@@ -8,6 +8,7 @@ extern crate log;
 use crate::rt::{mpsc, oneshot, spawn, UdpSocket};
 use hreq::http;
 use hreq::prelude::*;
+use hreq::server::Static;
 use pnet::datalink;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -110,25 +111,9 @@ async fn main() {
         tx_signal: tx_signal.clone(),
     });
 
-    web.at("/test.js").get(|_| async {
-        const TEST_JS: &str = include_str!("../www/test.js");
-
-        http::Response::builder()
-            .header("content-type", "application/javascript")
-            .body(TEST_JS)
-            .unwrap()
-    });
-
-    web.at("/").get(|_| async {
-        const INDEX_HTML: &str = include_str!("../www/index.html");
-
-        http::Response::builder()
-            .header("content-type", "text/html; charset=utf-8")
-            .body(INDEX_HTML)
-            .unwrap()
-    });
-
     web.at("/join").with_state().post(handle_post_join);
+
+    web.at("/*file").all(Static::dir("www"));
 
     let port: u16 = config::get_config_as_or("PORT", 3000);
 
