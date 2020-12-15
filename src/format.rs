@@ -2,6 +2,22 @@ use crate::sdp::{MediaAttribute, Simulcast, StreamId};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
+// The names of the codec have specific upper/lower case that must
+// be correctly set in the SDP.
+
+#[allow(dead_code)]
+pub const CODEC_H264: &str = "H264";
+#[allow(dead_code)]
+pub const CODEC_VP8: &str = "VP8";
+#[allow(dead_code)]
+pub const CODEC_OPUS: &str = "opus";
+#[allow(dead_code)]
+pub const CODEC_RTX: &str = "rtx";
+#[allow(dead_code)]
+pub const CODEC_ULFPEC: &str = "ulfpec";
+#[allow(dead_code)]
+pub const CODEC_RED: &str = "red";
+
 /// One format from an m-section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Format {
@@ -41,7 +57,7 @@ impl Format {
     }
 
     pub fn is_repair(&self) -> bool {
-        self.codec == "rtx"
+        self.codec == CODEC_RTX
     }
 
     pub fn fmtp_apt(&self) -> Option<u8> {
@@ -52,16 +68,6 @@ impl Format {
         }
 
         None
-    }
-
-    pub fn needs_ssrc(&self) -> bool {
-        match &self.codec[..] {
-            "rtx" => false,
-            "red" => {
-                panic!("Investigate whether red needs a a=ssrc cname line");
-            }
-            _ => true,
-        }
     }
 }
 
@@ -79,8 +85,8 @@ pub fn select_formats(formats: Vec<Format>, _simulcast: &Option<Simulcast>) -> V
     // TODO investigate codecs:
     //   - red (redundant coding) has fmtp-apt
     //   - ulpfec (Uneven Level Protection Forward Error Correction) uses a=ssrc-group:FID
-    const CODECS: &[&str] = &["H264", "opus"];
-    const REPAIR: &[&str] = &[]; // &["rtx"];
+    const CODECS: &[&str] = &[CODEC_H264, CODEC_OPUS];
+    const REPAIR: &[&str] = &[CODEC_RTX];
 
     let mut wanted = vec![];
     let mut repair = vec![];
