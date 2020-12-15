@@ -78,11 +78,19 @@ impl Ts {
     }
 
     pub fn now() -> Ts {
+        // RTP spec "wallclock" uses NTP time, which starts at 1900-01-01.
+        // We offset every .
+        //
+        // https://tools.ietf.org/html/rfc868
+        const MICROS_1900: f64 = 2_208_988_800.0 * 1_000_000.0;
+
         let dur = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap();
-        let time = (dur.as_secs() * 1_000_000 + dur.subsec_micros() as u64) as f64;
-        Ts::from_micros(time)
+
+        let now_micros = (dur.as_secs() * 1_000_000 + dur.subsec_micros() as u64) as f64;
+
+        Ts::from_micros(now_micros + MICROS_1900)
     }
 
     pub fn from_micros(v: f64) -> Ts {
