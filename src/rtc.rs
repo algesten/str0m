@@ -165,7 +165,7 @@ fn handle_rtp(
     let header = rtp::parse_header(&udp.buf, &id_to_ext)?;
     let ssrc = header.ssrc;
 
-    info!("RTP: {:?}", header);
+    // info!("RTP: {:?}", header);
 
     // Only exists if DTLS is established.
     let srtp_ctx = conn.srtp_rx.as_mut()?;
@@ -255,7 +255,7 @@ fn handle_rtp(
 
     stream.estimate_jitter(udp.timestamp, rtp_time);
 
-    //    info!("RTP: {:?} {:?} {:02X?}", header, format, &decrypted[0..10]);
+    info!("RTP: {:?} {:?} {:02X?}", header, format, &decrypted[0..10]);
 
     Some(())
 }

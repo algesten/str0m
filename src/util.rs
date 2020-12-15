@@ -93,6 +93,10 @@ impl Ts {
         Ts(v, 1.0)
     }
 
+    pub fn to_seconds(&self) -> f64 {
+        self.rebase(1.0).0
+    }
+
     #[inline(always)]
     pub fn is_zero(&self) -> bool {
         (self.0 - 0.0) < Ts::TOLERANCE

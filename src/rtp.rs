@@ -2,6 +2,7 @@ use crate::error::Error;
 use crate::media::IngressStream;
 use crate::sdp::{ExtMap, RtpExtensionType};
 use crate::{error::ErrorKind, util::Ts};
+use std::fmt;
 use std::str::from_utf8;
 
 #[derive(Debug, Clone)]
@@ -9,7 +10,7 @@ pub struct RtpHeader<'a> {
     pub version: u8,
     pub has_padding: bool,
     pub has_extension: bool,
-    pub csrc_count: usize, // "contributing source" (other ssrc)
+    // pub csrc_count: usize, // "contributing source" (other ssrc)
     pub marker: bool,
     pub payload_type: u8,
     pub sequence_number: u16,
@@ -90,7 +91,7 @@ pub fn parse_header<'a>(buf: &'a [u8], id_to_ext: &IdToExtType) -> Option<RtpHea
         version,
         has_padding,
         has_extension,
-        csrc_count,
+        // csrc_count,
         marker,
         payload_type,
         sequence_number,
@@ -269,7 +270,7 @@ impl RtpExtensionType {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct RtpExtValues<'a> {
     pub abs_send_time: Option<Ts>,
     pub voice_activity: Option<bool>,
@@ -286,6 +287,58 @@ pub struct RtpExtValues<'a> {
     pub rep_stream_id: Option<&'a str>,
     pub rtp_mid: Option<&'a str>,
     pub frame_mark: Option<u32>,
+}
+
+impl<'a> fmt::Debug for RtpExtValues<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "RtpExtValues {{")?;
+
+        if let Some(t) = self.rtp_mid {
+            write!(f, " mid: {}", t)?;
+        }
+        if let Some(t) = self.stream_id {
+            write!(f, " stream_id: {}", t)?;
+        }
+        if let Some(t) = self.rep_stream_id {
+            write!(f, " rep_stream_id: {}", t)?;
+        }
+        if let Some(t) = self.abs_send_time {
+            write!(f, " abs_send_time: {}", t.to_seconds())?;
+        }
+        if let Some(t) = self.voice_activity {
+            write!(f, " voice_activity: {}", t)?;
+        }
+        if let Some(t) = self.audio_level {
+            write!(f, " audio_level: {}", t)?;
+        }
+        if let Some(t) = self.tx_time_offs {
+            write!(f, " tx_time_offs: {}", t)?;
+        }
+        if let Some(t) = self.video_orient {
+            write!(f, " video_orient: {}", t)?;
+        }
+        if let Some(_) = self.transport_cc {
+            write!(f, " transport_cc: TODO")?;
+        }
+        if let Some(t) = self.play_delay_min {
+            write!(f, " play_delay_min: {}", t.to_seconds())?;
+        }
+        if let Some(t) = self.play_delay_max {
+            write!(f, " play_delay_max: {}", t.to_seconds())?;
+        }
+        if let Some(t) = self.video_c_type {
+            write!(f, " video_c_type: {}", t)?;
+        }
+        if let Some(t) = &self.video_timing {
+            write!(f, " video_timing: {:?}", t)?;
+        }
+        if let Some(_) = &self.frame_mark {
+            write!(f, " frame_mark: TODO")?;
+        }
+
+        write!(f, " }}")?;
+        Ok(())
+    }
 }
 
 impl<'a> RtpExtValues<'a> {
