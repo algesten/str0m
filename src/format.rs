@@ -1,4 +1,4 @@
-use crate::sdp::{MediaAttribute, Simulcast, SsrcInfo, StreamId};
+use crate::sdp::{MediaAttribute, Simulcast, StreamId};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -19,9 +19,6 @@ pub struct Format {
     pub fmtp: Vec<(String, String)>,
     /// Restrictions that applies to this format from the `a=rid` lines.
     pub restrictions: Vec<StreamId>,
-    /// For backwards compatibility, we need to provide a=ssrc cname lines.
-    /// As of 2020-12-13, only Chrome is ok with an a=ssrc "free" world.
-    pub ssrc_info: Option<SsrcInfo>,
 }
 
 impl Format {

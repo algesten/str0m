@@ -116,27 +116,6 @@ impl Media {
             .collect();
         self.extmaps = extmaps;
 
-        // Not all formats needs an a=ssrc cname line.
-        let needed_ssrc_count = self.formats.iter().filter(|f| f.needs_ssrc()).count();
-
-        let mut create_ingress = vec![];
-
-        // Backwards compat a=ssrc cname lines.
-        for (format, ssrc_info) in self
-            .formats
-            .iter_mut()
-            .zip(m.attrs.ssrc_info(needed_ssrc_count).into_iter())
-        {
-            create_ingress.push(ssrc_info.ssrc);
-            format.ssrc_info = Some(ssrc_info);
-        }
-
-        for ssrc in create_ingress {
-            // Backwards compat requires us to create the corresponding
-            // ingress streams here.
-            self.ingress_create_ssrc(ssrc);
-        }
-
         Ok(())
     }
 
@@ -202,29 +181,6 @@ impl Media {
 
         if let Some(s) = &self.simulcast {
             ret.push(MediaAttribute::Simulcast(s.clone()));
-        }
-
-        // a=ssrc-group:FID <ssrc> <ssrc>
-        let fid = self
-            .formats
-            .iter()
-            .filter_map(|f| f.ssrc_info.as_ref())
-            .map(|f| f.ssrc)
-            .collect::<Vec<_>>();
-
-        if fid.len() >= 2 {
-            ret.push(MediaAttribute::SsrcGroup {
-                semantics: "FID".to_string(),
-                ssrcs: fid,
-            });
-        }
-
-        for SsrcInfo { ssrc, cname } in self.formats.iter().filter_map(|f| f.ssrc_info.as_ref()) {
-            ret.push(MediaAttribute::Ssrc {
-                ssrc: *ssrc,
-                attr: "cname".to_string(),
-                value: cname.to_string(),
-            });
         }
 
         ret

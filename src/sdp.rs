@@ -14,13 +14,6 @@ pub struct Sdp {
 
 pub trait MediaAttributeThings {
     fn extmaps(&self) -> Vec<ExtMap>;
-    fn ssrc_info(&self, needed_ssrc_count: usize) -> Vec<SsrcInfo>;
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SsrcInfo {
-    pub ssrc: u32,
-    pub cname: String,
 }
 
 impl MediaAttributeThings for Vec<MediaAttribute> {
@@ -30,27 +23,6 @@ impl MediaAttributeThings for Vec<MediaAttribute> {
         for a in self {
             if let MediaAttribute::ExtMap(e) = a {
                 ret.push(e.clone());
-            }
-        }
-
-        ret
-    }
-
-    fn ssrc_info(&self, needed_ssrc_count: usize) -> Vec<SsrcInfo> {
-        let mut ret = vec![];
-
-        for a in self {
-            if let MediaAttribute::Ssrc { ssrc, attr, value } = a {
-                if attr == "cname" {
-                    ret.push(SsrcInfo {
-                        ssrc: *ssrc,
-                        cname: value.clone(),
-                    });
-
-                    if ret.len() == needed_ssrc_count {
-                        break;
-                    }
-                }
             }
         }
 
@@ -349,7 +321,6 @@ impl MediaDesc {
                                 rtcp_fb: vec![],
                                 fmtp: vec![],
                                 restrictions: vec![],
-                                ssrc_info: None,
                             });
                         }
                     }
