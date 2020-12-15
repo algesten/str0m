@@ -82,15 +82,14 @@ pub fn select_formats(formats: Vec<Format>, _simulcast: &Option<Simulcast>) -> V
     // TODO investigate codecs:
     //   - red (redundant coding) has fmtp-apt
     //   - ulpfec (Uneven Level Protection Forward Error Correction) uses a=ssrc-group:FID
-    const CODECS: &[&str] = &["h264", "opus"];
+    const CODECS: &[&str] = &["H264", "opus"];
     const REPAIR: &[&str] = &[]; // &["rtx"];
 
     let mut wanted = vec![];
     let mut repair = vec![];
     let mut other = vec![];
 
-    for mut f in formats {
-        f.codec = f.codec.to_lowercase();
+    for f in formats {
         if CODECS.contains(&&f.codec[..]) {
             wanted.push(f);
         } else if REPAIR.contains(&&f.codec[..]) {
