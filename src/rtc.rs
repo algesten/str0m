@@ -231,7 +231,7 @@ fn handle_rtp(
     // This must be done after determining whether the stream is a repair stream, since
     // that fact will impact which format line to choose.
     let format = unsafe { media_ptr.as_mut().unwrap().format_for_ingress(&stream) }?;
-    let rtp_time = Ts::new(header.timestamp as f64, format.clock_rate as f64);
+    let rtp_time = Ts::new(header.timestamp, format.clock_rate);
 
     let ext_seq = rtp::extend_seq(stream.rtp_ext_seq, header.sequence_number);
 

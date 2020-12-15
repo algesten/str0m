@@ -56,24 +56,27 @@ pub fn unix_time() -> i64 {
         .as_secs() as i64
 }
 
+/// 2^32 as float.
+const F32: f64 = 4_294_967_296.0;
+const MICROS: i64 = 1_000_000;
+
 #[derive(Debug, Clone, Copy)]
-pub struct Ts(f64, f64);
+pub struct Ts(i64, i64);
 
 impl Ts {
-    pub const ZERO: Ts = Ts(0.0, 1.0);
-    const TOLERANCE: f64 = 0.0000000000000001;
+    pub const ZERO: Ts = Ts(0, 1);
 
-    pub fn new(numer: f64, denum: f64) -> Ts {
-        Ts(numer, denum)
+    pub fn new(numer: impl Into<i64>, denum: impl Into<i64>) -> Ts {
+        Ts(numer.into(), denum.into())
     }
 
     #[inline(always)]
-    pub fn numer(&self) -> f64 {
+    pub fn numer(&self) -> i64 {
         self.0
     }
 
     #[inline(always)]
-    pub fn denum(&self) -> f64 {
+    pub fn denum(&self) -> i64 {
         self.1
     }
 
@@ -82,48 +85,103 @@ impl Ts {
         // We offset every .
         //
         // https://tools.ietf.org/html/rfc868
-        const MICROS_1900: f64 = 2_208_988_800.0 * 1_000_000.0;
+        const MICROS_1900: i64 = 2_208_988_800 * MICROS;
 
         let dur = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap();
 
-        let now_micros = (dur.as_secs() * 1_000_000 + dur.subsec_micros() as u64) as f64;
+        let now_micros = dur.as_secs() as i64 * 1_000_000 + dur.subsec_micros() as i64;
 
         Ts::from_micros(now_micros + MICROS_1900)
     }
 
-    pub fn from_micros(v: f64) -> Ts {
-        Ts(v, 1_000_000.0)
+    #[inline(always)]
+    pub fn from_micros(v: impl Into<i64>) -> Ts {
+        Ts(v.into(), MICROS)
     }
 
-    pub fn from_seconds(v: f64) -> Ts {
-        Ts(v, 1.0)
+    #[inline(always)]
+    pub fn from_seconds(v: impl Into<f64>) -> Ts {
+        Self::from_micros((v.into() * 1_000_000.0_f64) as i64)
     }
 
+    #[inline(always)]
     pub fn to_seconds(&self) -> f64 {
-        self.rebase(1.0).0
+        self.0 as f64 / self.1 as f64
+    }
+
+    pub fn to_micros(&self) -> i64 {
+        self.rebase(MICROS).numer()
+    }
+
+    #[inline(always)]
+    pub fn from_ntp_64(v: u64) -> Ts {
+        // https://tools.ietf.org/html/rfc3550#section-4
+        // Wallclock time (absolute date and time) is represented using the
+        // timestamp format of the Network Time Protocol (NTP), which is in
+        // seconds relative to 0h UTC on 1 January 1900 [4]. The full
+        // resolution NTP timestamp is a 64-bit unsigned fixed-point number with
+        // the integer part in the first 32 bits and the fractional part in the
+        // last 32 bits.
+        let secs = (v as f64) / F32;
+
+        Ts::from_seconds(secs)
+    }
+
+    #[inline(always)]
+    pub fn to_ntp_64(&self) -> u64 {
+        let secs = self.to_seconds();
+        assert!(secs >= 0.0);
+
+        // sec * (2 ^ 32)
+        (secs * F32) as u64
+    }
+
+    #[inline(always)]
+    pub fn from_ntp_32(v: u32) -> Ts {
+        // https://tools.ietf.org/html/rfc3550#section-4
+        // In some fields where a more compact representation is
+        // appropriate, only the middle 32 bits are used; that is, the low 16
+        // bits of the integer part and the high 16 bits of the fractional part.
+        // The high 16 bits of the integer part must be determined
+        // independently.
+
+        // Use the high bits from wallclock to lengthen this to the original value.
+        let now_hi = Ts::now().to_ntp_64() & (0xffff_u64 << 48);
+
+        let padded = now_hi | ((v as u64) << 16);
+
+        Ts::from_ntp_64(padded)
+    }
+
+    #[inline(always)]
+    pub fn to_ntp_32(&self) -> u32 {
+        let ntp_64 = self.to_ntp_64();
+
+        ((ntp_64 >> 16) & 0xffff_ffff) as u32
     }
 
     #[inline(always)]
     pub fn is_zero(&self) -> bool {
-        (self.0 - 0.0) < Ts::TOLERANCE
+        self.0 == 0
     }
 
     #[inline(always)]
     pub fn abs(mut self) -> Ts {
-        if self.0 < 0.0 {
+        if self.0 < 0 {
             self.0 = -self.0;
         }
         self
     }
 
     #[inline(always)]
-    pub fn rebase(self, denum: f64) -> Ts {
+    pub fn rebase(self, denum: i64) -> Ts {
         if denum == self.1 {
             self
         } else {
-            Ts::new((self.0 / self.1) * denum, denum)
+            let numer = self.0 as i128 * denum as i128 / self.1 as i128;
+            Ts::new(numer as i64, denum)
         }
     }
 
@@ -138,7 +196,7 @@ impl PartialEq for Ts {
     #[inline(always)]
     fn eq(&self, other: &Self) -> bool {
         let (t0, t1) = Ts::same_base(*self, *other);
-        (t0.0 - t1.0).abs() < Ts::TOLERANCE
+        t0.0 == t1.0
     }
 }
 impl Eq for Ts {}
@@ -207,8 +265,19 @@ mod test {
     #[test]
     fn ts_rebase() {
         let t1 = Ts::from_seconds(10.0);
-        let t2 = t1.rebase(90_000.0);
-        assert_eq!(t2.numer(), 90_000.0 * 10.0);
-        assert_eq!(t2.denum(), 90_000.0);
+        let t2 = t1.rebase(90_000);
+        assert_eq!(t2.numer(), 90_000 * 10);
+        assert_eq!(t2.denum(), 90_000);
+
+        println!("{}", (10.0234_f64).fract());
+    }
+
+    #[test]
+    fn ts_ntp_32() {
+        let t1 = Ts::now();
+        let t2 = t1.to_ntp_32();
+        let t3 = Ts::from_ntp_32(t2);
+        let diff = (t1.numer() - t3.numer()).abs();
+        assert!(diff < 100); // probably in the regions of 10^-5
     }
 }

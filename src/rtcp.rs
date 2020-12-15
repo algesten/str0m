@@ -189,7 +189,7 @@ pub fn handle_sender_report(udp: &PeerUdp, peer: &mut Peer, buf: &[u8]) -> Optio
     let rtp_time = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
 
     stream.rtcp_sr_last = udp.timestamp;
-    stream.rtcp_sr_ntp = Ts::from_micros(ntp_time as f64);
+    stream.rtcp_sr_ntp = Ts::from_ntp_64(ntp_time);
 
     // https://www.cs.columbia.edu/~hgs/rtp/faq.html#timestamp-computed
     // For video, time clock rate is fixed at 90 kHz. The timestamps generated
@@ -204,7 +204,7 @@ pub fn handle_sender_report(udp: &PeerUdp, peer: &mut Peer, buf: &[u8]) -> Optio
 }
 
 impl IngressStream {
-    pub fn build_receiver_report(&mut self, buf: &mut [u8]) -> Option<()> {
+    pub fn build_receiver_report(&mut self, buf: &mut [u8], systime: Ts) -> Option<()> {
         assert!(buf.len() == 24);
 
         // This rebuilds the packet loss fields.
@@ -214,6 +214,25 @@ impl IngressStream {
         buf[4] = (self.rtp_packet_loss * 255.0) as u8;
         (&mut buf[5..8]).copy_from_slice(&self.rtp_lost_packets.to_be_bytes()[5..]);
         (&mut buf[8..12]).copy_from_slice(&self.rtp_ext_seq?.to_be_bytes()[4..]);
+
+        // https://tools.ietf.org/html/rfc3550#section-6.4
+        // The middle 32 bits out of 64 in the NTP timestamp (as explained in
+        // Section 4) received as part of the most recent RTCP sender report
+        // (SR) packet from source SSRC_n.  If no SR has been received yet,
+        // the field is set to zero.
+        let last_sr = self.rtcp_sr_last.to_ntp_32();
+        (&mut buf[12..16]).copy_from_slice(&last_sr.to_be_bytes());
+
+        // The delay, expressed in units of 1/65536 seconds, between
+        // receiving the last SR packet from source SSRC_n and sending this
+        // reception report block.  If no SR packet has been received yet
+        // from SSRC_n, the DLSR field is set to zero.
+        let delay_last_sr = if self.rtcp_sr_last.is_zero() {
+            0
+        } else {
+            (((systime - self.rtcp_sr_last).to_micros()) * 65_536 / 1_000_000) as u32
+        };
+        (&mut buf[16..20]).copy_from_slice(&delay_last_sr.to_be_bytes());
 
         Some(())
     }

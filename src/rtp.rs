@@ -201,7 +201,7 @@ impl RtpExtensionType {
                 // fixed point 6.18
                 let time_24 = u32::from_be_bytes([0, buf[0], buf[1], buf[2]]);
                 let time_fp = time_24 as f32 / (2 ^ 18) as f32;
-                v.abs_send_time = Some(Ts::from_seconds(time_fp as f64));
+                v.abs_send_time = Some(Ts::from_seconds(time_fp));
             }
             // 1
             RtpExtensionType::AudioLevel => {
@@ -224,8 +224,8 @@ impl RtpExtensionType {
             RtpExtensionType::PlayoutDelay => {
                 let min = (buf[0] as u32) << 4 | (buf[1] as u32) >> 4;
                 let max = (buf[1] as u32) << 8 | buf[2] as u32;
-                v.play_delay_min = Some(Ts::new(min as f64, 100.0));
-                v.play_delay_max = Some(Ts::new(max as f64, 100.0));
+                v.play_delay_min = Some(Ts::new(min, 100));
+                v.play_delay_max = Some(Ts::new(max, 100));
             }
             // 1
             RtpExtensionType::VideoContentType => {
@@ -431,8 +431,8 @@ impl IngressStream {
             let transit_prior = self.rtp_sys_time_prior - self.rtp_time_prior;
             let d = (transit - transit_prior).abs().rebase(rtp_timebase);
 
-            self.rtp_jitter += 1.0 / 16.0 * (d.numer() - self.rtp_jitter);
-            self.rtp_jitter_norm = self.rtp_jitter / rtp_timebase;
+            self.rtp_jitter += 1.0 / 16.0 * (d.numer() as f64 - self.rtp_jitter);
+            self.rtp_jitter_norm = self.rtp_jitter / rtp_timebase as f64;
         }
 
         self.rtp_sys_time_prior = sys_time;
