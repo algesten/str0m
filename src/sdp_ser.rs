@@ -163,6 +163,7 @@ impl Media {
 
         // do we need a=msid here?
         ret.push(MediaAttribute::RtcpMux);
+        ret.push(MediaAttribute::RtcpRsize);
 
         for f in &self.formats {
             ret.push(f.as_rtpmap());
