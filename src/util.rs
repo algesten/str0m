@@ -140,6 +140,13 @@ impl Ts {
 
     #[inline(always)]
     pub fn from_ntp_32(v: u32) -> Ts {
+        let pad = (Ts::now().to_ntp_64() >> 32) as u32;
+        let padded = Ts::from_ntp_32_with_pad(v, pad);
+        Ts::from_ntp_64(padded)
+    }
+
+    #[inline(always)]
+    pub fn from_ntp_32_with_pad(vvv: u32, pad: u32) -> u64 {
         // https://tools.ietf.org/html/rfc3550#section-4
         // In some fields where a more compact representation is
         // appropriate, only the middle 32 bits are used; that is, the low 16
@@ -147,12 +154,33 @@ impl Ts {
         // The high 16 bits of the integer part must be determined
         // independently.
 
-        // Use the high bits from wallclock to lengthen this to the original value.
-        let now_hi = Ts::now().to_ntp_64() & (0xffff_u64 << 48);
+        let mut pad_hi = pad & 0xffff_0000;
+        let pad_lo = (pad & 0x0000_ffff) as i32;
 
-        let padded = now_hi | ((v as u64) << 16);
+        let v_lo = (vvv >> 16) as i32;
 
-        Ts::from_ntp_64(padded)
+        // We assume the remote clock is stable and monotonic, as is our own Ts:now().
+        // We reinterpet the remote clock with the knowledge of our own clock. The
+        // resulting value might not be the correct remote time, but any calculation
+        // using it should be relative to itself.
+        //
+        if pad_lo > 32768 && v_lo < 32768 {
+            if (pad_lo - v_lo).abs() > 32768 {
+                // local clock has wrapped around before remote.
+                pad_hi -= 0x1_0000;
+            }
+        } else if pad_lo < 32768 && v_lo > 32768 {
+            if (pad_lo - v_lo).abs() > 32768 {
+                // remote clock has wrapped around before local.
+                pad_hi += 0x1_0000
+            }
+        }
+
+        let v_frc = vvv & 0x0000_ffff;
+
+        let padded = ((pad_hi as u64) << 32) | ((v_lo as u64) << 32) | ((v_frc as u64) << 16);
+
+        padded
     }
 
     #[inline(always)]
@@ -274,10 +302,34 @@ mod test {
 
     #[test]
     fn ts_ntp_32() {
-        let t1 = Ts::now();
-        let t2 = t1.to_ntp_32();
-        let t3 = Ts::from_ntp_32(t2);
-        let diff = (t1.numer() - t3.numer()).abs();
-        assert!(diff < 100); // probably in the regions of 10^-5
+        // let t1 = Ts::now();
+        // let t2 = t1.to_ntp_32();
+        // let t3 = Ts::from_ntp_32(t2);
+        // let diff = (t1.numer() - t3.numer()).abs();
+        // assert!(diff < 100); // probably in the regions of 10^-5
+
+        assert_eq!(
+            Ts::from_ntp_32_with_pad(
+                0b1100_0000_0000_0000_0000_0000_1001_1001,
+                0b0000_0000_0000_1111_0000_0000_0000_0010,
+            ),
+            0b0000_0000_0001_0000_1100_0000_0000_0000_0000_0000_1001_1001_0000_0000_0000_0000
+        );
+
+        assert_eq!(
+            Ts::from_ntp_32_with_pad(
+                0b0000_0000_0000_0100_0000_0000_1001_1001,
+                0b0000_0000_0000_1111_1100_0000_0000_0010,
+            ),
+            0b0000_0000_0000_1110_0000_0000_0000_0100_0000_0000_1001_1001_0000_0000_0000_0000
+        );
+
+        assert_eq!(
+            Ts::from_ntp_32_with_pad(
+                0b0000_0000_0000_0100_0000_0000_1001_1001,
+                0b0000_0000_0000_1111_0000_0000_0000_0001,
+            ),
+            0b0000_0000_0000_1111_0000_0000_0000_0100_0000_0000_1001_1001_0000_0000_0000_0000
+        );
     }
 }
