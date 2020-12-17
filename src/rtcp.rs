@@ -3,6 +3,13 @@ use crate::peer::Peer;
 use crate::peer::PeerUdp;
 use crate::util::Ts;
 
+/// Header size before receiver report blocks.
+pub const RR_HEAD: usize = 8;
+/// Size of one receiver report.
+pub const RR_LEN: usize = 24;
+/// Max number of receiver reports per RTCP packet.
+pub const RR_MAX: usize = 32;
+
 #[derive(Debug)]
 pub struct RtcpHeader {
     pub version: u8,
@@ -203,8 +210,24 @@ pub fn handle_sender_report(udp: &PeerUdp, peer: &mut Peer, buf: &[u8]) -> Optio
     Some(())
 }
 
+pub fn receiver_report_header(buf: &mut [u8]) {
+    assert!(buf.len() >= RR_HEAD + RR_LEN);
+
+    let buf_len = buf.len();
+
+    let report_count = (buf_len - RR_HEAD) / RR_LEN;
+    buf[0] = (2 << 6) | (report_count as u8);
+    buf[1] = 200;
+
+    (&mut buf[2..4]).copy_from_slice(&(buf_len as u16).to_be_bytes());
+
+    // SSRC of sender. But we don't really have an SSRC, so this is some workaround.
+    let first_ssrc = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
+    (&mut buf[4..8]).copy_from_slice(&(first_ssrc + 1 as u32).to_be_bytes());
+}
+
 impl IngressStream {
-    pub fn build_receiver_report(&mut self, buf: &mut [u8], systime: Ts) -> Option<()> {
+    pub fn build_receiver_report(&mut self, buf: &mut [u8], systime: Ts) {
         assert!(buf.len() == 24);
 
         // This rebuilds the packet loss fields.
@@ -213,7 +236,9 @@ impl IngressStream {
         (&mut buf[0..4]).copy_from_slice(&self.ssrc.to_be_bytes());
         buf[4] = (self.rtp_packet_loss * 255.0) as u8;
         (&mut buf[5..8]).copy_from_slice(&self.rtp_lost_packets.to_be_bytes()[5..]);
-        (&mut buf[8..12]).copy_from_slice(&self.rtp_ext_seq?.to_be_bytes()[4..]);
+        (&mut buf[8..12]).copy_from_slice(&self.rtp_ext_seq.unwrap().to_be_bytes()[4..]);
+
+        (&mut buf[12..16]).copy_from_slice(&(self.rtp_jitter as u32).to_be_bytes());
 
         // https://tools.ietf.org/html/rfc3550#section-6.4
         // The middle 32 bits out of 64 in the NTP timestamp (as explained in
@@ -221,7 +246,7 @@ impl IngressStream {
         // (SR) packet from source SSRC_n.  If no SR has been received yet,
         // the field is set to zero.
         let last_sr = self.rtcp_sr_last.to_ntp_32();
-        (&mut buf[12..16]).copy_from_slice(&last_sr.to_be_bytes());
+        (&mut buf[16..20]).copy_from_slice(&last_sr.to_be_bytes());
 
         // The delay, expressed in units of 1/65536 seconds, between
         // receiving the last SR packet from source SSRC_n and sending this
@@ -232,8 +257,6 @@ impl IngressStream {
         } else {
             (((systime - self.rtcp_sr_last).to_micros()) * 65_536 / 1_000_000) as u32
         };
-        (&mut buf[16..20]).copy_from_slice(&delay_last_sr.to_be_bytes());
-
-        Some(())
+        (&mut buf[20..24]).copy_from_slice(&delay_last_sr.to_be_bytes());
     }
 }

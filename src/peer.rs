@@ -1,5 +1,6 @@
 use crate::dtls::{dtls_create_ctx, DtlsEvent, SrtpKeyMaterial};
-use crate::media::Media;
+use crate::media::{IngressStream, Media};
+use crate::rt;
 use crate::rt::{mpsc, oneshot};
 use crate::rtc::RtcSession;
 use crate::sdp::*;
@@ -143,6 +144,21 @@ impl Peer {
         // both in parallell without upsetting the borrow checker.
         let mut rtc = self.rtc.take().expect("Take RTCSession");
 
+        // Launch a loop to send periodical receiver reports.
+        {
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
+            let mut tx = self.tx.clone();
+            rt::spawn(async move {
+                loop {
+                    interval.tick().await;
+                    if tx.send(PeerInput::Periodical).await.is_err() {
+                        // receiver gone
+                        break;
+                    }
+                }
+            });
+        }
+
         // loop the entire lifetime of the peer
         loop {
             if let Some(op) = self.rx.recv().await {
@@ -161,6 +177,10 @@ impl Peer {
                     }
 
                     PeerInput::DtlsEvent(dtls_ev) => self.handle_dtls_ev(&mut rtc, dtls_ev)?,
+
+                    PeerInput::Periodical => {
+                        rtc.send_periodical_reports(&mut self).await;
+                    }
                 }
             } else {
                 trace!("Input ended");
@@ -254,6 +274,12 @@ impl Peer {
     pub fn media_by_mid(&mut self, mid: &str) -> Option<&mut Media> {
         self.media.iter_mut().find(|m| m.media_id.0 == mid)
     }
+
+    pub fn active_ingress<'a>(&'a mut self, into: &mut Vec<&'a mut IngressStream>) {
+        for m in &mut self.media {
+            m.active_ingress(into);
+        }
+    }
 }
 
 /// Kinds of input from a Server to a Peer.
@@ -269,6 +295,8 @@ pub enum PeerInput {
     SdpOffer(Sdp, oneshot::Sender<SdpAnswer>),
     /// This oddball doesn't originate from the Server, but the DtlsStream.
     DtlsEvent(DtlsEvent),
+    /// Periodical timer tick to do receiver reports.
+    Periodical,
 }
 
 /// Answer to an SDP offer.

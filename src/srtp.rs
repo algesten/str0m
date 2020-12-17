@@ -10,12 +10,14 @@ const SRTCP_INDEX_LEN: usize = 4;
 
 #[derive(Debug)]
 pub struct SrtpContext {
-    // Master key obtained from DTLS export_keying_material.
+    /// Master key obtained from DTLS export_keying_material.
     srtp_key: SrtpKey,
-    // Encryption/decryption derived from srtp_key for RTP.
+    /// Encryption/decryption derived from srtp_key for RTP.
     rtp: Derived,
-    // Encryption/decryption derived from srtp_key for RTCP.
+    /// Encryption/decryption derived from srtp_key for RTCP.
     rtcp: Derived,
+    /// Counter for outgoing SRTCP packets.
+    srtcp_index: u32,
 }
 
 impl SrtpContext {
@@ -26,6 +28,7 @@ impl SrtpContext {
             srtp_key,
             rtp,
             rtcp,
+            srtcp_index: 0,
         }
     }
 
@@ -64,6 +67,36 @@ impl SrtpContext {
         self.rtp.aes.crypt(false, &iv, input, &mut output);
 
         Some(output)
+    }
+
+    pub fn protect_rtcp(&mut self, buf: &[u8]) -> Vec<u8> {
+        // https://tools.ietf.org/html/rfc3711#page-15
+        // The SRTCP index MUST be set to zero before the first SRTCP
+        // packet is sent, and MUST be incremented by one,
+        // modulo 2^31, after each SRTCP packet is sent.
+        self.srtcp_index = (self.srtcp_index + 1) % 2_u32.pow(31);
+
+        let srtcp_index = self.srtcp_index;
+        let ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+
+        let iv = self.rtcp.salt.rtp_iv(ssrc, srtcp_index as u64);
+
+        let mut output = vec![0_u8; buf.len() + SRTCP_INDEX_LEN + SRTP_HMAC_LEN];
+        (&mut output[0..8]).copy_from_slice(&buf[0..8]);
+        let input = &buf[8..];
+        let encout = &mut output[8..(8 + input.len())];
+
+        self.rtcp.aes.crypt(true, &iv, input, encout);
+
+        // e is always encrypted, rest is 31 byte index.
+        let e_and_si = 0x8000_0000 | srtcp_index;
+        let to = &mut output[buf.len()..];
+        (&mut to[0..4]).copy_from_slice(&e_and_si.to_be_bytes());
+
+        let hmac_index = output.len() - SRTP_HMAC_LEN;
+        self.rtcp.hmac.rtcp_hmac(&mut output, hmac_index);
+
+        output
     }
 
     // SRTCP layout
@@ -111,13 +144,8 @@ impl SrtpContext {
         }
 
         // The SRTCP index is a 31-bit counter for the SRTCP packet.
-        // TODO: This should be interpreted to a u64 using self.prev_index,
-        // so that we can handle wrap-around for very long sessions having
-        // larger than 2^31 number of packets.
         let srtcp_index = e_and_si & 0x7fff_ffff;
-
-        let ssrc_be = [buf[4], buf[5], buf[6], buf[7]];
-        let ssrc = u32::from_be_bytes(ssrc_be);
+        let ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
 
         let iv = self.rtcp.salt.rtp_iv(ssrc, srtcp_index as u64);
 
@@ -299,6 +327,7 @@ impl RtpCrypter for AesKey {
 trait RtpHmac {
     fn rtp_verify(&self, buf: &[u8], srtp_index: u64, cmp: &[u8]) -> bool;
     fn rtcp_verify(&self, buf: &[u8], cmp: &[u8]) -> bool;
+    fn rtcp_hmac(&self, buf: &mut [u8], hmac_index: usize);
 }
 
 impl RtpHmac for HmacSha1 {
@@ -306,10 +335,9 @@ impl RtpHmac for HmacSha1 {
         let mut hmac = self.clone();
 
         let roc = (srtp_index >> 16) as u32;
-        let roc_be: [u8; 4] = roc.to_be_bytes();
 
         hmac.update(buf);
-        hmac.update(&roc_be[..]);
+        hmac.update(&roc.to_be_bytes());
 
         let tag = hmac.finalize().into_bytes();
 
@@ -324,6 +352,16 @@ impl RtpHmac for HmacSha1 {
         let tag = hmac.finalize().into_bytes();
 
         &tag[0..SRTP_HMAC_LEN] == cmp
+    }
+
+    fn rtcp_hmac(&self, buf: &mut [u8], hmac_index: usize) {
+        let mut hmac = self.clone();
+
+        hmac.update(&buf[0..hmac_index]);
+
+        let tag = hmac.finalize().into_bytes();
+
+        &mut buf[hmac_index..(hmac_index + SRTP_HMAC_LEN)].copy_from_slice(&tag[0..SRTP_HMAC_LEN]);
     }
 }
 
@@ -417,32 +455,59 @@ mod test {
         );
     }
 
+    const MAT: [u8; 60] = [
+        0x2C, 0xB0, 0x23, 0x46, 0xB4, 0x22, 0x76, 0xA6, 0x72, 0xCF, 0xD1, 0x43, 0xAE, 0xC2, 0xD5,
+        0xEE, 0xDD, 0xDE, 0x55, 0xF0, 0xAD, 0x7B, 0xCA, 0xC2, 0x26, 0x66, 0xF1, 0xC6, 0x38, 0x61,
+        0x73, 0xED, 0x6E, 0xB2, 0x5C, 0xB7, 0xD2, 0x6A, 0x61, 0xA1, 0xEE, 0x2C, 0x21, 0x0A, 0xDA,
+        0xE7, 0x60, 0xAA, 0xA2, 0xFD, 0x67, 0xB6, 0x72, 0xC4, 0x1A, 0xED, 0x10, 0x5F, 0x9D, 0x36,
+    ];
+
+    const SRTCP: &[u8] = &[
+        // header
+        0x80, 0xC8, 0x00, 0x06, //
+        // ssrc
+        0x3C, 0xD7, 0xCC, 0x13, //
+        // encrypted payload
+        0xB7, 0xC8, 0x31, 0xDC, 0xB7, 0x76, 0xCD, 0x8D, 0xC2, 0x6F, 0xDA, 0x1D, 0x9B, 0xFC, 0x8E,
+        0xE6, 0x58, 0x9A, 0x1A, 0x8A, 0x49, 0x28, 0x9C, 0xAE, 0xB2, 0x64, 0x20, 0x0C, 0x37, 0xD2,
+        0xD0, 0xA4, 0xAF, 0xAC, 0x63, 0x85, 0xFF, 0xC6, 0x0D, 0xEC, 0x7D, 0x06, 0xD4, 0x87, 0x3D,
+        0xD3, 0xA8, 0xCC, //
+        // E flag and srtcp index (1)
+        0x80, 0x00, 0x00, 0x01, //
+        // hmac
+        0xB7, 0xBB, 0x52, 0x65, 0x21, 0xD1, 0xE7, 0x3C, 0x0F, 0xC0,
+    ];
+
     #[test]
     fn unprotect_srtcp() {
-        let mat = [
-            0x2C, 0xB0, 0x23, 0x46, 0xB4, 0x22, 0x76, 0xA6, 0x72, 0xCF, 0xD1, 0x43, 0xAE, 0xC2,
-            0xD5, 0xEE, 0xDD, 0xDE, 0x55, 0xF0, 0xAD, 0x7B, 0xCA, 0xC2, 0x26, 0x66, 0xF1, 0xC6,
-            0x38, 0x61, 0x73, 0xED, 0x6E, 0xB2, 0x5C, 0xB7, 0xD2, 0x6A, 0x61, 0xA1, 0xEE, 0x2C,
-            0x21, 0x0A, 0xDA, 0xE7, 0x60, 0xAA, 0xA2, 0xFD, 0x67, 0xB6, 0x72, 0xC4, 0x1A, 0xED,
-            0x10, 0x5F, 0x9D, 0x36,
-        ];
-
-        let key_mat = SrtpKeyMaterial(mat);
+        let key_mat = SrtpKeyMaterial(MAT);
 
         let key_rx = SrtpKey::new(&key_mat, true);
 
         let mut ctx_rx = SrtpContext::new(key_rx);
 
-        let rtcp = [
-            0x80, 0xC8, 0x00, 0x06, 0x3C, 0xD7, 0xCC, 0x13, 0xB7, 0xC8, 0x31, 0xDC, 0xB7, 0x76,
-            0xCD, 0x8D, 0xC2, 0x6F, 0xDA, 0x1D, 0x9B, 0xFC, 0x8E, 0xE6, 0x58, 0x9A, 0x1A, 0x8A,
-            0x49, 0x28, 0x9C, 0xAE, 0xB2, 0x64, 0x20, 0x0C, 0x37, 0xD2, 0xD0, 0xA4, 0xAF, 0xAC,
-            0x63, 0x85, 0xFF, 0xC6, 0x0D, 0xEC, 0x7D, 0x06, 0xD4, 0x87, 0x3D, 0xD3, 0xA8, 0xCC,
-            0x80, 0x00, 0x00, 0x01, 0xB7, 0xBB, 0x52, 0x65, 0x21, 0xD1, 0xE7, 0x3C, 0x0F, 0xC0,
-        ];
+        let decrypted = ctx_rx.unprotect_rtcp(&SRTCP);
 
-        let decrypted = ctx_rx.unprotect_rtcp(&rtcp);
+        println!("{:02x?}", decrypted);
+    }
 
-        println!("{:02X?}", decrypted);
+    #[test]
+    fn protect_srtcp() {
+        let key_mat = SrtpKeyMaterial(MAT);
+        let key_rx = SrtpKey::new(&key_mat, true);
+        let mut ctx_rx = SrtpContext::new(key_rx);
+
+        let decrypted = ctx_rx.unprotect_rtcp(&SRTCP).unwrap();
+
+        // check srtcp_index will be 1
+        assert_eq!(ctx_rx.srtcp_index, 0);
+        // check srtcp_index in incoming was indeed 1
+        let srtcp_index = SRTCP.len() - SRTP_HMAC_LEN - SRTCP_INDEX_LEN;
+        let e_and_i = &SRTCP[srtcp_index..(srtcp_index + 4)];
+        assert_eq!(e_and_i, &0x8000_0001_u32.to_be_bytes());
+
+        // Take us back to where we started.
+        let encrypted = ctx_rx.protect_rtcp(&decrypted);
+        assert_eq!(encrypted, SRTCP);
     }
 }

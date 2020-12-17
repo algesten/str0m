@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use crate::format::Format;
 use crate::peer::IceCreds;
 use crate::sdp::*;
@@ -24,6 +26,15 @@ pub enum Direction {
     RecvOnly,
     SendRecv,
     Inactive,
+}
+
+impl Direction {
+    pub fn is_recv(&self) -> bool {
+        match self {
+            Direction::RecvOnly | Direction::SendRecv => true,
+            _ => false,
+        }
+    }
 }
 
 /// `Media` is one single thing, like a user mic, or a screen grab or a camera.
@@ -69,6 +80,9 @@ pub struct Media {
 #[derive(Debug)]
 pub struct IngressStream {
     pub ssrc: u32,
+
+    /// Address this ingress originates from.
+    pub addr: SocketAddr,
 
     /// If this ingress is a repair stream, this is the SSRC of the stream it repairs.
     pub repaired_ssrc: Option<u32>,
@@ -161,9 +175,9 @@ impl Media {
         self.ingress.iter().any(|i| i.ssrc == ssrc)
     }
 
-    pub fn ingress_create_ssrc(&mut self, ssrc: u32) -> &mut IngressStream {
+    pub fn ingress_create_ssrc(&mut self, ssrc: u32, addr: &SocketAddr) -> &mut IngressStream {
         self.ingress
-            .find_or_append(|i| i.ssrc == ssrc, || IngressStream::new(ssrc))
+            .find_or_append(|i| i.ssrc == ssrc, || IngressStream::new(ssrc, *addr))
     }
 
     pub fn ingress_by_ssrc(&mut self, ssrc: u32) -> Option<&mut IngressStream> {
@@ -201,12 +215,26 @@ impl Media {
         let stream = self.ingress.iter().find(|i| i.ssrc == ssrc)?;
         self.format_for_ingress(stream)
     }
+
+    pub fn active_ingress<'a>(&'a mut self, into: &mut Vec<&'a mut IngressStream>) {
+        if !self.direction.is_recv() {
+            return;
+        }
+
+        for stream in &mut self.ingress {
+            if stream.rtp_ext_seq.is_some() {
+                into.push(stream);
+            }
+        }
+    }
 }
 
 impl IngressStream {
-    pub fn new(ssrc: u32) -> Self {
+    pub fn new(ssrc: u32, addr: SocketAddr) -> Self {
         IngressStream {
             ssrc,
+
+            addr,
 
             repaired_ssrc: None,
 

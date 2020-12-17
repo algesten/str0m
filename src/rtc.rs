@@ -92,6 +92,12 @@ impl RtcSession {
         Some(())
     }
 
+    pub async fn send_periodical_reports(&mut self, peer: &mut Peer) -> Option<()> {
+        send_receiver_reports(self, peer).await?;
+
+        Some(())
+    }
+
     pub fn create_connection(
         &mut self,
         addr: &SocketAddr,
@@ -180,7 +186,7 @@ fn handle_rtp(
         // Match via mid. Associate SSRC to this mid.
         debug!("Associate SSRC {} with {:?}", ssrc, media.media_id);
 
-        media.ingress_create_ssrc(ssrc);
+        media.ingress_create_ssrc(ssrc, &udp.addr);
 
         Some(media)
     } else {
@@ -240,6 +246,8 @@ fn handle_rtp(
         if ext_seq > p {
             stream.rtp_ext_seq = Some(ext_seq);
         }
+    } else {
+        stream.rtp_ext_seq = Some(ext_seq);
     }
 
     let decrypted = srtp_ctx.unprotect_rtp(&udp.buf, &header, ext_seq)?;
@@ -255,7 +263,7 @@ fn handle_rtp(
 
     stream.estimate_jitter(udp.timestamp, rtp_time);
 
-    info!("RTP: {:?} {:?} {:02X?}", header, format, &decrypted[0..10]);
+    // info!("RTP: {:?} {:?} {:02x?}", header, format, &decrypted[0..10]);
 
     Some(())
 }
@@ -278,7 +286,7 @@ fn handle_rtcp(peer: &mut Peer, udp: PeerUdp, conn: &mut RtcConnection) -> Optio
         let header = rtcp::parse_header(buf, false)?;
         let buf = &buf[..header.length];
 
-        info!("RTCP: {:?} {:02X?}", header, buf);
+        info!("RTCP: {:?} {:02x?}", header, buf);
 
         match header.packet_type {
             rtcp::PacketType::SenderReport => {
@@ -308,6 +316,63 @@ fn handle_rtcp(peer: &mut Peer, udp: PeerUdp, conn: &mut RtcConnection) -> Optio
         }
 
         offset += header.length;
+    }
+
+    Some(())
+}
+
+async fn send_receiver_reports(rtc: &mut RtcSession, peer: &mut Peer) -> Option<()> {
+    let mut active = vec![];
+    peer.active_ingress(&mut active);
+
+    let mut addrs = vec![];
+    for stream in &active {
+        if !addrs.contains(&stream.addr) {
+            addrs.push(stream.addr);
+        }
+    }
+
+    let now = Ts::now();
+
+    for addr in addrs {
+        // Divide active ingress per remote SocketAddr
+        let mut by_addr = active
+            .iter_mut()
+            .filter(|s| s.addr == addr)
+            .collect::<Vec<_>>();
+
+        // Each RTCP packet can hold at most 32 reports.
+        for chunk in 0..=(by_addr.len() / rtcp::RR_MAX) {
+            let from = chunk * rtcp::RR_MAX;
+            let to = (from + rtcp::RR_MAX).min(by_addr.len());
+            let todo = &mut by_addr[from..to];
+
+            // Allocate big enough buffer to hold the entire message.
+            let len = rtcp::RR_HEAD + todo.len() * rtcp::RR_LEN;
+            let mut buf = vec![0; len];
+
+            // Holds the current position to write a receiver report into.
+            let mut cur = &mut buf[rtcp::RR_HEAD..];
+
+            for stream in todo {
+                stream.build_receiver_report(&mut cur[..rtcp::RR_LEN], now);
+                cur = &mut cur[rtcp::RR_LEN..];
+            }
+
+            // Header written after since we use the data written above.
+            rtcp::receiver_report_header(&mut buf);
+
+            // This must exist since we have received incoming RTCP
+            let conn = rtc.connection_by_remote_addr(&addr)?;
+
+            // Exists if DTLS is established (which it must be).
+            let ctx = conn.srtp_tx.as_mut()?;
+
+            // RTCP to SRTCP
+            let encrypted = ctx.protect_rtcp(&buf);
+
+            rtc.tx_server.udp.send((encrypted, addr)).await.ok()?;
+        }
     }
 
     Some(())
