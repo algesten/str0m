@@ -1,4 +1,4 @@
-use crate::sdp::{MediaAttribute, Simulcast, SsrcInfo, StreamId};
+use crate::sdp::{MediaAttribute, StreamId};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 

@@ -58,8 +58,8 @@ pub fn unix_time() -> i64 {
 
 /// 2^32 as float.
 const F32: f64 = 4_294_967_296.0;
-/// 2^16 as float.
-const F16: f64 = 65_536.0;
+// /// 2^16 as float.
+// const F16: f64 = 65_536.0;
 /// Microseconds i a second.
 const MICROS: i64 = 1_000_000;
 
@@ -141,12 +141,12 @@ impl Ts {
         (secs * F32) as u64
     }
 
-    #[inline(always)]
-    pub fn from_ntp_32(v: u32) -> Ts {
-        let secs = (v as f64) / F16;
+    // #[inline(always)]
+    // pub fn from_ntp_32(v: u32) -> Ts {
+    //     let secs = (v as f64) / F16;
 
-        Ts::from_seconds(secs)
-    }
+    //     Ts::from_seconds(secs)
+    // }
 
     #[inline(always)]
     pub fn to_ntp_32(&self) -> u32 {
