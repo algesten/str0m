@@ -56,9 +56,9 @@ impl Format {
         }
     }
 
-    pub fn is_repair(&self) -> bool {
-        self.codec == CODEC_RTX
-    }
+    // pub fn is_repair(&self) -> bool {
+    //     self.codec == CODEC_RTX
+    // }
 
     pub fn fmtp_apt(&self) -> Option<u8> {
         for (k, v) in &self.fmtp {

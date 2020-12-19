@@ -200,6 +200,14 @@ fn handle_rtp(
     // match the RTP to any incoming Media.
     let stream = media.ingress_by_ssrc(ssrc)?;
 
+    // The format must be one of the payload types communicated in the SDP.
+    let format = unsafe {
+        media_ptr
+            .as_ref()
+            .unwrap()
+            .format_by_pt(header.payload_type)
+    }?;
+
     if stream.addr.is_none() {
         debug!("SSRC {} originates from: {}", stream.ssrc, udp.addr);
         stream.addr = Some(udp.addr);
@@ -238,10 +246,6 @@ fn handle_rtp(
         }
     }
 
-    // Lookup the corresponding format for the incoming Ingress.
-    // This must be done after determining whether the stream is a repair stream, since
-    // that fact will impact which format line to choose.
-    let format = unsafe { media_ptr.as_mut().unwrap().format_for_ingress(&stream) }?;
     let rtp_time = Ts::new(header.timestamp, format.clock_rate);
 
     let ext_seq = rtp::extend_seq(stream.rtp_ext_seq, header.sequence_number);

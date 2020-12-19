@@ -188,30 +188,8 @@ impl Media {
             .find(|i| i.stream_id_str() == Some(stream_id))
     }
 
-    pub fn format_for_ingress(&self, stream: &IngressStream) -> Option<&Format> {
-        if let Some(ssrc) = stream.repaired_ssrc {
-            // Figure out Format for the stream this is repairing.
-            let repaired_format = self.format_for_ssrc(ssrc)?;
-
-            // Find format that points to the repaired format.
-            self.formats
-                .iter()
-                .find(|f| f.is_repair() && f.fmtp_apt() == Some(repaired_format.map_no))
-        } else {
-            if let Some(stream_id) = &stream.stream_id {
-                self.formats
-                    .iter()
-                    .find(|f| f.restrictions.contains(stream_id))
-            } else {
-                // Fallback if there are no stream_id
-                self.formats.get(0)
-            }
-        }
-    }
-
-    fn format_for_ssrc(&self, ssrc: u32) -> Option<&Format> {
-        let stream = self.ingress.iter().find(|i| i.ssrc == ssrc)?;
-        self.format_for_ingress(stream)
+    pub fn format_by_pt(&self, pt: u8) -> Option<&Format> {
+        self.formats.iter().find(|f| f.map_no == pt)
     }
 
     pub fn active_ingress<'a>(&'a mut self, into: &mut Vec<&'a mut IngressStream>) {
