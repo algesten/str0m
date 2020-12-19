@@ -86,7 +86,7 @@ pub fn select_formats(formats: Vec<Format>, _simulcast: &Option<Simulcast>) -> V
     //   - red (redundant coding) has fmtp-apt
     //   - ulpfec (Uneven Level Protection Forward Error Correction) uses a=ssrc-group:FID
     const CODECS: &[&str] = &[CODEC_H264, CODEC_OPUS];
-    const REPAIR: &[&str] = &[CODEC_RTX];
+    const REPAIR: &[&str] = &[]; // &[CODEC_RTX];
 
     let mut wanted = vec![];
     let mut repair = vec![];

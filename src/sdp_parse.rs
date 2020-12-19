@@ -440,11 +440,22 @@ where
 
     // a=fmtp:111 minptime=10; useinbandfec=1
     // a=fmtp:111 minptime=10;useinbandfec=1
-    let fmtp = attribute_line(
+    let fmtp1 = attribute_line(
         "fmtp",
         (map_no(), token(' '), sep_by1(key_val(), token(';'))),
     )
     .map(|(map_no, _, values)| MediaAttribute::Fmtp { map_no, values });
+
+    // a=fmtp:101 0-15
+    let fmtp2 =
+        attribute_line("fmtp", (map_no(), token(' '), not_sp())).map(|(map_no, _, value)| {
+            MediaAttribute::Fmtp {
+                map_no,
+                values: vec![("".to_string(), value)],
+            }
+        });
+
+    let fmtp = choice((fmtp1, fmtp2));
 
     // a=rid:<rid-id> <direction> [pt=<fmt-list>;]<restriction>=<value>
     let rid = attribute_line(
@@ -658,7 +669,7 @@ where
 {
     (
         optional(spaces()),
-        many1(satisfy(|c| c != '=')),
+        many1(satisfy(|c| c != '=' && c != ' ' && c != '\r' && c != '\n')),
         token('='),
         many1(satisfy(|c| c != ';' && c != ' ' && c != '\r' && c != '\n')),
     )
@@ -883,6 +894,42 @@ mod test {
     }
 
     #[test]
+    fn parse_offer_sdp_firefox() {
+        let sdp = "v=0\r\n\
+            o=mozilla...THIS_IS_SDPARTA-84.0 9033133899747520364 1 IN IP4 0.0.0.0\r\n\
+            s=-\r\n\
+            t=0 0\r\n\
+            a=fingerprint:sha-256 AE:DC:49:AE:CA:55:35:CB:4E:FA:FE:70:99:30:C0:14:C3:B8:06:80:1F:A9:DA:9A:7C:FB:B7:20:AB:83:60:45\r\n\
+            a=group:BUNDLE 0\r\n\
+            a=ice-options:trickle\r\n\
+            a=msid-semantic:WMS *\r\n\
+            m=audio 9 UDP/TLS/RTP/SAVPF 109 9 0 8 101\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=sendonly\r\n\
+            a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level\r\n\
+            a=extmap:2/recvonly urn:ietf:params:rtp-hdrext:csrc-audio-level\r\n\
+            a=extmap:3 urn:ietf:params:rtp-hdrext:sdes:mid\r\n\
+            a=fmtp:109 maxplaybackrate=48000;stereo=1;useinbandfec=1\r\n\
+            a=fmtp:101 0-15\r\n\
+            a=ice-pwd:cd25258044061ec2ecc73378eb3dc6a3\r\n\
+            a=ice-ufrag:c1e284ad\r\n\
+            a=mid:0\r\n\
+            a=msid:- {5c7f12e5-b4bd-7142-9a06-2885a2d1cb66}\r\n\
+            a=rtcp-mux\r\n\
+            a=rtpmap:109 opus/48000/2\r\n\
+            a=rtpmap:9 G722/8000/1\r\n\
+            a=rtpmap:0 PCMU/8000\r\n\
+            a=rtpmap:8 PCMA/8000\r\n\
+            a=rtpmap:101 telephone-event/8000/1\r\n\
+            a=setup:actpass\r\n\
+            a=ssrc:1481683531 cname:{326ec0d2-d1ae-974c-b1ad-aea85cdfa0ad}\r\n";
+
+        let parsed = sdp_parser().parse(sdp);
+
+        assert!(parsed.is_ok());
+    }
+
+    #[test]
     fn parse_offer_sdp_chrome() {
         let sdp = "v=0\r\n\
             o=- 5058682828002148772 3 IN IP4 127.0.0.1\r\n\
@@ -928,57 +975,10 @@ mod test {
             a=ssrc:3948621874 mslabel:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK\r\n\
             a=ssrc:3948621874 label:f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             ";
-        assert_eq!(
-            sdp_parser().parse(sdp),
-            Ok((
-                Sdp { session: Session { id: SessionId(5_058_682_828_002_148_772),
-                    bw: None, attrs:
-                    vec![SessionAttribute::Group { typ: "BUNDLE".into(), mids: vec!["0".into()] }, SessionAttribute::Unused("msid-semantic: WMS 5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into())] },
-                    media: vec![
-                        MediaDesc {
-                            typ: MediaType("audio".into()),
-                            proto: Proto("UDP/TLS/RTP/SAVPF".into()),
-                            map_no: vec![111, 103, 104, 9, 0, 8, 106, 105, 13, 110, 112, 113, 126],
-                            bw: None,
-                            attrs: vec![
-                                MediaAttribute::Rtcp("9 IN IP4 0.0.0.0".into()),
-                                MediaAttribute::IceUfrag("S5hk".into()),
-                                MediaAttribute::IcePwd("0zV/Yu3y8aDzbHgqWhnVQhqP".into()),
-                                MediaAttribute::IceOptions("trickle".into()),
-                                MediaAttribute::Fingerprint(Fingerprint { hash_func: "sha-256".into(), bytes: vec![140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8, 128, 168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73, 37, 115, 70, 96, 32, 220] }),
-                                MediaAttribute::Setup("actpass".into()),
-                                MediaAttribute::Mid("0".into()),
-                                MediaAttribute::ExtMap(ExtMap { id: 1, direction: None, ext_type: RtpExtensionType::AudioLevel, ext: None }),
-                                MediaAttribute::ExtMap(ExtMap { id: 2, direction: None, ext_type: RtpExtensionType::AbsoluteSendTime, ext: None }),
-                                MediaAttribute::ExtMap(ExtMap { id: 3, direction: None, ext_type: RtpExtensionType::TransportSequenceNumber, ext: None }),
-                                MediaAttribute::ExtMap(ExtMap { id: 4, direction: None, ext_type: RtpExtensionType::RtpMid, ext: None }),
-                                MediaAttribute::ExtMap(ExtMap { id: 5, direction: None, ext_type: RtpExtensionType::RtpStreamId, ext: None }),
-                                MediaAttribute::ExtMap(ExtMap { id: 6, direction: None, ext_type: RtpExtensionType::RepairedRtpStreamId, ext: None }),
-                                        MediaAttribute::SendRecv,
-                                MediaAttribute::Msid { stream_id: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(), track_id: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() },
-                                MediaAttribute::RtcpMux,
-                                MediaAttribute::RtpMap { map_no: 111, codec: "opus".into(), clock_rate: 48_000, enc_param: Some("2".into()) },
-                                MediaAttribute::RtcpFb { map_no: 111, value: "transport-cc".into() },
-                                MediaAttribute::Fmtp { map_no: 111, values: vec![("minptime".into(), "10".into()), ("useinbandfec".into(), "1".into())] },
-                                MediaAttribute::RtpMap { map_no: 103, codec: "ISAC".into(), clock_rate: 16_000, enc_param: None },
-                                MediaAttribute::RtpMap { map_no: 104, codec: "ISAC".into(), clock_rate: 32_000, enc_param: None },
-                                MediaAttribute::RtpMap { map_no: 9, codec: "G722".into(), clock_rate: 8_000, enc_param: None },
-                                MediaAttribute::RtpMap { map_no: 0, codec: "PCMU".into(), clock_rate: 8_000, enc_param: None },
-                                MediaAttribute::RtpMap { map_no: 8, codec: "PCMA".into(), clock_rate: 8_000, enc_param: None },
-                                MediaAttribute::RtpMap { map_no: 106, codec: "CN".into(), clock_rate: 32_000, enc_param: None },
-                                MediaAttribute::RtpMap { map_no: 105, codec: "CN".into(), clock_rate: 16_000, enc_param: None },
-                                MediaAttribute::RtpMap { map_no: 13, codec: "CN".into(), clock_rate: 8_000, enc_param: None },
-                                MediaAttribute::RtpMap { map_no: 110, codec: "telephone-event".into(), clock_rate: 48_000, enc_param: None },
-                                MediaAttribute::RtpMap { map_no: 112, codec: "telephone-event".into(), clock_rate: 32_000, enc_param: None },
-                                MediaAttribute::RtpMap { map_no: 113, codec: "telephone-event".into(), clock_rate: 16_000, enc_param: None },
-                                MediaAttribute::RtpMap { map_no: 126, codec: "telephone-event".into(), clock_rate: 8_000, enc_param: None },
-                                MediaAttribute::Ssrc { ssrc: 3_948_621_874, attr: "cname".into(), value: "xeXs3aE9AOBn00yJ".into() },
-                                MediaAttribute::Ssrc { ssrc: 3_948_621_874, attr: "msid".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1".into() },
-                                MediaAttribute::Ssrc { ssrc: 3_948_621_874, attr: "mslabel".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into() },
-                                MediaAttribute::Ssrc { ssrc: 3_948_621_874, attr: "label".into(), value: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() }] }] },
-                ""
-            ))
-        );
+
+        let parsed = sdp_parser().parse(sdp);
+
+        assert!(parsed.is_ok());
     }
 }
 
