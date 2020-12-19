@@ -92,9 +92,8 @@ pub struct IngressStream {
     /// when playing.
     ///
     /// According to spec these should be using an `a=group:LS` property, but that
-    /// doesn't exist in practice. Instead we rely on the value from
-    /// `a=ssrc:<num> cname:<value>`, which goes into `GroupId`.
-    pub group_id: GroupId,
+    /// doesn't exist in practice. We set the group id using the SDES CNAME.
+    pub group_id: Option<GroupId>,
 
     /// Optional SDES (RTCP source description) stream id sent as RTP bede header.
     /// In SDP this feature is called
@@ -238,7 +237,7 @@ impl IngressStream {
 
             repaired_ssrc: None,
 
-            group_id: GroupId("".to_string()),
+            group_id: None,
 
             stream_id: None,
 

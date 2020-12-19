@@ -1,7 +1,8 @@
-use crate::media::IngressStream;
+use crate::media::{GroupId, IngressStream};
 use crate::peer::Peer;
 use crate::peer::PeerUdp;
 use crate::util::Ts;
+use std::str::from_utf8;
 
 /// Header size before receiver report blocks.
 pub const RR_HEAD: usize = 8;
@@ -36,6 +37,16 @@ pub enum Fmt {
     PayloadFeedback(PayloadType),
     /// When the packet type is ExtendedReport
     NotUsed,
+}
+
+impl Fmt {
+    pub fn count(&self) -> u8 {
+        match self {
+            Fmt::ReceptionReport(v) => *v,
+            Fmt::SourceCount(v) => *v,
+            _ => panic!("Not a count"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,16 +189,29 @@ impl PacketType {
     }
 }
 
-pub fn handle_sender_report(udp: &PeerUdp, peer: &mut Peer, buf: &[u8]) -> Option<()> {
+pub fn handle_sender_report(
+    udp: &PeerUdp,
+    header: &RtcpHeader,
+    peer: &mut Peer,
+    buf: &[u8],
+) -> Option<()> {
+    // Sender report shape is here
+    // https://tools.ietf.org/html/rfc3550#page-36
     if buf.len() < 20 {
         return None;
     }
 
-    // Sender report shape is here
-    // https://tools.ietf.org/html/rfc3550#page-36
+    let mut buf = &buf[4..];
+
     let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
 
-    let media = peer.media_by_ingress_ssrc(ssrc)?;
+    let media = match peer.media_by_ingress_ssrc(ssrc) {
+        Some(v) => v,
+        None => {
+            trace!("Send report no ingress for SSRC: {}", ssrc);
+            return None;
+        }
+    };
 
     let stream = media.ingress_by_ssrc(ssrc)?;
     let ntp_time = u64::from_be_bytes([
@@ -207,6 +231,22 @@ pub fn handle_sender_report(udp: &PeerUdp, peer: &mut Peer, buf: &[u8]) -> Optio
     // frame, for a 25 f/s video by 3,600 for each frame.
     stream.rtcp_sr_rtp = rtp_time;
 
+    // Number of sender reports.
+    // For WebRTC this seems to always be 0?
+    let count = header.fmt.count();
+
+    for _ in 0..count {
+        buf = &buf[24..]; // by chance the sender info is same size as a report block.
+        handle_sender_report_block(udp, peer, buf)?;
+    }
+
+    Some(())
+}
+
+// Seems unused for WebRTC.
+fn handle_sender_report_block(_udp: &PeerUdp, _peer: &mut Peer, buf: &[u8]) -> Option<()> {
+    let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+    trace!("TODO sender report block: {}", ssrc);
     Some(())
 }
 
@@ -258,5 +298,81 @@ impl IngressStream {
             (((systime - self.rtcp_sr_last).to_micros()) * 65_536 / 1_000_000) as u32
         };
         (&mut buf[20..24]).copy_from_slice(&delay_last_sr.to_be_bytes());
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum SdesType {
+    /// End of SDES list
+    END = 0,
+    /// Canonical name.
+    CNAME = 1,
+    /// User name
+    NAME = 2,
+    /// User's electronic mail address
+    EMAIL = 3,
+    /// User's phone number
+    PHONE = 4,
+    /// Geographic user location
+    LOC = 5,
+    /// Name of application or tool
+    TOOL = 6,
+    /// Notice about the source
+    NOTE = 7,
+    /// Private extensions
+    PRIV = 8,
+    /// Who knows
+    Unknown,
+}
+
+pub fn handle_source_description(header: &RtcpHeader, peer: &mut Peer, buf: &[u8]) -> Option<()> {
+    // https://tools.ietf.org/html/rfc3550#page-45
+
+    // Number of source descriptions (SDES)
+    let count = header.fmt.count();
+
+    // position to read next sdes buf from.
+    let mut buf = &buf[4..];
+    for _ in 0..count {
+        let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+
+        let sdes_type = SdesType::from_u8(buf[4]);
+        let sdes_len = buf[5] as usize;
+        let text = from_utf8(&buf[6..(6 + sdes_len)]).ok()?;
+
+        if sdes_type == SdesType::CNAME {
+            if let Some(media) = peer.media_by_ingress_ssrc(ssrc) {
+                if let Some(ingress) = media.ingress_by_ssrc(ssrc) {
+                    if ingress.group_id.is_none() {
+                        debug!("Associate SSRC {} with CNAME: {}", ssrc, text);
+                        ingress.group_id = Some(GroupId(text.to_string()));
+                    }
+                }
+            }
+        } else {
+            trace!("Unused SDES {:?}={}", sdes_type, text);
+        }
+
+        buf = &buf[(6 + sdes_len)..];
+    }
+
+    None
+}
+
+impl SdesType {
+    fn from_u8(u: u8) -> Self {
+        use SdesType::*;
+        match u {
+            0 => END,
+            1 => CNAME,
+            2 => NAME,
+            3 => EMAIL,
+            4 => PHONE,
+            5 => LOC,
+            6 => TOOL,
+            7 => NOTE,
+            8 => PRIV,
+            _ => Unknown,
+        }
     }
 }
