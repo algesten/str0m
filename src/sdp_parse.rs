@@ -517,7 +517,10 @@ where
 
         fn to_simul(to: &mut SimulcastGroups, groups: Vec<Vec<String>>) {
             for group in groups {
-                let ids = group.into_iter().map(|i| StreamId(i)).collect::<Vec<_>>();
+                let ids = group
+                    .into_iter()
+                    .map(|i| SimulcastOption::StreamId(StreamId(i)))
+                    .collect::<Vec<_>>();
                 to.0.push(SimulcastGroup(ids));
             }
         }
@@ -533,7 +536,11 @@ where
             to_simul(to, s2.2);
         }
 
-        MediaAttribute::Simulcast(Simulcast { send, recv })
+        MediaAttribute::Simulcast(Simulcast {
+            send,
+            recv,
+            is_munged: false,
+        })
     });
 
     // a=ssrc-group:FID 1111 2222

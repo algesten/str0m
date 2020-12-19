@@ -14,6 +14,16 @@ pub struct Sdp {
 
 pub trait MediaAttributeThings {
     fn extmaps(&self) -> Vec<ExtMap>;
+    fn ssrc_info(&self) -> Vec<SsrcInfo>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SsrcInfo {
+    pub ssrc: u32,
+    pub cname: String,
+    // If this is a repair stream, this is the SSRC it repairs. This is
+    // figured out using a=ssrc-group:FID <main> <repair>
+    pub repaired_ssrc: Option<u32>,
 }
 
 impl MediaAttributeThings for Vec<MediaAttribute> {
@@ -23,6 +33,44 @@ impl MediaAttributeThings for Vec<MediaAttribute> {
         for a in self {
             if let MediaAttribute::ExtMap(e) = a {
                 ret.push(e.clone());
+            }
+        }
+
+        ret
+    }
+
+    fn ssrc_info(&self) -> Vec<SsrcInfo> {
+        let mut ret = vec![];
+
+        let mut fids = vec![];
+
+        for a in self {
+            if let MediaAttribute::SsrcGroup { semantics, ssrcs } = a {
+                if semantics != "FID" {
+                    continue;
+                }
+                if ssrcs.len() != 2 {
+                    trace!("Found a=ssrc-group=FID without two SSRC: {:?}", ssrcs);
+                    continue;
+                }
+                fids.push((ssrcs[0], ssrcs[1]));
+            }
+        }
+
+        for a in self {
+            if let MediaAttribute::Ssrc { ssrc, attr, value } = a {
+                let repaired_ssrc = fids
+                    .iter()
+                    .find(|(_, rtx)| rtx == ssrc)
+                    .map(|(main, _)| *main);
+
+                if attr == "cname" {
+                    ret.push(SsrcInfo {
+                        ssrc: *ssrc,
+                        cname: value.clone(),
+                        repaired_ssrc,
+                    });
+                }
             }
         }
 
@@ -287,10 +335,84 @@ impl MediaDesc {
         restr
     }
 
+    pub fn ssrc_info(&self) -> Vec<SsrcInfo> {
+        self.attrs.ssrc_info()
+    }
+
     pub fn simulcast(&self) -> Option<Simulcast> {
         for a in &self.attrs {
             if let MediaAttribute::Simulcast(s) = a {
                 return Some(s.clone());
+            }
+        }
+
+        // Fallback simulcast for browser doing SDP munging.
+        //
+        // # MUNGING!
+        //
+        // Original from browser:
+        //
+        // a=ssrc:659652645 cname:Taj3/ieCnLbsUFoH
+        // a=ssrc:659652645 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc:659652645 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
+        // a=ssrc:659652645 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc:98148385 cname:Taj3/ieCnLbsUFoH
+        // a=ssrc:98148385 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc:98148385 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
+        // a=ssrc:98148385 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc-group:FID 659652645 98148385
+        //
+        // Munged to enable simulcast is done by creating new SSRC for the
+        // simulcast layers and communicating it in a a=ssrc-group:SIM.
+        // The layers are in order from low to high bitrate.
+        //
+        // a=ssrc:659652645 cname:Taj3/ieCnLbsUFoH
+        // a=ssrc:659652645 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc:659652645 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
+        // a=ssrc:659652645 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc:98148385 cname:Taj3/ieCnLbsUFoH
+        // a=ssrc:98148385 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc:98148385 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
+        // a=ssrc:98148385 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc:1982135572 cname:Taj3/ieCnLbsUFoH
+        // a=ssrc:1982135572 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc:1982135572 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
+        // a=ssrc:1982135572 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc:2523084908 cname:Taj3/ieCnLbsUFoH
+        // a=ssrc:2523084908 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc:2523084908 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
+        // a=ssrc:2523084908 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc:3604909222 cname:Taj3/ieCnLbsUFoH
+        // a=ssrc:3604909222 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc:3604909222 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
+        // a=ssrc:3604909222 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc:1893605472 cname:Taj3/ieCnLbsUFoH
+        // a=ssrc:1893605472 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc:1893605472 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
+        // a=ssrc:1893605472 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
+        // a=ssrc-group:SIM 659652645 1982135572 3604909222
+        // a=ssrc-group:FID 659652645 98148385
+        // a=ssrc-group:FID 1982135572 2523084908
+        // a=ssrc-group:FID 3604909222 1893605472
+        //
+        for a in &self.attrs {
+            if let MediaAttribute::SsrcGroup { semantics, ssrcs } = a {
+                if semantics != "SIM" {
+                    continue;
+                }
+
+                let group = SimulcastGroup(
+                    ssrcs
+                        .iter()
+                        .map(|ssrc| SimulcastOption::Ssrc(*ssrc))
+                        .collect(),
+                );
+
+                return Some(Simulcast {
+                    recv: SimulcastGroups(vec![]),
+                    send: SimulcastGroups(vec![group]),
+                    is_munged: true,
+                });
             }
         }
 
@@ -595,6 +717,8 @@ pub enum MediaAttribute {
 pub struct Simulcast {
     pub send: SimulcastGroups,
     pub recv: SimulcastGroups,
+    /// If this is created synthentically for a munged SDP.
+    pub is_munged: bool,
 }
 
 impl Simulcast {
@@ -602,6 +726,7 @@ impl Simulcast {
         Simulcast {
             send: self.recv,
             recv: self.send,
+            is_munged: self.is_munged,
         }
     }
 }
@@ -614,7 +739,23 @@ impl Simulcast {
 pub struct SimulcastGroups(pub Vec<SimulcastGroup>);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SimulcastGroup(pub Vec<StreamId>);
+pub struct SimulcastGroup(pub Vec<SimulcastOption>);
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SimulcastOption {
+    StreamId(StreamId),
+    Ssrc(u32),
+}
+
+impl SimulcastOption {
+    pub fn as_stream_id(&self) -> &StreamId {
+        if let SimulcastOption::StreamId(stream_id) = self {
+            return stream_id;
+        } else {
+            panic!("as_stream_id on SimulcastOption::Ssrc");
+        }
+    }
+}
 
 impl fmt::Display for SimulcastGroups {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -633,9 +774,9 @@ impl fmt::Display for SimulcastGroup {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (idx, a) in self.0.iter().enumerate() {
             if idx + 1 == self.0.len() {
-                write!(f, "{}", a.0)?;
+                write!(f, "{}", a.as_stream_id().0)?;
             } else {
-                write!(f, "{};", a.0)?;
+                write!(f, "{};", a.as_stream_id().0)?;
             }
         }
         Ok(())
@@ -852,11 +993,19 @@ impl fmt::Display for MediaAttribute {
             }
             // a=simulcast:<send/recv> <alt A>;<alt B>,<or C> <send/recv> [same]
             Simulcast(x) => {
-                let self::Simulcast { send, recv } = x;
+                let self::Simulcast {
+                    send,
+                    recv,
+                    is_munged,
+                } = x;
                 assert!(
                     !(send.0.is_empty() && recv.0.is_empty()),
                     "Empty a=simulcast"
                 );
+                if *is_munged {
+                    // dont' write
+                    return Ok(());
+                }
                 write!(f, "a=simulcast:")?;
                 if !send.0.is_empty() {
                     write!(f, "send {}", send)?;

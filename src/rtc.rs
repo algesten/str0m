@@ -186,7 +186,7 @@ fn handle_rtp(
         // Match via mid. Associate SSRC to this mid.
         debug!("Associate SSRC {} with {:?}", ssrc, media.media_id);
 
-        media.ingress_create_ssrc(ssrc, &udp.addr);
+        media.ingress_create_ssrc(ssrc);
 
         Some(media)
     } else {
@@ -199,6 +199,11 @@ fn handle_rtp(
     // If we don't have an ingress stream by now, we failed to
     // match the RTP to any incoming Media.
     let stream = media.ingress_by_ssrc(ssrc)?;
+
+    if stream.addr.is_none() {
+        debug!("SSRC {} originates from: {}", stream.ssrc, udp.addr);
+        stream.addr = Some(udp.addr);
+    }
 
     // Repair streams have both "mid" and "rep_stream_id". They are
     // associated to Media via mid and this updates the repaired_ssrc
@@ -310,8 +315,10 @@ async fn send_receiver_reports(rtc: &mut RtcSession, peer: &mut Peer) -> Option<
 
     let mut addrs = vec![];
     for stream in &active {
-        if !addrs.contains(&stream.addr) {
-            addrs.push(stream.addr);
+        if let Some(addr) = &stream.addr {
+            if !addrs.contains(addr) {
+                addrs.push(*addr);
+            }
         }
     }
 
@@ -321,7 +328,7 @@ async fn send_receiver_reports(rtc: &mut RtcSession, peer: &mut Peer) -> Option<
         // Divide active ingress per remote SocketAddr
         let mut by_addr = active
             .iter_mut()
-            .filter(|s| s.addr == addr)
+            .filter(|s| s.addr == Some(addr))
             .collect::<Vec<_>>();
 
         // Each RTCP packet can hold at most 32 reports.

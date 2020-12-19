@@ -73,8 +73,12 @@ impl Media {
 
         self.restrictions = m.restrictions();
         self.simulcast = m.simulcast().map(|s| s.flip());
+
+        // Construct all formats.
+        let all_formats = m.formats(&self.restrictions);
+
         // Only keep the formats we intend to use.
-        self.formats = select_formats(m.formats(&self.restrictions), &self.simulcast);
+        self.formats = select_formats(all_formats);
 
         let uname = m
             .attrs
@@ -115,6 +119,25 @@ impl Media {
             .filter(|e| e.ext_type.is_supported())
             .collect();
         self.extmaps = extmaps;
+
+        // Pre-create the ingress needed. This should not be needed if we use "modern"
+        // unified plan where there is no a=ssrc sent. However, only with chrome
+        // simulcast do we see a=rid lines as an alternative to match up format
+        // with a specific SSRC.
+        {
+            // These SSRC need pre-instantiating.
+            for ssrc_info in m.ssrc_info() {
+                let ssrc = ssrc_info.ssrc;
+
+                debug!("[pre] Associate SSRC {} with {:?}", ssrc, self.media_id);
+                let ingress = self.ingress_create_ssrc(ssrc);
+
+                if let Some(repaired_ssrc) = ssrc_info.repaired_ssrc {
+                    debug!("[pre] SSRC {} repairs {}", ssrc, repaired_ssrc);
+                    ingress.repaired_ssrc = Some(repaired_ssrc);
+                }
+            }
+        }
 
         Ok(())
     }
@@ -183,6 +206,29 @@ impl Media {
         if let Some(s) = &self.simulcast {
             ret.push(MediaAttribute::Simulcast(s.clone()));
         }
+
+        // See if we can get away with not sending a=ssrc lines back.
+        //
+        // // a=ssrc-group:FID <ssrc> <ssrc>
+        // let fid = self
+        //     .formats
+        //     .iter()
+        //     .filter_map(|f| f.ssrc_info.as_ref())
+        //     .map(|f| f.ssrc)
+        //     .collect::<Vec<_>>();
+        // if fid.len() >= 2 {
+        //     ret.push(MediaAttribute::SsrcGroup {
+        //         semantics: "FID".to_string(),
+        //         ssrcs: fid,
+        //     });
+        // }
+        // for SsrcInfo { ssrc, cname } in self.formats.iter().filter_map(|f| f.ssrc_info.as_ref()) {
+        //     ret.push(MediaAttribute::Ssrc {
+        //         ssrc: *ssrc,
+        //         attr: "cname".to_string(),
+        //         value: cname.to_string(),
+        //     });
+        // }
 
         ret
     }

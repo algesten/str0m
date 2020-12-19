@@ -82,10 +82,15 @@ pub struct IngressStream {
     pub ssrc: u32,
 
     /// Address this ingress originates from.
-    pub addr: SocketAddr,
+    pub addr: Option<SocketAddr>,
 
     /// If this ingress is a repair stream, this is the SSRC of the stream it repairs.
     pub repaired_ssrc: Option<u32>,
+
+    /// Optional stream id sent as RTP bede header. In SDP this feature is called
+    /// "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id"
+    /// We only set this first time we "discover" what it is in the RTP.
+    pub stream_id: Option<StreamId>,
 
     /// Groups `IngressStream` that belongs together. Like audio and video from the same source.
     /// All media in the group goes in the same direction and are to be synchronized at
@@ -94,12 +99,6 @@ pub struct IngressStream {
     /// According to spec these should be using an `a=group:LS` property, but that
     /// doesn't exist in practice. We set the group id using the SDES CNAME.
     pub group_id: Option<GroupId>,
-
-    /// Optional SDES (RTCP source description) stream id sent as RTP bede header.
-    /// In SDP this feature is called
-    /// "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id"
-    /// We only set this first time we "discover" what it is in the RTP.
-    pub stream_id: Option<StreamId>,
 
     /// Last (extended) RTP packet sequence number.
     pub rtp_ext_seq: Option<u64>,
@@ -174,9 +173,9 @@ impl Media {
         self.ingress.iter().any(|i| i.ssrc == ssrc)
     }
 
-    pub fn ingress_create_ssrc(&mut self, ssrc: u32, addr: &SocketAddr) -> &mut IngressStream {
+    pub fn ingress_create_ssrc(&mut self, ssrc: u32) -> &mut IngressStream {
         self.ingress
-            .find_or_append(|i| i.ssrc == ssrc, || IngressStream::new(ssrc, *addr))
+            .find_or_append(|i| i.ssrc == ssrc, || IngressStream::new(ssrc))
     }
 
     pub fn ingress_by_ssrc(&mut self, ssrc: u32) -> Option<&mut IngressStream> {
@@ -229,11 +228,11 @@ impl Media {
 }
 
 impl IngressStream {
-    pub fn new(ssrc: u32, addr: SocketAddr) -> Self {
+    pub fn new(ssrc: u32) -> Self {
         IngressStream {
             ssrc,
 
-            addr,
+            addr: None,
 
             repaired_ssrc: None,
 

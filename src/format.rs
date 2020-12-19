@@ -1,4 +1,4 @@
-use crate::sdp::{MediaAttribute, Simulcast, StreamId};
+use crate::sdp::{MediaAttribute, Simulcast, SsrcInfo, StreamId};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -14,7 +14,7 @@ pub const CODEC_OPUS: &str = "opus";
 #[allow(dead_code)]
 pub const CODEC_RTX: &str = "rtx";
 #[allow(dead_code)]
-pub const CODEC_ULFPEC: &str = "ulfpec";
+pub const CODEC_ULPFEC: &str = "ulpfec";
 #[allow(dead_code)]
 pub const CODEC_RED: &str = "red";
 
@@ -72,9 +72,7 @@ impl Format {
 }
 
 /// Select the formats to keep from an SDP offer.
-// TODO Let _simulcast affect this choice. We need to handle cases where
-// a=rid points out different map_no.
-pub fn select_formats(formats: Vec<Format>, _simulcast: &Option<Simulcast>) -> Vec<Format> {
+pub fn select_formats(formats: Vec<Format>) -> Vec<Format> {
     // map_no to order no in the incoming SDP.
     let mut remote_order: HashMap<u8, usize> = HashMap::new();
     for (idx, f) in formats.iter().enumerate() {
@@ -85,8 +83,8 @@ pub fn select_formats(formats: Vec<Format>, _simulcast: &Option<Simulcast>) -> V
     // TODO investigate codecs:
     //   - red (redundant coding) has fmtp-apt
     //   - ulpfec (Uneven Level Protection Forward Error Correction) uses a=ssrc-group:FID
-    const CODECS: &[&str] = &[CODEC_H264, CODEC_OPUS];
-    const REPAIR: &[&str] = &[]; // &[CODEC_RTX];
+    const CODECS: &[&str] = &[CODEC_VP8, CODEC_OPUS];
+    const REPAIR: &[&str] = &[CODEC_RTX];
 
     let mut wanted = vec![];
     let mut repair = vec![];
