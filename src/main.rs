@@ -12,6 +12,7 @@ use hreq::server::Static;
 use pnet::datalink;
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::sync::Arc;
 
 #[macro_use]
 mod error;
@@ -87,18 +88,18 @@ async fn main() {
         .map(|addr| Candidate::host_udp(1, addr, udp_port))
         .collect();
 
-    let (rx_udp_sock, tx_udp_sock) = udp_socket.split();
+    let udp_socket = Arc::new(udp_socket);
     let (tx_udp, rx_udp) = mpsc::channel(10);
     let (tx_signal, rx_signal) = mpsc::channel(10);
 
-    let mut udp_send = UdpSend(rx_udp, tx_udp_sock);
+    let mut udp_send = UdpSend(rx_udp, udp_socket.clone());
     spawn(async move {
         udp_send.handle().await;
     });
 
     let server_in = ServerIn {
         signal: rx_signal,
-        udp: rx_udp_sock,
+        udp: udp_socket,
     };
     let server_out = ServerOut { udp: tx_udp };
     let mut server = Server::new(candidates, server_in, server_out);

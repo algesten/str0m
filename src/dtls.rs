@@ -2,6 +2,7 @@ use crate::rt::{mpsc, spawn, AsyncRead, AsyncWrite, Mutex};
 use crate::sdp::Fingerprint;
 use crate::util::unix_time;
 use crate::Error;
+use futures::future::FutureExt;
 use openssl::asn1::{Asn1Integer, Asn1Time};
 use openssl::bn::BigNum;
 use openssl::ec::EcKey;
@@ -348,17 +349,22 @@ impl AsyncRead for DtlsStream {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<IoResult<usize>> {
+        rbuf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<IoResult<()>> {
         let this = self.get_mut();
 
-        let ret = this.poll_read(cx, buf);
-
-        if let Poll::Ready(Err(e)) = &ret {
-            this.handle_err_event(e);
+        let buf = rbuf.initialize_unfilled();
+        match this.poll_read(cx, buf) {
+            Poll::Ready(Ok(amount)) => {
+                rbuf.advance(amount);
+                Ok(()).into()
+            }
+            Poll::Ready(Err(err)) => {
+                this.handle_err_event(&err);
+                Err(err).into()
+            }
+            Poll::Pending => Poll::Pending,
         }
-
-        ret
     }
 }
 
@@ -481,17 +487,31 @@ impl Read for SyncStream {
         let mut todo = if let Some(v) = self.rx_held.take() {
             v
         } else {
-            match self.rx_in.try_recv() {
-                Ok(v) => v,
-                Err(e) => match e {
-                    mpsc::error::TryRecvError::Closed => {
-                        return Ok(0);
-                    }
-                    mpsc::error::TryRecvError::Empty => {
-                        trace!("SyncStream read: WouldBlock");
-                        return Err(would_block());
-                    }
+            // This is what we need. See https://github.com/tokio-rs/tokio/issues/3350
+            // match self.rx_in.try_recv() {
+            //     Ok(v) => v,
+            //     Err(e) => match e {
+            //         mpsc::error::TryRecvError::Closed => {
+            //             return Ok(0);
+            //         }
+            //         mpsc::error::TryRecvError::Empty => {
+            //             trace!("SyncStream read: WouldBlock");
+            //             return Err(would_block());
+            //         }
+            //     },
+            // }
+
+            // This is band aid.
+            match self.rx_in.recv().now_or_never() {
+                Some(v) => match v {
+                    Some(v) => v,
+                    // channel closed
+                    None => return Ok(0),
                 },
+                None => {
+                    trace!("SyncStream read: WouldBlock");
+                    return Err(would_block());
+                }
             }
         };
         let max = todo.len().min(buf.len());

@@ -12,16 +12,17 @@ panic = "abort"
 [dependencies]
 combine = "4"
 crc = "1"
+futures = "0.3"
 hmac = "0.10"
-hreq = "0.7"
+hreq = "0.8"
 log = "0.4"
 openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = "^0.9"
-pnet = "0.26.0"
+pnet = "0.27"
 pretty_env_logger = "0.4"
-rand = "0.7"
-rustls = "0.18"
+rand = "0.8"
+rustls = "0.19"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha-1 = "0.9"
-tokio = { version = "0.2", features = ['rt-threaded', 'macros', 'net', 'sync', 'time'] }
+tokio = { version = "1", features = ['rt-multi-thread', 'macros', 'net', 'sync', 'time'] }

@@ -1,7 +1,6 @@
 use std::future::Future;
 
 pub use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
-pub use tokio::net::udp;
 pub use tokio::net::UdpSocket;
 pub use tokio::select;
 pub use tokio::sync::mpsc;

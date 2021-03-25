@@ -1,5 +1,5 @@
 use crate::peer::{Peer, PeerHandle, PeerInput, PeerUdp};
-use crate::rt::{mpsc, oneshot, spawn, udp};
+use crate::rt::{mpsc, oneshot, spawn, UdpSocket};
 use crate::sdp::{Candidate, Sdp};
 use crate::sdp_parse::parse_sdp;
 use crate::stun;
@@ -7,6 +7,7 @@ use crate::util::Ts;
 use crate::Error;
 use crate::{JoinReq, JoinResp};
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 pub struct Server {
     candidates: Vec<Candidate>,
@@ -16,7 +17,7 @@ pub struct Server {
 }
 
 pub struct ServerIn {
-    pub udp: udp::RecvHalf,
+    pub udp: Arc<UdpSocket>,
     pub signal: mpsc::Receiver<SignalIn>,
 }
 
@@ -302,7 +303,10 @@ impl BufExt for Vec<u8> {
     }
 }
 
-pub struct UdpSend(pub mpsc::Receiver<(Vec<u8>, SocketAddr)>, pub udp::SendHalf);
+pub struct UdpSend(
+    pub mpsc::Receiver<(Vec<u8>, SocketAddr)>,
+    pub Arc<UdpSocket>,
+);
 impl UdpSend {
     pub async fn handle(&mut self) {
         loop {
