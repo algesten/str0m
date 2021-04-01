@@ -1041,6 +1041,9 @@ impl fmt::Display for MediaAttribute {
 pub enum RtpExtensionType {
     AbsoluteSendTime,
     AudioLevel,
+    /// Use when a RTP packet is delayed by a send queue to indicate an offset in the "transmitter".
+    /// It effectively means we can set a timestamp offset exactly when the UDP packet leaves the
+    /// server.
     TransmissionTimeOffset,
     VideoOrientation,
     TransportSequenceNumber,
@@ -1146,14 +1149,13 @@ impl RtpExtensionType {
             RepairedRtpStreamId => true,
             RtpMid => true,
             AbsoluteSendTime => true,
-
-            TransmissionTimeOffset => false,
-            VideoOrientation => false,
-            AudioLevel => false,
+            VideoOrientation => true,
+            AudioLevel => true,
 
             // transport wide cc
-            TransportSequenceNumber => false,
+            TransportSequenceNumber => true,
 
+            TransmissionTimeOffset => false,
             PlayoutDelay => false,
             VideoContentType => false,
             VideoTiming => false,

@@ -11,6 +11,8 @@ use crate::server::{BufExt, ServerOut, UdpKind};
 use crate::srtp::SrtpContext;
 use crate::util::Ts;
 use openssl::ssl::SslContext;
+use rtcp::{TransportWideCC, TRANSPORT_WIDE_CC_MAX};
+use std::mem;
 use std::net::SocketAddr;
 
 /// WebRTC session for a Peer.
@@ -35,12 +37,20 @@ pub struct RtcSession {
 /// Holds state for one single SocketAddr beloning to a RtcSession.
 #[derive(Debug)]
 pub struct RtcConnection {
+    /// Remote peer address.
     remote_addr: SocketAddr,
+    /// DTLS output.
     tx_dtls: DtlsTx,
-    // srtp input context
+    /// srtp input context
     srtp_rx: Option<SrtpContext>,
-    // srtp output context
+    /// srtp output context
     srtp_tx: Option<SrtpContext>,
+    /// Sender of server out.
+    tx_server: ServerOut,
+    /// Record keeping of incoming transport wide cc.
+    recv_transport_fb: [Option<TransportWideCC>; TRANSPORT_WIDE_CC_MAX],
+    /// Counter of used to identify outbound transport wide cc.
+    send_transport_fb: u8,
 }
 
 impl RtcSession {
@@ -80,7 +90,7 @@ impl RtcSession {
             }
 
             UdpKind::Rtp => {
-                handle_rtp(peer, udp, &id_to_ext, conn);
+                handle_rtp(peer, udp, &id_to_ext, conn).await;
             }
 
             UdpKind::Rtcp => {
@@ -143,6 +153,9 @@ impl RtcSession {
             tx_dtls,
             srtp_rx: None,
             srtp_tx: None,
+            tx_server: self.tx_server.clone(),
+            recv_transport_fb: [None; TRANSPORT_WIDE_CC_MAX],
+            send_transport_fb: 0,
         };
         let last = self.conns.len();
         self.conns.push(conn);
@@ -160,7 +173,7 @@ impl RtcSession {
     }
 }
 
-fn handle_rtp(
+async fn handle_rtp(
     peer: &mut Peer,
     udp: PeerUdp,
     id_to_ext: &rtp::IdToExtType,
@@ -194,6 +207,45 @@ fn handle_rtp(
     };
 
     let media = media?;
+
+    // Handle transport wide CC.
+    if let Some(seq) = header.ext.transport_cc {
+        let idx = conn
+            .recv_transport_fb
+            .iter()
+            .position(|t| t.is_none())
+            .unwrap();
+
+        conn.recv_transport_fb[idx] = Some(TransportWideCC(seq, udp.timestamp));
+
+        if idx == TRANSPORT_WIDE_CC_MAX - 1 {
+            let ssrc = media.main_ingress()?.ssrc;
+
+            let mut packets = vec![];
+
+            let replace = [None; TRANSPORT_WIDE_CC_MAX];
+            let mut ready = mem::replace(&mut conn.recv_transport_fb, replace);
+            let to_send = &mut ready[..];
+
+            rtcp::build_transport_fb(
+                &mut conn.send_transport_fb,
+                ssrc,
+                &udp.timestamp,
+                to_send,
+                &mut packets,
+            );
+
+            for packet in packets {
+                // RTCP to SRTCP
+                let enc = srtp_ctx.protect_rtcp(&packet);
+                let addr = conn.remote_addr;
+
+                conn.tx_server.udp.send((enc, addr)).await.ok()?;
+            }
+        }
+    }
+
+    // Escape hatch for borrow checker.
     let media_ptr = media as *mut Media;
 
     // If we don't have an ingress stream by now, we failed to

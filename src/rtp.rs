@@ -218,7 +218,7 @@ impl RtpExtensionType {
             }
             // 2
             RtpExtensionType::TransportSequenceNumber => {
-                v.transport_cc = Some(u32::from_be_bytes([0, 0, buf[0], buf[1]]));
+                v.transport_cc = Some(u16::from_be_bytes([buf[0], buf[1]]));
             }
             // 3
             RtpExtensionType::PlayoutDelay => {
@@ -277,7 +277,7 @@ pub struct RtpExtValues<'a> {
     pub audio_level: Option<i8>,
     pub tx_time_offs: Option<u32>,
     pub video_orient: Option<u8>,  // TODO map out values buf[0] & 3;
-    pub transport_cc: Option<u32>, // (buf[0] << 8) | buf[1];
+    pub transport_cc: Option<u16>, // (buf[0] << 8) | buf[1];
     // https://webrtc.googlesource.com/src/+/refs/heads/master/docs/native-code/rtp-hdrext/playout-delay
     pub play_delay_min: Option<Ts>,
     pub play_delay_max: Option<Ts>,

@@ -203,6 +203,10 @@ impl Media {
             }
         }
     }
+
+    pub fn main_ingress(&mut self) -> Option<&mut IngressStream> {
+        self.ingress.iter_mut().find(|i| !i.is_repair())
+    }
 }
 
 impl IngressStream {
@@ -244,6 +248,10 @@ impl IngressStream {
 
     fn stream_id_str(&self) -> Option<&str> {
         self.stream_id.as_ref().map(|s| s.0.as_str())
+    }
+
+    fn is_repair(&self) -> bool {
+        self.repaired_ssrc.is_some()
     }
 }
 
