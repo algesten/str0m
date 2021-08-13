@@ -1,5 +1,6 @@
 use crate::util::hmac_sha1;
-use crc::crc32;
+use crc::{Crc, CRC_32_ISO_HDLC};
+// use crc::crc32;
 use rand::prelude::*;
 use std::net::IpAddr;
 use std::net::SocketAddr;
@@ -140,7 +141,7 @@ impl<'a> StunMessage<'a> {
         // fill in correct length
         (&mut buf[2..4]).copy_from_slice(&(attr_len as u16).to_be_bytes());
 
-        let crc = crc32::checksum_ieee(&buf[0..f_off]) ^ 0x5354_554e;
+        let crc = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(&buf[0..f_off]) ^ 0x5354_554e;
         (&mut buf[f_off + 4..(f_off + 4 + 4)]).copy_from_slice(&crc.to_be_bytes());
 
         buf

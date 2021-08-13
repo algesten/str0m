@@ -259,7 +259,7 @@ impl Derived {
 
         const LABEL_RTP_HMAC: u8 = 1;
         srtp_key.derive(LABEL_RTP_HMAC, &mut hmac[..]);
-        let rtp_hmac = HmacSha1::new_varkey(&hmac[..]).expect("RTP hmac");
+        let rtp_hmac = HmacSha1::new_from_slice(&hmac[..]).expect("RTP hmac");
 
         // RTP IV SALT
 
@@ -277,7 +277,7 @@ impl Derived {
 
         const LABEL_RTCP_HMAC: u8 = 4;
         srtp_key.derive(LABEL_RTCP_HMAC, &mut hmac[..]);
-        let rtcp_hmac = HmacSha1::new_varkey(&hmac[..]).expect("RTCP hmac");
+        let rtcp_hmac = HmacSha1::new_from_slice(&hmac[..]).expect("RTCP hmac");
 
         // RTCP IV SALT
 

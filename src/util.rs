@@ -9,7 +9,7 @@ use std::time::SystemTime;
 pub type HmacSha1 = Hmac<Sha1>;
 
 pub fn hmac_sha1(secret: &[u8], payload: &[u8]) -> [u8; 20] {
-    let mut hmac = HmacSha1::new_varkey(secret).expect("Make HMAC-SHA1");
+    let mut hmac = HmacSha1::new_from_slice(secret).expect("Make HMAC-SHA1");
     hmac.update(payload);
     let comp = hmac.finalize().into_bytes();
     comp.into()

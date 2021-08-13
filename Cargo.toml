@@ -11,14 +11,14 @@ panic = "abort"
 
 [dependencies]
 combine = "4"
-crc = "1"
+crc = "2"
 futures = "0.3"
-hmac = "0.10"
+hmac = "0.11"
 hreq = "0.8"
 log = "0.4"
 openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = "^0.9"
-pnet = "0.27"
+pnet = "0.28"
 pretty_env_logger = "0.4"
 rand = "0.8"
 rustls = "0.19"
