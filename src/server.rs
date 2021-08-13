@@ -218,7 +218,6 @@ impl Server {
             .await
             .is_err()
         {
-            drop(peer);
             self.remove_verified_peer(&addr);
             return None;
         }

@@ -252,13 +252,7 @@ impl MediaDesc {
         let mid_count = self
             .attrs
             .iter()
-            .filter(|a| {
-                if let MediaAttribute::Mid(_) = a {
-                    true
-                } else {
-                    false
-                }
-            })
+            .filter(|a| matches!(a, MediaAttribute::Mid(_)))
             .count();
 
         if mid_count == 0 {
@@ -278,13 +272,7 @@ impl MediaDesc {
         let setup = self
             .attrs
             .iter()
-            .filter(|a| {
-                if let MediaAttribute::Setup(_) = a {
-                    true
-                } else {
-                    false
-                }
-            })
+            .filter(|a| matches!(a, MediaAttribute::Setup(_)))
             .count();
 
         if setup != 1 {
@@ -750,7 +738,7 @@ pub enum SimulcastOption {
 impl SimulcastOption {
     pub fn as_stream_id(&self) -> &StreamId {
         if let SimulcastOption::StreamId(stream_id) = self {
-            return stream_id;
+            stream_id
         } else {
             panic!("as_stream_id on SimulcastOption::Ssrc");
         }
@@ -909,7 +897,7 @@ impl fmt::Display for MediaAttribute {
                 if let Some(d) = &e.direction {
                     write!(f, "/{}", d)?;
                 }
-                write!(f, " {}", e.ext_type.to_uri())?;
+                write!(f, " {}", e.ext_type.as_uri())?;
                 if let Some(e) = &e.ext {
                     write!(f, " {}", e)?;
                 }
@@ -966,11 +954,7 @@ impl fmt::Display for MediaAttribute {
                         write!(f, " pt=")?;
                     }
                     if idx + 1 == pt.len() {
-                        if restriction.is_empty() {
-                            write!(f, "{}", p)?;
-                        } else {
-                            write!(f, "{}", p)?;
-                        }
+                        write!(f, "{}", p)?;
                     } else {
                         write!(f, "{},", p)?;
                     }
@@ -1131,13 +1115,13 @@ impl RtpExtensionType {
         RtpExtensionType::UnknownUri
     }
 
-    pub fn to_uri(&self) -> &'static str {
+    pub fn as_uri(&self) -> &'static str {
         for (t, spec) in RTP_EXT_URI.iter() {
             if t == self {
                 return spec;
             }
         }
-        return "unknown";
+        "unknown"
     }
 
     pub fn is_supported(&self) -> bool {
@@ -1168,10 +1152,7 @@ impl RtpExtensionType {
 
     pub fn is_filtered(&self) -> bool {
         use RtpExtensionType::*;
-        match self {
-            UnknownUri | UnknownExt => true,
-            _ => false,
-        }
+        matches!(self, UnknownUri | UnknownExt)
     }
 }
 

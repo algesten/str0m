@@ -303,7 +303,7 @@ impl<'a> fmt::Debug for RtpExtValues<'a> {
             write!(f, " rep_stream_id: {}", t)?;
         }
         if let Some(t) = self.abs_send_time {
-            write!(f, " abs_send_time: {}", t.to_seconds())?;
+            write!(f, " abs_send_time: {}", t.as_seconds())?;
         }
         if let Some(t) = self.voice_activity {
             write!(f, " voice_activity: {}", t)?;
@@ -317,14 +317,14 @@ impl<'a> fmt::Debug for RtpExtValues<'a> {
         if let Some(t) = self.video_orient {
             write!(f, " video_orient: {}", t)?;
         }
-        if let Some(_) = self.transport_cc {
+        if self.transport_cc.is_some() {
             write!(f, " transport_cc: TODO")?;
         }
         if let Some(t) = self.play_delay_min {
-            write!(f, " play_delay_min: {}", t.to_seconds())?;
+            write!(f, " play_delay_min: {}", t.as_seconds())?;
         }
         if let Some(t) = self.play_delay_max {
-            write!(f, " play_delay_max: {}", t.to_seconds())?;
+            write!(f, " play_delay_max: {}", t.as_seconds())?;
         }
         if let Some(t) = self.video_c_type {
             write!(f, " video_c_type: {}", t)?;
@@ -332,7 +332,7 @@ impl<'a> fmt::Debug for RtpExtValues<'a> {
         if let Some(t) = &self.video_timing {
             write!(f, " video_timing: {:?}", t)?;
         }
-        if let Some(_) = &self.frame_mark {
+        if self.frame_mark.is_some() {
             write!(f, " frame_mark: TODO")?;
         }
 

@@ -1,6 +1,8 @@
 #![warn(clippy::all)]
 #![allow(clippy::inefficient_to_string)]
 #![allow(clippy::new_without_default)]
+#![allow(clippy::manual_range_contains)]
+#![allow(clippy::collapsible_else_if)]
 
 #[macro_use]
 extern crate log;

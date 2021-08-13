@@ -30,7 +30,7 @@ pub fn parse_message(buf: &mut [u8]) -> Option<StunMessage> {
 
     let mut message_integrity_offset = 0;
 
-    let attrs = Attribute::parse(&buf[20..], &trans_id, &mut message_integrity_offset)?;
+    let attrs = Attribute::parse(&buf[20..], trans_id, &mut message_integrity_offset)?;
 
     // message-integrity only includes the length up until and including
     // the message-integrity attribute.

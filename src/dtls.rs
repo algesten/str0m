@@ -125,7 +125,7 @@ enum State {
 impl State {
     fn as_running(&mut self) -> &mut SslStream<SyncStream> {
         if let State::Running(v) = self {
-            return v;
+            v
         } else {
             panic!("as_running of non-Running");
         }
@@ -225,13 +225,13 @@ impl DtlsStream {
             HandshakeError::SetupFailure(e) => {
                 let error = Error::from(e);
                 trace!("AsyncSslStream poll_init -> Failure: {:?}", error);
-                return Poll::Ready(Err(IoErr::new(IoErrKind::Other, error)));
+                Poll::Ready(Err(IoErr::new(IoErrKind::Other, error)))
             }
 
             HandshakeError::Failure(e) => {
                 let error = Error::from(e.into_error());
                 trace!("AsyncSslStream poll_init -> Error: {:?}", error);
-                return Poll::Ready(Err(IoErr::new(IoErrKind::InvalidData, error)));
+                Poll::Ready(Err(IoErr::new(IoErrKind::InvalidData, error)))
             }
 
             HandshakeError::WouldBlock(v) => {
@@ -272,7 +272,7 @@ impl DtlsStream {
         let mat = SrtpKeyMaterial(buf);
 
         let tx_event = self.tx_event.clone();
-        let event = DtlsEvent::Connected(self.remote_addr.clone(), fp, mat);
+        let event = DtlsEvent::Connected(self.remote_addr, fp, mat);
         spawn(async move {
             tx_event.send(event).await.ok();
         });
@@ -330,7 +330,7 @@ impl DtlsStream {
 
     fn handle_err_event(&self, e: &IoErr) {
         let tx_event = self.tx_event.clone();
-        let event = DtlsEvent::Error(self.remote_addr.clone(), e.to_string());
+        let event = DtlsEvent::Error(self.remote_addr, e.to_string());
         spawn(async move {
             tx_event.send(event).await.ok();
         });

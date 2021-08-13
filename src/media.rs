@@ -30,10 +30,7 @@ pub enum Direction {
 
 impl Direction {
     pub fn is_recv(&self) -> bool {
-        match self {
-            Direction::RecvOnly | Direction::SendRecv => true,
-            _ => false,
-        }
+        matches!(self, Direction::RecvOnly | Direction::SendRecv)
     }
 }
 

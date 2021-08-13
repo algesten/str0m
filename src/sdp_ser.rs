@@ -148,8 +148,8 @@ impl Media {
         let attrs = self.as_local_sdp_attrs(local);
 
         MediaDesc {
-            typ: self.kind.to_sdp_type(),
-            proto: self.kind.to_sdp_proto(),
+            typ: self.kind.as_sdp_type(),
+            proto: self.kind.as_sdp_proto(),
             map_no,
             bw: None,
             attrs,
@@ -247,7 +247,7 @@ impl MediaKind {
         }
     }
 
-    fn to_sdp_type(&self) -> MediaType {
+    fn as_sdp_type(&self) -> MediaType {
         MediaType(
             match self {
                 MediaKind::Audio => "audio",
@@ -258,7 +258,7 @@ impl MediaKind {
         )
     }
 
-    fn to_sdp_proto(&self) -> Proto {
+    fn as_sdp_proto(&self) -> Proto {
         Proto(
             match self {
                 MediaKind::Audio | MediaKind::Video => "UDP/TLS/RTP/SAVPF",

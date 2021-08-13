@@ -129,13 +129,13 @@ pub fn parse_header(buf: &[u8], is_srtcp: bool) -> Option<RtcpHeader> {
     //   zero a valid length ...)
     let length = (u16::from_be_bytes(length_be) + 1) * 4;
 
-    return Some(RtcpHeader {
+    Some(RtcpHeader {
         version,
         has_padding,
         fmt,
         packet_type,
         length: length as usize,
-    });
+    })
 }
 
 impl TransportType {
@@ -263,7 +263,7 @@ pub fn receiver_report_header(buf: &mut [u8]) {
 
     // SSRC of sender. But we don't really have an SSRC, so this is some workaround.
     let first_ssrc = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
-    (&mut buf[4..8]).copy_from_slice(&(first_ssrc + 1 as u32).to_be_bytes());
+    (&mut buf[4..8]).copy_from_slice(&(first_ssrc + 1_u32).to_be_bytes());
 }
 
 impl IngressStream {
@@ -285,7 +285,7 @@ impl IngressStream {
         // Section 4) received as part of the most recent RTCP sender report
         // (SR) packet from source SSRC_n.  If no SR has been received yet,
         // the field is set to zero.
-        let last_sr = self.rtcp_sr_last.to_ntp_32();
+        let last_sr = self.rtcp_sr_last.as_ntp_32();
         (&mut buf[16..20]).copy_from_slice(&last_sr.to_be_bytes());
 
         // The delay, expressed in units of 1/65536 seconds, between
@@ -295,12 +295,13 @@ impl IngressStream {
         let delay_last_sr = if self.rtcp_sr_last.is_zero() {
             0
         } else {
-            (((systime - self.rtcp_sr_last).to_micros()) * 65_536 / 1_000_000) as u32
+            (((systime - self.rtcp_sr_last).as_micros()) * 65_536 / 1_000_000) as u32
         };
         (&mut buf[20..24]).copy_from_slice(&delay_last_sr.to_be_bytes());
     }
 }
 
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum SdesType {
     /// End of SDES list

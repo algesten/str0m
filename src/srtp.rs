@@ -221,11 +221,11 @@ impl SrtpKey {
 
             // Copy to output. Even if we get 32 bytes of output with AES 128 ECB, we
             // only use the first 16. That matches the tests in the RFC.
-            for j in 0..16 {
+            for j in buf.iter().take(16) {
                 if i == out.len() {
                     break;
                 }
-                out[i] = buf[j];
+                out[i] = *j;
                 i += 1;
             }
 
@@ -318,7 +318,7 @@ impl RtpCrypter for AesKey {
 
         // Panics for stream ciphers if `output.len() < input.len()`
         // CTR is a stream cipher.
-        let count = cr.update(input, &mut output[..]).expect("enc_dec update");
+        let count = cr.update(input, &mut *output).expect("enc_dec update");
 
         cr.finalize(&mut output[count..]).expect("enc_dec finalize");
     }
@@ -361,7 +361,7 @@ impl RtpHmac for HmacSha1 {
 
         let tag = hmac.finalize().into_bytes();
 
-        &mut buf[hmac_index..(hmac_index + SRTP_HMAC_LEN)].copy_from_slice(&tag[0..SRTP_HMAC_LEN]);
+        buf[hmac_index..(hmac_index + SRTP_HMAC_LEN)].copy_from_slice(&tag[0..SRTP_HMAC_LEN]);
     }
 }
 

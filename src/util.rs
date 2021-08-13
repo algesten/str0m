@@ -12,7 +12,7 @@ pub fn hmac_sha1(secret: &[u8], payload: &[u8]) -> [u8; 20] {
     let mut hmac = HmacSha1::new_varkey(secret).expect("Make HMAC-SHA1");
     hmac.update(payload);
     let comp = hmac.finalize().into_bytes();
-    return comp.into();
+    comp.into()
 }
 
 // deliberate subset of ice-char, etc that are "safe"
@@ -110,11 +110,11 @@ impl Ts {
     }
 
     #[inline(always)]
-    pub fn to_seconds(&self) -> f64 {
+    pub fn as_seconds(&self) -> f64 {
         self.0 as f64 / self.1 as f64
     }
 
-    pub fn to_micros(&self) -> i64 {
+    pub fn as_micros(&self) -> i64 {
         self.rebase(MICROS).numer()
     }
 
@@ -133,8 +133,8 @@ impl Ts {
     }
 
     #[inline(always)]
-    pub fn to_ntp_64(&self) -> u64 {
-        let secs = self.to_seconds();
+    pub fn as_ntp_64(&self) -> u64 {
+        let secs = self.as_seconds();
         assert!(secs >= 0.0);
 
         // sec * (2 ^ 32)
@@ -149,8 +149,8 @@ impl Ts {
     // }
 
     #[inline(always)]
-    pub fn to_ntp_32(&self) -> u32 {
-        let ntp_64 = self.to_ntp_64();
+    pub fn as_ntp_32(&self) -> u32 {
+        let ntp_64 = self.as_ntp_64();
 
         ((ntp_64 >> 16) & 0xffff_ffff) as u32
     }

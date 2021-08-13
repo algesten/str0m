@@ -115,10 +115,10 @@ impl RtcSession {
     ) -> &mut RtcConnection {
         let ssl = dtls_ssl_create(&self.dtls_ctx).expect("dtls_ssl_create");
 
-        let parts = DtlsStream::accept(addr.clone(), ssl);
+        let parts = DtlsStream::accept(*addr, ssl);
         let (tx_dtls, rx_dtls, rx_event, mut dtls) = parts;
 
-        let mut sender = DtlsSender(rx_dtls, self.tx_server.clone(), addr.clone());
+        let mut sender = DtlsSender(rx_dtls, self.tx_server.clone(), *addr);
         spawn(async move {
             sender.handle().await;
         });
@@ -149,7 +149,7 @@ impl RtcSession {
         });
 
         let conn = RtcConnection {
-            remote_addr: addr.clone(),
+            remote_addr: *addr,
             tx_dtls,
             srtp_rx: None,
             srtp_tx: None,
@@ -181,7 +181,7 @@ async fn handle_rtp(
 ) -> Option<()> {
     //
 
-    let header = rtp::parse_header(&udp.buf, &id_to_ext)?;
+    let header = rtp::parse_header(&udp.buf, id_to_ext)?;
     let ssrc = header.ssrc;
 
     // info!("RTP: {:?}", header);
@@ -437,7 +437,7 @@ impl DtlsSender {
     async fn handle(&mut self) {
         loop {
             if let Some(buf) = self.0.recv().await {
-                self.1.udp.send((buf, self.2.clone())).await.ok();
+                self.1.udp.send((buf, self.2)).await.ok();
             } else {
                 trace!("DtlsSender end");
                 break;
