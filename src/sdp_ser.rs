@@ -55,7 +55,7 @@ impl Peer {
         // ensure what we created is correct
         for m in &sdp.media {
             if let Some(err) = m.check_consistent() {
-                panic!(format!("Bad create_sdp: {}", err));
+                panic!("Bad create_sdp: {}", err);
             }
         }
 

@@ -147,7 +147,7 @@ impl Peer {
         // Launch a loop to send periodical receiver reports.
         {
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
-            let mut tx = self.tx.clone();
+            let tx = self.tx.clone();
             rt::spawn(async move {
                 loop {
                     interval.tick().await;

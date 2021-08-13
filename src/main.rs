@@ -129,7 +129,7 @@ async fn main() {
 }
 
 async fn handle_post_join(
-    mut state: WebServer,
+    state: WebServer,
     req: http::Request<Body>,
 ) -> Result<http::Response<Body>, hreq::Error> {
     let mut body = req.into_body();

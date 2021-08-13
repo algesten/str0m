@@ -271,7 +271,7 @@ impl DtlsStream {
             .ok()?;
         let mat = SrtpKeyMaterial(buf);
 
-        let mut tx_event = self.tx_event.clone();
+        let tx_event = self.tx_event.clone();
         let event = DtlsEvent::Connected(self.remote_addr.clone(), fp, mat);
         spawn(async move {
             tx_event.send(event).await.ok();
@@ -329,7 +329,7 @@ impl DtlsStream {
     }
 
     fn handle_err_event(&self, e: &IoErr) {
-        let mut tx_event = self.tx_event.clone();
+        let tx_event = self.tx_event.clone();
         let event = DtlsEvent::Error(self.remote_addr.clone(), e.to_string());
         spawn(async move {
             tx_event.send(event).await.ok();
