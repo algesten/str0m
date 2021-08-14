@@ -464,7 +464,7 @@ pub fn build_transport_fb(
         let fb_count = *send_transport_cc;
         *send_transport_cc += 1;
 
-        let t_and_c = (((ref_time.to_micros() % WRAP_PERIOD) / DELTA) << 8) | (fb_count as i64);
+        let t_and_c = (((ref_time.as_micros() % WRAP_PERIOD) / DELTA) << 8) | (fb_count as i64);
         (&mut buf[16..20]).copy_from_slice(&t_and_c.to_be_bytes());
 
         let mut cur = first;
@@ -475,7 +475,7 @@ pub fn build_transport_fb(
             let delta_ts = cur.1 - ref_time;
             deltas.push(delta_ts);
 
-            let delta = delta_ts.to_micros() / DELTA;
+            let delta = delta_ts.as_micros() / DELTA;
 
             if delta < -32768 || delta > 32767 {
                 // If the delta exceeds even the larger limits, a new feedback
