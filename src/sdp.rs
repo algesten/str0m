@@ -1,6 +1,3 @@
-use crate::format::Format;
-use crate::media::Direction;
-use crate::util::FingerprintFmt;
 use std::fmt;
 use std::net::IpAddr;
 use std::num::ParseFloatError;
@@ -466,6 +463,40 @@ impl MediaDesc {
         }
         v
     }
+}
+
+/// Media direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    SendOnly,
+    RecvOnly,
+    SendRecv,
+    Inactive,
+}
+
+impl Direction {
+    pub fn is_recv(&self) -> bool {
+        matches!(self, Direction::RecvOnly | Direction::SendRecv)
+    }
+}
+
+/// One format from an m-section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Format {
+    /// rtpmap number
+    pub map_no: u8,
+    /// Codec from `a=rtpmap:<no> codec/<clock-rate>` line
+    pub codec: String,
+    /// Clock rate from `a=rtpmap:<no> codec/<clock-rate>` line
+    pub clock_rate: u32,
+    /// Optional encoding parameters from `a=rtpmap:<no> codec/<clock-rate>/<enc-param>` line
+    pub enc_param: Option<String>,
+    /// Options from `a=rtcp_fb` lines.
+    pub rtcp_fb: Vec<String>,
+    /// Extra format parameters from the `a=fmtp` line.
+    pub fmtp: Vec<(String, String)>,
+    /// Restrictions that applies to this format from the `a=rid` lines.
+    pub restrictions: Vec<StreamId>,
 }
 
 /// Identifier of an RTP stream.
@@ -1153,6 +1184,22 @@ impl RtpExtensionType {
     pub fn is_filtered(&self) -> bool {
         use RtpExtensionType::*;
         matches!(self, UnknownUri | UnknownExt)
+    }
+}
+
+pub struct FingerprintFmt<'a>(pub &'a [u8]);
+
+impl<'a> std::fmt::Display for FingerprintFmt<'a> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let last = self.0.len() - 1;
+        for (idx, b) in self.0.iter().enumerate() {
+            if idx < last {
+                write!(f, "{:02X}:", b)?;
+            } else {
+                write!(f, "{:02X}", b)?;
+            }
+        }
+        Ok(())
     }
 }
 

@@ -17,13 +17,10 @@ use {
 };
 
 use crate::sdp::*;
-use crate::{Error, ErrorKind};
+use crate::Error;
 
 pub fn parse_sdp(input: &str) -> Result<Sdp, Error> {
-    sdp_parser()
-        .parse(input)
-        .map(|(sdp, _)| sdp)
-        .map_err(|e| Error::new(ErrorKind::SdpParse, format!("{}", e)))
+    Ok(sdp_parser().parse(input).map(|(sdp, _)| sdp)?)
 }
 
 /// Creates a parser of SDP
