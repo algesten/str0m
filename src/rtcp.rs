@@ -452,11 +452,11 @@ pub fn build_transport_fb(
         buf[1] = PacketType::TransportLayerFeedback as u8;
         // len and padding written afterwards
 
-        (&mut buf[4..8]).copy_from_slice(&ssrc.to_be_bytes());
-        (&mut buf[8..12]).copy_from_slice(&(ssrc + 1).to_be_bytes());
+        buf[4..8].copy_from_slice(&ssrc.to_be_bytes());
+        buf[8..12].copy_from_slice(&(ssrc + 1).to_be_bytes());
 
         let base_seq = first.0;
-        (&mut buf[12..14]).copy_from_slice(&base_seq.to_be_bytes());
+        buf[12..14].copy_from_slice(&base_seq.to_be_bytes());
         let mut total_count = 0;
         // packet status count written after
 
@@ -465,7 +465,7 @@ pub fn build_transport_fb(
         *send_transport_cc += 1;
 
         let t_and_c = (((ref_time.as_micros() % WRAP_PERIOD) / DELTA) << 8) | (fb_count as i64);
-        (&mut buf[16..20]).copy_from_slice(&t_and_c.to_be_bytes());
+        buf[16..20].copy_from_slice(&t_and_c.to_be_bytes());
 
         let mut cur = first;
         let mut deltas = Vec::with_capacity(TRANSPORT_WIDE_CC_MAX);
