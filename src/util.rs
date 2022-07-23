@@ -45,12 +45,12 @@ impl<'a> std::fmt::Display for FingerprintFmt<'a> {
     }
 }
 
-pub fn unix_time() -> i64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64
-}
+// pub fn unix_time() -> i64 {
+//     SystemTime::now()
+//         .duration_since(SystemTime::UNIX_EPOCH)
+//         .unwrap()
+//         .as_secs() as i64
+// }
 
 /// 2^32 as float.
 const F32: f64 = 4_294_967_296.0;

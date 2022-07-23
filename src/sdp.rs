@@ -1,7 +1,6 @@
 use std::fmt;
 use std::net::IpAddr;
 use std::num::ParseFloatError;
-use std::ops::Deref;
 use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -9,9 +8,6 @@ pub struct Sdp {
     pub session: Session,
     pub transceivers: Vec<TransceiverInfo>,
 }
-
-pub struct Offer(pub Sdp);
-pub struct Answer(pub Sdp);
 
 /// Credentials for STUN packages.
 ///
@@ -1225,22 +1221,6 @@ impl<'a> std::fmt::Display for FingerprintFmt<'a> {
             }
         }
         Ok(())
-    }
-}
-
-impl Deref for Offer {
-    type Target = Sdp;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl Deref for Answer {
-    type Target = Sdp;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
     }
 }
 

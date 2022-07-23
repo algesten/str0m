@@ -11,9 +11,11 @@ mod util;
 use std::collections::HashSet;
 use std::convert::TryFrom;
 use std::net::SocketAddr;
+use std::ops::Deref;
 
 pub use error::Error;
-use sdp::{Answer, Fingerprint, IceCreds, Offer};
+use sdp::{Fingerprint, IceCreds, Sdp};
+use sdp_parse::parse_sdp;
 use stun::StunMessage;
 use udp::UdpKind;
 use util::Ts;
@@ -37,28 +39,29 @@ pub struct Peer {
 }
 
 impl Peer {
-    pub fn accepts(&self, addr: SocketAddr, input: &Input<'_>) -> Result<bool, Error> {
+    pub fn accepts(&self, input: &Input<'_>) -> Result<bool, Error> {
         use Input::*;
+        use NetworkData::*;
         match input {
             Tick(_) => Ok(true),
             Offer(_) => Ok(true),
             Answer(_) => Ok(true),
-            Stun(stun) => self.accepts_stun(addr, stun),
+            Network(addr, data) => match data {
+                Stun(stun) => self.accepts_stun(*addr, stun),
+            },
         }
     }
 
-    pub fn handle_input<'a>(
-        &mut self,
-        ts: Ts,
-        addr: SocketAddr,
-        input: Input<'a>,
-    ) -> Result<Output<'a>, Error> {
+    pub fn handle_input<'a>(&mut self, ts: Ts, input: Input<'a>) -> Result<Output<'a>, Error> {
         use Input::*;
+        use NetworkData::*;
         Ok(match input {
             Tick(buf) => Output::Yield,
             Offer(v) => self.handle_offer(v)?.into(),
             Answer(v) => self.handle_answer(v)?.into(),
-            Stun(stun) => self.handle_stun(addr, stun)?.into(),
+            Network(addr, data) => match data {
+                Stun(stun) => (addr, self.handle_stun(addr, stun)?.into()).into(),
+            },
         })
     }
 
@@ -123,7 +126,7 @@ pub enum Input<'a> {
     Tick(&'a mut [u8]),
     Offer(Offer),
     Answer(Answer),
-    Stun(StunMessage<'a>),
+    Network(SocketAddr, NetworkData<'a>),
 }
 
 pub enum Output<'a> {
@@ -131,33 +134,29 @@ pub enum Output<'a> {
     NeedTick,
     Offer(Offer),
     Answer(Answer),
+    Network(SocketAddr, NetworkData<'a>),
+}
+
+pub enum NetworkData<'a> {
     Stun(StunMessage<'a>),
 }
 
-impl<'a> TryFrom<&'a [u8]> for Input<'a> {
+pub struct Offer(Sdp);
+
+pub struct Answer(Sdp);
+
+impl<'a> TryFrom<&'a [u8]> for NetworkData<'a> {
     type Error = Error;
 
     fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
         let kind = UdpKind::try_from(value)?;
 
         Ok(match kind {
-            UdpKind::Stun => Input::Stun(stun::parse_message(&value)?),
+            UdpKind::Stun => NetworkData::Stun(stun::parse_message(&value)?),
             UdpKind::Dtls => todo!(),
             UdpKind::Rtp => todo!(),
             UdpKind::Rtcp => todo!(),
         })
-    }
-}
-
-impl<'a> From<StunMessage<'a>> for Input<'a> {
-    fn from(v: StunMessage<'a>) -> Self {
-        Input::Stun(v)
-    }
-}
-
-impl<'a> From<StunMessage<'a>> for Output<'a> {
-    fn from(v: StunMessage<'a>) -> Self {
-        Output::Stun(v)
     }
 }
 
@@ -188,5 +187,57 @@ impl<'a> From<Answer> for Output<'a> {
 impl<'a> From<()> for Output<'a> {
     fn from(_: ()) -> Self {
         Output::NeedTick
+    }
+}
+
+impl<'a> From<(SocketAddr, NetworkData<'a>)> for Input<'a> {
+    fn from((addr, data): (SocketAddr, NetworkData<'a>)) -> Self {
+        Input::Network(addr, data)
+    }
+}
+
+impl<'a> From<(SocketAddr, NetworkData<'a>)> for Output<'a> {
+    fn from((addr, data): (SocketAddr, NetworkData<'a>)) -> Self {
+        Output::Network(addr, data)
+    }
+}
+
+impl<'a> From<StunMessage<'a>> for NetworkData<'a> {
+    fn from(v: StunMessage<'a>) -> Self {
+        NetworkData::Stun(v)
+    }
+}
+
+impl Deref for Offer {
+    type Target = Sdp;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Deref for Answer {
+    type Target = Sdp;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'a> TryFrom<&'a str> for Offer {
+    type Error = Error;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let sdp = parse_sdp(value)?;
+        Ok(Offer(sdp))
+    }
+}
+
+impl<'a> TryFrom<&'a str> for Answer {
+    type Error = Error;
+
+    fn try_from(value: &'a str) -> Result<Self, Self::Error> {
+        let sdp = parse_sdp(value)?;
+        Ok(Answer(sdp))
     }
 }
