@@ -29,8 +29,10 @@ where
     Input: Stream<Token = char>,
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
 {
-    (session_parser(), many::<Vec<_>, _, _>(media_parser()))
-        .map(|(session, media)| Sdp { session, media })
+    (session_parser(), many::<Vec<_>, _, _>(media_parser())).map(|(session, media)| Sdp {
+        session,
+        transceivers: media,
+    })
 }
 
 /// /////////////////////////////////////////////////// Session description
@@ -285,13 +287,20 @@ where
     Input: Stream<Token = char>,
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
 {
+    let media_type = choice((
+        string("audio").map(|_| MediaType::Audio),
+        string("video").map(|_| MediaType::Video),
+        string("application").map(|_| MediaType::Application),
+        not_sp().map(|v| MediaType::Unknown(v)),
+    ));
+
     // m=<media> <port> <proto> <fmt> ...
     // <fmt> is: <pt> <pt> <pt> <pt>
     // where <pt> either matches a=rtpmap:<pt> or a=sctpmap:<pt>
     typed_line(
         'm',
         (
-            not_sp(), // type: audio, video etc.
+            media_type, // type: audio, video etc.
             token(' '),
             not_sp(), // port: just set to 9 or something
             token(' '),
@@ -306,7 +315,7 @@ where
             ), // <pt> <pt>
         ),
     )
-    .map(|(typ, _, _, _, proto, _, pts)| (MediaType(typ), Proto(proto), pts))
+    .map(|(typ, _, _, _, proto, _, pts)| (typ, Proto(proto), pts))
 }
 
 /// a=foo:bar lines belongin before the first m= line
@@ -817,7 +826,7 @@ mod test {
             m,
             Ok((
                 (
-                    MediaType("audio".into()),
+                    MediaType::Audio,
                     Proto("UDP/TLS/RTP/SAVPF".into()),
                     vec![111, 103],
                 ),
@@ -886,7 +895,7 @@ mod test {
                             SessionAttribute::Unused("msid-semantic:WMS *".into())
                         ]
                     },
-                    media: vec![]
+                    transceivers: vec![]
                 },
                 ""
             ))

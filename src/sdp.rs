@@ -6,7 +6,7 @@ use std::str::FromStr;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sdp {
     pub session: Session,
-    pub media: Vec<TransceiverInfo>,
+    pub transceivers: Vec<TransceiverInfo>,
 }
 
 /// Credentials for STUN packages.
@@ -20,7 +20,7 @@ pub struct IceCreds {
     pub password: String,
 }
 
-pub trait MediaAttributeThings {
+pub trait MediaAttributeExt {
     fn extmaps(&self) -> Vec<ExtMap>;
     fn ssrc_info(&self) -> Vec<SsrcInfo>;
 }
@@ -34,7 +34,7 @@ pub struct SsrcInfo {
     pub repaired_ssrc: Option<u32>,
 }
 
-impl MediaAttributeThings for Vec<MediaAttribute> {
+impl MediaAttributeExt for Vec<MediaAttribute> {
     fn extmaps(&self) -> Vec<ExtMap> {
         let mut ret = vec![];
 
@@ -86,13 +86,13 @@ impl MediaAttributeThings for Vec<MediaAttribute> {
     }
 }
 
-pub trait IceThings {
+pub trait IceExt {
     fn username(&self) -> Option<&str>;
     fn password(&self) -> Option<&str>;
     fn fingerprint(&self) -> Option<&Fingerprint>;
 }
 
-impl IceThings for Vec<MediaAttribute> {
+impl IceExt for Vec<MediaAttribute> {
     fn username(&self) -> Option<&str> {
         for a in self {
             if let MediaAttribute::IceUfrag(v) = a {
@@ -119,7 +119,7 @@ impl IceThings for Vec<MediaAttribute> {
     }
 }
 
-impl IceThings for Vec<SessionAttribute> {
+impl IceExt for Vec<SessionAttribute> {
     fn username(&self) -> Option<&str> {
         for a in self {
             if let SessionAttribute::IceUfrag(v) = a {
@@ -655,7 +655,12 @@ impl FromStr for F32Eq {
 
 /// "audio", "video", "application"
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MediaType(pub String);
+pub enum MediaType {
+    Audio,
+    Video,
+    Application,
+    Unknown(String),
+}
 
 /// UDP/TLS/RTP/SAVPF or DTLS/SCTP
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -816,7 +821,7 @@ impl fmt::Display for SimulcastGroup {
 impl fmt::Display for Sdp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.session)?;
-        for m in &self.media {
+        for m in &self.transceivers {
             write!(f, "{}", m)?;
         }
         Ok(())
@@ -903,7 +908,12 @@ impl fmt::Display for TransceiverInfo {
 
 impl fmt::Display for MediaType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        match self {
+            MediaType::Audio => write!(f, "audio"),
+            MediaType::Video => write!(f, "video"),
+            MediaType::Application => write!(f, "application"),
+            MediaType::Unknown(v) => write!(f, "{}", v),
+        }
     }
 }
 
@@ -1223,9 +1233,9 @@ mod test {
         let sdp = Sdp { session: Session { id: SessionId(5_058_682_828_002_148_772),
             bw: None, attrs:
             vec![SessionAttribute::Group { typ: "BUNDLE".into(), mids: vec!["0".into()] }, SessionAttribute::Unused("msid-semantic: WMS 5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into())] },
-            media: vec![
+            transceivers: vec![
                 TransceiverInfo {
-                    typ: MediaType("audio".into()),
+                    typ: MediaType::Audio,
                     proto: Proto("UDP/TLS/RTP/SAVPF".into()),
                     pts: vec![111, 103, 104, 9, 0, 8, 106, 105, 13, 110, 112, 113, 126],
                     bw: None,
