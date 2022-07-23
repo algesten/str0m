@@ -2,8 +2,11 @@ use hmac::{Hmac, Mac, NewMac};
 use rand::prelude::*;
 use sha1::Sha1;
 use std::cmp::Ordering;
+use std::fmt;
+use std::io;
 use std::ops::Add;
 use std::ops::Sub;
+use std::str::from_utf8_unchecked;
 use std::time::SystemTime;
 
 pub type HmacSha1 = Hmac<Sha1>;
@@ -18,7 +21,7 @@ pub fn hmac_sha1(secret: &[u8], payload: &[u8]) -> [u8; 20] {
 // deliberate subset of ice-char, etc that are "safe"
 const CHARS: &[u8] = b"abcdefghijklmnopqrstuvxyzABCDEFGHIJKLMNOPQRSTUVXYZ0123456789";
 
-pub fn rand_id<const L: usize>() -> [u8; L] {
+pub fn random_id<const L: usize>() -> Id<L> {
     let mut x = [0; L];
     let mut rng = rand::thread_rng();
     for i in 0..L {
@@ -26,7 +29,23 @@ pub fn rand_id<const L: usize>() -> [u8; L] {
         let idx = (CHARS.len() as f32 * y).floor() as usize;
         x[i] = CHARS[idx];
     }
-    x
+    Id(x)
+}
+
+pub struct Id<const L: usize>([u8; L]);
+
+impl<const L: usize> Id<L> {
+    // pub fn into_array(self) -> [u8; L] {
+    //     self.0
+    // }
+}
+
+impl<const L: usize> fmt::Display for Id<L> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // SAFETY: we know this is ascii chars.
+        let s = unsafe { from_utf8_unchecked(&self.0) };
+        write!(f, "{}", s)
+    }
 }
 
 pub struct FingerprintFmt<'a>(pub &'a [u8]);
@@ -45,12 +64,12 @@ impl<'a> std::fmt::Display for FingerprintFmt<'a> {
     }
 }
 
-// pub fn unix_time() -> i64 {
-//     SystemTime::now()
-//         .duration_since(SystemTime::UNIX_EPOCH)
-//         .unwrap()
-//         .as_secs() as i64
-// }
+pub fn unix_time() -> i64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
 
 /// 2^32 as float.
 const F32: f64 = 4_294_967_296.0;
@@ -232,18 +251,31 @@ impl Add for Ts {
     }
 }
 
-pub trait VecExt<T> {
-    fn find_or_append(&mut self, f: impl Fn(&T) -> bool, i: impl FnOnce() -> T) -> &mut T;
+#[derive(Default)]
+pub struct ChunkBuffer {
+    //
 }
 
-impl<T> VecExt<T> for Vec<T> {
-    fn find_or_append<'a>(&mut self, f: impl Fn(&T) -> bool, i: impl FnOnce() -> T) -> &mut T {
-        let pos = self.iter().position(f).unwrap_or_else(|| {
-            self.push(i());
-            self.len() - 1
-        });
+impl ChunkBuffer {
+    pub fn new() -> Self {
+        ChunkBuffer::default()
+    }
+}
 
-        &mut self[pos]
+impl io::Read for ChunkBuffer {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        todo!()
+        // Err(io::Error::new(io::ErrorKind::WouldBlock, "WouldBlock"))
+    }
+}
+
+impl io::Write for ChunkBuffer {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        todo!()
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 

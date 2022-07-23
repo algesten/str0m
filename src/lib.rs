@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate tracing;
 
+mod dtls;
 mod error;
 mod sdp;
 mod sdp_parse;
@@ -13,25 +14,33 @@ use std::convert::TryFrom;
 use std::net::SocketAddr;
 use std::ops::Deref;
 
+use dtls::{dtls_create_ctx, dtls_ssl_create, Dtls};
 pub use error::Error;
+use openssl::ssl::SslContext;
 use sdp::{Fingerprint, IceCreds, Sdp};
 use sdp_parse::parse_sdp;
 use stun::StunMessage;
 use udp::UdpKind;
-use util::Ts;
+use util::{random_id, ChunkBuffer, Ts};
 
 pub struct Peer {
-    /// Remote credentials for STUN. Obtained from SDP.
-    remote_creds: Vec<IceCreds>,
+    /// DTLS context for this peer.
+    ctx: SslContext,
+
+    /// DTLS wrapper over a buffer where we read/write DTLS packets from/to.
+    dtls: Dtls<ChunkBuffer>,
 
     /// Local credentials for STUN. We use one set for all m-lines.
     local_creds: IceCreds,
 
-    /// Remote fingerprints for DTLS. Obtained from SDP.
-    remote_fingerprints: Vec<Fingerprint>,
-
     /// Local fingerprint for DTLS. We use one certificate per peer.
     local_fingerprint: Fingerprint,
+
+    /// Remote credentials for STUN. Obtained from SDP.
+    remote_creds: Vec<IceCreds>,
+
+    /// Remote fingerprints for DTLS. Obtained from SDP.
+    remote_fingerprints: Vec<Fingerprint>,
 
     /// Addresses that have been "unlocked" via STUN. These IP:PORT combos
     /// are now verified for other kinds of data like DTLS, RTP, RTCP...
@@ -39,6 +48,28 @@ pub struct Peer {
 }
 
 impl Peer {
+    pub fn new() -> Result<Self, Error> {
+        let (ctx, local_fingerprint) = dtls_create_ctx()?;
+
+        let ssl = dtls_ssl_create(&ctx)?;
+        let dtls = Dtls::new(ssl, ChunkBuffer::new());
+
+        let peer = Peer {
+            ctx,
+            dtls,
+            local_creds: IceCreds {
+                username: random_id::<8>().to_string(),
+                password: random_id::<24>().to_string(),
+            },
+            local_fingerprint,
+            remote_creds: vec![],
+            remote_fingerprints: vec![],
+            verified: HashSet::new(),
+        };
+
+        Ok(peer)
+    }
+
     pub fn accepts(&self, input: &Input<'_>) -> Result<bool, Error> {
         use Input::*;
         use NetworkData::*;
