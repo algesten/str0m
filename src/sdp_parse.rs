@@ -245,7 +245,7 @@ where
 /// /////////////////////////////////////////////////// Media description
 
 /// A m= section with attributes, until next m= or EOF
-fn media_parser<Input>() -> impl Parser<Input, Output = MediaDesc>
+fn media_parser<Input>() -> impl Parser<Input, Output = TransceiverInfo>
 where
     Input: Stream<Token = char>,
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
@@ -256,11 +256,11 @@ where
         optional(bandwidth_line()),   // b=AS:2500
         many::<Vec<_>, _, _>(media_attribute_line()),
     )
-        .and_then(|((typ, proto, map_no), _, bw, attrs)| {
-            let m = MediaDesc {
+        .and_then(|((typ, proto, pts), _, bw, attrs)| {
+            let m = TransceiverInfo {
                 typ,
                 proto,
-                map_no,
+                pts,
                 bw,
                 attrs,
             };
@@ -286,8 +286,8 @@ where
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
 {
     // m=<media> <port> <proto> <fmt> ...
-    // <fmt> is: <map_no> <map_no> <map_no> <map_no>
-    // where <map_no> either matches a=rtpmap:<map_no> or a=sctpmap:<map_no>
+    // <fmt> is: <pt> <pt> <pt> <pt>
+    // where <pt> either matches a=rtpmap:<pt> or a=sctpmap:<pt>
     typed_line(
         'm',
         (
@@ -303,10 +303,10 @@ where
                         .map_err(StreamErrorFor::<Input>::message_format)
                 }),
                 token(' '),
-            ), // <map_no> <map_no>
+            ), // <pt> <pt>
         ),
     )
-    .map(|(typ, _, _, _, proto, _, map_no)| (MediaType(typ), Proto(proto), map_no))
+    .map(|(typ, _, _, _, proto, _, pts)| (MediaType(typ), Proto(proto), pts))
 }
 
 /// a=foo:bar lines belongin before the first m= line
@@ -396,7 +396,7 @@ where
     // a=end-of-candidates
     let endof = attribute_line_flag("end-of-candidates").map(|_| MediaAttribute::EndOfCandidates);
 
-    let map_no = || {
+    let pt = || {
         not_sp().and_then(|s| {
             s.parse::<u8>()
                 .map_err(StreamErrorFor::<Input>::message_format)
@@ -407,7 +407,7 @@ where
     let rtpmap = attribute_line(
         "rtpmap",
         (
-            map_no(),
+            pt(),
             token(' '),
             many1::<String, _, _>(satisfy(|c| c != '/' && c != '\r' && c != '\n')),
             token('/'),
@@ -418,10 +418,10 @@ where
             optional((token('/'), any_value())), // only audio has the last /2 (channels)
         ),
     )
-    .map(|(map_no, _, codec, _, clock_rate, opt_enc_param)| {
+    .map(|(pt, _, codec, _, clock_rate, opt_enc_param)| {
         let enc_param = opt_enc_param.map(|(_, e)| e);
         MediaAttribute::RtpMap {
-            map_no,
+            pt,
             codec,
             clock_rate,
             enc_param,
@@ -432,25 +432,21 @@ where
     // a=rtcp-fb:111 ccm fir
     // a=rtcp-fb:111 nack
     // a=rtcp-fb:111 nack pli
-    let rtcp_fb = attribute_line("rtcp-fb", (map_no(), token(' '), any_value()))
-        .map(|(map_no, _, value)| MediaAttribute::RtcpFb { map_no, value });
+    let rtcp_fb = attribute_line("rtcp-fb", (pt(), token(' '), any_value()))
+        .map(|(pt, _, value)| MediaAttribute::RtcpFb { pt, value });
 
     // a=fmtp:111 minptime=10; useinbandfec=1
     // a=fmtp:111 minptime=10;useinbandfec=1
-    let fmtp1 = attribute_line(
-        "fmtp",
-        (map_no(), token(' '), sep_by1(key_val(), token(';'))),
-    )
-    .map(|(map_no, _, values)| MediaAttribute::Fmtp { map_no, values });
+    let fmtp1 = attribute_line("fmtp", (pt(), token(' '), sep_by1(key_val(), token(';'))))
+        .map(|(pt, _, values)| MediaAttribute::Fmtp { pt, values });
 
     // a=fmtp:101 0-15
-    let fmtp2 =
-        attribute_line("fmtp", (map_no(), token(' '), not_sp())).map(|(map_no, _, value)| {
-            MediaAttribute::Fmtp {
-                map_no,
-                values: vec![("".to_string(), value)],
-            }
-        });
+    let fmtp2 = attribute_line("fmtp", (pt(), token(' '), not_sp())).map(|(pt, _, value)| {
+        MediaAttribute::Fmtp {
+            pt,
+            values: vec![("".to_string(), value)],
+        }
+    });
 
     let fmtp = choice((fmtp1, fmtp2));
 
@@ -465,7 +461,7 @@ where
                 token(' '),
                 optional((
                     string("pt="),
-                    sep_by1::<Vec<u8>, _, _, _>(map_no(), token(',')),
+                    sep_by1::<Vec<u8>, _, _, _>(pt(), token(',')),
                     // TODO this is not really optional when there is
                     // a restriction part. It means we are incorrectly
                     // allowing this: a=rid:foo send pt=111max-br=64000
