@@ -13,9 +13,10 @@ use std::convert::TryFrom;
 use std::net::SocketAddr;
 
 pub use error::Error;
-use sdp::{Fingerprint, IceCreds};
+use sdp::{Answer, Fingerprint, IceCreds, Offer};
 use stun::StunMessage;
-pub use udp::{UdpKind, UdpPacket};
+use udp::UdpKind;
+use util::Ts;
 
 pub struct Peer {
     /// Remote credentials for STUN. Obtained from SDP.
@@ -37,19 +38,28 @@ pub struct Peer {
 
 impl Peer {
     pub fn accepts(&self, addr: SocketAddr, input: &Input<'_>) -> Result<bool, Error> {
+        use Input::*;
         match input {
-            Input::Stun(stun) => self.accepts_stun(addr, stun),
+            Tick(_) => Ok(true),
+            Offer(_) => Ok(true),
+            Answer(_) => Ok(true),
+            Stun(stun) => self.accepts_stun(addr, stun),
         }
     }
 
     pub fn handle_input<'a>(
         &mut self,
+        ts: Ts,
         addr: SocketAddr,
         input: Input<'a>,
     ) -> Result<Output<'a>, Error> {
-        match input {
-            Input::Stun(stun) => Ok(Output::Stun(self.handle_stun(addr, stun)?)),
-        }
+        use Input::*;
+        Ok(match input {
+            Tick(buf) => Output::Yield,
+            Offer(v) => self.handle_offer(v)?.into(),
+            Answer(v) => self.handle_answer(v)?.into(),
+            Stun(stun) => self.handle_stun(addr, stun)?.into(),
+        })
     }
 
     fn accepts_stun(&self, addr: SocketAddr, stun: &StunMessage<'_>) -> Result<bool, Error> {
@@ -84,6 +94,14 @@ impl Peer {
         Ok(true)
     }
 
+    fn handle_offer(&mut self, offer: Offer) -> Result<Answer, Error> {
+        todo!()
+    }
+
+    fn handle_answer(&mut self, offer: Answer) -> Result<(), Error> {
+        todo!()
+    }
+
     fn handle_stun<'a>(
         &mut self,
         addr: SocketAddr,
@@ -102,10 +120,17 @@ impl Peer {
 }
 
 pub enum Input<'a> {
+    Tick(&'a mut [u8]),
+    Offer(Offer),
+    Answer(Answer),
     Stun(StunMessage<'a>),
 }
 
 pub enum Output<'a> {
+    Yield,
+    NeedTick,
+    Offer(Offer),
+    Answer(Answer),
     Stun(StunMessage<'a>),
 }
 
@@ -121,5 +146,47 @@ impl<'a> TryFrom<&'a [u8]> for Input<'a> {
             UdpKind::Rtp => todo!(),
             UdpKind::Rtcp => todo!(),
         })
+    }
+}
+
+impl<'a> From<StunMessage<'a>> for Input<'a> {
+    fn from(v: StunMessage<'a>) -> Self {
+        Input::Stun(v)
+    }
+}
+
+impl<'a> From<StunMessage<'a>> for Output<'a> {
+    fn from(v: StunMessage<'a>) -> Self {
+        Output::Stun(v)
+    }
+}
+
+impl<'a> From<Offer> for Input<'a> {
+    fn from(v: Offer) -> Self {
+        Input::Offer(v)
+    }
+}
+
+impl<'a> From<Answer> for Input<'a> {
+    fn from(v: Answer) -> Self {
+        Input::Answer(v)
+    }
+}
+
+impl<'a> From<Offer> for Output<'a> {
+    fn from(v: Offer) -> Self {
+        Output::Offer(v)
+    }
+}
+
+impl<'a> From<Answer> for Output<'a> {
+    fn from(v: Answer) -> Self {
+        Output::Answer(v)
+    }
+}
+
+impl<'a> From<()> for Output<'a> {
+    fn from(_: ()) -> Self {
+        Output::NeedTick
     }
 }

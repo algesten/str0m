@@ -1,11 +1,5 @@
-use std::convert::TryFrom;
-use std::net::SocketAddr;
-
-use crate::util::Ts;
 use crate::Error;
-
-#[derive(Debug)]
-pub struct UdpPacket(Vec<u8>, UdpKind, SocketAddr, Ts);
+use std::convert::TryFrom;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UdpKind {

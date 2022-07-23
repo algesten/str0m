@@ -1,10 +1,11 @@
-use crate::util::hmac_sha1;
-use crate::Error;
 use crc::{Crc, CRC_32_ISO_HDLC};
-// use crc::crc32;
 use rand::prelude::*;
+use std::io::Write;
 use std::net::IpAddr;
 use std::net::SocketAddr;
+
+use crate::util::hmac_sha1;
+use crate::Error;
 
 pub fn parse_message(buf: &[u8]) -> Result<StunMessage, Error> {
     let typ = (buf[0] as u16 & 0b0011_1111) << 8 | buf[1] as u16;
@@ -51,7 +52,7 @@ pub fn parse_message(buf: &[u8]) -> Result<StunMessage, Error> {
 
     // password as key is called "short-term credentials"
     // buffer from beginning including header (+20) to where message-integrity starts.
-    let to_check = &buf[0..(message_integrity_offset + 20)];
+    let integrity = &buf[0..(message_integrity_offset + 20)];
 
     if !attrs.local_remote().is_some() {
         return Err(Error::StunParse(
@@ -64,7 +65,7 @@ pub fn parse_message(buf: &[u8]) -> Result<StunMessage, Error> {
         method,
         trans_id,
         attrs,
-        to_check,
+        integrity,
     })
 }
 
@@ -74,7 +75,7 @@ pub struct StunMessage<'a> {
     method: Method,
     trans_id: &'a [u8],
     attrs: Vec<Attribute<'a>>,
-    to_check: &'a [u8],
+    integrity: &'a [u8],
 }
 
 impl<'a> StunMessage<'a> {
@@ -85,7 +86,7 @@ impl<'a> StunMessage<'a> {
 
     pub fn check_integrity(&self, password: &str) -> bool {
         if let Some(integ) = self.attrs.message_integrity() {
-            let comp = hmac_sha1(password.as_bytes(), self.to_check);
+            let comp = hmac_sha1(password.as_bytes(), self.integrity);
             comp == integ
         } else {
             false
@@ -112,37 +113,48 @@ impl<'a> StunMessage<'a> {
                 Attribute::MessageIntegrityMark,
                 Attribute::FingerprintMark,
             ],
-            to_check: &[],
+            integrity: &[],
         })
     }
 
-    pub fn to_bytes(&self, password: &str) -> Vec<u8> {
+    pub fn to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, Error> {
+        Ok(self
+            ._to_bytes(password, buf)
+            .map_err(|e| Error::StunError(format!("io write: {:?}", e)))?)
+    }
+
+    fn _to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, io::Error> {
         let attr_len = self.attrs.iter().fold(0, |p, a| p + a.padded_len());
         let msg_len = 20 + attr_len;
 
-        let mut buf = Vec::with_capacity(msg_len);
+        let mut buf = io::Cursor::new(buf);
 
         let typ = self.class.to_u16() | self.method.to_u16();
-        buf.extend_from_slice(&typ.to_be_bytes());
-        // -8 for fingerprint
-        buf.extend_from_slice(&((attr_len - 8) as u16).to_be_bytes());
-        buf.extend_from_slice(MAGIC);
-        buf.extend_from_slice(self.trans_id);
+        buf.write_all(&typ.to_be_bytes())?;
 
-        let mut off = 20; // attribute start
+        // -8 for fingerprint
+        buf.write_all(&((attr_len - 8) as u16).to_be_bytes())?;
+        buf.write_all(MAGIC)?;
+        buf.write_all(self.trans_id)?;
+
         let mut i_off = 0;
         let mut f_off = 0;
 
-        for a in &self.attrs {
-            a.to_bytes(&mut buf);
-            if let Attribute::MessageIntegrityMark = a {
-                i_off = off;
+        {
+            let mut off = 20; // attribute start
+            for a in &self.attrs {
+                a.to_bytes(&mut buf)?;
+                if let Attribute::MessageIntegrityMark = a {
+                    i_off = off;
+                }
+                if let Attribute::FingerprintMark = a {
+                    f_off = off;
+                }
+                off += a.padded_len();
             }
-            if let Attribute::FingerprintMark = a {
-                f_off = off;
-            }
-            off += a.padded_len();
         }
+
+        let buf = buf.into_inner();
 
         let hmac = hmac_sha1(password.as_bytes(), &buf[0..i_off]);
         (&mut buf[i_off + 4..(i_off + 4 + 20)]).copy_from_slice(&hmac);
@@ -153,7 +165,7 @@ impl<'a> StunMessage<'a> {
         let crc = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(&buf[0..f_off]) ^ 0x5354_554e;
         (&mut buf[f_off + 4..(f_off + 4 + 4)]).copy_from_slice(&crc.to_be_bytes());
 
-        buf
+        Ok(msg_len)
     }
 }
 
@@ -282,7 +294,7 @@ impl<'a> Attributes<'a> for Vec<Attribute<'a>> {
     }
 }
 
-use std::str;
+use std::{io, str};
 
 impl<'a> Attribute<'a> {
     fn padded_len(&self) -> usize {
@@ -299,35 +311,37 @@ impl<'a> Attribute<'a> {
         }
     }
 
-    fn to_bytes(&self, vec: &mut Vec<u8>) {
+    fn to_bytes(&self, vec: &mut dyn Write) -> io::Result<()> {
         use Attribute::*;
         match self {
             Username(v) => {
-                vec.extend_from_slice(&0x0006_u16.to_be_bytes());
-                vec.extend_from_slice(&(v.as_bytes().len() as u16).to_be_bytes());
-                vec.extend_from_slice(v.as_bytes());
+                vec.write_all(&0x0006_u16.to_be_bytes())?;
+                vec.write_all(&(v.as_bytes().len() as u16).to_be_bytes())?;
+                vec.write_all(v.as_bytes())?;
                 let pad = 4 - (v.as_bytes().len() % 4) % 4;
                 for _ in 0..pad {
-                    vec.push(0);
+                    vec.write_all(&[0])?;
                 }
             }
             IceControlled(v) => {
-                vec.extend_from_slice(&0x8029_u16.to_be_bytes());
-                vec.extend_from_slice(&8_u16.to_be_bytes());
-                vec.extend_from_slice(&v.to_be_bytes());
+                vec.write_all(&0x8029_u16.to_be_bytes())?;
+                vec.write_all(&8_u16.to_be_bytes())?;
+                vec.write_all(&v.to_be_bytes())?;
             }
             MessageIntegrityMark => {
-                vec.extend_from_slice(&0x0008_u16.to_be_bytes());
-                vec.extend_from_slice(&20_u16.to_be_bytes());
-                vec.resize(vec.len() + 20, 0); // filled in later
+                vec.write_all(&0x0008_u16.to_be_bytes())?;
+                vec.write_all(&20_u16.to_be_bytes())?;
+                vec.write_all(&[0; 20])?; // filled in later
             }
             FingerprintMark => {
-                vec.extend_from_slice(&0x8028_u16.to_be_bytes());
-                vec.extend_from_slice(&4_u16.to_be_bytes());
-                vec.resize(vec.len() + 4, 0); // filled in later
+                vec.write_all(&0x8028_u16.to_be_bytes())?;
+                vec.write_all(&4_u16.to_be_bytes())?;
+                vec.write_all(&[0; 4])?; // filled in later
             }
             _ => panic!("Can't write bytes for: {:?}", self),
         }
+
+        Ok(())
     }
 
     fn parse(

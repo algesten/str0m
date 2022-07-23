@@ -18,19 +18,15 @@ pub fn hmac_sha1(secret: &[u8], payload: &[u8]) -> [u8; 20] {
 // deliberate subset of ice-char, etc that are "safe"
 const CHARS: &[u8] = b"abcdefghijklmnopqrstuvxyzABCDEFGHIJKLMNOPQRSTUVXYZ0123456789";
 
-pub fn rand_id(len: usize) -> Vec<u8> {
-    let mut v = Vec::with_capacity(len);
+pub fn rand_id<const L: usize>() -> [u8; L] {
+    let mut x = [0; L];
     let mut rng = rand::thread_rng();
-    for _ in 0..len {
+    for i in 0..L {
         let y: f32 = rng.gen();
         let idx = (CHARS.len() as f32 * y).floor() as usize;
-        v.push(CHARS[idx]);
+        x[i] = CHARS[idx];
     }
-    v
-}
-
-pub fn rand_id_s(len: usize) -> String {
-    unsafe { String::from_utf8_unchecked(rand_id(len)) }
+    x
 }
 
 pub struct FingerprintFmt<'a>(pub &'a [u8]);
