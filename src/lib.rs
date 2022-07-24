@@ -1,76 +1,129 @@
+#![warn(missing_docs)]
+
+//! WebRTC the Rust way.
+
 #[macro_use]
 extern crate tracing;
 
 mod dtls;
 mod error;
+mod media;
 mod sdp;
-mod sdp_parse;
 mod stun;
 mod udp;
 mod util;
 
+use rand::Rng;
 use std::collections::HashSet;
 use std::convert::TryFrom;
+use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::ops::Deref;
 
 use dtls::{dtls_create_ctx, dtls_ssl_create, Dtls};
 pub use error::Error;
+use media::Media;
 use openssl::ssl::SslContext;
-use sdp::{Fingerprint, IceCreds, Sdp};
-use sdp_parse::parse_sdp;
+use sdp::{parse_sdp, Fingerprint, IceCreds, MediaType, Sdp, Session, SessionId};
 use stun::StunMessage;
 use udp::UdpKind;
-use util::{random_id, ChunkBuffer, Ts};
+use util::{random_id, PtrBuffer, Ts};
 
-pub struct Peer {
-    /// DTLS context for this peer.
-    ctx: SslContext,
+/// States the `Peer` can be in.
+pub mod state {
+    /// First state after creation.
+    pub struct Init {}
+    /// If we do `create_offer.
+    pub struct Offering {}
+    /// When we're ready to connect (Offer/Answer exchange is finished).
+    pub struct Connecting {}
+    /// When we have connected.
+    pub struct Connected {}
+}
 
-    /// DTLS wrapper over a buffer where we read/write DTLS packets from/to.
-    dtls: Dtls<ChunkBuffer>,
+/// A single peer connection.
+pub struct Peer<State> {
+    /// Unique id of the session, as transmitted on the o= line.
+    session_id: SessionId,
 
+    /// State of STUN.
+    stun_state: StunState,
+
+    /// State of DTLS.
+    dtls_state: DtlsState,
+
+    /// The configured media (audio/video or datachannel).
+    media: Vec<Media>,
+
+    _ph: PhantomData<State>,
+}
+
+struct StunState {
     /// Local credentials for STUN. We use one set for all m-lines.
     local_creds: IceCreds,
 
-    /// Local fingerprint for DTLS. We use one certificate per peer.
-    local_fingerprint: Fingerprint,
-
     /// Remote credentials for STUN. Obtained from SDP.
     remote_creds: Vec<IceCreds>,
-
-    /// Remote fingerprints for DTLS. Obtained from SDP.
-    remote_fingerprints: Vec<Fingerprint>,
 
     /// Addresses that have been "unlocked" via STUN. These IP:PORT combos
     /// are now verified for other kinds of data like DTLS, RTP, RTCP...
     verified: HashSet<SocketAddr>,
 }
 
-impl Peer {
-    pub fn new() -> Result<Self, Error> {
+struct DtlsState {
+    /// DTLS context for this peer.
+    ///
+    /// TODO: Should we share this for the entire app?
+    ctx: SslContext,
+
+    /// DTLS wrapper a special stream we read/write DTLS packets to.
+    /// Instantiation is delayed until we know whether this instance is
+    /// active or passive, which is evident from the a=setup:actpass,
+    /// a=setup:active or a=setup:passive in the negotiation.
+    dtls: Option<Dtls<PtrBuffer>>,
+
+    /// Local fingerprint for DTLS. We use one certificate per peer.
+    local_fingerprint: Fingerprint,
+
+    /// Remote fingerprints for DTLS. Obtained from SDP.
+    remote_fingerprints: Vec<Fingerprint>,
+}
+
+impl<T> Peer<T> {
+    /// Creates a new `Peer`.
+    ///
+    /// New peers starts out in the [`state::Init`] state which requires an SDP offer/answer
+    /// dance to become active.
+    pub fn new() -> Result<Peer<state::Init>, Error> {
         let (ctx, local_fingerprint) = dtls_create_ctx()?;
 
-        let ssl = dtls_ssl_create(&ctx)?;
-        let dtls = Dtls::new(ssl, ChunkBuffer::new());
+        let mut rng = rand::thread_rng();
+        let id = (u64::MAX as f64 * rng.gen::<f64>()) as u64;
 
         let peer = Peer {
-            ctx,
-            dtls,
-            local_creds: IceCreds {
-                username: random_id::<8>().to_string(),
-                password: random_id::<24>().to_string(),
+            session_id: SessionId(id),
+            stun_state: StunState {
+                local_creds: IceCreds {
+                    username: random_id::<8>().to_string(),
+                    password: random_id::<24>().to_string(),
+                },
+                remote_creds: vec![],
+                verified: HashSet::new(),
             },
-            local_fingerprint,
-            remote_creds: vec![],
-            remote_fingerprints: vec![],
-            verified: HashSet::new(),
+            dtls_state: DtlsState {
+                ctx,
+                dtls: None,
+                local_fingerprint,
+                remote_fingerprints: vec![],
+            },
+            media: vec![],
+            _ph: PhantomData,
         };
 
         Ok(peer)
     }
 
-    pub fn accepts(&self, input: &Input<'_>) -> Result<bool, Error> {
+    fn accepts(&self, input: &Input<'_>) -> Result<bool, Error> {
         use Input::*;
         use NetworkData::*;
         match input {
@@ -78,12 +131,12 @@ impl Peer {
             Offer(_) => Ok(true),
             Answer(_) => Ok(true),
             Network(addr, data) => match data {
-                Stun(stun) => self.accepts_stun(*addr, stun),
+                Stun(stun) => self.stun_state.accepts_stun(*addr, stun),
             },
         }
     }
 
-    pub fn handle_input<'a>(&mut self, ts: Ts, input: Input<'a>) -> Result<Output<'a>, Error> {
+    fn handle_input<'a>(&mut self, ts: Ts, input: Input<'a>) -> Result<Output<'a>, Error> {
         use Input::*;
         use NetworkData::*;
         Ok(match input {
@@ -91,11 +144,57 @@ impl Peer {
             Offer(v) => self.handle_offer(v)?.into(),
             Answer(v) => self.handle_answer(v)?.into(),
             Network(addr, data) => match data {
-                Stun(stun) => (addr, self.handle_stun(addr, stun)?.into()).into(),
+                Stun(stun) => (addr, self.stun_state.handle_stun(addr, stun)?.into()).into(),
             },
         })
     }
 
+    fn handle_offer(&mut self, offer: Offer) -> Result<Answer, Error> {
+        todo!()
+    }
+
+    fn handle_answer(&mut self, offer: Answer) -> Result<(), Error> {
+        todo!()
+    }
+}
+
+impl Peer<state::Init> {
+    /// Create an initial offer to start the RTC session.
+    ///
+    /// The offer must be provided _in some way_ to the remote side.
+    pub fn create_offer(mut self) -> (Offer, Peer<state::Offering>) {
+        todo!()
+    }
+
+    /// Accept an initial offer created on the remote side.
+    pub fn accept_offer(self, offer: Offer) -> (Answer, Peer<state::Connecting>) {
+        todo!()
+    }
+}
+
+impl Peer<state::Offering> {
+    /// Accept an answer from the remote side.
+    pub fn accept_answer(mut self, answer: Answer) -> Peer<state::Connecting> {
+        todo!()
+    }
+}
+
+impl Peer<state::Connecting> {
+    /// Provide network input.
+    ///
+    /// While connecting, we only accept input from the network.
+    pub fn handle_network_input<'a>(
+        &mut self,
+        ts: Ts,
+        addr: SocketAddr,
+        data: NetworkData<'a>,
+    ) -> Result<Output<'a>, Error> {
+        let input = (addr, data).into();
+        self.handle_input(ts, input)
+    }
+}
+
+impl StunState {
     fn accepts_stun(&self, addr: SocketAddr, stun: &StunMessage<'_>) -> Result<bool, Error> {
         let (local_username, remote_username) = stun.local_remote_username();
 
@@ -128,14 +227,6 @@ impl Peer {
         Ok(true)
     }
 
-    fn handle_offer(&mut self, offer: Offer) -> Result<Answer, Error> {
-        todo!()
-    }
-
-    fn handle_answer(&mut self, offer: Answer) -> Result<(), Error> {
-        todo!()
-    }
-
     fn handle_stun<'a>(
         &mut self,
         addr: SocketAddr,
@@ -150,6 +241,10 @@ impl Peer {
         }
 
         Ok(reply)
+    }
+
+    fn is_stun_verified(&self, addr: &SocketAddr) -> bool {
+        self.verified.contains(addr)
     }
 }
 

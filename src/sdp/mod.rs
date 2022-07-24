@@ -1,12 +1,16 @@
+mod parser;
+
 use std::fmt;
 use std::net::IpAddr;
 use std::num::ParseFloatError;
 use std::str::FromStr;
 
+pub use parser::parse_sdp;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sdp {
     pub session: Session,
-    pub transceivers: Vec<TransceiverInfo>,
+    pub media_lines: Vec<MediaLine>,
 }
 
 /// Credentials for STUN packages.
@@ -155,7 +159,7 @@ pub struct Session {
 }
 
 /// Session id from o= line
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SessionId(pub u64);
 
 /// Bandwidth from b= line
@@ -218,8 +222,9 @@ impl Candidate {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TransceiverInfo {
+/// An m-line
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct MediaLine {
     pub typ: MediaType,
     pub proto: Proto,
     pub pts: Vec<u8>, // payload types 96 97 125 107 from the m= line
@@ -227,7 +232,7 @@ pub struct TransceiverInfo {
     pub attrs: Vec<MediaAttribute>,
 }
 
-impl TransceiverInfo {
+impl MediaLine {
     pub fn mid(&self) -> &str {
         self.attrs
             .iter()
@@ -654,17 +659,30 @@ impl FromStr for F32Eq {
 }
 
 /// "audio", "video", "application"
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub enum MediaType {
+    #[default]
     Audio,
     Video,
     Application,
     Unknown(String),
 }
 
-/// UDP/TLS/RTP/SAVPF or DTLS/SCTP
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Proto(pub String);
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub enum Proto {
+    #[default]
+    Srtp,
+    Sctp,
+}
+
+impl Proto {
+    pub fn proto_line(&self) -> &str {
+        match self {
+            Proto::Srtp => "UDP/TLS/RTP/SAVPF",
+            Proto::Sctp => "DTLS/SCTP",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtMap {
@@ -821,7 +839,7 @@ impl fmt::Display for SimulcastGroup {
 impl fmt::Display for Sdp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.session)?;
-        for m in &self.transceivers {
+        for m in &self.media_lines {
             write!(f, "{}", m)?;
         }
         Ok(())
@@ -884,7 +902,7 @@ impl fmt::Display for Candidate {
     }
 }
 
-impl fmt::Display for TransceiverInfo {
+impl fmt::Display for MediaLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "m={} 9 {} ", self.typ, self.proto,)?;
         let len = self.pts.len();
@@ -919,7 +937,7 @@ impl fmt::Display for MediaType {
 
 impl fmt::Display for Proto {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", self.proto_line())
     }
 }
 
@@ -1233,10 +1251,10 @@ mod test {
         let sdp = Sdp { session: Session { id: SessionId(5_058_682_828_002_148_772),
             bw: None, attrs:
             vec![SessionAttribute::Group { typ: "BUNDLE".into(), mids: vec!["0".into()] }, SessionAttribute::Unused("msid-semantic: WMS 5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into())] },
-            transceivers: vec![
-                TransceiverInfo {
+            media_lines: vec![
+                MediaLine {
                     typ: MediaType::Audio,
-                    proto: Proto("UDP/TLS/RTP/SAVPF".into()),
+                    proto: Proto::Srtp,
                     pts: vec![111, 103, 104, 9, 0, 8, 106, 105, 13, 110, 112, 113, 126],
                     bw: None,
                     attrs: vec![

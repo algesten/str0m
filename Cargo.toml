@@ -13,6 +13,7 @@ panic = "abort"
 tracing = "0.1"
 combine = "4"
 
+# slab = "0.4"
 # crossbeam-queue = "0.3"
 # dashmap = "5"
 

@@ -31,7 +31,7 @@ where
 {
     (session_parser(), many::<Vec<_>, _, _>(media_parser())).map(|(session, media)| Sdp {
         session,
-        transceivers: media,
+        media_lines: media,
     })
 }
 
@@ -247,7 +247,7 @@ where
 /// /////////////////////////////////////////////////// Media description
 
 /// A m= section with attributes, until next m= or EOF
-fn media_parser<Input>() -> impl Parser<Input, Output = TransceiverInfo>
+fn media_parser<Input>() -> impl Parser<Input, Output = MediaLine>
 where
     Input: Stream<Token = char>,
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
@@ -259,7 +259,7 @@ where
         many::<Vec<_>, _, _>(media_attribute_line()),
     )
         .and_then(|((typ, proto, pts), _, bw, attrs)| {
-            let m = TransceiverInfo {
+            let m = MediaLine {
                 typ,
                 proto,
                 pts,
@@ -294,6 +294,11 @@ where
         not_sp().map(|v| MediaType::Unknown(v)),
     ));
 
+    let proto_line = choice((
+        string("UDP/TLS/RTP/SAVPF").map(|_| Proto::Srtp),
+        string("DTLS/SCTP").map(|_| Proto::Sctp),
+    ));
+
     // m=<media> <port> <proto> <fmt> ...
     // <fmt> is: <pt> <pt> <pt> <pt>
     // where <pt> either matches a=rtpmap:<pt> or a=sctpmap:<pt>
@@ -304,7 +309,7 @@ where
             token(' '),
             not_sp(), // port: just set to 9 or something
             token(' '),
-            not_sp(), // proto: UDP/TLS/RTP/SAVPF or DTLS/SCTP
+            proto_line, // proto:  or
             token(' '),
             sep_by(
                 not_sp().and_then(|s| {
@@ -315,7 +320,7 @@ where
             ), // <pt> <pt>
         ),
     )
-    .map(|(typ, _, _, _, proto, _, pts)| (typ, Proto(proto), pts))
+    .map(|(typ, _, _, _, proto, _, pts)| (typ, proto, pts))
 }
 
 /// a=foo:bar lines belongin before the first m= line
@@ -824,14 +829,7 @@ mod test {
         let m = media_line().parse("m=audio 9 UDP/TLS/RTP/SAVPF 111 103\r\n");
         assert_eq!(
             m,
-            Ok((
-                (
-                    MediaType::Audio,
-                    Proto("UDP/TLS/RTP/SAVPF".into()),
-                    vec![111, 103],
-                ),
-                ""
-            ))
+            Ok(((MediaType::Audio, Proto::Srtp, vec![111, 103],), ""))
         );
     }
 
@@ -895,7 +893,7 @@ mod test {
                             SessionAttribute::Unused("msid-semantic:WMS *".into())
                         ]
                     },
-                    transceivers: vec![]
+                    media_lines: vec![]
                 },
                 ""
             ))
@@ -1181,3 +1179,23 @@ mod test {
 // a=rid:hi send
 // a=rid:lo send
 // a=simulcast:send hi;lo
+
+// DataChannel only in Safari
+// v=0
+// o=- 4611516372927609806 2 IN IP4 127.0.0.1
+// s=-
+// t=0 0
+// a=group:BUNDLE 0
+// a=extmap-allow-mixed
+// a=msid-semantic: WMS
+
+// m=application 9 UDP/DTLS/SCTP webrtc-datachannel
+// c=IN IP4 0.0.0.0
+// a=ice-ufrag:HhS+
+// a=ice-pwd:FhYTGhlAtKCe6KFIX8b+AThW
+// a=ice-options:trickle
+// a=fingerprint:sha-256 B4:12:1C:7C:7D:ED:F1:FA:61:07:57:9C:29:BE:58:E3:BC:41:E7:13:8E:7D:D3:9D:1F:94:6E:A5:23:46:94:23
+// a=setup:actpass
+// a=mid:0
+// a=sctp-port:5000
+// a=max-message-size:262144

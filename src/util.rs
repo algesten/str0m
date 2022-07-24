@@ -2,12 +2,16 @@ use hmac::{Hmac, Mac, NewMac};
 use rand::prelude::*;
 use sha1::Sha1;
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::fmt;
 use std::io;
 use std::ops::Add;
 use std::ops::Sub;
+use std::slice;
 use std::str::from_utf8_unchecked;
 use std::time::SystemTime;
+
+use crate::dtls::DTLS_MTU;
 
 pub type HmacSha1 = Hmac<Sha1>;
 
@@ -251,27 +255,62 @@ impl Add for Ts {
     }
 }
 
-#[derive(Default)]
-pub struct ChunkBuffer {
-    //
+pub struct PtrBuffer {
+    src: Option<(*const u8, usize)>,
+    dst: VecDeque<([u8; DTLS_MTU], usize)>,
 }
 
-impl ChunkBuffer {
+impl PtrBuffer {
     pub fn new() -> Self {
-        ChunkBuffer::default()
+        PtrBuffer {
+            src: None,
+            dst: VecDeque::with_capacity(20),
+        }
+    }
+
+    pub fn set_read_src(&mut self, src: &[u8]) {
+        assert!(self.src.is_none());
+        self.src = Some((src.as_ptr(), src.len()));
+    }
+
+    pub fn assert_empty_src(&self) {
+        assert!(self.src.is_none(), "PtrBuffer::src is not None");
     }
 }
 
-impl io::Read for ChunkBuffer {
+impl io::Read for PtrBuffer {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        todo!()
-        // Err(io::Error::new(io::ErrorKind::WouldBlock, "WouldBlock"))
+        if let Some((ptr, len)) = self.src.take() {
+            // SAFETY: this is only safe if the read() of this data is done in the same
+            // scope calling set_read_src().
+            let src = unsafe { slice::from_raw_parts(ptr, len) };
+
+            // The read() call must read the entire buffer in one go, we can't fragment it.
+            assert!(
+                buf.len() >= len,
+                "Read buf too small for entire PtrBuffer::src"
+            );
+
+            (&mut buf[0..len]).copy_from_slice(src);
+
+            Ok(len)
+        } else {
+            Err(io::Error::new(io::ErrorKind::WouldBlock, "WouldBlock"))
+        }
     }
 }
 
-impl io::Write for ChunkBuffer {
+impl io::Write for PtrBuffer {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        todo!()
+        let len = buf.len();
+
+        assert!(len <= DTLS_MTU, "Too large DTLS packet: {}", buf.len());
+
+        self.dst.push_front(([0_u8; DTLS_MTU as usize], len));
+        let dst = self.dst.get_mut(0).unwrap();
+        (&mut dst.0[..]).copy_from_slice(buf);
+
+        Ok(len)
     }
 
     fn flush(&mut self) -> io::Result<()> {

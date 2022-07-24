@@ -22,6 +22,8 @@ const DTLS_SRTP: &str = "SRTP_AES128_CM_SHA1_80";
 const DTLS_EC_CURVE: Nid = Nid::X9_62_PRIME256V1;
 const DTLS_KEY_LABEL: &str = "EXTRACTOR-dtls_srtp";
 
+pub const DTLS_MTU: usize = 1400;
+
 extern "C" {
     pub fn DTLSv1_2_method() -> *const openssl_sys::SSL_METHOD;
 }
@@ -76,12 +78,14 @@ pub fn dtls_create_ctx() -> Result<(SslContext, Fingerprint), Error> {
 
 pub fn dtls_ssl_create(ctx: &SslContext) -> Result<Ssl, Error> {
     let mut ssl = Ssl::new(ctx)?;
+    ssl.set_mtu(DTLS_MTU as u32)?;
 
     let eckey = EcKey::from_curve_name(DTLS_EC_CURVE)?;
     ssl.set_tmp_ecdh(&eckey)?;
 
     Ok(ssl)
 }
+
 pub struct SrtpKeyMaterial([u8; 60]);
 
 impl Deref for SrtpKeyMaterial {
@@ -105,7 +109,7 @@ pub struct Dtls<S> {
 }
 
 pub enum State<S> {
-    Init(Ssl, S),
+    Init(Ssl, S, bool),
     Handshaking(MidHandshakeSslStream<S>),
     Established(SslStream<S>),
     Empty,
@@ -115,9 +119,9 @@ impl<S> Dtls<S>
 where
     S: io::Read + io::Write,
 {
-    pub fn new(ssl: Ssl, stream: S) -> Self {
+    pub fn new(ssl: Ssl, stream: S, active: bool) -> Self {
         Dtls {
-            state: State::Init(ssl, stream),
+            state: State::Init(ssl, stream, active),
             key_mat: None,
             exported: false,
         }
@@ -158,7 +162,13 @@ where
 
         let result = match taken {
             State::Empty | State::Established(_) => unreachable!(),
-            State::Init(ssl, stream) => ssl.accept(stream),
+            State::Init(ssl, stream, active) => {
+                if active {
+                    ssl.connect(stream)
+                } else {
+                    ssl.accept(stream)
+                }
+            }
             State::Handshaking(mid) => mid.handshake(),
         };
 
