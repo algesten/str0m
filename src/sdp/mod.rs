@@ -13,6 +13,37 @@ pub struct Sdp {
     pub media_lines: Vec<MediaLine>,
 }
 
+impl Sdp {
+    pub fn check_consistent(&self) -> Option<String> {
+        let group = self
+            .session
+            .attrs
+            .iter()
+            .find(|a| matches!(a, SessionAttribute::Group { .. }));
+
+        if let Some(SessionAttribute::Group { mids, .. }) = group {
+            if !mids.len() == self.media_lines.len() {
+                return Some(format!("a=group mid count doesn't match m-line count"));
+            }
+            for (m_line, mid) in self.media_lines.iter().zip(mids.iter()) {
+                if m_line.mid() != mid {
+                    return Some(format!(
+                        "Mid order not matching a=group {} != {}",
+                        m_line.mid(),
+                        mid
+                    ));
+                }
+
+                m_line.check_consistent()?;
+            }
+        } else {
+            return Some("Session attribute a=group missing".into());
+        }
+
+        None
+    }
+}
+
 /// Credentials for STUN packages.
 ///
 /// By matching IceCreds in STUN to SDP, we know which STUN belongs to which Peer.
@@ -181,7 +212,7 @@ pub enum SessionAttribute {
     IcePwd(String),
     IceOptions(String),
     Fingerprint(Fingerprint),
-    Setup(String), // active, passive, actpass, holdconn
+    Setup(Setup), // active, passive, actpass, holdconn
     Candidate(Candidate),
     EndOfCandidates,
     Unused(String),
@@ -668,7 +699,7 @@ pub enum MediaType {
     Unknown(String),
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Proto {
     #[default]
     Srtp,
@@ -680,6 +711,24 @@ impl Proto {
         match self {
             Proto::Srtp => "UDP/TLS/RTP/SAVPF",
             Proto::Sctp => "DTLS/SCTP",
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Setup {
+    #[default]
+    ActPass,
+    Active,
+    Passive,
+}
+
+impl Setup {
+    pub fn setup_line(&self) -> &str {
+        match self {
+            Setup::ActPass => "actpass",
+            Setup::Active => "active",
+            Setup::Passive => "passive",
         }
     }
 }
@@ -701,8 +750,8 @@ pub enum MediaAttribute {
     IcePwd(String),
     IceOptions(String),
     Fingerprint(Fingerprint),
-    Setup(String), // active, passive, actpass, holdconn
-    Mid(String),   // 0, 1, 2
+    Setup(Setup), // active, passive, actpass, holdconn
+    Mid(String),  // 0, 1, 2
     // a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level
     // a=extmap:2 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
     ExtMap(ExtMap),
@@ -879,7 +928,7 @@ impl fmt::Display for SessionAttribute {
                     FingerprintFmt(&v.bytes)
                 )?;
             }
-            Setup(v) => write!(f, "a=setup:{}\r\n", v)?,
+            Setup(v) => write!(f, "a=setup:{}\r\n", v.setup_line())?,
             Candidate(c) => write!(f, "{}", c)?,
             EndOfCandidates => write!(f, "a=end-of-candidates\r\n")?,
             Unused(v) => write!(f, "a={}\r\n", v)?,
@@ -957,7 +1006,7 @@ impl fmt::Display for MediaAttribute {
                     FingerprintFmt(&v.bytes)
                 )?;
             }
-            Setup(v) => write!(f, "a=setup:{}\r\n", v)?,
+            Setup(v) => write!(f, "a=setup:{}\r\n", v.setup_line())?,
             Mid(v) => write!(f, "a=mid:{}\r\n", v)?,
             ExtMap(e) => {
                 if e.ext_type.is_filtered() {
@@ -1263,7 +1312,7 @@ mod test {
                         MediaAttribute::IcePwd("0zV/Yu3y8aDzbHgqWhnVQhqP".into()),
                         MediaAttribute::IceOptions("trickle".into()),
                         MediaAttribute::Fingerprint(Fingerprint { hash_func: "sha-256".into(), bytes: vec![140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8, 128, 168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73, 37, 115, 70, 96, 32, 220] }),
-                        MediaAttribute::Setup("actpass".into()),
+                        MediaAttribute::Setup(Setup::ActPass),
                         MediaAttribute::Mid("0".into()),
                         MediaAttribute::ExtMap(ExtMap { id: 1, direction: None, ext_type: RtpExtensionType::AudioLevel, ext: None }),
                         MediaAttribute::ExtMap(ExtMap { id: 2, direction: None, ext_type: RtpExtensionType::AbsoluteSendTime, ext: None }),

@@ -19,20 +19,6 @@ pub enum Error {
     Io(io::Error),
 }
 
-impl Error {
-    pub(crate) fn is_fatal(&self) -> bool {
-        use Error::*;
-        match self {
-            UnknownUdpData => false,
-            StunParse(_) => false, // UDP packet might be damaged
-            StunError(_) => true,  // Bad STUN state, better abort.
-            SdpParse(_) => true,   // If we can't understand the SDP, we can't continue.
-            OpenSsl(_) => true,    // DTLS setup errors
-            Io(_) => true,         // For async we should explicitly handle WouldBlock.
-        }
-    }
-}
-
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Error::*;

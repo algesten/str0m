@@ -1,6 +1,6 @@
 //! Media (m-line) related stuff.
 
-use crate::sdp::{MediaLine, MediaType};
+use crate::sdp::{MediaAttribute, MediaLine, MediaType, Proto};
 
 ///
 pub struct Media {
@@ -13,6 +13,32 @@ pub struct Media {
 
 impl Media {
     pub fn new(typ: MediaType) -> Self {
-        todo!()
+        Media {
+            media_line: MediaLine {
+                typ,
+                proto: Proto::Srtp,
+                pts: vec![96],
+                bw: None,
+                attrs: vec![MediaAttribute::RtcpMuxOnly],
+            },
+
+            need_negotiating: false,
+        }
+    }
+
+    pub fn mid(&self) -> &str {
+        self.media_line.mid()
+    }
+
+    pub fn media_line(&self) -> &MediaLine {
+        &self.media_line
+    }
+
+    pub fn include_in_local_sdp(&self) -> bool {
+        !self.need_negotiating
+    }
+
+    pub fn include_in_remote_sdp(&self) -> bool {
+        self.need_negotiating
     }
 }

@@ -154,8 +154,14 @@ where
     )
     .map(|(hash_func, _, bytes)| SessionAttribute::Fingerprint(Fingerprint { hash_func, bytes }));
 
+    let setup_val = choice((
+        string("actpass").map(|_| Setup::ActPass),
+        string("active").map(|_| Setup::Active),
+        string("passive").map(|_| Setup::Passive),
+    ));
+
     // a=setup:actpass
-    let setup = attribute_line("setup", any_value()).map(SessionAttribute::Setup);
+    let setup = attribute_line("setup", setup_val).map(SessionAttribute::Setup);
 
     // a=candidate
     let cand = candidate().map(SessionAttribute::Candidate);
@@ -354,8 +360,14 @@ where
     )
     .map(|(hash_func, _, bytes)| MediaAttribute::Fingerprint(Fingerprint { hash_func, bytes }));
 
+    let setup_val = choice((
+        string("actpass").map(|_| Setup::ActPass),
+        string("active").map(|_| Setup::Active),
+        string("passive").map(|_| Setup::Passive),
+    ));
+
     // a=setup:actpass
-    let setup = attribute_line("setup", any_value()).map(MediaAttribute::Setup);
+    let setup = attribute_line("setup", setup_val).map(MediaAttribute::Setup);
 
     // a=mid:0
     let mid = attribute_line("mid", any_value()).map(MediaAttribute::Mid);
@@ -1188,7 +1200,6 @@ mod test {
 // a=group:BUNDLE 0
 // a=extmap-allow-mixed
 // a=msid-semantic: WMS
-
 // m=application 9 UDP/DTLS/SCTP webrtc-datachannel
 // c=IN IP4 0.0.0.0
 // a=ice-ufrag:HhS+

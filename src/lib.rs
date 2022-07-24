@@ -24,7 +24,8 @@ use dtls::{dtls_create_ctx, dtls_ssl_create, Dtls};
 pub use error::Error;
 use media::Media;
 use openssl::ssl::SslContext;
-use sdp::{parse_sdp, Fingerprint, IceCreds, MediaType, Sdp, Session, SessionId};
+use sdp::{parse_sdp, Fingerprint, IceCreds, MediaType, Sdp};
+use sdp::{Session, SessionAttribute, SessionId};
 use stun::StunMessage;
 use udp::UdpKind;
 use util::{random_id, PtrBuffer, Ts};
@@ -271,18 +272,65 @@ pub struct Offer(Sdp);
 
 pub struct Answer(Sdp);
 
-impl<'a> TryFrom<&'a [u8]> for NetworkData<'a> {
-    type Error = Error;
+impl<T> Peer<T> {
+    fn as_local_sdp(&self) -> Sdp {
+        let sdp = Sdp {
+            session: Session {
+                id: self.session_id,
+                bw: None,
+                attrs: vec![SessionAttribute::Group {
+                    typ: "BUNDLE".into(),
+                    mids: self
+                        .media
+                        .iter()
+                        .filter(|m| m.include_in_local_sdp())
+                        .map(|m| m.mid().to_string())
+                        .collect(),
+                }],
+            },
+            media_lines: self
+                .media
+                .iter()
+                .filter(|m| m.include_in_local_sdp())
+                .map(|m| m.media_line().clone())
+                .collect(),
+        };
 
-    fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
-        let kind = UdpKind::try_from(value)?;
+        if let Some(err) = sdp.check_consistent() {
+            panic!("{}", err);
+        }
 
-        Ok(match kind {
-            UdpKind::Stun => NetworkData::Stun(stun::parse_message(&value)?),
-            UdpKind::Dtls => todo!(),
-            UdpKind::Rtp => todo!(),
-            UdpKind::Rtcp => todo!(),
-        })
+        sdp
+    }
+
+    fn as_remote_sdp(&self) -> Sdp {
+        let sdp = Sdp {
+            session: Session {
+                id: self.session_id,
+                bw: None,
+                attrs: vec![SessionAttribute::Group {
+                    typ: "BUNDLE".into(),
+                    mids: self
+                        .media
+                        .iter()
+                        .filter(|m| m.include_in_remote_sdp())
+                        .map(|m| m.mid().to_string())
+                        .collect(),
+                }],
+            },
+            media_lines: self
+                .media
+                .iter()
+                .filter(|m| m.include_in_remote_sdp())
+                .map(|m| m.media_line().clone())
+                .collect(),
+        };
+
+        if let Some(err) = sdp.check_consistent() {
+            panic!("{}", err);
+        }
+
+        sdp
     }
 }
 
@@ -365,5 +413,20 @@ impl<'a> TryFrom<&'a str> for Answer {
     fn try_from(value: &'a str) -> Result<Self, Self::Error> {
         let sdp = parse_sdp(value)?;
         Ok(Answer(sdp))
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for NetworkData<'a> {
+    type Error = Error;
+
+    fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
+        let kind = UdpKind::try_from(value)?;
+
+        Ok(match kind {
+            UdpKind::Stun => NetworkData::Stun(stun::parse_message(&value)?),
+            UdpKind::Dtls => todo!(),
+            UdpKind::Rtp => todo!(),
+            UdpKind::Rtcp => todo!(),
+        })
     }
 }
