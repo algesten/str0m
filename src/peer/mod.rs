@@ -1,3 +1,4 @@
+mod config;
 mod init;
 mod inout;
 mod serialize;
@@ -11,14 +12,15 @@ use std::net::SocketAddr;
 
 use crate::dtls::{dtls_create_ctx, dtls_ssl_create, Dtls};
 use crate::media::Media;
-use crate::sdp::SessionId;
+use crate::sdp::{AttributeExt, Sdp};
 use crate::sdp::{Fingerprint, IceCreds};
-use crate::sdp::{MediaAttributeExt, Sdp};
+use crate::sdp::{SessionId, Setup};
 use crate::stun::StunMessage;
 use crate::util::{random_id, PtrBuffer, Ts};
 use crate::Error;
 
 pub use self::inout::{Answer, Input, NetworkData, Offer, Output};
+pub use config::PeerConfig;
 
 /// States the `Peer` can be in.
 pub mod state {
@@ -34,8 +36,13 @@ pub mod state {
 
 /// A single peer connection.
 pub struct Peer<State> {
+    config: PeerConfig,
+
     /// Unique id of the session, as transmitted on the o= line.
     session_id: SessionId,
+
+    /// Whether this peer is active, passive or actpass.
+    setup: Setup,
 
     /// State of STUN.
     stun_state: StunState,
@@ -145,13 +152,20 @@ impl<T> Peer<T> {
     /// New peers starts out in the [`state::Init`] state which requires an SDP offer/answer
     /// dance to become active.
     pub fn new() -> Result<Peer<state::Init>, Error> {
+        Peer::<T>::with_config(PeerConfig::default())
+    }
+
+    pub(crate) fn with_config(config: PeerConfig) -> Result<Peer<state::Init>, Error> {
         let (ctx, local_fingerprint) = dtls_create_ctx()?;
 
         let mut rng = rand::thread_rng();
         let id = (u64::MAX as f64 * rng.gen::<f64>()) as u64;
+        let setup = config.offset_setup;
 
         let peer = Peer {
+            config,
             session_id: SessionId(id),
+            setup,
             stun_state: StunState {
                 local_creds: IceCreds {
                     username: random_id::<8>().to_string(),
@@ -200,17 +214,82 @@ impl<T> Peer<T> {
     }
 
     fn handle_offer(&mut self, offer: Offer) -> Result<Answer, Error> {
-        self.extract_remote_secrets(&offer.0);
+        let sdp = &offer.0;
+        let x = self.update_from_session_media_attriutes(sdp)?;
+
+        // If we receive an offer, we are not allowed to answer with actpass.
+        if self.setup == Setup::ActPass {
+            self.setup = if self.config.answer_active {
+                Setup::Active
+            } else {
+                Setup::Passive
+            }
+        }
+
+        if let Some(remote_setup) = x {
+            self.setup = self.setup.compare_to_remote(remote_setup).ok_or_else(|| {
+                Error::SdpError(format!(
+                    "Incompatible a=setup, local={:?}, remote={:?}",
+                    self.setup, remote_setup
+                ))
+            })?;
+        }
+
+        if self.dtls_state.dtls.is_none() && self.setup == Setup::Active {
+            // A special, case, if remote offer is actpass or passive, we
+            // will assume active role, and can start DTLS at the same time
+            // as returning the SDP answer.
+            self.start_dtls();
+        }
+
         todo!()
     }
 
     fn handle_answer(&mut self, answer: Answer) -> Result<(), Error> {
-        self.extract_remote_secrets(&answer.0);
+        let sdp = &answer.0;
+        let x = self.update_from_session_media_attriutes(sdp)?;
+
+        if let Some(remote_setup) = x {
+            if remote_setup == Setup::ActPass {
+                return Err(Error::SdpError(
+                    "Remote incorrectly answered with a=setup:actpass".to_string(),
+                ));
+            }
+
+            self.setup = self.setup.compare_to_remote(remote_setup).ok_or_else(|| {
+                Error::SdpError(format!(
+                    "Incompatible a=setup, local={:?}, remote={:?}",
+                    self.setup, remote_setup
+                ))
+            })?;
+        }
+
+        if self.dtls_state.dtls.is_none() {
+            self.start_dtls();
+        }
+
         todo!()
     }
 
-    fn extract_remote_secrets(&mut self, sdp: &Sdp) {
+    fn update_from_session_media_attriutes(&mut self, sdp: &Sdp) -> Result<Option<Setup>, Error> {
+        let mut setups = vec![];
+
+        // Session level
+        if let Some(setup) = sdp.session.attrs.setup() {
+            setups.push(setup);
+        }
+        if let Some(creds) = sdp.session.attrs.ice_creds() {
+            self.stun_state.remote_creds.insert(creds);
+        }
+        if let Some(fp) = sdp.session.attrs.fingerprint() {
+            self.dtls_state.remote_fingerprints.insert(fp);
+        }
+
+        // M-line level
         for mline in &sdp.media_lines {
+            if let Some(setup) = mline.attrs.setup() {
+                setups.push(setup);
+            }
             if let Some(creds) = mline.attrs.ice_creds() {
                 self.stun_state.remote_creds.insert(creds);
             }
@@ -218,6 +297,33 @@ impl<T> Peer<T> {
                 self.dtls_state.remote_fingerprints.insert(fp);
             }
         }
+
+        let mut setup = None;
+
+        if !setups.is_empty() {
+            let first = &setups[0];
+            if !setups.iter().all(|s| s == first) {
+                return Err(Error::SdpError(
+                    "Remote SDP got conflicting a=setup lines".to_string(),
+                ));
+            }
+            setup = Some(*first);
+        }
+
+        Ok(setup)
+    }
+
+    fn start_dtls(&mut self) -> Result<(), Error> {
+        assert!(self.dtls_state.dtls.is_none());
+        assert!(self.setup != Setup::ActPass);
+
+        let active = self.setup == Setup::Active;
+
+        let ssl = dtls_ssl_create(&self.dtls_state.ctx)?;
+        let dtls = Dtls::new(ssl, PtrBuffer::new(), active);
+        self.dtls_state.dtls = Some(dtls);
+
+        Ok(())
     }
 }
 

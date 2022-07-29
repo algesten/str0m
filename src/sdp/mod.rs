@@ -56,8 +56,6 @@ pub struct IceCreds {
 }
 
 pub trait MediaAttributeExt {
-    fn ice_creds(&self) -> Option<IceCreds>;
-    fn fingerprint(&self) -> Option<Fingerprint>;
     fn extmaps(&self) -> Vec<ExtMap>;
     fn ssrc_info(&self) -> Vec<SsrcInfo>;
 }
@@ -72,41 +70,6 @@ pub struct SsrcInfo {
 }
 
 impl MediaAttributeExt for Vec<MediaAttribute> {
-    fn ice_creds(&self) -> Option<IceCreds> {
-        let username = self.iter().find_map(|m| {
-            if let MediaAttribute::IceUfrag(v) = m {
-                Some(v)
-            } else {
-                None
-            }
-        })?;
-
-        let password = self.iter().find_map(|m| {
-            if let MediaAttribute::IcePwd(v) = m {
-                Some(v)
-            } else {
-                None
-            }
-        })?;
-
-        Some(IceCreds {
-            username: username.to_string(),
-            password: password.to_string(),
-        })
-    }
-
-    fn fingerprint(&self) -> Option<Fingerprint> {
-        let fp = self.iter().find_map(|m| {
-            if let MediaAttribute::Fingerprint(v) = m {
-                Some(v)
-            } else {
-                None
-            }
-        })?;
-
-        Some(fp.clone())
-    }
-
     fn extmaps(&self) -> Vec<ExtMap> {
         let mut ret = vec![];
 
@@ -158,60 +121,96 @@ impl MediaAttributeExt for Vec<MediaAttribute> {
     }
 }
 
-pub trait IceExt {
-    fn username(&self) -> Option<&str>;
-    fn password(&self) -> Option<&str>;
-    fn fingerprint(&self) -> Option<&Fingerprint>;
+pub trait AttributeExt {
+    fn setup(&self) -> Option<Setup>;
+    fn ice_creds(&self) -> Option<IceCreds>;
+    fn fingerprint(&self) -> Option<Fingerprint>;
 }
 
-impl IceExt for Vec<MediaAttribute> {
-    fn username(&self) -> Option<&str> {
-        for a in self {
-            if let MediaAttribute::IceUfrag(v) = a {
-                return Some(v);
+impl AttributeExt for Vec<MediaAttribute> {
+    fn setup(&self) -> Option<Setup> {
+        let setup = self.iter().find_map(|m| {
+            if let MediaAttribute::Setup(v) = m {
+                Some(v)
+            } else {
+                None
             }
-        }
-        None
+        })?;
+
+        Some(*setup)
     }
-    fn password(&self) -> Option<&str> {
-        for a in self {
-            if let MediaAttribute::IcePwd(v) = a {
-                return Some(v);
+
+    fn ice_creds(&self) -> Option<IceCreds> {
+        let username = self.iter().find_map(|m| {
+            if let MediaAttribute::IceUfrag(v) = m {
+                Some(v)
+            } else {
+                None
             }
-        }
-        None
+        })?;
+
+        let password = self.iter().find_map(|m| {
+            if let MediaAttribute::IcePwd(v) = m {
+                Some(v)
+            } else {
+                None
+            }
+        })?;
+
+        Some(IceCreds {
+            username: username.to_string(),
+            password: password.to_string(),
+        })
     }
-    fn fingerprint(&self) -> Option<&Fingerprint> {
+    fn fingerprint(&self) -> Option<Fingerprint> {
         for a in self {
             if let MediaAttribute::Fingerprint(v) = a {
-                return Some(v);
+                return Some(v.clone());
             }
         }
         None
     }
 }
 
-impl IceExt for Vec<SessionAttribute> {
-    fn username(&self) -> Option<&str> {
-        for a in self {
-            if let SessionAttribute::IceUfrag(v) = a {
-                return Some(v);
+impl AttributeExt for Vec<SessionAttribute> {
+    fn setup(&self) -> Option<Setup> {
+        let setup = self.iter().find_map(|m| {
+            if let SessionAttribute::Setup(v) = m {
+                Some(v)
+            } else {
+                None
             }
-        }
-        None
+        })?;
+
+        Some(*setup)
     }
-    fn password(&self) -> Option<&str> {
-        for a in self {
-            if let SessionAttribute::IcePwd(v) = a {
-                return Some(v);
+
+    fn ice_creds(&self) -> Option<IceCreds> {
+        let username = self.iter().find_map(|m| {
+            if let SessionAttribute::IceUfrag(v) = m {
+                Some(v)
+            } else {
+                None
             }
-        }
-        None
+        })?;
+
+        let password = self.iter().find_map(|m| {
+            if let SessionAttribute::IcePwd(v) = m {
+                Some(v)
+            } else {
+                None
+            }
+        })?;
+
+        Some(IceCreds {
+            username: username.to_string(),
+            password: password.to_string(),
+        })
     }
-    fn fingerprint(&self) -> Option<&Fingerprint> {
+    fn fingerprint(&self) -> Option<Fingerprint> {
         for a in self {
             if let SessionAttribute::Fingerprint(v) = a {
-                return Some(v);
+                return Some(v.clone());
             }
         }
         None
@@ -777,6 +776,21 @@ impl Setup {
             Setup::ActPass => "actpass",
             Setup::Active => "active",
             Setup::Passive => "passive",
+        }
+    }
+
+    pub fn compare_to_remote(&self, remote: Setup) -> Option<Setup> {
+        use Setup::*;
+        match (self, remote) {
+            (ActPass, ActPass) => None,
+            (ActPass, Active) => Some(Passive),
+            (ActPass, Passive) => Some(Active),
+            (Active, ActPass) => Some(Active),
+            (Active, Active) => None,
+            (Active, Passive) => Some(Active),
+            (Passive, ActPass) => Some(Passive),
+            (Passive, Active) => Some(Passive),
+            (Passive, Passive) => None,
         }
     }
 }

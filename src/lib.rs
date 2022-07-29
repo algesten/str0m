@@ -16,4 +16,4 @@ mod util;
 
 pub use error::Error;
 
-pub use peer::{state, Answer, Input, NetworkData, Offer, Output, Peer};
+pub use peer::{state, Answer, Input, NetworkData, Offer, Output, Peer, PeerConfig};

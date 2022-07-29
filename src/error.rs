@@ -13,6 +13,8 @@ pub enum Error {
     StunError(String),
     /// Parsing of SDP failed.
     SdpParse(String),
+    /// SDP validation errors.
+    SdpError(String),
     /// Some error from OpenSSL layer (used for DTLS).
     OpenSsl(ErrorStack),
     /// Generic std::io::Error.
@@ -27,6 +29,7 @@ impl fmt::Display for Error {
             StunParse(v) => write!(f, "STUN parse failed: {}", v),
             StunError(v) => write!(f, "STUN handling failed: {}", v),
             SdpParse(v) => write!(f, "SDP parse failed: {}", v),
+            SdpError(v) => write!(f, "SDP error: {}", v),
             OpenSsl(v) => write!(f, "openssl: {}", v),
             Io(v) => write!(f, "io: {}", v),
         }
