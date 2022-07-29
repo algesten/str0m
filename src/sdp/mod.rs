@@ -56,6 +56,8 @@ pub struct IceCreds {
 }
 
 pub trait MediaAttributeExt {
+    fn ice_creds(&self) -> Option<IceCreds>;
+    fn fingerprint(&self) -> Option<Fingerprint>;
     fn extmaps(&self) -> Vec<ExtMap>;
     fn ssrc_info(&self) -> Vec<SsrcInfo>;
 }
@@ -70,6 +72,41 @@ pub struct SsrcInfo {
 }
 
 impl MediaAttributeExt for Vec<MediaAttribute> {
+    fn ice_creds(&self) -> Option<IceCreds> {
+        let username = self.iter().find_map(|m| {
+            if let MediaAttribute::IceUfrag(v) = m {
+                Some(v)
+            } else {
+                None
+            }
+        })?;
+
+        let password = self.iter().find_map(|m| {
+            if let MediaAttribute::IcePwd(v) = m {
+                Some(v)
+            } else {
+                None
+            }
+        })?;
+
+        Some(IceCreds {
+            username: username.to_string(),
+            password: password.to_string(),
+        })
+    }
+
+    fn fingerprint(&self) -> Option<Fingerprint> {
+        let fp = self.iter().find_map(|m| {
+            if let MediaAttribute::Fingerprint(v) = m {
+                Some(v)
+            } else {
+                None
+            }
+        })?;
+
+        Some(fp.clone())
+    }
+
     fn extmaps(&self) -> Vec<ExtMap> {
         let mut ret = vec![];
 
@@ -218,7 +255,7 @@ pub enum SessionAttribute {
     Unused(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Fingerprint {
     pub hash_func: String,
     pub bytes: Vec<u8>,
@@ -524,6 +561,17 @@ pub enum Direction {
 impl Direction {
     pub fn is_recv(&self) -> bool {
         matches!(self, Direction::RecvOnly | Direction::SendRecv)
+    }
+}
+
+impl From<Direction> for MediaAttribute {
+    fn from(v: Direction) -> Self {
+        match v {
+            Direction::SendOnly => MediaAttribute::SendOnly,
+            Direction::RecvOnly => MediaAttribute::RecvOnly,
+            Direction::SendRecv => MediaAttribute::SendRecv,
+            Direction::Inactive => MediaAttribute::Inactive,
+        }
     }
 }
 
