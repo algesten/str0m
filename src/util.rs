@@ -11,7 +11,7 @@ use std::slice;
 use std::str::from_utf8_unchecked;
 use std::time::SystemTime;
 
-use crate::dtls::DTLS_MTU;
+use crate::UDP_MTU;
 
 pub type HmacSha1 = Hmac<Sha1>;
 
@@ -257,7 +257,7 @@ impl Add for Ts {
 
 pub struct PtrBuffer {
     src: Option<(*const u8, usize)>,
-    dst: VecDeque<([u8; DTLS_MTU], usize)>,
+    dst: VecDeque<([u8; UDP_MTU], usize)>,
 }
 
 impl PtrBuffer {
@@ -304,9 +304,9 @@ impl io::Write for PtrBuffer {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         let len = buf.len();
 
-        assert!(len <= DTLS_MTU, "Too large DTLS packet: {}", buf.len());
+        assert!(len <= UDP_MTU, "Too large DTLS packet: {}", buf.len());
 
-        self.dst.push_front(([0_u8; DTLS_MTU as usize], len));
+        self.dst.push_front(([0_u8; UDP_MTU as usize], len));
         let dst = self.dst.get_mut(0).unwrap();
         (&mut dst.0[..]).copy_from_slice(buf);
 

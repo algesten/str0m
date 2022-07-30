@@ -8,7 +8,7 @@ impl<T> Peer<T> {
             self.stun_state.local_creds.username.clone(),
         )];
 
-        let mut sdp = Sdp {
+        let sdp = Sdp {
             session: Session {
                 id: self.session_id,
                 bw: None,

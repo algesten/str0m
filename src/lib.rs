@@ -14,6 +14,9 @@ mod stun;
 mod udp;
 mod util;
 
+pub(crate) const UDP_MTU: usize = 1400;
+
 pub use error::Error;
 
 pub use peer::{state, Answer, Input, NetworkData, Offer, Output, Peer, PeerConfig};
+pub use util::Ts;

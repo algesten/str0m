@@ -51,8 +51,13 @@ impl Peer<state::Connecting> {
         ts: Ts,
         addr: SocketAddr,
         data: NetworkData<'a>,
-    ) -> Result<Output<'a>, Error> {
+    ) -> Result<(), Error> {
         let input = (addr, data).into();
-        self._handle_input(ts, input)
+
+        let out = self._handle_input(ts, input)?;
+        // When we only provide network data as input, there should be no output.
+        assert!(matches!(out, Output::None));
+
+        Ok(())
     }
 }

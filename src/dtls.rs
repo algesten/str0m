@@ -14,15 +14,13 @@ use std::ops::Deref;
 
 use crate::sdp::Fingerprint;
 use crate::util::unix_time;
-use crate::Error;
+use crate::{Error, UDP_MTU};
 
 const RSA_F4: u32 = 0x10001;
 const DTLS_CIPHERS: &str = "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
 const DTLS_SRTP: &str = "SRTP_AES128_CM_SHA1_80";
 const DTLS_EC_CURVE: Nid = Nid::X9_62_PRIME256V1;
 const DTLS_KEY_LABEL: &str = "EXTRACTOR-dtls_srtp";
-
-pub const DTLS_MTU: usize = 1400;
 
 extern "C" {
     pub fn DTLSv1_2_method() -> *const openssl_sys::SSL_METHOD;
@@ -78,7 +76,7 @@ pub fn dtls_create_ctx() -> Result<(SslContext, Fingerprint), Error> {
 
 pub fn dtls_ssl_create(ctx: &SslContext) -> Result<Ssl, Error> {
     let mut ssl = Ssl::new(ctx)?;
-    ssl.set_mtu(DTLS_MTU as u32)?;
+    ssl.set_mtu(UDP_MTU as u32)?;
 
     let eckey = EcKey::from_curve_name(DTLS_EC_CURVE)?;
     ssl.set_tmp_ecdh(&eckey)?;
@@ -124,6 +122,18 @@ where
             state: State::Init(ssl, stream, active),
             key_mat: None,
             exported: false,
+        }
+    }
+
+    pub fn complete_handshake_until_block(&mut self) -> Result<bool, Error> {
+        if let Err(e) = self.handshaken() {
+            if e.kind() != io::ErrorKind::WouldBlock {
+                Ok(false)
+            } else {
+                Err(e.into())
+            }
+        } else {
+            Ok(true)
         }
     }
 

@@ -3,6 +3,8 @@ use openssl::error::ErrorStack;
 use std::fmt;
 use std::io;
 
+#[derive(Debug)]
+#[non_exhaustive]
 /// Error states of str0m RTC.
 pub enum Error {
     /// The UDP data packet is not recognized.

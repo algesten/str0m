@@ -1,4 +1,5 @@
 use std::convert::TryFrom;
+use std::fmt;
 use std::net::SocketAddr;
 use std::ops::Deref;
 
@@ -7,68 +8,68 @@ use crate::stun::{self, StunMessage};
 use crate::udp::UdpKind;
 use crate::Error;
 
-pub enum Input<'a> {
-    Tick(&'a mut [u8]),
+pub struct Input<'a>(pub(crate) InputInner<'a>);
+
+pub(crate) enum InputInner<'a> {
     Offer(Offer),
     Answer(Answer),
     Network(SocketAddr, NetworkData<'a>),
 }
 
-pub enum Output<'a> {
-    Yield,
-    NeedTick,
+#[derive(Debug)]
+pub enum Output {
+    None,
     Offer(Offer),
     Answer(Answer),
-    Network(SocketAddr, NetworkData<'a>),
 }
 
+#[derive(Debug)]
 pub enum NetworkData<'a> {
+    #[doc(hidden)]
     Stun(StunMessage<'a>),
+    #[doc(hidden)]
+    Dtls(&'a [u8]),
 }
 
+#[derive(Debug)]
 pub struct Offer(pub(crate) Sdp);
 
+#[derive(Debug)]
 pub struct Answer(pub(crate) Sdp);
 
 impl<'a> From<Offer> for Input<'a> {
     fn from(v: Offer) -> Self {
-        Input::Offer(v)
+        Input(InputInner::Offer(v))
     }
 }
 
 impl<'a> From<Answer> for Input<'a> {
     fn from(v: Answer) -> Self {
-        Input::Answer(v)
+        Input(InputInner::Answer(v))
     }
 }
 
-impl<'a> From<Offer> for Output<'a> {
+impl From<Offer> for Output {
     fn from(v: Offer) -> Self {
         Output::Offer(v)
     }
 }
 
-impl<'a> From<Answer> for Output<'a> {
+impl From<Answer> for Output {
     fn from(v: Answer) -> Self {
         Output::Answer(v)
     }
 }
 
-impl<'a> From<()> for Output<'a> {
+impl<'a> From<()> for Output {
     fn from(_: ()) -> Self {
-        Output::NeedTick
+        Output::None
     }
 }
 
 impl<'a> From<(SocketAddr, NetworkData<'a>)> for Input<'a> {
     fn from((addr, data): (SocketAddr, NetworkData<'a>)) -> Self {
-        Input::Network(addr, data)
-    }
-}
-
-impl<'a> From<(SocketAddr, NetworkData<'a>)> for Output<'a> {
-    fn from((addr, data): (SocketAddr, NetworkData<'a>)) -> Self {
-        Output::Network(addr, data)
+        Input(InputInner::Network(addr, data))
     }
 }
 
@@ -124,5 +125,21 @@ impl<'a> TryFrom<&'a [u8]> for NetworkData<'a> {
             UdpKind::Rtp => todo!(),
             UdpKind::Rtcp => todo!(),
         })
+    }
+}
+
+impl<'a> fmt::Debug for Input<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Input(")?;
+        write!(
+            f,
+            "{}",
+            match &self.0 {
+                InputInner::Offer(_) => "Offer",
+                InputInner::Answer(_) => "Answer",
+                InputInner::Network(_, _) => "NetworkData",
+            }
+        )?;
+        write!(f, ")")
     }
 }

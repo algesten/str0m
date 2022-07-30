@@ -7,18 +7,19 @@ use openssl::ssl::SslContext;
 use rand::Rng;
 use std::collections::HashSet;
 use std::marker::PhantomData;
-use std::mem;
 use std::net::SocketAddr;
+use std::{io, mem};
 
-use crate::dtls::{dtls_create_ctx, dtls_ssl_create, Dtls};
+use crate::dtls::{dtls_create_ctx, dtls_ssl_create, Dtls, SrtpKeyMaterial};
 use crate::media::Media;
 use crate::sdp::{AttributeExt, Sdp};
 use crate::sdp::{Fingerprint, IceCreds};
 use crate::sdp::{SessionId, Setup};
 use crate::stun::StunMessage;
 use crate::util::{random_id, PtrBuffer, Ts};
-use crate::Error;
+use crate::{Error, UDP_MTU};
 
+use self::inout::InputInner;
 pub use self::inout::{Answer, Input, NetworkData, Offer, Output};
 pub use config::PeerConfig;
 
@@ -85,18 +86,22 @@ struct DtlsState {
 
     /// Remote fingerprints for DTLS. Obtained from SDP.
     remote_fingerprints: HashSet<Fingerprint>,
+
+    /// The master key for the SRTP decryption/encryption.
+    /// Obtained as a side effect of the DTLS handshake.
+    srtp_key: Option<SrtpKeyMaterial>,
 }
 
 impl StunState {
     fn accepts_stun(&self, addr: SocketAddr, stun: &StunMessage<'_>) -> Result<bool, Error> {
         let (local_username, remote_username) = stun.local_remote_username();
 
-        let remote_creds_has_username = self
+        let creds_in_remote_sdp = self
             .remote_creds
             .iter()
             .any(|c| c.username == remote_username);
 
-        if !remote_creds_has_username {
+        if !creds_in_remote_sdp {
             // this is not a fault, the packet might not be for this peer.
             return Ok(false);
         }
@@ -120,11 +125,7 @@ impl StunState {
         Ok(true)
     }
 
-    fn handle_stun<'a>(
-        &mut self,
-        addr: SocketAddr,
-        stun: StunMessage<'a>,
-    ) -> Result<StunMessage<'a>, Error> {
+    fn handle_stun<'a>(&mut self, addr: SocketAddr, stun: StunMessage<'a>) -> Result<(), Error> {
         let reply = stun.reply()?;
 
         // on the back of a successful (authenticated) stun bind, we update
@@ -133,7 +134,10 @@ impl StunState {
             trace!("STUN new verified peer ({})", addr);
         }
 
-        Ok(reply)
+        let mut vec = vec![0; UDP_MTU];
+        let count = reply.to_bytes(&self.local_creds.password, &mut vec)?;
+
+        Ok(())
     }
 
     fn is_stun_verified(&self, addr: &SocketAddr) -> bool {
@@ -179,6 +183,7 @@ impl<T> Peer<T> {
                 dtls: None,
                 local_fingerprint,
                 remote_fingerprints: HashSet::new(),
+                srtp_key: None,
             },
             media: vec![],
             _ph: PhantomData,
@@ -187,29 +192,41 @@ impl<T> Peer<T> {
         Ok(peer)
     }
 
-    fn accepts(&self, input: &Input<'_>) -> Result<bool, Error> {
-        use Input::*;
+    /// Tests whether this [`Peer`] accepts the input.
+    ///
+    /// This is useful in a server scenario when multiplexing several Peers on the same UDP port.
+    pub fn accepts(&self, input: &Input<'_>) -> Result<bool, Error> {
+        use InputInner::*;
         use NetworkData::*;
-        match input {
-            Tick(_) => Ok(true),
-            Offer(_) => Ok(true),
-            Answer(_) => Ok(true),
-            Network(addr, data) => match data {
-                Stun(stun) => self.stun_state.accepts_stun(*addr, stun),
-            },
-        }
+        Ok(match &input.0 {
+            Offer(_) => true,  // TODO check against previous
+            Answer(_) => true, // TODO check against previous
+            Network(addr, data) => {
+                if let Stun(stun) = data {
+                    self.stun_state.accepts_stun(*addr, stun)?
+                } else {
+                    // All other kind of network input must be "unlocked" by STUN recognizing the
+                    // ice-ufrag/passwd from the SDP. Any sucessful STUN cause the remote IP/port
+                    // combo to be considered associated with this peer.
+                    self.stun_state.is_stun_verified(addr)
+                }
+            }
+        })
     }
 
-    fn _handle_input<'a>(&mut self, ts: Ts, input: Input<'a>) -> Result<Output<'a>, Error> {
-        use Input::*;
+    fn _handle_input(&mut self, ts: Ts, input: Input<'_>) -> Result<Output, Error> {
+        use InputInner::*;
         use NetworkData::*;
-        Ok(match input {
-            Tick(buf) => Output::Yield,
+        Ok(match input.0 {
             Offer(v) => self.handle_offer(v)?.into(),
             Answer(v) => self.handle_answer(v)?.into(),
-            Network(addr, data) => match data {
-                Stun(stun) => (addr, self.stun_state.handle_stun(addr, stun)?.into()).into(),
-            },
+            Network(addr, data) => {
+                match data {
+                    Stun(stun) => self.stun_state.handle_stun(addr, stun)?,
+                    Dtls(dtls) => self.dtls_state.handle_dtls(dtls)?,
+                }
+                Output::None
+            }
         })
     }
 
@@ -239,7 +256,7 @@ impl<T> Peer<T> {
             // A special, case, if remote offer is actpass or passive, we
             // will assume active role, and can start DTLS at the same time
             // as returning the SDP answer.
-            self.start_dtls();
+            self.start_dtls()?;
         }
 
         todo!()
@@ -265,7 +282,7 @@ impl<T> Peer<T> {
         }
 
         if self.dtls_state.dtls.is_none() {
-            self.start_dtls();
+            self.start_dtls()?;
         }
 
         todo!()
@@ -328,7 +345,48 @@ impl<T> Peer<T> {
 }
 
 impl Peer<state::Connected> {
-    pub fn handle_input<'a>(&mut self, ts: Ts, input: Input<'a>) -> Result<Output<'a>, Error> {
+    /// Provide input to this Peer.
+    ///
+    /// Any input can potentially result in multiple output. For example, one DTLS UDP packet
+    /// might result in multiple outgoing DTLS UDP packets.
+    pub fn handle_input<'a>(&mut self, ts: Ts, input: Input<'a>) -> Result<Output, Error> {
         self._handle_input(ts, input)
+    }
+}
+
+impl DtlsState {
+    fn handle_dtls<'a>(&mut self, buf: &'a [u8]) -> Result<(), Error> {
+        let dtls = self.dtls.as_mut().unwrap();
+
+        // provide buffer to be read.
+        dtls.inner_mut()?.set_read_src(buf);
+
+        let completed = dtls.complete_handshake_until_block()?;
+
+        if completed && self.srtp_key.is_none() {
+            let (srtp_key, fp) = dtls
+                .take_srtp_key_material()
+                .expect("SRTP key material on DTLS handshake completion");
+
+            // Before accepting the key material, check the fingerprint is known from the SDP.
+            if !self.remote_fingerprints.contains(&fp) {
+                let err = io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Unknown remote DTLS fingerrint",
+                );
+                return Err(err.into());
+            }
+
+            self.srtp_key = Some(srtp_key);
+        }
+
+        if completed {
+            // TODO: dtls.read() SCTP data.
+        }
+
+        // ensure incoming buffer was indeed read by DTLS layer.
+        dtls.inner_mut()?.assert_empty_src();
+
+        Ok(())
     }
 }
