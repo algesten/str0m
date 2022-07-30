@@ -43,13 +43,15 @@ pub enum Output {
 ///
 /// ```no_run
 /// # use str0m::*;
+/// # use std::convert::TryFrom;
+/// # use std::net::SocketAddr;
 /// # fn main() -> Result<(), Error> {
 /// let data: &[u8] = todo!(); // obtain data from socket.
-/// let addr: SocketAddr = todo!() // address of data.
+/// let addr: SocketAddr = todo!(); // address of data.
 ///
 /// // This parses the input data, and it can throw an
 /// // error if there are problems understanding the data.
-/// let network: NetworkInput<'_> = data.try_from()?;
+/// let network = NetworkInput::try_from(data)?;
 ///
 /// // This is the input into [`crate::Peer::handle_input`].
 /// let input: Input<'_> = (addr, network).into();

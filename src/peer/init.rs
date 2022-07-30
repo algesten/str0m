@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 use std::time::Instant;
 
-use crate::media::Media;
-use crate::sdp::{Direction, MediaType};
+use crate::media::{Media, MediaKind};
+use crate::sdp::Direction;
 use crate::{Error, Input};
 
 use super::inout::{Answer, InputInner, NetworkInput, NetworkOutput, Offer, Output};
@@ -13,15 +13,8 @@ impl Peer<state::Init> {
     /// Create an initial offer to start the RTC session.
     ///
     /// The offer must be provided _in some way_ to the remote side.
-    pub fn create_offer(mut self) -> (Offer, Peer<state::Offering>) {
-        // TODO fix this.
-        self.media
-            .push(Media::new(MediaType::Audio, Direction::RecvOnly));
-
-        let sdp = self.as_sdp();
-        let offer = Offer(sdp);
-
-        (offer, self.into_state())
+    pub fn create_offer(self) -> Peer<state::AddMedia> {
+        self.into_state()
     }
 
     /// Accept an initial offer created on the remote side.
@@ -31,6 +24,30 @@ impl Peer<state::Init> {
     ) -> Result<(Answer, Peer<state::Connecting>), Error> {
         let answer = self.handle_offer(offer)?;
         Ok((answer, self.into_state()))
+    }
+}
+
+impl Peer<state::AddMedia> {
+    /// Add audio or video media.
+    ///
+    /// To produce an initial offer, we need some media added. This adds audio or video.
+    pub fn add_media(mut self, kind: MediaKind, dir: Direction) -> (Offer, Peer<state::Offering>) {
+        let m = Media::new_media(self.setup, kind, dir);
+        self.media.push(m);
+
+        let offer = Offer(self.as_sdp());
+        (offer, self.into_state())
+    }
+
+    /// Add a data channel.
+    ///
+    /// To produce an initial offer, we need some media added. This adds a data channel.
+    pub fn add_data_channel(mut self) -> (Offer, Peer<state::Offering>) {
+        let m = Media::new_data_channel(self.setup);
+        self.media.push(m);
+
+        let offer = Offer(self.as_sdp());
+        (offer, self.into_state())
     }
 }
 
@@ -76,4 +93,23 @@ impl Peer<state::Connecting> {
     pub fn network_output(&mut self) -> Option<(SocketAddr, &NetworkOutput)> {
         self._network_output()
     }
+
+    /// Tests if the peer is connected.
+    ///
+    /// If connected, the peer is transitioned to [`state::Connected`].
+    pub fn try_connected(self) -> ConnectionResult {
+        let has_stun = !self.stun_state.verified.is_empty();
+        let has_dtls = self.dtls_state.dtls.is_some();
+
+        if has_stun && has_dtls {
+            ConnectionResult::Connected(self.into_state())
+        } else {
+            ConnectionResult::Connecting(self)
+        }
+    }
+}
+
+pub enum ConnectionResult {
+    Connecting(Peer<state::Connecting>),
+    Connected(Peer<state::Connected>),
 }

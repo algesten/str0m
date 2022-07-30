@@ -372,6 +372,24 @@ where
     // a=mid:0
     let mid = attribute_line("mid", any_value()).map(MediaAttribute::Mid);
 
+    let sctp_port = attribute_line(
+        "sctp-port",
+        not_sp::<Input>().and_then(|s| {
+            s.parse::<u16>()
+                .map_err(StreamErrorFor::<Input>::message_format)
+        }),
+    )
+    .map(MediaAttribute::SctpPort);
+
+    let max_message_size = attribute_line(
+        "max-message-size",
+        not_sp::<Input>().and_then(|s| {
+            s.parse::<usize>()
+                .map_err(StreamErrorFor::<Input>::message_format)
+        }),
+    )
+    .map(MediaAttribute::MaxMessageSize);
+
     // a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level
     // a=extmap:<value>["/"<direction>] <URI> <extensionattributes>
     let extmap = attribute_line(
@@ -607,6 +625,8 @@ where
         finger,
         setup,
         mid,
+        sctp_port,
+        max_message_size,
         extmap,
         direction,
         msid,
@@ -994,6 +1014,32 @@ mod test {
             a=ssrc:3948621874 mslabel:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK\r\n\
             a=ssrc:3948621874 label:f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             ";
+
+        let parsed = sdp_parser().parse(sdp);
+
+        assert!(parsed.is_ok());
+    }
+
+    #[test]
+    fn parse_safari_data_channel() {
+        let sdp = "v=0\r\n\
+        o=- 4611516372927609806 2 IN IP4 127.0.0.1\r\n\
+        s=-\r\n\
+        t=0 0\r\n\
+        a=group:BUNDLE 0\r\n\
+        a=extmap-allow-mixed\r\n\
+        a=msid-semantic: WMS\r\n\
+        m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n\
+        c=IN IP4 0.0.0.0\r\n\
+        a=ice-ufrag:HhS+\r\n\
+        a=ice-pwd:FhYTGhlAtKCe6KFIX8b+AThW\r\n\
+        a=ice-options:trickle\r\n\
+        a=fingerprint:sha-256 B4:12:1C:7C:7D:ED:F1:FA:61:07:57:9C:29:BE:58:E3:BC:41:E7:13:8E:7D:D3:9D:1F:94:6E:A5:23:46:94:23\r\n\
+        a=setup:actpass\r\n\
+        a=mid:0\r\n\
+        a=sctp-port:5000\r\n\
+        a=max-message-size:262144\r\n\
+        ";
 
         let parsed = sdp_parser().parse(sdp);
 

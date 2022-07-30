@@ -29,16 +29,30 @@ pub use config::PeerConfig;
 /// States the `Peer` can be in.
 pub mod state {
     /// First state after creation.
-    pub struct Init {}
+    pub struct Init(());
+
+    /// When creating an initial offer, we must add some kind of media, video/audio or data channel.
+    pub struct AddMedia(());
+
     /// If we do `create_offer.
-    pub struct Offering {}
+    pub struct Offering(());
+
     /// When we're ready to connect (Offer/Answer exchange is finished).
-    pub struct Connecting {}
+    pub struct Connecting(());
+
     /// When we have connected.
-    pub struct Connected {}
+    pub struct Connected(());
 }
 
 /// A single peer connection.
+///
+/// ```no_run
+/// # use str0m::*;
+/// # use std::convert::TryFrom;
+/// # use std::net::SocketAddr;
+/// # fn main() -> Result<(), Error> {
+/// # Ok(())}
+/// ```
 pub struct Peer<State> {
     /// Config object provided at creation.
     config: PeerConfig,

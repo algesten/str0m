@@ -551,16 +551,14 @@ impl MediaLine {
 /// Media direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
+    /// Send only direction.
     SendOnly,
+    /// Receive only direction.
     RecvOnly,
+    /// Bi-directional.
     SendRecv,
+    /// Disabled direction.
     Inactive,
-}
-
-impl Direction {
-    pub fn is_recv(&self) -> bool {
-        matches!(self, Direction::RecvOnly | Direction::SendRecv)
-    }
 }
 
 impl From<Direction> for MediaAttribute {
@@ -743,6 +741,7 @@ pub enum MediaType {
     Audio,
     Video,
     Application,
+    #[doc(hidden)]
     Unknown(String),
 }
 
@@ -814,6 +813,8 @@ pub enum MediaAttribute {
     Fingerprint(Fingerprint),
     Setup(Setup), // active, passive, actpass, holdconn
     Mid(String),  // 0, 1, 2
+    SctpPort(u16),
+    MaxMessageSize(usize),
     // a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level
     // a=extmap:2 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
     ExtMap(ExtMap),
@@ -1070,6 +1071,8 @@ impl fmt::Display for MediaAttribute {
             }
             Setup(v) => write!(f, "a=setup:{}\r\n", v.setup_line())?,
             Mid(v) => write!(f, "a=mid:{}\r\n", v)?,
+            SctpPort(v) => write!(f, "a=sctp-port:{}", v)?,
+            MaxMessageSize(v) => write!(f, "a=max-message-size:{}", v)?,
             ExtMap(e) => {
                 if e.ext_type.is_filtered() {
                     return Ok(());
