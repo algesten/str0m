@@ -19,5 +19,6 @@ pub(crate) const UDP_MTU: usize = 1400;
 pub use error::Error;
 
 pub use media::MediaKind;
-pub use peer::{state, Answer, Input, NetworkInput, Offer, Output, Peer, PeerConfig};
+pub use peer::{state, Answer, Input, NetworkInput, Offer, Output, Peer};
+pub use peer::{ConnectionResult, PeerConfig};
 pub use sdp::Direction;

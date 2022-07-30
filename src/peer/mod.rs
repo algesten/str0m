@@ -25,6 +25,7 @@ pub use self::inout::{Answer, Input, NetworkInput, Offer, Output};
 use self::inout::{InputInner, NetworkInputInner, NetworkOutput, NetworkOutputWriter};
 use self::ptr_buf::{OutputEnqueuer, PtrBuffer};
 pub use config::PeerConfig;
+pub use init::ConnectionResult;
 
 /// States the `Peer` can be in.
 pub mod state {
@@ -46,11 +47,52 @@ pub mod state {
 
 /// A single peer connection.
 ///
+/// # Start a connection by creating an offer
+///
 /// ```no_run
-/// # use str0m::*;
-/// # use std::convert::TryFrom;
-/// # use std::net::SocketAddr;
 /// # fn main() -> Result<(), Error> {
+/// use std::convert::TryFrom;
+/// use std::net::SocketAddr;
+/// use std::time::Instant;
+/// use str0m::*;
+///
+/// // 1. Create a Peer from a PeerConfig.
+/// let peer_init = PeerConfig::new().build()?;
+///
+/// // 2. To create an offer, we must media, or a data channel.
+/// let peer_media = peer_init.create_offer();
+/// let (offer, peer_offering) = peer_media.add_data_channel();
+///
+/// // 3. Send the offer _somehow_ to the remote peer and receive
+/// //    the answer back (via websocket for instance).
+/// let answer = todo!();
+/// let mut peer_connecting = peer_offering.accept_answer(answer)?;
+///
+/// // 4. Loop send/receive UDP data until connected.
+/// let peer_connected = loop {
+///     while let Some((addr, data_out)) = peer_connecting.network_output() {
+///         // TODO: send data_out to addr via UDP socket.
+///     }
+///
+///     // Obtain data from socket.
+///     let (addr, data_in): (SocketAddr, &[u8]) = todo!();
+///     // This should be the receive time as close to the network
+///     // socket read as possible.
+///     let time = Instant::now();
+///
+///     // Parse the network data.
+///     let network = NetworkInput::try_from(data_in)?;
+///
+///     // Feed input data to peer.
+///     peer_connecting.handle_network_input(time, addr, network)?;
+///
+///     match peer_connecting.try_connected() {
+///         ConnectionResult::Connecting(v) => peer_connecting = v,
+///         ConnectionResult::Connected(v) => break v,
+///     }
+/// };
+///
+/// // 5. Use the connected `peer_connected` instance.
 /// # Ok(())}
 /// ```
 pub struct Peer<State> {
