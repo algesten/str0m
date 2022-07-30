@@ -1,38 +1,52 @@
 use crate::sdp::Setup;
 
+/// Configuration for instantiating a [`crate::Peer`].
 #[derive(Default)]
 pub struct PeerConfig {
-    pub(crate) offset_setup: Setup,
+    pub(crate) disable_trickle_ice: bool,
+    pub(crate) offer_setup: Setup,
     pub(crate) answer_active: bool,
 }
 
 impl PeerConfig {
+    /// Creates a PeerConfig with default values.
     pub fn new() -> PeerConfig {
         PeerConfig::default()
     }
 
-    pub fn offset_active(mut self) -> Self {
-        self.offset_setup = Setup::Active;
+    /// Disable trickle ice.
+    ///
+    /// Enabled by default.
+    pub fn disable_trickle_ice(mut self) -> Self {
+        self.disable_trickle_ice = true;
         self
     }
 
-    pub fn offset_passive(mut self) -> Self {
-        self.offset_setup = Setup::Passive;
+    /// Initial offer as `a=setup:active`.
+    ///
+    /// Default is `a=setup:actpass`.
+    pub fn offer_active(mut self) -> Self {
+        self.offer_setup = Setup::Active;
         self
     }
 
-    pub fn offset_actpass(mut self) -> Self {
-        self.offset_setup = Setup::ActPass;
+    /// Initial offer as `a=setup:passive`.
+    ///
+    /// Default is `a=setup:actpass`.
+    pub fn offer_passive(mut self) -> Self {
+        self.offer_setup = Setup::Passive;
         self
     }
 
+    /// Initial answer as `a=setup:active`, if possible.
+    ///
+    /// Answering `active` is only possible if the offer we respond to is
+    /// `actpass` or `passive`. If the incoming offer is `active`, the
+    /// answer _must_ be `passive`.
+    ///
+    /// Default is to assume the passive role.
     pub fn answer_active(mut self) -> Self {
         self.answer_active = true;
-        self
-    }
-
-    pub fn answer_passive(mut self) -> Self {
-        self.answer_active = false;
         self
     }
 }

@@ -50,12 +50,4 @@ impl Media {
     pub fn media_line(&self) -> &MediaLine {
         &self.media_line
     }
-
-    pub fn include_in_local_sdp(&self) -> bool {
-        !self.need_negotiating
-    }
-
-    pub fn include_in_remote_sdp(&self) -> bool {
-        self.need_negotiating
-    }
 }

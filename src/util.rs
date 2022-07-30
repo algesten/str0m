@@ -80,6 +80,7 @@ const MICROS: i64 = 1_000_000;
 #[derive(Debug, Clone, Copy)]
 pub struct Ts(i64, i64);
 
+#[allow(dead_code)]
 impl Ts {
     pub const ZERO: Ts = Ts(0, 1);
 

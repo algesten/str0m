@@ -18,7 +18,7 @@ impl Peer<state::Init> {
         self.media
             .push(Media::new(MediaType::Audio, Direction::RecvOnly));
 
-        let sdp = self.as_local_sdp();
+        let sdp = self.as_sdp();
         let offer = Offer(sdp);
 
         (offer, self.into_state())
@@ -47,7 +47,8 @@ impl Peer<state::Connecting> {
     ///
     /// This is useful in a server scenario when multiplexing several Peers on the same UDP port.
     pub fn accepts(&self, addr: SocketAddr, data: &NetworkInput<'_>) -> Result<bool, Error> {
-        let input = Input(InputInner::Network(addr, data.clone()));
+        let owned = NetworkInput(data.0.clone());
+        let input = Input(InputInner::Network(addr, owned));
         self._accepts(&input)
     }
 

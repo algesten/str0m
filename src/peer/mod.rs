@@ -22,7 +22,7 @@ use crate::util::random_id;
 use crate::Error;
 
 pub use self::inout::{Answer, Input, NetworkInput, Offer, Output};
-use self::inout::{InputInner, NetworkOutput, NetworkOutputWriter};
+use self::inout::{InputInner, NetworkInputInner, NetworkOutput, NetworkOutputWriter};
 use self::ptr_buf::{OutputEnqueuer, PtrBuffer};
 pub use config::PeerConfig;
 
@@ -40,6 +40,7 @@ pub mod state {
 
 /// A single peer connection.
 pub struct Peer<State> {
+    /// Config object provided at creation.
     config: PeerConfig,
 
     /// Unique id of the session, as transmitted on the o= line.
@@ -269,7 +270,7 @@ impl<T> Peer<T> {
 
         let mut rng = rand::thread_rng();
         let id = (u64::MAX as f64 * rng.gen::<f64>()) as u64;
-        let setup = config.offset_setup;
+        let setup = config.offer_setup;
 
         let peer = Peer {
             config,
@@ -300,13 +301,13 @@ impl<T> Peer<T> {
 
     fn _accepts(&self, input: &Input<'_>) -> Result<bool, Error> {
         use InputInner::*;
-        use NetworkInput::*;
+        use NetworkInputInner::*;
         Ok(match &input.0 {
             Tick => panic!("Tick in accepts"),
             Offer(_) => true,  // TODO check against previous
             Answer(_) => true, // TODO check against previous
             Network(addr, data) => {
-                if let Stun(stun) = data {
+                if let Stun(stun) = &data.0 {
                     self.stun_state.accepts_stun(*addr, stun)?
                 } else {
                     // All other kind of network input must be "unlocked" by STUN recognizing the
@@ -318,15 +319,15 @@ impl<T> Peer<T> {
         })
     }
 
-    fn _handle_input(&mut self, time: Instant, input: Input<'_>) -> Result<Output, Error> {
+    fn _handle_input(&mut self, _time: Instant, input: Input<'_>) -> Result<Output, Error> {
         use InputInner::*;
-        use NetworkInput::*;
+        use NetworkInputInner::*;
         Ok(match input.0 {
             Tick => Output::None,
             Offer(v) => self.handle_offer(v)?.into(),
             Answer(v) => self.handle_answer(v)?.into(),
             Network(addr, data) => {
-                match data {
+                match data.0 {
                     Stun(stun) => self.stun_state.handle_stun(addr, &mut self.output, stun)?,
                     Dtls(dtls) => self.dtls_state.handle_dtls(addr, &mut self.output, dtls)?,
                 }

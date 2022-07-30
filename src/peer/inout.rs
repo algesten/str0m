@@ -8,6 +8,9 @@ use crate::stun::{self, StunMessage};
 use crate::udp::UdpKind;
 use crate::{Error, UDP_MTU};
 
+/// Encapsulates input to the [`crate::Peer`].
+///
+/// Created input by using the various `From` trait implementations.
 pub struct Input<'a>(pub(crate) InputInner<'a>);
 
 pub(crate) enum InputInner<'a> {
@@ -17,15 +20,45 @@ pub(crate) enum InputInner<'a> {
     Network(SocketAddr, NetworkInput<'a>),
 }
 
+/// Output as a response to [`Input`].
 #[derive(Debug)]
 pub enum Output {
+    /// No specific output.
     None,
+
+    /// An SDP offer.
+    ///
+    /// Returned in response to [`Input`] making changes to the local media config.
     Offer(Offer),
+
+    /// An SDP answer.
+    ///
+    /// Returned in response to [`Input`] being an SDP offer.
     Answer(Answer),
 }
 
-#[derive(Debug, Clone)]
-pub enum NetworkInput<'a> {
+/// Encapsulates network input (typically from a UDP socket).
+///
+/// Cannot deal with partial data. Must be entire UDP packets at a time.
+///
+/// ```no_run
+/// # use str0m::*;
+/// # fn main() -> Result<(), Error> {
+/// let data: &[u8] = todo!(); // obtain data from socket.
+/// let addr: SocketAddr = todo!() // address of data.
+///
+/// // This parses the input data, and it can throw an
+/// // error if there are problems understanding the data.
+/// let network: NetworkInput<'_> = data.try_from()?;
+///
+/// // This is the input into [`crate::Peer::handle_input`].
+/// let input: Input<'_> = (addr, network).into();
+/// # Ok(())}
+/// ```
+pub struct NetworkInput<'a>(pub(crate) NetworkInputInner<'a>);
+
+#[derive(Clone)]
+pub(crate) enum NetworkInputInner<'a> {
     #[doc(hidden)]
     Stun(StunMessage<'a>),
     #[doc(hidden)]
@@ -55,9 +88,11 @@ impl Deref for NetworkOutput {
     }
 }
 
+/// SDP offer.
 #[derive(Debug)]
 pub struct Offer(pub(crate) Sdp);
 
+/// SDP answer.
 #[derive(Debug)]
 pub struct Answer(pub(crate) Sdp);
 
@@ -94,12 +129,6 @@ impl<'a> From<()> for Output {
 impl<'a> From<(SocketAddr, NetworkInput<'a>)> for Input<'a> {
     fn from((addr, data): (SocketAddr, NetworkInput<'a>)) -> Self {
         Input(InputInner::Network(addr, data))
-    }
-}
-
-impl<'a> From<StunMessage<'a>> for NetworkInput<'a> {
-    fn from(v: StunMessage<'a>) -> Self {
-        NetworkInput::Stun(v)
     }
 }
 
@@ -143,12 +172,12 @@ impl<'a> TryFrom<&'a [u8]> for NetworkInput<'a> {
     fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
         let kind = UdpKind::try_from(value)?;
 
-        Ok(match kind {
-            UdpKind::Stun => NetworkInput::Stun(stun::parse_message(&value)?),
-            UdpKind::Dtls => todo!(),
+        Ok(NetworkInput(match kind {
+            UdpKind::Stun => NetworkInputInner::Stun(stun::parse_message(&value)?),
+            UdpKind::Dtls => NetworkInputInner::Dtls(value),
             UdpKind::Rtp => todo!(),
             UdpKind::Rtcp => todo!(),
-        })
+        }))
     }
 }
 
@@ -193,5 +222,11 @@ impl Deref for NetworkOutputWriter {
 impl DerefMut for NetworkOutputWriter {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0 .0[..]
+    }
+}
+
+impl<'a> From<()> for Input<'a> {
+    fn from(_: ()) -> Self {
+        Input(InputInner::Tick)
     }
 }

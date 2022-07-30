@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use crate::util::hmac_sha1;
 use crate::Error;
 
-pub fn parse_message(buf: &[u8]) -> Result<StunMessage, Error> {
+pub(crate) fn parse_message(buf: &[u8]) -> Result<StunMessage, Error> {
     let typ = (buf[0] as u16 & 0b0011_1111) << 8 | buf[1] as u16;
     let len = (buf[2] as u16) << 8 | buf[3] as u16;
     if len & 0b0000_0011 > 0 {
@@ -70,7 +70,7 @@ pub fn parse_message(buf: &[u8]) -> Result<StunMessage, Error> {
 }
 
 #[derive(Debug, Clone)]
-pub struct StunMessage<'a> {
+pub(crate) struct StunMessage<'a> {
     class: Class,
     method: Method,
     trans_id: &'a [u8],
