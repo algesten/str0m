@@ -1,4 +1,5 @@
 use crate::sdp::Setup;
+use crate::{state, Error, Peer};
 
 /// Configuration for instantiating a [`crate::Peer`].
 #[derive(Default)]
@@ -48,5 +49,10 @@ impl PeerConfig {
     pub fn answer_active(mut self) -> Self {
         self.answer_active = true;
         self
+    }
+
+    /// Creates a new [`Peer`] from this config.
+    pub fn build(self) -> Result<Peer<state::Init>, Error> {
+        Peer::<state::Init>::with_config(self)
     }
 }

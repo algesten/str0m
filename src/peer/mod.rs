@@ -257,14 +257,6 @@ impl<T> Peer<T> {
         unsafe { mem::transmute(self) }
     }
 
-    /// Creates a new `Peer`.
-    ///
-    /// New peers starts out in the [`state::Init`] state which requires an SDP offer/answer
-    /// dance to become active.
-    pub fn new() -> Result<Peer<state::Init>, Error> {
-        Peer::<T>::with_config(PeerConfig::default())
-    }
-
     pub(crate) fn with_config(config: PeerConfig) -> Result<Peer<state::Init>, Error> {
         let (ctx, local_fingerprint) = dtls_create_ctx()?;
 
