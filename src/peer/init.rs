@@ -5,7 +5,7 @@ use crate::sdp::{Direction, MediaType};
 use crate::util::Ts;
 use crate::Error;
 
-use super::inout::{Answer, NetworkData, Offer, Output};
+use super::inout::{Answer, NetworkInput, Offer, Output};
 use super::state;
 use super::Peer;
 
@@ -50,7 +50,7 @@ impl Peer<state::Connecting> {
         &mut self,
         ts: Ts,
         addr: SocketAddr,
-        data: NetworkData<'a>,
+        data: NetworkInput<'a>,
     ) -> Result<(), Error> {
         let input = (addr, data).into();
 

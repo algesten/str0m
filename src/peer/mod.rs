@@ -20,7 +20,7 @@ use crate::util::{random_id, PtrBuffer, Ts};
 use crate::{Error, UDP_MTU};
 
 use self::inout::InputInner;
-pub use self::inout::{Answer, Input, NetworkData, Offer, Output};
+pub use self::inout::{Answer, Input, NetworkInput, Offer, Output};
 pub use config::PeerConfig;
 
 /// States the `Peer` can be in.
@@ -197,7 +197,7 @@ impl<T> Peer<T> {
     /// This is useful in a server scenario when multiplexing several Peers on the same UDP port.
     pub fn accepts(&self, input: &Input<'_>) -> Result<bool, Error> {
         use InputInner::*;
-        use NetworkData::*;
+        use NetworkInput::*;
         Ok(match &input.0 {
             Offer(_) => true,  // TODO check against previous
             Answer(_) => true, // TODO check against previous
@@ -216,7 +216,7 @@ impl<T> Peer<T> {
 
     fn _handle_input(&mut self, ts: Ts, input: Input<'_>) -> Result<Output, Error> {
         use InputInner::*;
-        use NetworkData::*;
+        use NetworkInput::*;
         Ok(match input.0 {
             Offer(v) => self.handle_offer(v)?.into(),
             Answer(v) => self.handle_answer(v)?.into(),

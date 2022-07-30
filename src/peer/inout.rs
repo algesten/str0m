@@ -13,7 +13,7 @@ pub struct Input<'a>(pub(crate) InputInner<'a>);
 pub(crate) enum InputInner<'a> {
     Offer(Offer),
     Answer(Answer),
-    Network(SocketAddr, NetworkData<'a>),
+    Network(SocketAddr, NetworkInput<'a>),
 }
 
 #[derive(Debug)]
@@ -24,7 +24,7 @@ pub enum Output {
 }
 
 #[derive(Debug)]
-pub enum NetworkData<'a> {
+pub enum NetworkInput<'a> {
     #[doc(hidden)]
     Stun(StunMessage<'a>),
     #[doc(hidden)]
@@ -67,15 +67,15 @@ impl<'a> From<()> for Output {
     }
 }
 
-impl<'a> From<(SocketAddr, NetworkData<'a>)> for Input<'a> {
-    fn from((addr, data): (SocketAddr, NetworkData<'a>)) -> Self {
+impl<'a> From<(SocketAddr, NetworkInput<'a>)> for Input<'a> {
+    fn from((addr, data): (SocketAddr, NetworkInput<'a>)) -> Self {
         Input(InputInner::Network(addr, data))
     }
 }
 
-impl<'a> From<StunMessage<'a>> for NetworkData<'a> {
+impl<'a> From<StunMessage<'a>> for NetworkInput<'a> {
     fn from(v: StunMessage<'a>) -> Self {
-        NetworkData::Stun(v)
+        NetworkInput::Stun(v)
     }
 }
 
@@ -113,14 +113,14 @@ impl<'a> TryFrom<&'a str> for Answer {
     }
 }
 
-impl<'a> TryFrom<&'a [u8]> for NetworkData<'a> {
+impl<'a> TryFrom<&'a [u8]> for NetworkInput<'a> {
     type Error = Error;
 
     fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
         let kind = UdpKind::try_from(value)?;
 
         Ok(match kind {
-            UdpKind::Stun => NetworkData::Stun(stun::parse_message(&value)?),
+            UdpKind::Stun => NetworkInput::Stun(stun::parse_message(&value)?),
             UdpKind::Dtls => todo!(),
             UdpKind::Rtp => todo!(),
             UdpKind::Rtcp => todo!(),
@@ -137,7 +137,7 @@ impl<'a> fmt::Debug for Input<'a> {
             match &self.0 {
                 InputInner::Offer(_) => "Offer",
                 InputInner::Answer(_) => "Answer",
-                InputInner::Network(_, _) => "NetworkData",
+                InputInner::Network(_, _) => "Network",
             }
         )?;
         write!(f, ")")
