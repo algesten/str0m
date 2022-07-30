@@ -1,11 +1,11 @@
 use std::net::SocketAddr;
+use std::time::Instant;
 
 use crate::media::Media;
 use crate::sdp::{Direction, MediaType};
-use crate::util::Ts;
 use crate::{Error, Input};
 
-use super::inout::{Answer, InputInner, NetworkInput, Offer, Output};
+use super::inout::{Answer, InputInner, NetworkInput, NetworkOutput, Offer, Output};
 use super::state;
 use super::Peer;
 
@@ -56,16 +56,23 @@ impl Peer<state::Connecting> {
     /// While connecting, we only accept input from the network.
     pub fn handle_network_input<'a>(
         &mut self,
-        ts: Ts,
+        time: Instant,
         addr: SocketAddr,
         data: NetworkInput<'a>,
     ) -> Result<(), Error> {
         let input = (addr, data).into();
 
-        let out = self._handle_input(ts, input)?;
+        let out = self._handle_input(time, input)?;
         // When we only provide network data as input, there should be no output.
         assert!(matches!(out, Output::None));
 
         Ok(())
+    }
+
+    /// Poll network output.
+    ///
+    /// For every input provided, this needs to be polled until it returns `None`.
+    pub fn network_output(&mut self) -> Option<(SocketAddr, &NetworkOutput)> {
+        self._network_output()
     }
 }

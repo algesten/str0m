@@ -9,6 +9,7 @@ use rand::Rng;
 use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
 use std::net::SocketAddr;
+use std::time::Instant;
 use std::{io, mem};
 
 use crate::dtls::{dtls_create_ctx, dtls_ssl_create, Dtls, SrtpKeyMaterial};
@@ -17,7 +18,7 @@ use crate::sdp::{AttributeExt, Sdp};
 use crate::sdp::{Fingerprint, IceCreds};
 use crate::sdp::{SessionId, Setup};
 use crate::stun::StunMessage;
-use crate::util::{random_id, Ts};
+use crate::util::random_id;
 use crate::Error;
 
 pub use self::inout::{Answer, Input, NetworkInput, Offer, Output};
@@ -301,6 +302,7 @@ impl<T> Peer<T> {
         use InputInner::*;
         use NetworkInput::*;
         Ok(match &input.0 {
+            Tick => panic!("Tick in accepts"),
             Offer(_) => true,  // TODO check against previous
             Answer(_) => true, // TODO check against previous
             Network(addr, data) => {
@@ -316,10 +318,11 @@ impl<T> Peer<T> {
         })
     }
 
-    fn _handle_input(&mut self, ts: Ts, input: Input<'_>) -> Result<Output, Error> {
+    fn _handle_input(&mut self, time: Instant, input: Input<'_>) -> Result<Output, Error> {
         use InputInner::*;
         use NetworkInput::*;
         Ok(match input.0 {
+            Tick => Output::None,
             Offer(v) => self.handle_offer(v)?.into(),
             Answer(v) => self.handle_answer(v)?.into(),
             Network(addr, data) => {
@@ -330,6 +333,10 @@ impl<T> Peer<T> {
                 Output::None
             }
         })
+    }
+
+    fn _network_output(&mut self) -> Option<(SocketAddr, &NetworkOutput)> {
+        self.output.dequeue()
     }
 
     fn handle_offer(&mut self, offer: Offer) -> Result<Answer, Error> {
@@ -458,7 +465,14 @@ impl Peer<state::Connected> {
     ///
     /// Any input can potentially result in multiple output. For example, one DTLS UDP packet
     /// might result in multiple outgoing DTLS UDP packets.
-    pub fn handle_input<'a>(&mut self, ts: Ts, input: Input<'a>) -> Result<Output, Error> {
-        self._handle_input(ts, input)
+    pub fn handle_input<'a>(&mut self, time: Instant, input: Input<'a>) -> Result<Output, Error> {
+        self._handle_input(time, input)
+    }
+
+    /// Poll network output.
+    ///
+    /// For every input provided, this needs to be polled until it returns `None`.
+    pub fn network_output(&mut self) -> Option<(SocketAddr, &NetworkOutput)> {
+        self._network_output()
     }
 }

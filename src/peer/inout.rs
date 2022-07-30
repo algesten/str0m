@@ -11,6 +11,7 @@ use crate::{Error, UDP_MTU};
 pub struct Input<'a>(pub(crate) InputInner<'a>);
 
 pub(crate) enum InputInner<'a> {
+    Tick,
     Offer(Offer),
     Answer(Answer),
     Network(SocketAddr, NetworkInput<'a>),
@@ -158,6 +159,7 @@ impl<'a> fmt::Debug for Input<'a> {
             f,
             "{}",
             match &self.0 {
+                InputInner::Tick => "Tick",
                 InputInner::Offer(_) => "Offer",
                 InputInner::Answer(_) => "Answer",
                 InputInner::Network(_, _) => "Network",
