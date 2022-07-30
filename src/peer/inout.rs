@@ -1,12 +1,12 @@
 use std::convert::TryFrom;
 use std::fmt;
 use std::net::SocketAddr;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 
 use crate::sdp::{parse_sdp, Sdp};
 use crate::stun::{self, StunMessage};
 use crate::udp::UdpKind;
-use crate::Error;
+use crate::{Error, UDP_MTU};
 
 pub struct Input<'a>(pub(crate) InputInner<'a>);
 
@@ -23,12 +23,35 @@ pub enum Output {
     Answer(Answer),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum NetworkInput<'a> {
     #[doc(hidden)]
     Stun(StunMessage<'a>),
     #[doc(hidden)]
     Dtls(&'a [u8]),
+}
+
+#[derive(Clone)]
+pub struct NetworkOutput(Box<[u8; UDP_MTU]>, usize);
+
+impl NetworkOutput {
+    pub(crate) fn new() -> Self {
+        NetworkOutput(Box::new([0_u8; UDP_MTU]), 0)
+    }
+
+    /// This provides _the entire_ buffer to write. `set_len` must be done on
+    /// the writer onoce write is complete.
+    pub(crate) fn into_writer(self) -> NetworkOutputWriter {
+        NetworkOutputWriter(self, false)
+    }
+}
+
+impl Deref for NetworkOutput {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0[0..self.1]
+    }
 }
 
 #[derive(Debug)]
@@ -141,5 +164,32 @@ impl<'a> fmt::Debug for Input<'a> {
             }
         )?;
         write!(f, ")")
+    }
+}
+
+/// RAII guard for writing to [`NetworkOutput`].
+pub(crate) struct NetworkOutputWriter(NetworkOutput, bool);
+
+impl NetworkOutputWriter {
+    #[must_use]
+    pub fn set_len(mut self, len: usize) -> NetworkOutput {
+        assert!(len <= self.0 .0.len());
+        self.1 = true;
+        self.0 .1 = len;
+        self.0
+    }
+}
+
+impl Deref for NetworkOutputWriter {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0 .0[..]
+    }
+}
+
+impl DerefMut for NetworkOutputWriter {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0 .0[..]
     }
 }

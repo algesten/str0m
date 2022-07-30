@@ -1,4 +1,4 @@
-use crate::sdp::{MediaAttribute, MediaAttributeExt, Sdp, Session, SessionAttribute};
+use crate::sdp::{MediaAttribute, Sdp, Session, SessionAttribute};
 
 use super::Peer;
 

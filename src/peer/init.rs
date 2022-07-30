@@ -3,9 +3,9 @@ use std::net::SocketAddr;
 use crate::media::Media;
 use crate::sdp::{Direction, MediaType};
 use crate::util::Ts;
-use crate::Error;
+use crate::{Error, Input};
 
-use super::inout::{Answer, NetworkInput, Offer, Output};
+use super::inout::{Answer, InputInner, NetworkInput, Offer, Output};
 use super::state;
 use super::Peer;
 
@@ -43,6 +43,14 @@ impl Peer<state::Offering> {
 }
 
 impl Peer<state::Connecting> {
+    /// Tests whether this [`Peer`] accepts the input.
+    ///
+    /// This is useful in a server scenario when multiplexing several Peers on the same UDP port.
+    pub fn accepts(&self, addr: SocketAddr, data: &NetworkInput<'_>) -> Result<bool, Error> {
+        let input = Input(InputInner::Network(addr, data.clone()));
+        self._accepts(&input)
+    }
+
     /// Provide network input.
     ///
     /// While connecting, we only accept input from the network.

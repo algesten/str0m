@@ -1,11 +1,12 @@
 mod config;
 mod init;
 mod inout;
+mod ptr_buf;
 mod serialize;
 
 use openssl::ssl::SslContext;
 use rand::Rng;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::{io, mem};
@@ -16,11 +17,12 @@ use crate::sdp::{AttributeExt, Sdp};
 use crate::sdp::{Fingerprint, IceCreds};
 use crate::sdp::{SessionId, Setup};
 use crate::stun::StunMessage;
-use crate::util::{random_id, PtrBuffer, Ts};
-use crate::{Error, UDP_MTU};
+use crate::util::{random_id, Ts};
+use crate::Error;
 
-use self::inout::InputInner;
 pub use self::inout::{Answer, Input, NetworkInput, Offer, Output};
+use self::inout::{InputInner, NetworkOutput, NetworkOutputWriter};
+use self::ptr_buf::{OutputEnqueuer, PtrBuffer};
 pub use config::PeerConfig;
 
 /// States the `Peer` can be in.
@@ -45,6 +47,9 @@ pub struct Peer<State> {
     /// Whether this peer is active, passive or actpass.
     setup: Setup,
 
+    /// Queue of output network data.
+    output: OutputQueue,
+
     /// State of STUN.
     stun_state: StunState,
 
@@ -55,6 +60,14 @@ pub struct Peer<State> {
     media: Vec<Media>,
 
     _ph: PhantomData<State>,
+}
+
+pub(crate) struct OutputQueue {
+    /// Enqueued NetworkOutput to be consumed.
+    queue: VecDeque<(SocketAddr, NetworkOutput)>,
+
+    /// Free NetworkOutput instance ready to be reused.
+    free: Vec<NetworkOutput>,
 }
 
 struct StunState {
@@ -92,6 +105,41 @@ struct DtlsState {
     srtp_key: Option<SrtpKeyMaterial>,
 }
 
+impl OutputQueue {
+    fn new() -> Self {
+        const MAX_QUEUE: usize = 20;
+        OutputQueue {
+            queue: VecDeque::with_capacity(MAX_QUEUE),
+            free: vec![NetworkOutput::new(); MAX_QUEUE],
+        }
+    }
+
+    pub fn get_buffer_writer(&mut self) -> NetworkOutputWriter {
+        if self.free.is_empty() {
+            NetworkOutput::new().into_writer()
+        } else {
+            self.free.pop().unwrap().into_writer()
+        }
+    }
+
+    pub fn enqueue(&mut self, addr: SocketAddr, buffer: NetworkOutput) {
+        self.queue.push_back((addr, buffer));
+    }
+
+    pub fn dequeue(&mut self) -> Option<(SocketAddr, &NetworkOutput)> {
+        let (addr, out) = self.queue.pop_front()?;
+
+        // It's a bit strange to push the buffer to free already before handing it out to
+        // the API consumer. However, Rust borrowing rules means we will not get another
+        // change to the state until the API consumer releases the borrowed buffer.
+        self.free.push(out);
+
+        let borrowed = self.free.last().unwrap();
+
+        Some((addr, borrowed))
+    }
+}
+
 impl StunState {
     fn accepts_stun(&self, addr: SocketAddr, stun: &StunMessage<'_>) -> Result<bool, Error> {
         let (local_username, remote_username) = stun.local_remote_username();
@@ -125,7 +173,12 @@ impl StunState {
         Ok(true)
     }
 
-    fn handle_stun<'a>(&mut self, addr: SocketAddr, stun: StunMessage<'a>) -> Result<(), Error> {
+    fn handle_stun<'a>(
+        &mut self,
+        addr: SocketAddr,
+        queue: &mut OutputQueue,
+        stun: StunMessage<'a>,
+    ) -> Result<(), Error> {
         let reply = stun.reply()?;
 
         // on the back of a successful (authenticated) stun bind, we update
@@ -134,14 +187,65 @@ impl StunState {
             trace!("STUN new verified peer ({})", addr);
         }
 
-        let mut vec = vec![0; UDP_MTU];
-        let count = reply.to_bytes(&self.local_creds.password, &mut vec)?;
+        let mut writer = queue.get_buffer_writer();
+        let len = reply.to_bytes(&self.local_creds.password, &mut writer)?;
+        let buffer = writer.set_len(len);
+
+        queue.enqueue(addr, buffer);
 
         Ok(())
     }
 
     fn is_stun_verified(&self, addr: &SocketAddr) -> bool {
         self.verified.contains(addr)
+    }
+}
+
+impl DtlsState {
+    fn handle_dtls(
+        &mut self,
+        addr: SocketAddr,
+        output: &mut OutputQueue,
+        buf: &[u8],
+    ) -> Result<(), Error> {
+        let dtls = self.dtls.as_mut().unwrap();
+
+        let enqueuer = unsafe { OutputEnqueuer::new(addr, output) };
+
+        let ptr_buf = dtls.inner_mut()?;
+        ptr_buf.set_input(buf); // provide buffer to be read from.
+        ptr_buf.set_output(enqueuer); // provide output queue to write to
+
+        let completed = dtls.complete_handshake_until_block()?;
+
+        if completed && self.srtp_key.is_none() {
+            let (srtp_key, fp) = dtls
+                .take_srtp_key_material()
+                .expect("SRTP key material on DTLS handshake completion");
+
+            // Before accepting the key material, check the fingerprint is known from the SDP.
+            if !self.remote_fingerprints.contains(&fp) {
+                let err = io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Unknown remote DTLS fingerrint",
+                );
+                return Err(err.into());
+            }
+
+            self.srtp_key = Some(srtp_key);
+        }
+
+        if completed {
+            // TODO: dtls.read() SCTP data.
+        }
+
+        let ptr_buf = dtls.inner_mut()?;
+        // ensure incoming buffer was indeed read by DTLS layer.
+        ptr_buf.assert_input_was_read();
+        // clean up.
+        ptr_buf.remove_output();
+
+        Ok(())
     }
 }
 
@@ -170,6 +274,7 @@ impl<T> Peer<T> {
             config,
             session_id: SessionId(id),
             setup,
+            output: OutputQueue::new(),
             stun_state: StunState {
                 local_creds: IceCreds {
                     username: random_id::<8>().to_string(),
@@ -192,10 +297,7 @@ impl<T> Peer<T> {
         Ok(peer)
     }
 
-    /// Tests whether this [`Peer`] accepts the input.
-    ///
-    /// This is useful in a server scenario when multiplexing several Peers on the same UDP port.
-    pub fn accepts(&self, input: &Input<'_>) -> Result<bool, Error> {
+    fn _accepts(&self, input: &Input<'_>) -> Result<bool, Error> {
         use InputInner::*;
         use NetworkInput::*;
         Ok(match &input.0 {
@@ -222,8 +324,8 @@ impl<T> Peer<T> {
             Answer(v) => self.handle_answer(v)?.into(),
             Network(addr, data) => {
                 match data {
-                    Stun(stun) => self.stun_state.handle_stun(addr, stun)?,
-                    Dtls(dtls) => self.dtls_state.handle_dtls(dtls)?,
+                    Stun(stun) => self.stun_state.handle_stun(addr, &mut self.output, stun)?,
+                    Dtls(dtls) => self.dtls_state.handle_dtls(addr, &mut self.output, dtls)?,
                 }
                 Output::None
             }
@@ -345,48 +447,18 @@ impl<T> Peer<T> {
 }
 
 impl Peer<state::Connected> {
+    /// Tests whether this [`Peer`] accepts the input.
+    ///
+    /// This is useful in a server scenario when multiplexing several Peers on the same UDP port.
+    pub fn accepts(&self, input: &Input<'_>) -> Result<bool, Error> {
+        self._accepts(input)
+    }
+
     /// Provide input to this Peer.
     ///
     /// Any input can potentially result in multiple output. For example, one DTLS UDP packet
     /// might result in multiple outgoing DTLS UDP packets.
     pub fn handle_input<'a>(&mut self, ts: Ts, input: Input<'a>) -> Result<Output, Error> {
         self._handle_input(ts, input)
-    }
-}
-
-impl DtlsState {
-    fn handle_dtls<'a>(&mut self, buf: &'a [u8]) -> Result<(), Error> {
-        let dtls = self.dtls.as_mut().unwrap();
-
-        // provide buffer to be read.
-        dtls.inner_mut()?.set_read_src(buf);
-
-        let completed = dtls.complete_handshake_until_block()?;
-
-        if completed && self.srtp_key.is_none() {
-            let (srtp_key, fp) = dtls
-                .take_srtp_key_material()
-                .expect("SRTP key material on DTLS handshake completion");
-
-            // Before accepting the key material, check the fingerprint is known from the SDP.
-            if !self.remote_fingerprints.contains(&fp) {
-                let err = io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "Unknown remote DTLS fingerrint",
-                );
-                return Err(err.into());
-            }
-
-            self.srtp_key = Some(srtp_key);
-        }
-
-        if completed {
-            // TODO: dtls.read() SCTP data.
-        }
-
-        // ensure incoming buffer was indeed read by DTLS layer.
-        dtls.inner_mut()?.assert_empty_src();
-
-        Ok(())
     }
 }

@@ -69,7 +69,7 @@ pub fn parse_message(buf: &[u8]) -> Result<StunMessage, Error> {
     })
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct StunMessage<'a> {
     class: Class,
     method: Method,
