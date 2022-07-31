@@ -50,7 +50,7 @@ pub mod state {
 /// # Start a connection by creating an offer
 ///
 /// ```no_run
-/// # fn main() -> Result<(), Error> {
+/// # fn main() -> Result<(), str0m::Error> {
 /// use std::convert::TryFrom;
 /// use std::net::SocketAddr;
 /// use std::time::Instant;
