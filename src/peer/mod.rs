@@ -51,7 +51,7 @@ pub mod state {
 
 /// A single peer connection.
 ///
-/// # Start a connection by creating an offer
+/// # Starting by creating an offer
 ///
 /// ```no_run
 /// # fn main() -> Result<(), str0m::Error> {
@@ -63,9 +63,9 @@ pub mod state {
 /// // 1. Create a Peer from a PeerConfig.
 /// let peer_init = PeerConfig::new().build()?;
 ///
-/// // 2. To create an offer, we must media, or a data channel.
-/// let peer_media = peer_init.create_offer();
-/// let (offer, peer_offering) = peer_media.add_data_channel();
+/// // 2. To create an offer, we must add media, or a data channel.
+/// let change_set = peer_init.change_set();
+/// let (offer, peer_offering) = change_set.add_data_channel().apply();
 ///
 /// // 3. Send the offer _somehow_ to the remote peer and receive
 /// //    the answer back (via websocket for instance).
@@ -74,7 +74,7 @@ pub mod state {
 ///
 /// // 4. Loop send/receive UDP data until connected.
 /// let peer_connected = loop {
-///     while let Some((addr, data_out)) = peer_connecting.network_output() {
+///     while let Some((addr, data_out)) = peer_connecting.io().network_output() {
 ///         // TODO: send data_out to addr via UDP socket.
 ///     }
 ///
@@ -88,9 +88,9 @@ pub mod state {
 ///     let network = NetworkInput::try_from(data_in)?;
 ///
 ///     // Feed input data to peer.
-///     peer_connecting.handle_network_input(time, addr, network)?;
+///     peer_connecting.io().network_input(time, addr, network)?;
 ///
-///     match peer_connecting.try_connected() {
+///     match peer_connecting.try_connect() {
 ///         ConnectionResult::Connecting(v) => peer_connecting = v,
 ///         ConnectionResult::Connected(v) => break v,
 ///     }
