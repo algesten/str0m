@@ -117,7 +117,9 @@ pub struct Peer<State> {
     /// State of DTLS.
     dtls_state: DtlsState,
 
-    /// The configured media (audio/video or datachannel).
+    /// The configured media (audio/video or datachannel). "configured"
+    /// means the lines contain only the negotiated subset of possible
+    /// codecs/features.
     media: Vec<Media>,
 
     /// Changes to be made to the media state. These are held
@@ -482,11 +484,71 @@ impl<T> Peer<T> {
     }
 
     fn update_media_from_offer(&mut self, offer: Offer) -> Result<(), Error> {
+        // check_consistent ensures the m-lines contain all we need.
+        if let Some(problem) = offer.0.check_consistent() {
+            return Err(Error::SdpError(problem));
+        }
+
+        self.update_existing_media_from_sdp(&offer.0);
+
+        for m in offer.0.media_lines.into_iter() {
+            let remote_mid = m.mid();
+
+            // Skip lines we already have.
+            let exists = self.media.iter().any(|e| remote_mid == e.mid());
+            if exists {
+                continue;
+            }
+
+            let mut media = Media::new(m);
+            media.narrow_remote_to_locally_accepted();
+
+            self.media.push(media);
+        }
+
         Ok(())
     }
 
     fn update_media_from_changes(&mut self, changes: Changes, answer: Answer) -> Result<(), Error> {
+        // check_consistent ensures the m-lines contain all we need.
+        if let Some(problem) = answer.0.check_consistent() {
+            return Err(Error::SdpError(problem));
+        }
+
+        self.update_existing_media_from_sdp(&answer.0);
+
+        for mut media in changes.new_media_lines(self.setup) {
+            let local_mid = media.mid();
+            let remote = answer.0.media_lines.iter().find(|m| local_mid == m.mid());
+
+            if let Some(remote) = remote {
+                media.narrow_local_to_remotely_accepted(remote);
+
+                self.media.push(media);
+            } else {
+                return Err(Error::SdpError(format!(
+                    "Remote answer missing mid: {}",
+                    local_mid
+                )));
+            }
+        }
+
         Ok(())
+    }
+
+    fn update_existing_media_from_sdp(&mut self, sdp: &Sdp) {
+        for m in &sdp.media_lines {
+            if let Some(media) = self.media.iter_mut().find(|e| m.mid() == e.mid()) {
+                // We have the local media.
+
+                // Direction changes.
+                let wanted_dir = m.direction().invert();
+                if media.direction() != wanted_dir {
+                    media.set_direction(wanted_dir);
+                    todo!(); // emit event that direction changed
+                }
+            }
+        }
     }
 
     fn start_dtls(&mut self) -> Result<(), Error> {

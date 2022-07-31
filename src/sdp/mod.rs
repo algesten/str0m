@@ -26,15 +26,11 @@ impl Sdp {
                 return Some(format!("a=group mid count doesn't match m-line count"));
             }
             for (m_line, mid) in self.media_lines.iter().zip(mids.iter()) {
-                if m_line.mid() != mid {
-                    return Some(format!(
-                        "Mid order not matching a=group {} != {}",
-                        m_line.mid(),
-                        mid
-                    ));
-                }
-
                 m_line.check_consistent()?;
+                let m = m_line.mid();
+                if m != mid {
+                    return Some(format!("Mid order not matching a=group {} != {}", m, mid));
+                }
             }
         } else {
             return Some("Session attribute a=group missing".into());
@@ -289,6 +285,11 @@ impl Candidate {
     }
 }
 
+fn is_dir(a: &MediaAttribute) -> bool {
+    use MediaAttribute::*;
+    matches!(a, SendRecv | SendOnly | RecvOnly | Inactive)
+}
+
 /// An m-line
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MediaLine {
@@ -310,8 +311,9 @@ impl MediaLine {
                     None
                 }
             })
-            // guarded by check_consistent
-            .unwrap()
+            // We should only use `mid()` once we're certain there is
+            // a mid line. This is checked by `check_consistent`.
+            .expect("missing a=mid")
     }
 
     pub fn direction(&self) -> Direction {
@@ -328,12 +330,19 @@ impl MediaLine {
         Direction::Inactive
     }
 
-    pub fn check_consistent(&self) -> Option<String> {
-        let mid_count = self
+    pub fn set_direction(&mut self, dir: Direction) {
+        let idx = self
             .attrs
             .iter()
-            .filter(|a| matches!(a, MediaAttribute::Mid(_)))
-            .count();
+            .position(is_dir)
+            .expect("m-line must have direction");
+        self.attrs[idx] = dir.into();
+    }
+
+    pub fn check_consistent(&self) -> Option<String> {
+        use MediaAttribute::*;
+
+        let mid_count = self.attrs.iter().filter(|a| matches!(a, Mid(_))).count();
 
         if mid_count == 0 {
             return Some(format!(
@@ -349,18 +358,23 @@ impl MediaLine {
             ));
         }
 
-        let setup = self
-            .attrs
-            .iter()
-            .filter(|a| matches!(a, MediaAttribute::Setup(_)))
-            .count();
+        let setup = self.attrs.iter().filter(|a| matches!(a, Setup(_))).count();
 
         if setup != 1 {
-            return Some(format!("Expected 1 a=setup: line: {}", setup));
+            return Some(format!("Expected 1 a=setup: line for mid: {}", self.mid()));
+        }
+
+        let dir_count = self.attrs.iter().filter(|a| is_dir(a)).count();
+
+        if dir_count != 1 {
+            return Some(format!(
+                "Expected exactly one of a=sendrecv, a=sendonly, a=recvonly, a=inactive for mid: {}",
+                self.mid()
+            ));
         }
 
         if self.pts.is_empty() {
-            return Some("Expected at least one m-line".to_string());
+            return Some(format!("Expected at least one PT for mid: {}", self.mid()));
         }
 
         for m in &self.pts {
@@ -376,10 +390,14 @@ impl MediaLine {
                 })
                 .count();
             if rtp_count == 0 {
-                return Some(format!("Missing a=rtp_map:{}", m));
+                return Some(format!("Missing a=rtp_map:{} for mid: {}", m, self.mid()));
             }
             if rtp_count > 1 {
-                return Some(format!("More than one a=rtp_map:{}", m));
+                return Some(format!(
+                    "More than one a=rtp_map:{} for mid: {}",
+                    m,
+                    self.mid()
+                ));
             }
         }
         None
@@ -559,6 +577,16 @@ pub enum Direction {
     SendRecv,
     /// Disabled direction.
     Inactive,
+}
+
+impl Direction {
+    pub(crate) fn invert(&self) -> Self {
+        match self {
+            Direction::SendOnly => Direction::RecvOnly,
+            Direction::RecvOnly => Direction::SendOnly,
+            _ => *self,
+        }
+    }
 }
 
 impl From<Direction> for MediaAttribute {

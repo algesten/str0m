@@ -115,14 +115,11 @@ impl ChangeSet<state::Connected, Changed> {
 }
 
 impl Changes {
-    pub fn new_media_lines(&self, setup: Setup) -> Vec<Media> {
-        self.0
-            .iter()
-            .filter_map(|c| match c {
-                Change::AddMedia(kind, dir) => Some(Media::new_media(setup, *kind, *dir)),
-                Change::AddDataChannel => Some(Media::new_data_channel(setup)),
-                // _ => None,
-            })
-            .collect()
+    pub fn new_media_lines(&self, setup: Setup) -> impl Iterator<Item = Media> + '_ {
+        self.0.iter().filter_map(move |c| match c {
+            Change::AddMedia(kind, dir) => Some(Media::new_media(setup, *kind, *dir)),
+            Change::AddDataChannel => Some(Media::new_data_channel(setup)),
+            // _ => None,
+        })
     }
 }

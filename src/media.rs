@@ -1,5 +1,7 @@
 //! Media (m-line) related stuff.
 
+use std::ops::{Deref, DerefMut};
+
 use crate::sdp::{Direction, MediaAttribute, MediaLine, MediaType, Proto, Setup};
 use crate::util::random_id;
 
@@ -19,6 +21,10 @@ pub enum MediaKind {
 }
 
 impl Media {
+    pub fn new(media_line: MediaLine) -> Self {
+        Media { media_line }
+    }
+
     pub fn new_data_channel(setup: Setup) -> Self {
         let mid = random_id::<3>().to_string();
 
@@ -70,12 +76,30 @@ impl Media {
         }
     }
 
-    pub fn mid(&self) -> &str {
-        self.media_line.mid()
-    }
-
     pub fn media_line(&self) -> &MediaLine {
         &self.media_line
+    }
+
+    pub fn narrow_remote_to_locally_accepted(&mut self) {
+        // TODO
+    }
+
+    pub fn narrow_local_to_remotely_accepted(&mut self, _remote: &MediaLine) {
+        // TODO
+    }
+}
+
+impl Deref for Media {
+    type Target = MediaLine;
+
+    fn deref(&self) -> &Self::Target {
+        &self.media_line
+    }
+}
+
+impl DerefMut for Media {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.media_line
     }
 }
 

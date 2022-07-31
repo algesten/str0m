@@ -29,8 +29,8 @@ impl<T> Peer<T> {
             mids: self.media.iter().map(|m| m.mid().to_string()).collect(),
         });
 
-        let new_lines = if let Some(changes) = &self.pending_changes {
-            changes.new_media_lines(self.setup)
+        let new_lines = if let Some(pending) = &self.pending_changes {
+            pending.new_media_lines(self.setup).collect()
         } else {
             vec![]
         };

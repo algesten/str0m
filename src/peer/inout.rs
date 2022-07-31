@@ -38,7 +38,7 @@ impl<'a, State> Io<'a, State> {
     /// While connecting, we only accept input from the network.
     pub fn network_input(
         &mut self,
-        time: Instant,
+        _time: Instant,
         addr: SocketAddr,
         input: NetworkInput<'_>,
     ) -> Result<(), Error> {
