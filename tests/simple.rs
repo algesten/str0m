@@ -30,7 +30,7 @@ fn connect_peer_active(
     let mut peer_connecting = peer_offering.accept_answer(answer)?;
 
     let peer_connected = loop {
-        while let Some((addr, data_out)) = peer_connecting.network_output() {
+        while let Some((addr, data_out)) = peer_connecting.io().network_output() {
             tx.send(TestData::Data(addr, data_out.to_vec())).unwrap();
         }
 
@@ -43,7 +43,7 @@ fn connect_peer_active(
 
         let network = NetworkInput::try_from(data_in.as_slice())?;
 
-        peer_connecting.network_input(time, addr, network)?;
+        peer_connecting.io().network_input(time, addr, network)?;
 
         match peer_connecting.try_connect() {
             ConnectionResult::Connecting(v) => peer_connecting = v,
@@ -70,7 +70,7 @@ fn connect_peer_passive(
     tx.send(TestData::Answer(answer)).unwrap();
 
     let peer_connected = loop {
-        while let Some((addr, data_out)) = peer_connecting.network_output() {
+        while let Some((addr, data_out)) = peer_connecting.io().network_output() {
             tx.send(TestData::Data(addr, data_out.to_vec())).unwrap();
         }
 
@@ -83,7 +83,7 @@ fn connect_peer_passive(
 
         let network = NetworkInput::try_from(data_in.as_slice())?;
 
-        peer_connecting.network_input(time, addr, network)?;
+        peer_connecting.io().network_input(time, addr, network)?;
 
         match peer_connecting.try_connect() {
             ConnectionResult::Connecting(v) => peer_connecting = v,

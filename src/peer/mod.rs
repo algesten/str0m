@@ -546,6 +546,13 @@ impl<T> Peer<T> {
 }
 
 impl Peer<state::Connected> {
+    /// Make a modification to the session.
+    ///
+    /// The offer must be provided _in some way_ to the remote side.
+    pub fn change_set(self) -> ChangeSet<state::Connected, change_state::NoChange> {
+        ChangeSet::new(self)
+    }
+
     /// Tests if this peer will accept the network input.
     ///
     /// This is used in a server side peer to multiplex multiple peer
@@ -576,6 +583,65 @@ impl Peer<state::Connected> {
     /// For every input provided, this needs to be polled until it returns `None`.
     pub fn network_output(&mut self) -> Option<(SocketAddr, &NetworkOutput)> {
         self.do_network_output()
+    }
+}
+
+impl Peer<state::Offering> {
+    /// Accept an answer from the remote side.
+    pub fn accept_answer(mut self, answer: Answer) -> Result<Peer<state::Connected>, Error> {
+        self.apply_pending_changes(answer)?;
+        Ok(self.into_state())
+    }
+
+    /// Abort the changes.
+    ///
+    /// Goes back to a state where we can accept an offer from the remote side instead.
+    pub fn rollback(mut self) -> Peer<state::Connected> {
+        self.pending_changes.take();
+        self.into_state()
+    }
+
+    /// Do network IO.
+    pub fn io(&mut self) -> Io<'_, state::Offering> {
+        Io(self)
+    }
+}
+
+/// Handle to perform network input/output for a [`Peer`].
+pub struct Io<'a, State>(&'a mut Peer<State>);
+
+impl<'a, State> Io<'a, State> {
+    /// Tests if this peer will accept the network input.
+    ///
+    /// This is used in a server side peer to multiplex multiple peer
+    /// connections over the same UDP port. After the initial STUN, the
+    /// remote (client) peer is recognized by IP/port.
+    pub fn accepts_network_input(
+        &self,
+        addr: SocketAddr,
+        input: &NetworkInput<'_>,
+    ) -> Result<bool, Error> {
+        self.0.do_accepts_network_input(addr, input)
+    }
+
+    /// Provide network input.
+    ///
+    /// While connecting, we only accept input from the network.
+    pub fn network_input(
+        &mut self,
+        time: Instant,
+        addr: SocketAddr,
+        input: NetworkInput<'_>,
+    ) -> Result<(), Error> {
+        self.0.do_network_input(time, addr, input)
+    }
+
+    /// Polls for network output.
+    ///
+    /// Changes to the `Peer` state will queue up network output to send.
+    /// For every change, this function must be polled until it returns `None`.
+    pub fn network_output(&mut self) -> Option<(SocketAddr, &NetworkOutput)> {
+        self.0.do_network_output()
     }
 }
 
