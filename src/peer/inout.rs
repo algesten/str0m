@@ -1,10 +1,63 @@
 use std::convert::TryFrom;
+use std::net::SocketAddr;
 use std::ops::{Deref, DerefMut};
+use std::time::Instant;
 
 use crate::sdp::{parse_sdp, Sdp};
 use crate::stun::{self, StunMessage};
 use crate::udp::UdpKind;
-use crate::{Error, UDP_MTU};
+use crate::{Error, Peer, UDP_MTU};
+
+/// Handle to perform network input/output for a [`Peer`].
+pub struct Io<'a, State>(pub(crate) &'a mut Peer<State>);
+
+impl<'a, State> Io<'a, State> {
+    /// Tests if this peer will accept the network input.
+    ///
+    /// This is used in a server side peer to multiplex multiple peer
+    /// connections over the same UDP port. After the initial STUN, the
+    /// remote (client) peer is recognized by IP/port.
+    pub fn accepts_network_input(
+        &self,
+        addr: SocketAddr,
+        input: &NetworkInput<'_>,
+    ) -> Result<bool, Error> {
+        use NetworkInputInner::*;
+        if let Stun(stun) = &input.0 {
+            self.0.stun_state.accepts_stun(addr, stun)
+        } else {
+            // All other kind of network input must be "unlocked" by STUN recognizing the
+            // ice-ufrag/passwd from the SDP. Any sucessful STUN cause the remote IP/port
+            // combo to be considered associated with this peer.
+            Ok(self.0.stun_state.is_stun_verified(addr))
+        }
+    }
+
+    /// Provide network input.
+    ///
+    /// While connecting, we only accept input from the network.
+    pub fn network_input(
+        &mut self,
+        time: Instant,
+        addr: SocketAddr,
+        input: NetworkInput<'_>,
+    ) -> Result<(), Error> {
+        use NetworkInputInner::*;
+        let output = &mut self.0.output;
+        match input.0 {
+            Stun(stun) => self.0.stun_state.handle_stun(addr, output, stun),
+            Dtls(dtls) => self.0.dtls_state.handle_dtls(addr, output, dtls),
+        }
+    }
+
+    /// Polls for network output.
+    ///
+    /// Changes to the `Peer` state will queue up network output to send.
+    /// For every change, this function must be polled until it returns `None`.
+    pub fn network_output(&mut self) -> Option<(SocketAddr, &NetworkOutput)> {
+        self.0.output.dequeue()
+    }
+}
 
 /// Encapsulates network input (typically from a UDP socket).
 ///

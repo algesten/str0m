@@ -10,7 +10,6 @@ use rand::Rng;
 use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
 use std::net::SocketAddr;
-use std::time::Instant;
 use std::{io, mem};
 
 use crate::dtls::{dtls_create_ctx, dtls_ssl_create, Dtls, SrtpKeyMaterial};
@@ -23,8 +22,8 @@ use crate::util::random_id;
 use crate::Error;
 
 use self::change::Changes;
-pub use self::inout::{Answer, NetworkInput, Offer};
-use self::inout::{NetworkInputInner, NetworkOutput, NetworkOutputWriter};
+pub use self::inout::{Answer, Io, NetworkInput, Offer};
+use self::inout::{NetworkOutput, NetworkOutputWriter};
 use self::ptr_buf::{OutputEnqueuer, PtrBuffer};
 pub use change::{change_state, ChangeSet};
 pub use config::PeerConfig;
@@ -243,7 +242,7 @@ impl StunState {
     fn handle_stun<'a>(
         &mut self,
         addr: SocketAddr,
-        queue: &mut OutputQueue,
+        output: &mut OutputQueue,
         stun: StunMessage<'a>,
     ) -> Result<(), Error> {
         let reply = stun.reply()?;
@@ -254,11 +253,11 @@ impl StunState {
             trace!("STUN new verified peer ({})", addr);
         }
 
-        let mut writer = queue.get_buffer_writer();
+        let mut writer = output.get_buffer_writer();
         let len = reply.to_bytes(&self.local_creds.password, &mut writer)?;
         let buffer = writer.set_len(len);
 
-        queue.enqueue(addr, buffer);
+        output.enqueue(addr, buffer);
 
         Ok(())
     }
@@ -376,59 +375,6 @@ impl<T> Peer<T> {
         let changes = self.pending_changes.take().unwrap();
 
         Ok(())
-    }
-
-    // fn _accepts(&self, input: &Input<'_>) -> Result<bool, Error> {
-    //     use InputInner::*;
-    //     use NetworkInputInner::*;
-    //     Ok(match &input.0 {
-    //         Tick => panic!("Tick in accepts"),
-    //         Offer(_) => true,  // TODO check against previous
-    //         Answer(_) => true, // TODO check against previous
-    //         Network(addr, data) => {
-    //             if let Stun(stun) = &data.0 {
-    //                 self.stun_state.accepts_stun(*addr, stun)?
-    //             } else {
-    //                 // All other kind of network input must be "unlocked" by STUN recognizing the
-    //                 // ice-ufrag/passwd from the SDP. Any sucessful STUN cause the remote IP/port
-    //                 // combo to be considered associated with this peer.
-    //                 self.stun_state.is_stun_verified(addr)
-    //             }
-    //         }
-    //     })
-    // }
-
-    fn do_accepts_network_input<'a>(
-        &self,
-        addr: SocketAddr,
-        input: &NetworkInput<'a>,
-    ) -> Result<bool, Error> {
-        use NetworkInputInner::*;
-        if let Stun(stun) = &input.0 {
-            self.stun_state.accepts_stun(addr, stun)
-        } else {
-            // All other kind of network input must be "unlocked" by STUN recognizing the
-            // ice-ufrag/passwd from the SDP. Any sucessful STUN cause the remote IP/port
-            // combo to be considered associated with this peer.
-            Ok(self.stun_state.is_stun_verified(addr))
-        }
-    }
-
-    fn do_network_input<'a>(
-        &mut self,
-        _time: Instant,
-        addr: SocketAddr,
-        input: NetworkInput<'a>,
-    ) -> Result<(), Error> {
-        use NetworkInputInner::*;
-        match input.0 {
-            Stun(stun) => self.stun_state.handle_stun(addr, &mut self.output, stun),
-            Dtls(dtls) => self.dtls_state.handle_dtls(addr, &mut self.output, dtls),
-        }
-    }
-
-    fn do_network_output(&mut self) -> Option<(SocketAddr, &NetworkOutput)> {
-        self.output.dequeue()
     }
 
     fn do_handle_offer(&mut self, offer: Offer) -> Result<Answer, Error> {
@@ -553,36 +499,9 @@ impl Peer<state::Connected> {
         ChangeSet::new(self)
     }
 
-    /// Tests if this peer will accept the network input.
-    ///
-    /// This is used in a server side peer to multiplex multiple peer
-    /// connections over the same UDP port. After the initial STUN, the
-    /// remote (client) peer is recognized by IP/port.
-    pub fn accepts_network_input<'a>(
-        &self,
-        addr: SocketAddr,
-        input: &NetworkInput<'a>,
-    ) -> Result<bool, Error> {
-        self.do_accepts_network_input(addr, input)
-    }
-
-    /// Provides network input.
-    ///
-    /// While connecting, we only accept input from the network.
-    pub fn network_input<'a>(
-        &mut self,
-        time: Instant,
-        addr: SocketAddr,
-        input: NetworkInput<'a>,
-    ) -> Result<(), Error> {
-        self.do_network_input(time, addr, input)
-    }
-
-    /// Polls for network output.
-    ///
-    /// For every input provided, this needs to be polled until it returns `None`.
-    pub fn network_output(&mut self) -> Option<(SocketAddr, &NetworkOutput)> {
-        self.do_network_output()
+    /// Do network IO.
+    pub fn io(&mut self) -> Io<'_, state::Connected> {
+        Io(self)
     }
 }
 
@@ -604,44 +523,6 @@ impl Peer<state::Offering> {
     /// Do network IO.
     pub fn io(&mut self) -> Io<'_, state::Offering> {
         Io(self)
-    }
-}
-
-/// Handle to perform network input/output for a [`Peer`].
-pub struct Io<'a, State>(&'a mut Peer<State>);
-
-impl<'a, State> Io<'a, State> {
-    /// Tests if this peer will accept the network input.
-    ///
-    /// This is used in a server side peer to multiplex multiple peer
-    /// connections over the same UDP port. After the initial STUN, the
-    /// remote (client) peer is recognized by IP/port.
-    pub fn accepts_network_input(
-        &self,
-        addr: SocketAddr,
-        input: &NetworkInput<'_>,
-    ) -> Result<bool, Error> {
-        self.0.do_accepts_network_input(addr, input)
-    }
-
-    /// Provide network input.
-    ///
-    /// While connecting, we only accept input from the network.
-    pub fn network_input(
-        &mut self,
-        time: Instant,
-        addr: SocketAddr,
-        input: NetworkInput<'_>,
-    ) -> Result<(), Error> {
-        self.0.do_network_input(time, addr, input)
-    }
-
-    /// Polls for network output.
-    ///
-    /// Changes to the `Peer` state will queue up network output to send.
-    /// For every change, this function must be polled until it returns `None`.
-    pub fn network_output(&mut self) -> Option<(SocketAddr, &NetworkOutput)> {
-        self.0.do_network_output()
     }
 }
 
