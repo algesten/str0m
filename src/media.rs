@@ -7,11 +7,9 @@ use crate::util::random_id;
 pub(crate) struct Media {
     /// The corresponding transceiver config in the m-line.
     media_line: MediaLine,
-
-    /// Whether this transceiver has been negotiated with the remote side.
-    need_negotiating: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Kind when adding media.
 pub enum MediaKind {
     /// Add audio media.
@@ -42,8 +40,6 @@ impl Media {
                     MediaAttribute::MaxMessageSize(262144), // TODO this value is from Safari
                 ],
             },
-
-            need_negotiating: false,
         }
     }
 
@@ -71,8 +67,6 @@ impl Media {
                     MediaAttribute::RtcpMuxOnly,
                 ],
             },
-
-            need_negotiating: false,
         }
     }
 

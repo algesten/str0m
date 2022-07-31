@@ -29,9 +29,15 @@ impl<T> Peer<T> {
             mids: self.media.iter().map(|m| m.mid().to_string()).collect(),
         });
 
-        let media_lines = self
-            .media
-            .iter()
+        let new_lines = if let Some(changes) = &self.pending_changes {
+            changes.new_media_lines(self.setup)
+        } else {
+            vec![]
+        };
+
+        let all_lines = self.media.iter().chain(new_lines.iter());
+
+        let media_lines = all_lines
             .map(|m| m.media_line())
             .cloned()
             .map(|mut m| {

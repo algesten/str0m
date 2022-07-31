@@ -18,8 +18,7 @@ fn connect_peer_active(
 ) -> Result<Peer<state::Connected>, Error> {
     let peer_init = PeerConfig::new().build()?;
 
-    let peer_media = peer_init.create_offer();
-    let (offer, peer_offering) = peer_media.add_data_channel();
+    let (offer, peer_offering) = peer_init.change_set().add_data_channel().apply();
 
     tx.send(TestData::Offer(offer)).unwrap();
 
@@ -44,9 +43,9 @@ fn connect_peer_active(
 
         let network = NetworkInput::try_from(data_in.as_slice())?;
 
-        peer_connecting.handle_network_input(time, addr, network)?;
+        peer_connecting.network_input(time, addr, network)?;
 
-        match peer_connecting.try_connected() {
+        match peer_connecting.try_connect() {
             ConnectionResult::Connecting(v) => peer_connecting = v,
             ConnectionResult::Connected(v) => break v,
         }
@@ -84,9 +83,9 @@ fn connect_peer_passive(
 
         let network = NetworkInput::try_from(data_in.as_slice())?;
 
-        peer_connecting.handle_network_input(time, addr, network)?;
+        peer_connecting.network_input(time, addr, network)?;
 
-        match peer_connecting.try_connected() {
+        match peer_connecting.try_connect() {
             ConnectionResult::Connecting(v) => peer_connecting = v,
             ConnectionResult::Connected(v) => break v,
         }
