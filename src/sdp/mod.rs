@@ -1,7 +1,7 @@
 mod parser;
 
 use std::fmt::{self};
-use std::net::IpAddr;
+use std::net::SocketAddr;
 use std::num::ParseFloatError;
 use std::ops::Deref;
 use std::str::{from_utf8_unchecked, FromStr};
@@ -54,11 +54,6 @@ pub struct IceCreds {
     pub password: String,
 }
 
-pub trait MediaAttributeExt {
-    fn extmaps(&self) -> Vec<ExtMap>;
-    fn ssrc_info(&self) -> Vec<SsrcInfo>;
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SsrcInfo {
     pub ssrc: u32,
@@ -66,154 +61,6 @@ pub struct SsrcInfo {
     // If this is a repair stream, this is the SSRC it repairs. This is
     // figured out using a=ssrc-group:FID <main> <repair>
     pub repaired_ssrc: Option<u32>,
-}
-
-impl MediaAttributeExt for Vec<MediaAttribute> {
-    fn extmaps(&self) -> Vec<ExtMap> {
-        let mut ret = vec![];
-
-        for a in self {
-            if let MediaAttribute::ExtMap(e) = a {
-                ret.push(e.clone());
-            }
-        }
-
-        ret
-    }
-
-    fn ssrc_info(&self) -> Vec<SsrcInfo> {
-        let mut ret = vec![];
-
-        let mut fids = vec![];
-
-        for a in self {
-            if let MediaAttribute::SsrcGroup { semantics, ssrcs } = a {
-                if semantics != "FID" {
-                    continue;
-                }
-                if ssrcs.len() != 2 {
-                    trace!("Found a=ssrc-group=FID without two SSRC: {:?}", ssrcs);
-                    continue;
-                }
-                fids.push((ssrcs[0], ssrcs[1]));
-            }
-        }
-
-        for a in self {
-            if let MediaAttribute::Ssrc { ssrc, attr, value } = a {
-                let repaired_ssrc = fids
-                    .iter()
-                    .find(|(_, rtx)| rtx == ssrc)
-                    .map(|(main, _)| *main);
-
-                if attr == "cname" {
-                    ret.push(SsrcInfo {
-                        ssrc: *ssrc,
-                        cname: value.clone(),
-                        repaired_ssrc,
-                    });
-                }
-            }
-        }
-
-        ret
-    }
-}
-
-pub trait AttributeExt {
-    fn setup(&self) -> Option<Setup>;
-    fn ice_creds(&self) -> Option<IceCreds>;
-    fn fingerprint(&self) -> Option<Fingerprint>;
-}
-
-impl AttributeExt for Vec<MediaAttribute> {
-    fn setup(&self) -> Option<Setup> {
-        let setup = self.iter().find_map(|m| {
-            if let MediaAttribute::Setup(v) = m {
-                Some(v)
-            } else {
-                None
-            }
-        })?;
-
-        Some(*setup)
-    }
-
-    fn ice_creds(&self) -> Option<IceCreds> {
-        let username = self.iter().find_map(|m| {
-            if let MediaAttribute::IceUfrag(v) = m {
-                Some(v)
-            } else {
-                None
-            }
-        })?;
-
-        let password = self.iter().find_map(|m| {
-            if let MediaAttribute::IcePwd(v) = m {
-                Some(v)
-            } else {
-                None
-            }
-        })?;
-
-        Some(IceCreds {
-            username: username.to_string(),
-            password: password.to_string(),
-        })
-    }
-    fn fingerprint(&self) -> Option<Fingerprint> {
-        for a in self {
-            if let MediaAttribute::Fingerprint(v) = a {
-                return Some(v.clone());
-            }
-        }
-        None
-    }
-}
-
-impl AttributeExt for Vec<SessionAttribute> {
-    fn setup(&self) -> Option<Setup> {
-        let setup = self.iter().find_map(|m| {
-            if let SessionAttribute::Setup(v) = m {
-                Some(v)
-            } else {
-                None
-            }
-        })?;
-
-        Some(*setup)
-    }
-
-    fn ice_creds(&self) -> Option<IceCreds> {
-        let username = self.iter().find_map(|m| {
-            if let SessionAttribute::IceUfrag(v) = m {
-                Some(v)
-            } else {
-                None
-            }
-        })?;
-
-        let password = self.iter().find_map(|m| {
-            if let SessionAttribute::IcePwd(v) = m {
-                Some(v)
-            } else {
-                None
-            }
-        })?;
-
-        Some(IceCreds {
-            username: username.to_string(),
-            password: password.to_string(),
-        })
-    }
-    fn fingerprint(&self) -> Option<Fingerprint> {
-        for a in self {
-            if let SessionAttribute::Fingerprint(v) = a {
-                return Some(v.clone());
-            }
-        }
-        None
-    }
 }
 
 /// Session info, before the first m= line
@@ -233,6 +80,74 @@ pub struct SessionId(pub u64);
 pub struct Bandwidth {
     pub typ: String,
     pub val: String,
+}
+
+impl Session {
+    pub fn setup(&self) -> Option<Setup> {
+        let setup = self.attrs.iter().find_map(|m| {
+            if let SessionAttribute::Setup(v) = m {
+                Some(v)
+            } else {
+                None
+            }
+        })?;
+
+        Some(*setup)
+    }
+
+    pub fn ice_creds(&self) -> Option<IceCreds> {
+        let username = self.attrs.iter().find_map(|m| {
+            if let SessionAttribute::IceUfrag(v) = m {
+                Some(v)
+            } else {
+                None
+            }
+        })?;
+
+        let password = self.attrs.iter().find_map(|m| {
+            if let SessionAttribute::IcePwd(v) = m {
+                Some(v)
+            } else {
+                None
+            }
+        })?;
+
+        Some(IceCreds {
+            username: username.to_string(),
+            password: password.to_string(),
+        })
+    }
+
+    pub fn fingerprint(&self) -> Option<Fingerprint> {
+        for a in &self.attrs {
+            if let SessionAttribute::Fingerprint(v) = a {
+                return Some(v.clone());
+            }
+        }
+        None
+    }
+
+    pub fn ice_lite(&self) -> bool {
+        self.attrs
+            .iter()
+            .any(|a| matches!(a, SessionAttribute::IceLite))
+    }
+
+    pub fn ice_candidates(&self) -> impl Iterator<Item = &Candidate> {
+        self.attrs.iter().filter_map(|a| {
+            if let SessionAttribute::Candidate(v) = a {
+                Some(v)
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn end_of_candidates(&self) -> bool {
+        self.attrs
+            .iter()
+            .any(|a| matches!(a, SessionAttribute::EndOfCandidates))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -300,32 +215,66 @@ pub struct Fingerprint {
     pub bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Candidate {
-    pub found: String,         // 1-32 "ice chars", ALPHA / DIGIT / "+" / "/"
-    pub comp_id: String,       // 1 for RTP, 2 for RTCP
-    pub proto: String,         // udp/tcp
-    pub prio: u32,             // 1-10 digits
-    pub addr: String,          // ip
-    pub port: u16,             // port
-    pub typ: String,           // host/srflx/prflx/relay
-    pub raddr: Option<String>, // ip
-    pub rport: Option<u16>,    // port
+    found: String,             // 1-32 "ice chars", ALPHA / DIGIT / "+" / "/"
+    comp_id: u16,              // 1 for RTP, 2 for RTCP
+    proto: String,             // udp/tcp
+    prio: Option<u32>,         // 1-10 digits
+    addr: SocketAddr,          // ip/port
+    base: Option<SocketAddr>,  // the "base" used for local candidates.
+    typ: String,               // host/srflx/prflx/relay TODO: enum this
+    raddr: Option<SocketAddr>, // ip/port
 }
 
+impl PartialEq for Candidate {
+    fn eq(&self, other: &Self) -> bool {
+        self.addr == other.addr && self.base == other.base && self.raddr == other.raddr
+    }
+}
+
+impl Eq for Candidate {}
+
 impl Candidate {
-    pub fn host_udp(prio: u32, addr: &IpAddr, port: u16) -> Self {
+    pub fn host(addr: SocketAddr) -> Self {
         Candidate {
             found: "1".into(),
-            comp_id: "1".into(),
+            comp_id: 1,
             proto: "udp".into(),
-            prio,
-            addr: addr.to_string(),
-            port,
+            prio: None, // not set for local candidates.
+            addr,
+            base: Some(addr),
             typ: "host".into(),
             raddr: None,
-            rport: None,
         }
+    }
+
+    pub(crate) fn is_host(&self) -> bool {
+        self.typ == "host"
+    }
+
+    pub(crate) fn prio(&self) -> u32 {
+        // Remote candidates have their prio calculated on their side.
+        if let Some(prio) = &self.prio {
+            return *prio;
+        }
+
+        // Local candidates are calculating locally
+        let type_preference = match self.typ.as_str() {
+            "host" => 126,
+            "prflx" => 110,
+            "srflx" => 100,
+            "relay" => 0,
+            _ => panic!("Unexpected candidate type: {}", self.typ),
+        };
+
+        let local_preference = if matches!(self.base.unwrap(), SocketAddr::V6(_)) {
+            65_535
+        } else {
+            65_534
+        };
+
+        type_preference << 24 | local_preference << 8 | (255 - self.comp_id as u32)
     }
 }
 
@@ -465,8 +414,117 @@ impl MediaLine {
         restr
     }
 
+    pub fn setup(&self) -> Option<Setup> {
+        let setup = self.attrs.iter().find_map(|m| {
+            if let MediaAttribute::Setup(v) = m {
+                Some(v)
+            } else {
+                None
+            }
+        })?;
+
+        Some(*setup)
+    }
+
+    pub fn ice_creds(&self) -> Option<IceCreds> {
+        let username = self.attrs.iter().find_map(|m| {
+            if let MediaAttribute::IceUfrag(v) = m {
+                Some(v)
+            } else {
+                None
+            }
+        })?;
+
+        let password = self.attrs.iter().find_map(|m| {
+            if let MediaAttribute::IcePwd(v) = m {
+                Some(v)
+            } else {
+                None
+            }
+        })?;
+
+        Some(IceCreds {
+            username: username.to_string(),
+            password: password.to_string(),
+        })
+    }
+    pub fn fingerprint(&self) -> Option<Fingerprint> {
+        for a in &self.attrs {
+            if let MediaAttribute::Fingerprint(v) = a {
+                return Some(v.clone());
+            }
+        }
+        None
+    }
+
+    /// This hoovers the ice candidates from all m-lines, lots of dupes.
+    /// For WebRTC we don't expect different ice states per media line.
+    pub fn ice_candidates(&self) -> impl Iterator<Item = &Candidate> {
+        self.attrs.iter().filter_map(|a| {
+            if let MediaAttribute::Candidate(v) = a {
+                Some(v)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Any end-of-candidate in any m-line.
+    /// For WebRTC we don't expect different ice states per media line.
+    pub fn end_of_candidates(&self) -> bool {
+        self.attrs
+            .iter()
+            .any(|a| matches!(a, MediaAttribute::EndOfCandidates))
+    }
+
+    pub fn extmaps(&self) -> Vec<ExtMap> {
+        let mut ret = vec![];
+
+        for a in &self.attrs {
+            if let MediaAttribute::ExtMap(e) = a {
+                ret.push(e.clone());
+            }
+        }
+
+        ret
+    }
+
     pub fn ssrc_info(&self) -> Vec<SsrcInfo> {
-        self.attrs.ssrc_info()
+        let mut ret = vec![];
+
+        let mut fids = vec![];
+
+        for a in &self.attrs {
+            if let MediaAttribute::SsrcGroup { semantics, ssrcs } = a {
+                if semantics != "FID" {
+                    continue;
+                }
+                if ssrcs.len() != 2 {
+                    trace!("Found a=ssrc-group=FID without two SSRC: {:?}", ssrcs);
+                    continue;
+                }
+                fids.push((ssrcs[0], ssrcs[1]));
+            }
+        }
+
+        for a in &self.attrs {
+            if let MediaAttribute::Ssrc { ssrc, attr, value } = a {
+                let repaired_ssrc = fids
+                    .iter()
+                    .find(|(_, rtx)| rtx == ssrc)
+                    .map(|(main, _)| *main);
+
+                if attr == "cname" {
+                    ret.push(SsrcInfo {
+                        ssrc: *ssrc,
+                        cname: value.clone(),
+                        repaired_ssrc,
+                    });
+                }
+            }
+        }
+
+        ret
     }
 
     pub fn simulcast(&self) -> Option<Simulcast> {
@@ -1109,9 +1167,15 @@ impl fmt::Display for Candidate {
         write!(
             f,
             "a=candidate:{} {} {} {} {} {} typ {}",
-            self.found, self.comp_id, self.proto, self.prio, self.addr, self.port, self.typ
+            self.found,
+            self.comp_id,
+            self.proto,
+            self.prio(),
+            self.addr.ip(),
+            self.addr.port(),
+            self.typ
         )?;
-        if let (Some(raddr), Some(rport)) = (self.raddr.as_ref(), self.rport.as_ref()) {
+        if let Some((raddr, rport)) = self.raddr.as_ref().map(|r| (r.ip(), r.port())) {
             write!(f, " raddr {} rport {}", raddr, rport)?;
         }
         write!(f, "\r\n")

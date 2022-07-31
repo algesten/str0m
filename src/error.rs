@@ -7,6 +7,8 @@ use std::io;
 #[non_exhaustive]
 /// Error states of str0m RTC.
 pub enum Error {
+    /// Configuration error.
+    Config(String),
     /// The UDP data packet is not recognized.
     UnknownUdpData,
     /// Parsing STUN packet failed.
@@ -27,6 +29,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use Error::*;
         match self {
+            Config(v) => write!(f, "{}", v),
             UnknownUdpData => write!(f, "Unknown UDP data"),
             StunParse(v) => write!(f, "STUN parse failed: {}", v),
             StunError(v) => write!(f, "STUN handling failed: {}", v),

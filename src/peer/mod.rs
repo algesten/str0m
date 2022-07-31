@@ -16,7 +16,7 @@ use crate::dtls::{dtls_create_ctx, dtls_ssl_create, Dtls, SrtpKeyMaterial};
 use crate::ice::IceState;
 use crate::media::Media;
 use crate::sdp::Fingerprint;
-use crate::sdp::{AttributeExt, Mid, Sdp};
+use crate::sdp::{Mid, Sdp};
 use crate::sdp::{SessionId, Setup};
 use crate::Error;
 
@@ -277,12 +277,30 @@ impl<T> Peer<T> {
 
         let setup = config.offer_setup;
 
+        let session_id = SessionId(id);
+
+        let mut ice_state = IceState::new(config.ice_lite);
+
+        for c in &config.local_candidates {
+            ice_state.add_local_candidate(&session_id, c.clone());
+        }
+
+        if config.end_of_candidates {
+            if ice_state.local_candidates().is_empty() {
+                return Err(Error::Config(
+                    "Illegal PeerConfig without candidates and end-of-candidates".to_string(),
+                ));
+            }
+
+            ice_state.set_local_end_of_candidates(&session_id);
+        }
+
         let peer = Peer {
             config,
-            session_id: SessionId(id),
+            session_id,
             setup,
             output: OutputQueue::new(),
-            ice_state: IceState::new(),
+            ice_state,
             dtls_state: DtlsState {
                 ctx,
                 dtls: None,
@@ -314,7 +332,7 @@ impl<T> Peer<T> {
         assert!(self.pending_changes.is_none());
 
         let sdp = &offer.0;
-        let x = self.update_session_from_remote_sdp(sdp)?;
+        let x = self.update_session_from_remote_sdp(sdp, true)?;
 
         // If we receive an offer, we are not allowed to answer with actpass.
         if self.setup == Setup::ActPass {
@@ -355,7 +373,7 @@ impl<T> Peer<T> {
         assert!(self.pending_changes.is_some());
 
         let sdp = &answer.0;
-        let x = self.update_session_from_remote_sdp(sdp)?;
+        let x = self.update_session_from_remote_sdp(sdp, false)?;
 
         if let Some(remote_setup) = x {
             if remote_setup == Setup::ActPass {
@@ -384,31 +402,53 @@ impl<T> Peer<T> {
         Ok(())
     }
 
-    fn update_session_from_remote_sdp(&mut self, sdp: &Sdp) -> Result<Option<Setup>, Error> {
+    fn update_session_from_remote_sdp(
+        &mut self,
+        sdp: &Sdp,
+        remote_is_offer: bool,
+    ) -> Result<Option<Setup>, Error> {
         debug!("{:?} Update session from remote SDP", self.session_id);
+
+        if self.ice_state.can_set_controlling() {
+            let local_is_ice_lite = self.config.ice_lite;
+            let remote_is_ice_lite = sdp.session.ice_lite();
+            let local_sent_offer = !remote_is_offer;
+            let local_is_controlling = match (local_is_ice_lite, remote_is_ice_lite) {
+                // if both are ice-lite, local is controlling if local sent offer.
+                (true, true) => local_sent_offer,
+                // remote is not ice-lite, remote is controlling.
+                (true, false) => false,
+                // local is not ice-lite, local is controlling.
+                (false, true) => true,
+                // if none is ice-lite, local is controlling if local sent offer.
+                (false, false) => local_sent_offer,
+            };
+            self.ice_state
+                .set_controlling(&self.session_id, local_is_controlling);
+        }
 
         let mut setups = vec![];
 
         // Session level
-        if let Some(setup) = sdp.session.attrs.setup() {
+        if let Some(setup) = sdp.session.setup() {
             setups.push(setup);
         }
-        if let Some(creds) = sdp.session.attrs.ice_creds() {
+        if let Some(creds) = sdp.session.ice_creds() {
             self.ice_state.add_remote_creds(&self.session_id, creds);
         }
-        if let Some(fp) = sdp.session.attrs.fingerprint() {
+        if let Some(fp) = sdp.session.fingerprint() {
             self.dtls_state.add_remote_fingerprint(&self.session_id, fp);
         }
 
         // M-line level
         for mline in &sdp.media_lines {
-            if let Some(setup) = mline.attrs.setup() {
+            if let Some(setup) = mline.setup() {
                 setups.push(setup);
             }
-            if let Some(creds) = mline.attrs.ice_creds() {
+            if let Some(creds) = mline.ice_creds() {
                 self.ice_state.add_remote_creds(&self.session_id, creds);
             }
-            if let Some(fp) = mline.attrs.fingerprint() {
+            if let Some(fp) = mline.fingerprint() {
                 self.dtls_state.add_remote_fingerprint(&self.session_id, fp);
             }
         }

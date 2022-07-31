@@ -15,6 +15,9 @@ impl<T> Peer<T> {
             SessionAttribute::IcePwd(creds.password.clone()),
         ];
 
+        if self.config.ice_lite {
+            s_attrs.push(SessionAttribute::IceLite);
+        }
         if !self.config.disable_trickle_ice {
             m_attrs.push(MediaAttribute::IceOptions("trickle".to_string()));
             s_attrs.push(SessionAttribute::IceOptions("trickle".to_string()));

@@ -19,7 +19,10 @@ fn connect_peer_active(
     tx: mpsc::Sender<TestData>,
     rx: mpsc::Receiver<TestData>,
 ) -> Result<Peer<state::Connected>, Error> {
-    let peer_init = PeerConfig::with_session_id(1).build()?;
+    let peer_init = PeerConfig::with_session_id(1)
+        .local_candidate(Candidate::host("1.1.1.1:1000".parse().unwrap()))
+        .end_of_candidates()
+        .build()?;
 
     let (offer, peer_offering) = peer_init.change_set().add_data_channel().apply();
 
@@ -61,7 +64,10 @@ fn connect_peer_passive(
     tx: mpsc::Sender<TestData>,
     rx: mpsc::Receiver<TestData>,
 ) -> Result<Peer<state::Connected>, Error> {
-    let peer_init = PeerConfig::with_session_id(2).build()?;
+    let peer_init = PeerConfig::with_session_id(2)
+        .local_candidate(Candidate::host("2.2.2.2:2000".parse().unwrap()))
+        .end_of_candidates()
+        .build()?;
 
     let data = rx.recv().unwrap();
     let offer = match data {

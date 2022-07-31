@@ -1,13 +1,26 @@
-use std::collections::HashSet;
+use std::cmp::Ordering;
+use std::collections::{BTreeSet, HashSet};
 use std::net::SocketAddr;
 
 use crate::peer::OutputQueue;
-use crate::sdp::{IceCreds, SessionId};
+use crate::sdp::{Candidate, IceCreds, SessionId};
 use crate::stun::StunMessage;
 use crate::util::random_id;
 use crate::Error;
 
 pub(crate) struct IceState {
+    /// Whether this is the controlling agent.
+    controlling: bool,
+
+    /// If we are running ice-lite mode and only deal with local host candidates.
+    ice_lite: bool,
+
+    /// If we got indication there be no more local candidates.
+    local_end_of_candidates: bool,
+
+    /// If we got indication there be no more remote candidates.
+    remote_end_of_candidates: bool,
+
     /// Local credentials for STUN. We use one set for all m-lines.
     local_creds: IceCreds,
 
@@ -17,17 +30,172 @@ pub(crate) struct IceState {
     /// Addresses that have been "unlocked" via STUN. These IP:PORT combos
     /// are now verified for other kinds of data like DTLS, RTP, RTCP...
     verified: HashSet<SocketAddr>,
+
+    /// Candidates, in the order they drop in.
+    local_candidates: Vec<Candidate>,
+
+    /// Candidates, in the order they drop in.
+    remote_candidates: Vec<Candidate>,
+
+    /// Pairs formed by combining all local/remote as they drop in.
+    candidate_pairs: BTreeSet<CandidatePair>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct CandidatePair {
+    local_idx: usize,
+    remote_idx: usize,
+    prio: u64,
+    state: CheckState,
+}
+
+impl PartialOrd for CandidatePair {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CandidatePair {
+    fn cmp(&self, other: &Self) -> Ordering {
+        todo!()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CheckState {
+    Waiting,
+    InProgress,
+    Succeeded,
+    Failed,
 }
 
 impl IceState {
-    pub fn new() -> Self {
+    pub fn new(ice_lite: bool) -> Self {
         IceState {
+            controlling: false,
+            ice_lite,
+            local_end_of_candidates: false,
+            remote_end_of_candidates: false,
             local_creds: IceCreds {
                 username: random_id::<8>().to_string(),
                 password: random_id::<24>().to_string(),
             },
             remote_creds: HashSet::new(),
             verified: HashSet::new(),
+            local_candidates: vec![],
+            remote_candidates: vec![],
+            candidate_pairs: BTreeSet::new(),
+        }
+    }
+
+    pub fn can_set_controlling(&mut self) -> bool {
+        self.candidate_pairs.is_empty()
+    }
+
+    pub fn set_controlling(&mut self, id: &SessionId, c: bool) {
+        assert!(self.candidate_pairs.is_empty());
+        debug!(
+            "{:?} Ice agent is {}",
+            id,
+            if c { "controlling" } else { "controlled" }
+        );
+        self.controlling = c;
+    }
+
+    pub fn add_local_candidate(&mut self, id: &SessionId, c: Candidate) {
+        if self.local_end_of_candidates {
+            debug!(
+                "{:?} No more local candidates accepted: end-of-candidates",
+                id
+            );
+        }
+
+        if self.ice_lite && !c.is_host() {
+            debug!(
+                "{:?} Ignoring non-host ICE candidate due to ice-lite: {:?}",
+                id, c
+            );
+            return;
+        }
+
+        debug!("{:?} Adding local candidate: {:?}", id, c);
+
+        IceState::do_add_candidate(
+            c,
+            &mut self.local_candidates,
+            &self.remote_candidates,
+            &mut self.candidate_pairs,
+            self.controlling,
+        )
+    }
+
+    pub fn add_remote_candidate(&mut self, id: &SessionId, c: Candidate) {
+        if self.local_end_of_candidates {
+            debug!(
+                "{:?} No more remote candidates accepted: end-of-candidates",
+                id
+            );
+        }
+
+        debug!("{:?} Adding remote candidate: {:?}", id, c);
+
+        IceState::do_add_candidate(
+            c,
+            &mut self.remote_candidates,
+            &self.local_candidates,
+            &mut self.candidate_pairs,
+            !self.controlling,
+        )
+    }
+
+    fn do_add_candidate(
+        candidate: Candidate,
+        add_to: &mut Vec<Candidate>,
+        pair_with: &Vec<Candidate>,
+        pair_to: &mut BTreeSet<CandidatePair>,
+        prio_left: bool,
+    ) {
+        if add_to.contains(&candidate) {
+            // TODO this should keep the one with lower priority.
+            trace!("Not adding redundant candidate: {:?}", candidate);
+            return;
+        }
+
+        if pair_to.len() >= 100 {
+            debug!("Ignoring further ice candidates since we got >= 100 pairs");
+            return;
+        }
+
+        add_to.push(candidate);
+        let left = add_to.last().unwrap();
+        let left_idx = add_to.len() - 01;
+        let left_prio = left.prio() as u64;
+
+        for (right_idx, right) in pair_with.iter().enumerate() {
+            let right_prio = right.prio() as u64;
+
+            // Once the pairs are formed, a candidate pair priority is computed.
+            // Let G be the priority for the candidate provided by the controlling
+            // agent.  Let D be the priority for the candidate provided by the
+            // controlled agent.  The priority for a pair is computed as:
+            // pair priority = 2^32*MIN(G,D) + 2*MAX(G,D) + (G>D?1:0)
+
+            let (g, d) = if prio_left {
+                (left_prio, right_prio)
+            } else {
+                (right_prio, left_prio)
+            };
+
+            let prio = 2 ^ 32 * g.min(d) + 2 * g.max(d) + if g > d { 1 } else { 0 };
+
+            let pair = CandidatePair {
+                local_idx: if prio_left { left_idx } else { right_idx },
+                remote_idx: if prio_left { right_idx } else { left_idx },
+                prio,
+                state: CheckState::Waiting,
+            };
+
+            pair_to.insert(pair);
         }
     }
 
@@ -103,5 +271,14 @@ impl IceState {
 
     pub fn local_creds(&self) -> &IceCreds {
         &self.local_creds
+    }
+
+    pub fn local_candidates(&self) -> &[Candidate] {
+        &self.local_candidates
+    }
+
+    pub(crate) fn set_local_end_of_candidates(&mut self, id: &SessionId) {
+        info!("{:?} Local ICE end-of-candidates", id);
+        self.local_end_of_candidates = true;
     }
 }

@@ -16,6 +16,8 @@ use {
     combine::{ParseError, Parser, Stream},
 };
 
+use std::net::IpAddr;
+
 use crate::sdp::*;
 use crate::Error;
 
@@ -198,12 +200,22 @@ where
                 .map_err(StreamErrorFor::<Input>::message_format)
         })
     };
+
+    let ip_addr = || {
+        not_sp().and_then(|s| {
+            s.parse::<IpAddr>()
+                .map_err(StreamErrorFor::<Input>::message_format)
+        })
+    };
     attribute_line(
         "candidate",
         (
             not_sp(),
             token(' '),
-            not_sp(),
+            not_sp().and_then(|s| {
+                s.parse::<u16>()
+                    .map_err(StreamErrorFor::<Input>::message_format)
+            }),
             token(' '),
             not_sp(),
             token(' '),
@@ -212,12 +224,12 @@ where
                     .map_err(StreamErrorFor::<Input>::message_format)
             }),
             token(' '),
-            not_sp(),
+            ip_addr(),
             token(' '),
             port(),
             string(" typ "),
             not_sp(),
-            optional((string(" raddr "), not_sp(), string(" rport "), port())),
+            optional((string(" raddr "), ip_addr(), string(" rport "), port())),
         ),
     )
     .map(
@@ -225,12 +237,11 @@ where
             found,
             comp_id,
             proto,
-            prio,
-            addr,
-            port,
+            prio: Some(prio), // remote candidates calculate prio on their side
+            addr: SocketAddr::from((addr, port)),
+            base: None, // not set for remote candidates.
             typ,
-            rport: raddr_opt.as_ref().map(|(_, _, _, r)| *r),
-            raddr: raddr_opt.map(|(_, r, _, _)| r),
+            raddr: raddr_opt.map(|(_, addr, _, port)| SocketAddr::from((addr, port))),
         },
     )
 }
