@@ -32,6 +32,7 @@ impl OutputEnqueuer {
     }
 }
 
+unsafe impl Send for PtrBuffer {}
 pub(crate) struct PtrBuffer {
     src: Option<(*const u8, usize)>,
     dst: Option<OutputEnqueuer>,

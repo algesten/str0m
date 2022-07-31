@@ -390,7 +390,7 @@ impl<T> Peer<T> {
 
     fn handle_offer(&mut self, offer: Offer) -> Result<Answer, Error> {
         let sdp = &offer.0;
-        let x = self.update_from_session_media_attriutes(sdp)?;
+        let x = self.update_from_sdp(sdp)?;
 
         // If we receive an offer, we are not allowed to answer with actpass.
         if self.setup == Setup::ActPass {
@@ -422,7 +422,7 @@ impl<T> Peer<T> {
 
     fn handle_answer(&mut self, answer: Answer) -> Result<(), Error> {
         let sdp = &answer.0;
-        let x = self.update_from_session_media_attriutes(sdp)?;
+        let x = self.update_from_sdp(sdp)?;
 
         if let Some(remote_setup) = x {
             if remote_setup == Setup::ActPass {
@@ -446,7 +446,7 @@ impl<T> Peer<T> {
         todo!()
     }
 
-    fn update_from_session_media_attriutes(&mut self, sdp: &Sdp) -> Result<Option<Setup>, Error> {
+    fn update_from_sdp(&mut self, sdp: &Sdp) -> Result<Option<Setup>, Error> {
         let mut setups = vec![];
 
         // Session level
