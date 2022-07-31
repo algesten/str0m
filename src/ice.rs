@@ -8,6 +8,7 @@ use crate::stun::StunMessage;
 use crate::util::random_id;
 use crate::Error;
 
+#[derive(Debug)]
 pub(crate) struct IceState {
     /// Whether this is the controlling agent.
     controlling: bool,
@@ -57,7 +58,7 @@ impl PartialOrd for CandidatePair {
 
 impl Ord for CandidatePair {
     fn cmp(&self, other: &Self) -> Ordering {
-        todo!()
+        self.prio.cmp(&other.prio)
     }
 }
 
@@ -277,8 +278,23 @@ impl IceState {
         &self.local_candidates
     }
 
+    pub(crate) fn set_remote_end_of_candidates(&mut self, id: &SessionId) {
+        if self.remote_end_of_candidates {
+            return;
+        }
+        info!("{:?} Remote end-of-candidates", id);
+        self.remote_end_of_candidates = true;
+    }
+
     pub(crate) fn set_local_end_of_candidates(&mut self, id: &SessionId) {
-        info!("{:?} Local ICE end-of-candidates", id);
+        if self.local_end_of_candidates {
+            return;
+        }
+        info!("{:?} Local end-of-candidates", id);
         self.local_end_of_candidates = true;
+    }
+
+    pub(crate) fn local_end_of_candidates(&self) -> bool {
+        self.local_end_of_candidates
     }
 }

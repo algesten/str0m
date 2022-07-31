@@ -27,6 +27,7 @@ use self::ptr_buf::{OutputEnqueuer, PtrBuffer};
 pub use change::{change_state, ChangeSet};
 pub use config::PeerConfig;
 pub use peer_init::ConnectionResult;
+pub use serialize::is_dynamic_media_attr;
 
 /// States the `Peer` can be in.
 pub mod state {
@@ -428,6 +429,7 @@ impl<T> Peer<T> {
         }
 
         let mut setups = vec![];
+        let mut candidates = HashSet::new();
 
         // Session level
         if let Some(setup) = sdp.session.setup() {
@@ -439,6 +441,8 @@ impl<T> Peer<T> {
         if let Some(fp) = sdp.session.fingerprint() {
             self.dtls_state.add_remote_fingerprint(&self.session_id, fp);
         }
+        candidates.extend(sdp.session.ice_candidates().cloned());
+        let mut end_of_candidates = sdp.session.end_of_candidates();
 
         // M-line level
         for mline in &sdp.media_lines {
@@ -451,6 +455,8 @@ impl<T> Peer<T> {
             if let Some(fp) = mline.fingerprint() {
                 self.dtls_state.add_remote_fingerprint(&self.session_id, fp);
             }
+            candidates.extend(mline.ice_candidates().cloned());
+            end_of_candidates |= mline.end_of_candidates();
         }
 
         let mut setup = None;
@@ -463,6 +469,14 @@ impl<T> Peer<T> {
                 ));
             }
             setup = Some(*first);
+        }
+
+        for c in candidates {
+            self.ice_state.add_remote_candidate(&self.session_id, c);
+        }
+        if end_of_candidates {
+            self.ice_state
+                .set_remote_end_of_candidates(&self.session_id);
         }
 
         Ok(setup)

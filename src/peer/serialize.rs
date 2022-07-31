@@ -2,6 +2,21 @@ use crate::sdp::{MediaAttribute, Sdp, Session, SessionAttribute};
 
 use super::Peer;
 
+// Keep in sync with below addition of dynamic attributes.
+pub fn is_dynamic_media_attr(a: &MediaAttribute) -> bool {
+    use MediaAttribute::*;
+    matches!(
+        a,
+        IceUfrag(_)
+            | IcePwd(_)
+            | IceOptions(_)
+            | Candidate(_)
+            | EndOfCandidates
+            | Fingerprint(_)
+            | Setup(_)
+    )
+}
+
 impl<T> Peer<T> {
     pub(crate) fn as_sdp(&self) -> Sdp {
         let creds = &self.ice_state.local_creds();
@@ -21,6 +36,16 @@ impl<T> Peer<T> {
         if !self.config.disable_trickle_ice {
             m_attrs.push(MediaAttribute::IceOptions("trickle".to_string()));
             s_attrs.push(SessionAttribute::IceOptions("trickle".to_string()));
+        }
+
+        for c in self.ice_state.local_candidates() {
+            m_attrs.push(MediaAttribute::Candidate(c.clone()));
+            s_attrs.push(SessionAttribute::Candidate(c.clone()));
+        }
+
+        if self.ice_state.local_end_of_candidates() {
+            m_attrs.push(MediaAttribute::EndOfCandidates);
+            s_attrs.push(SessionAttribute::EndOfCandidates);
         }
 
         let fp = self.dtls_state.local_fingerprint.clone();

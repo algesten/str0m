@@ -215,7 +215,7 @@ pub struct Fingerprint {
     pub bytes: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash)]
 pub struct Candidate {
     found: String,             // 1-32 "ice chars", ALPHA / DIGIT / "+" / "/"
     comp_id: u16,              // 1 for RTP, 2 for RTCP

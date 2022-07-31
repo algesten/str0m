@@ -2,6 +2,7 @@
 
 use std::ops::{Deref, DerefMut};
 
+use crate::peer::is_dynamic_media_attr;
 use crate::sdp::{Direction, MediaAttribute, MediaLine, MediaType, Mid, Proto};
 
 ///
@@ -84,6 +85,10 @@ impl Media {
     }
 
     pub fn narrow_remote_to_locally_accepted(&mut self) {
+        // Remove attributes that are added on dynamically
+        // TODO: flip this to an allow-list.
+        self.attrs.retain(|a| !is_dynamic_media_attr(a));
+
         // TODO
     }
 
