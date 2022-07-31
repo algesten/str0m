@@ -209,6 +209,13 @@ impl OutputQueue {
 }
 
 impl StunState {
+    fn add_remote_creds(&mut self, id: &SessionId, creds: IceCreds) {
+        let line = format!("{:?} Added remote creds: {:?}", id, creds);
+        if self.remote_creds.insert(creds) {
+            trace!(line);
+        }
+    }
+
     fn accepts_stun(&self, addr: SocketAddr, stun: &StunMessage<'_>) -> Result<bool, Error> {
         let (local_username, remote_username) = stun.local_remote_username();
 
@@ -270,6 +277,13 @@ impl StunState {
 }
 
 impl DtlsState {
+    fn add_remote_fingerprint(&mut self, id: &SessionId, fp: Fingerprint) {
+        let line = format!("{:?} Added remote fingerprint: {:?}", id, fp);
+        if self.remote_fingerprints.insert(fp) {
+            trace!(line);
+        }
+    }
+
     fn handle_dtls(
         &mut self,
         addr: SocketAddr,
@@ -396,7 +410,13 @@ impl<T> Peer<T> {
                 Setup::Active
             } else {
                 Setup::Passive
-            }
+            };
+            debug!(
+                "{:?} Change setup for answer: {} -> {}",
+                self.session_id,
+                Setup::ActPass,
+                self.setup
+            );
         }
 
         if let Some(remote_setup) = x {
@@ -408,10 +428,7 @@ impl<T> Peer<T> {
             })?;
         }
 
-        if self.dtls_state.dtls.is_none() && self.setup == Setup::Active {
-            // A special, case, if remote offer is actpass or passive, we
-            // will assume active role, and can start DTLS at the same time
-            // as returning the SDP answer.
+        if self.dtls_state.dtls.is_none() {
             self.start_dtls()?;
         }
 
@@ -465,10 +482,10 @@ impl<T> Peer<T> {
             setups.push(setup);
         }
         if let Some(creds) = sdp.session.attrs.ice_creds() {
-            self.stun_state.remote_creds.insert(creds);
+            self.stun_state.add_remote_creds(&self.session_id, creds);
         }
         if let Some(fp) = sdp.session.attrs.fingerprint() {
-            self.dtls_state.remote_fingerprints.insert(fp);
+            self.dtls_state.add_remote_fingerprint(&self.session_id, fp);
         }
 
         // M-line level
@@ -477,10 +494,10 @@ impl<T> Peer<T> {
                 setups.push(setup);
             }
             if let Some(creds) = mline.attrs.ice_creds() {
-                self.stun_state.remote_creds.insert(creds);
+                self.stun_state.add_remote_creds(&self.session_id, creds);
             }
             if let Some(fp) = mline.attrs.fingerprint() {
-                self.dtls_state.remote_fingerprints.insert(fp);
+                self.dtls_state.add_remote_fingerprint(&self.session_id, fp);
             }
         }
 

@@ -856,6 +856,20 @@ pub enum Setup {
     Passive,
 }
 
+impl fmt::Display for Setup {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Setup::ActPass => "actpass",
+                Setup::Active => "active",
+                Setup::Passive => "passive",
+            }
+        )
+    }
+}
+
 impl Setup {
     pub fn setup_line(&self) -> &str {
         match self {
