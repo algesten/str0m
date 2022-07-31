@@ -4,7 +4,7 @@ use super::Peer;
 
 impl<T> Peer<T> {
     pub(crate) fn as_sdp(&self) -> Sdp {
-        let creds = &self.stun_state.local_creds;
+        let creds = &self.ice_state.local_creds();
 
         let mut m_attrs = vec![
             MediaAttribute::IceUfrag(creds.username.clone()),

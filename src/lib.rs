@@ -7,6 +7,7 @@ extern crate tracing;
 
 mod dtls;
 mod error;
+mod ice;
 mod media;
 mod peer;
 mod sdp;

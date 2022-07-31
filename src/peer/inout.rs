@@ -24,12 +24,12 @@ impl<'a, State> Io<'a, State> {
     ) -> Result<bool, Error> {
         use NetworkInputInner::*;
         if let Stun(stun) = &input.0 {
-            self.0.stun_state.accepts_stun(addr, stun)
+            self.0.ice_state.accepts_stun(addr, stun)
         } else {
             // All other kind of network input must be "unlocked" by STUN recognizing the
             // ice-ufrag/passwd from the SDP. Any sucessful STUN cause the remote IP/port
             // combo to be considered associated with this peer.
-            Ok(self.0.stun_state.is_stun_verified(addr))
+            Ok(self.0.ice_state.is_stun_verified(addr))
         }
     }
 
@@ -45,7 +45,7 @@ impl<'a, State> Io<'a, State> {
         use NetworkInputInner::*;
         let output = &mut self.0.output;
         match input.0 {
-            Stun(stun) => self.0.stun_state.handle_stun(addr, output, stun),
+            Stun(stun) => self.0.ice_state.handle_stun(addr, output, stun),
             Dtls(dtls) => self.0.dtls_state.handle_dtls(addr, output, dtls),
         }
     }

@@ -13,12 +13,11 @@ use std::net::SocketAddr;
 use std::{io, mem};
 
 use crate::dtls::{dtls_create_ctx, dtls_ssl_create, Dtls, SrtpKeyMaterial};
+use crate::ice::IceState;
 use crate::media::Media;
+use crate::sdp::Fingerprint;
 use crate::sdp::{AttributeExt, Mid, Sdp};
-use crate::sdp::{Fingerprint, IceCreds};
 use crate::sdp::{SessionId, Setup};
-use crate::stun::StunMessage;
-use crate::util::random_id;
 use crate::Error;
 
 use self::change::Changes;
@@ -112,7 +111,7 @@ pub struct Peer<State> {
     output: OutputQueue,
 
     /// State of STUN.
-    stun_state: StunState,
+    ice_state: IceState,
 
     /// State of DTLS.
     dtls_state: DtlsState,
@@ -136,18 +135,6 @@ pub(crate) struct OutputQueue {
 
     /// Free NetworkOutput instance ready to be reused.
     free: Vec<NetworkOutput>,
-}
-
-struct StunState {
-    /// Local credentials for STUN. We use one set for all m-lines.
-    local_creds: IceCreds,
-
-    /// Remote credentials for STUN. Obtained from SDP.
-    remote_creds: HashSet<IceCreds>,
-
-    /// Addresses that have been "unlocked" via STUN. These IP:PORT combos
-    /// are now verified for other kinds of data like DTLS, RTP, RTCP...
-    verified: HashSet<SocketAddr>,
 }
 
 struct DtlsState {
@@ -205,74 +192,6 @@ impl OutputQueue {
         let borrowed = self.free.last().unwrap();
 
         Some((addr, borrowed))
-    }
-}
-
-impl StunState {
-    fn add_remote_creds(&mut self, id: &SessionId, creds: IceCreds) {
-        let line = format!("{:?} Added remote creds: {:?}", id, creds);
-        if self.remote_creds.insert(creds) {
-            trace!(line);
-        }
-    }
-
-    fn accepts_stun(&self, addr: SocketAddr, stun: &StunMessage<'_>) -> Result<bool, Error> {
-        let (local_username, remote_username) = stun.local_remote_username();
-
-        let creds_in_remote_sdp = self
-            .remote_creds
-            .iter()
-            .any(|c| c.username == remote_username);
-
-        if !creds_in_remote_sdp {
-            // this is not a fault, the packet might not be for this peer.
-            return Ok(false);
-        }
-
-        if local_username != self.local_creds.username {
-            // this is a bit suspicious... maybe a name clash on the remote username?
-            return Err(Error::StunError(format!(
-                "STUN local != peer.local ({}): {} != {}",
-                addr, local_username, self.local_creds.username
-            )));
-        }
-
-        if !stun.check_integrity(&self.local_creds.password) {
-            // this is also sus.
-            return Err(Error::StunError(format!(
-                "STUN check_integrity failed ({})",
-                addr,
-            )));
-        }
-
-        Ok(true)
-    }
-
-    fn handle_stun<'a>(
-        &mut self,
-        addr: SocketAddr,
-        output: &mut OutputQueue,
-        stun: StunMessage<'a>,
-    ) -> Result<(), Error> {
-        let reply = stun.reply()?;
-
-        // on the back of a successful (authenticated) stun bind, we update
-        // the validated addresses to receive dtls, rtcp, rtp etc.
-        if self.verified.insert(addr) {
-            trace!("STUN new verified peer ({})", addr);
-        }
-
-        let mut writer = output.get_buffer_writer();
-        let len = reply.to_bytes(&self.local_creds.password, &mut writer)?;
-        let buffer = writer.set_len(len);
-
-        output.enqueue(addr, buffer);
-
-        Ok(())
-    }
-
-    fn is_stun_verified(&self, addr: SocketAddr) -> bool {
-        self.verified.contains(&addr)
     }
 }
 
@@ -363,14 +282,7 @@ impl<T> Peer<T> {
             session_id: SessionId(id),
             setup,
             output: OutputQueue::new(),
-            stun_state: StunState {
-                local_creds: IceCreds {
-                    username: random_id::<8>().to_string(),
-                    password: random_id::<24>().to_string(),
-                },
-                remote_creds: HashSet::new(),
-                verified: HashSet::new(),
-            },
+            ice_state: IceState::new(),
             dtls_state: DtlsState {
                 ctx,
                 dtls: None,
@@ -482,7 +394,7 @@ impl<T> Peer<T> {
             setups.push(setup);
         }
         if let Some(creds) = sdp.session.attrs.ice_creds() {
-            self.stun_state.add_remote_creds(&self.session_id, creds);
+            self.ice_state.add_remote_creds(&self.session_id, creds);
         }
         if let Some(fp) = sdp.session.attrs.fingerprint() {
             self.dtls_state.add_remote_fingerprint(&self.session_id, fp);
@@ -494,7 +406,7 @@ impl<T> Peer<T> {
                 setups.push(setup);
             }
             if let Some(creds) = mline.attrs.ice_creds() {
-                self.stun_state.add_remote_creds(&self.session_id, creds);
+                self.ice_state.add_remote_creds(&self.session_id, creds);
             }
             if let Some(fp) = mline.attrs.fingerprint() {
                 self.dtls_state.add_remote_fingerprint(&self.session_id, fp);
