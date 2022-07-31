@@ -26,7 +26,7 @@ impl Peer<state::Init> {
 impl Peer<state::InitialOffering> {
     /// Accept an answer from the remote side.
     pub fn accept_answer(mut self, answer: Answer) -> Result<Peer<state::Connecting>, Error> {
-        self.apply_pending_changes(answer)?;
+        self.do_handle_answer(answer)?;
         Ok(self.into_state())
     }
 

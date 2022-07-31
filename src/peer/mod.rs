@@ -279,7 +279,8 @@ impl DtlsState {
         let enqueuer = unsafe { OutputEnqueuer::new(addr, output) };
 
         let ptr_buf = dtls.inner_mut()?;
-        ptr_buf.set_input(buf); // provide buffer to be read from.
+        // SAFETY: The io::Read call of ptr_buf must happen within the lifetime of buf.
+        unsafe { ptr_buf.set_input(buf) }; // provide buffer to be read from.
         ptr_buf.set_output(enqueuer); // provide output queue to write to
 
         let completed = dtls.complete_handshake_until_block()?;
@@ -367,19 +368,11 @@ impl<T> Peer<T> {
         Offer(sdp)
     }
 
-    fn apply_pending_changes(&mut self, answer: Answer) -> Result<(), Error> {
-        assert!(self.pending_changes.is_some());
-
-        self.do_handle_answer(answer)?;
-
-        let changes = self.pending_changes.take().unwrap();
-
-        Ok(())
-    }
-
     fn do_handle_offer(&mut self, offer: Offer) -> Result<Answer, Error> {
+        assert!(self.pending_changes.is_none());
+
         let sdp = &offer.0;
-        let x = self.update_from_remote_sdp(sdp)?;
+        let x = self.update_session_from_remote_sdp(sdp)?;
 
         // If we receive an offer, we are not allowed to answer with actpass.
         if self.setup == Setup::ActPass {
@@ -406,12 +399,18 @@ impl<T> Peer<T> {
             self.start_dtls()?;
         }
 
-        todo!()
+        self.update_media_from_offer(offer)?;
+
+        let answer = Answer(self.as_sdp());
+
+        Ok(answer)
     }
 
     fn do_handle_answer(&mut self, answer: Answer) -> Result<(), Error> {
+        assert!(self.pending_changes.is_some());
+
         let sdp = &answer.0;
-        let x = self.update_from_remote_sdp(sdp)?;
+        let x = self.update_session_from_remote_sdp(sdp)?;
 
         if let Some(remote_setup) = x {
             if remote_setup == Setup::ActPass {
@@ -432,10 +431,15 @@ impl<T> Peer<T> {
             self.start_dtls()?;
         }
 
-        todo!()
+        // this is checked above.
+        let changes = self.pending_changes.take().unwrap();
+
+        self.update_media_from_changes(changes, answer)?;
+
+        Ok(())
     }
 
-    fn update_from_remote_sdp(&mut self, sdp: &Sdp) -> Result<Option<Setup>, Error> {
+    fn update_session_from_remote_sdp(&mut self, sdp: &Sdp) -> Result<Option<Setup>, Error> {
         let mut setups = vec![];
 
         // Session level
@@ -477,6 +481,14 @@ impl<T> Peer<T> {
         Ok(setup)
     }
 
+    fn update_media_from_offer(&mut self, offer: Offer) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn update_media_from_changes(&mut self, changes: Changes, answer: Answer) -> Result<(), Error> {
+        Ok(())
+    }
+
     fn start_dtls(&mut self) -> Result<(), Error> {
         assert!(self.dtls_state.dtls.is_none());
         assert!(self.setup != Setup::ActPass);
@@ -508,7 +520,7 @@ impl Peer<state::Connected> {
 impl Peer<state::Offering> {
     /// Accept an answer from the remote side.
     pub fn accept_answer(mut self, answer: Answer) -> Result<Peer<state::Connected>, Error> {
-        self.apply_pending_changes(answer)?;
+        self.do_handle_answer(answer)?;
         Ok(self.into_state())
     }
 

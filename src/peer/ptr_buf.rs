@@ -11,6 +11,8 @@ use super::OutputQueue;
 pub(crate) struct OutputEnqueuer(SocketAddr, *mut OutputQueue);
 
 impl OutputEnqueuer {
+    /// Creates an enqueuer helper instance.
+    ///
     /// SAFETY: The user of this enqueuer must guarantee that the
     /// instance does not outlive the lifetime of `&mut OutputQueue`.
     pub unsafe fn new(addr: SocketAddr, output: &mut OutputQueue) -> Self {
@@ -18,21 +20,23 @@ impl OutputEnqueuer {
     }
 
     pub fn get_buffer_writer(&mut self) -> NetworkOutputWriter {
-        // SAFETY: See new
+        // SAFETY: See `new`
         let queue = unsafe { &mut *self.1 };
 
         queue.get_buffer_writer()
     }
 
     pub fn enqueue(&mut self, buffer: NetworkOutput) {
-        // SAFETY: See new
+        // SAFETY: See `new`
         let queue = unsafe { &mut *self.1 };
 
         queue.enqueue(self.0, buffer);
     }
 }
 
+// SAFETY: The internal raw pointer should be short lived, see `PtrBuffer::set_input`.
 unsafe impl Send for PtrBuffer {}
+
 pub(crate) struct PtrBuffer {
     src: Option<(*const u8, usize)>,
     dst: Option<OutputEnqueuer>,
@@ -46,7 +50,12 @@ impl PtrBuffer {
         }
     }
 
-    pub fn set_input(&mut self, src: &[u8]) {
+    /// Sets input to be read via `io::Read`. The data is read via a raw pointer to
+    /// avoid lifetime parameters.
+    ///
+    /// SAFETY: The caller must ensure the [`io::Read::read`] call happens within the
+    /// lifetime of `src` &[u8].
+    pub unsafe fn set_input(&mut self, src: &[u8]) {
         assert!(self.src.is_none());
         self.src = Some((src.as_ptr(), src.len()));
     }
@@ -68,7 +77,7 @@ impl io::Read for PtrBuffer {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if let Some((ptr, len)) = self.src.take() {
             // SAFETY: this is only safe if the read() of this data is done in the same
-            // scope calling set_read_src().
+            // scope calling set_input().
             let src = unsafe { slice::from_raw_parts(ptr, len) };
 
             // The read() call must read the entire buffer in one go, we can't fragment it.
