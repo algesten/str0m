@@ -2,8 +2,7 @@
 
 use std::ops::{Deref, DerefMut};
 
-use crate::sdp::{Direction, MediaAttribute, MediaLine, MediaType, Proto, Setup};
-use crate::util::random_id;
+use crate::sdp::{Direction, MediaAttribute, MediaLine, MediaType, Mid, Proto};
 
 ///
 pub(crate) struct Media {
@@ -25,9 +24,7 @@ impl Media {
         Media { media_line }
     }
 
-    pub fn new_data_channel(setup: Setup) -> Self {
-        let mid = random_id::<3>().to_string();
-
+    pub fn new_data_channel(mid: Mid) -> Self {
         Media {
             media_line: MediaLine {
                 typ: MediaType::Application,
@@ -40,7 +37,6 @@ impl Media {
                     // a=ice-pwd:FhYTGhlAtKCe6KFIX8b+AThW
                     // a=ice-options:trickle
                     // a=fingerprint:sha-256 B4:12:1C:7C:7D:ED:F1:FA:61:07:57:9C:29:BE:58:E3:BC:41:E7:13:8E:7D:D3:9D:1F:94:6E:A5:23:46:94:23
-                    MediaAttribute::Setup(setup),
                     MediaAttribute::Mid(mid),
                     MediaAttribute::SctpPort(5000), // TODO investigate this port
                     MediaAttribute::MaxMessageSize(262144), // TODO this value is from Safari
@@ -49,9 +45,7 @@ impl Media {
         }
     }
 
-    pub fn new_media(setup: Setup, kind: MediaKind, dir: Direction) -> Self {
-        let mid = random_id::<3>().to_string();
-
+    pub fn new_media(mid: Mid, kind: MediaKind, dir: Direction) -> Self {
         Media {
             media_line: MediaLine {
                 typ: kind.into(),
@@ -64,7 +58,6 @@ impl Media {
                     // a=ice-pwd:FhYTGhlAtKCe6KFIX8b+AThW
                     // a=ice-options:trickle
                     // a=fingerprint:sha-256 B4:12:1C:7C:7D:ED:F1:FA:61:07:57:9C:29:BE:58:E3:BC:41:E7:13:8E:7D:D3:9D:1F:94:6E:A5:23:46:94:23
-                    MediaAttribute::Setup(setup),
                     MediaAttribute::Mid(mid),
                     // a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level
                     // a=extmap:9 urn:ietf:params:rtp-hdrext:sdes:mid

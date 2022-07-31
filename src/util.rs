@@ -34,9 +34,9 @@ pub fn random_id<const L: usize>() -> Id<L> {
 pub struct Id<const L: usize>([u8; L]);
 
 impl<const L: usize> Id<L> {
-    // pub fn into_array(self) -> [u8; L] {
-    //     self.0
-    // }
+    pub fn into_array(self) -> [u8; L] {
+        self.0
+    }
 }
 
 impl<const L: usize> fmt::Display for Id<L> {

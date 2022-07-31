@@ -4,6 +4,7 @@ use crate::{state, Error, Peer};
 /// Configuration for instantiating a [`crate::Peer`].
 #[derive(Default)]
 pub struct PeerConfig {
+    pub(crate) session_id: Option<u64>,
     pub(crate) disable_trickle_ice: bool,
     pub(crate) offer_setup: Setup,
     pub(crate) answer_active: bool,
@@ -11,8 +12,15 @@ pub struct PeerConfig {
 
 impl PeerConfig {
     /// Creates a PeerConfig with default values.
-    pub fn new() -> PeerConfig {
+    pub fn new() -> Self {
         PeerConfig::default()
+    }
+
+    #[doc(hidden)]
+    pub fn with_session_id(id: u64) -> Self {
+        let mut p = PeerConfig::new();
+        p.session_id = Some(id);
+        p
     }
 
     /// Disable trickle ice.

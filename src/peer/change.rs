@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use std::mem;
 
 use crate::media::Media;
-use crate::sdp::Setup;
+use crate::sdp::Mid;
 use crate::{state, Direction, MediaKind, Offer, Peer};
 
 use self::change_state::Changed;
@@ -31,8 +31,8 @@ pub struct ChangeSet<PeerState, ChangeState> {
 pub(crate) struct Changes(pub Vec<Change>);
 
 pub(crate) enum Change {
-    AddMedia(MediaKind, Direction),
-    AddDataChannel,
+    AddMedia(Mid, MediaKind, Direction),
+    AddDataChannel(Mid),
 }
 
 impl<T, V> ChangeSet<T, V> {
@@ -45,12 +45,14 @@ impl<T, V> ChangeSet<T, V> {
     }
 
     fn do_add_media<W>(mut self, kind: MediaKind, dir: Direction) -> ChangeSet<T, W> {
-        self.changes.0.push(Change::AddMedia(kind, dir));
+        let mid = self.peer.new_mid();
+        self.changes.0.push(Change::AddMedia(mid, kind, dir));
         self.into_state()
     }
 
     fn do_add_data_channel<W>(mut self) -> ChangeSet<T, W> {
-        self.changes.0.push(Change::AddDataChannel);
+        let mid = self.peer.new_mid();
+        self.changes.0.push(Change::AddDataChannel(mid));
         self.into_state()
     }
 
@@ -115,10 +117,10 @@ impl ChangeSet<state::Connected, Changed> {
 }
 
 impl Changes {
-    pub fn new_media_lines(&self, setup: Setup) -> impl Iterator<Item = Media> + '_ {
+    pub fn new_media_lines(&self) -> impl Iterator<Item = Media> + '_ {
         self.0.iter().filter_map(move |c| match c {
-            Change::AddMedia(kind, dir) => Some(Media::new_media(setup, *kind, *dir)),
-            Change::AddDataChannel => Some(Media::new_data_channel(setup)),
+            Change::AddMedia(mid, kind, dir) => Some(Media::new_media(*mid, *kind, *dir)),
+            Change::AddDataChannel(mid) => Some(Media::new_data_channel(*mid)),
             // _ => None,
         })
     }

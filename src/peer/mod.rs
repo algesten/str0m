@@ -14,7 +14,7 @@ use std::{io, mem};
 
 use crate::dtls::{dtls_create_ctx, dtls_ssl_create, Dtls, SrtpKeyMaterial};
 use crate::media::Media;
-use crate::sdp::{AttributeExt, Sdp};
+use crate::sdp::{AttributeExt, Mid, Sdp};
 use crate::sdp::{Fingerprint, IceCreds};
 use crate::sdp::{SessionId, Setup};
 use crate::stun::StunMessage;
@@ -328,7 +328,20 @@ impl<T> Peer<T> {
         let (ctx, local_fingerprint) = dtls_create_ctx()?;
 
         let mut rng = rand::thread_rng();
-        let id = (u64::MAX as f64 * rng.gen::<f64>()) as u64;
+
+        let id = if let Some(id) = config.session_id {
+            id
+        } else {
+            // We always want exactly 18 char 64 bit session numbers.
+            loop {
+                const MAX_ID: u64 = 999_999_999_999_999_999;
+                let x = (MAX_ID as f64 * rng.gen::<f64>()) as u64;
+                if x.to_string().chars().count() == 18 {
+                    break x;
+                }
+            }
+        };
+
         let setup = config.offer_setup;
 
         let peer = Peer {
@@ -361,6 +374,7 @@ impl<T> Peer<T> {
 
     fn set_pending_changes(&mut self, changes: Changes) -> Offer {
         assert!(self.pending_changes.is_none());
+        debug!("{:?} Set pending changes", self.session_id);
 
         self.pending_changes = Some(changes);
 
@@ -442,6 +456,8 @@ impl<T> Peer<T> {
     }
 
     fn update_session_from_remote_sdp(&mut self, sdp: &Sdp) -> Result<Option<Setup>, Error> {
+        debug!("{:?} Update session from remote SDP", self.session_id);
+
         let mut setups = vec![];
 
         // Session level
@@ -484,6 +500,8 @@ impl<T> Peer<T> {
     }
 
     fn update_media_from_offer(&mut self, offer: Offer) -> Result<(), Error> {
+        debug!("{:?} Update media from Offer", self.session_id);
+
         // check_consistent ensures the m-lines contain all we need.
         if let Some(problem) = offer.0.check_consistent() {
             return Err(Error::SdpError(problem));
@@ -500,6 +518,11 @@ impl<T> Peer<T> {
                 continue;
             }
 
+            debug!(
+                "{:?} Add new media with mid: {}",
+                self.session_id, remote_mid
+            );
+
             let mut media = Media::new(m);
             media.narrow_remote_to_locally_accepted();
 
@@ -510,6 +533,8 @@ impl<T> Peer<T> {
     }
 
     fn update_media_from_changes(&mut self, changes: Changes, answer: Answer) -> Result<(), Error> {
+        debug!("{:?} Update media from pending changes", self.session_id);
+
         // check_consistent ensures the m-lines contain all we need.
         if let Some(problem) = answer.0.check_consistent() {
             return Err(Error::SdpError(problem));
@@ -517,11 +542,16 @@ impl<T> Peer<T> {
 
         self.update_existing_media_from_sdp(&answer.0);
 
-        for mut media in changes.new_media_lines(self.setup) {
+        for mut media in changes.new_media_lines() {
             let local_mid = media.mid();
             let remote = answer.0.media_lines.iter().find(|m| local_mid == m.mid());
 
             if let Some(remote) = remote {
+                debug!(
+                    "{:?} Add new media with mid: {}",
+                    self.session_id, local_mid
+                );
+
                 media.narrow_local_to_remotely_accepted(remote);
 
                 self.media.push(media);
@@ -544,6 +574,14 @@ impl<T> Peer<T> {
                 // Direction changes.
                 let wanted_dir = m.direction().invert();
                 if media.direction() != wanted_dir {
+                    debug!(
+                        "{:?} Direction change for mid ({}): {} -> {}",
+                        self.session_id,
+                        media.mid(),
+                        media.direction(),
+                        wanted_dir
+                    );
+
                     media.set_direction(wanted_dir);
                     todo!(); // emit event that direction changed
                 }
@@ -552,6 +590,8 @@ impl<T> Peer<T> {
     }
 
     fn start_dtls(&mut self) -> Result<(), Error> {
+        info!("{:?} Start DTLS", self.session_id);
+
         assert!(self.dtls_state.dtls.is_none());
         assert!(self.setup != Setup::ActPass);
 
@@ -563,6 +603,17 @@ impl<T> Peer<T> {
 
         Ok(())
     }
+
+    /// Create a new Mid that doesn't already exist.
+    pub(crate) fn new_mid(&self) -> Mid {
+        loop {
+            let mid = Mid::new();
+            if self.media.iter().any(|m| m.mid() == mid) {
+                continue;
+            }
+            break mid;
+        }
+    }
 }
 
 impl Peer<state::Connected> {
@@ -570,6 +621,7 @@ impl Peer<state::Connected> {
     ///
     /// The offer must be provided _in some way_ to the remote side.
     pub fn change_set(self) -> ChangeSet<state::Connected, change_state::NoChange> {
+        info!("{:?} Create ChangeSet", self.session_id);
         ChangeSet::new(self)
     }
 
@@ -582,6 +634,7 @@ impl Peer<state::Connected> {
 impl Peer<state::Offering> {
     /// Accept an answer from the remote side.
     pub fn accept_answer(mut self, answer: Answer) -> Result<Peer<state::Connected>, Error> {
+        info!("{:?} Accept answer", self.session_id);
         self.do_handle_answer(answer)?;
         Ok(self.into_state())
     }
@@ -590,6 +643,7 @@ impl Peer<state::Offering> {
     ///
     /// Goes back to a state where we can accept an offer from the remote side instead.
     pub fn rollback(mut self) -> Peer<state::Connected> {
+        info!("{:?} Rollback offer", self.session_id);
         self.pending_changes.take();
         self.into_state()
     }

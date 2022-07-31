@@ -1,11 +1,14 @@
 mod parser;
 
-use std::fmt;
+use std::fmt::{self};
 use std::net::IpAddr;
 use std::num::ParseFloatError;
-use std::str::FromStr;
+use std::ops::Deref;
+use std::str::{from_utf8_unchecked, FromStr};
 
 pub use parser::parse_sdp;
+
+use crate::util::random_id;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sdp {
@@ -28,7 +31,7 @@ impl Sdp {
             for (m_line, mid) in self.media_lines.iter().zip(mids.iter()) {
                 m_line.check_consistent()?;
                 let m = m_line.mid();
-                if m != mid {
+                if m != *mid {
                     return Some(format!("Mid order not matching a=group {} != {}", m, mid));
                 }
             }
@@ -232,12 +235,53 @@ pub struct Bandwidth {
     pub val: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mid([u8; 3]);
+
+impl Mid {
+    pub(crate) fn new() -> Mid {
+        Mid(random_id::<3>().into_array())
+    }
+}
+
+impl fmt::Display for Mid {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s: &str = self;
+        write!(f, "{}", s)
+    }
+}
+
+impl Deref for Mid {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: We know the mid is ascii alphanumeric
+        unsafe { from_utf8_unchecked(&self.0) }.trim()
+    }
+}
+
+impl<'a> From<&'a str> for Mid {
+    fn from(v: &'a str) -> Self {
+        assert!(v.chars().all(|c| c.is_ascii_alphanumeric()));
+        let bytes = v.as_bytes();
+        assert!(bytes.len() <= 3);
+
+        // pad with space.
+        let mut array = [b' '; 3];
+
+        let max = bytes.len().min(array.len());
+        (&mut array[0..max]).copy_from_slice(bytes);
+
+        Mid(array)
+    }
+}
+
 /// Attributes before the first m= line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionAttribute {
     Group {
-        typ: String,       // BUNDLE, LS etc
-        mids: Vec<String>, // 0 1 2 3
+        typ: String,    // BUNDLE, LS etc
+        mids: Vec<Mid>, // 0 1 2 3
     },
     IceLite,
     IceUfrag(String),
@@ -301,12 +345,12 @@ pub struct MediaLine {
 }
 
 impl MediaLine {
-    pub fn mid(&self) -> &str {
+    pub fn mid(&self) -> Mid {
         self.attrs
             .iter()
             .find_map(|a| {
                 if let MediaAttribute::Mid(m) = a {
-                    Some(&m[..])
+                    Some(*m)
                 } else {
                     None
                 }
@@ -589,6 +633,21 @@ impl Direction {
     }
 }
 
+impl fmt::Display for Direction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Direction::SendOnly => "sendonly",
+                Direction::RecvOnly => "recvonly",
+                Direction::SendRecv => "sendrecv",
+                Direction::Inactive => "inactive",
+            }
+        )
+    }
+}
+
 impl From<Direction> for MediaAttribute {
     fn from(v: Direction) -> Self {
         match v {
@@ -840,7 +899,7 @@ pub enum MediaAttribute {
     IceOptions(String),
     Fingerprint(Fingerprint),
     Setup(Setup), // active, passive, actpass, holdconn
-    Mid(String),  // 0, 1, 2
+    Mid(Mid),     // 0, 1, 2
     SctpPort(u16),
     MaxMessageSize(usize),
     // a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level
@@ -1006,7 +1065,10 @@ impl fmt::Display for SessionAttribute {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use SessionAttribute::*;
         match self {
-            Group { typ, mids } => write!(f, "a=group:{} {}\r\n", typ, mids.join(" "))?,
+            Group { typ, mids } => {
+                let mids: Vec<_> = mids.iter().map(|m| m.to_string()).collect();
+                write!(f, "a=group:{} {}\r\n", typ, mids.join(" "))?;
+            }
             IceLite => write!(f, "a=ice-lite\r\n")?,
             IceUfrag(v) => write!(f, "a=ice-ufrag:{}\r\n", v)?,
             IcePwd(v) => write!(f, "a=ice-pwd:{}\r\n", v)?,

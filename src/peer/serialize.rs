@@ -22,15 +22,18 @@ impl<T> Peer<T> {
 
         let fp = self.dtls_state.local_fingerprint.clone();
         m_attrs.push(MediaAttribute::Fingerprint(fp.clone()));
+        m_attrs.push(MediaAttribute::Setup(self.setup));
+
         s_attrs.push(SessionAttribute::Fingerprint(fp));
+        s_attrs.push(SessionAttribute::Setup(self.setup));
 
         s_attrs.push(SessionAttribute::Group {
             typ: "BUNDLE".into(),
-            mids: self.media.iter().map(|m| m.mid().to_string()).collect(),
+            mids: self.media.iter().map(|m| m.mid()).collect(),
         });
 
         let new_lines = if let Some(pending) = &self.pending_changes {
-            pending.new_media_lines(self.setup).collect()
+            pending.new_media_lines().collect()
         } else {
             vec![]
         };

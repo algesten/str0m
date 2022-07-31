@@ -1,9 +1,12 @@
+mod _common;
+
 use std::convert::TryFrom;
 use std::net::SocketAddr;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Instant;
 
+use _common::init_log;
 use str0m::*;
 
 pub enum TestData {
@@ -16,7 +19,7 @@ fn connect_peer_active(
     tx: mpsc::Sender<TestData>,
     rx: mpsc::Receiver<TestData>,
 ) -> Result<Peer<state::Connected>, Error> {
-    let peer_init = PeerConfig::new().build()?;
+    let peer_init = PeerConfig::with_session_id(1).build()?;
 
     let (offer, peer_offering) = peer_init.change_set().add_data_channel().apply();
 
@@ -58,7 +61,7 @@ fn connect_peer_passive(
     tx: mpsc::Sender<TestData>,
     rx: mpsc::Receiver<TestData>,
 ) -> Result<Peer<state::Connected>, Error> {
-    let peer_init = PeerConfig::new().build()?;
+    let peer_init = PeerConfig::with_session_id(2).build()?;
 
     let data = rx.recv().unwrap();
     let offer = match data {
@@ -96,6 +99,8 @@ fn connect_peer_passive(
 
 #[test]
 fn connect_audio() -> Result<(), Error> {
+    init_log();
+
     let (tx1, rx1) = mpsc::channel();
     let (tx2, rx2) = mpsc::channel();
 

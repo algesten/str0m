@@ -125,7 +125,11 @@ where
     // a=group:LS 1 2
     let group = attribute_line(
         "group",
-        (not_sp(), token(' '), sep_by1(not_sp(), token(' '))),
+        (
+            not_sp(),
+            token(' '),
+            sep_by1(not_sp().map(|m| Mid::from(m.as_str())), token(' ')),
+        ),
     )
     .map(|(typ, _, mids)| SessionAttribute::Group { typ, mids });
 
@@ -370,7 +374,9 @@ where
     let setup = attribute_line("setup", setup_val).map(MediaAttribute::Setup);
 
     // a=mid:0
-    let mid = attribute_line("mid", any_value()).map(MediaAttribute::Mid);
+    let mid = attribute_line("mid", any_value())
+        .map(|m| Mid::from(m.as_str()))
+        .map(MediaAttribute::Mid);
 
     let sctp_port = attribute_line(
         "sctp-port",
