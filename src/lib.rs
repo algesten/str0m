@@ -21,5 +21,5 @@ pub use error::Error;
 
 pub use media::MediaKind;
 pub use peer::{change_state, ChangeSet, ConnectionResult, PeerConfig};
-pub use peer::{state, Answer, Io, NetworkInput, Offer, Peer};
+pub use peer::{state, Answer, Io, NetworkInput, Offer, Output, Peer};
 pub use sdp::{Candidate, Direction};

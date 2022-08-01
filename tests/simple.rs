@@ -4,7 +4,7 @@ use std::convert::TryFrom;
 use std::net::SocketAddr;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use _common::init_log;
 use str0m::*;
@@ -12,7 +12,7 @@ use str0m::*;
 pub enum TestData {
     Offer(Offer),
     Answer(Answer),
-    Data(SocketAddr, Vec<u8>),
+    Data(SocketAddr, SocketAddr, Vec<u8>),
 }
 
 fn connect_peer_active(
@@ -36,24 +36,35 @@ fn connect_peer_active(
     let mut peer_connecting = peer_offering.accept_answer(answer)?;
 
     let peer_connected = loop {
-        while let Some((addr, data_out)) = peer_connecting.io().network_output() {
-            tx.send(TestData::Data(addr, data_out.to_vec())).unwrap();
+        while let Some(Output {
+            source,
+            target,
+            data,
+        }) = peer_connecting.io().network_output()
+        {
+            tx.send(TestData::Data(source, target, data.to_vec()))
+                .unwrap();
         }
-
-        let data = rx.recv().unwrap();
-        let (addr, data_in) = match data {
-            TestData::Data(addr, v) => (addr, v),
-            _ => panic!("Expected TestData::Data"),
-        };
-        let time = Instant::now();
-
-        let network = NetworkInput::try_from(data_in.as_slice())?;
-
-        peer_connecting.io().network_input(time, addr, network)?;
 
         match peer_connecting.try_connect() {
             ConnectionResult::Connecting(v) => peer_connecting = v,
             ConnectionResult::Connected(v) => break v,
+        }
+
+        if let Some(data) = rx.recv_timeout(Duration::from_millis(100)).ok() {
+            let (source, target, data_in) = match data {
+                TestData::Data(source, target, v) => (source, target, v),
+                _ => panic!("Expected TestData::Data"),
+            };
+            let time = Instant::now();
+
+            let input = NetworkInput::try_from(data_in.as_slice())?;
+
+            peer_connecting
+                .io()
+                .network_input(time, source, target, input)?;
+        } else {
+            peer_connecting.io().tick(Instant::now())?;
         }
     };
 
@@ -79,24 +90,35 @@ fn connect_peer_passive(
     tx.send(TestData::Answer(answer)).unwrap();
 
     let peer_connected = loop {
-        while let Some((addr, data_out)) = peer_connecting.io().network_output() {
-            tx.send(TestData::Data(addr, data_out.to_vec())).unwrap();
+        while let Some(Output {
+            source,
+            target,
+            data,
+        }) = peer_connecting.io().network_output()
+        {
+            tx.send(TestData::Data(source, target, data.to_vec()))
+                .unwrap();
         }
-
-        let data = rx.recv().unwrap();
-        let (addr, data_in) = match data {
-            TestData::Data(addr, v) => (addr, v),
-            _ => panic!("Expected TestData::Data"),
-        };
-        let time = Instant::now();
-
-        let network = NetworkInput::try_from(data_in.as_slice())?;
-
-        peer_connecting.io().network_input(time, addr, network)?;
 
         match peer_connecting.try_connect() {
             ConnectionResult::Connecting(v) => peer_connecting = v,
             ConnectionResult::Connected(v) => break v,
+        }
+
+        if let Some(data) = rx.recv_timeout(Duration::from_millis(100)).ok() {
+            let (source, target, data) = match data {
+                TestData::Data(source, target, data) => (source, target, data),
+                _ => panic!("Expected TestData::Data"),
+            };
+            let time = Instant::now();
+
+            let input = NetworkInput::try_from(data.as_slice())?;
+
+            peer_connecting
+                .io()
+                .network_input(time, source, target, input)?;
+        } else {
+            peer_connecting.io().tick(Instant::now())?;
         }
     };
 

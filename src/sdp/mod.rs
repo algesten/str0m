@@ -276,6 +276,10 @@ impl Candidate {
 
         type_preference << 24 | local_preference << 8 | (255 - self.comp_id as u32)
     }
+
+    pub(crate) fn addr(&self) -> SocketAddr {
+        self.addr
+    }
 }
 
 fn is_dir(a: &MediaAttribute) -> bool {

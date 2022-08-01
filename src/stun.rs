@@ -79,18 +79,31 @@ pub(crate) struct StunMessage<'a> {
 }
 
 impl<'a> StunMessage<'a> {
-    pub fn binding_request(
-        local_user: &'a str,
-        remote_user: &'a str,
-        trans_id: &'a [u8; 12],
-    ) -> Self {
+    pub fn trans_id(&self) -> &[u8] {
+        self.trans_id
+    }
+
+    pub fn binding_request(remote_local_user: &'a str, trans_id: &'a [u8; 12]) -> Self {
         StunMessage {
             class: Class::Request,
             method: Method::Binding,
             trans_id: &*trans_id,
-            attrs: vec![],
+            attrs: vec![
+                Attribute::Username(remote_local_user),
+                Attribute::IceControlling(random()),
+                Attribute::MessageIntegrityMark,
+                Attribute::FingerprintMark,
+            ],
             integrity: &[],
         }
+    }
+
+    pub fn is_binding_request(&self) -> bool {
+        self.class == Class::Request && self.method == Method::Binding
+    }
+
+    pub fn is_binding_response(&self) -> bool {
+        self.class == Class::Success && self.method == Method::Binding
     }
 
     pub fn split_username(&self) -> (&str, &str) {
@@ -319,6 +332,7 @@ impl<'a> Attribute<'a> {
                 v.len() + pad
             }
             IceControlled(_) => 8,
+            IceControlling(_) => 8,
             MessageIntegrityMark => 20,
             FingerprintMark => 4,
             _ => panic!("No length for {:?}", self),
@@ -337,7 +351,7 @@ impl<'a> Attribute<'a> {
                     vec.write_all(&[0])?;
                 }
             }
-            IceControlled(v) => {
+            IceControlled(v) | IceControlling(v) => {
                 vec.write_all(&0x8029_u16.to_be_bytes())?;
                 vec.write_all(&8_u16.to_be_bytes())?;
                 vec.write_all(&v.to_be_bytes())?;

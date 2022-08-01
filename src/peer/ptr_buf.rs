@@ -8,29 +8,37 @@ use super::inout::{NetworkOutput, NetworkOutputWriter};
 use super::OutputQueue;
 
 /// Helper to enqueue network output data.
-pub(crate) struct OutputEnqueuer(SocketAddr, *mut OutputQueue);
+pub(crate) struct OutputEnqueuer {
+    source: SocketAddr,
+    target: SocketAddr,
+    ptr: *mut OutputQueue,
+}
 
 impl OutputEnqueuer {
     /// Creates an enqueuer helper instance.
     ///
     /// SAFETY: The user of this enqueuer must guarantee that the
     /// instance does not outlive the lifetime of `&mut OutputQueue`.
-    pub unsafe fn new(addr: SocketAddr, output: &mut OutputQueue) -> Self {
-        OutputEnqueuer(addr, output as *mut OutputQueue)
+    pub unsafe fn new(source: SocketAddr, target: SocketAddr, output: &mut OutputQueue) -> Self {
+        OutputEnqueuer {
+            source,
+            target,
+            ptr: output as *mut OutputQueue,
+        }
     }
 
     pub fn get_buffer_writer(&mut self) -> NetworkOutputWriter {
         // SAFETY: See `new`
-        let queue = unsafe { &mut *self.1 };
+        let queue = unsafe { &mut *self.ptr };
 
         queue.get_buffer_writer()
     }
 
     pub fn enqueue(&mut self, buffer: NetworkOutput) {
         // SAFETY: See `new`
-        let queue = unsafe { &mut *self.1 };
+        let queue = unsafe { &mut *self.ptr };
 
-        queue.enqueue(self.0, buffer);
+        queue.enqueue(self.source, self.target, buffer);
     }
 }
 

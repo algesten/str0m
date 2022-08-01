@@ -6,7 +6,7 @@ use std::fmt;
 use std::ops::Add;
 use std::ops::Sub;
 use std::str::from_utf8_unchecked;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 pub type HmacSha1 = Hmac<Sha1>;
 
@@ -248,6 +248,17 @@ impl Add for Ts {
     fn add(self, rhs: Self) -> Self::Output {
         let (t0, t1) = Ts::same_base(self, rhs);
         Ts::new(t0.0 + t1.0, t0.1)
+    }
+}
+
+impl From<Instant> for Ts {
+    fn from(v: Instant) -> Self {
+        use once_cell::sync::Lazy;
+        static START_TIME: Lazy<Instant> = Lazy::new(|| Instant::now());
+
+        let duration = v.duration_since(*START_TIME);
+
+        Ts::new((duration.as_secs_f64() * 1000.0) as i64, 1000)
     }
 }
 

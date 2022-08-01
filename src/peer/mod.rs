@@ -10,6 +10,7 @@ use rand::Rng;
 use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
 use std::net::SocketAddr;
+use std::time::Instant;
 use std::{io, mem};
 
 use crate::dtls::{dtls_create_ctx, dtls_ssl_create, Dtls, SrtpKeyMaterial};
@@ -18,6 +19,7 @@ use crate::media::Media;
 use crate::sdp::Fingerprint;
 use crate::sdp::{Mid, Sdp};
 use crate::sdp::{SessionId, Setup};
+use crate::util::Ts;
 use crate::Error;
 
 use self::change::Changes;
@@ -26,6 +28,7 @@ use self::inout::{NetworkOutput, NetworkOutputWriter};
 use self::ptr_buf::{OutputEnqueuer, PtrBuffer};
 pub use change::{change_state, ChangeSet};
 pub use config::PeerConfig;
+pub use inout::Output;
 pub use peer_init::ConnectionResult;
 pub use serialize::is_dynamic_media_attr;
 
@@ -54,48 +57,6 @@ pub mod state {
 ///
 /// ```no_run
 /// # fn main() -> Result<(), str0m::Error> {
-/// use std::convert::TryFrom;
-/// use std::net::SocketAddr;
-/// use std::time::Instant;
-/// use str0m::*;
-///
-/// // 1. Create a Peer from a PeerConfig.
-/// let peer_init = PeerConfig::new().build()?;
-///
-/// // 2. To create an offer, we must add media, or a data channel.
-/// let change_set = peer_init.change_set();
-/// let (offer, peer_offering) = change_set.add_data_channel().apply();
-///
-/// // 3. Send the offer _somehow_ to the remote peer and receive
-/// //    the answer back (via websocket for instance).
-/// let answer = todo!();
-/// let mut peer_connecting = peer_offering.accept_answer(answer)?;
-///
-/// // 4. Loop send/receive UDP data until connected.
-/// let peer_connected = loop {
-///     while let Some((addr, data_out)) = peer_connecting.io().network_output() {
-///         // TODO: send data_out to addr via UDP socket.
-///     }
-///
-///     // Obtain data from socket.
-///     let (addr, data_in): (SocketAddr, &[u8]) = todo!();
-///     // This should be the receive time as close to the network
-///     // socket read as possible.
-///     let time = Instant::now();
-///
-///     // Parse the network data.
-///     let network = NetworkInput::try_from(data_in)?;
-///
-///     // Feed input data to peer.
-///     peer_connecting.io().network_input(time, addr, network)?;
-///
-///     match peer_connecting.try_connect() {
-///         ConnectionResult::Connecting(v) => peer_connecting = v,
-///         ConnectionResult::Connected(v) => break v,
-///     }
-/// };
-///
-/// // 5. Use the connected `peer_connected` instance.
 /// # Ok(())}
 /// ```
 pub struct Peer<State> {
@@ -132,10 +93,16 @@ pub struct Peer<State> {
 
 pub(crate) struct OutputQueue {
     /// Enqueued NetworkOutput to be consumed.
-    queue: VecDeque<(SocketAddr, NetworkOutput)>,
+    queue: VecDeque<EnqueuedOutput>,
 
     /// Free NetworkOutput instance ready to be reused.
     free: Vec<NetworkOutput>,
+}
+
+pub(crate) struct EnqueuedOutput {
+    pub(crate) source: SocketAddr,
+    pub(crate) target: SocketAddr,
+    pub(crate) data: NetworkOutput,
 }
 
 struct DtlsState {
@@ -178,21 +145,34 @@ impl OutputQueue {
         }
     }
 
-    pub fn enqueue(&mut self, addr: SocketAddr, buffer: NetworkOutput) {
-        self.queue.push_back((addr, buffer));
+    pub fn enqueue(&mut self, source: SocketAddr, target: SocketAddr, data: NetworkOutput) {
+        self.queue.push_back(EnqueuedOutput {
+            source,
+            target,
+            data,
+        });
     }
 
-    pub fn dequeue(&mut self) -> Option<(SocketAddr, &NetworkOutput)> {
-        let (addr, out) = self.queue.pop_front()?;
+    pub fn dequeue(&mut self) -> Option<Output<'_>> {
+        let EnqueuedOutput {
+            source,
+            target,
+            data,
+        } = self.queue.pop_front()?;
 
         // It's a bit strange to push the buffer to free already before handing it out to
         // the API consumer. However, Rust borrowing rules means we will not get another
         // change to the state until the API consumer releases the borrowed buffer.
-        self.free.push(out);
-
+        self.free.push(data);
         let borrowed = self.free.last().unwrap();
 
-        Some((addr, borrowed))
+        let ret = Output {
+            source,
+            target,
+            data: &borrowed,
+        };
+
+        Some(ret)
     }
 }
 
@@ -206,13 +186,14 @@ impl DtlsState {
 
     fn handle_dtls(
         &mut self,
-        addr: SocketAddr,
+        source: SocketAddr,
+        target: SocketAddr,
         output: &mut OutputQueue,
         buf: &[u8],
     ) -> Result<(), Error> {
         let dtls = self.dtls.as_mut().unwrap();
 
-        let enqueuer = unsafe { OutputEnqueuer::new(addr, output) };
+        let enqueuer = unsafe { OutputEnqueuer::new(source, target, output) };
 
         let ptr_buf = dtls.inner_mut()?;
         // SAFETY: The io::Read call of ptr_buf must happen within the lifetime of buf.
@@ -315,6 +296,15 @@ impl<T> Peer<T> {
         };
 
         Ok(peer)
+    }
+
+    fn do_tick(&mut self, time: Instant) -> Result<(), Error> {
+        let time: Ts = time.into();
+
+        self.ice_state
+            .drive_stun_controlling(time, &mut self.output)?;
+
+        Ok(())
     }
 
     fn set_pending_changes(&mut self, changes: Changes) -> Offer {

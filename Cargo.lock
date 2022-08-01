@@ -431,6 +431,7 @@ dependencies = [
  "combine",
  "crc",
  "hmac",
+ "once_cell",
  "openssl",
  "openssl-sys",
  "rand",

@@ -11,6 +11,12 @@ use crate::{Error, Peer, UDP_MTU};
 /// Handle to perform network input/output for a [`Peer`].
 pub struct Io<'a, State>(pub(crate) &'a mut Peer<State>);
 
+pub struct Output<'a> {
+    pub source: SocketAddr,
+    pub target: SocketAddr,
+    pub data: &'a NetworkOutput,
+}
+
 impl<'a, State> Io<'a, State> {
     /// Tests if this peer will accept the network input.
     ///
@@ -38,23 +44,35 @@ impl<'a, State> Io<'a, State> {
     /// While connecting, we only accept input from the network.
     pub fn network_input(
         &mut self,
-        _time: Instant,
-        addr: SocketAddr,
+        time: Instant,
+        source: SocketAddr,
+        target: SocketAddr,
         input: NetworkInput<'_>,
     ) -> Result<(), Error> {
         use NetworkInputInner::*;
+
         let output = &mut self.0.output;
-        match input.0 {
-            Stun(stun) => self.0.ice_state.handle_stun(addr, output, stun),
-            Dtls(dtls) => self.0.dtls_state.handle_dtls(addr, output, dtls),
-        }
+        let x = match input.0 {
+            Stun(stun) => self.0.ice_state.handle_stun(source, target, output, stun),
+            Dtls(dtls) => self.0.dtls_state.handle_dtls(source, target, output, dtls),
+        };
+
+        // Also drive internal state forward.
+        self.tick(time)?;
+
+        x
+    }
+
+    /// Used in absence of network input to drive the engine.
+    pub fn tick(&mut self, time: Instant) -> Result<(), Error> {
+        self.0.do_tick(time)
     }
 
     /// Polls for network output.
     ///
     /// Changes to the `Peer` state will queue up network output to send.
     /// For every change, this function must be polled until it returns `None`.
-    pub fn network_output(&mut self) -> Option<(SocketAddr, &NetworkOutput)> {
+    pub fn network_output(&mut self) -> Option<Output<'_>> {
         self.0.output.dequeue()
     }
 }
