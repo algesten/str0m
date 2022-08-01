@@ -113,13 +113,13 @@ impl IceState {
 
         if self.ice_lite && !c.is_host() {
             debug!(
-                "{:?} Ignoring non-host ICE candidate due to ice-lite: {:?}",
+                "{:?} Ignoring non-host ICE candidate due to ice-lite: {}",
                 id, c
             );
             return;
         }
 
-        debug!("{:?} Adding local candidate: {:?}", id, c);
+        debug!("{:?} Adding local candidate: {}", id, c);
 
         IceState::do_add_candidate(
             c,
@@ -138,7 +138,7 @@ impl IceState {
             );
         }
 
-        debug!("{:?} Adding remote candidate: {:?}", id, c);
+        debug!("{:?} Adding remote candidate: {}", id, c);
 
         IceState::do_add_candidate(
             c,
@@ -158,7 +158,7 @@ impl IceState {
     ) {
         if add_to.contains(&candidate) {
             // TODO this should keep the one with lower priority.
-            trace!("Not adding redundant candidate: {:?}", candidate);
+            trace!("Not adding redundant candidate: {}", candidate);
             return;
         }
 

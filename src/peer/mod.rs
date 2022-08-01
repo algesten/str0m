@@ -483,7 +483,7 @@ impl<T> Peer<T> {
     }
 
     fn update_media_from_offer(&mut self, offer: Offer) -> Result<(), Error> {
-        debug!("{:?} Update media from Offer", self.session_id);
+        debug!("{:?} Update media from offer", self.session_id);
 
         // check_consistent ensures the m-lines contain all we need.
         if let Some(problem) = offer.0.check_consistent() {

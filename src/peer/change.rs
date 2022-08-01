@@ -85,6 +85,7 @@ impl ChangeSet<state::Init, Changed> {
     ///
     /// This is only available once some changes have been made.
     pub fn apply(self) -> (Offer, Peer<state::InitialOffering>) {
+        debug!("{:?} Create initial offer", self.peer.session_id);
         self.do_apply()
     }
 }
@@ -112,6 +113,7 @@ impl ChangeSet<state::Connected, Changed> {
     ///
     /// This is only available once some changes have been made.
     pub fn apply(self) -> (Offer, Peer<state::InitialOffering>) {
+        debug!("{:?} Create offer", self.peer.session_id);
         self.do_apply()
     }
 }
