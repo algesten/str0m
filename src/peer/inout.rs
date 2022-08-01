@@ -11,10 +11,23 @@ use crate::{Error, Peer, UDP_MTU};
 /// Handle to perform network input/output for a [`Peer`].
 pub struct Io<'a, State>(pub(crate) &'a mut Peer<State>);
 
+/// Network output.
+///
+/// The `source`/`target` is used to match up which external interface to send
+/// the data via. The data is chunked up for UDP transport.
 pub struct Output<'a> {
+    /// Source address to send from.
+    pub source: SocketAddr,
+    /// Target address to send to.
+    pub target: SocketAddr,
+    /// The data to deliver.
+    pub data: &'a NetworkOutput,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Addrs {
     pub source: SocketAddr,
     pub target: SocketAddr,
-    pub data: &'a NetworkOutput,
 }
 
 impl<'a, State> Io<'a, State> {
@@ -51,21 +64,24 @@ impl<'a, State> Io<'a, State> {
     ) -> Result<(), Error> {
         use NetworkInputInner::*;
 
+        let time = time.into();
+        let addrs = Addrs { source, target };
+
         let output = &mut self.0.output;
         let x = match input.0 {
-            Stun(stun) => self.0.ice_state.handle_stun(source, target, output, stun),
-            Dtls(dtls) => self.0.dtls_state.handle_dtls(source, target, output, dtls),
+            Stun(stun) => self.0.ice_state.handle_stun(time, addrs, output, stun),
+            Dtls(buf) => self.0.dtls_state.handle_dtls(addrs, output, buf),
         };
 
         // Also drive internal state forward.
-        self.tick(time)?;
+        self.0.do_tick(time)?;
 
         x
     }
 
     /// Used in absence of network input to drive the engine.
     pub fn tick(&mut self, time: Instant) -> Result<(), Error> {
-        self.0.do_tick(time)
+        self.0.do_tick(time.into())
     }
 
     /// Polls for network output.

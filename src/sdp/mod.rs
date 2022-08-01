@@ -215,6 +215,7 @@ pub struct Fingerprint {
     pub bytes: Vec<u8>,
 }
 
+/// An ICE candidate.
 #[derive(Debug, Clone, Hash)]
 pub struct Candidate {
     found: String,             // 1-32 "ice chars", ALPHA / DIGIT / "+" / "/"
@@ -236,6 +237,7 @@ impl PartialEq for Candidate {
 impl Eq for Candidate {}
 
 impl Candidate {
+    /// Creates a host ICE candidate.
     pub fn host(addr: SocketAddr) -> Self {
         Candidate {
             found: "1".into(),

@@ -1,9 +1,9 @@
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::net::SocketAddr;
-use std::ops::Add;
 
+use crate::peer::Addrs;
 use crate::peer::OutputQueue;
 use crate::sdp::{Candidate, IceCreds, SessionId};
 use crate::stun::StunMessage;
@@ -82,17 +82,28 @@ impl IceConnectionState {
 struct CandidatePair {
     /// Index into local_candidates.
     local_idx: usize,
+
     /// Index into remote_candidates.
     remote_idx: usize,
+
     /// Calculated prio for this pair. This is the basis
     /// for sorting the pairs.
     prio: u64,
+
     /// Current state of checking the entry.
     state: CheckState,
-    /// The time we attempted to send a STUN request using this pair.
+
+    /// The time we last attempted to send a STUN request using this pair.
     attempted: Option<Ts>,
-    /// Transaction id to tally up reply wth request.
-    trans_id: Option<[u8; 12]>,
+
+    /// The number of times we sent a STUN to this candidate.
+    count: u64,
+
+    /// Last time we got a response.
+    responded: Option<Ts>,
+
+    /// Transaction ids to tally up reply wth request.
+    trans_id: VecDeque<[u8; 12]>,
 }
 
 impl PartialOrd for CandidatePair {
@@ -240,7 +251,9 @@ impl IceState {
                 prio,
                 state: CheckState::Waiting,
                 attempted: None,
-                trans_id: None,
+                count: 0,
+                responded: None,
+                trans_id: VecDeque::new(),
             };
 
             add.pair_to.push(pair);
@@ -309,18 +322,22 @@ impl IceState {
 
     pub fn handle_stun<'a>(
         &mut self,
-        source: SocketAddr,
-        target: SocketAddr,
+        time: Ts,
+        addrs: Addrs,
         output: &mut OutputQueue,
         stun: StunMessage<'a>,
     ) -> Result<(), Error> {
         // fail if this is not for us.
-        self.accepts_stun(target, &stun)?;
+        self.accepts_stun(addrs.target, &stun)?;
 
         // on the back of a successful (authenticated) stun bind, we update
         // the validated addresses to receive dtls, rtcp, rtp etc.
-        if self.verified.insert(target) {
-            trace!("{:?} STUN new verified peer ({})", self.session_id, target);
+        if self.verified.insert(addrs.target) {
+            trace!(
+                "{:?} STUN new verified peer ({})",
+                self.session_id,
+                addrs.target
+            );
         }
 
         use IceConnectionState::*;
@@ -334,10 +351,11 @@ impl IceState {
             let pair = self
                 .candidate_pairs
                 .iter_mut()
-                .find(|c| c.trans_id.as_ref().map(|t| t.as_slice()) == Some(stun.trans_id()));
+                .find(|c| c.trans_id.iter().any(|t| t == stun.trans_id()));
 
             if let Some(pair) = pair {
                 pair.state = CheckState::Succeeded;
+                pair.responded = Some(time);
             } else {
                 return Err(Error::StunError(
                     "Failed to find STUN request via transaction id".into(),
@@ -350,7 +368,7 @@ impl IceState {
         // TODO: do we ever get binding failures?
         assert!(stun.is_binding_request());
 
-        trace!("{:?} STUN reply to ({})", self.session_id, source);
+        trace!("{:?} STUN reply to ({})", self.session_id, addrs.source);
 
         let reply = stun.reply()?;
 
@@ -358,7 +376,7 @@ impl IceState {
         let len = reply.to_bytes(&self.local_creds.password, &mut writer)?;
         let buffer = writer.set_len(len);
 
-        output.enqueue(target, source, buffer);
+        output.enqueue(addrs, buffer);
 
         Ok(())
     }
@@ -501,14 +519,18 @@ impl IceState {
         let len = msg.to_bytes(&req.remote_creds.password, &mut writer)?;
         let buffer = writer.set_len(len);
 
-        req.next.trans_id = Some(trans_id);
+        req.next.trans_id.push_back(trans_id);
+        while req.next.trans_id.len() > 20 {
+            req.next.trans_id.pop_front();
+        }
 
         let source = req.local.addr();
         let target = req.remote.addr();
+        let addrs = Addrs { source, target };
 
         trace!("{:?} STUN binding request to: {}", req.id, target);
 
-        req.queue.enqueue(source, target, buffer);
+        req.queue.enqueue(addrs, buffer);
 
         Ok(())
     }

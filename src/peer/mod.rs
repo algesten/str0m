@@ -9,8 +9,6 @@ use openssl::ssl::SslContext;
 use rand::Rng;
 use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
-use std::net::SocketAddr;
-use std::time::Instant;
 use std::{io, mem};
 
 use crate::dtls::{dtls_create_ctx, dtls_ssl_create, Dtls, SrtpKeyMaterial};
@@ -28,6 +26,7 @@ use self::inout::{NetworkOutput, NetworkOutputWriter};
 use self::ptr_buf::{OutputEnqueuer, PtrBuffer};
 pub use change::{change_state, ChangeSet};
 pub use config::PeerConfig;
+pub(crate) use inout::Addrs;
 pub use inout::Output;
 pub use peer_init::ConnectionResult;
 pub use serialize::is_dynamic_media_attr;
@@ -93,16 +92,10 @@ pub struct Peer<State> {
 
 pub(crate) struct OutputQueue {
     /// Enqueued NetworkOutput to be consumed.
-    queue: VecDeque<EnqueuedOutput>,
+    queue: VecDeque<(Addrs, NetworkOutput)>,
 
     /// Free NetworkOutput instance ready to be reused.
     free: Vec<NetworkOutput>,
-}
-
-pub(crate) struct EnqueuedOutput {
-    pub(crate) source: SocketAddr,
-    pub(crate) target: SocketAddr,
-    pub(crate) data: NetworkOutput,
 }
 
 struct DtlsState {
@@ -145,20 +138,12 @@ impl OutputQueue {
         }
     }
 
-    pub fn enqueue(&mut self, source: SocketAddr, target: SocketAddr, data: NetworkOutput) {
-        self.queue.push_back(EnqueuedOutput {
-            source,
-            target,
-            data,
-        });
+    pub fn enqueue(&mut self, addrs: Addrs, data: NetworkOutput) {
+        self.queue.push_back((addrs, data));
     }
 
     pub fn dequeue(&mut self) -> Option<Output<'_>> {
-        let EnqueuedOutput {
-            source,
-            target,
-            data,
-        } = self.queue.pop_front()?;
+        let (Addrs { source, target }, data) = self.queue.pop_front()?;
 
         // It's a bit strange to push the buffer to free already before handing it out to
         // the API consumer. However, Rust borrowing rules means we will not get another
@@ -186,14 +171,13 @@ impl DtlsState {
 
     fn handle_dtls(
         &mut self,
-        source: SocketAddr,
-        target: SocketAddr,
+        addrs: Addrs,
         output: &mut OutputQueue,
         buf: &[u8],
     ) -> Result<(), Error> {
         let dtls = self.dtls.as_mut().unwrap();
 
-        let enqueuer = unsafe { OutputEnqueuer::new(source, target, output) };
+        let enqueuer = unsafe { OutputEnqueuer::new(addrs, output) };
 
         let ptr_buf = dtls.inner_mut()?;
         // SAFETY: The io::Read call of ptr_buf must happen within the lifetime of buf.
@@ -298,11 +282,10 @@ impl<T> Peer<T> {
         Ok(peer)
     }
 
-    fn do_tick(&mut self, time: Instant) -> Result<(), Error> {
-        let time: Ts = time.into();
+    fn do_tick(&mut self, time: Ts) -> Result<(), Error> {
+        let queue = &mut self.output;
 
-        self.ice_state
-            .drive_stun_controlling(time, &mut self.output)?;
+        self.ice_state.drive_stun_controlling(time, queue)?;
 
         Ok(())
     }

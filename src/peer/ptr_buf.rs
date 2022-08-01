@@ -1,16 +1,14 @@
 use std::io;
-use std::net::SocketAddr;
 use std::slice;
 
 use crate::UDP_MTU;
 
-use super::inout::{NetworkOutput, NetworkOutputWriter};
+use super::inout::{Addrs, NetworkOutput, NetworkOutputWriter};
 use super::OutputQueue;
 
 /// Helper to enqueue network output data.
 pub(crate) struct OutputEnqueuer {
-    source: SocketAddr,
-    target: SocketAddr,
+    addrs: Addrs,
     ptr: *mut OutputQueue,
 }
 
@@ -19,10 +17,9 @@ impl OutputEnqueuer {
     ///
     /// SAFETY: The user of this enqueuer must guarantee that the
     /// instance does not outlive the lifetime of `&mut OutputQueue`.
-    pub unsafe fn new(source: SocketAddr, target: SocketAddr, output: &mut OutputQueue) -> Self {
+    pub unsafe fn new(addrs: Addrs, output: &mut OutputQueue) -> Self {
         OutputEnqueuer {
-            source,
-            target,
+            addrs,
             ptr: output as *mut OutputQueue,
         }
     }
@@ -38,7 +35,7 @@ impl OutputEnqueuer {
         // SAFETY: See `new`
         let queue = unsafe { &mut *self.ptr };
 
-        queue.enqueue(self.source, self.target, buffer);
+        queue.enqueue(self.addrs, buffer);
     }
 }
 
