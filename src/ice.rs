@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashSet};
+use std::fmt;
 use std::net::SocketAddr;
 
 use crate::peer::OutputQueue;
@@ -10,6 +11,9 @@ use crate::Error;
 
 #[derive(Debug)]
 pub(crate) struct IceState {
+    /// Id of session, used for logging
+    session_id: SessionId,
+
     /// Whether this is the controlling agent.
     controlling: bool,
 
@@ -21,6 +25,9 @@ pub(crate) struct IceState {
 
     /// If we got indication there be no more remote candidates.
     remote_end_of_candidates: bool,
+
+    /// State of checking connection.
+    conn_state: IceConnectionState,
 
     /// Local credentials for STUN. We use one set for all m-lines.
     local_creds: IceCreds,
@@ -40,6 +47,34 @@ pub(crate) struct IceState {
 
     /// Pairs formed by combining all local/remote as they drop in.
     candidate_pairs: BTreeSet<CandidatePair>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IceConnectionState {
+    /// Waiting for candidates.
+    New,
+
+    /// Checking pairs of local-remote candidates.
+    Checking,
+
+    /// A usable pair of local-remote candidates found, but still checking.
+    Connected,
+
+    /// A usable pair of local-remote candidates found. Checking is finished.
+    Completed,
+
+    /// No connection found from the candidate pairs.
+    Failed,
+
+    /// Shut down.
+    Closed,
+}
+
+impl IceConnectionState {
+    fn should_check(&self) -> bool {
+        use IceConnectionState::*;
+        matches!(self, New | Checking | Connected)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -71,12 +106,14 @@ enum CheckState {
 }
 
 impl IceState {
-    pub fn new(ice_lite: bool) -> Self {
+    pub fn new(session_id: SessionId, ice_lite: bool) -> Self {
         IceState {
+            session_id,
             controlling: false,
             ice_lite,
             local_end_of_candidates: false,
             remote_end_of_candidates: false,
+            conn_state: IceConnectionState::New,
             local_creds: IceCreds {
                 username: random_id::<8>().to_string(),
                 password: random_id::<24>().to_string(),
@@ -93,33 +130,33 @@ impl IceState {
         self.candidate_pairs.is_empty()
     }
 
-    pub fn set_controlling(&mut self, id: &SessionId, c: bool) {
+    pub fn set_controlling(&mut self, c: bool) {
         assert!(self.candidate_pairs.is_empty());
         debug!(
             "{:?} Ice agent is {}",
-            id,
+            self.session_id,
             if c { "controlling" } else { "controlled" }
         );
         self.controlling = c;
     }
 
-    pub fn add_local_candidate(&mut self, id: &SessionId, c: Candidate) {
+    pub fn add_local_candidate(&mut self, c: Candidate) {
         if self.local_end_of_candidates {
             debug!(
                 "{:?} No more local candidates accepted: end-of-candidates",
-                id
+                self.session_id
             );
         }
 
         if self.ice_lite && !c.is_host() {
             debug!(
                 "{:?} Ignoring non-host ICE candidate due to ice-lite: {}",
-                id, c
+                self.session_id, c
             );
             return;
         }
 
-        debug!("{:?} Adding local candidate: {}", id, c);
+        debug!("{:?} Adding local candidate: {}", self.session_id, c);
 
         IceState::do_add_candidate(
             c,
@@ -130,15 +167,15 @@ impl IceState {
         )
     }
 
-    pub fn add_remote_candidate(&mut self, id: &SessionId, c: Candidate) {
+    pub fn add_remote_candidate(&mut self, c: Candidate) {
         if self.local_end_of_candidates {
             debug!(
                 "{:?} No more remote candidates accepted: end-of-candidates",
-                id
+                self.session_id
             );
         }
 
-        debug!("{:?} Adding remote candidate: {}", id, c);
+        debug!("{:?} Adding remote candidate: {}", self.session_id, c);
 
         IceState::do_add_candidate(
             c,
@@ -200,15 +237,15 @@ impl IceState {
         }
     }
 
-    pub fn add_remote_creds(&mut self, id: &SessionId, creds: IceCreds) {
-        let line = format!("{:?} Added remote creds: {:?}", id, creds);
+    pub fn add_remote_creds(&mut self, creds: IceCreds) {
+        let line = format!("{:?} Added remote creds: {:?}", self.session_id, creds);
         if self.remote_creds.insert(creds) {
             trace!(line);
         }
     }
 
     pub fn accepts_stun(&self, addr: SocketAddr, stun: &StunMessage<'_>) -> Result<bool, Error> {
-        let (local_username, remote_username) = stun.local_remote_username();
+        let (local_username, remote_username) = stun.split_username();
 
         let creds_in_remote_sdp = self
             .remote_creds
@@ -278,23 +315,76 @@ impl IceState {
         &self.local_candidates
     }
 
-    pub(crate) fn set_remote_end_of_candidates(&mut self, id: &SessionId) {
+    pub fn set_remote_end_of_candidates(&mut self) {
         if self.remote_end_of_candidates {
             return;
         }
-        info!("{:?} Remote end-of-candidates", id);
+        info!("{:?} Remote end-of-candidates", self.session_id);
         self.remote_end_of_candidates = true;
     }
 
-    pub(crate) fn set_local_end_of_candidates(&mut self, id: &SessionId) {
+    pub fn set_local_end_of_candidates(&mut self) {
         if self.local_end_of_candidates {
             return;
         }
-        info!("{:?} Local end-of-candidates", id);
+        info!("{:?} Local end-of-candidates", self.session_id);
         self.local_end_of_candidates = true;
     }
 
-    pub(crate) fn local_end_of_candidates(&self) -> bool {
+    pub fn local_end_of_candidates(&self) -> bool {
         self.local_end_of_candidates
+    }
+
+    fn set_conn_state(&mut self, c: IceConnectionState) {
+        if c != self.conn_state {
+            info!(
+                "{:?} Ice connection state change: {} -> {}",
+                self.session_id, self.conn_state, c
+            );
+            self.conn_state = c;
+        }
+        // TODO emit event that this is happening.
+    }
+
+    pub fn drive_stun(&mut self, queue: &mut OutputQueue) -> Result<(), Error> {
+        if !self.controlling {
+            return Ok(());
+        }
+
+        use IceConnectionState::*;
+
+        if self.conn_state.should_check() {
+            const MAX_CONCURRENT: usize = 10;
+
+            if self.conn_state == New {
+                self.set_conn_state(Checking);
+            }
+
+            let current_checks = self
+                .candidate_pairs
+                .iter()
+                .filter(|c| c.state == CheckState::InProgress)
+                .count();
+        }
+
+        Ok(())
+    }
+}
+
+impl fmt::Display for IceConnectionState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use IceConnectionState::*;
+        write!(
+            f,
+            "{}",
+            match self {
+                New => "new",
+                Checking => "checking",
+                Connected => "connected",
+                Completed => "completed",
+                Failed => "failed",
+                Closed => "closed",
+            }
+        )
     }
 }

@@ -54,7 +54,7 @@ pub(crate) fn parse_message(buf: &[u8]) -> Result<StunMessage, Error> {
     // buffer from beginning including header (+20) to where message-integrity starts.
     let integrity = &buf[0..(message_integrity_offset + 20)];
 
-    if !attrs.local_remote().is_some() {
+    if !attrs.split_username().is_some() {
         return Err(Error::StunParse(
             "STUN packet missing/incorrect username".into(),
         ));
@@ -79,9 +79,23 @@ pub(crate) struct StunMessage<'a> {
 }
 
 impl<'a> StunMessage<'a> {
-    pub fn local_remote_username(&self) -> (&str, &str) {
+    pub fn binding_request(
+        local_user: &'a str,
+        remote_user: &'a str,
+        trans_id: &'a [u8; 12],
+    ) -> Self {
+        StunMessage {
+            class: Class::Request,
+            method: Method::Binding,
+            trans_id: &*trans_id,
+            attrs: vec![],
+            integrity: &[],
+        }
+    }
+
+    pub fn split_username(&self) -> (&str, &str) {
         // The existance of this is attribute checked in the parsing.
-        self.attrs.local_remote().unwrap()
+        self.attrs.split_username().unwrap()
     }
 
     pub fn check_integrity(&self, password: &str) -> bool {
@@ -255,7 +269,7 @@ pub enum Attribute<'a> {
 
 trait Attributes<'a> {
     fn username(&self) -> Option<&'a str>;
-    fn local_remote(&self) -> Option<(&'a str, &'a str)>;
+    fn split_username(&self) -> Option<(&'a str, &'a str)>;
     fn message_integrity(&self) -> Option<&'a [u8]>;
 }
 
@@ -268,7 +282,7 @@ impl<'a> Attributes<'a> for Vec<Attribute<'a>> {
         }
         None
     }
-    fn local_remote(&self) -> Option<(&'a str, &'a str)> {
+    fn split_username(&self) -> Option<(&'a str, &'a str)> {
         // usernames are on the form gfNK:062g where
         // gfNK is my local sdp ice username and
         // 062g is the remote.

@@ -280,10 +280,10 @@ impl<T> Peer<T> {
 
         let session_id = SessionId(id);
 
-        let mut ice_state = IceState::new(config.ice_lite);
+        let mut ice_state = IceState::new(session_id, config.ice_lite);
 
         for c in &config.local_candidates {
-            ice_state.add_local_candidate(&session_id, c.clone());
+            ice_state.add_local_candidate(c.clone());
         }
 
         if config.end_of_candidates {
@@ -293,7 +293,7 @@ impl<T> Peer<T> {
                 ));
             }
 
-            ice_state.set_local_end_of_candidates(&session_id);
+            ice_state.set_local_end_of_candidates();
         }
 
         let peer = Peer {
@@ -424,8 +424,7 @@ impl<T> Peer<T> {
                 // if none is ice-lite, local is controlling if local sent offer.
                 (false, false) => local_sent_offer,
             };
-            self.ice_state
-                .set_controlling(&self.session_id, local_is_controlling);
+            self.ice_state.set_controlling(local_is_controlling);
         }
 
         let mut setups = vec![];
@@ -436,7 +435,7 @@ impl<T> Peer<T> {
             setups.push(setup);
         }
         if let Some(creds) = sdp.session.ice_creds() {
-            self.ice_state.add_remote_creds(&self.session_id, creds);
+            self.ice_state.add_remote_creds(creds);
         }
         if let Some(fp) = sdp.session.fingerprint() {
             self.dtls_state.add_remote_fingerprint(&self.session_id, fp);
@@ -450,7 +449,7 @@ impl<T> Peer<T> {
                 setups.push(setup);
             }
             if let Some(creds) = mline.ice_creds() {
-                self.ice_state.add_remote_creds(&self.session_id, creds);
+                self.ice_state.add_remote_creds(creds);
             }
             if let Some(fp) = mline.fingerprint() {
                 self.dtls_state.add_remote_fingerprint(&self.session_id, fp);
@@ -472,11 +471,10 @@ impl<T> Peer<T> {
         }
 
         for c in candidates {
-            self.ice_state.add_remote_candidate(&self.session_id, c);
+            self.ice_state.add_remote_candidate(c);
         }
         if end_of_candidates {
-            self.ice_state
-                .set_remote_end_of_candidates(&self.session_id);
+            self.ice_state.set_remote_end_of_candidates();
         }
 
         Ok(setup)
