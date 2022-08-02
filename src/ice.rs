@@ -12,6 +12,11 @@ use crate::stun::StunMessage;
 use crate::util::{random_id, Ts};
 use crate::Error;
 
+// TODO this file should be rewritten with a slightly stricter adherence to spec. We can
+// always assume one "Component" since we are definitely multiplexing RTCP/RTP over the same
+// UDP port. We can also assume all media will go to the same Peer (SDP allows for different ICE
+// connections per m-line, and this will not be relevant for WebRTC).
+
 const MAX_IN_FLIGHT_COUNT: usize = 6;
 static CONTROLLED_FAIL_AFTER_SECS: Lazy<Ts> = Lazy::new(|| Ts::from_seconds(20.0));
 
