@@ -68,7 +68,7 @@ impl Peer<state::Connecting> {
     }
 }
 
-/// The result of [`Peer::try_connected`].
+/// The result of `Peer::try_connected()`.
 pub enum ConnectionResult {
     /// Peer is still connecting.
     Connecting(Peer<state::Connecting>),
