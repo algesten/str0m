@@ -84,17 +84,17 @@ pub struct Ts(i64, i64);
 impl Ts {
     pub const ZERO: Ts = Ts(0, 1);
 
-    pub fn new(numer: impl Into<i64>, denum: impl Into<i64>) -> Ts {
-        Ts(numer.into(), denum.into())
+    pub const fn new(numer: i64, denum: i64) -> Ts {
+        Ts(numer, denum)
     }
 
     #[inline(always)]
-    pub fn numer(&self) -> i64 {
+    pub const fn numer(&self) -> i64 {
         self.0
     }
 
     #[inline(always)]
-    pub fn denum(&self) -> i64 {
+    pub const fn denum(&self) -> i64 {
         self.1
     }
 
@@ -115,8 +115,8 @@ impl Ts {
     }
 
     #[inline(always)]
-    pub fn from_micros(v: impl Into<i64>) -> Ts {
-        Ts(v.into(), MICROS)
+    pub const fn from_micros(v: i64) -> Ts {
+        Ts(v, MICROS)
     }
 
     #[inline(always)]
@@ -129,7 +129,7 @@ impl Ts {
         self.0 as f64 / self.1 as f64
     }
 
-    pub fn as_micros(&self) -> i64 {
+    pub const fn as_micros(&self) -> i64 {
         self.rebase(MICROS).numer()
     }
 
@@ -171,12 +171,12 @@ impl Ts {
     }
 
     #[inline(always)]
-    pub fn is_zero(&self) -> bool {
+    pub const fn is_zero(&self) -> bool {
         self.0 == 0
     }
 
     #[inline(always)]
-    pub fn abs(mut self) -> Ts {
+    pub const fn abs(mut self) -> Ts {
         if self.0 < 0 {
             self.0 = -self.0;
         }
@@ -184,7 +184,7 @@ impl Ts {
     }
 
     #[inline(always)]
-    pub fn rebase(self, denum: i64) -> Ts {
+    pub const fn rebase(self, denum: i64) -> Ts {
         if denum == self.1 {
             self
         } else {

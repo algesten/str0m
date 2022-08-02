@@ -3,12 +3,17 @@ use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::net::SocketAddr;
 
+use once_cell::sync::Lazy;
+
 use crate::peer::Addrs;
 use crate::peer::OutputQueue;
 use crate::sdp::{Candidate, IceCreds, SessionId};
 use crate::stun::StunMessage;
 use crate::util::{random_id, Ts};
 use crate::Error;
+
+const MAX_IN_FLIGHT_COUNT: usize = 6;
+static CONTROLLED_FAIL_AFTER_SECS: Lazy<Ts> = Lazy::new(|| Ts::from_seconds(20.0));
 
 #[derive(Debug)]
 pub(crate) struct IceState {
@@ -29,6 +34,9 @@ pub(crate) struct IceState {
 
     /// State of checking connection.
     conn_state: IceConnectionState,
+
+    /// Time conn_state changed.
+    conn_state_change: Option<Ts>,
 
     /// Local credentials for STUN. We use one set for all m-lines.
     local_creds: IceCreds,
@@ -93,17 +101,43 @@ struct CandidatePair {
     /// Current state of checking the entry.
     state: CheckState,
 
-    /// The time we last attempted to send a STUN request using this pair.
-    attempted: Option<Ts>,
-
-    /// The number of times we sent a STUN to this candidate.
-    count: u64,
-
-    /// Last time we got a response.
-    responded: Option<Ts>,
-
     /// Transaction ids to tally up reply wth request.
-    trans_id: VecDeque<[u8; 12]>,
+    trans_id: VecDeque<([u8; 12], Ts, Option<Ts>)>,
+}
+
+impl CandidatePair {
+    pub fn record_attempt(&mut self, time: Ts, trans_id: [u8; 12]) {
+        if self.state == CheckState::Waiting {
+            self.state = CheckState::InProgress;
+        }
+        self.trans_id.push_back((trans_id, time, None));
+        while self.trans_id.len() > MAX_IN_FLIGHT_COUNT {
+            self.trans_id.pop_front();
+        }
+    }
+
+    pub fn has_trans_id(&self, trans_id: &[u8]) -> bool {
+        self.trans_id.iter().any(|t| t.0 == trans_id)
+    }
+
+    pub fn record_success(&mut self, trans_id: &[u8], time: Ts) {
+        if self.state == CheckState::InProgress {
+            self.state = CheckState::Succeeded;
+        }
+        if let Some(t) = self.trans_id.iter_mut().find(|t| t.0 == trans_id) {
+            t.2 = Some(time);
+        }
+    }
+
+    pub fn resend_at(&self) -> Option<Ts> {
+        let (_, attempted, _) = self.trans_id.back()?;
+
+        let count = self.trans_id.len();
+        let delay_millis = 250 * 2_i64.pow(count.min(4) as u32);
+        let delay = Ts::new(delay_millis, 1000);
+
+        Some(*attempted + delay)
+    }
 }
 
 impl PartialOrd for CandidatePair {
@@ -135,6 +169,7 @@ impl IceState {
             local_end_of_candidates: false,
             remote_end_of_candidates: false,
             conn_state: IceConnectionState::New,
+            conn_state_change: None,
             local_creds: IceCreds {
                 username: random_id::<8>().to_string(),
                 password: random_id::<24>().to_string(),
@@ -250,9 +285,6 @@ impl IceState {
                 remote_idx: if add.prio_left { right_idx } else { left_idx },
                 prio,
                 state: CheckState::Waiting,
-                attempted: None,
-                count: 0,
-                responded: None,
                 trans_id: VecDeque::new(),
             };
 
@@ -341,21 +373,20 @@ impl IceState {
         }
 
         use IceConnectionState::*;
-        self.set_conn_state(if self.has_more_candidates_to_check() {
-            Connected
+        if self.has_more_candidates_to_check() {
+            self.set_conn_state(Connected, time);
         } else {
-            Completed
-        });
+            self.set_conn_state(Completed, time);
+        }
 
         if stun.is_binding_response() {
             let pair = self
                 .candidate_pairs
                 .iter_mut()
-                .find(|c| c.trans_id.iter().any(|t| t == stun.trans_id()));
+                .find(|c| c.has_trans_id(stun.trans_id()));
 
             if let Some(pair) = pair {
-                pair.state = CheckState::Succeeded;
-                pair.responded = Some(time);
+                pair.record_success(stun.trans_id(), time);
             } else {
                 return Err(Error::StunError(
                     "Failed to find STUN request via transaction id".into(),
@@ -417,13 +448,14 @@ impl IceState {
         self.local_end_of_candidates
     }
 
-    fn set_conn_state(&mut self, c: IceConnectionState) {
+    fn set_conn_state(&mut self, c: IceConnectionState, time: Ts) {
         if c != self.conn_state {
             info!(
                 "{:?} Ice connection state change: {} -> {}",
                 self.session_id, self.conn_state, c
             );
             self.conn_state = c;
+            self.conn_state_change = Some(time);
         }
         // TODO emit event that this is happening.
     }
@@ -433,61 +465,119 @@ impl IceState {
         time: Ts,
         queue: &mut OutputQueue,
     ) -> Result<(), Error> {
-        if !self.controlling {
+        use IceConnectionState::*;
+
+        if matches!(self.conn_state, Failed | Closed) {
             return Ok(());
         }
 
-        use IceConnectionState::*;
-
-        if self.conn_state.should_check() {
-            const MAX_CONCURRENT: usize = 10;
-
-            if self.conn_state == New {
-                self.set_conn_state(Checking);
-            }
-
-            while self.count_candidates_in_progress() < MAX_CONCURRENT {
-                // The candidates are ordered in prio order, so the first in Waiting is
-                // the top prio pair
-                let next = self
-                    .candidate_pairs
-                    .iter_mut()
-                    .find(|c| c.state == CheckState::Waiting);
-
-                if let Some(next) = next {
-                    let local_creds = &self.local_creds;
-                    let remote_creds = self
-                        .remote_creds
-                        .iter()
-                        .next()
-                        .expect("Must have remote ice credentials");
-
-                    let local = &self.local_candidates[next.local_idx];
-                    let remote = &self.remote_candidates[next.remote_idx];
-
-                    let req = BindingReq {
-                        id: &self.session_id,
-                        next,
-                        local,
-                        remote,
-                        time,
-                        local_creds,
-                        remote_creds,
-                        queue,
-                    };
-
-                    IceState::send_binding_request(req)?;
-                } else {
-                    // No more candidates to check.
-                    if self.conn_state == Connected {
-                        self.set_conn_state(Completed);
+        if !self.controlling {
+            if self.conn_state == Connected {
+                if let Some(since) = self.conn_state_change {
+                    if time - since > *CONTROLLED_FAIL_AFTER_SECS {
+                        self.set_conn_state(Failed, time);
                     }
-                    break;
                 }
+            }
+            return Ok(());
+        }
+
+        let all_failed = self
+            .candidate_pairs
+            .iter()
+            .all(|c| c.state == CheckState::Failed);
+
+        if all_failed {
+            self.set_conn_state(Failed, time);
+            return Ok(());
+        }
+
+        if !self.conn_state.should_check() {
+            return Ok(());
+        }
+
+        const MAX_CONCURRENT: usize = 10;
+
+        if self.conn_state == New {
+            self.set_conn_state(Checking, time);
+        }
+
+        while self.count_candidates_in_progress() < MAX_CONCURRENT {
+            // contortions to use &mut self.candidates twice without
+            // upsetting the brrwchkr.
+            let next = match IceState::next_resend(&mut self.candidate_pairs, time) {
+                Some(v) => Some(v),
+                None => match IceState::next_waiting(&mut self.candidate_pairs) {
+                    Some(v) => Some(v),
+                    None => None,
+                },
+            };
+
+            if let Some(next) = next {
+                let fail_count = next.trans_id.iter().filter(|(_, _, c)| c.is_none()).count();
+
+                if fail_count == MAX_IN_FLIGHT_COUNT {
+                    // this candidate is going nowhere.
+                    next.state = CheckState::Failed;
+                    continue;
+                }
+
+                let local_creds = &self.local_creds;
+                let remote_creds = self
+                    .remote_creds
+                    .iter()
+                    .next()
+                    .expect("Must have remote ice credentials");
+
+                let local = &self.local_candidates[next.local_idx];
+                let remote = &self.remote_candidates[next.remote_idx];
+
+                let req = BindingReq {
+                    id: &self.session_id,
+                    pair: next,
+                    local,
+                    remote,
+                    time,
+                    local_creds,
+                    remote_creds,
+                    queue,
+                };
+
+                IceState::send_binding_request(req)?;
+            } else {
+                // No more candidates to check.
+                if self.conn_state == Connected {
+                    self.set_conn_state(Completed, time);
+                }
+                break;
             }
         }
 
         Ok(())
+    }
+
+    /// Get the next candidate pair that needs a resend.
+    fn next_resend(candidates: &mut Vec<CandidatePair>, time: Ts) -> Option<&mut CandidatePair> {
+        use CheckState::*;
+        let next_resend = candidates
+            .iter_mut()
+            .filter(|c| matches!(c.state, InProgress | Succeeded))
+            .min_by_key(|c| c.resend_at().unwrap());
+
+        if let Some(next_resend) = next_resend {
+            if time >= next_resend.resend_at().unwrap() {
+                // we need to resend this.
+                return Some(next_resend);
+            }
+        }
+
+        None
+    }
+
+    /// Get the next waiting candidate pair.
+    fn next_waiting(candidates: &mut Vec<CandidatePair>) -> Option<&mut CandidatePair> {
+        use CheckState::*;
+        candidates.iter_mut().find(|c| c.state == Waiting)
     }
 
     fn has_more_candidates_to_check(&self) -> bool {
@@ -503,12 +593,8 @@ impl IceState {
             .count()
     }
 
-    fn send_binding_request(mut req: BindingReq<'_>) -> Result<(), Error> {
-        assert!(req.next.state == CheckState::Waiting);
-        assert!(req.next.attempted.is_none());
-
-        req.next.state = CheckState::InProgress;
-        req.next.attempted = Some(req.time);
+    fn send_binding_request(req: BindingReq<'_>) -> Result<(), Error> {
+        let pair = req.pair;
 
         let remote_local = format!("{}:{}", req.remote_creds.username, req.local_creds.username);
         let trans_id = random_id::<12>().into_array();
@@ -517,20 +603,17 @@ impl IceState {
 
         let mut writer = req.queue.get_buffer_writer();
         let len = msg.to_bytes(&req.remote_creds.password, &mut writer)?;
-        let buffer = writer.set_len(len);
-
-        req.next.trans_id.push_back(trans_id);
-        while req.next.trans_id.len() > 20 {
-            req.next.trans_id.pop_front();
-        }
+        let data = writer.set_len(len);
 
         let source = req.local.addr();
         let target = req.remote.addr();
         let addrs = Addrs { source, target };
 
+        pair.record_attempt(req.time, trans_id);
+
         trace!("{:?} STUN binding request to: {}", req.id, target);
 
-        req.queue.enqueue(addrs, buffer);
+        req.queue.enqueue(addrs, data);
 
         Ok(())
     }
@@ -546,7 +629,7 @@ struct AddCandidate<'a> {
 
 struct BindingReq<'a> {
     id: &'a SessionId,
-    next: &'a mut CandidatePair,
+    pair: &'a mut CandidatePair,
     local: &'a Candidate,
     remote: &'a Candidate,
     time: Ts,
