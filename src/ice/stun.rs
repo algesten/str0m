@@ -7,68 +7,6 @@ use std::net::SocketAddr;
 use crate::util::hmac_sha1;
 use crate::Error;
 
-pub(crate) fn parse_message(buf: &[u8]) -> Result<StunMessage, Error> {
-    let typ = (buf[0] as u16 & 0b0011_1111) << 8 | buf[1] as u16;
-    let len = (buf[2] as u16) << 8 | buf[3] as u16;
-    if len & 0b0000_0011 > 0 {
-        return Err(Error::StunParse("STUN len is not a multiple of 4".into()));
-    }
-    if len as usize != buf.len() - 20 {
-        return Err(Error::StunParse(
-            "STUN length vs UDP packet mismatch".into(),
-        ));
-    }
-    if &buf[4..8] != MAGIC {
-        return Err(Error::StunParse("STUN magic cookie mismatch".into()));
-    }
-    // typ is method and class
-    // |M11|M10|M9|M8|M7|C1|M6|M5|M4|C0|M3|M2|M1|M0|
-    // |11 |10 |9 |8 |7 |1 |6 |5 |4 |0 |3 |2 |1 |0 |
-    let class = Class::from_typ(typ);
-    let method = Method::from_typ(typ);
-    let begin = &buf[0..4];
-    // let buf_ptr = buf as *mut [u8];
-    let trans_id = &buf[8..20];
-
-    let mut message_integrity_offset = 0;
-
-    let attrs = Attribute::parse(&buf[20..], trans_id, &mut message_integrity_offset)?;
-
-    // message-integrity only includes the length up until and including
-    // the message-integrity attribute.
-    if message_integrity_offset == 0 {
-        return Err(Error::StunParse("No message integrity in incoming".into()));
-    }
-
-    // length including message integrity attribute
-    let m_int_len = (message_integrity_offset + 4 + 20) as u16;
-
-    // this is safe because Attribute::parse() hasn't borrowed this part.
-    unsafe {
-        let ptr = begin as *const [u8] as *mut [u8];
-        (*ptr)[2] = (m_int_len >> 8) as u8;
-        (*ptr)[3] = m_int_len as u8;
-    }
-
-    // password as key is called "short-term credentials"
-    // buffer from beginning including header (+20) to where message-integrity starts.
-    let integrity = &buf[0..(message_integrity_offset + 20)];
-
-    if !attrs.split_username().is_some() {
-        return Err(Error::StunParse(
-            "STUN packet missing/incorrect username".into(),
-        ));
-    }
-
-    Ok(StunMessage {
-        class,
-        method,
-        trans_id,
-        attrs,
-        integrity,
-    })
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct StunMessage<'a> {
     class: Class,
@@ -79,6 +17,68 @@ pub(crate) struct StunMessage<'a> {
 }
 
 impl<'a> StunMessage<'a> {
+    pub fn parse(buf: &[u8]) -> Result<StunMessage, Error> {
+        let typ = (buf[0] as u16 & 0b0011_1111) << 8 | buf[1] as u16;
+        let len = (buf[2] as u16) << 8 | buf[3] as u16;
+        if len & 0b0000_0011 > 0 {
+            return Err(Error::StunParse("STUN len is not a multiple of 4".into()));
+        }
+        if len as usize != buf.len() - 20 {
+            return Err(Error::StunParse(
+                "STUN length vs UDP packet mismatch".into(),
+            ));
+        }
+        if &buf[4..8] != MAGIC {
+            return Err(Error::StunParse("STUN magic cookie mismatch".into()));
+        }
+        // typ is method and class
+        // |M11|M10|M9|M8|M7|C1|M6|M5|M4|C0|M3|M2|M1|M0|
+        // |11 |10 |9 |8 |7 |1 |6 |5 |4 |0 |3 |2 |1 |0 |
+        let class = Class::from_typ(typ);
+        let method = Method::from_typ(typ);
+        let begin = &buf[0..4];
+        // let buf_ptr = buf as *mut [u8];
+        let trans_id = &buf[8..20];
+
+        let mut message_integrity_offset = 0;
+
+        let attrs = Attribute::parse(&buf[20..], trans_id, &mut message_integrity_offset)?;
+
+        // message-integrity only includes the length up until and including
+        // the message-integrity attribute.
+        if message_integrity_offset == 0 {
+            return Err(Error::StunParse("No message integrity in incoming".into()));
+        }
+
+        // length including message integrity attribute
+        let m_int_len = (message_integrity_offset + 4 + 20) as u16;
+
+        // this is safe because Attribute::parse() hasn't borrowed this part.
+        unsafe {
+            let ptr = begin as *const [u8] as *mut [u8];
+            (*ptr)[2] = (m_int_len >> 8) as u8;
+            (*ptr)[3] = m_int_len as u8;
+        }
+
+        // password as key is called "short-term credentials"
+        // buffer from beginning including header (+20) to where message-integrity starts.
+        let integrity = &buf[0..(message_integrity_offset + 20)];
+
+        if !attrs.split_username().is_some() {
+            return Err(Error::StunParse(
+                "STUN packet missing/incorrect username".into(),
+            ));
+        }
+
+        Ok(StunMessage {
+            class,
+            method,
+            trans_id,
+            attrs,
+            integrity,
+        })
+    }
+
     pub fn trans_id(&self) -> &[u8] {
         self.trans_id
     }

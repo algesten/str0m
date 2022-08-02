@@ -9,9 +9,9 @@ mod dtls;
 mod error;
 mod ice;
 mod media;
+mod output;
 mod peer;
 mod sdp;
-mod stun;
 mod udp;
 mod util;
 
@@ -21,5 +21,6 @@ pub use error::Error;
 
 pub use media::MediaKind;
 pub use peer::{change_state, ChangeSet, ConnectionResult, PeerConfig};
-pub use peer::{state, Answer, Io, NetworkInput, Offer, Output, Peer};
+pub use peer::{state, Answer, Io, NetworkInput, Offer, Peer};
 pub use sdp::{Candidate, Direction};
+pub use util::Addrs;

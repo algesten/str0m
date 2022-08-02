@@ -1,3 +1,5 @@
+mod stun;
+
 use std::cmp::Ordering;
 use std::collections::{HashSet, VecDeque};
 use std::fmt;
@@ -5,12 +7,11 @@ use std::net::SocketAddr;
 
 use once_cell::sync::Lazy;
 
-use crate::peer::Addrs;
-use crate::peer::OutputQueue;
+use crate::output::OutputQueue;
 use crate::sdp::{Candidate, IceCreds, SessionId};
-use crate::stun::StunMessage;
-use crate::util::{random_id, Ts};
+use crate::util::{random_id, Addrs, Ts};
 use crate::Error;
+pub(crate) use stun::StunMessage;
 
 // TODO this file should be rewritten with a slightly stricter adherence to spec. We can
 // always assume one "Component" since we are definitely multiplexing RTCP/RTP over the same
@@ -61,6 +62,9 @@ pub(crate) struct IceState {
 
     /// Pairs formed by combining all local/remote as they drop in.
     candidate_pairs: Vec<CandidatePair>,
+
+    /// If we are controlled, this is the last address we saw a STUN packet for.
+    controlled_last_addrs: Option<Addrs>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,6 +110,9 @@ struct CandidatePair {
     /// Current state of checking the entry.
     state: CheckState,
 
+    /// The time we first got CheckState::Succeeded.
+    succeded_time: Option<Ts>,
+
     /// Transaction ids to tally up reply wth request.
     trans_id: VecDeque<([u8; 12], Ts, Option<Ts>)>,
 }
@@ -128,6 +135,9 @@ impl CandidatePair {
     pub fn record_success(&mut self, trans_id: &[u8], time: Ts) {
         if self.state == CheckState::InProgress {
             self.state = CheckState::Succeeded;
+            if self.succeded_time.is_none() {
+                self.succeded_time = Some(time);
+            }
         }
         if let Some(t) = self.trans_id.iter_mut().find(|t| t.0 == trans_id) {
             t.2 = Some(time);
@@ -139,7 +149,7 @@ impl CandidatePair {
 
         let count = self.trans_id.len();
         let delay_millis = 250 * 2_i64.pow(count.min(4) as u32);
-        let delay = Ts::new(delay_millis, 1000);
+        let delay = Ts::from_millis(delay_millis);
 
         Some(*attempted + delay)
     }
@@ -184,6 +194,7 @@ impl IceState {
             local_candidates: vec![],
             remote_candidates: vec![],
             candidate_pairs: Vec::new(),
+            controlled_last_addrs: None,
         }
     }
 
@@ -290,6 +301,7 @@ impl IceState {
                 remote_idx: if add.prio_left { right_idx } else { left_idx },
                 prio,
                 state: CheckState::Waiting,
+                succeded_time: None,
                 trans_id: VecDeque::new(),
             };
 
@@ -401,10 +413,14 @@ impl IceState {
             return Ok(());
         }
 
+        // We are controlled.
+
         // TODO: do we ever get binding failures?
         assert!(stun.is_binding_request());
 
         trace!("{:?} STUN reply to ({})", self.session_id, addrs.source);
+
+        self.controlled_last_addrs = Some(addrs);
 
         let reply = stun.reply()?;
 
@@ -621,6 +637,28 @@ impl IceState {
         req.queue.enqueue(addrs, data);
 
         Ok(())
+    }
+
+    pub(crate) fn connected_addrs(&self, time: Ts) -> Option<Addrs> {
+        if self.controlling {
+            let pair = self
+                .candidate_pairs
+                .iter()
+                .filter(|c| c.state == CheckState::Succeeded)
+                // A second delay here to allow better candidatepairs to be discovered before we decide to use it.
+                .filter(|c| time - c.succeded_time.unwrap() > Ts::from_millis(1000))
+                .next()?;
+
+            let local = &self.local_candidates[pair.local_idx];
+            let remote = &self.remote_candidates[pair.remote_idx];
+
+            Some(Addrs {
+                source: local.addr(),
+                target: remote.addr(),
+            })
+        } else {
+            self.controlled_last_addrs
+        }
     }
 }
 

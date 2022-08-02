@@ -1,13 +1,13 @@
 use std::io;
 use std::slice;
 
+use crate::util::Addrs;
 use crate::UDP_MTU;
 
-use super::inout::{Addrs, NetworkOutput, NetworkOutputWriter};
-use super::OutputQueue;
+use super::{NetworkOutput, NetworkOutputWriter, OutputQueue};
 
 /// Helper to enqueue network output data.
-pub(crate) struct OutputEnqueuer {
+struct OutputEnqueuer {
     addrs: Addrs,
     ptr: *mut OutputQueue,
 }
@@ -17,10 +17,10 @@ impl OutputEnqueuer {
     ///
     /// SAFETY: The user of this enqueuer must guarantee that the
     /// instance does not outlive the lifetime of `&mut OutputQueue`.
-    pub unsafe fn new(addrs: Addrs, output: &mut OutputQueue) -> Self {
+    pub fn new(addrs: Addrs, queue: &mut OutputQueue) -> Self {
         OutputEnqueuer {
             addrs,
-            ptr: output as *mut OutputQueue,
+            ptr: queue as *mut OutputQueue,
         }
     }
 
@@ -69,7 +69,13 @@ impl PtrBuffer {
         assert!(self.src.is_none(), "PtrBuffer::src is not None");
     }
 
-    pub fn set_output(&mut self, enqueuer: OutputEnqueuer) {
+    /// Sets the output queue to be written to. Must be followed by
+    /// `remote_output()`.
+    ///
+    /// SAFETY: The caller must ensure `remove_output` is called before
+    /// the lifetime end of `queue`.
+    pub unsafe fn set_output(&mut self, addrs: Addrs, queue: &mut OutputQueue) {
+        let enqueuer = OutputEnqueuer::new(addrs, queue);
         self.dst = Some(enqueuer);
     }
 

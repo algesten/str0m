@@ -48,11 +48,11 @@ impl<T> Peer<T> {
             s_attrs.push(SessionAttribute::EndOfCandidates);
         }
 
-        let fp = self.dtls_state.local_fingerprint.clone();
+        let fp = self.dtls_state.local_fingerprint();
         m_attrs.push(MediaAttribute::Fingerprint(fp.clone()));
         m_attrs.push(MediaAttribute::Setup(self.setup));
 
-        s_attrs.push(SessionAttribute::Fingerprint(fp));
+        s_attrs.push(SessionAttribute::Fingerprint(fp.clone()));
         s_attrs.push(SessionAttribute::Setup(self.setup));
 
         s_attrs.push(SessionAttribute::Group {

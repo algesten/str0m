@@ -3,6 +3,7 @@ use rand::prelude::*;
 use sha1::Sha1;
 use std::cmp::Ordering;
 use std::fmt;
+use std::net::SocketAddr;
 use std::ops::Add;
 use std::ops::Sub;
 use std::str::from_utf8_unchecked;
@@ -70,12 +71,27 @@ pub fn unix_time() -> i64 {
         .as_secs() as i64
 }
 
+/// Holder of a source and target `SocketAddr`.
+///
+/// This is used for network input/output to identify sender and receiver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Addrs {
+    /// Where the network data originated.
+    pub source: SocketAddr,
+    /// The destination of the network data.
+    pub target: SocketAddr,
+}
+
 /// 2^32 as float.
 const F32: f64 = 4_294_967_296.0;
 // /// 2^16 as float.
 // const F16: f64 = 65_536.0;
-/// Microseconds i a second.
+
+/// Microseconds in a second.
 const MICROS: i64 = 1_000_000;
+
+/// Milliseconds in a second.
+const MILLIS: i64 = 1_000;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Ts(i64, i64);
@@ -117,6 +133,11 @@ impl Ts {
     #[inline(always)]
     pub const fn from_micros(v: i64) -> Ts {
         Ts(v, MICROS)
+    }
+
+    #[inline(always)]
+    pub const fn from_millis(v: i64) -> Ts {
+        Ts(v, MILLIS)
     }
 
     #[inline(always)]

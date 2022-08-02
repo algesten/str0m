@@ -56,7 +56,7 @@ impl Peer<state::Connecting> {
     pub fn try_connect(self) -> ConnectionResult {
         info!("{:?} Try connect", self.session_id);
         let has_stun = self.ice_state.has_any_verified();
-        let has_dtls = self.dtls_state.dtls.is_some();
+        let has_dtls = self.dtls_state.is_inited();
 
         if has_stun && has_dtls {
             trace!("{:?} Connected", self.session_id);

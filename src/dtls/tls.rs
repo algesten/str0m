@@ -154,8 +154,13 @@ where
         self.key_mat.take()
     }
 
-    pub fn inner_mut(&mut self) -> Result<&mut S, Error> {
-        Ok(self.handshaken()?.get_mut())
+    pub fn inner_mut(&mut self) -> &mut S {
+        match &mut self.state {
+            State::Init(_, s, _) => s,
+            State::Handshaking(v) => v.get_mut(),
+            State::Established(v) => v.get_mut(),
+            State::Empty => panic!("inner_mut on empty dtls state"),
+        }
     }
 }
 

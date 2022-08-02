@@ -2,19 +2,17 @@ mod change;
 mod config;
 mod inout;
 mod peer_init;
-mod ptr_buf;
 mod serialize;
 
-use openssl::ssl::SslContext;
 use rand::Rng;
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::marker::PhantomData;
-use std::{io, mem};
+use std::mem;
 
-use crate::dtls::{dtls_create_ctx, dtls_ssl_create, Dtls, SrtpKeyMaterial};
+use crate::dtls::DtlsState;
 use crate::ice::IceState;
 use crate::media::Media;
-use crate::sdp::Fingerprint;
+use crate::output::OutputQueue;
 use crate::sdp::{Mid, Sdp};
 use crate::sdp::{SessionId, Setup};
 use crate::util::Ts;
@@ -22,12 +20,8 @@ use crate::Error;
 
 use self::change::Changes;
 pub use self::inout::{Answer, Io, NetworkInput, Offer};
-use self::inout::{NetworkOutput, NetworkOutputWriter};
-use self::ptr_buf::{OutputEnqueuer, PtrBuffer};
 pub use change::{change_state, ChangeSet};
 pub use config::PeerConfig;
-pub(crate) use inout::Addrs;
-pub use inout::Output;
 pub use peer_init::ConnectionResult;
 pub use serialize::is_dynamic_media_attr;
 
@@ -90,133 +84,6 @@ pub struct Peer<State> {
     _ph: PhantomData<State>,
 }
 
-pub(crate) struct OutputQueue {
-    /// Enqueued NetworkOutput to be consumed.
-    queue: VecDeque<(Addrs, NetworkOutput)>,
-
-    /// Free NetworkOutput instance ready to be reused.
-    free: Vec<NetworkOutput>,
-}
-
-struct DtlsState {
-    /// DTLS context for this peer.
-    ///
-    /// TODO: Should we share this for the entire app?
-    ctx: SslContext,
-
-    /// DTLS wrapper a special stream we read/write DTLS packets to.
-    /// Instantiation is delayed until we know whether this instance is
-    /// active or passive, which is evident from the a=setup:actpass,
-    /// a=setup:active or a=setup:passive in the negotiation.
-    dtls: Option<Dtls<PtrBuffer>>,
-
-    /// Local fingerprint for DTLS. We use one certificate per peer.
-    local_fingerprint: Fingerprint,
-
-    /// Remote fingerprints for DTLS. Obtained from SDP.
-    remote_fingerprints: HashSet<Fingerprint>,
-
-    /// The master key for the SRTP decryption/encryption.
-    /// Obtained as a side effect of the DTLS handshake.
-    srtp_key: Option<SrtpKeyMaterial>,
-}
-
-impl OutputQueue {
-    fn new() -> Self {
-        const MAX_QUEUE: usize = 20;
-        OutputQueue {
-            queue: VecDeque::with_capacity(MAX_QUEUE),
-            free: vec![NetworkOutput::new(); MAX_QUEUE],
-        }
-    }
-
-    pub fn get_buffer_writer(&mut self) -> NetworkOutputWriter {
-        if self.free.is_empty() {
-            NetworkOutput::new().into_writer()
-        } else {
-            self.free.pop().unwrap().into_writer()
-        }
-    }
-
-    pub fn enqueue(&mut self, addrs: Addrs, data: NetworkOutput) {
-        self.queue.push_back((addrs, data));
-    }
-
-    pub fn dequeue(&mut self) -> Option<Output<'_>> {
-        let (Addrs { source, target }, data) = self.queue.pop_front()?;
-
-        // It's a bit strange to push the buffer to free already before handing it out to
-        // the API consumer. However, Rust borrowing rules means we will not get another
-        // change to the state until the API consumer releases the borrowed buffer.
-        self.free.push(data);
-        let borrowed = self.free.last().unwrap();
-
-        let ret = Output {
-            source,
-            target,
-            data: &borrowed,
-        };
-
-        Some(ret)
-    }
-}
-
-impl DtlsState {
-    fn add_remote_fingerprint(&mut self, id: &SessionId, fp: Fingerprint) {
-        let line = format!("{:?} Added remote fingerprint: {:?}", id, fp);
-        if self.remote_fingerprints.insert(fp) {
-            trace!(line);
-        }
-    }
-
-    fn handle_dtls(
-        &mut self,
-        addrs: Addrs,
-        output: &mut OutputQueue,
-        buf: &[u8],
-    ) -> Result<(), Error> {
-        let dtls = self.dtls.as_mut().unwrap();
-
-        let enqueuer = unsafe { OutputEnqueuer::new(addrs, output) };
-
-        let ptr_buf = dtls.inner_mut()?;
-        // SAFETY: The io::Read call of ptr_buf must happen within the lifetime of buf.
-        unsafe { ptr_buf.set_input(buf) }; // provide buffer to be read from.
-        ptr_buf.set_output(enqueuer); // provide output queue to write to
-
-        let completed = dtls.complete_handshake_until_block()?;
-
-        if completed && self.srtp_key.is_none() {
-            let (srtp_key, fp) = dtls
-                .take_srtp_key_material()
-                .expect("SRTP key material on DTLS handshake completion");
-
-            // Before accepting the key material, check the fingerprint is known from the SDP.
-            if !self.remote_fingerprints.contains(&fp) {
-                let err = io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "Unknown remote DTLS fingerrint",
-                );
-                return Err(err.into());
-            }
-
-            self.srtp_key = Some(srtp_key);
-        }
-
-        if completed {
-            // TODO: dtls.read() SCTP data.
-        }
-
-        let ptr_buf = dtls.inner_mut()?;
-        // ensure incoming buffer was indeed read by DTLS layer.
-        ptr_buf.assert_input_was_read();
-        // clean up.
-        ptr_buf.remove_output();
-
-        Ok(())
-    }
-}
-
 impl<T> Peer<T> {
     fn into_state<U>(self) -> Peer<U> {
         // SAFETY: this is fine, because we only change the PhantomData.
@@ -224,8 +91,6 @@ impl<T> Peer<T> {
     }
 
     pub(crate) fn with_config(config: PeerConfig) -> Result<Peer<state::Init>, Error> {
-        let (ctx, local_fingerprint) = dtls_create_ctx()?;
-
         let mut rng = rand::thread_rng();
 
         let id = if let Some(id) = config.session_id {
@@ -267,13 +132,7 @@ impl<T> Peer<T> {
             setup,
             output: OutputQueue::new(),
             ice_state,
-            dtls_state: DtlsState {
-                ctx,
-                dtls: None,
-                local_fingerprint,
-                remote_fingerprints: HashSet::new(),
-                srtp_key: None,
-            },
+            dtls_state: DtlsState::new(session_id)?,
             media: vec![],
             pending_changes: None,
             _ph: PhantomData,
@@ -286,6 +145,9 @@ impl<T> Peer<T> {
         let queue = &mut self.output;
 
         self.ice_state.drive_stun_controlling(time, queue)?;
+        if let Some(addrs) = self.ice_state.connected_addrs(time) {
+            self.dtls_state.drive_dtls(time, addrs, queue)?;
+        }
 
         Ok(())
     }
@@ -332,8 +194,9 @@ impl<T> Peer<T> {
             })?;
         }
 
-        if self.dtls_state.dtls.is_none() {
-            self.start_dtls()?;
+        if !self.dtls_state.is_inited() {
+            let active = self.setup == Setup::Active;
+            self.dtls_state.init_dtls(active)?;
         }
 
         self.update_media_from_offer(offer)?;
@@ -364,8 +227,9 @@ impl<T> Peer<T> {
             })?;
         }
 
-        if self.dtls_state.dtls.is_none() {
-            self.start_dtls()?;
+        if !self.dtls_state.is_inited() {
+            let active = self.setup == Setup::Active;
+            self.dtls_state.init_dtls(active)?;
         }
 
         // this is checked above.
@@ -541,21 +405,6 @@ impl<T> Peer<T> {
                 }
             }
         }
-    }
-
-    fn start_dtls(&mut self) -> Result<(), Error> {
-        info!("{:?} Start DTLS", self.session_id);
-
-        assert!(self.dtls_state.dtls.is_none());
-        assert!(self.setup != Setup::ActPass);
-
-        let active = self.setup == Setup::Active;
-
-        let ssl = dtls_ssl_create(&self.dtls_state.ctx)?;
-        let dtls = Dtls::new(ssl, PtrBuffer::new(), active);
-        self.dtls_state.dtls = Some(dtls);
-
-        Ok(())
     }
 
     /// Create a new Mid that doesn't already exist.
