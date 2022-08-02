@@ -74,9 +74,9 @@ pub enum IceConnectionState {
 
     /// No connection found from the candidate pairs.
     Failed,
-
-    /// Shut down.
-    Closed,
+    //
+    // Shut down.
+    // Closed,
 }
 
 impl IceConnectionState {
@@ -467,7 +467,7 @@ impl IceState {
     ) -> Result<(), Error> {
         use IceConnectionState::*;
 
-        if matches!(self.conn_state, Failed | Closed) {
+        if matches!(self.conn_state, Failed) {
             return Ok(());
         }
 
@@ -650,7 +650,6 @@ impl fmt::Display for IceConnectionState {
                 Connected => "connected",
                 Completed => "completed",
                 Failed => "failed",
-                Closed => "closed",
             }
         )
     }
