@@ -1,7 +1,7 @@
 mod change;
 mod config;
+mod init;
 mod inout;
-mod peer_init;
 mod serialize;
 
 use rand::Rng;
@@ -22,7 +22,7 @@ use self::change::Changes;
 pub use self::inout::{Answer, Io, NetworkInput, Offer};
 pub use change::{change_state, ChangeSet};
 pub use config::PeerConfig;
-pub use peer_init::ConnectionResult;
+pub use init::ConnectionResult;
 pub use serialize::is_dynamic_media_attr;
 
 /// States the `Peer` can be in.
@@ -146,7 +146,7 @@ impl<T> Peer<T> {
 
         self.ice_state.drive_stun_controlling(time, queue)?;
         if let Some(addrs) = self.ice_state.connected_addrs(time) {
-            self.dtls_state.drive_dtls(time, addrs, queue)?;
+            self.dtls_state.initiate_handshake(time, addrs, queue)?;
         }
 
         Ok(())

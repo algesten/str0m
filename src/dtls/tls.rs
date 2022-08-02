@@ -137,7 +137,11 @@ where
         }
     }
 
-    fn handshaken(&mut self) -> Result<&mut SslStream<S>, io::Error> {
+    pub fn is_handshaken(&self) -> bool {
+        matches!(self.state, State::Established(_))
+    }
+
+    pub fn handshaken(&mut self) -> Result<&mut SslStream<S>, io::Error> {
         let v = self.state.handshaken()?;
 
         // first time we complete the handshake, we extract the keying material for SRTP.

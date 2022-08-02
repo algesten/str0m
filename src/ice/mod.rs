@@ -641,12 +641,18 @@ impl IceState {
 
     pub(crate) fn connected_addrs(&self, time: Ts) -> Option<Addrs> {
         if self.controlling {
+            let delay = if self.count_candidates_in_progress() > 0 {
+                Ts::from_millis(1000)
+            } else {
+                Ts::ZERO
+            };
+
             let pair = self
                 .candidate_pairs
                 .iter()
                 .filter(|c| c.state == CheckState::Succeeded)
                 // A second delay here to allow better candidatepairs to be discovered before we decide to use it.
-                .filter(|c| time - c.succeded_time.unwrap() > Ts::from_millis(1000))
+                .filter(|c| time - c.succeded_time.unwrap() > delay)
                 .next()?;
 
             let local = &self.local_candidates[pair.local_idx];

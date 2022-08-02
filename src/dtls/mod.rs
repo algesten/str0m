@@ -14,7 +14,11 @@ use self::tls::{dtls_create_ctx, Dtls};
 mod tls;
 
 pub(crate) struct DtlsState {
+    /// Session id for the Peer.
     session_id: SessionId,
+
+    /// Whether we are the initiating side of the DTLS handshake.
+    active: bool,
 
     /// DTLS context for this peer.
     ///
@@ -44,6 +48,7 @@ impl DtlsState {
 
         Ok(DtlsState {
             session_id,
+            active: false,
             ctx,
             dtls: None,
             local_fingerprint,
@@ -60,10 +65,10 @@ impl DtlsState {
     }
 
     pub fn init_dtls(&mut self, active: bool) -> Result<(), Error> {
-        info!("{:?} Init DTLS", self.session_id);
-
         assert!(self.dtls.is_none());
+        info!("{:?} Init DTLS active: {}", self.session_id, active);
 
+        self.active = active;
         let ssl = dtls_ssl_create(&self.ctx)?;
         let dtls = Dtls::new(ssl, PtrBuffer::new(), active);
         self.dtls = Some(dtls);
@@ -75,23 +80,48 @@ impl DtlsState {
         self.dtls.is_some()
     }
 
-    pub fn drive_dtls(
+    pub fn initiate_handshake(
         &mut self,
-        time: Ts,
+        _time: Ts,
         addrs: Addrs,
         output: &mut OutputQueue,
     ) -> Result<(), Error> {
+        if !self.active {
+            return Ok(());
+        }
+
         let dtls = match self.dtls.as_mut() {
             Some(v) => v,
             None => return Ok(()),
         };
+
+        if dtls.is_handshaken() {
+            return Ok(());
+        }
+
+        debug!("{:?} DTLS initiate handshake", self.session_id);
+
+        let ptr_buf = dtls.inner_mut();
+
+        // Ensure no hangover state.
+        ptr_buf.assert_input_was_read();
+
+        // SAFETY: We must call ptr_buf.remove_output() within `output` ref lifetime.
+        unsafe { ptr_buf.set_output(addrs, output) }; // provide output queue to write to
+
+        // This should write stuff into the output.
+        dtls.handshaken()?;
+
+        let ptr_buf = dtls.inner_mut();
+        // clean up.
+        ptr_buf.remove_output();
 
         Ok(())
     }
 
     pub fn handle_dtls(
         &mut self,
-        time: Ts,
+        _time: Ts,
         addrs: Addrs,
         output: &mut OutputQueue,
         buf: &[u8],
@@ -140,5 +170,12 @@ impl DtlsState {
 
     pub fn local_fingerprint(&self) -> &Fingerprint {
         &self.local_fingerprint
+    }
+
+    pub fn is_handshaken(&self) -> bool {
+        self.dtls
+            .as_ref()
+            .map(|d| d.is_handshaken())
+            .unwrap_or(false)
     }
 }
