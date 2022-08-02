@@ -58,6 +58,7 @@ impl Peer<state::Connecting> {
         let has_dtls = self.dtls_state.is_handshaken();
 
         if has_stun && has_dtls {
+            info!("{:?} Connected", self.session_id);
             ConnectionResult::Connected(self.into_state())
         } else {
             ConnectionResult::Connecting(self)
