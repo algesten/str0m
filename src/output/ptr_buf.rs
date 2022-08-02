@@ -1,7 +1,7 @@
 use std::io;
 use std::slice;
 
-use crate::util::Addrs;
+use crate::Addrs;
 use crate::UDP_MTU;
 
 use super::{NetworkOutput, NetworkOutputWriter, OutputQueue};

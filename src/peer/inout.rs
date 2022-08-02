@@ -7,7 +7,7 @@ use crate::ice::StunMessage;
 use crate::output::NetworkOutput;
 use crate::sdp::{parse_sdp, Sdp};
 use crate::udp::UdpKind;
-use crate::util::Addrs;
+use crate::Addrs;
 use crate::{Error, Peer};
 
 /// Handle to perform network input/output for a [`Peer`].

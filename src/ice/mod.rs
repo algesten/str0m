@@ -9,7 +9,8 @@ use once_cell::sync::Lazy;
 
 use crate::output::OutputQueue;
 use crate::sdp::{Candidate, IceCreds, SessionId};
-use crate::util::{random_id, Addrs, Ts};
+use crate::util::{random_id, Ts};
+use crate::Addrs;
 use crate::Error;
 pub(crate) use stun::StunMessage;
 

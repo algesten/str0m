@@ -9,6 +9,7 @@ mod dtls;
 mod error;
 mod ice;
 mod media;
+mod net;
 mod output;
 mod peer;
 mod sdp;
@@ -20,7 +21,7 @@ pub(crate) const UDP_MTU: usize = 1400;
 pub use error::Error;
 
 pub use media::MediaKind;
+pub use net::Addrs;
 pub use peer::{change_state, ChangeSet, ConnectionResult, PeerConfig};
 pub use peer::{state, Answer, Io, NetworkInput, Offer, Peer};
 pub use sdp::{Candidate, Direction};
-pub use util::Addrs;

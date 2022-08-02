@@ -3,7 +3,7 @@ mod ptr_buf;
 use std::collections::VecDeque;
 use std::ops::{Deref, DerefMut};
 
-use crate::util::Addrs;
+use crate::Addrs;
 use crate::UDP_MTU;
 pub(crate) use ptr_buf::PtrBuffer;
 

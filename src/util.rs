@@ -3,7 +3,6 @@ use rand::prelude::*;
 use sha1::Sha1;
 use std::cmp::Ordering;
 use std::fmt;
-use std::net::SocketAddr;
 use std::ops::Add;
 use std::ops::Sub;
 use std::str::from_utf8_unchecked;
@@ -69,17 +68,6 @@ pub fn unix_time() -> i64 {
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64
-}
-
-/// Holder of a source and target `SocketAddr`.
-///
-/// This is used for network input/output to identify sender and receiver.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Addrs {
-    /// Where the network data originated.
-    pub source: SocketAddr,
-    /// The destination of the network data.
-    pub target: SocketAddr,
 }
 
 /// 2^32 as float.

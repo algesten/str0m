@@ -5,7 +5,8 @@ use std::io;
 use crate::dtls::tls::dtls_ssl_create;
 use crate::output::{OutputQueue, PtrBuffer};
 use crate::sdp::{Fingerprint, SessionId};
-use crate::util::{Addrs, Ts};
+use crate::util::Ts;
+use crate::Addrs;
 use crate::Error;
 
 pub use self::tls::SrtpKeyMaterial;
