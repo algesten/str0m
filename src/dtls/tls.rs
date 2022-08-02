@@ -127,7 +127,7 @@ where
 
     pub fn complete_handshake_until_block(&mut self) -> Result<bool, Error> {
         if let Err(e) = self.handshaken() {
-            if e.kind() != io::ErrorKind::WouldBlock {
+            if e.kind() == io::ErrorKind::WouldBlock {
                 Ok(false)
             } else {
                 Err(e.into())
@@ -139,6 +139,10 @@ where
 
     pub fn is_handshaken(&self) -> bool {
         matches!(self.state, State::Established(_))
+    }
+
+    pub fn is_started(&self) -> bool {
+        !matches!(self.state, State::Init(_, _, _))
     }
 
     pub fn handshaken(&mut self) -> Result<&mut SslStream<S>, io::Error> {

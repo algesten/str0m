@@ -95,7 +95,7 @@ impl DtlsState {
             None => return Ok(()),
         };
 
-        if dtls.is_handshaken() {
+        if dtls.is_started() {
             return Ok(());
         }
 
@@ -110,7 +110,11 @@ impl DtlsState {
         unsafe { ptr_buf.set_output(addrs, output) }; // provide output queue to write to
 
         // This should write stuff into the output.
-        dtls.handshaken()?;
+        let complete = dtls.complete_handshake_until_block()?;
+
+        // We don't expect this to complete here since completing DTLS requires an
+        // exchange of packets, so the actual completion is in handle_dtls().
+        assert!(!complete);
 
         let ptr_buf = dtls.inner_mut();
         // clean up.
@@ -127,7 +131,6 @@ impl DtlsState {
         buf: &[u8],
     ) -> Result<(), Error> {
         let dtls = self.dtls.as_mut().expect("Mut have inited DTLS");
-
         let ptr_buf = dtls.inner_mut();
 
         // SAFETY: The io::Read call of ptr_buf must happen within the lifetime of buf.
@@ -139,6 +142,8 @@ impl DtlsState {
         let completed = dtls.complete_handshake_until_block()?;
 
         if completed && self.srtp_key.is_none() {
+            debug!("{:?} DTLS connected", self.session_id);
+
             let (srtp_key, fp) = dtls
                 .take_srtp_key_material()
                 .expect("SRTP key material on DTLS handshake completion");
@@ -152,6 +157,7 @@ impl DtlsState {
                 return Err(err.into());
             }
 
+            debug!("{:?} Extracted SRTP key material", self.session_id);
             self.srtp_key = Some(srtp_key);
         }
 
