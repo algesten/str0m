@@ -4,7 +4,6 @@ use std::ops::Deref;
 use std::time::Instant;
 
 use crate::ice::StunMessage;
-use crate::output::Output;
 use crate::sdp::{parse_sdp, Sdp};
 use crate::udp::UdpKind;
 use crate::Addrs;
@@ -60,7 +59,7 @@ impl<'a, State> Io<'a, State> {
     ///
     /// Changes to the `Peer` state will queue up network output to send.
     /// For every change, this function must be polled until it returns `None`.
-    pub fn pull(&mut self) -> Option<(Addrs, &Output)> {
+    pub fn pull(&mut self) -> Option<(Addrs, &[u8])> {
         self.0.output.dequeue()
     }
 }

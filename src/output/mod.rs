@@ -86,7 +86,7 @@ impl OutputQueue {
         self.queue.push_back((addrs, data));
     }
 
-    pub fn dequeue(&mut self) -> Option<(Addrs, &Output)> {
+    pub fn dequeue(&mut self) -> Option<(Addrs, &[u8])> {
         let (addrs, data) = self.queue.pop_front()?;
 
         // It's a bit strange to push the buffer to free already before handing it out to
