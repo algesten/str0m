@@ -35,7 +35,7 @@ fn connect_peer_active(
     let mut peer_connecting = peer_offering.accept_answer(answer)?;
 
     let peer_connected = loop {
-        while let Some((addrs, data)) = peer_connecting.io().network_output() {
+        while let Some((addrs, data)) = peer_connecting.io().pull() {
             tx.send(TestData::Data(addrs, data.to_vec())).unwrap();
         }
 
@@ -51,9 +51,9 @@ fn connect_peer_active(
             };
             let time = Instant::now();
 
-            let input = NetworkInput::try_from(data_in.as_slice())?;
+            let input = Input::try_from(data_in.as_slice())?;
 
-            peer_connecting.io().network_input(time, addrs, input)?;
+            peer_connecting.io().push(time, addrs, input)?;
         } else {
             peer_connecting.io().tick(Instant::now())?;
         }
@@ -81,7 +81,7 @@ fn connect_peer_passive(
     tx.send(TestData::Answer(answer)).unwrap();
 
     let peer_connected = loop {
-        while let Some((addrs, data)) = peer_connecting.io().network_output() {
+        while let Some((addrs, data)) = peer_connecting.io().pull() {
             tx.send(TestData::Data(addrs, data.to_vec())).unwrap();
         }
 
@@ -97,9 +97,9 @@ fn connect_peer_passive(
             };
             let time = Instant::now();
 
-            let input = NetworkInput::try_from(data.as_slice())?;
+            let input = Input::try_from(data.as_slice())?;
 
-            peer_connecting.io().network_input(time, addrs, input)?;
+            peer_connecting.io().push(time, addrs, input)?;
         } else {
             peer_connecting.io().tick(Instant::now())?;
         }

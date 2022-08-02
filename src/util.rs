@@ -3,6 +3,7 @@ use rand::prelude::*;
 use sha1::Sha1;
 use std::cmp::Ordering;
 use std::fmt;
+use std::net::SocketAddr;
 use std::ops::Add;
 use std::ops::Sub;
 use std::str::from_utf8_unchecked;
@@ -61,6 +62,18 @@ impl<'a> std::fmt::Display for FingerprintFmt<'a> {
         }
         Ok(())
     }
+}
+
+/// Holder of a source and target `SocketAddr`.
+///
+/// This is used for network input/output to identify sender and receiver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Addrs {
+    /// The data origin.
+    pub source: SocketAddr,
+
+    /// The destination of the data.
+    pub target: SocketAddr,
 }
 
 pub fn unix_time() -> i64 {

@@ -4,7 +4,7 @@ use std::slice;
 use crate::Addrs;
 use crate::UDP_MTU;
 
-use super::{NetworkOutput, NetworkOutputWriter, OutputQueue};
+use super::{Output, OutputQueue, OutputWriter};
 
 /// Helper to enqueue network output data.
 struct OutputEnqueuer {
@@ -24,14 +24,14 @@ impl OutputEnqueuer {
         }
     }
 
-    pub fn get_buffer_writer(&mut self) -> NetworkOutputWriter {
+    pub fn get_buffer_writer(&mut self) -> OutputWriter {
         // SAFETY: See `new`
         let queue = unsafe { &mut *self.ptr };
 
         queue.get_buffer_writer()
     }
 
-    pub fn enqueue(&mut self, buffer: NetworkOutput) {
+    pub fn enqueue(&mut self, buffer: Output) {
         // SAFETY: See `new`
         let queue = unsafe { &mut *self.ptr };
 

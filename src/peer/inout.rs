@@ -4,7 +4,7 @@ use std::ops::Deref;
 use std::time::Instant;
 
 use crate::ice::StunMessage;
-use crate::output::NetworkOutput;
+use crate::output::Output;
 use crate::sdp::{parse_sdp, Sdp};
 use crate::udp::UdpKind;
 use crate::Addrs;
@@ -19,12 +19,8 @@ impl<'a, State> Io<'a, State> {
     /// This is used in a server side peer to multiplex multiple peer
     /// connections over the same UDP port. After the initial STUN, the
     /// remote (client) peer is recognized by IP/port.
-    pub fn accepts_network_input(
-        &self,
-        addr: SocketAddr,
-        input: &NetworkInput<'_>,
-    ) -> Result<bool, Error> {
-        use NetworkInputInner::*;
+    pub fn accepts(&self, addr: SocketAddr, input: &Input<'_>) -> Result<bool, Error> {
+        use InputInner::*;
         if let Stun(stun) = &input.0 {
             self.0.ice_state.accepts_stun(addr, stun)
         } else {
@@ -38,13 +34,8 @@ impl<'a, State> Io<'a, State> {
     /// Provide network input.
     ///
     /// While connecting, we only accept input from the network.
-    pub fn network_input(
-        &mut self,
-        time: Instant,
-        addrs: Addrs,
-        input: NetworkInput<'_>,
-    ) -> Result<(), Error> {
-        use NetworkInputInner::*;
+    pub fn push(&mut self, time: Instant, addrs: Addrs, input: Input<'_>) -> Result<(), Error> {
+        use InputInner::*;
 
         let time = time.into();
 
@@ -69,7 +60,7 @@ impl<'a, State> Io<'a, State> {
     ///
     /// Changes to the `Peer` state will queue up network output to send.
     /// For every change, this function must be polled until it returns `None`.
-    pub fn network_output(&mut self) -> Option<(Addrs, &NetworkOutput)> {
+    pub fn pull(&mut self) -> Option<(Addrs, &Output)> {
         self.0.output.dequeue()
     }
 }
@@ -84,17 +75,16 @@ impl<'a, State> Io<'a, State> {
 /// # use std::net::SocketAddr;
 /// # fn main() -> Result<(), Error> {
 /// let data: &[u8] = todo!(); // obtain data from socket.
-/// let addr: SocketAddr = todo!(); // address of data.
 ///
 /// // This parses the input data, and it can throw an
 /// // error if there are problems understanding the data.
-/// let input = NetworkInput::try_from(data)?;
+/// let input = Input::try_from(data)?;
 /// # Ok(())}
 /// ```
-pub struct NetworkInput<'a>(pub(crate) NetworkInputInner<'a>);
+pub struct Input<'a>(pub(crate) InputInner<'a>);
 
 #[derive(Clone)]
-pub(crate) enum NetworkInputInner<'a> {
+pub(crate) enum InputInner<'a> {
     #[doc(hidden)]
     Stun(StunMessage<'a>),
     #[doc(hidden)]
@@ -143,15 +133,15 @@ impl<'a> TryFrom<&'a str> for Answer {
     }
 }
 
-impl<'a> TryFrom<&'a [u8]> for NetworkInput<'a> {
+impl<'a> TryFrom<&'a [u8]> for Input<'a> {
     type Error = Error;
 
     fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
         let kind = UdpKind::try_from(value)?;
 
-        Ok(NetworkInput(match kind {
-            UdpKind::Stun => NetworkInputInner::Stun(StunMessage::parse(&value)?),
-            UdpKind::Dtls => NetworkInputInner::Dtls(value),
+        Ok(Input(match kind {
+            UdpKind::Stun => InputInner::Stun(StunMessage::parse(&value)?),
+            UdpKind::Dtls => InputInner::Dtls(value),
             UdpKind::Rtp => todo!(),
             UdpKind::Rtcp => todo!(),
         }))

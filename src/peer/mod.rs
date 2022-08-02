@@ -19,7 +19,7 @@ use crate::util::Ts;
 use crate::Error;
 
 use self::change::Changes;
-pub use self::inout::{Answer, Io, NetworkInput, Offer};
+pub use self::inout::{Answer, Input, Io, Offer};
 pub use change::{change_state, ChangeSet};
 pub use config::PeerConfig;
 pub use init::ConnectionResult;
