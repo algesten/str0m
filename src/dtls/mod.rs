@@ -9,7 +9,7 @@ use crate::util::Ts;
 use crate::Addrs;
 use crate::Error;
 
-pub use self::tls::SrtpKeyMaterial;
+pub use self::tls::KeyingMaterial;
 use self::tls::{dtls_create_ctx, Dtls};
 
 mod tls;
@@ -40,7 +40,7 @@ pub(crate) struct DtlsState {
 
     /// The master key for the SRTP decryption/encryption.
     /// Obtained as a side effect of the DTLS handshake.
-    srtp_key: Option<SrtpKeyMaterial>,
+    srtp_keying: Option<KeyingMaterial>,
 }
 
 impl DtlsState {
@@ -54,7 +54,7 @@ impl DtlsState {
             dtls: None,
             local_fingerprint,
             remote_fingerprints: HashSet::new(),
-            srtp_key: None,
+            srtp_keying: None,
         })
     }
 
@@ -67,7 +67,7 @@ impl DtlsState {
 
     pub fn init_dtls(&mut self, active: bool) -> Result<(), Error> {
         assert!(self.dtls.is_none());
-        info!("{:?} Init DTLS active: {}", self.session_id, active);
+        info!("{:?} Init DTLS (active: {})", self.session_id, active);
 
         self.active = active;
         let ssl = dtls_ssl_create(&self.ctx)?;
@@ -142,14 +142,12 @@ impl DtlsState {
 
         let completed = dtls.complete_handshake_until_block()?;
 
-        if completed && self.srtp_key.is_none() {
-            debug!("{:?} DTLS connected", self.session_id);
+        if completed && self.srtp_keying.is_none() {
+            let (keying, fp) = dtls
+                .take_srtp_keying_material()
+                .expect("SRTP keying material on DTLS handshake completion");
 
-            let (srtp_key, fp) = dtls
-                .take_srtp_key_material()
-                .expect("SRTP key material on DTLS handshake completion");
-
-            // Before accepting the key material, check the fingerprint is known from the SDP.
+            // Before accepting the keying material, check the fingerprint is known from the SDP.
             if !self.remote_fingerprints.contains(&fp) {
                 let err = io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -158,8 +156,9 @@ impl DtlsState {
                 return Err(err.into());
             }
 
-            debug!("{:?} Extracted SRTP key material", self.session_id);
-            self.srtp_key = Some(srtp_key);
+            debug!("{:?} DTLS connected", self.session_id);
+
+            self.srtp_keying = Some(keying);
         }
 
         if completed {

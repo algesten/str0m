@@ -84,9 +84,9 @@ pub fn dtls_ssl_create(ctx: &SslContext) -> Result<Ssl, Error> {
     Ok(ssl)
 }
 
-pub struct SrtpKeyMaterial([u8; 60]);
+pub struct KeyingMaterial([u8; 60]);
 
-impl Deref for SrtpKeyMaterial {
+impl Deref for KeyingMaterial {
     type Target = [u8; 60];
 
     fn deref(&self) -> &Self::Target {
@@ -94,15 +94,15 @@ impl Deref for SrtpKeyMaterial {
     }
 }
 
-impl std::fmt::Debug for SrtpKeyMaterial {
+impl std::fmt::Debug for KeyingMaterial {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SrtpKeyMaterial")
+        write!(f, "KeyingMaterial")
     }
 }
 
 pub struct Dtls<S> {
     state: State<S>,
-    key_mat: Option<(SrtpKeyMaterial, Fingerprint)>,
+    keying_mat: Option<(KeyingMaterial, Fingerprint)>,
     exported: bool,
 }
 
@@ -120,7 +120,7 @@ where
     pub fn new(ssl: Ssl, stream: S, active: bool) -> Self {
         Dtls {
             state: State::Init(ssl, stream, active),
-            key_mat: None,
+            keying_mat: None,
             exported: false,
         }
     }
@@ -150,16 +150,16 @@ where
 
         // first time we complete the handshake, we extract the keying material for SRTP.
         if !self.exported {
-            let key_mat = extract_srtp_key_material(v)?;
+            let keying_mat = export_srtp_keying_material(v)?;
             self.exported = true;
-            self.key_mat = Some(key_mat);
+            self.keying_mat = Some(keying_mat);
         }
 
         Ok(v)
     }
 
-    pub fn take_srtp_key_material(&mut self) -> Option<(SrtpKeyMaterial, Fingerprint)> {
-        self.key_mat.take()
+    pub fn take_srtp_keying_material(&mut self) -> Option<(KeyingMaterial, Fingerprint)> {
+        self.keying_mat.take()
     }
 
     pub fn inner_mut(&mut self) -> &mut S {
@@ -219,9 +219,9 @@ where
     }
 }
 
-fn extract_srtp_key_material<S>(
+fn export_srtp_keying_material<S>(
     stream: &mut SslStream<S>,
-) -> Result<(SrtpKeyMaterial, Fingerprint), io::Error> {
+) -> Result<(KeyingMaterial, Fingerprint), io::Error> {
     let ssl = stream.ssl();
 
     // remote peer certificate fingerprint
@@ -239,7 +239,7 @@ fn extract_srtp_key_material<S>(
     let mut buf = [0_u8; 60];
     ssl.export_keying_material(&mut buf, DTLS_KEY_LABEL, None)?;
 
-    let mat = SrtpKeyMaterial(buf);
+    let mat = KeyingMaterial(buf);
 
     Ok((mat, fp))
 }
