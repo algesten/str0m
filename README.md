@@ -25,7 +25,7 @@ our data stream.
 
 Because there is just one data stream, there is no need for multiple check lists. This 
 also means there is no need for the frozen state when checking candidate pairs since all
-pairs go straight into the waiting state.
+pairs go straight into the waiting state.2
 
 ## No STUN backwards compatibility.
 

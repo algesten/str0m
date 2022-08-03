@@ -8,7 +8,7 @@ use thiserror::Error;
 mod id;
 
 mod ice;
-pub use ice::{Candidate, StunError};
+pub use ice::{Candidate, IceAgent, StunError};
 
 mod sdp;
 pub use sdp::SdpError;

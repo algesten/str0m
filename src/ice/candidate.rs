@@ -113,10 +113,8 @@ impl Candidate {
     ///
     /// Host candidates are local sockets directly on the host.
     pub fn host(addr: SocketAddr) -> Result<Self, IceError> {
-        let ip = addr.ip();
-
-        if !is_valid_ip(ip) {
-            return Err(IceError::BadCandidate(format!("invalid IP {}", ip)));
+        if !is_valid_ip(addr.ip()) {
+            return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
         }
 
         Ok(Candidate::new(
@@ -136,8 +134,15 @@ impl Candidate {
     /// Peer reflexive candidates are NAT:ed addresses discovered via STUN
     /// binding responses. `addr` is the discovered address. `base` is the local
     /// (host) address inside the NAT we used to get this response.
-    pub fn peer_reflexive(addr: SocketAddr, base: SocketAddr) -> Self {
-        Candidate::new(
+    pub fn peer_reflexive(addr: SocketAddr, base: SocketAddr) -> Result<Self, IceError> {
+        if !is_valid_ip(addr.ip()) {
+            return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
+        }
+        if !is_valid_ip(base.ip()) {
+            return Err(IceError::BadCandidate(format!("invalid ip {}", base.ip())));
+        }
+
+        Ok(Candidate::new(
             None,
             1, // only RTP
             "udp".into(),
@@ -146,7 +151,7 @@ impl Candidate {
             Some(base),
             CandidateKind::PeerReflexive,
             None,
-        )
+        ))
     }
 
     /// Candidate foundation.
@@ -212,18 +217,18 @@ impl Candidate {
 
         // https://datatracker.ietf.org/doc/html/rfc8445#section-5.1.2
         // MUST be a positive integer between 1 and (2**31 - 1)
-        println!("{}", prio);
         assert!(prio >= 1 && prio <= 2_u32.pow(31) - 1);
 
         prio
     }
 
     pub(crate) fn local_preference(&self) -> u32 {
-        self.local_preference.unwrap_or(if self.base().is_ipv6() {
-            65_535
-        } else {
-            65_534
-        })
+        self.local_preference
+            .unwrap_or_else(|| if self.addr.is_ipv6() { 65_535 } else { 65_534 })
+    }
+
+    pub(crate) fn component_id(&self) -> u16 {
+        self.component_id
     }
 
     pub(crate) fn addr(&self) -> SocketAddr {

@@ -247,7 +247,20 @@ impl IceAgent {
             }
         }
 
+        // These are the indexes of the remote candidates this candidate should be paired with.
+        let remote_idxs: Vec<_> = self
+            .remote_candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| !v.discarded() && v.addr().is_ipv4() == ip.is_ipv4())
+            .map(|(i, _)| i)
+            .collect();
+
         self.local_candidates.push(c);
+
+        let local_idxs = [self.local_candidates.len() - 1];
+
+        self.form_pairs(&local_idxs, &remote_idxs);
 
         true
     }
@@ -257,7 +270,95 @@ impl IceAgent {
     /// Returns `false` if the candidate was not added because it is redundant.
     /// Adding loopback addresses or multicast/broadcast addresses causes
     /// an error.
-    pub fn add_remote_candidate(&mut self, c: Candidate) {}
+    pub fn add_remote_candidate(&mut self, c: Candidate) -> bool {
+        // This is a a:rtcp-mux-only implementation. The only component
+        // we accept is 1 for RTP.
+        if c.component_id() != 1 {
+            return false;
+        }
+
+        // These are the indexes of the local candidates this candidate should be paired with.
+        let local_idxs: Vec<_> = self
+            .local_candidates
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| !v.discarded() && v.addr().is_ipv4() == c.addr().is_ipv4())
+            .map(|(i, _)| i)
+            .collect();
+
+        self.remote_candidates.push(c);
+
+        let remote_idxs = [self.remote_candidates.len() - 1];
+
+        self.form_pairs(&local_idxs, &remote_idxs);
+
+        true
+    }
+
+    /// Form pairs given two slices of indexes into the local_candidates and remote_candidates.
+    fn form_pairs(&mut self, local_idxs: &[usize], remote_idxs: &[usize]) {
+        for local_idx in local_idxs {
+            'outer: for remote_idx in remote_idxs {
+                let local = &self.local_candidates[*local_idx];
+                let remote = &self.remote_candidates[*remote_idx];
+
+                // The ICE agent computes a priority for each candidate pair.  Let G be
+                // the priority for the candidate provided by the controlling agent.
+                // Let D be the priority for the candidate provided by the controlled
+                // agent.  The priority for a pair is computed as follows:
+                //
+                //    pair priority = 2^32*MIN(G,D) + 2*MAX(G,D) + (G>D?1:0)
+
+                let (g, d) = if self.controlling {
+                    (local.prio(), remote.prio())
+                } else {
+                    (remote.prio(), local.prio())
+                };
+
+                let prio = 2_u64.pow(32) * g.min(d) as u64
+                    + 2 * g.max(d) as u64
+                    + if g > d { 1 } else { 0 };
+
+                let pair = CandidatePair::new(*local_idx, *remote_idx, prio);
+
+                // The agent prunes each checklist.  This is done by removing a
+                // candidate pair if it is redundant with a higher-priority candidate
+                // pair in the same checklist.  Two candidate pairs are redundant if
+                // their local candidates have the same base and their remote candidates
+                // are identical.
+
+                for (check_idx, check) in self.candidate_pairs.iter().enumerate() {
+                    let check_local = check.local_candidate(&self.local_candidates);
+                    let check_remote = check.remote_candidate(&self.remote_candidates);
+
+                    let redundant =
+                        local.base() == check_local.base() && remote.addr() == check_remote.addr();
+
+                    if redundant {
+                        if check.prio() >= pair.prio() {
+                            // skip this new pair since there is a redundant pair already in the
+                            // list with higher/equal prio.
+                        } else {
+                            // replace the existing candidate pair, since the new one got a higher prio.
+                            self.candidate_pairs[check_idx] = pair;
+                        }
+
+                        // There can only be one candidate pair per local base / remote addr.
+                        // Since we found that redundant entry, there's no point in checking further
+                        // candidate pairs.
+                        continue 'outer;
+                    }
+                }
+
+                // This is not a redundant pair, add it.
+                self.candidate_pairs.push(pair);
+            }
+        }
+
+        // NB it would be nicer to have BTreeSet, but that makes it impossible to
+        // get mut references to the elements in the list.
+        self.candidate_pairs.sort();
+    }
 
     /// Invalidate a candidate and remove it from the connection.
     ///
@@ -283,7 +384,15 @@ impl IceAgent {
 
     /// Discard candidate pairs that contain the candidate identified by a local index.
     fn discard_candidate_pairs(&mut self, local_idx: usize) {
-        //
+        self.candidate_pairs.retain(|c| c.local_idx() != local_idx);
+    }
+
+    #[cfg(test)]
+    fn pair_indexes(&self) -> Vec<(usize, usize)> {
+        self.candidate_pairs
+            .iter()
+            .map(|c| (c.local_idx(), c.remote_idx()))
+            .collect()
     }
 }
 
@@ -298,6 +407,12 @@ mod test {
     }
     fn ipv4_2() -> SocketAddr {
         "2.3.4.5:5000".parse().unwrap()
+    }
+    fn ipv4_3() -> SocketAddr {
+        "3.4.5.6:5000".parse().unwrap()
+    }
+    fn ipv4_4() -> SocketAddr {
+        "4.5.6.7:5000".parse().unwrap()
     }
     fn ipv6_1() -> SocketAddr {
         "[1001::]:5000".parse().unwrap()
@@ -335,7 +450,7 @@ mod test {
         assert!(x2);
 
         // this is redundant given we have the direct host candidate above.
-        let x1 = agent.add_local_candidate(Candidate::peer_reflexive(ipv4_1(), ipv4_1()));
+        let x1 = agent.add_local_candidate(Candidate::peer_reflexive(ipv4_1(), ipv4_1()).unwrap());
         assert!(x1 == false);
     }
 
@@ -347,7 +462,7 @@ mod test {
         // redundant when the agent is not behind a NAT.
 
         // this is contrived, but it is redundant when we add the host candidate below.
-        let x1 = agent.add_local_candidate(Candidate::peer_reflexive(ipv4_1(), ipv4_1()));
+        let x1 = agent.add_local_candidate(Candidate::peer_reflexive(ipv4_1(), ipv4_1()).unwrap());
         assert!(x1);
 
         let x2 = agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
@@ -360,5 +475,61 @@ mod test {
             .collect();
 
         assert_eq!(v, vec![true, false]);
+    }
+
+    #[test]
+    fn form_pairs() {
+        let mut agent = IceAgent::new();
+
+        // local 0
+        agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
+        // local 1
+        agent.add_local_candidate(Candidate::peer_reflexive(ipv4_4(), ipv4_2()).unwrap());
+
+        // remote 0
+        agent.add_remote_candidate(Candidate::peer_reflexive(ipv4_4(), ipv4_3()).unwrap());
+        // remote 1
+        agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
+
+        // we expect:
+        // (host host) - (0, 1)
+        // (host rflx) - (0, 1)
+        // (rflx host) - (1, 1)
+        // (rflx rflx) - (1, 0)
+
+        assert_eq!(agent.pair_indexes(), [(0, 1), (0, 0), (1, 1), (1, 0)]);
+    }
+
+    #[test]
+    fn form_pairs_skip_redundant() {
+        let mut agent = IceAgent::new();
+
+        agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
+
+        agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
+
+        assert_eq!(agent.pair_indexes(), [(0, 0)]);
+
+        // this local candidate is redundant an won't form a new pair.
+        agent.add_local_candidate(Candidate::peer_reflexive(ipv4_2(), ipv4_1()).unwrap());
+
+        assert_eq!(agent.pair_indexes(), [(0, 0)]);
+    }
+
+    #[test]
+    fn form_pairs_replace_redundant() {
+        let mut agent = IceAgent::new();
+
+        agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
+
+        agent.add_local_candidate(Candidate::peer_reflexive(ipv4_2(), ipv4_1()).unwrap());
+
+        assert_eq!(agent.pair_indexes(), [(0, 0)]);
+
+        // this local candidate is redundant, but has higher prio than then existing pair.
+        // it replaces the existing pair.
+        agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
+
+        assert_eq!(agent.pair_indexes(), [(1, 0)]);
     }
 }
