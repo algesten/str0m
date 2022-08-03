@@ -1,24 +1,14 @@
-use combine::error::StringStreamError;
 use combine::Parser;
 use std::fmt::{self};
 use std::net::SocketAddr;
 use std::num::ParseFloatError;
 use std::ops::Deref;
 use std::str::{from_utf8_unchecked, FromStr};
-use thiserror::Error;
 
 use crate::id::random_id;
 
 use super::parser::sdp_parser;
-
-#[derive(Debug, Error)]
-pub enum SdpError {
-    #[error("SDP parse: {0}")]
-    Parse(#[from] StringStreamError),
-
-    #[error("SDP inconsistent: {0}")]
-    Inconsistent(String),
-}
+use super::SdpError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sdp {
