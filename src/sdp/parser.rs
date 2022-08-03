@@ -17,6 +17,8 @@ use {
     combine::{ParseError, Parser, Stream},
 };
 
+use crate::ice::{Candidate, CandidateKind};
+
 use super::sdp::*;
 
 /// Creates a parser of SDP
@@ -201,6 +203,14 @@ where
                 .map_err(StreamErrorFor::<Input>::message_format)
         })
     };
+
+    let kind = choice((
+        string("host").map(|_| CandidateKind::Host),
+        string("prflx").map(|_| CandidateKind::PeerReflexive),
+        string("srflx").map(|_| CandidateKind::ServerReflexive),
+        string("relay").map(|_| CandidateKind::Relayed),
+    ));
+
     attribute_line(
         "candidate",
         (
@@ -222,20 +232,21 @@ where
             token(' '),
             port(),
             string(" typ "),
-            not_sp(),
+            kind,
             optional((string(" raddr "), ip_addr(), string(" rport "), port())),
         ),
     )
     .map(
-        |(found, _, comp_id, _, proto, _, prio, _, addr, _, port, _, typ, raddr_opt)| Candidate {
-            found,
-            comp_id,
-            proto,
-            prio: Some(prio), // remote candidates calculate prio on their side
-            addr: SocketAddr::from((addr, port)),
-            base: None, // not set for remote candidates.
-            typ,
-            raddr: raddr_opt.map(|(_, addr, _, port)| SocketAddr::from((addr, port))),
+        |(found, _, comp_id, _, proto, _, prio, _, addr, _, port, _, kind, raddr_opt)| {
+            Candidate::parsed(
+                found,
+                comp_id,
+                proto,
+                prio, // remote candidates calculate prio on their side
+                SocketAddr::from((addr, port)),
+                kind,
+                raddr_opt.map(|(_, addr, _, port)| SocketAddr::from((addr, port))),
+            )
         },
     )
 }

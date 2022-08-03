@@ -1,10 +1,11 @@
 use combine::Parser;
 use std::fmt::{self};
-use std::net::SocketAddr;
+use std::hash::Hash;
 use std::num::ParseFloatError;
 use std::ops::Deref;
 use std::str::{from_utf8_unchecked, FromStr};
 
+use crate::ice::Candidate;
 use crate::id::random_id;
 
 use super::parser::sdp_parser;
@@ -156,7 +157,7 @@ impl Session {
 pub struct Mid([u8; 3]);
 
 impl Mid {
-    pub(crate) fn new() -> Mid {
+    pub fn new() -> Mid {
         Mid(random_id::<3>().into_array())
     }
 }
@@ -215,75 +216,6 @@ pub enum SessionAttribute {
 pub struct Fingerprint {
     pub hash_func: String,
     pub bytes: Vec<u8>,
-}
-
-/// An ICE candidate.
-#[derive(Debug, Clone, Hash)]
-pub struct Candidate {
-    pub found: String,             // 1-32 "ice chars", ALPHA / DIGIT / "+" / "/"
-    pub comp_id: u16,              // 1 for RTP, 2 for RTCP
-    pub proto: String,             // udp/tcp
-    pub prio: Option<u32>,         // 1-10 digits
-    pub addr: SocketAddr,          // ip/port
-    pub base: Option<SocketAddr>,  // the "base" used for local candidates.
-    pub typ: String,               // host/srflx/prflx/relay TODO: enum this
-    pub raddr: Option<SocketAddr>, // ip/port
-}
-
-impl PartialEq for Candidate {
-    fn eq(&self, other: &Self) -> bool {
-        self.addr == other.addr && self.base == other.base && self.raddr == other.raddr
-    }
-}
-
-impl Eq for Candidate {}
-
-impl Candidate {
-    /// Creates a host ICE candidate.
-    pub fn host(addr: SocketAddr) -> Self {
-        Candidate {
-            found: "1".into(),
-            comp_id: 1,
-            proto: "udp".into(),
-            prio: None, // not set for local candidates.
-            addr,
-            base: Some(addr),
-            typ: "host".into(),
-            raddr: None,
-        }
-    }
-
-    pub(crate) fn is_host(&self) -> bool {
-        self.typ == "host"
-    }
-
-    pub(crate) fn prio(&self) -> u32 {
-        // Remote candidates have their prio calculated on their side.
-        if let Some(prio) = &self.prio {
-            return *prio;
-        }
-
-        // Local candidates are calculating locally
-        let type_preference = match self.typ.as_str() {
-            "host" => 126,
-            "prflx" => 110,
-            "srflx" => 100,
-            "relay" => 0,
-            _ => panic!("Unexpected candidate type: {}", self.typ),
-        };
-
-        let local_preference = if matches!(self.base.unwrap(), SocketAddr::V6(_)) {
-            65_535
-        } else {
-            65_534
-        };
-
-        type_preference << 24 | local_preference << 8 | (255 - self.comp_id as u32)
-    }
-
-    pub(crate) fn addr(&self) -> SocketAddr {
-        self.addr
-    }
 }
 
 fn is_dir(a: &MediaAttribute) -> bool {
@@ -652,7 +584,7 @@ pub enum Direction {
 }
 
 impl Direction {
-    pub(crate) fn invert(&self) -> Self {
+    pub fn invert(&self) -> Self {
         match self {
             Direction::SendOnly => Direction::RecvOnly,
             Direction::RecvOnly => Direction::SendOnly,
@@ -1129,26 +1061,6 @@ impl fmt::Display for SessionAttribute {
             Unused(v) => write!(f, "a={}\r\n", v)?,
         }
         Ok(())
-    }
-}
-
-impl fmt::Display for Candidate {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "a=candidate:{} {} {} {} {} {} typ {}",
-            self.found,
-            self.comp_id,
-            self.proto,
-            self.prio(),
-            self.addr.ip(),
-            self.addr.port(),
-            self.typ
-        )?;
-        if let Some((raddr, rport)) = self.raddr.as_ref().map(|r| (r.ip(), r.port())) {
-            write!(f, " raddr {} rport {}", raddr, rport)?;
-        }
-        write!(f, "\r\n")
     }
 }
 

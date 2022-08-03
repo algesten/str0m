@@ -8,10 +8,10 @@ use thiserror::Error;
 mod id;
 
 mod ice;
-use ice::StunError;
+pub use ice::{Candidate, StunError};
 
 mod sdp;
-use sdp::SdpError;
+pub use sdp::SdpError;
 
 #[derive(Debug, Error)]
 pub enum Error {

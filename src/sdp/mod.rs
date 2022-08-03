@@ -2,7 +2,7 @@ use combine::error::StringStreamError;
 use thiserror::Error;
 
 mod sdp;
-pub use sdp::{Candidate, Fingerprint, MediaLine, MediaType, Mid, Sdp, SessionId};
+pub use sdp::{Fingerprint, MediaLine, MediaType, Mid, Sdp, SessionId};
 
 mod parser;
 

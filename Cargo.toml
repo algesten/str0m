@@ -17,5 +17,9 @@ crc = "2"
 # SDP parsing
 combine = "4"
 
+# ICE
+# This can be replaced if https://github.com/rust-lang/rust/issues/27709 ever lands
+ip_network = "0.4" 
+
 [dev-dependencies]
 tracing-subscriber = "0.2"
