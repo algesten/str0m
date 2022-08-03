@@ -1,14 +1,28 @@
 use crc::{Crc, CRC_32_ISO_HDLC};
+use hmac::Hmac;
+use hmac::Mac;
+use hmac::NewMac;
 use rand::prelude::*;
+use sha1::Sha1;
 use std::io::Write;
 use std::net::IpAddr;
 use std::net::SocketAddr;
+use thiserror::Error;
 
-use crate::util::hmac_sha1;
-use crate::Error;
+#[derive(Debug, Error)]
+pub enum StunError {
+    #[error("STUN parse error: {0}")]
+    Parse(String),
+
+    #[error("STUN io: {0}")]
+    Io(#[from] io::Error),
+
+    #[error("STUN error: {0}")]
+    Other(String),
+}
 
 #[derive(Debug, Clone)]
-pub(crate) struct StunMessage<'a> {
+pub struct StunMessage<'a> {
     class: Class,
     method: Method,
     trans_id: &'a [u8],
@@ -17,19 +31,19 @@ pub(crate) struct StunMessage<'a> {
 }
 
 impl<'a> StunMessage<'a> {
-    pub fn parse(buf: &[u8]) -> Result<StunMessage, Error> {
+    pub fn parse(buf: &[u8]) -> Result<StunMessage, StunError> {
         let typ = (buf[0] as u16 & 0b0011_1111) << 8 | buf[1] as u16;
         let len = (buf[2] as u16) << 8 | buf[3] as u16;
         if len & 0b0000_0011 > 0 {
-            return Err(Error::StunParse("STUN len is not a multiple of 4".into()));
+            return Err(StunError::Parse("len is not a multiple of 4".into()));
         }
         if len as usize != buf.len() - 20 {
-            return Err(Error::StunParse(
+            return Err(StunError::Parse(
                 "STUN length vs UDP packet mismatch".into(),
             ));
         }
         if &buf[4..8] != MAGIC {
-            return Err(Error::StunParse("STUN magic cookie mismatch".into()));
+            return Err(StunError::Parse("magic cookie mismatch".into()));
         }
         // typ is method and class
         // |M11|M10|M9|M8|M7|C1|M6|M5|M4|C0|M3|M2|M1|M0|
@@ -47,7 +61,7 @@ impl<'a> StunMessage<'a> {
         // message-integrity only includes the length up until and including
         // the message-integrity attribute.
         if message_integrity_offset == 0 {
-            return Err(Error::StunParse("No message integrity in incoming".into()));
+            return Err(StunError::Parse("No message integrity in incoming".into()));
         }
 
         // length including message integrity attribute
@@ -65,7 +79,7 @@ impl<'a> StunMessage<'a> {
         let integrity = &buf[0..(message_integrity_offset + 20)];
 
         if !attrs.split_username().is_some() {
-            return Err(Error::StunParse(
+            return Err(StunError::Parse(
                 "STUN packet missing/incorrect username".into(),
             ));
         }
@@ -98,14 +112,6 @@ impl<'a> StunMessage<'a> {
         }
     }
 
-    pub fn is_binding_request(&self) -> bool {
-        self.class == Class::Request && self.method == Method::Binding
-    }
-
-    pub fn is_binding_response(&self) -> bool {
-        self.class == Class::Success && self.method == Method::Binding
-    }
-
     pub fn split_username(&self) -> (&str, &str) {
         // The existance of this is attribute checked in the parsing.
         self.attrs.split_username().unwrap()
@@ -120,9 +126,9 @@ impl<'a> StunMessage<'a> {
         }
     }
 
-    pub fn reply(&self) -> Result<StunMessage<'a>, Error> {
+    pub fn reply(&self) -> Result<StunMessage<'a>, StunError> {
         if self.class != Class::Request || self.method != Method::Binding {
-            return Err(Error::StunError(format!(
+            return Err(StunError::Other(format!(
                 "Unhandled class/method: {:?}/{:?}",
                 self.class, self.method
             )));
@@ -144,13 +150,13 @@ impl<'a> StunMessage<'a> {
         })
     }
 
-    pub fn to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, Error> {
+    pub fn to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, StunError> {
         Ok(self
-            ._to_bytes(password, buf)
-            .map_err(|e| Error::StunError(format!("io write: {:?}", e)))?)
+            .do_to_bytes(password, buf)
+            .map_err(|e| StunError::Other(format!("io write: {:?}", e)))?)
     }
 
-    fn _to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, io::Error> {
+    fn do_to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, io::Error> {
         let attr_len = self.attrs.iter().fold(0, |p, a| p + a.padded_len());
         let msg_len = 20 + attr_len;
 
@@ -376,7 +382,7 @@ impl<'a> Attribute<'a> {
         mut buf: &'a [u8],
         trans_id: &'a [u8],
         msg_integrity_off: &mut usize,
-    ) -> Result<Vec<Attribute<'a>>, Error> {
+    ) -> Result<Vec<Attribute<'a>>, StunError> {
         let mut ret = vec![];
         let mut off = 0;
         // With the exception of the FINGERPRINT
@@ -396,7 +402,7 @@ impl<'a> Attribute<'a> {
             //     buf
             // );
             if len > buf.len() - 4 {
-                return Err(Error::StunParse(format!(
+                return Err(StunError::Parse(format!(
                     "Bad STUN attribute length: {} > {}",
                     len,
                     buf.len() - 4,
@@ -413,7 +419,7 @@ impl<'a> Attribute<'a> {
                     }
                     0x0008 => {
                         if len != 20 {
-                            return Err(Error::StunParse(
+                            return Err(StunError::Parse(
                                 "Expected message integrity to have length 20".into(),
                             ));
                         }
@@ -425,11 +431,11 @@ impl<'a> Attribute<'a> {
                     }
                     0x0009 => {
                         if buf[4] != 0 || buf[5] != 0 || buf[6] & 0b1111_1000 != 0 {
-                            return Err(Error::StunParse("Expected 0 at top of error code".into()));
+                            return Err(StunError::Parse("Expected 0 at top of error code".into()));
                         }
                         let class = buf[6] as u16 * 100;
                         if class < 300 || class > 699 {
-                            return Err(Error::StunParse(format!(
+                            return Err(StunError::Parse(format!(
                                 "Error class is not in range: {}",
                                 class
                             )));
@@ -461,14 +467,14 @@ impl<'a> Attribute<'a> {
                     }
                     0x0024 => {
                         if len != 4 {
-                            return Err(Error::StunParse("Priority that isnt 4 in length".into()));
+                            return Err(StunError::Parse("Priority that isnt 4 in length".into()));
                         }
                         let bytes = [buf[4], buf[5], buf[6], buf[7]];
                         ret.push(Attribute::Priority(u32::from_be_bytes(bytes)));
                     }
                     0x0025 => {
                         if len != 0 {
-                            return Err(Error::StunParse(
+                            return Err(StunError::Parse(
                                 "UseCandidate that isnt 0 in length".into(),
                             ));
                         }
@@ -484,7 +490,7 @@ impl<'a> Attribute<'a> {
                     }
                     0x8029 => {
                         if len != 8 {
-                            return Err(Error::StunParse(
+                            return Err(StunError::Parse(
                                 "IceControlled that isnt 8 in length".into(),
                             ));
                         }
@@ -494,7 +500,7 @@ impl<'a> Attribute<'a> {
                     }
                     0x802a => {
                         if len != 8 {
-                            return Err(Error::StunParse(
+                            return Err(StunError::Parse(
                                 "IceControlling that isnt 8 in length".into(),
                             ));
                         }
@@ -526,20 +532,20 @@ impl<'a> Attribute<'a> {
     }
 }
 
-fn decode_str(typ: u16, buf: &[u8], len: usize) -> Result<&str, Error> {
+fn decode_str(typ: u16, buf: &[u8], len: usize) -> Result<&str, StunError> {
     if len > 128 {
-        return Err(Error::StunParse(format!(
+        return Err(StunError::Parse(format!(
             "0x{:04x?} too long str len: {}",
             typ, len
         )));
     }
     match str::from_utf8(&buf[0..len]).ok() {
         Some(v) => Ok(v),
-        None => Err(Error::StunParse(format!("0x{:04x?} malformed utf-8", typ))),
+        None => Err(StunError::Parse(format!("0x{:04x?} malformed utf-8", typ))),
     }
 }
 
-fn decode_xor(buf: &[u8], trans_id: &[u8]) -> Result<SocketAddr, Error> {
+fn decode_xor(buf: &[u8], trans_id: &[u8]) -> Result<SocketAddr, StunError> {
     let port = (((buf[2] as u16) << 8) | (buf[3] as u16)) ^ 0x2112;
     let ip_buf = &buf[4..];
     let ip = match buf[1] {
@@ -561,9 +567,18 @@ fn decode_xor(buf: &[u8], trans_id: &[u8]) -> Result<SocketAddr, Error> {
             IpAddr::V6(bytes.into())
         }
         e => {
-            return Err(Error::StunParse(format!("Invalid address family: {:?}", e)));
+            return Err(StunError::Parse(format!("Invalid address family: {:?}", e)));
         }
     };
 
     Ok(SocketAddr::new(ip, port))
+}
+
+pub type HmacSha1 = Hmac<Sha1>;
+
+pub fn hmac_sha1(secret: &[u8], payload: &[u8]) -> [u8; 20] {
+    let mut hmac = HmacSha1::new_from_slice(secret).expect("Make HMAC-SHA1");
+    hmac.update(payload);
+    let comp = hmac.finalize().into_bytes();
+    comp.into()
 }

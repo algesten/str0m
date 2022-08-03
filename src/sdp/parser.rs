@@ -7,6 +7,7 @@
 // * tracks can be grouped by media-stream id using m-level a=msid:<media-id> <track-id>
 // * a=ssrc are deprecated by a=ssrc cname:<participant id> is a unique id for an endpoint
 
+use std::net::{IpAddr, SocketAddr};
 use {
     combine::error::*,
     combine::parser::char::*,
@@ -16,14 +17,7 @@ use {
     combine::{ParseError, Parser, Stream},
 };
 
-use std::net::IpAddr;
-
-use crate::sdp::*;
-use crate::Error;
-
-pub fn parse_sdp(input: &str) -> Result<Sdp, Error> {
-    Ok(sdp_parser().parse(input).map(|(sdp, _)| sdp)?)
-}
+use super::sdp::*;
 
 /// Creates a parser of SDP
 pub fn sdp_parser<Input>() -> impl Parser<Input, Output = Sdp>
