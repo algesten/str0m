@@ -14,6 +14,7 @@ use thiserror::Error;
 pub const STUN_INITIAL_RTO_MILLIS: u64 = 250;
 pub const STUN_MAX_RETRANS: usize = 9;
 pub const STUN_MAX_RTO_MILLIS: u64 = 8000;
+pub const STUN_TIMEOUT: Duration = Duration::from_secs(40); // the above algo gives us 39_750
 
 /// Calculate the send delay given how many times we tried.
 ///
@@ -138,7 +139,7 @@ impl<'a> StunMessage<'a> {
     }
 
     pub fn binding_request(
-        remote_local_user: &'a str,
+        username: &'a str,
         trans_id: &'a [u8; 12],
         controlling: bool,
         prio: u32,
@@ -149,7 +150,7 @@ impl<'a> StunMessage<'a> {
             method: Method::Binding,
             trans_id: &*trans_id,
             attrs: vec![
-                Attribute::Username(remote_local_user),
+                Attribute::Username(username),
                 if controlling {
                     Attribute::IceControlling(random())
                 } else {
@@ -171,7 +172,7 @@ impl<'a> StunMessage<'a> {
     }
 
     pub fn reply(
-        remote_local_user: &'a str,
+        username: &'a str,
         trans_id: &'a [u8; 12],
         mapped_address: SocketAddr,
     ) -> StunMessage<'a> {
@@ -180,7 +181,7 @@ impl<'a> StunMessage<'a> {
             method: Method::Binding,
             trans_id,
             attrs: vec![
-                Attribute::Username(remote_local_user),
+                Attribute::Username(username),
                 Attribute::XorMappedAddress(mapped_address),
                 Attribute::MessageIntegrityMark,
                 Attribute::FingerprintMark,

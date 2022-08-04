@@ -18,6 +18,8 @@ pub use ice::{Candidate, IceAgent, StunError};
 mod sdp;
 pub use sdp::SdpError;
 
+pub const DATAGRAM_MTU: usize = 1500;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("{0}")]
@@ -30,6 +32,7 @@ pub enum Error {
     Io(#[from] io::Error),
 }
 
+#[derive(Debug)]
 /// An outgoing packet
 pub struct Transmit {
     /// The source socket this packet should be sent from.

@@ -5,10 +5,11 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 use crate::id::random_id;
-use crate::{Datagram, Receive, Transmit};
+use crate::{Datagram, Receive, Transmit, DATAGRAM_MTU};
 
 use super::candidate::{Candidate, CandidateKind};
 use super::pair::CandidatePair;
+use super::stun::STUN_TIMEOUT;
 use super::StunMessage;
 
 #[derive(Debug, Error)]
@@ -19,7 +20,7 @@ pub enum IceError {
 
 #[derive(Debug)]
 pub struct IceAgent {
-    /// Last time of handle_timeout.
+    /// Last time handle_timeout run (paced by timing_advance).
     ///
     /// This drives the state forward.
     last_now: Option<Instant>,
@@ -64,6 +65,9 @@ pub struct IceAgent {
 
     /// The candidate pairs.
     candidate_pairs: Vec<CandidatePair>,
+
+    /// Transmit packets ready to be polled by poll_transmit.
+    transmit: VecDeque<Transmit>,
 
     /// Events ready to be polled by poll_event.
     events: VecDeque<Event>,
@@ -156,6 +160,7 @@ impl IceAgent {
             local_candidates: vec![],
             remote_candidates: vec![],
             candidate_pairs: vec![],
+            transmit: VecDeque::new(),
             events: VecDeque::new(),
             stun_server_queue: VecDeque::new(),
         }
@@ -187,14 +192,20 @@ impl IceAgent {
     /// ### Panics
     ///
     /// Panics if there are no remote credentials set.
-    fn stun_credentials(&self) -> (String, String) {
+    fn stun_credentials(&self, reply: bool) -> (String, String) {
         let peer = self
             .remote_credentials
             .as_ref()
             .expect("Remote ICE credentials");
         let local = &self.local_credentials;
 
-        let username = format!("{}:{}", peer.username, local.username);
+        let (left, right) = if reply {
+            (&local.username, &peer.username)
+        } else {
+            (&peer.username, &local.username)
+        };
+
+        let username = format!("{}:{}", left, right);
         let password = peer.password.clone();
 
         (username, password)
@@ -560,12 +571,46 @@ impl IceAgent {
 
         self.last_now = Some(now);
 
-        //
+        // First we try to empty the queue of saved STUN requests.
+        if self.remote_credentials.is_some() {
+            let queue = &mut self.stun_server_queue;
+
+            // No need hanging on to very old requests.
+            while let Some(peek) = queue.front() {
+                if now - peek.now >= STUN_TIMEOUT {
+                    queue.pop_front();
+                } else {
+                    break;
+                }
+            }
+
+            if let Some(req) = self.stun_server_queue.pop_front() {
+                self.stun_server_handle_request(req);
+                return;
+            }
+        }
+
+        // prune failed candidates.
+        self.candidate_pairs.retain(|c| c.is_still_possible(now));
+
+        // when do we need to handle the next candidate pair?
+        let next = self
+            .candidate_pairs
+            .iter_mut()
+            .enumerate()
+            .map(|(i, c)| (i, c.next_binding_attempt(now)))
+            .min_by_key(|(_, t)| *t);
+
+        if let Some((idx, deadline)) = next {
+            if now >= deadline {
+                self.stun_client_binding_request(now, idx);
+            }
+        }
     }
 
     /// Poll for the next datagram to send.
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
-        None
+        self.transmit.pop_front()
     }
 
     /// Poll for the next time to call [`IceAgent::handle_timeout`].
@@ -619,10 +664,17 @@ impl IceAgent {
         if self.remote_credentials.is_some() {
             self.stun_server_handle_request(req);
         } else {
+            let queue = &mut self.stun_server_queue;
+
             // It is possible (and in fact very likely) that the
             // initiating agent will receive a Binding request prior to receiving
             // the candidates from its peer.
-            self.stun_server_queue.push_back(req);
+            queue.push_back(req);
+
+            // This is some denial-of-service attack protection.
+            while queue.len() > 100 {
+                queue.pop_front();
+            }
 
             // If this happens, the agent MUST
             // immediately generate a response.  The agent has sufficient
@@ -640,6 +692,11 @@ impl IceAgent {
         if req.remote_username != remote_creds.username {
             // this check can be delayed due to receiving STUN bind requests before we
             // get the exchange on the signal level.
+            return;
+        }
+
+        if req.use_candidate && self.controlling {
+            // the other side is not controlling, and it sent USE-CANDIDATE. that's wrong.
             return;
         }
 
@@ -737,6 +794,63 @@ impl IceAgent {
             self.candidate_pairs.push(pair);
             self.candidate_pairs.sort();
         }
+
+        let pair = self
+            .candidate_pairs
+            .iter()
+            .find(|p| p.local_idx() == local_idx && p.remote_idx() == remote_idx)
+            // unwrap is fine since we have inserted a pair if it was missing.
+            .unwrap();
+
+        let local = pair.local_candidate(&self.local_candidates);
+        let remote = pair.remote_candidate(&self.remote_candidates);
+
+        let (username, password) = self.stun_credentials(true);
+        let reply = StunMessage::reply(&username, &req.trans_id, req.destination);
+
+        let mut buf = vec![0_u8; DATAGRAM_MTU];
+
+        let n = reply
+            .to_bytes(&password, &mut buf)
+            .expect("IO error writing STUN reply");
+        buf.truncate(n);
+
+        let trans = Transmit {
+            source: local.base(),
+            destination: remote.addr(),
+            contents: buf,
+        };
+
+        self.transmit.push_back(trans);
+    }
+
+    fn stun_client_binding_request(&mut self, now: Instant, pair_idx: usize) {
+        let (username, password) = self.stun_credentials(false);
+
+        let pair = &mut self.candidate_pairs[pair_idx];
+        let local = pair.local_candidate(&self.local_candidates);
+        let remote = pair.remote_candidate(&self.remote_candidates);
+        let prio = local.prio_prflx();
+
+        let trans_id = pair.new_attempt(now);
+
+        let binding =
+            StunMessage::binding_request(&username, trans_id, self.controlling, prio, false);
+
+        let mut buf = vec![0_u8; DATAGRAM_MTU];
+
+        let n = binding
+            .to_bytes(&password, &mut buf)
+            .expect("IO error writing STUN reply");
+        buf.truncate(n);
+
+        let trans = Transmit {
+            source: local.base(),
+            destination: remote.addr(),
+            contents: buf,
+        };
+
+        self.transmit.push_back(trans);
     }
 
     fn stun_client_handle_response(&mut self, now: Instant, message: StunMessage<'_>) {
