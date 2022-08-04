@@ -33,7 +33,8 @@ pub struct Candidate {
 
     /// Priority.
     ///
-    /// For remote, this is communicated, and locally it's calculated.
+    /// For remote, this is communicated, and locally it's (mostly) calculated.
+    /// For local peer reflexive it is set.
     prio: Option<u32>, // 1-10 digits
 
     /// The actual address to use. This might be a host address, server reflex, relay etc.
@@ -134,24 +135,30 @@ impl Candidate {
     /// Peer reflexive candidates are NAT:ed addresses discovered via STUN
     /// binding responses. `addr` is the discovered address. `base` is the local
     /// (host) address inside the NAT we used to get this response.
-    pub fn peer_reflexive(addr: SocketAddr, base: SocketAddr) -> Result<Self, IceError> {
-        if !is_valid_ip(addr.ip()) {
-            return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
-        }
-        if !is_valid_ip(base.ip()) {
-            return Err(IceError::BadCandidate(format!("invalid ip {}", base.ip())));
-        }
-
-        Ok(Candidate::new(
+    pub(crate) fn peer_reflexive(addr: SocketAddr, base: SocketAddr, prio: u32) -> Self {
+        Candidate::new(
+            None,
+            1, // only RTP
+            "udp".into(),
+            Some(prio),
+            addr,
+            Some(base),
+            CandidateKind::PeerReflexive,
+            None,
+        )
+    }
+    /// Creates a server reflexive ICE candidate.
+    pub(crate) fn server_reflexive(addr: SocketAddr, base: SocketAddr, raddr: SocketAddr) -> Self {
+        Candidate::new(
             None,
             1, // only RTP
             "udp".into(),
             None,
             addr,
             Some(base),
-            CandidateKind::PeerReflexive,
-            None,
-        ))
+            CandidateKind::ServerReflexive,
+            Some(raddr),
+        )
     }
 
     /// Candidate foundation.
@@ -189,6 +196,14 @@ impl Candidate {
     }
 
     pub(crate) fn prio(&self) -> u32 {
+        self.do_prio(false)
+    }
+
+    pub(crate) fn prio_prflx(&self) -> u32 {
+        self.do_prio(true)
+    }
+
+    fn do_prio(&self, as_prflx: bool) -> u32 {
         // Remote candidates have their prio calculated on their side.
         if let Some(prio) = &self.prio {
             return *prio;
@@ -197,11 +212,15 @@ impl Candidate {
         // The RECOMMENDED values for type preferences are 126 for host
         // candidates, 110 for peer-reflexive candidates, 100 for server-
         // reflexive candidates, and 0 for relayed candidates.
-        let type_preference = match self.kind {
-            CandidateKind::Host => 126,
-            CandidateKind::PeerReflexive => 110,
-            CandidateKind::ServerReflexive => 100,
-            CandidateKind::Relayed => 0,
+        let type_preference = if as_prflx {
+            110
+        } else {
+            match self.kind {
+                CandidateKind::Host => 126,
+                CandidateKind::PeerReflexive => 110,
+                CandidateKind::ServerReflexive => 100,
+                CandidateKind::Relayed => 0,
+            }
         };
 
         // The recommended formula combines a preference for the candidate type

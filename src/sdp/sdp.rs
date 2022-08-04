@@ -5,7 +5,7 @@ use std::num::ParseFloatError;
 use std::ops::Deref;
 use std::str::{from_utf8_unchecked, FromStr};
 
-use crate::ice::Candidate;
+use crate::ice::{Candidate, IceCreds};
 use crate::id::random_id;
 
 use super::parser::sdp_parser;
@@ -53,17 +53,6 @@ impl Sdp {
 
         None
     }
-}
-
-/// Credentials for STUN packages.
-///
-/// By matching IceCreds in STUN to SDP, we know which STUN belongs to which Peer.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct IceCreds {
-    // From a=ice-ufrag
-    pub username: String,
-    // From a=ice-pwd
-    pub password: String,
 }
 
 /// Session info, before the first m= line

@@ -1,11 +1,14 @@
-use std::time::Duration;
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
 use crate::id::random_id;
+use crate::{Datagram, Receive, Transmit};
 
 use super::candidate::{Candidate, CandidateKind};
 use super::pair::CandidatePair;
+use super::StunMessage;
 
 #[derive(Debug, Error)]
 pub enum IceError {
@@ -15,6 +18,11 @@ pub enum IceError {
 
 #[derive(Debug)]
 pub struct IceAgent {
+    /// Last time of handle_timeout.
+    ///
+    /// This drives the state forward.
+    last_now: Option<Instant>,
+
     /// Timing advance (Ta) value.
     ///
     /// ICE agents SHOULD use a default Ta value, 50 ms, but MAY use another
@@ -29,11 +37,15 @@ pub struct IceAgent {
     /// Whether this agent is operating as ice-lite.
     ice_lite: bool,
 
-    /// Username for this side.
-    username: String,
+    // The default limit of candidate pairs for the checklist set is 100,
+    // but the value MUST be configurable.
+    max_candidate_pairs: Option<usize>,
 
-    /// Password for this side.
-    password: String,
+    /// Credentials for this side. Set on init and ice-restart.
+    local_credentials: IceCreds,
+
+    /// Credentials for the remote side. Set when we learn about it.
+    remote_credentials: Option<IceCreds>,
 
     /// If this side is controlling or controlled.
     controlling: bool,
@@ -51,6 +63,9 @@ pub struct IceAgent {
 
     /// The candidate pairs.
     candidate_pairs: Vec<CandidatePair>,
+
+    /// Events ready to be polled by poll_event.
+    events: VecDeque<Event>,
 }
 
 /// States the [`IceAgent`] can be in.
@@ -89,6 +104,17 @@ pub enum IceConnectionState {
     Closed,
 }
 
+/// Credentials for STUN packages.
+///
+/// By matching IceCreds in STUN to SDP, we know which STUN belongs to which Peer.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct IceCreds {
+    // From a=ice-ufrag
+    pub username: String,
+    // From a=ice-pwd
+    pub password: String,
+}
+
 impl IceAgent {
     pub fn new() -> Self {
         // Username Fragment and Password:  Values used to perform connectivity
@@ -98,27 +124,61 @@ impl IceAgent {
         let username = random_id::<3>().to_string();
         let password = random_id::<16>().to_string();
 
+        let local_credentials = IceCreds { username, password };
+
         IceAgent {
+            last_now: None,
             timing_advance: None,
             ice_lite: false,
-            username,
-            password,
+            max_candidate_pairs: None,
+            local_credentials,
+            remote_credentials: None,
             controlling: false,
             state: IceConnectionState::New,
             local_candidates: vec![],
             remote_candidates: vec![],
             candidate_pairs: vec![],
+            events: VecDeque::new(),
         }
     }
 
-    /// The STUN username.
-    pub fn username(&self) -> &str {
-        &self.username
+    /// Local ice credentials.
+    pub fn local_credentials(&self) -> &IceCreds {
+        &self.local_credentials
     }
 
-    /// The STUN password.
-    pub fn password(&self) -> &str {
-        &self.password
+    /// Remote ice credentials, if set.
+    pub fn remote_credentials(&self) -> Option<&IceCreds> {
+        self.remote_credentials.as_ref()
+    }
+
+    /// Sets the remote ice credentials.
+    pub fn set_remote_credentials(&mut self, r: IceCreds) {
+        self.remote_credentials = Some(r);
+    }
+
+    /// Credentials for STUN.
+    ///
+    /// The username for the credential is formed by concatenating the
+    /// username fragment provided by the peer with the username fragment of
+    /// the ICE agent sending the request, separated by a colon (":").
+    ///
+    /// The password is equal to the password provided by the peer.
+    ///
+    /// ### Panics
+    ///
+    /// Panics if there are no remote credentials set.
+    fn stun_credentials(&self) -> (String, String) {
+        let peer = self
+            .remote_credentials
+            .as_ref()
+            .expect("Remote ICE credentials");
+        let local = &self.local_credentials;
+
+        let username = format!("{}:{}", peer.username, local.username);
+        let password = peer.password.clone();
+
+        (username, password)
     }
 
     /// Whether this side is controlling or controlled.
@@ -358,6 +418,18 @@ impl IceAgent {
         // NB it would be nicer to have BTreeSet, but that makes it impossible to
         // get mut references to the elements in the list.
         self.candidate_pairs.sort();
+
+        // an ICE agent MUST limit the total number of connectivity checks
+        // the agent performs across all checklists in the checklist set.
+        // This is done by limiting the total number of candidate pairs in the
+        // checklist set. The default limit of candidate pairs for the checklist
+        // set is 100, but the value MUST be configurable.
+        //
+        // TODO: How does this work with trickle ice?
+        let max = self.max_candidate_pairs.unwrap_or(100);
+        while self.candidate_pairs.len() > max {
+            self.candidate_pairs.pop();
+        }
     }
 
     /// Invalidate a candidate and remove it from the connection.
@@ -387,6 +459,182 @@ impl IceAgent {
         self.candidate_pairs.retain(|c| c.local_idx() != local_idx);
     }
 
+    fn set_connection_state(&mut self, state: IceConnectionState) {
+        if self.state != state {
+            self.state = state;
+            self.events
+                .push_back(Event::IceConnectionStateChange(state));
+        }
+    }
+
+    /// Tells whether the message is for this agent instance.
+    ///
+    /// This is used to multiplex multiple ice agents sharing the same UDP socket.
+    ///
+    /// ### Panics
+    ///
+    /// Panics if no remote credentials have been set using [`IceAgent::set_remote_credentials`].
+    pub fn accepts_message(&self, message: &StunMessage<'_>) -> bool {
+        // The username for the credential is formed by concatenating the
+        // username fragment provided by the peer with the username fragment of
+        // the ICE agent sending the request, separated by a colon (":").
+        let (local, remote) = message.split_username();
+
+        let local_creds = self.local_credentials();
+        let remote_creds = self.remote_credentials().expect("Remote ICE credentials");
+
+        if local != local_creds.username || remote != remote_creds.username {
+            return false;
+        }
+
+        // The password is equal to the password provided by the peer.
+        if !message.check_integrity(&local_creds.password) {
+            return false;
+        }
+
+        true
+    }
+
+    /// Handles an incoming STUN message.
+    ///
+    /// Will not be used if [`IceAgent::accepts_message`] returns false.
+    pub fn handle_receive(&mut self, now: Instant, receive: Receive) {
+        let message = match receive.contents {
+            Datagram::Stun(v) => v,
+            _ => return,
+        };
+
+        if !self.accepts_message(&message) {
+            return;
+        }
+
+        if message.is_binding_request() {
+            self.stun_server_handle_request(now, message);
+        } else if message.is_successful_binding_response() {
+            self.stun_client_handle_response(now, message);
+        }
+        // TODO handle unsuccessful responses.
+    }
+
+    pub fn handle_timeout(&mut self, now: Instant) {
+        if self.state == IceConnectionState::New {
+            self.set_connection_state(IceConnectionState::Checking);
+        }
+
+        // The generation of ordinary and triggered connectivity checks is
+        // governed by timer Ta.
+        if let Some(last_now) = self.last_now {
+            if now < last_now + self.timing_advance() {
+                return;
+            }
+        }
+
+        self.last_now = Some(now);
+
+        //
+    }
+
+    /// Poll for the next datagram to send.
+    pub fn poll_transmit(&mut self) -> Option<Transmit> {
+        None
+    }
+
+    /// Poll for the next time to call [`IceAgent::handle_timeout`].
+    ///
+    /// Returns `None` until the first evern `handle_timeout` is called.
+    pub fn poll_timeout(&mut self) -> Option<Instant> {
+        // if we never called handle_timeout, there will be no current time.
+        let last_now = self.last_now?;
+
+        // when do we need to handle the next candidate pair?
+        self.candidate_pairs
+            .iter_mut()
+            .map(|c| c.next_binding_attempt(last_now))
+            .min()
+    }
+
+    pub fn poll_event(&mut self) -> Option<Event> {
+        self.events.pop_front()
+    }
+
+    fn stun_server_handle_request(&self, now: Instant, message: StunMessage) {
+        todo!()
+    }
+
+    fn stun_client_handle_response(&mut self, now: Instant, message: StunMessage<'_>) {
+        // Find the candidate pair that this trans_id was sent for.
+        let trans_id = message.trans_id();
+        let maybe_pair = self
+            .candidate_pairs
+            .iter_mut()
+            .find(|p| p.has_binding_attempt(trans_id));
+
+        let pair = match maybe_pair {
+            Some(v) => v,
+            // Not finding the candidate pair is fine. That might mean the
+            // binding response came in "too late", after we discarded the
+            // pair for some reason.
+            None => return,
+        };
+
+        // The ICE agent MUST check the mapped address from the STUN response.
+        // If the transport address does not match any of the local candidates
+        // that the agent knows about, the mapped address represents a new
+        // candidate: a peer-reflexive candidate.
+        let mapped_address = message.mapped_address();
+
+        let found_locally = self
+            .local_candidates
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.addr() == mapped_address);
+
+        if let Some((idx, _)) = found_locally {
+            // Note, the valid_idx might not be the same as the local_idx that we
+            // sent the request from. This might happen for hosts with asymmetric
+            // routing, traffic leaving on one interface and responses coming back
+            // on another.
+            pair.record_binding_response(now, trans_id, idx);
+        } else {
+            let local_sent_from = pair.local_candidate(&self.local_candidates);
+
+            // Like other candidates, a peer-reflexive candidate has a type, base, priority,
+            // and foundation. They are computed as follows:
+
+            // o  The priority is the value of the PRIORITY attribute in the Binding
+            //     request.
+            //
+            // The PRIORITY attribute MUST be included in a Binding request and be
+            // set to the value computed by the algorithm in Section 5.1.2 for the
+            // local candidate, but with the candidate type preference of peer-
+            // reflexive candidates.
+            let prio = local_sent_from.prio_prflx();
+
+            // o  The base is the local candidate of the candidate pair from which
+            //     the Binding request was sent.
+            let base = local_sent_from.base();
+
+            // o  The type is peer reflexive.
+            let candidate = Candidate::peer_reflexive(mapped_address, base, prio);
+
+            // The ICE agent does not need to pair the peer-reflexive candidate with
+            // remote candidates.
+            // If an agent wishes to pair the peer-reflexive candidate with remote
+            // candidates other than the one in the valid pair that will be generated,
+            // the agent MAY provide updated candidate information to the peer that includes
+            // the peer-reflexive candidate.  This will cause the peer-reflexive candidate
+            // to be paired with all other remote candidates.
+
+            // For now we do not tell the other side abou discovered peer-reflexive candidates.
+            // We just include it in our list of local candidates and use it for the "valid pair".
+            self.local_candidates.push(candidate);
+
+            let idx = self.local_candidates.len() - 1;
+
+            pair.record_binding_response(now, trans_id, idx);
+        }
+    }
+
     #[cfg(test)]
     fn pair_indexes(&self) -> Vec<(usize, usize)> {
         self.candidate_pairs
@@ -394,6 +642,11 @@ impl IceAgent {
             .map(|c| (c.local_idx(), c.remote_idx()))
             .collect()
     }
+}
+
+#[derive(Debug)]
+pub enum Event {
+    IceConnectionStateChange(IceConnectionState),
 }
 
 #[cfg(test)]
@@ -450,7 +703,7 @@ mod test {
         assert!(x2);
 
         // this is redundant given we have the direct host candidate above.
-        let x1 = agent.add_local_candidate(Candidate::peer_reflexive(ipv4_1(), ipv4_1()).unwrap());
+        let x1 = agent.add_local_candidate(Candidate::peer_reflexive(ipv4_1(), ipv4_1(), 1));
         assert!(x1 == false);
     }
 
@@ -462,7 +715,7 @@ mod test {
         // redundant when the agent is not behind a NAT.
 
         // this is contrived, but it is redundant when we add the host candidate below.
-        let x1 = agent.add_local_candidate(Candidate::peer_reflexive(ipv4_1(), ipv4_1()).unwrap());
+        let x1 = agent.add_local_candidate(Candidate::peer_reflexive(ipv4_1(), ipv4_1(), 1));
         assert!(x1);
 
         let x2 = agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
@@ -484,10 +737,10 @@ mod test {
         // local 0
         agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
         // local 1
-        agent.add_local_candidate(Candidate::peer_reflexive(ipv4_4(), ipv4_2()).unwrap());
+        agent.add_local_candidate(Candidate::peer_reflexive(ipv4_4(), ipv4_2(), 1));
 
         // remote 0
-        agent.add_remote_candidate(Candidate::peer_reflexive(ipv4_4(), ipv4_3()).unwrap());
+        agent.add_remote_candidate(Candidate::peer_reflexive(ipv4_4(), ipv4_3(), 2));
         // remote 1
         agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
 
@@ -511,7 +764,7 @@ mod test {
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 
         // this local candidate is redundant an won't form a new pair.
-        agent.add_local_candidate(Candidate::peer_reflexive(ipv4_2(), ipv4_1()).unwrap());
+        agent.add_local_candidate(Candidate::peer_reflexive(ipv4_2(), ipv4_1(), 1));
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
     }
@@ -522,7 +775,7 @@ mod test {
 
         agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
 
-        agent.add_local_candidate(Candidate::peer_reflexive(ipv4_2(), ipv4_1()).unwrap());
+        agent.add_local_candidate(Candidate::peer_reflexive(ipv4_2(), ipv4_1(), 1));
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 

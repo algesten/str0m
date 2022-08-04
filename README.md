@@ -12,9 +12,14 @@ component (1 for RTP), and never do a separate component for RTCP.
 
 ## One-to-one relationship Ice Agent - Session - Data Stream.
 
-Since WebRTC multiplexes all RTP/RTCP traffic over a single UDP socket between two peers, 
+https://datatracker.ietf.org/doc/html/rfc8843#section-1.2
+
+> The use of a BUNDLE transport allows the usage of a single set of ICE
+> [RFC8445] candidates for the whole BUNDLE group.
+
+With BUNDLE, WebRTC multiplexes all RTP/RTCP traffic over a single UDP socket between two peers, 
 there is no need to make the Ice Agent have multiple data streams per peer. Furthermore
-and ice agent is supposed to have different sessions for each peer (reusing the agent for
+and full ice agent is supposed to have different sessions for each peer (reusing the agent for
 multiple connections), but sharing the ice agent is not a complication worth the trouble
 right now. Because we do rtcp-mux-only, we also only have one "component" (RTP) in
 our data stream.
@@ -48,6 +53,41 @@ https://datatracker.ietf.org/doc/html/rfc8445#section-14.2
 
 Global Ta pacing is out of scope this implementation.
 
-# Ice-lite stays ice-lite
+## Ice-lite stays ice-lite
 
 We do not switch ice-lite during a session.
+
+## ICE role conflicts won't happen
+
+https://datatracker.ietf.org/doc/html/rfc8445#section-6.1.1
+
+> The initiating agent that started the ICE processing MUST take the 
+> controlling role, and the other MUST take the controlled role.
+
+https://datatracker.ietf.org/doc/html/rfc8445#section-7.2.5.1
+
+> If the Binding request generates a 487 (Role Conflict) error response
+> (Section 7.3.1.1), and if the ICE agent included an ICE-CONTROLLED
+> attribute in the request, the agent MUST switch to the controlling
+> role.
+
+We ignore this MUST because in WebRTC it's never unclear which side starts
+the ICE processing (the one making the initial OFFER).
+
+## First mid in BUNDLE is special
+
+https://datatracker.ietf.org/doc/html/rfc8859#section-4.5
+
+> This is due to the BUNDLE grouping semantic
+> [RFC8843], which mandates that the values from the "m=" line
+> corresponding to the mid appearing first on the "a=group:BUNDLE" line
+> be considered for setting up the RTP transport.
+
+This means we put ICE transport
+
+# Sources
+
+* https://datatracker.ietf.org/doc/html/rfc8859 - SDP attribute categories
+* https://datatracker.ietf.org/doc/html/rfc8445 - ICE
+    * https://datatracker.ietf.org/doc/html/rfc8421 - multihomed ice
+* https://datatracker.ietf.org/doc/html/rfc8829 - JSEP

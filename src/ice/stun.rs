@@ -7,7 +7,31 @@ use sha1::Sha1;
 use std::io::Write;
 use std::net::IpAddr;
 use std::net::SocketAddr;
+use std::time::Duration;
 use thiserror::Error;
+
+// Consult libwebrtc for default values here.
+pub const STUN_INITIAL_RTO_MILLIS: u64 = 250;
+pub const STUN_MAX_RETRANS: usize = 9;
+pub const STUN_MAX_RTO_MILLIS: u64 = 8000;
+
+/// Calculate the send delay given how many times we tried.
+///
+/// Technically RTO should be calculated as per https://datatracker.ietf.org/doc/html/rfc2988, and
+/// modified by https://datatracker.ietf.org/doc/html/rfc5389#section-7.2.1,
+/// but chrome does it like this. https://webrtc.googlesource.com/src/+/refs/heads/main/p2p/base/stun_request.cc
+pub fn stun_resend_delay(send_count: usize) -> Duration {
+    if send_count == 0 {
+        return Duration::ZERO;
+    }
+
+    let retrans = (send_count - 1).min(STUN_MAX_RETRANS);
+
+    let rto = STUN_INITIAL_RTO_MILLIS << retrans;
+    let capped = rto.min(STUN_INITIAL_RTO_MILLIS);
+
+    Duration::from_millis(capped)
+}
 
 #[derive(Debug, Error)]
 pub enum StunError {
@@ -79,8 +103,12 @@ impl<'a> StunMessage<'a> {
         let integrity = &buf[0..(message_integrity_offset + 20)];
 
         if !attrs.split_username().is_some() {
+            return Err(StunError::Parse("STUN packet missing username".into()));
+        }
+
+        if !attrs.mapped_address().is_some() {
             return Err(StunError::Parse(
-                "STUN packet missing/incorrect username".into(),
+                "STUN packet missing mapped address".into(),
             ));
         }
 
@@ -93,18 +121,36 @@ impl<'a> StunMessage<'a> {
         })
     }
 
+    pub fn is_binding_request(&self) -> bool {
+        self.method == Method::Binding && self.class == Class::Request
+    }
+
+    pub fn is_successful_binding_response(&self) -> bool {
+        self.method == Method::Binding && self.class == Class::Success
+    }
+
     pub fn trans_id(&self) -> &[u8] {
         self.trans_id
     }
 
-    pub fn binding_request(remote_local_user: &'a str, trans_id: &'a [u8; 12]) -> Self {
+    pub fn binding_request(
+        remote_local_user: &'a str,
+        trans_id: &'a [u8; 12],
+        mapped_address: SocketAddr,
+        controlling: bool,
+    ) -> Self {
         StunMessage {
             class: Class::Request,
             method: Method::Binding,
             trans_id: &*trans_id,
             attrs: vec![
                 Attribute::Username(remote_local_user),
-                Attribute::IceControlling(random()),
+                if controlling {
+                    Attribute::IceControlling(random())
+                } else {
+                    Attribute::IceControlled(random())
+                },
+                Attribute::XorMappedAddress(mapped_address),
                 Attribute::MessageIntegrityMark,
                 Attribute::FingerprintMark,
             ],
@@ -117,6 +163,11 @@ impl<'a> StunMessage<'a> {
         self.attrs.split_username().unwrap()
     }
 
+    pub fn mapped_address(&self) -> SocketAddr {
+        // The existance of this is attribute checked in the parsing.
+        self.attrs.mapped_address().unwrap()
+    }
+
     pub fn check_integrity(&self, password: &str) -> bool {
         if let Some(integ) = self.attrs.message_integrity() {
             let comp = hmac_sha1(password.as_bytes(), self.integrity);
@@ -126,7 +177,11 @@ impl<'a> StunMessage<'a> {
         }
     }
 
-    pub fn reply(&self) -> Result<StunMessage<'a>, StunError> {
+    pub fn reply(
+        &self,
+        mapped_address: SocketAddr,
+        controlling: bool,
+    ) -> Result<StunMessage<'a>, StunError> {
         if self.class != Class::Request || self.method != Method::Binding {
             return Err(StunError::Other(format!(
                 "Unhandled class/method: {:?}/{:?}",
@@ -142,7 +197,12 @@ impl<'a> StunMessage<'a> {
                 // username is on the form local:remote in both directions
                 // this unwrap is ok, because we checked the existence during parsing.
                 Attribute::Username(self.attrs.username().unwrap()),
-                Attribute::IceControlled(random()),
+                if controlling {
+                    Attribute::IceControlling(random())
+                } else {
+                    Attribute::IceControlled(random())
+                },
+                Attribute::XorMappedAddress(mapped_address),
                 Attribute::MessageIntegrityMark,
                 Attribute::FingerprintMark,
             ],
@@ -289,6 +349,7 @@ pub enum Attribute<'a> {
 trait Attributes<'a> {
     fn username(&self) -> Option<&'a str>;
     fn split_username(&self) -> Option<(&'a str, &'a str)>;
+    fn mapped_address(&self) -> Option<SocketAddr>;
     fn message_integrity(&self) -> Option<&'a [u8]>;
 }
 
@@ -301,6 +362,7 @@ impl<'a> Attributes<'a> for Vec<Attribute<'a>> {
         }
         None
     }
+
     fn split_username(&self) -> Option<(&'a str, &'a str)> {
         // usernames are on the form gfNK:062g where
         // gfNK is my local sdp ice username and
@@ -317,6 +379,16 @@ impl<'a> Attributes<'a> for Vec<Attribute<'a>> {
         }
         None
     }
+
+    fn mapped_address(&self) -> Option<SocketAddr> {
+        for a in self {
+            if let Attribute::XorMappedAddress(v) = a {
+                return Some(*v);
+            }
+        }
+        None
+    }
+
     fn message_integrity(&self) -> Option<&'a [u8]> {
         for a in self {
             if let Attribute::MessageIntegrity(v) = a {
