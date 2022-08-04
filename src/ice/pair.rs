@@ -85,6 +85,26 @@ impl CandidatePair {
         }
     }
 
+    pub fn calculate_prio(controlling: bool, remote_prio: u32, local_prio: u32) -> u64 {
+        // The ICE agent computes a priority for each candidate pair.  Let G be
+        // the priority for the candidate provided by the controlling agent.
+        // Let D be the priority for the candidate provided by the controlled
+        // agent.  The priority for a pair is computed as follows:
+        //
+        //    pair priority = 2^32*MIN(G,D) + 2*MAX(G,D) + (G>D?1:0)
+
+        let (g, d) = if controlling {
+            (local_prio, remote_prio)
+        } else {
+            (remote_prio, local_prio)
+        };
+
+        let prio =
+            2_u64.pow(32) * g.min(d) as u64 + 2 * g.max(d) as u64 + if g > d { 1 } else { 0 };
+
+        prio
+    }
+
     pub fn local_idx(&self) -> usize {
         self.local_idx
     }
@@ -103,6 +123,10 @@ impl CandidatePair {
 
     pub fn prio(&self) -> u64 {
         self.prio
+    }
+
+    pub fn state(&self) -> CheckState {
+        self.state
     }
 
     /// Records a new binding request attempt.
@@ -210,6 +234,27 @@ impl CandidatePair {
             let cutoff = last + stun_resend_delay(STUN_MAX_RETRANS);
             now < cutoff
         }
+    }
+
+    pub(crate) fn reset_to_waiting(&mut self) {
+        //    Cancellation means that the agent
+        //    will not retransmit the Binding requests associated with the
+        //    connectivity-check transaction, will not treat the lack of
+        //    response to be a failure, but will wait the duration of the
+        //    transaction timeout for a response.  In addition, the agent
+        //    MUST enqueue the pair ... in order to trigger a new connectivity
+        //    check of the pair.
+        //
+        //    Creating a new connectivity check enables validating
+        //    In-Progress pairs as soon as possible, without having to wait
+        //    for retransmissions of the Binding requests associated with the
+        //    original connectivity-check transaction.
+        //
+        //    Note that a state change of the pair from Failed to Waiting
+        //    might also trigger a state change of the associated checklist.
+        self.state = CheckState::Waiting;
+        self.binding_attempts.clear();
+        self.cached_next_attempt_time = None;
     }
 }
 

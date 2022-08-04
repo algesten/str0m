@@ -28,7 +28,7 @@ pub fn stun_resend_delay(send_count: usize) -> Duration {
     let retrans = (send_count - 1).min(STUN_MAX_RETRANS);
 
     let rto = STUN_INITIAL_RTO_MILLIS << retrans;
-    let capped = rto.min(STUN_INITIAL_RTO_MILLIS);
+    let capped = rto.min(STUN_MAX_RTO_MILLIS);
 
     Duration::from_millis(capped)
 }
@@ -102,14 +102,18 @@ impl<'a> StunMessage<'a> {
         // buffer from beginning including header (+20) to where message-integrity starts.
         let integrity = &buf[0..(message_integrity_offset + 20)];
 
-        if !attrs.split_username().is_some() {
+        if attrs.split_username().is_none() {
             return Err(StunError::Parse("STUN packet missing username".into()));
         }
 
-        if !attrs.mapped_address().is_some() {
-            return Err(StunError::Parse(
-                "STUN packet missing mapped address".into(),
-            ));
+        if method == Method::Binding && class == Class::Success {
+            if attrs.mapped_address().is_none() {
+                return Err(StunError::Parse("STUN packet missing mapped addr".into()));
+            }
+        } else if method == Method::Binding && class == Class::Request {
+            if attrs.prio().is_none() {
+                return Err(StunError::Parse("STUN packet missing mapped addr".into()));
+            }
         }
 
         Ok(StunMessage {
@@ -136,10 +140,11 @@ impl<'a> StunMessage<'a> {
     pub fn binding_request(
         remote_local_user: &'a str,
         trans_id: &'a [u8; 12],
-        mapped_address: SocketAddr,
         controlling: bool,
+        prio: u32,
+        use_candidate: bool,
     ) -> Self {
-        StunMessage {
+        let mut m = StunMessage {
             class: Class::Request,
             method: Method::Binding,
             trans_id: &*trans_id,
@@ -150,6 +155,32 @@ impl<'a> StunMessage<'a> {
                 } else {
                     Attribute::IceControlled(random())
                 },
+                Attribute::Priority(prio),
+            ],
+            integrity: &[],
+        };
+
+        if use_candidate {
+            m.attrs.push(Attribute::UseCandidate);
+        }
+
+        m.attrs.push(Attribute::MessageIntegrityMark);
+        m.attrs.push(Attribute::FingerprintMark);
+
+        m
+    }
+
+    pub fn reply(
+        remote_local_user: &'a str,
+        trans_id: &'a [u8; 12],
+        mapped_address: SocketAddr,
+    ) -> StunMessage<'a> {
+        StunMessage {
+            class: Class::Success,
+            method: Method::Binding,
+            trans_id,
+            attrs: vec![
+                Attribute::Username(remote_local_user),
                 Attribute::XorMappedAddress(mapped_address),
                 Attribute::MessageIntegrityMark,
                 Attribute::FingerprintMark,
@@ -163,9 +194,16 @@ impl<'a> StunMessage<'a> {
         self.attrs.split_username().unwrap()
     }
 
-    pub fn mapped_address(&self) -> SocketAddr {
-        // The existance of this is attribute checked in the parsing.
-        self.attrs.mapped_address().unwrap()
+    pub fn mapped_address(&self) -> Option<SocketAddr> {
+        self.attrs.mapped_address()
+    }
+
+    pub fn prio(&self) -> Option<u32> {
+        self.attrs.prio()
+    }
+
+    pub fn use_candidate(&self) -> bool {
+        self.attrs.use_candidate()
     }
 
     pub fn check_integrity(&self, password: &str) -> bool {
@@ -175,39 +213,6 @@ impl<'a> StunMessage<'a> {
         } else {
             false
         }
-    }
-
-    pub fn reply(
-        &self,
-        mapped_address: SocketAddr,
-        controlling: bool,
-    ) -> Result<StunMessage<'a>, StunError> {
-        if self.class != Class::Request || self.method != Method::Binding {
-            return Err(StunError::Other(format!(
-                "Unhandled class/method: {:?}/{:?}",
-                self.class, self.method
-            )));
-        }
-
-        Ok(StunMessage {
-            class: Class::Success,
-            method: Method::Binding,
-            trans_id: self.trans_id,
-            attrs: vec![
-                // username is on the form local:remote in both directions
-                // this unwrap is ok, because we checked the existence during parsing.
-                Attribute::Username(self.attrs.username().unwrap()),
-                if controlling {
-                    Attribute::IceControlling(random())
-                } else {
-                    Attribute::IceControlled(random())
-                },
-                Attribute::XorMappedAddress(mapped_address),
-                Attribute::MessageIntegrityMark,
-                Attribute::FingerprintMark,
-            ],
-            integrity: &[],
-        })
     }
 
     pub fn to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, StunError> {
@@ -350,6 +355,8 @@ trait Attributes<'a> {
     fn username(&self) -> Option<&'a str>;
     fn split_username(&self) -> Option<(&'a str, &'a str)>;
     fn mapped_address(&self) -> Option<SocketAddr>;
+    fn prio(&self) -> Option<u32>;
+    fn use_candidate(&self) -> bool;
     fn message_integrity(&self) -> Option<&'a [u8]>;
 }
 
@@ -387,6 +394,19 @@ impl<'a> Attributes<'a> for Vec<Attribute<'a>> {
             }
         }
         None
+    }
+
+    fn prio(&self) -> Option<u32> {
+        for a in self {
+            if let Attribute::Priority(v) = a {
+                return Some(*v);
+            }
+        }
+        None
+    }
+
+    fn use_candidate(&self) -> bool {
+        self.iter().any(|a| matches!(a, Attribute::UseCandidate))
     }
 
     fn message_integrity(&self) -> Option<&'a [u8]> {

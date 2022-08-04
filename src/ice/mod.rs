@@ -8,5 +8,3 @@ mod candidate;
 pub use candidate::{Candidate, CandidateKind};
 
 mod pair;
-
-mod rto;

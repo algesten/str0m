@@ -135,9 +135,14 @@ impl Candidate {
     /// Peer reflexive candidates are NAT:ed addresses discovered via STUN
     /// binding responses. `addr` is the discovered address. `base` is the local
     /// (host) address inside the NAT we used to get this response.
-    pub(crate) fn peer_reflexive(addr: SocketAddr, base: SocketAddr, prio: u32) -> Self {
+    pub(crate) fn peer_reflexive(
+        addr: SocketAddr,
+        base: SocketAddr,
+        prio: u32,
+        found: Option<String>,
+    ) -> Self {
         Candidate::new(
-            None,
+            found,
             1, // only RTP
             "udp".into(),
             Some(prio),
@@ -147,6 +152,21 @@ impl Candidate {
             None,
         )
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_peer_rflx(addr: SocketAddr, base: SocketAddr) -> Self {
+        Candidate::new(
+            None,
+            1, // only RTP
+            "udp".into(),
+            None,
+            addr,
+            Some(base),
+            CandidateKind::PeerReflexive,
+            None,
+        )
+    }
+
     /// Creates a server reflexive ICE candidate.
     pub(crate) fn server_reflexive(addr: SocketAddr, base: SocketAddr, raddr: SocketAddr) -> Self {
         Candidate::new(

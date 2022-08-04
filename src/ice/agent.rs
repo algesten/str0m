@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use thiserror::Error;
@@ -66,7 +67,24 @@ pub struct IceAgent {
 
     /// Events ready to be polled by poll_event.
     events: VecDeque<Event>,
+
+    /// Queue of incoming STUN requests we might have to queue up before we receive
+    /// the remote_credentials.
+    stun_server_queue: VecDeque<StunRequest>,
 }
+
+#[derive(Debug)]
+struct StunRequest {
+    now: Instant,
+    source: SocketAddr,
+    destination: SocketAddr,
+    trans_id: [u8; 12],
+    prio: u32,
+    use_candidate: bool,
+    remote_username: String,
+}
+
+const REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION: &str = "tmp_prflx";
 
 /// States the [`IceAgent`] can be in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,6 +157,7 @@ impl IceAgent {
             remote_candidates: vec![],
             candidate_pairs: vec![],
             events: VecDeque::new(),
+            stun_server_queue: VecDeque::new(),
         }
     }
 
@@ -337,6 +356,17 @@ impl IceAgent {
             return false;
         }
 
+        let existing = self
+            .remote_candidates
+            .iter_mut()
+            .enumerate()
+            .find(|(_, v)| {
+                v.foundation() == REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION
+                    && v.addr() == c.addr()
+                    && v.prio() == c.prio()
+                    && v.kind() == CandidateKind::PeerReflexive
+            });
+
         // These are the indexes of the local candidates this candidate should be paired with.
         let local_idxs: Vec<_> = self
             .local_candidates
@@ -346,10 +376,17 @@ impl IceAgent {
             .map(|(i, _)| i)
             .collect();
 
-        self.remote_candidates.push(c);
+        let remote_idx = if let Some((idx, existing)) = existing {
+            // If any subsequent candidate exchanges contain this peer-reflexive
+            // candidate, it will signal the actual foundation for the candidate.
+            *existing = c;
+            idx
+        } else {
+            self.remote_candidates.push(c);
+            self.remote_candidates.len() - 1
+        };
 
-        let remote_idxs = [self.remote_candidates.len() - 1];
-
+        let remote_idxs = [remote_idx];
         self.form_pairs(&local_idxs, &remote_idxs);
 
         true
@@ -362,23 +399,8 @@ impl IceAgent {
                 let local = &self.local_candidates[*local_idx];
                 let remote = &self.remote_candidates[*remote_idx];
 
-                // The ICE agent computes a priority for each candidate pair.  Let G be
-                // the priority for the candidate provided by the controlling agent.
-                // Let D be the priority for the candidate provided by the controlled
-                // agent.  The priority for a pair is computed as follows:
-                //
-                //    pair priority = 2^32*MIN(G,D) + 2*MAX(G,D) + (G>D?1:0)
-
-                let (g, d) = if self.controlling {
-                    (local.prio(), remote.prio())
-                } else {
-                    (remote.prio(), local.prio())
-                };
-
-                let prio = 2_u64.pow(32) * g.min(d) as u64
-                    + 2 * g.max(d) as u64
-                    + if g > d { 1 } else { 0 };
-
+                let prio =
+                    CandidatePair::calculate_prio(self.controlling, remote.prio(), local.prio());
                 let pair = CandidatePair::new(*local_idx, *remote_idx, prio);
 
                 // The agent prunes each checklist.  This is done by removing a
@@ -469,11 +491,12 @@ impl IceAgent {
 
     /// Tells whether the message is for this agent instance.
     ///
-    /// This is used to multiplex multiple ice agents sharing the same UDP socket.
+    /// This is used to multiplex multiple ice agents on a server sharing the same UDP socket.
+    /// For this to work, the server should operate in ice-lite mode and not initiate any
+    /// binding requests itself.
     ///
-    /// ### Panics
-    ///
-    /// Panics if no remote credentials have been set using [`IceAgent::set_remote_credentials`].
+    /// If no remote credentials have been set using `set_remote_credentials`, the remote
+    /// username is not checked.
     pub fn accepts_message(&self, message: &StunMessage<'_>) -> bool {
         // The username for the credential is formed by concatenating the
         // username fragment provided by the peer with the username fragment of
@@ -481,10 +504,14 @@ impl IceAgent {
         let (local, remote) = message.split_username();
 
         let local_creds = self.local_credentials();
-        let remote_creds = self.remote_credentials().expect("Remote ICE credentials");
-
-        if local != local_creds.username || remote != remote_creds.username {
+        if local != local_creds.username {
             return false;
+        }
+
+        if let Some(remote_creds) = self.remote_credentials() {
+            if remote != remote_creds.username {
+                return false;
+            }
         }
 
         // The password is equal to the password provided by the peer.
@@ -501,15 +528,17 @@ impl IceAgent {
     pub fn handle_receive(&mut self, now: Instant, receive: Receive) {
         let message = match receive.contents {
             Datagram::Stun(v) => v,
-            _ => return,
+            // _ => return,
         };
 
+        // Regardless of whether we have remote_creds at this point, we can
+        // at least check the message integrity.
         if !self.accepts_message(&message) {
             return;
         }
 
         if message.is_binding_request() {
-            self.stun_server_handle_request(now, message);
+            self.stun_server_handle_message(now, receive.source, receive.destination, message);
         } else if message.is_successful_binding_response() {
             self.stun_client_handle_response(now, message);
         }
@@ -557,8 +586,157 @@ impl IceAgent {
         self.events.pop_front()
     }
 
-    fn stun_server_handle_request(&self, now: Instant, message: StunMessage) {
-        todo!()
+    fn stun_server_handle_message(
+        &mut self,
+        now: Instant,
+        source: SocketAddr,
+        destination: SocketAddr,
+        message: StunMessage,
+    ) {
+        let prio = message
+            .prio()
+            // this should be guarded in the parsing
+            .expect("STUN request prio");
+        let use_candidate = message.use_candidate();
+
+        let mut trans_id = [0_u8; 12];
+        trans_id.copy_from_slice(message.trans_id());
+
+        let (_, remote_username) = message.split_username();
+
+        // Because we might have to delay stun requests until we receive the remote
+        // credentials, we extract all relevant bits of information so it can be owned.
+        let req = StunRequest {
+            now,
+            source,
+            destination,
+            trans_id,
+            prio,
+            use_candidate,
+            remote_username: remote_username.into(),
+        };
+
+        if self.remote_credentials.is_some() {
+            self.stun_server_handle_request(req);
+        } else {
+            // It is possible (and in fact very likely) that the
+            // initiating agent will receive a Binding request prior to receiving
+            // the candidates from its peer.
+            self.stun_server_queue.push_back(req);
+
+            // If this happens, the agent MUST
+            // immediately generate a response.  The agent has sufficient
+            // information at this point to generate the response; the password from
+            // the peer is not required.
+
+            // TODO: The spec seems to indicate we can generate a reply, but that seems
+            // to fly in the face of logic. A reply requires a fingerprint message integrity
+            // and we can't construct that until we get the remote password.
+        }
+    }
+
+    fn stun_server_handle_request(&mut self, req: StunRequest) {
+        let remote_creds = self.remote_credentials().expect("Remote ICE creds");
+        if req.remote_username != remote_creds.username {
+            // this check can be delayed due to receiving STUN bind requests before we
+            // get the exchange on the signal level.
+            return;
+        }
+
+        // If the source transport address of the request does not match any
+        // existing remote candidates, it represents a new peer-reflexive remote
+        // candidate.
+        let found_in_remote = self
+            .remote_candidates
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.addr() == req.source);
+
+        let remote_idx = if let Some((idx, _)) = found_in_remote {
+            idx
+        } else {
+            // o  The priority is the value of the PRIORITY attribute in the Binding
+            //     request.
+            //
+            // o  The foundation is an arbitrary value, different from the
+            //     foundations of all other remote candidates.  If any subsequent
+            //     candidate exchanges contain this peer-reflexive candidate, it will
+            //     signal the actual foundation for the candidate.
+            //
+            // o  The component ID is the component ID of the local candidate to
+            //     which the request was sent.
+            let c = Candidate::peer_reflexive(
+                req.source,
+                req.source,
+                req.prio,
+                Some(REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION.into()),
+            );
+
+            // This candidate is added to the list of remote candidates.  However,
+            // the ICE agent does not pair this candidate with any local candidates.
+            self.remote_candidates.push(c);
+
+            self.remote_candidates.len() - 1
+        };
+
+        let local_idx = self
+            .local_candidates
+            .iter()
+            .enumerate()
+            .find(|(_, v)| {
+                // The local candidate will be
+                // either a host candidate (for cases where the request was not received
+                // through a relay) or a relayed candidate (for cases where it is
+                // received through a relay).  The local candidate can never be a
+                // server-reflexive candidate.
+                matches!(v.kind(), CandidateKind::Host | CandidateKind::Relayed)
+                    && v.addr() == req.destination
+            })
+            .expect(
+                "STUN request for destination socket that is neither a host candidate nor a relay",
+            )
+            .0;
+
+        let maybe_pair = self
+            .candidate_pairs
+            .iter_mut()
+            .find(|p| p.local_idx() == local_idx && p.remote_idx() == remote_idx);
+
+        if let Some(pair) = maybe_pair {
+            // When the pair is already on the checklist:
+
+            match pair.state() {
+                super::pair::CheckState::Succeeded => {
+                    // *  If the state of that pair is Succeeded, nothing further is done.
+                    //
+                }
+                super::pair::CheckState::InProgress => {
+                    // *  If the state of that pair is In-Progress, the agent cancels the
+                    //    In-Progress transaction.
+                    pair.reset_to_waiting();
+                }
+                super::pair::CheckState::Waiting => {
+                    // *  If the state of that pair is Waiting, Frozen, or Failed, the
+                    //    agent MUST enqueue the pair in the triggered checklist
+                    //    associated with the checklist (if not already present), and set
+                    //    the state of the pair to Waiting.
+                    pair.reset_to_waiting();
+                }
+            }
+        } else {
+            // If the pair is not already on the checklist:
+
+            let local = &self.local_candidates[local_idx];
+            let remote = &self.remote_candidates[remote_idx];
+            let prio = CandidatePair::calculate_prio(self.controlling, remote.prio(), local.prio());
+
+            // *  Its state is set to Waiting. (this is the default)
+            // *  The pair is inserted into the checklist based on its priority.
+            // *  The pair is enqueued into the triggered-check queue.
+            let pair = CandidatePair::new(local_idx, remote_idx, prio);
+            self.candidate_pairs.push(pair);
+            self.candidate_pairs.sort();
+        }
     }
 
     fn stun_client_handle_response(&mut self, now: Instant, message: StunMessage<'_>) {
@@ -581,15 +759,18 @@ impl IceAgent {
         // If the transport address does not match any of the local candidates
         // that the agent knows about, the mapped address represents a new
         // candidate: a peer-reflexive candidate.
-        let mapped_address = message.mapped_address();
+        let mapped_address = message
+            .mapped_address()
+            // This should be caught in the parsing.
+            .expect("Mapped address in STUN response");
 
-        let found_locally = self
+        let found_in_local = self
             .local_candidates
             .iter()
             .enumerate()
             .find(|(_, c)| c.addr() == mapped_address);
 
-        if let Some((idx, _)) = found_locally {
+        if let Some((idx, _)) = found_in_local {
             // Note, the valid_idx might not be the same as the local_idx that we
             // sent the request from. This might happen for hosts with asymmetric
             // routing, traffic leaving on one interface and responses coming back
@@ -615,7 +796,7 @@ impl IceAgent {
             let base = local_sent_from.base();
 
             // o  The type is peer reflexive.
-            let candidate = Candidate::peer_reflexive(mapped_address, base, prio);
+            let candidate = Candidate::peer_reflexive(mapped_address, base, prio, None);
 
             // The ICE agent does not need to pair the peer-reflexive candidate with
             // remote candidates.
@@ -703,7 +884,7 @@ mod test {
         assert!(x2);
 
         // this is redundant given we have the direct host candidate above.
-        let x1 = agent.add_local_candidate(Candidate::peer_reflexive(ipv4_1(), ipv4_1(), 1));
+        let x1 = agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_1(), ipv4_1()));
         assert!(x1 == false);
     }
 
@@ -715,7 +896,7 @@ mod test {
         // redundant when the agent is not behind a NAT.
 
         // this is contrived, but it is redundant when we add the host candidate below.
-        let x1 = agent.add_local_candidate(Candidate::peer_reflexive(ipv4_1(), ipv4_1(), 1));
+        let x1 = agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_1(), ipv4_1()));
         assert!(x1);
 
         let x2 = agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
@@ -737,10 +918,10 @@ mod test {
         // local 0
         agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
         // local 1
-        agent.add_local_candidate(Candidate::peer_reflexive(ipv4_4(), ipv4_2(), 1));
+        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_4(), ipv4_2()));
 
         // remote 0
-        agent.add_remote_candidate(Candidate::peer_reflexive(ipv4_4(), ipv4_3(), 2));
+        agent.add_remote_candidate(Candidate::test_peer_rflx(ipv4_4(), ipv4_3()));
         // remote 1
         agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
 
@@ -764,7 +945,7 @@ mod test {
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 
         // this local candidate is redundant an won't form a new pair.
-        agent.add_local_candidate(Candidate::peer_reflexive(ipv4_2(), ipv4_1(), 1));
+        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1()));
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
     }
@@ -775,7 +956,7 @@ mod test {
 
         agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
 
-        agent.add_local_candidate(Candidate::peer_reflexive(ipv4_2(), ipv4_1(), 1));
+        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1()));
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 
