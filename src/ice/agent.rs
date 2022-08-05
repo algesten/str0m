@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
+use crate::ice::pair::CheckState;
 use crate::id::random_id;
 use crate::{Datagram, Receive, Transmit, DATAGRAM_MTU};
 
@@ -18,7 +19,11 @@ pub enum IceError {
     BadCandidate(String),
 }
 
-const DEFAULT_TIMING_ADVANCE: Duration = Duration::from_millis(50);
+/// Timing advance (Ta) value.
+///
+/// ICE agents SHOULD use a default Ta value, 50 ms, but MAY use another
+/// value based on the characteristics of the associated data.
+const TIMING_ADVANCE: Duration = Duration::from_millis(50);
 
 #[derive(Debug)]
 pub struct IceAgent {
@@ -26,17 +31,6 @@ pub struct IceAgent {
     ///
     /// This drives the state forward.
     last_now: Option<Instant>,
-
-    /// Timing advance (Ta) value.
-    ///
-    /// ICE agents SHOULD use a default Ta value, 50 ms, but MAY use another
-    /// value based on the characteristics of the associated data.
-    ///
-    /// If an agent wants to use a Ta value other than the default value, the
-    /// agent MUST indicate the proposed value to its peer during the
-    /// establishment of the ICE session.  Both agents MUST use the higher
-    /// value of the proposed values.
-    timing_advance: Option<Duration>,
 
     /// Whether this agent is operating as ice-lite.
     ice_lite: bool,
@@ -77,6 +71,9 @@ pub struct IceAgent {
     /// Queue of incoming STUN requests we might have to queue up before we receive
     /// the remote_credentials.
     stun_server_queue: VecDeque<StunRequest>,
+
+    /// Time we have reason to check nominations.
+    scheduled_nomination_check: Option<Instant>,
 }
 
 #[derive(Debug)]
@@ -152,7 +149,6 @@ impl IceAgent {
 
         IceAgent {
             last_now: None,
-            timing_advance: None,
             ice_lite: false,
             max_candidate_pairs: None,
             local_credentials,
@@ -165,7 +161,13 @@ impl IceAgent {
             transmit: VecDeque::new(),
             events: VecDeque::new(),
             stun_server_queue: VecDeque::new(),
+            scheduled_nomination_check: None,
         }
+    }
+
+    #[doc(hidden)]
+    pub fn set_last_now(&mut self, now: Instant) {
+        self.last_now = Some(now);
     }
 
     /// Local ice credentials.
@@ -237,20 +239,6 @@ impl IceAgent {
     /// Current ice agent state.
     pub fn state(&self) -> IceConnectionState {
         self.state
-    }
-
-    /// Timing advance (Ta).
-    ///
-    /// Every time Ta
-    /// expires, the agent can generate another new STUN or TURN transaction.
-    /// This transaction can be either a retry of a previous transaction that
-    /// failed with a recoverable error (such as authentication failure) or a
-    /// transaction for a new host candidate and STUN or TURN server pair.
-    ///
-    /// The agent SHOULD NOT generate transactions more frequently than once
-    /// per each ta expiration.
-    fn timing_advance(&self) -> Duration {
-        self.timing_advance.unwrap_or(DEFAULT_TIMING_ADVANCE)
     }
 
     /// Adds a local candidate.
@@ -563,7 +551,7 @@ impl IceAgent {
     /// If no remote credentials have been set using `set_remote_credentials`, the remote
     /// username is not checked.
     pub fn accepts_message(&self, message: &StunMessage<'_>) -> bool {
-        debug!("Accepts message: {:?}", message);
+        debug!("Check if accepts message: {:?}", message);
 
         // The username for the credential is formed by concatenating the
         // username fragment provided by the peer with the username fragment of
@@ -641,7 +629,7 @@ impl IceAgent {
         // The generation of ordinary and triggered connectivity checks is
         // governed by timer Ta.
         if let Some(last_now) = self.last_now {
-            if now < last_now + self.timing_advance() {
+            if now < last_now + TIMING_ADVANCE {
                 debug!("Stop timeout within timing advance of last");
                 return;
             }
@@ -665,7 +653,16 @@ impl IceAgent {
 
             if let Some(req) = self.stun_server_queue.pop_front() {
                 debug!("Handle enqueued STUN request: {:?}", req);
-                self.stun_server_handle_request(req);
+                self.stun_server_handle_request(now, req);
+                return;
+            }
+        }
+
+        // do we have a scheduled nomination check?
+        if let Some(nom) = self.scheduled_nomination_check {
+            if now >= nom {
+                self.scheduled_nomination_check = None;
+                self.attempt_nomination();
                 return;
             }
         }
@@ -674,7 +671,11 @@ impl IceAgent {
         self.candidate_pairs.retain(|p| {
             let keep = p.is_still_possible(now);
             if !keep {
-                debug!("Remove failed pair: {:?}", p);
+                if p.is_nominated() {
+                    debug!("Remove nominated failed pair: {:?}", p);
+                } else {
+                    debug!("Remove failed pair: {:?}", p);
+                }
             }
             keep
         });
@@ -694,7 +695,8 @@ impl IceAgent {
 
         if let Some((idx, deadline)) = next {
             if now >= deadline {
-                debug!("Handle next triggered pair");
+                let pair = &self.candidate_pairs[idx];
+                debug!("Handle next triggered pair: {:?}", pair);
                 self.stun_client_binding_request(now, idx);
             } else {
                 debug!("Next triggered pair is in the future");
@@ -719,23 +721,26 @@ impl IceAgent {
         let last_now = self.last_now?;
 
         // when do we need to handle the next candidate pair?
-        let mut x = self
+        let maybe_binding = self
             .candidate_pairs
             .iter_mut()
             .map(|c| c.next_binding_attempt(last_now))
             .min();
 
+        let maybe_scheduled = self.scheduled_nomination_check;
+
+        let mut maybe_next = smallest(maybe_binding, maybe_scheduled);
+
         // Time must advance with at least Ta.
-        if let (Some(last_now), Some(n)) = (self.last_now, x) {
-            let ta = self.timing_advance();
-            if n < last_now + ta {
-                x = Some(last_now + ta);
+        if let (Some(last_now), Some(next)) = (self.last_now, maybe_next) {
+            if next < last_now + TIMING_ADVANCE {
+                maybe_next = Some(last_now + TIMING_ADVANCE);
             }
         }
 
-        debug!("Next timeout is: {:?}", x);
+        debug!("Next timeout is: {:?}", maybe_next);
 
-        x
+        maybe_next
     }
 
     pub fn poll_event(&mut self) -> Option<IceAgentEvent> {
@@ -757,6 +762,10 @@ impl IceAgent {
             .expect("STUN request prio");
         let use_candidate = message.use_candidate();
 
+        if use_candidate {
+            trace!("Binding request sent USE-CANDIDATE");
+        }
+
         let mut trans_id = [0_u8; 12];
         trans_id.copy_from_slice(message.trans_id());
 
@@ -776,7 +785,7 @@ impl IceAgent {
         };
 
         if self.remote_credentials.is_some() {
-            self.stun_server_handle_request(req);
+            self.stun_server_handle_request(now, req);
         } else {
             debug!(
                 "Enqueue STUN request due to missing remote credentials: {:?}",
@@ -807,7 +816,7 @@ impl IceAgent {
         }
     }
 
-    fn stun_server_handle_request(&mut self, req: StunRequest) {
+    fn stun_server_handle_request(&mut self, now: Instant, req: StunRequest) {
         let remote_creds = self.remote_credentials().expect("Remote ICE creds");
         if req.remote_username != remote_creds.username {
             // this check can be delayed due to receiving STUN bind requests before we
@@ -857,7 +866,10 @@ impl IceAgent {
                 Some(REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION.into()),
             );
 
-            debug!("Created temp remote candidate for STUN request: {:?}", c);
+            debug!(
+                "Created peer reflexive remote candidate from STUN request: {:?}",
+                c
+            );
 
             // This candidate is added to the list of remote candidates.  However,
             // the ICE agent does not pair this candidate with any local candidates.
@@ -895,24 +907,11 @@ impl IceAgent {
             // When the pair is already on the checklist:
             debug!("Found existing pair for STUN request: {:?}", pair);
 
-            match pair.state() {
-                super::pair::CheckState::Succeeded => {
-                    // *  If the state of that pair is Succeeded, nothing further is done.
-                    //
-                }
-                super::pair::CheckState::InProgress => {
-                    // *  If the state of that pair is In-Progress, the agent cancels the
-                    //    In-Progress transaction.
-                    pair.reset_to_waiting();
-                }
-                super::pair::CheckState::Waiting => {
-                    // *  If the state of that pair is Waiting, Frozen, or Failed, the
-                    //    agent MUST enqueue the pair in the triggered checklist
-                    //    associated with the checklist (if not already present), and set
-                    //    the state of the pair to Waiting.
-                    pair.reset_to_waiting();
-                }
-            }
+            // TODO: The spec has all these ideas about resetting to Waiting state
+            // for the candidate pair. I think that's to do speeding up the triggered
+            // checks if a nomination comes through. It doesn't seem to make much
+            // sense in this implementation, where a nomination jumps the queue.
+            // https://datatracker.ietf.org/doc/html/rfc8445#section-7.3.1.4
         } else {
             // If the pair is not already on the checklist:
             let local = &self.local_candidates[local_idx];
@@ -932,10 +931,27 @@ impl IceAgent {
 
         let pair = self
             .candidate_pairs
-            .iter()
+            .iter_mut()
             .find(|p| p.local_idx() == local_idx && p.remote_idx() == remote_idx)
             // unwrap is fine since we have inserted a pair if it was missing.
             .unwrap();
+
+        pair.increase_remote_binding_requests();
+
+        if self.controlling
+            && !pair.is_nominated()
+            && pair.state() == CheckState::Succeeded
+            && self.scheduled_nomination_check.is_none()
+        {
+            trace!("Schedule nomination check on request");
+            self.scheduled_nomination_check = Some(now + TIMING_ADVANCE);
+        }
+
+        if !self.controlling && req.use_candidate && !pair.is_nominated() {
+            // This results in answering a nomination request with a binding
+            // request in the other direction.
+            pair.nominate();
+        }
 
         let local = pair.local_candidate(&self.local_candidates);
         let remote = pair.remote_candidate(&self.remote_candidates);
@@ -969,11 +985,18 @@ impl IceAgent {
         let local = pair.local_candidate(&self.local_candidates);
         let remote = pair.remote_candidate(&self.remote_candidates);
         let prio = local.prio_prflx();
+        // Only the controlling side sends USE-CANDIDATE.
+        let use_candidate = self.controlling && pair.is_nominated();
 
         let trans_id = pair.new_attempt(now);
 
-        let binding =
-            StunMessage::binding_request(&username, trans_id, self.controlling, prio, false);
+        let binding = StunMessage::binding_request(
+            &username,
+            trans_id,
+            self.controlling,
+            prio,
+            use_candidate,
+        );
 
         debug!("Send STUN request: {:?}", binding);
 
@@ -1027,7 +1050,7 @@ impl IceAgent {
             .enumerate()
             .find(|(_, c)| c.addr() == mapped_address);
 
-        if let Some((idx, _)) = found_in_local {
+        let (pair, valid_idx) = if let Some((valid_idx, _)) = found_in_local {
             // Note, the valid_idx might not be the same as the local_idx that we
             // sent the request from. This might happen for hosts with asymmetric
             // routing, traffic leaving on one interface and responses coming back
@@ -1036,7 +1059,7 @@ impl IceAgent {
                 "Found local candidate for mapped address: {}",
                 mapped_address
             );
-            pair.record_binding_response(now, trans_id, idx);
+            (pair, valid_idx)
         } else {
             let local_sent_from = pair.local_candidate(&self.local_candidates);
 
@@ -1078,7 +1101,34 @@ impl IceAgent {
 
             let idx = self.local_candidates.len() - 1;
 
-            pair.record_binding_response(now, trans_id, idx);
+            (pair, idx)
+        };
+
+        pair.record_binding_response(now, trans_id, valid_idx);
+
+        if self.controlling
+            && !pair.is_nominated()
+            && pair.remote_binding_requests() > 0
+            && self.scheduled_nomination_check.is_none()
+        {
+            trace!("Schedule nomination check on reply");
+            self.scheduled_nomination_check = Some(now + TIMING_ADVANCE);
+        }
+    }
+
+    fn attempt_nomination(&mut self) {
+        debug!("Attempt nomimation");
+
+        let best = self
+            .candidate_pairs
+            .iter_mut()
+            .filter(|p| p.state() == CheckState::Succeeded && p.remote_binding_requests() > 0)
+            .max_by_key(|p| p.prio());
+
+        if let Some(best) = best {
+            if !best.is_nominated() {
+                best.nominate();
+            }
         }
     }
 
@@ -1242,6 +1292,21 @@ mod test {
         agent.handle_timeout(now1);
         let now2 = agent.poll_timeout().unwrap();
 
-        assert!(now2 - now1 == DEFAULT_TIMING_ADVANCE);
+        assert!(now2 - now1 == TIMING_ADVANCE);
+    }
+}
+
+fn smallest(t1: Option<Instant>, t2: Option<Instant>) -> Option<Instant> {
+    match (t1, t2) {
+        (None, None) => None,
+        (None, Some(v2)) => Some(v2),
+        (Some(v1), None) => Some(v1),
+        (Some(v1), Some(v2)) => {
+            if v1 < v2 {
+                Some(v1)
+            } else {
+                Some(v2)
+            }
+        }
     }
 }

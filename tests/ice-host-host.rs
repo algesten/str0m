@@ -1,9 +1,10 @@
 use std::convert::TryFrom;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use common::init_log;
 use ice_common::sock;
 use str0m::{Candidate, IceAgent, Receive};
+use tracing::{info_span, Span};
 
 mod common;
 mod ice_common;
@@ -11,21 +12,22 @@ mod ice_common;
 fn host(s: impl Into<String>) -> Candidate {
     Candidate::host(sock(s)).unwrap()
 }
-pub fn progress(now: Instant, f: &mut IceAgent, t: &mut IceAgent) -> Instant {
-    f.handle_timeout(now);
+pub fn progress(now: Instant, f: &mut IceAgent, t: &mut IceAgent, sf: &Span, st: &Span) -> Instant {
+    sf.in_scope(|| f.handle_timeout(now));
 
-    while let Some(trans) = f.poll_transmit() {
+    while let Some(trans) = sf.in_scope(|| f.poll_transmit()) {
         println!("forward: {} -> {}", trans.source, trans.destination);
-        t.handle_receive(now, Receive::try_from(&trans).unwrap());
+        st.in_scope(|| t.handle_receive(now, Receive::try_from(&trans).unwrap()));
     }
 
-    let timeout = f.poll_timeout();
+    let tim_f = sf.in_scope(|| f.poll_timeout());
+    let tim_t = st.in_scope(|| t.poll_timeout());
 
-    while let Some(v) = f.poll_event() {
+    while let Some(v) = sf.in_scope(|| f.poll_event()) {
         println!("Polled event: {:?}", v);
     }
 
-    timeout.unwrap()
+    tim_f.unwrap().min(tim_t.unwrap())
 }
 
 #[test]
@@ -50,6 +52,18 @@ pub fn host_host() {
 
     let now = Instant::now();
 
-    let now = progress(now, &mut a1, &mut a2);
-    let now = progress(now, &mut a2, &mut a1);
+    a1.set_last_now(now - Duration::from_millis(100));
+    a2.set_last_now(now - Duration::from_millis(100));
+
+    let span1 = info_span!("L");
+    let span2 = info_span!("R");
+
+    let now = progress(now, &mut a1, &mut a2, &span1, &span2);
+    let now = progress(now, &mut a2, &mut a1, &span2, &span1);
+    let now = progress(now, &mut a1, &mut a2, &span1, &span2);
+    let now = progress(now, &mut a2, &mut a1, &span2, &span1);
+    let now = progress(now, &mut a1, &mut a2, &span1, &span2);
+    let now = progress(now, &mut a2, &mut a1, &span2, &span1);
+    let now = progress(now, &mut a1, &mut a2, &span1, &span2);
+    let now = progress(now, &mut a2, &mut a1, &span2, &span1);
 }

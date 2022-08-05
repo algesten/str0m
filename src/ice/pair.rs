@@ -1,13 +1,13 @@
 use std::collections::VecDeque;
 use std::fmt;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::id::random_id;
 use crate::Candidate;
 
 use super::stun::{stun_resend_delay, STUN_MAX_RETRANS};
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 /// A pair of candidates, local and remote, in the ice agent.
 pub struct CandidatePair {
     /// Index into the local_candidates list in IceAgent.
@@ -35,6 +35,12 @@ pub struct CandidatePair {
     /// The next time we are to do a binding attempt, cached, since we
     /// potentially recalculate this many times per second otherwise.
     cached_next_attempt_time: Option<Instant>,
+
+    /// Number of remote binding requests we seen for this pair.
+    remote_binding_requests: u64,
+
+    /// State of nomination for this candidate pair.
+    nomination_state: NominationState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -61,6 +67,20 @@ pub enum CheckState {
     // Failed,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum NominationState {
+    /// This pair has not been nominated.
+    #[default]
+    None,
+    /// The pair has been nominated. The binding request for the
+    /// nomination has not been sent.
+    Nominated,
+    /// The binding request is sent.
+    Attempt,
+    /// Successful nomination. Received a reply for the transaction id.
+    Success,
+}
+
 pub struct BindingAttempt {
     /// The transaction id used in the STUN binding request.
     ///
@@ -72,6 +92,9 @@ pub struct BindingAttempt {
 
     /// The time we got a binding response, if ever.
     respone_recv: Option<Instant>,
+
+    /// Whether the binding attempt is nominated.
+    nominated: bool,
 }
 
 impl CandidatePair {
@@ -129,6 +152,29 @@ impl CandidatePair {
         self.state
     }
 
+    pub fn increase_remote_binding_requests(&mut self) {
+        self.remote_binding_requests += 1;
+        trace!("Remote binding requests: {}", self.remote_binding_requests);
+    }
+
+    pub fn remote_binding_requests(&self) -> u64 {
+        self.remote_binding_requests
+    }
+
+    pub fn is_nominated(&self) -> bool {
+        !matches!(self.nomination_state, NominationState::None)
+    }
+
+    pub fn is_nomination_success(&self) -> bool {
+        matches!(self.nomination_state, NominationState::Success)
+    }
+
+    pub fn nominate(&mut self) {
+        assert!(self.nomination_state == NominationState::None);
+        self.nomination_state = NominationState::Nominated;
+        debug!("Nominating pair: {:?}", self);
+    }
+
     /// Records a new binding request attempt.
     ///
     /// Returns the transaction id to use in the STUN message.
@@ -136,10 +182,16 @@ impl CandidatePair {
         // calculate a new time
         self.cached_next_attempt_time = None;
 
+        if matches!(self.nomination_state, NominationState::Nominated) {
+            debug!("Nominated attempt STUN binding: {:?}", self);
+            self.nomination_state = NominationState::Attempt;
+        }
+
         let attempt = BindingAttempt {
             trans_id: random_id().into_array(),
             request_sent: now,
             respone_recv: None,
+            nominated: self.is_nominated(),
         };
 
         self.binding_attempts.push_back(attempt);
@@ -186,6 +238,11 @@ impl CandidatePair {
 
         attempt.respone_recv = Some(now);
 
+        if attempt.nominated && self.nomination_state == NominationState::Attempt {
+            self.nomination_state = NominationState::Success;
+            debug!("Nomination success: {:?}", self);
+        }
+
         if self.state == CheckState::InProgress {
             trace!(
                 "Check state: {:?} -> {:?}",
@@ -213,7 +270,10 @@ impl CandidatePair {
             return cached;
         }
 
-        let next = if let Some(last) = self.last_attempt_time() {
+        let next = if matches!(self.nomination_state, NominationState::Nominated) {
+            // Cheating a bit to make the nomination "skip the queue".
+            now - Duration::from_secs(60)
+        } else if let Some(last) = self.last_attempt_time() {
             let send_count = self.binding_attempts.len();
             last + stun_resend_delay(send_count)
         } else {
@@ -247,29 +307,6 @@ impl CandidatePair {
             now < cutoff
         }
     }
-
-    pub(crate) fn reset_to_waiting(&mut self) {
-        debug!("Reset pair to waiting state: {:?}", self);
-        //    Cancellation means that the agent
-        //    will not retransmit the Binding requests associated with the
-        //    connectivity-check transaction, will not treat the lack of
-        //    response to be a failure, but will wait the duration of the
-        //    transaction timeout for a response.  In addition, the agent
-        //    MUST enqueue the pair ... in order to trigger a new connectivity
-        //    check of the pair.
-        //
-        //    Creating a new connectivity check enables validating
-        //    In-Progress pairs as soon as possible, without having to wait
-        //    for retransmissions of the Binding requests associated with the
-        //    original connectivity-check transaction.
-        //
-        //    Note that a state change of the pair from Failed to Waiting
-        //    might also trigger a state change of the associated checklist.
-        trace!("Check state: {:?} -> {:?}", self.state, CheckState::Waiting);
-        self.state = CheckState::Waiting;
-        self.binding_attempts.clear();
-        self.cached_next_attempt_time = None;
-    }
 }
 
 impl PartialEq for CandidatePair {
@@ -301,5 +338,21 @@ impl fmt::Debug for BindingAttempt {
             .field("request_sent", &self.request_sent)
             .field("respone_recv", &self.respone_recv)
             .finish()
+    }
+}
+
+impl fmt::Debug for CandidatePair {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "CandidatePair({}-{} prio={} state={:?} attempts={} remote={} nom={:?})",
+            self.local_idx,
+            self.remote_idx,
+            self.prio,
+            self.state,
+            self.binding_attempts.len(),
+            self.remote_binding_requests,
+            self.nomination_state
+        )
     }
 }

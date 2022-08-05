@@ -50,8 +50,8 @@ pub enum StunError {
 
 #[derive(Clone)]
 pub struct StunMessage<'a> {
-    class: Class,
     method: Method,
+    class: Class,
     trans_id: &'a [u8],
     attrs: Vec<Attribute<'a>>,
     integrity: &'a [u8],
@@ -441,6 +441,7 @@ impl<'a> Attribute<'a> {
                     20
                 }
             }
+            UseCandidate => 0,
             _ => panic!("No length for: {:?}", self),
         }
     }
@@ -488,6 +489,10 @@ impl<'a> Attribute<'a> {
                 vec.write_all(&0x0020_u16.to_be_bytes())?;
                 vec.write_all(&((len as u16).to_be_bytes()))?;
                 vec.write_all(&buf[0..len])?;
+            }
+            UseCandidate => {
+                vec.write_all(&0x0025_u16.to_be_bytes())?;
+                vec.write_all(&0_u16.to_be_bytes())?;
             }
             _ => panic!("Can't write bytes for: {:?}", self),
         }
@@ -729,8 +734,8 @@ pub fn hmac_sha1(secret: &[u8], payload: &[u8]) -> [u8; 20] {
 impl<'a> fmt::Debug for StunMessage<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("StunMessage")
-            .field("class", &self.class)
             .field("method", &self.method)
+            .field("class", &self.class)
             .field("trans_id_len", &self.trans_id.len())
             .field("attrs", &self.attrs)
             .field("integrity_len", &self.integrity.len())
