@@ -1,19 +1,17 @@
 use std::convert::TryFrom;
 use std::time::Instant;
 
+use common::init_log;
 use ice_common::sock;
-use str0m::{Candidate, IceAgent, IceAgentEvent, Receive};
+use str0m::{Candidate, IceAgent, Receive};
 
+mod common;
 mod ice_common;
 
 fn host(s: impl Into<String>) -> Candidate {
     Candidate::host(sock(s)).unwrap()
 }
-pub fn progress(
-    now: Instant,
-    f: &mut IceAgent,
-    t: &mut IceAgent,
-) -> (Instant, Option<IceAgentEvent>) {
+pub fn progress(now: Instant, f: &mut IceAgent, t: &mut IceAgent) -> Instant {
     f.handle_timeout(now);
 
     if let Some(trans) = f.poll_transmit() {
@@ -23,13 +21,15 @@ pub fn progress(
 
     let timeout = f.poll_timeout();
 
-    let event = f.poll_event();
+    f.poll_event();
 
-    (timeout.unwrap(), event)
+    timeout.unwrap()
 }
 
 #[test]
 pub fn host_host() {
+    init_log();
+
     let mut a1 = IceAgent::new();
     let mut a2 = IceAgent::new();
     let h1 = host("1.1.1.1:4000");
@@ -46,7 +46,7 @@ pub fn host_host() {
     a1.set_controlling(true);
     a2.set_controlling(false);
 
-    let now = Instant::now();
+    let now1 = Instant::now();
 
-    let (now, event) = progress(now, &mut a1, &mut a2);
+    let now1 = progress(now1, &mut a1, &mut a2);
 }

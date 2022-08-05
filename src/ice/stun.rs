@@ -458,8 +458,13 @@ impl<'a> Attribute<'a> {
                     vec.write_all(&[0])?;
                 }
             }
-            IceControlled(v) | IceControlling(v) => {
+            IceControlled(v) => {
                 vec.write_all(&0x8029_u16.to_be_bytes())?;
+                vec.write_all(&8_u16.to_be_bytes())?;
+                vec.write_all(&v.to_be_bytes())?;
+            }
+            IceControlling(v) => {
+                vec.write_all(&0x802a_u16.to_be_bytes())?;
                 vec.write_all(&8_u16.to_be_bytes())?;
                 vec.write_all(&v.to_be_bytes())?;
             }

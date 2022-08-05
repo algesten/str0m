@@ -18,6 +18,8 @@ pub enum IceError {
     BadCandidate(String),
 }
 
+const DEFAULT_TIMING_ADVANCE: Duration = Duration::from_millis(50);
+
 #[derive(Debug)]
 pub struct IceAgent {
     /// Last time handle_timeout run (paced by timing_advance).
@@ -241,7 +243,7 @@ impl IceAgent {
     /// The agent SHOULD NOT generate transactions more frequently than once
     /// per each ta expiration.
     fn timing_advance(&self) -> Duration {
-        self.timing_advance.unwrap_or(Duration::from_millis(50))
+        self.timing_advance.unwrap_or(DEFAULT_TIMING_ADVANCE)
     }
 
     /// Adds a local candidate.
@@ -407,7 +409,6 @@ impl IceAgent {
             *existing = c;
             idx
         } else {
-            debug!("Add new peer reflexive candidate: {:?}", c);
             self.remote_candidates.push(c);
             self.remote_candidates.len() - 1
         };
@@ -665,6 +666,11 @@ impl IceAgent {
             keep
         });
 
+        if self.remote_credentials.is_none() {
+            trace!("Stop timeout due to missing remote credentials");
+            return;
+        }
+
         // when do we need to handle the next candidate pair?
         let next = self
             .candidate_pairs
@@ -700,13 +706,22 @@ impl IceAgent {
         let last_now = self.last_now?;
 
         // when do we need to handle the next candidate pair?
-        let x = self
+        let mut x = self
             .candidate_pairs
             .iter_mut()
             .map(|c| c.next_binding_attempt(last_now))
             .min();
 
+        // Time must advance with at least Ta.
+        if let (Some(last_now), Some(n)) = (self.last_now, x) {
+            let ta = self.timing_advance();
+            if n < last_now + ta {
+                x = Some(last_now + ta);
+            }
+        }
+
         debug!("Next timeout is: {:?}", x);
+
         x
     }
 
@@ -911,7 +926,7 @@ impl IceAgent {
 
         let (username, password) = self.stun_credentials(true);
 
-        let reply = StunMessage::reply(&username, &req.trans_id, req.destination);
+        let reply = StunMessage::reply(&username, &req.trans_id, req.source);
 
         debug!("Send STUN reply: {:?}", reply);
 
@@ -1198,5 +1213,18 @@ mod test {
         agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
 
         assert_eq!(agent.pair_indexes(), [(1, 0)]);
+    }
+
+    #[test]
+    fn poll_time_must_timing_advance() {
+        let mut agent = IceAgent::new();
+        agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
+        agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
+
+        let now1 = Instant::now();
+        agent.handle_timeout(now1);
+        let now2 = agent.poll_timeout().unwrap();
+
+        assert!(now2 - now1 == DEFAULT_TIMING_ADVANCE);
     }
 }
