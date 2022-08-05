@@ -369,6 +369,9 @@ impl IceAgent {
             .map(|(i, _)| i)
             .collect();
 
+        self.events
+            .push_back(IceAgentEvent::NewLocalCandidate(c.clone()));
+
         self.local_candidates.push(c);
 
         let local_idxs = [self.local_candidates.len() - 1];
@@ -810,7 +813,7 @@ impl IceAgent {
             // this check can be delayed due to receiving STUN bind requests before we
             // get the exchange on the signal level.
             debug!(
-                "STUN request rejected, remote user mismatch (delayed): {} != {}",
+                "STUN request rejected, remote user mismatch (enqueued): {} != {}",
                 req.remote_username, remote_creds.username
             );
             return;
@@ -842,17 +845,19 @@ impl IceAgent {
             //     foundations of all other remote candidates.  If any subsequent
             //     candidate exchanges contain this peer-reflexive candidate, it will
             //     signal the actual foundation for the candidate.
-            //
-            // o  The component ID is the component ID of the local candidate to
-            //     which the request was sent.
             let c = Candidate::peer_reflexive(
                 req.source,
                 req.source,
                 req.prio,
+                // TODO: REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION should probably have
+                // a counter to really make it "different from the foundations of
+                // all other remote candidates".
+                // In practice it might no matter since we don't do the frozen-waiting
+                // dance for candidate pairs.
                 Some(REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION.into()),
             );
 
-            debug!("Created temporary candidate for STUN request: {:?}", c);
+            debug!("Created temp remote candidate for STUN request: {:?}", c);
 
             // This candidate is added to the list of remote candidates.  However,
             // the ICE agent does not pair this candidate with any local candidates.
@@ -874,7 +879,7 @@ impl IceAgent {
                 matches!(v.kind(), CandidateKind::Host | CandidateKind::Relayed)
                     && v.addr() == req.destination
             })
-            // Receiving traffic for an IP address that neither is a HOST or RELAY is a configuration
+            // Receiving traffic for an IP address that neither is a HOST nor RELAY is a configuration
             // fault. We need to be aware of the interfaces that the ice agent is connected to.
             .expect(
                 "STUN request for socket that is neither a host nor a relay candidate. This is a config error.",
@@ -1089,6 +1094,7 @@ impl IceAgent {
 #[derive(Debug)]
 pub enum IceAgentEvent {
     IceConnectionStateChange(IceConnectionState),
+    NewLocalCandidate(Candidate),
 }
 
 #[cfg(test)]

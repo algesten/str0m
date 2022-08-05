@@ -14,14 +14,16 @@ fn host(s: impl Into<String>) -> Candidate {
 pub fn progress(now: Instant, f: &mut IceAgent, t: &mut IceAgent) -> Instant {
     f.handle_timeout(now);
 
-    if let Some(trans) = f.poll_transmit() {
+    while let Some(trans) = f.poll_transmit() {
         println!("forward: {} -> {}", trans.source, trans.destination);
         t.handle_receive(now, Receive::try_from(&trans).unwrap());
     }
 
     let timeout = f.poll_timeout();
 
-    f.poll_event();
+    while let Some(v) = f.poll_event() {
+        println!("Polled event: {:?}", v);
+    }
 
     timeout.unwrap()
 }
