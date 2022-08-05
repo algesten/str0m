@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::fmt;
 use std::time::Instant;
 
 use crate::id::random_id;
@@ -60,7 +61,6 @@ pub enum CheckState {
     // Failed,
 }
 
-#[derive(Debug)]
 pub struct BindingAttempt {
     /// The transaction id used in the STUN binding request.
     ///
@@ -292,5 +292,14 @@ impl Ord for CandidatePair {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // reverse since we want highest prio first.
         self.prio.cmp(&other.prio).reverse()
+    }
+}
+
+impl fmt::Debug for BindingAttempt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BindingAttempt")
+            .field("request_sent", &self.request_sent)
+            .field("respone_recv", &self.respone_recv)
+            .finish()
     }
 }

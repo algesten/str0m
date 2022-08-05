@@ -1,13 +1,15 @@
+use std::fmt;
+use std::io::Write;
+use std::net::IpAddr;
+use std::net::SocketAddr;
+use std::time::Duration;
+
 use crc::{Crc, CRC_32_ISO_HDLC};
 use hmac::Hmac;
 use hmac::Mac;
 use hmac::NewMac;
 use rand::prelude::*;
 use sha1::Sha1;
-use std::io::Write;
-use std::net::IpAddr;
-use std::net::SocketAddr;
-use std::time::Duration;
 use thiserror::Error;
 
 // Consult libwebrtc for default values here.
@@ -46,7 +48,7 @@ pub enum StunError {
     Other(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StunMessage<'a> {
     class: Class,
     method: Method,
@@ -324,7 +326,7 @@ impl Method {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Attribute<'a> {
     MappedAddress,                // TODO
     Username(&'a str),            // < 128 utf8 chars
@@ -722,4 +724,48 @@ pub fn hmac_sha1(secret: &[u8], payload: &[u8]) -> [u8; 20] {
     hmac.update(payload);
     let comp = hmac.finalize().into_bytes();
     comp.into()
+}
+
+impl<'a> fmt::Debug for StunMessage<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StunMessage")
+            .field("class", &self.class)
+            .field("method", &self.method)
+            .field("trans_id_len", &self.trans_id.len())
+            .field("attrs", &self.attrs)
+            .field("integrity_len", &self.integrity.len())
+            .finish()
+    }
+}
+
+impl<'a> fmt::Debug for Attribute<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MappedAddress => write!(f, "MappedAddress"),
+            Self::Username(arg0) => f.debug_tuple("Username").field(arg0).finish(),
+            Self::MessageIntegrity(_) => f.debug_tuple("MessageIntegrity(_)").finish(),
+            Self::MessageIntegrityMark => write!(f, "MessageIntegrityMark"),
+            Self::ErrorCode(arg0, arg1) => {
+                f.debug_tuple("ErrorCode").field(arg0).field(arg1).finish()
+            }
+            Self::UnknownAttributes => write!(f, "UnknownAttributes"),
+            Self::Realm(arg0) => f.debug_tuple("Realm").field(arg0).finish(),
+            Self::Nonce(arg0) => f.debug_tuple("Nonce").field(arg0).finish(),
+            Self::XorMappedAddress(arg0) => f.debug_tuple("XorMappedAddress").field(arg0).finish(),
+            Self::Software(arg0) => f.debug_tuple("Software").field(arg0).finish(),
+            Self::AlternateServer => write!(f, "AlternateServer"),
+            Self::Fingerprint(arg0) => f.debug_tuple("Fingerprint").field(arg0).finish(),
+            Self::FingerprintMark => write!(f, "FingerprintMark"),
+            Self::Priority(arg0) => f.debug_tuple("Priority").field(arg0).finish(),
+            Self::UseCandidate => write!(f, "UseCandidate"),
+            Self::IceControlled(arg0) => f.debug_tuple("IceControlled").field(arg0).finish(),
+            Self::IceControlling(arg0) => f.debug_tuple("IceControlling").field(arg0).finish(),
+            Self::NetworkCost(arg0, arg1) => f
+                .debug_tuple("NetworkCost")
+                .field(arg0)
+                .field(arg1)
+                .finish(),
+            Self::Unknown(arg0) => f.debug_tuple("Unknown").field(arg0).finish(),
+        }
+    }
 }

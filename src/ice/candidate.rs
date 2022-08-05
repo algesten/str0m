@@ -10,7 +10,7 @@ use crate::SdpError;
 use super::IceError;
 
 /// An ICE candidate.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Candidate {
     /// An arbitrary string used in the freezing algorithm to
     /// group similar candidates.
@@ -66,6 +66,25 @@ pub struct Candidate {
     /// If we discarded this candidate (for example due to being redundant
     /// against another candidate).
     discarded: bool,
+}
+
+impl fmt::Debug for Candidate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Candidate({}={}", self.kind, self.addr)?;
+        if let Some(base) = self.base {
+            if base != self.addr {
+                write!(f, " base={}", base)?;
+            }
+        }
+        if let Some(raddr) = self.raddr {
+            write!(f, " raddr={}", raddr)?;
+        }
+        write!(f, " prio={}", self.prio())?;
+        if self.discarded {
+            write!(f, " discarded")?;
+        }
+        write!(f, ")")
+    }
 }
 
 impl Candidate {

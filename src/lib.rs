@@ -4,6 +4,7 @@
 extern crate tracing;
 
 use std::convert::TryFrom;
+use std::fmt;
 use std::io;
 use std::net::SocketAddr;
 
@@ -32,7 +33,6 @@ pub enum Error {
     Io(#[from] io::Error),
 }
 
-#[derive(Debug)]
 /// An outgoing packet
 pub struct Transmit {
     /// The source socket this packet should be sent from.
@@ -145,5 +145,15 @@ impl<'a> TryFrom<&'a Transmit> for Receive<'a> {
             destination: t.destination,
             contents: Datagram::try_from(&t.contents[..])?,
         })
+    }
+}
+
+impl fmt::Debug for Transmit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Transmit")
+            .field("source", &self.source)
+            .field("destination", &self.destination)
+            .field("len", &self.contents.len())
+            .finish()
     }
 }
