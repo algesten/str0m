@@ -191,6 +191,9 @@ impl IceAgent {
     ///
     /// The password is equal to the password provided by the peer.
     ///
+    /// The responses utilize the same usernames and passwords as the requests
+    /// (note that the USERNAME attribute is not present in the response).
+    ///
     /// ### Panics
     ///
     /// Panics if there are no remote credentials set.
@@ -202,13 +205,17 @@ impl IceAgent {
         let local = &self.local_credentials;
 
         let (left, right) = if reply {
-            (&local.username, &peer.username)
+            ("not_used", "not_used")
         } else {
-            (&peer.username, &local.username)
+            (&peer.username[..], &local.username[..])
         };
 
         let username = format!("{}:{}", left, right);
-        let password = peer.password.clone();
+        let password = if reply {
+            local.password.clone()
+        } else {
+            peer.password.clone()
+        };
 
         (username, password)
     }
@@ -558,29 +565,32 @@ impl IceAgent {
         // The username for the credential is formed by concatenating the
         // username fragment provided by the peer with the username fragment of
         // the ICE agent sending the request, separated by a colon (":").
-        let (local, remote) = message.split_username();
+        if message.is_binding_request() {
+            // The existence of USERNAME is checked in the STUN parser.
+            let (local, remote) = message.split_username().unwrap();
 
-        let local_creds = self.local_credentials();
-        if local != local_creds.username {
-            debug!(
-                "Message rejected, local user mismatch: {} != {}",
-                local, local_creds.username
-            );
-            return false;
-        }
-
-        if let Some(remote_creds) = self.remote_credentials() {
-            if remote != remote_creds.username {
+            let local_creds = self.local_credentials();
+            if local != local_creds.username {
                 debug!(
-                    "Message rejected, remote user mismatch: {} != {}",
-                    remote, remote_creds.username
+                    "Message rejected, local user mismatch: {} != {}",
+                    local, local_creds.username
                 );
                 return false;
             }
+
+            if let Some(remote_creds) = self.remote_credentials() {
+                if remote != remote_creds.username {
+                    debug!(
+                        "Message rejected, remote user mismatch: {} != {}",
+                        remote, remote_creds.username
+                    );
+                    return false;
+                }
+            }
         }
 
-        // The password is equal to the password provided by the peer.
-        if !message.check_integrity(&local_creds.password) {
+        let (_, password) = self.stun_credentials(!message.is_response());
+        if !message.check_integrity(&password) {
             debug!("Message rejected, integrity check failed");
             return false;
         }
@@ -747,7 +757,8 @@ impl IceAgent {
         let mut trans_id = [0_u8; 12];
         trans_id.copy_from_slice(message.trans_id());
 
-        let (_, remote_username) = message.split_username();
+        // The existence of USERNAME is checked by the STUN parser.
+        let (_, remote_username) = message.split_username().unwrap();
 
         // Because we might have to delay stun requests until we receive the remote
         // credentials, we extract all relevant bits of information so it can be owned.
@@ -924,9 +935,9 @@ impl IceAgent {
         let local = pair.local_candidate(&self.local_candidates);
         let remote = pair.remote_candidate(&self.remote_candidates);
 
-        let (username, password) = self.stun_credentials(true);
+        let (_, password) = self.stun_credentials(true);
 
-        let reply = StunMessage::reply(&username, &req.trans_id, req.source);
+        let reply = StunMessage::reply(&req.trans_id, req.source);
 
         debug!("Send STUN reply: {:?}", reply);
 

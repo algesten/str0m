@@ -103,15 +103,14 @@ impl<'a> StunMessage<'a> {
         // buffer from beginning including header (+20) to where message-integrity starts.
         let integrity = &buf[0..(message_integrity_offset + 20)];
 
-        if attrs.split_username().is_none() {
-            return Err(StunError::Parse("STUN packet missing username".into()));
-        }
-
         if method == Method::Binding && class == Class::Success {
             if attrs.mapped_address().is_none() {
                 return Err(StunError::Parse("STUN packet missing mapped addr".into()));
             }
         } else if method == Method::Binding && class == Class::Request {
+            if attrs.split_username().is_none() {
+                return Err(StunError::Parse("STUN packet missing username".into()));
+            }
             if attrs.prio().is_none() {
                 return Err(StunError::Parse("STUN packet missing mapped addr".into()));
             }
@@ -128,6 +127,10 @@ impl<'a> StunMessage<'a> {
 
     pub fn is_binding_request(&self) -> bool {
         self.method == Method::Binding && self.class == Class::Request
+    }
+
+    pub fn is_response(&self) -> bool {
+        matches!(self.class, Class::Success | Class::Failure)
     }
 
     pub fn is_successful_binding_response(&self) -> bool {
@@ -171,17 +174,12 @@ impl<'a> StunMessage<'a> {
         m
     }
 
-    pub fn reply(
-        username: &'a str,
-        trans_id: &'a [u8; 12],
-        mapped_address: SocketAddr,
-    ) -> StunMessage<'a> {
+    pub fn reply(trans_id: &'a [u8; 12], mapped_address: SocketAddr) -> StunMessage<'a> {
         StunMessage {
             class: Class::Success,
             method: Method::Binding,
             trans_id,
             attrs: vec![
-                Attribute::Username(username),
                 Attribute::XorMappedAddress(mapped_address),
                 Attribute::MessageIntegrityMark,
                 Attribute::FingerprintMark,
@@ -190,9 +188,8 @@ impl<'a> StunMessage<'a> {
         }
     }
 
-    pub fn split_username(&self) -> (&str, &str) {
-        // The existance of this is attribute checked in the parsing.
-        self.attrs.split_username().unwrap()
+    pub fn split_username(&self) -> Option<(&str, &str)> {
+        self.attrs.split_username()
     }
 
     pub fn mapped_address(&self) -> Option<SocketAddr> {
@@ -329,15 +326,15 @@ impl Method {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Attribute<'a> {
-    MappedAddress,              // TODO
-    Username(&'a str),          // < 128 utf8 chars
-    MessageIntegrity(&'a [u8]), // 20 bytes sha-1
-    MessageIntegrityMark,       // 20 bytes sha-1
-    ErrorCode(u16, &'a str),    // 300-699 and reason phrase < 128 utf8 chars
-    UnknownAttributes,          // TODO
-    Realm(&'a str),             // < 128 utf8 chars
-    Nonce(&'a str),             // < 128 utf8 chars
-    XorMappedAddress(SocketAddr),
+    MappedAddress,                // TODO
+    Username(&'a str),            // < 128 utf8 chars
+    MessageIntegrity(&'a [u8]),   // 20 bytes sha-1
+    MessageIntegrityMark,         // 20 bytes sha-1
+    ErrorCode(u16, &'a str),      // 300-699 and reason phrase < 128 utf8 chars
+    UnknownAttributes,            // TODO
+    Realm(&'a str),               // < 128 utf8 chars
+    Nonce(&'a str),               // < 128 utf8 chars
+    XorMappedAddress(SocketAddr), // 0x0020
     Software(&'a str),
     AlternateServer,  // TODO
     Fingerprint(u32), // crc32
@@ -437,9 +434,9 @@ impl<'a> Attribute<'a> {
             Priority(_) => 4,
             XorMappedAddress(v) => {
                 if v.is_ipv4() {
-                    5
+                    8
                 } else {
-                    17
+                    20
                 }
             }
             _ => panic!("No length for: {:?}", self),
@@ -486,6 +483,8 @@ impl<'a> Attribute<'a> {
             XorMappedAddress(v) => {
                 let mut buf = [0_u8; 17];
                 let len = encode_xor(*v, &mut buf, trans_id);
+                vec.write_all(&0x0020_u16.to_be_bytes())?;
+                vec.write_all(&((len as u16).to_be_bytes()))?;
                 vec.write_all(&buf[0..len])?;
             }
             _ => panic!("Can't write bytes for: {:?}", self),
@@ -672,7 +671,7 @@ fn encode_xor(addr: SocketAddr, buf: &mut [u8; 17], trans_id: &[u8]) -> usize {
             for i in 0..4 {
                 ip_buf[i] = bytes[i] ^ MAGIC[i];
             }
-            5
+            8
         }
         SocketAddr::V6(v) => {
             let bytes = v.ip().octets();
@@ -682,7 +681,7 @@ fn encode_xor(addr: SocketAddr, buf: &mut [u8; 17], trans_id: &[u8]) -> usize {
             for i in 4..16 {
                 ip_buf[i] = bytes[i] ^ trans_id[i - 4];
             }
-            17
+            20
         }
     }
 }

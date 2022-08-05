@@ -46,7 +46,8 @@ pub fn host_host() {
     a1.set_controlling(true);
     a2.set_controlling(false);
 
-    let now1 = Instant::now();
+    let now = Instant::now();
 
-    let now1 = progress(now1, &mut a1, &mut a2);
+    let now = progress(now, &mut a1, &mut a2);
+    let now = progress(now, &mut a2, &mut a1);
 }
