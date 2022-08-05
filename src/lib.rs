@@ -47,6 +47,7 @@ pub struct Transmit {
     pub contents: Vec<u8>,
 }
 
+#[derive(Debug)]
 /// Received incoming data.
 pub struct Receive<'a> {
     /// The socket this received data originated from.
@@ -71,8 +72,10 @@ impl<'a> Receive<'a> {
     }
 }
 
+#[derive(Debug)]
 pub enum Datagram<'a> {
     Stun(StunMessage<'a>),
+    Dtls(()),
 }
 
 impl<'a> TryFrom<&'a [u8]> for Datagram<'a> {

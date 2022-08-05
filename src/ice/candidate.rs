@@ -171,20 +171,6 @@ impl Candidate {
         )
     }
 
-    /// Creates a server reflexive ICE candidate.
-    pub(crate) fn server_reflexive(addr: SocketAddr, base: SocketAddr, raddr: SocketAddr) -> Self {
-        Candidate::new(
-            None,
-            1, // only RTP
-            "udp".into(),
-            None,
-            addr,
-            Some(base),
-            CandidateKind::ServerReflexive,
-            Some(raddr),
-        )
-    }
-
     /// Candidate foundation.
     ///
     /// For local candidates this is calculated.

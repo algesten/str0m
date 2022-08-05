@@ -150,6 +150,11 @@ impl CandidatePair {
         }
 
         if self.state == CheckState::Waiting {
+            trace!(
+                "Check state: {:?} -> {:?}",
+                self.state,
+                CheckState::InProgress
+            );
             self.state = CheckState::InProgress;
         }
 
@@ -182,8 +187,15 @@ impl CandidatePair {
         attempt.respone_recv = Some(now);
 
         if self.state == CheckState::InProgress {
+            trace!(
+                "Check state: {:?} -> {:?}",
+                self.state,
+                CheckState::Succeeded
+            );
             self.state = CheckState::Succeeded;
         }
+
+        debug!("Recorded binding response: {:?}", self);
     }
 
     /// The time of the last binding request attempt.
@@ -237,6 +249,7 @@ impl CandidatePair {
     }
 
     pub(crate) fn reset_to_waiting(&mut self) {
+        debug!("Reset pair to waiting state: {:?}", self);
         //    Cancellation means that the agent
         //    will not retransmit the Binding requests associated with the
         //    connectivity-check transaction, will not treat the lack of
@@ -252,6 +265,7 @@ impl CandidatePair {
         //
         //    Note that a state change of the pair from Failed to Waiting
         //    might also trigger a state change of the associated checklist.
+        trace!("Check state: {:?} -> {:?}", self.state, CheckState::Waiting);
         self.state = CheckState::Waiting;
         self.binding_attempts.clear();
         self.cached_next_attempt_time = None;
