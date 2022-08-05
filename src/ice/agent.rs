@@ -70,7 +70,7 @@ pub struct IceAgent {
     transmit: VecDeque<Transmit>,
 
     /// Events ready to be polled by poll_event.
-    events: VecDeque<Event>,
+    events: VecDeque<IceAgentEvent>,
 
     /// Queue of incoming STUN requests we might have to queue up before we receive
     /// the remote_credentials.
@@ -496,7 +496,7 @@ impl IceAgent {
         if self.state != state {
             self.state = state;
             self.events
-                .push_back(Event::IceConnectionStateChange(state));
+                .push_back(IceAgentEvent::IceConnectionStateChange(state));
         }
     }
 
@@ -627,7 +627,7 @@ impl IceAgent {
             .min()
     }
 
-    pub fn poll_event(&mut self) -> Option<Event> {
+    pub fn poll_event(&mut self) -> Option<IceAgentEvent> {
         self.events.pop_front()
     }
 
@@ -749,8 +749,10 @@ impl IceAgent {
                 matches!(v.kind(), CandidateKind::Host | CandidateKind::Relayed)
                     && v.addr() == req.destination
             })
+            // Receiving traffic for an IP address that neither is a HOST or RELAY is a configuration
+            // fault. We need to be aware of the interfaces that the ice agent is connected to.
             .expect(
-                "STUN request for destination socket that is neither a host candidate nor a relay",
+                "STUN request for socket that is neither a host nor a relay candidate. This is a config error.",
             )
             .0;
 
@@ -940,7 +942,7 @@ impl IceAgent {
 }
 
 #[derive(Debug)]
-pub enum Event {
+pub enum IceAgentEvent {
     IceConnectionStateChange(IceConnectionState),
 }
 
@@ -1053,7 +1055,6 @@ mod test {
         let mut agent = IceAgent::new();
 
         agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
-
         agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
@@ -1069,7 +1070,6 @@ mod test {
         let mut agent = IceAgent::new();
 
         agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
-
         agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1()));
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);

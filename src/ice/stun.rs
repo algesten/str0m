@@ -242,7 +242,7 @@ impl<'a> StunMessage<'a> {
         {
             let mut off = 20; // attribute start
             for a in &self.attrs {
-                a.to_bytes(&mut buf)?;
+                a.to_bytes(&mut buf, self.trans_id)?;
                 if let Attribute::MessageIntegrityMark = a {
                     i_off = off;
                 }
@@ -434,11 +434,19 @@ impl<'a> Attribute<'a> {
             IceControlling(_) => 8,
             MessageIntegrityMark => 20,
             FingerprintMark => 4,
-            _ => panic!("No length for {:?}", self),
+            Priority(_) => 4,
+            XorMappedAddress(v) => {
+                if v.is_ipv4() {
+                    5
+                } else {
+                    17
+                }
+            }
+            _ => panic!("No length for: {:?}", self),
         }
     }
 
-    fn to_bytes(&self, vec: &mut dyn Write) -> io::Result<()> {
+    fn to_bytes(&self, vec: &mut dyn Write, trans_id: &[u8]) -> io::Result<()> {
         use Attribute::*;
         match self {
             Username(v) => {
@@ -464,6 +472,16 @@ impl<'a> Attribute<'a> {
                 vec.write_all(&0x8028_u16.to_be_bytes())?;
                 vec.write_all(&4_u16.to_be_bytes())?;
                 vec.write_all(&[0; 4])?; // filled in later
+            }
+            Priority(v) => {
+                vec.write_all(&0x0024_u16.to_be_bytes())?;
+                vec.write_all(&4_u16.to_be_bytes())?;
+                vec.write_all(&v.to_be_bytes())?;
+            }
+            XorMappedAddress(v) => {
+                let mut buf = [0_u8; 17];
+                let len = encode_xor(*v, &mut buf, trans_id);
+                vec.write_all(&buf[0..len])?;
             }
             _ => panic!("Can't write bytes for: {:?}", self),
         }
@@ -635,6 +653,32 @@ fn decode_str(typ: u16, buf: &[u8], len: usize) -> Result<&str, StunError> {
     match str::from_utf8(&buf[0..len]).ok() {
         Some(v) => Ok(v),
         None => Err(StunError::Parse(format!("0x{:04x?} malformed utf-8", typ))),
+    }
+}
+
+fn encode_xor(addr: SocketAddr, buf: &mut [u8; 17], trans_id: &[u8]) -> usize {
+    let port = addr.port() ^ 0x2112;
+    (&mut buf[2..4]).copy_from_slice(&port.to_be_bytes());
+    buf[1] = if addr.is_ipv4() { 1 } else { 2 };
+    let ip_buf = &mut buf[4..];
+    match addr {
+        SocketAddr::V4(v) => {
+            let bytes = v.ip().octets();
+            for i in 0..4 {
+                ip_buf[i] = bytes[i] ^ MAGIC[i];
+            }
+            5
+        }
+        SocketAddr::V6(v) => {
+            let bytes = v.ip().octets();
+            for i in 0..4 {
+                ip_buf[i] = bytes[i] ^ MAGIC[i];
+            }
+            for i in 4..16 {
+                ip_buf[i] = bytes[i] ^ trans_id[i - 4];
+            }
+            17
+        }
     }
 }
 

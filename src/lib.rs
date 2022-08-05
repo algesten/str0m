@@ -13,7 +13,7 @@ use thiserror::Error;
 mod id;
 
 mod ice;
-pub use ice::{Candidate, IceAgent, StunError};
+pub use ice::{Candidate, IceAgent, IceAgentEvent, StunError};
 
 mod sdp;
 pub use sdp::SdpError;
@@ -130,5 +130,17 @@ impl<'a> TryFrom<&'a [u8]> for MultiplexKind {
                 "Unknown datagram",
             ))
         }
+    }
+}
+
+impl<'a> TryFrom<&'a Transmit> for Receive<'a> {
+    type Error = Error;
+
+    fn try_from(t: &'a Transmit) -> Result<Self, Self::Error> {
+        Ok(Receive {
+            source: t.source,
+            destination: t.destination,
+            contents: Datagram::try_from(&t.contents[..])?,
+        })
     }
 }

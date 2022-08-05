@@ -5,6 +5,7 @@ mod sdp;
 pub use sdp::{Fingerprint, MediaLine, MediaType, Mid, Sdp, SessionId};
 
 mod parser;
+pub(crate) use parser::candidate as parse_candidate;
 
 #[derive(Debug, Error)]
 pub enum SdpError {

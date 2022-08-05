@@ -181,7 +181,8 @@ where
     ))
 }
 
-fn candidate<Input>() -> impl Parser<Input, Output = Candidate>
+#[doc(hidden)]
+pub fn candidate<Input>() -> impl Parser<Input, Output = Candidate>
 where
     Input: Stream<Token = char>,
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
