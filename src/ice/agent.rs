@@ -72,8 +72,11 @@ pub struct IceAgent {
     /// the remote_credentials.
     stun_server_queue: VecDeque<StunRequest>,
 
-    /// Time we have reason to check nominations.
-    scheduled_nomination_check: Option<Instant>,
+    /// If we have reason to do an immediate timeout.
+    need_extra_timeout: bool,
+
+    /// We have reason to do a nomination check on next timeout.
+    do_nomination_check: bool,
 }
 
 #[derive(Debug)]
@@ -161,7 +164,8 @@ impl IceAgent {
             transmit: VecDeque::new(),
             events: VecDeque::new(),
             stun_server_queue: VecDeque::new(),
-            scheduled_nomination_check: None,
+            need_extra_timeout: false,
+            do_nomination_check: false,
         }
     }
 
@@ -173,11 +177,6 @@ impl IceAgent {
     /// Local ice credentials.
     pub fn local_credentials(&self) -> &IceCreds {
         &self.local_credentials
-    }
-
-    /// Remote ice credentials, if set.
-    pub fn remote_credentials(&self) -> Option<&IceCreds> {
-        self.remote_credentials.as_ref()
     }
 
     /// Sets the remote ice credentials.
@@ -519,6 +518,9 @@ impl IceAgent {
                 debug!("Local candidate to discard {:?}", other);
                 other.set_discarded();
                 self.discard_candidate_pairs(idx);
+                // The discard could have affected the state.
+                // Do another timeout to evaluate state soon.
+                self.need_extra_timeout = true;
                 return true;
             }
         }
@@ -531,15 +533,6 @@ impl IceAgent {
     fn discard_candidate_pairs(&mut self, local_idx: usize) {
         trace!("Discard pairs for local candidate index: {:?}", local_idx);
         self.candidate_pairs.retain(|c| c.local_idx() != local_idx);
-    }
-
-    fn set_connection_state(&mut self, state: IceConnectionState) {
-        if self.state != state {
-            info!("State change: {:?} -> {:?}", self.state, state);
-            self.state = state;
-            self.events
-                .push_back(IceAgentEvent::IceConnectionStateChange(state));
-        }
     }
 
     /// Tells whether the message is for this agent instance.
@@ -569,7 +562,7 @@ impl IceAgent {
                 return false;
             }
 
-            if let Some(remote_creds) = self.remote_credentials() {
+            if let Some(remote_creds) = &self.remote_credentials {
                 if remote != remote_creds.username {
                     debug!(
                         "Message rejected, remote user mismatch: {} != {}",
@@ -622,9 +615,7 @@ impl IceAgent {
     pub fn handle_timeout(&mut self, now: Instant) {
         info!("Handle timeout: {:?}", now);
 
-        if self.state == IceConnectionState::New {
-            self.set_connection_state(IceConnectionState::Checking);
-        }
+        self.evaluate_state(now);
 
         // The generation of ordinary and triggered connectivity checks is
         // governed by timer Ta.
@@ -653,32 +644,33 @@ impl IceAgent {
 
             if let Some(req) = self.stun_server_queue.pop_front() {
                 debug!("Handle enqueued STUN request: {:?}", req);
-                self.stun_server_handle_request(now, req);
+                self.stun_server_handle_request(req);
                 return;
             }
         }
 
-        // do we have a scheduled nomination check?
-        if let Some(nom) = self.scheduled_nomination_check {
-            if now >= nom {
-                self.scheduled_nomination_check = None;
-                self.attempt_nomination();
-                return;
-            }
+        self.need_extra_timeout = false;
+
+        if self.do_nomination_check {
+            self.do_nomination_check = false;
+            self.attempt_nomination();
+            // don't return here. we can go on to handle the binding request
+            // for the nomination straight away.
         }
 
         // prune failed candidates.
+        let mut any_pruned = false;
         self.candidate_pairs.retain(|p| {
             let keep = p.is_still_possible(now);
             if !keep {
-                if p.is_nominated() {
-                    debug!("Remove nominated failed pair: {:?}", p);
-                } else {
-                    debug!("Remove failed pair: {:?}", p);
-                }
+                debug!("Remove failed pair: {:?}", p);
+                any_pruned = true;
             }
             keep
         });
+        if any_pruned {
+            self.evaluate_state(now);
+        }
 
         if self.remote_credentials.is_none() {
             trace!("Stop timeout due to missing remote credentials");
@@ -727,7 +719,11 @@ impl IceAgent {
             .map(|c| c.next_binding_attempt(last_now))
             .min();
 
-        let maybe_scheduled = self.scheduled_nomination_check;
+        let maybe_scheduled = if self.need_extra_timeout {
+            self.last_now.map(|t| t + TIMING_ADVANCE)
+        } else {
+            None
+        };
 
         let mut maybe_next = smallest(maybe_binding, maybe_scheduled);
 
@@ -785,7 +781,7 @@ impl IceAgent {
         };
 
         if self.remote_credentials.is_some() {
-            self.stun_server_handle_request(now, req);
+            self.stun_server_handle_request(req);
         } else {
             debug!(
                 "Enqueue STUN request due to missing remote credentials: {:?}",
@@ -816,8 +812,8 @@ impl IceAgent {
         }
     }
 
-    fn stun_server_handle_request(&mut self, now: Instant, req: StunRequest) {
-        let remote_creds = self.remote_credentials().expect("Remote ICE creds");
+    fn stun_server_handle_request(&mut self, req: StunRequest) {
+        let remote_creds = self.remote_credentials.as_ref().expect("Remote ICE creds");
         if req.remote_username != remote_creds.username {
             // this check can be delayed due to receiving STUN bind requests before we
             // get the exchange on the signal level.
@@ -941,10 +937,11 @@ impl IceAgent {
         if self.controlling
             && !pair.is_nominated()
             && pair.state() == CheckState::Succeeded
-            && self.scheduled_nomination_check.is_none()
+            && !self.do_nomination_check
         {
             trace!("Schedule nomination check on request");
-            self.scheduled_nomination_check = Some(now + TIMING_ADVANCE);
+            self.do_nomination_check = true;
+            self.need_extra_timeout = true;
         }
 
         if !self.controlling && req.use_candidate && !pair.is_nominated() {
@@ -1109,11 +1106,15 @@ impl IceAgent {
         if self.controlling
             && !pair.is_nominated()
             && pair.remote_binding_requests() > 0
-            && self.scheduled_nomination_check.is_none()
+            && !self.do_nomination_check
         {
             trace!("Schedule nomination check on reply");
-            self.scheduled_nomination_check = Some(now + TIMING_ADVANCE);
+            self.do_nomination_check = true;
+            self.need_extra_timeout = true;
         }
+
+        // State might change when we get a response.
+        self.evaluate_state(now);
     }
 
     fn attempt_nomination(&mut self) {
@@ -1128,6 +1129,74 @@ impl IceAgent {
         if let Some(best) = best {
             if !best.is_nominated() {
                 best.nominate();
+            }
+        }
+    }
+
+    fn set_connection_state(&mut self, state: IceConnectionState) {
+        if self.state != state {
+            info!("State change: {:?} -> {:?}", self.state, state);
+            self.state = state;
+            self.events
+                .push_back(IceAgentEvent::IceConnectionStateChange(state));
+        }
+    }
+
+    fn evaluate_state(&mut self, now: Instant) {
+        use IceConnectionState::*;
+
+        let mut any_nomination_success = false;
+        let mut any_still_possible = false;
+
+        for p in &self.candidate_pairs {
+            if p.is_nomination_success() {
+                any_nomination_success = true;
+            } else if p.is_still_possible(now) {
+                any_still_possible = true;
+            }
+        }
+
+        match self.state {
+            New => {
+                self.set_connection_state(Checking);
+            }
+            Checking | Disconnected => {
+                if any_nomination_success {
+                    if any_still_possible {
+                        self.set_connection_state(Connected);
+                    } else {
+                        self.set_connection_state(Completed);
+                    }
+                }
+            }
+            Connected => {
+                if any_nomination_success {
+                    if !any_still_possible {
+                        self.set_connection_state(Completed);
+                    }
+                } else {
+                    if any_still_possible {
+                        self.set_connection_state(Disconnected);
+                    } else {
+                        self.set_connection_state(Failed);
+                    }
+                }
+            }
+            Completed => {
+                if any_nomination_success {
+                    if any_still_possible {
+                        self.set_connection_state(Connected);
+                    }
+                } else {
+                    if any_still_possible {
+                        self.set_connection_state(Disconnected);
+                    } else {
+                        self.set_connection_state(Failed);
+                    }
+                }
+            }
+            Failed | Closed => {
+                // the end
             }
         }
     }
