@@ -378,6 +378,15 @@ impl IceAgent {
 
         let local_idxs = [self.local_candidates.len() - 1];
 
+        // We always run in trickle ice mode.
+        //
+        // https://www.rfc-editor.org/rfc/rfc8838.html#section-10
+        // A Trickle ICE agent MUST NOT pair a local candidate until it has been trickled
+        // to the remote party.
+        //
+        // TODO: The trickle ice spec is strange. What does it mean "has been trickled to the
+        // remote party"? Since we don't get a confirmation that the candidate has been received
+        // by the remote party, whether we form local pairs directly or later seems irrelevant.
         self.form_pairs(&local_idxs, &remote_idxs);
 
         true
@@ -416,9 +425,9 @@ impl IceAgent {
             .enumerate()
             .find(|(_, v)| {
                 v.foundation() == REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION
+                    && v.kind() == CandidateKind::PeerReflexive
                     && v.addr() == c.addr()
                     && v.prio() == c.prio()
-                    && v.kind() == CandidateKind::PeerReflexive
             });
 
         let ipv4 = c.addr().is_ipv4();
@@ -732,6 +741,11 @@ impl IceAgent {
             return;
         }
 
+        if self.ice_lite {
+            trace!("Stop timeout sice ice-lite do no checks");
+            return;
+        }
+
         // when do we need to handle the next candidate pair?
         let next = self
             .candidate_pairs
@@ -768,11 +782,15 @@ impl IceAgent {
         let last_now = self.last_now?;
 
         // when do we need to handle the next candidate pair?
-        let maybe_binding = self
-            .candidate_pairs
-            .iter_mut()
-            .map(|c| c.next_binding_attempt(last_now))
-            .min();
+        let maybe_binding = if self.ice_lite {
+            // ice-lite doesn't do checks.
+            None
+        } else {
+            self.candidate_pairs
+                .iter_mut()
+                .map(|c| c.next_binding_attempt(last_now))
+                .min()
+        };
 
         let maybe_scheduled = if self.need_extra_timeout {
             self.last_now.map(|t| t + TIMING_ADVANCE)
@@ -981,6 +999,10 @@ impl IceAgent {
             self.candidate_pairs.sort();
         }
 
+        // borrow checker gymnastics to calculate this here while
+        // using it further down.
+        let any_nominated = self.candidate_pairs.iter().any(|p| p.is_nominated());
+
         let pair = self
             .candidate_pairs
             .iter_mut()
@@ -991,7 +1013,7 @@ impl IceAgent {
         pair.increase_remote_binding_requests();
 
         if self.controlling
-            && !pair.is_nominated()
+            && !any_nominated
             && pair.state() == CheckState::Succeeded
             && !self.do_nomination_check
         {
@@ -1000,10 +1022,14 @@ impl IceAgent {
             self.need_extra_timeout = true;
         }
 
-        if !self.controlling && req.use_candidate && !pair.is_nominated() {
-            // This results in answering a nomination request with a binding
-            // request in the other direction.
-            pair.nominate();
+        if !self.controlling && req.use_candidate {
+            if !any_nominated {
+                // We need to answer a nomination request with a binding request
+                // in the other direction.
+                //
+                // If this is ice-lite, we make it successful straight away.
+                pair.nominate(self.ice_lite);
+            }
         }
 
         let local = pair.local_candidate(&self.local_candidates);
@@ -1166,14 +1192,14 @@ impl IceAgent {
 
         pair.record_binding_response(now, trans_id, valid_idx);
 
-        if self.controlling
-            && !pair.is_nominated()
-            && pair.remote_binding_requests() > 0
-            && !self.do_nomination_check
-        {
-            trace!("Schedule nomination check on reply");
-            self.do_nomination_check = true;
-            self.need_extra_timeout = true;
+        if self.controlling {
+            let req_count = pair.remote_binding_requests();
+            let any_nominated = self.candidate_pairs.iter().any(|p| p.is_nominated());
+            if !any_nominated && req_count > 0 && !self.do_nomination_check {
+                trace!("Schedule nomination check on reply");
+                self.do_nomination_check = true;
+                self.need_extra_timeout = true;
+            }
         }
 
         // State might change when we get a response.
@@ -1191,7 +1217,7 @@ impl IceAgent {
 
         if let Some(best) = best {
             if !best.is_nominated() {
-                best.nominate();
+                best.nominate(false);
             }
         }
     }

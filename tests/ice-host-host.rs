@@ -65,5 +65,4 @@ pub fn host_host() {
     let now = progress(now, &mut a1, &mut a2, &span1, &span2);
     let now = progress(now, &mut a2, &mut a1, &span2, &span1);
     let now = progress(now, &mut a1, &mut a2, &span1, &span2);
-    let now = progress(now, &mut a2, &mut a1, &span2, &span1);
 }

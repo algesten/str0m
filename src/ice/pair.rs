@@ -169,10 +169,15 @@ impl CandidatePair {
         matches!(self.nomination_state, NominationState::Success)
     }
 
-    pub fn nominate(&mut self) {
+    pub fn nominate(&mut self, force_success: bool) {
         assert!(self.nomination_state == NominationState::None);
-        self.nomination_state = NominationState::Nominated;
-        debug!("Nominating pair: {:?}", self);
+        if force_success {
+            self.nomination_state = NominationState::Success;
+            debug!("Force success nominated pair {:?}", self);
+        } else {
+            self.nomination_state = NominationState::Nominated;
+            debug!("Nominated pair: {:?}", self);
+        }
     }
 
     /// Records a new binding request attempt.
