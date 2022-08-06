@@ -1131,14 +1131,6 @@ impl IceAgent {
             }
         }
     }
-
-    #[cfg(test)]
-    fn pair_indexes(&self) -> Vec<(usize, usize)> {
-        self.candidate_pairs
-            .iter()
-            .map(|c| (c.local_idx(), c.remote_idx()))
-            .collect()
-    }
 }
 
 #[derive(Debug)]
@@ -1149,9 +1141,17 @@ pub enum IceAgentEvent {
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use std::net::SocketAddr;
 
-    use super::*;
+    impl IceAgent {
+        fn pair_indexes(&self) -> Vec<(usize, usize)> {
+            self.candidate_pairs
+                .iter()
+                .map(|c| (c.local_idx(), c.remote_idx()))
+                .collect()
+        }
+    }
 
     fn ipv4_1() -> SocketAddr {
         "1.2.3.4:5000".parse().unwrap()
