@@ -5,7 +5,8 @@ use std::num::ParseFloatError;
 use std::ops::Deref;
 use std::str::{from_utf8_unchecked, FromStr};
 
-use ice::{Candidate, IceCreds, Id};
+use ice::{Candidate, IceCreds};
+use net::Id;
 
 use super::parser::sdp_parser;
 use super::SdpError;

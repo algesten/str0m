@@ -5,14 +5,16 @@ use std::time::{Duration, Instant};
 use rand::random;
 use thiserror::Error;
 
+use net::Id;
+use net::StunMessage;
+use net::TransId;
+use net::STUN_TIMEOUT;
+use net::{Datagram, Receive, Transmit, DATAGRAM_MTU};
+
 use crate::pair::CheckState;
-use crate::stun::TransId;
-use crate::{Datagram, Id, Receive, Transmit, DATAGRAM_MTU};
 
 use super::candidate::{Candidate, CandidateKind};
 use super::pair::CandidatePair;
-use super::stun::STUN_TIMEOUT;
-use super::StunMessage;
 
 #[derive(Debug, Error)]
 pub enum IceError {

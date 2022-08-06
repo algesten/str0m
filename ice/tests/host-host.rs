@@ -2,7 +2,8 @@ use std::convert::TryFrom;
 use std::time::{Duration, Instant};
 
 use common::{init_log, sock};
-use ice::{Candidate, IceAgent, Receive};
+use ice::{Candidate, IceAgent};
+use net::Receive;
 use tracing::{info_span, Span};
 
 mod common;

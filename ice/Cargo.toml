@@ -6,16 +6,9 @@ edition = "2021"
 [dependencies]
 tracing = "0.1"
 thiserror = "1"
-
-# STUN
-hmac = "0.11"
-sha-1 = "0.9"
 rand = "0.8"
-crc = "2"
 
-# ICE
-# This can be replaced if https://github.com/rust-lang/rust/issues/27709 ever lands
-ip_network = "0.4" 
+net = { path = "../net" }
 
 [dev-dependencies]
 tracing-subscriber = "0.2"

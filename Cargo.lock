@@ -145,21 +145,12 @@ dependencies = [
 name = "ice"
 version = "0.1.0"
 dependencies = [
- "crc",
- "hmac",
- "ip_network",
+ "net",
  "rand",
- "sha-1",
  "thiserror",
  "tracing",
  "tracing-subscriber",
 ]
-
-[[package]]
-name = "ip_network"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aa2f047c0a98b2f299aa5d6d7088443570faae494e9ae1305e48be000c9e0eb1"
 
 [[package]]
 name = "itoa"
@@ -211,6 +202,18 @@ name = "memchr"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
+
+[[package]]
+name = "net"
+version = "0.1.0"
+dependencies = [
+ "crc",
+ "hmac",
+ "rand",
+ "sha-1",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "num-integer"
@@ -339,6 +342,7 @@ version = "0.1.0"
 dependencies = [
  "combine",
  "ice",
+ "net",
  "thiserror",
  "tracing",
 ]

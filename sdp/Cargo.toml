@@ -10,3 +10,4 @@ tracing = "0.1"
 combine = "4"
 
 ice = { path = "../ice" }
+net = { path = "../net" }

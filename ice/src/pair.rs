@@ -2,10 +2,10 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::stun::TransId;
 use crate::Candidate;
+use net::TransId;
 
-use super::stun::{stun_resend_delay, STUN_MAX_RETRANS};
+use net::{stun_resend_delay, STUN_MAX_RETRANS};
 
 #[derive(Default)]
 /// A pair of candidates, local and remote, in the ice agent.
