@@ -1,0 +1,12 @@
+[package]
+name = "sdp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = "1"
+tracing = "0.1"
+
+combine = "4"
+
+ice = { path = "../ice" }

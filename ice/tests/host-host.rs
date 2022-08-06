@@ -1,13 +1,11 @@
 use std::convert::TryFrom;
 use std::time::{Duration, Instant};
 
-use common::init_log;
-use ice_common::sock;
-use str0m::{Candidate, IceAgent, Receive};
+use common::{init_log, sock};
+use ice::{Candidate, IceAgent, Receive};
 use tracing::{info_span, Span};
 
 mod common;
-mod ice_common;
 
 fn host(s: impl Into<String>) -> Candidate {
     Candidate::host(sock(s)).unwrap()
@@ -37,14 +35,12 @@ pub fn host_host() {
     let mut a1 = IceAgent::new();
     let mut a2 = IceAgent::new();
     let h1 = host("1.1.1.1:4000");
-    let h1r = Candidate::parse(&h1.to_string()).unwrap();
     let h2 = host("2.2.2.2:5000");
-    let h2r = Candidate::parse(&h2.to_string()).unwrap();
 
-    a1.add_local_candidate(h1);
-    a2.add_local_candidate(h2);
-    a1.add_remote_candidate(h2r);
-    a2.add_remote_candidate(h1r);
+    a1.add_local_candidate(h1.clone());
+    a2.add_local_candidate(h2.clone());
+    a1.add_remote_candidate(h2);
+    a2.add_remote_candidate(h1);
     a1.set_remote_credentials(a2.local_credentials().clone());
     a2.set_remote_credentials(a1.local_credentials().clone());
     a1.set_controlling(true);
@@ -64,5 +60,5 @@ pub fn host_host() {
     let now = progress(now, &mut a2, &mut a1, &span2, &span1);
     let now = progress(now, &mut a1, &mut a2, &span1, &span2);
     let now = progress(now, &mut a2, &mut a1, &span2, &span1);
-    let now = progress(now, &mut a1, &mut a2, &span1, &span2);
+    let _ = progress(now, &mut a1, &mut a2, &span1, &span2);
 }

@@ -5,8 +5,7 @@ use std::num::ParseFloatError;
 use std::ops::Deref;
 use std::str::{from_utf8_unchecked, FromStr};
 
-use crate::ice::{Candidate, IceCreds};
-use crate::id::random_id;
+use ice::{Candidate, IceCreds, Id};
 
 use super::parser::sdp_parser;
 use super::SdpError;
@@ -147,7 +146,7 @@ pub struct Mid([u8; 3]);
 
 impl Mid {
     pub fn new() -> Mid {
-        Mid(random_id::<3>().into_array())
+        Mid(Id::random().into_array())
     }
 }
 

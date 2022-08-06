@@ -5,9 +5,8 @@ use std::time::{Duration, Instant};
 use rand::random;
 use thiserror::Error;
 
-use crate::ice::pair::CheckState;
-use crate::id::random_id;
-use crate::{Datagram, Receive, Transmit, DATAGRAM_MTU};
+use crate::pair::CheckState;
+use crate::{Datagram, Id, Receive, Transmit, DATAGRAM_MTU};
 
 use super::candidate::{Candidate, CandidateKind};
 use super::pair::CandidatePair;
@@ -151,8 +150,8 @@ impl IceCreds {
         // checks.  The values MUST be unguessable, with at least 128 bits of
         // random number generator output used to generate the password, and
         // at least 24 bits of output to generate the username fragment.
-        let username = random_id::<3>().to_string();
-        let password = random_id::<16>().to_string();
+        let username = Id::<3>::random().to_string();
+        let password = Id::<16>::random().to_string();
         IceCreds { username, password }
     }
 }

@@ -17,9 +17,9 @@ use {
     combine::{ParseError, Parser, Stream},
 };
 
-use crate::ice::{Candidate, CandidateKind};
+use ice::{Candidate, CandidateKind};
 
-use super::sdp::*;
+use super::data::*;
 
 /// Creates a parser of SDP
 pub fn sdp_parser<Input>() -> impl Parser<Input, Output = Sdp>

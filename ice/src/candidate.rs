@@ -3,10 +3,6 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, SocketAddr};
 
-use combine::Parser;
-
-use crate::SdpError;
-
 use super::IceError;
 
 /// An ICE candidate.
@@ -122,7 +118,8 @@ impl Candidate {
         }
     }
 
-    pub(crate) fn parsed(
+    #[doc(hidden)]
+    pub fn parsed(
         foundation: String,
         component_id: u16,
         proto: String,
@@ -240,13 +237,6 @@ impl Candidate {
         hash.to_string()
     }
 
-    #[doc(hidden)]
-    pub fn parse(input: &str) -> Result<Candidate, SdpError> {
-        Ok(crate::sdp::parse_candidate()
-            .parse(input)
-            .map(|(sdp, _)| sdp)?)
-    }
-
     pub(crate) fn prio(&self) -> u32 {
         self.do_prio(false)
     }
@@ -334,7 +324,8 @@ impl Candidate {
         self.ufrag = Some(ufrag.into());
     }
 
-    pub(crate) fn ufrag(&self) -> Option<&str> {
+    #[doc(hidden)]
+    pub fn ufrag(&self) -> Option<&str> {
         self.ufrag.as_ref().map(|s| s.as_str())
     }
 }

@@ -1,5 +1,3 @@
-//!
-
 #[macro_use]
 extern crate tracing;
 
@@ -8,16 +6,23 @@ use std::fmt;
 use std::io;
 use std::net::SocketAddr;
 
-use ice::StunMessage;
 use thiserror::Error;
 
 mod id;
+// this is only exported from this crate to avoid needing
+// a "util" crate or similar.
+pub use id::Id;
 
-mod ice;
-pub use ice::{Candidate, IceAgent, IceAgentEvent, StunError};
+mod stun;
+pub use stun::{StunError, StunMessage};
 
-mod sdp;
-pub use sdp::SdpError;
+mod agent;
+pub use agent::{IceAgent, IceAgentEvent, IceConnectionState, IceCreds, IceError};
+
+mod candidate;
+pub use candidate::{Candidate, CandidateKind};
+
+mod pair;
 
 pub const DATAGRAM_MTU: usize = 1500;
 
@@ -25,9 +30,6 @@ pub const DATAGRAM_MTU: usize = 1500;
 pub enum Error {
     #[error("{0}")]
     Stun(#[from] StunError),
-
-    #[error("{0}")]
-    Sdp(#[from] SdpError),
 
     #[error("{0}")]
     Io(#[from] io::Error),

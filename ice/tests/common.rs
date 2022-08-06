@@ -1,4 +1,3 @@
-
 pub fn init_log() {
     use std::env;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -13,3 +12,9 @@ pub fn init_log() {
         .init();
 }
 
+use std::net::SocketAddr;
+
+pub fn sock(s: impl Into<String>) -> SocketAddr {
+    let s: String = s.into();
+    s.parse().unwrap()
+}

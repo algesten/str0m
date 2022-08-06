@@ -2,8 +2,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::id::random_id;
-use crate::Candidate;
+use crate::{Candidate, Id};
 
 use super::stun::{stun_resend_delay, STUN_MAX_RETRANS};
 
@@ -193,7 +192,7 @@ impl CandidatePair {
         }
 
         let attempt = BindingAttempt {
-            trans_id: random_id().into_array(),
+            trans_id: Id::random().into_array(),
             request_sent: now,
             respone_recv: None,
             nominated: self.is_nominated(),

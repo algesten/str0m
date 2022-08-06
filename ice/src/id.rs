@@ -6,20 +6,20 @@ use rand::Rng;
 // deliberate subset of ice-char, etc that are "safe"
 const CHARS: &[u8] = b"abcdefghijklmnopqrstuvxyzABCDEFGHIJKLMNOPQRSTUVXYZ0123456789";
 
-pub fn random_id<const L: usize>() -> Id<L> {
-    let mut x = [0; L];
-    let mut rng = rand::thread_rng();
-    for i in 0..L {
-        let y: f32 = rng.gen();
-        let idx = (CHARS.len() as f32 * y).floor() as usize;
-        x[i] = CHARS[idx];
-    }
-    Id(x)
-}
-
 pub struct Id<const L: usize>([u8; L]);
 
 impl<const L: usize> Id<L> {
+    pub fn random() -> Id<L> {
+        let mut x = [0; L];
+        let mut rng = rand::thread_rng();
+        for i in 0..L {
+            let y: f32 = rng.gen();
+            let idx = (CHARS.len() as f32 * y).floor() as usize;
+            x[i] = CHARS[idx];
+        }
+        Id(x)
+    }
+
     pub fn into_array(self) -> [u8; L] {
         self.0
     }
