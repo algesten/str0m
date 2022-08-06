@@ -8,7 +8,6 @@ use crc::{Crc, CRC_32_ISO_HDLC};
 use hmac::Hmac;
 use hmac::Mac;
 use hmac::NewMac;
-use rand::prelude::*;
 use sha1::Sha1;
 use thiserror::Error;
 
@@ -147,6 +146,7 @@ impl<'a> StunMessage<'a> {
         username: &'a str,
         trans_id: &'a [u8; 12],
         controlling: bool,
+        control_tie_breaker: u64,
         prio: u32,
         use_candidate: bool,
     ) -> Self {
@@ -157,9 +157,9 @@ impl<'a> StunMessage<'a> {
             attrs: vec![
                 Attribute::Username(username),
                 if controlling {
-                    Attribute::IceControlling(random())
+                    Attribute::IceControlling(control_tie_breaker)
                 } else {
-                    Attribute::IceControlled(random())
+                    Attribute::IceControlled(control_tie_breaker)
                 },
                 Attribute::Priority(prio),
             ],

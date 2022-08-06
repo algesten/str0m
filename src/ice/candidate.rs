@@ -330,6 +330,10 @@ impl Candidate {
         self.discarded
     }
 
+    pub(crate) fn set_ufrag(&mut self, ufrag: &str) {
+        self.ufrag = Some(ufrag.into());
+    }
+
     pub(crate) fn ufrag(&self) -> Option<&str> {
         self.ufrag.as_ref().map(|s| s.as_str())
     }

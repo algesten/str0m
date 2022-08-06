@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use rand::random;
 use thiserror::Error;
 
 use crate::ice::pair::CheckState;
@@ -47,6 +48,11 @@ pub struct IceAgent {
 
     /// If this side is controlling or controlled.
     controlling: bool,
+
+    /// Number used in STUN attribute ICE-CONTROLLING and ICE-CONTROLLED.
+    /// An ICE agent MUST use the same number for all Binding requests,
+    /// for all streams, within an ICE session
+    control_tie_breaker: u64,
 
     /// Current state of the agent.
     state: IceConnectionState,
@@ -139,7 +145,7 @@ pub struct IceCreds {
     pub password: String,
 }
 
-impl IceAgent {
+impl IceCreds {
     pub fn new() -> Self {
         // Username Fragment and Password:  Values used to perform connectivity
         // checks.  The values MUST be unguessable, with at least 128 bits of
@@ -147,16 +153,20 @@ impl IceAgent {
         // at least 24 bits of output to generate the username fragment.
         let username = random_id::<3>().to_string();
         let password = random_id::<16>().to_string();
+        IceCreds { username, password }
+    }
+}
 
-        let local_credentials = IceCreds { username, password };
-
+impl IceAgent {
+    pub fn new() -> Self {
         IceAgent {
             last_now: None,
             ice_lite: false,
             max_candidate_pairs: None,
-            local_credentials,
+            local_credentials: IceCreds::new(),
             remote_credentials: None,
             controlling: false,
+            control_tie_breaker: random(),
             state: IceConnectionState::New,
             local_candidates: vec![],
             remote_candidates: vec![],
@@ -347,6 +357,9 @@ impl IceAgent {
             }
         }
 
+        // Tie this ufrag to this ICE-session.
+        c.set_ufrag(&self.local_credentials.username);
+
         // These are the indexes of the remote candidates this candidate should be paired with.
         let remote_idxs: Vec<_> = self
             .remote_candidates
@@ -356,8 +369,10 @@ impl IceAgent {
             .map(|(i, _)| i)
             .collect();
 
-        self.events
-            .push_back(IceAgentEvent::NewLocalCandidate(c.clone()));
+        if self.state != IceConnectionState::New {
+            self.events
+                .push_back(IceAgentEvent::NewLocalCandidate(c.clone()));
+        }
 
         self.local_candidates.push(c);
 
@@ -381,6 +396,18 @@ impl IceAgent {
         if c.component_id() != 1 {
             debug!("Reject candidate for component other than 1: {:?}", c);
             return false;
+        }
+
+        if let Some(creds) = &self.remote_credentials {
+            if let Some(ufrag) = c.ufrag() {
+                if ufrag != creds.username {
+                    debug!(
+                        "Reject candidate with ufrag mismatch: {} != {}",
+                        ufrag, creds.username
+                    );
+                    return false;
+                }
+            }
         }
 
         let existing_prflx = self
@@ -527,6 +554,34 @@ impl IceAgent {
 
         debug!("Candidate to discard not found: {:?}", c);
         false
+    }
+
+    /// Restart ICE.
+    ///
+    /// This is useful when detecting a change in network interfaces, such as
+    /// current session running off a 4G, and we connect to a WiFi. The session
+    /// should continue sending data over the 4G until we redone the ICE gathering
+    /// process.
+    pub fn ice_restart(&mut self) {
+        // An ICE agent MAY restart ICE for existing data streams.  An ICE
+        // restart causes all previous states of the data streams, excluding the
+        // roles of the agents, to be flushed.  The only difference between an
+        // ICE restart and a brand new data session is that during the restart,
+        // data can continue to be sent using existing data sessions, and a new
+        // data session always requires the roles to be determined.
+        self.local_credentials = IceCreds::new();
+        self.remote_credentials = None;
+        self.local_candidates.clear();
+        self.remote_candidates.clear();
+        self.candidate_pairs.clear();
+        self.transmit.clear();
+        self.events.clear();
+        self.need_extra_timeout = false;
+        self.do_nomination_check = false;
+
+        self.events
+            .push_back(IceAgentEvent::IceRestart(self.local_credentials.clone()));
+        self.set_connection_state(IceConnectionState::Checking);
     }
 
     /// Discard candidate pairs that contain the candidate identified by a local index.
@@ -992,6 +1047,7 @@ impl IceAgent {
             &username,
             trans_id,
             self.controlling,
+            self.control_tie_breaker,
             prio,
             use_candidate,
         );
@@ -1165,6 +1221,12 @@ impl IceAgent {
 
         match self.state {
             New => {
+                self.events
+                    .push_back(IceAgentEvent::IceRestart(self.local_credentials.clone()));
+                for c in &self.local_candidates {
+                    self.events
+                        .push_back(IceAgentEvent::NewLocalCandidate(c.clone()));
+                }
                 self.set_connection_state(Checking);
             }
             Checking | Disconnected => {
@@ -1211,6 +1273,7 @@ impl IceAgent {
 
 #[derive(Debug)]
 pub enum IceAgentEvent {
+    IceRestart(IceCreds),
     IceConnectionStateChange(IceConnectionState),
     NewLocalCandidate(Candidate),
 }
