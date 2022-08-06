@@ -860,6 +860,7 @@ impl IceAgent {
                 // In practice it might no matter since we don't do the frozen-waiting
                 // dance for candidate pairs.
                 Some(REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION.into()),
+                self.local_credentials.username.clone(),
             );
 
             debug!(
@@ -1077,7 +1078,13 @@ impl IceAgent {
             let base = local_sent_from.base();
 
             // o  The type is peer reflexive.
-            let candidate = Candidate::peer_reflexive(mapped_address, base, prio, None);
+            let candidate = Candidate::peer_reflexive(
+                mapped_address,
+                base,
+                prio,
+                None,
+                self.local_credentials.username.clone(),
+            );
 
             debug!(
                 "Created local peer reflexive candidate for mapped address: {}",

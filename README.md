@@ -83,11 +83,18 @@ https://datatracker.ietf.org/doc/html/rfc8859#section-4.5
 > corresponding to the mid appearing first on the "a=group:BUNDLE" line
 > be considered for setting up the RTP transport.
 
-This means we put ICE transport
+This means we put ICE transport attributes in the first mid.
+
+## Only trickle ICE
+
+We do not support ICE _without_ trickle ice. In practice it doesn't make 
+much difference. Mainly that the state machine always expects it to be
+possible that add more remote candidates.
 
 # Sources
 
 * https://datatracker.ietf.org/doc/html/rfc8859 - SDP attribute categories
 * https://datatracker.ietf.org/doc/html/rfc8445 - ICE
     * https://datatracker.ietf.org/doc/html/rfc8421 - multihomed ice
+    * https://www.rfc-editor.org/rfc/rfc8838.html - trickle ice
 * https://datatracker.ietf.org/doc/html/rfc8829 - JSEP

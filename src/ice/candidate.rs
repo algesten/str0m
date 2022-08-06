@@ -59,6 +59,14 @@ pub struct Candidate {
     /// For server reflexive candidates, this is the address/port of the server.
     raddr: Option<SocketAddr>, // ip/port
 
+    /// Ufrag.
+    ///
+    /// This is used to tie an ice candidate to a specific ICE session. It's important
+    /// when trickle ICE is used in conjunction with ice restart, since it must be
+    /// possible the ice agent to know whether a candidate appearing belongs to
+    /// the current or previous session.
+    ufrag: Option<String>,
+
     /// The ice agent might assign a local preference if we have multiple candidates
     /// that are the same type.
     local_preference: Option<u32>,
@@ -97,6 +105,7 @@ impl Candidate {
         base: Option<SocketAddr>,
         kind: CandidateKind,
         raddr: Option<SocketAddr>,
+        ufrag: Option<String>,
     ) -> Self {
         Candidate {
             foundation,
@@ -107,6 +116,7 @@ impl Candidate {
             base,
             kind,
             raddr,
+            ufrag,
             local_preference: None,
             discarded: false,
         }
@@ -120,6 +130,7 @@ impl Candidate {
         addr: SocketAddr,
         kind: CandidateKind,
         raddr: Option<SocketAddr>,
+        ufrag: Option<String>,
     ) -> Self {
         Candidate::new(
             Some(foundation),
@@ -130,6 +141,7 @@ impl Candidate {
             None,
             kind,
             raddr,
+            ufrag,
         )
     }
 
@@ -150,6 +162,7 @@ impl Candidate {
             Some(addr),
             CandidateKind::Host,
             None,
+            None,
         ))
     }
 
@@ -163,6 +176,7 @@ impl Candidate {
         base: SocketAddr,
         prio: u32,
         found: Option<String>,
+        ufrag: String,
     ) -> Self {
         Candidate::new(
             found,
@@ -173,6 +187,7 @@ impl Candidate {
             Some(base),
             CandidateKind::PeerReflexive,
             None,
+            Some(ufrag),
         )
     }
 
@@ -186,6 +201,7 @@ impl Candidate {
             addr,
             Some(base),
             CandidateKind::PeerReflexive,
+            None,
             None,
         )
     }
@@ -313,6 +329,10 @@ impl Candidate {
     pub(crate) fn discarded(&self) -> bool {
         self.discarded
     }
+
+    pub(crate) fn ufrag(&self) -> Option<&str> {
+        self.ufrag.as_ref().map(|s| s.as_str())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -360,6 +380,9 @@ impl fmt::Display for Candidate {
         )?;
         if let Some((raddr, rport)) = self.raddr.as_ref().map(|r| (r.ip(), r.port())) {
             write!(f, " raddr {} rport {}", raddr, rport)?;
+        }
+        if let Some(ufrag) = &self.ufrag {
+            write!(f, " ufrag {}", ufrag)?;
         }
         write!(f, "\r\n")
     }

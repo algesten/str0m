@@ -234,11 +234,17 @@ where
             port(),
             string(" typ "),
             kind,
-            optional((string(" raddr "), ip_addr(), string(" rport "), port())),
+            optional((
+                attempt(string(" raddr ")),
+                ip_addr(),
+                string(" rport "),
+                port(),
+            )),
+            optional((attempt(string(" ufrag ")), not_sp())),
         ),
     )
     .map(
-        |(found, _, comp_id, _, proto, _, prio, _, addr, _, port, _, kind, raddr_opt)| {
+        |(found, _, comp_id, _, proto, _, prio, _, addr, _, port, _, kind, raddr, ufrag)| {
             Candidate::parsed(
                 found,
                 comp_id,
@@ -246,7 +252,8 @@ where
                 prio, // remote candidates calculate prio on their side
                 SocketAddr::from((addr, port)),
                 kind,
-                raddr_opt.map(|(_, addr, _, port)| SocketAddr::from((addr, port))),
+                raddr.map(|(_, addr, _, port)| SocketAddr::from((addr, port))),
+                ufrag.map(|(_, u)| u),
             )
         },
     )
@@ -1067,6 +1074,18 @@ mod test {
         let parsed = sdp_parser().parse(sdp);
 
         assert!(parsed.is_ok());
+    }
+
+    #[test]
+    fn parse_candidate_ufrag() {
+        let a = "a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ srflx raddr 203.0.113.100 rport 10100 ufrag abc\r\n";
+
+        let (c, _) = candidate().parse(a).unwrap();
+        assert_eq!(c.ufrag(), Some("abc"));
+
+        let a = "a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ host ufrag abc\r\n";
+        let (c, _) = candidate().parse(a).unwrap();
+        assert_eq!(c.ufrag(), Some("abc"));
     }
 }
 
