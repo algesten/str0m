@@ -6,6 +6,7 @@ use rand::random;
 use thiserror::Error;
 
 use crate::pair::CheckState;
+use crate::stun::TransId;
 use crate::{Datagram, Id, Receive, Transmit, DATAGRAM_MTU};
 
 use super::candidate::{Candidate, CandidateKind};
@@ -89,7 +90,7 @@ struct StunRequest {
     now: Instant,
     source: SocketAddr,
     destination: SocketAddr,
-    trans_id: [u8; 12],
+    trans_id: TransId,
     prio: u32,
     use_candidate: bool,
     remote_ufrag: String,
@@ -834,8 +835,7 @@ impl IceAgent {
             trace!("Binding request sent USE-CANDIDATE");
         }
 
-        let mut trans_id = [0_u8; 12];
-        trans_id.copy_from_slice(message.trans_id());
+        let trans_id = message.trans_id();
 
         // The existence of USERNAME is checked by the STUN parser.
         let (_, remote_ufrag) = message.split_username().unwrap();
@@ -1036,7 +1036,7 @@ impl IceAgent {
 
         let (_, password) = self.stun_credentials(true);
 
-        let reply = StunMessage::reply(&req.trans_id, req.source);
+        let reply = StunMessage::reply(req.trans_id, req.source);
 
         debug!("Send STUN reply: {:?}", reply);
 

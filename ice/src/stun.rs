@@ -8,6 +8,7 @@ use crc::{Crc, CRC_32_ISO_HDLC};
 use hmac::Hmac;
 use hmac::Mac;
 use hmac::NewMac;
+use rand::random;
 use sha1::Sha1;
 use thiserror::Error;
 
@@ -47,11 +48,30 @@ pub enum StunError {
     Other(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TransId([u8; 12]);
+
+impl TransId {
+    pub fn new() -> Self {
+        let mut t = [0_u8; 12];
+        for v in &mut t {
+            *v = random();
+        }
+        TransId(t)
+    }
+
+    fn from_slice(s: &[u8]) -> Self {
+        let mut t = [0_u8; 12];
+        (&mut t[..]).copy_from_slice(s);
+        TransId(t)
+    }
+}
+
 #[derive(Clone)]
 pub struct StunMessage<'a> {
     method: Method,
     class: Class,
-    trans_id: &'a [u8],
+    trans_id: TransId,
     attrs: Vec<Attribute<'a>>,
     integrity: &'a [u8],
 }
@@ -78,7 +98,7 @@ impl<'a> StunMessage<'a> {
         let method = Method::from_typ(typ);
         let begin = &buf[0..4];
         // let buf_ptr = buf as *mut [u8];
-        let trans_id = &buf[8..20];
+        let trans_id = TransId::from_slice(&buf[8..20]);
 
         let mut message_integrity_offset = 0;
 
@@ -138,13 +158,13 @@ impl<'a> StunMessage<'a> {
         self.method == Method::Binding && self.class == Class::Success
     }
 
-    pub fn trans_id(&self) -> &[u8] {
+    pub fn trans_id(&self) -> TransId {
         self.trans_id
     }
 
     pub fn binding_request(
         username: &'a str,
-        trans_id: &'a [u8; 12],
+        trans_id: TransId,
         controlling: bool,
         control_tie_breaker: u64,
         prio: u32,
@@ -153,7 +173,7 @@ impl<'a> StunMessage<'a> {
         let mut m = StunMessage {
             class: Class::Request,
             method: Method::Binding,
-            trans_id: &*trans_id,
+            trans_id,
             attrs: vec![
                 Attribute::Username(username),
                 if controlling {
@@ -176,7 +196,7 @@ impl<'a> StunMessage<'a> {
         m
     }
 
-    pub fn reply(trans_id: &'a [u8; 12], mapped_address: SocketAddr) -> StunMessage<'a> {
+    pub fn reply(trans_id: TransId, mapped_address: SocketAddr) -> StunMessage<'a> {
         StunMessage {
             class: Class::Success,
             method: Method::Binding,
@@ -233,7 +253,7 @@ impl<'a> StunMessage<'a> {
         // -8 for fingerprint
         buf.write_all(&((attr_len - 8) as u16).to_be_bytes())?;
         buf.write_all(MAGIC)?;
-        buf.write_all(self.trans_id)?;
+        buf.write_all(&self.trans_id.0)?;
 
         let mut i_off = 0;
         let mut f_off = 0;
@@ -241,7 +261,7 @@ impl<'a> StunMessage<'a> {
         {
             let mut off = 20; // attribute start
             for a in &self.attrs {
-                a.to_bytes(&mut buf, self.trans_id)?;
+                a.to_bytes(&mut buf, &self.trans_id.0)?;
                 if let Attribute::MessageIntegrityMark = a {
                     i_off = off;
                 }
@@ -502,7 +522,7 @@ impl<'a> Attribute<'a> {
 
     fn parse(
         mut buf: &'a [u8],
-        trans_id: &'a [u8],
+        trans_id: TransId,
         msg_integrity_off: &mut usize,
     ) -> Result<Vec<Attribute<'a>>, StunError> {
         let mut ret = vec![];
@@ -693,7 +713,7 @@ fn encode_xor(addr: SocketAddr, buf: &mut [u8; 17], trans_id: &[u8]) -> usize {
     }
 }
 
-fn decode_xor(buf: &[u8], trans_id: &[u8]) -> Result<SocketAddr, StunError> {
+fn decode_xor(buf: &[u8], trans_id: TransId) -> Result<SocketAddr, StunError> {
     let port = (((buf[2] as u16) << 8) | (buf[3] as u16)) ^ 0x2112;
     let ip_buf = &buf[4..];
     let ip = match buf[1] {
@@ -710,7 +730,7 @@ fn decode_xor(buf: &[u8], trans_id: &[u8]) -> Result<SocketAddr, StunError> {
                 bytes[i] = ip_buf[i] ^ MAGIC[i];
             }
             for i in 4..16 {
-                bytes[i] = ip_buf[i] ^ trans_id[i - 4];
+                bytes[i] = ip_buf[i] ^ trans_id.0[i - 4];
             }
             IpAddr::V6(bytes.into())
         }
@@ -736,7 +756,6 @@ impl<'a> fmt::Debug for StunMessage<'a> {
         f.debug_struct("StunMessage")
             .field("method", &self.method)
             .field("class", &self.class)
-            .field("trans_id_len", &self.trans_id.len())
             .field("attrs", &self.attrs)
             .field("integrity_len", &self.integrity.len())
             .finish()

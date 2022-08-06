@@ -2,7 +2,8 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::{Candidate, Id};
+use crate::stun::TransId;
+use crate::Candidate;
 
 use super::stun::{stun_resend_delay, STUN_MAX_RETRANS};
 
@@ -84,7 +85,7 @@ pub struct BindingAttempt {
     /// The transaction id used in the STUN binding request.
     ///
     /// This is how we recognize the binding response.
-    trans_id: [u8; 12],
+    trans_id: TransId,
 
     /// The time we sent the binding request.
     request_sent: Instant,
@@ -182,7 +183,7 @@ impl CandidatePair {
     /// Records a new binding request attempt.
     ///
     /// Returns the transaction id to use in the STUN message.
-    pub fn new_attempt(&mut self, now: Instant) -> &[u8; 12] {
+    pub fn new_attempt(&mut self, now: Instant) -> TransId {
         // calculate a new time
         self.cached_next_attempt_time = None;
 
@@ -192,7 +193,7 @@ impl CandidatePair {
         }
 
         let attempt = BindingAttempt {
-            trans_id: Id::random().into_array(),
+            trans_id: TransId::new(),
             request_sent: now,
             respone_recv: None,
             nominated: self.is_nominated(),
@@ -216,11 +217,11 @@ impl CandidatePair {
 
         let last = self.binding_attempts.back().unwrap();
 
-        &last.trans_id
+        last.trans_id
     }
 
     /// Tells if this pair caused the binding request for a STUN transaction id.
-    pub fn has_binding_attempt(&self, trans_id: &[u8]) -> bool {
+    pub fn has_binding_attempt(&self, trans_id: TransId) -> bool {
         self.binding_attempts.iter().any(|b| b.trans_id == trans_id)
     }
 
@@ -229,7 +230,7 @@ impl CandidatePair {
     /// ### Panics
     ///
     /// Panics if the trans_id doesn't belong to this pair.
-    pub fn record_binding_response(&mut self, now: Instant, trans_id: &[u8], valid_idx: usize) {
+    pub fn record_binding_response(&mut self, now: Instant, trans_id: TransId, valid_idx: usize) {
         self.cached_next_attempt_time = None;
 
         self.valid_idx = Some(valid_idx);
