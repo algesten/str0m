@@ -87,7 +87,7 @@ impl Session {
     }
 
     pub fn ice_creds(&self) -> Option<IceCreds> {
-        let username = self.attrs.iter().find_map(|m| {
+        let ufrag = self.attrs.iter().find_map(|m| {
             if let SessionAttribute::IceUfrag(v) = m {
                 Some(v)
             } else {
@@ -95,7 +95,7 @@ impl Session {
             }
         })?;
 
-        let password = self.attrs.iter().find_map(|m| {
+        let pass = self.attrs.iter().find_map(|m| {
             if let SessionAttribute::IcePwd(v) = m {
                 Some(v)
             } else {
@@ -104,8 +104,8 @@ impl Session {
         })?;
 
         Some(IceCreds {
-            username: username.to_string(),
-            password: password.to_string(),
+            ufrag: ufrag.to_string(),
+            pass: pass.to_string(),
         })
     }
 
@@ -355,7 +355,7 @@ impl MediaLine {
     }
 
     pub fn ice_creds(&self) -> Option<IceCreds> {
-        let username = self.attrs.iter().find_map(|m| {
+        let ufrag = self.attrs.iter().find_map(|m| {
             if let MediaAttribute::IceUfrag(v) = m {
                 Some(v)
             } else {
@@ -363,7 +363,7 @@ impl MediaLine {
             }
         })?;
 
-        let password = self.attrs.iter().find_map(|m| {
+        let pass = self.attrs.iter().find_map(|m| {
             if let MediaAttribute::IcePwd(v) = m {
                 Some(v)
             } else {
@@ -372,8 +372,8 @@ impl MediaLine {
         })?;
 
         Some(IceCreds {
-            username: username.to_string(),
-            password: password.to_string(),
+            ufrag: ufrag.to_string(),
+            pass: pass.to_string(),
         })
     }
     pub fn fingerprint(&self) -> Option<Fingerprint> {

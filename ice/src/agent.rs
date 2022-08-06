@@ -92,7 +92,7 @@ struct StunRequest {
     trans_id: [u8; 12],
     prio: u32,
     use_candidate: bool,
-    remote_username: String,
+    remote_ufrag: String,
 }
 
 const REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION: &str = "tmp_prflx";
@@ -139,9 +139,9 @@ pub enum IceConnectionState {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IceCreds {
     // From a=ice-ufrag
-    pub username: String,
+    pub ufrag: String,
     // From a=ice-pwd
-    pub password: String,
+    pub pass: String,
 }
 
 impl IceCreds {
@@ -150,9 +150,9 @@ impl IceCreds {
         // checks.  The values MUST be unguessable, with at least 128 bits of
         // random number generator output used to generate the password, and
         // at least 24 bits of output to generate the username fragment.
-        let username = Id::<3>::random().to_string();
-        let password = Id::<16>::random().to_string();
-        IceCreds { username, password }
+        let ufrag = Id::<3>::random().to_string();
+        let pass = Id::<16>::random().to_string();
+        IceCreds { ufrag, pass }
     }
 }
 
@@ -217,14 +217,14 @@ impl IceAgent {
         let (left, right) = if reply {
             ("not_used", "not_used")
         } else {
-            (&peer.username[..], &local.username[..])
+            (&peer.ufrag[..], &local.ufrag[..])
         };
 
         let username = format!("{}:{}", left, right);
         let password = if reply {
-            local.password.clone()
+            local.pass.clone()
         } else {
-            peer.password.clone()
+            peer.pass.clone()
         };
 
         (username, password)
@@ -357,7 +357,7 @@ impl IceAgent {
         }
 
         // Tie this ufrag to this ICE-session.
-        c.set_ufrag(&self.local_credentials.username);
+        c.set_ufrag(&self.local_credentials.ufrag);
 
         // These are the indexes of the remote candidates this candidate should be paired with.
         let remote_idxs: Vec<_> = self
@@ -408,10 +408,10 @@ impl IceAgent {
 
         if let Some(creds) = &self.remote_credentials {
             if let Some(ufrag) = c.ufrag() {
-                if ufrag != creds.username {
+                if ufrag != creds.ufrag {
                     debug!(
                         "Reject candidate with ufrag mismatch: {} != {}",
-                        ufrag, creds.username
+                        ufrag, creds.ufrag
                     );
                     return false;
                 }
@@ -605,7 +605,7 @@ impl IceAgent {
     /// binding requests itself.
     ///
     /// If no remote credentials have been set using `set_remote_credentials`, the remote
-    /// username is not checked.
+    /// ufrag is not checked.
     pub fn accepts_message(&self, message: &StunMessage<'_>) -> bool {
         debug!("Check if accepts message: {:?}", message);
 
@@ -617,19 +617,19 @@ impl IceAgent {
             let (local, remote) = message.split_username().unwrap();
 
             let local_creds = self.local_credentials();
-            if local != local_creds.username {
+            if local != local_creds.ufrag {
                 debug!(
                     "Message rejected, local user mismatch: {} != {}",
-                    local, local_creds.username
+                    local, local_creds.ufrag
                 );
                 return false;
             }
 
             if let Some(remote_creds) = &self.remote_credentials {
-                if remote != remote_creds.username {
+                if remote != remote_creds.ufrag {
                     debug!(
                         "Message rejected, remote user mismatch: {} != {}",
-                        remote, remote_creds.username
+                        remote, remote_creds.ufrag
                     );
                     return false;
                 }
@@ -838,7 +838,7 @@ impl IceAgent {
         trans_id.copy_from_slice(message.trans_id());
 
         // The existence of USERNAME is checked by the STUN parser.
-        let (_, remote_username) = message.split_username().unwrap();
+        let (_, remote_ufrag) = message.split_username().unwrap();
 
         // Because we might have to delay stun requests until we receive the remote
         // credentials, we extract all relevant bits of information so it can be owned.
@@ -849,7 +849,7 @@ impl IceAgent {
             trans_id,
             prio,
             use_candidate,
-            remote_username: remote_username.into(),
+            remote_ufrag: remote_ufrag.into(),
         };
 
         if self.remote_credentials.is_some() {
@@ -886,12 +886,12 @@ impl IceAgent {
 
     fn stun_server_handle_request(&mut self, req: StunRequest) {
         let remote_creds = self.remote_credentials.as_ref().expect("Remote ICE creds");
-        if req.remote_username != remote_creds.username {
+        if req.remote_ufrag != remote_creds.ufrag {
             // this check can be delayed due to receiving STUN bind requests before we
             // get the exchange on the signal level.
             debug!(
                 "STUN request rejected, remote user mismatch (enqueued): {} != {}",
-                req.remote_username, remote_creds.username
+                req.remote_ufrag, remote_creds.ufrag
             );
             return;
         }
@@ -932,7 +932,7 @@ impl IceAgent {
                 // In practice it might no matter since we don't do the frozen-waiting
                 // dance for candidate pairs.
                 Some(REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION.into()),
-                self.local_credentials.username.clone(),
+                self.local_credentials.ufrag.clone(),
             );
 
             debug!(
@@ -1164,7 +1164,7 @@ impl IceAgent {
                 base,
                 prio,
                 None,
-                self.local_credentials.username.clone(),
+                self.local_credentials.ufrag.clone(),
             );
 
             debug!(
