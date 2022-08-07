@@ -130,24 +130,31 @@ pub enum IceConnectionState {
     /// against one another, and has found a working connection.
     Completed,
 
-    /// The ICE candidate has checked all candidates pairs against one another and has
-    /// failed to find compatible matches.
-    Failed,
-
     /// Connection failed. This is a less stringent test than `failed` and may trigger
     /// intermittently and resolve just as spontaneously on less reliable networks,
     /// or during temporary disconnections. When the problem resolves, the connection
     /// may return to the connected state.
     Disconnected,
-
-    /// The ICE agent has shut down and is no longer handling requests.
-    Closed,
+    //
+    // NB: The failed and closed state doesn't really have a mapping in this implementation.
+    //     We never end trickle ice and it's always possible to "come back" if more remote
+    //     candidates are added.
+    //
+    // The ICE candidate has checked all candidates pairs against one another and has
+    // failed to find compatible matches.
+    // Failed,
+    // The ICE agent has shut down and is no longer handling requests.
+    // Closed,
 }
 
 impl IceConnectionState {
     pub fn is_connected(&self) -> bool {
         use IceConnectionState::*;
         matches!(self, Connected | Completed)
+    }
+
+    pub fn is_disconnected(&self) -> bool {
+        *self == IceConnectionState::Disconnected
     }
 }
 
@@ -1394,6 +1401,8 @@ impl IceAgent {
                     } else {
                         self.set_connection_state(Completed);
                     }
+                } else if !any_still_possible {
+                    self.set_connection_state(Disconnected);
                 }
             }
             Connected => {
@@ -1402,11 +1411,7 @@ impl IceAgent {
                         self.set_connection_state(Completed);
                     }
                 } else {
-                    if any_still_possible {
-                        self.set_connection_state(Disconnected);
-                    } else {
-                        self.set_connection_state(Failed);
-                    }
+                    self.set_connection_state(Disconnected);
                 }
             }
             Completed => {
@@ -1415,15 +1420,8 @@ impl IceAgent {
                         self.set_connection_state(Connected);
                     }
                 } else {
-                    if any_still_possible {
-                        self.set_connection_state(Disconnected);
-                    } else {
-                        self.set_connection_state(Failed);
-                    }
+                    self.set_connection_state(Disconnected);
                 }
-            }
-            Failed | Closed => {
-                // the end
             }
         }
     }

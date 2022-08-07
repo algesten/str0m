@@ -31,7 +31,10 @@ pub fn host(s: impl Into<String>) -> Candidate {
 
 /// Transform the socket to rig different test scenarios.
 ///
-/// port 9999 -> closed (packets dropped)
+/// * either port 9999 -> closed (packets dropped)
+/// * from 3.3.3.3 is rewritten to 4.4.4.4
+/// * to 3.3.3.3 is dropped
+/// * to 4.4.4.4 is rewritten to 3.3.3.3
 fn transform(from: SocketAddr, to: SocketAddr) -> Option<(SocketAddr, SocketAddr)> {
     if from.port() == 9999 || to.port() == 9999 {
         // drop packet.
