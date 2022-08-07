@@ -70,8 +70,8 @@ pub struct IceAgent {
     /// The candidate pairs.
     candidate_pairs: Vec<CandidatePair>,
 
-    /// Transmit packets ready to be polled by poll_transmit.
-    transmit: VecDeque<Transmit>,
+    /// Transmit packet ready to be polled by poll_transmit.
+    transmit: Option<Transmit>,
 
     /// Events ready to be polled by poll_event.
     events: VecDeque<IceAgentEvent>,
@@ -243,7 +243,7 @@ impl IceAgent {
             local_candidates: vec![],
             remote_candidates: vec![],
             candidate_pairs: vec![],
-            transmit: VecDeque::new(),
+            transmit: None,
             events: VecDeque::new(),
             stun_server_queue: VecDeque::new(),
             need_extra_timeout: false,
@@ -253,11 +253,6 @@ impl IceAgent {
         }
     }
 
-    #[doc(hidden)]
-    pub fn set_last_now(&mut self, now: Instant) {
-        self.last_now = Some(now);
-    }
-
     /// Local ice credentials.
     pub fn local_credentials(&self) -> &IceCreds {
         &self.local_credentials
@@ -265,6 +260,7 @@ impl IceAgent {
 
     /// Sets the remote ice credentials.
     pub fn set_remote_credentials(&mut self, r: IceCreds) {
+        info!("Set remote credentials: {:?}", r);
         self.remote_credentials = Some(r);
     }
 
@@ -283,23 +279,23 @@ impl IceAgent {
     ///
     /// Panics if there are no remote credentials set.
     fn stun_credentials(&self, reply: bool) -> (String, String) {
-        let peer = self
-            .remote_credentials
-            .as_ref()
-            .expect("Remote ICE credentials");
         let local = &self.local_credentials;
 
-        let (left, right) = if reply {
-            ("not_used", "not_used")
+        let (left, right, peer_pass) = if reply {
+            ("not_used", "not_used", "not_used")
         } else {
-            (&peer.ufrag[..], &local.ufrag[..])
+            let peer = self
+                .remote_credentials
+                .as_ref()
+                .expect("Remote ICE credentials");
+            (&peer.ufrag[..], &local.ufrag[..], &peer.pass[..])
         };
 
         let username = format!("{}:{}", left, right);
         let password = if reply {
             local.pass.clone()
         } else {
-            peer.pass.clone()
+            peer_pass.into()
         };
 
         (username, password)
@@ -477,14 +473,14 @@ impl IceAgent {
     /// Returns `false` if the candidate was not added because it is redundant.
     /// Adding loopback addresses or multicast/broadcast addresses causes
     /// an error.
-    pub fn add_remote_candidate(&mut self, c: Candidate) -> bool {
+    pub fn add_remote_candidate(&mut self, c: Candidate) {
         info!("Add remote candidate: {:?}", c);
 
         // This is a a:rtcp-mux-only implementation. The only component
         // we accept is 1 for RTP.
         if c.component_id() != 1 {
             debug!("Reject candidate for component other than 1: {:?}", c);
-            return false;
+            return;
         }
 
         if let Some(creds) = &self.remote_credentials {
@@ -494,7 +490,7 @@ impl IceAgent {
                         "Reject candidate with ufrag mismatch: {} != {}",
                         ufrag, creds.ufrag
                     );
-                    return false;
+                    return;
                 }
             }
         }
@@ -537,8 +533,6 @@ impl IceAgent {
 
         let remote_idxs = [remote_idx];
         self.form_pairs(&local_idxs, &remote_idxs);
-
-        true
     }
 
     /// Form pairs given two slices of indexes into the local_candidates and remote_candidates.
@@ -663,7 +657,7 @@ impl IceAgent {
         self.local_candidates.clear();
         self.remote_candidates.clear();
         self.candidate_pairs.clear();
-        self.transmit.clear();
+        self.transmit = None;
         self.events.clear();
         self.need_extra_timeout = false;
         self.discovered_recv.clear();
@@ -763,6 +757,12 @@ impl IceAgent {
     pub fn handle_timeout(&mut self, now: Instant) {
         info!("Handle timeout: {:?}", now);
 
+        if self.transmit.is_some() {
+            // Can't progress, since there is a enqueued send. The
+            trace!("Stop timeout, already got enqueued transmit");
+            return;
+        }
+
         // This happens exactly once because evaluate_state() below will
         // switch away from New -> Checking.
         if self.state == IceConnectionState::New {
@@ -856,7 +856,7 @@ impl IceAgent {
 
     /// Poll for the next datagram to send.
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
-        let x = self.transmit.pop_front();
+        let x = self.transmit.take();
         trace!("Poll transmit: {:?}", x);
         x
     }
@@ -870,6 +870,11 @@ impl IceAgent {
         // if we never called handle_timeout, there will be no current time.
         let last_now = self.last_now?;
 
+        // We must empty the queued replies as soon as possible.
+        if !self.stun_server_queue.is_empty() {
+            return Some(last_now + TIMING_ADVANCE);
+        }
+
         // when do we need to handle the next candidate pair?
         let maybe_binding = if self.ice_lite {
             // ice-lite doesn't do checks.
@@ -881,16 +886,16 @@ impl IceAgent {
                 .min()
         };
 
-        let maybe_scheduled = if self.need_extra_timeout {
-            self.last_now.map(|t| t + TIMING_ADVANCE)
+        let maybe_need_extra = if self.need_extra_timeout {
+            Some(last_now + TIMING_ADVANCE)
         } else {
             None
         };
 
-        let mut maybe_next = smallest(maybe_binding, maybe_scheduled);
+        let mut maybe_next = smallest(maybe_binding, maybe_need_extra);
 
         // Time must advance with at least Ta.
-        if let (Some(last_now), Some(next)) = (self.last_now, maybe_next) {
+        if let Some(next) = maybe_next {
             if next < last_now + TIMING_ADVANCE {
                 maybe_next = Some(last_now + TIMING_ADVANCE);
             }
@@ -1150,7 +1155,8 @@ impl IceAgent {
             contents: buf,
         };
 
-        self.transmit.push_back(trans);
+        assert!(self.transmit.is_none());
+        self.transmit = Some(trans);
     }
 
     fn stun_client_binding_request(&mut self, now: Instant, pair_idx: usize) {
@@ -1191,7 +1197,8 @@ impl IceAgent {
             contents: buf,
         };
 
-        self.transmit.push_back(trans);
+        assert!(self.transmit.is_none());
+        self.transmit = Some(trans);
     }
 
     fn stun_client_handle_response(&mut self, now: Instant, message: StunMessage<'_>) {
