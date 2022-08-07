@@ -7,7 +7,7 @@ mod common;
 use common::{host, init_log, progress};
 
 #[test]
-pub fn host_host() {
+pub fn drop_host() {
     init_log();
 
     let mut a1 = IceAgent::new();
