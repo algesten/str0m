@@ -20,9 +20,9 @@ pub const STUN_TIMEOUT: Duration = Duration::from_secs(40); // the above algo gi
 
 /// Calculate the send delay given how many times we tried.
 ///
-/// Technically RTO should be calculated as per https://datatracker.ietf.org/doc/html/rfc2988, and
-/// modified by https://datatracker.ietf.org/doc/html/rfc5389#section-7.2.1,
-/// but chrome does it like this. https://webrtc.googlesource.com/src/+/refs/heads/main/p2p/base/stun_request.cc
+// Technically RTO should be calculated as per https://datatracker.ietf.org/doc/html/rfc2988, and
+// modified by https://datatracker.ietf.org/doc/html/rfc5389#section-7.2.1,
+// but chrome does it like this. https://webrtc.googlesource.com/src/+/refs/heads/main/p2p/base/stun_request.cc
 pub fn stun_resend_delay(send_count: usize) -> Duration {
     if send_count == 0 {
         return Duration::ZERO;

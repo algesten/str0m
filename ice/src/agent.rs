@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
@@ -85,6 +85,9 @@ pub struct IceAgent {
 
     /// We have reason to do a nomination check on next timeout.
     do_nomination_check: bool,
+
+    /// Remote addresses we have seen traffic appear from.
+    discovered_recv: HashSet<SocketAddr>,
 }
 
 #[derive(Debug)]
@@ -178,6 +181,7 @@ impl IceAgent {
             stun_server_queue: VecDeque::new(),
             need_extra_timeout: false,
             do_nomination_check: false,
+            discovered_recv: HashSet::new(),
         }
     }
 
@@ -372,8 +376,7 @@ impl IceAgent {
             .collect();
 
         if self.state != IceConnectionState::New {
-            self.events
-                .push_back(IceAgentEvent::NewLocalCandidate(c.clone()));
+            self.emit_event(IceAgentEvent::NewLocalCandidate(c.clone()));
         }
 
         self.local_candidates.push(c);
@@ -589,9 +592,9 @@ impl IceAgent {
         self.events.clear();
         self.need_extra_timeout = false;
         self.do_nomination_check = false;
+        self.discovered_recv.clear();
 
-        self.events
-            .push_back(IceAgentEvent::IceRestart(self.local_credentials.clone()));
+        self.emit_event(IceAgentEvent::IceRestart(self.local_credentials.clone()));
         self.set_connection_state(IceConnectionState::Checking);
     }
 
@@ -675,6 +678,11 @@ impl IceAgent {
         } else if message.is_successful_binding_response() {
             self.stun_client_handle_response(now, message);
         }
+
+        self.emit_event(IceAgentEvent::DiscoveredRecv {
+            source: receive.source,
+        });
+
         // TODO handle unsuccessful responses.
     }
 
@@ -770,7 +778,7 @@ impl IceAgent {
     /// Poll for the next datagram to send.
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
         let x = self.transmit.pop_front();
-        info!("Poll transmit: {:?}", x);
+        trace!("Poll transmit: {:?}", x);
         x
     }
 
@@ -809,14 +817,26 @@ impl IceAgent {
             }
         }
 
-        debug!("Next timeout is: {:?}", maybe_next);
+        trace!("Next timeout is: {:?}", maybe_next);
 
         maybe_next
     }
 
+    fn emit_event(&mut self, event: IceAgentEvent) {
+        if let IceAgentEvent::DiscoveredRecv { source } = event {
+            if !self.discovered_recv.insert(source) {
+                // we already dispatched this discovered
+                return;
+            }
+        }
+
+        trace!("Enqueueing event: {:?}", event);
+        self.events.push_back(event);
+    }
+
     pub fn poll_event(&mut self) -> Option<IceAgentEvent> {
         let x = self.events.pop_front();
-        info!("Poll event: {:?}", x);
+        trace!("Poll event: {:?}", x);
         x
     }
 
@@ -1227,8 +1247,7 @@ impl IceAgent {
         if self.state != state {
             info!("State change: {:?} -> {:?}", self.state, state);
             self.state = state;
-            self.events
-                .push_back(IceAgentEvent::IceConnectionStateChange(state));
+            self.emit_event(IceAgentEvent::IceConnectionStateChange(state));
         }
     }
 
@@ -1248,11 +1267,9 @@ impl IceAgent {
 
         match self.state {
             New => {
-                self.events
-                    .push_back(IceAgentEvent::IceRestart(self.local_credentials.clone()));
-                for c in &self.local_candidates {
-                    self.events
-                        .push_back(IceAgentEvent::NewLocalCandidate(c.clone()));
+                self.emit_event(IceAgentEvent::IceRestart(self.local_credentials.clone()));
+                for c in self.local_candidates.clone() {
+                    self.emit_event(IceAgentEvent::NewLocalCandidate(c));
                 }
                 self.set_connection_state(Checking);
             }
@@ -1263,6 +1280,23 @@ impl IceAgent {
                     } else {
                         self.set_connection_state(Completed);
                     }
+
+                    // drop all other candidate pairs so that we will only
+                    // STUN bind (refresh) this single pair going forward.
+                    self.candidate_pairs.retain(|p| p.is_nomination_success());
+                    assert!(self.candidate_pairs.len() == 1);
+
+                    let nominated = &self.candidate_pairs[0];
+
+                    let local = nominated.local_candidate(&self.local_candidates);
+                    let remote = nominated.remote_candidate(&self.remote_candidates);
+
+                    let event = IceAgentEvent::NominatedSend {
+                        source: local.base(),
+                        destination: remote.addr(),
+                    };
+
+                    self.emit_event(event);
                 }
             }
             Connected => {
@@ -1298,11 +1332,44 @@ impl IceAgent {
     }
 }
 
+/// Events from an [`IceAgent`].
 #[derive(Debug)]
 pub enum IceAgentEvent {
+    /// The agent resarted (or started).
     IceRestart(IceCreds),
+
+    /// Connection state changed.
+    ///
+    /// This is mostly for show since the actual addresses to use will be
+    /// communicated in `PossibleRemote` and `NominatedLocal`.
     IceConnectionStateChange(IceConnectionState),
+
+    /// Added new local candidate.
+    ///
+    /// This happens on every accepted [`IceAgent::add_local_candidate`].
+    /// The application should use these for trickle ice.
     NewLocalCandidate(Candidate),
+
+    /// A possible remote socket for the peer.
+    ///
+    /// The application should associate this with the peer. There will
+    /// be more than one of these, and traffic might eventually come in
+    /// on any of them.
+    DiscoveredRecv {
+        /// The remote socket to look out for.
+        source: SocketAddr,
+    },
+
+    /// The nominated local and remote socket for sending data.
+    NominatedSend {
+        /// The local socket address to send datagrams from.
+        ///
+        /// This will correspond to some local address added to
+        /// [`IceAgent::add_local_candidate`].
+        source: SocketAddr,
+        /// The remote address to send datagrams to.
+        destination: SocketAddr,
+    },
 }
 
 #[cfg(test)]
