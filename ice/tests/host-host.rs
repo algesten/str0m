@@ -2,7 +2,7 @@ use std::convert::TryFrom;
 use std::time::{Duration, Instant};
 
 use common::{init_log, sock};
-use ice::{Candidate, IceAgent};
+use ice::{Candidate, IceAgent, IceAgentStats};
 use net::Receive;
 use tracing::{info_span, Span};
 
@@ -11,6 +11,7 @@ mod common;
 fn host(s: impl Into<String>) -> Candidate {
     Candidate::host(sock(s)).unwrap()
 }
+
 pub fn progress(now: Instant, f: &mut IceAgent, t: &mut IceAgent, sf: &Span, st: &Span) -> Instant {
     sf.in_scope(|| f.handle_timeout(now));
 
@@ -47,7 +48,7 @@ pub fn host_host() {
     a1.set_controlling(true);
     a2.set_controlling(false);
 
-    let now = Instant::now();
+    let mut now = Instant::now();
 
     a1.set_last_now(now - Duration::from_millis(100));
     a2.set_last_now(now - Duration::from_millis(100));
@@ -55,11 +56,33 @@ pub fn host_host() {
     let span1 = info_span!("L");
     let span2 = info_span!("R");
 
-    let now = progress(now, &mut a1, &mut a2, &span1, &span2);
-    let now = progress(now, &mut a2, &mut a1, &span2, &span1);
-    let now = progress(now, &mut a1, &mut a2, &span1, &span2);
-    let now = progress(now, &mut a2, &mut a1, &span2, &span1);
-    let now = progress(now, &mut a1, &mut a2, &span1, &span2);
-    let now = progress(now, &mut a2, &mut a1, &span2, &span1);
-    let _ = progress(now, &mut a1, &mut a2, &span1, &span2);
+    loop {
+        if a1.state().is_connected() && a2.state().is_connected() {
+            break;
+        }
+        now = progress(now, &mut a1, &mut a2, &span1, &span2);
+        now = progress(now, &mut a2, &mut a1, &span2, &span1);
+    }
+
+    assert_eq!(
+        a1.stats(),
+        IceAgentStats {
+            bind_request_sent: 2,
+            bind_success_recv: 2,
+            bind_request_recv: 2,
+            discovered_recv_count: 1,
+            nomination_send_count: 1,
+        }
+    );
+
+    assert_eq!(
+        a2.stats(),
+        IceAgentStats {
+            bind_request_sent: 2,
+            bind_success_recv: 1,
+            bind_request_recv: 2,
+            discovered_recv_count: 1,
+            nomination_send_count: 1,
+        }
+    );
 }

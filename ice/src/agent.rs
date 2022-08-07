@@ -90,6 +90,9 @@ pub struct IceAgent {
     /// Currently nominated pair for sending. This is used to evalulate
     /// if we get a better candidate for [`IceAgentEvent::NominatedSend`].
     nominated_send: Option<PairId>,
+
+    /// Statistics counter for the agent.
+    stats: IceAgentStats,
 }
 
 #[derive(Debug)]
@@ -141,6 +144,13 @@ pub enum IceConnectionState {
     Closed,
 }
 
+impl IceConnectionState {
+    pub fn is_connected(&self) -> bool {
+        use IceConnectionState::*;
+        matches!(self, Connected | Completed)
+    }
+}
+
 /// Credentials for STUN packages.
 ///
 /// By matching IceCreds in STUN to SDP, we know which STUN belongs to which Peer.
@@ -150,6 +160,61 @@ pub struct IceCreds {
     pub ufrag: String,
     // From a=ice-pwd
     pub pass: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct IceAgentStats {
+    pub bind_request_sent: u64,
+    pub bind_success_recv: u64,
+    pub bind_request_recv: u64,
+    pub discovered_recv_count: u64,
+    pub nomination_send_count: u64,
+}
+
+/// Events from an [`IceAgent`].
+#[derive(Debug)]
+pub enum IceAgentEvent {
+    /// The agent resarted (or started).
+    IceRestart(IceCreds),
+
+    /// Connection state changed.
+    ///
+    /// This is mostly for show since the actual addresses to use will be
+    /// communicated in `PossibleRemote` and `NominatedLocal`.
+    IceConnectionStateChange(IceConnectionState),
+
+    /// Added new local candidate.
+    ///
+    /// This happens on every accepted [`IceAgent::add_local_candidate`].
+    /// The application should use these for trickle ice.
+    NewLocalCandidate(Candidate),
+
+    /// A possible remote socket for the peer.
+    ///
+    /// The application should associate this with the peer. There will
+    /// be more than one of these, and traffic might eventually come in
+    /// on any of them.
+    ///
+    /// For each ICE restart, the app will only receive unique addresses once.
+    DiscoveredRecv {
+        /// The remote socket to look out for.
+        source: SocketAddr,
+    },
+
+    /// A nominated local and remote socket for sending data.
+    ///
+    /// As opposed to the ICE spec, we can send this multiple times without
+    /// requiring an ICE restart. The application should always use the values
+    /// of the last emitted event to send data.
+    NominatedSend {
+        /// The local socket address to send datagrams from.
+        ///
+        /// This will correspond to some local address added to
+        /// [`IceAgent::add_local_candidate`].
+        source: SocketAddr,
+        /// The remote address to send datagrams to.
+        destination: SocketAddr,
+    },
 }
 
 impl IceCreds {
@@ -184,6 +249,7 @@ impl IceAgent {
             need_extra_timeout: false,
             discovered_recv: HashSet::new(),
             nominated_send: None,
+            stats: IceAgentStats::default(),
         }
     }
 
@@ -256,6 +322,13 @@ impl IceAgent {
     /// Current ice agent state.
     pub fn state(&self) -> IceConnectionState {
         self.state
+    }
+
+    /// Stats for the agent.
+    ///
+    /// Resets on ICE restart.
+    pub fn stats(&self) -> IceAgentStats {
+        self.stats
     }
 
     /// Adds a local candidate.
@@ -834,6 +907,9 @@ impl IceAgent {
                 // we already dispatched this discovered
                 return;
             }
+            self.stats.discovered_recv_count += 1;
+        } else if matches!(event, IceAgentEvent::NominatedSend { .. }) {
+            self.stats.nomination_send_count += 1;
         }
 
         trace!("Enqueueing event: {:?}", event);
@@ -929,6 +1005,8 @@ impl IceAgent {
             debug!("STUN request rejected, USE-CANDIDATE when local is controlling");
             return;
         }
+
+        self.stats.bind_request_recv += 1;
 
         // If the source transport address of the request does not match any
         // existing remote candidates, it represents a new peer-reflexive remote
@@ -1087,6 +1165,8 @@ impl IceAgent {
 
         let trans_id = pair.new_attempt(now);
 
+        self.stats.bind_request_sent += 1;
+
         let binding = StunMessage::binding_request(
             &username,
             trans_id,
@@ -1121,6 +1201,8 @@ impl IceAgent {
             .candidate_pairs
             .iter_mut()
             .find(|p| p.has_binding_attempt(trans_id));
+
+        self.stats.bind_success_recv += 1;
 
         let pair = match maybe_pair {
             Some(v) => v,
@@ -1338,52 +1420,6 @@ impl IceAgent {
             }
         }
     }
-}
-
-/// Events from an [`IceAgent`].
-#[derive(Debug)]
-pub enum IceAgentEvent {
-    /// The agent resarted (or started).
-    IceRestart(IceCreds),
-
-    /// Connection state changed.
-    ///
-    /// This is mostly for show since the actual addresses to use will be
-    /// communicated in `PossibleRemote` and `NominatedLocal`.
-    IceConnectionStateChange(IceConnectionState),
-
-    /// Added new local candidate.
-    ///
-    /// This happens on every accepted [`IceAgent::add_local_candidate`].
-    /// The application should use these for trickle ice.
-    NewLocalCandidate(Candidate),
-
-    /// A possible remote socket for the peer.
-    ///
-    /// The application should associate this with the peer. There will
-    /// be more than one of these, and traffic might eventually come in
-    /// on any of them.
-    ///
-    /// For each ICE restart, the app will only receive unique addresses once.
-    DiscoveredRecv {
-        /// The remote socket to look out for.
-        source: SocketAddr,
-    },
-
-    /// A nominated local and remote socket for sending data.
-    ///
-    /// As opposed to the ICE spec, we can send this multiple times without
-    /// requiring an ICE restart. The application should always use the values
-    /// of the last emitted event to send data.
-    NominatedSend {
-        /// The local socket address to send datagrams from.
-        ///
-        /// This will correspond to some local address added to
-        /// [`IceAgent::add_local_candidate`].
-        source: SocketAddr,
-        /// The remote address to send datagrams to.
-        destination: SocketAddr,
-    },
 }
 
 #[cfg(test)]
