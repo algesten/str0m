@@ -3,13 +3,15 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use crate::Candidate;
-use net::TransId;
+use net::{Id, TransId};
 
 use net::{stun_resend_delay, STUN_MAX_RETRANS};
 
 #[derive(Default)]
 /// A pair of candidates, local and remote, in the ice agent.
 pub struct CandidatePair {
+    id: PairId,
+
     /// Index into the local_candidates list in IceAgent.
     local_idx: usize,
 
@@ -97,6 +99,15 @@ pub struct BindingAttempt {
     nominated: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PairId([u8; 20]);
+
+impl Default for PairId {
+    fn default() -> Self {
+        PairId(Id::random().into_array())
+    }
+}
+
 impl CandidatePair {
     pub fn new(local_idx: usize, remote_idx: usize, prio: u64) -> Self {
         CandidatePair {
@@ -106,6 +117,10 @@ impl CandidatePair {
             binding_attempts: VecDeque::with_capacity(STUN_MAX_RETRANS + 1),
             ..Default::default()
         }
+    }
+
+    pub fn id(&self) -> PairId {
+        self.id
     }
 
     pub fn calculate_prio(controlling: bool, remote_prio: u32, local_prio: u32) -> u64 {
@@ -163,10 +178,6 @@ impl CandidatePair {
 
     pub fn is_nominated(&self) -> bool {
         !matches!(self.nomination_state, NominationState::None)
-    }
-
-    pub fn is_nomination_success(&self) -> bool {
-        matches!(self.nomination_state, NominationState::Success)
     }
 
     pub fn nominate(&mut self, force_success: bool) {

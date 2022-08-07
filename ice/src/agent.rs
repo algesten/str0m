@@ -11,7 +11,7 @@ use net::TransId;
 use net::STUN_TIMEOUT;
 use net::{Datagram, Receive, Transmit, DATAGRAM_MTU};
 
-use crate::pair::CheckState;
+use crate::pair::{CheckState, PairId};
 
 use super::candidate::{Candidate, CandidateKind};
 use super::pair::CandidatePair;
@@ -83,11 +83,13 @@ pub struct IceAgent {
     /// If we have reason to do an immediate timeout.
     need_extra_timeout: bool,
 
-    /// We have reason to do a nomination check on next timeout.
-    do_nomination_check: bool,
-
-    /// Remote addresses we have seen traffic appear from.
+    /// Remote addresses we have seen traffic appear from. This is used
+    /// to dedupe [`IceAgentEvent::DiscoveredRecv`].
     discovered_recv: HashSet<SocketAddr>,
+
+    /// Currently nominated pair for sending. This is used to evalulate
+    /// if we get a better candidate for [`IceAgentEvent::NominatedSend`].
+    nominated_send: Option<PairId>,
 }
 
 #[derive(Debug)]
@@ -180,8 +182,8 @@ impl IceAgent {
             events: VecDeque::new(),
             stun_server_queue: VecDeque::new(),
             need_extra_timeout: false,
-            do_nomination_check: false,
             discovered_recv: HashSet::new(),
+            nominated_send: None,
         }
     }
 
@@ -591,7 +593,6 @@ impl IceAgent {
         self.transmit.clear();
         self.events.clear();
         self.need_extra_timeout = false;
-        self.do_nomination_check = false;
         self.discovered_recv.clear();
 
         self.emit_event(IceAgentEvent::IceRestart(self.local_credentials.clone()));
@@ -689,6 +690,15 @@ impl IceAgent {
     pub fn handle_timeout(&mut self, now: Instant) {
         info!("Handle timeout: {:?}", now);
 
+        // This happens exactly once because evaluate_state() below will
+        // switch away from New -> Checking.
+        if self.state == IceConnectionState::New {
+            self.emit_event(IceAgentEvent::IceRestart(self.local_credentials.clone()));
+            for c in self.local_candidates.clone() {
+                self.emit_event(IceAgentEvent::NewLocalCandidate(c));
+            }
+        }
+
         self.evaluate_state(now);
 
         // The generation of ordinary and triggered connectivity checks is
@@ -725,12 +735,7 @@ impl IceAgent {
 
         self.need_extra_timeout = false;
 
-        if self.do_nomination_check {
-            self.do_nomination_check = false;
-            self.attempt_nomination();
-            // don't return here. we can go on to handle the binding request
-            // for the nomination straight away.
-        }
+        self.evaluate_nomination();
 
         // prune failed candidates.
         let mut any_pruned = false;
@@ -743,6 +748,7 @@ impl IceAgent {
             keep
         });
         if any_pruned {
+            self.evaluate_nomination();
             self.evaluate_state(now);
         }
 
@@ -1020,10 +1026,6 @@ impl IceAgent {
             self.candidate_pairs.sort();
         }
 
-        // borrow checker gymnastics to calculate this here while
-        // using it further down.
-        let any_nominated = self.candidate_pairs.iter().any(|p| p.is_nominated());
-
         let pair = self
             .candidate_pairs
             .iter_mut()
@@ -1031,30 +1033,25 @@ impl IceAgent {
             // unwrap is fine since we have inserted a pair if it was missing.
             .unwrap();
 
+        let local = pair.local_candidate(&self.local_candidates);
+        let local_addr = local.base();
+        let remote = pair.remote_candidate(&self.remote_candidates);
+        let remote_addr = remote.addr();
+
         pair.increase_remote_binding_requests();
 
-        if self.controlling
-            && !any_nominated
-            && pair.state() == CheckState::Succeeded
-            && !self.do_nomination_check
-        {
-            trace!("Schedule nomination check on request");
-            self.do_nomination_check = true;
-            self.need_extra_timeout = true;
+        if !self.controlling && !pair.is_nominated() && req.use_candidate {
+            // We need to answer a nomination request with a binding request
+            // in the other direction.
+            //
+            // If this is ice-lite, we make it successful straight away.
+            pair.nominate(self.ice_lite);
         }
 
-        if !self.controlling && req.use_candidate {
-            if !any_nominated {
-                // We need to answer a nomination request with a binding request
-                // in the other direction.
-                //
-                // If this is ice-lite, we make it successful straight away.
-                pair.nominate(self.ice_lite);
-            }
+        if self.controlling && pair.state() == CheckState::Succeeded {
+            // See if we can nominate something now.
+            self.evaluate_nomination();
         }
-
-        let local = pair.local_candidate(&self.local_candidates);
-        let remote = pair.remote_candidate(&self.remote_candidates);
 
         let (_, password) = self.stun_credentials(true);
 
@@ -1070,8 +1067,8 @@ impl IceAgent {
         buf.truncate(n);
 
         let trans = Transmit {
-            source: local.base(),
-            destination: remote.addr(),
+            source: local_addr,
+            destination: remote_addr,
             contents: buf,
         };
 
@@ -1214,32 +1211,64 @@ impl IceAgent {
         pair.record_binding_response(now, trans_id, valid_idx);
 
         if self.controlling {
-            let req_count = pair.remote_binding_requests();
-            let any_nominated = self.candidate_pairs.iter().any(|p| p.is_nominated());
-            if !any_nominated && req_count > 0 && !self.do_nomination_check {
-                trace!("Schedule nomination check on reply");
-                self.do_nomination_check = true;
-                self.need_extra_timeout = true;
-            }
+            self.evaluate_nomination();
         }
 
         // State might change when we get a response.
         self.evaluate_state(now);
     }
 
-    fn attempt_nomination(&mut self) {
-        debug!("Attempt nomimation");
-
-        let best = self
-            .candidate_pairs
-            .iter_mut()
-            .filter(|p| p.state() == CheckState::Succeeded && p.remote_binding_requests() > 0)
-            .max_by_key(|p| p.prio());
+    fn evaluate_nomination(&mut self) {
+        let best = if self.controlling {
+            // For controlling agents, we pick the best candidate pair using
+            // this strategy.
+            self.candidate_pairs
+                .iter()
+                .filter(|p| p.state() == CheckState::Succeeded && p.remote_binding_requests() > 0)
+                .max_by_key(|p| p.prio())
+                .map(|p| p.id())
+        } else {
+            // For controlled agents, we pick the best pair from what the controlling
+            // agent has indicated with USE-CANDIDATE stun attribute.
+            self.candidate_pairs
+                .iter()
+                .filter(|p| p.is_nominated())
+                .max_by_key(|p| p.prio())
+                .map(|p| p.id())
+        };
 
         if let Some(best) = best {
-            if !best.is_nominated() {
-                best.nominate(false);
+            if let Some(current_best) = self.nominated_send {
+                if best == current_best {
+                    // The best is also the current best.
+                    return;
+                } else {
+                    trace!("Found better nomination than current");
+                }
+            } else {
+                trace!("Nominating best candidate");
             }
+
+            let pair = self
+                .candidate_pairs
+                .iter_mut()
+                .find(|p| p.id() == best)
+                // above logic means this can't fail
+                .unwrap();
+
+            if !pair.is_nominated() && (self.controlling || self.ice_lite) {
+                // ice lite progresses pair to success straight away.
+                pair.nominate(self.ice_lite);
+            }
+
+            let local = pair.local_candidate(&self.local_candidates);
+            let remote = pair.remote_candidate(&self.remote_candidates);
+
+            self.nominated_send = Some(best);
+            self.emit_event(IceAgentEvent::NominatedSend {
+                source: local.base(),
+                destination: remote.addr(),
+            })
         }
     }
 
@@ -1254,12 +1283,12 @@ impl IceAgent {
     fn evaluate_state(&mut self, now: Instant) {
         use IceConnectionState::*;
 
-        let mut any_nomination_success = false;
+        let mut any_nomination = false;
         let mut any_still_possible = false;
 
         for p in &self.candidate_pairs {
-            if p.is_nomination_success() {
-                any_nomination_success = true;
+            if p.is_nominated() {
+                any_nomination = true;
             } else if p.is_still_possible(now) {
                 any_still_possible = true;
             }
@@ -1267,40 +1296,19 @@ impl IceAgent {
 
         match self.state {
             New => {
-                self.emit_event(IceAgentEvent::IceRestart(self.local_credentials.clone()));
-                for c in self.local_candidates.clone() {
-                    self.emit_event(IceAgentEvent::NewLocalCandidate(c));
-                }
                 self.set_connection_state(Checking);
             }
             Checking | Disconnected => {
-                if any_nomination_success {
+                if any_nomination {
                     if any_still_possible {
                         self.set_connection_state(Connected);
                     } else {
                         self.set_connection_state(Completed);
                     }
-
-                    // drop all other candidate pairs so that we will only
-                    // STUN bind (refresh) this single pair going forward.
-                    self.candidate_pairs.retain(|p| p.is_nomination_success());
-                    assert!(self.candidate_pairs.len() == 1);
-
-                    let nominated = &self.candidate_pairs[0];
-
-                    let local = nominated.local_candidate(&self.local_candidates);
-                    let remote = nominated.remote_candidate(&self.remote_candidates);
-
-                    let event = IceAgentEvent::NominatedSend {
-                        source: local.base(),
-                        destination: remote.addr(),
-                    };
-
-                    self.emit_event(event);
                 }
             }
             Connected => {
-                if any_nomination_success {
+                if any_nomination {
                     if !any_still_possible {
                         self.set_connection_state(Completed);
                     }
@@ -1313,7 +1321,7 @@ impl IceAgent {
                 }
             }
             Completed => {
-                if any_nomination_success {
+                if any_nomination {
                     if any_still_possible {
                         self.set_connection_state(Connected);
                     }
@@ -1355,12 +1363,18 @@ pub enum IceAgentEvent {
     /// The application should associate this with the peer. There will
     /// be more than one of these, and traffic might eventually come in
     /// on any of them.
+    ///
+    /// For each ICE restart, the app will only receive unique addresses once.
     DiscoveredRecv {
         /// The remote socket to look out for.
         source: SocketAddr,
     },
 
-    /// The nominated local and remote socket for sending data.
+    /// A nominated local and remote socket for sending data.
+    ///
+    /// As opposed to the ICE spec, we can send this multiple times without
+    /// requiring an ICE restart. The application should always use the values
+    /// of the last emitted event to send data.
     NominatedSend {
         /// The local socket address to send datagrams from.
         ///

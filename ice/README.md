@@ -30,7 +30,7 @@ our data stream.
 
 Because there is just one data stream, there is no need for multiple check lists. This 
 also means there is no need for the frozen state when checking candidate pairs since all
-pairs go straight into the waiting state.2
+pairs go straight into the waiting state.
 
 ## No STUN backwards compatibility.
 
@@ -90,6 +90,28 @@ This means we put ICE transport attributes in the first mid.
 We do not support ICE _without_ trickle ice. In practice it doesn't make 
 much difference. Mainly that the state machine always expects it to be
 possible that add more remote candidates.
+
+## Nomination doesn't stop gathering
+
+The WebRTC documentation is conflicting with the ICE RFC. 
+
+https://developer.mozilla.org/en-US/docs/Web/API/RTCIceCandidatePairStats/nominated
+
+> Note: If more than one candidate pair are nominated at the same time, 
+> the one whose priority is higher will be selected for use.
+
+https://datatracker.ietf.org/doc/html/rfc8445#section-8.1.1
+
+> The only requirement is that the agent MUST eventually pick one and only 
+> one candidate pair and generate a check for that pair with the USE-CANDIDATE 
+> attribute set... the agent MUST NOT nominate another pair for same component
+> of the data stream within the ICE session.  Doing so requires an ICE restart.
+
+With tricklig ICE candidates and shifting network conditions, there doesn't
+seem to be a good reason to only allow one nomination. We let the gathering
+and evaluation of candidate pairs continue regardless of nomination state.
+
+The ICE agent can change the nominated pair without needing an ICE restart.
 
 # Sources
 
