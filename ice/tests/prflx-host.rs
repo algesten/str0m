@@ -7,13 +7,13 @@ mod common;
 use common::{host, init_log, progress};
 
 #[test]
-pub fn host_host() {
+pub fn prflx_host() {
     init_log();
 
     let mut a1 = IceAgent::new();
     let mut a2 = IceAgent::new();
 
-    a1.add_local_candidate(host("1.1.1.1:1000"));
+    a1.add_local_candidate(host("3.3.3.3:1000")); // will be rewritten to 4.4.4.4
     a2.add_local_candidate(host("2.2.2.2:1000"));
     a1.set_controlling(true);
     a2.set_controlling(false);
@@ -36,7 +36,7 @@ pub fn host_host() {
         IceAgentStats {
             bind_request_sent: 2,
             bind_success_recv: 2,
-            bind_request_recv: 2,
+            bind_request_recv: 1,
             discovered_recv_count: 1,
             nomination_send_count: 1,
         }
@@ -45,7 +45,7 @@ pub fn host_host() {
     assert_eq!(
         a2.stats(),
         IceAgentStats {
-            bind_request_sent: 2,
+            bind_request_sent: 3,
             bind_success_recv: 1,
             bind_request_recv: 2,
             discovered_recv_count: 1,
