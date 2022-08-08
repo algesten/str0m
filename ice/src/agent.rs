@@ -3,7 +3,6 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use rand::random;
-use thiserror::Error;
 
 use net::Id;
 use net::StunMessage;
@@ -15,12 +14,6 @@ use crate::pair::{CheckState, PairId};
 
 use super::candidate::{Candidate, CandidateKind};
 use super::pair::CandidatePair;
-
-#[derive(Debug, Error)]
-pub enum IceError {
-    #[error("ICE bad candidate: {0}")]
-    BadCandidate(String),
-}
 
 /// Timing advance (Ta) value.
 ///
