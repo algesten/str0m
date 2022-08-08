@@ -80,9 +80,6 @@ pub struct IceAgent {
     /// the remote_credentials.
     stun_server_queue: VecDeque<StunRequest>,
 
-    /// If we have reason to do an immediate timeout.
-    need_extra_timeout: bool,
-
     /// Remote addresses we have seen traffic appear from. This is used
     /// to dedupe [`IceAgentEvent::DiscoveredRecv`].
     discovered_recv: HashSet<SocketAddr>,
@@ -253,7 +250,6 @@ impl IceAgent {
             transmit: None,
             events: VecDeque::new(),
             stun_server_queue: VecDeque::new(),
-            need_extra_timeout: false,
             discovered_recv: HashSet::new(),
             nominated_send: None,
             stats: IceAgentStats::default(),
@@ -635,9 +631,6 @@ impl IceAgent {
                 debug!("Local candidate to discard {:?}", other);
                 other.set_discarded();
                 self.discard_candidate_pairs(idx);
-                // The discard could have affected the state.
-                // Do another timeout to evaluate state soon.
-                self.need_extra_timeout = true;
                 return true;
             }
         }
@@ -666,7 +659,6 @@ impl IceAgent {
         self.candidate_pairs.clear();
         self.transmit = None;
         self.events.clear();
-        self.need_extra_timeout = false;
         self.discovered_recv.clear();
 
         self.emit_event(IceAgentEvent::IceRestart(self.local_credentials.clone()));
@@ -764,6 +756,15 @@ impl IceAgent {
     pub fn handle_timeout(&mut self, now: Instant) {
         info!("Handle timeout: {:?}", now);
 
+        // The generation of ordinary and triggered connectivity checks is
+        // governed by timer Ta.
+        if let Some(last_now) = self.last_now {
+            if now < last_now + TIMING_ADVANCE {
+                debug!("Stop timeout within timing advance of last");
+                return;
+            }
+        }
+
         if self.transmit.is_some() {
             // Can't progress, since there is a enqueued send. The
             trace!("Stop timeout, already got enqueued transmit");
@@ -780,17 +781,6 @@ impl IceAgent {
         }
 
         self.evaluate_state(now);
-
-        // The generation of ordinary and triggered connectivity checks is
-        // governed by timer Ta.
-        if let Some(last_now) = self.last_now {
-            if now < last_now + TIMING_ADVANCE {
-                debug!("Stop timeout within timing advance of last");
-                return;
-            }
-        }
-
-        self.last_now = Some(now);
 
         // First we try to empty the queue of saved STUN requests.
         if self.remote_credentials.is_some() {
@@ -813,7 +803,7 @@ impl IceAgent {
             }
         }
 
-        self.need_extra_timeout = false;
+        self.last_now = Some(now);
 
         self.evaluate_nomination();
 
@@ -883,7 +873,7 @@ impl IceAgent {
         }
 
         // when do we need to handle the next candidate pair?
-        let maybe_binding = if self.ice_lite {
+        let maybe_next = if self.ice_lite {
             // ice-lite doesn't do checks.
             None
         } else {
@@ -893,24 +883,21 @@ impl IceAgent {
                 .min()
         };
 
-        let maybe_need_extra = if self.need_extra_timeout {
-            Some(last_now + TIMING_ADVANCE)
+        // Time must advance with at least Ta.
+        let next = if let Some(next) = maybe_next {
+            if next < last_now + TIMING_ADVANCE {
+                last_now + TIMING_ADVANCE
+            } else {
+                next
+            }
         } else {
-            None
+            // IDLE for a while.
+            last_now + Duration::from_secs(3)
         };
 
-        let mut maybe_next = smallest(maybe_binding, maybe_need_extra);
+        trace!("Next timeout in: {:?}", next - last_now);
 
-        // Time must advance with at least Ta.
-        if let Some(next) = maybe_next {
-            if next < last_now + TIMING_ADVANCE {
-                maybe_next = Some(last_now + TIMING_ADVANCE);
-            }
-        }
-
-        trace!("Next timeout is: {:?}", maybe_next);
-
-        maybe_next
+        Some(next)
     }
 
     fn emit_event(&mut self, event: IceAgentEvent) {
@@ -1147,7 +1134,10 @@ impl IceAgent {
 
         let reply = StunMessage::reply(req.trans_id, req.source);
 
-        debug!("Send STUN reply: {:?}", reply);
+        debug!(
+            "Send STUN reply: {} -> {} {:?}",
+            local_addr, remote_addr, reply
+        );
 
         let mut buf = vec![0_u8; DATAGRAM_MTU];
 
@@ -1189,7 +1179,12 @@ impl IceAgent {
             use_candidate,
         );
 
-        debug!("Send STUN request: {:?}", binding);
+        debug!(
+            "Send STUN request: {} -> {} {:?}",
+            local.base(),
+            remote.addr(),
+            binding
+        );
 
         let mut buf = vec![0_u8; DATAGRAM_MTU];
 
@@ -1581,20 +1576,5 @@ mod test {
         let now2 = agent.poll_timeout().unwrap();
 
         assert!(now2 - now1 == TIMING_ADVANCE);
-    }
-}
-
-fn smallest(t1: Option<Instant>, t2: Option<Instant>) -> Option<Instant> {
-    match (t1, t2) {
-        (None, None) => None,
-        (None, Some(v2)) => Some(v2),
-        (Some(v1), None) => Some(v1),
-        (Some(v1), Some(v2)) => {
-            if v1 < v2 {
-                Some(v1)
-            } else {
-                Some(v2)
-            }
-        }
     }
 }

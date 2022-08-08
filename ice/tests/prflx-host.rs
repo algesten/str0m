@@ -1,34 +1,26 @@
-use std::time::Instant;
-
-use ice::{IceAgent, IceAgentStats};
+use ice::IceAgentStats;
 use tracing::info_span;
 
 mod common;
-use common::{host, init_log, progress};
+use common::{host, init_log, progress, TestAgent};
 
 #[test]
 pub fn prflx_host() {
     init_log();
 
-    let mut a1 = IceAgent::new();
-    let mut a2 = IceAgent::new();
+    let mut a1 = TestAgent::new(info_span!("L"));
+    let mut a2 = TestAgent::new(info_span!("R"));
 
     a1.add_local_candidate(host("3.3.3.3:1000")); // will be rewritten to 4.4.4.4
     a2.add_local_candidate(host("2.2.2.2:1000"));
     a1.set_controlling(true);
     a2.set_controlling(false);
 
-    let span1 = info_span!("L");
-    let span2 = info_span!("R");
-
-    let mut now = Instant::now();
-
     loop {
         if a1.state().is_connected() && a2.state().is_connected() {
             break;
         }
-        now = progress(now, &mut a1, &mut a2, &span1, &span2);
-        now = progress(now, &mut a2, &mut a1, &span2, &span1);
+        progress(&mut a1, &mut a2);
     }
 
     assert_eq!(
