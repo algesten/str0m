@@ -4,11 +4,11 @@ use std::time::{Duration, Instant};
 
 use rand::random;
 
-use net::Id;
 use net::StunMessage;
 use net::TransId;
 use net::STUN_TIMEOUT;
-use net::{Datagram, Receive, Transmit, DATAGRAM_MTU};
+use net::{DatagramRecv, Receive, Transmit, DATAGRAM_MTU};
+use net::{DatagramSend, Id};
 
 use crate::pair::{CheckState, PairId};
 
@@ -719,7 +719,7 @@ impl IceAgent {
         info!("Handle receive: {:?}", receive);
 
         let message = match receive.contents {
-            Datagram::Stun(v) => v,
+            DatagramRecv::Stun(v) => v,
             _ => {
                 trace!("Receive rejected, not STUN");
                 return;
@@ -1142,7 +1142,7 @@ impl IceAgent {
         let trans = Transmit {
             source: local_addr,
             destination: remote_addr,
-            contents: buf,
+            contents: DatagramSend::new(buf),
         };
 
         assert!(self.transmit.is_none());
@@ -1189,7 +1189,7 @@ impl IceAgent {
         let trans = Transmit {
             source: local.base(),
             destination: remote.addr(),
-            contents: buf,
+            contents: DatagramSend::new(buf),
         };
 
         assert!(self.transmit.is_none());

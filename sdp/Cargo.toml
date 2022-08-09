@@ -9,5 +9,6 @@ tracing = "0.1"
 
 combine = "4"
 
+dtls = { path = "../dtls" }
 ice = { path = "../ice" }
 net = { path = "../net" }

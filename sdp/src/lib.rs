@@ -5,7 +5,7 @@ use combine::error::StringStreamError;
 use thiserror::Error;
 
 mod data;
-pub use data::{Fingerprint, MediaLine, MediaType, Mid, Sdp, SessionId};
+pub use data::{MediaLine, MediaType, Mid, Sdp, SessionId};
 
 mod parser;
 

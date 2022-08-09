@@ -5,6 +5,7 @@ use std::convert::TryFrom;
 use std::fmt;
 use std::io;
 use std::net::SocketAddr;
+use std::ops::Deref;
 
 use thiserror::Error;
 
@@ -39,7 +40,16 @@ pub struct Transmit {
     pub destination: SocketAddr,
 
     /// Contents of the datagram.
-    pub contents: Vec<u8>,
+    pub contents: DatagramSend,
+}
+
+#[derive(Debug)]
+pub struct DatagramSend(Vec<u8>);
+
+impl DatagramSend {
+    pub fn new(v: Vec<u8>) -> Self {
+        DatagramSend(v)
+    }
 }
 
 #[derive(Debug)]
@@ -52,13 +62,13 @@ pub struct Receive<'a> {
     pub destination: SocketAddr,
 
     /// Parsed contents of the datagram.    
-    pub contents: Datagram<'a>,
+    pub contents: DatagramRecv<'a>,
 }
 
 impl<'a> Receive<'a> {
     /// Creates a new instance by trying to parse the contents of `buf`.
     pub fn new(source: SocketAddr, destination: SocketAddr, buf: &'a [u8]) -> Result<Self, Error> {
-        let contents = Datagram::try_from(buf)?;
+        let contents = DatagramRecv::try_from(buf)?;
         Ok(Receive {
             source,
             destination,
@@ -68,20 +78,20 @@ impl<'a> Receive<'a> {
 }
 
 #[derive(Debug)]
-pub enum Datagram<'a> {
+pub enum DatagramRecv<'a> {
     Stun(StunMessage<'a>),
-    Dtls(()),
+    Dtls(&'a [u8]),
 }
 
-impl<'a> TryFrom<&'a [u8]> for Datagram<'a> {
+impl<'a> TryFrom<&'a [u8]> for DatagramRecv<'a> {
     type Error = Error;
 
     fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
         let kind = MultiplexKind::try_from(value)?;
 
         Ok(match kind {
-            MultiplexKind::Stun => Datagram::Stun(StunMessage::parse(value)?),
-            MultiplexKind::Dtls => todo!(),
+            MultiplexKind::Stun => DatagramRecv::Stun(StunMessage::parse(value)?),
+            MultiplexKind::Dtls => DatagramRecv::Dtls(value),
             MultiplexKind::Rtp => todo!(),
             MultiplexKind::Rtcp => todo!(),
         })
@@ -138,7 +148,7 @@ impl<'a> TryFrom<&'a Transmit> for Receive<'a> {
         Ok(Receive {
             source: t.source,
             destination: t.destination,
-            contents: Datagram::try_from(&t.contents[..])?,
+            contents: DatagramRecv::try_from(&t.contents[..])?,
         })
     }
 }
@@ -150,5 +160,13 @@ impl fmt::Debug for Transmit {
             .field("destination", &self.destination)
             .field("len", &self.contents.len())
             .finish()
+    }
+}
+
+impl Deref for DatagramSend {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }

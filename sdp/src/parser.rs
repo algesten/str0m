@@ -17,6 +17,7 @@ use {
     combine::{ParseError, Parser, Stream},
 };
 
+use dtls::Fingerprint;
 use ice::{Candidate, CandidateKind};
 
 use super::data::*;

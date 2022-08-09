@@ -1,4 +1,5 @@
 use combine::Parser;
+use dtls::Fingerprint;
 use std::fmt::{self};
 use std::hash::Hash;
 use std::num::ParseFloatError;
@@ -199,12 +200,6 @@ pub enum SessionAttribute {
     Candidate(Candidate),
     EndOfCandidates,
     Unused(String),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Fingerprint {
-    pub hash_func: String,
-    pub bytes: Vec<u8>,
 }
 
 fn is_dir(a: &MediaAttribute) -> bool {
