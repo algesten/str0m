@@ -1,13 +1,13 @@
 use combine::Parser;
 use dtls::Fingerprint;
+use rtp::{ExtMap, Mid};
 use std::fmt::{self};
 use std::hash::Hash;
 use std::num::ParseFloatError;
-use std::ops::Deref;
-use std::str::{from_utf8_unchecked, FromStr};
+use std::str::FromStr;
 
 use ice::{Candidate, IceCreds};
-use net::Id;
+use rtp::Pt;
 
 use super::parser::sdp_parser;
 use super::SdpError;
@@ -143,47 +143,6 @@ impl Session {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Mid([u8; 3]);
-
-impl Mid {
-    pub fn new() -> Mid {
-        Mid(Id::random().into_array())
-    }
-}
-
-impl fmt::Display for Mid {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s: &str = self;
-        write!(f, "{}", s)
-    }
-}
-
-impl Deref for Mid {
-    type Target = str;
-
-    fn deref(&self) -> &Self::Target {
-        // SAFETY: We know the mid is ascii alphanumeric
-        unsafe { from_utf8_unchecked(&self.0) }.trim()
-    }
-}
-
-impl<'a> From<&'a str> for Mid {
-    fn from(v: &'a str) -> Self {
-        assert!(v.chars().all(|c| c.is_ascii_alphanumeric()));
-        let bytes = v.as_bytes();
-        assert!(bytes.len() <= 3);
-
-        // pad with space.
-        let mut array = [b' '; 3];
-
-        let max = bytes.len().min(array.len());
-        (&mut array[0..max]).copy_from_slice(bytes);
-
-        Mid(array)
-    }
-}
-
 /// Attributes before the first m= line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionAttribute {
@@ -212,7 +171,7 @@ fn is_dir(a: &MediaAttribute) -> bool {
 pub struct MediaLine {
     pub typ: MediaType,
     pub proto: Proto,
-    pub pts: Vec<u8>, // payload types 96 97 125 107 from the m= line
+    pub pts: Vec<Pt>, // payload types 96 97 125 107 from the m= line
     pub bw: Option<Bandwidth>,
     pub attrs: Vec<MediaAttribute>,
 }
@@ -325,13 +284,13 @@ impl MediaLine {
 
         for a in &self.attrs {
             if let MediaAttribute::Rid {
-                stream_id,
+                id,
                 direction,
                 pt,
                 restriction,
             } = a
             {
-                restr.push(Restriction::new(stream_id, direction, pt, restriction));
+                restr.push(Restriction::new(id.clone(), direction, pt, restriction));
             }
         }
 
@@ -544,7 +503,7 @@ impl MediaLine {
             // Restrictions that apply to this format.
             for r in restr {
                 if r.pts.is_empty() || r.pts.contains(m) {
-                    format.restrictions.push(r.stream_id.clone());
+                    format.restrictions.push(r.id.clone());
                 }
             }
 
@@ -607,77 +566,100 @@ impl From<Direction> for MediaAttribute {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Format {
     /// payload type (PT) number.
-    pub pt: u8,
-    /// Codec from `a=rtpmap:<no> codec/<clock-rate>` line
+    pub pt: Pt,
+
+    /// Codec from `a=rtpmap:<no> codec/<clock-rate>` line.
+    ///
+    /// The uppercase/lowercase of this is weird: `VP8`, `VP9`, `H264`, `opus`.
     pub codec: String,
+
     /// Clock rate from `a=rtpmap:<no> codec/<clock-rate>` line
     pub clock_rate: u32,
+
     /// Optional encoding parameters from `a=rtpmap:<no> codec/<clock-rate>/<enc-param>` line
     pub enc_param: Option<String>,
+
     /// Options from `a=rtcp_fb` lines.
     pub rtcp_fb: Vec<String>,
-    /// Extra format parameters from the `a=fmtp` line.
+
+    /// Extra format parameters from the `a=fmtp:<no>` line.
     pub fmtp: Vec<(String, String)>,
+
     /// Restrictions that applies to this format from the `a=rid` lines.
-    pub restrictions: Vec<StreamId>,
+    pub restrictions: Vec<RestrictionId>,
 }
 
-/// Identifier of an RTP stream.
+/// Identifier of an `a=rid` restriction.
 ///
 /// Defined in https://tools.ietf.org/html/draft-ietf-avtext-rid-09
-/// Communicated in SDES and places like a=rid:<here>
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StreamId(pub String);
+pub struct RestrictionId(pub String);
 
-impl Default for StreamId {
+impl RestrictionId {
+    pub fn new(v: String) -> Self {
+        RestrictionId(v)
+    }
+}
+
+impl Default for RestrictionId {
     fn default() -> Self {
-        StreamId("".to_string())
+        RestrictionId("".to_string())
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Restriction {
     /// The stream id this restriction is for. Unique within the m-section.
-    stream_id: StreamId,
+    pub id: RestrictionId,
+
     /// "send" or "recv"
-    direction: &'static str,
+    pub direction: &'static str,
+
     /// Payload types (PT) this restriction applies to. Empty means all.
     /// (This is pt=1,2,3).
-    pts: Vec<u8>,
+    pub pts: Vec<Pt>,
+
     /// In pixels
-    max_width: Option<u32>,
+    pub max_width: Option<u32>,
+
     /// In pixels
-    max_height: Option<u32>,
+    pub max_height: Option<u32>,
+
     /// Frame rate in frames per second
-    max_fps: Option<u32>,
+    pub max_fps: Option<u32>,
+
     /// Frame size in pixels per frame. Width * height.
-    max_fs: Option<u32>,
+    pub max_fs: Option<u32>,
+
     /// Bit rate in bits per second.
-    max_br: Option<u32>,
+    pub max_br: Option<u32>,
+
     /// Pixel rate, pixels per second.
     ///
     /// Calculated as an average of all samples of any given coded picture.
     /// This is expressed as a floating point value, with an allowed range of
     /// 0.0001 to 48.0. These values MUST NOT be encoded with more than
     /// four digits to the right of the decimal point.
-    max_pps: Option<F32Eq>,
+    pub max_pps: Option<F32Eq>,
+
     /// Bits per pixel.
-    max_bpp: Option<u32>,
+    pub max_bpp: Option<u32>,
+
     /// Other streams this stream depends on.
-    depend: Option<Vec<StreamId>>,
+    pub depend: Option<Vec<RestrictionId>>,
 }
 
 impl Restriction {
     fn new(
-        stream_id: &str,
+        id: RestrictionId,
         direction: &'static str,
-        pt: &[u8],
+        pt: &[Pt],
         restriction: &[(String, String)],
     ) -> Self {
         let mut r = Restriction {
             ..Default::default()
         };
-        r.stream_id = StreamId(stream_id.to_string());
+        r.id = id;
         r.direction = direction;
         r.pts = pt.to_vec();
 
@@ -691,7 +673,7 @@ impl Restriction {
                 "max-pps" => r.max_pps = v.parse::<F32Eq>().ok(),
                 "max-bpp" => r.max_bpp = v.parse::<u32>().ok(),
                 "depend" => {
-                    r.depend = Some(v.split(',').map(|i| StreamId(i.to_string())).collect())
+                    r.depend = Some(v.split(',').map(|i| RestrictionId(i.to_string())).collect())
                 }
                 _ => {
                     debug!("Unrecognized a=rid restriction {}={}", k, v);
@@ -739,7 +721,7 @@ impl Restriction {
         }
 
         MediaAttribute::Rid {
-            stream_id: self.stream_id.0.to_string(),
+            id: self.id.clone(),
             direction: self.direction,
             pt: self.pts.clone(),
             restriction,
@@ -839,14 +821,6 @@ impl Setup {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExtMap {
-    pub id: u8,                    // 1-14 inclusive, 0 and 15 are reserved.
-    pub direction: Option<String>, // recvonly, sendrecv, sendonly
-    pub ext_type: RtpExtensionType,
-    pub ext: Option<String>,
-}
-
 /// Attributes before the first m= line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MediaAttribute {
@@ -880,29 +854,29 @@ pub enum MediaAttribute {
     Candidate(Candidate),
     EndOfCandidates,
     RtpMap {
-        pt: u8,                    // 111
+        pt: Pt,                    // 111
         codec: String,             // opus
         clock_rate: u32,           // 48000
         enc_param: Option<String>, // 2 (audio number of channels)
     },
     // rtcp-fb RTCP feedback parameters, repeated
     RtcpFb {
-        pt: u8,        // 111
+        pt: Pt,        // 111
         value: String, // nack, nack pli, ccm fir...
     },
     // format parameters, seems to be one of these
     Fmtp {
-        pt: u8,                        // 111
+        pt: Pt,                        // 111
         values: Vec<(String, String)>, // minptime=10;useinbandfec=1
     },
     // a=rid:<rid-id> <direction> [pt=<fmt-list>;]<restriction>=<value>
     // a=rid:hi send pt=111,112;max-br=64000;max-height=360
     // https://tools.ietf.org/html/draft-ietf-mmusic-rid-15
     Rid {
-        stream_id: String, // StreamId and RepairStreamId as in SDES or RTP header ext.
+        id: RestrictionId,       //
         direction: &'static str, // send or recv
         // No pt means the rid applies to all
-        pt: Vec<u8>, // 111, 112 (rtpmap no)
+        pt: Vec<Pt>, // 111, 112 (rtpmap no)
         restriction: Vec<(String, String)>,
     },
     // a=rid:hi send
@@ -953,13 +927,13 @@ pub struct SimulcastGroup(pub Vec<SimulcastOption>);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SimulcastOption {
-    StreamId(StreamId),
+    Rid(RestrictionId),
     Ssrc(u32),
 }
 
 impl SimulcastOption {
-    pub fn as_stream_id(&self) -> &StreamId {
-        if let SimulcastOption::StreamId(stream_id) = self {
+    pub fn as_stream_id(&self) -> &RestrictionId {
+        if let SimulcastOption::Rid(stream_id) = self {
             stream_id
         } else {
             panic!("as_stream_id on SimulcastOption::Ssrc");
@@ -1161,12 +1135,12 @@ impl fmt::Display for MediaAttribute {
             }
             // a=rid:hi send pt=111,112;max-br=64000;max-height=360
             Rid {
-                stream_id,
+                id,
                 direction,
                 pt,
                 restriction,
             } => {
-                write!(f, "a=rid:{} {}", stream_id, direction)?;
+                write!(f, "a=rid:{} {}", id.0, direction)?;
                 for (idx, p) in pt.iter().enumerate() {
                     if idx == 0 {
                         write!(f, " pt=")?;
@@ -1239,141 +1213,6 @@ impl fmt::Display for MediaAttribute {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum RtpExtensionType {
-    AbsoluteSendTime,
-    AudioLevel,
-    /// Use when a RTP packet is delayed by a send queue to indicate an offset in the "transmitter".
-    /// It effectively means we can set a timestamp offset exactly when the UDP packet leaves the
-    /// server.
-    TransmissionTimeOffset,
-    VideoOrientation,
-    TransportSequenceNumber,
-    PlayoutDelay,
-    VideoContentType,
-    VideoTiming,
-    /// UTF8 encoded identifier for the RTP stream. Not the same as SSRC, this is is designed to
-    /// avoid running out of SSRC for very large sessions.
-    RtpStreamId,
-    /// UTF8 encoded identifier referencing another RTP stream's RtpStreamId. If we see
-    /// this extension type, we know the stream is a repair stream.
-    RepairedRtpStreamId,
-    RtpMid,
-    FrameMarking,
-    ColorSpace,
-    UnknownUri,
-    UnknownExt,
-}
-/// Mapping of extension URI to our enum
-const RTP_EXT_URI: &[(RtpExtensionType, &str)] = &[
-    (
-        RtpExtensionType::AbsoluteSendTime,
-        "http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time",
-    ),
-    (
-        RtpExtensionType::AudioLevel,
-        "urn:ietf:params:rtp-hdrext:ssrc-audio-level",
-    ),
-    (
-        RtpExtensionType::TransmissionTimeOffset,
-        "urn:ietf:params:rtp-hdrext:toffset",
-    ),
-    (
-        RtpExtensionType::VideoOrientation,
-        "urn:3gpp:video-orientation",
-    ),
-    (
-        RtpExtensionType::TransportSequenceNumber,
-        "http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01",
-    ),
-    (
-        RtpExtensionType::PlayoutDelay,
-        "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay",
-    ),
-    (
-        RtpExtensionType::VideoContentType,
-        "http://www.webrtc.org/experiments/rtp-hdrext/video-content-type",
-    ),
-    (
-        RtpExtensionType::VideoTiming,
-        "http://www.webrtc.org/experiments/rtp-hdrext/video-timing",
-    ),
-    (
-        RtpExtensionType::RtpStreamId,
-        "urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id",
-    ),
-    (
-        RtpExtensionType::RepairedRtpStreamId,
-        "urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id",
-    ),
-    (
-        RtpExtensionType::RtpMid,
-        "urn:ietf:params:rtp-hdrext:sdes:mid",
-    ),
-    (
-        RtpExtensionType::FrameMarking,
-        "http://tools.ietf.org/html/draft-ietf-avtext-framemarking-07",
-    ),
-    (
-        RtpExtensionType::ColorSpace,
-        "http://www.webrtc.org/experiments/rtp-hdrext/color-space",
-    ),
-];
-
-impl RtpExtensionType {
-    pub fn from_uri(uri: &str) -> Self {
-        for (t, spec) in RTP_EXT_URI.iter() {
-            if *spec == uri {
-                return *t;
-            }
-        }
-
-        trace!("Unknown a=extmap uri: {}", uri);
-
-        RtpExtensionType::UnknownUri
-    }
-
-    pub fn as_uri(&self) -> &'static str {
-        for (t, spec) in RTP_EXT_URI.iter() {
-            if t == self {
-                return spec;
-            }
-        }
-        "unknown"
-    }
-
-    pub fn is_supported(&self) -> bool {
-        use RtpExtensionType::*;
-        match self {
-            // These 4 seem to be the bare minimum to get Chrome
-            // to send RTP for a simulcast video
-            RtpStreamId => true,
-            RepairedRtpStreamId => true,
-            RtpMid => true,
-            AbsoluteSendTime => true,
-            VideoOrientation => true,
-            AudioLevel => true,
-
-            // transport wide cc
-            TransportSequenceNumber => true,
-
-            TransmissionTimeOffset => false,
-            PlayoutDelay => false,
-            VideoContentType => false,
-            VideoTiming => false,
-            FrameMarking => false,
-            ColorSpace => false,
-            UnknownUri => false,
-            UnknownExt => false,
-        }
-    }
-
-    pub fn is_filtered(&self) -> bool {
-        use RtpExtensionType::*;
-        matches!(self, UnknownUri | UnknownExt)
-    }
-}
-
 pub struct FingerprintFmt<'a>(pub &'a [u8]);
 
 impl<'a> std::fmt::Display for FingerprintFmt<'a> {
@@ -1392,6 +1231,8 @@ impl<'a> std::fmt::Display for FingerprintFmt<'a> {
 
 #[cfg(test)]
 mod test {
+    use rtp::RtpExtensionType;
+
     use super::*;
 
     #[test]
@@ -1403,7 +1244,7 @@ mod test {
                 MediaLine {
                     typ: MediaType::Audio,
                     proto: Proto::Srtp,
-                    pts: vec![111, 103, 104, 9, 0, 8, 106, 105, 13, 110, 112, 113, 126],
+                    pts: vec![111.into(), 103.into(), 104.into(), 9.into(), 0.into(), 8.into(), 106.into(), 105.into(), 13.into(), 110.into(), 112.into(), 113.into(), 126.into()],
                     bw: None,
                     attrs: vec![
                         MediaAttribute::Rtcp("9 IN IP4 0.0.0.0".into()),
@@ -1422,21 +1263,21 @@ mod test {
                         MediaAttribute::SendRecv,
                         MediaAttribute::Msid { stream_id: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(), track_id: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() },
                         MediaAttribute::RtcpMux,
-                        MediaAttribute::RtpMap { pt: 111, codec: "opus".into(), clock_rate: 48_000, enc_param: Some("2".into()) },
-                        MediaAttribute::RtcpFb { pt: 111, value: "transport-cc".into() },
-                        MediaAttribute::Fmtp { pt: 111, values: vec![("minptime".into(), "10".into()), ("useinbandfec".into(), "1".into())] },
-                        MediaAttribute::RtpMap { pt: 103, codec: "ISAC".into(), clock_rate: 16_000, enc_param: None },
-                        MediaAttribute::RtpMap { pt: 104, codec: "ISAC".into(), clock_rate: 32_000, enc_param: None },
-                        MediaAttribute::RtpMap { pt: 9, codec: "G722".into(), clock_rate: 8_000, enc_param: None },
-                        MediaAttribute::RtpMap { pt: 0, codec: "PCMU".into(), clock_rate: 8_000, enc_param: None },
-                        MediaAttribute::RtpMap { pt: 8, codec: "PCMA".into(), clock_rate: 8_000, enc_param: None },
-                        MediaAttribute::RtpMap { pt: 106, codec: "CN".into(), clock_rate: 32_000, enc_param: None },
-                        MediaAttribute::RtpMap { pt: 105, codec: "CN".into(), clock_rate: 16_000, enc_param: None },
-                        MediaAttribute::RtpMap { pt: 13, codec: "CN".into(), clock_rate: 8_000, enc_param: None },
-                        MediaAttribute::RtpMap { pt: 110, codec: "telephone-event".into(), clock_rate: 48_000, enc_param: None },
-                        MediaAttribute::RtpMap { pt: 112, codec: "telephone-event".into(), clock_rate: 32_000, enc_param: None },
-                        MediaAttribute::RtpMap { pt: 113, codec: "telephone-event".into(), clock_rate: 16_000, enc_param: None },
-                        MediaAttribute::RtpMap { pt: 126, codec: "telephone-event".into(), clock_rate: 8_000, enc_param: None },
+                        MediaAttribute::RtpMap { pt: 111.into(), codec: "opus".into(), clock_rate: 48_000, enc_param: Some("2".into()) },
+                        MediaAttribute::RtcpFb { pt: 111.into(), value: "transport-cc".into() },
+                        MediaAttribute::Fmtp { pt: 111.into(), values: vec![("minptime".into(), "10".into()), ("useinbandfec".into(), "1".into())] },
+                        MediaAttribute::RtpMap { pt: 103.into(), codec: "ISAC".into(), clock_rate: 16_000, enc_param: None },
+                        MediaAttribute::RtpMap { pt: 104.into(), codec: "ISAC".into(), clock_rate: 32_000, enc_param: None },
+                        MediaAttribute::RtpMap { pt: 9.into(), codec: "G722".into(), clock_rate: 8_000, enc_param: None },
+                        MediaAttribute::RtpMap { pt: 0.into(), codec: "PCMU".into(), clock_rate: 8_000, enc_param: None },
+                        MediaAttribute::RtpMap { pt: 8.into(), codec: "PCMA".into(), clock_rate: 8_000, enc_param: None },
+                        MediaAttribute::RtpMap { pt: 106.into(), codec: "CN".into(), clock_rate: 32_000, enc_param: None },
+                        MediaAttribute::RtpMap { pt: 105.into(), codec: "CN".into(), clock_rate: 16_000, enc_param: None },
+                        MediaAttribute::RtpMap { pt: 13.into(), codec: "CN".into(), clock_rate: 8_000, enc_param: None },
+                        MediaAttribute::RtpMap { pt: 110.into(), codec: "telephone-event".into(), clock_rate: 48_000, enc_param: None },
+                        MediaAttribute::RtpMap { pt: 112.into(), codec: "telephone-event".into(), clock_rate: 32_000, enc_param: None },
+                        MediaAttribute::RtpMap { pt: 113.into(), codec: "telephone-event".into(), clock_rate: 16_000, enc_param: None },
+                        MediaAttribute::RtpMap { pt: 126.into(), codec: "telephone-event".into(), clock_rate: 8_000, enc_param: None },
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874, attr: "cname".into(), value: "xeXs3aE9AOBn00yJ".into() },
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874, attr: "msid".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1".into() },
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874, attr: "mslabel".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into() },

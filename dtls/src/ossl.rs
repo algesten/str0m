@@ -88,6 +88,13 @@ pub fn dtls_ssl_create(ctx: &SslContext) -> Result<Ssl, DtlsError> {
 /// Keying material used as master key for SRTP.
 pub struct KeyingMaterial([u8; 60]);
 
+impl KeyingMaterial {
+    #[doc(hidden)]
+    pub fn new(m: [u8; 60]) -> Self {
+        KeyingMaterial(m)
+    }
+}
+
 impl Deref for KeyingMaterial {
     type Target = [u8; 60];
 

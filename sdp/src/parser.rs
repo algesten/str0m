@@ -1,12 +1,3 @@
-// * each m-section is enumerated by session level a=group:BUNDLE <mid> <mid> <mid>
-// * one m-section per transceiver
-// * each m-section has a a=mid:<mid>
-// * each transceiver can be a=sendrecv, a=sendonly, a=recvonly
-// * each transceiver carries up to one track in each direction.
-// * tracks can be externally grouped by a session level a=group:LS (never seen)
-// * tracks can be grouped by media-stream id using m-level a=msid:<media-id> <track-id>
-// * a=ssrc are deprecated by a=ssrc cname:<participant id> is a unique id for an endpoint
-
 use std::net::{IpAddr, SocketAddr};
 use {
     combine::error::*,
@@ -19,6 +10,7 @@ use {
 
 use dtls::Fingerprint;
 use ice::{Candidate, CandidateKind};
+use rtp::{ExtMap, Mid, Pt, RtpExtensionType};
 
 use super::data::*;
 
@@ -317,7 +309,7 @@ where
 // m=audio 64205 UDP/TLS/RTP/SAVPF 111
 // m=video 53151 UDP/TLS/RTP/SAVPF 96 97 125 107 100 101
 // m=application 54055 DTLS/SCTP 5000
-fn media_line<Input>() -> impl Parser<Input, Output = (MediaType, Proto, Vec<u8>)>
+fn media_line<Input>() -> impl Parser<Input, Output = (MediaType, Proto, Vec<Pt>)>
 where
     Input: Stream<Token = char>,
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
@@ -349,6 +341,7 @@ where
             sep_by(
                 not_sp().and_then(|s| {
                     s.parse::<u8>()
+                        .map(|v| Pt::from(v))
                         .map_err(StreamErrorFor::<Input>::message_format)
                 }),
                 token(' '),
@@ -474,6 +467,7 @@ where
     let pt = || {
         not_sp().and_then(|s| {
             s.parse::<u8>()
+                .map(|v| Pt::from(v))
                 .map_err(StreamErrorFor::<Input>::message_format)
         })
     };
@@ -529,14 +523,14 @@ where
     let rid = attribute_line(
         "rid",
         (
-            name(),
+            name().map(|v| RestrictionId::new(v)),
             token(' '),
             choice((string("send"), string("recv"))),
             optional((
                 token(' '),
                 optional((
                     string("pt="),
-                    sep_by1::<Vec<u8>, _, _, _>(pt(), token(',')),
+                    sep_by1::<Vec<Pt>, _, _, _>(pt(), token(',')),
                     // TODO this is not really optional when there is
                     // a restriction part. It means we are incorrectly
                     // allowing this: a=rid:foo send pt=111max-br=64000
@@ -546,7 +540,7 @@ where
             )),
         ),
     )
-    .map(|(stream_id, _, direction, x)| {
+    .map(|(id, _, direction, x)| {
         let mut pt = vec![];
         let mut restriction = vec![];
         if let Some((_, ps, rs)) = x {
@@ -557,7 +551,7 @@ where
         }
 
         MediaAttribute::Rid {
-            stream_id,
+            id,
             direction,
             pt,
             restriction,
@@ -587,7 +581,7 @@ where
             for group in groups {
                 let ids = group
                     .into_iter()
-                    .map(|i| SimulcastOption::StreamId(StreamId(i)))
+                    .map(|i| SimulcastOption::Rid(RestrictionId(i)))
                     .collect::<Vec<_>>();
                 to.0.push(SimulcastGroup(ids));
             }
@@ -892,7 +886,10 @@ mod test {
         let m = media_line().parse("m=audio 9 UDP/TLS/RTP/SAVPF 111 103\r\n");
         assert_eq!(
             m,
-            Ok(((MediaType::Audio, Proto::Srtp, vec![111, 103],), ""))
+            Ok((
+                (MediaType::Audio, Proto::Srtp, vec![111.into(), 103.into()],),
+                ""
+            ))
         );
     }
 

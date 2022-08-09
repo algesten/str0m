@@ -127,7 +127,6 @@ name = "dtls"
 version = "0.1.0"
 dependencies = [
  "net",
- "once_cell",
  "openssl",
  "openssl-sys",
  "thiserror",
@@ -425,6 +424,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a3f87b73ce11b1619a3c6332f45341e0047173771e8b8b73f87bfeefb7b56244"
 
 [[package]]
+name = "rtp"
+version = "0.1.0"
+dependencies = [
+ "dtls",
+ "hmac",
+ "net",
+ "openssl",
+ "openssl-sys",
+ "sha-1",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "ryu"
 version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -437,7 +450,7 @@ dependencies = [
  "combine",
  "dtls",
  "ice",
- "net",
+ "rtp",
  "thiserror",
  "tracing",
 ]

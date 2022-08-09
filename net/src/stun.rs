@@ -742,7 +742,7 @@ fn decode_xor(buf: &[u8], trans_id: TransId) -> Result<SocketAddr, StunError> {
     Ok(SocketAddr::new(ip, port))
 }
 
-pub type HmacSha1 = Hmac<Sha1>;
+type HmacSha1 = Hmac<Sha1>;
 
 pub fn hmac_sha1(secret: &[u8], payload: &[u8]) -> [u8; 20] {
     let mut hmac = HmacSha1::new_from_slice(secret).expect("Make HMAC-SHA1");
