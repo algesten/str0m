@@ -1,4 +1,5 @@
-use crate::ext::{IdToExtType, RtpExtValues};
+use crate::ext::{ExtensionValues, Extensions};
+use crate::{Pt, Ssrc};
 
 #[derive(Debug, Clone)]
 pub struct RtpHeader<'a> {
@@ -7,17 +8,17 @@ pub struct RtpHeader<'a> {
     pub has_extension: bool,
     // pub csrc_count: usize, // "contributing source" (other ssrc)
     pub marker: bool,
-    pub payload_type: u8,
+    pub payload_type: Pt,
     pub sequence_number: u16,
     pub timestamp: u32,
-    pub ssrc: u32,
+    pub ssrc: Ssrc,
     // pub csrc: [u32; 15],
-    pub ext: RtpExtValues<'a>,
+    pub ext_vals: ExtensionValues<'a>,
     pub header_len: usize,
 }
 
 impl<'a> RtpHeader<'a> {
-    pub fn parse(buf: &'a [u8], id_to_ext: &IdToExtType) -> Option<RtpHeader<'a>> {
+    pub fn parse(buf: &'a [u8], extensions: &Extensions) -> Option<RtpHeader<'a>> {
         let orig_len = buf.len();
         if buf.len() < 12 {
             trace!("RTP header too short < 12: {}", buf.len());
@@ -33,12 +34,12 @@ impl<'a> RtpHeader<'a> {
         let has_extension = buf[0] & 0b0001_0000 > 0;
         let csrc_count = (buf[0] & 0b0000_1111) as usize;
         let marker = buf[1] & 0b1000_0000 > 0;
-        let payload_type = buf[1] & 0b0111_1111;
+        let payload_type = (buf[1] & 0b0111_1111).into();
         let sequence_number = u16::from_be_bytes([buf[2], buf[3]]);
 
         let timestamp = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
 
-        let ssrc = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
+        let ssrc = (u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]])).into();
 
         let buf: &[u8] = &buf[12..];
 
@@ -56,7 +57,7 @@ impl<'a> RtpHeader<'a> {
 
         let buf: &[u8] = &buf[csrc_len..];
 
-        let mut ext = RtpExtValues {
+        let mut ext = ExtensionValues {
             ..Default::default()
         };
 
@@ -75,7 +76,7 @@ impl<'a> RtpHeader<'a> {
             let buf: &[u8] = &buf[4..];
             if ext_type == 0xbede {
                 // each m-line has a specific extmap mapping.
-                parse_bede(&buf[..ext_len], &mut ext, id_to_ext);
+                parse_bede(&buf[..ext_len], &mut ext, extensions);
             }
 
             &buf[ext_len..]
@@ -94,16 +95,23 @@ impl<'a> RtpHeader<'a> {
             timestamp,
             ssrc,
             // csrc,
-            ext,
+            ext_vals: ext,
             header_len,
         };
 
         Some(ret)
     }
+
+    /// Sequencer number of this RTP header given the previous number.
+    ///
+    /// The logic detects wrap-arounds of the 16-bit RTP sequence number.
+    pub fn sequence_number(&self, previous: Option<u64>) -> u64 {
+        extend_seq(previous, self.sequence_number)
+    }
 }
 
 // https://tools.ietf.org/html/rfc5285
-fn parse_bede<'a>(mut buf: &'a [u8], ext: &mut RtpExtValues<'a>, id_to_ext: &IdToExtType) {
+fn parse_bede<'a>(mut buf: &'a [u8], ext_vals: &mut ExtensionValues<'a>, exts: &Extensions) {
     loop {
         if buf.is_empty() {
             return;
@@ -133,10 +141,10 @@ fn parse_bede<'a>(mut buf: &'a [u8], ext: &mut RtpExtValues<'a>, id_to_ext: &IdT
             return;
         }
 
-        let typ_buf = &buf[..len];
-        let typ = id_to_ext.lookup(id);
-
-        typ.parse_value(typ_buf, ext);
+        let ext_buf = &buf[..len];
+        if let Some(ext) = exts.lookup(id) {
+            ext.parse_value(ext_buf, ext_vals);
+        }
 
         buf = &buf[len..];
     }

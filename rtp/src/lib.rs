@@ -10,18 +10,22 @@ mod id;
 pub use id::{CName, Mid, Pt, Ssrc};
 
 mod ext;
-pub use ext::{ExtMap, RtpExtensionType};
+pub use ext::{ExtMap, Extension};
+
+mod dir;
+pub use dir::Direction;
 
 mod mtime;
 pub use mtime::MediaTime;
 
-mod r;
-pub use r::RtpHeader;
+mod header;
+pub use header::RtpHeader;
 
 mod srtp;
 pub use srtp::{SrtpContext, SrtpKey};
 
 mod rtcp;
+pub use rtcp::RtcpHeader;
 
 /// Errors that can arise in RTP.
 #[derive(Debug, Error)]
@@ -35,11 +39,5 @@ pub enum RtpError {
     Io(#[from] io::Error),
 
     #[error("Differing ext id to ext type: {0} != {1}")]
-    ExtMapDiffers(RtpExtensionType, RtpExtensionType),
+    ExtMapDiffers(Extension, Extension),
 }
-
-pub struct RtpSession {
-    cname: CName,
-}
-
-pub struct Endpoint {}

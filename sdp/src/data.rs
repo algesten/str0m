@@ -1,6 +1,6 @@
 use combine::Parser;
 use dtls::Fingerprint;
-use rtp::{ExtMap, Mid};
+use rtp::{Direction, ExtMap, Mid, Ssrc};
 use std::fmt::{self};
 use std::hash::Hash;
 use std::num::ParseFloatError;
@@ -279,24 +279,6 @@ impl MediaLine {
         None
     }
 
-    pub fn restrictions(&self) -> Vec<Restriction> {
-        let mut restr = vec![];
-
-        for a in &self.attrs {
-            if let MediaAttribute::Rid {
-                id,
-                direction,
-                pt,
-                restriction,
-            } = a
-            {
-                restr.push(Restriction::new(id.clone(), direction, pt, restriction));
-            }
-        }
-
-        restr
-    }
-
     pub fn setup(&self) -> Option<Setup> {
         let setup = self.attrs.iter().find_map(|m| {
             if let MediaAttribute::Setup(v) = m {
@@ -437,7 +419,7 @@ impl MediaLine {
                 let group = SimulcastGroup(
                     ssrcs
                         .iter()
-                        .map(|ssrc| SimulcastOption::Ssrc(*ssrc))
+                        .map(|ssrc| SimulcastOption::Ssrc((*ssrc).into()))
                         .collect(),
                 );
 
@@ -451,104 +433,6 @@ impl MediaLine {
 
         None
     }
-
-    pub fn formats(&self, restr: &[Restriction]) -> Vec<Format> {
-        let mut v = vec![];
-
-        for m in &self.pts {
-            let mut format = self
-                .attrs
-                .iter()
-                .find_map(|a| {
-                    if let MediaAttribute::RtpMap {
-                        pt,
-                        codec,
-                        clock_rate,
-                        enc_param,
-                    } = a
-                    {
-                        if pt == m {
-                            return Some(Format {
-                                pt: *pt,
-                                codec: codec.clone(),
-                                clock_rate: *clock_rate,
-                                enc_param: enc_param.clone(),
-                                rtcp_fb: vec![],
-                                fmtp: vec![],
-                                restrictions: vec![],
-                            });
-                        }
-                    }
-                    None
-                })
-                .unwrap(); // since we did check_consistent()
-
-            // Fill in created Format with additional attributes
-            for a in &self.attrs {
-                if let MediaAttribute::RtcpFb { pt, value } = a {
-                    if pt == m {
-                        format.rtcp_fb.push(value.clone());
-                    }
-                }
-
-                if let MediaAttribute::Fmtp { pt, values } = a {
-                    if pt == m {
-                        for (k, v) in values {
-                            format.fmtp.push((k.clone(), v.clone()));
-                        }
-                    }
-                }
-            }
-
-            // Restrictions that apply to this format.
-            for r in restr {
-                if r.pts.is_empty() || r.pts.contains(m) {
-                    format.restrictions.push(r.id.clone());
-                }
-            }
-
-            v.push(format);
-        }
-        v
-    }
-}
-
-/// Media direction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Direction {
-    /// Send only direction.
-    SendOnly,
-    /// Receive only direction.
-    RecvOnly,
-    /// Bi-directional.
-    SendRecv,
-    /// Disabled direction.
-    Inactive,
-}
-
-impl Direction {
-    pub fn invert(&self) -> Self {
-        match self {
-            Direction::SendOnly => Direction::RecvOnly,
-            Direction::RecvOnly => Direction::SendOnly,
-            _ => *self,
-        }
-    }
-}
-
-impl fmt::Display for Direction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Direction::SendOnly => "sendonly",
-                Direction::RecvOnly => "recvonly",
-                Direction::SendRecv => "sendrecv",
-                Direction::Inactive => "inactive",
-            }
-        )
-    }
 }
 
 impl From<Direction> for MediaAttribute {
@@ -560,33 +444,6 @@ impl From<Direction> for MediaAttribute {
             Direction::Inactive => MediaAttribute::Inactive,
         }
     }
-}
-
-/// One format from an m-section.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Format {
-    /// payload type (PT) number.
-    pub pt: Pt,
-
-    /// Codec from `a=rtpmap:<no> codec/<clock-rate>` line.
-    ///
-    /// The uppercase/lowercase of this is weird: `VP8`, `VP9`, `H264`, `opus`.
-    pub codec: String,
-
-    /// Clock rate from `a=rtpmap:<no> codec/<clock-rate>` line
-    pub clock_rate: u32,
-
-    /// Optional encoding parameters from `a=rtpmap:<no> codec/<clock-rate>/<enc-param>` line
-    pub enc_param: Option<String>,
-
-    /// Options from `a=rtcp_fb` lines.
-    pub rtcp_fb: Vec<String>,
-
-    /// Extra format parameters from the `a=fmtp:<no>` line.
-    pub fmtp: Vec<(String, String)>,
-
-    /// Restrictions that applies to this format from the `a=rid` lines.
-    pub restrictions: Vec<RestrictionId>,
 }
 
 /// Identifier of an `a=rid` restriction.
@@ -604,128 +461,6 @@ impl RestrictionId {
 impl Default for RestrictionId {
     fn default() -> Self {
         RestrictionId("".to_string())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct Restriction {
-    /// The stream id this restriction is for. Unique within the m-section.
-    pub id: RestrictionId,
-
-    /// "send" or "recv"
-    pub direction: &'static str,
-
-    /// Payload types (PT) this restriction applies to. Empty means all.
-    /// (This is pt=1,2,3).
-    pub pts: Vec<Pt>,
-
-    /// In pixels
-    pub max_width: Option<u32>,
-
-    /// In pixels
-    pub max_height: Option<u32>,
-
-    /// Frame rate in frames per second
-    pub max_fps: Option<u32>,
-
-    /// Frame size in pixels per frame. Width * height.
-    pub max_fs: Option<u32>,
-
-    /// Bit rate in bits per second.
-    pub max_br: Option<u32>,
-
-    /// Pixel rate, pixels per second.
-    ///
-    /// Calculated as an average of all samples of any given coded picture.
-    /// This is expressed as a floating point value, with an allowed range of
-    /// 0.0001 to 48.0. These values MUST NOT be encoded with more than
-    /// four digits to the right of the decimal point.
-    pub max_pps: Option<F32Eq>,
-
-    /// Bits per pixel.
-    pub max_bpp: Option<u32>,
-
-    /// Other streams this stream depends on.
-    pub depend: Option<Vec<RestrictionId>>,
-}
-
-impl Restriction {
-    fn new(
-        id: RestrictionId,
-        direction: &'static str,
-        pt: &[Pt],
-        restriction: &[(String, String)],
-    ) -> Self {
-        let mut r = Restriction {
-            ..Default::default()
-        };
-        r.id = id;
-        r.direction = direction;
-        r.pts = pt.to_vec();
-
-        for (k, v) in restriction {
-            match &k[..] {
-                "max-width" => r.max_width = v.parse::<u32>().ok(),
-                "max-height" => r.max_height = v.parse::<u32>().ok(),
-                "max-fps" => r.max_fps = v.parse::<u32>().ok(),
-                "max-fs" => r.max_fs = v.parse::<u32>().ok(),
-                "max-br" => r.max_br = v.parse::<u32>().ok(),
-                "max-pps" => r.max_pps = v.parse::<F32Eq>().ok(),
-                "max-bpp" => r.max_bpp = v.parse::<u32>().ok(),
-                "depend" => {
-                    r.depend = Some(v.split(',').map(|i| RestrictionId(i.to_string())).collect())
-                }
-                _ => {
-                    debug!("Unrecognized a=rid restriction {}={}", k, v);
-                }
-            }
-        }
-
-        r
-    }
-
-    pub fn to_media_attr(&self) -> MediaAttribute {
-        let mut restriction = vec![];
-
-        if let Some(v) = self.max_width {
-            restriction.push(("max-width".to_string(), v.to_string()));
-        }
-        if let Some(v) = self.max_height {
-            restriction.push(("max-height".to_string(), v.to_string()));
-        }
-        if let Some(v) = self.max_fps {
-            restriction.push(("max-fps".to_string(), v.to_string()));
-        }
-        if let Some(v) = self.max_fs {
-            restriction.push(("max-fs".to_string(), v.to_string()));
-        }
-        if let Some(v) = self.max_br {
-            restriction.push(("max-br".to_string(), v.to_string()));
-        }
-        if let Some(v) = self.max_pps {
-            let x = (v.0 * 10_000.0).round() / 10_000.0;
-            restriction.push(("max-pps".to_string(), x.to_string()));
-        }
-        if let Some(v) = self.max_bpp {
-            restriction.push(("max-bpp".to_string(), v.to_string()));
-        }
-        if let Some(v) = &self.depend {
-            restriction.push((
-                "depend".to_string(),
-                v.iter()
-                    .map(|s| &s.0)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(","),
-            ));
-        }
-
-        MediaAttribute::Rid {
-            id: self.id.clone(),
-            direction: self.direction,
-            pt: self.pts.clone(),
-            restriction,
-        }
     }
 }
 
@@ -887,10 +622,10 @@ pub enum MediaAttribute {
     Simulcast(Simulcast),
     SsrcGroup {
         semantics: String, // i.e. "FID"
-        ssrcs: Vec<u32>,   // <normal stream> <repair stream>
+        ssrcs: Vec<Ssrc>,  // <normal stream> <repair stream>
     },
     Ssrc {
-        ssrc: u32, // synchronization source id
+        ssrc: Ssrc, // synchronization source id
         attr: String,
         value: String,
     },
@@ -928,7 +663,7 @@ pub struct SimulcastGroup(pub Vec<SimulcastOption>);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SimulcastOption {
     Rid(RestrictionId),
-    Ssrc(u32),
+    Ssrc(Ssrc),
 }
 
 impl SimulcastOption {
@@ -1082,17 +817,17 @@ impl fmt::Display for MediaAttribute {
             SctpPort(v) => write!(f, "a=sctp-port:{}", v)?,
             MaxMessageSize(v) => write!(f, "a=max-message-size:{}", v)?,
             ExtMap(e) => {
-                if e.ext_type.is_filtered() {
+                if !e.ext.is_serialized() {
                     return Ok(());
                 }
                 write!(f, "a=extmap:{}", e.id)?;
                 if let Some(d) = &e.direction {
                     write!(f, "/{}", d)?;
                 }
-                write!(f, " {}", e.ext_type.as_uri())?;
-                if let Some(e) = &e.ext {
-                    write!(f, " {}", e)?;
-                }
+                write!(f, " {}", e.ext.as_uri())?;
+                // if let Some(e) = &e.ext {
+                //     write!(f, " {}", e)?;
+                // }
                 write!(f, "\r\n")?;
             }
             RecvOnly => write!(f, "a=recvonly\r\n")?,
@@ -1198,14 +933,14 @@ impl fmt::Display for MediaAttribute {
                 write!(f, "a=ssrc-group:{} ", semantics)?;
                 for (idx, ssrc) in ssrcs.iter().enumerate() {
                     if idx + 1 < ssrcs.len() {
-                        write!(f, "{} ", ssrc)?;
+                        write!(f, "{} ", **ssrc)?;
                     } else {
-                        write!(f, "{}\r\n", ssrc)?;
+                        write!(f, "{}\r\n", **ssrc)?;
                     }
                 }
             }
             Ssrc { ssrc, attr, value } => {
-                write!(f, "a=ssrc:{} {}:{}\r\n", ssrc, attr, value)?;
+                write!(f, "a=ssrc:{} {}:{}\r\n", **ssrc, attr, value)?;
             }
             Unused(v) => write!(f, "a={}\r\n", v)?,
         }
@@ -1231,7 +966,7 @@ impl<'a> std::fmt::Display for FingerprintFmt<'a> {
 
 #[cfg(test)]
 mod test {
-    use rtp::RtpExtensionType;
+    use rtp::Extension;
 
     use super::*;
 
@@ -1254,12 +989,12 @@ mod test {
                         MediaAttribute::Fingerprint(Fingerprint { hash_func: "sha-256".into(), bytes: vec![140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8, 128, 168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73, 37, 115, 70, 96, 32, 220] }),
                         MediaAttribute::Setup(Setup::ActPass),
                         MediaAttribute::Mid("0".into()),
-                        MediaAttribute::ExtMap(ExtMap { id: 1, direction: None, ext_type: RtpExtensionType::AudioLevel, ext: None }),
-                        MediaAttribute::ExtMap(ExtMap { id: 2, direction: None, ext_type: RtpExtensionType::AbsoluteSendTime, ext: None }),
-                        MediaAttribute::ExtMap(ExtMap { id: 3, direction: None, ext_type: RtpExtensionType::TransportSequenceNumber, ext: None }),
-                        MediaAttribute::ExtMap(ExtMap { id: 4, direction: None, ext_type: RtpExtensionType::RtpMid, ext: None }),
-                        MediaAttribute::ExtMap(ExtMap { id: 5, direction: None, ext_type: RtpExtensionType::RtpStreamId, ext: None }),
-                        MediaAttribute::ExtMap(ExtMap { id: 6, direction: None, ext_type: RtpExtensionType::RepairedRtpStreamId, ext: None }),
+                        MediaAttribute::ExtMap(ExtMap { id: 1, direction: None, ext: Extension::AudioLevel }),
+                        MediaAttribute::ExtMap(ExtMap { id: 2, direction: None, ext: Extension::AbsoluteSendTime }),
+                        MediaAttribute::ExtMap(ExtMap { id: 3, direction: None, ext: Extension::TransportSequenceNumber }),
+                        MediaAttribute::ExtMap(ExtMap { id: 4, direction: None, ext: Extension::RtpMid }),
+                        MediaAttribute::ExtMap(ExtMap { id: 5, direction: None, ext: Extension::RtpStreamId }),
+                        MediaAttribute::ExtMap(ExtMap { id: 6, direction: None, ext: Extension::RepairedRtpStreamId }),
                         MediaAttribute::SendRecv,
                         MediaAttribute::Msid { stream_id: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(), track_id: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() },
                         MediaAttribute::RtcpMux,
@@ -1278,10 +1013,10 @@ mod test {
                         MediaAttribute::RtpMap { pt: 112.into(), codec: "telephone-event".into(), clock_rate: 32_000, enc_param: None },
                         MediaAttribute::RtpMap { pt: 113.into(), codec: "telephone-event".into(), clock_rate: 16_000, enc_param: None },
                         MediaAttribute::RtpMap { pt: 126.into(), codec: "telephone-event".into(), clock_rate: 8_000, enc_param: None },
-                        MediaAttribute::Ssrc { ssrc: 3_948_621_874, attr: "cname".into(), value: "xeXs3aE9AOBn00yJ".into() },
-                        MediaAttribute::Ssrc { ssrc: 3_948_621_874, attr: "msid".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1".into() },
-                        MediaAttribute::Ssrc { ssrc: 3_948_621_874, attr: "mslabel".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into() },
-                        MediaAttribute::Ssrc { ssrc: 3_948_621_874, attr: "label".into(), value: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() }] }] };
+                        MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "cname".into(), value: "xeXs3aE9AOBn00yJ".into() },
+                        MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "msid".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1".into() },
+                        MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "mslabel".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into() },
+                        MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "label".into(), value: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() }] }] };
         assert_eq!(&format!("{}", sdp), "v=0\r\n\
             o=- 5058682828002148772 2 IN IP4 127.0.0.1\r\n\
             s=-\r\n\

@@ -10,7 +10,7 @@ use {
 
 use dtls::Fingerprint;
 use ice::{Candidate, CandidateKind};
-use rtp::{ExtMap, Mid, Pt, RtpExtensionType};
+use rtp::{Direction, ExtMap, Extension, Mid, Pt, Ssrc};
 
 use super::data::*;
 
@@ -423,18 +423,17 @@ where
                 s.parse::<u8>()
                     .map_err(StreamErrorFor::<Input>::message_format)
             }),
-            optional((token('/'), not_sp())),
+            optional((token('/'), not_sp().map(|d| Direction::from(&d[..])))),
             token(' '),
-            not_sp().map(|uri| RtpExtensionType::from_uri(&uri)),
+            not_sp().map(|uri| Extension::from_uri(&uri)),
             optional((token(' '), any_value())),
         ),
     )
-    .map(|(id, dir_opt, _, ext_type, ext_opt)| {
+    .map(|(id, dir_opt, _, ext_type, _ext_opt)| {
         MediaAttribute::ExtMap(ExtMap {
             id,
             direction: dir_opt.map(|(_, d)| d),
-            ext_type,
-            ext: ext_opt.map(|(_, e)| e),
+            ext: ext_type,
         })
     });
 
@@ -614,6 +613,7 @@ where
             sep_by1(
                 not_sp().and_then(|s| {
                     s.parse::<u32>()
+                    .map(|v| Ssrc::from(v))
                         .map_err(StreamErrorFor::<Input>::message_format)
                 }),
                 token(' '),
@@ -631,6 +631,7 @@ where
         (
             not_sp().and_then(|s| {
                 s.parse::<u32>()
+                    .map(|v| Ssrc::from(v))
                     .map_err(StreamErrorFor::<Input>::message_format)
             }),
             token(' '),

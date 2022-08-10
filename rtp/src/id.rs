@@ -45,7 +45,7 @@ impl<'a> From<&'a str> for Mid {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ssrc(u32);
 
 impl Deref for Ssrc {
@@ -53,6 +53,12 @@ impl Deref for Ssrc {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl From<u32> for Ssrc {
+    fn from(v: u32) -> Self {
+        Ssrc(v)
     }
 }
 

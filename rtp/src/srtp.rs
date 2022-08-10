@@ -6,15 +6,13 @@ use openssl::symm::{Cipher, Crypter, Mode};
 use dtls::KeyingMaterial;
 use sha1::Sha1;
 
-use crate::r::RtpHeader;
+use crate::header::RtpHeader;
 
 const SRTP_HMAC_LEN: usize = 10;
 const SRTCP_INDEX_LEN: usize = 4;
 
 #[derive(Debug)]
 pub struct SrtpContext {
-    /// Master key obtained from DTLS export_keying_material.
-    srtp_key: SrtpKey,
     /// Encryption/decryption derived from srtp_key for RTP.
     rtp: Derived,
     /// Encryption/decryption derived from srtp_key for RTCP.
@@ -28,7 +26,6 @@ impl SrtpContext {
         let (rtp, rtcp) = Derived::from_key(&srtp_key);
 
         SrtpContext {
-            srtp_key,
             rtp,
             rtcp,
             srtcp_index: 0,
@@ -59,7 +56,7 @@ impl SrtpContext {
             return None;
         }
 
-        let iv = self.rtp.salt.rtp_iv(header.ssrc, srtp_index);
+        let iv = self.rtp.salt.rtp_iv(*header.ssrc, srtp_index);
 
         let input = &buf[header.header_len..hmac_start];
         let mut output = vec![0_u8; input.len()];
