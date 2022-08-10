@@ -2,7 +2,7 @@ use crate::ext::{ExtensionValues, Extensions};
 use crate::{Pt, Ssrc};
 
 #[derive(Debug, Clone)]
-pub struct RtpHeader<'a> {
+pub struct RtpHeader {
     pub version: u8,
     pub has_padding: bool,
     pub has_extension: bool,
@@ -13,12 +13,12 @@ pub struct RtpHeader<'a> {
     pub timestamp: u32,
     pub ssrc: Ssrc,
     // pub csrc: [u32; 15],
-    pub ext_vals: ExtensionValues<'a>,
+    pub ext_vals: ExtensionValues,
     pub header_len: usize,
 }
 
-impl<'a> RtpHeader<'a> {
-    pub fn parse(buf: &'a [u8], extensions: &Extensions) -> Option<RtpHeader<'a>> {
+impl RtpHeader {
+    pub fn parse(buf: &[u8], extensions: &Extensions) -> Option<RtpHeader> {
         let orig_len = buf.len();
         if buf.len() < 12 {
             trace!("RTP header too short < 12: {}", buf.len());
@@ -111,7 +111,7 @@ impl<'a> RtpHeader<'a> {
 }
 
 // https://tools.ietf.org/html/rfc5285
-fn parse_bede<'a>(mut buf: &'a [u8], ext_vals: &mut ExtensionValues<'a>, exts: &Extensions) {
+fn parse_bede(mut buf: &[u8], ext_vals: &mut ExtensionValues, exts: &Extensions) {
     loop {
         if buf.is_empty() {
             return;

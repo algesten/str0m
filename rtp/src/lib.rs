@@ -7,7 +7,7 @@ use openssl::error::ErrorStack;
 use thiserror::Error;
 
 mod id;
-pub use id::{CName, Mid, Pt, Ssrc};
+pub use id::{Mid, Pt, Ssrc, StreamId};
 
 mod ext;
 pub use ext::{ExtMap, Extension};

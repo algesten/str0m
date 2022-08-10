@@ -2,7 +2,7 @@ use std::fmt;
 use std::str::from_utf8;
 
 use crate::mtime::MediaTime;
-use crate::{Direction, RtpError};
+use crate::{Direction, Mid, RtpError, StreamId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExtMap {
@@ -162,11 +162,6 @@ impl Extensions {
                     if v == x.ext {
                         // same mapping, nothing to do
                     } else {
-                        // We assume that an ext-type mapping cannot be different within the context
-                        // of one RTP session. If they are different, we have no strategy for parsing
-                        // the mid from a RTP packet to match it up with an m-line (avoiding a=ssrc).
-                        // If we see this error, we must make fallback strategies for how to match
-                        // incoming RTP to a Media/IngressStream.
                         return Err(RtpError::ExtMapDiffers(v, x.ext));
                     }
                 } else {
@@ -189,7 +184,7 @@ impl Extensions {
 }
 
 impl Extension {
-    pub(crate) fn parse_value<'a>(&self, buf: &'a [u8], v: &mut ExtensionValues<'a>) -> Option<()> {
+    pub(crate) fn parse_value(&self, buf: &[u8], v: &mut ExtensionValues) -> Option<()> {
         use Extension::*;
         match self {
             // 3
@@ -241,15 +236,15 @@ impl Extension {
             }
             RtpStreamId => {
                 let s = from_utf8(buf).ok()?;
-                v.stream_id = Some(s);
+                v.stream_id = Some(s.into());
             }
             RepairedRtpStreamId => {
                 let s = from_utf8(buf).ok()?;
-                v.rep_stream_id = Some(s);
+                v.rep_stream_id = Some(s.into());
             }
             RtpMid => {
                 let s = from_utf8(buf).ok()?;
-                v.rtp_mid = Some(s);
+                v.rtp_mid = Some(s.into());
             }
             FrameMarking => {
                 v.frame_mark = Some(u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]));
@@ -267,7 +262,7 @@ impl Extension {
 }
 
 #[derive(Clone, Default)]
-pub struct ExtensionValues<'a> {
+pub struct ExtensionValues {
     pub abs_send_time: Option<MediaTime>,
     pub voice_activity: Option<bool>,
     pub audio_level: Option<i8>,
@@ -279,13 +274,13 @@ pub struct ExtensionValues<'a> {
     pub play_delay_max: Option<MediaTime>,
     pub video_c_type: Option<u8>, // 0 = unspecified, 1 = screenshare
     pub video_timing: Option<VideoTiming>,
-    pub stream_id: Option<&'a str>,
-    pub rep_stream_id: Option<&'a str>,
-    pub rtp_mid: Option<&'a str>,
+    pub stream_id: Option<StreamId>,
+    pub rep_stream_id: Option<StreamId>,
+    pub rtp_mid: Option<Mid>,
     pub frame_mark: Option<u32>,
 }
 
-impl<'a> fmt::Debug for ExtensionValues<'a> {
+impl fmt::Debug for ExtensionValues {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ExtensionValues {{")?;
 
