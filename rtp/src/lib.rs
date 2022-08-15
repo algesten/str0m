@@ -8,9 +8,11 @@ use thiserror::Error;
 
 mod id;
 pub use id::{Mid, Pt, Ssrc, StreamId};
+// TODO: Move this to some other crate.
+pub use id::MLineIdx;
 
 mod ext;
-pub use ext::{ExtMap, Extension};
+pub use ext::{ExtMap, Extension, Extensions};
 
 mod dir;
 pub use dir::Direction;
@@ -25,7 +27,7 @@ mod srtp;
 pub use srtp::{SrtpContext, SrtpKey};
 
 mod rtcp;
-pub use rtcp::RtcpHeader;
+pub use rtcp::{RtcpHeader, RtcpType};
 
 /// Errors that can arise in RTP.
 #[derive(Debug, Error)]

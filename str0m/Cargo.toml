@@ -4,3 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+thiserror = "1"
+tracing = "0.1"
+
+dtls = { path = "../dtls" }
+ice = { path = "../ice" }
+net = { path = "../net" }
+rtp = { path = "../rtp" }
+sdp = { path = "../sdp" }

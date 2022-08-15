@@ -6,7 +6,7 @@ use net::Id;
 
 macro_rules! str_id {
     ($id:ident) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub struct $id([u8; 3]);
 
         impl $id {
@@ -54,7 +54,7 @@ str_id!(StreamId);
 
 macro_rules! num_id {
     ($id:ident, $t:ty) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub struct $id($t);
 
         impl Deref for $id {
@@ -81,3 +81,5 @@ macro_rules! num_id {
 
 num_id!(Ssrc, u32);
 num_id!(Pt, u8);
+
+num_id!(MLineIdx, usize);

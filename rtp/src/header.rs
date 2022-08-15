@@ -18,7 +18,7 @@ pub struct RtpHeader {
 }
 
 impl RtpHeader {
-    pub fn parse(buf: &[u8], extensions: &Extensions) -> Option<RtpHeader> {
+    pub fn parse(buf: &[u8], exts: &Extensions) -> Option<RtpHeader> {
         let orig_len = buf.len();
         if buf.len() < 12 {
             trace!("RTP header too short < 12: {}", buf.len());
@@ -76,7 +76,7 @@ impl RtpHeader {
             let buf: &[u8] = &buf[4..];
             if ext_type == 0xbede {
                 // each m-line has a specific extmap mapping.
-                parse_bede(&buf[..ext_len], &mut ext, extensions);
+                parse_bede(&buf[..ext_len], &mut ext, exts);
             }
 
             &buf[ext_len..]
@@ -239,12 +239,14 @@ mod test {
     use super::*;
 
     #[test]
-    fn check_estimate_srtp_index() {
+    fn extend_seq_wrap_around() {
         assert_eq!(extend_seq(None, 0), 0);
         assert_eq!(extend_seq(Some(0), 1), 1);
         assert_eq!(extend_seq(Some(65_535), 0), 65_536);
         assert_eq!(extend_seq(Some(65_500), 2), 65_538);
         assert_eq!(extend_seq(Some(2), 1), 1);
         assert_eq!(extend_seq(Some(65_538), 1), 65_537);
+        assert_eq!(extend_seq(Some(3), 3), 3);
+        assert_eq!(extend_seq(Some(65_500), 65_500), 65_500);
     }
 }

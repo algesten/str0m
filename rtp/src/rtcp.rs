@@ -1,20 +1,15 @@
+use std::collections::VecDeque;
 use std::str::from_utf8;
 
-use crate::MediaTime;
-
-/// Header size before receiver report blocks.
-pub const RR_HEAD: usize = 8;
-/// Size of one receiver report.
-pub const RR_LEN: usize = 24;
-/// Max number of receiver reports per RTCP packet.
-pub const RR_MAX: usize = 32;
+use crate::{MediaTime, Ssrc};
 
 #[derive(Debug)]
 pub struct RtcpHeader {
     pub version: u8,
     pub has_padding: bool,
-    pub fmt: Fmt,
-    pub packet_type: PacketType,
+    pub fmt: FeedbackMessageType,
+    pub packet_type: RtcpType,
+    /// Length of RTCP message in bytes, including header.
     pub length: usize,
 }
 
@@ -22,7 +17,7 @@ pub struct RtcpHeader {
 ///
 /// PacketType determines how to interpret the count field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Fmt {
+pub enum FeedbackMessageType {
     /// When packet type SenderReport or ReceiverReport
     ReceptionReport(u8),
     /// When packet type SourceDescription or Goodbye
@@ -37,11 +32,11 @@ pub enum Fmt {
     NotUsed,
 }
 
-impl Fmt {
+impl FeedbackMessageType {
     pub fn count(&self) -> u8 {
         match self {
-            Fmt::ReceptionReport(v) => *v,
-            Fmt::SourceCount(v) => *v,
+            FeedbackMessageType::ReceptionReport(v) => *v,
+            FeedbackMessageType::SourceCount(v) => *v,
             _ => panic!("Not a count"),
         }
     }
@@ -65,7 +60,7 @@ pub enum PayloadType {
 
 /// Kind of RTCP packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PacketType {
+pub enum RtcpType {
     /// RTCP_PT_SR
     SenderReport = 200,
     /// RTCP_PT_RR
@@ -89,7 +84,7 @@ pub enum PacketType {
 
 impl RtcpHeader {
     pub fn parse(buf: &[u8], is_srtcp: bool) -> Option<RtcpHeader> {
-        use PacketType::*;
+        use RtcpType::*;
 
         if buf.len() < 8 {
             trace!("RTCP header too short < 8: {}", buf.len());
@@ -104,14 +99,15 @@ impl RtcpHeader {
         let has_padding = buf[0] & 0b0010_0000 > 0;
 
         let fmt_n = buf[0] & 0b0001_1111;
-        let packet_type = PacketType::from_u8(buf[1])?;
+        let packet_type = RtcpType::from_u8(buf[1])?;
+        use FeedbackMessageType::*;
         let fmt = match packet_type {
-            SenderReport | ReceiverReport => Fmt::ReceptionReport(fmt_n),
-            SourceDescription | Goodbye => Fmt::SourceCount(fmt_n),
-            ApplicationDefined => Fmt::Subtype(fmt_n),
-            TransportLayerFeedback => Fmt::TransportFeedback(TransportType::from_u8(fmt_n)?),
-            PayloadSpecificFeedback => Fmt::PayloadFeedback(PayloadType::from_u8(fmt_n)?),
-            ExtendedReport => Fmt::NotUsed,
+            SenderReport | ReceiverReport => ReceptionReport(fmt_n),
+            SourceDescription | Goodbye => SourceCount(fmt_n),
+            ApplicationDefined => Subtype(fmt_n),
+            TransportLayerFeedback => TransportFeedback(TransportType::from_u8(fmt_n)?),
+            PayloadSpecificFeedback => PayloadFeedback(PayloadType::from_u8(fmt_n)?),
+            ExtendedReport => NotUsed,
         };
 
         if is_srtcp && packet_type != SenderReport && packet_type != ReceiverReport {
@@ -140,6 +136,106 @@ impl RtcpHeader {
             length: length as usize,
         })
     }
+
+    pub fn feedback<'a>(buf: &'a [u8]) -> impl Iterator<Item = RtcpFb> + 'a {
+        FbIter::new(buf)
+    }
+}
+
+struct FbIter<'a> {
+    buf: &'a [u8],
+    offset: usize,
+    queue: VecDeque<RtcpFb>,
+}
+
+impl<'a> FbIter<'a> {
+    fn new(buf: &'a [u8]) -> Self {
+        FbIter {
+            buf,
+            offset: 0,
+            queue: VecDeque::new(),
+        }
+    }
+}
+
+impl<'a> Iterator for FbIter<'a> {
+    type Item = RtcpFb;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if !self.queue.is_empty() {
+            return self.queue.pop_front();
+        }
+
+        let buf = &self.buf[self.offset..];
+        let header = RtcpHeader::parse(self.buf, false)?;
+
+        match header.packet_type {
+            RtcpType::SenderReport => parse_sender_report(&header, buf, &mut self.queue),
+            RtcpType::ReceiverReport => parse_receiver_report(&header, buf, &mut self.queue),
+            RtcpType::SourceDescription => parse_sdes(&header, buf, &mut self.queue),
+            RtcpType::Goodbye => parse_goodbye(&header, buf, &mut self.queue),
+            RtcpType::TransportLayerFeedback => parse_trans_layer_fb(&header, buf, &mut self.queue),
+            RtcpType::PayloadSpecificFeedback => parse_payl_spec_fb(&header, buf, &mut self.queue),
+
+            // TODO ExtendedReport can be interesting.
+            RtcpType::ApplicationDefined | RtcpType::ExtendedReport => {}
+        }
+
+        self.offset += header.length;
+
+        todo!()
+    }
+}
+
+pub enum RtcpFb {
+    SenderReportInfo(ReportInfo),
+    SenderReport(Report),
+    ReceiverReport(Report),
+    Sdes(Sdes),
+    Goodbye(Ssrc),
+    Nack(Nack),
+    Pli(Pli),
+    Fir(Fir),
+}
+
+pub struct ReportInfo {
+    pub ssrc: Ssrc,
+    pub ntp_time: MediaTime,
+    pub rtp_time: u32,
+    pub sender_packet_count: u32,
+    pub sender_octet_count: u32,
+}
+
+pub struct Report {
+    pub ssrc: Ssrc,
+    pub fraction_cost: u8,
+    pub cumulative_packets_lost: u32, // 24 bit
+    pub highest_seq_no_recvd: u32,
+    pub interarrival_jitter: u32,
+    pub last_sr_timestampa: u32,
+    pub delay_since_last_sr: u32,
+}
+
+pub struct Sdes {
+    pub ssrc: Ssrc,
+    pub stype: SdesType,
+    pub value: String,
+}
+
+// PT=TransportLayerFeedback and FMT=1
+pub struct Nack {
+    pub ssrc: Ssrc,
+    pub pid: u16, // seq_no
+    // bitmask with following lost packets after pid
+    // https://www.rfc-editor.org/rfc/rfc4585#section-6.2.1
+    pub blp: u16,
+}
+
+pub struct Pli {
+    pub ssrc: Ssrc,
+}
+pub struct Fir {
+    pub ssrc: Ssrc,
 }
 
 impl TransportType {
@@ -173,9 +269,9 @@ impl PayloadType {
     }
 }
 
-impl PacketType {
+impl RtcpType {
     fn from_u8(v: u8) -> Option<Self> {
-        use PacketType::*;
+        use RtcpType::*;
         match v {
             200 => Some(SenderReport),   // sr
             201 => Some(ReceiverReport), // rr
@@ -193,34 +289,21 @@ impl PacketType {
     }
 }
 
-pub fn handle_sender_report(header: &RtcpHeader, buf: &[u8]) -> Option<()> {
+fn parse_sender_report(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
     // Sender report shape is here
-    // https://tools.ietf.org/html/rfc3550#page-36
+    // https://www.rfc-editor.org/rfc/rfc3550#section-6.4.1
     if buf.len() < 20 {
-        return None;
+        return;
     }
 
-    let mut buf = &buf[4..];
+    let buf = &buf[4..];
 
-    let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
-
-    // let media = match peer.media_by_ingress_ssrc(ssrc) {
-    //     Some(v) => v,
-    //     None => {
-    //         trace!("Send report no ingress for SSRC: {}", ssrc);
-    //         return None;
-    //     }
-    // };
-
-    // let stream = media.ingress_by_ssrc(ssrc)?;
+    let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
 
     let ntp_time = u64::from_be_bytes([
         buf[4], buf[5], buf[6], buf[7], buf[8], buf[9], buf[10], buf[11],
     ]);
-    let rtp_time = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
-
-    // stream.rtcp_sr_last = udp.timestamp;
-    // stream.rtcp_sr_ntp = MediaTime::from_ntp_64(ntp_time);
+    let ntp_time = MediaTime::from_ntp_64(ntp_time);
 
     // https://www.cs.columbia.edu/~hgs/rtp/faq.html#timestamp-computed
     // For video, time clock rate is fixed at 90 kHz. The timestamps generated
@@ -229,41 +312,220 @@ pub fn handle_sender_report(header: &RtcpHeader, buf: &[u8]) -> Option<()> {
     // fixed frame rate, the timestamp is governed by the nominal frame rate.
     // Thus, for a 30 f/s video, timestamps would increase by 3,000 for each
     // frame, for a 25 f/s video by 3,600 for each frame.
-    // stream.rtcp_sr_rtp = rtp_time;
+    let rtp_time = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
+
+    let sender_packet_count = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
+    let sender_octet_count = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
+
+    queue.push_back(RtcpFb::SenderReportInfo(ReportInfo {
+        ssrc,
+        ntp_time,
+        rtp_time,
+        sender_packet_count,
+        sender_octet_count,
+    }));
 
     // Number of sender reports.
-    // For WebRTC this seems to always be 0?
-    let count = header.fmt.count();
+    let count = header.fmt.count() as usize;
 
-    for _ in 0..count {
-        buf = &buf[24..]; // by chance the sender info is same size as a report block.
-        handle_sender_report_block(buf)?;
+    read_reports(buf, count, move |report| {
+        queue.push_back(RtcpFb::SenderReport(report));
+    });
+}
+
+fn parse_receiver_report(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
+    // Receiver report shape is here
+    // https://www.rfc-editor.org/rfc/rfc3550#section-6.4.2
+    if buf.len() < 20 {
+        return;
     }
 
-    Some(())
+    let buf = &buf[8..];
+
+    let count = header.fmt.count() as usize;
+
+    read_reports(buf, count, move |report| {
+        queue.push_back(RtcpFb::ReceiverReport(report));
+    });
 }
 
-// Seems unused for WebRTC.
-fn handle_sender_report_block(buf: &[u8]) -> Option<()> {
-    let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
-    trace!("TODO sender report block: {}", ssrc);
-    Some(())
+fn read_reports(mut buf: &[u8], count: usize, mut enqueue: impl FnMut(Report)) {
+    for _ in 0..count {
+        buf = &buf[24..]; // by chance the sender info is same size as a report block.
+
+        let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
+        let fraction_cost = buf[4];
+        let cumulative_packets_lost = u32::from_be_bytes([0, buf[5], buf[6], buf[7]]);
+        let highest_seq_no_recvd = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
+        let interarrival_jitter = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
+        let last_sr_timestampa = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
+        let delay_since_last_sr = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
+
+        let report = Report {
+            ssrc,
+            fraction_cost,
+            cumulative_packets_lost,
+            highest_seq_no_recvd,
+            interarrival_jitter,
+            last_sr_timestampa,
+            delay_since_last_sr,
+        };
+
+        enqueue(report);
+    }
 }
 
-pub fn receiver_report_header(buf: &mut [u8]) {
-    assert!(buf.len() >= RR_HEAD + RR_LEN);
+fn parse_sdes(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
+    let mut buf = &buf[4..];
 
-    let buf_len = buf.len();
+    for _ in 0..header.fmt.count() {
+        let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
+        let stype = SdesType::from_u8(buf[4]);
+        let len = buf[5] as usize;
 
-    let report_count = (buf_len - RR_HEAD) / RR_LEN;
-    buf[0] = (2 << 6) | (report_count as u8);
-    buf[1] = 200;
+        if let Ok(value) = from_utf8(&buf[6..(6 + len)]) {
+            if matches!(stype, SdesType::END) {
+                // The end of SDES
+                break;
+            }
 
-    (&mut buf[2..4]).copy_from_slice(&(buf_len as u16).to_be_bytes());
+            let sdes = Sdes {
+                ssrc,
+                stype,
+                value: value.to_string(),
+            };
+            queue.push_back(RtcpFb::Sdes(sdes));
+        } else {
+            break;
+        }
+        buf = &buf[(6 + len)..];
+    }
 
-    // SSRC of sender. But we don't really have an SSRC, so this is some workaround.
-    let first_ssrc = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
-    (&mut buf[4..8]).copy_from_slice(&(first_ssrc + 1_u32).to_be_bytes());
+    //
+}
+
+fn parse_goodbye(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
+    let mut buf = &buf[4..];
+
+    for _ in 0..header.fmt.count() {
+        let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
+        queue.push_back(RtcpFb::Goodbye(ssrc));
+        buf = &buf[4..];
+    }
+}
+
+fn parse_trans_layer_fb(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
+    let t = match header.fmt {
+        FeedbackMessageType::TransportFeedback(v) => v,
+        _ => return,
+    };
+
+    use TransportType::*;
+    match t {
+        Nack => parse_nack_fb(header, buf, queue),
+        TransportWide => parse_twcc_fb(header, buf, queue),
+    }
+}
+
+fn parse_nack_fb(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
+    // [header, sender-SSRC, reported-SSRC, FCI, FCI, FCI...]
+    let buf = &buf[8..];
+    let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
+
+    let fci_len = header.length - 12;
+    let count = fci_len / 4;
+    let mut buf = &buf[4..];
+
+    for _ in 0..count {
+        let pid = u16::from_be_bytes([buf[0], buf[1]]);
+        let blp = u16::from_be_bytes([buf[2], buf[3]]);
+
+        let nack = Nack { ssrc, pid, blp };
+        queue.push_back(RtcpFb::Nack(nack));
+
+        buf = &buf[4..];
+    }
+}
+
+fn parse_twcc_fb(_header: &RtcpHeader, _buf: &[u8], _queue: &mut VecDeque<RtcpFb>) {
+    // TODO: let's deal with this madness later.
+}
+
+fn parse_payl_spec_fb(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
+    let t = match header.fmt {
+        FeedbackMessageType::PayloadFeedback(v) => v,
+        _ => return,
+    };
+
+    use PayloadType::*;
+    match t {
+        PictureLossIndication => parse_pli(header, buf, queue),
+        SliceLossIndication => {
+            // TODO
+        }
+        ReferencePictureSelectionIndication => {
+            // TODO
+        }
+        FullIntraRequest => parse_fir(header, buf, queue),
+        ApplicationLayer => {
+            // ?
+        }
+    }
+}
+
+fn parse_pli(_header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
+    let buf = &buf[8..];
+    let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
+    queue.push_back(RtcpFb::Pli(Pli { ssrc }))
+}
+
+fn parse_fir(_header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
+    let buf = &buf[8..];
+    let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
+    queue.push_back(RtcpFb::Fir(Fir { ssrc }))
+}
+
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum SdesType {
+    /// End of SDES list
+    END = 0,
+    /// Canonical name.
+    CNAME = 1,
+    /// User name
+    NAME = 2,
+    /// User's electronic mail address
+    EMAIL = 3,
+    /// User's phone number
+    PHONE = 4,
+    /// Geographic user location
+    LOC = 5,
+    /// Name of application or tool
+    TOOL = 6,
+    /// Notice about the source
+    NOTE = 7,
+    /// Private extensions
+    PRIV = 8,
+    /// Who knows
+    Unknown,
+}
+
+impl SdesType {
+    fn from_u8(u: u8) -> Self {
+        use SdesType::*;
+        match u {
+            0 => END,
+            1 => CNAME,
+            2 => NAME,
+            3 => EMAIL,
+            4 => PHONE,
+            5 => LOC,
+            6 => TOOL,
+            7 => NOTE,
+            8 => PRIV,
+            _ => Unknown,
+        }
+    }
 }
 
 // impl IngressStream {
@@ -300,201 +562,157 @@ pub fn receiver_report_header(buf: &mut [u8]) {
 //         (&mut buf[20..24]).copy_from_slice(&delay_last_sr.to_be_bytes());
 //     }
 // }
+// pub fn handle_source_description(header: &RtcpHeader, buf: &[u8]) -> Option<()> {
+//     // https://tools.ietf.org/html/rfc3550#page-45
 
-#[allow(clippy::upper_case_acronyms)]
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum SdesType {
-    /// End of SDES list
-    END = 0,
-    /// Canonical name.
-    CNAME = 1,
-    /// User name
-    NAME = 2,
-    /// User's electronic mail address
-    EMAIL = 3,
-    /// User's phone number
-    PHONE = 4,
-    /// Geographic user location
-    LOC = 5,
-    /// Name of application or tool
-    TOOL = 6,
-    /// Notice about the source
-    NOTE = 7,
-    /// Private extensions
-    PRIV = 8,
-    /// Who knows
-    Unknown,
-}
+//     // Number of source descriptions (SDES)
+//     let count = header.fmt.count();
 
-pub fn handle_source_description(header: &RtcpHeader, buf: &[u8]) -> Option<()> {
-    // https://tools.ietf.org/html/rfc3550#page-45
+//     // position to read next sdes buf from.
+//     let mut buf = &buf[4..];
+//     for _ in 0..count {
+//         let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
 
-    // Number of source descriptions (SDES)
-    let count = header.fmt.count();
+//         let sdes_type = SdesType::from_u8(buf[4]);
+//         let sdes_len = buf[5] as usize;
+//         let text = from_utf8(&buf[6..(6 + sdes_len)]).ok()?;
 
-    // position to read next sdes buf from.
-    let mut buf = &buf[4..];
-    for _ in 0..count {
-        let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+//         if sdes_type == SdesType::CNAME {
+//             // if let Some(media) = peer.media_by_ingress_ssrc(ssrc) {
+//             //     if let Some(ingress) = media.ingress_by_ssrc(ssrc) {
+//             //         if ingress.group_id.is_none() {
+//             //             debug!("Associate SSRC {} with CNAME: {}", ssrc, text);
+//             //             ingress.group_id = Some(GroupId(text.to_string()));
+//             //         }
+//             //     }
+//             // }
+//         } else {
+//             trace!("Unused SDES {:?}={}", sdes_type, text);
+//         }
 
-        let sdes_type = SdesType::from_u8(buf[4]);
-        let sdes_len = buf[5] as usize;
-        let text = from_utf8(&buf[6..(6 + sdes_len)]).ok()?;
+//         buf = &buf[(6 + sdes_len)..];
+//     }
 
-        if sdes_type == SdesType::CNAME {
-            // if let Some(media) = peer.media_by_ingress_ssrc(ssrc) {
-            //     if let Some(ingress) = media.ingress_by_ssrc(ssrc) {
-            //         if ingress.group_id.is_none() {
-            //             debug!("Associate SSRC {} with CNAME: {}", ssrc, text);
-            //             ingress.group_id = Some(GroupId(text.to_string()));
-            //         }
-            //     }
-            // }
-        } else {
-            trace!("Unused SDES {:?}={}", sdes_type, text);
-        }
+//     None
+// }
 
-        buf = &buf[(6 + sdes_len)..];
-    }
+// #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+// /// Record of receiving one transport wide cc.
+// pub struct TransportWideCC(pub u16, pub MediaTime);
 
-    None
-}
+// pub const TRANSPORT_WIDE_CC_MAX: usize = 4;
 
-impl SdesType {
-    fn from_u8(u: u8) -> Self {
-        use SdesType::*;
-        match u {
-            0 => END,
-            1 => CNAME,
-            2 => NAME,
-            3 => EMAIL,
-            4 => PHONE,
-            5 => LOC,
-            6 => TOOL,
-            7 => NOTE,
-            8 => PRIV,
-            _ => Unknown,
-        }
-    }
-}
+// pub fn build_transport_fb(
+//     send_transport_cc: &mut u8,
+//     ssrc: u32,
+//     timestamp: &MediaTime,
+//     to_send: &mut [Option<TransportWideCC>],
+//     output: &mut Vec<Vec<u8>>,
+// ) -> Option<()> {
+//     // https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-/// Record of receiving one transport wide cc.
-pub struct TransportWideCC(pub u16, pub MediaTime);
+//     //     0                   1                   2                   3
+//     //     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+//     //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//     //    |V=2|P|  FMT=15 |    PT=205     |           length              |
+//     //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//     //    |                     SSRC of packet sender                     |
+//     //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//     //    |                      SSRC of media source                     |
+//     //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//     //    |      base sequence number     |      packet status count      |
+//     //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//     //    |                 reference time                | fb pkt. count |
+//     //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//     //    |          packet chunk         |         packet chunk          |
+//     //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//     //    .                                                               .
+//     //    .                                                               .
+//     //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//     //    |         packet chunk          |  recv delta   |  recv delta   |
+//     //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//     //    .                                                               .
+//     //    .                                                               .
+//     //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//     //    |           recv delta          |  recv delta   | zero padding  |
+//     //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-pub const TRANSPORT_WIDE_CC_MAX: usize = 4;
+//     // Deltas are represented as multiples of 250us:
+//     // o  If the "Packet received, small delta" symbol has been appended to
+//     //     the status list, an 8-bit unsigned receive delta will be appended
+//     //     to recv delta list, representing a delta in the range [0, 63.75]
+//     //     ms.
+//     // o  If the "Packet received, large or negative delta" symbol has been
+//     //     appended to the status list, a 16-bit signed receive delta will be
+//     //     appended to recv delta list, representing a delta in the range
+//     //     [-8192.0, 8191.75] ms.
+//     const DELTA: i64 = 250; // microseconds
+//     const WRAP_PERIOD: i64 = 1 << 24;
 
-pub fn build_transport_fb(
-    send_transport_cc: &mut u8,
-    ssrc: u32,
-    timestamp: &MediaTime,
-    to_send: &mut [Option<TransportWideCC>],
-    output: &mut Vec<Vec<u8>>,
-) -> Option<()> {
-    // https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01
+//     loop {
+//         // If no index found, deliberate early return
+//         let mut index = to_send.iter().position(|t| t.is_none())?;
+//         let first = to_send[index].take()?;
 
-    //     0                   1                   2                   3
-    //     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-    //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    //    |V=2|P|  FMT=15 |    PT=205     |           length              |
-    //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    //    |                     SSRC of packet sender                     |
-    //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    //    |                      SSRC of media source                     |
-    //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    //    |      base sequence number     |      packet status count      |
-    //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    //    |                 reference time                | fb pkt. count |
-    //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    //    |          packet chunk         |         packet chunk          |
-    //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    //    .                                                               .
-    //    .                                                               .
-    //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    //    |         packet chunk          |  recv delta   |  recv delta   |
-    //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    //    .                                                               .
-    //    .                                                               .
-    //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    //    |           recv delta          |  recv delta   | zero padding  |
-    //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//         let buf = vec![0_u8; 256];
+//         output.push(buf);
+//         let last = output.len() - 1;
 
-    // Deltas are represented as multiples of 250us:
-    // o  If the "Packet received, small delta" symbol has been appended to
-    //     the status list, an 8-bit unsigned receive delta will be appended
-    //     to recv delta list, representing a delta in the range [0, 63.75]
-    //     ms.
-    // o  If the "Packet received, large or negative delta" symbol has been
-    //     appended to the status list, a 16-bit signed receive delta will be
-    //     appended to recv delta list, representing a delta in the range
-    //     [-8192.0, 8191.75] ms.
-    const DELTA: i64 = 250; // microseconds
-    const WRAP_PERIOD: i64 = 1 << 24;
+//         let buf = output.get_mut(last).unwrap();
+//         buf.resize(20, 0); // space for header + 1 chunk.
 
-    loop {
-        // If no index found, deliberate early return
-        let mut index = to_send.iter().position(|t| t.is_none())?;
-        let first = to_send[index].take()?;
+//         // 5 bits This field identifies the type
+//         // of the FB message.  It must have the value 15.
+//         buf[0] = 2 << 6 | 15;
+//         // 8 bits This is the RTCP packet type that
+//         // identifies the packet as being an RTCP FB message.  The
+//         // value must be RTPFB = 205.
+//         buf[1] = RtcpType::TransportLayerFeedback as u8;
+//         // len and padding written afterwards
 
-        let buf = vec![0_u8; 256];
-        output.push(buf);
-        let last = output.len() - 1;
+//         buf[4..8].copy_from_slice(&ssrc.to_be_bytes());
+//         buf[8..12].copy_from_slice(&(ssrc + 1).to_be_bytes());
 
-        let buf = output.get_mut(last).unwrap();
-        buf.resize(20, 0); // space for header + 1 chunk.
+//         let base_seq = first.0;
+//         buf[12..14].copy_from_slice(&base_seq.to_be_bytes());
+//         let mut total_count = 0;
+//         // packet status count written after
 
-        // 5 bits This field identifies the type
-        // of the FB message.  It must have the value 15.
-        buf[0] = 2 << 6 | 15;
-        // 8 bits This is the RTCP packet type that
-        // identifies the packet as being an RTCP FB message.  The
-        // value must be RTPFB = 205.
-        buf[1] = PacketType::TransportLayerFeedback as u8;
-        // len and padding written afterwards
+//         let ref_time = first.1;
+//         let fb_count = *send_transport_cc;
+//         *send_transport_cc += 1;
 
-        buf[4..8].copy_from_slice(&ssrc.to_be_bytes());
-        buf[8..12].copy_from_slice(&(ssrc + 1).to_be_bytes());
+//         let t_and_c = (((ref_time.as_micros() % WRAP_PERIOD) / DELTA) << 8) | (fb_count as i64);
+//         buf[16..20].copy_from_slice(&t_and_c.to_be_bytes());
 
-        let base_seq = first.0;
-        buf[12..14].copy_from_slice(&base_seq.to_be_bytes());
-        let mut total_count = 0;
-        // packet status count written after
+//         let mut cur = first;
+//         let mut deltas = Vec::with_capacity(TRANSPORT_WIDE_CC_MAX);
+//         let mut chunks = 0;
 
-        let ref_time = first.1;
-        let fb_count = *send_transport_cc;
-        *send_transport_cc += 1;
+//         loop {
+//             let delta_ts = cur.1 - ref_time;
+//             deltas.push(delta_ts);
 
-        let t_and_c = (((ref_time.as_micros() % WRAP_PERIOD) / DELTA) << 8) | (fb_count as i64);
-        buf[16..20].copy_from_slice(&t_and_c.to_be_bytes());
+//             let delta = delta_ts.as_micros() / DELTA;
 
-        let mut cur = first;
-        let mut deltas = Vec::with_capacity(TRANSPORT_WIDE_CC_MAX);
-        let mut chunks = 0;
+//             if delta < -32768 || delta > 32767 {
+//                 // If the delta exceeds even the larger limits, a new feedback
+//                 // message must be used, where the 24-bit base receive delta can
+//                 // cover very large gaps.
+//                 break;
+//             }
 
-        loop {
-            let delta_ts = cur.1 - ref_time;
-            deltas.push(delta_ts);
+//             // Position for handling next one.
+//             index += 1;
+//             if index == to_send.len() {
+//                 break;
+//             }
+//             cur = to_send[index].take().unwrap();
+//         }
 
-            let delta = delta_ts.as_micros() / DELTA;
+//         // write deltas
+//         // write status count, len and padding
+//     }
 
-            if delta < -32768 || delta > 32767 {
-                // If the delta exceeds even the larger limits, a new feedback
-                // message must be used, where the 24-bit base receive delta can
-                // cover very large gaps.
-                break;
-            }
-
-            // Position for handling next one.
-            index += 1;
-            if index == to_send.len() {
-                break;
-            }
-            cur = to_send[index].take().unwrap();
-        }
-
-        // write deltas
-        // write status count, len and padding
-    }
-
-    Some(())
-}
+//     Some(())
+// }

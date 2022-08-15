@@ -38,6 +38,9 @@ impl MediaTime {
         // RTP spec "wallclock" uses NTP time, which starts at 1900-01-01.
         //
         // https://tools.ietf.org/html/rfc868
+        //
+        // 365 days * 70 years + 17 leap year days
+        // (365 * 70 + 17) * 86400 = 2208988800
         const MICROS_1900: i64 = 2_208_988_800 * MICROS;
 
         let dur = SystemTime::now()
