@@ -432,6 +432,7 @@ dependencies = [
  "net",
  "openssl",
  "openssl-sys",
+ "rand",
  "sha-1",
  "thiserror",
  "tracing",
@@ -451,6 +452,7 @@ dependencies = [
  "dtls",
  "ice",
  "rtp",
+ "serde",
  "thiserror",
  "tracing",
 ]

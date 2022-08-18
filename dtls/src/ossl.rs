@@ -116,7 +116,7 @@ pub struct TlsStream<S> {
 }
 
 pub enum State<S> {
-    Init(Ssl, S, bool),
+    Init(Ssl, S, Option<bool>),
     Handshaking(MidHandshakeSslStream<S>),
     Established(SslStream<S>),
     Empty,
@@ -126,11 +126,21 @@ impl<S> TlsStream<S>
 where
     S: io::Read + io::Write,
 {
-    pub fn new(ssl: Ssl, stream: S, active: bool) -> Self {
+    pub fn new(ssl: Ssl, stream: S) -> Self {
         TlsStream {
-            state: State::Init(ssl, stream, active),
+            state: State::Init(ssl, stream, None),
             keying_mat: None,
             exported: false,
+        }
+    }
+
+    pub fn set_active(&mut self, active: bool) {
+        match &mut self.state {
+            State::Init(_, _, v) => {
+                assert!(v.is_none(), "set_active should called exactly once");
+                *v = Some(active);
+            }
+            _ => panic!("set_active must be called before handshaking"),
         }
     }
 
@@ -191,6 +201,7 @@ where
         let result = match taken {
             State::Empty | State::Established(_) => unreachable!(),
             State::Init(ssl, stream, active) => {
+                let active = active.expect("set_active to be called before handshake");
                 if active {
                     ssl.connect(stream)
                 } else {

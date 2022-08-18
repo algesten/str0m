@@ -10,7 +10,7 @@ use {
 
 use dtls::Fingerprint;
 use ice::{Candidate, CandidateKind};
-use rtp::{Direction, ExtMap, Extension, Mid, Pt, Ssrc};
+use rtp::{Direction, ExtMap, Extension, Mid, Pt, SessionId, Ssrc};
 
 use super::data::*;
 
@@ -71,7 +71,7 @@ where
         )
             .map(|(_, _, sess, _, _)| sess),
     );
-    from_str(session_string).map(SessionId)
+    from_str(session_string).map(|x: u64| SessionId::from(x))
 }
 
 /// `b=<bwtype>:<bandwidth>`
@@ -613,7 +613,7 @@ where
             sep_by1(
                 not_sp().and_then(|s| {
                     s.parse::<u32>()
-                    .map(|v| Ssrc::from(v))
+                        .map(|v| Ssrc::from(v))
                         .map_err(StreamErrorFor::<Input>::message_format)
                 }),
                 token(' '),
@@ -908,7 +908,7 @@ mod test {
             session_parser().parse(sdp),
             Ok((
                 Session {
-                    id: SessionId(6_564_425_948_916_445_306),
+                    id: 6_564_425_948_916_445_306.into(),
                     bw: None,
                     attrs: vec![
                         SessionAttribute::Group {
@@ -938,7 +938,7 @@ mod test {
             Ok((
                 Sdp {
                     session: Session {
-                        id: SessionId(7052848360639826063),
+                        id: 7052848360639826063.into(),
                         bw: None,
                         attrs: vec![
                             SessionAttribute::Fingerprint(Fingerprint {

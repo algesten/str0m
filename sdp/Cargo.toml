@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 thiserror = "1"
 tracing = "0.1"
+serde = "1"
 
 combine = "4"
 

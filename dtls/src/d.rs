@@ -46,15 +46,23 @@ impl Dtls {
     ///
     /// `active` indicates whether this side should initiate the handshake or not.
     /// This in turn is governed by the `a=setup` SDP attribute.
-    pub fn new(active: bool) -> Result<Self, DtlsError> {
+    pub fn new() -> Result<Self, DtlsError> {
         let (_context, fingerprint) = dtls_create_ctx()?;
         let ssl = dtls_ssl_create(&_context)?;
         Ok(Dtls {
             _context,
             fingerprint,
-            tls: TlsStream::new(ssl, IoBuffer::default(), active),
+            tls: TlsStream::new(ssl, IoBuffer::default()),
             events: VecDeque::new(),
         })
+    }
+
+    /// Set whether this instance is active or passive.
+    ///
+    /// i.e. initiating the client helo or not. This must be called
+    /// exactly once before starting to handshake (I/O).
+    pub fn set_active(&mut self, active: bool) {
+        self.tls.set_active(active);
     }
 
     /// The local fingerprint.
@@ -105,10 +113,10 @@ impl Dtls {
     }
 
     /// Handles an incoming DTLS datagrams.
-    pub fn handle_receive(&mut self, receive: Receive) -> Result<(), DtlsError> {
-        info!("Handle receive: {:?}", receive);
+    pub fn handle_receive(&mut self, r: Receive) -> Result<(), DtlsError> {
+        info!("Handle receive: {:?}", r);
 
-        let message = match receive.contents {
+        let message = match r.contents {
             DatagramRecv::Dtls(v) => v,
             _ => {
                 trace!("Receive rejected, not DTLS");

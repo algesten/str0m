@@ -2,6 +2,8 @@ use std::fmt;
 use std::ops::Deref;
 use std::str::from_utf8_unchecked;
 
+use rand::random;
+
 use net::Id;
 
 macro_rules! str_id {
@@ -46,16 +48,25 @@ macro_rules! str_id {
                 $id(array)
             }
         }
+
+        impl Default for $id {
+            fn default() -> Self {
+                $id::new()
+            }
+        }
     };
 }
-
-str_id!(Mid);
-str_id!(StreamId);
 
 macro_rules! num_id {
     ($id:ident, $t:ty) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub struct $id($t);
+
+        impl $id {
+            pub fn new() -> Self {
+                $id(random())
+            }
+        }
 
         impl Deref for $id {
             type Target = $t;
@@ -79,7 +90,9 @@ macro_rules! num_id {
     };
 }
 
+str_id!(Mid);
+str_id!(StreamId);
 num_id!(Ssrc, u32);
 num_id!(Pt, u8);
-
 num_id!(MLineIdx, usize);
+num_id!(SessionId, u64);

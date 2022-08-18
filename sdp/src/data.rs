@@ -1,8 +1,7 @@
 use combine::Parser;
 use dtls::Fingerprint;
-use rtp::{Direction, ExtMap, Mid, Ssrc};
+use rtp::{Direction, ExtMap, Mid, SessionId, Ssrc};
 use std::fmt::{self};
-use std::hash::Hash;
 use std::num::ParseFloatError;
 use std::str::FromStr;
 
@@ -63,10 +62,6 @@ pub struct Session {
     pub bw: Option<Bandwidth>,
     pub attrs: Vec<SessionAttribute>,
 }
-
-/// Session id from o= line
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SessionId(pub u64);
 
 /// Bandwidth from b= line
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -715,7 +710,7 @@ impl fmt::Display for Sdp {
 impl fmt::Display for Session {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "v=0\r\n")?;
-        write!(f, "o=- {} 2 IN IP4 127.0.0.1\r\n", self.id.0)?;
+        write!(f, "o=- {} 2 IN IP4 127.0.0.1\r\n", self.id)?;
         write!(f, "s=-\r\n")?;
         if let Some(bw) = &self.bw {
             write!(f, "b={}:{}\r\n", bw.typ, bw.val)?;
@@ -972,7 +967,7 @@ mod test {
 
     #[test]
     fn write_sdp() {
-        let sdp = Sdp { session: Session { id: SessionId(5_058_682_828_002_148_772),
+        let sdp = Sdp { session: Session { id: 5_058_682_828_002_148_772.into(),
             bw: None, attrs:
             vec![SessionAttribute::Group { typ: "BUNDLE".into(), mids: vec!["0".into()] }, SessionAttribute::Unused("msid-semantic: WMS 5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into())] },
             media_lines: vec![

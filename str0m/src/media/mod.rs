@@ -3,12 +3,13 @@ use std::time::Instant;
 
 use dtls::KeyingMaterial;
 use net::{DatagramRecv, DatagramSend, Receive};
-use rtp::{Direction, Extensions, MLineIdx, Mid, RtcpHeader, RtpHeader};
+use rtp::{Direction, Extensions, MLineIdx, Mid, RtcpHeader, RtpHeader, SessionId};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
 
-mod oper;
+// mod oper;
 
 pub struct Session {
+    id: SessionId,
     media: Vec<Media>,
     channels: Vec<DataChannel>,
     exts: Extensions,
@@ -47,6 +48,18 @@ pub struct DataChannel {
 }
 
 impl Session {
+    pub fn new() -> Self {
+        Session {
+            id: SessionId::new(),
+            media: vec![],
+            channels: vec![],
+            exts: Extensions::new(),
+            srtp_rx: None,
+            srtp_tx: None,
+            ssrc_map_rx: HashMap::new(),
+        }
+    }
+
     pub fn set_keying_material(&mut self, mat: KeyingMaterial) {
         let key_rx = SrtpKey::new(&mat, true);
         let ctx_rx = SrtpContext::new(key_rx);
@@ -57,9 +70,13 @@ impl Session {
         self.srtp_tx = Some(ctx_tx);
     }
 
-    pub fn handle_recv(&mut self, recv: Receive) -> Option<()> {
+    pub fn handle_receive(&mut self, r: Receive) {
+        self.do_handle_receive(r);
+    }
+
+    fn do_handle_receive(&mut self, r: Receive) -> Option<()> {
         use DatagramRecv::*;
-        match recv.contents {
+        match r.contents {
             Rtp(buf) => {
                 if let Some(header) = RtpHeader::parse(buf, &self.exts) {
                     self.handle_rtp(header, buf)?;
@@ -117,6 +134,10 @@ impl Session {
 
     pub fn poll_datagram(&mut self) -> Option<DatagramSend> {
         todo!()
+    }
+
+    pub(crate) fn has_mid(&self, mid: Mid) -> bool {
+        self.media.iter().any(|m| m.mid == mid)
     }
 
     // pub fn handle_sctp(&mut self, sctp) {

@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 tracing = "0.1"
 thiserror = "1"
+rand = "0.8"
 
 # SRTP uses aes, which we could find pure rust implemetations for,
 # however since DTLS requires openssl, we chose to use just openssl

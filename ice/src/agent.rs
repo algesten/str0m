@@ -715,10 +715,10 @@ impl IceAgent {
     /// Handles an incoming STUN message.
     ///
     /// Will not be used if [`IceAgent::accepts_message`] returns false.
-    pub fn handle_receive(&mut self, now: Instant, receive: Receive) {
-        info!("Handle receive: {:?}", receive);
+    pub fn handle_receive(&mut self, now: Instant, r: Receive) {
+        info!("Handle receive: {:?}", r);
 
-        let message = match receive.contents {
+        let message = match r.contents {
             DatagramRecv::Stun(v) => v,
             _ => {
                 trace!("Receive rejected, not STUN");
@@ -734,14 +734,12 @@ impl IceAgent {
         }
 
         if message.is_binding_request() {
-            self.stun_server_handle_message(now, receive.source, receive.destination, message);
+            self.stun_server_handle_message(now, r.source, r.destination, message);
         } else if message.is_successful_binding_response() {
             self.stun_client_handle_response(now, message);
         }
 
-        self.emit_event(IceAgentEvent::DiscoveredRecv {
-            source: receive.source,
-        });
+        self.emit_event(IceAgentEvent::DiscoveredRecv { source: r.source });
 
         // TODO handle unsuccessful responses.
     }
