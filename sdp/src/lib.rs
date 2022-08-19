@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate tracing;
-
 use std::fmt;
 use std::ops::Deref;
 
@@ -9,7 +6,8 @@ use serde::ser::SerializeStruct;
 use thiserror::Error;
 
 mod data;
-pub use data::{MediaLine, MediaType, Sdp};
+pub use data::{MediaAttribute, MediaLine, MediaType, Proto};
+pub use data::{Sdp, Session, SessionAttribute, Setup};
 
 mod parser;
 

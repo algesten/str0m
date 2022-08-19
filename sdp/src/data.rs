@@ -29,6 +29,12 @@ impl Sdp {
         }
     }
 
+    pub fn setup(&self) -> Option<Setup> {
+        self.session
+            .setup()
+            .or_else(|| self.media_lines.iter().find_map(|m| m.setup()))
+    }
+
     fn do_assert_consistency(&self) -> Option<String> {
         let group = self
             .session
@@ -549,6 +555,14 @@ impl Setup {
             (Passive, Passive) => None,
         }
     }
+
+    pub fn invert(&self) -> Setup {
+        match self {
+            Setup::ActPass => Setup::ActPass,
+            Setup::Active => Setup::Passive,
+            Setup::Passive => Setup::Active,
+        }
+    }
 }
 
 /// Attributes before the first m= line.
@@ -577,8 +591,8 @@ pub enum MediaAttribute {
         stream_id: String,
         track_id: String,
     },
-    RtcpMux,
-    RtcpMuxOnly,
+    RtcpMux,     //
+    RtcpMuxOnly, // only in offer, answer with a=rtcp-mux
     // reduced size rtcp. remove this if not supported.
     RtcpRsize,
     Candidate(Candidate),

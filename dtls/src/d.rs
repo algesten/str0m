@@ -57,6 +57,13 @@ impl Dtls {
         })
     }
 
+    /// Tells if this instance has been inited.
+    ///
+    /// Once true, we cannot do `set_active` anymore.
+    pub fn is_inited(&self) -> bool {
+        self.tls.is_inited()
+    }
+
     /// Set whether this instance is active or passive.
     ///
     /// i.e. initiating the client helo or not. This must be called

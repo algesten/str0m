@@ -134,6 +134,13 @@ where
         }
     }
 
+    pub fn is_inited(&self) -> bool {
+        match &self.state {
+            State::Init(_, _, v) => v.is_some(),
+            _ => true,
+        }
+    }
+
     pub fn set_active(&mut self, active: bool) {
         match &mut self.state {
             State::Init(_, _, v) => {

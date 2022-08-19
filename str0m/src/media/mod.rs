@@ -5,6 +5,7 @@ use dtls::KeyingMaterial;
 use net::{DatagramRecv, DatagramSend, Receive};
 use rtp::{Direction, Extensions, MLineIdx, Mid, RtcpHeader, RtpHeader, SessionId};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
+use sdp::{MediaAttribute, MediaLine, MediaType, Proto, Sdp, SessionAttribute};
 
 // mod oper;
 
@@ -20,10 +21,22 @@ pub struct Session {
 
 pub struct Media {
     mid: Mid,
+    kind: MediaKind,
     m_line_idx: MLineIdx,
     dir: Direction,
     sources_rx: Vec<Source>,
     sources_tx: Vec<Source>,
+}
+
+pub struct Codec {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Kind when adding media.
+pub enum MediaKind {
+    /// Add audio media.
+    Audio,
+    /// Add video media.
+    Video,
 }
 
 pub struct Source {
@@ -173,4 +186,121 @@ fn fallback_match_media<'a>(
     ssrc_map_rx.insert(header.ssrc, idx);
 
     Some(media)
+}
+
+impl Session {
+    pub fn as_sdp(&self) -> Sdp {
+        let (mids, media_lines) = {
+            // Merge media lines and data channels.
+            let mut v = self
+                .channels
+                .iter()
+                .map(|m| &*m as &dyn AsMediaLine)
+                .chain(self.media.iter().map(|m| &*m as &dyn AsMediaLine))
+                .collect::<Vec<_>>();
+
+            // Sort on the order they been added to the SDP.
+            v.sort_by_key(|m| **m.index());
+
+            // Mids go into the session part of the SDP.
+            let mids = v.iter().map(|m| m.mid()).collect();
+
+            // Turn into sdp::MediaLine (m-line).
+            let lines = v.into_iter().map(|m| m.as_media_line()).collect();
+
+            (mids, lines)
+        };
+
+        Sdp {
+            session: sdp::Session {
+                id: self.id,
+                bw: None,
+                attrs: vec![
+                    SessionAttribute::Group {
+                        typ: "BUNDLE".into(),
+                        mids,
+                    },
+                    // a=msid-semantic: WMS
+                ],
+            },
+            media_lines,
+        }
+    }
+}
+
+trait AsMediaLine {
+    fn mid(&self) -> Mid;
+    fn index(&self) -> &MLineIdx;
+    fn as_media_line(&self) -> MediaLine;
+}
+
+impl AsMediaLine for DataChannel {
+    fn mid(&self) -> Mid {
+        self.mid
+    }
+    fn index(&self) -> &MLineIdx {
+        &self.m_line_idx
+    }
+    fn as_media_line(&self) -> MediaLine {
+        MediaLine {
+            typ: sdp::MediaType::Application,
+            proto: Proto::Sctp,
+            pts: vec![],
+            bw: None,
+            attrs: vec![
+                // a=ice-ufrag:HhS+\r\n\
+                // a=ice-pwd:FhYTGhlAtKCe6KFIX8b+AThW\r\n\
+                // a=ice-options:trickle\r\n\
+                // a=fingerprint:sha-256 B4:12:1C:7C:7D:ED:F1:FA:61:07:57:9C:29:BE:58:E3:BC:41:E7:13:8E:7D:D3:9D:1F:94:6E:A5:23:46:94:23\r\n\
+                // a=setup:actpass\r\n\
+                MediaAttribute::Mid(self.mid),
+                MediaAttribute::SctpPort(5000),
+                MediaAttribute::MaxMessageSize(262144),
+            ],
+        }
+    }
+}
+
+impl AsMediaLine for Media {
+    fn mid(&self) -> Mid {
+        self.mid
+    }
+    fn index(&self) -> &MLineIdx {
+        &self.m_line_idx
+    }
+    fn as_media_line(&self) -> MediaLine {
+        MediaLine {
+            typ: self.kind.into(),
+            proto: Proto::Srtp,
+            pts: vec![],
+            bw: None,
+            attrs: vec![
+                // only in first:
+                // "a=candidate:1669605774 1 udp 2122260223 192.168.115.173 64356 typ host generation 0 network-id 1 network-cost 10",
+                // "a=candidate:755488126 1 tcp 1518280447 192.168.115.173 9 typ host tcptype active generation 0 network-id 1 network-cost 10",
+
+                // in every m-line
+                // "a=ice-ufrag:v8Lx",
+                // "a=ice-pwd:GdpW980Caww9WWsbg6jJ5pGu",
+                // "a=ice-options:trickle",
+                // "a=fingerprint:sha-256 7A:D7:C9:33:94:8D:8A:BA:10:EB:93:21:7C:B4:91:6D:40:F7:56:07:CA:9D:42:D3:80:32:2D:10:D9:AC:8E:15",
+                // "a=setup:actpass",
+                MediaAttribute::Mid(self.mid),
+                // extmaps here
+                self.dir.into(),
+                // a=msid here
+                MediaAttribute::RtcpMux,
+                // rtpmap here
+            ],
+        }
+    }
+}
+
+impl Into<MediaType> for MediaKind {
+    fn into(self) -> MediaType {
+        match self {
+            MediaKind::Audio => MediaType::Audio,
+            MediaKind::Video => MediaType::Video,
+        }
+    }
 }

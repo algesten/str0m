@@ -2,22 +2,22 @@
 extern crate tracing;
 
 use std::io;
-use std::marker::PhantomData;
 use std::time::Instant;
 
+use change::Changes;
 use dtls::Dtls;
 use ice::IceAgent;
 use media::Session;
 use net::{Receive, Transmit};
 use rtp::Mid;
-use sdp::{Answer, Offer};
+use sdp::{Answer, Offer, Sdp, Setup};
 use thiserror::Error;
 
 mod media;
+use media::MediaKind;
 
-mod change_set;
-pub use change_set::change;
-pub use change_set::{ChangeSet, MediaKind};
+mod change;
+pub use change::ChangeSet;
 
 /// Errors for the whole Rtc engine.
 #[derive(Debug, Error)]
@@ -31,33 +31,12 @@ pub enum RtcError {
     Dtls(#[from] dtls::DtlsError),
 }
 
-pub struct Rtc<State> {
+pub struct Rtc {
     ice: IceAgent,
     dtls: Dtls,
+    setup: Setup,
     session: Session,
-    _ph: PhantomData<State>,
-}
-
-/// States the `Rtc` can be in.
-pub mod state {
-    /// First state after creation.
-    pub struct Inited(());
-
-    /// While doing the initial offer, we are only accepting an answer. This is before
-    /// any UDP traffic has started.
-    pub struct FirstOffer(());
-
-    /// When we're ready to connect (first Offer/Answer exchange is finished).
-    pub struct Connecting(());
-
-    /// When we have connected.
-    pub struct Connected(());
-
-    /// While we have made a new offer.
-    ///
-    /// This goes back to `Connected` once the answer for the offer
-    /// has been received back and applied.
-    pub struct Offering(());
+    pending: Option<Changes>,
 }
 
 pub enum Event {
@@ -75,14 +54,77 @@ pub enum Output {
     Event(Event),
 }
 
-impl<S> Rtc<S> {
-    pub(crate) fn into_state<T>(self) -> Rtc<T> {
+impl Rtc {
+    pub fn new() -> Self {
         Rtc {
-            ice: self.ice,
-            dtls: self.dtls,
-            session: self.session,
-            _ph: PhantomData,
+            ice: IceAgent::new(),
+            dtls: Dtls::new().expect("DTLS to init without problem"),
+            setup: Setup::ActPass,
+            session: Session::new(),
+            pending: None,
         }
+    }
+
+    pub fn create_offer(&mut self) -> ChangeSet {
+        // Creating an offer means we are initiating the DTLS as well.
+        // self.dtls.set_active(true);
+
+        ChangeSet::new(self)
+    }
+
+    pub fn accept_offer(&mut self, offer: Offer) -> Option<Answer> {
+        // rollback any pending changes.
+        self.accept_answer(None);
+
+        // If we receive an offer, we are not allowed to answer with actpass.
+        if self.setup == Setup::ActPass {
+            let remote_setup = offer.setup().unwrap_or(Setup::Active);
+            self.setup = remote_setup.invert();
+            debug!(
+                "Change setup for answer: {} -> {}",
+                Setup::ActPass,
+                self.setup
+            );
+        }
+
+        // Ensure setup=active/passive is corresponding remote and init dtls.
+        self.init_setup_dtls(&offer);
+
+        todo!()
+    }
+
+    pub(crate) fn set_changes(&mut self, changes: Changes) {
+        self.pending = Some(changes);
+    }
+
+    pub fn pending_changes(&mut self) -> Option<PendingChanges> {
+        self.pending.as_ref()?;
+        Some(PendingChanges { rtc: self })
+    }
+
+    fn accept_answer(&mut self, answer: Option<Answer>) {
+        if let Some(answer) = answer {
+            // Ensure setup=active/passive is corresponding remote and init dtls.
+            self.init_setup_dtls(&answer);
+
+            todo!()
+        } else {
+            // rollback
+            self.pending = None;
+        }
+    }
+
+    fn init_setup_dtls(&mut self, remote_sdp: &Sdp) -> Option<()> {
+        if let Some(remote_setup) = remote_sdp.setup() {
+            self.setup = self.setup.compare_to_remote(remote_setup)?;
+        }
+
+        if !self.dtls.is_inited() {
+            let active = self.setup == Setup::Active;
+            self.dtls.set_active(active);
+        }
+
+        Some(())
     }
 
     pub(crate) fn new_mid(&self) -> Mid {
@@ -94,11 +136,11 @@ impl<S> Rtc<S> {
         }
     }
 
-    fn do_poll_output(&mut self) -> Output {
+    pub fn poll_output(&mut self) -> Output {
         todo!()
     }
 
-    fn do_handle_input(&mut self, input: Input) -> Result<(), RtcError> {
+    pub fn handle_input(&mut self, input: Input) -> Result<(), RtcError> {
         match input {
             Input::Timeout(now) => self.do_handle_timeout(now),
             Input::Receive(now, r) => self.do_handle_receive(now, r)?,
@@ -122,79 +164,16 @@ impl<S> Rtc<S> {
     }
 }
 
-impl Rtc<state::Inited> {
-    pub fn new() -> Self {
-        Rtc {
-            ice: IceAgent::new(),
-            dtls: Dtls::new().expect("DTLS to init without problem"),
-            session: Session::new(),
-            _ph: PhantomData,
-        }
-    }
-
-    pub fn create_offer(mut self) -> ChangeSet<state::Inited, change::Unchanged> {
-        // Creating an offer means we are initiating the DTLS as well.
-        self.dtls.set_active(true);
-
-        ChangeSet::new(self)
-    }
-
-    pub fn accept_offer(mut self, offer: Offer) -> Rtc<state::Connecting> {
-        // Accepting an offer means we're not initiating the DTLS connection.
-        self.dtls.set_active(false);
-
-        todo!()
-    }
+pub struct PendingChanges<'a> {
+    rtc: &'a mut Rtc,
 }
 
-impl Rtc<state::FirstOffer> {
-    pub fn accept_answer(mut self, answer: Answer) -> Rtc<state::Connecting> {
-        todo!()
-    }
-}
-
-impl Rtc<state::Connecting> {
-    pub fn handle_input(&mut self, input: Input) -> Result<(), RtcError> {
-        self.do_handle_input(input)
+impl<'a> PendingChanges<'a> {
+    pub fn accept_answer(self, answer: Answer) {
+        self.rtc.accept_answer(Some(answer));
     }
 
-    pub fn poll_output(&mut self) -> Output {
-        self.do_poll_output()
-    }
-}
-
-impl Rtc<state::Connected> {
-    pub fn create_change(self) -> ChangeSet<state::Connected, change::Unchanged> {
-        ChangeSet::new(self)
-    }
-
-    pub fn accept_offer(self) -> Answer {
-        todo!()
-    }
-
-    pub fn handle_input(&mut self, input: Input) -> Result<(), RtcError> {
-        self.do_handle_input(input)
-    }
-
-    pub fn poll_output(&mut self) -> Output {
-        self.do_poll_output()
-    }
-}
-
-impl Rtc<state::Offering> {
-    pub fn accept_answer(self, answer: Answer) -> Rtc<state::Connected> {
-        todo!()
-    }
-
-    pub fn rollback(self) -> Rtc<state::Connected> {
-        todo!()
-    }
-
-    pub fn handle_input(&mut self, input: Input) -> Result<(), RtcError> {
-        self.do_handle_input(input)
-    }
-
-    pub fn poll_output(&mut self) -> Output {
-        self.do_poll_output()
+    pub fn rollback(self) {
+        self.rtc.accept_answer(None);
     }
 }
