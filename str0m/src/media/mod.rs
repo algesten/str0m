@@ -33,6 +33,10 @@ pub struct Media {
 
 pub struct Codec {}
 
+pub enum MediaEvent {
+    //
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Kind when adding media.
 pub enum MediaKind {
@@ -84,6 +88,10 @@ impl Session {
         let key_tx = SrtpKey::new(&mat, false);
         let ctx_tx = SrtpContext::new(key_tx);
         self.srtp_tx = Some(ctx_tx);
+    }
+
+    pub fn handle_timeout(&mut self, now: Instant) {
+        todo!()
     }
 
     pub fn handle_receive(&mut self, r: Receive) {
@@ -148,7 +156,15 @@ impl Session {
         Some(())
     }
 
+    pub fn poll_event(&mut self) -> Option<MediaEvent> {
+        todo!()
+    }
+
     pub fn poll_datagram(&mut self) -> Option<DatagramSend> {
+        todo!()
+    }
+
+    pub fn poll_timeout(&mut self) -> Option<Instant> {
         todo!()
     }
 

@@ -6,7 +6,7 @@ use std::io;
 use thiserror::Error;
 
 mod d;
-pub use d::Dtls;
+pub use d::{Dtls, DtlsEvent};
 
 mod ossl;
 pub use ossl::KeyingMaterial;

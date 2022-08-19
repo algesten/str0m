@@ -29,6 +29,12 @@ impl Sdp {
         }
     }
 
+    pub fn fingerprint(&self) -> Option<Fingerprint> {
+        self.session
+            .fingerprint()
+            .or_else(|| self.media_lines.iter().find_map(|m| m.fingerprint()))
+    }
+
     pub fn setup(&self) -> Option<Setup> {
         self.session
             .setup()

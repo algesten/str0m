@@ -856,7 +856,7 @@ impl IceAgent {
 
     /// Poll for the next time to call [`IceAgent::handle_timeout`].
     ///
-    /// Returns `None` until the first evern `handle_timeout` is called.
+    /// Returns `None` until the first ever `handle_timeout` is called.
     pub fn poll_timeout(&mut self) -> Option<Instant> {
         info!("Poll timeout with last_now: {:?}", self.last_now);
 
