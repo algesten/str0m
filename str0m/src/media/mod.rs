@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use dtls::KeyingMaterial;
+use dtls::{Fingerprint, KeyingMaterial};
+use ice::{Candidate, IceCreds};
 use net::{DatagramRecv, DatagramSend, Receive};
 use rtp::{Direction, Extensions, MLineIdx, Mid, RtcpHeader, RtpHeader, SessionId};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
-use sdp::{MediaAttribute, MediaLine, MediaType, Proto, Sdp, SessionAttribute};
+use sdp::{MediaAttribute, MediaLine, MediaType, Proto, Sdp, SessionAttribute, Setup};
+
+use crate::change::Changes;
 
 // mod oper;
 
@@ -188,9 +191,40 @@ fn fallback_match_media<'a>(
     Some(media)
 }
 
+pub(crate) struct AsSdpParams<'a> {
+    pub candidates: &'a [Candidate],
+    pub creds: &'a IceCreds,
+    pub fingerprint: &'a Fingerprint,
+    pub setup: Setup,
+    pub pending: &'a Option<Changes>,
+}
+
+impl<'a> AsSdpParams<'a> {
+    fn media_attributes(&self, include_candidates: bool) -> Vec<MediaAttribute> {
+        use MediaAttribute::*;
+
+        let mut v = if include_candidates {
+            self.candidates
+                .iter()
+                .map(|c| Candidate(c.clone()))
+                .collect()
+        } else {
+            vec![]
+        };
+
+        v.push(IceUfrag(self.creds.ufrag.clone()));
+        v.push(IcePwd(self.creds.pass.clone()));
+        v.push(IceOptions("trickle".into()));
+        v.push(Fingerprint(self.fingerprint.clone()));
+        v.push(Setup(self.setup));
+
+        v
+    }
+}
+
 impl Session {
-    pub fn as_sdp(&self) -> Sdp {
-        let (mids, media_lines) = {
+    pub(crate) fn as_sdp(&self, params: AsSdpParams) -> Sdp {
+        let (media_lines, mids) = {
             // Merge media lines and data channels.
             let mut v = self
                 .channels
@@ -202,13 +236,28 @@ impl Session {
             // Sort on the order they been added to the SDP.
             v.sort_by_key(|m| **m.index());
 
+            // Turn into sdp::MediaLine (m-line).
+            let mut lines = v
+                .iter()
+                .map(|m| {
+                    let idx = m.index();
+                    // Candidates should only be in the first BUNDLE mid
+                    let include_candidates = **idx == 0;
+                    let attrs = params.media_attributes(include_candidates);
+                    m.as_media_line(attrs)
+                })
+                .collect();
+
+            // if we have pending changes, this is an offer and we need
+            // to modify existing lines and add new lines.
+            if let Some(pending) = params.pending {
+                pending.apply_changes(&mut lines);
+            }
+
             // Mids go into the session part of the SDP.
             let mids = v.iter().map(|m| m.mid()).collect();
 
-            // Turn into sdp::MediaLine (m-line).
-            let lines = v.into_iter().map(|m| m.as_media_line()).collect();
-
-            (mids, lines)
+            (lines, mids)
         };
 
         Sdp {
@@ -231,7 +280,7 @@ impl Session {
 trait AsMediaLine {
     fn mid(&self) -> Mid;
     fn index(&self) -> &MLineIdx;
-    fn as_media_line(&self) -> MediaLine;
+    fn as_media_line(&self, attrs: Vec<MediaAttribute>) -> MediaLine;
 }
 
 impl AsMediaLine for DataChannel {
@@ -241,22 +290,17 @@ impl AsMediaLine for DataChannel {
     fn index(&self) -> &MLineIdx {
         &self.m_line_idx
     }
-    fn as_media_line(&self) -> MediaLine {
+    fn as_media_line(&self, mut attrs: Vec<MediaAttribute>) -> MediaLine {
+        attrs.push(MediaAttribute::Mid(self.mid));
+        attrs.push(MediaAttribute::SctpPort(5000));
+        attrs.push(MediaAttribute::MaxMessageSize(262144));
+
         MediaLine {
             typ: sdp::MediaType::Application,
             proto: Proto::Sctp,
             pts: vec![],
             bw: None,
-            attrs: vec![
-                // a=ice-ufrag:HhS+\r\n\
-                // a=ice-pwd:FhYTGhlAtKCe6KFIX8b+AThW\r\n\
-                // a=ice-options:trickle\r\n\
-                // a=fingerprint:sha-256 B4:12:1C:7C:7D:ED:F1:FA:61:07:57:9C:29:BE:58:E3:BC:41:E7:13:8E:7D:D3:9D:1F:94:6E:A5:23:46:94:23\r\n\
-                // a=setup:actpass\r\n\
-                MediaAttribute::Mid(self.mid),
-                MediaAttribute::SctpPort(5000),
-                MediaAttribute::MaxMessageSize(262144),
-            ],
+            attrs,
         }
     }
 }
@@ -268,30 +312,20 @@ impl AsMediaLine for Media {
     fn index(&self) -> &MLineIdx {
         &self.m_line_idx
     }
-    fn as_media_line(&self) -> MediaLine {
+    fn as_media_line(&self, mut attrs: Vec<MediaAttribute>) -> MediaLine {
+        attrs.push(MediaAttribute::Mid(self.mid));
+        // extmaps here
+        attrs.push(self.dir.into());
+        // a=msid here
+        attrs.push(MediaAttribute::RtcpMux);
+        // rtpmap here
+
         MediaLine {
             typ: self.kind.into(),
             proto: Proto::Srtp,
             pts: vec![],
             bw: None,
-            attrs: vec![
-                // only in first:
-                // "a=candidate:1669605774 1 udp 2122260223 192.168.115.173 64356 typ host generation 0 network-id 1 network-cost 10",
-                // "a=candidate:755488126 1 tcp 1518280447 192.168.115.173 9 typ host tcptype active generation 0 network-id 1 network-cost 10",
-
-                // in every m-line
-                // "a=ice-ufrag:v8Lx",
-                // "a=ice-pwd:GdpW980Caww9WWsbg6jJ5pGu",
-                // "a=ice-options:trickle",
-                // "a=fingerprint:sha-256 7A:D7:C9:33:94:8D:8A:BA:10:EB:93:21:7C:B4:91:6D:40:F7:56:07:CA:9D:42:D3:80:32:2D:10:D9:AC:8E:15",
-                // "a=setup:actpass",
-                MediaAttribute::Mid(self.mid),
-                // extmaps here
-                self.dir.into(),
-                // a=msid here
-                MediaAttribute::RtcpMux,
-                // rtpmap here
-            ],
+            attrs,
         }
     }
 }
@@ -302,5 +336,11 @@ impl Into<MediaType> for MediaKind {
             MediaKind::Audio => MediaType::Audio,
             MediaKind::Video => MediaType::Video,
         }
+    }
+}
+
+impl Changes {
+    fn apply_changes(&self, lines: &mut Vec<MediaLine>) {
+        todo!()
     }
 }

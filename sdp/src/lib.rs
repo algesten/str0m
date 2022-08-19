@@ -3,6 +3,7 @@ use std::ops::Deref;
 
 use combine::error::StringStreamError;
 use serde::ser::SerializeStruct;
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 mod data;
@@ -42,7 +43,17 @@ impl Deref for Answer {
     }
 }
 
-use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+impl From<Sdp> for Offer {
+    fn from(v: Sdp) -> Self {
+        Offer(v)
+    }
+}
+
+impl From<Sdp> for Answer {
+    fn from(v: Sdp) -> Self {
+        Answer(v)
+    }
+}
 
 macro_rules! sdp_ser {
     ($Struct:tt, $Name:literal, $LCName:literal) => {

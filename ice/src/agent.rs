@@ -254,6 +254,11 @@ impl IceAgent {
         &self.local_credentials
     }
 
+    /// Local ice candidates.
+    pub fn local_candidates(&self) -> &[Candidate] {
+        &self.local_candidates
+    }
+
     /// Sets the remote ice credentials.
     pub fn set_remote_credentials(&mut self, r: IceCreds) {
         info!("Set remote credentials: {:?}", r);

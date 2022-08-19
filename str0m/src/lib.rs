@@ -7,7 +7,7 @@ use std::time::Instant;
 use change::Changes;
 use dtls::Dtls;
 use ice::IceAgent;
-use media::Session;
+use media::{AsSdpParams, Session};
 use net::{Receive, Transmit};
 use rtp::Mid;
 use sdp::{Answer, Offer, Sdp, Setup};
@@ -66,15 +66,22 @@ impl Rtc {
     }
 
     pub fn create_offer(&mut self) -> ChangeSet {
-        // Creating an offer means we are initiating the DTLS as well.
-        // self.dtls.set_active(true);
+        if !self.dtls.is_inited() {
+            // The side that makes the first offer is the controlling side.
+            self.ice.set_controlling(true);
+        }
 
         ChangeSet::new(self)
     }
 
     pub fn accept_offer(&mut self, offer: Offer) -> Option<Answer> {
-        // rollback any pending changes.
+        // rollback any pending offer.
         self.accept_answer(None);
+
+        if !self.dtls.is_inited() {
+            // The side that makes the first offer is the controlling side.
+            self.ice.set_controlling(false);
+        }
 
         // If we receive an offer, we are not allowed to answer with actpass.
         if self.setup == Setup::ActPass {
@@ -90,11 +97,33 @@ impl Rtc {
         // Ensure setup=active/passive is corresponding remote and init dtls.
         self.init_setup_dtls(&offer);
 
-        todo!()
+        let params = self.as_sdp_params(false);
+        let sdp = self.session.as_sdp(params);
+
+        Some(sdp.into())
     }
 
-    pub(crate) fn set_changes(&mut self, changes: Changes) {
+    pub(crate) fn set_changes(&mut self, changes: Changes) -> Offer {
         self.pending = Some(changes);
+
+        let params = self.as_sdp_params(true);
+        let sdp = self.session.as_sdp(params);
+
+        sdp.into()
+    }
+
+    fn as_sdp_params(&self, include_pending: bool) -> AsSdpParams {
+        AsSdpParams {
+            candidates: self.ice.local_candidates(),
+            creds: self.ice.local_credentials(),
+            fingerprint: self.dtls.local_fingerprint(),
+            setup: self.setup,
+            pending: if include_pending {
+                &self.pending
+            } else {
+                &None
+            },
+        }
     }
 
     pub fn pending_changes(&mut self) -> Option<PendingChanges> {

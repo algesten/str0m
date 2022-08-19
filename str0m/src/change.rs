@@ -37,7 +37,6 @@ impl<'a> ChangeSet<'a> {
     }
 
     pub fn apply(self) -> Offer {
-        self.rtc.set_changes(self.changes);
-        todo!()
+        self.rtc.set_changes(self.changes)
     }
 }
