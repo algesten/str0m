@@ -130,6 +130,9 @@ impl Rtc {
         // Ensure setup=active/passive is corresponding remote and init dtls.
         self.init_setup_dtls(&offer);
 
+        // Modify session with offer
+        self.session.apply_offer(offer)?;
+
         let params = self.as_sdp_params(false);
         let sdp = self.session.as_sdp(params);
 
@@ -178,7 +181,9 @@ impl Rtc {
                 }
             }
 
-            todo!()
+            // Modify session with answer
+            let pending = self.pending.take().expect("pending changes");
+            self.session.apply_answer(pending, answer)?;
         } else {
             // rollback
             self.pending = None;

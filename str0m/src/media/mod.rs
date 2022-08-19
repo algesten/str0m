@@ -6,9 +6,10 @@ use ice::{Candidate, IceCreds};
 use net::{DatagramRecv, DatagramSend, Receive};
 use rtp::{Direction, Extensions, MLineIdx, Mid, RtcpHeader, RtpHeader, SessionId};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
-use sdp::{MediaAttribute, MediaLine, MediaType, Proto, Sdp, SessionAttribute, Setup};
+use sdp::{Answer, MediaAttribute, MediaLine, MediaType, Proto, Sdp, SessionAttribute, Setup};
 
 use crate::change::Changes;
+use crate::RtcError;
 
 // mod oper;
 
@@ -170,6 +171,14 @@ impl Session {
 
     pub(crate) fn has_mid(&self, mid: Mid) -> bool {
         self.media.iter().any(|m| m.mid == mid)
+    }
+
+    pub fn apply_offer(&self, offer: sdp::Offer) -> Result<(), RtcError> {
+        todo!()
+    }
+
+    pub(crate) fn apply_answer(&self, pending: Changes, answer: Answer) -> Result<(), RtcError> {
+        todo!()
     }
 
     // pub fn handle_sctp(&mut self, sctp) {
