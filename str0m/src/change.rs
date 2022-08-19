@@ -4,9 +4,9 @@ use sdp::Offer;
 use crate::MediaKind;
 use crate::Rtc;
 
-pub(crate) struct Changes(pub Vec<Change>);
+pub struct Changes(pub Vec<Change>);
 
-pub(crate) enum Change {
+pub enum Change {
     AddMedia(Mid, MediaKind, Direction),
     AddDataChannel(Mid),
 }

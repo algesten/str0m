@@ -11,6 +11,13 @@ AUDIO extmap
         "a=extmap:3 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01",
         "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid",
 
+h264 profiles
+
+* 42 00 1f - 4200=baseline (B)              1f=level 3.1
+* 42 e0 1f - 42e0=constrained baseline (CB) 1f=level 3.1
+* 4d 00 1f - 4d00=main (M)                  1f=level 3.1
+* 64 00 1f - 6400=high (H)                  1f=level 3.1
+
 VIDEO extmap
 
         "a=extmap:2 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time",
