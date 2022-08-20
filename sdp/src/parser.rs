@@ -509,16 +509,18 @@ where
     let rtcp_fb = attribute_line("rtcp-fb", (pt(), token(' '), any_value()))
         .map(|(pt, _, value)| MediaAttribute::RtcpFb { pt, value });
 
+    let fmtp_param = sep_by1(key_val().map(|(k, v)| FmtpParam::parse(&k, &v)), token(';'));
+
     // a=fmtp:111 minptime=10; useinbandfec=1
     // a=fmtp:111 minptime=10;useinbandfec=1
-    let fmtp1 = attribute_line("fmtp", (pt(), token(' '), sep_by1(key_val(), token(';'))))
+    let fmtp1 = attribute_line("fmtp", (pt(), token(' '), fmtp_param))
         .map(|(pt, _, values)| MediaAttribute::Fmtp { pt, values });
 
     // a=fmtp:101 0-15
-    let fmtp2 = attribute_line("fmtp", (pt(), token(' '), not_sp())).map(|(pt, _, value)| {
+    let fmtp2 = attribute_line("fmtp", (pt(), token(' '), not_sp())).map(|(pt, _, _value)| {
         MediaAttribute::Fmtp {
             pt,
-            values: vec![("".to_string(), value)],
+            values: vec![FmtpParam::Unknown],
         }
     });
 
