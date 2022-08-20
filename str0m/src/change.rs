@@ -1,14 +1,14 @@
 use rtp::{Direction, Mid};
 use sdp::Offer;
 
-use crate::MediaKind;
 use crate::Rtc;
+use crate::{ChannelTicket, MediaKind, MediaTicket};
 
 pub struct Changes(pub Vec<Change>);
 
 pub enum Change {
     AddMedia(Mid, MediaKind, Direction),
-    AddDataChannel(Mid),
+    AddChannel(Mid),
 }
 
 pub struct ChangeSet<'a> {
@@ -24,16 +24,16 @@ impl<'a> ChangeSet<'a> {
         }
     }
 
-    pub fn add_media(mut self, kind: MediaKind, dir: Direction) -> Self {
+    pub fn add_media(&mut self, kind: MediaKind, dir: Direction) -> MediaTicket {
         let mid = self.rtc.new_mid();
         self.changes.0.push(Change::AddMedia(mid, kind, dir));
-        self
+        MediaTicket(mid)
     }
 
-    pub fn add_data_channel(mut self) -> Self {
+    pub fn add_channel(&mut self) -> ChannelTicket {
         let mid = self.rtc.new_mid();
-        self.changes.0.push(Change::AddDataChannel(mid));
-        self
+        self.changes.0.push(Change::AddChannel(mid));
+        ChannelTicket(mid)
     }
 
     pub fn apply(self) -> Offer {

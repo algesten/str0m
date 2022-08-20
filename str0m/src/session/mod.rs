@@ -3,35 +3,33 @@ use std::time::Instant;
 
 use dtls::KeyingMaterial;
 use net::{DatagramRecv, DatagramSend, Receive};
-use rtp::{Direction, Extensions, MLineIdx, Mid, RtcpHeader, RtpHeader, SessionId};
+use rtp::{Extensions, Mid, RtcpHeader, RtpHeader, SessionId};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
-use sdp::{Answer, RtpParams};
+use sdp::Answer;
 
 use crate::change::Changes;
 use crate::RtcError;
 
-// mod oper;
 mod as_sdp;
 pub use as_sdp::AsSdpParams;
+
+mod codec;
+pub use codec::CodecParams;
+
+mod media;
+pub use media::Media;
+
+mod channel;
+pub use channel::Channel;
 
 pub struct Session {
     id: SessionId,
     media: Vec<Media>,
-    channels: Vec<DataChannel>,
+    channels: Vec<Channel>,
     exts: Extensions,
     srtp_rx: Option<SrtpContext>,
     srtp_tx: Option<SrtpContext>,
     ssrc_map: HashMap<Ssrc, usize>,
-}
-
-pub struct Media {
-    mid: Mid,
-    kind: MediaKind,
-    m_line_idx: MLineIdx,
-    dir: Direction,
-    params: Vec<RtpParams>,
-    sources_rx: Vec<Source>,
-    sources_tx: Vec<Source>,
 }
 
 pub enum MediaEvent {
@@ -47,27 +45,6 @@ pub enum MediaKind {
     Video,
 }
 
-pub struct Source {
-    ssrc: Ssrc,
-    seq_no: u64,
-    last_used: Instant,
-}
-
-impl<'a> From<&'a RtpHeader> for Source {
-    fn from(v: &'a RtpHeader) -> Self {
-        Source {
-            ssrc: v.ssrc,
-            seq_no: v.sequence_number(None),
-            last_used: Instant::now(),
-        }
-    }
-}
-
-pub struct DataChannel {
-    mid: Mid,
-    m_line_idx: MLineIdx,
-}
-
 impl Session {
     pub fn new() -> Self {
         Session {
@@ -79,6 +56,14 @@ impl Session {
             srtp_tx: None,
             ssrc_map: HashMap::new(),
         }
+    }
+
+    pub fn get_media(&mut self, mid: Mid) -> Option<&mut Media> {
+        self.media.iter_mut().find(|m| m.mid() == mid)
+    }
+
+    pub fn get_channel(&mut self, mid: Mid) -> Option<&mut Channel> {
+        self.channels.iter_mut().find(|m| m.mid() == mid)
     }
 
     pub fn set_keying_material(&mut self, mat: KeyingMaterial) {
@@ -174,7 +159,7 @@ impl Session {
     }
 
     pub fn has_mid(&self, mid: Mid) -> bool {
-        self.media.iter().any(|m| m.mid == mid)
+        self.media.iter().any(|m| m.mid() == mid)
     }
 
     pub fn apply_offer(&self, offer: sdp::Offer) -> Result<(), RtcError> {
@@ -191,26 +176,6 @@ impl Session {
     // }
 }
 
-impl Media {
-    fn get_source(&mut self, header: &RtpHeader) -> &mut Source {
-        let maybe_idx = self.sources_rx.iter().position(|s| s.ssrc == header.ssrc);
-
-        if let Some(idx) = maybe_idx {
-            &mut self.sources_rx[idx]
-        } else {
-            self.sources_rx.push(Source::from(header));
-            self.sources_rx.last_mut().unwrap()
-        }
-    }
-
-    fn get_params(&self, header: &RtpHeader) -> Option<&RtpParams> {
-        let pt = header.payload_type;
-        self.params
-            .iter()
-            .find(|p| p.codec.pt == pt || p.resend == Some(pt))
-    }
-}
-
 /// Fallback strategy to match up packet with m-line.
 fn fallback_match_media<'a>(
     header: &RtpHeader,
@@ -219,7 +184,7 @@ fn fallback_match_media<'a>(
 ) -> Option<&'a mut Media> {
     // Attempt to match Mid in RTP header with our m-lines from SDP.
     let mid = header.ext_vals.rtp_mid?;
-    let (idx, media) = media.iter_mut().enumerate().find(|(_, m)| m.mid == mid)?;
+    let (idx, media) = media.iter_mut().enumerate().find(|(_, m)| m.mid() == mid)?;
 
     // Retain this association.
     ssrc_map.insert(header.ssrc, idx);

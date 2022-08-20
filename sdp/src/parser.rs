@@ -494,7 +494,7 @@ where
     )
     .map(|(pt, _, codec, _, clock_rate, opt_channels)| {
         let channels = opt_channels.map(|(_, e)| e);
-        MediaAttribute::RtpMap(CodecParams {
+        MediaAttribute::RtpMap(CodecSpec {
             pt,
             codec: codec.as_str().into(),
             clock_rate,
@@ -509,7 +509,10 @@ where
     let rtcp_fb = attribute_line("rtcp-fb", (pt(), token(' '), any_value()))
         .map(|(pt, _, value)| MediaAttribute::RtcpFb { pt, value });
 
-    let fmtp_param = sep_by1(key_val().map(|(k, v)| FmtpParam::parse(&k, &v)), token(';'));
+    let fmtp_param = sep_by1(
+        key_val().map(|(k, v)| FormatParam::parse(&k, &v)),
+        token(';'),
+    );
 
     // a=fmtp:111 minptime=10; useinbandfec=1
     // a=fmtp:111 minptime=10;useinbandfec=1
@@ -520,7 +523,7 @@ where
     let fmtp2 = attribute_line("fmtp", (pt(), token(' '), not_sp())).map(|(pt, _, _value)| {
         MediaAttribute::Fmtp {
             pt,
-            values: vec![FmtpParam::Unknown],
+            values: vec![FormatParam::Unknown],
         }
     });
 

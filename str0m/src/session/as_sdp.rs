@@ -5,7 +5,7 @@ use sdp::{MediaAttribute, MediaLine, MediaType, Proto, Sdp, SessionAttribute, Se
 
 use crate::change::Changes;
 
-use super::{DataChannel, Media, MediaKind, Session};
+use super::{Channel, Media, MediaKind, Session};
 
 pub struct AsSdpParams<'a> {
     pub candidates: &'a [Candidate],
@@ -50,7 +50,7 @@ impl Session {
                 .collect::<Vec<_>>();
 
             // Sort on the order they been added to the SDP.
-            v.sort_by_key(|m| **m.index());
+            v.sort_by_key(|m| *m.index());
 
             // Turn into sdp::MediaLine (m-line).
             let mut lines = v
@@ -58,7 +58,7 @@ impl Session {
                 .map(|m| {
                     let idx = m.index();
                     // Candidates should only be in the first BUNDLE mid
-                    let include_candidates = **idx == 0;
+                    let include_candidates = *idx == 0;
                     let attrs = params.media_attributes(include_candidates);
                     m.as_media_line(attrs)
                 })
@@ -95,19 +95,19 @@ impl Session {
 
 trait AsMediaLine {
     fn mid(&self) -> Mid;
-    fn index(&self) -> &MLineIdx;
+    fn index(&self) -> MLineIdx;
     fn as_media_line(&self, attrs: Vec<MediaAttribute>) -> MediaLine;
 }
 
-impl AsMediaLine for DataChannel {
+impl AsMediaLine for Channel {
     fn mid(&self) -> Mid {
-        self.mid
+        self.mid()
     }
-    fn index(&self) -> &MLineIdx {
-        &self.m_line_idx
+    fn index(&self) -> MLineIdx {
+        self.m_line_idx()
     }
     fn as_media_line(&self, mut attrs: Vec<MediaAttribute>) -> MediaLine {
-        attrs.push(MediaAttribute::Mid(self.mid));
+        attrs.push(MediaAttribute::Mid(self.mid()));
         attrs.push(MediaAttribute::SctpPort(5000));
         attrs.push(MediaAttribute::MaxMessageSize(262144));
 
@@ -123,24 +123,24 @@ impl AsMediaLine for DataChannel {
 
 impl AsMediaLine for Media {
     fn mid(&self) -> Mid {
-        self.mid
+        self.mid()
     }
-    fn index(&self) -> &MLineIdx {
-        &self.m_line_idx
+    fn index(&self) -> MLineIdx {
+        self.m_line_idx()
     }
     fn as_media_line(&self, mut attrs: Vec<MediaAttribute>) -> MediaLine {
-        attrs.push(MediaAttribute::Mid(self.mid));
+        attrs.push(MediaAttribute::Mid(self.mid()));
         // extmaps here
-        attrs.push(self.dir.into());
+        attrs.push(self.direction().into());
         // a=msid here
         attrs.push(MediaAttribute::RtcpMux);
 
-        for p in &self.params {
-            p.to_media_attrs(&mut attrs);
+        for p in self.codecs() {
+            p.inner().to_media_attrs(&mut attrs);
         }
 
         MediaLine {
-            typ: self.kind.into(),
+            typ: self.kind().into(),
             proto: Proto::Srtp,
             pts: vec![],
             bw: None,

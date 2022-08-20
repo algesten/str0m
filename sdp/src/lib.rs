@@ -7,8 +7,8 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 mod data;
-pub use data::{Codec, CodecParams, Sdp, Session, SessionAttribute, Setup};
-pub use data::{MediaAttribute, MediaLine, MediaType, Proto, RtpParams};
+pub use data::{Codec, CodecSpec, FormatParams, Sdp, Session, SessionAttribute, Setup};
+pub use data::{MediaAttribute, MediaLine, MediaType, PayloadParams, Proto};
 
 mod parser;
 

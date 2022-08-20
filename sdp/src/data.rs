@@ -222,7 +222,7 @@ impl MediaLine {
         self.attrs[idx] = dir.into();
     }
 
-    pub fn rtp_params(&self) -> Vec<RtpParams> {
+    pub fn rtp_params(&self) -> Vec<PayloadParams> {
         let rtp_maps: Vec<_> = self
             .attrs
             .iter()
@@ -262,19 +262,19 @@ impl MediaLine {
         let mut params: Vec<_> = rtp_maps
             .iter()
             .filter(|c| c.codec.is_audio() | c.codec.is_video())
-            .map(|c| RtpParams::new((*c).clone()))
+            .map(|c| PayloadParams::new((*c).clone()))
             .collect();
 
         for p in &mut params {
             for (pt, values) in fmtps.iter() {
                 // find matching a=fmtp line, if it exists.
                 if **pt == p.codec.pt {
-                    p.codec_fmtp = (**values).clone();
+                    p.fmtps.set_attributes(values);
                 }
 
                 // find resend pt, if there is one.
                 for fp in values.iter() {
-                    if let FmtpParam::Apt(v) = fp {
+                    if let FormatParam::Apt(v) = fp {
                         if *v == p.codec.pt {
                             // ensure this is a rtx
                             let is_rtx = rtp_maps
@@ -699,7 +699,7 @@ pub enum MediaAttribute {
     RtcpRsize,
     Candidate(Candidate),
     EndOfCandidates,
-    RtpMap(CodecParams),
+    RtpMap(CodecSpec),
     // rtcp-fb RTCP feedback parameters, repeated
     RtcpFb {
         pt: Pt,        // 111
@@ -707,8 +707,8 @@ pub enum MediaAttribute {
     },
     // format parameters, seems to be one of these
     Fmtp {
-        pt: Pt,                 // 111
-        values: Vec<FmtpParam>, // minptime=10;useinbandfec=1
+        pt: Pt,                   // 111
+        values: Vec<FormatParam>, // minptime=10;useinbandfec=1
     },
     // a=rid:<rid-id> <direction> [pt=<fmt-list>;]<restriction>=<value>
     // a=rid:hi send pt=111,112;max-br=64000;max-height=360
@@ -738,12 +738,61 @@ pub enum MediaAttribute {
     Unused(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CodecParams {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CodecSpec {
     pub pt: Pt,
     pub codec: Codec,
     pub clock_rate: u32,
     pub channels: Option<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct FormatParams {
+    pub min_p_time: Option<u8>,
+    pub use_inband_fec: Option<bool>,
+    pub level_asymmetry_allowed: Option<bool>,
+    pub packetization_mode: Option<u8>,
+    pub profile_level_id: Option<u32>,
+}
+
+impl FormatParams {
+    fn set_attributes(&mut self, values: &[FormatParam]) {
+        use FormatParam::*;
+        for v in values {
+            match v {
+                MinPTime(v) => self.min_p_time = Some(*v),
+                UseInbandFec(v) => self.use_inband_fec = Some(*v),
+                LevelAsymmetryAllowed(v) => self.level_asymmetry_allowed = Some(*v),
+                PacketizationMode(v) => self.packetization_mode = Some(*v),
+                ProfileLevelId(v) => self.profile_level_id = Some(*v),
+                Apt(_) => {}
+                Unknown => {}
+            }
+        }
+    }
+
+    fn to_format_param(&self) -> Vec<FormatParam> {
+        use FormatParam::*;
+        let mut r = Vec::with_capacity(5);
+
+        if let Some(v) = self.min_p_time {
+            r.push(MinPTime(v));
+        }
+        if let Some(v) = self.use_inband_fec {
+            r.push(UseInbandFec(v));
+        }
+        if let Some(v) = self.level_asymmetry_allowed {
+            r.push(LevelAsymmetryAllowed(v));
+        }
+        if let Some(v) = self.packetization_mode {
+            r.push(PacketizationMode(v));
+        }
+        if let Some(v) = self.profile_level_id {
+            r.push(ProfileLevelId(v));
+        }
+
+        r
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -798,9 +847,9 @@ impl fmt::Display for Codec {
     }
 }
 
-pub struct RtpParams {
-    pub codec: CodecParams,
-    pub codec_fmtp: Vec<FmtpParam>,
+pub struct PayloadParams {
+    pub codec: CodecSpec,
+    pub fmtps: FormatParams,
     pub resend: Option<Pt>,
     pub fb_transport_cc: bool,
     pub fb_fir: bool,
@@ -809,7 +858,7 @@ pub struct RtpParams {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FmtpParam {
+pub enum FormatParam {
     /// The minimum duration of media represented by a packet.
     ///
     /// Default 3. Max 120.
@@ -843,65 +892,67 @@ pub enum FmtpParam {
     Unknown,
 }
 
-impl FmtpParam {
+impl FormatParam {
     pub fn parse(k: &str, v: &str) -> Self {
+        use FormatParam::*;
         match k {
             "minptime" => {
                 if let Ok(v) = v.parse() {
-                    FmtpParam::MinPTime(v)
+                    MinPTime(v)
                 } else {
-                    FmtpParam::Unknown
+                    Unknown
                 }
             }
-            "useinbandfec" => FmtpParam::UseInbandFec(v == "1"),
-            "level-asymmetry-allowed" => FmtpParam::LevelAsymmetryAllowed(v == "1"),
+            "useinbandfec" => UseInbandFec(v == "1"),
+            "level-asymmetry-allowed" => LevelAsymmetryAllowed(v == "1"),
             "packetization-mode" => {
                 if let Ok(v) = v.parse() {
-                    FmtpParam::PacketizationMode(v)
+                    PacketizationMode(v)
                 } else {
-                    FmtpParam::Unknown
+                    Unknown
                 }
             }
             "profile-level-id" => {
                 if let Ok(v) = v.parse() {
-                    FmtpParam::ProfileLevelId(v)
+                    ProfileLevelId(v)
                 } else {
-                    FmtpParam::Unknown
+                    Unknown
                 }
             }
             "apt" => {
                 if let Ok(v) = v.parse::<u8>() {
-                    FmtpParam::Apt(v.into())
+                    Apt(v.into())
                 } else {
-                    FmtpParam::Unknown
+                    Unknown
                 }
             }
-            _ => FmtpParam::Unknown,
+            _ => Unknown,
         }
     }
 }
 
-impl fmt::Display for FmtpParam {
+impl fmt::Display for FormatParam {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use FormatParam::*;
         match self {
-            FmtpParam::MinPTime(v) => write!(f, "minptime={}", v),
-            FmtpParam::UseInbandFec(v) => write!(f, "useinbandfec={}", if *v { 1 } else { 0 }),
-            FmtpParam::LevelAsymmetryAllowed(v) => {
+            MinPTime(v) => write!(f, "minptime={}", v),
+            UseInbandFec(v) => write!(f, "useinbandfec={}", if *v { 1 } else { 0 }),
+            LevelAsymmetryAllowed(v) => {
                 write!(f, "level-asymmetry-allowed={}", if *v { 1 } else { 0 })
             }
-            FmtpParam::PacketizationMode(v) => write!(f, "packetization-mode={}", *v),
-            FmtpParam::ProfileLevelId(v) => write!(f, "profile-level-id={:06x}", *v),
-            FmtpParam::Apt(v) => write!(f, "apt={}", v),
-            FmtpParam::Unknown => Ok(()),
+            PacketizationMode(v) => write!(f, "packetization-mode={}", *v),
+            ProfileLevelId(v) => write!(f, "profile-level-id={:06x}", *v),
+            Apt(v) => write!(f, "apt={}", v),
+            Unknown => Ok(()),
         }
     }
 }
 
-impl RtpParams {
-    fn new(codec: CodecParams) -> Self {
-        RtpParams {
+impl PayloadParams {
+    fn new(codec: CodecSpec) -> Self {
+        PayloadParams {
             codec,
-            codec_fmtp: vec![],
+            fmtps: FormatParams::default(),
             resend: None,
             fb_transport_cc: false,
             fb_fir: false,
@@ -938,8 +989,16 @@ impl RtpParams {
             });
         }
 
+        let fmtps = self.fmtps.to_format_param();
+        if !fmtps.is_empty() {
+            attrs.push(MediaAttribute::Fmtp {
+                pt: self.codec.pt,
+                values: fmtps,
+            });
+        }
+
         if let Some(pt) = self.resend {
-            attrs.push(MediaAttribute::RtpMap(CodecParams {
+            attrs.push(MediaAttribute::RtpMap(CodecSpec {
                 pt,
                 codec: Codec::Rtx,
                 clock_rate: self.codec.clock_rate,
@@ -947,7 +1006,7 @@ impl RtpParams {
             }));
             attrs.push(MediaAttribute::Fmtp {
                 pt: pt,
-                values: vec![FmtpParam::Apt(self.codec.pt)],
+                values: vec![FormatParam::Apt(self.codec.pt)],
             });
         }
     }
@@ -1314,9 +1373,9 @@ mod test {
                         MediaAttribute::SendRecv,
                         MediaAttribute::Msid { stream_id: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(), track_id: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() },
                         MediaAttribute::RtcpMux,
-                        MediaAttribute::RtpMap( CodecParams { pt: 111.into(), codec: "opus".into(), clock_rate: 48_000, channels: Some(2) }),
+                        MediaAttribute::RtpMap( CodecSpec { pt: 111.into(), codec: "opus".into(), clock_rate: 48_000, channels: Some(2) }),
                         MediaAttribute::RtcpFb { pt: 111.into(), value: "transport-cc".into() },
-                        MediaAttribute::Fmtp { pt: 111.into(), values: vec![FmtpParam::MinPTime(10), FmtpParam::UseInbandFec(true)] },
+                        MediaAttribute::Fmtp { pt: 111.into(), values: vec![FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)] },
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "cname".into(), value: "xeXs3aE9AOBn00yJ".into() },
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "msid".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1".into() },
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "mslabel".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into() },

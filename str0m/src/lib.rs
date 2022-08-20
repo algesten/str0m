@@ -9,14 +9,14 @@ use change::Changes;
 use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::{Candidate, IceAgent};
 use ice::{IceAgentEvent, IceConnectionState};
-use media::{AsSdpParams, Session};
 use net::{Receive, Transmit};
 use rtp::Mid;
 use sdp::{Answer, Offer, Sdp, Setup};
 use thiserror::Error;
 
-mod media;
-use media::MediaKind;
+mod session;
+use session::{AsSdpParams, MediaKind, Session};
+pub use session::{Channel, CodecParams, Media};
 
 mod change;
 pub use change::ChangeSet;
@@ -57,6 +57,8 @@ struct SendAddr {
 pub enum Event {
     IceCandidate(Candidate),
     IceConnectionStateChange(IceConnectionState),
+    MediaAdded(MediaTicket),
+    ChannelAdded(ChannelTicket),
 }
 
 pub enum Input<'a> {
@@ -314,6 +316,14 @@ impl Rtc {
         Ok(())
     }
 
+    pub fn media(&mut self, ticket: &MediaTicket) -> Option<&mut Media> {
+        self.session.get_media(ticket.0)
+    }
+
+    pub fn channel(&mut self, ticket: &ChannelTicket) -> Option<&mut Channel> {
+        self.session.get_channel(ticket.0)
+    }
+
     fn do_handle_timeout(&mut self, now: Instant) {
         self.ice.handle_timeout(now);
         self.session.handle_timeout(now);
@@ -344,6 +354,14 @@ impl<'a> PendingChanges<'a> {
         self.rtc.accept_answer(None).expect("rollback to not error");
     }
 }
+
+pub struct MediaTicket(pub(crate) Mid);
+
+pub struct MediaSender<'a>(&'a mut Rtc);
+
+pub struct ChannelTicket(pub(crate) Mid);
+
+pub struct ChannelSender<'a>(&'a mut Rtc);
 
 trait Soonest {
     fn soonest(self, other: Self) -> Self;
