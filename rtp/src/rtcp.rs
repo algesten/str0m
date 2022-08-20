@@ -198,6 +198,22 @@ pub enum RtcpFb {
     Fir(Fir),
 }
 
+impl RtcpFb {
+    pub fn ssrc(&self) -> Ssrc {
+        use RtcpFb::*;
+        match self {
+            SenderReportInfo(v) => v.ssrc,
+            SenderReport(v) => v.ssrc,
+            ReceiverReport(v) => v.ssrc,
+            Sdes(v) => v.ssrc,
+            Goodbye(v) => *v,
+            Nack(v) => v.ssrc,
+            Pli(v) => v.ssrc,
+            Fir(v) => v.ssrc,
+        }
+    }
+}
+
 pub struct ReportInfo {
     pub ssrc: Ssrc,
     pub ntp_time: MediaTime,

@@ -483,17 +483,23 @@ where
                 s.parse::<u32>()
                     .map_err(StreamErrorFor::<Input>::message_format)
             }),
-            optional((token('/'), any_value())), // only audio has the last /2 (channels)
+            optional((
+                token('/'),
+                any_value().and_then(|s| {
+                    s.parse::<u8>()
+                        .map_err(StreamErrorFor::<Input>::message_format)
+                }),
+            )), // only audio has the last /2 (channels)
         ),
     )
-    .map(|(pt, _, codec, _, clock_rate, opt_enc_param)| {
-        let enc_param = opt_enc_param.map(|(_, e)| e);
-        MediaAttribute::RtpMap {
+    .map(|(pt, _, codec, _, clock_rate, opt_channels)| {
+        let channels = opt_channels.map(|(_, e)| e);
+        MediaAttribute::RtpMap(CodecParams {
             pt,
-            codec,
+            codec: codec.as_str().into(),
             clock_rate,
-            enc_param,
-        }
+            channels,
+        })
     });
 
     // a=rtcp-fb:111 transport-cc

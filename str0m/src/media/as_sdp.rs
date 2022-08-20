@@ -67,7 +67,7 @@ impl Session {
             // if we have pending changes, this is an offer and we need
             // to modify existing lines and add new lines.
             if let Some(pending) = params.pending {
-                pending.apply_changes(&mut lines);
+                pending.apply_to_sdp(&mut lines);
             }
 
             // Mids go into the session part of the SDP.
@@ -134,7 +134,10 @@ impl AsMediaLine for Media {
         attrs.push(self.dir.into());
         // a=msid here
         attrs.push(MediaAttribute::RtcpMux);
-        // rtpmap here
+
+        for p in &self.params {
+            p.to_media_attrs(&mut attrs);
+        }
 
         MediaLine {
             typ: self.kind.into(),
@@ -156,7 +159,7 @@ impl Into<MediaType> for MediaKind {
 }
 
 impl Changes {
-    fn apply_changes(&self, lines: &mut Vec<MediaLine>) {
+    fn apply_to_sdp(&self, lines: &mut Vec<MediaLine>) {
         todo!()
     }
 }
