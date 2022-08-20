@@ -9,14 +9,17 @@ use change::Changes;
 use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::{Candidate, IceAgent};
 use ice::{IceAgentEvent, IceConnectionState};
-use net::{Receive, Transmit};
 use rtp::Mid;
 use sdp::{Answer, Offer, Sdp, Setup};
 use thiserror::Error;
 
-mod session;
-use session::{AsSdpParams, MediaKind, Session};
-pub use session::{Channel, CodecParams, Media};
+pub mod net {
+    pub use dtls::DtlsError;
+    pub use net_::{DatagramRecv, DatagramSend, Receive, StunMessage, Transmit};
+}
+
+pub mod media;
+use media::{AsSdpParams, Channel, Media, Session};
 
 mod change;
 pub use change::ChangeSet;
@@ -34,7 +37,7 @@ pub enum RtcError {
 
     /// DTLS errors
     #[error("{0}")]
-    Dtls(#[from] dtls::DtlsError),
+    Dtls(#[from] net::DtlsError),
 }
 
 pub struct Rtc {
@@ -63,12 +66,12 @@ pub enum Event {
 
 pub enum Input<'a> {
     Timeout(Instant),
-    Receive(Instant, Receive<'a>),
+    Receive(Instant, net::Receive<'a>),
 }
 
 pub enum Output {
     Timeout(Instant),
-    Transmit(Transmit),
+    Transmit(net::Transmit),
     Event(Event),
 }
 
@@ -287,7 +290,7 @@ impl Rtc {
                 .or_else(|| self.session.poll_datagram());
 
             if let Some(contents) = datagram {
-                let t = Transmit {
+                let t = net::Transmit {
                     source: send.source,
                     destination: send.destination,
                     contents,
@@ -329,7 +332,7 @@ impl Rtc {
         self.session.handle_timeout(now);
     }
 
-    fn do_handle_receive(&mut self, now: Instant, r: Receive) -> Result<(), RtcError> {
+    fn do_handle_receive(&mut self, now: Instant, r: net::Receive) -> Result<(), RtcError> {
         use net::DatagramRecv::*;
         match r.contents {
             Stun(_) => self.ice.handle_receive(now, r),
@@ -357,11 +360,7 @@ impl<'a> PendingChanges<'a> {
 
 pub struct MediaTicket(pub(crate) Mid);
 
-pub struct MediaSender<'a>(&'a mut Rtc);
-
 pub struct ChannelTicket(pub(crate) Mid);
-
-pub struct ChannelSender<'a>(&'a mut Rtc);
 
 trait Soonest {
     fn soonest(self, other: Self) -> Self;

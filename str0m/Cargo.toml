@@ -9,6 +9,6 @@ tracing = "0.1"
 
 dtls = { path = "../dtls" }
 ice = { path = "../ice" }
-net = { path = "../net" }
+net_ = { package = "net", path = "../net" }
 rtp = { path = "../rtp" }
 sdp = { path = "../sdp" }

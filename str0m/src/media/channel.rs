@@ -10,7 +10,7 @@ impl Channel {
         self.mid
     }
 
-    pub fn m_line_idx(&self) -> MLineIdx {
+    pub(crate) fn m_line_idx(&self) -> MLineIdx {
         self.m_line_idx
     }
 }

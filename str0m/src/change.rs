@@ -1,8 +1,9 @@
 use rtp::{Direction, Mid};
 use sdp::Offer;
 
+use crate::media::MediaKind;
 use crate::Rtc;
-use crate::{ChannelTicket, MediaKind, MediaTicket};
+use crate::{ChannelTicket, MediaTicket};
 
 pub struct Changes(pub Vec<Change>);
 

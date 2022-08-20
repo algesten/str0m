@@ -2,31 +2,21 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use dtls::KeyingMaterial;
-use net::{DatagramRecv, DatagramSend, Receive};
 use rtp::{Extensions, Mid, RtcpHeader, RtpHeader, SessionId};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
 use sdp::Answer;
 
 use crate::change::Changes;
+use crate::net;
 use crate::RtcError;
 
-mod as_sdp;
-pub use as_sdp::AsSdpParams;
+use super::{Channel, Media};
 
-mod codec;
-pub use codec::CodecParams;
-
-mod media;
-pub use media::Media;
-
-mod channel;
-pub use channel::Channel;
-
-pub struct Session {
-    id: SessionId,
-    media: Vec<Media>,
-    channels: Vec<Channel>,
-    exts: Extensions,
+pub(crate) struct Session {
+    pub id: SessionId,
+    pub media: Vec<Media>,
+    pub channels: Vec<Channel>,
+    pub exts: Extensions,
     srtp_rx: Option<SrtpContext>,
     srtp_tx: Option<SrtpContext>,
     ssrc_map: HashMap<Ssrc, usize>,
@@ -34,15 +24,6 @@ pub struct Session {
 
 pub enum MediaEvent {
     //
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// Kind when adding media.
-pub enum MediaKind {
-    /// Add audio media.
-    Audio,
-    /// Add video media.
-    Video,
 }
 
 impl Session {
@@ -80,12 +61,12 @@ impl Session {
         todo!()
     }
 
-    pub fn handle_receive(&mut self, r: Receive) {
+    pub fn handle_receive(&mut self, r: net::Receive) {
         self.do_handle_receive(r);
     }
 
-    fn do_handle_receive(&mut self, r: Receive) -> Option<()> {
-        use DatagramRecv::*;
+    fn do_handle_receive(&mut self, r: net::Receive) -> Option<()> {
+        use net::DatagramRecv::*;
         match r.contents {
             Rtp(buf) => {
                 if let Some(header) = RtpHeader::parse(buf, &self.exts) {
@@ -150,7 +131,7 @@ impl Session {
         todo!()
     }
 
-    pub fn poll_datagram(&mut self) -> Option<DatagramSend> {
+    pub fn poll_datagram(&mut self) -> Option<net::DatagramSend> {
         todo!()
     }
 

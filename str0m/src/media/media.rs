@@ -1,10 +1,8 @@
 use std::time::Instant;
 
-use rtp::{Direction, MLineIdx, Mid, RtpHeader, Ssrc};
+use rtp::{Direction, MLineIdx, Mid, Pt, RtpHeader, Ssrc};
 
-use crate::CodecParams;
-
-use super::MediaKind;
+use super::CodecParams;
 
 pub struct Media {
     mid: Mid,
@@ -14,6 +12,15 @@ pub struct Media {
     params: Vec<CodecParams>,
     sources_rx: Vec<Source>,
     sources_tx: Vec<Source>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Types of media.
+pub enum MediaKind {
+    /// Audio media.
+    Audio,
+    /// Video media.
+    Video,
 }
 
 pub struct Source {
@@ -41,6 +48,10 @@ impl Media {
 
     pub fn codecs(&self) -> &[CodecParams] {
         &self.params
+    }
+
+    pub fn write(&mut self, pt: Pt, data: &[u8]) {
+        //
     }
 
     pub(crate) fn get_source(&mut self, header: &RtpHeader) -> &mut Source {

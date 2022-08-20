@@ -1,5 +1,7 @@
+use sdp::PayloadParams;
+
 use rtp::Pt;
-use sdp::{Codec, FormatParams, PayloadParams};
+use sdp::{Codec, FormatParams};
 
 pub struct CodecParams(PayloadParams);
 
