@@ -54,7 +54,7 @@ impl Media {
         //
     }
 
-    pub(crate) fn get_source(&mut self, header: &RtpHeader) -> &mut Source {
+    pub(crate) fn get_source_rx(&mut self, header: &RtpHeader) -> &mut Source {
         let maybe_idx = self.sources_rx.iter().position(|s| s.ssrc == header.ssrc);
 
         if let Some(idx) = maybe_idx {
@@ -78,7 +78,7 @@ impl<'a> From<&'a RtpHeader> for Source {
         Source {
             ssrc: v.ssrc,
             seq_no: v.sequence_number(None),
-            last_used: Instant::now(),
+            last_used: Instant::now(), // this will be overwritten
         }
     }
 }

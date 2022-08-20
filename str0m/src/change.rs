@@ -3,7 +3,6 @@ use sdp::Offer;
 
 use crate::media::MediaKind;
 use crate::Rtc;
-use crate::{ChannelTicket, MediaTicket};
 
 pub struct Changes(pub Vec<Change>);
 
@@ -25,16 +24,16 @@ impl<'a> ChangeSet<'a> {
         }
     }
 
-    pub fn add_media(&mut self, kind: MediaKind, dir: Direction) -> MediaTicket {
+    pub fn add_media(&mut self, kind: MediaKind, dir: Direction) -> Mid {
         let mid = self.rtc.new_mid();
         self.changes.0.push(Change::AddMedia(mid, kind, dir));
-        MediaTicket(mid)
+        mid
     }
 
-    pub fn add_channel(&mut self) -> ChannelTicket {
+    pub fn add_channel(&mut self) -> Mid {
         let mid = self.rtc.new_mid();
         self.changes.0.push(Change::AddChannel(mid));
-        ChannelTicket(mid)
+        mid
     }
 
     pub fn apply(self) -> Offer {

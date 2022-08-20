@@ -9,7 +9,7 @@ use change::Changes;
 use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::{Candidate, IceAgent};
 use ice::{IceAgentEvent, IceConnectionState};
-use rtp::Mid;
+use rtp::{Mid, Pt};
 use sdp::{Answer, Offer, Sdp, Setup};
 use thiserror::Error;
 
@@ -60,8 +60,9 @@ struct SendAddr {
 pub enum Event {
     IceCandidate(Candidate),
     IceConnectionStateChange(IceConnectionState),
-    MediaAdded(MediaTicket),
-    ChannelAdded(ChannelTicket),
+    MediaAdded(Mid),
+    ChannelAdded(Mid),
+    MediaData(Mid, Pt, Vec<u8>),
 }
 
 pub enum Input<'a> {
@@ -319,12 +320,12 @@ impl Rtc {
         Ok(())
     }
 
-    pub fn media(&mut self, ticket: &MediaTicket) -> Option<&mut Media> {
-        self.session.get_media(ticket.0)
+    pub fn media(&mut self, mid: Mid) -> Option<&mut Media> {
+        self.session.get_media(mid)
     }
 
-    pub fn channel(&mut self, ticket: &ChannelTicket) -> Option<&mut Channel> {
-        self.session.get_channel(ticket.0)
+    pub fn channel(&mut self, mid: Mid) -> Option<&mut Channel> {
+        self.session.get_channel(mid)
     }
 
     fn do_handle_timeout(&mut self, now: Instant) {
@@ -357,10 +358,6 @@ impl<'a> PendingChanges<'a> {
         self.rtc.accept_answer(None).expect("rollback to not error");
     }
 }
-
-pub struct MediaTicket(pub(crate) Mid);
-
-pub struct ChannelTicket(pub(crate) Mid);
 
 trait Soonest {
     fn soonest(self, other: Self) -> Self;

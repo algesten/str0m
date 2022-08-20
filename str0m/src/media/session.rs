@@ -100,7 +100,7 @@ impl Session {
         };
 
         let srtp = self.srtp_rx.as_mut()?;
-        let source = media.get_source(&header);
+        let source = media.get_source_rx(&header);
 
         source.last_used = Instant::now();
         source.seq_no = header.sequence_number(Some(source.seq_no));

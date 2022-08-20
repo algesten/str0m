@@ -847,6 +847,7 @@ impl fmt::Display for Codec {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PayloadParams {
     pub codec: CodecSpec,
     pub fmtps: FormatParams,
