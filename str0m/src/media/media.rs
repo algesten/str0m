@@ -86,6 +86,7 @@ impl ReceiverSource {
         let seq_no = header.sequence_number(Some(self.register.max_seq()));
 
         self.register.update_seq(seq_no);
+        self.register.update_time(now, header.timestamp);
 
         seq_no
     }

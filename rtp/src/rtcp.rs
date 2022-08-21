@@ -189,8 +189,8 @@ impl<'a> Iterator for FbIter<'a> {
 
 pub enum RtcpFb {
     SenderReportInfo(ReportInfo),
-    SenderReport(Report),
-    ReceiverReport(Report),
+    SenderReport(ReportBlock),
+    ReceiverReport(ReportBlock),
     Sdes(Sdes),
     Goodbye(Ssrc),
     Nack(Nack),
@@ -222,14 +222,14 @@ pub struct ReportInfo {
     pub sender_octet_count: u32,
 }
 
-pub struct Report {
+pub struct ReportBlock {
     pub ssrc: Ssrc,
-    pub fraction_cost: u8,
-    pub cumulative_packets_lost: u32, // 24 bit
-    pub highest_seq_no_recvd: u32,
-    pub interarrival_jitter: u32,
-    pub last_sr_timestampa: u32,
-    pub delay_since_last_sr: u32,
+    pub fraction_lost: u8,
+    pub packets_lost: u32, // 24 bit
+    pub max_seq: u32,
+    pub jitter: u32,
+    pub last_sr_time: u32,
+    pub last_sr_delay: u32,
 }
 
 pub struct Sdes {
@@ -365,26 +365,26 @@ fn parse_receiver_report(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<R
     });
 }
 
-fn read_reports(mut buf: &[u8], count: usize, mut enqueue: impl FnMut(Report)) {
+fn read_reports(mut buf: &[u8], count: usize, mut enqueue: impl FnMut(ReportBlock)) {
     for _ in 0..count {
         buf = &buf[24..]; // by chance the sender info is same size as a report block.
 
         let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
-        let fraction_cost = buf[4];
-        let cumulative_packets_lost = u32::from_be_bytes([0, buf[5], buf[6], buf[7]]);
-        let highest_seq_no_recvd = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
-        let interarrival_jitter = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
-        let last_sr_timestampa = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
-        let delay_since_last_sr = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
+        let fraction_lost = buf[4];
+        let packets_lost = u32::from_be_bytes([0, buf[5], buf[6], buf[7]]);
+        let max_seq = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
+        let jitter = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
+        let last_sr_time = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
+        let last_sr_delay = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
 
-        let report = Report {
+        let report = ReportBlock {
             ssrc,
-            fraction_cost,
-            cumulative_packets_lost,
-            highest_seq_no_recvd,
-            interarrival_jitter,
-            last_sr_timestampa,
-            delay_since_last_sr,
+            fraction_lost,
+            packets_lost,
+            max_seq,
+            jitter,
+            last_sr_time,
+            last_sr_delay,
         };
 
         enqueue(report);
