@@ -80,13 +80,13 @@ impl Media {
 }
 
 impl ReceiverSource {
-    pub fn update(&mut self, now: Instant, header: &RtpHeader) -> SeqNo {
+    pub fn update(&mut self, now: Instant, header: &RtpHeader, clock_rate: u32) -> SeqNo {
         self.last_used = now;
 
         let seq_no = header.sequence_number(Some(self.register.max_seq()));
 
         self.register.update_seq(seq_no);
-        self.register.update_time(now, header.timestamp);
+        self.register.update_time(now, header.timestamp, clock_rate);
 
         seq_no
     }

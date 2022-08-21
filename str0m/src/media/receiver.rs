@@ -1,4 +1,3 @@
-use std::ops::Sub;
 use std::time::Instant;
 
 use bitvec::prelude::*;
@@ -11,7 +10,7 @@ const MIN_SEQUENTIAL: u64 = 2;
 #[derive(Debug)]
 pub struct ReceiverRegister {
     /// Bit array to keep track of lost packets.
-    bits: BitArr!(for 512, in usize),
+    bits: BitArr!(for MAX_DROPOUT as usize * 2, in usize),
 
     /// First ever sequence number observed.
     base_seq: SeqNo,
@@ -112,8 +111,31 @@ impl ReceiverRegister {
         self.received += 1;
     }
 
-    pub fn update_time(&mut self, arrival: Instant, rtp_time: u32) {
-        let tp = TimePoint { arrival, rtp_time };
+    fn maybe_seq_jump(&mut self, seq: SeqNo) {
+        if self.bad_seq == Some(seq) {
+            // Two sequential packets -- assume that the other side
+            // restarted without telling us so just re-sync
+            // (i.e., pretend this was the first packet).
+            self.init_seq(seq);
+        } else {
+            self.bad_seq = Some((*seq + 1).into());
+        }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.probation == 0
+    }
+
+    pub fn max_seq(&self) -> SeqNo {
+        self.max_seq
+    }
+
+    pub fn update_time(&mut self, arrival: Instant, rtp_time: u32, clock_rate: u32) {
+        let tp = TimePoint {
+            arrival,
+            rtp_time,
+            clock_rate,
+        };
 
         if let Some(prior) = self.time_point_prior {
             if tp.is_same(prior) {
@@ -173,7 +195,7 @@ impl ReceiverRegister {
             }
 
             // update jitter.
-            let d = tp - prior;
+            let d = tp.delta(prior);
 
             self.jitter += (1.0 / 16.0) * (d - self.jitter);
         }
@@ -181,28 +203,27 @@ impl ReceiverRegister {
         self.time_point_prior = Some(tp);
     }
 
-    fn maybe_seq_jump(&mut self, seq: SeqNo) {
-        if self.bad_seq == Some(seq) {
-            // Two sequential packets -- assume that the other side
-            // restarted without telling us so just re-sync
-            // (i.e., pretend this was the first packet).
-            self.init_seq(seq);
-        } else {
-            self.bad_seq = Some((*seq + 1).into());
+    /// Create a new report block for a receiver report.
+    ///
+    /// This modifies the state since fraction_lost is calculated
+    /// since the last call to this function.
+    pub fn report_block(&mut self, ssrc: Ssrc) -> ReportBlock {
+        ReportBlock {
+            ssrc,
+            fraction_lost: self.fraction_lost(),
+            packets_lost: self.packets_lost(),
+            max_seq: (*self.max_seq % (u32::MAX as u64)) as u32,
+            jitter: self.jitter as u32,
+            last_sr_time: 0,
+            last_sr_delay: 0,
         }
     }
 
-    pub fn is_valid(&self) -> bool {
-        self.probation == 0
-    }
+    // Calculations from here
+    // https://www.rfc-editor.org/rfc/rfc3550#appendix-A.3
 
-    pub fn max_seq(&self) -> SeqNo {
-        self.max_seq
-    }
-
-    pub fn report_block(&mut self, ssrc: Ssrc) -> ReportBlock {
-        // Calculations from here
-        // https://www.rfc-editor.org/rfc/rfc3550#appendix-A.3
+    /// Fraction lost since last call.
+    fn fraction_lost(&mut self) -> u8 {
         let expected = self.expected();
         let expected_interval = expected - self.expected_prior;
         self.expected_prior = expected;
@@ -211,39 +232,30 @@ impl ReceiverRegister {
         let received_interval = received - self.received_prior;
         self.received_prior = received;
 
-        // Since this signed number is carried in 24 bits, it should be clamped
-        // at 0x7fffff for positive loss or 0x800000 for negative loss rather
-        // than wrapping around.
-        let lost_t = expected - received;
-        let packets_lost = if lost_t > 0x7fffff {
-            0x7fffff_u32
-        } else if lost_t < -0x7fffff {
-            0x8000000_u32
-        } else {
-            lost_t as u32
-        };
-
         let lost_interval = expected_interval - received_interval;
 
-        let fraction_lost = if expected_interval == 0 || lost_interval == 0 {
+        let lost = if expected_interval == 0 || lost_interval == 0 {
             0
         } else {
             (lost_interval << 8) / expected_interval
         } as u8;
 
-        ReportBlock {
-            ssrc,
-            fraction_lost,
-            packets_lost,
-            max_seq: (*self.max_seq % (u32::MAX as u64)) as u32,
-            jitter: self.jitter as u32,
-            last_sr_time: 0,
-            last_sr_delay: 0,
-        }
+        lost
     }
 
-    fn lost(&self) -> i64 {
-        self.expected() - self.received as i64
+    /// Absolute number of lost packets.
+    fn packets_lost(&self) -> u32 {
+        // Since this signed number is carried in 24 bits, it should be clamped
+        // at 0x7fffff for positive loss or 0x800000 for negative loss rather
+        // than wrapping around.
+        let lost_t = self.expected() - self.received;
+        if lost_t > 0x7fffff {
+            0x7fffff_u32
+        } else if lost_t < -0x7fffff {
+            0x8000000_u32
+        } else {
+            lost_t as u32
+        }
     }
 
     fn expected(&self) -> i64 {
@@ -256,40 +268,25 @@ impl ReceiverRegister {
 struct TimePoint {
     arrival: Instant,
     rtp_time: u32,
+    clock_rate: u32,
 }
 
 impl TimePoint {
     fn is_same(&self, other: TimePoint) -> bool {
         self.rtp_time == other.rtp_time
     }
-}
 
-// Calculates the delta between two timepoints.
-//
-// * i1, i2 is `Instant` 1 and `Instant` 2 respective.
-// * r1, r2 is u32 rtp_time respective.
-//
-// The delta is calculated as:
-//
-// (i2 - r2) - (i1 - r1)
-//
-// This can be reordered, and lose the units:
-//
-// (i2 - i1) - (r2 - r1)
-//
-impl Sub for TimePoint {
-    type Output = f32;
-
-    fn sub(self, rhs: Self) -> Self::Output {
+    fn delta(&self, other: TimePoint) -> f32 {
         // See
         // https://www.rfc-editor.org/rfc/rfc3550#appendix-A.8
         //
-        let rdur = self.rtp_time as f32 - rhs.rtp_time as f32;
-
         // rdur is often i 90kHz (for video) or 48kHz (for audio). we need
         // a time unit of Duration, that is likely to give us an increase between
         // 1 in rdur. milliseconds is thus "too coarse"
-        let tdur = (self.arrival - rhs.arrival).as_micros() as f32;
+        let rdur =
+            ((self.rtp_time as f32 - other.rtp_time as f32) * 1_000_000.0) / self.clock_rate as f32;
+
+        let tdur = (self.arrival - other.arrival).as_micros() as f32;
 
         let d = (tdur - rdur).abs();
 
@@ -299,6 +296,8 @@ impl Sub for TimePoint {
 
 #[cfg(test)]
 mod test {
+    use std::time::Duration;
+
     use super::*;
 
     #[test]
@@ -307,11 +306,9 @@ mod test {
         reg.update_seq(14.into());
         assert_eq!(reg.probation, 1);
         reg.update_seq(15.into());
-        assert!(reg.is_valid());
         assert_eq!(reg.probation, 0);
         reg.update_seq(16.into());
         reg.update_seq(17.into());
-        assert!(reg.is_valid());
         assert_eq!(reg.max_seq, 17.into());
     }
 
@@ -321,10 +318,8 @@ mod test {
         reg.update_seq(14.into());
         assert_eq!(reg.probation, 1);
         reg.update_seq(16.into());
-        assert!(!reg.is_valid());
         assert_eq!(reg.probation, 1);
         reg.update_seq(17.into());
-        assert!(reg.is_valid());
     }
 
     #[test]
@@ -357,7 +352,7 @@ mod test {
 
     #[test]
     fn old_packet_within_tolerance() {
-        let mut reg = ReceiverRegister::new(14.into());
+        let mut reg = ReceiverRegister::new(140.into());
         reg.update_seq(140.into());
         reg.update_seq(141.into());
         assert_eq!(reg.max_seq, 141.into());
@@ -371,7 +366,7 @@ mod test {
 
     #[test]
     fn old_packet_outside_tolerance() {
-        let mut reg = ReceiverRegister::new(14.into());
+        let mut reg = ReceiverRegister::new(140.into());
         reg.update_seq(140.into());
         reg.update_seq(141.into());
         assert_eq!(reg.max_seq, 141.into());
@@ -382,5 +377,52 @@ mod test {
         reg.update_seq(21.into());
         assert_eq!(reg.max_seq, 21.into()); // reset
         assert!(reg.bad_seq.is_none());
+    }
+
+    #[test]
+    fn jitter_at_0() {
+        let mut reg = ReceiverRegister::new(14.into());
+        reg.update_seq(14.into());
+        reg.update_seq(15.into());
+
+        // 100 fps in clock rate 90kHz => 90_000/100 = 900 per frame
+        // 1/100 * 1_000_000 = 10_000 microseconds per frame.
+
+        let start = Instant::now();
+        let dur = Duration::from_micros(10_000);
+
+        reg.update_time(start + 4 * dur, 1234 + 4 * 900, 90_000);
+        reg.update_time(start + 5 * dur, 1234 + 5 * 900, 90_000);
+        reg.update_time(start + 6 * dur, 1234 + 6 * 900, 90_000);
+        reg.update_time(start + 7 * dur, 1234 + 7 * 900, 90_000);
+        assert_eq!(reg.jitter, 0.0);
+
+        //
+    }
+
+    #[test]
+    fn jitter_at_20() {
+        let mut reg = ReceiverRegister::new(14.into());
+        reg.update_seq(14.into());
+        reg.update_seq(15.into());
+
+        // 100 fps in clock rate 90kHz => 90_000/100 = 900 per frame
+        // 1/100 * 1_000_000 = 10_000 microseconds per frame.
+
+        let start = Instant::now();
+        let dur = Duration::from_micros(10_000);
+        let off = Duration::from_micros(10);
+
+        for i in 4..1000 {
+            let arrival = if i % 2 == 0 {
+                start + i * dur - off
+            } else {
+                start + i * dur + off
+            };
+            reg.update_time(arrival, 1234 + i * 900, 90_000);
+        }
+
+        // jitter should converge on 20.0
+        assert!((20.0 - reg.jitter).abs() < 0.01);
     }
 }

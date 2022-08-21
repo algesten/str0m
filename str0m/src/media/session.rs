@@ -100,8 +100,9 @@ impl Session {
         };
 
         let srtp = self.srtp_rx.as_mut()?;
+        let clock_rate = media.get_params(&header)?.clock_rate();
         let source = media.get_source_rx(&header);
-        let seq_no = source.update(now, &header);
+        let seq_no = source.update(now, &header, clock_rate);
 
         if source.is_valid() {
             let data = srtp.unprotect_rtp(buf, &header, *seq_no)?;
