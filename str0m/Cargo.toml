@@ -7,6 +7,8 @@ edition = "2021"
 thiserror = "1"
 tracing = "0.1"
 
+bitvec = "1"
+
 dtls = { path = "../dtls" }
 ice = { path = "../ice" }
 net_ = { package = "net", path = "../net" }

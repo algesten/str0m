@@ -7,7 +7,7 @@ use openssl::error::ErrorStack;
 use thiserror::Error;
 
 mod id;
-pub use id::{Mid, Pt, SessionId, Ssrc, StreamId};
+pub use id::{Mid, Pt, SeqNo, SessionId, Ssrc, StreamId};
 // TODO: Move this to some other crate.
 pub use id::MLineIdx;
 

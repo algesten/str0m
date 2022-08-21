@@ -61,16 +61,16 @@ impl Session {
         todo!()
     }
 
-    pub fn handle_receive(&mut self, r: net::Receive) {
-        self.do_handle_receive(r);
+    pub fn handle_receive(&mut self, now: Instant, r: net::Receive) {
+        self.do_handle_receive(now, r);
     }
 
-    fn do_handle_receive(&mut self, r: net::Receive) -> Option<()> {
+    fn do_handle_receive(&mut self, now: Instant, r: net::Receive) -> Option<()> {
         use net::DatagramRecv::*;
         match r.contents {
             Rtp(buf) => {
                 if let Some(header) = RtpHeader::parse(buf, &self.exts) {
-                    self.handle_rtp(header, buf)?;
+                    self.handle_rtp(now, header, buf)?;
                 } else {
                     trace!("Failed to parse RTP header");
                 }
@@ -91,7 +91,7 @@ impl Session {
         Some(())
     }
 
-    fn handle_rtp(&mut self, header: RtpHeader, buf: &[u8]) -> Option<()> {
+    fn handle_rtp(&mut self, now: Instant, header: RtpHeader, buf: &[u8]) -> Option<()> {
         let media = if let Some(idx) = self.ssrc_map.get(&header.ssrc) {
             // We know which Media this packet belongs to.
             &mut self.media[*idx]
@@ -101,12 +101,12 @@ impl Session {
 
         let srtp = self.srtp_rx.as_mut()?;
         let source = media.get_source_rx(&header);
+        let seq_no = source.update(now, &header);
 
-        source.last_used = Instant::now();
-        source.seq_no = header.sequence_number(Some(source.seq_no));
-
-        let data = srtp.unprotect_rtp(buf, &header, source.seq_no)?;
-        let params = media.get_params(&header)?;
+        if source.is_valid() {
+            let data = srtp.unprotect_rtp(buf, &header, *seq_no)?;
+            let params = media.get_params(&header)?;
+        }
 
         Some(())
     }
@@ -172,3 +172,15 @@ fn fallback_match_media<'a>(
 
     Some(media)
 }
+
+// * receiver register - handle_rtp
+// * nack reporter     - handle_rtp  (poll_rtcp)
+// * receiver reporter - handle_rtp  (poll_rtcp)
+// * twcc reporter     - handle_rtp handle_rtcp (poll_rtcp)
+// * depacketizer      - handle_rtp
+
+// * packetizer        - write
+// * send buffer       - write_rtp
+// * nack responder    - handle_rtcp (poll_rtcp poll_rtp)
+// * sender reporter   -             (poll_rtcp)
+// * twcc generator    - handle_rtcp (poll_rtcp)

@@ -76,8 +76,8 @@ pub enum Output {
     Event(Event),
 }
 
-fn future() -> Instant {
-    Instant::now() + Duration::from_secs(60 * 60 * 24 * 365 * 10)
+fn not_happening() -> Instant {
+    Instant::now() + Duration::from_secs(60 * 60 * 24 * 365 * 100)
 }
 
 impl Rtc {
@@ -222,7 +222,7 @@ impl Rtc {
 
     pub fn poll_output(&mut self) -> Result<Output, RtcError> {
         if !self.alive {
-            return Ok(Output::Timeout(future()));
+            return Ok(Output::Timeout(not_happening()));
         }
 
         while let Some(e) = self.ice.poll_event() {
@@ -303,7 +303,7 @@ impl Rtc {
         let time = None
             .soonest(self.ice.poll_timeout())
             .soonest(self.session.poll_timeout())
-            .unwrap_or_else(future);
+            .unwrap_or_else(not_happening);
 
         Ok(Output::Timeout(time))
     }
@@ -338,7 +338,7 @@ impl Rtc {
         match r.contents {
             Stun(_) => self.ice.handle_receive(now, r),
             Dtls(_) => self.dtls.handle_receive(r)?,
-            Rtp(_) | Rtcp(_) => self.session.handle_receive(r),
+            Rtp(_) | Rtcp(_) => self.session.handle_receive(now, r),
         }
 
         Ok(())

@@ -1,5 +1,5 @@
 use crate::ext::{ExtensionValues, Extensions};
-use crate::{Pt, Ssrc};
+use crate::{Pt, SeqNo, Ssrc};
 
 #[derive(Debug, Clone)]
 pub struct RtpHeader {
@@ -105,8 +105,9 @@ impl RtpHeader {
     /// Sequencer number of this RTP header given the previous number.
     ///
     /// The logic detects wrap-arounds of the 16-bit RTP sequence number.
-    pub fn sequence_number(&self, previous: Option<u64>) -> u64 {
-        extend_seq(previous, self.sequence_number)
+    pub fn sequence_number(&self, previous: Option<SeqNo>) -> SeqNo {
+        let e_seq = extend_seq(previous.map(|v| *v), self.sequence_number);
+        e_seq.into()
     }
 }
 

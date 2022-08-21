@@ -1,0 +1,30 @@
+
+# transmitter
+
+wt - window size of sender > 0
+nt - next packet to be transmitted (only increasing)
+na - highest acknowledgement received
+* all packets, but not including na have been received
+
+na <= nr <= ns
+
+Whenever the transmitter has data to send, it may transmit up to wt packets ahead of the latest acknowledgment na. That is, it may transmit packet number nt as long as nt < na+wt.
+
+In the absence of a communication error, the transmitter soon receives an acknowledgment for all the packets it has sent, leaving na equal to nt.
+
+# receiver
+
+wr - window size of reciever > 0
+nr - first packet not yet received (only increasing). all packets below have been received.
+ns - one more than the highest sequence received. no packet above has been received
+* between nr and ns, some packets have been received
+
+Every time a packet numbered x is received, the receiver checks to see if it falls in the receive window, nr ≤ x < nr+wr. If it falls within the window, the receiver accepts it. If it is numbered nr, the receive sequence number is increased by 1, and possibly more if further consecutive packets were previously received and stored. If x > nr, the packet is stored until all preceding packets have been received.[1] If x≥ns, the latter is updated to ns=x+1.
+
+If the packet's number is not within the receive window, the receiver discards it and does not modify nr or ns.
+
+Whether the packet was accepted or not, the receiver transmits an acknowledgment containing the current nr.
+
+# overall
+
+na <= nr <= ns = nt <= na+wt
