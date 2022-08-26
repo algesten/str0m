@@ -27,7 +27,7 @@ mod srtp;
 pub use srtp::{SrtpContext, SrtpKey};
 
 mod rtcp;
-pub use rtcp::{ReportBlock, RtcpHeader, RtcpType};
+pub use rtcp::{Nack, ReportBlock, RtcpHeader, RtcpType};
 
 /// Errors that can arise in RTP.
 #[derive(Debug, Error)]

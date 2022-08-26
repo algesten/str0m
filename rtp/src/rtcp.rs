@@ -239,6 +239,7 @@ pub struct Sdes {
 }
 
 // PT=TransportLayerFeedback and FMT=1
+#[derive(Debug, PartialEq, Eq)]
 pub struct Nack {
     pub ssrc: Ssrc,
     pub pid: u16, // seq_no
