@@ -101,7 +101,7 @@ impl Session {
 
         let srtp = self.srtp_rx.as_mut()?;
         let clock_rate = media.get_params(&header)?.clock_rate();
-        let source = media.get_source_rx(&header);
+        let source = media.get_source_rx(&header, now);
         let seq_no = source.update(now, &header, clock_rate);
 
         if source.is_valid() {
@@ -137,7 +137,7 @@ impl Session {
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        todo!()
+        self.media.iter_mut().filter_map(|m| m.poll_timeout()).min()
     }
 
     pub fn has_mid(&self, mid: Mid) -> bool {

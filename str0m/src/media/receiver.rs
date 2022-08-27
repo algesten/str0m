@@ -42,6 +42,8 @@ pub struct ReceiverRegister {
 
     /// Previously received time point.
     time_point_prior: Option<TimePoint>,
+
+    nack_report: Option<Nack>,
 }
 
 impl ReceiverRegister {
@@ -59,6 +61,7 @@ impl ReceiverRegister {
             jitter: 0.0,
             nack_check_from: base_seq,
             time_point_prior: None,
+            nack_report: None,
         }
     }
 
@@ -74,6 +77,7 @@ impl ReceiverRegister {
         self.set_bit(seq);
         self.nack_check_from = seq;
         self.time_point_prior = None;
+        self.nack_report = None;
     }
 
     fn set_bit(&mut self, seq: SeqNo) {
@@ -217,7 +221,20 @@ impl ReceiverRegister {
         self.time_point_prior = Some(tp);
     }
 
+    pub fn has_nack_report(&mut self) -> bool {
+        if self.nack_report.is_none() {
+            self.nack_report = self.create_nack_report();
+        }
+        self.nack_report.is_some()
+    }
+
     pub fn nack_report(&mut self) -> Option<Nack> {
+        self.nack_report
+            .take()
+            .or_else(|| self.create_nack_report())
+    }
+
+    fn create_nack_report(&mut self) -> Option<Nack> {
         if *self.max_seq < MISORDER_DELAY {
             return None;
         }

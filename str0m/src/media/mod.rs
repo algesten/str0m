@@ -16,6 +16,4 @@ pub use channel::Channel;
 mod session;
 pub(crate) use session::Session;
 
-mod fb_nack;
-
 mod receiver;

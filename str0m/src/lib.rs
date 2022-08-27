@@ -3,7 +3,7 @@ extern crate tracing;
 
 use std::io;
 use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use change::Changes;
 use dtls::{Dtls, DtlsEvent, Fingerprint};
@@ -23,6 +23,9 @@ use media::{AsSdpParams, Channel, Media, Session};
 
 mod change;
 pub use change::ChangeSet;
+
+mod util;
+pub(crate) use util::*;
 
 /// Errors for the whole Rtc engine.
 #[derive(Debug, Error)]
@@ -74,10 +77,6 @@ pub enum Output {
     Timeout(Instant),
     Transmit(net::Transmit),
     Event(Event),
-}
-
-fn not_happening() -> Instant {
-    Instant::now() + Duration::from_secs(60 * 60 * 24 * 365 * 100)
 }
 
 impl Rtc {
@@ -356,26 +355,5 @@ impl<'a> PendingChanges<'a> {
 
     pub fn rollback(self) {
         self.rtc.accept_answer(None).expect("rollback to not error");
-    }
-}
-
-trait Soonest {
-    fn soonest(self, other: Self) -> Self;
-}
-
-impl Soonest for Option<Instant> {
-    fn soonest(self, other: Self) -> Self {
-        match (self, other) {
-            (Some(v1), Some(v2)) => {
-                if v1 < v2 {
-                    Some(v1)
-                } else {
-                    Some(v2)
-                }
-            }
-            (None, None) => None,
-            (None, v) => v,
-            (v, None) => v,
-        }
     }
 }
