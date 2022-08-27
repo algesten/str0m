@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
@@ -36,7 +36,7 @@ pub(crate) struct Session {
     ssrc_map: HashMap<Ssrc, usize>,
     last_regular: Instant,
     last_nack: Instant,
-    feedback: Vec<RtcpFb>,
+    feedback: VecDeque<RtcpFb>,
 }
 
 pub enum MediaEvent {
@@ -55,7 +55,7 @@ impl Session {
             ssrc_map: HashMap::new(),
             last_regular: already_happened(),
             last_nack: already_happened(),
-            feedback: vec![],
+            feedback: VecDeque::new(),
         }
     }
 

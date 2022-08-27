@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::str::from_utf8;
 
@@ -99,6 +98,28 @@ pub enum RtcpType {
     ExtendedReport = 207,
 }
 
+impl RtcpType {
+    const fn len(&self) -> usize {
+        use RtcpType::*;
+        match self {
+            // The sender SSRC is the actual sender info SSRC.
+            SenderReport => 8,
+            // The first SSRC is the "sender", which is useless and sent as 0.
+            ReceiverReport => 8,
+            // The first SSRC is part of the chunks of SDES.
+            SourceDescription => 4,
+            // The first SSRC is an actual goodbye.
+            Goodbye => 4,
+            ApplicationDefined => 4,
+            // The first SSRC is the "sender", which is useless and sent as 0.
+            TransportLayerFeedback => 8,
+            // The first SSRC is the "sender", which is useless and sent as 0.
+            PayloadSpecificFeedback => 8,
+            ExtendedReport => 8,
+        }
+    }
+}
+
 //         0                   1                   2                   3
 //         0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 //        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -171,40 +192,7 @@ impl RtcpHeader {
         FbIter::new(buf)
     }
 
-    pub fn can_continue(&self, fb: &RtcpFb) -> bool {
-        use RtcpType::*;
-        match fb {
-            RtcpFb::SenderInfo(_) => false,
-            RtcpFb::ReceiverReport(_) => {
-                if !matches!(self.packet_type, SenderReport | ReceiverReport) {
-                    return false;
-                }
-                self.fmt.count() < 31
-            }
-            RtcpFb::Sdes(_) => {
-                if !matches!(self.packet_type, SourceDescription) {
-                    return false;
-                }
-                self.fmt.count() < 31
-            }
-            RtcpFb::Goodbye(_) => {
-                if !matches!(self.packet_type, SourceDescription) {
-                    return false;
-                }
-                self.fmt.count() < 31
-            }
-            RtcpFb::Nack(_) => {
-                matches!(
-                    self.fmt,
-                    FeedbackMessageType::TransportFeedback(TransportType::Nack)
-                )
-            }
-            RtcpFb::Pli(_) => false,
-            RtcpFb::Fir(_) => false,
-        }
-    }
-
-    pub fn finish(&self, buf: &mut [u8]) {
+    fn write_to(&self, buf: &mut [u8]) {
         assert!(buf.len() >= 8, "rtcp buffer must fit header");
         assert!(buf.len() % 4 == 0, "rtcp buffer must be multiple of 4");
 
@@ -219,27 +207,8 @@ impl RtcpHeader {
         }
     }
 
-    /// Byte length of the RTCP header.
-    pub fn len(&self) -> usize {
-        use RtcpType::*;
-        match self.packet_type {
-            // This looks strange when reading the RFC. However we consider the SSRC
-            // following the header to belong to the feedback rather than then header
-            // for sender reports.
-            SenderReport => 4,
-            // The first SSRC is the "sender", which is useless and sent as 0.
-            ReceiverReport => 8,
-            // The first SSRC is part of the chunks of SDES.
-            SourceDescription => 4,
-            // The first SSRC is an actual goodbye.
-            Goodbye => 4,
-            ApplicationDefined => 4,
-            // The first SSRC is the "sender", which is useless and sent as 0.
-            TransportLayerFeedback => 8,
-            // The first SSRC is the "sender", which is useless and sent as 0.
-            PayloadSpecificFeedback => 8,
-            ExtendedReport => 8,
-        }
+    fn len(&self) -> usize {
+        self.packet_type.len()
     }
 }
 
@@ -299,13 +268,96 @@ pub enum RtcpFb {
     Fir(Fir),
 }
 
+const SR_LEN: usize = 5 * 4;
+const RR_LEN: usize = 6 * 4;
+
 impl RtcpFb {
-    pub fn build_feedback(feedback: &mut Vec<Self>, buf: &mut [u8]) {
+    pub fn build_feedback(feedback: &mut VecDeque<Self>, mut buf: &mut [u8]) {
         // Certain grouping is possible, which means we sort the feedback to
         // be able to extract the groups.
-        feedback.sort_by_key(|f| f.ord_no());
+        feedback.make_contiguous().sort_by_key(RtcpFb::ord_no);
+
+        // This either writes SenderInfo + ReceiverReport to make SenderReports (SR), or
+        // straight up ReceiverReports (RR).
+        while matches!(
+            feedback.front(),
+            Some(RtcpFb::SenderInfo(_)) | Some(RtcpFb::ReceiverReport(_))
+        ) {
+            // length needed to fit the first item
+            let needed_len: usize = if matches!(feedback.front(), Some(RtcpFb::SenderInfo(_))) {
+                RtcpType::SenderReport.len() + SR_LEN
+            } else {
+                RtcpType::ReceiverReport.len() + SR_LEN
+            };
+
+            if buf.len() < needed_len {
+                // can't fit anything more in this buf
+                return;
+            }
+
+            // We are definitely writing the first item
+            let fb = feedback.pop_front().unwrap();
+
+            // Figure out how many receiver reports we can fit after the first item.
+            let max_rr = {
+                let rr_count = feedback
+                    .iter()
+                    .filter(|f| matches!(f, RtcpFb::ReceiverReport(_)))
+                    .count();
+
+                let available_for_rr = buf.len() - needed_len;
+                let fitting_sr = available_for_rr / RR_LEN;
+
+                // Each SR can hold at most 31 RR. This is furter restricted by how much
+                // space is left in the buffer we write to.
+                rr_count.min(31).min(fitting_sr)
+            };
+
+            // Total length of the first item + fitted rr.
+            let length = needed_len + max_rr * RR_LEN;
+
+            // The header is either for a SR or RR.
+            let header = fb.as_header(max_rr as u8, length);
+            header.write_to(buf);
+
+            // First item after the header.
+            fb.write_to(buf);
+
+            // Then we remove the rr as we are grouping them into this rtcp.
+            for i in 0..max_rr {
+                let pos = feedback
+                    .iter()
+                    .position(|f| matches!(f, RtcpFb::ReceiverReport(_)))
+                    // This fn presupposes there are max_rr available reports.
+                    .expect("there to be enough RR to yank");
+
+                let rr = feedback.remove(pos).unwrap();
+
+                // Offset into buffer this is to be at.
+                let off = needed_len + i * RR_LEN;
+
+                rr.write_to(&mut buf[off..]);
+            }
+
+            buf = &mut buf[length..];
+        }
+
+        // Now all SR/RR should have been handled.
 
         todo!()
+    }
+
+    fn write_to(&self, buf: &mut [u8]) {
+        use RtcpFb::*;
+        match self {
+            SenderInfo(v) => v.write_to(buf),
+            ReceiverReport(v) => v.write_to(buf),
+            Sdes(_) => todo!(),
+            Goodbye(_) => todo!(),
+            Nack(_) => todo!(),
+            Pli(_) => todo!(),
+            Fir(_) => todo!(),
+        }
     }
 
     fn ord_no(&self) -> usize {
@@ -334,71 +386,56 @@ impl RtcpFb {
         }
     }
 
-    pub fn begin_header(&self) -> RtcpHeader {
-        let mut header = RtcpHeader {
-            version: 2,
-            has_padding: false,
-            fmt: FeedbackMessageType::NotUsed,
-            packet_type: RtcpType::SenderReport,
-            length: 0,
-            ssrc: 0.into(),
+    fn as_header(&self, count: u8, length: usize) -> RtcpHeader {
+        let (fmt, packet_type, ssrc) = match self {
+            RtcpFb::SenderInfo(v) => (
+                FeedbackMessageType::ReceptionReport(count),
+                RtcpType::SenderReport,
+                v.ssrc,
+            ),
+            RtcpFb::ReceiverReport(_) => (
+                FeedbackMessageType::ReceptionReport(count),
+                RtcpType::ReceiverReport,
+                0.into(),
+            ),
+
+            RtcpFb::Sdes(_) => (
+                FeedbackMessageType::SourceCount(count),
+                RtcpType::SourceDescription,
+                0.into(),
+            ),
+            RtcpFb::Goodbye(_) => (
+                //
+                FeedbackMessageType::SourceCount(count),
+                RtcpType::Goodbye,
+                0.into(),
+            ),
+
+            RtcpFb::Nack(_) => (
+                FeedbackMessageType::TransportFeedback(TransportType::Nack),
+                RtcpType::TransportLayerFeedback,
+                0.into(),
+            ),
+            RtcpFb::Pli(_) => (
+                FeedbackMessageType::PayloadFeedback(PayloadType::PictureLossIndication),
+                RtcpType::PayloadSpecificFeedback,
+                0.into(),
+            ),
+            RtcpFb::Fir(_) => (
+                FeedbackMessageType::PayloadFeedback(PayloadType::FullIntraRequest),
+                RtcpType::PayloadSpecificFeedback,
+                0.into(),
+            ),
         };
 
-        match self {
-            RtcpFb::SenderInfo(_) => {
-                header.fmt = FeedbackMessageType::ReceptionReport(0);
-                header.packet_type = RtcpType::SenderReport;
-            }
-            RtcpFb::ReceiverReport(_) => {
-                header.fmt = FeedbackMessageType::ReceptionReport(0);
-                header.packet_type = RtcpType::ReceiverReport;
-            }
-            RtcpFb::Sdes(_) => {
-                header.fmt = FeedbackMessageType::SourceCount(0);
-                header.packet_type = RtcpType::SourceDescription;
-            }
-            RtcpFb::Goodbye(_) => {
-                header.fmt = FeedbackMessageType::SourceCount(0);
-                header.packet_type = RtcpType::Goodbye;
-            }
-            RtcpFb::Nack(_) => {
-                header.fmt = FeedbackMessageType::TransportFeedback(TransportType::Nack);
-                header.packet_type = RtcpType::TransportLayerFeedback;
-            }
-            RtcpFb::Pli(_) => {
-                header.fmt =
-                    FeedbackMessageType::PayloadFeedback(PayloadType::PictureLossIndication);
-                header.packet_type = RtcpType::PayloadSpecificFeedback;
-            }
-            RtcpFb::Fir(_) => {
-                header.fmt = FeedbackMessageType::PayloadFeedback(PayloadType::FullIntraRequest);
-                header.packet_type = RtcpType::PayloadSpecificFeedback;
-            }
+        RtcpHeader {
+            version: 2,
+            has_padding: false,
+            fmt,
+            packet_type,
+            length,
+            ssrc,
         }
-
-        header
-    }
-
-    pub fn maybe_write_to(&self, buf: &mut [u8], header: &mut RtcpHeader) -> Option<usize> {
-        {
-            use RtcpFb::*;
-            if matches!(self, SenderInfo(_) | ReceiverReport(_)) {
-                if let FeedbackMessageType::ReceptionReport(v) = &mut header.fmt {
-                    *v += 1;
-                } else {
-                    unreachable!("Incorrect header for {:?}", self)
-                }
-            }
-            if matches!(self, Sdes(_) | Goodbye(_)) {
-                if let FeedbackMessageType::SourceCount(v) = &mut header.fmt {
-                    *v += 1;
-                } else {
-                    unreachable!("Incorrect header for {:?}", self)
-                }
-            }
-        }
-
-        None
     }
 }
 
@@ -411,6 +448,51 @@ pub struct SenderInfo {
     pub sender_octet_count: u32,
 }
 
+impl SenderInfo {
+    fn parse(buf: &[u8]) -> SenderInfo {
+        // Sender report shape is here
+        // https://www.rfc-editor.org/rfc/rfc3550#section-6.4.1
+
+        let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
+
+        let ntp_time = u64::from_be_bytes([
+            buf[4], buf[5], buf[6], buf[7], buf[8], buf[9], buf[10], buf[11],
+        ]);
+        let ntp_time = MediaTime::from_ntp_64(ntp_time);
+
+        // https://www.cs.columbia.edu/~hgs/rtp/faq.html#timestamp-computed
+        // For video, time clock rate is fixed at 90 kHz. The timestamps generated
+        // depend on whether the application can determine the frame number or not.
+        // If it can or it can be sure that it is transmitting every frame with a
+        // fixed frame rate, the timestamp is governed by the nominal frame rate.
+        // Thus, for a 30 f/s video, timestamps would increase by 3,000 for each
+        // frame, for a 25 f/s video by 3,600 for each frame.
+        let rtp_time = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
+
+        let sender_packet_count = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
+        let sender_octet_count = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
+
+        SenderInfo {
+            ssrc,
+            ntp_time,
+            rtp_time,
+            sender_packet_count,
+            sender_octet_count,
+        }
+    }
+
+    fn write_to(&self, buf: &mut [u8]) {
+        (&mut buf[0..4]).copy_from_slice(&(*self.ssrc).to_be_bytes());
+
+        let ntp_time = self.ntp_time.as_ntp_64();
+        (&mut buf[4..12]).copy_from_slice(&ntp_time.to_be_bytes());
+
+        (&mut buf[12..16]).copy_from_slice(&self.rtp_time.to_be_bytes());
+        (&mut buf[16..20]).copy_from_slice(&self.sender_packet_count.to_be_bytes());
+        (&mut buf[20..24]).copy_from_slice(&self.sender_octet_count.to_be_bytes());
+    }
+}
+
 #[derive(Debug)]
 pub struct ReportBlock {
     pub ssrc: Ssrc,
@@ -420,6 +502,33 @@ pub struct ReportBlock {
     pub jitter: u32,
     pub last_sr_time: u32,
     pub last_sr_delay: u32,
+}
+
+impl ReportBlock {
+    fn parse(buf: &[u8]) -> Self {
+        // Receiver report shape is here
+        // https://www.rfc-editor.org/rfc/rfc3550#section-6.4.2
+
+        let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
+        let fraction_lost = buf[4];
+        let packets_lost = u32::from_be_bytes([0, buf[5], buf[6], buf[7]]);
+        let max_seq = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
+        let jitter = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
+        let last_sr_time = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
+        let last_sr_delay = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
+
+        ReportBlock {
+            ssrc,
+            fraction_lost,
+            packets_lost,
+            max_seq,
+            jitter,
+            last_sr_time,
+            last_sr_delay,
+        }
+    }
+
+    fn write_to(&self, buf: &mut [u8]) {}
 }
 
 #[derive(Debug)]
@@ -500,84 +609,34 @@ impl RtcpType {
 }
 
 fn parse_sender_report(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
-    // Sender report shape is here
-    // https://www.rfc-editor.org/rfc/rfc3550#section-6.4.1
-    if buf.len() < 20 {
+    if buf.len() < 28 {
         return;
     }
 
-    let buf = &buf[4..];
+    queue.push_back(RtcpFb::SenderInfo(SenderInfo::parse(&buf[4..])));
 
-    let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
-
-    let ntp_time = u64::from_be_bytes([
-        buf[4], buf[5], buf[6], buf[7], buf[8], buf[9], buf[10], buf[11],
-    ]);
-    let ntp_time = MediaTime::from_ntp_64(ntp_time);
-
-    // https://www.cs.columbia.edu/~hgs/rtp/faq.html#timestamp-computed
-    // For video, time clock rate is fixed at 90 kHz. The timestamps generated
-    // depend on whether the application can determine the frame number or not.
-    // If it can or it can be sure that it is transmitting every frame with a
-    // fixed frame rate, the timestamp is governed by the nominal frame rate.
-    // Thus, for a 30 f/s video, timestamps would increase by 3,000 for each
-    // frame, for a 25 f/s video by 3,600 for each frame.
-    let rtp_time = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
-
-    let sender_packet_count = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
-    let sender_octet_count = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
-
-    queue.push_back(RtcpFb::SenderInfo(SenderInfo {
-        ssrc,
-        ntp_time,
-        rtp_time,
-        sender_packet_count,
-        sender_octet_count,
-    }));
-
-    // Number of sender reports.
+    // Number of receiver reports.
     let count = header.fmt.count() as usize;
+    let mut buf = &buf[28..];
 
-    read_reports(&buf[24..], count, move |report| {
+    for _ in 0..count {
+        let report = ReportBlock::parse(buf);
         queue.push_back(RtcpFb::ReceiverReport(report));
-    });
+        buf = &buf[24..];
+    }
 }
 
 fn parse_receiver_report(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
-    // Receiver report shape is here
-    // https://www.rfc-editor.org/rfc/rfc3550#section-6.4.2
-    if buf.len() < 20 {
+    if buf.len() < 8 {
         return;
     }
 
     let count = header.fmt.count() as usize;
+    let mut buf = &buf[8..];
 
-    read_reports(&buf[8..], count, move |report| {
-        queue.push_back(RtcpFb::ReceiverReport(report));
-    });
-}
-
-fn read_reports(mut buf: &[u8], count: usize, mut enqueue: impl FnMut(ReportBlock)) {
     for _ in 0..count {
-        let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
-        let fraction_lost = buf[4];
-        let packets_lost = u32::from_be_bytes([0, buf[5], buf[6], buf[7]]);
-        let max_seq = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
-        let jitter = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
-        let last_sr_time = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
-        let last_sr_delay = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
-
-        let report = ReportBlock {
-            ssrc,
-            fraction_lost,
-            packets_lost,
-            max_seq,
-            jitter,
-            last_sr_time,
-            last_sr_delay,
-        };
-
-        enqueue(report);
+        let report = ReportBlock::parse(buf);
+        queue.push_back(RtcpFb::ReceiverReport(report));
         buf = &buf[24..];
     }
 }
