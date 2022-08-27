@@ -1,6 +1,6 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use rtp::{MLineIdx, RtpHeader};
+use rtp::{MLineIdx, RtcpFb, RtpHeader};
 
 pub use rtp::{Direction, Mid, Pt};
 pub use sdp::{Codec, FormatParams};
@@ -17,6 +17,9 @@ use receiver::ReceiverSource;
 mod sender;
 use sender::SenderSource;
 
+// How often we remove unused senders/receivers.
+const CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
+
 pub struct Media {
     mid: Mid,
     kind: MediaKind,
@@ -25,6 +28,7 @@ pub struct Media {
     params: Vec<CodecParams>,
     sources_rx: Vec<ReceiverSource>,
     sources_tx: Vec<SenderSource>,
+    last_cleanup: Instant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,7 +70,7 @@ impl Media {
         header: &RtpHeader,
         now: Instant,
     ) -> &mut ReceiverSource {
-        let maybe_idx = self.sources_rx.iter().position(|s| s.ssrc == header.ssrc);
+        let maybe_idx = self.sources_rx.iter().position(|s| s.ssrc() == header.ssrc);
 
         if let Some(idx) = maybe_idx {
             &mut self.sources_rx[idx]
@@ -83,7 +87,41 @@ impl Media {
             .find(|p| p.inner().codec.pt == pt || p.inner().resend == Some(pt))
     }
 
+    pub(crate) fn has_nack(&mut self) -> bool {
+        self.sources_rx.iter_mut().any(|s| s.has_nack())
+    }
+
+    pub(crate) fn handle_timeout(&mut self, now: Instant) {
+        if now >= self.cleanup_at() {
+            self.last_cleanup = now;
+            self.sources_rx.retain(|s| s.is_alive(now));
+        }
+    }
+
     pub(crate) fn poll_timeout(&mut self) -> Option<Instant> {
-        self.sources_rx.iter_mut().map(|s| s.poll_timeout()).min()
+        Some(self.cleanup_at())
+    }
+
+    fn cleanup_at(&self) -> Instant {
+        self.last_cleanup + CLEANUP_INTERVAL
+    }
+
+    /// Creates sender info and receiver reports for all senders/receivers
+    pub(crate) fn create_regular_feedback(&mut self, feedback: &mut Vec<RtcpFb>) {
+        for s in &mut self.sources_tx {
+            feedback.push(s.create_sender_info());
+        }
+        for s in &mut self.sources_rx {
+            feedback.push(s.create_receiver_report());
+        }
+    }
+
+    // Creates nack reports for receivers, if needed.
+    pub(crate) fn create_nack(&mut self, feedback: &mut Vec<RtcpFb>) {
+        for s in &mut self.sources_rx {
+            if let Some(nack) = s.create_nack() {
+                feedback.push(nack);
+            }
+        }
     }
 }

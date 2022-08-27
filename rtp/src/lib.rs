@@ -25,9 +25,10 @@ pub use header::RtpHeader;
 
 mod srtp;
 pub use srtp::{SrtpContext, SrtpKey};
+pub use srtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD_PREFIX, SRTCP_OVERHEAD_SUFFIX};
 
 mod rtcp;
-pub use rtcp::{Nack, ReportBlock, RtcpHeader, RtcpType};
+pub use rtcp::{Nack, ReportBlock, RtcpFb, RtcpHeader, RtcpType, SenderInfo};
 
 /// Errors that can arise in RTP.
 #[derive(Debug, Error)]

@@ -1,24 +1,17 @@
 use std::time::{Duration, Instant};
 
-use rtp::{RtpHeader, SeqNo, Ssrc};
+use rtp::{RtcpFb, RtpHeader, SeqNo, Ssrc};
 
 mod register;
 use register::ReceiverRegister;
 
-use crate::util::not_happening;
-
+// How long an SSRC receiver is alive without receiving any packets.
 const SSRC_ALIVE: Duration = Duration::from_millis(10_000);
 
-// https://www.rfc-editor.org/rfc/rfc8829#section-5.1.2
-const RR_INTERVAL: Duration = Duration::from_millis(4000);
-const NACK_MIN_INTERVAL: Duration = Duration::from_millis(250);
-
 pub struct ReceiverSource {
-    pub ssrc: Ssrc,
-    pub register: ReceiverRegister,
-    pub last_used: Instant,
-    pub last_rr: Instant,
-    pub last_nack: Instant,
+    ssrc: Ssrc,
+    register: ReceiverRegister,
+    last_used: Instant,
 }
 
 impl ReceiverSource {
@@ -28,9 +21,11 @@ impl ReceiverSource {
             ssrc: header.ssrc,
             register: ReceiverRegister::new(base_seq),
             last_used: now,
-            last_rr: now,
-            last_nack: now,
         }
+    }
+
+    pub fn ssrc(&self) -> Ssrc {
+        self.ssrc
     }
 
     pub fn update(&mut self, now: Instant, header: &RtpHeader, clock_rate: u32) -> SeqNo {
@@ -44,28 +39,31 @@ impl ReceiverSource {
         seq_no
     }
 
+    pub fn is_alive(&self, now: Instant) -> bool {
+        now <= (self.last_used + SSRC_ALIVE)
+    }
+
     pub fn is_valid(&self) -> bool {
         self.register.is_valid()
     }
 
-    pub fn poll_timeout(&mut self) -> Instant {
-        // cleanup when it's time to remove the SSRC receiver.
-        let cleanup_at = self.last_used + SSRC_ALIVE;
+    pub fn create_receiver_report(&mut self) -> RtcpFb {
+        let mut block = self.register.report_block();
+        block.ssrc = self.ssrc;
 
-        // next regular receiver report
-        let rr_at = self.last_rr + RR_INTERVAL;
-
-        // if we need to send a nack.
-        let nack_at = if self.register.has_nack_report() {
-            self.last_nack + NACK_MIN_INTERVAL
-        } else {
-            not_happening()
-        };
-
-        [cleanup_at, rr_at, nack_at].into_iter().min().unwrap()
+        RtcpFb::ReceiverReport(block)
     }
 
-    pub fn handle_timeout(&mut self, now: Instant) {
-        //
+    pub fn has_nack(&mut self) -> bool {
+        self.register.has_nack_report()
+    }
+
+    pub fn create_nack(&mut self) -> Option<RtcpFb> {
+        if let Some(mut nack) = self.register.nack_report() {
+            nack.ssrc = self.ssrc;
+            return Some(RtcpFb::Nack(nack));
+        }
+
+        None
     }
 }

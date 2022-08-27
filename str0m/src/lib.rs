@@ -59,6 +59,7 @@ pub struct Rtc {
     pending: Option<Changes>,
     remote_addrs: Vec<SocketAddr>,
     send_addr: Option<SendAddr>,
+    last_now: Instant,
 }
 
 struct SendAddr {
@@ -97,6 +98,7 @@ impl Rtc {
             pending: None,
             remote_addrs: vec![],
             send_addr: None,
+            last_now: already_happened(),
         }
     }
 
@@ -310,7 +312,14 @@ impl Rtc {
             .soonest(self.session.poll_timeout())
             .unwrap_or_else(not_happening);
 
-        Ok(Output::Timeout(time))
+        // We want to guarantee time doesn't go backwards.
+        let next = if time < self.last_now {
+            self.last_now
+        } else {
+            time
+        };
+
+        Ok(Output::Timeout(next))
     }
 
     pub fn handle_input(&mut self, input: Input) -> Result<(), RtcError> {
@@ -334,11 +343,13 @@ impl Rtc {
     }
 
     fn do_handle_timeout(&mut self, now: Instant) {
+        self.last_now = now;
         self.ice.handle_timeout(now);
         self.session.handle_timeout(now);
     }
 
     fn do_handle_receive(&mut self, now: Instant, r: net::Receive) -> Result<(), RtcError> {
+        self.last_now = now;
         use net::DatagramRecv::*;
         match r.contents {
             Stun(_) => self.ice.handle_receive(now, r),

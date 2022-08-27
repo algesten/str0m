@@ -1,16 +1,30 @@
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
-use rtp::{Extensions, Mid, RtcpHeader, RtpHeader, SessionId};
+use net_::DATAGRAM_MTU;
+use rtp::{
+    Extensions, Mid, RtcpFb, RtcpHeader, RtpHeader, SessionId, SRTCP_BLOCK_SIZE,
+    SRTCP_OVERHEAD_PREFIX, SRTCP_OVERHEAD_SUFFIX,
+};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
 use sdp::Answer;
 
 use crate::change::Changes;
 use crate::net;
+use crate::util::{already_happened, Soonest};
 use crate::RtcError;
 
 use super::{Channel, Media};
+
+// Time between regular receiver reports.
+// https://www.rfc-editor.org/rfc/rfc8829#section-5.1.2
+const RR_INTERVAL: Duration = Duration::from_millis(4000);
+
+// Minimum time we delay between sending nacks. This should be
+// set high enough to not cause additional problems in very bad
+// network conditions.
+const NACK_MIN_INTERVAL: Duration = Duration::from_millis(250);
 
 pub(crate) struct Session {
     pub id: SessionId,
@@ -20,6 +34,9 @@ pub(crate) struct Session {
     srtp_rx: Option<SrtpContext>,
     srtp_tx: Option<SrtpContext>,
     ssrc_map: HashMap<Ssrc, usize>,
+    last_regular: Instant,
+    last_nack: Instant,
+    feedback: Vec<RtcpFb>,
 }
 
 pub enum MediaEvent {
@@ -36,6 +53,9 @@ impl Session {
             srtp_rx: None,
             srtp_tx: None,
             ssrc_map: HashMap::new(),
+            last_regular: already_happened(),
+            last_nack: already_happened(),
+            feedback: vec![],
         }
     }
 
@@ -58,7 +78,25 @@ impl Session {
     }
 
     pub fn handle_timeout(&mut self, now: Instant) {
-        todo!()
+        for m in &mut self.media {
+            m.handle_timeout(now);
+        }
+
+        if now >= self.regular_feedback_at() {
+            self.last_regular = now;
+            for m in &mut self.media {
+                m.create_regular_feedback(&mut self.feedback);
+            }
+        }
+
+        if let Some(nack_at) = self.nack_at() {
+            if now >= nack_at {
+                self.last_nack = now;
+                for m in &mut self.media {
+                    m.create_nack(&mut self.feedback);
+                }
+            }
+        }
     }
 
     pub fn handle_receive(&mut self, now: Instant, r: net::Receive) {
@@ -133,11 +171,47 @@ impl Session {
     }
 
     pub fn poll_datagram(&mut self) -> Option<net::DatagramSend> {
-        todo!()
+        let feedback = self.poll_feedback();
+        if feedback.is_some() {
+            return feedback;
+        }
+
+        None
+    }
+
+    fn poll_feedback(&mut self) -> Option<net::DatagramSend> {
+        if self.feedback.is_empty() {
+            return None;
+        }
+
+        // The encryptable "body" must be an even number of 16.
+        // For an mtu 1500, this works out as: 1500 - (1500 - 8 - 16) % 16 => 1496
+        const ENCRYPTABLE_MTU: usize = DATAGRAM_MTU
+            - (DATAGRAM_MTU - SRTCP_OVERHEAD_PREFIX - SRTCP_OVERHEAD_SUFFIX) % SRTCP_BLOCK_SIZE;
+
+        let mut data = vec![0_u8; ENCRYPTABLE_MTU];
+        let buf = &mut data[SRTCP_OVERHEAD_PREFIX..];
+
+        // the bytes available while still fitting the srtp
+        let len = buf.len() - SRTCP_OVERHEAD_SUFFIX;
+
+        let mut buf = &mut buf[..len];
+        assert!(
+            buf.len() % SRTCP_BLOCK_SIZE == 0,
+            "Multiple of SRTCP_BLOCK_SIZE"
+        );
+
+        RtcpFb::build_feedback(&mut self.feedback, &mut buf);
+
+        Some(net::DatagramSend::new(data))
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        self.media.iter_mut().filter_map(|m| m.poll_timeout()).min()
+        let media_at = self.media.iter_mut().filter_map(|m| m.poll_timeout()).min();
+        let regular_at = Some(self.regular_feedback_at());
+        let nack_at = self.nack_at();
+
+        media_at.soonest(regular_at).soonest(nack_at)
     }
 
     pub fn has_mid(&self, mid: Mid) -> bool {
@@ -156,6 +230,20 @@ impl Session {
     // }
     // pub fn poll_sctp(&mut self) -> Option<Sctp> {
     // }
+
+    fn regular_feedback_at(&self) -> Instant {
+        self.last_regular + RR_INTERVAL
+    }
+
+    fn nack_at(&mut self) -> Option<Instant> {
+        let need_nack = self.media.iter_mut().any(|s| s.has_nack());
+
+        if need_nack {
+            Some(self.last_nack + NACK_MIN_INTERVAL)
+        } else {
+            None
+        }
+    }
 }
 
 /// Fallback strategy to match up packet with m-line.

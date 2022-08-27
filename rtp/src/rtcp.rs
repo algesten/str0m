@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::str::from_utf8;
 
@@ -11,6 +12,9 @@ pub struct RtcpHeader {
     pub packet_type: RtcpType,
     /// Length of RTCP message in bytes, including header.
     pub length: usize,
+    /// There is always an ssrc following the first 4 bytes, sometimes
+    /// it counts towards the header, sometimes it doesn't.
+    pub ssrc: Ssrc,
 }
 
 /// Number of _something_ in the RTCP packet.
@@ -38,6 +42,19 @@ impl FeedbackMessageType {
             FeedbackMessageType::ReceptionReport(v) => *v,
             FeedbackMessageType::SourceCount(v) => *v,
             _ => panic!("Not a count"),
+        }
+    }
+
+    fn as_u8(&self) -> u8 {
+        use FeedbackMessageType::*;
+        match self {
+            ReceptionReport(v) | SourceCount(v) | Subtype(v) => {
+                assert!(*v <= 31, "rtcp fmt when count must be <= 31");
+                *v
+            }
+            TransportFeedback(v) => *v as u8,
+            PayloadFeedback(v) => *v as u8,
+            NotUsed => 0,
         }
     }
 }
@@ -81,6 +98,14 @@ pub enum RtcpType {
     /// RTCP_PT_XR
     ExtendedReport = 207,
 }
+
+//         0                   1                   2                   3
+//         0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+//        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// header |V=2|P|    RC   |   PT=SR=200   |             length            |
+//        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+//        |                         SSRC of sender                        |
+//        +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
 
 impl RtcpHeader {
     pub fn parse(buf: &[u8], is_srtcp: bool) -> Option<RtcpHeader> {
@@ -128,17 +153,93 @@ impl RtcpHeader {
         //   zero a valid length ...)
         let length = (u16::from_be_bytes(length_be) + 1) * 4;
 
+        // There's always an SSRC after the first 4 octets, sometimes it counts
+        // towards the header, sometimes it doesn't. We can always read it.
+        let ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]).into();
+
         Some(RtcpHeader {
             version,
             has_padding,
             fmt,
             packet_type,
             length: length as usize,
+            ssrc,
         })
     }
 
     pub fn feedback<'a>(buf: &'a [u8]) -> impl Iterator<Item = RtcpFb> + 'a {
         FbIter::new(buf)
+    }
+
+    pub fn can_continue(&self, fb: &RtcpFb) -> bool {
+        use RtcpType::*;
+        match fb {
+            RtcpFb::SenderInfo(_) => false,
+            RtcpFb::ReceiverReport(_) => {
+                if !matches!(self.packet_type, SenderReport | ReceiverReport) {
+                    return false;
+                }
+                self.fmt.count() < 31
+            }
+            RtcpFb::Sdes(_) => {
+                if !matches!(self.packet_type, SourceDescription) {
+                    return false;
+                }
+                self.fmt.count() < 31
+            }
+            RtcpFb::Goodbye(_) => {
+                if !matches!(self.packet_type, SourceDescription) {
+                    return false;
+                }
+                self.fmt.count() < 31
+            }
+            RtcpFb::Nack(_) => {
+                matches!(
+                    self.fmt,
+                    FeedbackMessageType::TransportFeedback(TransportType::Nack)
+                )
+            }
+            RtcpFb::Pli(_) => false,
+            RtcpFb::Fir(_) => false,
+        }
+    }
+
+    pub fn finish(&self, buf: &mut [u8]) {
+        assert!(buf.len() >= 8, "rtcp buffer must fit header");
+        assert!(buf.len() % 4 == 0, "rtcp buffer must be multiple of 4");
+
+        buf[0] = 0b10_0_00000 | self.fmt.as_u8();
+        buf[1] = self.packet_type as u8;
+
+        (&mut buf[2..4]).copy_from_slice(&self.length.to_be_bytes());
+
+        if self.len() == 8 {
+            // size indicates we should write the ssrc for the header, and not the body.
+            (&mut buf[4..8]).copy_from_slice(&(*self.ssrc).to_be_bytes());
+        }
+    }
+
+    /// Byte length of the RTCP header.
+    pub fn len(&self) -> usize {
+        use RtcpType::*;
+        match self.packet_type {
+            // This looks strange when reading the RFC. However we consider the SSRC
+            // following the header to belong to the feedback rather than then header
+            // for sender reports.
+            SenderReport => 4,
+            // The first SSRC is the "sender", which is useless and sent as 0.
+            ReceiverReport => 8,
+            // The first SSRC is part of the chunks of SDES.
+            SourceDescription => 4,
+            // The first SSRC is an actual goodbye.
+            Goodbye => 4,
+            ApplicationDefined => 4,
+            // The first SSRC is the "sender", which is useless and sent as 0.
+            TransportLayerFeedback => 8,
+            // The first SSRC is the "sender", which is useless and sent as 0.
+            PayloadSpecificFeedback => 8,
+            ExtendedReport => 8,
+        }
     }
 }
 
@@ -183,13 +284,13 @@ impl<'a> Iterator for FbIter<'a> {
 
         self.offset += header.length;
 
-        todo!()
+        self.queue.pop_front()
     }
 }
 
+#[derive(Debug)]
 pub enum RtcpFb {
-    SenderReportInfo(ReportInfo),
-    SenderReport(ReportBlock),
+    SenderInfo(SenderInfo),
     ReceiverReport(ReportBlock),
     Sdes(Sdes),
     Goodbye(Ssrc),
@@ -199,11 +300,31 @@ pub enum RtcpFb {
 }
 
 impl RtcpFb {
+    pub fn build_feedback(feedback: &mut Vec<Self>, buf: &mut [u8]) {
+        // Certain grouping is possible, which means we sort the feedback to
+        // be able to extract the groups.
+        feedback.sort_by_key(|f| f.ord_no());
+
+        todo!()
+    }
+
+    fn ord_no(&self) -> usize {
+        use RtcpFb::*;
+        match self {
+            SenderInfo(_) => 0,
+            ReceiverReport(_) => 1,
+            Sdes(_) => 2,
+            Goodbye(_) => 3,
+            Nack(_) => 4,
+            Pli(_) => 5,
+            Fir(_) => 6,
+        }
+    }
+
     pub fn ssrc(&self) -> Ssrc {
         use RtcpFb::*;
         match self {
-            SenderReportInfo(v) => v.ssrc,
-            SenderReport(v) => v.ssrc,
+            SenderInfo(v) => v.ssrc,
             ReceiverReport(v) => v.ssrc,
             Sdes(v) => v.ssrc,
             Goodbye(v) => *v,
@@ -212,9 +333,77 @@ impl RtcpFb {
             Fir(v) => v.ssrc,
         }
     }
+
+    pub fn begin_header(&self) -> RtcpHeader {
+        let mut header = RtcpHeader {
+            version: 2,
+            has_padding: false,
+            fmt: FeedbackMessageType::NotUsed,
+            packet_type: RtcpType::SenderReport,
+            length: 0,
+            ssrc: 0.into(),
+        };
+
+        match self {
+            RtcpFb::SenderInfo(_) => {
+                header.fmt = FeedbackMessageType::ReceptionReport(0);
+                header.packet_type = RtcpType::SenderReport;
+            }
+            RtcpFb::ReceiverReport(_) => {
+                header.fmt = FeedbackMessageType::ReceptionReport(0);
+                header.packet_type = RtcpType::ReceiverReport;
+            }
+            RtcpFb::Sdes(_) => {
+                header.fmt = FeedbackMessageType::SourceCount(0);
+                header.packet_type = RtcpType::SourceDescription;
+            }
+            RtcpFb::Goodbye(_) => {
+                header.fmt = FeedbackMessageType::SourceCount(0);
+                header.packet_type = RtcpType::Goodbye;
+            }
+            RtcpFb::Nack(_) => {
+                header.fmt = FeedbackMessageType::TransportFeedback(TransportType::Nack);
+                header.packet_type = RtcpType::TransportLayerFeedback;
+            }
+            RtcpFb::Pli(_) => {
+                header.fmt =
+                    FeedbackMessageType::PayloadFeedback(PayloadType::PictureLossIndication);
+                header.packet_type = RtcpType::PayloadSpecificFeedback;
+            }
+            RtcpFb::Fir(_) => {
+                header.fmt = FeedbackMessageType::PayloadFeedback(PayloadType::FullIntraRequest);
+                header.packet_type = RtcpType::PayloadSpecificFeedback;
+            }
+        }
+
+        header
+    }
+
+    pub fn maybe_write_to(&self, buf: &mut [u8], header: &mut RtcpHeader) -> Option<usize> {
+        {
+            use RtcpFb::*;
+            if matches!(self, SenderInfo(_) | ReceiverReport(_)) {
+                if let FeedbackMessageType::ReceptionReport(v) = &mut header.fmt {
+                    *v += 1;
+                } else {
+                    unreachable!("Incorrect header for {:?}", self)
+                }
+            }
+            if matches!(self, Sdes(_) | Goodbye(_)) {
+                if let FeedbackMessageType::SourceCount(v) = &mut header.fmt {
+                    *v += 1;
+                } else {
+                    unreachable!("Incorrect header for {:?}", self)
+                }
+            }
+        }
+
+        None
+    }
 }
 
-pub struct ReportInfo {
+#[derive(Debug)]
+pub struct SenderInfo {
     pub ssrc: Ssrc,
     pub ntp_time: MediaTime,
     pub rtp_time: u32,
@@ -222,6 +411,7 @@ pub struct ReportInfo {
     pub sender_octet_count: u32,
 }
 
+#[derive(Debug)]
 pub struct ReportBlock {
     pub ssrc: Ssrc,
     pub fraction_lost: u8,
@@ -232,6 +422,7 @@ pub struct ReportBlock {
     pub last_sr_delay: u32,
 }
 
+#[derive(Debug)]
 pub struct Sdes {
     pub ssrc: Ssrc,
     pub stype: SdesType,
@@ -248,9 +439,11 @@ pub struct Nack {
     pub blp: u16,
 }
 
+#[derive(Debug)]
 pub struct Pli {
     pub ssrc: Ssrc,
 }
+#[derive(Debug)]
 pub struct Fir {
     pub ssrc: Ssrc,
 }
@@ -334,7 +527,7 @@ fn parse_sender_report(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<Rtc
     let sender_packet_count = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
     let sender_octet_count = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
 
-    queue.push_back(RtcpFb::SenderReportInfo(ReportInfo {
+    queue.push_back(RtcpFb::SenderInfo(SenderInfo {
         ssrc,
         ntp_time,
         rtp_time,
@@ -345,8 +538,8 @@ fn parse_sender_report(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<Rtc
     // Number of sender reports.
     let count = header.fmt.count() as usize;
 
-    read_reports(buf, count, move |report| {
-        queue.push_back(RtcpFb::SenderReport(report));
+    read_reports(&buf[24..], count, move |report| {
+        queue.push_back(RtcpFb::ReceiverReport(report));
     });
 }
 
@@ -357,19 +550,15 @@ fn parse_receiver_report(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<R
         return;
     }
 
-    let buf = &buf[8..];
-
     let count = header.fmt.count() as usize;
 
-    read_reports(buf, count, move |report| {
+    read_reports(&buf[8..], count, move |report| {
         queue.push_back(RtcpFb::ReceiverReport(report));
     });
 }
 
 fn read_reports(mut buf: &[u8], count: usize, mut enqueue: impl FnMut(ReportBlock)) {
     for _ in 0..count {
-        buf = &buf[24..]; // by chance the sender info is same size as a report block.
-
         let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
         let fraction_lost = buf[4];
         let packets_lost = u32::from_be_bytes([0, buf[5], buf[6], buf[7]]);
@@ -389,33 +578,62 @@ fn read_reports(mut buf: &[u8], count: usize, mut enqueue: impl FnMut(ReportBloc
         };
 
         enqueue(report);
+        buf = &buf[24..];
     }
 }
 
 fn parse_sdes(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
     let mut buf = &buf[4..];
+    let mut abs = 0;
 
     for _ in 0..header.fmt.count() {
         let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
-        let stype = SdesType::from_u8(buf[4]);
-        let len = buf[5] as usize;
 
-        if let Ok(value) = from_utf8(&buf[6..(6 + len)]) {
+        buf = &buf[4..];
+        abs += 4;
+        loop {
+            let stype = SdesType::from_u8(buf[0]);
+
             if matches!(stype, SdesType::END) {
-                // The end of SDES
+                // The end of SDES.
+
+                // Each chunk consists of an SSRC/CSRC identifier followed by a list of
+                // zero or more items, which carry information about the SSRC/CSRC.
+                // Each chunk starts on a 32-bit boundary.
+                //
+                // Items are contiguous, i.e., items are not individually padded to a
+                // 32-bit boundary.  Text is not null terminated because some multi-
+                // octet encodings include null octets.
+                //
+                // No length octet follows the null item type octet, but additional null
+                // octets MUST be included if needed to pad until the next 32-bit
+                // boundary.
+
+                let pad = abs % 4;
+                buf = &buf[pad..];
+                abs += pad;
+
                 break;
             }
 
-            let sdes = Sdes {
-                ssrc,
-                stype,
-                value: value.to_string(),
-            };
-            queue.push_back(RtcpFb::Sdes(sdes));
-        } else {
-            break;
+            let len = buf[1] as usize;
+            buf = &buf[2..];
+            abs += 2;
+
+            if let Ok(value) = from_utf8(&buf[..len]) {
+                let sdes = Sdes {
+                    ssrc,
+                    stype,
+                    value: value.to_string(),
+                };
+                queue.push_back(RtcpFb::Sdes(sdes));
+            } else {
+                // failed to read as utf-8. skip.
+            }
+
+            buf = &buf[len..];
+            abs += len;
         }
-        buf = &buf[(6 + len)..];
     }
 
     //

@@ -11,6 +11,18 @@ use crate::header::RtpHeader;
 const SRTP_HMAC_LEN: usize = 10;
 const SRTCP_INDEX_LEN: usize = 4;
 
+// header = 4 bytes
+// ssrc   = 4 bytes
+// ssrtcp_index = 4 bytes
+// hmac = 10 bytes
+// TOTAL overhead for SRTCP = 22 bytes.
+// However, each RTCP packet must be on a 4 byte boundary since length is
+// given in number of 4 bytes - 1 (making 0 valid).
+
+pub const SRTCP_OVERHEAD_PREFIX: usize = 8;
+pub const SRTCP_OVERHEAD_SUFFIX: usize = 16;
+pub const SRTCP_BLOCK_SIZE: usize = 16;
+
 #[derive(Debug)]
 pub struct SrtpContext {
     /// Encryption/decryption derived from srtp_key for RTP.

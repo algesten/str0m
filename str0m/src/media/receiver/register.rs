@@ -289,6 +289,7 @@ impl ReceiverRegister {
     /// This modifies the state since fraction_lost is calculated
     /// since the last call to this function.
     pub fn report_block(&mut self) -> ReportBlock {
+        todo!();
         ReportBlock {
             ssrc: 0.into(),
             fraction_lost: self.fraction_lost(),
