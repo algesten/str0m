@@ -19,13 +19,19 @@ pub mod net {
 }
 
 pub mod media;
-use media::{AsSdpParams, Channel, Media, Session};
+use media::{Channel, Media};
 
 mod change;
 pub use change::ChangeSet;
 
 mod util;
 pub(crate) use util::*;
+
+mod session;
+use session::Session;
+
+mod session_sdp;
+use session_sdp::AsSdpParams;
 
 /// Errors for the whole Rtc engine.
 #[derive(Debug, Error)]

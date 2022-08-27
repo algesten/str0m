@@ -4,8 +4,9 @@ use rtp::{MLineIdx, Mid};
 use sdp::{MediaAttribute, MediaLine, MediaType, Proto, Sdp, SessionAttribute, Setup};
 
 use crate::change::Changes;
+use crate::media::MediaKind;
 
-use super::{Channel, Media, MediaKind, Session};
+use super::{Channel, Media, Session};
 
 pub struct AsSdpParams<'a> {
     pub candidates: &'a [Candidate],
