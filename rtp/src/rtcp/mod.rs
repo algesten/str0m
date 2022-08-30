@@ -10,6 +10,9 @@ mod sdes;
 mod sr;
 mod twcc;
 
+#[cfg(test)]
+mod test;
+
 use fmt::{FeedbackMessageType, PayloadType, TransportType};
 use iter::FbIter;
 pub use nack::Nack;
@@ -242,7 +245,7 @@ impl RtcpFb {
 
                 // Each SR can hold at most 31 RR. This is furter restricted by how much
                 // space is left in the buffer we write to.
-                rr_count.min(31).min(fitting_sr)
+                rr_count.min(31 - xrr).min(fitting_sr)
             };
 
             // Total length of the first item + fitted rr.
@@ -298,14 +301,17 @@ impl RtcpFb {
                 let available_for_gb = buf.len() - NEEDED;
                 let fitting_gb = available_for_gb / 4;
 
-                gb_count.min(31).min(fitting_gb)
+                gb_count.min(30).min(fitting_gb)
             };
 
             // Total length of the first item + fitted rr.
             let length = NEEDED + max_gb * 4;
 
+            // Number of goodbyes to send.
+            let count = max_gb + 1;
+
             // The header with counts/length
-            let header = fb.as_header(max_gb as u8, length);
+            let header = fb.as_header(count as u8, length);
             header.write_to(buf);
 
             // First item after the header.
@@ -421,112 +427,5 @@ impl RtcpFb {
 impl Ssrc {
     fn write_to(&self, buf: &mut [u8]) {
         (&mut buf[0..4]).copy_from_slice(&(*self).to_be_bytes())
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use crate::MediaTime;
-
-    use super::*;
-
-    fn sr(ssrc: u32, ntp_time: MediaTime) -> RtcpFb {
-        RtcpFb::SenderInfo(SenderInfo {
-            ssrc: ssrc.into(),
-            ntp_time,
-            rtp_time: 4,
-            sender_packet_count: 5,
-            sender_octet_count: 6,
-        })
-    }
-
-    fn rr(ssrc: u32) -> RtcpFb {
-        RtcpFb::ReceiverReport(ReceiverReport {
-            ssrc: ssrc.into(),
-            fraction_lost: 3,
-            packets_lost: 1234,
-            max_seq: 4000,
-            jitter: 5,
-            last_sr_time: 12,
-            last_sr_delay: 1,
-        })
-    }
-
-    #[test]
-    fn test_sr() {
-        let mut buf = vec![0; 1200];
-
-        let now = MediaTime::now();
-
-        let mut fb = VecDeque::new();
-        fb.push_back(sr(1, now));
-
-        let n = RtcpFb::build_feedback(&mut fb, &mut buf);
-        buf.truncate(n);
-        assert_eq!(n, 28);
-
-        let mut iter = RtcpFb::feedback(&buf);
-
-        assert_eq!(iter.next(), Some(sr(1, now)));
-    }
-
-    #[test]
-    fn test_rr() {
-        let mut buf = vec![0; 1200];
-
-        let mut fb = VecDeque::new();
-        fb.push_back(rr(2));
-
-        let n = RtcpFb::build_feedback(&mut fb, &mut buf);
-        buf.truncate(n);
-        assert_eq!(n, 32);
-
-        let mut iter = RtcpFb::feedback(&buf);
-
-        assert_eq!(iter.next(), Some(rr(2)));
-    }
-
-    #[test]
-    fn test_sr_rr() {
-        let mut buf = vec![0; 1200];
-
-        let now = MediaTime::now();
-
-        let mut fb = VecDeque::new();
-        fb.push_back(rr(2));
-        fb.push_back(sr(1, now));
-
-        let n = RtcpFb::build_feedback(&mut fb, &mut buf);
-        buf.truncate(n);
-        assert_eq!(n, 52);
-
-        let mut iter = RtcpFb::feedback(&buf);
-
-        assert_eq!(iter.next(), Some(sr(1, now)));
-        assert_eq!(iter.next(), Some(rr(2)));
-    }
-
-    #[test]
-    fn test_sr_rr_more_than_31() {
-        let mut buf = vec![0; 1200];
-
-        let now = MediaTime::now();
-
-        let mut fb = VecDeque::new();
-        for i in 0..33 {
-            fb.push_back(rr(i + 2));
-        }
-        fb.push_back(sr(1, now));
-
-        let n = RtcpFb::build_feedback(&mut fb, &mut buf);
-        buf.truncate(n);
-        assert_eq!(n, 828);
-
-        let mut iter = RtcpFb::feedback(&buf);
-
-        assert_eq!(iter.next(), Some(sr(1, now)));
-        for i in 0..33 {
-            fb.push_back(rr(i + 2));
-        }
     }
 }

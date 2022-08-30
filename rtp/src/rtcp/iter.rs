@@ -90,10 +90,11 @@ fn parse_next(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
     }
 }
 
-fn parse_goodbye(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
-    let mut buf = &buf[4..];
-
+fn parse_goodbye(header: &RtcpHeader, mut buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
     for _ in 0..header.fmt.count() {
+        if buf.len() < 4 {
+            return;
+        }
         let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
         queue.push_back(RtcpFb::Goodbye(ssrc));
         buf = &buf[4..];
