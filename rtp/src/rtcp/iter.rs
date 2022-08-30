@@ -4,9 +4,9 @@ use crate::rtcp::fmt::FeedbackMessageType;
 use crate::{RtcpFb, RtcpHeader};
 
 use super::nack::parse_nack_fb;
-use super::report_block::parse_receiver_report;
+use super::rr::parse_receiver_report;
 use super::sdes::parse_sdes;
-use super::sender_info::parse_sender_report;
+use super::sr::parse_sender_report;
 use super::twcc::parse_twcc_fb;
 use super::{PayloadType, RtcpType, TransportType};
 
@@ -37,7 +37,7 @@ impl<'a> Iterator for FbIter<'a> {
         let buf = &self.buf[self.offset..];
         let header = RtcpHeader::parse(self.buf, false)?;
 
-        parse_next(&header, buf, &mut self.queue);
+        parse_next(&header, &buf[header.len()..], &mut self.queue);
 
         self.offset += header.length;
 

@@ -2,8 +2,8 @@ use std::collections::VecDeque;
 
 use crate::{RtcpFb, RtcpHeader, Ssrc};
 
-#[derive(Debug)]
-pub struct ReportBlock {
+#[derive(Debug, PartialEq, Eq)]
+pub struct ReceiverReport {
     pub ssrc: Ssrc,
     pub fraction_lost: u8,
     pub packets_lost: u32, // 24 bit
@@ -13,7 +13,7 @@ pub struct ReportBlock {
     pub last_sr_delay: u32,
 }
 
-impl ReportBlock {
+impl ReceiverReport {
     pub(crate) fn parse(buf: &[u8]) -> Self {
         // Receiver report shape is here
         // https://www.rfc-editor.org/rfc/rfc3550#section-6.4.2
@@ -26,7 +26,7 @@ impl ReportBlock {
         let last_sr_time = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
         let last_sr_delay = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
 
-        ReportBlock {
+        ReceiverReport {
             ssrc,
             fraction_lost,
             packets_lost,
@@ -48,16 +48,14 @@ impl ReportBlock {
     }
 }
 
-pub fn parse_receiver_report(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
-    if buf.len() < 8 {
-        return;
-    }
-
+pub fn parse_receiver_report(header: &RtcpHeader, mut buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
     let count = header.fmt.count() as usize;
-    let mut buf = &buf[8..];
 
     for _ in 0..count {
-        let report = ReportBlock::parse(buf);
+        if buf.len() < 24 {
+            return;
+        }
+        let report = ReceiverReport::parse(buf);
         queue.push_back(RtcpFb::ReceiverReport(report));
         buf = &buf[24..];
     }

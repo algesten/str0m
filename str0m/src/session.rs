@@ -154,7 +154,7 @@ impl Session {
         let srtp = self.srtp_rx.as_mut()?;
         let decrypted = srtp.unprotect_rtcp(&buf)?;
 
-        let mut fb_iter = RtcpHeader::feedback(&decrypted);
+        let mut fb_iter = RtcpFb::feedback(&decrypted);
 
         while let Some(fb) = fb_iter.next() {
             if let Some(idx) = self.ssrc_map.get(&fb.ssrc()) {

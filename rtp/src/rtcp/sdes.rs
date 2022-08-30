@@ -3,11 +3,10 @@ use std::str::from_utf8;
 
 use crate::{RtcpFb, RtcpHeader, Ssrc};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Sdes {
     pub ssrc: Ssrc,
-    pub stype: SdesType,
-    pub value: String,
+    pub values: Vec<(SdesType, String)>,
 }
 
 #[allow(clippy::upper_case_acronyms)]
@@ -60,6 +59,17 @@ pub fn parse_sdes(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>)
     for _ in 0..header.fmt.count() {
         let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
 
+        queue.push_back(RtcpFb::Sdes(Sdes {
+            ssrc,
+            values: vec![],
+        }));
+
+        // TODO there must be a better way, right?
+        let sdes = match queue.back_mut().unwrap() {
+            RtcpFb::Sdes(v) => v,
+            _ => unreachable!(),
+        };
+
         buf = &buf[4..];
         abs += 4;
         loop {
@@ -92,12 +102,7 @@ pub fn parse_sdes(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>)
             abs += 2;
 
             if let Ok(value) = from_utf8(&buf[..len]) {
-                let sdes = Sdes {
-                    ssrc,
-                    stype,
-                    value: value.to_string(),
-                };
-                queue.push_back(RtcpFb::Sdes(sdes));
+                sdes.values.push((stype, value.to_string()));
             } else {
                 // failed to read as utf-8. skip.
             }

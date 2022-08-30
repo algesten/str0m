@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use bitvec::prelude::*;
-use rtp::{Nack, ReportBlock, SeqNo};
+use rtp::{Nack, ReceiverReport, SeqNo};
 
 const MAX_DROPOUT: u64 = 3000;
 const MAX_MISORDER: u64 = 100;
@@ -288,9 +288,9 @@ impl ReceiverRegister {
     ///
     /// This modifies the state since fraction_lost is calculated
     /// since the last call to this function.
-    pub fn report_block(&mut self) -> ReportBlock {
+    pub fn report_block(&mut self) -> ReceiverReport {
         todo!();
-        ReportBlock {
+        ReceiverReport {
             ssrc: 0.into(),
             fraction_lost: self.fraction_lost(),
             packets_lost: self.packets_lost(),

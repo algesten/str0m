@@ -1,8 +1,8 @@
 use std::collections::VecDeque;
 
-use crate::{MediaTime, ReportBlock, RtcpFb, RtcpHeader, Ssrc};
+use crate::{MediaTime, ReceiverReport, RtcpFb, RtcpHeader, Ssrc};
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SenderInfo {
     pub ssrc: Ssrc,
     pub ntp_time: MediaTime,
@@ -57,18 +57,21 @@ impl SenderInfo {
 }
 
 pub fn parse_sender_report(header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
-    if buf.len() < 28 {
+    if buf.len() < 24 {
         return;
     }
 
-    queue.push_back(RtcpFb::SenderInfo(SenderInfo::parse(&buf[4..])));
+    queue.push_back(RtcpFb::SenderInfo(SenderInfo::parse(buf)));
 
     // Number of receiver reports.
     let count = header.fmt.count() as usize;
-    let mut buf = &buf[28..];
+    let mut buf = &buf[24..];
 
     for _ in 0..count {
-        let report = ReportBlock::parse(buf);
+        if buf.len() < 24 {
+            return;
+        }
+        let report = ReceiverReport::parse(buf);
         queue.push_back(RtcpFb::ReceiverReport(report));
         buf = &buf[24..];
     }
