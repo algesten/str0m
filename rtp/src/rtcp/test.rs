@@ -29,11 +29,18 @@ fn sdes(ssrc: u32) -> RtcpFb {
     RtcpFb::Sdes(Sdes {
         ssrc: ssrc.into(),
         values: vec![
-            //
             (SdesType::NAME, "Martin".into()),
             (SdesType::TOOL, "str0m".into()),
             (SdesType::NOTE, "Writing things right here".into()),
         ],
+    })
+}
+
+fn nack(ssrc: u32, pid: u16) -> RtcpFb {
+    RtcpFb::Nack(Nack {
+        ssrc: ssrc.into(),
+        pid,
+        blp: 0b1010_0101,
     })
 }
 
@@ -149,8 +156,8 @@ fn test_gb_2() {
 
     let mut iter = RtcpFb::feedback(&buf);
 
-    assert_eq!(iter.next(), Some(gb(2)));
     assert_eq!(iter.next(), Some(gb(1)));
+    assert_eq!(iter.next(), Some(gb(2)));
 }
 
 #[test]
@@ -203,8 +210,8 @@ fn test_sdes_2() {
 
     let mut iter = RtcpFb::feedback(&buf);
 
-    assert_eq!(iter.next(), Some(sdes(2)));
     assert_eq!(iter.next(), Some(sdes(1)));
+    assert_eq!(iter.next(), Some(sdes(2)));
 }
 
 #[test]
@@ -238,5 +245,77 @@ fn test_sdes_32() {
 
     for i in 24..32 {
         assert_eq!(iter.next(), Some(sdes(i + 3)));
+    }
+}
+
+#[test]
+fn test_nack() {
+    let mut buf = vec![0; 1200];
+
+    let mut fb = VecDeque::new();
+    fb.push_back(nack(1, 2));
+
+    let n = RtcpFb::build_feedback(&mut fb, &mut buf);
+    buf.truncate(n);
+    assert_eq!(n, 16);
+
+    let mut iter = RtcpFb::feedback(&buf);
+
+    assert_eq!(iter.next(), Some(nack(1, 2)));
+}
+
+#[test]
+fn test_nack_2_same_ssrc() {
+    let mut buf = vec![0; 1200];
+
+    let mut fb = VecDeque::new();
+    fb.push_back(nack(1, 2));
+    fb.push_back(nack(1, 20));
+
+    let n = RtcpFb::build_feedback(&mut fb, &mut buf);
+    buf.truncate(n);
+    assert_eq!(n, 20);
+
+    let mut iter = RtcpFb::feedback(&buf);
+
+    assert_eq!(iter.next(), Some(nack(1, 2)));
+    assert_eq!(iter.next(), Some(nack(1, 20)));
+}
+
+#[test]
+fn test_nack_2_different_ssrc() {
+    let mut buf = vec![0; 1200];
+
+    let mut fb = VecDeque::new();
+    fb.push_back(nack(1, 2));
+    fb.push_back(nack(2, 20));
+
+    let n = RtcpFb::build_feedback(&mut fb, &mut buf);
+    buf.truncate(n);
+    assert_eq!(n, 32);
+
+    let mut iter = RtcpFb::feedback(&buf);
+
+    assert_eq!(iter.next(), Some(nack(1, 2)));
+    assert_eq!(iter.next(), Some(nack(2, 20)));
+}
+
+#[test]
+fn test_nack_32_same_ssrc() {
+    let mut buf = vec![0; 1200];
+
+    let mut fb = VecDeque::new();
+    for i in 0..32 {
+        fb.push_back(nack(i + 1, 19 * i as u16));
+    }
+
+    let n = RtcpFb::build_feedback(&mut fb, &mut buf);
+    buf.truncate(n);
+    assert_eq!(n, 512);
+
+    let mut iter = RtcpFb::feedback(&buf);
+
+    for i in 0..32 {
+        assert_eq!(iter.next(), Some(nack(i + 1, 19 * i as u16)));
     }
 }

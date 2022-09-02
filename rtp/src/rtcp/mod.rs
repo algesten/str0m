@@ -1,3 +1,4 @@
+use std::cmp;
 use std::collections::VecDeque;
 
 use crate::Ssrc;
@@ -209,8 +210,12 @@ impl RtcpFb {
         let mut abs = 0;
 
         // Certain grouping is possible, which means we sort the feedback to
-        // be able to extract the groups.
-        feedback.make_contiguous().sort_by_key(RtcpFb::ord_no);
+        // be able to extract the groups. Furthermore, nacks are possible to pack
+        // multiple under the same header as long as they are the same ssrc. This
+        // sort will sort on:
+        // 1. type of RtcpFb packet
+        // 2. SSRC.
+        feedback.make_contiguous().sort_by(RtcpFb::sorter);
 
         // This either writes SenderInfo + ReceiverReport to make SenderReports (SR), or
         // straight up ReceiverReports (RR).
@@ -382,7 +387,68 @@ impl RtcpFb {
             abs += used_length;
         }
 
+        while let Some(RtcpFb::Nack(s)) = feedback.front() {
+            let ssrc = s.ssrc;
+
+            // nack has this structre, we can pack on ssrc.
+            // [ssrc_sender, ssrc_media_source, fci, fci, ...]
+
+            const NEEDED: usize = 8 + 8;
+
+            if buf.len() < NEEDED {
+                return abs;
+            }
+
+            let fb = feedback.pop_front().unwrap();
+
+            let same_ssrc = feedback
+                .iter()
+                .filter(|f| {
+                    if let RtcpFb::Nack(s) = f {
+                        s.ssrc == ssrc
+                    } else {
+                        false
+                    }
+                })
+                .count();
+
+            let remaining = buf.len() - NEEDED;
+            let fits_in_space = remaining / 4;
+
+            let max_to_write = same_ssrc.min(30).min(fits_in_space);
+            let count = max_to_write + 1;
+
+            let used_length = NEEDED + max_to_write * 4;
+
+            let header = fb.as_header(count as u8, used_length);
+            header.write_to(buf);
+
+            fb.write_to(&mut buf[header.len()..]);
+
+            buf = &mut buf[NEEDED..];
+
+            for _ in 0..max_to_write {
+                let fbn = feedback.pop_front().unwrap();
+                let nack = match fbn {
+                    RtcpFb::Nack(v) => v,
+                    _ => unreachable!(),
+                };
+                nack.write_pid_blp(buf);
+                buf = &mut buf[4..];
+            }
+
+            abs += used_length;
+        }
+
         abs
+    }
+
+    fn sorter(a: &RtcpFb, b: &RtcpFb) -> cmp::Ordering {
+        let ord = a.ord_no().cmp(&b.ord_no());
+        match ord {
+            cmp::Ordering::Equal => a.ssrc().cmp(&b.ssrc()),
+            _ => ord,
+        }
     }
 
     fn ord_no(&self) -> usize {
@@ -405,7 +471,7 @@ impl RtcpFb {
             ReceiverReport(v) => v.write_to(buf),
             Goodbye(v) => v.write_to(buf),
             Sdes(v) => v.write_to(buf),
-            Nack(_) => todo!(),
+            Nack(v) => v.write_to(buf),
             Pli(_) => todo!(),
             Fir(_) => todo!(),
         }
