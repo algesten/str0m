@@ -20,6 +20,9 @@ pub use rr::ReceiverReport;
 use sdes::Sdes;
 pub use sr::SenderInfo;
 
+use self::rr::LEN_RR;
+use self::sr::LEN_SR;
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum RtcpFb {
     SenderInfo(SenderInfo),
@@ -187,7 +190,7 @@ impl RtcpHeader {
 
         if self.len() == 8 {
             // size indicates we should write the ssrc for the header, and not the body.
-            (&mut buf[4..8]).copy_from_slice(&(*self.ssrc).to_be_bytes());
+            (&mut buf[4..8]).copy_from_slice(&self.ssrc.to_be_bytes());
         }
     }
 
@@ -195,9 +198,6 @@ impl RtcpHeader {
         self.packet_type.header_len()
     }
 }
-
-const SR_LEN: usize = 6 * 4;
-const RR_LEN: usize = 6 * 4;
 
 impl RtcpFb {
     pub fn feedback<'a>(buf: &'a [u8]) -> impl Iterator<Item = RtcpFb> + 'a {
@@ -220,9 +220,9 @@ impl RtcpFb {
         ) {
             // length needed to fit the first item
             let (needed_len, xrr) = if matches!(feedback.front(), Some(RtcpFb::SenderInfo(_))) {
-                (RtcpType::SenderReport.header_len() + SR_LEN, 0)
+                (RtcpType::SenderReport.header_len() + LEN_SR, 0)
             } else {
-                (RtcpType::ReceiverReport.header_len() + RR_LEN, 1)
+                (RtcpType::ReceiverReport.header_len() + LEN_RR, 1)
             };
 
             if buf.len() < needed_len {
@@ -241,7 +241,7 @@ impl RtcpFb {
                     .count();
 
                 let available_for_rr = buf.len() - needed_len;
-                let fitting_sr = available_for_rr / RR_LEN;
+                let fitting_sr = available_for_rr / LEN_RR;
 
                 // Each SR can hold at most 31 RR. This is furter restricted by how much
                 // space is left in the buffer we write to.
@@ -249,7 +249,7 @@ impl RtcpFb {
             };
 
             // Total length of the first item + fitted rr.
-            let length = needed_len + max_rr * RR_LEN;
+            let length = needed_len + max_rr * LEN_RR;
 
             // Number of receiver reports to send.
             let count = max_rr + xrr;
@@ -272,7 +272,7 @@ impl RtcpFb {
                 let rr = feedback.remove(pos).unwrap();
 
                 // Offset into buffer this is to be at.
-                let off = needed_len + i * RR_LEN;
+                let off = needed_len + i * LEN_RR;
 
                 rr.write_to(&mut buf[off..]);
             }
@@ -331,6 +331,57 @@ impl RtcpFb {
             abs += length;
         }
 
+        while let Some(RtcpFb::Sdes(s)) = feedback.front() {
+            let size = s.byte_size();
+
+            let needed = size + 4;
+
+            if buf.len() < needed {
+                return abs;
+            }
+
+            let fb = feedback.pop_front().unwrap();
+
+            let mut remaining = buf.len() - needed;
+            let mut count = 0;
+            let total_sdes = feedback
+                .iter()
+                .filter(|f| matches!(f, RtcpFb::Sdes(_)))
+                .count();
+
+            let max_to_write = total_sdes.min(31);
+
+            for i in 0..max_to_write {
+                let fbn = feedback.get(i).unwrap();
+                let s = match fbn {
+                    RtcpFb::Sdes(v) => v,
+                    _ => unimplemented!(),
+                };
+                let size = s.byte_size();
+                if size < remaining {
+                    count += 1;
+                    remaining -= size;
+                }
+            }
+
+            let used_length = buf.len() - remaining;
+
+            let header = fb.as_header(count + 1, used_length);
+            header.write_to(buf);
+
+            let n = fb.write_to(&mut buf[header.len()..]);
+
+            buf = &mut buf[header.len() + n..];
+
+            for _ in 0..count {
+                let fbn = feedback.pop_front().unwrap();
+                let n = fbn.write_to(buf);
+                buf = &mut buf[n..];
+            }
+
+            abs += used_length;
+        }
+
         abs
     }
 
@@ -347,13 +398,13 @@ impl RtcpFb {
         }
     }
 
-    fn write_to(&self, buf: &mut [u8]) {
+    fn write_to(&self, buf: &mut [u8]) -> usize {
         use RtcpFb::*;
         match self {
             SenderInfo(v) => v.write_to(buf),
             ReceiverReport(v) => v.write_to(buf),
             Goodbye(v) => v.write_to(buf),
-            Sdes(_) => todo!(),
+            Sdes(v) => v.write_to(buf),
             Nack(_) => todo!(),
             Pli(_) => todo!(),
             Fir(_) => todo!(),
@@ -425,7 +476,8 @@ impl RtcpFb {
 }
 
 impl Ssrc {
-    fn write_to(&self, buf: &mut [u8]) {
-        (&mut buf[0..4]).copy_from_slice(&(*self).to_be_bytes())
+    fn write_to(&self, buf: &mut [u8]) -> usize {
+        (&mut buf[0..4]).copy_from_slice(&(*self).to_be_bytes());
+        4
     }
 }

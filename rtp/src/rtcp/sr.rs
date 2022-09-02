@@ -2,6 +2,8 @@ use std::collections::VecDeque;
 
 use crate::{MediaTime, ReceiverReport, RtcpFb, RtcpHeader, Ssrc};
 
+pub const LEN_SR: usize = 6 * 4;
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct SenderInfo {
     pub ssrc: Ssrc,
@@ -44,8 +46,8 @@ impl SenderInfo {
         }
     }
 
-    pub fn write_to(&self, buf: &mut [u8]) {
-        (&mut buf[0..4]).copy_from_slice(&(*self.ssrc).to_be_bytes());
+    pub(crate) fn write_to(&self, buf: &mut [u8]) -> usize {
+        (&mut buf[0..4]).copy_from_slice(&self.ssrc.to_be_bytes());
 
         let ntp_time = self.ntp_time.as_ntp_64();
         (&mut buf[4..12]).copy_from_slice(&ntp_time.to_be_bytes());
@@ -53,6 +55,8 @@ impl SenderInfo {
         (&mut buf[12..16]).copy_from_slice(&self.rtp_time.to_be_bytes());
         (&mut buf[16..20]).copy_from_slice(&self.sender_packet_count.to_be_bytes());
         (&mut buf[20..24]).copy_from_slice(&self.sender_octet_count.to_be_bytes());
+
+        LEN_SR
     }
 }
 

@@ -2,6 +2,8 @@ use std::collections::VecDeque;
 
 use crate::{RtcpFb, RtcpHeader, Ssrc};
 
+pub const LEN_RR: usize = 6 * 4;
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct ReceiverReport {
     pub ssrc: Ssrc,
@@ -37,14 +39,16 @@ impl ReceiverReport {
         }
     }
 
-    pub fn write_to(&self, buf: &mut [u8]) {
-        (&mut buf[0..4]).copy_from_slice(&(*self.ssrc).to_be_bytes());
+    pub(crate) fn write_to(&self, buf: &mut [u8]) -> usize {
+        (&mut buf[0..4]).copy_from_slice(&self.ssrc.to_be_bytes());
         (&mut buf[4..8]).copy_from_slice(&self.packets_lost.to_be_bytes());
         buf[4] = self.fraction_lost;
         (&mut buf[8..12]).copy_from_slice(&self.max_seq.to_be_bytes());
         (&mut buf[12..16]).copy_from_slice(&self.jitter.to_be_bytes());
         (&mut buf[16..20]).copy_from_slice(&self.last_sr_time.to_be_bytes());
         (&mut buf[20..24]).copy_from_slice(&self.last_sr_delay.to_be_bytes());
+
+        LEN_RR
     }
 }
 

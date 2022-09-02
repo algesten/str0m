@@ -34,6 +34,10 @@ impl<'a> Iterator for FbIter<'a> {
             return self.queue.pop_front();
         }
 
+        if self.buf.len() - self.offset == 0 {
+            return None;
+        }
+
         let buf = &self.buf[self.offset..];
         let header = RtcpHeader::parse(self.buf, false)?;
 
