@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 
 use crate::Ssrc;
 
+mod fir;
 mod fmt;
 mod iter;
 mod nack;
@@ -14,11 +15,12 @@ mod twcc;
 #[cfg(test)]
 mod test;
 
+pub use self::fir::Fir;
 use fmt::{FeedbackMessageType, PayloadType, TransportType};
 use iter::FbIter;
 pub use nack::Nack;
 pub use rr::ReceiverReport;
-use sdes::Sdes;
+pub use sdes::Sdes;
 pub use sr::SenderInfo;
 
 use self::rr::LEN_RR;
@@ -32,7 +34,7 @@ pub enum RtcpFb {
     Goodbye(Ssrc),
     Nack(Nack),
     Pli(Ssrc),
-    Fir(Ssrc),
+    Fir(Fir),
 }
 
 #[derive(Debug)]
@@ -472,8 +474,8 @@ impl RtcpFb {
             Goodbye(v) => v.write_to(buf),
             Sdes(v) => v.write_to(buf),
             Nack(v) => v.write_to(buf),
-            Pli(_) => todo!(),
-            Fir(_) => todo!(),
+            Pli(v) => v.write_to(buf),
+            Fir(v) => v.write_to(buf),
         }
     }
 
@@ -486,7 +488,7 @@ impl RtcpFb {
             Goodbye(v) => *v,
             Nack(v) => v.ssrc,
             Pli(v) => *v,
-            Fir(v) => *v,
+            Fir(v) => v.ssrc,
         }
     }
 

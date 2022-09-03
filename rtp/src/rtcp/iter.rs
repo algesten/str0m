@@ -1,14 +1,14 @@
 use std::collections::VecDeque;
 
-use crate::rtcp::fmt::FeedbackMessageType;
-use crate::{RtcpFb, RtcpHeader};
-
+use super::fir::parse_fir;
+use super::fmt::FeedbackMessageType;
 use super::nack::parse_nack_fb;
 use super::rr::parse_receiver_report;
 use super::sdes::parse_sdes;
 use super::sr::parse_sender_report;
 use super::twcc::parse_twcc_fb;
 use super::{PayloadType, RtcpType, TransportType};
+use super::{RtcpFb, RtcpHeader};
 
 pub struct FbIter<'a> {
     buf: &'a [u8],
@@ -109,10 +109,4 @@ fn parse_pli(_header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
     let buf = &buf[8..];
     let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
     queue.push_back(RtcpFb::Pli(ssrc))
-}
-
-fn parse_fir(_header: &RtcpHeader, buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
-    let buf = &buf[8..];
-    let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
-    queue.push_back(RtcpFb::Fir(ssrc))
 }
