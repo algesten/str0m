@@ -10,7 +10,7 @@ mod fmt;
 pub use fmt::{FeedbackMessageType, PayloadType, TransportType};
 
 mod sr;
-pub use sr::SenderReport;
+pub use sr::{SenderInfo, SenderReport};
 
 mod rr;
 pub use rr::{ReceiverReport, ReceptionReport};
@@ -23,25 +23,24 @@ pub trait RtcpPacket {
     fn length_words(&self) -> usize;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RtcpFb {
     SenderReport(SenderReport),
     ReceiverReport(ReceiverReport),
 }
 
 impl RtcpFb {
-    fn merge(&mut self, other: &mut RtcpFb, word_capacity: usize) -> bool {
+    fn merge(&mut self, other: &mut RtcpFb, words_left: usize) -> bool {
         match (self, other) {
             // Stack receiver reports into sender reports.
             (RtcpFb::SenderReport(sr), RtcpFb::ReceiverReport(rr)) => {
-                let max = word_capacity / SenderReport::merge_item_size();
-                let n = sr.reports.append_all_possible(&mut rr.reports, max);
+                let n = sr.reports.append_all_possible(&mut rr.reports, words_left);
                 n > 0
             }
 
             // Stack receiver reports.
-            (RtcpFb::ReceiverReport(rr1), RtcpFb::ReceiverReport(rr2)) => {
-                let max = word_capacity / ReceiverReport::merge_item_size();
-                let n = rr1.reports.append_all_possible(&mut rr2.reports, max);
+            (RtcpFb::ReceiverReport(r1), RtcpFb::ReceiverReport(r2)) => {
+                let n = r1.reports.append_all_possible(&mut r2.reports, words_left);
                 n > 0
             }
 
@@ -137,4 +136,115 @@ impl RtcpPacket for RtcpFb {
             RtcpFb::ReceiverReport(v) => v.length_words(),
         }
     }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::MediaTime;
+
+    #[test]
+    fn pack_sr_4_rr() {
+        let now = MediaTime::now();
+        let mut queue = VecDeque::new();
+        queue.push_back(sr(1, now));
+        queue.push_back(rr(3));
+        queue.push_back(rr(4));
+        queue.push_back(rr(5));
+
+        RtcpFb::pack(&mut queue, 350);
+
+        assert_eq!(queue.len(), 1);
+
+        let sr = match queue.pop_front().unwrap() {
+            RtcpFb::SenderReport(v) => v,
+            _ => unreachable!(),
+        };
+
+        assert_eq!(sr.reports.len(), 4);
+        let mut iter = sr.reports.iter();
+        assert_eq!(iter.next().unwrap(), &report(2));
+        assert_eq!(iter.next().unwrap(), &report(3));
+        assert_eq!(iter.next().unwrap(), &report(4));
+        assert_eq!(iter.next().unwrap(), &report(5));
+    }
+
+    #[test]
+    fn pack_4_rr() {
+        let mut queue = VecDeque::new();
+        queue.push_back(rr(1));
+        queue.push_back(rr(2));
+        queue.push_back(rr(3));
+        queue.push_back(rr(4));
+
+        RtcpFb::pack(&mut queue, 350);
+
+        assert_eq!(queue.len(), 1);
+
+        let sr = match queue.pop_front().unwrap() {
+            RtcpFb::ReceiverReport(v) => v,
+            _ => unreachable!(),
+        };
+
+        assert_eq!(sr.reports.len(), 4);
+        let mut iter = sr.reports.iter();
+        assert_eq!(iter.next().unwrap(), &report(1));
+        assert_eq!(iter.next().unwrap(), &report(2));
+        assert_eq!(iter.next().unwrap(), &report(3));
+        assert_eq!(iter.next().unwrap(), &report(4));
+    }
+
+    fn sr(ssrc: u32, ntp_time: MediaTime) -> RtcpFb {
+        RtcpFb::SenderReport(SenderReport {
+            sender_info: SenderInfo {
+                ssrc: ssrc.into(),
+                ntp_time,
+                rtp_time: 4,
+                sender_packet_count: 5,
+                sender_octet_count: 6,
+            },
+            reports: report(2).into(),
+        })
+    }
+
+    fn rr(ssrc: u32) -> RtcpFb {
+        RtcpFb::ReceiverReport(ReceiverReport {
+            reports: report(ssrc).into(),
+        })
+    }
+
+    fn report(ssrc: u32) -> ReceptionReport {
+        ReceptionReport {
+            ssrc: ssrc.into(),
+            fraction_lost: 3,
+            packets_lost: 1234,
+            max_seq: 4000,
+            jitter: 5,
+            last_sr_time: 12,
+            last_sr_delay: 1,
+        }
+    }
+
+    // fn sdes(ssrc: u32) -> RtcpFb {
+    //     RtcpFb::Sdes(Sdes {
+    //         ssrc: ssrc.into(),
+    //         values: vec![
+    //             (SdesType::NAME, "Martin".into()),
+    //             (SdesType::TOOL, "str0m".into()),
+    //             (SdesType::NOTE, "Writing things right here".into()),
+    //         ],
+    //     })
+    // }
+
+    // fn nack(ssrc: u32, pid: u16) -> RtcpFb {
+    //     RtcpFb::Nack(Nack {
+    //         ssrc: ssrc.into(),
+    //         pid,
+    //         blp: 0b1010_0101,
+    //     })
+    // }
+
+    // fn gb(ssrc: u32) -> RtcpFb {
+    //     RtcpFb::Goodbye(ssrc.into())
+    // }
 }

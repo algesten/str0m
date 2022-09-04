@@ -17,12 +17,6 @@ pub struct SenderInfo {
     pub sender_octet_count: u32,
 }
 
-impl SenderReport {
-    pub(crate) fn merge_item_size() -> usize {
-        6
-    }
-}
-
 impl RtcpPacket for SenderReport {
     fn header(&self) -> RtcpHeader {
         RtcpHeader {

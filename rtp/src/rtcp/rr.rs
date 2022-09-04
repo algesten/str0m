@@ -1,5 +1,6 @@
 use crate::Ssrc;
 
+use super::list::private::WordSized;
 use super::{FeedbackMessageType, ReportList, RtcpHeader, RtcpPacket, RtcpType};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,12 +19,6 @@ pub struct ReceptionReport {
     pub last_sr_delay: u32,
 }
 
-impl ReceiverReport {
-    pub(crate) fn merge_item_size() -> usize {
-        6
-    }
-}
-
 impl RtcpPacket for ReceiverReport {
     fn header(&self) -> RtcpHeader {
         RtcpHeader {
@@ -37,5 +32,11 @@ impl RtcpPacket for ReceiverReport {
         // * header: 1
         // * reports: x 6
         1 + 6 * self.reports.len()
+    }
+}
+
+impl WordSized for ReceptionReport {
+    fn word_size(&self) -> usize {
+        6
     }
 }

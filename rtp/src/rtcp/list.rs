@@ -29,22 +29,54 @@ impl<T> ReportList<T> {
     pub(crate) fn is_full(&self) -> bool {
         self.len() == 31
     }
+}
 
-    pub(crate) fn append_all_possible(&mut self, other: &mut Self, max: usize) -> usize {
+impl<T: private::WordSized> ReportList<T> {
+    pub(crate) fn append_all_possible(&mut self, other: &mut Self, mut words_left: usize) -> usize {
+        // Position where we start inserting in self.
         let pos = self.len();
-        let to_move = (31 - pos).min(other.len()).min(max);
 
-        for i in 0..to_move {
+        // Max number we can move.
+        let max = (31 - pos).min(other.len());
+
+        // after this loop ends, i will hold the number of items moved.
+        let mut i = 0;
+        loop {
+            if i == max {
+                break;
+            }
+
+            // first borrow item from other, to check the item size will fit.
+            let item = other.0[i].as_ref().unwrap();
+            let item_size = item.word_size();
+
+            // can we fit one more item?
+            if words_left < item_size {
+                break;
+            }
+
+            // it fits, move it.
             self.0[pos + i] = other.0[i].take();
+
+            // reduce space left.
+            words_left -= item_size;
+
+            i += 1;
         }
 
         // shift down remaining in other
-        for i in to_move..31 {
-            other.0[i - to_move] = other.0[i].take();
+        for j in i..31 {
+            other.0[j - i] = other.0[j].take();
         }
 
         // return number of appended items.
-        to_move
+        i
+    }
+}
+
+pub(crate) mod private {
+    pub trait WordSized {
+        fn word_size(&self) -> usize;
     }
 }
 
