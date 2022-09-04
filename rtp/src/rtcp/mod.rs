@@ -39,6 +39,71 @@ pub enum RtcpFb {
 }
 
 impl RtcpFb {
+    pub fn write_packet(feedback: &mut VecDeque<RtcpFb>, buf: &mut [u8], pad_to: usize) -> usize {
+        assert!(pad_to > 0, "pad_to must be more than 0");
+        assert_eq!(pad_to % 4, 0, "pad_to is on a word boundary");
+
+        // Total length, in bytes, shrunk to be on the pad_to boundary.
+        let mut total_len = buf.len();
+        total_len -= total_len % pad_to;
+
+        // Capacity in words
+        let word_capacity = total_len / 4;
+
+        // Pack RTCP feedback packets. Merge together ones of the same type.
+        RtcpFb::pack(feedback, word_capacity);
+
+        let mut offset = 0;
+        let mut offset_prev = 0;
+        while let Some(fb) = feedback.front() {
+            // Length of next item.
+            let item_len = fb.length_words() * 4;
+
+            // Capacity left in the buffer.
+            let capacity = total_len - offset;
+            if capacity < item_len {
+                break;
+            }
+
+            // We definitely can fit the next RTCP item.
+            let fb = feedback.pop_front().unwrap();
+            let written = fb.write_to(&mut buf[offset..]);
+
+            assert_eq!(written, item_len, "length_words equals write_to length");
+
+            // Move offsets for the amount written.
+            offset_prev = offset;
+            offset += item_len;
+        }
+
+        // Check if there is padding needed to fill up to pad_to.
+        let pad = pad_to - offset % pad_to;
+        if offset > 0 && pad_to > 1 && pad < pad_to {
+            for i in 0..pad {
+                buf[offset + i] = 0;
+            }
+            offset += pad;
+
+            // In a compound RTCP packet, padding is only
+            // required on one individual packet because the compound packet is
+            // encrypted as a whole .  Thus, padding MUST only be added to the
+            // last individual packet, and if padding is added to that packet,
+            // the padding bit MUST be set only on that packet.
+            buf[offset - 1] = pad as u8;
+            let header = &mut buf[offset_prev..];
+
+            // Add padding bytes on to the total length of the packet.
+            let mut words_less_one = u16::from_be_bytes([header[2], header[3]]);
+            words_less_one += pad as u16 / 4;
+            (&mut header[2..4]).copy_from_slice(&words_less_one.to_be_bytes());
+
+            // Toggle padding bit
+            buf[offset_prev] |= 0b00_1_00000;
+        }
+
+        offset
+    }
+
     fn merge(&mut self, other: &mut RtcpFb, words_left: usize) -> bool {
         match (self, other) {
             // Stack receiver reports into sender reports.
@@ -85,7 +150,7 @@ impl RtcpFb {
         }
     }
 
-    pub fn pack(feedback: &mut VecDeque<Self>, mut word_capacity: usize) {
+    fn pack(feedback: &mut VecDeque<Self>, mut word_capacity: usize) {
         // Index into feedback of item we are to pack into.
         let mut i = 0;
         let len = feedback.len();
