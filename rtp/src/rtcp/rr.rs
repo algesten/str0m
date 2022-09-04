@@ -1,11 +1,14 @@
-use std::collections::VecDeque;
+use crate::Ssrc;
 
-use crate::{RtcpFb, RtcpHeader, Ssrc};
+use super::{FeedbackMessageType, ReportList, RtcpHeader, RtcpPacket, RtcpType};
 
-pub const LEN_RR: usize = 6 * 4;
-
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceiverReport {
+    pub reports: ReportList<ReceptionReport>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReceptionReport {
     pub ssrc: Ssrc,
     pub fraction_lost: u8,
     pub packets_lost: u32, // 24 bit
@@ -16,51 +19,23 @@ pub struct ReceiverReport {
 }
 
 impl ReceiverReport {
-    pub(crate) fn parse(buf: &[u8]) -> Self {
-        // Receiver report shape is here
-        // https://www.rfc-editor.org/rfc/rfc3550#section-6.4.2
-
-        let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
-        let fraction_lost = buf[4];
-        let packets_lost = u32::from_be_bytes([0, buf[5], buf[6], buf[7]]);
-        let max_seq = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
-        let jitter = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
-        let last_sr_time = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
-        let last_sr_delay = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
-
-        ReceiverReport {
-            ssrc,
-            fraction_lost,
-            packets_lost,
-            max_seq,
-            jitter,
-            last_sr_time,
-            last_sr_delay,
-        }
-    }
-
-    pub(crate) fn write_to(&self, buf: &mut [u8]) -> usize {
-        (&mut buf[0..4]).copy_from_slice(&self.ssrc.to_be_bytes());
-        (&mut buf[4..8]).copy_from_slice(&self.packets_lost.to_be_bytes());
-        buf[4] = self.fraction_lost;
-        (&mut buf[8..12]).copy_from_slice(&self.max_seq.to_be_bytes());
-        (&mut buf[12..16]).copy_from_slice(&self.jitter.to_be_bytes());
-        (&mut buf[16..20]).copy_from_slice(&self.last_sr_time.to_be_bytes());
-        (&mut buf[20..24]).copy_from_slice(&self.last_sr_delay.to_be_bytes());
-
-        LEN_RR
+    pub(crate) fn merge_item_size() -> usize {
+        6
     }
 }
 
-pub fn parse_receiver_report(header: &RtcpHeader, mut buf: &[u8], queue: &mut VecDeque<RtcpFb>) {
-    let count = header.fmt.count() as usize;
-
-    for _ in 0..count {
-        if buf.len() < 24 {
-            return;
+impl RtcpPacket for ReceiverReport {
+    fn header(&self) -> RtcpHeader {
+        RtcpHeader {
+            rtcp_type: RtcpType::SenderReport,
+            feedback_message_type: FeedbackMessageType::ReceptionReport(self.reports.len() as u8),
+            words_less_one: (self.length_words() - 1) as u16,
         }
-        let report = ReceiverReport::parse(buf);
-        queue.push_back(RtcpFb::ReceiverReport(report));
-        buf = &buf[24..];
+    }
+
+    fn length_words(&self) -> usize {
+        // * header: 1
+        // * reports: x 6
+        1 + 6 * self.reports.len()
     }
 }
