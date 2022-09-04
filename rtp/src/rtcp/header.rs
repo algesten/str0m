@@ -40,7 +40,7 @@ impl RtcpHeader {
                 match transport_type {
                     TransportType::Nack => {
                         // [ssrc_sender, ssrc_media_source, fci, fci, ...]
-                        let fci_length = self.length_bytes() - LEN_HEADER - 2 * 4;
+                        let fci_length = self.length_words() * 4 - LEN_HEADER - 2 * 4;
 
                         // each fci is one word: [pid, blp]
                         fci_length / 4
@@ -66,7 +66,7 @@ impl RtcpHeader {
 
                     PayloadType::FullIntraRequest => {
                         // [ssrc_sender, ssrc_media_source, fci, fci, ...]
-                        let fci_length = self.length_bytes() - LEN_HEADER - 2 * 4;
+                        let fci_length = self.length_words() * 4 - LEN_HEADER - 2 * 4;
 
                         // each fci is two words: [ssrc, [seq_no, reserved]]
                         fci_length / 8
@@ -89,9 +89,16 @@ impl RtcpHeader {
         self.words_less_one as usize + 1
     }
 
-    /// Length of entire RTCP packet (including header) in bytes.
-    pub fn length_bytes(&self) -> usize {
-        self.length_words() as usize * 4
+    /// Write header to buffer.
+    pub(crate) fn write_to(&self, buf: &mut [u8]) -> usize {
+        let fmt: u8 = self.feedback_message_type.into();
+
+        buf[0] = 0b10_0_00000 | fmt;
+        buf[1] = self.rtcp_type as u8;
+
+        (&mut buf[2..4]).copy_from_slice(&self.words_less_one.to_be_bytes());
+
+        4
     }
 }
 

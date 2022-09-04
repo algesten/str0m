@@ -24,6 +24,11 @@ pub trait RtcpPacket {
 
     /// Length of entire RTCP packet (including header) in words (4 bytes).
     fn length_words(&self) -> usize;
+
+    /// Write this packet to the buffer.
+    ///
+    /// Panics if the buffer doesn't have capacity to hold length_words * 4 bytes.
+    fn write_to(&self, buf: &mut [u8]) -> usize;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,6 +154,14 @@ impl RtcpPacket for RtcpFb {
             RtcpFb::SenderReport(v) => v.length_words(),
             RtcpFb::ReceiverReport(v) => v.length_words(),
             RtcpFb::SourceDescription(v) => v.length_words(),
+        }
+    }
+
+    fn write_to(&self, buf: &mut [u8]) -> usize {
+        match self {
+            RtcpFb::SenderReport(v) => v.write_to(buf),
+            RtcpFb::ReceiverReport(v) => v.write_to(buf),
+            RtcpFb::SourceDescription(v) => v.write_to(buf),
         }
     }
 }
