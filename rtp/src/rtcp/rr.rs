@@ -66,3 +66,53 @@ impl ReceptionReport {
         (&mut buf[20..24]).copy_from_slice(&self.last_sr_delay.to_be_bytes());
     }
 }
+
+impl<'a> TryFrom<&'a [u8]> for ReceiverReport {
+    type Error = &'static str;
+
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        let mut reports = ReportList::new();
+        let mut buf = buf;
+
+        let count = buf.len() / 24;
+
+        for _ in 0..count {
+            let report = buf.try_into()?;
+            reports.push(report);
+            buf = &buf[24..];
+        }
+
+        Ok(ReceiverReport { reports })
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for ReceptionReport {
+    type Error = &'static str;
+
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        if buf.len() < 24 {
+            return Err("Less than 24 bytes for ReceptionReport");
+        }
+
+        // Receiver report shape is here
+        // https://www.rfc-editor.org/rfc/rfc3550#section-6.4.2
+
+        let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
+        let fraction_lost = buf[4];
+        let packets_lost = u32::from_be_bytes([0, buf[5], buf[6], buf[7]]);
+        let max_seq = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
+        let jitter = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
+        let last_sr_time = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
+        let last_sr_delay = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
+
+        Ok(ReceptionReport {
+            ssrc,
+            fraction_lost,
+            packets_lost,
+            max_seq,
+            jitter,
+            last_sr_time,
+            last_sr_delay,
+        })
+    }
+}

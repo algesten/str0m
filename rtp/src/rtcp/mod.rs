@@ -39,6 +39,40 @@ pub enum RtcpFb {
 }
 
 impl RtcpFb {
+    pub fn read_packet(buf: &[u8]) -> Result<VecDeque<RtcpFb>, &'static str> {
+        let mut feedback = VecDeque::new();
+
+        let mut buf = buf;
+        loop {
+            if buf.is_empty() {
+                break;
+            }
+
+            let header: RtcpHeader = buf.try_into()?;
+            let has_padding = buf[0] & 0b00_1_00000 > 0;
+            let full_length = header.length_words() * 4;
+
+            println!("{:?}", header);
+
+            let unpadded_length = if has_padding {
+                let pad = buf[full_length - 1] as usize;
+                if full_length < pad {
+                    return Err("buf.len() is less than padding");
+                }
+                full_length - pad
+            } else {
+                full_length
+            };
+
+            let fb = (&buf[..unpadded_length]).try_into()?;
+            feedback.push_back(fb);
+
+            buf = &buf[full_length..];
+        }
+
+        Ok(feedback)
+    }
+
     pub fn write_packet(feedback: &mut VecDeque<RtcpFb>, buf: &mut [u8], pad_to: usize) -> usize {
         assert!(pad_to > 0, "pad_to must be more than 0");
         assert_eq!(pad_to % 4, 0, "pad_to is on a word boundary");
@@ -231,6 +265,30 @@ impl RtcpPacket for RtcpFb {
     }
 }
 
+impl<'a> TryFrom<&'a [u8]> for RtcpFb {
+    type Error = &'static str;
+
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        let header: RtcpHeader = buf.try_into()?;
+
+        // By constraining the length, all subparsing can go
+        // until they exhaust the buffer length. This presupposes
+        // padding is removed from the input.
+        let buf = &buf[4..];
+
+        Ok(match header.rtcp_type() {
+            RtcpType::SenderReport => RtcpFb::SenderReport(buf.try_into()?),
+            RtcpType::ReceiverReport => RtcpFb::ReceiverReport(buf.try_into()?),
+            RtcpType::SourceDescription => RtcpFb::SourceDescription(buf.try_into()?),
+            RtcpType::Goodbye => todo!(),
+            RtcpType::ApplicationDefined => todo!(),
+            RtcpType::TransportLayerFeedback => todo!(),
+            RtcpType::PayloadSpecificFeedback => todo!(),
+            RtcpType::ExtendedReport => todo!(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -285,6 +343,24 @@ mod test {
         assert_eq!(iter.next().unwrap(), &report(2));
         assert_eq!(iter.next().unwrap(), &report(3));
         assert_eq!(iter.next().unwrap(), &report(4));
+    }
+
+    #[test]
+    fn roundtrip_sr_rr() {
+        let now = MediaTime::now();
+        let mut feedback = VecDeque::new();
+        feedback.push_back(sr(1, now));
+        feedback.push_back(rr(3));
+        feedback.push_back(rr(4));
+        feedback.push_back(rr(5));
+
+        let mut buf = vec![0_u8; 1360];
+        let n = RtcpFb::write_packet(&mut feedback, &mut buf, 16);
+        buf.truncate(n);
+
+        let parsed = RtcpFb::read_packet(&buf).unwrap();
+
+        assert_eq!(parsed, feedback);
     }
 
     fn sr(ssrc: u32, ntp_time: MediaTime) -> RtcpFb {

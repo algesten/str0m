@@ -68,7 +68,7 @@ pub enum TransportType {
 }
 
 impl TryFrom<u8> for TransportType {
-    type Error = ();
+    type Error = &'static str;
 
     fn try_from(v: u8) -> Result<Self, Self::Error> {
         use TransportType::*;
@@ -76,8 +76,8 @@ impl TryFrom<u8> for TransportType {
             1 => Ok(Nack),
             15 => Ok(TransportWide),
             _ => {
-                trace!("Unrecognized TransportSpecificFeedback type: {}", v);
-                Err(())
+                trace!("Uknown TransportType: {}", v);
+                Err("Uknown TransportType")
             }
         }
     }
@@ -113,7 +113,7 @@ pub enum PayloadType {
 }
 
 impl TryFrom<u8> for PayloadType {
-    type Error = ();
+    type Error = &'static str;
 
     fn try_from(v: u8) -> Result<Self, Self::Error> {
         use PayloadType::*;
@@ -124,8 +124,8 @@ impl TryFrom<u8> for PayloadType {
             4 => Ok(FullIntraRequest),
             15 => Ok(ApplicationLayer),
             _ => {
-                trace!("Unrecognized PayloadSpecificFeedback type: {}", v);
-                Err(())
+                trace!("Uknown PayloadType: {}", v);
+                Err("Uknown PayloadType")
             }
         }
     }

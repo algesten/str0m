@@ -62,3 +62,67 @@ impl SenderInfo {
         (&mut buf[20..24]).copy_from_slice(&self.sender_octet_count.to_be_bytes());
     }
 }
+
+impl<'a> TryFrom<&'a [u8]> for SenderReport {
+    type Error = &'static str;
+
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        let sender_info = buf.try_into()?;
+
+        let mut reports = ReportList::new();
+        let mut buf = &buf[24..];
+
+        let count = buf.len() / 24;
+
+        for _ in 0..count {
+            let report = buf.try_into()?;
+            reports.push(report);
+            buf = &buf[24..];
+        }
+
+        Ok(SenderReport {
+            sender_info,
+            reports,
+        })
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for SenderInfo {
+    type Error = &'static str;
+
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        if buf.len() < 24 {
+            return Err("Less than 24 bytes for SenderInfo");
+        }
+
+        // Sender report shape is here
+        // https://www.rfc-editor.org/rfc/rfc3550#section-6.4.1
+
+        let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
+
+        let ntp_time = u64::from_be_bytes([
+            buf[4], buf[5], buf[6], buf[7], buf[8], buf[9], buf[10], buf[11],
+        ]);
+        let ntp_time = MediaTime::from_ntp_64(ntp_time);
+
+        // https://www.cs.columbia.edu/~hgs/rtp/faq.html#timestamp-computed
+        // For video, time clock rate is fixed at 90 kHz. The timestamps generated
+        // depend on whether the application can determine the frame number or not.
+        // If it can or it can be sure that it is transmitting every frame with a
+        // fixed frame rate, the timestamp is governed by the nominal frame rate.
+        // Thus, for a 30 f/s video, timestamps would increase by 3,000 for each
+        // frame, for a 25 f/s video by 3,600 for each frame.
+        let rtp_time = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
+
+        let sender_packet_count = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
+        let sender_octet_count = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);
+
+        Ok(SenderInfo {
+            ssrc,
+            ntp_time,
+            rtp_time,
+            sender_packet_count,
+            sender_octet_count,
+        })
+    }
+}

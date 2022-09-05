@@ -1,3 +1,5 @@
+use std::str::from_utf8;
+
 use crate::{FeedbackMessageType, RtcpType, Ssrc};
 
 use super::list::private::WordSized;
@@ -138,5 +140,93 @@ impl From<u8> for SdesType {
             8 => PRIV,
             _ => Unknown,
         }
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for Descriptions {
+    type Error = &'static str;
+
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        let mut reports = ReportList::new();
+
+        let mut buf = buf;
+
+        loop {
+            if buf.is_empty() {
+                break;
+            }
+            let report: Sdes = buf.try_into()?;
+
+            let len = report.word_size() * 4;
+            buf = &buf[len..];
+
+            reports.push(report);
+        }
+
+        Ok(Descriptions { reports })
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for Sdes {
+    type Error = &'static str;
+
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        if buf.len() < 8 {
+            return Err("Less than 8 bytes for Sdes");
+        }
+
+        let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
+        let mut values = vec![];
+
+        let mut buf = &buf[4..];
+        let mut abs = 0;
+
+        loop {
+            let stype: SdesType = buf[0].into();
+
+            if matches!(stype, SdesType::END) {
+                // The end of SDES.
+
+                // Each chunk consists of an SSRC/CSRC identifier followed by a list of
+                // zero or more items, which carry information about the SSRC/CSRC.
+                // Each chunk starts on a 32-bit boundary.
+                //
+                // Items are contiguous, i.e., items are not individually padded to a
+                // 32-bit boundary.  Text is not null terminated because some multi-
+                // octet encodings include null octets.
+                //
+                // No length octet follows the null item type octet, but additional null
+                // octets MUST be included if needed to pad until the next 32-bit
+                // boundary.
+
+                let pad = 4 - abs % 4;
+                if pad < 4 {
+                    if buf.len() < pad {
+                        return Err("Not enough buf.len() for Sdes padding");
+                    }
+                }
+
+                break;
+            }
+
+            let len = buf[1] as usize;
+
+            if buf.len() < 2 + len {
+                return Err("Not enough buf.len() for Sdes value");
+            }
+            buf = &buf[2..];
+            abs += 2;
+
+            if let Ok(value) = from_utf8(&buf[..len]) {
+                values.push((stype, value.to_string()));
+            } else {
+                // failed to read as utf-8. skip.
+            }
+
+            buf = &buf[len..];
+            abs += len;
+        }
+
+        Ok(Sdes { ssrc, values })
     }
 }

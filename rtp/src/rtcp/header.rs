@@ -2,6 +2,7 @@ use super::{FeedbackMessageType, PayloadType, TransportType};
 
 pub(crate) const LEN_HEADER: usize = 4;
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct RtcpHeader {
     pub(crate) rtcp_type: RtcpType,
     pub(crate) feedback_message_type: FeedbackMessageType,
@@ -133,7 +134,7 @@ pub enum RtcpType {
 }
 
 impl TryFrom<u8> for RtcpType {
-    type Error = ();
+    type Error = &'static str;
 
     fn try_from(v: u8) -> Result<Self, Self::Error> {
         use RtcpType::*;
@@ -147,9 +148,49 @@ impl TryFrom<u8> for RtcpType {
             206 => Ok(PayloadSpecificFeedback),
             207 => Ok(ExtendedReport),
             _ => {
-                trace!("Unrecognized RTCP type: {}", v);
-                Err(())
+                trace!("Unknown RtcpType: {}", v);
+                Err("Unknown RtcpType")
             }
         }
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for RtcpHeader {
+    type Error = &'static str;
+
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        if buf.len() < 4 {
+            return Err("Need 4 bytes for RTCP header");
+        }
+
+        let version = (buf[0] & 0b11_0_00000) >> 6;
+        if version != 2 {
+            return Err("RTCP header version should be 2");
+        }
+
+        let fmt = buf[0] & 0b00_0_11111;
+        let rtcp_type: RtcpType = buf[1].try_into()?;
+
+        let feedback_message_type = {
+            use FeedbackMessageType::*;
+            match rtcp_type {
+                RtcpType::SenderReport => ReceptionReport(fmt),
+                RtcpType::ReceiverReport => ReceptionReport(fmt),
+                RtcpType::SourceDescription => SourceCount(fmt),
+                RtcpType::Goodbye => SourceCount(fmt),
+                RtcpType::ApplicationDefined => Subtype(fmt),
+                RtcpType::TransportLayerFeedback => TransportFeedback(fmt.try_into()?),
+                RtcpType::PayloadSpecificFeedback => PayloadFeedback(fmt.try_into()?),
+                RtcpType::ExtendedReport => NotUsed,
+            }
+        };
+
+        let words_less_one = u16::from_be_bytes([buf[2], buf[3]]);
+
+        Ok(RtcpHeader {
+            rtcp_type,
+            feedback_message_type,
+            words_less_one,
+        })
     }
 }

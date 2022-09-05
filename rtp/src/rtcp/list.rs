@@ -5,6 +5,10 @@ use std::ops::Index;
 pub struct ReportList<T>([Option<T>; 31]);
 
 impl<T> ReportList<T> {
+    pub fn new() -> Self {
+        ReportList::default()
+    }
+
     pub fn len(&self) -> usize {
         self.0.iter().position(|i| i.is_none()).unwrap()
     }
