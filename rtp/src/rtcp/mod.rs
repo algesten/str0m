@@ -18,6 +18,13 @@ pub use rr::{ReceiverReport, ReceptionReport};
 mod sdes;
 pub use sdes::{Descriptions, Sdes, SdesType};
 
+mod bb;
+pub use bb::Goodbye;
+
+use crate::Ssrc;
+
+use self::list::private::WordSized;
+
 pub trait RtcpPacket {
     /// The...
     fn header(&self) -> RtcpHeader;
@@ -36,6 +43,7 @@ pub enum RtcpFb {
     SenderReport(SenderReport),
     ReceiverReport(ReceiverReport),
     SourceDescription(Descriptions),
+    Goodbye(Goodbye),
 }
 
 impl RtcpFb {
@@ -158,6 +166,12 @@ impl RtcpFb {
                 n > 0
             }
 
+            // Stack source descriptions.
+            (RtcpFb::Goodbye(g1), RtcpFb::Goodbye(g2)) => {
+                let n = g1.reports.append_all_possible(&mut g2.reports, words_left);
+                n > 0
+            }
+
             // No merge possible
             _ => false,
         }
@@ -168,6 +182,7 @@ impl RtcpFb {
             RtcpFb::SenderReport(v) => v.reports.is_full(),
             RtcpFb::ReceiverReport(v) => v.reports.is_full(),
             RtcpFb::SourceDescription(v) => v.reports.is_full(),
+            RtcpFb::Goodbye(v) => v.reports.is_full(),
         }
     }
 
@@ -177,10 +192,12 @@ impl RtcpFb {
         match self {
             // A SenderReport always has, at least, the SenderInfo part.
             RtcpFb::SenderReport(_) => false,
-            // ReceiverReport can become completely empty.
+            // ReceiverReport can become empty.
             RtcpFb::ReceiverReport(v) => v.reports.is_empty(),
-            // SourceDescription can become completely empty.
+            // SourceDescription can become empty.
             RtcpFb::SourceDescription(v) => v.reports.is_empty(),
+            // Goodbye can become empty,
+            RtcpFb::Goodbye(v) => v.reports.is_empty(),
         }
     }
 
@@ -245,6 +262,7 @@ impl RtcpPacket for RtcpFb {
             RtcpFb::SenderReport(v) => v.header(),
             RtcpFb::ReceiverReport(v) => v.header(),
             RtcpFb::SourceDescription(v) => v.header(),
+            RtcpFb::Goodbye(v) => v.header(),
         }
     }
 
@@ -253,6 +271,7 @@ impl RtcpPacket for RtcpFb {
             RtcpFb::SenderReport(v) => v.length_words(),
             RtcpFb::ReceiverReport(v) => v.length_words(),
             RtcpFb::SourceDescription(v) => v.length_words(),
+            RtcpFb::Goodbye(v) => v.length_words(),
         }
     }
 
@@ -261,6 +280,7 @@ impl RtcpPacket for RtcpFb {
             RtcpFb::SenderReport(v) => v.write_to(buf),
             RtcpFb::ReceiverReport(v) => v.write_to(buf),
             RtcpFb::SourceDescription(v) => v.write_to(buf),
+            RtcpFb::Goodbye(v) => v.write_to(buf),
         }
     }
 }
@@ -280,12 +300,28 @@ impl<'a> TryFrom<&'a [u8]> for RtcpFb {
             RtcpType::SenderReport => RtcpFb::SenderReport(buf.try_into()?),
             RtcpType::ReceiverReport => RtcpFb::ReceiverReport(buf.try_into()?),
             RtcpType::SourceDescription => RtcpFb::SourceDescription(buf.try_into()?),
-            RtcpType::Goodbye => todo!(),
+            RtcpType::Goodbye => RtcpFb::Goodbye(buf.try_into()?),
             RtcpType::ApplicationDefined => todo!(),
             RtcpType::TransportLayerFeedback => todo!(),
             RtcpType::PayloadSpecificFeedback => todo!(),
             RtcpType::ExtendedReport => todo!(),
         })
+    }
+}
+
+impl WordSized for Ssrc {
+    fn word_size(&self) -> usize {
+        1
+    }
+}
+
+/// Pad up to the next word (4 byte) boundary.
+fn pad_bytes_to_word(n: usize) -> usize {
+    let pad = 4 - n % 4;
+    if pad == 4 {
+        n
+    } else {
+        n + pad
     }
 }
 
@@ -360,7 +396,14 @@ mod test {
 
         let parsed = RtcpFb::read_packet(&buf).unwrap();
 
-        assert_eq!(parsed, feedback);
+        let mut compare = VecDeque::new();
+        compare.push_back(sr(1, now));
+        compare.push_back(rr(3));
+        compare.push_back(rr(4));
+        compare.push_back(rr(5));
+        RtcpFb::pack(&mut compare, 1400);
+
+        assert_eq!(parsed, compare);
     }
 
     fn sr(ssrc: u32, ntp_time: MediaTime) -> RtcpFb {
@@ -416,14 +459,4 @@ mod test {
     // fn gb(ssrc: u32) -> RtcpFb {
     //     RtcpFb::Goodbye(ssrc.into())
     // }
-}
-
-/// Pad up to the next word (4 byte) boundary.
-fn pad_bytes_to_word(n: usize) -> usize {
-    let pad = 4 - n % 4;
-    if pad == 4 {
-        n
-    } else {
-        n + pad
-    }
 }
