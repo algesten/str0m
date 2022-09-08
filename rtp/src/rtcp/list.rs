@@ -10,7 +10,7 @@ impl<T> ReportList<T> {
     }
 
     pub fn len(&self) -> usize {
-        self.0.iter().position(|i| i.is_none()).unwrap()
+        self.0.iter().position(|i| i.is_none()).unwrap_or(31)
     }
 
     pub fn push(&mut self, v: T) {

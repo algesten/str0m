@@ -152,6 +152,9 @@ impl<'a> TryFrom<&'a [u8]> for Descriptions {
         let mut buf = buf;
 
         loop {
+            if reports.len() == 31 {
+                return Err("More than 31 Sdes");
+            }
             if buf.is_empty() {
                 break;
             }
@@ -182,6 +185,10 @@ impl<'a> TryFrom<&'a [u8]> for Sdes {
         let mut abs = 0;
 
         loop {
+            if buf.len() < 2 {
+                return Err("Less than 2 bytes for next Sdes value");
+            }
+
             let stype: SdesType = buf[0].into();
 
             if matches!(stype, SdesType::END) {

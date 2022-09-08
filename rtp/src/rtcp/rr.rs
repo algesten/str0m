@@ -76,6 +76,10 @@ impl<'a> TryFrom<&'a [u8]> for ReceiverReport {
 
         let count = buf.len() / 24;
 
+        if count > 31 {
+            return Err("More than 31 ReceptionReport");
+        }
+
         for _ in 0..count {
             let report = buf.try_into()?;
             reports.push(report);

@@ -47,8 +47,8 @@ impl RtcpHeader {
                         fci_length / 4
                     }
                     TransportType::TransportWide => {
-                        //
-                        todo!()
+                        // TODO
+                        0
                     }
                 }
             }
@@ -74,9 +74,9 @@ impl RtcpHeader {
                     }
 
                     _ => {
-                        // PayloadType::SliceLossIndication => todo!(),
-                        // PayloadType::ReferencePictureSelectionIndication => todo!(),
-                        // PayloadType::ApplicationLayer => todo!(),
+                        // PayloadType::SliceLossIndication => {},
+                        // PayloadType::ReferencePictureSelectionIndication => {},
+                        // PayloadType::ApplicationLayer => {},
                         0
                     }
                 }

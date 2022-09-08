@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 pub use header::{RtcpHeader, RtcpType};
 
 mod list;
+use list::private::WordSized;
 pub(crate) use list::ReportList;
 
 mod fmt;
@@ -22,8 +23,6 @@ mod bb;
 pub use bb::Goodbye;
 
 use crate::Ssrc;
-
-use self::list::private::WordSized;
 
 pub trait RtcpPacket {
     /// The...
@@ -47,7 +46,7 @@ pub enum RtcpFb {
 }
 
 impl RtcpFb {
-    pub fn read_packet(buf: &[u8]) -> Result<VecDeque<RtcpFb>, &'static str> {
+    pub fn read_packet(buf: &[u8]) -> VecDeque<RtcpFb> {
         let mut feedback = VecDeque::new();
 
         let mut buf = buf;
@@ -56,29 +55,41 @@ impl RtcpFb {
                 break;
             }
 
-            let header: RtcpHeader = buf.try_into()?;
+            let header: RtcpHeader = match buf.try_into() {
+                Ok(v) => v,
+                Err(e) => {
+                    debug!("{}", e);
+                    break;
+                }
+            };
             let has_padding = buf[0] & 0b00_1_00000 > 0;
             let full_length = header.length_words() * 4;
 
-            println!("{:?}", header);
+            if full_length > buf.len() {
+                // this length is incorrect.
+                break;
+            }
 
             let unpadded_length = if has_padding {
                 let pad = buf[full_length - 1] as usize;
                 if full_length < pad {
-                    return Err("buf.len() is less than padding");
+                    debug!("buf.len() is less than padding: {} < {}", full_length, pad);
+                    break;
                 }
                 full_length - pad
             } else {
                 full_length
             };
 
-            let fb = (&buf[..unpadded_length]).try_into()?;
-            feedback.push_back(fb);
+            match (&buf[..unpadded_length]).try_into() {
+                Ok(v) => feedback.push_back(v),
+                Err(e) => debug!("{}", e),
+            }
 
             buf = &buf[full_length..];
         }
 
-        Ok(feedback)
+        feedback
     }
 
     pub fn write_packet(feedback: &mut VecDeque<RtcpFb>, buf: &mut [u8], pad_to: usize) -> usize {
@@ -300,11 +311,38 @@ impl<'a> TryFrom<&'a [u8]> for RtcpFb {
             RtcpType::SenderReport => RtcpFb::SenderReport(buf.try_into()?),
             RtcpType::ReceiverReport => RtcpFb::ReceiverReport(buf.try_into()?),
             RtcpType::SourceDescription => RtcpFb::SourceDescription(buf.try_into()?),
-            RtcpType::Goodbye => RtcpFb::Goodbye(buf.try_into()?),
-            RtcpType::ApplicationDefined => todo!(),
-            RtcpType::TransportLayerFeedback => todo!(),
-            RtcpType::PayloadSpecificFeedback => todo!(),
-            RtcpType::ExtendedReport => todo!(),
+            RtcpType::Goodbye => RtcpFb::Goodbye((header.count(), buf).try_into()?),
+            RtcpType::ApplicationDefined => return Err("Ignore RTCP type: ApplicationDefined"),
+            RtcpType::TransportLayerFeedback => {
+                let tlfb = match header.feedback_message_type() {
+                    FeedbackMessageType::TransportFeedback(v) => v,
+                    _ => return Err("Expected TransportFeedback in FeedbackMessageType"),
+                };
+
+                match tlfb {
+                    TransportType::Nack => return Err("TODO: Nack"),
+                    TransportType::TransportWide => return Err("TODO: TransportWide"),
+                }
+            }
+            RtcpType::PayloadSpecificFeedback => {
+                let plfb = match header.feedback_message_type() {
+                    FeedbackMessageType::PayloadFeedback(v) => v,
+                    _ => return Err("Expected PayloadFeedback in FeedbackMessageType"),
+                };
+
+                match plfb {
+                    PayloadType::PictureLossIndication => return Err("TODO: PLI"),
+                    PayloadType::SliceLossIndication => return Err("Ignore PayloadType type: SLI"),
+                    PayloadType::ReferencePictureSelectionIndication => {
+                        return Err("Ignore PayloadType type: RPSI")
+                    }
+                    PayloadType::FullIntraRequest => return Err("TODO: FIR"),
+                    PayloadType::ApplicationLayer => {
+                        return Err("Ignore PayloadType: ApplicationLayer")
+                    }
+                }
+            }
+            RtcpType::ExtendedReport => return Err("TODO: XR"),
         })
     }
 }
@@ -394,7 +432,7 @@ mod test {
         let n = RtcpFb::write_packet(&mut feedback, &mut buf, 16);
         buf.truncate(n);
 
-        let parsed = RtcpFb::read_packet(&buf).unwrap();
+        let parsed = RtcpFb::read_packet(&buf);
 
         let mut compare = VecDeque::new();
         compare.push_back(sr(1, now));
@@ -459,4 +497,41 @@ mod test {
     // fn gb(ssrc: u32) -> RtcpFb {
     //     RtcpFb::Goodbye(ssrc.into())
     // }
+
+    #[test]
+    fn fuzz_failures() {
+        const TESTS: &[&[u8]] = &[
+            //
+            &[191, 202, 54, 74],
+            &[166, 202, 0, 2, 218, 54, 214, 222, 160, 2, 146, 0, 251],
+            &[
+                151, 203, 0, 40, 88, 236, 217, 19, 82, 62, 73, 84, 112, 252, 69, 78, 38, 72, 43, 4,
+                21, 136, 90, 29, 89, 70, 90, 196, 149, 168, 54, 1, 57, 16, 128, 8, 53, 172, 192,
+                248, 175, 7, 92, 54, 82, 153, 179, 204, 181, 64, 94, 211, 67, 77, 110, 252, 181,
+                18, 53, 48, 180, 179, 205, 234, 139, 61, 179, 54, 19, 120, 79, 119, 232, 208, 210,
+                73, 78, 28, 242, 156, 242, 239, 19, 246, 183, 10, 49, 114, 216, 64, 105, 161, 50,
+                99, 156, 113, 153, 90, 207, 53, 145, 96, 158, 198, 224, 114, 9, 20, 30, 156, 220,
+                56, 151, 216, 164, 129, 156, 40, 85, 70, 189, 210, 146, 242, 242, 55, 70, 144, 113,
+                9, 44, 74, 22, 123, 180, 153, 18, 88, 1, 185, 85, 227, 200, 62, 53, 142, 89, 28,
+                37, 128, 223, 36, 248, 117, 26, 182, 173, 112, 42, 1, 2, 117, 203, 114, 179,
+            ],
+            &[
+                150, 202, 0, 54, 0, 149, 201, 0, 0, 138, 201, 0, 0, 152, 201, 0, 0, 151, 201, 0, 0,
+                150, 201, 0, 0, 141, 201, 0, 0, 159, 201, 0, 0, 150, 201, 0, 0, 159, 201, 0, 0,
+                134, 201, 0, 0, 143, 201, 0, 0, 162, 201, 0, 0, 166, 201, 0, 0, 177, 201, 0, 0,
+                182, 201, 0, 0, 131, 201, 0, 0, 164, 201, 0, 0, 133, 201, 0, 0, 143, 201, 0, 0,
+                174, 201, 0, 0, 186, 201, 0, 0, 165, 201, 0, 0, 173, 201, 0, 0, 186, 201, 0, 0,
+                166, 201, 0, 0, 159, 201, 0, 0, 158, 201, 0, 0, 190, 201, 0, 0, 156, 201, 0, 0,
+                147, 201, 0, 0, 169, 201, 0, 0, 135, 201, 0, 0, 148, 201, 0, 0, 132, 201, 0, 0,
+                138, 201, 0, 0, 162, 201, 0, 0, 185, 201, 0, 0, 157, 201, 0, 0, 183, 201, 0, 0,
+                145, 201, 0, 0, 130, 201, 0, 0, 183, 201, 0, 0, 152, 201, 0, 0, 153, 201, 0, 0,
+                154, 201, 0, 0, 138, 201, 0, 0, 148, 201, 0, 0, 158, 201, 0, 0, 156, 201, 0, 0,
+                181, 201, 0, 0, 173, 201, 0, 0, 171, 201, 0, 0, 169, 201, 0, 0, 167, 201, 41, 216,
+            ],
+        ];
+
+        for t in TESTS {
+            let _ = RtcpFb::read_packet(t);
+        }
+    }
 }

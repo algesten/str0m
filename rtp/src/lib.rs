@@ -1,3 +1,5 @@
+#![cfg_attr(fuzzing, feature(no_coverage))]
+
 #[macro_use]
 extern crate tracing;
 
@@ -43,4 +45,19 @@ pub enum RtpError {
 
     #[error("Differing ext id to ext type: {0} != {1}")]
     ExtMapDiffers(Extension, Extension),
+}
+
+#[cfg(all(fuzzing, test))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fuzz_rtcp_parse() {
+        fn parse_rtcp(buf: &Vec<u8>) -> bool {
+            let _ = RtcpFb::read_packet(&buf);
+            true
+        }
+        let result = fuzzcheck::fuzz_test(parse_rtcp).default_options().launch();
+        assert!(!result.found_test_failure);
+    }
 }

@@ -21,3 +21,6 @@ sha-1 = "0.9"
 
 dtls = { path = "../dtls" }
 net = { path = "../net" }
+
+[target.'cfg(fuzzing)'.dev-dependencies]
+fuzzcheck = "0.12"
