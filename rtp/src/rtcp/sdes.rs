@@ -153,7 +153,7 @@ impl<'a> TryFrom<&'a [u8]> for Descriptions {
 
         loop {
             if reports.len() == 31 {
-                return Err("More than 31 Sdes");
+                break;
             }
             if buf.is_empty() {
                 break;

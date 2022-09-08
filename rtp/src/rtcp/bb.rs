@@ -32,10 +32,6 @@ impl<'a> TryFrom<(usize, &'a [u8])> for Goodbye {
     type Error = &'static str;
 
     fn try_from((count, buf): (usize, &'a [u8])) -> Result<Self, Self::Error> {
-        if count > 31 {
-            return Err("Goodbye count more than 31");
-        }
-
         if buf.len() < 4 {
             return Err("Less than 4 bytes for Goodbye");
         }
@@ -47,7 +43,9 @@ impl<'a> TryFrom<(usize, &'a [u8])> for Goodbye {
             return Err("Less than count * 4 bytes for Goodbye");
         }
 
-        for _ in 0..count {
+        let max = count.min(31);
+
+        for _ in 0..max {
             let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
             reports.push(ssrc);
             buf = &buf[4..];

@@ -22,6 +22,9 @@ pub use sdes::{Descriptions, Sdes, SdesType};
 mod bb;
 pub use bb::Goodbye;
 
+mod nack;
+pub use nack::{Nack, NackPair};
+
 use crate::Ssrc;
 
 pub trait RtcpPacket {
@@ -43,6 +46,7 @@ pub enum RtcpFb {
     ReceiverReport(ReceiverReport),
     SourceDescription(Descriptions),
     Goodbye(Goodbye),
+    Nack(Nack),
 }
 
 impl RtcpFb {
@@ -194,6 +198,7 @@ impl RtcpFb {
             RtcpFb::ReceiverReport(v) => v.reports.is_full(),
             RtcpFb::SourceDescription(v) => v.reports.is_full(),
             RtcpFb::Goodbye(v) => v.reports.is_full(),
+            RtcpFb::Nack(v) => v.reports.is_full(),
         }
     }
 
@@ -209,6 +214,8 @@ impl RtcpFb {
             RtcpFb::SourceDescription(v) => v.reports.is_empty(),
             // Goodbye can become empty,
             RtcpFb::Goodbye(v) => v.reports.is_empty(),
+            // Nack can become empty
+            RtcpFb::Nack(v) => v.reports.is_empty(),
         }
     }
 
@@ -274,6 +281,7 @@ impl RtcpPacket for RtcpFb {
             RtcpFb::ReceiverReport(v) => v.header(),
             RtcpFb::SourceDescription(v) => v.header(),
             RtcpFb::Goodbye(v) => v.header(),
+            RtcpFb::Nack(v) => v.header(),
         }
     }
 
@@ -283,6 +291,7 @@ impl RtcpPacket for RtcpFb {
             RtcpFb::ReceiverReport(v) => v.length_words(),
             RtcpFb::SourceDescription(v) => v.length_words(),
             RtcpFb::Goodbye(v) => v.length_words(),
+            RtcpFb::Nack(v) => v.length_words(),
         }
     }
 
@@ -292,6 +301,7 @@ impl RtcpPacket for RtcpFb {
             RtcpFb::ReceiverReport(v) => v.write_to(buf),
             RtcpFb::SourceDescription(v) => v.write_to(buf),
             RtcpFb::Goodbye(v) => v.write_to(buf),
+            RtcpFb::Nack(v) => v.write_to(buf),
         }
     }
 }
@@ -320,7 +330,7 @@ impl<'a> TryFrom<&'a [u8]> for RtcpFb {
                 };
 
                 match tlfb {
-                    TransportType::Nack => return Err("TODO: Nack"),
+                    TransportType::Nack => RtcpFb::Nack(buf.try_into()?),
                     TransportType::TransportWide => return Err("TODO: TransportWide"),
                 }
             }
