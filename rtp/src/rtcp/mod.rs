@@ -25,6 +25,9 @@ pub use bb::Goodbye;
 mod nack;
 pub use nack::{Nack, NackPair};
 
+mod pli;
+pub use pli::Pli;
+
 use crate::Ssrc;
 
 pub trait RtcpPacket {
@@ -47,6 +50,7 @@ pub enum RtcpFb {
     SourceDescription(Descriptions),
     Goodbye(Goodbye),
     Nack(Nack),
+    Pli(Pli),
 }
 
 impl RtcpFb {
@@ -187,6 +191,12 @@ impl RtcpFb {
                 n > 0
             }
 
+            // Stack Nack
+            (RtcpFb::Nack(n1), RtcpFb::Nack(n2)) if n1.ssrc == n2.ssrc => {
+                let n = n1.reports.append_all_possible(&mut n2.reports, words_left);
+                n > 0
+            }
+
             // No merge possible
             _ => false,
         }
@@ -199,6 +209,7 @@ impl RtcpFb {
             RtcpFb::SourceDescription(v) => v.reports.is_full(),
             RtcpFb::Goodbye(v) => v.reports.is_full(),
             RtcpFb::Nack(v) => v.reports.is_full(),
+            RtcpFb::Pli(_) => true,
         }
     }
 
@@ -216,6 +227,8 @@ impl RtcpFb {
             RtcpFb::Goodbye(v) => v.reports.is_empty(),
             // Nack can become empty
             RtcpFb::Nack(v) => v.reports.is_empty(),
+            // Nack is never empty
+            RtcpFb::Pli(_) => false,
         }
     }
 
@@ -282,6 +295,7 @@ impl RtcpPacket for RtcpFb {
             RtcpFb::SourceDescription(v) => v.header(),
             RtcpFb::Goodbye(v) => v.header(),
             RtcpFb::Nack(v) => v.header(),
+            RtcpFb::Pli(v) => v.header(),
         }
     }
 
@@ -292,6 +306,7 @@ impl RtcpPacket for RtcpFb {
             RtcpFb::SourceDescription(v) => v.length_words(),
             RtcpFb::Goodbye(v) => v.length_words(),
             RtcpFb::Nack(v) => v.length_words(),
+            RtcpFb::Pli(v) => v.length_words(),
         }
     }
 
@@ -302,6 +317,7 @@ impl RtcpPacket for RtcpFb {
             RtcpFb::SourceDescription(v) => v.write_to(buf),
             RtcpFb::Goodbye(v) => v.write_to(buf),
             RtcpFb::Nack(v) => v.write_to(buf),
+            RtcpFb::Pli(v) => v.write_to(buf),
         }
     }
 }

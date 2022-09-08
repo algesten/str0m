@@ -1,6 +1,7 @@
-use crate::{
-    FeedbackMessageType, ReportList, RtcpHeader, RtcpPacket, RtcpType, Ssrc, TransportType,
-};
+use crate::{FeedbackMessageType, ReportList, RtcpHeader, RtcpPacket};
+use crate::{RtcpType, Ssrc, TransportType};
+
+use super::list::private::WordSized;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Nack {
@@ -24,7 +25,11 @@ impl RtcpPacket for Nack {
     }
 
     fn length_words(&self) -> usize {
-        2 + self.reports.len()
+        // header
+        // sender SSRC
+        // media SSRC
+        // 1 word per NackPair
+        1 + 2 + self.reports.len()
     }
 
     fn write_to(&self, buf: &mut [u8]) -> usize {
@@ -36,7 +41,13 @@ impl RtcpPacket for Nack {
             (&mut buf[2..4]).copy_from_slice(&r.lost_packets.to_be_bytes());
             buf = &mut buf[4..];
         }
-        todo!()
+        (self.length_words() - 1) * 4
+    }
+}
+
+impl WordSized for NackPair {
+    fn word_size(&self) -> usize {
+        1
     }
 }
 
