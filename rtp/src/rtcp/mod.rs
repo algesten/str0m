@@ -28,6 +28,9 @@ pub use nack::{Nack, NackPair};
 mod pli;
 pub use pli::Pli;
 
+mod fir;
+pub use fir::{Fir, FirEntry};
+
 use crate::Ssrc;
 
 pub trait RtcpPacket {
@@ -51,6 +54,7 @@ pub enum RtcpFb {
     Goodbye(Goodbye),
     Nack(Nack),
     Pli(Pli),
+    Fir(Fir),
 }
 
 impl RtcpFb {
@@ -197,6 +201,12 @@ impl RtcpFb {
                 n > 0
             }
 
+            // Stack source descriptions.
+            (RtcpFb::Fir(f1), RtcpFb::Fir(f2)) => {
+                let n = f1.reports.append_all_possible(&mut f2.reports, words_left);
+                n > 0
+            }
+
             // No merge possible
             _ => false,
         }
@@ -210,6 +220,7 @@ impl RtcpFb {
             RtcpFb::Goodbye(v) => v.reports.is_full(),
             RtcpFb::Nack(v) => v.reports.is_full(),
             RtcpFb::Pli(_) => true,
+            RtcpFb::Fir(v) => v.reports.is_full(),
         }
     }
 
@@ -229,6 +240,8 @@ impl RtcpFb {
             RtcpFb::Nack(v) => v.reports.is_empty(),
             // Nack is never empty
             RtcpFb::Pli(_) => false,
+            // Fir can be merged to empty.
+            RtcpFb::Fir(v) => v.reports.is_empty(),
         }
     }
 
@@ -296,6 +309,7 @@ impl RtcpPacket for RtcpFb {
             RtcpFb::Goodbye(v) => v.header(),
             RtcpFb::Nack(v) => v.header(),
             RtcpFb::Pli(v) => v.header(),
+            RtcpFb::Fir(v) => v.header(),
         }
     }
 
@@ -307,6 +321,7 @@ impl RtcpPacket for RtcpFb {
             RtcpFb::Goodbye(v) => v.length_words(),
             RtcpFb::Nack(v) => v.length_words(),
             RtcpFb::Pli(v) => v.length_words(),
+            RtcpFb::Fir(v) => v.length_words(),
         }
     }
 
@@ -318,6 +333,7 @@ impl RtcpPacket for RtcpFb {
             RtcpFb::Goodbye(v) => v.write_to(buf),
             RtcpFb::Nack(v) => v.write_to(buf),
             RtcpFb::Pli(v) => v.write_to(buf),
+            RtcpFb::Fir(v) => v.write_to(buf),
         }
     }
 }
