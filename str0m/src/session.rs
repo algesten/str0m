@@ -1,10 +1,11 @@
 use std::collections::{HashMap, VecDeque};
+use std::convert::TryInto;
 use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
 use net_::DATAGRAM_MTU;
 use rtp::{
-    Extensions, Mid, RtcpFb, RtcpHeader, RtpHeader, SessionId, SRTCP_BLOCK_SIZE,
+    Extensions, Mid, Rtcp, RtcpHeader, RtpHeader, SessionId, SRTCP_BLOCK_SIZE,
     SRTCP_OVERHEAD_PREFIX, SRTCP_OVERHEAD_SUFFIX,
 };
 use rtp::{SrtpContext, SrtpKey, Ssrc};
@@ -36,7 +37,7 @@ pub(crate) struct Session {
     ssrc_map: HashMap<Ssrc, usize>,
     last_regular: Instant,
     last_nack: Instant,
-    feedback: VecDeque<RtcpFb>,
+    feedback: VecDeque<Rtcp>,
 }
 
 pub enum MediaEvent {
@@ -114,13 +115,17 @@ impl Session {
                 }
             }
             Rtcp(buf) => {
-                if let Some(_header) = RtcpHeader::parse(buf, true) {
-                    // The header in SRTP is not interesting. It's just there to fulfil
-                    // the RTCP protocol. If we fail to verify it, there packet was not
-                    // welformed.
-                    self.handle_rtcp(buf)?;
-                } else {
-                    trace!("Failed to parse RTCP header");
+                let r: Result<RtcpHeader, &'static str> = buf.try_into();
+                match r {
+                    Ok(v) => {
+                        // The header in SRTP is not interesting. It's just there to fulfil
+                        // the RTCP protocol. If we fail to verify it, there packet was not
+                        // welformed.
+                        self.handle_rtcp(buf)?;
+                    }
+                    Err(e) => {
+                        trace!("Failed to parse RTCP header: {}", e);
+                    }
                 }
             }
             _ => {}
@@ -154,9 +159,9 @@ impl Session {
         let srtp = self.srtp_rx.as_mut()?;
         let decrypted = srtp.unprotect_rtcp(&buf)?;
 
-        let mut fb_iter = RtcpFb::feedback(&decrypted);
+        let packets = Rtcp::read_packet(buf);
 
-        while let Some(fb) = fb_iter.next() {
+        for fb in packets {
             if let Some(idx) = self.ssrc_map.get(&fb.ssrc()) {
                 let media = &self.media[*idx];
                 //
@@ -201,7 +206,7 @@ impl Session {
             "Multiple of SRTCP_BLOCK_SIZE"
         );
 
-        RtcpFb::build_feedback(&mut self.feedback, &mut buf);
+        Rtcp::build_feedback(&mut self.feedback, &mut buf);
 
         Some(net::DatagramSend::new(data))
     }

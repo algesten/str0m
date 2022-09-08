@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use rtp::{RtcpFb, Ssrc};
+use rtp::{Rtcp, Ssrc};
 
 pub struct SenderSource {
     ssrc: Ssrc,
@@ -12,7 +12,7 @@ impl SenderSource {
         self.ssrc
     }
 
-    pub(crate) fn create_sender_info(&self) -> RtcpFb {
+    pub(crate) fn create_sender_info(&self) -> Rtcp {
         todo!()
     }
 }

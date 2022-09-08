@@ -54,7 +54,7 @@ mod tests {
     #[test]
     fn fuzz_rtcp_parse() {
         fn parse_rtcp(buf: &Vec<u8>) -> bool {
-            let _ = RtcpFb::read_packet(&buf);
+            let _ = Rtcp::read_packet(&buf);
             true
         }
         let result = fuzzcheck::fuzz_test(parse_rtcp).default_options().launch();

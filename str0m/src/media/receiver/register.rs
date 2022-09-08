@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use bitvec::prelude::*;
-use rtp::{Nack, ReceiverReport, SeqNo};
+use rtp::{Nack, NackEntry, ReceptionReport, SeqNo};
 
 const MAX_DROPOUT: u64 = 3000;
 const MAX_MISORDER: u64 = 100;
@@ -279,8 +279,11 @@ impl ReceiverRegister {
 
         first_missing.map(|first| Nack {
             ssrc: 0.into(),
-            pid: (first % u16::MAX as u64) as u16,
-            blp: bitmask,
+            reports: NackEntry {
+                pid: (first % u16::MAX as u64) as u16,
+                blp: bitmask,
+            }
+            .into(),
         })
     }
 
@@ -288,9 +291,8 @@ impl ReceiverRegister {
     ///
     /// This modifies the state since fraction_lost is calculated
     /// since the last call to this function.
-    pub fn report_block(&mut self) -> ReceiverReport {
-        todo!();
-        ReceiverReport {
+    pub fn report_block(&mut self) -> ReceptionReport {
+        ReceptionReport {
             ssrc: 0.into(),
             fraction_lost: self.fraction_lost(),
             packets_lost: self.packets_lost(),
@@ -536,8 +538,11 @@ mod test {
             reg.nack_report(),
             Some(Nack {
                 ssrc: 0.into(),
-                pid: t.missing,
-                blp: t.bitmask,
+                reports: NackEntry {
+                    pid: t.missing,
+                    blp: t.bitmask,
+                }
+                .into()
             })
         );
         assert_eq!(reg.nack_check_from, t.check_from.into());

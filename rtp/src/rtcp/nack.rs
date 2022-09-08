@@ -6,13 +6,13 @@ use super::list::private::WordSized;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Nack {
     pub ssrc: Ssrc,
-    pub reports: ReportList<NackPair>,
+    pub reports: ReportList<NackEntry>,
 }
 
 #[derive(Debug, PartialEq, Eq, Default, Clone, Copy)]
-pub struct NackPair {
-    pub packet_id: u16,
-    pub lost_packets: u16,
+pub struct NackEntry {
+    pub pid: u16,
+    pub blp: u16,
 }
 
 impl RtcpPacket for Nack {
@@ -37,15 +37,15 @@ impl RtcpPacket for Nack {
         (&mut buf[4..8]).copy_from_slice(&self.ssrc.to_be_bytes());
         let mut buf = &mut buf[8..];
         for r in &self.reports {
-            (&mut buf[0..2]).copy_from_slice(&r.packet_id.to_be_bytes());
-            (&mut buf[2..4]).copy_from_slice(&r.lost_packets.to_be_bytes());
+            (&mut buf[0..2]).copy_from_slice(&r.pid.to_be_bytes());
+            (&mut buf[2..4]).copy_from_slice(&r.blp.to_be_bytes());
             buf = &mut buf[4..];
         }
         (self.length_words() - 1) * 4
     }
 }
 
-impl WordSized for NackPair {
+impl WordSized for NackEntry {
     fn word_size(&self) -> usize {
         1
     }
@@ -68,12 +68,9 @@ impl<'a> TryFrom<&'a [u8]> for Nack {
         let max = count.min(31);
 
         for _ in 0..max {
-            let packet_id = u16::from_be_bytes([buf[0], buf[1]]);
-            let lost_packets = u16::from_be_bytes([buf[2], buf[3]]);
-            reports.push(NackPair {
-                packet_id,
-                lost_packets,
-            });
+            let pid = u16::from_be_bytes([buf[0], buf[1]]);
+            let blp = u16::from_be_bytes([buf[2], buf[3]]);
+            reports.push(NackEntry { pid, blp });
             buf = &buf[4..];
         }
 

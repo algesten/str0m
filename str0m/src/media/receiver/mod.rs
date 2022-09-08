@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use rtp::{RtcpFb, RtpHeader, SeqNo, Ssrc};
+use rtp::{ReceiverReport, Rtcp, RtpHeader, SeqNo, Ssrc};
 
 mod register;
 use register::ReceiverRegister;
@@ -47,21 +47,23 @@ impl ReceiverSource {
         self.register.is_valid()
     }
 
-    pub fn create_receiver_report(&mut self) -> RtcpFb {
+    pub fn create_receiver_report(&mut self) -> Rtcp {
         let mut block = self.register.report_block();
         block.ssrc = self.ssrc;
 
-        RtcpFb::ReceiverReport(block)
+        Rtcp::ReceiverReport(ReceiverReport {
+            reports: block.into(),
+        })
     }
 
     pub fn has_nack(&mut self) -> bool {
         self.register.has_nack_report()
     }
 
-    pub fn create_nack(&mut self) -> Option<RtcpFb> {
+    pub fn create_nack(&mut self) -> Option<Rtcp> {
         if let Some(mut nack) = self.register.nack_report() {
             nack.ssrc = self.ssrc;
-            return Some(RtcpFb::Nack(nack));
+            return Some(Rtcp::Nack(nack));
         }
 
         None

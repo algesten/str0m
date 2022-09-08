@@ -23,7 +23,7 @@ mod bb;
 pub use bb::Goodbye;
 
 mod nack;
-pub use nack::{Nack, NackPair};
+pub use nack::{Nack, NackEntry};
 
 mod pli;
 pub use pli::Pli;
@@ -47,7 +47,7 @@ pub trait RtcpPacket {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RtcpFb {
+pub enum Rtcp {
     SenderReport(SenderReport),
     ReceiverReport(ReceiverReport),
     SourceDescription(Descriptions),
@@ -57,8 +57,8 @@ pub enum RtcpFb {
     Fir(Fir),
 }
 
-impl RtcpFb {
-    pub fn read_packet(buf: &[u8]) -> VecDeque<RtcpFb> {
+impl Rtcp {
+    pub fn read_packet(buf: &[u8]) -> VecDeque<Rtcp> {
         let mut feedback = VecDeque::new();
 
         let mut buf = buf;
@@ -104,7 +104,7 @@ impl RtcpFb {
         feedback
     }
 
-    pub fn write_packet(feedback: &mut VecDeque<RtcpFb>, buf: &mut [u8], pad_to: usize) -> usize {
+    pub fn write_packet(feedback: &mut VecDeque<Rtcp>, buf: &mut [u8], pad_to: usize) -> usize {
         assert!(pad_to > 0, "pad_to must be more than 0");
         assert_eq!(pad_to % 4, 0, "pad_to is on a word boundary");
 
@@ -116,7 +116,7 @@ impl RtcpFb {
         let word_capacity = total_len / 4;
 
         // Pack RTCP feedback packets. Merge together ones of the same type.
-        RtcpFb::pack(feedback, word_capacity);
+        Rtcp::pack(feedback, word_capacity);
 
         let mut offset = 0;
         let mut offset_prev = 0;
@@ -169,40 +169,40 @@ impl RtcpFb {
         offset
     }
 
-    fn merge(&mut self, other: &mut RtcpFb, words_left: usize) -> bool {
+    fn merge(&mut self, other: &mut Rtcp, words_left: usize) -> bool {
         match (self, other) {
             // Stack receiver reports into sender reports.
-            (RtcpFb::SenderReport(sr), RtcpFb::ReceiverReport(rr)) => {
+            (Rtcp::SenderReport(sr), Rtcp::ReceiverReport(rr)) => {
                 let n = sr.reports.append_all_possible(&mut rr.reports, words_left);
                 n > 0
             }
 
             // Stack receiver reports.
-            (RtcpFb::ReceiverReport(r1), RtcpFb::ReceiverReport(r2)) => {
+            (Rtcp::ReceiverReport(r1), Rtcp::ReceiverReport(r2)) => {
                 let n = r1.reports.append_all_possible(&mut r2.reports, words_left);
                 n > 0
             }
 
             // Stack source descriptions.
-            (RtcpFb::SourceDescription(s1), RtcpFb::SourceDescription(s2)) => {
+            (Rtcp::SourceDescription(s1), Rtcp::SourceDescription(s2)) => {
                 let n = s1.reports.append_all_possible(&mut s2.reports, words_left);
                 n > 0
             }
 
             // Stack source descriptions.
-            (RtcpFb::Goodbye(g1), RtcpFb::Goodbye(g2)) => {
+            (Rtcp::Goodbye(g1), Rtcp::Goodbye(g2)) => {
                 let n = g1.reports.append_all_possible(&mut g2.reports, words_left);
                 n > 0
             }
 
             // Stack Nack
-            (RtcpFb::Nack(n1), RtcpFb::Nack(n2)) if n1.ssrc == n2.ssrc => {
+            (Rtcp::Nack(n1), Rtcp::Nack(n2)) if n1.ssrc == n2.ssrc => {
                 let n = n1.reports.append_all_possible(&mut n2.reports, words_left);
                 n > 0
             }
 
             // Stack source descriptions.
-            (RtcpFb::Fir(f1), RtcpFb::Fir(f2)) => {
+            (Rtcp::Fir(f1), Rtcp::Fir(f2)) => {
                 let n = f1.reports.append_all_possible(&mut f2.reports, words_left);
                 n > 0
             }
@@ -214,13 +214,13 @@ impl RtcpFb {
 
     fn is_full(&self) -> bool {
         match self {
-            RtcpFb::SenderReport(v) => v.reports.is_full(),
-            RtcpFb::ReceiverReport(v) => v.reports.is_full(),
-            RtcpFb::SourceDescription(v) => v.reports.is_full(),
-            RtcpFb::Goodbye(v) => v.reports.is_full(),
-            RtcpFb::Nack(v) => v.reports.is_full(),
-            RtcpFb::Pli(_) => true,
-            RtcpFb::Fir(v) => v.reports.is_full(),
+            Rtcp::SenderReport(v) => v.reports.is_full(),
+            Rtcp::ReceiverReport(v) => v.reports.is_full(),
+            Rtcp::SourceDescription(v) => v.reports.is_full(),
+            Rtcp::Goodbye(v) => v.reports.is_full(),
+            Rtcp::Nack(v) => v.reports.is_full(),
+            Rtcp::Pli(_) => true,
+            Rtcp::Fir(v) => v.reports.is_full(),
         }
     }
 
@@ -229,19 +229,19 @@ impl RtcpFb {
     fn is_empty(&self) -> bool {
         match self {
             // A SenderReport always has, at least, the SenderInfo part.
-            RtcpFb::SenderReport(_) => false,
+            Rtcp::SenderReport(_) => false,
             // ReceiverReport can become empty.
-            RtcpFb::ReceiverReport(v) => v.reports.is_empty(),
+            Rtcp::ReceiverReport(v) => v.reports.is_empty(),
             // SourceDescription can become empty.
-            RtcpFb::SourceDescription(v) => v.reports.is_empty(),
+            Rtcp::SourceDescription(v) => v.reports.is_empty(),
             // Goodbye can become empty,
-            RtcpFb::Goodbye(v) => v.reports.is_empty(),
+            Rtcp::Goodbye(v) => v.reports.is_empty(),
             // Nack can become empty
-            RtcpFb::Nack(v) => v.reports.is_empty(),
+            Rtcp::Nack(v) => v.reports.is_empty(),
             // Nack is never empty
-            RtcpFb::Pli(_) => false,
+            Rtcp::Pli(_) => false,
             // Fir can be merged to empty.
-            RtcpFb::Fir(v) => v.reports.is_empty(),
+            Rtcp::Fir(v) => v.reports.is_empty(),
         }
     }
 
@@ -259,7 +259,7 @@ impl RtcpFb {
             // fb_a is the item we are merging items into.
             // SAFETY: We're never going to have i and j referencing the same item in feedback.
             let fb_a = unsafe {
-                let fb_a_ptr = &mut feedback[i] as *mut RtcpFb;
+                let fb_a_ptr = &mut feedback[i] as *mut Rtcp;
                 &mut *fb_a_ptr
             };
 
@@ -300,45 +300,45 @@ impl RtcpFb {
     }
 }
 
-impl RtcpPacket for RtcpFb {
+impl RtcpPacket for Rtcp {
     fn header(&self) -> RtcpHeader {
         match self {
-            RtcpFb::SenderReport(v) => v.header(),
-            RtcpFb::ReceiverReport(v) => v.header(),
-            RtcpFb::SourceDescription(v) => v.header(),
-            RtcpFb::Goodbye(v) => v.header(),
-            RtcpFb::Nack(v) => v.header(),
-            RtcpFb::Pli(v) => v.header(),
-            RtcpFb::Fir(v) => v.header(),
+            Rtcp::SenderReport(v) => v.header(),
+            Rtcp::ReceiverReport(v) => v.header(),
+            Rtcp::SourceDescription(v) => v.header(),
+            Rtcp::Goodbye(v) => v.header(),
+            Rtcp::Nack(v) => v.header(),
+            Rtcp::Pli(v) => v.header(),
+            Rtcp::Fir(v) => v.header(),
         }
     }
 
     fn length_words(&self) -> usize {
         match self {
-            RtcpFb::SenderReport(v) => v.length_words(),
-            RtcpFb::ReceiverReport(v) => v.length_words(),
-            RtcpFb::SourceDescription(v) => v.length_words(),
-            RtcpFb::Goodbye(v) => v.length_words(),
-            RtcpFb::Nack(v) => v.length_words(),
-            RtcpFb::Pli(v) => v.length_words(),
-            RtcpFb::Fir(v) => v.length_words(),
+            Rtcp::SenderReport(v) => v.length_words(),
+            Rtcp::ReceiverReport(v) => v.length_words(),
+            Rtcp::SourceDescription(v) => v.length_words(),
+            Rtcp::Goodbye(v) => v.length_words(),
+            Rtcp::Nack(v) => v.length_words(),
+            Rtcp::Pli(v) => v.length_words(),
+            Rtcp::Fir(v) => v.length_words(),
         }
     }
 
     fn write_to(&self, buf: &mut [u8]) -> usize {
         match self {
-            RtcpFb::SenderReport(v) => v.write_to(buf),
-            RtcpFb::ReceiverReport(v) => v.write_to(buf),
-            RtcpFb::SourceDescription(v) => v.write_to(buf),
-            RtcpFb::Goodbye(v) => v.write_to(buf),
-            RtcpFb::Nack(v) => v.write_to(buf),
-            RtcpFb::Pli(v) => v.write_to(buf),
-            RtcpFb::Fir(v) => v.write_to(buf),
+            Rtcp::SenderReport(v) => v.write_to(buf),
+            Rtcp::ReceiverReport(v) => v.write_to(buf),
+            Rtcp::SourceDescription(v) => v.write_to(buf),
+            Rtcp::Goodbye(v) => v.write_to(buf),
+            Rtcp::Nack(v) => v.write_to(buf),
+            Rtcp::Pli(v) => v.write_to(buf),
+            Rtcp::Fir(v) => v.write_to(buf),
         }
     }
 }
 
-impl<'a> TryFrom<&'a [u8]> for RtcpFb {
+impl<'a> TryFrom<&'a [u8]> for Rtcp {
     type Error = &'static str;
 
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
@@ -350,10 +350,10 @@ impl<'a> TryFrom<&'a [u8]> for RtcpFb {
         let buf = &buf[4..];
 
         Ok(match header.rtcp_type() {
-            RtcpType::SenderReport => RtcpFb::SenderReport(buf.try_into()?),
-            RtcpType::ReceiverReport => RtcpFb::ReceiverReport(buf.try_into()?),
-            RtcpType::SourceDescription => RtcpFb::SourceDescription(buf.try_into()?),
-            RtcpType::Goodbye => RtcpFb::Goodbye((header.count(), buf).try_into()?),
+            RtcpType::SenderReport => Rtcp::SenderReport(buf.try_into()?),
+            RtcpType::ReceiverReport => Rtcp::ReceiverReport(buf.try_into()?),
+            RtcpType::SourceDescription => Rtcp::SourceDescription(buf.try_into()?),
+            RtcpType::Goodbye => Rtcp::Goodbye((header.count(), buf).try_into()?),
             RtcpType::ApplicationDefined => return Err("Ignore RTCP type: ApplicationDefined"),
             RtcpType::TransportLayerFeedback => {
                 let tlfb = match header.feedback_message_type() {
@@ -362,7 +362,7 @@ impl<'a> TryFrom<&'a [u8]> for RtcpFb {
                 };
 
                 match tlfb {
-                    TransportType::Nack => RtcpFb::Nack(buf.try_into()?),
+                    TransportType::Nack => Rtcp::Nack(buf.try_into()?),
                     TransportType::TransportWide => return Err("TODO: TransportWide"),
                 }
             }
@@ -419,12 +419,12 @@ mod test {
         queue.push_back(rr(4));
         queue.push_back(rr(5));
 
-        RtcpFb::pack(&mut queue, 350);
+        Rtcp::pack(&mut queue, 350);
 
         assert_eq!(queue.len(), 1);
 
         let sr = match queue.pop_front().unwrap() {
-            RtcpFb::SenderReport(v) => v,
+            Rtcp::SenderReport(v) => v,
             _ => unreachable!(),
         };
 
@@ -444,12 +444,12 @@ mod test {
         queue.push_back(rr(3));
         queue.push_back(rr(4));
 
-        RtcpFb::pack(&mut queue, 350);
+        Rtcp::pack(&mut queue, 350);
 
         assert_eq!(queue.len(), 1);
 
         let sr = match queue.pop_front().unwrap() {
-            RtcpFb::ReceiverReport(v) => v,
+            Rtcp::ReceiverReport(v) => v,
             _ => unreachable!(),
         };
 
@@ -471,23 +471,23 @@ mod test {
         feedback.push_back(rr(5));
 
         let mut buf = vec![0_u8; 1360];
-        let n = RtcpFb::write_packet(&mut feedback, &mut buf, 16);
+        let n = Rtcp::write_packet(&mut feedback, &mut buf, 16);
         buf.truncate(n);
 
-        let parsed = RtcpFb::read_packet(&buf);
+        let parsed = Rtcp::read_packet(&buf);
 
         let mut compare = VecDeque::new();
         compare.push_back(sr(1, now));
         compare.push_back(rr(3));
         compare.push_back(rr(4));
         compare.push_back(rr(5));
-        RtcpFb::pack(&mut compare, 1400);
+        Rtcp::pack(&mut compare, 1400);
 
         assert_eq!(parsed, compare);
     }
 
-    fn sr(ssrc: u32, ntp_time: MediaTime) -> RtcpFb {
-        RtcpFb::SenderReport(SenderReport {
+    fn sr(ssrc: u32, ntp_time: MediaTime) -> Rtcp {
+        Rtcp::SenderReport(SenderReport {
             sender_info: SenderInfo {
                 ssrc: ssrc.into(),
                 ntp_time,
@@ -499,8 +499,8 @@ mod test {
         })
     }
 
-    fn rr(ssrc: u32) -> RtcpFb {
-        RtcpFb::ReceiverReport(ReceiverReport {
+    fn rr(ssrc: u32) -> Rtcp {
+        Rtcp::ReceiverReport(ReceiverReport {
             reports: report(ssrc).into(),
         })
     }
@@ -573,7 +573,7 @@ mod test {
         ];
 
         for t in TESTS {
-            let _ = RtcpFb::read_packet(t);
+            let _ = Rtcp::read_packet(t);
         }
     }
 }

@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use rtp::{MLineIdx, RtcpFb, RtpHeader};
+use rtp::{MLineIdx, Rtcp, RtpHeader};
 
 pub use rtp::{Direction, Mid, Pt};
 pub use sdp::{Codec, FormatParams};
@@ -108,7 +108,7 @@ impl Media {
     }
 
     /// Creates sender info and receiver reports for all senders/receivers
-    pub(crate) fn create_regular_feedback(&mut self, feedback: &mut VecDeque<RtcpFb>) {
+    pub(crate) fn create_regular_feedback(&mut self, feedback: &mut VecDeque<Rtcp>) {
         for s in &mut self.sources_tx {
             feedback.push_back(s.create_sender_info());
         }
@@ -118,7 +118,7 @@ impl Media {
     }
 
     // Creates nack reports for receivers, if needed.
-    pub(crate) fn create_nack(&mut self, feedback: &mut VecDeque<RtcpFb>) {
+    pub(crate) fn create_nack(&mut self, feedback: &mut VecDeque<Rtcp>) {
         for s in &mut self.sources_rx {
             if let Some(nack) = s.create_nack() {
                 feedback.push_back(nack);
