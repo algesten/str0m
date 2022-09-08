@@ -19,7 +19,10 @@ pub struct ReceiverRegister {
     /// Max ever observed sequence number.
     max_seq: SeqNo,
 
-    /// last 'bad' seq number + 1
+    /// last 'bad' seq number + 1.
+    ///
+    /// This is set when we observe a large jump in sequence numbers (MAX_DROPOUT) that we
+    /// assume could indicate a restart of the sender sequence numbers.
     bad_seq: Option<SeqNo>,
 
     /// Sequential packets remaining until source is valid.
@@ -38,6 +41,8 @@ pub struct ReceiverRegister {
     jitter: f32,
 
     /// Check nacks from this point.
+    ///
+    /// We've reported nack to here already.
     nack_check_from: SeqNo,
 
     /// Previously received time point.
@@ -80,7 +85,9 @@ impl ReceiverRegister {
         self.nack_report = None;
     }
 
+    /// Set a bit indicating we've received a packet.
     fn set_bit(&mut self, seq: SeqNo) {
+        // Do not set if it's lower than our nack_check_from, since we already sent a NACK for that.
         if *seq < *self.nack_check_from {
             return;
         }
@@ -103,6 +110,8 @@ impl ReceiverRegister {
                 self.max_seq = seq;
             }
         } else if *self.max_seq < *seq {
+            // Incoming seq is larger than we've seen before. This
+            // is the normal case, where we receive packets sequentially.
             let udelta = *seq - *self.max_seq;
 
             if udelta < MAX_DROPOUT {
@@ -235,11 +244,10 @@ impl ReceiverRegister {
     }
 
     fn create_nack_report(&mut self) -> Option<Nack> {
-        if *self.max_seq < MISORDER_DELAY {
-            return None;
-        }
-
+        // nack_check_from tracks where we create the next nack report from.
         let start = *self.nack_check_from;
+        // MISORDER_DELAY gives us a "grace period" of receiving packets out of
+        // order without reporting it as a NACK straight away.
         let stop = *self.max_seq - MISORDER_DELAY;
 
         if stop < start {

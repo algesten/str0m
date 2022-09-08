@@ -112,13 +112,36 @@ impl<'a, T> IntoIterator for &'a ReportList<T> {
     }
 }
 
+impl<T> IntoIterator for ReportList<T> {
+    type Item = T;
+    type IntoIter = IterOwned<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        IterOwned(self, 0)
+    }
+}
+
 pub struct Iter<'a, T>(&'a ReportList<T>, usize);
+
+pub struct IterOwned<T>(ReportList<T>, usize);
 
 impl<'a, T> Iterator for Iter<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
         let n = self.0 .0[self.1].as_ref();
+        if n.is_some() {
+            self.1 += 1;
+        }
+        n
+    }
+}
+
+impl<T> Iterator for IterOwned<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let n = self.0 .0[self.1].take();
         if n.is_some() {
             self.1 += 1;
         }

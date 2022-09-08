@@ -4,11 +4,9 @@ use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
 use net_::DATAGRAM_MTU;
-use rtp::{
-    Extensions, Mid, Rtcp, RtcpHeader, RtpHeader, SessionId, SRTCP_BLOCK_SIZE,
-    SRTCP_OVERHEAD_PREFIX, SRTCP_OVERHEAD_SUFFIX,
-};
-use rtp::{SrtpContext, SrtpKey, Ssrc};
+use rtp::{Extensions, Mid, Rtcp, RtcpHeader, RtpHeader, SessionId, SRTCP_BLOCK_SIZE};
+use rtp::{RtcpType, SrtpContext, SrtpKey, Ssrc};
+use rtp::{SRTCP_OVERHEAD_PREFIX, SRTCP_OVERHEAD_SUFFIX};
 use sdp::Answer;
 
 use crate::change::Changes;
@@ -118,10 +116,19 @@ impl Session {
                 let r: Result<RtcpHeader, &'static str> = buf.try_into();
                 match r {
                     Ok(v) => {
-                        // The header in SRTP is not interesting. It's just there to fulfil
-                        // the RTCP protocol. If we fail to verify it, there packet was not
-                        // welformed.
-                        self.handle_rtcp(buf)?;
+                        // According to spec, the outer enclosing SRTCP packet should always be a SR or RR,
+                        // even if it's irrelevant and empty.
+                        use RtcpType::*;
+                        let is_sr_rr = matches!(v.rtcp_type(), SenderReport | ReceiverReport);
+
+                        if is_sr_rr {
+                            // The header in SRTP is not interesting. It's just there to fulfil
+                            // the RTCP protocol. If we fail to verify it, there packet was not
+                            // welformed.
+                            self.handle_rtcp(buf)?;
+                        } else {
+                            trace!("SRTCP is not SR or RR: {:?}", v.rtcp_type());
+                        }
                     }
                     Err(e) => {
                         trace!("Failed to parse RTCP header: {}", e);
@@ -159,12 +166,12 @@ impl Session {
         let srtp = self.srtp_rx.as_mut()?;
         let decrypted = srtp.unprotect_rtcp(&buf)?;
 
-        let packets = Rtcp::read_packet(buf);
+        let feedback = Rtcp::packet_iter(&decrypted);
 
-        for fb in packets {
+        for fb in feedback {
             if let Some(idx) = self.ssrc_map.get(&fb.ssrc()) {
                 let media = &self.media[*idx];
-                //
+                // TODO: apply feedback
             }
         }
 
@@ -206,7 +213,7 @@ impl Session {
             "Multiple of SRTCP_BLOCK_SIZE"
         );
 
-        Rtcp::build_feedback(&mut self.feedback, &mut buf);
+        Rtcp::write_packet(&mut self.feedback, &mut buf, SRTCP_BLOCK_SIZE);
 
         Some(net::DatagramSend::new(data))
     }

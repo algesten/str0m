@@ -287,7 +287,7 @@ impl Derived {
         let mut rtcp_aes = [0; 16];
         srtp_key.derive(LABEL_RTCP_AES, &mut rtcp_aes[..]);
 
-        // RTP SHA1 HMAC
+        // RTCP SHA1 HMAC
 
         const LABEL_RTCP_HMAC: u8 = 4;
         srtp_key.derive(LABEL_RTCP_HMAC, &mut hmac[..]);
