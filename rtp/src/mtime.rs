@@ -1,6 +1,9 @@
 use std::cmp::Ordering;
+use std::convert::TryInto;
 use std::ops::{Add, Sub};
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
+
+use once_cell::sync::Lazy;
 
 /// 2^32 as float.
 const F32: f64 = 4_294_967_296.0;
@@ -35,21 +38,7 @@ impl MediaTime {
     }
 
     pub fn now() -> MediaTime {
-        // RTP spec "wallclock" uses NTP time, which starts at 1900-01-01.
-        //
-        // https://tools.ietf.org/html/rfc868
-        //
-        // 365 days * 70 years + 17 leap year days
-        // (365 * 70 + 17) * 86400 = 2208988800
-        const MICROS_1900: i64 = 2_208_988_800 * MICROS;
-
-        let dur = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap();
-
-        let now_micros = dur.as_secs() as i64 * 1_000_000 + dur.subsec_micros() as i64;
-
-        MediaTime::from_micros(now_micros + MICROS_1900)
+        Instant::now().into()
     }
 
     #[inline(always)]
@@ -194,6 +183,38 @@ impl Add for MediaTime {
     }
 }
 
+impl From<Instant> for MediaTime {
+    fn from(v: Instant) -> Self {
+        // This is a bit fishy. We "freeze" a moment in time for Instant and SystemTime,
+        // so we can make relative comparisons of Instant - Instant and translate that to
+        // SystemTime - unix epoch. Hopefully the error is quite small.
+        static TIME_START: Lazy<(Instant, SystemTime)> =
+            Lazy::new(|| (Instant::now(), SystemTime::now()));
+
+        // RTP spec "wallclock" uses NTP time, which starts at 1900-01-01.
+        //
+        // https://tools.ietf.org/html/rfc868
+        //
+        // 365 days * 70 years + 17 leap year days
+        // (365 * 70 + 17) * 86400 = 2208988800
+        const MICROS_1900: i64 = 2_208_988_800 * MICROS;
+
+        let duration_since_time_0 = v.duration_since(TIME_START.0);
+        let system_time = TIME_START.1 + duration_since_time_0;
+
+        let duration_since_epoch = system_time
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("clock to go forwards from unix epoch");
+
+        let duration_micros: i64 = duration_since_epoch
+            .as_micros()
+            .try_into()
+            .expect("u64 to represent micros since unix epoch");
+
+        MediaTime::from_micros(duration_micros + MICROS_1900)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -206,5 +227,12 @@ mod test {
         assert_eq!(t2.denum(), 90_000);
 
         println!("{}", (10.0234_f64).fract());
+    }
+
+    #[test]
+    fn from_instant() {
+        let now = Instant::now();
+        let m: MediaTime = now.into();
+        assert!(m.as_seconds() > 3871711275.0);
     }
 }
