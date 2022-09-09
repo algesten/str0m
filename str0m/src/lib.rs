@@ -112,6 +112,8 @@ impl Rtc {
     }
 
     pub fn accept_offer(&mut self, offer: Offer) -> Result<Answer, RtcError> {
+        self.add_ice_details(&offer)?;
+
         // rollback any pending offer.
         self.accept_answer(None)?;
 
@@ -182,6 +184,8 @@ impl Rtc {
 
     fn accept_answer(&mut self, answer: Option<Answer>) -> Result<(), RtcError> {
         if let Some(answer) = answer {
+            self.add_ice_details(&answer)?;
+
             // Ensure setup=active/passive is corresponding remote and init dtls.
             self.init_setup_dtls(&answer);
 
@@ -200,6 +204,20 @@ impl Rtc {
         } else {
             // rollback
             self.pending = None;
+        }
+
+        Ok(())
+    }
+
+    fn add_ice_details(&mut self, sdp: &Sdp) -> Result<(), RtcError> {
+        if let Some(creds) = sdp.ice_creds() {
+            self.ice.set_remote_credentials(creds);
+        } else {
+            return Err(RtcError::RemoteSdp("missing a=ice-ufrag/pwd".into()));
+        }
+
+        for r in sdp.ice_candidates() {
+            self.ice.add_remote_candidate(r.clone());
         }
 
         Ok(())

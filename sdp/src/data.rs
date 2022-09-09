@@ -1,6 +1,7 @@
 use combine::Parser;
 use dtls::Fingerprint;
 use rtp::{Direction, ExtMap, Mid, SessionId, Ssrc};
+use std::collections::HashSet;
 use std::fmt::{self};
 use std::num::ParseFloatError;
 use std::str::FromStr;
@@ -33,6 +34,26 @@ impl Sdp {
         self.session
             .fingerprint()
             .or_else(|| self.media_lines.iter().find_map(|m| m.fingerprint()))
+    }
+
+    pub fn ice_creds(&self) -> Option<IceCreds> {
+        self.session
+            .ice_creds()
+            .or_else(|| self.media_lines.iter().find_map(|m| m.ice_creds()))
+    }
+
+    pub fn ice_candidates(&self) -> impl Iterator<Item = &Candidate> {
+        let mut candidates: HashSet<&Candidate> = HashSet::new();
+
+        // Session level ice candidates.
+        candidates.extend(self.session.ice_candidates());
+
+        // M-line level ice candidates.
+        for m in &self.media_lines {
+            candidates.extend(m.ice_candidates());
+        }
+
+        candidates.into_iter()
     }
 
     pub fn setup(&self) -> Option<Setup> {

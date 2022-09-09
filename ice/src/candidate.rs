@@ -6,7 +6,7 @@ use std::net::{IpAddr, SocketAddr};
 use super::IceError;
 
 /// An ICE candidate.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Candidate {
     /// An arbitrary string used in the freezing algorithm to
     /// group similar candidates.

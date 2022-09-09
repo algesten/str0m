@@ -261,8 +261,10 @@ impl IceAgent {
 
     /// Sets the remote ice credentials.
     pub fn set_remote_credentials(&mut self, r: IceCreds) {
-        info!("Set remote credentials: {:?}", r);
-        self.remote_credentials = Some(r);
+        if self.remote_credentials.as_ref() != Some(&r) {
+            info!("Set remote credentials: {:?}", r);
+            self.remote_credentials = Some(r);
+        }
     }
 
     /// Credentials for STUN.
