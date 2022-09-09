@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
 use net_::DATAGRAM_MTU;
-use rtp::{Extensions, Mid, Rtcp, RtcpHeader, RtpHeader, SessionId, SRTCP_BLOCK_SIZE};
+use rtp::{Extensions, Mid, Rtcp, RtcpFb, RtcpHeader, RtpHeader, SessionId, SRTCP_BLOCK_SIZE};
 use rtp::{RtcpType, SrtpContext, SrtpKey, Ssrc};
 use rtp::{SRTCP_OVERHEAD_PREFIX, SRTCP_OVERHEAD_SUFFIX};
 use sdp::Answer;
@@ -166,9 +166,9 @@ impl Session {
         let srtp = self.srtp_rx.as_mut()?;
         let decrypted = srtp.unprotect_rtcp(&buf)?;
 
-        let feedback = Rtcp::packet_iter(&decrypted);
+        let feedback = Rtcp::read_packet(&decrypted);
 
-        for fb in feedback {
+        for fb in RtcpFb::from_rtcp(feedback) {
             if let Some(idx) = self.ssrc_map.get(&fb.ssrc()) {
                 let media = &self.media[*idx];
                 // TODO: apply feedback
