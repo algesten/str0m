@@ -4,9 +4,11 @@ use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
 use net_::DATAGRAM_MTU;
-use rtp::{Extensions, Mid, Rtcp, RtcpFb, RtcpHeader, RtpHeader, SessionId, SRTCP_BLOCK_SIZE};
+use rtp::{
+    Extensions, Mid, ReceiverReport, ReportList, Rtcp, RtcpFb, RtcpHeader, RtpHeader, SessionId,
+};
 use rtp::{RtcpType, SrtpContext, SrtpKey, Ssrc};
-use rtp::{SRTCP_OVERHEAD_PREFIX, SRTCP_OVERHEAD_SUFFIX};
+use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD_SUFFIX};
 use sdp::Answer;
 
 use crate::change::Changes;
@@ -164,9 +166,9 @@ impl Session {
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
         let srtp = self.srtp_rx.as_mut()?;
-        let decrypted = srtp.unprotect_rtcp(&buf)?;
+        let unprotected = srtp.unprotect_rtcp(&buf)?;
 
-        let feedback = Rtcp::read_packet(&decrypted);
+        let feedback = Rtcp::read_packet(&unprotected);
 
         for fb in RtcpFb::from_rtcp(feedback) {
             if let Some(idx) = self.ssrc_map.get(&fb.ssrc()) {
@@ -196,26 +198,35 @@ impl Session {
             return None;
         }
 
+        // The first RTCP packet must be SR or RR, since the sender SSRC is used for the
+        // SRTCP encryption. If feedback is lacking such, we add a dummy RR.
+        // If the self.feedback already contains an SR/RR it will be sorted to appear
+        // at the front of the queue by Rtcp::write_packet below.
+        self.maybe_insert_dummy_rr()?;
+
         // The encryptable "body" must be an even number of 16.
-        // For an mtu 1500, this works out as: 1500 - (1500 - 8 - 16) % 16 => 1496
         const ENCRYPTABLE_MTU: usize = DATAGRAM_MTU
-            - (DATAGRAM_MTU - SRTCP_OVERHEAD_PREFIX - SRTCP_OVERHEAD_SUFFIX) % SRTCP_BLOCK_SIZE;
+            - SRTCP_OVERHEAD_SUFFIX
+            - (DATAGRAM_MTU - SRTCP_OVERHEAD_SUFFIX) % SRTCP_BLOCK_SIZE;
 
         let mut data = vec![0_u8; ENCRYPTABLE_MTU];
-        let buf = &mut data[SRTCP_OVERHEAD_PREFIX..];
 
-        // the bytes available while still fitting the srtp
-        let len = buf.len() - SRTCP_OVERHEAD_SUFFIX;
-
-        let mut buf = &mut buf[..len];
         assert!(
-            buf.len() % SRTCP_BLOCK_SIZE == 0,
-            "Multiple of SRTCP_BLOCK_SIZE"
+            data.len() % SRTCP_BLOCK_SIZE == 0,
+            "RTCP buffer multiple of SRTCP block size",
         );
 
-        Rtcp::write_packet(&mut self.feedback, &mut buf, SRTCP_BLOCK_SIZE);
+        Rtcp::write_packet(&mut self.feedback, &mut data, SRTCP_BLOCK_SIZE);
 
-        Some(net::DatagramSend::new(data))
+        let srtp = self.srtp_tx.as_mut()?;
+        let protected = srtp.protect_rtcp(&data);
+
+        assert!(
+            protected.len() < DATAGRAM_MTU,
+            "Encrypted SRTCP should be less than MTU"
+        );
+
+        Some(net::DatagramSend::new(protected))
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
@@ -255,6 +266,34 @@ impl Session {
         } else {
             None
         }
+    }
+
+    /// Helper that ensures feedback has at least one SR/RR.
+    #[must_use]
+    pub(crate) fn maybe_insert_dummy_rr(&mut self) -> Option<()> {
+        let has_sr_rr = self
+            .feedback
+            .iter()
+            .any(|r| matches!(r, Rtcp::SenderReport(_) | Rtcp::ReceiverReport(_)));
+
+        if has_sr_rr {
+            return Some(());
+        }
+
+        // If we don't have any sender SSRC, we simply can't send feedback at this point.
+        let first_ssrc = self
+            .media
+            .first()
+            .and_then(|m| m.first_source_tx())
+            .map(|s| s.ssrc())?;
+
+        self.feedback
+            .push_front(Rtcp::ReceiverReport(ReceiverReport {
+                sender_ssrc: first_ssrc,
+                reports: ReportList::new(),
+            }));
+
+        Some(())
     }
 }
 

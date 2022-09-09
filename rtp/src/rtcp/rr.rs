@@ -5,6 +5,7 @@ use super::{FeedbackMessageType, ReportList, RtcpHeader, RtcpPacket, RtcpType};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceiverReport {
+    pub sender_ssrc: Ssrc,
     pub reports: ReportList<ReceptionReport>,
 }
 
@@ -38,8 +39,7 @@ impl RtcpPacket for ReceiverReport {
     fn write_to(&self, buf: &mut [u8]) -> usize {
         self.header().write_to(buf);
 
-        // TODO: Get some relevant sender SSRC in here.
-        (&mut buf[4..8]).copy_from_slice(&0_u32.to_be_bytes());
+        (&mut buf[4..8]).copy_from_slice(&self.sender_ssrc.to_be_bytes());
 
         for (i, r) in self.reports.iter().enumerate() {
             r.write_to(&mut buf[8 + i * 24..]);
@@ -71,8 +71,10 @@ impl<'a> TryFrom<&'a [u8]> for ReceiverReport {
     type Error = &'static str;
 
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        let sender_ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
+
         let mut reports = ReportList::new();
-        let mut buf = buf;
+        let mut buf = &buf[4..];
 
         let count = buf.len() / 24;
 
@@ -84,7 +86,10 @@ impl<'a> TryFrom<&'a [u8]> for ReceiverReport {
             buf = &buf[24..];
         }
 
-        Ok(ReceiverReport { reports })
+        Ok(ReceiverReport {
+            sender_ssrc,
+            reports,
+        })
     }
 }
 

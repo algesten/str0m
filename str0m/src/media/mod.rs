@@ -107,14 +107,35 @@ impl Media {
         self.last_cleanup + CLEANUP_INTERVAL
     }
 
+    pub(crate) fn first_source_tx(&self) -> Option<&SenderSource> {
+        self.sources_tx.first()
+    }
+
     /// Creates sender info and receiver reports for all senders/receivers
-    pub(crate) fn create_regular_feedback(&mut self, now: Instant, feedback: &mut VecDeque<Rtcp>) {
+    pub(crate) fn create_regular_feedback(
+        &mut self,
+        now: Instant,
+        feedback: &mut VecDeque<Rtcp>,
+    ) -> Option<()> {
+        // If we don't have any sender sources, we can't create an SRTCP wrapper around the
+        // feedback. This is because the SSRC is used to calculate the specific encryption key.
+        // No sender SSRC, no encryption, no feedback possible.
+        let first_ssrc = self.first_source_tx().map(|s| s.ssrc())?;
+
         for s in &mut self.sources_tx {
-            feedback.push_back(s.create_sender_info());
+            let sr = s.create_sender_report(now);
+
+            feedback.push_back(Rtcp::SenderReport(sr));
         }
+
         for s in &mut self.sources_rx {
-            feedback.push_back(s.create_receiver_report(now));
+            let mut rr = s.create_receiver_report(now);
+            rr.sender_ssrc = first_ssrc;
+
+            feedback.push_back(Rtcp::ReceiverReport(rr));
         }
+
+        Some(())
     }
 
     /// Creates nack reports for receivers, if needed.

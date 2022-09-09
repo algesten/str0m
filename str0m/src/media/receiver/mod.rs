@@ -51,7 +51,7 @@ impl ReceiverSource {
         self.register.is_valid()
     }
 
-    pub fn create_receiver_report(&mut self, now: Instant) -> Rtcp {
+    pub fn create_receiver_report(&mut self, now: Instant) -> ReceiverReport {
         let mut report = self.register.reception_report();
         report.ssrc = self.ssrc;
 
@@ -80,9 +80,10 @@ impl ReceiverSource {
             0
         };
 
-        Rtcp::ReceiverReport(ReceiverReport {
+        ReceiverReport {
+            sender_ssrc: 0.into(), // set one level up
             reports: report.into(),
-        })
+        }
     }
 
     pub fn has_nack(&mut self) -> bool {

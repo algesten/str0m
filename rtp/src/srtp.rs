@@ -19,7 +19,6 @@ const SRTCP_INDEX_LEN: usize = 4;
 // However, each RTCP packet must be on a 4 byte boundary since length is
 // given in number of 4 bytes - 1 (making 0 valid).
 
-pub const SRTCP_OVERHEAD_PREFIX: usize = 8;
 pub const SRTCP_OVERHEAD_SUFFIX: usize = 16;
 pub const SRTCP_BLOCK_SIZE: usize = 16;
 

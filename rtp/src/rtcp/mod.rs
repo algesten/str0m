@@ -5,7 +5,7 @@ pub use header::{RtcpHeader, RtcpType};
 
 mod list;
 use list::private::WordSized;
-pub(crate) use list::ReportList;
+pub use list::ReportList;
 
 mod fmt;
 pub use fmt::{FeedbackMessageType, PayloadType, TransportType};
@@ -253,6 +253,9 @@ impl Rtcp {
         let mut i = 0;
         let len = feedback.len();
 
+        // SenderReport/ReceiveReport first for SRTCP.
+        feedback.make_contiguous().sort_by_key(Self::order_no);
+
         'outer: loop {
             // If we reach last element, there is no more packing to do.
             if i == len - 1 {
@@ -298,8 +301,31 @@ impl Rtcp {
             }
         }
 
-        // prune empty
-        feedback.retain(|f| !f.is_empty());
+        // Prune empty, however must keep the first SR/RR even if it is empty for SRTCP.
+        let mut seen_first = false;
+        feedback.retain(|f| {
+            let keep_first = !seen_first;
+            seen_first = true;
+            keep_first || !f.is_empty()
+        });
+    }
+
+    fn order_no(&self) -> u8 {
+        use Rtcp::*;
+        match self {
+            // SenderReport/ReceiverReport first since they possibly contain
+            // the SSRC for the SRTCP encryption.
+            SenderReport(_) => 0,
+            ReceiverReport(_) => 1,
+
+            SourceDescription(_) => 2,
+            Nack(_) => 3,
+            Pli(_) => 4,
+            Fir(_) => 5,
+
+            // Goodbye last since they remove stuff.
+            Goodbye(_) => 6,
+        }
     }
 }
 
@@ -417,10 +443,10 @@ mod test {
     fn pack_sr_4_rr() {
         let now = MediaTime::now();
         let mut queue = VecDeque::new();
-        queue.push_back(sr(1, now));
         queue.push_back(rr(3));
         queue.push_back(rr(4));
         queue.push_back(rr(5));
+        queue.push_back(sr(1, now)); // should be sorted to front
 
         Rtcp::pack(&mut queue, 350);
 
@@ -504,6 +530,7 @@ mod test {
 
     fn rr(ssrc: u32) -> Rtcp {
         Rtcp::ReceiverReport(ReceiverReport {
+            sender_ssrc: 42.into(),
             reports: report(ssrc).into(),
         })
     }
