@@ -84,7 +84,7 @@ impl Session {
         if now >= self.regular_feedback_at() {
             self.last_regular = now;
             for m in &mut self.media {
-                m.create_regular_feedback(&mut self.feedback);
+                m.create_regular_feedback(now, &mut self.feedback);
             }
         }
 
@@ -125,7 +125,7 @@ impl Session {
                             // The header in SRTP is not interesting. It's just there to fulfil
                             // the RTCP protocol. If we fail to verify it, there packet was not
                             // welformed.
-                            self.handle_rtcp(buf)?;
+                            self.handle_rtcp(now, buf)?;
                         } else {
                             trace!("SRTCP is not SR or RR: {:?}", v.rtcp_type());
                         }
@@ -162,7 +162,7 @@ impl Session {
         Some(())
     }
 
-    fn handle_rtcp(&mut self, buf: &[u8]) -> Option<()> {
+    fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
         let srtp = self.srtp_rx.as_mut()?;
         let decrypted = srtp.unprotect_rtcp(&buf)?;
 
@@ -170,8 +170,8 @@ impl Session {
 
         for fb in RtcpFb::from_rtcp(feedback) {
             if let Some(idx) = self.ssrc_map.get(&fb.ssrc()) {
-                let media = &self.media[*idx];
-                // TODO: apply feedback
+                let media = &mut self.media[*idx];
+                media.handle_rtcp_fb(now, fb);
             }
         }
 

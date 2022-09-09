@@ -31,10 +31,10 @@ pub struct ReceiverRegister {
     /// Counter of received packets.
     received: i64,
 
-    /// Expected at last report block generation.
+    /// Expected at last reception report generation.
     expected_prior: i64,
 
-    /// Received at last report block generation.
+    /// Received at last reception report generation.
     received_prior: i64,
 
     /// Estimated jitter.
@@ -295,11 +295,11 @@ impl ReceiverRegister {
         })
     }
 
-    /// Create a new report block for a receiver report.
+    /// Create a new reception report.
     ///
     /// This modifies the state since fraction_lost is calculated
     /// since the last call to this function.
-    pub fn report_block(&mut self) -> ReceptionReport {
+    pub fn reception_report(&mut self) -> ReceptionReport {
         ReceptionReport {
             ssrc: 0.into(),
             fraction_lost: self.fraction_lost(),

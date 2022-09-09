@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use rtp::{ReceiverReport, Rtcp, RtpHeader, SeqNo, Ssrc};
+use rtp::{MediaTime, ReceiverReport, Rtcp, RtpHeader, SenderInfo, SeqNo, Ssrc};
 
 mod register;
 use register::ReceiverRegister;
@@ -12,6 +12,8 @@ pub struct ReceiverSource {
     ssrc: Ssrc,
     register: ReceiverRegister,
     last_used: Instant,
+    sender_info: Option<SenderInfo>,
+    sender_info_at: Option<Instant>,
 }
 
 impl ReceiverSource {
@@ -21,6 +23,8 @@ impl ReceiverSource {
             ssrc: header.ssrc,
             register: ReceiverRegister::new(base_seq),
             last_used: now,
+            sender_info: None,
+            sender_info_at: None,
         }
     }
 
@@ -47,12 +51,37 @@ impl ReceiverSource {
         self.register.is_valid()
     }
 
-    pub fn create_receiver_report(&mut self) -> Rtcp {
-        let mut block = self.register.report_block();
-        block.ssrc = self.ssrc;
+    pub fn create_receiver_report(&mut self, now: Instant) -> Rtcp {
+        let mut report = self.register.reception_report();
+        report.ssrc = self.ssrc;
+
+        // The middle 32 bits out of 64 in the NTP timestamp (as explained in
+        // Section 4) received as part of the most recent RTCP sender report
+        // (SR) packet from source SSRC_n.  If no SR has been received yet,
+        // the field is set to zero.
+        report.last_sr_time = {
+            let t = self
+                .sender_info
+                .map(|s| s.ntp_time)
+                .unwrap_or(MediaTime::ZERO);
+
+            let t64 = t.as_ntp_64();
+            (t64 >> 16) as u32
+        };
+
+        // The delay, expressed in units of 1/65_536 seconds, between
+        // receiving the last SR packet from source SSRC_n and sending this
+        // reception report block.  If no SR packet has been received yet
+        // from SSRC_n, the DLSR field is set to zero.
+        report.last_sr_delay = if let Some(t) = self.sender_info_at {
+            let delay = now - t;
+            ((delay.as_micros() * 65_536) / 1_000_000) as u32
+        } else {
+            0
+        };
 
         Rtcp::ReceiverReport(ReceiverReport {
-            reports: block.into(),
+            reports: report.into(),
         })
     }
 
@@ -67,5 +96,10 @@ impl ReceiverSource {
         }
 
         None
+    }
+
+    pub fn set_sender_info(&mut self, now: Instant, s: SenderInfo) {
+        self.sender_info = Some(s);
+        self.sender_info_at = Some(now);
     }
 }

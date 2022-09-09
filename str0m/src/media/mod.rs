@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use rtp::{MLineIdx, Rtcp, RtpHeader};
+use rtp::{MLineIdx, Rtcp, RtcpFb, RtpHeader};
 
 pub use rtp::{Direction, Mid, Pt};
 pub use sdp::{Codec, FormatParams};
@@ -108,21 +108,39 @@ impl Media {
     }
 
     /// Creates sender info and receiver reports for all senders/receivers
-    pub(crate) fn create_regular_feedback(&mut self, feedback: &mut VecDeque<Rtcp>) {
+    pub(crate) fn create_regular_feedback(&mut self, now: Instant, feedback: &mut VecDeque<Rtcp>) {
         for s in &mut self.sources_tx {
             feedback.push_back(s.create_sender_info());
         }
         for s in &mut self.sources_rx {
-            feedback.push_back(s.create_receiver_report());
+            feedback.push_back(s.create_receiver_report(now));
         }
     }
 
-    // Creates nack reports for receivers, if needed.
+    /// Creates nack reports for receivers, if needed.
     pub(crate) fn create_nack(&mut self, feedback: &mut VecDeque<Rtcp>) {
         for s in &mut self.sources_rx {
             if let Some(nack) = s.create_nack() {
                 feedback.push_back(nack);
             }
         }
+    }
+
+    /// Appply incoming RTCP feedback.
+    pub(crate) fn handle_rtcp_fb(&mut self, now: Instant, fb: RtcpFb) -> Option<()> {
+        let source_rx = self.sources_rx.iter_mut().find(|s| s.ssrc() == fb.ssrc())?;
+
+        use RtcpFb::*;
+        match fb {
+            SenderInfo(v) => source_rx.set_sender_info(now, v),
+            ReceptionReport(_) => todo!(),
+            SourceDescription(_) => todo!(),
+            Goodbye(_) => todo!(),
+            Nack(_, _) => todo!(),
+            Pli(_) => todo!(),
+            Fir(_) => todo!(),
+        }
+
+        Some(())
     }
 }
