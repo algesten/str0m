@@ -1,6 +1,6 @@
 use dtls::Fingerprint;
 use ice::{Candidate, IceCreds};
-use rtp::{MLineIdx, Mid};
+use rtp::{Extensions, MLineIdx, Mid};
 use sdp::{MediaAttribute, MediaLine, MediaType, Proto, Sdp, SessionAttribute, Setup};
 
 use crate::change::Changes;
@@ -63,7 +63,8 @@ impl Session {
                     // Candidates should only be in the first BUNDLE mid
                     let include_candidates = *idx == 0;
                     let attrs = params.media_attributes(include_candidates);
-                    m.as_media_line(attrs)
+                    let extrs = &self.exts;
+                    m.as_media_line(attrs, extrs)
                 })
                 .collect();
 
@@ -99,7 +100,7 @@ impl Session {
 pub trait AsMediaLine {
     fn mid(&self) -> Mid;
     fn index(&self) -> MLineIdx;
-    fn as_media_line(&self, attrs: Vec<MediaAttribute>) -> MediaLine;
+    fn as_media_line(&self, attrs: Vec<MediaAttribute>, exts: &Extensions) -> MediaLine;
 }
 
 impl AsMediaLine for Channel {
@@ -109,7 +110,7 @@ impl AsMediaLine for Channel {
     fn index(&self) -> MLineIdx {
         self.m_line_idx()
     }
-    fn as_media_line(&self, mut attrs: Vec<MediaAttribute>) -> MediaLine {
+    fn as_media_line(&self, mut attrs: Vec<MediaAttribute>, _exts: &Extensions) -> MediaLine {
         attrs.push(MediaAttribute::Mid(self.mid()));
         attrs.push(MediaAttribute::SctpPort(5000));
         attrs.push(MediaAttribute::MaxMessageSize(262144));
@@ -131,9 +132,14 @@ impl AsMediaLine for Media {
     fn index(&self) -> MLineIdx {
         self.m_line_idx()
     }
-    fn as_media_line(&self, mut attrs: Vec<MediaAttribute>) -> MediaLine {
+    fn as_media_line(&self, mut attrs: Vec<MediaAttribute>, exts: &Extensions) -> MediaLine {
         attrs.push(MediaAttribute::Mid(self.mid()));
-        // extmaps here
+
+        let audio = self.kind() == MediaKind::Audio;
+        for e in exts.into_extmap(audio) {
+            attrs.push(MediaAttribute::ExtMap(e));
+        }
+
         attrs.push(self.direction().into());
         // a=msid here
         attrs.push(MediaAttribute::RtcpMux);

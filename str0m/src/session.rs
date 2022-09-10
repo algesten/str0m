@@ -383,7 +383,13 @@ impl Session {
 
     /// Update session level Extensions.
     fn update_session_extmaps(&mut self, sdp: &Sdp) -> Result<(), RtcError> {
-        let extmaps = sdp.media_lines.iter().map(|m| m.extmaps()).flatten();
+        let extmaps = sdp
+            .media_lines
+            .iter()
+            .map(|m| m.extmaps())
+            .flatten()
+            // Only keep supported extensions
+            .filter(|x| x.ext.is_supported());
 
         for x in extmaps {
             self.exts.apply_mapping(&x)?;

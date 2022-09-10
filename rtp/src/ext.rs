@@ -113,6 +113,7 @@ impl Extension {
         "unknown"
     }
 
+    /// Extensions that we have implemented support for.
     pub fn is_supported(&self) -> bool {
         use Extension::*;
         match self {
@@ -140,6 +141,40 @@ impl Extension {
 
     pub fn is_serialized(&self) -> bool {
         *self != Extension::UnknownUri
+    }
+
+    fn is_audio(&self) -> bool {
+        use Extension::*;
+        matches!(
+            self,
+            RtpStreamId
+                | RepairedRtpStreamId
+                | RtpMid
+                | AbsoluteSendTime
+                | AudioLevel
+                | TransportSequenceNumber
+                | TransmissionTimeOffset
+                | PlayoutDelay
+        )
+    }
+
+    fn is_video(&self) -> bool {
+        use Extension::*;
+        matches!(
+            self,
+            RtpStreamId
+                | RepairedRtpStreamId
+                | RtpMid
+                | AbsoluteSendTime
+                | VideoOrientation
+                | TransportSequenceNumber
+                | TransmissionTimeOffset
+                | PlayoutDelay
+                | VideoContentType
+                | VideoTiming
+                | FrameMarking
+                | ColorSpace
+        )
     }
 }
 
@@ -178,6 +213,19 @@ impl Extensions {
             debug!("Lookup RTP extension out of range 1-14: {}", id);
             None
         }
+    }
+
+    pub fn into_extmap(&self, audio: bool) -> impl Iterator<Item = ExtMap> + '_ {
+        self.0
+            .iter()
+            .enumerate()
+            .filter_map(|(i, e)| e.as_ref().map(|e| (i, e)))
+            .filter(move |(_, e)| if audio { e.is_audio() } else { e.is_video() })
+            .map(|(i, e)| ExtMap {
+                id: (i + 1) as u8,
+                direction: None,
+                ext: *e,
+            })
     }
 }
 
