@@ -40,6 +40,14 @@ pub enum RtcError {
     #[error("remote sdp: {0}")]
     RemoteSdp(String),
 
+    /// SDP errors.
+    #[error("{0}")]
+    Sdp(#[from] sdp::SdpError),
+
+    /// RTP errors.
+    #[error("{0}")]
+    Rtp(#[from] rtp::RtpError),
+
     /// Other IO errors.
     #[error("{0}")]
     Io(#[from] io::Error),

@@ -3,6 +3,7 @@ use sdp::PayloadParams;
 use rtp::Pt;
 use sdp::{Codec, FormatParams};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodecParams(PayloadParams);
 
 impl CodecParams {
@@ -28,5 +29,11 @@ impl CodecParams {
 
     pub(crate) fn inner(&self) -> &PayloadParams {
         &self.0
+    }
+}
+
+impl From<PayloadParams> for CodecParams {
+    fn from(p: PayloadParams) -> Self {
+        CodecParams(p)
     }
 }

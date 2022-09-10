@@ -4,12 +4,11 @@ use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
 use net_::DATAGRAM_MTU;
-use rtp::{
-    Extensions, Mid, ReceiverReport, ReportList, Rtcp, RtcpFb, RtcpHeader, RtpHeader, SessionId,
-};
+use rtp::{Extensions, MLineIdx, Mid, ReceiverReport, ReportList, Rtcp, RtcpFb};
+use rtp::{RtcpHeader, RtpHeader, SessionId};
 use rtp::{RtcpType, SrtpContext, SrtpKey, Ssrc};
 use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD_SUFFIX};
-use sdp::Answer;
+use sdp::{Answer, MediaLine, Offer, Sdp};
 
 use crate::change::Changes;
 use crate::net;
@@ -241,14 +240,6 @@ impl Session {
         self.media.iter().any(|m| m.mid() == mid)
     }
 
-    pub fn apply_offer(&self, offer: sdp::Offer) -> Result<(), RtcError> {
-        todo!()
-    }
-
-    pub fn apply_answer(&self, pending: Changes, answer: Answer) -> Result<(), RtcError> {
-        todo!()
-    }
-
     // pub fn handle_sctp(&mut self, sctp) {
     // }
     // pub fn poll_sctp(&mut self) -> Option<Sctp> {
@@ -295,6 +286,111 @@ impl Session {
 
         Some(())
     }
+
+    pub fn apply_offer(&mut self, offer: Offer) -> Result<(), RtcError> {
+        offer.assert_consistency()?;
+
+        self.update_session_extmaps(&offer)?;
+
+        let new_lines = self.sync_m_lines(&offer).map_err(RtcError::RemoteSdp)?;
+
+        self.add_new_lines(&new_lines)
+            .map_err(RtcError::RemoteSdp)?;
+
+        todo!()
+    }
+
+    pub fn apply_answer(&mut self, pending: Changes, answer: Answer) -> Result<(), RtcError> {
+        answer.assert_consistency()?;
+
+        self.update_session_extmaps(&answer)?;
+
+        let new_lines = self.sync_m_lines(&answer).map_err(RtcError::RemoteSdp)?;
+
+        // The new_lines from the answer must correspond to what we sent in the offer.
+        if let Some(err) = pending.ensure_correct_answer(&new_lines) {
+            return Err(RtcError::RemoteSdp(err));
+        }
+
+        self.add_new_lines(&new_lines)
+            .map_err(RtcError::RemoteSdp)?;
+
+        todo!()
+    }
+
+    fn sync_m_lines<'a>(&mut self, sdp: &'a Sdp) -> Result<Vec<&'a MediaLine>, String> {
+        let mut new_lines = Vec::new();
+
+        for (idx, m) in sdp.media_lines.iter().enumerate() {
+            if let Some(media) = self.get_media(m.mid()) {
+                if idx != *media.m_line_idx() {
+                    return index_err(m.mid());
+                }
+
+                media.apply_changes(m);
+            } else if let Some(chan) = self.get_channel(m.mid()) {
+                if idx != *chan.m_line_idx() {
+                    return index_err(m.mid());
+                }
+
+                chan.apply_changes(m);
+            } else {
+                // We've checked all the index for all mids we've encountered so far.
+                // Once we start finding mids that we haven't seen before, the index must also be new.
+                let all_less = self.as_media_lines().all(|m| *m.index() < idx);
+
+                if !all_less {
+                    return Err(format!("New mid ({}) for m-line index: {}", m.mid(), idx));
+                }
+
+                new_lines.push(m);
+            }
+        }
+
+        fn index_err<T>(mid: Mid) -> Result<T, String> {
+            Err(format!("Changed order for m-line with mid: {}", mid))
+        }
+
+        Ok(new_lines)
+    }
+
+    fn add_new_lines(&mut self, new_lines: &[&MediaLine]) -> Result<(), String> {
+        let index_start = self.as_media_lines().map(|m| *m.index()).max().unwrap_or(0);
+
+        for (i, m) in new_lines.iter().enumerate() {
+            let idx: MLineIdx = (index_start + i).into();
+
+            if m.typ.is_media() {
+                self.media.push((*m, idx).into());
+                let media = self.media.last_mut().unwrap();
+
+                media.apply_changes(m);
+            } else if m.typ.is_channel() {
+                self.channels.push((*m, idx).into());
+                let chan = self.channels.last_mut().unwrap();
+
+                chan.apply_changes(m);
+            } else {
+                return Err(format!(
+                    "New m-line is neither media nor channel: {}",
+                    m.mid()
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Update session level Extensions.
+    fn update_session_extmaps(&mut self, sdp: &Sdp) -> Result<(), RtcError> {
+        let extmaps = sdp.media_lines.iter().map(|m| m.extmaps()).flatten();
+
+        for x in extmaps {
+            self.exts.apply_mapping(&x)?;
+        }
+
+        Ok(())
+    }
 }
 
 /// Fallback strategy to match up packet with m-line.
@@ -303,9 +399,14 @@ fn fallback_match_media<'a>(
     media: &'a mut [Media],
     ssrc_map: &mut HashMap<Ssrc, usize>,
 ) -> Option<&'a mut Media> {
-    // Attempt to match Mid in RTP header with our m-lines from SDP.
-    let mid = header.ext_vals.rtp_mid?;
-    let (idx, media) = media.iter_mut().enumerate().find(|(_, m)| m.mid() == mid)?;
+    // Match either by mid or ssrc, if present.
+    let mid = header.ext_vals.rtp_mid;
+    let ssrc = header.ssrc;
+
+    let (idx, media) = media
+        .iter_mut()
+        .enumerate()
+        .find(|(_, m)| m.contains_ssrc(ssrc) || Some(m.mid()) == mid)?;
 
     // Retain this association.
     ssrc_map.insert(header.ssrc, idx);

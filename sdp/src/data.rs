@@ -557,6 +557,95 @@ impl MediaLine {
 
         None
     }
+
+    pub fn ssrc_info(&self) -> Vec<SsrcInfo> {
+        let mut v = vec![];
+
+        fn by_ssrc(v: &mut Vec<SsrcInfo>, ssrc: Ssrc) -> &mut SsrcInfo {
+            if let Some(pos) = v.iter().position(|i| i.ssrc == ssrc) {
+                &mut v[pos]
+            } else {
+                v.push(SsrcInfo {
+                    ssrc,
+                    ..Default::default()
+                });
+                v.last_mut().unwrap()
+            }
+        }
+
+        for a in &self.attrs {
+            match a {
+                MediaAttribute::Ssrc { ssrc, attr, value } => {
+                    let info = by_ssrc(&mut v, *ssrc);
+
+                    // a=ssrc:2147603131 cname:TbS1Ajv9obq6/63I
+                    // a=ssrc:2147603131 msid:- 7a08dda6-518f-4027-b707-410a6d414176
+                    match attr.to_lowercase().as_str() {
+                        "cname" => info.cname = Some(value.clone()),
+                        "msid" => {
+                            let mut iter = value.split(" ");
+
+                            fn trim_and_no_minus(s: &str) -> Option<String> {
+                                let s = s.trim();
+
+                                if s == "-" {
+                                    None
+                                } else {
+                                    Some(s.into())
+                                }
+                            }
+
+                            if let Some(stream_id) = iter.next() {
+                                info.stream_id = trim_and_no_minus(stream_id);
+                            }
+                            if let Some(track_id) = iter.next() {
+                                info.track_id = trim_and_no_minus(track_id);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                MediaAttribute::SsrcGroup { semantics, ssrcs } => {
+                    if semantics.to_lowercase() != "fid" {
+                        continue;
+                    }
+
+                    // a=ssrc-group:FID 659652645 98148385
+                    // Should be two SSRC after FID.
+                    if ssrcs.len() != 2 {
+                        continue;
+                    }
+
+                    let info = by_ssrc(&mut v, ssrcs[0]);
+                    info.repair = Some(ssrcs[1]);
+                }
+                _ => {}
+            }
+        }
+
+        v
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SsrcInfo {
+    pub ssrc: Ssrc,
+    pub repair: Option<Ssrc>,
+    pub cname: Option<String>,
+    pub stream_id: Option<String>,
+    pub track_id: Option<String>,
+}
+
+impl Default for SsrcInfo {
+    fn default() -> Self {
+        Self {
+            ssrc: 0.into(),
+            repair: None,
+            cname: None,
+            stream_id: None,
+            track_id: None,
+        }
+    }
 }
 
 impl From<Direction> for MediaAttribute {
@@ -615,6 +704,16 @@ pub enum MediaType {
     Application,
     #[doc(hidden)]
     Unknown(String),
+}
+
+impl MediaType {
+    pub fn is_media(&self) -> bool {
+        matches!(self, MediaType::Audio | MediaType::Video)
+    }
+
+    pub fn is_channel(&self) -> bool {
+        matches!(self, MediaType::Application)
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

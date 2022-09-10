@@ -40,15 +40,17 @@ impl<'a> AsSdpParams<'a> {
 }
 
 impl Session {
+    /// Merge media lines and data channels.
+    pub fn as_media_lines(&self) -> impl Iterator<Item = &dyn AsMediaLine> {
+        self.channels
+            .iter()
+            .map(|m| &*m as &dyn AsMediaLine)
+            .chain(self.media.iter().map(|m| &*m as &dyn AsMediaLine))
+    }
+
     pub fn as_sdp(&self, params: AsSdpParams) -> Sdp {
         let (media_lines, mids) = {
-            // Merge media lines and data channels.
-            let mut v = self
-                .channels
-                .iter()
-                .map(|m| &*m as &dyn AsMediaLine)
-                .chain(self.media.iter().map(|m| &*m as &dyn AsMediaLine))
-                .collect::<Vec<_>>();
+            let mut v = self.as_media_lines().collect::<Vec<_>>();
 
             // Sort on the order they been added to the SDP.
             v.sort_by_key(|m| *m.index());
@@ -94,7 +96,7 @@ impl Session {
     }
 }
 
-trait AsMediaLine {
+pub trait AsMediaLine {
     fn mid(&self) -> Mid;
     fn index(&self) -> MLineIdx;
     fn as_media_line(&self, attrs: Vec<MediaAttribute>) -> MediaLine;

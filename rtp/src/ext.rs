@@ -152,21 +152,19 @@ impl Extensions {
         Extensions([None; 14])
     }
 
-    pub fn apply_mappings(&mut self, v: &[ExtMap]) -> Result<(), RtpError> {
-        for x in v {
-            if x.id >= 1 && x.id <= 14 {
-                // Mapping goes from 0 to 13.
-                let id = x.id as usize - 1;
+    pub fn apply_mapping(&mut self, x: &ExtMap) -> Result<(), RtpError> {
+        if x.id >= 1 && x.id <= 14 {
+            // Mapping goes from 0 to 13.
+            let id = x.id as usize - 1;
 
-                if let Some(v) = self.0[id] {
-                    if v == x.ext {
-                        // same mapping, nothing to do
-                    } else {
-                        return Err(RtpError::ExtMapDiffers(v, x.ext));
-                    }
+            if let Some(v) = self.0[id] {
+                if v == x.ext {
+                    // same mapping, nothing to do
                 } else {
-                    self.0[id] = Some(x.ext);
+                    return Err(RtpError::ExtMapDiffers(v, x.ext));
                 }
+            } else {
+                self.0[id] = Some(x.ext);
             }
         }
 

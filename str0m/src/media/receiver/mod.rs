@@ -4,12 +4,14 @@ use rtp::{MediaTime, ReceiverReport, Rtcp, RtpHeader, SenderInfo, SeqNo, Ssrc};
 
 mod register;
 use register::ReceiverRegister;
+use sdp::SsrcInfo;
 
 // How long an SSRC receiver is alive without receiving any packets.
 const SSRC_ALIVE: Duration = Duration::from_millis(10_000);
 
 pub struct ReceiverSource {
     ssrc: Ssrc,
+    info: Option<SsrcInfo>,
     register: ReceiverRegister,
     last_used: Instant,
     sender_info: Option<SenderInfo>,
@@ -21,6 +23,7 @@ impl ReceiverSource {
         let base_seq = header.sequence_number(None);
         ReceiverSource {
             ssrc: header.ssrc,
+            info: None,
             register: ReceiverRegister::new(base_seq),
             last_used: now,
             sender_info: None,
@@ -102,5 +105,16 @@ impl ReceiverSource {
     pub fn set_sender_info(&mut self, now: Instant, s: SenderInfo) {
         self.sender_info = Some(s);
         self.sender_info_at = Some(now);
+    }
+
+    pub fn matches_ssrc_info(&self, info: &SsrcInfo) -> bool {
+        self.ssrc == info.ssrc || Some(self.ssrc) == info.repair
+    }
+
+    pub fn set_ssrc_info(&mut self, info: &SsrcInfo) {
+        if self.info.as_ref() != Some(info) {
+            debug!("ReceiverSource({}) set info: {:?}", self.ssrc(), info);
+            self.info = Some(info.clone());
+        }
     }
 }

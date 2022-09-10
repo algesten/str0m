@@ -1,10 +1,11 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
-use rtp::{MLineIdx, Rtcp, RtcpFb, RtpHeader};
+use rtp::{MLineIdx, Rtcp, RtcpFb, RtpHeader, Ssrc};
 
 pub use rtp::{Direction, Mid, Pt};
 pub use sdp::{Codec, FormatParams};
+use sdp::{MediaLine, MediaType, SsrcInfo};
 
 mod codec;
 pub use codec::CodecParams;
@@ -18,6 +19,8 @@ use receiver::ReceiverSource;
 mod sender;
 use sender::SenderSource;
 
+use crate::util::already_happened;
+
 // How often we remove unused senders/receivers.
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
 
@@ -30,6 +33,7 @@ pub struct Media {
     sources_rx: Vec<ReceiverSource>,
     sources_tx: Vec<SenderSource>,
     last_cleanup: Instant,
+    ssrc_info: Vec<SsrcInfo>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +62,10 @@ impl Media {
         self.dir
     }
 
+    fn codec_by_pt(&self, pt: Pt) -> Option<&CodecParams> {
+        self.params.iter().find(|c| c.pt() == pt)
+    }
+
     pub fn codecs(&self) -> &[CodecParams] {
         &self.params
     }
@@ -76,7 +84,17 @@ impl Media {
         if let Some(idx) = maybe_idx {
             &mut self.sources_rx[idx]
         } else {
-            self.sources_rx.push(ReceiverSource::new(header, now));
+            let mut new_source = ReceiverSource::new(header, now);
+
+            // We might have info for this source already.
+            for info in &self.ssrc_info {
+                if new_source.matches_ssrc_info(info) {
+                    new_source.set_ssrc_info(info);
+                    break;
+                }
+            }
+
+            self.sources_rx.push(new_source);
             self.sources_rx.last_mut().unwrap()
         }
     }
@@ -163,5 +181,96 @@ impl Media {
         }
 
         Some(())
+    }
+
+    pub(crate) fn apply_changes(&mut self, m: &MediaLine) {
+        // Directional changes
+        {
+            let new_dir = m.direction();
+            if self.dir != new_dir {
+                debug!(
+                    "Mid ({}) change direction: {} -> {}",
+                    self.mid, self.dir, new_dir
+                );
+                self.dir = new_dir;
+            }
+        }
+
+        // Changes in PT
+        {
+            let params: Vec<CodecParams> = m.rtp_params().into_iter().map(|m| m.into()).collect();
+            let mut new_pts = HashSet::new();
+
+            for p_new in params {
+                new_pts.insert(p_new.pt());
+
+                if let Some(p_old) = self.codec_by_pt(p_new.pt()) {
+                    if *p_old != p_new {
+                        debug!("Ignore change in mid ({}) for pt: {}", self.mid, p_new.pt());
+                    }
+                } else {
+                    debug!("Ignoring new pt ({}) in mid: {}", p_new.pt(), self.mid);
+                }
+            }
+
+            self.params.retain(|p| {
+                let keep = new_pts.contains(&p.pt());
+
+                if !keep {
+                    debug!("Mid ({}) remove pt: {}", self.mid, p.pt());
+                }
+
+                keep
+            });
+        }
+
+        // SSRC changes
+        {
+            let infos = m.ssrc_info();
+
+            // Might want to update the info field in any already initialized ReceiverSource.
+            for info in &infos {
+                for s in &mut self.sources_rx {
+                    if s.matches_ssrc_info(info) {
+                        s.set_ssrc_info(info);
+                    }
+                }
+            }
+
+            self.ssrc_info = infos;
+        }
+    }
+
+    /// Check if SSRC been communicated in SDP either as main or repair SSRC.
+    pub fn contains_ssrc(&self, ssrc: Ssrc) -> bool {
+        self.ssrc_info
+            .iter()
+            .any(|i| i.ssrc == ssrc || i.repair == Some(ssrc))
+    }
+}
+
+impl<'a> From<(&'a MediaLine, MLineIdx)> for Media {
+    fn from((l, m_line_idx): (&'a MediaLine, MLineIdx)) -> Self {
+        Media {
+            mid: l.mid(),
+            kind: l.typ.clone().into(),
+            m_line_idx,
+            dir: l.direction(),
+            params: l.rtp_params().into_iter().map(|p| p.into()).collect(),
+            sources_rx: vec![],
+            sources_tx: vec![],
+            last_cleanup: already_happened(),
+            ssrc_info: vec![],
+        }
+    }
+}
+
+impl From<MediaType> for MediaKind {
+    fn from(v: MediaType) -> Self {
+        match v {
+            MediaType::Audio => MediaKind::Audio,
+            MediaType::Video => MediaKind::Video,
+            _ => panic!("Not MediaType::Audio or Video"),
+        }
     }
 }
