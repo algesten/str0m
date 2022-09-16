@@ -11,6 +11,7 @@ use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD_SUFFIX};
 use sdp::{Answer, MediaLine, Offer, Sdp};
 
 use crate::change::Changes;
+use crate::media::CodecConfig;
 use crate::net;
 use crate::util::{already_happened, Soonest};
 use crate::RtcError;
@@ -37,6 +38,7 @@ pub(crate) struct Session {
     last_regular: Instant,
     last_nack: Instant,
     feedback: VecDeque<Rtcp>,
+    pub codec_config: CodecConfig,
 }
 
 pub enum MediaEvent {
@@ -56,6 +58,7 @@ impl Session {
             last_regular: already_happened(),
             last_nack: already_happened(),
             feedback: VecDeque::new(),
+            codec_config: CodecConfig::default(),
         }
     }
 
@@ -321,13 +324,19 @@ impl Session {
     fn sync_m_lines<'a>(&mut self, sdp: &'a Sdp) -> Result<Vec<&'a MediaLine>, String> {
         let mut new_lines = Vec::new();
 
+        // SAFETY: CodecConfig is read only and not interfering with self.get_media.
+        let config = unsafe {
+            let ptr = &self.codec_config as *const CodecConfig;
+            &*ptr
+        };
+
         for (idx, m) in sdp.media_lines.iter().enumerate() {
             if let Some(media) = self.get_media(m.mid()) {
                 if idx != *media.m_line_idx() {
                     return index_err(m.mid());
                 }
 
-                media.apply_changes(m);
+                media.apply_changes(m, config);
             } else if let Some(chan) = self.get_channel(m.mid()) {
                 if idx != *chan.m_line_idx() {
                     return index_err(m.mid());
@@ -364,7 +373,7 @@ impl Session {
                 self.media.push((*m, idx).into());
                 let media = self.media.last_mut().unwrap();
 
-                media.apply_changes(m);
+                media.apply_changes(m, &self.codec_config);
             } else if m.typ.is_channel() {
                 self.channels.push((*m, idx).into());
                 let chan = self.channels.last_mut().unwrap();

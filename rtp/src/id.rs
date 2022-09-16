@@ -15,6 +15,10 @@ macro_rules! str_id {
             pub fn new() -> $id {
                 $id(Id::random().into_array())
             }
+
+            pub const fn from_array(a: [u8; 3]) -> $id {
+                $id(a)
+            }
         }
 
         impl fmt::Display for $id {

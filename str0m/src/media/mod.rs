@@ -8,7 +8,7 @@ pub use sdp::{Codec, FormatParams};
 use sdp::{MediaLine, MediaType, SsrcInfo};
 
 mod codec;
-pub use codec::CodecParams;
+pub use codec::{CodecConfig, CodecParams};
 
 mod channel;
 pub use channel::Channel;
@@ -46,6 +46,25 @@ pub enum MediaKind {
 }
 
 impl Media {
+    pub(crate) fn new<'a>(
+        mid: Mid,
+        kind: MediaKind,
+        dir: Direction,
+        params: impl Iterator<Item = &'a CodecParams>,
+    ) -> Self {
+        Media {
+            mid,
+            kind,
+            m_line_idx: 0.into(),
+            dir,
+            params: params.map(|c| c.clone()).collect(),
+            sources_rx: vec![],
+            sources_tx: vec![],
+            last_cleanup: already_happened(),
+            ssrc_info: vec![],
+        }
+    }
+
     pub fn mid(&self) -> Mid {
         self.mid
     }
@@ -183,7 +202,7 @@ impl Media {
         Some(())
     }
 
-    pub(crate) fn apply_changes(&mut self, m: &MediaLine) {
+    pub(crate) fn apply_changes(&mut self, m: &MediaLine, config: &CodecConfig) {
         // Directional changes
         {
             let new_dir = m.direction();
@@ -198,7 +217,12 @@ impl Media {
 
         // Changes in PT
         {
-            let params: Vec<CodecParams> = m.rtp_params().into_iter().map(|m| m.into()).collect();
+            let params: Vec<CodecParams> = m
+                .rtp_params()
+                .into_iter()
+                .map(|m| m.into())
+                .filter(|m| config.matches(m))
+                .collect();
             let mut new_pts = HashSet::new();
 
             for p_new in params {

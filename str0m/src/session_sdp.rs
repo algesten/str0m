@@ -55,23 +55,37 @@ impl Session {
             // Sort on the order they been added to the SDP.
             v.sort_by_key(|m| *m.index());
 
+            let mut new_lines = vec![];
+
+            // If there are additions in the pending changes, prepend them now.
+            if let Some(pending) = params.pending {
+                new_lines = pending.as_new_m_lines(&self.codec_config).collect();
+            }
+
+            // Add potentially new m-lines to the existing ones.
+            v.extend(new_lines.iter().map(|n| n as &dyn AsMediaLine));
+
+            // Session level extension map.
+            let exts = &self.exts;
+
             // Turn into sdp::MediaLine (m-line).
             let mut lines = v
                 .iter()
                 .map(|m| {
-                    let idx = m.index();
                     // Candidates should only be in the first BUNDLE mid
-                    let include_candidates = *idx == 0;
-                    let attrs = params.media_attributes(include_candidates);
-                    let extrs = &self.exts;
-                    m.as_media_line(attrs, extrs)
-                })
-                .collect();
+                    let include_candidates = {
+                        let idx = m.index();
+                        *idx == 0
+                    };
 
-            // if we have pending changes, this is an offer and we need
-            // to modify existing lines and add new lines.
+                    let attrs = params.media_attributes(include_candidates);
+
+                    m.as_media_line(attrs, exts)
+                })
+                .collect::<Vec<_>>();
+
             if let Some(pending) = params.pending {
-                pending.apply_to_sdp(&mut lines);
+                pending.apply_to(&mut lines);
             }
 
             // Mids go into the session part of the SDP.
@@ -164,11 +178,5 @@ impl Into<MediaType> for MediaKind {
             MediaKind::Audio => MediaType::Audio,
             MediaKind::Video => MediaType::Video,
         }
-    }
-}
-
-impl Changes {
-    fn apply_to_sdp(&self, lines: &mut Vec<MediaLine>) {
-        todo!()
     }
 }

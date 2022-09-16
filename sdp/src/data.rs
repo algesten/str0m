@@ -858,6 +858,13 @@ pub enum MediaAttribute {
     Unused(String),
 }
 
+impl MediaAttribute {
+    pub fn is_direction(&self) -> bool {
+        use MediaAttribute::*;
+        matches!(self, RecvOnly | SendRecv | SendOnly | Inactive)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CodecSpec {
     pub pt: Pt,
@@ -873,6 +880,7 @@ pub struct FormatParams {
     pub level_asymmetry_allowed: Option<bool>,
     pub packetization_mode: Option<u8>,
     pub profile_level_id: Option<u32>,
+    pub profile_id: Option<u32>,
 }
 
 impl FormatParams {
@@ -885,6 +893,7 @@ impl FormatParams {
                 LevelAsymmetryAllowed(v) => self.level_asymmetry_allowed = Some(*v),
                 PacketizationMode(v) => self.packetization_mode = Some(*v),
                 ProfileLevelId(v) => self.profile_level_id = Some(*v),
+                ProfileId(v) => self.profile_id = Some(*v),
                 Apt(_) => {}
                 Unknown => {}
             }
@@ -909,6 +918,9 @@ impl FormatParams {
         }
         if let Some(v) = self.profile_level_id {
             r.push(ProfileLevelId(v));
+        }
+        if let Some(v) = self.profile_id {
+            r.push(ProfileId(v));
         }
 
         r
@@ -1006,6 +1018,9 @@ pub enum FormatParam {
     /// * 64 00 1f - 6400=high (H)                  1f=level 3.1
     ProfileLevelId(u32),
 
+    /// VP9 profile id
+    ProfileId(u32),
+
     /// RTX (resend) codecs, which PT it concerns.
     Apt(Pt),
 
@@ -1040,6 +1055,13 @@ impl FormatParam {
                     Unknown
                 }
             }
+            "profile-id" => {
+                if let Ok(v) = v.parse() {
+                    ProfileId(v)
+                } else {
+                    Unknown
+                }
+            }
             "apt" => {
                 if let Ok(v) = v.parse::<u8>() {
                     Apt(v.into())
@@ -1063,6 +1085,7 @@ impl fmt::Display for FormatParam {
             }
             PacketizationMode(v) => write!(f, "packetization-mode={}", *v),
             ProfileLevelId(v) => write!(f, "profile-level-id={:06x}", *v),
+            ProfileId(v) => write!(f, "profile-id={}", *v),
             Apt(v) => write!(f, "apt={}", v),
             Unknown => Ok(()),
         }
@@ -1126,7 +1149,7 @@ impl PayloadParams {
                 channels: None,
             }));
             attrs.push(MediaAttribute::Fmtp {
-                pt: pt,
+                pt,
                 values: vec![FormatParam::Apt(self.codec.pt)],
             });
         }

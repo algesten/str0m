@@ -1,9 +1,10 @@
 use std::ops::Deref;
 
-use rtp::{Direction, Mid};
+use rtp::{Direction, Extensions, MLineIdx, Mid};
 use sdp::{MediaLine, Offer};
 
-use crate::media::MediaKind;
+use crate::media::{Channel, CodecConfig, Media, MediaKind};
+use crate::session_sdp::AsMediaLine;
 use crate::Rtc;
 
 pub struct Changes(pub Vec<Change>);
@@ -11,6 +12,7 @@ pub struct Changes(pub Vec<Change>);
 pub enum Change {
     AddMedia(Mid, MediaKind, Direction),
     AddChannel(Mid),
+    Direction(Mid, Direction),
 }
 
 pub struct ChangeSet<'a> {
@@ -36,6 +38,10 @@ impl<'a> ChangeSet<'a> {
         let mid = self.rtc.new_mid();
         self.changes.0.push(Change::AddChannel(mid));
         mid
+    }
+
+    pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
+        self.changes.0.push(Change::Direction(mid, dir));
     }
 
     pub fn apply(self) -> Offer {
@@ -94,6 +100,51 @@ impl Changes {
             .filter(|c| matches!(c, Change::AddMedia(_, _, _) | Change::AddChannel(_)))
             .count()
     }
+
+    pub fn as_new_m_lines<'a, 'b: 'a>(
+        &'a self,
+        config: &'b CodecConfig,
+    ) -> impl Iterator<Item = NewMLine> + '_ {
+        self.0.iter().filter_map(move |c| c.as_new_m_line(config))
+    }
+
+    pub(crate) fn apply_to(&self, lines: &mut [MediaLine]) {
+        for change in &self.0 {
+            use Change::*;
+            match change {
+                Direction(mid, dir) => {
+                    if let Some(line) = lines.iter_mut().find(|l| l.mid() == *mid) {
+                        if let Some(dir_pos) = line.attrs.iter().position(|a| a.is_direction()) {
+                            line.attrs[dir_pos] = (*dir).into();
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+impl Change {
+    fn as_new_m_line(&self, config: &CodecConfig) -> Option<NewMLine> {
+        use Change::*;
+        match self {
+            AddMedia(mid, kind, dir) => {
+                let media = Media::new(*mid, *kind, *dir, config.all_for_kind(*kind));
+                Some(NewMLine::Media(media))
+            }
+            AddChannel(mid) => {
+                let channel = Channel::new(*mid);
+                Some(NewMLine::Channel(channel))
+            }
+            _ => None,
+        }
+    }
+}
+
+pub enum NewMLine {
+    Media(Media),
+    Channel(Channel),
 }
 
 impl Deref for Changes {
@@ -101,5 +152,26 @@ impl Deref for Changes {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl AsMediaLine for NewMLine {
+    fn mid(&self) -> Mid {
+        match self {
+            NewMLine::Media(v) => v.mid(),
+            NewMLine::Channel(v) => v.mid(),
+        }
+    }
+
+    fn index(&self) -> MLineIdx {
+        // If we set 0 here, we get weirdness in session_sdp.rs
+        usize::MAX.into()
+    }
+
+    fn as_media_line(&self, attrs: Vec<sdp::MediaAttribute>, exts: &Extensions) -> MediaLine {
+        match self {
+            NewMLine::Media(v) => v.as_media_line(attrs, exts),
+            NewMLine::Channel(v) => v.as_media_line(attrs, exts),
+        }
     }
 }

@@ -1,7 +1,9 @@
-use sdp::PayloadParams;
+use sdp::{CodecSpec, PayloadParams};
 
 use rtp::Pt;
 use sdp::{Codec, FormatParams};
+
+use super::MediaKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodecParams(PayloadParams);
@@ -35,5 +37,179 @@ impl CodecParams {
 impl From<PayloadParams> for CodecParams {
     fn from(p: PayloadParams) -> Self {
         CodecParams(p)
+    }
+}
+
+pub struct CodecConfig {
+    configs: Vec<CodecParams>,
+}
+
+impl CodecConfig {
+    pub fn new() -> Self {
+        CodecConfig { configs: vec![] }
+    }
+
+    pub fn matches(&self, c: &CodecParams) -> bool {
+        self.configs.iter().any(|x| {
+            x.codec() == c.codec() && x.clock_rate() == c.clock_rate() && x.fmtp() == c.fmtp()
+        })
+    }
+
+    pub fn add_config(
+        &mut self,
+        pt: Pt,
+        resend: Option<Pt>,
+        codec: Codec,
+        clock_rate: u32,
+        channels: Option<u8>,
+        fmtps: FormatParams,
+    ) {
+        let (fb_transport_cc, fb_fir, fb_nack, fb_pli, resend) = if codec.is_video() {
+            (true, true, true, true, resend)
+        } else {
+            (true, false, false, false, None)
+        };
+
+        let p = PayloadParams {
+            codec: CodecSpec {
+                pt,
+                codec,
+                clock_rate,
+                channels,
+            },
+            fmtps,
+            resend,
+            fb_transport_cc,
+            fb_fir,
+            fb_nack,
+            fb_pli,
+        };
+
+        self.configs.push(p.into());
+    }
+
+    pub fn add_h264(
+        &mut self,
+        pt: Pt,
+        resend: Option<Pt>,
+        packetization_mode: bool,
+        profile_level_id: u32,
+    ) {
+        self.add_config(
+            pt,
+            resend,
+            Codec::H264,
+            90_000,
+            None,
+            FormatParams {
+                level_asymmetry_allowed: Some(true),
+                packetization_mode: if packetization_mode { Some(1) } else { Some(0) },
+                profile_level_id: Some(profile_level_id),
+                ..Default::default()
+            },
+        )
+    }
+
+    pub fn add_default_opus(&mut self) {
+        self.add_config(
+            111.into(),
+            None,
+            Codec::Opus,
+            48_000,
+            Some(2),
+            FormatParams {
+                min_p_time: Some(10),
+                use_inband_fec: Some(true),
+                ..Default::default()
+            },
+        )
+    }
+
+    pub fn add_default_vp8(&mut self) {
+        self.add_config(
+            96.into(),
+            Some(97.into()),
+            Codec::Vp8,
+            90_000,
+            None,
+            FormatParams::default(),
+        )
+    }
+
+    pub fn add_default_h264(&mut self) {
+        const PARAMS: &[(u8, u8, bool, u32)] = &[
+            (127, 121, true, 0x42001f),
+            (125, 107, false, 0x42001f),
+            (108, 109, true, 0x42e01f),
+            (124, 120, false, 0x42e01f),
+            (123, 119, true, 0x4d001f),
+            (35, 36, false, 0x4d001f),
+            (114, 115, true, 0x64001f),
+        ];
+
+        for p in PARAMS {
+            self.add_h264(p.0.into(), Some(p.1.into()), p.2, p.3)
+        }
+    }
+
+    pub fn add_default_av1(&mut self) {
+        self.add_config(
+            41.into(),
+            Some(42.into()),
+            Codec::Av1,
+            90_000,
+            None,
+            FormatParams::default(),
+        )
+    }
+
+    pub fn add_default_vp9(&mut self) {
+        self.add_config(
+            98.into(),
+            Some(99.into()),
+            Codec::Vp9,
+            90_000,
+            None,
+            FormatParams {
+                profile_id: Some(0),
+                ..Default::default()
+            },
+        );
+        self.add_config(
+            100.into(),
+            Some(101.into()),
+            Codec::Vp9,
+            90_000,
+            None,
+            FormatParams {
+                profile_id: Some(2),
+                ..Default::default()
+            },
+        );
+    }
+
+    pub(crate) fn all_for_kind(&self, kind: MediaKind) -> impl Iterator<Item = &CodecParams> {
+        self.configs.iter().filter(move |c| {
+            if kind == MediaKind::Video {
+                c.codec().is_video()
+            } else {
+                c.codec().is_audio()
+            }
+        })
+    }
+}
+
+impl Default for CodecConfig {
+    fn default() -> Self {
+        let mut c = CodecConfig::new();
+
+        c.add_default_opus();
+
+        c.add_default_vp8();
+        c.add_default_h264();
+        c.add_default_av1();
+        c.add_default_vp9();
+
+        c
     }
 }
