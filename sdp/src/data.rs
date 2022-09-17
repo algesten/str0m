@@ -931,6 +931,7 @@ impl FormatParams {
 pub enum Codec {
     Opus,
     H264,
+    H265,
     Vp8,
     Vp9,
     Av1,
@@ -956,6 +957,7 @@ impl<'a> From<&'a str> for Codec {
         match &lc[..] {
             "opus" => Codec::Opus,
             "h264" => Codec::H264,
+            "h265" => Codec::H265,
             "vp8" => Codec::Vp8,
             "vp9" => Codec::Vp9,
             "av1" => Codec::Av1,
@@ -970,6 +972,7 @@ impl fmt::Display for Codec {
         match self {
             Codec::Opus => write!(f, "opus"),
             Codec::H264 => write!(f, "H264"),
+            Codec::H265 => write!(f, "H265"),
             Codec::Vp8 => write!(f, "VP8"),
             Codec::Vp9 => write!(f, "VP9"),
             Codec::Av1 => write!(f, "AV1"),

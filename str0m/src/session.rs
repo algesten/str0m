@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
 use net_::DATAGRAM_MTU;
-use rtp::{Extensions, MLineIdx, Mid, ReceiverReport, ReportList, Rtcp, RtcpFb};
+use rtp::{Extensions, MLineIdx, Mid, Pt, ReceiverReport, ReportList, Rtcp, RtcpFb};
 use rtp::{RtcpHeader, RtpHeader, SessionId};
 use rtp::{RtcpType, SrtpContext, SrtpKey, Ssrc};
 use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD_SUFFIX};
@@ -42,7 +42,8 @@ pub(crate) struct Session {
 }
 
 pub enum MediaEvent {
-    //
+    MediaData(Mid, Pt, Vec<u8>),
+    MediaError(Mid, Pt, RtcError),
 }
 
 impl Session {
@@ -158,10 +159,24 @@ impl Session {
         let source = media.get_source_rx(&header, now);
         let seq_no = source.update(now, &header, clock_rate);
 
-        if source.is_valid() {
-            let data = srtp.unprotect_rtp(buf, &header, *seq_no)?;
-            let params = media.get_params(&header)?;
+        // The first few packets, the source is in "probabtion".
+        if !source.is_valid() {
+            return Some(());
         }
+
+        let data = srtp.unprotect_rtp(buf, &header, *seq_no)?;
+
+        // Parameters using the PT in the header. This will return the same CodecParams
+        // instance regardless of whether this being a resend PT or not.
+        let params = media.get_params(&header)?;
+
+        // This is the "main" PT and it will differ to header.payload_type if this is a resend.
+        let pt = params.pt();
+        let codec = params.codec();
+
+        // Buffers are unique per m-line (since PT is unique per m-line).
+        let buf = media.get_buffer_rx(pt, codec);
+        buf.push(data, seq_no, header.marker);
 
         Some(())
     }
@@ -183,7 +198,16 @@ impl Session {
     }
 
     pub fn poll_event(&mut self) -> Option<MediaEvent> {
-        todo!()
+        for media in &mut self.media {
+            if let Some((mid, pt, r)) = media.poll_sample() {
+                match r {
+                    Ok(v) => return Some(MediaEvent::MediaData(mid, pt, v)),
+                    Err(e) => return Some(MediaEvent::MediaError(mid, pt, e.into())),
+                }
+            }
+        }
+
+        None
     }
 
     pub fn poll_datagram(&mut self) -> Option<net::DatagramSend> {

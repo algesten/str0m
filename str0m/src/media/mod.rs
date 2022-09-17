@@ -1,6 +1,7 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
+use packet::{PacketError, SampleBuf};
 use rtp::{MLineIdx, Rtcp, RtcpFb, RtpHeader, Ssrc};
 
 pub use rtp::{Direction, Mid, Pt};
@@ -34,6 +35,7 @@ pub struct Media {
     sources_tx: Vec<SenderSource>,
     last_cleanup: Instant,
     ssrc_info: Vec<SsrcInfo>,
+    buffers_rx: HashMap<Pt, SampleBuf>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +64,7 @@ impl Media {
             sources_tx: vec![],
             last_cleanup: already_happened(),
             ssrc_info: vec![],
+            buffers_rx: HashMap::new(),
         }
     }
 
@@ -91,6 +94,17 @@ impl Media {
 
     pub fn write(&mut self, pt: Pt, data: &[u8]) {
         //
+    }
+
+    pub fn poll_sample(&mut self) -> Option<(Mid, Pt, Result<Vec<u8>, PacketError>)> {
+        for (pt, buf) in self.buffers_rx.iter_mut() {
+            match buf.emit_sample() {
+                Ok(Some(v)) => return Some((self.mid, *pt, Ok(v))),
+                Err(e) => return Some((self.mid, *pt, Err(e))),
+                Ok(None) => continue,
+            }
+        }
+        None
     }
 
     pub(crate) fn get_source_rx(
@@ -271,6 +285,12 @@ impl Media {
             .iter()
             .any(|i| i.ssrc == ssrc || i.repair == Some(ssrc))
     }
+
+    pub fn get_buffer_rx(&mut self, pt: Pt, codec: Codec) -> &mut SampleBuf {
+        self.buffers_rx
+            .entry(pt)
+            .or_insert_with(|| SampleBuf::new(codec.into()))
+    }
 }
 
 impl<'a> From<(&'a MediaLine, MLineIdx)> for Media {
@@ -285,6 +305,7 @@ impl<'a> From<(&'a MediaLine, MLineIdx)> for Media {
             sources_tx: vec![],
             last_cleanup: already_happened(),
             ssrc_info: vec![],
+            buffers_rx: HashMap::new(),
         }
     }
 }

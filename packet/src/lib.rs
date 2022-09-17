@@ -1,23 +1,27 @@
+use sdp::Codec;
 use std::fmt;
 use thiserror::Error;
 
 mod g7xx;
-pub use g7xx::{G711Packetizer, G722Packetizer, G7xxPacketizer};
+use g7xx::{G711Packetizer, G722Packetizer};
 
 mod h264;
-pub use h264::{H264Depacketizer, H264Packetizer};
+use h264::{H264Depacketizer, H264Packetizer};
 
 mod h265;
-pub use h265::H265Depacketizer;
+use h265::H265Depacketizer;
 
 mod opus;
-pub use opus::{OpusDepacketizer, OpusPacketizer};
+use opus::{OpusDepacketizer, OpusPacketizer};
 
 mod vp8;
-pub use vp8::{Vp8Depacketizer, Vp8Packetizer};
+use vp8::{Vp8Depacketizer, Vp8Packetizer};
 
 mod vp9;
-pub use vp9::{Vp9Depacketizer, Vp9Packetizer};
+use vp9::{Vp9Depacketizer, Vp9Packetizer};
+
+mod sample;
+pub use sample::SampleBuf;
 
 /// Packetizes some bytes for use as RTP packet.
 pub trait Packetizer: fmt::Debug {
@@ -97,5 +101,104 @@ impl BitRead for (&[u8], usize) {
 
     fn get_u16(&mut self) -> u16 {
         u16::from_be_bytes([self.get_u8(), self.get_u8()])
+    }
+}
+
+#[derive(Debug)]
+pub enum CodecPacketizer {
+    G711(G711Packetizer),
+    G722(G722Packetizer),
+    H264(H264Packetizer),
+    // H265() TODO
+    Opus(OpusPacketizer),
+    Vp8(Vp8Packetizer),
+    Vp9(Vp9Packetizer),
+}
+
+#[derive(Debug)]
+pub enum CodecDepacketizer {
+    H264(H264Depacketizer),
+    H265(H265Depacketizer),
+    Opus(OpusDepacketizer),
+    Vp8(Vp8Depacketizer),
+    Vp9(Vp9Depacketizer),
+}
+
+impl From<Codec> for CodecPacketizer {
+    fn from(c: Codec) -> Self {
+        match c {
+            Codec::Opus => CodecPacketizer::Opus(OpusPacketizer),
+            Codec::H264 => CodecPacketizer::H264(H264Packetizer::default()),
+            Codec::H265 => unimplemented!("Missing packetizer for H265"),
+            Codec::Vp8 => CodecPacketizer::Vp8(Vp8Packetizer::default()),
+            Codec::Vp9 => CodecPacketizer::Vp9(Vp9Packetizer::default()),
+            Codec::Av1 => unimplemented!("Missing packetizer for AV1"),
+            Codec::Rtx => panic!("Cant instantiate packetizer for RTX codec"),
+            Codec::Unknown => panic!("Cant instantiate packetizer for unknown codec"),
+        }
+    }
+}
+
+impl From<Codec> for CodecDepacketizer {
+    fn from(c: Codec) -> Self {
+        match c {
+            Codec::Opus => CodecDepacketizer::Opus(OpusDepacketizer),
+            Codec::H264 => CodecDepacketizer::H264(H264Depacketizer::default()),
+            Codec::H265 => CodecDepacketizer::H265(H265Depacketizer::default()),
+            Codec::Vp8 => CodecDepacketizer::Vp8(Vp8Depacketizer::default()),
+            Codec::Vp9 => CodecDepacketizer::Vp9(Vp9Depacketizer::default()),
+            Codec::Av1 => unimplemented!("Missing depacketizer for AV1"),
+            Codec::Rtx => panic!("Cant instantiate depacketizer for RTX codec"),
+            Codec::Unknown => panic!("Cant instantiate depacketizer for unknown codec"),
+        }
+    }
+}
+
+impl Packetizer for CodecPacketizer {
+    fn packetize(&mut self, mtu: usize, b: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+        use CodecPacketizer::*;
+        match self {
+            G711(v) => v.packetize(mtu, b),
+            G722(v) => v.packetize(mtu, b),
+            H264(v) => v.packetize(mtu, b),
+            Opus(v) => v.packetize(mtu, b),
+            Vp8(v) => v.packetize(mtu, b),
+            Vp9(v) => v.packetize(mtu, b),
+        }
+    }
+}
+
+impl Depacketizer for CodecDepacketizer {
+    fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
+        use CodecDepacketizer::*;
+        match self {
+            H264(v) => v.depacketize(packet, out),
+            H265(v) => v.depacketize(packet, out),
+            Opus(v) => v.depacketize(packet, out),
+            Vp8(v) => v.depacketize(packet, out),
+            Vp9(v) => v.depacketize(packet, out),
+        }
+    }
+
+    fn is_partition_head(&self, packet: &[u8]) -> bool {
+        use CodecDepacketizer::*;
+        match self {
+            H264(v) => v.is_partition_head(packet),
+            H265(v) => v.is_partition_head(packet),
+            Opus(v) => v.is_partition_head(packet),
+            Vp8(v) => v.is_partition_head(packet),
+            Vp9(v) => v.is_partition_head(packet),
+        }
+    }
+
+    fn is_partition_tail(&self, marker: bool, packet: &[u8]) -> bool {
+        use CodecDepacketizer::*;
+        match self {
+            H264(v) => v.is_partition_tail(marker, packet),
+            H265(v) => v.is_partition_tail(marker, packet),
+            Opus(v) => v.is_partition_tail(marker, packet),
+            Vp8(v) => v.is_partition_tail(marker, packet),
+            Vp9(v) => v.is_partition_tail(marker, packet),
+        }
     }
 }

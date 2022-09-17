@@ -8,3 +8,6 @@ edition = "2021"
 [dependencies]
 thiserror = "1"
 rand = "0.8"
+
+rtp = { path = "../rtp" }
+sdp = { path = "../sdp" }

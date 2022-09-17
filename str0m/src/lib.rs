@@ -28,7 +28,7 @@ mod util;
 pub(crate) use util::*;
 
 mod session;
-use session::Session;
+use session::{MediaEvent, Session};
 
 mod session_sdp;
 use session_sdp::AsSdpParams;
@@ -55,6 +55,10 @@ pub enum RtcError {
     /// DTLS errors
     #[error("{0}")]
     Dtls(#[from] net::DtlsError),
+
+    /// RTP packetization error
+    #[error("{0}")]
+    Packet(#[from] packet::PacketError),
 }
 
 pub struct Rtc {
@@ -81,6 +85,7 @@ pub enum Event {
     MediaAdded(Mid),
     ChannelAdded(Mid),
     MediaData(Mid, Pt, Vec<u8>),
+    MediaError(Mid, Pt, RtcError),
 }
 
 pub enum Input<'a> {
@@ -310,7 +315,14 @@ impl Rtc {
         }
 
         while let Some(e) = self.session.poll_event() {
-            match e {}
+            match e {
+                MediaEvent::MediaData(mid, pt, data) => {
+                    return Ok(Output::Event(Event::MediaData(mid, pt, data)))
+                }
+                MediaEvent::MediaError(mid, pt, err) => {
+                    return Ok(Output::Event(Event::MediaError(mid, pt, err)))
+                }
+            }
         }
 
         if let Some(v) = self.ice.poll_transmit() {
