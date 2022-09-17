@@ -1,10 +1,12 @@
-use crate::{Depacketizer, PacketError, Payloader};
+use crate::{Depacketizer, PacketError, Packetizer};
 
 #[derive(Default, Debug, Copy, Clone)]
-pub struct OpusPayloader;
+pub struct OpusPacketizer;
 
-impl Payloader for OpusPayloader {
-    fn payload(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+impl Packetizer for OpusPacketizer {
+    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+        assert!(payload.len() <= mtu, "Opus payload must be less than MTU");
+
         if payload.is_empty() || mtu == 0 {
             return Ok(vec![]);
         }
@@ -61,20 +63,20 @@ mod test {
 
     #[test]
     fn test_opus_payload() -> Result<(), PacketError> {
-        let mut pck = OpusPayloader::default();
+        let mut pck = OpusPacketizer::default();
         let empty = &[];
         let payload = &[0x90, 0x90, 0x90];
 
         // Positive MTU, empty payload
-        let result = pck.payload(1, empty)?;
+        let result = pck.packetize(1, empty)?;
         assert!(result.is_empty(), "Generated payload should be empty");
 
         // Positive MTU, small payload
-        let result = pck.payload(1, payload)?;
+        let result = pck.packetize(1, payload)?;
         assert_eq!(result.len(), 1, "Generated payload should be the 1");
 
         // Positive MTU, small payload
-        let result = pck.payload(2, payload)?;
+        let result = pck.packetize(2, payload)?;
         assert_eq!(result.len(), 1, "Generated payload should be the 1");
 
         Ok(())

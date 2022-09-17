@@ -1,4 +1,4 @@
-use crate::{BitRead, Depacketizer, PacketError, Payloader};
+use crate::{BitRead, Depacketizer, PacketError, Packetizer};
 
 use std::fmt;
 use std::sync::Arc;
@@ -11,27 +11,27 @@ const MAX_VP9REF_PICS: usize = 3;
 /// InitialPictureIDFn is a function that returns random initial picture ID.
 pub type InitialPictureIDFn = Arc<dyn (Fn() -> u16) + Send + Sync>;
 
-/// Vp9Payloader payloads VP9 packets
+/// Vp9Packetizer payloads VP9 packets
 #[derive(Default, Clone)]
-pub struct Vp9Payloader {
+pub struct Vp9Packetizer {
     picture_id: u16,
     initialized: bool,
 
     pub initial_picture_id_fn: Option<InitialPictureIDFn>,
 }
 
-impl fmt::Debug for Vp9Payloader {
+impl fmt::Debug for Vp9Packetizer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Vp9Payloader")
+        f.debug_struct("Vp9Packetizer")
             .field("picture_id", &self.picture_id)
             .field("initialized", &self.initialized)
             .finish()
     }
 }
 
-impl Payloader for Vp9Payloader {
-    /// Payload fragments an Vp9Payloader packet across one or more byte arrays
-    fn payload(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+impl Packetizer for Vp9Packetizer {
+    /// Packetize some VP9 payload across one or more byte arrays
+    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
         /*
          * https://www.ietf.org/id/draft-ietf-payload-vp9-13.txt
          *
@@ -702,7 +702,7 @@ mod test {
     }
 
     #[test]
-    fn test_vp9_payloader_payload() -> Result<(), PacketError> {
+    fn test_vp9_packetizer_payload() -> Result<(), PacketError> {
         let mut r0 = 8692;
         let mut rands = vec![];
         for _ in 0..10 {
@@ -752,27 +752,27 @@ mod test {
         ];
 
         for (name, bs, mtu, expected) in tests {
-            let mut pck = Vp9Payloader {
+            let mut pck = Vp9Packetizer {
                 initial_picture_id_fn: Some(Arc::new(|| -> u16 { 8692 })),
                 ..Default::default()
             };
 
             let mut actual = vec![];
             for b in &bs {
-                actual.extend(pck.payload(mtu, b)?);
+                actual.extend(pck.packetize(mtu, b)?);
             }
             assert_eq!(expected, actual, "{}: Payloaded packet", name);
         }
 
         //"PictureIDOverflow"
         {
-            let mut pck = Vp9Payloader {
+            let mut pck = Vp9Packetizer {
                 initial_picture_id_fn: Some(Arc::new(|| -> u16 { 8692 })),
                 ..Default::default()
             };
             let mut p_prev = Vp9Packet::default();
             for i in 0..0x8000 {
-                let res = pck.payload(4, &[0x01])?;
+                let res = pck.packetize(4, &[0x01])?;
                 let mut p = Vp9Packet::default();
                 let mut payload = Vec::new();
                 p.depacketize(&res[0], &mut payload)?;

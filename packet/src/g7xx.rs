@@ -1,16 +1,16 @@
-use crate::{PacketError, Payloader};
+use crate::{PacketError, Packetizer};
 
-/// G711Payloader payloads G711 packets
-pub type G711Payloader = G7xxPayloader;
-/// G722Payloader payloads G722 packets
-pub type G722Payloader = G7xxPayloader;
+/// G711Packetizer payloads G711 packets
+pub type G711Packetizer = G7xxPacketizer;
+/// G722Packetizer payloads G722 packets
+pub type G722Packetizer = G7xxPacketizer;
 
 #[derive(Default, Debug, Copy, Clone)]
-pub struct G7xxPayloader;
+pub struct G7xxPacketizer;
 
-impl Payloader for G7xxPayloader {
+impl Packetizer for G7xxPacketizer {
     /// Payload fragments an G7xx packet across one or more byte arrays
-    fn payload(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
         if payload.is_empty() || mtu == 0 {
             return Ok(vec![]);
         }
@@ -38,7 +38,7 @@ mod test {
 
     #[test]
     fn test_g7xx_payload() -> Result<(), PacketError> {
-        let mut pck = G711Payloader::default();
+        let mut pck = G711Packetizer::default();
 
         const TEST_LEN: usize = 10000;
         const TEST_MTU: usize = 1500;
@@ -46,13 +46,13 @@ mod test {
         //generate random 8-bit g722 samples
         let samples: Vec<u8> = (0..TEST_LEN).map(|_| rand::random::<u8>()).collect();
 
-        //make a copy, for payloader input
+        //make a copy, for packetizer input
         let mut samples_in = vec![0u8; TEST_LEN];
         samples_in.clone_from_slice(&samples);
         let samples_in = samples_in.to_vec();
 
         //split our samples into payloads
-        let payloads = pck.payload(TEST_MTU, &samples_in)?;
+        let payloads = pck.packetize(TEST_MTU, &samples_in)?;
 
         let outcnt = ((TEST_LEN as f64) / (TEST_MTU as f64)).ceil() as usize;
         assert_eq!(
@@ -71,15 +71,15 @@ mod test {
         let payload = &[0x90, 0x90, 0x90];
 
         // Positive MTU, empty payload
-        let result = pck.payload(1, empty)?;
+        let result = pck.packetize(1, empty)?;
         assert!(result.is_empty(), "Generated payload should be empty");
 
         // 0 MTU, small payload
-        let result = pck.payload(0, payload)?;
+        let result = pck.packetize(0, payload)?;
         assert_eq!(result.len(), 0, "Generated payload should be empty");
 
         // Positive MTU, small payload
-        let result = pck.payload(10, payload)?;
+        let result = pck.packetize(10, payload)?;
         assert_eq!(result.len(), 1, "Generated payload should be the 1");
 
         Ok(())

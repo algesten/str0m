@@ -8,10 +8,10 @@ pub mod opus;
 pub mod vp8;
 pub mod vp9;
 
-/// Payloader chunks up some bytes for use as RTP packet
-pub trait Payloader: fmt::Debug {
+/// Chunks up some bytes for use as RTP packet
+pub trait Packetizer: fmt::Debug {
     /// Chunk the data up into RTP packets.
-    fn payload(&mut self, mtu: usize, b: &[u8]) -> Result<Vec<Vec<u8>>, PacketError>;
+    fn packetize(&mut self, mtu: usize, b: &[u8]) -> Result<Vec<Vec<u8>>, PacketError>;
 }
 
 /// Depacketizer depacketizes a RTP payload, removing any RTP specific data from the payload

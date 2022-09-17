@@ -1,17 +1,17 @@
-use crate::{BitRead, Depacketizer, PacketError, Payloader};
+use crate::{BitRead, Depacketizer, PacketError, Packetizer};
 
 pub const VP8_HEADER_SIZE: usize = 1;
 
-/// Vp8Payloader payloads VP8 packets
+/// Vp8Packetizer payloads VP8 packets
 #[derive(Default, Debug, Copy, Clone)]
-pub struct Vp8Payloader {
+pub struct Vp8Packetizer {
     pub enable_picture_id: bool,
     picture_id: u16,
 }
 
-impl Payloader for Vp8Payloader {
+impl Packetizer for Vp8Packetizer {
     /// Payload fragments a VP8 packet across one or more byte arrays
-    fn payload(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
         if payload.is_empty() || mtu == 0 {
             return Ok(vec![]);
         }
@@ -354,10 +354,10 @@ mod test {
 
     #[test]
     fn test_vp8_payload() -> Result<(), PacketError> {
-        let tests: Vec<(&str, Vp8Payloader, usize, Vec<&[u8]>, Vec<Vec<&[u8]>>)> = vec![
+        let tests: Vec<(&str, Vp8Packetizer, usize, Vec<&[u8]>, Vec<Vec<&[u8]>>)> = vec![
             (
                 "WithoutPictureID",
-                Vp8Payloader::default(),
+                Vp8Packetizer::default(),
                 2,
                 vec![&[0x90, 0x90, 0x90], &[0x91, 0x91]],
                 vec![
@@ -367,7 +367,7 @@ mod test {
             ),
             (
                 "WithPictureID_1byte",
-                Vp8Payloader {
+                Vp8Packetizer {
                     enable_picture_id: true,
                     picture_id: 0x20,
                 },
@@ -380,7 +380,7 @@ mod test {
             ),
             (
                 "WithPictureID_2bytes",
-                Vp8Payloader {
+                Vp8Packetizer {
                     enable_picture_id: true,
                     picture_id: 0x120,
                 },
@@ -398,7 +398,7 @@ mod test {
 
         for (name, mut pck, mtu, payloads, expected) in tests {
             for (i, payload) in payloads.iter().enumerate() {
-                let actual = pck.payload(mtu, payload)?;
+                let actual = pck.packetize(mtu, payload)?;
                 assert_eq!(
                     expected[i], actual,
                     "{}: Generated packet[{}] differs",
@@ -412,20 +412,20 @@ mod test {
 
     #[test]
     fn test_vp8_payload_eror() -> Result<(), PacketError> {
-        let mut pck = Vp8Payloader::default();
+        let mut pck = Vp8Packetizer::default();
         let empty = &[];
         let payload = &[0x90, 0x90, 0x90];
 
         // Positive MTU, empty payload
-        let result = pck.payload(1, empty)?;
+        let result = pck.packetize(1, empty)?;
         assert!(result.is_empty(), "Generated payload should be empty");
 
         // Positive MTU, small payload
-        let result = pck.payload(1, payload)?;
+        let result = pck.packetize(1, payload)?;
         assert_eq!(result.len(), 0, "Generated payload should be empty");
 
         // Positive MTU, small payload
-        let result = pck.payload(2, payload)?;
+        let result = pck.packetize(2, payload)?;
         assert_eq!(
             result.len(),
             payload.len(),

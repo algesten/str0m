@@ -1,8 +1,8 @@
-use crate::{Depacketizer, PacketError, Payloader};
+use crate::{Depacketizer, PacketError, Packetizer};
 
-/// H264Payloader payloads H264 packets
+/// H264Packetizer payloads H264 packets
 #[derive(Default, Debug, Clone)]
-pub struct H264Payloader {
+pub struct H264Packetizer {
     sps_nalu: Option<Vec<u8>>,
     pps_nalu: Option<Vec<u8>>,
 }
@@ -28,7 +28,7 @@ pub const OUTPUT_STAP_AHEADER: u8 = 0x78;
 
 pub static ANNEXB_NALUSTART_CODE: &'static [u8] = &[0x00, 0x00, 0x00, 0x01];
 
-impl H264Payloader {
+impl H264Packetizer {
     fn next_ind(nalu: &[u8], start: usize) -> (isize, isize) {
         let mut zero_count = 0;
 
@@ -151,22 +151,23 @@ impl H264Payloader {
     }
 }
 
-impl Payloader for H264Payloader {
+impl Packetizer for H264Packetizer {
     /// Payload fragments a H264 packet across one or more byte arrays
-    fn payload(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
         if payload.is_empty() || mtu == 0 {
             return Ok(vec![]);
         }
 
         let mut payloads = vec![];
 
-        let (mut next_ind_start, mut next_ind_len) = H264Payloader::next_ind(payload, 0);
+        let (mut next_ind_start, mut next_ind_len) = H264Packetizer::next_ind(payload, 0);
         if next_ind_start == -1 {
             self.emit(payload, mtu, &mut payloads);
         } else {
             while next_ind_start != -1 {
                 let prev_start = (next_ind_start + next_ind_len) as usize;
-                let (next_ind_start2, next_ind_len2) = H264Payloader::next_ind(payload, prev_start);
+                let (next_ind_start2, next_ind_len2) =
+                    H264Packetizer::next_ind(payload, prev_start);
                 next_ind_start = next_ind_start2;
                 next_ind_len = next_ind_len2;
                 if next_ind_start != -1 {
@@ -318,22 +319,22 @@ mod test {
             &[0x1c, 0x40, 0x13, 0x14, 0x15],
         ];
 
-        let mut pck = H264Payloader::default();
+        let mut pck = H264Packetizer::default();
 
         // Positive MTU, empty payload
-        let result = pck.payload(1, empty)?;
+        let result = pck.packetize(1, empty)?;
         assert!(result.is_empty(), "Generated payload should be empty");
 
         // 0 MTU, small payload
-        let result = pck.payload(0, small_payload)?;
+        let result = pck.packetize(0, small_payload)?;
         assert_eq!(result.len(), 0, "Generated payload should be empty");
 
         // Positive MTU, small payload
-        let result = pck.payload(1, small_payload)?;
+        let result = pck.packetize(1, small_payload)?;
         assert_eq!(result.len(), 0, "Generated payload should be empty");
 
         // Positive MTU, small payload
-        let result = pck.payload(5, small_payload)?;
+        let result = pck.packetize(5, small_payload)?;
         assert_eq!(result.len(), 1, "Generated payload should be the 1");
         assert_eq!(
             result[0].len(),
@@ -342,7 +343,7 @@ mod test {
         );
 
         // Multiple NALU in a single payload
-        let result = pck.payload(5, multiple_payload)?;
+        let result = pck.packetize(5, multiple_payload)?;
         assert_eq!(result.len(), 2, "2 nal units should be broken out");
         for i in 0..2 {
             assert_eq!(
@@ -354,7 +355,7 @@ mod test {
         }
 
         // Large Payload split across multiple RTP Packets
-        let result = pck.payload(5, large_payload)?;
+        let result = pck.packetize(5, large_payload)?;
         assert_eq!(
             result, large_payload_packetized,
             "FU-A packetization failed"
@@ -362,7 +363,7 @@ mod test {
 
         // Nalu type 9 or 12
         let small_payload2 = &[0x09, 0x00, 0x00];
-        let result = pck.payload(5, small_payload2)?;
+        let result = pck.packetize(5, small_payload2)?;
         assert_eq!(result.len(), 0, "Generated payload should be empty");
 
         Ok(())
@@ -540,8 +541,8 @@ mod test {
     }
 
     #[test]
-    fn test_h264_payloader_payload_sps_and_pps_handling() -> Result<(), PacketError> {
-        let mut pck = H264Payloader::default();
+    fn test_h264_packetizer_payload_sps_and_pps_handling() -> Result<(), PacketError> {
+        let mut pck = H264Packetizer::default();
         let expected: Vec<&[u8]> = vec![
             &[
                 0x78, 0x00, 0x03, 0x07, 0x00, 0x01, 0x00, 0x03, 0x08, 0x02, 0x03,
@@ -550,13 +551,13 @@ mod test {
         ];
 
         // When packetizing SPS and PPS are emitted with following NALU
-        let res = pck.payload(1500, &[0x07, 0x00, 0x01])?;
+        let res = pck.packetize(1500, &[0x07, 0x00, 0x01])?;
         assert!(res.is_empty(), "Generated payload should be empty");
 
-        let res = pck.payload(1500, &[0x08, 0x02, 0x03])?;
+        let res = pck.packetize(1500, &[0x08, 0x02, 0x03])?;
         assert!(res.is_empty(), "Generated payload should be empty");
 
-        let actual = pck.payload(1500, &[0x05, 0x04, 0x05])?;
+        let actual = pck.packetize(1500, &[0x05, 0x04, 0x05])?;
         assert_eq!(actual, expected, "SPS and PPS aren't packed together");
 
         Ok(())
