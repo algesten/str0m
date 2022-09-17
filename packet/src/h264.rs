@@ -187,14 +187,14 @@ impl Packetizer for H264Packetizer {
     }
 }
 
-/// H264Packet represents the H264 header that is stored in the payload of an RTP Packet
+/// Depacketizes H264 RTP packets.
 #[derive(PartialEq, Eq, Debug, Default, Clone)]
-pub struct H264Packet {
+pub struct H264Depacketizer {
     pub is_avc: bool,
     fua_buffer: Option<Vec<u8>>,
 }
 
-impl Depacketizer for H264Packet {
+impl Depacketizer for H264Depacketizer {
     /// depacketize parses the passed byte slice and stores the result in the H264Packet this method is called upon
     fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
         if packet.len() <= 2 {
@@ -409,8 +409,8 @@ mod test {
             0x3c, 0x22, 0x11,
         ];
 
-        let mut pkt = H264Packet::default();
-        let mut avc_pkt = H264Packet {
+        let mut pkt = H264Depacketizer::default();
+        let mut avc_pkt = H264Depacketizer {
             is_avc: true,
             ..Default::default()
         };
@@ -494,7 +494,7 @@ mod test {
 
     #[test]
     fn test_h264_partition_head_checker_is_partition_head() -> Result<(), PacketError> {
-        let h264 = H264Packet::default();
+        let h264 = H264Depacketizer::default();
         let empty_nalu = &[];
         assert!(
             !h264.is_partition_head(empty_nalu),

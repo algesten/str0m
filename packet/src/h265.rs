@@ -711,14 +711,14 @@ impl Default for H265Payload {
 /// Packet implementation
 ///
 
-/// H265Packet represents a H265 packet, stored in the payload of an RTP packet.
+/// Depacketizes H265 RTP packets.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
-pub struct H265Packet {
+pub struct H265Depacketizer {
     payload: H265Payload,
     might_need_donl: bool,
 }
 
-impl H265Packet {
+impl H265Depacketizer {
     /// with_donl can be called to specify whether or not DONL might be parsed.
     /// DONL may need to be parsed if `sprop-max-don-diff` is greater than 0 on the RTP stream.
     pub fn with_donl(&mut self, value: bool) {
@@ -736,7 +736,7 @@ impl H265Packet {
     }
 }
 
-impl Depacketizer for H265Packet {
+impl Depacketizer for H265Depacketizer {
     /// depacketize parses the passed byte slice and stores the result in the H265Packet this method is called upon
     fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
         if packet.len() <= H265NALU_HEADER_SIZE {
@@ -1624,7 +1624,7 @@ mod test {
         ];
 
         for cur in tests {
-            let mut pck = H265Packet::default();
+            let mut pck = H265Depacketizer::default();
             if cur.with_donl {
                 pck.with_donl(true);
             }
@@ -1684,7 +1684,7 @@ mod test {
     ];
 
         for cur in tests {
-            let mut pck = H265Packet::default();
+            let mut pck = H265Depacketizer::default();
             let mut out = Vec::new();
             let _ = pck.depacketize(&cur, &mut out)?;
         }

@@ -21,3 +21,5 @@ Changes made:
 4. Remove Box<dyn Trait> use.
 5. Make depacketize take a `&mut Vec` output to allow control of allocation.
 6. Rename Payloader -> Packetizer
+7. Rename XXXPacket -> XXXDepacketizer
+

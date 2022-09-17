@@ -15,11 +15,11 @@ impl Packetizer for OpusPacketizer {
     }
 }
 
-/// OpusPacket represents the Opus header that is stored in the payload of an RTP Packet
+/// Depacketizes Opus RTP packets.
 #[derive(PartialEq, Eq, Debug, Default, Clone)]
-pub struct OpusPacket;
+pub struct OpusDepacketizer;
 
-impl Depacketizer for OpusPacket {
+impl Depacketizer for OpusDepacketizer {
     fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
         if packet.is_empty() {
             Err(PacketError::ErrShortPacket)
@@ -44,7 +44,7 @@ mod test {
 
     #[test]
     fn test_opus_unmarshal() -> Result<(), PacketError> {
-        let mut pck = OpusPacket::default();
+        let mut pck = OpusDepacketizer::default();
 
         // Empty packet
         let empty_bytes = &[];
@@ -84,7 +84,7 @@ mod test {
 
     #[test]
     fn test_opus_is_partition_head() -> Result<(), PacketError> {
-        let opus = OpusPacket::default();
+        let opus = OpusDepacketizer::default();
         //"NormalPacket"
         assert!(
             opus.is_partition_head(&[0x00, 0x00]),

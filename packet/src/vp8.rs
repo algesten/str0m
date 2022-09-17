@@ -98,9 +98,9 @@ impl Packetizer for Vp8Packetizer {
     }
 }
 
-/// Vp8Packet represents the VP8 header that is stored in the payload of an RTP Packet
+/// Depacketizes VP8 RTP packets.
 #[derive(PartialEq, Eq, Debug, Default, Clone)]
-pub struct Vp8Packet {
+pub struct Vp8Depacketizer {
     /// Required Header
     /// extended controlbits present
     pub x: u8,
@@ -134,7 +134,7 @@ pub struct Vp8Packet {
     pub key_idx: u8,
 }
 
-impl Depacketizer for Vp8Packet {
+impl Depacketizer for Vp8Depacketizer {
     /// depacketize parses the passed byte slice and stores the result in the VP8Packet this method is called upon
     fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
         let payload_len = packet.len();
@@ -242,7 +242,7 @@ mod test {
 
     #[test]
     fn test_vp8_unmarshal() -> Result<(), PacketError> {
-        let mut pck = Vp8Packet::default();
+        let mut pck = Vp8Depacketizer::default();
 
         // Empty packet
         let empty_bytes = &[];
@@ -437,7 +437,7 @@ mod test {
 
     #[test]
     fn test_vp8_partition_head_checker_is_partition_head() -> Result<(), PacketError> {
-        let vp8 = Vp8Packet::default();
+        let vp8 = Vp8Depacketizer::default();
 
         //"SmallPacket"
         assert!(

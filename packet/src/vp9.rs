@@ -130,9 +130,9 @@ impl Packetizer for Vp9Packetizer {
     }
 }
 
-/// Vp9Packet represents the VP9 header that is stored in the payload of an RTP Packet
+/// Depacketizes VP9 RTP packets.
 #[derive(PartialEq, Eq, Debug, Default, Clone)]
-pub struct Vp9Packet {
+pub struct Vp9Depacketizer {
     /// picture ID is present
     pub i: bool,
     /// inter-picture predicted frame.
@@ -189,7 +189,7 @@ pub struct Vp9Packet {
     pub pgpdiff: Vec<Vec<u8>>,
 }
 
-impl Depacketizer for Vp9Packet {
+impl Depacketizer for Vp9Depacketizer {
     /// depacketize parses the passed byte slice and stores the result in the Vp9Packet this method is called upon
     fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
         if packet.is_empty() {
@@ -245,7 +245,7 @@ impl Depacketizer for Vp9Packet {
     }
 }
 
-impl Vp9Packet {
+impl Vp9Depacketizer {
     // Picture ID:
     //
     //      +-+-+-+-+-+-+-+-+
@@ -468,25 +468,25 @@ mod test {
 
     #[test]
     fn test_vp9_packet_unmarshal() -> Result<(), PacketError> {
-        let tests: Vec<(&str, &[u8], Vp9Packet, &[u8], Option<PacketError>)> = vec![
+        let tests: Vec<(&str, &[u8], Vp9Depacketizer, &[u8], Option<PacketError>)> = vec![
             (
                 "Empty",
                 &[],
-                Vp9Packet::default(),
+                Vp9Depacketizer::default(),
                 &[],
                 Some(PacketError::ErrShortPacket),
             ),
             (
                 "NonFlexible",
                 &[0x00, 0xAA],
-                Vp9Packet::default(),
+                Vp9Depacketizer::default(),
                 &[0xAA],
                 None,
             ),
             (
                 "NonFlexiblePictureID",
                 &[0x80, 0x02, 0xAA],
-                Vp9Packet {
+                Vp9Depacketizer {
                     i: true,
                     picture_id: 0x02,
                     ..Default::default()
@@ -497,7 +497,7 @@ mod test {
             (
                 "NonFlexiblePictureIDExt",
                 &[0x80, 0x81, 0xFF, 0xAA],
-                Vp9Packet {
+                Vp9Depacketizer {
                     i: true,
                     picture_id: 0x01FF,
                     ..Default::default()
@@ -508,21 +508,21 @@ mod test {
             (
                 "NonFlexiblePictureIDExt_ShortPacket0",
                 &[0x80, 0x81],
-                Vp9Packet::default(),
+                Vp9Depacketizer::default(),
                 &[],
                 Some(PacketError::ErrShortPacket),
             ),
             (
                 "NonFlexiblePictureIDExt_ShortPacket1",
                 &[0x80],
-                Vp9Packet::default(),
+                Vp9Depacketizer::default(),
                 &[],
                 Some(PacketError::ErrShortPacket),
             ),
             (
                 "NonFlexibleLayerIndicePictureID",
                 &[0xA0, 0x02, 0x23, 0x01, 0xAA],
-                Vp9Packet {
+                Vp9Depacketizer {
                     i: true,
                     l: true,
                     picture_id: 0x02,
@@ -538,7 +538,7 @@ mod test {
             (
                 "FlexibleLayerIndicePictureID",
                 &[0xB0, 0x02, 0x23, 0x01, 0xAA],
-                Vp9Packet {
+                Vp9Depacketizer {
                     f: true,
                     i: true,
                     l: true,
@@ -554,21 +554,21 @@ mod test {
             (
                 "NonFlexibleLayerIndicePictureID_ShortPacket0",
                 &[0xA0, 0x02, 0x23],
-                Vp9Packet::default(),
+                Vp9Depacketizer::default(),
                 &[],
                 Some(PacketError::ErrShortPacket),
             ),
             (
                 "NonFlexibleLayerIndicePictureID_ShortPacket1",
                 &[0xA0, 0x02],
-                Vp9Packet::default(),
+                Vp9Depacketizer::default(),
                 &[],
                 Some(PacketError::ErrShortPacket),
             ),
             (
                 "FlexiblePictureIDRefIndex",
                 &[0xD0, 0x02, 0x03, 0x04, 0xAA],
-                Vp9Packet {
+                Vp9Depacketizer {
                     i: true,
                     p: true,
                     f: true,
@@ -582,14 +582,14 @@ mod test {
             (
                 "FlexiblePictureIDRefIndex_TooManyPDiff",
                 &[0xD0, 0x02, 0x03, 0x05, 0x07, 0x09, 0x10, 0xAA],
-                Vp9Packet::default(),
+                Vp9Depacketizer::default(),
                 &[],
                 Some(PacketError::ErrTooManyPDiff),
             ),
             (
                 "FlexiblePictureIDRefIndexNoPayload",
                 &[0xD0, 0x02, 0x03, 0x04],
-                Vp9Packet {
+                Vp9Depacketizer {
                     i: true,
                     p: true,
                     f: true,
@@ -603,21 +603,21 @@ mod test {
             (
                 "FlexiblePictureIDRefIndex_ShortPacket0",
                 &[0xD0, 0x02, 0x03],
-                Vp9Packet::default(),
+                Vp9Depacketizer::default(),
                 &[],
                 Some(PacketError::ErrShortPacket),
             ),
             (
                 "FlexiblePictureIDRefIndex_ShortPacket1",
                 &[0xD0, 0x02],
-                Vp9Packet::default(),
+                Vp9Depacketizer::default(),
                 &[],
                 Some(PacketError::ErrShortPacket),
             ),
             (
                 "FlexiblePictureIDRefIndex_ShortPacket2",
                 &[0xD0],
-                Vp9Packet::default(),
+                Vp9Depacketizer::default(),
                 &[],
                 Some(PacketError::ErrShortPacket),
             ),
@@ -635,7 +635,7 @@ mod test {
                     (720 >> 8) as u8,
                     (720 & 0xff) as u8,
                 ],
-                Vp9Packet {
+                Vp9Depacketizer {
                     b: true,
                     v: true,
                     ns: 1,
@@ -659,7 +659,7 @@ mod test {
                     (2 << 5) | (1 << 2), // T:2 U:0 R:1 -
                     33,
                 ],
-                Vp9Packet {
+                Vp9Depacketizer {
                     b: true,
                     v: true,
                     ns: 1,
@@ -677,7 +677,7 @@ mod test {
         ];
 
         for (name, b, pkt, expected, err) in tests {
-            let mut p = Vp9Packet::default();
+            let mut p = Vp9Depacketizer::default();
 
             if let Some(expected) = err {
                 let mut payload = Vec::new();
@@ -770,10 +770,10 @@ mod test {
                 initial_picture_id_fn: Some(Arc::new(|| -> u16 { 8692 })),
                 ..Default::default()
             };
-            let mut p_prev = Vp9Packet::default();
+            let mut p_prev = Vp9Depacketizer::default();
             for i in 0..0x8000 {
                 let res = pck.packetize(4, &[0x01])?;
-                let mut p = Vp9Packet::default();
+                let mut p = Vp9Depacketizer::default();
                 let mut payload = Vec::new();
                 p.depacketize(&res[0], &mut payload)?;
 
@@ -802,7 +802,7 @@ mod test {
 
     #[test]
     fn test_vp9_partition_head_checker_is_partition_head() -> Result<(), PacketError> {
-        let vp9 = Vp9Packet::default();
+        let vp9 = Vp9Depacketizer::default();
 
         //"SmallPacket"
         assert!(
