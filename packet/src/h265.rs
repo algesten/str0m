@@ -707,10 +707,6 @@ impl Default for H265Payload {
     }
 }
 
-///
-/// Packet implementation
-///
-
 /// Depacketizes H265 RTP packets.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct H265Depacketizer {

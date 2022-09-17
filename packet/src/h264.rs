@@ -1,6 +1,6 @@
 use crate::{Depacketizer, PacketError, Packetizer};
 
-/// H264Packetizer payloads H264 packets
+/// Packetizes H264 RTP packets.
 #[derive(Default, Debug, Clone)]
 pub struct H264Packetizer {
     sps_nalu: Option<Vec<u8>>,

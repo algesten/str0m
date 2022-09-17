@@ -1,10 +1,11 @@
 use crate::{PacketError, Packetizer};
 
-/// G711Packetizer payloads G711 packets
+/// Packetizes G711 RTP packets.
 pub type G711Packetizer = G7xxPacketizer;
-/// G722Packetizer payloads G722 packets
+/// Packetizes G722 RTP packets.
 pub type G722Packetizer = G7xxPacketizer;
 
+/// Generic packetizer for G711 and G722 packets.
 #[derive(Default, Debug, Copy, Clone)]
 pub struct G7xxPacketizer;
 

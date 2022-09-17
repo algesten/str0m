@@ -1,20 +1,33 @@
 use std::fmt;
 use thiserror::Error;
 
-pub mod g7xx;
-pub mod h264;
-pub mod h265;
-pub mod opus;
-pub mod vp8;
-pub mod vp9;
+mod g7xx;
+pub use g7xx::{G711Packetizer, G722Packetizer, G7xxPacketizer};
 
-/// Chunks up some bytes for use as RTP packet
+mod h264;
+pub use h264::{H264Depacketizer, H264Packetizer};
+
+mod h265;
+pub use h265::H265Depacketizer;
+
+mod opus;
+pub use opus::{OpusDepacketizer, OpusPacketizer};
+
+mod vp8;
+pub use vp8::{Vp8Depacketizer, Vp8Packetizer};
+
+mod vp9;
+pub use vp9::{Vp9Depacketizer, Vp9Packetizer};
+
+/// Packetizes some bytes for use as RTP packet.
 pub trait Packetizer: fmt::Debug {
     /// Chunk the data up into RTP packets.
     fn packetize(&mut self, mtu: usize, b: &[u8]) -> Result<Vec<Vec<u8>>, PacketError>;
 }
 
-/// Depacketizer depacketizes a RTP payload, removing any RTP specific data from the payload
+/// Depacketizes an RTP payload.
+///
+/// Removes any RTP specific data from the payload.
 pub trait Depacketizer {
     /// Unpack the RTP packet into a provided Vec<u8>.
     fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError>;
@@ -30,6 +43,7 @@ pub trait Depacketizer {
     fn is_partition_tail(&self, marker: bool, packet: &[u8]) -> bool;
 }
 
+/// Errors arising in packet- and depacketization.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum PacketError {
     #[error("Packet is too short")]

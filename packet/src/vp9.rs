@@ -11,7 +11,7 @@ const MAX_VP9REF_PICS: usize = 3;
 /// InitialPictureIDFn is a function that returns random initial picture ID.
 pub type InitialPictureIDFn = Arc<dyn (Fn() -> u16) + Send + Sync>;
 
-/// Vp9Packetizer payloads VP9 packets
+/// Packetizes VP9 RTP packets.
 #[derive(Default, Clone)]
 pub struct Vp9Packetizer {
     picture_id: u16,

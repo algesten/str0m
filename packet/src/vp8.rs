@@ -2,7 +2,7 @@ use crate::{BitRead, Depacketizer, PacketError, Packetizer};
 
 pub const VP8_HEADER_SIZE: usize = 1;
 
-/// Vp8Packetizer payloads VP8 packets
+/// Packetizes VP8 RTP packets.
 #[derive(Default, Debug, Copy, Clone)]
 pub struct Vp8Packetizer {
     pub enable_picture_id: bool,

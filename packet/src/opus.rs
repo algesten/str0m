@@ -1,5 +1,6 @@
 use crate::{Depacketizer, PacketError, Packetizer};
 
+/// Packetizes Opus RTP packets.
 #[derive(Default, Debug, Copy, Clone)]
 pub struct OpusPacketizer;
 
