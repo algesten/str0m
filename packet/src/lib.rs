@@ -8,23 +8,26 @@ pub mod opus;
 pub mod vp8;
 pub mod vp9;
 
-/// Payloader payloads a byte array for use as RTP packet
+/// Payloader chunks up some bytes for use as RTP packet
 pub trait Payloader: fmt::Debug {
+    /// Chunk the data up into RTP packets.
     fn payload(&mut self, mtu: usize, b: &[u8]) -> Result<Vec<Vec<u8>>, PacketError>;
 }
 
 /// Depacketizer depacketizes a RTP payload, removing any RTP specific data from the payload
 pub trait Depacketizer {
-    fn depacketize(&mut self, b: &[u8]) -> Result<Vec<u8>, PacketError>;
+    /// Unpack the RTP packet into a provided Vec<u8>.
+    fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError>;
 
-    /// Checks if the packet is at the beginning of a partition.  This
-    /// should return false if the result could not be determined, in
-    /// which case the caller will detect timestamp discontinuities.
-    fn is_partition_head(&self, payload: &[u8]) -> bool;
+    /// Checks if the packet is at the beginning of a partition.
+    ///
+    /// Returns false if the result could not be determined.
+    fn is_partition_head(&self, packet: &[u8]) -> bool;
 
-    /// Checks if the packet is at the end of a partition.  This should
-    /// return false if the result could not be determined.
-    fn is_partition_tail(&self, marker: bool, payload: &[u8]) -> bool;
+    /// Checks if the packet is at the end of a partition.
+    ///
+    /// Returns false if the result could not be determined.
+    fn is_partition_tail(&self, marker: bool, packet: &[u8]) -> bool;
 }
 
 #[derive(Debug, Error, PartialEq, Eq)]

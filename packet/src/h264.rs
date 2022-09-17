@@ -195,12 +195,10 @@ pub struct H264Packet {
 
 impl Depacketizer for H264Packet {
     /// depacketize parses the passed byte slice and stores the result in the H264Packet this method is called upon
-    fn depacketize(&mut self, packet: &[u8]) -> Result<Vec<u8>, PacketError> {
+    fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
         if packet.len() <= 2 {
             return Err(PacketError::ErrShortPacket);
         }
-
-        let mut payload = Vec::new();
 
         // NALU Types
         // https://tools.ietf.org/html/rfc6184#section-5.4
@@ -210,12 +208,12 @@ impl Depacketizer for H264Packet {
         match nalu_type {
             1..=23 => {
                 if self.is_avc {
-                    payload.extend_from_slice(&(packet.len() as u32).to_be_bytes());
+                    out.extend_from_slice(&(packet.len() as u32).to_be_bytes());
                 } else {
-                    payload.extend_from_slice(ANNEXB_NALUSTART_CODE);
+                    out.extend_from_slice(ANNEXB_NALUSTART_CODE);
                 }
-                payload.extend_from_slice(&packet);
-                Ok(payload)
+                out.extend_from_slice(&packet);
+                Ok(())
             }
             STAPA_NALU_TYPE => {
                 let mut curr_offset = STAPA_HEADER_SIZE;
@@ -232,15 +230,15 @@ impl Depacketizer for H264Packet {
                     }
 
                     if self.is_avc {
-                        payload.extend_from_slice(&(nalu_size as u32).to_be_bytes());
+                        out.extend_from_slice(&(nalu_size as u32).to_be_bytes());
                     } else {
-                        payload.extend_from_slice(ANNEXB_NALUSTART_CODE);
+                        out.extend_from_slice(ANNEXB_NALUSTART_CODE);
                     }
-                    payload.extend_from_slice(&packet[curr_offset..curr_offset + nalu_size]);
+                    out.extend_from_slice(&packet[curr_offset..curr_offset + nalu_size]);
                     curr_offset += nalu_size;
                 }
 
-                Ok(payload)
+                Ok(())
             }
             FUA_NALU_TYPE => {
                 if packet.len() < FUA_HEADER_SIZE as usize {
@@ -262,18 +260,17 @@ impl Depacketizer for H264Packet {
 
                     if let Some(fua_buffer) = self.fua_buffer.take() {
                         if self.is_avc {
-                            payload
-                                .extend_from_slice(&((fua_buffer.len() + 1) as u32).to_be_bytes());
+                            out.extend_from_slice(&((fua_buffer.len() + 1) as u32).to_be_bytes());
                         } else {
-                            payload.extend_from_slice(ANNEXB_NALUSTART_CODE);
+                            out.extend_from_slice(ANNEXB_NALUSTART_CODE);
                         }
-                        payload.push(nalu_ref_idc | fragmented_nalu_type);
-                        payload.extend_from_slice(&fua_buffer);
+                        out.push(nalu_ref_idc | fragmented_nalu_type);
+                        out.extend_from_slice(&fua_buffer);
                     }
 
-                    Ok(payload)
+                    Ok(())
                 } else {
-                    Ok(Vec::new())
+                    Ok(())
                 }
             }
             _ => Err(PacketError::NaluTypeIsNotHandled(nalu_type)),
@@ -281,21 +278,21 @@ impl Depacketizer for H264Packet {
     }
 
     /// is_partition_head checks if this is the head of a packetized nalu stream.
-    fn is_partition_head(&self, payload: &[u8]) -> bool {
-        if payload.len() < 2 {
+    fn is_partition_head(&self, packet: &[u8]) -> bool {
+        if packet.len() < 2 {
             return false;
         }
 
-        if payload[0] & NALU_TYPE_BITMASK == FUA_NALU_TYPE
-            || payload[0] & NALU_TYPE_BITMASK == FUB_NALU_TYPE
+        if packet[0] & NALU_TYPE_BITMASK == FUA_NALU_TYPE
+            || packet[0] & NALU_TYPE_BITMASK == FUB_NALU_TYPE
         {
-            (payload[1] & FU_START_BITMASK) != 0
+            (packet[1] & FU_START_BITMASK) != 0
         } else {
             true
         }
     }
 
-    fn is_partition_tail(&self, marker: bool, _payload: &[u8]) -> bool {
+    fn is_partition_tail(&self, marker: bool, _packet: &[u8]) -> bool {
         marker
     }
 }
@@ -418,70 +415,76 @@ mod test {
         };
 
         let data = &[];
-        let result = pkt.depacketize(data);
+        let mut out = Vec::new();
+        let result = pkt.depacketize(data, &mut out);
         assert!(result.is_err(), "Unmarshal did not fail on nil payload");
 
         let data = &[0x00, 0x00];
-        let result = pkt.depacketize(data);
+        let mut out = Vec::new();
+        let result = pkt.depacketize(data, &mut out);
         assert!(
             result.is_err(),
             "Unmarshal accepted a packet that is too small for a payload and header"
         );
 
         let data = &[0xFF, 0x00, 0x00];
-        let result = pkt.depacketize(data);
+        let mut out = Vec::new();
+        let result = pkt.depacketize(data, &mut out);
         assert!(
             result.is_err(),
             "Unmarshal accepted a packet with a NALU Type we don't handle"
         );
 
-        let result = pkt.depacketize(incomplete_single_payload_multi_nalu);
+        let mut out = Vec::new();
+        let result = pkt.depacketize(incomplete_single_payload_multi_nalu, &mut out);
         assert!(
             result.is_err(),
             "Unmarshal accepted a STAP-A packet with insufficient data"
         );
 
-        let payload = pkt.depacketize(single_payload)?;
+        let mut out = Vec::new();
+        pkt.depacketize(single_payload, &mut out)?;
         assert_eq!(
-            payload, single_payload_unmarshaled,
+            out, single_payload_unmarshaled,
             "Unmarshaling a single payload shouldn't modify the payload"
         );
 
-        let payload = avc_pkt.depacketize(single_payload)?;
+        let mut out = Vec::new();
+        avc_pkt.depacketize(single_payload, &mut out)?;
         assert_eq!(
-            payload, single_payload_unmarshaled_avc,
+            out, single_payload_unmarshaled_avc,
             "Unmarshaling a single payload into avc stream shouldn't modify the payload"
         );
 
-        let mut large_payload_result = Vec::new();
+        let mut large_out = Vec::new();
         for p in &large_payload_packetized {
-            let payload = pkt.depacketize(*p)?;
-            large_payload_result.extend_from_slice(&payload);
+            pkt.depacketize(*p, &mut large_out)?;
         }
         assert_eq!(
-            large_payload_result, large_payload,
+            large_out, large_payload,
             "Failed to unmarshal a large payload"
         );
 
-        let mut large_payload_result_avc = Vec::new();
+        let mut large_out_avc = Vec::new();
         for p in &large_payload_packetized {
-            let payload = avc_pkt.depacketize(*p)?;
-            large_payload_result_avc.extend_from_slice(&payload);
+            avc_pkt.depacketize(*p, &mut large_out_avc)?;
         }
         assert_eq!(
-            large_payload_result_avc, large_payload_avc,
+            large_out_avc, large_payload_avc,
             "Failed to unmarshal a large payload into avc stream"
         );
 
-        let payload = pkt.depacketize(single_payload_multi_nalu)?;
+        let mut out = Vec::new();
+        pkt.depacketize(single_payload_multi_nalu, &mut out)?;
         assert_eq!(
-            payload, single_payload_multi_nalu_unmarshaled,
+            out, single_payload_multi_nalu_unmarshaled,
             "Failed to unmarshal a single packet with multiple NALUs"
         );
 
-        let payload = avc_pkt.depacketize(single_payload_multi_nalu)?;
+        let mut out = Vec::new();
+        avc_pkt.depacketize(single_payload_multi_nalu, &mut out)?;
         assert_eq!(
-            payload, single_payload_multi_nalu_unmarshaled_avc,
+            out, single_payload_multi_nalu_unmarshaled_avc,
             "Failed to unmarshal a single packet with multiple NALUs into avc stream"
         );
 

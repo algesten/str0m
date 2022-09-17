@@ -19,3 +19,4 @@ Changes made:
 2. Make tests inline to codec file.
 3. Remove `Result` type alias.
 4. Remove Box<dyn Trait> use.
+5. Make depacketize take a `&mut Vec` output to allow control of allocation.

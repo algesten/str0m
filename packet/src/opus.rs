@@ -18,11 +18,12 @@ impl Payloader for OpusPayloader {
 pub struct OpusPacket;
 
 impl Depacketizer for OpusPacket {
-    fn depacketize(&mut self, packet: &[u8]) -> Result<Vec<u8>, PacketError> {
+    fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
         if packet.is_empty() {
             Err(PacketError::ErrShortPacket)
         } else {
-            Ok(packet.to_vec())
+            out.extend_from_slice(packet);
+            Ok(())
         }
     }
 
@@ -45,13 +46,15 @@ mod test {
 
         // Empty packet
         let empty_bytes = &[];
-        let result = pck.depacketize(empty_bytes);
+        let mut out = Vec::new();
+        let result = pck.depacketize(empty_bytes, &mut out);
         assert!(result.is_err(), "Result should be err in case of error");
 
         // Normal packet
         let raw_bytes: &[u8] = &[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x90];
-        let payload = pck.depacketize(raw_bytes)?;
-        assert_eq!(raw_bytes, &payload, "Payload must be same");
+        let mut out = Vec::new();
+        pck.depacketize(raw_bytes, &mut out)?;
+        assert_eq!(raw_bytes, &out, "Payload must be same");
 
         Ok(())
     }

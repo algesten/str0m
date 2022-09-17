@@ -738,45 +738,47 @@ impl H265Packet {
 
 impl Depacketizer for H265Packet {
     /// depacketize parses the passed byte slice and stores the result in the H265Packet this method is called upon
-    fn depacketize(&mut self, payload: &[u8]) -> Result<Vec<u8>, PacketError> {
-        if payload.len() <= H265NALU_HEADER_SIZE {
+    fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
+        if packet.len() <= H265NALU_HEADER_SIZE {
             return Err(PacketError::ErrShortPacket);
         }
 
-        let payload_header = H265NALUHeader::new(payload[0], payload[1]);
-        if payload_header.f() {
+        let header = H265NALUHeader::new(packet[0], packet[1]);
+        if header.f() {
             return Err(PacketError::ErrH265CorruptedPacket);
         }
 
-        if payload_header.is_paci_packet() {
+        if header.is_paci_packet() {
             let mut decoded = H265PACIPacket::default();
-            decoded.depacketize(payload)?;
+            decoded.depacketize(packet)?;
 
             self.payload = H265Payload::H265PACIPacket(decoded);
-        } else if payload_header.is_fragmentation_unit() {
+        } else if header.is_fragmentation_unit() {
             let mut decoded = H265FragmentationUnitPacket::default();
             decoded.with_donl(self.might_need_donl);
 
-            decoded.depacketize(payload)?;
+            decoded.depacketize(packet)?;
 
             self.payload = H265Payload::H265FragmentationUnitPacket(decoded);
-        } else if payload_header.is_aggregation_packet() {
+        } else if header.is_aggregation_packet() {
             let mut decoded = H265AggregationPacket::default();
             decoded.with_donl(self.might_need_donl);
 
-            decoded.depacketize(payload)?;
+            decoded.depacketize(packet)?;
 
             self.payload = H265Payload::H265AggregationPacket(decoded);
         } else {
             let mut decoded = H265SingleNALUnitPacket::default();
             decoded.with_donl(self.might_need_donl);
 
-            decoded.depacketize(payload)?;
+            decoded.depacketize(packet)?;
 
             self.payload = H265Payload::H265SingleNALUnitPacket(decoded);
         }
 
-        Ok(payload.to_vec())
+        out.extend_from_slice(packet);
+
+        Ok(())
     }
 
     /// is_partition_head checks if this is the head of a packetized nalu stream.
@@ -1627,7 +1629,8 @@ mod test {
                 pck.with_donl(true);
             }
 
-            let result = pck.depacketize(&cur.raw);
+            let mut out = Vec::new();
+            let result = pck.depacketize(&cur.raw, &mut out);
 
             if cur.expected_err.is_some() && result.is_ok() {
                 assert!(false, "should error");
@@ -1682,7 +1685,8 @@ mod test {
 
         for cur in tests {
             let mut pck = H265Packet::default();
-            let _ = pck.depacketize(&cur)?;
+            let mut out = Vec::new();
+            let _ = pck.depacketize(&cur, &mut out)?;
         }
 
         Ok(())

@@ -191,7 +191,7 @@ pub struct Vp9Packet {
 
 impl Depacketizer for Vp9Packet {
     /// depacketize parses the passed byte slice and stores the result in the Vp9Packet this method is called upon
-    fn depacketize(&mut self, packet: &[u8]) -> Result<Vec<u8>, PacketError> {
+    fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
         if packet.is_empty() {
             return Err(PacketError::ErrShortPacket);
         }
@@ -226,8 +226,9 @@ impl Depacketizer for Vp9Packet {
             payload_index = self.parse_ssdata(&mut reader, payload_index)?;
         }
 
-        let out = (&packet[payload_index..]).to_vec();
-        Ok(out)
+        out.extend_from_slice(&packet[payload_index..]);
+
+        Ok(())
     }
 
     /// is_partition_head checks whether if this is a head of the VP9 partition
@@ -679,7 +680,8 @@ mod test {
             let mut p = Vp9Packet::default();
 
             if let Some(expected) = err {
-                if let Err(actual) = p.depacketize(&b) {
+                let mut payload = Vec::new();
+                if let Err(actual) = p.depacketize(&b, &mut payload) {
                     assert_eq!(
                         expected, actual,
                         "{}: expected {}, but got {}",
@@ -689,7 +691,8 @@ mod test {
                     assert!(false, "{}: expected error, but got passed", name);
                 }
             } else {
-                let payload = p.depacketize(&b)?;
+                let mut payload = Vec::new();
+                p.depacketize(&b, &mut payload)?;
                 assert_eq!(pkt, p, "{}: expected {:?}, but got {:?}", name, pkt, p);
                 assert_eq!(payload, expected);
             }
@@ -771,7 +774,8 @@ mod test {
             for i in 0..0x8000 {
                 let res = pck.payload(4, &[0x01])?;
                 let mut p = Vp9Packet::default();
-                p.depacketize(&res[0])?;
+                let mut payload = Vec::new();
+                p.depacketize(&res[0], &mut payload)?;
 
                 if i > 0 {
                     if p_prev.picture_id == 0x7FFF {
