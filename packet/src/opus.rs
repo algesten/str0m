@@ -6,13 +6,20 @@ pub struct OpusPacketizer;
 
 impl Packetizer for OpusPacketizer {
     fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
-        assert!(payload.len() <= mtu, "Opus payload must be less than MTU");
-
         if payload.is_empty() || mtu == 0 {
             return Ok(vec![]);
         }
 
-        Ok(vec![payload.to_vec()])
+        let mut out = vec![];
+
+        let mut cur = 0;
+        while cur < payload.len() {
+            let min = mtu.min(payload.len() - cur);
+            out.push((&payload[cur..(cur + min)]).to_vec());
+            cur += mtu;
+        }
+
+        Ok(out)
     }
 }
 
@@ -74,11 +81,11 @@ mod test {
 
         // Positive MTU, small payload
         let result = pck.packetize(1, payload)?;
-        assert_eq!(result.len(), 1, "Generated payload should be the 1");
+        assert_eq!(result.len(), 3, "Generated payload should be 3");
 
         // Positive MTU, small payload
         let result = pck.packetize(2, payload)?;
-        assert_eq!(result.len(), 1, "Generated payload should be the 1");
+        assert_eq!(result.len(), 2, "Generated payload should be the 2");
 
         Ok(())
     }
