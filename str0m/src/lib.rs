@@ -265,12 +265,7 @@ impl Rtc {
 
     /// Creates an Ssrc that is not in the session already.
     pub(crate) fn new_ssrc(&self) -> Ssrc {
-        loop {
-            let ssrc: Ssrc = (rand::random::<u32>()).into();
-            if !self.session.has_ssrc(ssrc) {
-                break ssrc;
-            }
-        }
+        self.session.new_ssrc()
     }
 
     pub fn poll_output(&mut self) -> Result<Output, RtcError> {

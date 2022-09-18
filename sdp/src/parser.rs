@@ -447,10 +447,12 @@ where
     // // a=msid:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1
     // // a=msid:- f78dde68-7055-4e20-bb37-433803dd1ed1
     let msid = attribute_line("msid", (not_sp(), token(' '), any_value())).map(
-        |(stream_id, _, track_id)| MediaAttribute::Msid(Msid {
-            stream_id,
-            track_id,
-        }),
+        |(stream_id, _, track_id)| {
+            MediaAttribute::Msid(Msid {
+                stream_id,
+                track_id,
+            })
+        },
     );
 
     let rtcpmux = attribute_line_flag("rtcp-mux").map(|_| MediaAttribute::RtcpMux);

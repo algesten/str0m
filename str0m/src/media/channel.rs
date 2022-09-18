@@ -1,25 +1,18 @@
-use rtp::{MLineIdx, Mid};
+use rtp::Mid;
 use sdp::MediaLine;
 
 pub struct Channel {
     mid: Mid,
-    m_line_idx: MLineIdx,
+    index: usize,
 }
 
 impl Channel {
-    pub(crate) fn new(mid: Mid) -> Self {
-        Channel {
-            mid,
-            m_line_idx: 0.into(),
-        }
-    }
-
     pub fn mid(&self) -> Mid {
         self.mid
     }
 
-    pub(crate) fn m_line_idx(&self) -> MLineIdx {
-        self.m_line_idx
+    pub fn index(&self) -> usize {
+        self.index
     }
 
     pub(crate) fn apply_changes(&mut self, _m: &MediaLine) {
@@ -27,10 +20,21 @@ impl Channel {
     }
 }
 
-impl<'a> From<(&'a MediaLine, MLineIdx)> for Channel {
-    fn from((l, m_line_idx): (&'a MediaLine, MLineIdx)) -> Self {
-        let mut c = Channel::new(l.mid());
-        c.m_line_idx = m_line_idx;
-        c
+impl Default for Channel {
+    fn default() -> Self {
+        Self {
+            mid: Mid::new(),
+            index: 0,
+        }
+    }
+}
+
+impl From<(Mid, usize)> for Channel {
+    fn from((mid, index): (Mid, usize)) -> Self {
+        Channel {
+            mid,
+            index,
+            ..Default::default()
+        }
     }
 }

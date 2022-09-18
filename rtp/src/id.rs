@@ -98,6 +98,5 @@ str_id!(Mid);
 str_id!(StreamId);
 num_id!(Ssrc, u32);
 num_id!(Pt, u8);
-num_id!(MLineIdx, usize);
 num_id!(SessionId, u64);
 num_id!(SeqNo, u64);

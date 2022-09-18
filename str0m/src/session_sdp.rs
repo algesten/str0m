@@ -1,10 +1,11 @@
 use dtls::Fingerprint;
 use ice::{Candidate, IceCreds};
-use rtp::{Extensions, MLineIdx, Mid};
+use rtp::{Extensions, Mid};
 use sdp::{MediaAttribute, MediaLine, MediaType, Proto, Sdp, SessionAttribute, Setup};
 
 use crate::change::Changes;
 use crate::media::MediaKind;
+use crate::session::MediaOrChannel;
 
 use super::{Channel, Media, Session};
 
@@ -40,43 +41,34 @@ impl<'a> AsSdpParams<'a> {
 }
 
 impl Session {
-    /// Merge media lines and data channels.
-    pub fn as_media_lines(&self) -> impl Iterator<Item = &dyn AsMediaLine> {
-        self.channels
-            .iter()
-            .map(|m| &*m as &dyn AsMediaLine)
-            .chain(self.media.iter().map(|m| &*m as &dyn AsMediaLine))
-    }
-
     pub fn as_sdp(&self, params: AsSdpParams) -> Sdp {
         let (media_lines, mids) = {
             let mut v = self.as_media_lines().collect::<Vec<_>>();
 
-            // Sort on the order they been added to the SDP.
-            v.sort_by_key(|m| *m.index());
-
             let mut new_lines = vec![];
+
+            // When creating new m-lines from the pending changes, the m-line index starts from this.
+            let new_index_start = v.len();
 
             // If there are additions in the pending changes, prepend them now.
             if let Some(pending) = params.pending {
-                new_lines = pending.as_new_m_lines(&self.codec_config).collect();
+                new_lines = pending
+                    .as_new_m_lines(new_index_start, &self.codec_config)
+                    .collect();
             }
 
             // Add potentially new m-lines to the existing ones.
             v.extend(new_lines.iter().map(|n| n as &dyn AsMediaLine));
 
             // Session level extension map.
-            let exts = &self.exts;
+            let exts = self.exts();
 
             // Turn into sdp::MediaLine (m-line).
             let mut lines = v
                 .iter()
                 .map(|m| {
                     // Candidates should only be in the first BUNDLE mid
-                    let include_candidates = {
-                        let idx = m.index();
-                        *idx == 0
-                    };
+                    let include_candidates = m.index() == 0;
 
                     let attrs = params.media_attributes(include_candidates);
 
@@ -96,7 +88,7 @@ impl Session {
 
         Sdp {
             session: sdp::Session {
-                id: self.id,
+                id: self.id(),
                 bw: None,
                 attrs: vec![
                     SessionAttribute::Group {
@@ -113,7 +105,7 @@ impl Session {
 
 pub trait AsMediaLine {
     fn mid(&self) -> Mid;
-    fn index(&self) -> MLineIdx;
+    fn index(&self) -> usize;
     fn as_media_line(&self, attrs: Vec<MediaAttribute>, exts: &Extensions) -> MediaLine;
 }
 
@@ -121,8 +113,8 @@ impl AsMediaLine for Channel {
     fn mid(&self) -> Mid {
         self.mid()
     }
-    fn index(&self) -> MLineIdx {
-        self.m_line_idx()
+    fn index(&self) -> usize {
+        self.index()
     }
     fn as_media_line(&self, mut attrs: Vec<MediaAttribute>, _exts: &Extensions) -> MediaLine {
         attrs.push(MediaAttribute::Mid(self.mid()));
@@ -143,8 +135,8 @@ impl AsMediaLine for Media {
     fn mid(&self) -> Mid {
         self.mid()
     }
-    fn index(&self) -> MLineIdx {
-        self.m_line_idx()
+    fn index(&self) -> usize {
+        self.index()
     }
     fn as_media_line(&self, mut attrs: Vec<MediaAttribute>, exts: &Extensions) -> MediaLine {
         attrs.push(MediaAttribute::Mid(self.mid()));
@@ -193,6 +185,30 @@ impl AsMediaLine for Media {
             pts: vec![],
             bw: None,
             attrs,
+        }
+    }
+}
+
+impl AsMediaLine for MediaOrChannel {
+    fn mid(&self) -> Mid {
+        use MediaOrChannel::*;
+        match self {
+            Media(v) => v.mid(),
+            Channel(v) => v.mid(),
+        }
+    }
+    fn index(&self) -> usize {
+        use MediaOrChannel::*;
+        match self {
+            Media(v) => v.index(),
+            Channel(v) => v.index(),
+        }
+    }
+    fn as_media_line(&self, attrs: Vec<sdp::MediaAttribute>, exts: &Extensions) -> MediaLine {
+        use MediaOrChannel::*;
+        match self {
+            Media(v) => v.as_media_line(attrs, exts),
+            Channel(v) => v.as_media_line(attrs, exts),
         }
     }
 }

@@ -10,8 +10,6 @@ use thiserror::Error;
 
 mod id;
 pub use id::{Mid, Pt, SeqNo, SessionId, Ssrc, StreamId};
-// TODO: Move this to some other crate.
-pub use id::MLineIdx;
 
 mod ext;
 pub use ext::{ExtMap, Extension, Extensions};

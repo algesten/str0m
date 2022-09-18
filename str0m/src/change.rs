@@ -1,11 +1,11 @@
 use std::ops::Deref;
 
 use net_::Id;
-use rtp::{Direction, Extensions, MLineIdx, Mid, Ssrc};
+use rtp::{Direction, Mid, Ssrc};
 use sdp::{MediaLine, Msid, Offer};
 
-use crate::media::{Channel, CodecConfig, CodecParams, Media, MediaKind};
-use crate::session_sdp::AsMediaLine;
+use crate::media::{CodecConfig, CodecParams, MediaKind};
+use crate::session::MediaOrChannel;
 use crate::Rtc;
 
 pub struct Changes(pub Vec<Change>);
@@ -24,7 +24,10 @@ pub struct AddMedia {
     pub kind: MediaKind,
     pub dir: Direction,
     pub ssrcs: Vec<Ssrc>,
+
+    // These are filled in when creating a Media from AddMedia
     pub params: Vec<CodecParams>,
+    pub index: usize,
 }
 
 pub struct ChangeSet<'a> {
@@ -73,7 +76,10 @@ impl<'a> ChangeSet<'a> {
             kind,
             dir,
             ssrcs,
-            params: vec![], // added in as_new_m_line
+
+            // Added later
+            params: vec![],
+            index: 0,
         };
 
         self.changes.0.push(Change::AddMedia(add));
@@ -149,9 +155,13 @@ impl Changes {
 
     pub fn as_new_m_lines<'a, 'b: 'a>(
         &'a self,
+        index_start: usize,
         config: &'b CodecConfig,
-    ) -> impl Iterator<Item = NewMLine> + '_ {
-        self.0.iter().filter_map(move |c| c.as_new_m_line(config))
+    ) -> impl Iterator<Item = MediaOrChannel> + '_ {
+        self.0
+            .iter()
+            .enumerate()
+            .filter_map(move |(idx, c)| c.as_new_m_line(index_start + idx, config))
     }
 
     pub(crate) fn apply_to(&self, lines: &mut [MediaLine]) {
@@ -172,29 +182,25 @@ impl Changes {
 }
 
 impl Change {
-    fn as_new_m_line(&self, config: &CodecConfig) -> Option<NewMLine> {
+    fn as_new_m_line(&self, index: usize, config: &CodecConfig) -> Option<MediaOrChannel> {
         use Change::*;
         match self {
             AddMedia(v) => {
                 // TODO can we avoid all this cloning?
                 let mut add = v.clone();
                 add.params = config.all_for_kind(v.kind).map(|c| c.clone()).collect();
+                add.index = index;
 
-                let media = v.clone().into();
-                Some(NewMLine::Media(media))
+                let media = add.into();
+                Some(MediaOrChannel::Media(media))
             }
             AddChannel(mid) => {
-                let channel = Channel::new(*mid);
-                Some(NewMLine::Channel(channel))
+                let channel = (*mid, index).into();
+                Some(MediaOrChannel::Channel(channel))
             }
             _ => None,
         }
     }
-}
-
-pub enum NewMLine {
-    Media(Media),
-    Channel(Channel),
 }
 
 impl Deref for Changes {
@@ -202,26 +208,5 @@ impl Deref for Changes {
 
     fn deref(&self) -> &Self::Target {
         &self.0
-    }
-}
-
-impl AsMediaLine for NewMLine {
-    fn mid(&self) -> Mid {
-        match self {
-            NewMLine::Media(v) => v.mid(),
-            NewMLine::Channel(v) => v.mid(),
-        }
-    }
-
-    fn index(&self) -> MLineIdx {
-        // If we set 0 here, we get weirdness in session_sdp.rs
-        usize::MAX.into()
-    }
-
-    fn as_media_line(&self, attrs: Vec<sdp::MediaAttribute>, exts: &Extensions) -> MediaLine {
-        match self {
-            NewMLine::Media(v) => v.as_media_line(attrs, exts),
-            NewMLine::Channel(v) => v.as_media_line(attrs, exts),
-        }
     }
 }

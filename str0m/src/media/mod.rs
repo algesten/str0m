@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use net_::{DatagramSend, Id};
 use packet::{DepacketizingBuffer, PacketError, PacketizingBuffer};
-use rtp::{MLineIdx, MediaTime, Rtcp, RtcpFb, RtpHeader, Ssrc};
+use rtp::{MediaTime, Rtcp, RtcpFb, RtpHeader, Ssrc};
 
 pub use rtp::{Direction, Mid, Pt};
 pub use sdp::{Codec, FormatParams};
@@ -35,6 +35,9 @@ pub struct Media {
     /// Three letter identifier of this m-line.
     mid: Mid,
 
+    /// The index of this media line in the Session::media Vec.
+    index: usize,
+
     /// Unique CNAME for use in Sdes RTCP packets.
     ///
     /// This is for _outgoing_ SDP. Incoming CNAME ca be
@@ -49,9 +52,6 @@ pub struct Media {
 
     /// Audio eller video.
     kind: MediaKind,
-
-    /// Index of m-line in SDP.
-    m_line_idx: MLineIdx,
 
     /// Current media direction.
     ///
@@ -112,6 +112,10 @@ impl Media {
         self.mid
     }
 
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
     pub(crate) fn cname(&self) -> &str {
         &self.cname
     }
@@ -122,10 +126,6 @@ impl Media {
 
     pub(crate) fn kind(&self) -> MediaKind {
         self.kind
-    }
-
-    pub(crate) fn m_line_idx(&self) -> MLineIdx {
-        self.m_line_idx
     }
 
     pub fn direction(&self) -> Direction {
@@ -375,63 +375,65 @@ impl Media {
         }
         None
     }
+
+    pub(crate) fn add_source_tx(&mut self, ssrc: Ssrc) {
+        self.sources_tx.push(SenderSource::new(ssrc));
+    }
 }
 
-impl<'a> From<(&'a MediaLine, MLineIdx)> for Media {
-    fn from((l, m_line_idx): (&'a MediaLine, MLineIdx)) -> Self {
-        let mut m = Media {
-            mid: l.mid(),
+impl Default for Media {
+    fn default() -> Self {
+        Self {
+            mid: Mid::new(),
+            index: 0,
             cname: Id::<20>::random().to_string(),
             msid: Msid {
                 stream_id: Id::<30>::random().to_string(),
                 track_id: Id::<30>::random().to_string(),
             },
-            kind: l.typ.clone().into(),
-            m_line_idx,
-            dir: l.direction(),
-            params: l.rtp_params().into_iter().map(|p| p.into()).collect(),
-            sources_rx: vec![],
-            sources_tx: vec![],
-            last_cleanup: already_happened(),
-            ssrc_info_rx: l.ssrc_info(),
-            buffers_rx: HashMap::new(),
-            buffers_tx: HashMap::new(),
-        };
-
-        let ssrc_count = m.ssrc_info_rx.len();
-
-        for _ in 0..ssrc_count {
-            // TODO: Fix this.
-            m.sources_tx.push(SenderSource::new(0.into()));
-        }
-
-        m
-    }
-}
-
-impl From<AddMedia> for Media {
-    fn from(a: AddMedia) -> Self {
-        let mut m = Media {
-            mid: a.mid,
-            cname: Id::<20>::random().to_string(),
-            msid: a.msid,
-            kind: a.kind,
-            m_line_idx: 0.into(),
-            dir: a.dir,
-            params: a.params,
+            kind: MediaKind::Video,
+            dir: Direction::SendRecv,
+            params: vec![],
             sources_rx: vec![],
             sources_tx: vec![],
             last_cleanup: already_happened(),
             ssrc_info_rx: vec![],
             buffers_rx: HashMap::new(),
             buffers_tx: HashMap::new(),
-        };
-
-        for ssrc in a.ssrcs {
-            m.sources_tx.push(SenderSource::new(ssrc));
         }
+    }
+}
 
-        m
+// Going from an incoming m-line in an SDP, this is used to create new Media.
+impl<'a> From<(&'a MediaLine, usize)> for Media {
+    fn from((l, index): (&'a MediaLine, usize)) -> Self {
+        Media {
+            mid: l.mid(),
+            index,
+            kind: l.typ.clone().into(),
+            dir: l.direction(),
+            ssrc_info_rx: l.ssrc_info(),
+            params: l.rtp_params().into_iter().map(|p| p.into()).collect(),
+            ..Default::default()
+        }
+    }
+}
+
+// Going from AddMedia to Media is for m-lines that are pending in a Change and are sent
+// in the offer to the other side.
+impl From<AddMedia> for Media {
+    fn from(a: AddMedia) -> Self {
+        let sources_tx = a.ssrcs.into_iter().map(SenderSource::new).collect();
+        Media {
+            mid: a.mid,
+            index: a.index,
+            msid: a.msid,
+            kind: a.kind,
+            dir: a.dir,
+            params: a.params,
+            sources_tx,
+            ..Default::default()
+        }
     }
 }
 
@@ -458,7 +460,7 @@ impl MediaWriter<'_> {
             PacketizingBuffer::new(self.codec.into(), max_retain)
         });
 
-        // buf.push_sample(ts, data, xDATAGRAM_MTU)?;
+        // buf.push_sample(ts, data, DATAGRAM_MTU)?;
 
         Ok(())
     }
