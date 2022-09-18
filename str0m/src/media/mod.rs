@@ -379,7 +379,7 @@ impl Media {
 
 impl<'a> From<(&'a MediaLine, MLineIdx)> for Media {
     fn from((l, m_line_idx): (&'a MediaLine, MLineIdx)) -> Self {
-        Media {
+        let mut m = Media {
             mid: l.mid(),
             cname: Id::<20>::random().to_string(),
             msid: Msid {
@@ -393,10 +393,19 @@ impl<'a> From<(&'a MediaLine, MLineIdx)> for Media {
             sources_rx: vec![],
             sources_tx: vec![],
             last_cleanup: already_happened(),
-            ssrc_info_rx: vec![],
+            ssrc_info_rx: l.ssrc_info(),
             buffers_rx: HashMap::new(),
             buffers_tx: HashMap::new(),
+        };
+
+        let ssrc_count = m.ssrc_info_rx.len();
+
+        for _ in 0..ssrc_count {
+            // TODO: Fix this.
+            m.sources_tx.push(SenderSource::new(0.into()));
         }
+
+        m
     }
 }
 
