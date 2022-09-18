@@ -809,10 +809,7 @@ pub enum MediaAttribute {
     Inactive, // a=inactive
     // a=msid:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1
     // a=msid:- 78dde68-7055-4e20-bb37-433803dd1ed1
-    Msid {
-        stream_id: String,
-        track_id: String,
-    },
+    Msid(Msid),
     RtcpMux,     //
     RtcpMuxOnly, // only in offer, answer with a=rtcp-mux
     // reduced size rtcp. remove this if not supported.
@@ -1203,6 +1200,12 @@ impl SimulcastOption {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Msid {
+    pub stream_id: String,
+    pub track_id: String,
+}
+
 impl fmt::Display for SimulcastGroups {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (idx, a) in self.0.iter().enumerate() {
@@ -1363,10 +1366,7 @@ impl fmt::Display for MediaAttribute {
             Inactive => write!(f, "a=inactive\r\n")?,
             // a=msid:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1
             // a=msid:- 78dde68-7055-4e20-bb37-433803dd1ed1
-            Msid {
-                stream_id,
-                track_id,
-            } => write!(f, "a=msid:{} {}\r\n", stream_id, track_id)?,
+            Msid(v) => write!(f, "a=msid:{} {}\r\n", v.stream_id, v.track_id)?,
             RtcpMux => write!(f, "a=rtcp-mux\r\n")?,
             RtcpMuxOnly => write!(f, "a=rtcp-mux-only\r\n")?,
             RtcpRsize => write!(f, "a=rtcp-rsize\r\n")?,
@@ -1518,7 +1518,7 @@ mod test {
                         MediaAttribute::ExtMap(ExtMap { id: 5, direction: None, ext: Extension::RtpStreamId }),
                         MediaAttribute::ExtMap(ExtMap { id: 6, direction: None, ext: Extension::RepairedRtpStreamId }),
                         MediaAttribute::SendRecv,
-                        MediaAttribute::Msid { stream_id: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(), track_id: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() },
+                        MediaAttribute::Msid(Msid { stream_id: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(), track_id: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() }),
                         MediaAttribute::RtcpMux,
                         MediaAttribute::RtpMap( CodecSpec { pt: 111.into(), codec: "opus".into(), clock_rate: 48_000, channels: Some(2) }),
                         MediaAttribute::RtcpFb { pt: 111.into(), value: "transport-cc".into() },

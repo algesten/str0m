@@ -16,8 +16,7 @@ pub type InitialPictureIDFn = Arc<dyn (Fn() -> u16) + Send + Sync>;
 pub struct Vp9Packetizer {
     picture_id: u16,
     initialized: bool,
-
-    pub initial_picture_id_fn: Option<InitialPictureIDFn>,
+    initial_picture_id_fn: Option<InitialPictureIDFn>,
 }
 
 impl fmt::Debug for Vp9Packetizer {

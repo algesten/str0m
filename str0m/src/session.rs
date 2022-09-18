@@ -267,6 +267,13 @@ impl Session {
         self.media.iter().any(|m| m.mid() == mid)
     }
 
+    /// Test if the ssrc is known in the session at all, as sender or receiver.
+    pub fn has_ssrc(&self, ssrc: Ssrc) -> bool {
+        self.media
+            .iter()
+            .any(|m| m.has_ssrc_rx(ssrc) || m.has_ssrc_tx(ssrc))
+    }
+
     // pub fn handle_sctp(&mut self, sctp) {
     // }
     // pub fn poll_sctp(&mut self) -> Option<Sctp> {
@@ -445,7 +452,7 @@ fn fallback_match_media<'a>(
     let (idx, media) = media
         .iter_mut()
         .enumerate()
-        .find(|(_, m)| m.contains_ssrc(ssrc) || Some(m.mid()) == mid)?;
+        .find(|(_, m)| m.has_ssrc_rx(ssrc) || Some(m.mid()) == mid)?;
 
     // Retain this association.
     ssrc_map.insert(header.ssrc, idx);

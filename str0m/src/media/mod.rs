@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
-use packet::{PacketError, SampleBuf};
-use rtp::{MLineIdx, Rtcp, RtcpFb, RtpHeader, Ssrc};
+use net_::{DatagramSend, Id};
+use packet::{DepacketizingBuffer, PacketError, PacketizingBuffer};
+use rtp::{MLineIdx, MediaTime, Rtcp, RtcpFb, RtpHeader, Ssrc};
 
 pub use rtp::{Direction, Mid, Pt};
 pub use sdp::{Codec, FormatParams};
-use sdp::{MediaLine, MediaType, SsrcInfo};
+use sdp::{MediaLine, MediaType, Msid, SsrcInfo};
 
 mod codec;
 pub use codec::{CodecConfig, CodecParams};
@@ -20,22 +21,81 @@ use receiver::ReceiverSource;
 mod sender;
 use sender::SenderSource;
 
+use crate::change::AddMedia;
 use crate::util::already_happened;
+use crate::RtcError;
 
 // How often we remove unused senders/receivers.
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Audio or video media.
+///
+/// An m-line in SDP.
 pub struct Media {
+    /// Three letter identifier of this m-line.
     mid: Mid,
+
+    /// Unique CNAME for use in Sdes RTCP packets.
+    ///
+    /// This is for _outgoing_ SDP. Incoming CNAME ca be
+    /// found in the `ssrc_info_rx`.
+    cname: String,
+
+    /// "Stream and track" identifiers.
+    ///
+    /// This is for _outgoing_ SDP. Incoming Msid details
+    /// can be found in the `ssrc_info_rx`.
+    msid: Msid,
+
+    /// Audio eller video.
     kind: MediaKind,
+
+    /// Index of m-line in SDP.
     m_line_idx: MLineIdx,
+
+    /// Current media direction.
+    ///
+    /// Can be altered via negotiation.
     dir: Direction,
+
+    /// Negotiated codec parameters.
+    ///
+    /// The PT information from SDP.
     params: Vec<CodecParams>,
+
+    /// Receiving sources (SSRC).
+    ///
+    /// These are created first time we observe the SSRC in an incoming RTP packet.
+    /// Each source keeps track of packet loss, nack, reports etc. Receiving sources are
+    /// cleaned up when we haven't received any data for the SSRC for a while.
     sources_rx: Vec<ReceiverSource>,
+
+    /// Sender sources (SSRC).
+    ///
+    /// Created when we configure new m-lines via Changes API.
     sources_tx: Vec<SenderSource>,
+
+    /// Last time we ran cleanup.
     last_cleanup: Instant,
-    ssrc_info: Vec<SsrcInfo>,
-    buffers_rx: HashMap<Pt, SampleBuf>,
+
+    /// SSRC information discovered in the SDP.
+    ///
+    /// This tells us which SSRC is resend (RTX) for which SSRC as well as the identifiers for
+    /// WebRTC javascript API for MediaStream and Track (MediaStream and Track are not concepts
+    /// we use in this crate).
+    ssrc_info_rx: Vec<SsrcInfo>,
+
+    /// Buffers for incoming data.
+    ///
+    /// Video samples are often fragmented over several RTP packets. These buffers reassembles
+    /// the incoming RTP to full samples.
+    buffers_rx: HashMap<Pt, DepacketizingBuffer>,
+
+    /// Buffers for outgoing data.
+    ///
+    /// When writing a sample we create a number of RTP packets to send. These buffers have the
+    /// individual RTP data payload ready to send.
+    buffers_tx: HashMap<Pt, PacketizingBuffer>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,28 +108,16 @@ pub enum MediaKind {
 }
 
 impl Media {
-    pub(crate) fn new<'a>(
-        mid: Mid,
-        kind: MediaKind,
-        dir: Direction,
-        params: impl Iterator<Item = &'a CodecParams>,
-    ) -> Self {
-        Media {
-            mid,
-            kind,
-            m_line_idx: 0.into(),
-            dir,
-            params: params.map(|c| c.clone()).collect(),
-            sources_rx: vec![],
-            sources_tx: vec![],
-            last_cleanup: already_happened(),
-            ssrc_info: vec![],
-            buffers_rx: HashMap::new(),
-        }
-    }
-
     pub fn mid(&self) -> Mid {
         self.mid
+    }
+
+    pub(crate) fn cname(&self) -> &str {
+        &self.cname
+    }
+
+    pub(crate) fn msid(&self) -> &Msid {
+        &self.msid
     }
 
     pub(crate) fn kind(&self) -> MediaKind {
@@ -92,16 +140,25 @@ impl Media {
         &self.params
     }
 
-    pub fn write(&mut self, pt: Pt, data: &[u8]) {
-        //
+    pub fn get_writer(&mut self, pt: Pt) -> MediaWriter<'_> {
+        let codec = {
+            self.codec_by_pt(pt)
+                .map(|p| p.codec())
+                .unwrap_or(Codec::Unknown)
+        };
+
+        MediaWriter {
+            media: self,
+            pt,
+            codec,
+        }
     }
 
-    pub fn poll_sample(&mut self) -> Option<(Mid, Pt, Result<Vec<u8>, PacketError>)> {
-        for (pt, buf) in self.buffers_rx.iter_mut() {
-            match buf.emit_sample() {
-                Ok(Some(v)) => return Some((self.mid, *pt, Ok(v))),
-                Err(e) => return Some((self.mid, *pt, Err(e))),
-                Ok(None) => continue,
+    pub(crate) fn poll_datagram(&mut self) -> Option<DatagramSend> {
+        for (pt, buf) in &mut self.buffers_tx {
+            if let Some(pkt) = buf.poll_next() {
+                // let header = RtpHeader::new(*pt, pkt.seq_no, pkt.ts, ssrc);
+                //
             }
         }
         None
@@ -120,7 +177,7 @@ impl Media {
             let mut new_source = ReceiverSource::new(header, now);
 
             // We might have info for this source already.
-            for info in &self.ssrc_info {
+            for info in &self.ssrc_info_rx {
                 if new_source.matches_ssrc_info(info) {
                     new_source.set_ssrc_info(info);
                     break;
@@ -160,6 +217,10 @@ impl Media {
 
     pub(crate) fn first_source_tx(&self) -> Option<&SenderSource> {
         self.sources_tx.first()
+    }
+
+    pub(crate) fn source_tx_ssrcs(&self) -> impl Iterator<Item = Ssrc> + '_ {
+        self.sources_tx.iter().map(|s| s.ssrc())
     }
 
     /// Creates sender info and receiver reports for all senders/receivers
@@ -275,21 +336,44 @@ impl Media {
                 }
             }
 
-            self.ssrc_info = infos;
+            self.ssrc_info_rx = infos;
         }
     }
 
-    /// Check if SSRC been communicated in SDP either as main or repair SSRC.
-    pub fn contains_ssrc(&self, ssrc: Ssrc) -> bool {
-        self.ssrc_info
+    /// Test if we know of this SSRC either via SDP or received packets.
+    pub(crate) fn has_ssrc_rx(&self, ssrc: Ssrc) -> bool {
+        let via_sdp = self
+            .ssrc_info_rx
             .iter()
-            .any(|i| i.ssrc == ssrc || i.repair == Some(ssrc))
+            .any(|i| i.ssrc == ssrc || i.repair == Some(ssrc));
+
+        if via_sdp {
+            return true;
+        }
+
+        // via received packets
+        self.sources_rx.iter().any(|r| r.ssrc() == ssrc)
     }
 
-    pub fn get_buffer_rx(&mut self, pt: Pt, codec: Codec) -> &mut SampleBuf {
+    pub(crate) fn has_ssrc_tx(&self, ssrc: Ssrc) -> bool {
+        self.sources_tx.iter().any(|r| r.ssrc() == ssrc)
+    }
+
+    pub(crate) fn get_buffer_rx(&mut self, pt: Pt, codec: Codec) -> &mut DepacketizingBuffer {
         self.buffers_rx
             .entry(pt)
-            .or_insert_with(|| SampleBuf::new(codec.into()))
+            .or_insert_with(|| DepacketizingBuffer::new(codec.into()))
+    }
+
+    pub(crate) fn poll_sample(&mut self) -> Option<(Mid, Pt, Result<Vec<u8>, PacketError>)> {
+        for (pt, buf) in &mut self.buffers_rx {
+            match buf.emit_sample() {
+                Ok(Some(v)) => return Some((self.mid, *pt, Ok(v))),
+                Err(e) => return Some((self.mid, *pt, Err(e))),
+                Ok(None) => continue,
+            }
+        }
+        None
     }
 }
 
@@ -297,6 +381,11 @@ impl<'a> From<(&'a MediaLine, MLineIdx)> for Media {
     fn from((l, m_line_idx): (&'a MediaLine, MLineIdx)) -> Self {
         Media {
             mid: l.mid(),
+            cname: Id::<20>::random().to_string(),
+            msid: Msid {
+                stream_id: Id::<30>::random().to_string(),
+                track_id: Id::<30>::random().to_string(),
+            },
             kind: l.typ.clone().into(),
             m_line_idx,
             dir: l.direction(),
@@ -304,9 +393,36 @@ impl<'a> From<(&'a MediaLine, MLineIdx)> for Media {
             sources_rx: vec![],
             sources_tx: vec![],
             last_cleanup: already_happened(),
-            ssrc_info: vec![],
+            ssrc_info_rx: vec![],
             buffers_rx: HashMap::new(),
+            buffers_tx: HashMap::new(),
         }
+    }
+}
+
+impl From<AddMedia> for Media {
+    fn from(a: AddMedia) -> Self {
+        let mut m = Media {
+            mid: a.mid,
+            cname: Id::<20>::random().to_string(),
+            msid: a.msid,
+            kind: a.kind,
+            m_line_idx: 0.into(),
+            dir: a.dir,
+            params: a.params,
+            sources_rx: vec![],
+            sources_tx: vec![],
+            last_cleanup: already_happened(),
+            ssrc_info_rx: vec![],
+            buffers_rx: HashMap::new(),
+            buffers_tx: HashMap::new(),
+        };
+
+        for ssrc in a.ssrcs {
+            m.sources_tx.push(SenderSource::new(ssrc));
+        }
+
+        m
     }
 }
 
@@ -317,5 +433,24 @@ impl From<MediaType> for MediaKind {
             MediaType::Video => MediaKind::Video,
             _ => panic!("Not MediaType::Audio or Video"),
         }
+    }
+}
+
+pub struct MediaWriter<'a> {
+    media: &'a mut Media,
+    pt: Pt,
+    codec: Codec,
+}
+
+impl MediaWriter<'_> {
+    pub fn write(&mut self, ts: MediaTime, data: &[u8]) -> Result<(), RtcError> {
+        let buf = self.media.buffers_tx.entry(self.pt).or_insert_with(|| {
+            let max_retain = if self.codec.is_video() { 10 } else { 50 };
+            PacketizingBuffer::new(self.codec.into(), max_retain)
+        });
+
+        // buf.push_sample(ts, data, xDATAGRAM_MTU)?;
+
+        Ok(())
     }
 }

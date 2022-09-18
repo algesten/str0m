@@ -8,8 +8,8 @@ use sha1::Sha1;
 
 use crate::header::RtpHeader;
 
+pub const SRTP_BLOCK_SIZE: usize = 16;
 const SRTP_HMAC_LEN: usize = 10;
-const SRTCP_INDEX_LEN: usize = 4;
 
 // header = 4 bytes
 // ssrc   = 4 bytes
@@ -19,6 +19,7 @@ const SRTCP_INDEX_LEN: usize = 4;
 // However, each RTCP packet must be on a 4 byte boundary since length is
 // given in number of 4 bytes - 1 (making 0 valid).
 
+const SRTCP_INDEX_LEN: usize = 4;
 pub const SRTCP_OVERHEAD_SUFFIX: usize = 16;
 pub const SRTCP_BLOCK_SIZE: usize = 16;
 
@@ -45,6 +46,57 @@ impl SrtpContext {
 
     // SRTP layout
     // [header, [rtp, (padding + pad_count)], hmac]
+
+    //     0                   1                   2                   3
+    //     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+<+
+    //    |V=2|P|X|  CC   |M|     PT      |       sequence number         | |
+    //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
+    //    |                           timestamp                           | |
+    //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
+    //    |           synchronization source (SSRC) identifier            | |
+    //    +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+ |
+    //    |            contributing source (CSRC) identifiers             | |
+    //    |                               ....                            | |
+    //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
+    //    |                   RTP extension (OPTIONAL)                    | |
+    //  +>+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
+    //  | |                          payload  ...                         | |
+    //  | |                               +-------------------------------+ |
+    //  | |                               | RTP padding   | RTP pad count | |
+    //  +>+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+<+
+    //  | ~                     SRTP MKI (OPTIONAL)                       ~ |
+    //  | +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
+    //  | :                 authentication tag (RECOMMENDED)              : |
+    //  | +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
+    //  |                                                                   |
+    //  +- Encrypted Portion*                      Authenticated Portion ---+
+
+    pub fn protect_rtp(
+        &mut self,
+        buf: &[u8],
+        header: &RtpHeader,
+        srtp_index: u64, // same as ext_seq
+    ) -> Vec<u8> {
+        let iv = self.rtp.salt.rtp_iv(*header.ssrc, srtp_index);
+
+        let hlen = header.header_len;
+        let input = &buf[hlen..];
+        assert!(
+            input.len() % SRTP_BLOCK_SIZE == 0,
+            "RTP body padded to 16 block size"
+        );
+
+        let mut output = vec![0_u8; buf.len() + SRTP_HMAC_LEN];
+        self.rtp.aes.crypt(true, &iv, input, &mut output[hlen..]);
+
+        output[..hlen].copy_from_slice(&buf[..hlen]);
+
+        let hmac_start = buf.len();
+        self.rtp.hmac.rtp_hmac(&mut output, srtp_index, hmac_start);
+
+        output
+    }
 
     pub fn unprotect_rtp(
         &mut self,
@@ -338,12 +390,26 @@ impl RtpCrypter for AesKey {
 }
 
 trait RtpHmac {
+    fn rtp_hmac(&self, buf: &mut [u8], srtp_index: u64, hmac_start: usize);
     fn rtp_verify(&self, buf: &[u8], srtp_index: u64, cmp: &[u8]) -> bool;
-    fn rtcp_verify(&self, buf: &[u8], cmp: &[u8]) -> bool;
     fn rtcp_hmac(&self, buf: &mut [u8], hmac_index: usize);
+    fn rtcp_verify(&self, buf: &[u8], cmp: &[u8]) -> bool;
 }
 
 impl RtpHmac for HmacSha1 {
+    fn rtp_hmac(&self, buf: &mut [u8], srtp_index: u64, hmac_start: usize) {
+        let mut hmac = self.clone();
+
+        let roc = (srtp_index >> 16) as u32;
+
+        hmac.update(&buf[..hmac_start]);
+        hmac.update(&roc.to_be_bytes());
+
+        let tag = hmac.finalize().into_bytes();
+
+        buf[hmac_start..(hmac_start + SRTP_HMAC_LEN)].copy_from_slice(&tag[0..SRTP_HMAC_LEN]);
+    }
+
     fn rtp_verify(&self, buf: &[u8], srtp_index: u64, cmp: &[u8]) -> bool {
         let mut hmac = self.clone();
 
@@ -351,16 +417,6 @@ impl RtpHmac for HmacSha1 {
 
         hmac.update(buf);
         hmac.update(&roc.to_be_bytes());
-
-        let tag = hmac.finalize().into_bytes();
-
-        &tag[0..SRTP_HMAC_LEN] == cmp
-    }
-
-    fn rtcp_verify(&self, buf: &[u8], cmp: &[u8]) -> bool {
-        let mut hmac = self.clone();
-
-        hmac.update(buf);
 
         let tag = hmac.finalize().into_bytes();
 
@@ -375,6 +431,16 @@ impl RtpHmac for HmacSha1 {
         let tag = hmac.finalize().into_bytes();
 
         buf[hmac_index..(hmac_index + SRTP_HMAC_LEN)].copy_from_slice(&tag[0..SRTP_HMAC_LEN]);
+    }
+
+    fn rtcp_verify(&self, buf: &[u8], cmp: &[u8]) -> bool {
+        let mut hmac = self.clone();
+
+        hmac.update(buf);
+
+        let tag = hmac.finalize().into_bytes();
+
+        &tag[0..SRTP_HMAC_LEN] == cmp
     }
 }
 

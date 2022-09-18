@@ -11,15 +11,15 @@ struct Rtp {
     marker: bool,
 }
 
-pub struct SampleBuf {
+pub struct DepacketizingBuffer {
     depack: CodecDepacketizer,
     last_emitted: Option<SeqNo>,
     queue: VecDeque<Rtp>,
 }
 
-impl SampleBuf {
+impl DepacketizingBuffer {
     pub fn new(depack: CodecDepacketizer) -> Self {
-        SampleBuf {
+        DepacketizingBuffer {
             depack,
             last_emitted: None,
             queue: VecDeque::new(),

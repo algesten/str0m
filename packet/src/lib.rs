@@ -20,8 +20,11 @@ use vp8::{Vp8Depacketizer, Vp8Packetizer};
 mod vp9;
 use vp9::{Vp9Depacketizer, Vp9Packetizer};
 
-mod sample;
-pub use sample::SampleBuf;
+mod buffer_rx;
+pub use buffer_rx::DepacketizingBuffer;
+
+mod buffer_tx;
+pub use buffer_tx::{Packetized, PacketizingBuffer};
 
 /// Packetizes some bytes for use as RTP packet.
 pub trait Packetizer: fmt::Debug {

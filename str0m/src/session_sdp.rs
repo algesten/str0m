@@ -155,11 +155,36 @@ impl AsMediaLine for Media {
         }
 
         attrs.push(self.direction().into());
-        // a=msid here
+        attrs.push(MediaAttribute::Msid(self.msid().clone()));
         attrs.push(MediaAttribute::RtcpMux);
 
         for p in self.codecs() {
             p.inner().to_media_attrs(&mut attrs);
+        }
+
+        // Outgoing SSRCs
+        let msid = format!("{} {}", self.msid().stream_id, self.msid().track_id);
+        for ssrc in self.source_tx_ssrcs() {
+            attrs.push(MediaAttribute::Ssrc {
+                ssrc,
+                attr: "cname".to_string(),
+                value: self.cname().to_string(),
+            });
+            attrs.push(MediaAttribute::Ssrc {
+                ssrc,
+                attr: "msid".to_string(),
+                value: msid.clone(),
+            });
+        }
+
+        let count = self.source_tx_ssrcs().count();
+        if count == 2 {
+            attrs.push(MediaAttribute::SsrcGroup {
+                semantics: "FID".to_string(),
+                ssrcs: self.source_tx_ssrcs().collect(),
+            });
+        } else if count > 2 {
+            // TODO: handle simulcast
         }
 
         MediaLine {

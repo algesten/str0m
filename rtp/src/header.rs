@@ -1,5 +1,5 @@
 use crate::ext::{ExtensionValues, Extensions};
-use crate::{Pt, SeqNo, Ssrc};
+use crate::{MediaTime, Pt, SeqNo, Ssrc};
 
 #[derive(Debug, Clone)]
 pub struct RtpHeader {
@@ -18,6 +18,21 @@ pub struct RtpHeader {
 }
 
 impl RtpHeader {
+    pub fn new(pt: Pt, seq_no: SeqNo, ts: MediaTime, ssrc: Ssrc) -> Self {
+        RtpHeader {
+            version: 2,
+            has_padding: false,
+            has_extension: true,
+            marker: false,
+            payload_type: pt,
+            sequence_number: (*seq_no % (u16::MAX as u64)) as u16,
+            timestamp: ts.as_ntp_32(),
+            ssrc,
+            ext_vals: ExtensionValues::default(),
+            header_len: 10,
+        }
+    }
+
     pub fn parse(buf: &[u8], exts: &Extensions) -> Option<RtpHeader> {
         let orig_len = buf.len();
         if buf.len() < 12 {

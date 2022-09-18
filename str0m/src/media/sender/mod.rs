@@ -2,17 +2,26 @@ use std::time::Instant;
 
 use rtp::{ReportList, SenderInfo, SenderReport, Ssrc};
 
+use crate::util::already_happened;
+
 pub struct SenderSource {
     ssrc: Ssrc,
     last_used: Instant,
 }
 
 impl SenderSource {
+    pub fn new(ssrc: Ssrc) -> Self {
+        SenderSource {
+            ssrc,
+            last_used: already_happened(),
+        }
+    }
+
     pub fn ssrc(&self) -> Ssrc {
         self.ssrc
     }
 
-    pub(crate) fn create_sender_report(&self, now: Instant) -> SenderReport {
+    pub fn create_sender_report(&self, now: Instant) -> SenderReport {
         SenderReport {
             sender_info: self.sender_info(now),
             reports: ReportList::new(),

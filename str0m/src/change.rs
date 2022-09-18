@@ -1,18 +1,30 @@
 use std::ops::Deref;
 
-use rtp::{Direction, Extensions, MLineIdx, Mid};
-use sdp::{MediaLine, Offer};
+use net_::Id;
+use rtp::{Direction, Extensions, MLineIdx, Mid, Ssrc};
+use sdp::{MediaLine, Msid, Offer};
 
-use crate::media::{Channel, CodecConfig, Media, MediaKind};
+use crate::media::{Channel, CodecConfig, CodecParams, Media, MediaKind};
 use crate::session_sdp::AsMediaLine;
 use crate::Rtc;
 
 pub struct Changes(pub Vec<Change>);
 
+#[derive(Debug)]
 pub enum Change {
-    AddMedia(Mid, MediaKind, Direction),
+    AddMedia(AddMedia),
     AddChannel(Mid),
-    Direction(Mid, Direction),
+    ChangeDir(Mid, Direction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddMedia {
+    pub mid: Mid,
+    pub msid: Msid,
+    pub kind: MediaKind,
+    pub dir: Direction,
+    pub ssrcs: Vec<Ssrc>,
+    pub params: Vec<CodecParams>,
 }
 
 pub struct ChangeSet<'a> {
@@ -30,7 +42,41 @@ impl<'a> ChangeSet<'a> {
 
     pub fn add_media(&mut self, kind: MediaKind, dir: Direction) -> Mid {
         let mid = self.rtc.new_mid();
-        self.changes.0.push(Change::AddMedia(mid, kind, dir));
+
+        let ssrcs = {
+            // For video we do RTX channels.
+            let ssrc_base = if kind == MediaKind::Video { 2 } else { 1 };
+
+            // TODO: allow configuring simulcast
+            let simulcast_count = 1;
+
+            let ssrc_count = ssrc_base * simulcast_count;
+            let mut v = Vec::with_capacity(ssrc_count);
+
+            for _ in 0..ssrc_count {
+                // Allocate SSRC that are not in use in the session already.
+                v.push(self.rtc.new_ssrc());
+            }
+
+            v
+        };
+
+        // TODO: let user configure stream/track name.
+        let msid = Msid {
+            stream_id: Id::<30>::random().to_string(),
+            track_id: Id::<30>::random().to_string(),
+        };
+
+        let add = AddMedia {
+            mid,
+            msid,
+            kind,
+            dir,
+            ssrcs,
+            params: vec![], // added in as_new_m_line
+        };
+
+        self.changes.0.push(Change::AddMedia(add));
         mid
     }
 
@@ -41,7 +87,7 @@ impl<'a> ChangeSet<'a> {
     }
 
     pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
-        self.changes.0.push(Change::Direction(mid, dir));
+        self.changes.0.push(Change::ChangeDir(mid, dir));
     }
 
     pub fn apply(self) -> Offer {
@@ -66,7 +112,7 @@ impl Changes {
             for m in &self.0 {
                 use Change::*;
                 match m {
-                    AddMedia(v, _, _) if *v == mid => {
+                    AddMedia(v) if v.mid == mid => {
                         if !l.typ.is_media() {
                             return Some(format!(
                                 "Answer m-line for mid ({}) is not of media type: {:?}",
@@ -97,7 +143,7 @@ impl Changes {
     fn count_new_m_lines(&self) -> usize {
         self.0
             .iter()
-            .filter(|c| matches!(c, Change::AddMedia(_, _, _) | Change::AddChannel(_)))
+            .filter(|c| matches!(c, Change::AddMedia(_) | Change::AddChannel(_)))
             .count()
     }
 
@@ -112,7 +158,7 @@ impl Changes {
         for change in &self.0 {
             use Change::*;
             match change {
-                Direction(mid, dir) => {
+                ChangeDir(mid, dir) => {
                     if let Some(line) = lines.iter_mut().find(|l| l.mid() == *mid) {
                         if let Some(dir_pos) = line.attrs.iter().position(|a| a.is_direction()) {
                             line.attrs[dir_pos] = (*dir).into();
@@ -129,8 +175,12 @@ impl Change {
     fn as_new_m_line(&self, config: &CodecConfig) -> Option<NewMLine> {
         use Change::*;
         match self {
-            AddMedia(mid, kind, dir) => {
-                let media = Media::new(*mid, *kind, *dir, config.all_for_kind(*kind));
+            AddMedia(v) => {
+                // TODO can we avoid all this cloning?
+                let mut add = v.clone();
+                add.params = config.all_for_kind(v.kind).map(|c| c.clone()).collect();
+
+                let media = v.clone().into();
                 Some(NewMLine::Media(media))
             }
             AddChannel(mid) => {

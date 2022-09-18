@@ -5,7 +5,7 @@ pub const VP8_HEADER_SIZE: usize = 1;
 /// Packetizes VP8 RTP packets.
 #[derive(Default, Debug, Copy, Clone)]
 pub struct Vp8Packetizer {
-    pub enable_picture_id: bool,
+    enable_picture_id: bool,
     picture_id: u16,
 }
 

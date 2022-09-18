@@ -9,7 +9,7 @@ use change::Changes;
 use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::{Candidate, IceAgent};
 use ice::{IceAgentEvent, IceConnectionState};
-use rtp::{Mid, Pt};
+use rtp::{Mid, Pt, Ssrc};
 use sdp::{Answer, Offer, Sdp, Setup};
 use thiserror::Error;
 
@@ -59,6 +59,10 @@ pub enum RtcError {
     /// RTP packetization error
     #[error("{0}")]
     Packet(#[from] packet::PacketError),
+
+    /// The PT attempted to write to is not known.
+    #[error("PT is unknown {0}")]
+    UnknownPt(Pt),
 }
 
 pub struct Rtc {
@@ -249,11 +253,22 @@ impl Rtc {
         Some(())
     }
 
+    /// Creates a new Mid that is not in the session already.
     pub(crate) fn new_mid(&self) -> Mid {
         loop {
             let mid = Mid::new();
             if !self.session.has_mid(mid) {
                 break mid;
+            }
+        }
+    }
+
+    /// Creates an Ssrc that is not in the session already.
+    pub(crate) fn new_ssrc(&self) -> Ssrc {
+        loop {
+            let ssrc: Ssrc = (rand::random::<u32>()).into();
+            if !self.session.has_ssrc(ssrc) {
+                break ssrc;
             }
         }
     }
