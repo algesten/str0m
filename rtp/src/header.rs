@@ -25,12 +25,43 @@ impl RtpHeader {
             has_extension: true,
             marker: false,
             payload_type: pt,
-            sequence_number: (*seq_no % (u16::MAX as u64)) as u16,
+            sequence_number: *seq_no as u16,
             timestamp: ts.as_ntp_32(),
             ssrc,
             ext_vals: ExtensionValues::default(),
-            header_len: 10,
+            header_len: 12,
         }
+    }
+
+    pub fn write_to(&self, buf: &mut [u8], exts: &Extensions) -> usize {
+        buf[0] = 0b10_0_0_0000
+            | if self.has_padding { 1 << 5 } else { 0 }
+            | if self.has_extension { 1 << 4 } else { 0 };
+
+        assert!(*self.payload_type <= 127);
+        buf[1] = *self.payload_type & 0b0111_1111 | if self.marker { 1 << 7 } else { 0 };
+
+        buf[2..4].copy_from_slice(&self.sequence_number.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.timestamp.to_be_bytes());
+        buf[8..12].copy_from_slice(&self.ssrc.to_be_bytes());
+
+        buf[12..14].copy_from_slice(&0xbede_u16.to_be_bytes());
+
+        let ext_buf = &mut buf[16..];
+        let mut ext_len = exts.write_to(ext_buf, &self.ext_vals);
+
+        let pad = 4 - ext_len % 4;
+        if pad < 4 {
+            ext_len += pad;
+            for i in 0..pad {
+                ext_buf[ext_len - i - 1] = 0;
+            }
+        }
+
+        let bede_len = ((ext_len + pad) / 4) as u16;
+        buf[14..16].copy_from_slice(&bede_len.to_be_bytes());
+
+        14 + ext_len
     }
 
     pub fn parse(buf: &[u8], exts: &Extensions) -> Option<RtpHeader> {
@@ -84,8 +115,8 @@ impl RtpHeader {
                 return None;
             }
 
-            let ext_type = u32::from_be_bytes([0, 0, buf[0], buf[1]]);
-            let ext_words = u32::from_be_bytes([0, 0, buf[2], buf[3]]);
+            let ext_type = u16::from_be_bytes([buf[0], buf[1]]);
+            let ext_words = u16::from_be_bytes([buf[2], buf[3]]);
             let ext_len = ext_words as usize * 4;
 
             let buf: &[u8] = &buf[4..];

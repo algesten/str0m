@@ -53,7 +53,7 @@ impl Session {
             // If there are additions in the pending changes, prepend them now.
             if let Some(pending) = params.pending {
                 new_lines = pending
-                    .as_new_m_lines(new_index_start, &self.codec_config)
+                    .as_new_m_lines(new_index_start, self.codec_config())
                     .collect();
             }
 

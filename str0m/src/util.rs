@@ -1,13 +1,17 @@
 use std::time::{Duration, Instant};
 
+use once_cell::sync::Lazy;
+
 pub fn not_happening() -> Instant {
-    Instant::now() + Duration::from_secs(60 * 60 * 24 * 365 * 100)
+    const YEARS_100: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 100);
+    static FUTURE: Lazy<Instant> = Lazy::new(|| Instant::now() + YEARS_100);
+    *FUTURE
 }
 
 pub fn already_happened() -> Instant {
-    let now = Instant::now();
-    let dur = now - now;
-    now - dur
+    const HOURS_24: Duration = Duration::from_secs(60 * 60 * 24);
+    static PAST: Lazy<Instant> = Lazy::new(|| Instant::now() - HOURS_24);
+    *PAST
 }
 
 pub trait Soonest {
@@ -28,5 +32,19 @@ impl Soonest for Option<Instant> {
             (None, v) => v,
             (v, None) => v,
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn absolute_times() {
+        assert_eq!(not_happening(), not_happening());
+        assert!(Instant::now() < not_happening());
+        assert_eq!(already_happened(), already_happened());
+        assert!(Instant::now() > already_happened());
+        assert_ne!(not_happening(), already_happened())
     }
 }

@@ -10,6 +10,7 @@ use crate::header::RtpHeader;
 
 pub const SRTP_BLOCK_SIZE: usize = 16;
 const SRTP_HMAC_LEN: usize = 10;
+pub const SRTP_OVERHEAD: usize = 10;
 
 // header = 4 bytes
 // ssrc   = 4 bytes
@@ -20,7 +21,7 @@ const SRTP_HMAC_LEN: usize = 10;
 // given in number of 4 bytes - 1 (making 0 valid).
 
 const SRTCP_INDEX_LEN: usize = 4;
-pub const SRTCP_OVERHEAD_SUFFIX: usize = 16;
+pub const SRTCP_OVERHEAD: usize = 16;
 pub const SRTCP_BLOCK_SIZE: usize = 16;
 
 #[derive(Debug)]

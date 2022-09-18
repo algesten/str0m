@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
-use net_::{DatagramSend, Id};
-use packet::{DepacketizingBuffer, PacketError, PacketizingBuffer};
-use rtp::{MediaTime, Rtcp, RtcpFb, RtpHeader, Ssrc};
+use net_::{Id, DATAGRAM_MTU};
+use packet::{DepacketizingBuffer, PacketError, Packetized, PacketizingBuffer};
+use rtp::{Extensions, MediaTime, Rtcp, RtcpFb, RtpHeader, SeqNo, Ssrc, SRTP_OVERHEAD};
 
 pub use rtp::{Direction, Mid, Pt};
 pub use sdp::{Codec, FormatParams};
@@ -141,27 +141,49 @@ impl Media {
     }
 
     pub fn get_writer(&mut self, pt: Pt) -> MediaWriter<'_> {
-        let codec = {
-            self.codec_by_pt(pt)
-                .map(|p| p.codec())
-                .unwrap_or(Codec::Unknown)
-        };
+        let codec = { self.codec_by_pt(pt).map(|p| p.codec()) };
 
         MediaWriter {
             media: self,
             pt,
             codec,
+            simulcast_level: 0,
         }
     }
 
-    pub(crate) fn poll_datagram(&mut self) -> Option<DatagramSend> {
-        for (pt, buf) in &mut self.buffers_tx {
-            if let Some(pkt) = buf.poll_next() {
-                // let header = RtpHeader::new(*pt, pkt.seq_no, pkt.ts, ssrc);
-                //
-            }
-        }
-        None
+    pub(crate) fn poll_packet(
+        &mut self,
+        now: Instant,
+        exts: &Extensions,
+        twcc: &mut u64,
+    ) -> Option<(RtpHeader, Vec<u8>, SeqNo)> {
+        let (pt, pkt) = next_send_buffer(&mut self.buffers_tx)?;
+
+        let tx = self
+            .sources_tx
+            .iter_mut()
+            .find(|s| s.ssrc() == pkt.ssrc)
+            .expect("SenderSource for packetized write");
+
+        let seq_no = tx.next_seq_no();
+        pkt.seq_no = Some(seq_no);
+
+        let mut header = RtpHeader::new(pt, seq_no, pkt.ts, pkt.ssrc);
+        header.marker = pkt.last;
+
+        header.ext_vals.abs_send_time = Some(now.into());
+        header.ext_vals.rtp_mid = Some(self.mid);
+        header.ext_vals.transport_cc = Some(*twcc as u16);
+        *twcc += 1;
+
+        let mut buf = Vec::with_capacity(DATAGRAM_MTU);
+        let header_len = header.write_to(&mut buf, exts);
+        assert!(header_len % 4 == 0, "RTP header must be multiple of 4");
+
+        let data_out = &mut buf[header_len..];
+        data_out[..pkt.data.len()].copy_from_slice(&pkt.data);
+
+        Some((header, buf, seq_no))
     }
 
     pub(crate) fn get_source_rx(
@@ -381,6 +403,18 @@ impl Media {
     }
 }
 
+fn next_send_buffer(
+    buffers_tx: &mut HashMap<Pt, PacketizingBuffer>,
+) -> Option<(Pt, &mut Packetized)> {
+    for (pt, buf) in buffers_tx {
+        if let Some(pkt) = buf.poll_next() {
+            assert!(pkt.seq_no.is_none());
+            return Some((*pt, pkt));
+        }
+    }
+    None
+}
+
 impl Default for Media {
     fn default() -> Self {
         Self {
@@ -450,18 +484,53 @@ impl From<MediaType> for MediaKind {
 pub struct MediaWriter<'a> {
     media: &'a mut Media,
     pt: Pt,
-    codec: Codec,
+    codec: Option<Codec>,
+    simulcast_level: usize,
 }
 
 impl MediaWriter<'_> {
     pub fn write(&mut self, ts: MediaTime, data: &[u8]) -> Result<(), RtcError> {
+        let codec = match self.codec {
+            Some(v) => v,
+            None => return Err(RtcError::UnknownPt(self.pt)),
+        };
+
+        let is_audio = self.media.kind == MediaKind::Audio;
+
+        // The SSRC is figured out given the simulcast level.
+        let tx = get_source_tx(
+            &mut self.media.sources_tx,
+            is_audio,
+            self.simulcast_level,
+            false,
+        )
+        .ok_or(RtcError::NoSenderSource(self.simulcast_level))?;
+
+        let ssrc = tx.ssrc();
+
         let buf = self.media.buffers_tx.entry(self.pt).or_insert_with(|| {
-            let max_retain = if self.codec.is_video() { 10 } else { 50 };
-            PacketizingBuffer::new(self.codec.into(), max_retain)
+            let max_retain = if codec.is_audio() { 50 } else { 10 };
+            PacketizingBuffer::new(codec.into(), max_retain)
         });
 
-        // buf.push_sample(ts, data, DATAGRAM_MTU)?;
+        buf.push_sample(ts, data, ssrc, DATAGRAM_MTU - SRTP_OVERHEAD)?;
 
         Ok(())
     }
+}
+
+/// Get the SenderSource by providing simulcast level and maybe reset.
+///
+/// Separte in wait for polonius.
+fn get_source_tx(
+    sources_tx: &mut Vec<SenderSource>,
+    is_audio: bool,
+    level: usize,
+    resend: bool,
+) -> Option<&mut SenderSource> {
+    let (per_level, resend_offset) = if is_audio { (1, 0) } else { (2, 1) };
+
+    let idx = level * per_level + if resend { resend_offset } else { 0 };
+
+    sources_tx.get_mut(idx)
 }

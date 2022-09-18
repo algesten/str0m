@@ -1,15 +1,18 @@
 use std::collections::VecDeque;
 
-use rtp::{MediaTime, SeqNo};
+use rtp::{MediaTime, SeqNo, Ssrc};
 
 use crate::{CodecPacketizer, PacketError, Packetizer};
 
 pub struct Packetized {
     pub ts: MediaTime,
-    pub seq_no: SeqNo,
     pub data: Vec<u8>,
     pub first: bool,
     pub last: bool,
+    pub ssrc: Ssrc,
+
+    /// Set when packet is first sent. This is so we can resend.
+    pub seq_no: Option<SeqNo>,
 }
 
 pub struct PacketizingBuffer {
@@ -33,29 +36,25 @@ impl PacketizingBuffer {
         &mut self,
         ts: MediaTime,
         data: &[u8],
-        seq_no: SeqNo,
+        ssrc: Ssrc,
         mtu: usize,
-    ) -> Result<SeqNo, PacketError> {
+    ) -> Result<(), PacketError> {
         let chunks = self.pack.packetize(mtu, data)?;
         let len = chunks.len();
 
         assert!(len <= self.max_retain, "Must retain at least chunked count");
 
-        let mut cur = *seq_no;
-
         for (idx, data) in chunks.into_iter().enumerate() {
-            let seq_no = cur.into();
-            cur += 1;
-
             let first = idx == 0;
             let last = idx == len - 1;
 
             let rtp = Packetized {
                 ts,
-                seq_no,
                 data,
                 first,
                 last,
+                ssrc,
+                seq_no: None,
             };
 
             self.queue.push_back(rtp);
@@ -67,16 +66,16 @@ impl PacketizingBuffer {
             self.emit_next -= 1;
         }
 
-        Ok(cur.into())
+        Ok(())
     }
 
-    pub fn poll_next(&mut self) -> Option<&Packetized> {
-        let next = self.queue.get(self.emit_next)?;
+    pub fn poll_next(&mut self) -> Option<&mut Packetized> {
+        let next = self.queue.get_mut(self.emit_next)?;
         self.emit_next += 1;
         Some(next)
     }
 
     pub fn get(&self, seq_no: SeqNo) -> Option<&Packetized> {
-        self.queue.iter().find(|r| r.seq_no == seq_no)
+        self.queue.iter().find(|r| r.seq_no == Some(seq_no))
     }
 }

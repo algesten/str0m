@@ -1,11 +1,12 @@
 use std::time::Instant;
 
-use rtp::{ReportList, SenderInfo, SenderReport, Ssrc};
+use rtp::{ReportList, SenderInfo, SenderReport, SeqNo, Ssrc};
 
 use crate::util::already_happened;
 
 pub struct SenderSource {
     ssrc: Ssrc,
+    next_seq_no: SeqNo,
     last_used: Instant,
 }
 
@@ -13,6 +14,10 @@ impl SenderSource {
     pub fn new(ssrc: Ssrc) -> Self {
         SenderSource {
             ssrc,
+            // https://www.rfc-editor.org/rfc/rfc3550#page-13
+            // The initial value of the sequence number SHOULD be random (unpredictable)
+            // to make known-plaintext attacks on encryption more difficult
+            next_seq_no: (rand::random::<u16>() as u64).into(),
             last_used: already_happened(),
         }
     }
@@ -36,5 +41,11 @@ impl SenderSource {
             sender_packet_count: 0,
             sender_octet_count: 0,
         }
+    }
+
+    pub fn next_seq_no(&mut self) -> SeqNo {
+        let s = self.next_seq_no;
+        self.next_seq_no = (*s + 1).into();
+        s
     }
 }

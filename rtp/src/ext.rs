@@ -227,9 +227,78 @@ impl Extensions {
                 ext: *e,
             })
     }
+
+    pub(crate) fn write_to(&self, ext_buf: &mut [u8], ev: &ExtensionValues) -> usize {
+        let orig_len = ext_buf.len();
+        let mut b = ext_buf;
+        for x in &self.0 {
+            if let Some(v) = x {
+                if let Some(n) = v.write_to(b, ev, self) {
+                    b = &mut b[n..];
+                }
+            }
+        }
+        orig_len - b.len()
+    }
 }
 
 impl Extension {
+    pub(crate) fn write_to(
+        &self,
+        buf: &mut [u8],
+        ev: &ExtensionValues,
+        exts: &Extensions,
+    ) -> Option<usize> {
+        use Extension::*;
+        match self {
+            AbsoluteSendTime => {
+                let v = ev.abs_send_time?;
+            }
+            AudioLevel => {
+                let v1 = ev.audio_level?;
+                let v2 = ev.voice_activity?;
+            }
+            TransmissionTimeOffset => {
+                let v = ev.tx_time_offs?;
+            }
+            VideoOrientation => {
+                let v = ev.video_orient?;
+            }
+            TransportSequenceNumber => {
+                let v = ev.transport_cc?;
+            }
+            PlayoutDelay => {
+                let v1 = ev.play_delay_min?;
+                let v2 = ev.play_delay_max?;
+            }
+            VideoContentType => {
+                let v = ev.video_c_type?;
+            }
+            VideoTiming => {
+                let v = ev.video_timing?;
+            }
+            RtpStreamId => {
+                let v = ev.stream_id?;
+            }
+            RepairedRtpStreamId => {
+                let v = ev.rep_stream_id?;
+            }
+            RtpMid => {
+                let v = ev.rtp_mid?;
+            }
+            FrameMarking => {
+                let v = ev.frame_mark?;
+            }
+            ColorSpace => {
+                // TODO HDR color space
+            }
+            UnknownUri => {
+                // do nothing
+            }
+        }
+        Some(0)
+    }
+
     pub(crate) fn parse_value(&self, buf: &[u8], v: &mut ExtensionValues) -> Option<()> {
         use Extension::*;
         match self {
@@ -378,7 +447,7 @@ impl fmt::Debug for ExtensionValues {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct VideoTiming {
     // 0x01 = extension is set due to timer.
     // 0x02 - extension is set because the frame is larger than usual.

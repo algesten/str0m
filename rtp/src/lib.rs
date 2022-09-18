@@ -25,7 +25,7 @@ pub use header::RtpHeader;
 
 mod srtp;
 pub use srtp::{SrtpContext, SrtpKey};
-pub use srtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD_SUFFIX};
+pub use srtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
 mod rtcp;
 pub use rtcp::*;

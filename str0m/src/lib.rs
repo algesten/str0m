@@ -63,6 +63,11 @@ pub enum RtcError {
     /// The PT attempted to write to is not known.
     #[error("PT is unknown {0}")]
     UnknownPt(Pt),
+
+    /// If MediaWriter.write fails because the simulcast level
+    /// used is not mapped to any SSRC.
+    #[error("No sender source (simulcast level: {0}")]
+    NoSenderSource(usize),
 }
 
 pub struct Rtc {
@@ -343,7 +348,7 @@ impl Rtc {
             // These can only be sent after we got an ICE connection.
             let datagram = None
                 .or_else(|| self.dtls.poll_datagram())
-                .or_else(|| self.session.poll_datagram());
+                .or_else(|| self.session.poll_datagram(self.last_now));
 
             if let Some(contents) = datagram {
                 let t = net::Transmit {

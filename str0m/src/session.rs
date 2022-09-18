@@ -3,11 +3,11 @@ use std::convert::TryInto;
 use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
-use net_::DATAGRAM_MTU;
+use net_::{DatagramSend, DATAGRAM_MTU};
 use rtp::{Extensions, Mid, Pt, ReceiverReport, ReportList, Rtcp, RtcpFb};
 use rtp::{RtcpHeader, RtpHeader, SessionId};
 use rtp::{RtcpType, SrtpContext, SrtpKey, Ssrc};
-use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD_SUFFIX};
+use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
 use sdp::{Answer, MediaLine, Offer, Sdp};
 
 use crate::change::{Change, Changes};
@@ -37,7 +37,8 @@ pub(crate) struct Session {
     last_regular: Instant,
     last_nack: Instant,
     feedback: VecDeque<Rtcp>,
-    pub codec_config: CodecConfig,
+    codec_config: CodecConfig,
+    twcc: u64,
 }
 
 pub enum MediaOrChannel {
@@ -62,6 +63,7 @@ impl Session {
             last_nack: already_happened(),
             feedback: VecDeque::new(),
             codec_config: CodecConfig::default(),
+            twcc: 0,
         }
     }
 
@@ -93,6 +95,10 @@ impl Session {
 
     pub fn exts(&self) -> &Extensions {
         &self.exts
+    }
+
+    pub fn codec_config(&self) -> &CodecConfig {
+        &self.codec_config
     }
 
     pub fn set_keying_material(&mut self, mat: KeyingMaterial) {
@@ -230,10 +236,20 @@ impl Session {
         None
     }
 
-    pub fn poll_datagram(&mut self) -> Option<net::DatagramSend> {
+    pub fn poll_datagram(&mut self, now: Instant) -> Option<net::DatagramSend> {
+        // Time must have progressed forward from start value.
+        if now == already_happened() {
+            return None;
+        }
+
         let feedback = self.poll_feedback();
         if feedback.is_some() {
             return feedback;
+        }
+
+        let packet = self.poll_packet(now);
+        if packet.is_some() {
+            return packet;
         }
 
         None
@@ -251,9 +267,8 @@ impl Session {
         self.maybe_insert_dummy_rr()?;
 
         // The encryptable "body" must be an even number of 16.
-        const ENCRYPTABLE_MTU: usize = DATAGRAM_MTU
-            - SRTCP_OVERHEAD_SUFFIX
-            - (DATAGRAM_MTU - SRTCP_OVERHEAD_SUFFIX) % SRTCP_BLOCK_SIZE;
+        const ENCRYPTABLE_MTU: usize =
+            DATAGRAM_MTU - SRTCP_OVERHEAD - (DATAGRAM_MTU - SRTCP_OVERHEAD) % SRTCP_BLOCK_SIZE;
 
         let mut data = vec![0_u8; ENCRYPTABLE_MTU];
 
@@ -273,6 +288,19 @@ impl Session {
         );
 
         Some(net::DatagramSend::new(protected))
+    }
+
+    fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
+        let srtp_tx = self.srtp_tx.as_mut()?;
+
+        for m in only_media_mut(&mut self.media) {
+            if let Some((header, buf, seq_no)) = m.poll_packet(now, &self.exts, &mut self.twcc) {
+                let encrypted = srtp_tx.protect_rtp(&buf, &header, *seq_no);
+                return Some(DatagramSend::new(encrypted));
+            }
+        }
+
+        None
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
