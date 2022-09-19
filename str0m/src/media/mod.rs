@@ -165,7 +165,7 @@ impl Media {
             .find(|s| s.ssrc() == pkt.ssrc)
             .expect("SenderSource for packetized write");
 
-        let seq_no = tx.next_seq_no();
+        let seq_no = tx.next_seq_no(now);
         pkt.seq_no = Some(seq_no);
 
         let mut header = RtpHeader::new(pt, seq_no, pkt.ts, pkt.ssrc);

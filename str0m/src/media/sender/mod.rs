@@ -43,7 +43,8 @@ impl SenderSource {
         }
     }
 
-    pub fn next_seq_no(&mut self) -> SeqNo {
+    pub fn next_seq_no(&mut self, now: Instant) -> SeqNo {
+        self.last_used = now;
         let s = self.next_seq_no;
         self.next_seq_no = (*s + 1).into();
         s
