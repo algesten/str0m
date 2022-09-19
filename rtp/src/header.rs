@@ -122,7 +122,7 @@ impl RtpHeader {
             let buf: &[u8] = &buf[4..];
             if ext_type == 0xbede {
                 // each m-line has a specific extmap mapping.
-                parse_bede(&buf[..ext_len], &mut ext, exts);
+                exts.parse(&buf[..ext_len], &mut ext);
             }
 
             &buf[ext_len..]
@@ -154,46 +154,6 @@ impl RtpHeader {
     pub fn sequence_number(&self, previous: Option<SeqNo>) -> SeqNo {
         let e_seq = extend_seq(previous.map(|v| *v), self.sequence_number);
         e_seq.into()
-    }
-}
-
-// https://tools.ietf.org/html/rfc5285
-fn parse_bede(mut buf: &[u8], ext_vals: &mut ExtensionValues, exts: &Extensions) {
-    loop {
-        if buf.is_empty() {
-            return;
-        }
-
-        if buf[0] == 0 {
-            // padding
-            buf = &buf[1..];
-            continue;
-        }
-
-        let id = buf[0] >> 4;
-        let len = (buf[0] & 0xf) as usize + 1;
-        buf = &buf[1..];
-
-        if id == 15 {
-            // If the ID value 15 is
-            // encountered, its length field should be ignored, processing of the
-            // entire extension should terminate at that point, and only the
-            // extension elements present prior to the element with ID 15
-            // considered.
-            return;
-        }
-
-        if buf.len() < len {
-            trace!("Not enough type ext len: {} < {}", buf.len(), len);
-            return;
-        }
-
-        let ext_buf = &buf[..len];
-        if let Some(ext) = exts.lookup(id) {
-            ext.parse_value(ext_buf, ext_vals);
-        }
-
-        buf = &buf[len..];
     }
 }
 

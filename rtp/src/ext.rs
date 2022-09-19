@@ -228,86 +228,169 @@ impl Extensions {
             })
     }
 
-    pub(crate) fn write_to(&self, ext_buf: &mut [u8], ev: &ExtensionValues) -> usize {
+    // https://tools.ietf.org/html/rfc5285
+    pub fn parse(&self, mut buf: &[u8], ext_vals: &mut ExtensionValues) {
+        loop {
+            if buf.is_empty() {
+                return;
+            }
+
+            if buf[0] == 0 {
+                // padding
+                buf = &buf[1..];
+                continue;
+            }
+
+            let id = buf[0] >> 4;
+            let len = (buf[0] & 0xf) as usize + 1;
+            buf = &buf[1..];
+
+            if id == 15 {
+                // If the ID value 15 is
+                // encountered, its length field should be ignored, processing of the
+                // entire extension should terminate at that point, and only the
+                // extension elements present prior to the element with ID 15
+                // considered.
+                return;
+            }
+
+            if buf.len() < len {
+                trace!("Not enough type ext len: {} < {}", buf.len(), len);
+                return;
+            }
+
+            let ext_buf = &buf[..len];
+            if let Some(ext) = self.lookup(id) {
+                ext.parse_value(ext_buf, ext_vals);
+            }
+
+            buf = &buf[len..];
+        }
+    }
+
+    pub fn write_to(&self, ext_buf: &mut [u8], ev: &ExtensionValues) -> usize {
         let orig_len = ext_buf.len();
         let mut b = ext_buf;
-        for x in &self.0 {
+
+        for (idx, x) in self.0.iter().enumerate() {
             if let Some(v) = x {
-                if let Some(n) = v.write_to(b, ev, self) {
-                    b = &mut b[n..];
+                if let Some(n) = v.write_to(&mut b[1..], ev) {
+                    assert!(n <= 16);
+                    assert!(n > 0);
+                    b[0] = (idx as u8 + 1) << 4 | (n as u8 - 1);
+                    b = &mut b[1 + n..];
                 }
             }
         }
+
         orig_len - b.len()
     }
 }
 
+const FIXED_POINT_6_18: i64 = 262_144; // 2 ^ 18
+
 impl Extension {
-    pub(crate) fn write_to(
-        &self,
-        buf: &mut [u8],
-        ev: &ExtensionValues,
-        exts: &Extensions,
-    ) -> Option<usize> {
+    pub fn write_to(&self, buf: &mut [u8], ev: &ExtensionValues) -> Option<usize> {
         use Extension::*;
         match self {
             AbsoluteSendTime => {
-                let v = ev.abs_send_time?;
+                // 24 bit fixed point 6 bits for seconds, 18 for the decimals.
+                // wraps around at 64 seconds.
+                let v = ev.abs_send_time?.rebase(FIXED_POINT_6_18);
+                let time_24 = v.numer() as u32;
+                buf[..3].copy_from_slice(&time_24.to_be_bytes()[1..]);
+                Some(3)
             }
             AudioLevel => {
                 let v1 = ev.audio_level?;
                 let v2 = ev.voice_activity?;
+                buf[0] = if v2 { 0x80 } else { 0 } | (-(0x7f & v1) as u8);
+                Some(1)
             }
             TransmissionTimeOffset => {
                 let v = ev.tx_time_offs?;
+                buf[..4].copy_from_slice(&v.to_be_bytes());
+                Some(4)
             }
             VideoOrientation => {
                 let v = ev.video_orient?;
+                buf[0] = v & 3;
+                Some(1)
             }
             TransportSequenceNumber => {
                 let v = ev.transport_cc?;
+                buf[..2].copy_from_slice(&v.to_be_bytes());
+                Some(2)
             }
             PlayoutDelay => {
-                let v1 = ev.play_delay_min?;
-                let v2 = ev.play_delay_max?;
+                let v1 = ev.play_delay_min?.rebase(100);
+                let v2 = ev.play_delay_max?.rebase(100);
+                let min = (v1.numer() & 0xfff) as u32;
+                let max = (v2.numer() & 0xfff) as u32;
+                buf[0] = (min >> 4) as u8;
+                buf[1] = (min << 4) as u8 | (max >> 8) as u8;
+                buf[2] = max as u8;
+                Some(3)
             }
             VideoContentType => {
                 let v = ev.video_c_type?;
+                buf[0] = v;
+                Some(1)
             }
             VideoTiming => {
                 let v = ev.video_timing?;
+                buf[0] = v.flags;
+                buf[1..3].copy_from_slice(&v.encode_start.to_be_bytes());
+                buf[3..5].copy_from_slice(&v.encode_finish.to_be_bytes());
+                buf[5..7].copy_from_slice(&v.packetize_complete.to_be_bytes());
+                buf[7..9].copy_from_slice(&v.last_left_pacer.to_be_bytes());
+                // Reserved for network
+                buf[9..11].copy_from_slice(&0_u16.to_be_bytes());
+                buf[11..13].copy_from_slice(&0_u16.to_be_bytes());
+                Some(13)
             }
             RtpStreamId => {
                 let v = ev.stream_id?;
+                let l = v.as_bytes().len();
+                buf[..l].copy_from_slice(v.as_bytes());
+                Some(l)
             }
             RepairedRtpStreamId => {
                 let v = ev.rep_stream_id?;
+                let l = v.as_bytes().len();
+                buf[..l].copy_from_slice(v.as_bytes());
+                Some(l)
             }
             RtpMid => {
                 let v = ev.rtp_mid?;
+                let l = v.as_bytes().len();
+                buf[..l].copy_from_slice(v.as_bytes());
+                Some(l)
             }
             FrameMarking => {
                 let v = ev.frame_mark?;
+                buf[..4].copy_from_slice(&v.to_be_bytes());
+                Some(4)
             }
             ColorSpace => {
                 // TODO HDR color space
+                todo!()
             }
             UnknownUri => {
                 // do nothing
+                todo!()
             }
         }
-        Some(0)
     }
 
-    pub(crate) fn parse_value(&self, buf: &[u8], v: &mut ExtensionValues) -> Option<()> {
+    pub fn parse_value(&self, buf: &[u8], v: &mut ExtensionValues) -> Option<()> {
         use Extension::*;
         match self {
             // 3
             AbsoluteSendTime => {
                 // fixed point 6.18
                 let time_24 = u32::from_be_bytes([0, buf[0], buf[1], buf[2]]);
-                let time_fp = time_24 as f32 / (2 ^ 18) as f32;
-                v.abs_send_time = Some(MediaTime::from_seconds(time_fp));
+                v.abs_send_time = Some(MediaTime::new(time_24 as i64, FIXED_POINT_6_18));
             }
             // 1
             AudioLevel => {
@@ -329,7 +412,7 @@ impl Extension {
             // 3
             PlayoutDelay => {
                 let min = (buf[0] as u32) << 4 | (buf[1] as u32) >> 4;
-                let max = (buf[1] as u32) << 8 | buf[2] as u32;
+                let max = ((buf[1] & 0xf) as u32) << 8 | buf[2] as u32;
                 v.play_delay_min = Some(MediaTime::new(min as i64, 100));
                 v.play_delay_max = Some(MediaTime::new(max as i64, 100));
             }
@@ -341,12 +424,12 @@ impl Extension {
             VideoTiming => {
                 v.video_timing = Some(self::VideoTiming {
                     flags: buf[0],
-                    encode_start: u32::from_be_bytes([0, 0, buf[1], buf[2]]),
-                    encode_finish: u32::from_be_bytes([0, 0, buf[2], buf[3]]),
-                    packetize_complete: u32::from_be_bytes([0, 0, buf[4], buf[5]]),
-                    last_left_pacer: u32::from_be_bytes([0, 0, buf[6], buf[7]]),
-                    //  8 -  9 // reserved for network
-                    // 10 - 11 // reserved for network
+                    encode_start: u16::from_be_bytes([buf[1], buf[2]]),
+                    encode_finish: u16::from_be_bytes([buf[3], buf[4]]),
+                    packetize_complete: u16::from_be_bytes([buf[5], buf[6]]),
+                    last_left_pacer: u16::from_be_bytes([buf[7], buf[8]]),
+                    //  9 - 10 // reserved for network
+                    // 11 - 12 // reserved for network
                 });
             }
             RtpStreamId => {
@@ -452,10 +535,10 @@ pub struct VideoTiming {
     // 0x01 = extension is set due to timer.
     // 0x02 - extension is set because the frame is larger than usual.
     pub flags: u8,
-    pub encode_start: u32,
-    pub encode_finish: u32,
-    pub packetize_complete: u32,
-    pub last_left_pacer: u32,
+    pub encode_start: u16,
+    pub encode_finish: u16,
+    pub packetize_complete: u16,
+    pub last_left_pacer: u16,
 }
 
 impl fmt::Display for Extension {
@@ -481,5 +564,44 @@ impl fmt::Display for Extension {
                 UnknownUri => "unknown-uri",
             }
         )
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn abs_send_time() {
+        let mut exts = Extensions::new();
+        exts.0[3] = Some(Extension::AbsoluteSendTime);
+        let mut ev = ExtensionValues::default();
+        ev.abs_send_time = Some(MediaTime::new(1, FIXED_POINT_6_18));
+
+        let mut buf = vec![0_u8; 8];
+        exts.write_to(&mut buf[..], &ev);
+
+        let mut ev2 = ExtensionValues::default();
+        exts.parse(&buf, &mut ev2);
+
+        assert_eq!(ev.abs_send_time, ev2.abs_send_time);
+    }
+
+    #[test]
+    fn playout_delay() {
+        let mut exts = Extensions::new();
+        exts.0[1] = Some(Extension::PlayoutDelay);
+        let mut ev = ExtensionValues::default();
+        ev.play_delay_min = Some(MediaTime::new(100, 100));
+        ev.play_delay_max = Some(MediaTime::new(200, 100));
+
+        let mut buf = vec![0_u8; 8];
+        exts.write_to(&mut buf[..], &ev);
+
+        let mut ev2 = ExtensionValues::default();
+        exts.parse(&buf, &mut ev2);
+
+        assert_eq!(ev.play_delay_min, ev2.play_delay_min);
+        assert_eq!(ev.play_delay_max, ev2.play_delay_max);
     }
 }
