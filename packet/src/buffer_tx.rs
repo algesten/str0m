@@ -10,6 +10,7 @@ pub struct Packetized {
     pub first: bool,
     pub last: bool,
     pub ssrc: Ssrc,
+    pub sim_lvl: usize,
 
     /// Set when packet is first sent. This is so we can resend.
     pub seq_no: Option<SeqNo>,
@@ -37,6 +38,7 @@ impl PacketizingBuffer {
         ts: MediaTime,
         data: &[u8],
         ssrc: Ssrc,
+        sim_lvl: usize,
         mtu: usize,
     ) -> Result<(), PacketError> {
         let chunks = self.pack.packetize(mtu, data)?;
@@ -54,6 +56,7 @@ impl PacketizingBuffer {
                 first,
                 last,
                 ssrc,
+                sim_lvl,
                 seq_no: None,
             };
 
@@ -77,5 +80,13 @@ impl PacketizingBuffer {
 
     pub fn get(&self, seq_no: SeqNo) -> Option<&Packetized> {
         self.queue.iter().find(|r| r.seq_no == Some(seq_no))
+    }
+
+    pub fn has_ssrc(&self, ssrc: Ssrc) -> bool {
+        self.queue.front().map(|p| p.ssrc == ssrc).unwrap_or(false)
+    }
+
+    pub fn first_seq_no(&self) -> Option<SeqNo> {
+        self.queue.front().and_then(|p| p.seq_no)
     }
 }

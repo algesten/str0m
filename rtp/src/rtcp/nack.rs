@@ -1,4 +1,5 @@
-use crate::{FeedbackMessageType, ReportList, RtcpHeader, RtcpPacket};
+use crate::header::extend_seq;
+use crate::{FeedbackMessageType, ReportList, RtcpHeader, RtcpPacket, SeqNo};
 use crate::{RtcpType, Ssrc, TransportType};
 
 use super::list::private::WordSized;
@@ -75,5 +76,65 @@ impl<'a> TryFrom<&'a [u8]> for Nack {
         }
 
         Ok(Nack { ssrc, reports })
+    }
+}
+
+impl NackEntry {
+    pub fn into_iter(self, seq_no: SeqNo) -> impl Iterator<Item = SeqNo> {
+        NackEntryIterator(self, 0, seq_no)
+    }
+}
+
+pub struct NackEntryIterator(NackEntry, u16, SeqNo);
+
+impl Iterator for NackEntryIterator {
+    type Item = SeqNo;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let seq_16 = if self.1 == 0 {
+            self.1 += 1;
+            self.0.pid
+        } else {
+            loop {
+                if self.1 >= 17 {
+                    return None;
+                }
+                let i = self.1 - 1;
+                self.1 += 1;
+                if 1 << (i as u16) & self.0.blp > 0 {
+                    break self.0.pid.wrapping_add(self.1 - 1);
+                }
+            }
+        };
+        let l = extend_seq(Some(*self.2), seq_16);
+        return Some(l.into());
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn nack_entry_iter() {
+        // 196_618
+        let seq_no: SeqNo = (65_536_u64 * 3 + 10).into();
+
+        // 196_508
+        let pid = (65_536_u32 - 100) as u16;
+
+        println!("{:?} {:?}", seq_no, pid);
+
+        // 196_509, 196_512, 196_524
+        let blp = 0b1000_0000_0000_1001;
+
+        let entry = NackEntry { pid, blp };
+
+        let nacks: Vec<_> = entry.into_iter(seq_no).collect();
+
+        assert_eq!(
+            nacks,
+            vec![196508.into(), 196509.into(), 196512.into(), 196524.into()]
+        );
     }
 }

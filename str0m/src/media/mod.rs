@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use net_::{Id, DATAGRAM_MTU};
 use packet::{DepacketizingBuffer, PacketError, Packetized, PacketizingBuffer};
-use rtp::{Extensions, MediaTime, Rtcp, RtcpFb, RtpHeader, SeqNo, Ssrc, SRTP_OVERHEAD};
+use rtp::{Extensions, MediaTime, NackEntry, Rtcp, RtcpFb, RtpHeader, SeqNo, Ssrc, SRTP_OVERHEAD};
 
 pub use rtp::{Direction, Mid, Pt};
 pub use sdp::{Codec, FormatParams};
@@ -96,6 +96,11 @@ pub struct Media {
     /// When writing a sample we create a number of RTP packets to send. These buffers have the
     /// individual RTP data payload ready to send.
     buffers_tx: HashMap<Pt, PacketizingBuffer>,
+
+    /// Queued resends.
+    ///
+    /// These have been scheduled via nacks.
+    resends: VecDeque<Resend>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,7 +152,7 @@ impl Media {
             media: self,
             pt,
             codec,
-            simulcast_level: 0,
+            sim_lvl: 0,
         }
     }
 
@@ -157,18 +162,54 @@ impl Media {
         exts: &Extensions,
         twcc: &mut u64,
     ) -> Option<(RtpHeader, Vec<u8>, SeqNo)> {
-        let (pt, pkt) = next_send_buffer(&mut self.buffers_tx)?;
+        let (pt, pkt, ssrc, seq_no) = loop {
+            if let Some(resend) = self.resends.pop_front() {
+                // If there is no buffer for this resend, we loop to next. This is
+                // a weird situation though, since it means the other side sent a nack for
+                // an SSRC that matched this Media, but didnt match a buffer_tx.
+                let buffer = match self.buffers_tx.values().find(|p| p.has_ssrc(resend.ssrc)) {
+                    Some(v) => v,
+                    None => continue,
+                };
 
-        let tx = self
-            .sources_tx
-            .iter_mut()
-            .find(|s| s.ssrc() == pkt.ssrc)
-            .expect("SenderSource for packetized write");
+                // The seq_no could simply be too old to exist in the buffer, in which
+                // case we will not do a resend.
+                let pkt = match buffer.get(resend.seq_no) {
+                    Some(v) => v,
+                    None => continue,
+                };
 
-        let seq_no = tx.next_seq_no(now);
-        pkt.seq_no = Some(seq_no);
+                let is_audio = self.kind == MediaKind::Audio;
 
-        let mut header = RtpHeader::new(pt, seq_no, pkt.ts, pkt.ssrc);
+                // The resend ssrc. This would correspond to the RTX PT for video.
+                // Audio should not be resent, so this also gates whether we are doing resends at all.
+                let ssrc_rtx =
+                    match get_source_tx(&mut self.sources_tx, is_audio, pkt.sim_lvl, true)
+                        .map(|tx| tx.ssrc())
+                    {
+                        Some(v) => v,
+                        None => continue,
+                    };
+
+                break (resend.pt, pkt, ssrc_rtx, resend.seq_no);
+            } else {
+                // exit via ? here is ok since that means there is nothing to send.
+                let (pt, pkt) = next_send_buffer(&mut self.buffers_tx)?;
+
+                let tx = self
+                    .sources_tx
+                    .iter_mut()
+                    .find(|s| s.ssrc() == pkt.ssrc)
+                    .expect("SenderSource for packetized write");
+
+                let seq_no = tx.next_seq_no(now);
+                pkt.seq_no = Some(seq_no);
+
+                break (pt, pkt, pkt.ssrc, seq_no);
+            }
+        };
+
+        let mut header = RtpHeader::new(pt, seq_no, pkt.ts, ssrc);
         header.marker = pkt.last;
 
         header.ext_vals.abs_send_time = Some(now.into());
@@ -283,15 +324,21 @@ impl Media {
 
     /// Appply incoming RTCP feedback.
     pub(crate) fn handle_rtcp_fb(&mut self, now: Instant, fb: RtcpFb) -> Option<()> {
-        let source_rx = self.sources_rx.iter_mut().find(|s| s.ssrc() == fb.ssrc())?;
+        let ssrc = fb.ssrc();
 
         use RtcpFb::*;
         match fb {
-            SenderInfo(v) => source_rx.set_sender_info(now, v),
+            SenderInfo(v) => {
+                let source_rx = self.sources_rx.iter_mut().find(|s| s.ssrc() == ssrc)?;
+                source_rx.set_sender_info(now, v);
+            }
             ReceptionReport(_) => todo!(),
             SourceDescription(_) => todo!(),
             Goodbye(_) => todo!(),
-            Nack(_, _) => todo!(),
+            Nack(ssrc, list) => {
+                let entries = list.into_iter();
+                self.handle_nack(ssrc, entries)?;
+            }
             Pli(_) => todo!(),
             Fir(_) => todo!(),
         }
@@ -401,6 +448,36 @@ impl Media {
     pub(crate) fn add_source_tx(&mut self, ssrc: Ssrc) {
         self.sources_tx.push(SenderSource::new(ssrc));
     }
+
+    pub(crate) fn handle_nack(
+        &mut self,
+        ssrc: Ssrc,
+        entries: impl Iterator<Item = NackEntry>,
+    ) -> Option<()> {
+        // Figure out which packetizing buffer has been used to send the entries that been nack'ed.
+        let (pt, buffer) = self.buffers_tx.iter_mut().find(|(_, p)| p.has_ssrc(ssrc))?;
+
+        // Turning NackEntry into SeqNo we need to know a SeqNo "close by" to lengthen the 16 bit
+        // sequence number into the 64 bit we have in SeqNo.
+        let seq_no = buffer.first_seq_no()?;
+        let iter = entries.flat_map(|n| n.into_iter(seq_no));
+
+        // Schedule all resends. They will be handled on next poll_packet
+        self.resends.extend(iter.map(|seq_no| Resend {
+            ssrc,
+            pt: *pt,
+            seq_no,
+        }));
+
+        Some(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Resend {
+    pub ssrc: Ssrc,
+    pub pt: Pt,
+    pub seq_no: SeqNo,
 }
 
 fn next_send_buffer(
@@ -434,6 +511,7 @@ impl Default for Media {
             ssrc_info_rx: vec![],
             buffers_rx: HashMap::new(),
             buffers_tx: HashMap::new(),
+            resends: VecDeque::new(),
         }
     }
 }
@@ -485,7 +563,7 @@ pub struct MediaWriter<'a> {
     media: &'a mut Media,
     pt: Pt,
     codec: Option<Codec>,
-    simulcast_level: usize,
+    sim_lvl: usize,
 }
 
 impl MediaWriter<'_> {
@@ -498,13 +576,8 @@ impl MediaWriter<'_> {
         let is_audio = self.media.kind == MediaKind::Audio;
 
         // The SSRC is figured out given the simulcast level.
-        let tx = get_source_tx(
-            &mut self.media.sources_tx,
-            is_audio,
-            self.simulcast_level,
-            false,
-        )
-        .ok_or(RtcError::NoSenderSource(self.simulcast_level))?;
+        let tx = get_source_tx(&mut self.media.sources_tx, is_audio, self.sim_lvl, false)
+            .ok_or(RtcError::NoSenderSource(self.sim_lvl))?;
 
         let ssrc = tx.ssrc();
 
@@ -513,7 +586,7 @@ impl MediaWriter<'_> {
             PacketizingBuffer::new(codec.into(), max_retain)
         });
 
-        buf.push_sample(ts, data, ssrc, DATAGRAM_MTU - SRTP_OVERHEAD)?;
+        buf.push_sample(ts, data, ssrc, self.sim_lvl, DATAGRAM_MTU - SRTP_OVERHEAD)?;
 
         Ok(())
     }
