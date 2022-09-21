@@ -95,6 +95,7 @@ impl ReceiverSource {
     pub fn create_nack(&mut self) -> Option<Rtcp> {
         if let Some(mut nack) = self.register.nack_report() {
             nack.ssrc = self.ssrc;
+            info!("Send nack: {:?}", nack);
             return Some(Rtcp::Nack(nack));
         }
 

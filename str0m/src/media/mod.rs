@@ -335,8 +335,12 @@ impl Media {
                 source_rx.set_sender_info(now, v);
             }
             ReceptionReport(_) => todo!(),
-            SourceDescription(_) => todo!(),
-            Goodbye(_) => todo!(),
+            SourceDescription(v) => {
+                error!("SourceDescription: {:?}", v);
+            }
+            Goodbye(v) => {
+                error!("Goodbye: {:?}", v);
+            }
             Nack(ssrc, list) => {
                 let entries = list.into_iter();
                 self.handle_nack(ssrc, entries)?;

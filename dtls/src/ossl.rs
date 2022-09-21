@@ -210,8 +210,10 @@ where
             State::Init(ssl, stream, active) => {
                 let active = active.expect("set_active to be called before handshake");
                 if active {
+                    debug!("Connect");
                     ssl.connect(stream)
                 } else {
+                    debug!("Accept");
                     ssl.accept(stream)
                 }
             }
@@ -220,6 +222,8 @@ where
 
         match result {
             Ok(v) => {
+                debug!("Established");
+
                 let _ = mem::replace(self, State::Established(v));
 
                 // recursively return the &mut SslStream.
@@ -231,11 +235,13 @@ where
                     io::Error::new(io::ErrorKind::WouldBlock, "WouldBlock")
                 }
                 HandshakeError::SetupFailure(e) => {
-                    //
+                    debug!("DTLS setup failed: {:?}", e);
                     io::Error::new(io::ErrorKind::InvalidInput, e)
                 }
                 HandshakeError::Failure(e) => {
-                    io::Error::new(io::ErrorKind::InvalidData, e.into_error())
+                    let e = e.into_error();
+                    debug!("DTLS failure: {:?}", e);
+                    io::Error::new(io::ErrorKind::InvalidData, e)
                 }
             }),
         }

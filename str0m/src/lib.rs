@@ -313,9 +313,10 @@ impl Rtc {
                     return Ok(Output::Event(Event::IceConnectionStateChange(v)))
                 }
                 IceAgentEvent::NewLocalCandidate(v) => {
-                    return Ok(Output::Event(Event::IceCandidate(v)))
+                    return Ok(Output::Event(Event::IceCandidate(v)));
                 }
                 IceAgentEvent::DiscoveredRecv { source } => {
+                    info!("ICE remote address: {:?}", source);
                     self.remote_addrs.push(source);
                     while self.remote_addrs.len() > 20 {
                         self.remote_addrs.remove(0);
@@ -325,6 +326,7 @@ impl Rtc {
                     source,
                     destination,
                 } => {
+                    info!("ICE nominated send: {:?}", source);
                     self.send_addr = Some(SendAddr {
                         source,
                         destination,
@@ -336,12 +338,14 @@ impl Rtc {
         while let Some(e) = self.dtls.poll_event() {
             match e {
                 DtlsEvent::Connected => {
-                    //
+                    debug!("DTLS connected");
                 }
                 DtlsEvent::SrtpKeyingMaterial(mat) => {
+                    info!("DTLS set SRTP keying material");
                     self.session.set_keying_material(mat);
                 }
                 DtlsEvent::RemoteFingerprint(v1) => {
+                    debug!("DTLS verify remote fingerprint");
                     if let Some(v2) = &self.remote_fingerprint {
                         if v1 != *v2 {
                             self.alive = false;

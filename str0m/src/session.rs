@@ -117,6 +117,7 @@ impl Session {
         }
 
         if now >= self.regular_feedback_at() {
+            info!("Create regular feedback");
             self.last_regular = now;
             for m in only_media_mut(&mut self.media) {
                 m.create_regular_feedback(now, &mut self.feedback);
