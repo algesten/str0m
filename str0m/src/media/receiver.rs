@@ -2,8 +2,7 @@ use std::time::{Duration, Instant};
 
 use rtp::{MediaTime, ReceiverReport, Rtcp, RtpHeader, SenderInfo, SeqNo, Ssrc};
 
-mod register;
-use register::ReceiverRegister;
+use super::register::ReceiverRegister;
 use sdp::SsrcInfo;
 
 // How long an SSRC receiver is alive without receiving any packets.

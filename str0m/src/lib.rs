@@ -7,11 +7,15 @@ use std::time::Instant;
 
 use change::Changes;
 use dtls::{Dtls, DtlsEvent, Fingerprint};
-use ice::{Candidate, IceAgent};
+use ice::IceAgent;
 use ice::{IceAgentEvent, IceConnectionState};
+use net_::NetError;
 use rtp::{Mid, Pt, Ssrc};
-use sdp::{Answer, Offer, Sdp, Setup};
+use sdp::{Sdp, Setup};
 use thiserror::Error;
+
+pub use ice::Candidate;
+pub use sdp::{Answer, Offer};
 
 pub mod net {
     pub use dtls::DtlsError;
@@ -68,6 +72,9 @@ pub enum RtcError {
     /// used is not mapped to any SSRC.
     #[error("No sender source (simulcast level: {0}")]
     NoSenderSource(usize),
+
+    #[error("{0}")]
+    NetError(#[from] NetError),
 }
 
 pub struct Rtc {
@@ -88,6 +95,7 @@ struct SendAddr {
     destination: SocketAddr,
 }
 
+#[derive(Debug)]
 pub enum Event {
     IceCandidate(Candidate),
     IceConnectionStateChange(IceConnectionState),
@@ -124,6 +132,10 @@ impl Rtc {
         }
     }
 
+    pub fn add_local_candidate(&mut self, c: Candidate) {
+        self.ice.add_local_candidate(c);
+    }
+
     pub fn create_offer(&mut self) -> ChangeSet {
         if !self.dtls.is_inited() {
             // The side that makes the first offer is the controlling side.
@@ -156,7 +168,11 @@ impl Rtc {
         // If we receive an offer, we are not allowed to answer with actpass.
         if self.setup == Setup::ActPass {
             let remote_setup = offer.setup().unwrap_or(Setup::Active);
-            self.setup = remote_setup.invert();
+            self.setup = if remote_setup == Setup::ActPass {
+                Setup::Passive
+            } else {
+                remote_setup.invert()
+            };
             debug!(
                 "Change setup for answer: {} -> {}",
                 Setup::ActPass,
@@ -274,6 +290,16 @@ impl Rtc {
     }
 
     pub fn poll_output(&mut self) -> Result<Output, RtcError> {
+        let o = self.do_poll_output()?;
+
+        if let Output::Event(e) = &o {
+            info!("{:?}", e);
+        }
+
+        Ok(o)
+    }
+
+    fn do_poll_output(&mut self) -> Result<Output, RtcError> {
         if !self.alive {
             return Ok(Output::Timeout(not_happening()));
         }
@@ -402,6 +428,7 @@ impl Rtc {
     }
 
     fn do_handle_receive(&mut self, now: Instant, r: net::Receive) -> Result<(), RtcError> {
+        //trace!("IN {:?}", r);
         self.last_now = now;
         use net::DatagramRecv::*;
         match r.contents {

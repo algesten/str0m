@@ -154,6 +154,14 @@ impl AsMediaLine for Media {
             p.inner().to_media_attrs(&mut attrs);
         }
 
+        // The advertised payload types.
+        let pts = self
+            .codecs()
+            .iter()
+            .flat_map(|c| [Some(c.pt()), c.pt_rtx()].into_iter())
+            .filter_map(|c| c)
+            .collect();
+
         // Outgoing SSRCs
         let msid = format!("{} {}", self.msid().stream_id, self.msid().track_id);
         for ssrc in self.source_tx_ssrcs() {
@@ -182,7 +190,7 @@ impl AsMediaLine for Media {
         MediaLine {
             typ: self.kind().into(),
             proto: Proto::Srtp,
-            pts: vec![],
+            pts,
             bw: None,
             attrs,
         }

@@ -220,8 +220,10 @@ impl IceCreds {
         // checks.  The values MUST be unguessable, with at least 128 bits of
         // random number generator output used to generate the password, and
         // at least 24 bits of output to generate the username fragment.
-        let ufrag = Id::<3>::random().to_string();
-        let pass = Id::<16>::random().to_string();
+        //
+        // Chrome demands lengths for ufrag 4 and pass 22.
+        let ufrag = Id::<4>::random().to_string();
+        let pass = Id::<22>::random().to_string();
         IceCreds { ufrag, pass }
     }
 }
@@ -680,7 +682,7 @@ impl IceAgent {
     /// If no remote credentials have been set using `set_remote_credentials`, the remote
     /// ufrag is not checked.
     pub fn accepts_message(&self, message: &StunMessage<'_>) -> bool {
-        debug!("Check if accepts message: {:?}", message);
+        trace!("Check if accepts message: {:?}", message);
 
         // The username for the credential is formed by concatenating the
         // username fragment provided by the peer with the username fragment of
@@ -723,7 +725,7 @@ impl IceAgent {
     ///
     /// Will not be used if [`IceAgent::accepts_message`] returns false.
     pub fn handle_receive(&mut self, now: Instant, r: Receive) {
-        info!("Handle receive: {:?}", r);
+        trace!("Handle receive: {:?}", r);
 
         let message = match r.contents {
             DatagramRecv::Stun(v) => v,
@@ -752,7 +754,7 @@ impl IceAgent {
     }
 
     pub fn handle_timeout(&mut self, now: Instant) {
-        info!("Handle timeout: {:?}", now);
+        trace!("Handle timeout: {:?}", now);
 
         // The generation of ordinary and triggered connectivity checks is
         // governed by timer Ta.
@@ -841,10 +843,10 @@ impl IceAgent {
         if let Some((idx, deadline)) = next {
             if now >= deadline {
                 let pair = &self.candidate_pairs[idx];
-                debug!("Handle next triggered pair: {:?}", pair);
+                trace!("Handle next triggered pair: {:?}", pair);
                 self.stun_client_binding_request(now, idx);
             } else {
-                debug!("Next triggered pair is in the future");
+                trace!("Next triggered pair is in the future");
             }
         }
     }
@@ -860,7 +862,7 @@ impl IceAgent {
     ///
     /// Returns `None` until the first ever `handle_timeout` is called.
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        info!("Poll timeout with last_now: {:?}", self.last_now);
+        trace!("Poll timeout with last_now: {:?}", self.last_now);
 
         // if we never called handle_timeout, there will be no current time.
         let last_now = self.last_now?;
@@ -1015,7 +1017,7 @@ impl IceAgent {
             .find(|(_, c)| !c.discarded() && c.addr() == req.source);
 
         let remote_idx = if let Some((idx, _)) = found_in_remote {
-            debug!("Remote candidate for STUN request found");
+            trace!("Remote candidate for STUN request found");
             idx
         } else {
             // o  The priority is the value of the PRIORITY attribute in the Binding
@@ -1077,7 +1079,7 @@ impl IceAgent {
 
         if let Some(pair) = maybe_pair {
             // When the pair is already on the checklist:
-            debug!("Found existing pair for STUN request: {:?}", pair);
+            trace!("Found existing pair for STUN request: {:?}", pair);
 
             // TODO: The spec has all these ideas about resetting to Waiting state
             // for the candidate pair. I think that's to do speeding up the triggered
@@ -1242,7 +1244,7 @@ impl IceAgent {
             // sent the request from. This might happen for hosts with asymmetric
             // routing, traffic leaving on one interface and responses coming back
             // on another.
-            debug!(
+            trace!(
                 "Found local candidate for mapped address: {}",
                 mapped_address
             );

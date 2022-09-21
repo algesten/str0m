@@ -13,6 +13,10 @@ impl CodecParams {
         self.0.codec.pt
     }
 
+    pub fn pt_rtx(&self) -> Option<Pt> {
+        self.0.resend
+    }
+
     pub fn codec(&self) -> Codec {
         self.0.codec.codec
     }

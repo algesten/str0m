@@ -294,6 +294,7 @@ where
                 attrs,
             };
             if let Some(err) = m.check_consistent() {
+                println!("{:?}", err);
                 return Err(StreamErrorFor::<Input>::message_format(err));
             }
             Ok(m)
@@ -897,13 +898,10 @@ mod test {
 
     #[test]
     fn media_line_simple() {
-        let m = media_line().parse("m=audio 9 UDP/TLS/RTP/SAVPF 111 103\r\n");
+        let m = media_line().parse("m=audio 9 UDP/TLS/RTP/SAVPF 10\r\n");
         assert_eq!(
             m,
-            Ok((
-                (MediaType::Audio, Proto::Srtp, vec![111.into(), 103.into()],),
-                ""
-            ))
+            Ok(((MediaType::Audio, Proto::Srtp, vec![10.into()],), ""))
         );
     }
 
@@ -1085,6 +1083,24 @@ mod test {
 
         let parsed = sdp_parser().parse(sdp);
 
+        assert!(parsed.is_ok());
+    }
+
+    #[test]
+    fn parse_minimal() {
+        let sdp = "v=0\r\n\
+        o=- 5058682828002148772 3 IN IP4 127.0.0.1\r\n\
+        s=-\r\n\
+        t=0 0\r\n\
+        m=audio 9 UDP/TLS/RTP/SAVPF\r\n\
+        c=IN IP4 0.0.0.0\r\n\
+        a=rtcp:9 IN IP4 0.0.0.0\r\n\
+        a=setup:actpass\r\n\
+        a=inactive\r\n\
+        a=mid:0\r\n\
+        ";
+
+        let parsed = sdp_parser().parse(sdp);
         assert!(parsed.is_ok());
     }
 

@@ -12,3 +12,6 @@ combine = "4"
 dtls = { path = "../dtls" }
 ice = { path = "../ice" }
 rtp = { path = "../rtp" }
+
+[dev-dependencies]
+serde_json = "1.0"

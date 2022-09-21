@@ -21,9 +21,11 @@ pub enum SdpError {
     Inconsistent(String),
 }
 
+#[derive(Debug, PartialEq, Eq)]
 /// SDP offer.
 pub struct Offer(Sdp);
 
+#[derive(Debug, PartialEq, Eq)]
 /// SDP answer.
 pub struct Answer(Sdp);
 
@@ -74,6 +76,7 @@ macro_rules! sdp_ser {
             where
                 D: Deserializer<'de>,
             {
+                #[derive(Debug)]
                 enum Field {
                     Typ,
                     Sdp,
@@ -135,8 +138,8 @@ macro_rules! sdp_ser {
                     where
                         V: de::MapAccess<'de>,
                     {
-                        let mut typ = None;
-                        let mut sdp = None;
+                        let mut typ: Option<String> = None;
+                        let mut sdp: Option<String> = None;
                         while let Some(key) = map.next_key()? {
                             match key {
                                 Field::Typ => {
@@ -154,8 +157,12 @@ macro_rules! sdp_ser {
                             }
                         }
                         let sdp = sdp.ok_or_else(|| de::Error::missing_field("sdp"))?;
-                        let sdp = Sdp::parse(sdp)
-                            .map_err(|_ph| de::Error::custom("Failed to parse SDP"))?;
+                        let sdp = Sdp::parse(&sdp).map_err(|ph| {
+                            use std::error::Error;
+                            println!("{:?}", ph.source());
+
+                            de::Error::custom(format!("Failed to parse SDP: {:?}", ph))
+                        })?;
                         Ok($Struct(sdp))
                     }
                 }
@@ -169,3 +176,45 @@ macro_rules! sdp_ser {
 
 sdp_ser!(Offer, "Offer", "offer");
 sdp_ser!(Answer, "Answer", "answer");
+
+#[cfg(test)]
+mod test {
+    use rtp::SessionId;
+
+    use super::*;
+
+    fn sdp() -> Sdp {
+        Sdp {
+            session: Session {
+                id: SessionId::from(123_u64),
+                attrs: vec![],
+                bw: None,
+            },
+            media_lines: vec![],
+        }
+    }
+
+    #[test]
+    fn serialize_deserialize_offer() {
+        let offer = Offer(sdp());
+        let json = serde_json::to_string(&offer).unwrap();
+
+        assert_eq!(json, "{\"type\":\"offer\",\"sdp\":\"v=0\\r\\no=- 123 2 IN IP4 127.0.0.1\\r\\ns=-\\r\\nt=0 0\\r\\n\"}");
+
+        let offer2: Offer = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(offer, offer2);
+    }
+
+    #[test]
+    fn serialize_deserialize_answer() {
+        let answer = Answer(sdp());
+        let json = serde_json::to_string(&answer).unwrap();
+
+        assert_eq!(json, "{\"type\":\"answer\",\"sdp\":\"v=0\\r\\no=- 123 2 IN IP4 127.0.0.1\\r\\ns=-\\r\\nt=0 0\\r\\n\"}");
+
+        let answer2: Answer = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(answer, answer2);
+    }
+}

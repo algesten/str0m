@@ -268,7 +268,7 @@ impl CandidatePair {
             self.state = CheckState::Succeeded;
         }
 
-        debug!("Recorded binding response: {:?}", self);
+        trace!("Recorded binding response: {:?}", self);
     }
 
     /// The time of the last binding request attempt.

@@ -21,7 +21,7 @@ pub use id::Id;
 pub const DATAGRAM_MTU: usize = 1500;
 
 #[derive(Debug, Error)]
-pub enum Error {
+pub enum NetError {
     #[error("{0}")]
     Stun(#[from] StunError),
 
@@ -67,7 +67,11 @@ pub struct Receive<'a> {
 
 impl<'a> Receive<'a> {
     /// Creates a new instance by trying to parse the contents of `buf`.
-    pub fn new(source: SocketAddr, destination: SocketAddr, buf: &'a [u8]) -> Result<Self, Error> {
+    pub fn new(
+        source: SocketAddr,
+        destination: SocketAddr,
+        buf: &'a [u8],
+    ) -> Result<Self, NetError> {
         let contents = DatagramRecv::try_from(buf)?;
         Ok(Receive {
             source,
@@ -86,7 +90,7 @@ pub enum DatagramRecv<'a> {
 }
 
 impl<'a> TryFrom<&'a [u8]> for DatagramRecv<'a> {
-    type Error = Error;
+    type Error = NetError;
 
     fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
         use DatagramRecv::*;
@@ -146,7 +150,7 @@ impl<'a> TryFrom<&'a [u8]> for MultiplexKind {
 }
 
 impl<'a> TryFrom<&'a Transmit> for Receive<'a> {
-    type Error = Error;
+    type Error = NetError;
 
     fn try_from(t: &'a Transmit) -> Result<Self, Self::Error> {
         Ok(Receive {

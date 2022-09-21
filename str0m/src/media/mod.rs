@@ -21,6 +21,8 @@ use receiver::ReceiverSource;
 mod sender;
 use sender::SenderSource;
 
+mod register;
+
 use crate::change::AddMedia;
 use crate::util::already_happened;
 use crate::RtcError;

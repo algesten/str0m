@@ -1,0 +1,65 @@
+<html>
+
+<head>
+    <title>WebRTC Post example</title>
+    <style>
+        body {
+            background: black;
+            color: white;
+        }
+    </style>
+</head>
+
+<body>
+    <button id="cam" onClick="startCam()">Cam</button>
+    <button id="mic" onClick="startMic()">Mic</button>
+    <button id="rtc" onClick="startRtc()">Rtc</button>
+    <script>
+        let streamCam;
+        let streamMic;
+        let rtc = new RTCPeerConnection();
+        const byId = (id) => document.getElementById(id);
+        const byTag = (tag) => [].slice.call(document.getElementsByTagName(tag));
+        async function startCam() {
+            byId('cam').disabled = true;
+            streamCam = await navigator.mediaDevices.getUserMedia({
+                video: true,
+            });
+        }
+        async function startMic() {
+            byId('mic').disabled = true;
+            streamMic = await navigator.mediaDevices.getUserMedia({
+                audio: true,
+            });
+        }
+        async function startRtc() {
+            byTag('button').forEach(b => b.disabled = true);
+            if (streamCam) {
+                rtc.addTrack(streamCam.getTracks()[0], streamCam);
+            }
+            if (streamMic) {
+                rtc.addTrack(streamMic.getTracks()[0], streamMic);
+            }
+
+            const offer = await rtc.createOffer();
+            rtc.setLocalDescription(offer);
+            console.log(offer.sdp.split('\r\n'));
+
+            const res = await fetch('', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(offer),
+            });
+
+            const answer = await res.json();
+            rtc.setRemoteDescription(answer);
+            console.log(answer.sdp.split('\r\n'));
+
+
+        }
+    </script>
+</body>
+
+</html>
