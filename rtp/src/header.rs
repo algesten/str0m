@@ -154,6 +154,13 @@ impl RtpHeader {
         2
     }
 
+    /// For RTX the original sequence number is inserted befor the RTP payload.
+    pub fn write_original_sequence_number(buf: &mut [u8], seq_no: SeqNo) -> usize {
+        let seq_u16 = (*seq_no) as u16;
+        buf[0..2].copy_from_slice(&seq_u16.to_be_bytes());
+        2
+    }
+
     pub fn is_rtx_null_packet(buf: &[u8]) -> bool {
         &buf[0..10] == &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     }

@@ -164,7 +164,7 @@ impl Media {
         exts: &Extensions,
         twcc: &mut u64,
     ) -> Option<(RtpHeader, Vec<u8>, SeqNo)> {
-        let (pt, pkt, ssrc, seq_no) = loop {
+        let (pt, pkt, ssrc, seq_no, orig_seq_no) = loop {
             if let Some(resend) = self.resends.pop_front() {
                 // If there is no buffer for this resend, we loop to next. This is
                 // a weird situation though, since it means the other side sent a nack for
@@ -183,31 +183,34 @@ impl Media {
 
                 let is_audio = self.kind == MediaKind::Audio;
 
-                // The resend ssrc. This would correspond to the RTX PT for video.
+                // The send source, to get a contiguous seq_no for the resend.
                 // Audio should not be resent, so this also gates whether we are doing resends at all.
-                let ssrc_rtx =
-                    match get_source_tx(&mut self.sources_tx, is_audio, pkt.sim_lvl, true)
-                        .map(|tx| tx.ssrc())
-                    {
-                        Some(v) => v,
-                        None => continue,
-                    };
+                let source = match get_source_tx(&mut self.sources_tx, is_audio, pkt.sim_lvl, true)
+                {
+                    Some(v) => v,
+                    None => continue,
+                };
 
-                break (resend.pt, pkt, ssrc_rtx, resend.seq_no);
+                let seq_no = source.next_seq_no(now);
+
+                // The resend ssrc. This would correspond to the RTX PT for video.
+                let ssrc_rtx = source.ssrc();
+
+                break (resend.pt, pkt, ssrc_rtx, seq_no, Some(resend.seq_no));
             } else {
                 // exit via ? here is ok since that means there is nothing to send.
                 let (pt, pkt) = next_send_buffer(&mut self.buffers_tx)?;
 
-                let tx = self
+                let source = self
                     .sources_tx
                     .iter_mut()
                     .find(|s| s.ssrc() == pkt.ssrc)
                     .expect("SenderSource for packetized write");
 
-                let seq_no = tx.next_seq_no(now);
+                let seq_no = source.next_seq_no(now);
                 pkt.seq_no = Some(seq_no);
 
-                break (pt, pkt, pkt.ssrc, seq_no);
+                break (pt, pkt, pkt.ssrc, seq_no, None);
             }
         };
 
@@ -223,7 +226,14 @@ impl Media {
         let header_len = header.write_to(&mut buf, exts);
         assert!(header_len % 4 == 0, "RTP header must be multiple of 4");
 
-        let data_out = &mut buf[header_len..];
+        let mut data_out = &mut buf[header_len..];
+
+        // For resends, the original seq_no is inserted before the payload.
+        if let Some(orig_seq_no) = orig_seq_no {
+            let n = RtpHeader::write_original_sequence_number(data_out, orig_seq_no);
+            data_out = &mut data_out[n..];
+        }
+
         data_out[..pkt.data.len()].copy_from_slice(&pkt.data);
 
         Some((header, buf, seq_no))
