@@ -22,15 +22,19 @@
         const byTag = (tag) => [].slice.call(document.getElementsByTagName(tag));
         async function startCam() {
             byId('cam').disabled = true;
+            byId('rtc').disabled = true;
             streamCam = await navigator.mediaDevices.getUserMedia({
                 video: true,
             });
+            byId('rtc').disabled = false;
         }
         async function startMic() {
             byId('mic').disabled = true;
+            byId('rtc').disabled = true;
             streamMic = await navigator.mediaDevices.getUserMedia({
                 audio: true,
             });
+            byId('rtc').disabled = false;
         }
         async function startRtc() {
             byTag('button').forEach(b => b.disabled = true);
