@@ -1,7 +1,8 @@
+use std::fmt;
 use std::ops::Index;
 
 /// List containing max 31 items.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ReportList<T>([Option<T>; 31]);
 
 impl<T> ReportList<T> {
@@ -154,5 +155,20 @@ impl<T> From<T> for ReportList<T> {
         let mut l = ReportList::default();
         l.push(t);
         l
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for ReportList<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[")?;
+        let len = self.len();
+        for (i, s) in self.0.iter().filter_map(|f| f.as_ref()).enumerate() {
+            if i == len - 1 {
+                write!(f, "{:?}", s)?;
+            } else {
+                write!(f, "{:?},", s)?;
+            }
+        }
+        write!(f, "]")
     }
 }
