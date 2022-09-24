@@ -8,7 +8,8 @@ use rouille::Server;
 use rouille::{Request, Response};
 
 use str0m::net::Receive;
-use str0m::{Candidate, Input, Offer, Output, Rtc, RtcError};
+use str0m::IceConnectionState;
+use str0m::{Candidate, Event, Input, Offer, Output, Rtc, RtcError};
 
 fn init_log() {
     use std::env;
@@ -84,8 +85,10 @@ fn run(mut rtc: Rtc, socket: UdpSocket) -> Result<(), RtcError> {
                 continue;
             }
 
-            Output::Event(_v) => {
-                //                println!("{:?}", v);
+            Output::Event(v) => {
+                if v == Event::IceConnectionStateChange(IceConnectionState::Disconnected) {
+                    return Ok(());
+                }
                 continue;
             }
         };

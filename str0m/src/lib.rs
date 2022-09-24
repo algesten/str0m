@@ -8,11 +8,13 @@ use std::time::Instant;
 use change::Changes;
 use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::IceAgent;
-use ice::{IceAgentEvent, IceConnectionState};
+use ice::IceAgentEvent;
 use net_::NetError;
 use rtp::{Mid, Pt, Ssrc};
 use sdp::{Sdp, Setup};
 use thiserror::Error;
+
+pub use ice::IceConnectionState;
 
 pub use ice::Candidate;
 pub use sdp::{Answer, Offer};
@@ -466,3 +468,21 @@ impl<'a> PendingChanges<'a> {
         self.rtc.accept_answer(None).expect("rollback to not error");
     }
 }
+
+impl PartialEq for Event {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::IceCandidate(l0), Self::IceCandidate(r0)) => l0 == r0,
+            (Self::IceConnectionStateChange(l0), Self::IceConnectionStateChange(r0)) => l0 == r0,
+            (Self::MediaAdded(l0), Self::MediaAdded(r0)) => l0 == r0,
+            (Self::ChannelAdded(l0), Self::ChannelAdded(r0)) => l0 == r0,
+            (Self::MediaData(l0, l1, l2), Self::MediaData(r0, r1, r2)) => {
+                l0 == r0 && l1 == r1 && l2 == r2
+            }
+            (Self::MediaError(_, _, _), Self::MediaError(_, _, _)) => false,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Event {}
