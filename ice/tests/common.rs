@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::ops::{Deref, DerefMut};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use ice::{Candidate, IceAgent, IceAgentEvent};
 use net::Receive;
@@ -79,28 +79,31 @@ fn transform(from: SocketAddr, to: SocketAddr) -> Option<(SocketAddr, SocketAddr
 }
 
 pub struct TestAgent {
+    pub start_time: Instant,
     pub agent: IceAgent,
     pub span: Span,
-    pub events: Vec<IceAgentEvent>,
+    pub events: Vec<(Duration, IceAgentEvent)>,
     pub progress_count: u64,
     pub time: Instant,
+    pub drop_sent_packets: bool,
 }
 
 impl TestAgent {
     pub fn new(span: Span) -> Self {
+        let now = Instant::now();
         TestAgent {
+            start_time: now,
             agent: IceAgent::new(),
             span,
             events: vec![],
             progress_count: 0,
-            time: Instant::now(),
+            time: now,
+            drop_sent_packets: false,
         }
     }
 }
 
 pub fn progress(a1: &mut TestAgent, a2: &mut TestAgent) {
-    println!("{} {}", a1.progress_count, a2.progress_count);
-
     let (f, t) = if a1.progress_count % 2 == a2.progress_count % 2 {
         (a2, a1)
     } else {
@@ -115,16 +118,17 @@ pub fn progress(a1: &mut TestAgent, a2: &mut TestAgent) {
     if let Some(trans) = f.span.in_scope(|| f.agent.poll_transmit()) {
         let mut receive = Receive::try_from(&trans).unwrap();
 
-        println!("recv 1 {:?}", receive);
-
         // rewrite receive with test transforms, and potentially drop the packet.
         if let Some((source, destination)) = transform(receive.source, receive.destination) {
             receive.source = source;
             receive.destination = destination;
 
-            println!("recv 2 {:?}", receive);
-
-            t.span.in_scope(|| t.agent.handle_receive(t.time, receive));
+            if f.drop_sent_packets {
+                // drop packet
+                t.span.in_scope(|| t.agent.handle_timeout(t.time));
+            } else {
+                t.span.in_scope(|| t.agent.handle_receive(t.time, receive));
+            }
         } else {
             // drop packet
             t.span.in_scope(|| t.agent.handle_timeout(t.time));
@@ -132,6 +136,8 @@ pub fn progress(a1: &mut TestAgent, a2: &mut TestAgent) {
     } else {
         t.span.in_scope(|| t.agent.handle_timeout(t.time));
     }
+
+    let time = t.time;
 
     let tim_f = f.span.in_scope(|| f.agent.poll_timeout()).unwrap_or(f.time);
     f.time = tim_f;
@@ -142,11 +148,12 @@ pub fn progress(a1: &mut TestAgent, a2: &mut TestAgent) {
     while let Some(v) = t.span.in_scope(|| t.agent.poll_event()) {
         println!("Polled event: {:?}", v);
         use ice::IceAgentEvent::*;
-        f.span.in_scope(|| match v {
-            IceRestart(v) => f.agent.set_remote_credentials(v),
-            NewLocalCandidate(v) => f.agent.add_remote_candidate(v),
+        f.span.in_scope(|| match &v {
+            IceRestart(v) => f.agent.set_remote_credentials(v.clone()),
+            NewLocalCandidate(v) => f.agent.add_remote_candidate(v.clone()),
             _ => {}
         });
+        t.events.push((time - t.start_time, v));
     }
 }
 

@@ -169,7 +169,7 @@ pub struct IceAgentStats {
 }
 
 /// Events from an [`IceAgent`].
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum IceAgentEvent {
     /// The agent resarted (or started).
     IceRestart(IceCreds),
