@@ -57,7 +57,7 @@ impl ReceiverRegister {
             bits: BitArray::default(),
             base_seq,
             // ensure first update_seq considers the first packet sequential
-            max_seq: (*base_seq - 1).into(),
+            max_seq: base_seq.wrapping_sub(1).into(),
             bad_seq: None,
             probation: MIN_SEQUENTIAL,
             received: 1,

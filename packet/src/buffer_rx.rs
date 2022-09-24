@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::fmt;
 
 use rtp::SeqNo;
 
@@ -11,6 +12,7 @@ struct Rtp {
     marker: bool,
 }
 
+#[derive(Debug)]
 pub struct DepacketizingBuffer {
     depack: CodecDepacketizer,
     last_emitted: Option<SeqNo>,
@@ -27,10 +29,11 @@ impl DepacketizingBuffer {
     }
 
     pub fn push(&mut self, data: Vec<u8>, seq_no: SeqNo, marker: bool) {
-        // We're not emit samples in the wrong order. If we receive
+        // We're not emitting samples in the wrong order. If we receive
         // packets that are before the last emitted, we drop.
         if let Some(last_emitted) = self.last_emitted {
             if seq_no <= last_emitted {
+                trace!("Drop packet before emitted: {} <= {}", seq_no, last_emitted);
                 return;
             }
         }
@@ -38,6 +41,7 @@ impl DepacketizingBuffer {
         match self.queue.binary_search_by_key(&seq_no, |r| r.seq_no) {
             Ok(_) => {
                 // exact same seq_no found. ignore
+                trace!("Drop exactly same packet: {}", seq_no);
                 return;
             }
             Err(i) => {
@@ -117,5 +121,15 @@ impl DepacketizingBuffer {
         }
 
         None
+    }
+}
+
+impl fmt::Debug for Rtp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Rtp")
+            .field("seq_no", &self.seq_no)
+            .field("marker", &self.marker)
+            .field("len", &self.data.len())
+            .finish()
     }
 }

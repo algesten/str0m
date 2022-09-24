@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate tracing;
+
 use sdp::Codec;
 use std::fmt;
 use thiserror::Error;

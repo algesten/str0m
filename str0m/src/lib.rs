@@ -146,6 +146,10 @@ impl Rtc {
     }
 
     pub fn accept_offer(&mut self, offer: Offer) -> Result<Answer, RtcError> {
+        if offer.media_lines.is_empty() {
+            return Err(RtcError::RemoteSdp("No m-lines in offer".into()));
+        }
+
         self.add_ice_details(&offer)?;
 
         // rollback any pending offer.
@@ -293,7 +297,11 @@ impl Rtc {
         let o = self.do_poll_output()?;
 
         if let Output::Event(e) = &o {
-            info!("{:?}", e);
+            if let Event::MediaData(x, y, z) = e {
+                info!("MediaData({}, {:?}, {})", x, y, z.len());
+            } else {
+                info!("{:?}", e);
+            }
         }
 
         Ok(o)
@@ -432,7 +440,7 @@ impl Rtc {
     }
 
     fn do_handle_receive(&mut self, now: Instant, r: net::Receive) -> Result<(), RtcError> {
-        //trace!("IN {:?}", r);
+        trace!("IN {:?}", r);
         self.last_now = now;
         use net::DatagramRecv::*;
         match r.contents {

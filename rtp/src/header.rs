@@ -148,6 +148,16 @@ impl RtpHeader {
         Some(ret)
     }
 
+    /// For RTX the original sequence number is inserted befor the RTP payload.
+    pub fn read_original_sequence_number(buf: &[u8], seq_no: &mut u16) -> usize {
+        *seq_no = u16::from_be_bytes([buf[0], buf[1]]);
+        2
+    }
+
+    pub fn is_rtx_null_packet(buf: &[u8]) -> bool {
+        &buf[0..10] == &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    }
+
     /// Sequencer number of this RTP header given the previous number.
     ///
     /// The logic detects wrap-arounds of the 16-bit RTP sequence number.

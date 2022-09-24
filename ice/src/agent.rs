@@ -854,7 +854,9 @@ impl IceAgent {
     /// Poll for the next datagram to send.
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
         let x = self.transmit.take();
-        trace!("Poll transmit: {:?}", x);
+        if x.is_some() {
+            trace!("Poll transmit: {:?}", x);
+        }
         x
     }
 
@@ -862,8 +864,6 @@ impl IceAgent {
     ///
     /// Returns `None` until the first ever `handle_timeout` is called.
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        trace!("Poll timeout with last_now: {:?}", self.last_now);
-
         // if we never called handle_timeout, there will be no current time.
         let last_now = self.last_now?;
 
@@ -895,8 +895,6 @@ impl IceAgent {
             last_now + Duration::from_secs(3)
         };
 
-        trace!("Next timeout in: {:?}", next - last_now);
-
         Some(next)
     }
 
@@ -917,7 +915,9 @@ impl IceAgent {
 
     pub fn poll_event(&mut self) -> Option<IceAgentEvent> {
         let x = self.events.pop_front();
-        trace!("Poll event: {:?}", x);
+        if x.is_some() {
+            trace!("Poll event: {:?}", x);
+        }
         x
     }
 

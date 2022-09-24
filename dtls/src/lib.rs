@@ -115,14 +115,18 @@ impl Dtls {
     /// Poll for the next datagram to send.
     pub fn poll_datagram(&mut self) -> Option<DatagramSend> {
         let x = self.tls.inner_mut().pop_outgoing();
-        trace!("Poll datagram: {:?}", x);
+        if let Some(x) = &x {
+            trace!("Poll datagram: {}", x.len());
+        }
         x
     }
 
     /// Poll for an event.
     pub fn poll_event(&mut self) -> Option<DtlsEvent> {
         let x = self.events.pop_front();
-        trace!("Poll event: {:?}", x);
+        if x.is_some() {
+            trace!("Poll event: {:?}", x);
+        }
         x
     }
 

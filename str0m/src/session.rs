@@ -143,7 +143,7 @@ impl Session {
         match r.contents {
             Rtp(buf) => {
                 if let Some(header) = RtpHeader::parse(buf, &self.exts) {
-                    self.handle_rtp(now, header, buf)?;
+                    self.handle_rtp(now, header, buf);
                 } else {
                     trace!("Failed to parse RTP header");
                 }
@@ -177,25 +177,103 @@ impl Session {
         Some(())
     }
 
-    fn handle_rtp(&mut self, now: Instant, header: RtpHeader, buf: &[u8]) -> Option<()> {
-        let media = only_media_mut(&mut self.media)
-            .find(|m| m.has_ssrc_rx(header.ssrc) || Some(m.mid()) == header.ext_vals.rtp_mid)?;
+    fn handle_rtp(&mut self, now: Instant, header: RtpHeader, buf: &[u8]) {
+        trace!("Handle RTP: {:?}", header);
+        let mid_in = header.ext_vals.rtp_mid;
+        let media = match only_media_mut(&mut self.media)
+            .find(|m| m.has_ssrc_rx(header.ssrc) || Some(m.mid()) == mid_in)
+        {
+            Some(v) => v,
+            None => {
+                trace!("No Media for {:?} or {:?}", mid_in, header.ssrc);
+                return;
+            }
+        };
 
-        let srtp = self.srtp_rx.as_mut()?;
-        let clock_rate = media.get_params(&header)?.clock_rate();
-        let source = media.get_source_rx(&header, now);
+        let srtp = match self.srtp_rx.as_mut() {
+            Some(v) => v,
+            None => {
+                trace!("Rejecting SRTP while missing SrtpContext");
+                return;
+            }
+        };
+        let clock_rate = match media.get_params(&header) {
+            Some(v) => v.clock_rate(),
+            None => {
+                trace!("No codec params for {:?}", header.payload_type);
+                return;
+            }
+        };
+        let is_rtx = media.is_rtx(header.ssrc);
+        let source = media.get_source_rx(&header, is_rtx, now);
         let seq_no = source.update(now, &header, clock_rate);
 
-        // The first few packets, the source is in "probabtion".
-        if !source.is_valid() {
-            return Some(());
+        // The first few packets, the source is in "probabtion". However for rtx,
+        // we let them straight through, since it would be weird to require probabtion
+        // time for resends (they are not contiguous) in the receiver register.
+        if !is_rtx && !source.is_valid() {
+            trace!("Source is not (yet) valid, probably probation");
+            return;
         }
 
-        let data = srtp.unprotect_rtp(buf, &header, *seq_no)?;
+        let mut data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
+            Some(v) => v,
+            None => {
+                trace!("Failed to unprotect SRTP");
+                return;
+            }
+        };
+
+        // For RTX we copy the header and modify the sequencer number to be that of the repaired stream.
+        let mut header = header.clone();
+
+        // This seq_no is the lengthened original seq_no for RTX stream, and just straight up
+        // lengthened seq_no for non-rtx.
+        let seq_no = if is_rtx {
+            let mut orig_seq_16 = 0;
+
+            // Not sure why we receive these initial packets with just nulls for the RTX.
+            if RtpHeader::is_rtx_null_packet(&data) {
+                trace!("Drop RTX null packet");
+                return;
+            }
+
+            let n = RtpHeader::read_original_sequence_number(&data, &mut orig_seq_16);
+            data.drain(0..n);
+            trace!(
+                "Repaired seq no {} -> {}",
+                header.sequence_number,
+                orig_seq_16
+            );
+            header.sequence_number = orig_seq_16;
+
+            let repaired_ssrc = match media.get_repaired_rx_ssrc(header.ssrc) {
+                Some(v) => v,
+                None => {
+                    trace!("Can't find repaired SSRC for: {}", header.ssrc);
+                    return;
+                }
+            };
+            trace!("Repaired {:?} -> {:?}", header.ssrc, repaired_ssrc);
+            header.ssrc = repaired_ssrc;
+
+            let source = media.get_source_rx(&header, false, now);
+            let orig_seq_no = source.update(now, &header, clock_rate);
+
+            if !source.is_valid() {
+                trace!("Repaired source is not (yet) valid, probably probation");
+                return;
+            }
+
+            orig_seq_no
+        } else {
+            seq_no
+        };
 
         // Parameters using the PT in the header. This will return the same CodecParams
         // instance regardless of whether this being a resend PT or not.
-        let params = media.get_params(&header)?;
+        // unwrap: is ok because we checked above.
+        let params = media.get_params(&header).unwrap();
 
         // This is the "main" PT and it will differ to header.payload_type if this is a resend.
         let pt = params.pt();
@@ -203,9 +281,9 @@ impl Session {
 
         // Buffers are unique per m-line (since PT is unique per m-line).
         let buf = media.get_buffer_rx(pt, codec);
-        buf.push(data, seq_no, header.marker);
 
-        Some(())
+        trace!("Add to buffer {}", seq_no);
+        buf.push(data, seq_no, header.marker);
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
@@ -383,14 +461,18 @@ impl Session {
         // configured, we (probably) have simulcast in both directions. If we have RTX, we have it
         // in both directions.
         for l in &new_lines {
-            let ssrcs: Vec<_> = l.ssrc_info().iter().map(|_| self.new_ssrc()).collect();
+            let ssrcs: Vec<_> = l
+                .ssrc_info()
+                .iter()
+                .map(|i| (self.new_ssrc(), i.repair.is_some()))
+                .collect();
 
             let media = self
                 .get_media(l.mid())
                 .expect("Media to be added for new m-line");
 
-            for ssrc in ssrcs {
-                media.add_source_tx(ssrc);
+            for (ssrc, is_rtx) in ssrcs {
+                media.add_source_tx(ssrc, is_rtx);
             }
         }
 
@@ -423,8 +505,8 @@ impl Session {
                 .get_media(add_media.mid)
                 .expect("Media to be added for pending mid");
 
-            for ssrc in add_media.ssrcs {
-                media.add_source_tx(ssrc);
+            for (ssrc, is_rtx) in add_media.ssrcs {
+                media.add_source_tx(ssrc, is_rtx);
             }
         }
 

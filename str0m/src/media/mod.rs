@@ -232,6 +232,7 @@ impl Media {
     pub(crate) fn get_source_rx(
         &mut self,
         header: &RtpHeader,
+        is_rtx: bool,
         now: Instant,
     ) -> &mut ReceiverSource {
         let maybe_idx = self.sources_rx.iter().position(|s| s.ssrc() == header.ssrc);
@@ -239,7 +240,12 @@ impl Media {
         if let Some(idx) = maybe_idx {
             &mut self.sources_rx[idx]
         } else {
-            let mut new_source = ReceiverSource::new(header, now);
+            info!(
+                "New ReceiverSource for {:?} {:?}",
+                header.ssrc, header.payload_type
+            );
+
+            let mut new_source = ReceiverSource::new(header, is_rtx, now);
 
             // We might have info for this source already.
             for info in &self.ssrc_info_rx {
@@ -262,14 +268,15 @@ impl Media {
     }
 
     pub(crate) fn has_nack(&mut self) -> bool {
-        self.sources_rx.iter_mut().any(|s| s.has_nack())
+        self.sources_rx
+            .iter_mut()
+            .filter(|s| !s.is_rtx())
+            .any(|s| s.has_nack())
     }
 
     pub(crate) fn handle_timeout(&mut self, now: Instant) {
-        if now >= self.cleanup_at() {
-            self.last_cleanup = now;
-            self.sources_rx.retain(|s| s.is_alive(now));
-        }
+        // TODO(martin): more cleanup
+        self.last_cleanup = now;
     }
 
     pub(crate) fn poll_timeout(&mut self) -> Option<Instant> {
@@ -302,6 +309,7 @@ impl Media {
         for s in &mut self.sources_tx {
             let sr = s.create_sender_report(now);
 
+            debug!("Created feedback SR: {:?}", sr);
             feedback.push_back(Rtcp::SenderReport(sr));
         }
 
@@ -309,6 +317,7 @@ impl Media {
             let mut rr = s.create_receiver_report(now);
             rr.sender_ssrc = first_ssrc;
 
+            debug!("Created feedback RR: {:?}", rr);
             feedback.push_back(Rtcp::ReceiverReport(rr));
         }
 
@@ -318,7 +327,11 @@ impl Media {
     /// Creates nack reports for receivers, if needed.
     pub(crate) fn create_nack(&mut self, feedback: &mut VecDeque<Rtcp>) {
         for s in &mut self.sources_rx {
+            if s.is_rtx() {
+                continue;
+            }
             if let Some(nack) = s.create_nack() {
+                debug!("Created feedback NACK {:?}", nack);
                 feedback.push_back(nack);
             }
         }
@@ -451,8 +464,8 @@ impl Media {
         None
     }
 
-    pub(crate) fn add_source_tx(&mut self, ssrc: Ssrc) {
-        self.sources_tx.push(SenderSource::new(ssrc));
+    pub(crate) fn add_source_tx(&mut self, ssrc: Ssrc, is_rtx: bool) {
+        self.sources_tx.push(SenderSource::new(ssrc, is_rtx));
     }
 
     pub(crate) fn handle_nack(
@@ -476,6 +489,29 @@ impl Media {
         }));
 
         Some(())
+    }
+
+    pub(crate) fn is_rtx(&self, ssrc: Ssrc) -> bool {
+        let is_rtx_rx = self.ssrc_info_rx.iter().any(|r| r.repair == Some(ssrc));
+        if is_rtx_rx {
+            return true;
+        }
+
+        let is_rtx_tx = self
+            .sources_tx
+            .iter()
+            .find(|s| s.ssrc() == ssrc)
+            .map(|s| s.is_rtx())
+            .unwrap_or(false);
+
+        is_rtx_tx
+    }
+
+    pub(crate) fn get_repaired_rx_ssrc(&self, ssrc: Ssrc) -> Option<Ssrc> {
+        self.ssrc_info_rx
+            .iter()
+            .find(|r| r.repair == Some(ssrc))
+            .map(|r| r.ssrc)
     }
 }
 
@@ -541,7 +577,11 @@ impl<'a> From<(&'a MediaLine, usize)> for Media {
 // in the offer to the other side.
 impl From<AddMedia> for Media {
     fn from(a: AddMedia) -> Self {
-        let sources_tx = a.ssrcs.into_iter().map(SenderSource::new).collect();
+        let sources_tx = a
+            .ssrcs
+            .into_iter()
+            .map(|(s, r)| SenderSource::new(s, r))
+            .collect();
         Media {
             mid: a.mid,
             index: a.index,

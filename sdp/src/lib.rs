@@ -158,9 +158,6 @@ macro_rules! sdp_ser {
                         }
                         let sdp = sdp.ok_or_else(|| de::Error::missing_field("sdp"))?;
                         let sdp = Sdp::parse(&sdp).map_err(|ph| {
-                            use std::error::Error;
-                            println!("{:?}", ph.source());
-
                             de::Error::custom(format!("Failed to parse SDP: {:?}", ph))
                         })?;
                         Ok($Struct(sdp))

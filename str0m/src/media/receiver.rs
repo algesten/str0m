@@ -1,15 +1,13 @@
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use rtp::{MediaTime, ReceiverReport, Rtcp, RtpHeader, SenderInfo, SeqNo, Ssrc};
 
 use super::register::ReceiverRegister;
 use sdp::SsrcInfo;
 
-// How long an SSRC receiver is alive without receiving any packets.
-const SSRC_ALIVE: Duration = Duration::from_millis(10_000);
-
 pub struct ReceiverSource {
     ssrc: Ssrc,
+    is_rtx: bool,
     info: Option<SsrcInfo>,
     register: ReceiverRegister,
     last_used: Instant,
@@ -18,10 +16,11 @@ pub struct ReceiverSource {
 }
 
 impl ReceiverSource {
-    pub fn new(header: &RtpHeader, now: Instant) -> Self {
+    pub fn new(header: &RtpHeader, is_rtx: bool, now: Instant) -> Self {
         let base_seq = header.sequence_number(None);
         ReceiverSource {
             ssrc: header.ssrc,
+            is_rtx,
             info: None,
             register: ReceiverRegister::new(base_seq),
             last_used: now,
@@ -34,6 +33,10 @@ impl ReceiverSource {
         self.ssrc
     }
 
+    pub fn is_rtx(&self) -> bool {
+        self.is_rtx
+    }
+
     pub fn update(&mut self, now: Instant, header: &RtpHeader, clock_rate: u32) -> SeqNo {
         self.last_used = now;
 
@@ -43,10 +46,6 @@ impl ReceiverSource {
         self.register.update_time(now, header.timestamp, clock_rate);
 
         seq_no
-    }
-
-    pub fn is_alive(&self, now: Instant) -> bool {
-        now <= (self.last_used + SSRC_ALIVE)
     }
 
     pub fn is_valid(&self) -> bool {

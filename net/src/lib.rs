@@ -81,7 +81,6 @@ impl<'a> Receive<'a> {
     }
 }
 
-#[derive(Debug)]
 pub enum DatagramRecv<'a> {
     Stun(StunMessage<'a>),
     Dtls(&'a [u8]),
@@ -177,4 +176,16 @@ impl Deref for DatagramSend {
     fn deref(&self) -> &Self::Target {
         &self.0
     }
+}
+
+impl fmt::Debug for DatagramRecv<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Stun(v) => f.debug_tuple("Stun").field(v).finish(),
+            Self::Dtls(v) => write!(f, "Dtls(len: {})", v.len()),
+            Self::Rtp(v) => write!(f, "Rtp(len: {})", v.len()),
+            Self::Rtcp(v) => write!(f, "Rtcp(len: {})", v.len()),
+        }
+    }
+    //
 }

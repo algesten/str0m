@@ -15,7 +15,7 @@ fn init_log() {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", "debug");
+        env::set_var("RUST_LOG", "trace");
     }
 
     tracing_subscriber::registry()

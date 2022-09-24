@@ -23,7 +23,7 @@ pub struct AddMedia {
     pub msid: Msid,
     pub kind: MediaKind,
     pub dir: Direction,
-    pub ssrcs: Vec<Ssrc>,
+    pub ssrcs: Vec<(Ssrc, bool)>,
 
     // These are filled in when creating a Media from AddMedia
     pub params: Vec<CodecParams>,
@@ -48,7 +48,9 @@ impl<'a> ChangeSet<'a> {
 
         let ssrcs = {
             // For video we do RTX channels.
-            let ssrc_base = if kind == MediaKind::Video { 2 } else { 1 };
+            let has_rtx = kind == MediaKind::Video;
+
+            let ssrc_base = if has_rtx { 2 } else { 1 };
 
             // TODO: allow configuring simulcast
             let simulcast_count = 1;
@@ -56,9 +58,10 @@ impl<'a> ChangeSet<'a> {
             let ssrc_count = ssrc_base * simulcast_count;
             let mut v = Vec::with_capacity(ssrc_count);
 
-            for _ in 0..ssrc_count {
+            for i in 0..ssrc_count {
                 // Allocate SSRC that are not in use in the session already.
-                v.push(self.rtc.new_ssrc());
+                let is_rtx = has_rtx && i % 2 == 1;
+                v.push((self.rtc.new_ssrc(), is_rtx));
             }
 
             v
