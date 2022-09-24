@@ -298,7 +298,7 @@ impl Rtc {
 
         if let Output::Event(e) = &o {
             if let Event::MediaData(x, y, z) = e {
-                info!("MediaData({}, {:?}, {})", x, y, z.len());
+                info!("MediaData({}, {:?}, len: {})", x, y, z.len());
             } else {
                 info!("{:?}", e);
             }

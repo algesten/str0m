@@ -37,7 +37,8 @@ pub struct ReceiverRegister {
     /// Received at last reception report generation.
     received_prior: i64,
 
-    /// Estimated jitter.
+    /// Estimated jitter. This is in the media time base, so divided by
+    /// 90_000 or 48_000 to normalize.
     jitter: f32,
 
     /// Check nacks from this point.
@@ -351,7 +352,7 @@ impl ReceiverRegister {
     }
 
     fn expected(&self) -> i64 {
-        *self.max_seq as i64 - (*self.base_seq + 1) as i64
+        *self.max_seq as i64 - *self.base_seq as i64 + 1
     }
 }
 
@@ -626,5 +627,34 @@ mod test {
         }
         assert_eq!(reg.nack_report(), None);
         assert_eq!(reg.nack_check_from, 125.into());
+    }
+
+    #[test]
+    fn expected_received_no_loss() {
+        let mut reg = ReceiverRegister::new(14.into());
+        reg.update_seq(14.into());
+        reg.update_seq(15.into());
+        reg.update_seq(16.into());
+        reg.update_seq(17.into());
+        // MIN_SEQUENTIAL=2, 14, 15 resets base_seq.
+        assert_eq!(reg.base_seq, 15.into());
+        assert_eq!(reg.max_seq, 17.into());
+        assert_eq!(reg.expected(), 3);
+        assert_eq!(reg.received, 3);
+        assert_eq!(reg.packets_lost(), 0);
+    }
+
+    #[test]
+    fn expected_received_with_loss() {
+        let mut reg = ReceiverRegister::new(14.into());
+        reg.update_seq(14.into());
+        reg.update_seq(15.into());
+        reg.update_seq(17.into());
+        // MIN_SEQUENTIAL=2, 14, 15 resets base_seq.
+        assert_eq!(reg.base_seq, 15.into());
+        assert_eq!(reg.max_seq, 17.into());
+        assert_eq!(reg.expected(), 3);
+        assert_eq!(reg.received, 2);
+        assert_eq!(reg.packets_lost(), 1);
     }
 }
