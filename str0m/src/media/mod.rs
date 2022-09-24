@@ -316,6 +316,9 @@ impl Media {
         // No sender SSRC, no encryption, no feedback possible.
         let first_ssrc = self.first_source_tx().map(|s| s.ssrc())?;
 
+        // Since we're making new sender/receiver reports, clear out previous.
+        feedback.retain(|r| !matches!(r, Rtcp::SenderReport(_) | Rtcp::ReceiverReport(_)));
+
         for s in &mut self.sources_tx {
             let sr = s.create_sender_report(now);
 
