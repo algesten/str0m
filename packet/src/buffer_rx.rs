@@ -1,13 +1,14 @@
 use std::collections::VecDeque;
 use std::fmt;
 
-use rtp::SeqNo;
+use rtp::{MediaTime, SeqNo};
 
 use crate::{CodecDepacketizer, Depacketizer, PacketError};
 
 // Internal struct to hold one pushed entry of RTP data with sequence number and marker.
 struct Rtp {
     data: Vec<u8>,
+    time: MediaTime,
     seq_no: SeqNo,
     marker: bool,
 }
@@ -28,7 +29,7 @@ impl DepacketizingBuffer {
         }
     }
 
-    pub fn push(&mut self, data: Vec<u8>, seq_no: SeqNo, marker: bool) {
+    pub fn push(&mut self, data: Vec<u8>, time: MediaTime, seq_no: SeqNo, marker: bool) {
         // We're not emitting samples in the wrong order. If we receive
         // packets that are before the last emitted, we drop.
         if let Some(last_emitted) = self.last_emitted {
@@ -50,6 +51,7 @@ impl DepacketizingBuffer {
                     i,
                     Rtp {
                         data,
+                        time,
                         seq_no,
                         marker,
                     },
@@ -58,17 +60,18 @@ impl DepacketizingBuffer {
         }
     }
 
-    pub fn emit_sample(&mut self) -> Result<Option<Vec<u8>>, PacketError> {
-        let (start, stop) = match self.find_contiguous() {
-            Some((a, b)) => (a, b),
-            None => return Ok(None),
-        };
+    pub fn emit_sample(&mut self) -> Option<Result<(MediaTime, Vec<u8>), PacketError>> {
+        let (start, stop) = self.find_contiguous()?;
 
         let mut out = Vec::new();
 
+        let time = self.queue.get(start).expect("first index exist").time;
+
         for i in start..=stop {
             let rtp = self.queue.remove(i).expect("contiguous index to exist");
-            self.depack.depacketize(&rtp.data, &mut out)?;
+            if let Err(e) = self.depack.depacketize(&rtp.data, &mut out) {
+                return Some(Err(e));
+            }
             self.last_emitted = Some(rtp.seq_no);
         }
 
@@ -76,7 +79,7 @@ impl DepacketizingBuffer {
         let last = self.last_emitted.expect("there to be a last emitted");
         self.queue.retain(|r| r.seq_no > last);
 
-        Ok(Some(out))
+        Some(Ok((time, out)))
     }
 
     fn find_contiguous(&self) -> Option<(usize, usize)> {

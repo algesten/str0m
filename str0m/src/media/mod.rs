@@ -2,8 +2,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use net_::{Id, DATAGRAM_MTU};
-use packet::{DepacketizingBuffer, PacketError, Packetized, PacketizingBuffer};
-use rtp::{Extensions, MediaTime, NackEntry, Rtcp, RtcpFb, RtpHeader, SeqNo, Ssrc, SRTP_OVERHEAD};
+use packet::{DepacketizingBuffer, Packetized, PacketizingBuffer};
+pub use rtp::MediaTime;
+use rtp::{Extensions, NackEntry, Rtcp, RtcpFb, RtpHeader, SeqNo, Ssrc, SRTP_OVERHEAD};
 
 pub use rtp::{Direction, Mid, Pt};
 pub use sdp::{Codec, FormatParams};
@@ -25,7 +26,7 @@ mod register;
 
 use crate::change::AddMedia;
 use crate::util::already_happened;
-use crate::RtcError;
+use crate::{MediaData, RtcError};
 
 // How often we remove unused senders/receivers.
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
@@ -466,12 +467,18 @@ impl Media {
             .or_insert_with(|| DepacketizingBuffer::new(codec.into()))
     }
 
-    pub(crate) fn poll_sample(&mut self) -> Option<(Mid, Pt, Result<Vec<u8>, PacketError>)> {
+    pub(crate) fn poll_sample(&mut self) -> Option<Result<MediaData, RtcError>> {
         for (pt, buf) in &mut self.buffers_rx {
-            match buf.emit_sample() {
-                Ok(Some(v)) => return Some((self.mid, *pt, Ok(v))),
-                Err(e) => return Some((self.mid, *pt, Err(e))),
-                Ok(None) => continue,
+            if let Some(r) = buf.emit_sample() {
+                return Some(
+                    r.map(|(time, data)| MediaData {
+                        mid: self.mid,
+                        pt: *pt,
+                        time,
+                        data,
+                    })
+                    .map_err(|e| RtcError::Packet(self.mid, *pt, e)),
+                );
             }
         }
         None
@@ -645,7 +652,10 @@ impl MediaWriter<'_> {
             PacketizingBuffer::new(codec.into(), max_retain)
         });
 
-        buf.push_sample(ts, data, ssrc, self.sim_lvl, DATAGRAM_MTU - SRTP_OVERHEAD)?;
+        if let Err(e) = buf.push_sample(ts, data, ssrc, self.sim_lvl, DATAGRAM_MTU - SRTP_OVERHEAD)
+        {
+            return Err(RtcError::Packet(self.media.mid, self.pt, e));
+        };
 
         Ok(())
     }

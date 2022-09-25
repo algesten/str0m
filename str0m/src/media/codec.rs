@@ -5,7 +5,7 @@ use sdp::{Codec, FormatParams};
 
 use super::MediaKind;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CodecParams(PayloadParams);
 
 impl CodecParams {

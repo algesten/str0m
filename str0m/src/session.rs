@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU};
-use rtp::{Extensions, Mid, Pt, ReceiverReport, ReportList, Rtcp, RtcpFb};
+use rtp::{Extensions, MediaTime, Mid, ReceiverReport, ReportList, Rtcp, RtcpFb};
 use rtp::{RtcpHeader, RtpHeader, SessionId};
 use rtp::{RtcpType, SrtpContext, SrtpKey, Ssrc};
 use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
@@ -12,10 +12,10 @@ use sdp::{Answer, MediaLine, Offer, Sdp};
 
 use crate::change::{Change, Changes};
 use crate::media::CodecConfig;
-use crate::net;
 use crate::session_sdp::AsMediaLine;
 use crate::util::{already_happened, Soonest};
 use crate::RtcError;
+use crate::{net, MediaData};
 
 use super::{Channel, Media};
 
@@ -47,8 +47,8 @@ pub enum MediaOrChannel {
 }
 
 pub enum MediaEvent {
-    MediaData(Mid, Pt, Vec<u8>),
-    MediaError(Mid, Pt, RtcError),
+    MediaData(MediaData),
+    MediaError(RtcError),
 }
 
 impl Session {
@@ -279,11 +279,13 @@ impl Session {
         let pt = params.pt();
         let codec = params.codec();
 
+        let time = MediaTime::new(header.timestamp as i64, clock_rate as i64);
+
         // Buffers are unique per m-line (since PT is unique per m-line).
         let buf = media.get_buffer_rx(pt, codec);
 
         trace!("Add to buffer {}", seq_no);
-        buf.push(data, seq_no, header.marker);
+        buf.push(data, time, seq_no, header.marker);
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
@@ -304,10 +306,10 @@ impl Session {
 
     pub fn poll_event(&mut self) -> Option<MediaEvent> {
         for media in self.media() {
-            if let Some((mid, pt, r)) = media.poll_sample() {
+            if let Some(r) = media.poll_sample() {
                 match r {
-                    Ok(v) => return Some(MediaEvent::MediaData(mid, pt, v)),
-                    Err(e) => return Some(MediaEvent::MediaError(mid, pt, e.into())),
+                    Ok(v) => return Some(MediaEvent::MediaData(v)),
+                    Err(e) => return Some(MediaEvent::MediaError(e)),
                 }
             }
         }

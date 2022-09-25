@@ -8,7 +8,7 @@ use net::Id;
 
 macro_rules! str_id {
     ($id:ident) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        #[derive(Clone, Copy, PartialEq, Eq, Hash)]
         pub struct $id([u8; 3]);
 
         impl $id {
@@ -25,6 +25,13 @@ macro_rules! str_id {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 let s: &str = self;
                 write!(f, "{}", s)
+            }
+        }
+
+        impl fmt::Debug for $id {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let s: &str = self;
+                write!(f, "Mid({})", s)
             }
         }
 

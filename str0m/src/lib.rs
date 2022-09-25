@@ -1,16 +1,16 @@
 #[macro_use]
 extern crate tracing;
 
-use std::io;
 use std::net::SocketAddr;
 use std::time::Instant;
+use std::{fmt, io};
 
 use change::Changes;
 use dtls::{Dtls, DtlsEvent, Fingerprint};
-use ice::IceAgent;
 use ice::IceAgentEvent;
+use ice::{IceAgent, IceError};
 use net_::NetError;
-use rtp::{Mid, Pt, Ssrc};
+use rtp::{MediaTime, Mid, Pt, Ssrc};
 use sdp::{Sdp, Setup};
 use thiserror::Error;
 
@@ -63,8 +63,8 @@ pub enum RtcError {
     Dtls(#[from] net::DtlsError),
 
     /// RTP packetization error
-    #[error("{0}")]
-    Packet(#[from] packet::PacketError),
+    #[error("{0} {1} {2}")]
+    Packet(Mid, Pt, packet::PacketError),
 
     /// The PT attempted to write to is not known.
     #[error("PT is unknown {0}")]
@@ -77,6 +77,9 @@ pub enum RtcError {
 
     #[error("{0}")]
     NetError(#[from] NetError),
+
+    #[error("{0}")]
+    IceError(#[from] IceError),
 }
 
 pub struct Rtc {
@@ -103,8 +106,16 @@ pub enum Event {
     IceConnectionStateChange(IceConnectionState),
     MediaAdded(Mid),
     ChannelAdded(Mid),
-    MediaData(Mid, Pt, Vec<u8>),
-    MediaError(Mid, Pt, RtcError),
+    MediaData(MediaData),
+    MediaError(RtcError),
+}
+
+#[derive(PartialEq, Eq)]
+pub struct MediaData {
+    pub mid: Mid,
+    pub pt: Pt,
+    pub time: MediaTime,
+    pub data: Vec<u8>,
 }
 
 pub enum Input<'a> {
@@ -136,6 +147,14 @@ impl Rtc {
 
     pub fn add_local_candidate(&mut self, c: Candidate) {
         self.ice.add_local_candidate(c);
+    }
+
+    pub fn add_remote_candidate(&mut self, c: Candidate) {
+        self.ice.add_remote_candidate(c);
+    }
+
+    pub fn ice_connection_state(&self) -> IceConnectionState {
+        self.ice.state()
     }
 
     pub fn create_offer(&mut self) -> ChangeSet {
@@ -299,11 +318,7 @@ impl Rtc {
         let o = self.do_poll_output()?;
 
         if let Output::Event(e) = &o {
-            if let Event::MediaData(x, y, z) = e {
-                info!("MediaData({}, {:?}, len: {})", x, y, z.len());
-            } else {
-                info!("{:?}", e);
-            }
+            info!("{:?}", e);
         }
 
         Ok(o)
@@ -371,12 +386,10 @@ impl Rtc {
 
         while let Some(e) = self.session.poll_event() {
             match e {
-                MediaEvent::MediaData(mid, pt, data) => {
-                    return Ok(Output::Event(Event::MediaData(mid, pt, data)))
+                MediaEvent::MediaData(m) => {
+                    return Ok(Output::Event(Event::MediaData(m)));
                 }
-                MediaEvent::MediaError(mid, pt, err) => {
-                    return Ok(Output::Event(Event::MediaError(mid, pt, err)))
-                }
+                MediaEvent::MediaError(e) => return Ok(Output::Event(Event::MediaError(e))),
             }
         }
 
@@ -476,13 +489,22 @@ impl PartialEq for Event {
             (Self::IceConnectionStateChange(l0), Self::IceConnectionStateChange(r0)) => l0 == r0,
             (Self::MediaAdded(l0), Self::MediaAdded(r0)) => l0 == r0,
             (Self::ChannelAdded(l0), Self::ChannelAdded(r0)) => l0 == r0,
-            (Self::MediaData(l0, l1, l2), Self::MediaData(r0, r1, r2)) => {
-                l0 == r0 && l1 == r1 && l2 == r2
-            }
-            (Self::MediaError(_, _, _), Self::MediaError(_, _, _)) => false,
+            (Self::MediaData(m1), Self::MediaData(m2)) => m1 == m2,
+            (Self::MediaError(_), Self::MediaError(_)) => false,
             _ => false,
         }
     }
 }
 
 impl Eq for Event {}
+
+impl fmt::Debug for MediaData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MediaData")
+            .field("mid", &self.mid)
+            .field("pt", &self.pt)
+            .field("time", &self.time)
+            .field("len", &self.data.len())
+            .finish()
+    }
+}
