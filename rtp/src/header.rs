@@ -29,7 +29,7 @@ impl RtpHeader {
             timestamp: ts.as_ntp_32(),
             ssrc,
             ext_vals: ExtensionValues::default(),
-            header_len: 12,
+            header_len: 16,
         }
     }
 
@@ -58,10 +58,34 @@ impl RtpHeader {
             }
         }
 
-        let bede_len = ((ext_len + pad) / 4) as u16;
+        let bede_len = (ext_len / 4) as u16;
         buf[14..16].copy_from_slice(&bede_len.to_be_bytes());
 
-        14 + ext_len
+        16 + ext_len
+    }
+
+    pub fn pad_packet(
+        buf: &mut [u8],
+        header_len: usize,
+        body_len: usize,
+        block_size: usize,
+    ) -> usize {
+        let pad = block_size - body_len % block_size;
+        let pad = if pad == block_size { 0 } else { pad };
+
+        let len = header_len + body_len;
+
+        for i in len..(len + pad) {
+            buf[i] = 0;
+        }
+        buf[len + pad - 1] = pad as u8;
+
+        if pad > 0 {
+            // set the padding bit
+            buf[0] |= 0b00_1_0_0000;
+        }
+
+        pad
     }
 
     pub fn parse(buf: &[u8], exts: &Extensions) -> Option<RtpHeader> {
@@ -120,6 +144,12 @@ impl RtpHeader {
             let ext_len = ext_words as usize * 4;
 
             let buf: &[u8] = &buf[4..];
+
+            if buf.len() < ext_len {
+                trace!("RTP ext len larger than header {} > {}", buf.len(), ext_len);
+                return None;
+            }
+
             if ext_type == 0xbede {
                 // each m-line has a specific extmap mapping.
                 exts.parse(&buf[..ext_len], &mut ext);
