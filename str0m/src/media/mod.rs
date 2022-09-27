@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 use net_::{Id, DATAGRAM_MTU};
 use packet::{DepacketizingBuffer, Packetized, PacketizingBuffer};
 pub use rtp::MediaTime;
-use rtp::{Extensions, NackEntry, Rtcp, RtcpFb, RtpHeader, SeqNo, Ssrc, SRTP_OVERHEAD};
+use rtp::{Extensions, NackEntry, Rtcp, RtcpFb, RtpHeader};
+use rtp::{SeqNo, Ssrc, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
 pub use rtp::{Direction, Mid, Pt};
 pub use sdp::{Codec, FormatParams};
@@ -223,19 +224,26 @@ impl Media {
         header.ext_vals.transport_cc = Some(*twcc as u16);
         *twcc += 1;
 
-        let mut buf = Vec::with_capacity(DATAGRAM_MTU);
+        let mut buf = vec![0; DATAGRAM_MTU];
         let header_len = header.write_to(&mut buf, exts);
         assert!(header_len % 4 == 0, "RTP header must be multiple of 4");
+        header.header_len = header_len;
 
-        let mut data_out = &mut buf[header_len..];
+        let mut body_out = &mut buf[header_len..];
 
         // For resends, the original seq_no is inserted before the payload.
         if let Some(orig_seq_no) = orig_seq_no {
-            let n = RtpHeader::write_original_sequence_number(data_out, orig_seq_no);
-            data_out = &mut data_out[n..];
+            let n = RtpHeader::write_original_sequence_number(body_out, orig_seq_no);
+            body_out = &mut body_out[n..];
         }
 
-        data_out[..pkt.data.len()].copy_from_slice(&pkt.data);
+        let body_len = pkt.data.len();
+        body_out[..body_len].copy_from_slice(&pkt.data);
+
+        // pad for SRTP
+        let pad_len = RtpHeader::pad_packet(&mut buf[..], header_len, body_len, SRTP_BLOCK_SIZE);
+
+        buf.truncate(header_len + body_len + pad_len);
 
         Some((header, buf, seq_no))
     }
@@ -633,7 +641,7 @@ pub struct MediaWriter<'a> {
 }
 
 impl MediaWriter<'_> {
-    pub fn write(&mut self, ts: MediaTime, data: &[u8]) -> Result<(), RtcError> {
+    pub fn write(&mut self, ts: MediaTime, data: &[u8]) -> Result<usize, RtcError> {
         let codec = match self.codec {
             Some(v) => v,
             None => return Err(RtcError::UnknownPt(self.pt)),
@@ -648,7 +656,7 @@ impl MediaWriter<'_> {
         let ssrc = tx.ssrc();
 
         let buf = self.media.buffers_tx.entry(self.pt).or_insert_with(|| {
-            let max_retain = if codec.is_audio() { 50 } else { 10 };
+            let max_retain = if codec.is_audio() { 5000 } else { 1000 };
             PacketizingBuffer::new(codec.into(), max_retain)
         });
 
@@ -657,7 +665,7 @@ impl MediaWriter<'_> {
             return Err(RtcError::Packet(self.media.mid, self.pt, e));
         };
 
-        Ok(())
+        Ok(buf.free())
     }
 }
 
