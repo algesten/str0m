@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::fmt;
 
 use rtp::{MediaTime, SeqNo, Ssrc};
 
@@ -88,5 +89,23 @@ impl PacketizingBuffer {
 
     pub fn first_seq_no(&self) -> Option<SeqNo> {
         self.queue.front().and_then(|p| p.seq_no)
+    }
+
+    pub fn free(&self) -> usize {
+        self.max_retain - self.queue.len()
+    }
+}
+
+impl fmt::Debug for Packetized {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Packetized")
+            .field("ts", &self.ts)
+            .field("len", &self.data.len())
+            .field("first", &self.first)
+            .field("last", &self.last)
+            .field("ssrc", &self.ssrc)
+            .field("sim_lvl", &self.sim_lvl)
+            .field("seq_no", &self.seq_no)
+            .finish()
     }
 }
