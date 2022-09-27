@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::convert::TryInto;
 use std::ops::{Add, Sub};
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use once_cell::sync::Lazy;
 
@@ -212,6 +212,19 @@ impl From<Instant> for MediaTime {
             .expect("u64 to represent micros since unix epoch");
 
         MediaTime::from_micros(duration_micros + MICROS_1900)
+    }
+}
+
+impl Into<Duration> for MediaTime {
+    fn into(self) -> Duration {
+        let m = self.rebase(MICROS);
+        Duration::from_micros(m.0 as u64)
+    }
+}
+
+impl From<Duration> for MediaTime {
+    fn from(v: Duration) -> Self {
+        MediaTime::new(v.as_micros() as i64, MICROS)
     }
 }
 
