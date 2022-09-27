@@ -206,7 +206,7 @@ impl Rtc {
         }
 
         // Ensure setup=active/passive is corresponding remote and init dtls.
-        self.init_setup_dtls(&offer);
+        self.init_setup_dtls(&offer)?;
 
         // Modify session with offer
         self.session.apply_offer(offer)?;
@@ -250,7 +250,7 @@ impl Rtc {
             self.add_ice_details(&answer)?;
 
             // Ensure setup=active/passive is corresponding remote and init dtls.
-            self.init_setup_dtls(&answer);
+            self.init_setup_dtls(&answer)?;
 
             if self.remote_fingerprint.is_none() {
                 if let Some(f) = answer.fingerprint() {
@@ -286,17 +286,30 @@ impl Rtc {
         Ok(())
     }
 
-    fn init_setup_dtls(&mut self, remote_sdp: &Sdp) -> Option<()> {
+    fn init_setup_dtls(&mut self, remote_sdp: &Sdp) -> Result<(), RtcError> {
         if let Some(remote_setup) = remote_sdp.setup() {
-            self.setup = self.setup.compare_to_remote(remote_setup)?;
+            self.setup = self.setup.compare_to_remote(remote_setup).ok_or_else(|| {
+                RtcError::RemoteSdp(format!(
+                    "impossible setup {:?} != {:?}",
+                    self.setup, remote_setup
+                ))
+            })?;
+        } else {
+            warn!("Missing a=setup line");
         }
+
+        info!("DTLS setup is: {:?}", self.setup);
+        assert!(self.setup != Setup::ActPass);
 
         if !self.dtls.is_inited() {
             let active = self.setup == Setup::Active;
             self.dtls.set_active(active);
+            if active {
+                self.dtls.handle_handshake()?;
+            }
         }
 
-        Some(())
+        Ok(())
     }
 
     /// Creates a new Mid that is not in the session already.
