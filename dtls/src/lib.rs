@@ -165,7 +165,7 @@ impl Dtls {
     /// Handle handshaking.
     ///
     /// Once handshaken, this becomes a noop.
-    fn handle_handshake(&mut self) -> Result<bool, DtlsError> {
+    pub fn handle_handshake(&mut self) -> Result<bool, DtlsError> {
         if self.tls.is_handshaken() {
             // Nice. Nothing to do.
             Ok(false)
