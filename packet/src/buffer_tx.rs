@@ -92,7 +92,7 @@ impl PacketizingBuffer {
     }
 
     pub fn free(&self) -> usize {
-        self.max_retain - self.queue.len()
+        self.max_retain - self.queue.len() + self.emit_next
     }
 }
 

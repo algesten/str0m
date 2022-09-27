@@ -656,7 +656,7 @@ impl MediaWriter<'_> {
         let ssrc = tx.ssrc();
 
         let buf = self.media.buffers_tx.entry(self.pt).or_insert_with(|| {
-            let max_retain = if codec.is_audio() { 5000 } else { 1000 };
+            let max_retain = if codec.is_audio() { 4096 } else { 2048 };
             PacketizingBuffer::new(codec.into(), max_retain)
         });
 
