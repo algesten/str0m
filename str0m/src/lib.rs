@@ -380,7 +380,9 @@ impl Rtc {
                 }
                 DtlsEvent::SrtpKeyingMaterial(mat) => {
                     info!("DTLS set SRTP keying material");
-                    self.session.set_keying_material(mat);
+                    assert!(self.setup != Setup::ActPass);
+                    let active = self.setup == Setup::Active;
+                    self.session.set_keying_material(mat, active);
                 }
                 DtlsEvent::RemoteFingerprint(v1) => {
                     debug!("DTLS verify remote fingerprint");

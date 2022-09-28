@@ -163,12 +163,10 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
 
         progress(&mut l, &mut r)?;
 
-        if time_l > MediaTime::from_seconds(30) {
+        if time_l > MediaTime::from_seconds(10) {
             break;
         }
     }
-
-    println!("{:?}", r.events);
 
     Ok(())
 }

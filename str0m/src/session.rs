@@ -101,12 +101,16 @@ impl Session {
         &self.codec_config
     }
 
-    pub fn set_keying_material(&mut self, mat: KeyingMaterial) {
-        let key_rx = SrtpKey::new(&mat, true);
+    pub fn set_keying_material(&mut self, mat: KeyingMaterial, active: bool) {
+        // Whether we're active or passive determines if we use the left or right
+        // hand side of the key material to derive input/output.
+        let left = active;
+
+        let key_rx = SrtpKey::new(&mat, !left);
         let ctx_rx = SrtpContext::new(key_rx);
         self.srtp_rx = Some(ctx_rx);
 
-        let key_tx = SrtpKey::new(&mat, false);
+        let key_tx = SrtpKey::new(&mat, left);
         let ctx_tx = SrtpContext::new(key_tx);
         self.srtp_tx = Some(ctx_tx);
     }

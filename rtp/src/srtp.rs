@@ -235,14 +235,14 @@ pub struct SrtpKey {
 }
 
 impl SrtpKey {
-    pub fn new(mat: &KeyingMaterial, input: bool) -> Self {
+    pub fn new(mat: &KeyingMaterial, left: bool) -> Self {
         // layout in SrtpKeyMaterial is [key_input, key_output, salt_input, salt_output]
 
         const ML: usize = 16; // master len
         const SL: usize = 14; // salt len
 
         // offset 0, offset 1
-        let (o0, o1) = if input { (0, 0) } else { (ML, SL) };
+        let (o0, o1) = if left { (0, 0) } else { (ML, SL) };
 
         let mut master = [0; ML];
         let mut salt = [0; SL];
@@ -313,8 +313,6 @@ type RtpIv = [u8; 16];
 
 impl Derived {
     fn from_key(srtp_key: &SrtpKey) -> (Self, Self) {
-        let mut hmac = [0; 20];
-
         // RTP AES Counter
 
         const LABEL_RTP_AES: u8 = 0;
@@ -323,9 +321,12 @@ impl Derived {
 
         // RTP SHA1 HMAC
 
-        const LABEL_RTP_HMAC: u8 = 1;
-        srtp_key.derive(LABEL_RTP_HMAC, &mut hmac[..]);
-        let rtp_hmac = HmacSha1::new_from_slice(&hmac[..]).expect("RTP hmac");
+        let rtp_hmac = {
+            const LABEL_RTP_HMAC: u8 = 1;
+            let mut hmac = [0; 20];
+            srtp_key.derive(LABEL_RTP_HMAC, &mut hmac[..]);
+            HmacSha1::new_from_slice(&hmac[..]).expect("RTP hmac")
+        };
 
         // RTP IV SALT
 
@@ -341,9 +342,12 @@ impl Derived {
 
         // RTCP SHA1 HMAC
 
-        const LABEL_RTCP_HMAC: u8 = 4;
-        srtp_key.derive(LABEL_RTCP_HMAC, &mut hmac[..]);
-        let rtcp_hmac = HmacSha1::new_from_slice(&hmac[..]).expect("RTCP hmac");
+        let rtcp_hmac = {
+            const LABEL_RTCP_HMAC: u8 = 4;
+            let mut hmac = [0; 20];
+            srtp_key.derive(LABEL_RTCP_HMAC, &mut hmac[..]);
+            HmacSha1::new_from_slice(&hmac[..]).expect("RTCP hmac")
+        };
 
         // RTCP IV SALT
 
