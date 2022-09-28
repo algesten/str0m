@@ -219,6 +219,11 @@ impl Media {
         let mut header = RtpHeader::new(pt, seq_no, pkt.ts, ssrc);
         header.marker = pkt.last;
 
+        // We can fill out as many values we want here, only the negotiated ones will
+        // be used when writing the RTP packet.
+        //
+        // These need to match `Extension::is_supported()` so we are sending what we are
+        // declaring we support.
         header.ext_vals.abs_send_time = Some(now.into());
         header.ext_vals.rtp_mid = Some(self.mid);
         header.ext_vals.transport_cc = Some(*twcc as u16);

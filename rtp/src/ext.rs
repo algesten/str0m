@@ -2,13 +2,23 @@ use std::fmt;
 use std::str::from_utf8;
 
 use crate::mtime::MediaTime;
-use crate::{Direction, Mid, RtpError, StreamId};
+use crate::{Direction, Mid, StreamId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExtMap {
     pub id: u8,                       // 1-14 inclusive, 0 and 15 are reserved.
     pub direction: Option<Direction>, // recvonly, sendrecv, sendonly, inactive
     pub ext: Extension,
+}
+
+impl ExtMap {
+    pub fn new(id: u8, ext: Extension) -> Self {
+        ExtMap {
+            id,
+            direction: None,
+            ext,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -114,21 +124,20 @@ impl Extension {
     }
 
     /// Extensions that we have implemented support for.
+    ///
+    /// Make sure this corresponds to `Extensions::default_mappings()`.
     pub fn is_supported(&self) -> bool {
         use Extension::*;
         match self {
-            // These seem to be the bare minimum to get Chrome
-            // to send RTP for a simulcast video
-            RtpStreamId => true,
-            RepairedRtpStreamId => true,
             RtpMid => true,
             AbsoluteSendTime => true,
-            VideoOrientation => true,
-            AudioLevel => true,
-
-            // transport wide cc
             TransportSequenceNumber => true,
 
+            // TODO below
+            AudioLevel => true,
+            RtpStreamId => false,
+            RepairedRtpStreamId => false,
+            VideoOrientation => false,
             TransmissionTimeOffset => false,
             PlayoutDelay => false,
             VideoContentType => false,
@@ -178,8 +187,27 @@ impl Extension {
     }
 }
 
+// As of 2022-09-28, for audio google chrome offers these.
+// "a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level"
+// "a=extmap:2 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time"
+// "a=extmap:3 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01"
+// "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid"
+//
+// For video these.
+// "a=extmap:2 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time"
+// "a=extmap:3 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01"
+// "a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid"
+// "a=extmap:5 http://www.webrtc.org/experiments/rtp-hdrext/playout-delay"
+// "a=extmap:6 http://www.webrtc.org/experiments/rtp-hdrext/video-content-type"
+// "a=extmap:7 http://www.webrtc.org/experiments/rtp-hdrext/video-timing"
+// "a=extmap:8 http://www.webrtc.org/experiments/rtp-hdrext/color-space"
+// "a=extmap:10 urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id"
+// "a=extmap:11 urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id"
+// "a=extmap:13 urn:3gpp:video-orientation"
+// "a=extmap:14 urn:ietf:params:rtp-hdrext:toffset"
+
 /// Mapping between RTP extension id to what extension that is.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Extensions([Option<Extension>; 14]);
 
 impl Extensions {
@@ -187,23 +215,33 @@ impl Extensions {
         Extensions([None; 14])
     }
 
-    pub fn apply_mapping(&mut self, x: &ExtMap) -> Result<(), RtpError> {
-        if x.id >= 1 && x.id <= 14 {
-            // Mapping goes from 0 to 13.
-            let id = x.id as usize - 1;
+    pub fn default_mappings() -> Extensions {
+        let mut exts = Self::new();
 
-            if let Some(v) = self.0[id] {
-                if v == x.ext {
-                    // same mapping, nothing to do
-                } else {
-                    return Err(RtpError::ExtMapDiffers(v, x.ext));
-                }
-            } else {
-                self.0[id] = Some(x.ext);
+        exts.apply_mapping(&ExtMap::new(2, Extension::AbsoluteSendTime));
+        exts.apply_mapping(&ExtMap::new(3, Extension::TransportSequenceNumber));
+        exts.apply_mapping(&ExtMap::new(4, Extension::RtpMid));
+
+        exts
+    }
+
+    pub fn apply_mapping(&mut self, x: &ExtMap) {
+        if x.id < 1 && x.id > 14 {
+            return;
+        }
+
+        // Mapping goes from 0 to 13.
+        let i = x.id as usize - 1;
+
+        // Remove previous mapping if we have one.
+        for (idx, m) in self.0.iter_mut().enumerate() {
+            if i != idx && *m == Some(x.ext) {
+                m.take();
             }
         }
 
-        Ok(())
+        // Put it in place
+        self.0[i] = Some(x.ext);
     }
 
     pub fn lookup(&self, id: u8) -> Option<Extension> {

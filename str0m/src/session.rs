@@ -56,7 +56,7 @@ impl Session {
         Session {
             id: SessionId::new(),
             media: vec![],
-            exts: Extensions::new(),
+            exts: Extensions::default_mappings(),
             srtp_rx: None,
             srtp_tx: None,
             last_regular: already_happened(),
@@ -596,7 +596,7 @@ impl Session {
             .filter(|x| x.ext.is_supported());
 
         for x in extmaps {
-            self.exts.apply_mapping(&x)?;
+            self.exts.apply_mapping(&x);
         }
 
         Ok(())

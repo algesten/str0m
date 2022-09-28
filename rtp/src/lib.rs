@@ -40,9 +40,6 @@ pub enum RtpError {
     /// Other IO errors.
     #[error("{0}")]
     Io(#[from] io::Error),
-
-    #[error("Differing ext id to ext type: {0} != {1}")]
-    ExtMapDiffers(Extension, Extension),
 }
 
 #[cfg(all(fuzzing, test))]
