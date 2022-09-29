@@ -67,8 +67,7 @@ impl DepacketizingBuffer {
 
         let time = self.queue.get(start).expect("first index exist").time;
 
-        for i in start..=stop {
-            let rtp = self.queue.remove(i).expect("contiguous index to exist");
+        for rtp in self.queue.drain(start..=stop) {
             if let Err(e) = self.depack.depacketize(&rtp.data, &mut out) {
                 return Some(Err(e));
             }
@@ -104,7 +103,7 @@ impl DepacketizingBuffer {
                 stop = None;
             } else {
                 if start.is_some() {
-                    if iseq + offset != index {
+                    if index + offset != iseq {
                         // packets are not contiguous.
                         start = None;
                         stop = None;
@@ -134,5 +133,65 @@ impl fmt::Debug for Rtp {
             .field("marker", &self.marker)
             .field("len", &self.data.len())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    // Chrome sends padding packets in between real RTP frames. A bit unclear why.
+    #[test]
+    fn padded_frame() {
+        let mut buf =
+            DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepacketizer)));
+
+        let t1 = MediaTime::new(0, 90_000);
+        buf.push(vec![1], t1, 0.into(), false);
+        buf.push(vec![2], t1, 1.into(), false);
+        buf.push(vec![3], t1, 2.into(), true);
+
+        // padding packet for same time t1 here.
+        buf.push(vec![], t1, 3.into(), false);
+
+        let t2 = MediaTime::new(1500, 90_000);
+        buf.push(vec![4], t2, 4.into(), false);
+        buf.push(vec![5], t2, 5.into(), false);
+        buf.push(vec![6], t2, 6.into(), true);
+
+        buf.push(vec![], t2, 7.into(), false);
+
+        let (rt1, d1) = buf.emit_sample().expect("sample 1").unwrap();
+        let (rt2, d2) = buf.emit_sample().expect("sample 2").unwrap();
+        assert_eq!(rt1, t1);
+        assert_eq!(rt2, t2);
+        assert_eq!(d1, vec![1, 2, 3]);
+        assert_eq!(d2, vec![4, 5, 6]);
+    }
+}
+
+#[derive(Debug)]
+struct TestDepacketizer;
+
+impl Depacketizer for TestDepacketizer {
+    fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
+        out.extend_from_slice(packet);
+        Ok(())
+    }
+
+    fn is_partition_head(&self, packet: &[u8]) -> bool {
+        !packet.is_empty() && packet[0] % 3 == 1
+    }
+
+    fn is_partition_tail(&self, marker: bool, packet: &[u8]) -> bool {
+        if packet.is_empty() {
+            return false;
+        }
+
+        let is_tail = packet[0] % 3 == 0;
+        if is_tail {
+            assert!(marker);
+        }
+        is_tail
     }
 }

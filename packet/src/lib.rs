@@ -38,7 +38,7 @@ pub trait Packetizer: fmt::Debug {
 /// Depacketizes an RTP payload.
 ///
 /// Removes any RTP specific data from the payload.
-pub trait Depacketizer {
+pub trait Depacketizer: fmt::Debug {
     /// Unpack the RTP packet into a provided Vec<u8>.
     fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError>;
 
@@ -119,6 +119,7 @@ pub enum CodecPacketizer {
     Opus(OpusPacketizer),
     Vp8(Vp8Packetizer),
     Vp9(Vp9Packetizer),
+    Boxed(Box<dyn Packetizer + Send>),
 }
 
 #[derive(Debug)]
@@ -128,6 +129,7 @@ pub enum CodecDepacketizer {
     Opus(OpusDepacketizer),
     Vp8(Vp8Depacketizer),
     Vp9(Vp9Depacketizer),
+    Boxed(Box<dyn Depacketizer + Send>),
 }
 
 impl From<Codec> for CodecPacketizer {
@@ -170,6 +172,7 @@ impl Packetizer for CodecPacketizer {
             Opus(v) => v.packetize(mtu, b),
             Vp8(v) => v.packetize(mtu, b),
             Vp9(v) => v.packetize(mtu, b),
+            Boxed(v) => v.packetize(mtu, b),
         }
     }
 }
@@ -183,6 +186,7 @@ impl Depacketizer for CodecDepacketizer {
             Opus(v) => v.depacketize(packet, out),
             Vp8(v) => v.depacketize(packet, out),
             Vp9(v) => v.depacketize(packet, out),
+            Boxed(v) => v.depacketize(packet, out),
         }
     }
 
@@ -194,6 +198,7 @@ impl Depacketizer for CodecDepacketizer {
             Opus(v) => v.is_partition_head(packet),
             Vp8(v) => v.is_partition_head(packet),
             Vp9(v) => v.is_partition_head(packet),
+            Boxed(v) => v.is_partition_head(packet),
         }
     }
 
@@ -205,6 +210,7 @@ impl Depacketizer for CodecDepacketizer {
             Opus(v) => v.is_partition_tail(marker, packet),
             Vp8(v) => v.is_partition_tail(marker, packet),
             Vp9(v) => v.is_partition_tail(marker, packet),
+            Boxed(v) => v.is_partition_tail(marker, packet),
         }
     }
 }
