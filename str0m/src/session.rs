@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU};
+use rtp::{extend_seq, RtcpHeader, RtpHeader, SessionId, TwccRegister};
 use rtp::{Extensions, MediaTime, Mid, ReceiverReport, ReportList, Rtcp, RtcpFb};
-use rtp::{RtcpHeader, RtpHeader, SessionId};
 use rtp::{RtcpType, SrtpContext, SrtpKey, Ssrc};
 use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
 use sdp::{Answer, MediaLine, Offer, Sdp};
@@ -39,6 +39,7 @@ pub(crate) struct Session {
     feedback: VecDeque<Rtcp>,
     codec_config: CodecConfig,
     twcc: u64,
+    twcc_register: TwccRegister,
 }
 
 pub enum MediaOrChannel {
@@ -64,6 +65,7 @@ impl Session {
             feedback: VecDeque::new(),
             codec_config: CodecConfig::default(),
             twcc: 0,
+            twcc_register: TwccRegister::new(100),
         }
     }
 
@@ -183,6 +185,12 @@ impl Session {
 
     fn handle_rtp(&mut self, now: Instant, header: RtpHeader, buf: &[u8]) {
         trace!("Handle RTP: {:?}", header);
+        if let Some(transport_cc) = header.ext_vals.transport_cc {
+            let prev = self.twcc_register.max_seq();
+            let extended = extend_seq(Some(*prev), transport_cc);
+            self.twcc_register.update_seq(extended.into(), now);
+        }
+
         let mid_in = header.ext_vals.rtp_mid;
         let media = match only_media_mut(&mut self.media)
             .find(|m| m.has_ssrc_rx(header.ssrc) || Some(m.mid()) == mid_in)

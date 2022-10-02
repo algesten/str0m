@@ -100,7 +100,7 @@ impl ReceiverRegister {
         if self.probation > 0 {
             // Source is not valid until MIN_SEQUENTIAL packets with
             // sequential sequence numbers have been received.
-            if *seq == *self.max_seq + 1 {
+            if *seq == self.max_seq.wrapping_add(1) {
                 self.probation -= 1;
                 self.max_seq = seq;
                 if self.probation == 0 {

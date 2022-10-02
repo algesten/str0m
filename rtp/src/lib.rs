@@ -21,7 +21,7 @@ mod mtime;
 pub use mtime::MediaTime;
 
 mod header;
-pub use header::RtpHeader;
+pub use header::{extend_seq, RtpHeader};
 
 mod srtp;
 pub use srtp::{SrtpContext, SrtpKey};
