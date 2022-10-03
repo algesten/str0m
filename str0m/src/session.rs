@@ -640,15 +640,3 @@ fn only_media_mut(media: &mut [MediaOrChannel]) -> impl Iterator<Item = &mut Med
         MediaOrChannel::Channel(_) => None,
     })
 }
-
-// * receiver register - handle_rtp
-// * nack reporter     - handle_rtp  (poll_rtcp)
-// * receiver reporter - handle_rtp  (poll_rtcp)
-// * twcc reporter     - handle_rtp handle_rtcp (poll_rtcp)
-// * depacketizer      - handle_rtp
-
-// * packetizer        - write
-// * send buffer       - write_rtp
-// * nack responder    - handle_rtcp (poll_rtcp poll_rtp)
-// * sender reporter   -             (poll_rtcp)
-// * twcc generator    - handle_rtcp (poll_rtcp)
