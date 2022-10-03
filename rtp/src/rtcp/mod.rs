@@ -61,6 +61,7 @@ pub enum Rtcp {
     Nack(Nack),
     Pli(Pli),
     Fir(Fir),
+    Twcc(Twcc),
 }
 
 impl Rtcp {
@@ -227,6 +228,7 @@ impl Rtcp {
             Rtcp::Nack(v) => v.reports.is_full(),
             Rtcp::Pli(_) => true,
             Rtcp::Fir(v) => v.reports.is_full(),
+            Rtcp::Twcc(_) => true,
         }
     }
 
@@ -248,6 +250,8 @@ impl Rtcp {
             Rtcp::Pli(_) => false,
             // Fir can be merged to empty.
             Rtcp::Fir(v) => v.reports.is_empty(),
+            // A twcc report is never empty.
+            Rtcp::Twcc(_) => false,
         }
     }
 
@@ -325,9 +329,10 @@ impl Rtcp {
             Nack(_) => 3,
             Pli(_) => 4,
             Fir(_) => 5,
+            Twcc(_) => 6,
 
             // Goodbye last since they remove stuff.
-            Goodbye(_) => 6,
+            Goodbye(_) => 10,
         }
     }
 }
@@ -342,6 +347,7 @@ impl RtcpPacket for Rtcp {
             Rtcp::Nack(v) => v.header(),
             Rtcp::Pli(v) => v.header(),
             Rtcp::Fir(v) => v.header(),
+            Rtcp::Twcc(v) => v.header(),
         }
     }
 
@@ -354,6 +360,7 @@ impl RtcpPacket for Rtcp {
             Rtcp::Nack(v) => v.length_words(),
             Rtcp::Pli(v) => v.length_words(),
             Rtcp::Fir(v) => v.length_words(),
+            Rtcp::Twcc(v) => v.length_words(),
         }
     }
 
@@ -366,6 +373,7 @@ impl RtcpPacket for Rtcp {
             Rtcp::Nack(v) => v.write_to(buf),
             Rtcp::Pli(v) => v.write_to(buf),
             Rtcp::Fir(v) => v.write_to(buf),
+            Rtcp::Twcc(v) => v.write_to(buf),
         }
     }
 }
@@ -395,7 +403,7 @@ impl<'a> TryFrom<&'a [u8]> for Rtcp {
 
                 match tlfb {
                     TransportType::Nack => Rtcp::Nack(buf.try_into()?),
-                    TransportType::TransportWide => return Err("TODO: TransportWide"),
+                    TransportType::TransportWide => Rtcp::Twcc(buf.try_into()?),
                 }
             }
             RtcpType::PayloadSpecificFeedback => {

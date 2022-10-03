@@ -1,4 +1,4 @@
-use crate::{FirEntry, NackEntry, ReceptionReport, ReportList, Rtcp, Sdes, SenderInfo, Ssrc};
+use crate::{FirEntry, NackEntry, ReceptionReport, ReportList, Rtcp, Sdes, SenderInfo, Ssrc, Twcc};
 
 /// Normalization of [`Rtcp`] so we can deal with one SSRC at a time.
 pub enum RtcpFb {
@@ -9,6 +9,7 @@ pub enum RtcpFb {
     Nack(Ssrc, ReportList<NackEntry>),
     Pli(Ssrc),
     Fir(FirEntry),
+    Twcc(Twcc),
 }
 
 impl RtcpFb {
@@ -39,6 +40,9 @@ impl RtcpFb {
                 Rtcp::Fir(v) => {
                     q.extend(v.reports.into_iter().map(RtcpFb::Fir));
                 }
+                Rtcp::Twcc(v) => {
+                    q.push(RtcpFb::Twcc(v));
+                }
             }
         }
         q.into_iter()
@@ -53,6 +57,7 @@ impl RtcpFb {
             RtcpFb::Nack(v, _) => *v,
             RtcpFb::Pli(v) => *v,
             RtcpFb::Fir(v) => v.ssrc,
+            RtcpFb::Twcc(v) => v.ssrc,
         }
     }
 }

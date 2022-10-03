@@ -1,24 +1,115 @@
 use std::collections::VecDeque;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use crate::{MediaTime, SeqNo, Ssrc};
+use crate::{FeedbackMessageType, RtcpHeader, RtcpPacket};
+use crate::{RtcpType, SeqNo, Ssrc, TransportType};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Twcc {
     pub sender_ssrc: Ssrc,
     pub ssrc: Ssrc,
-    pub feedback_count: u8, // counter for each Twcc
     pub base_seq: u16,
     pub status_count: u16,
     pub reference_time: u32, // 24 bit
+    pub feedback_count: u8,  // counter for each Twcc
     pub chunks: Vec<PacketChunk>,
     pub delta: Vec<Delta>,
 }
 
-// 1 1 1 1 1 0 0 0 0 1 1 1 1
-// |-------| |-------------|
-// T1
-//         T2 ------ T
+impl Twcc {
+    fn status_count(&self) -> u16 {
+        let tot: usize = self.chunks.iter().map(|p| p.status_count()).sum();
+
+        assert!(tot <= 65535);
+
+        tot as u16
+    }
+
+    fn chunks_byte_len(&self) -> usize {
+        self.chunks.len() * 2
+    }
+
+    fn delta_byte_len(&self) -> usize {
+        self.delta
+            .iter()
+            .map(|d| match d {
+                Delta::Small(_) => 1,
+                Delta::Large(_) => 2,
+            })
+            .sum()
+    }
+}
+
+impl RtcpPacket for Twcc {
+    fn header(&self) -> RtcpHeader {
+        RtcpHeader {
+            rtcp_type: RtcpType::TransportLayerFeedback,
+            feedback_message_type: FeedbackMessageType::TransportFeedback(
+                TransportType::TransportWide,
+            ),
+            words_less_one: (self.length_words() - 1) as u16,
+        }
+    }
+
+    fn length_words(&self) -> usize {
+        // header: 1
+        // sender ssrc: 1
+        // ssrc: 1
+        // base seq + packet status: 1
+        // ref time + feedback count: 1
+        // chunks byte len + delta byte len + padding
+
+        let mut total = self.chunks_byte_len() + self.delta_byte_len();
+
+        let pad = 4 - total % 4;
+        if pad < 4 {
+            total += pad;
+        }
+
+        assert!(total % 4 == 0);
+
+        let total_words = total / 4;
+
+        5 + total_words
+    }
+
+    fn write_to(&self, buf: &mut [u8]) -> usize {
+        let len_start = buf.len();
+
+        self.header().write_to(buf);
+        (&mut buf[4..8]).copy_from_slice(&self.sender_ssrc.to_be_bytes());
+        (&mut buf[8..12]).copy_from_slice(&self.ssrc.to_be_bytes());
+
+        (&mut buf[12..14]).copy_from_slice(&self.base_seq.to_be_bytes());
+        (&mut buf[14..16]).copy_from_slice(&self.status_count().to_be_bytes());
+
+        (&mut buf[16..19]).copy_from_slice(&self.reference_time.to_be_bytes()[0..3]);
+        buf[19] = self.feedback_count;
+
+        let mut buf = &mut buf[20..];
+        for p in &self.chunks {
+            p.write_to(buf);
+            buf = &mut buf[2..];
+        }
+
+        for d in &self.delta {
+            let n = d.write_to(buf);
+            buf = &mut buf[n..];
+        }
+
+        let mut total = len_start - buf.len();
+
+        let pad = 4 - total % 4;
+        if pad < 4 {
+            for i in 0..pad {
+                buf[total + i] = 0;
+            }
+            total += pad;
+        }
+
+        total
+    }
+}
 
 #[derive(Debug)]
 pub struct TwccRegister {
@@ -94,16 +185,12 @@ impl TwccRegister {
             self.time_start = Some(first.time);
         }
 
-        let (base_seq, base_time) = (first.seq, first.time);
-        let base_time_rel = base_time - self.time_start.expect("a start time");
-        let mut base_time_m: MediaTime = base_time_rel.into();
+        let (base_seq, first_time) = (first.seq, first.time);
+        let time_start = self.time_start.expect("a start time");
+        let first_time_rel = first_time - time_start;
 
         // The value is to be interpreted in multiples of 64ms
-        // 1000_000/64 = 15_625
-        const TIME_24_BASE: i64 = 15_625;
-        base_time_m = base_time_m.rebase(TIME_24_BASE);
-
-        let reference_time = (base_time_m.numer() / 1000) as u32;
+        let reference_time = (first_time_rel.as_micros() as u64 / 64_000) as u32;
 
         let mut twcc = Twcc {
             sender_ssrc: 0.into(),
@@ -115,6 +202,8 @@ impl TwccRegister {
             chunks: Vec::new(),
             delta: Vec::new(),
         };
+
+        let base_time = time_start + Duration::from_micros(reference_time as u64 * 64_000);
 
         let interims = self.build_interims(base_seq, base_time);
         let mut start = 0;
@@ -131,18 +220,37 @@ impl TwccRegister {
 
             let max = as_run.max(as_single).max(as_double);
 
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            enum Mode {
+                Run,
+                Single,
+                Double,
+            }
+
+            let mode = if max == as_run {
+                Mode::Run
+            } else if max == as_single {
+                Mode::Single
+            } else {
+                Mode::Double
+            };
+
             assert!(max > 0);
             let stop = start + max;
 
-            let mut chunk = if max == as_run {
-                let status = interims[start].status();
-                PacketChunk::Run(status, 0)
-            } else if max == as_single {
-                PacketChunk::Vector(Symbol::Single(0))
-            } else if max == as_double {
-                PacketChunk::Vector(Symbol::Double(0))
-            } else {
-                unreachable!()
+            let mut chunk = match mode {
+                Mode::Run => {
+                    let status = interims[start].status();
+                    PacketChunk::Run(status, 0)
+                }
+                Mode::Single => {
+                    assert!(max <= 14);
+                    PacketChunk::Vector(Symbol::Single(0))
+                }
+                Mode::Double => {
+                    assert!(max <= 7);
+                    PacketChunk::Vector(Symbol::Double(0))
+                }
             };
 
             for i in start..stop {
@@ -154,10 +262,28 @@ impl TwccRegister {
                     twcc.delta.push(delta);
                 }
             }
+
+            // single and double must be finished with 0 to fill the 14 or 7*2 respective.
+            match mode {
+                Mode::Single => {
+                    let n = 14 - max;
+                    chunk.append(ChunkInterim::Missing(n as u16));
+                }
+                Mode::Double => {
+                    let n = 7 - max;
+                    chunk.append(ChunkInterim::Missing(n as u16));
+                }
+                _ => {}
+            }
+
             twcc.chunks.push(chunk);
 
             start = stop;
         }
+
+        let status_count: usize = twcc.chunks.iter().map(|c| c.status_count()).sum();
+        assert!(status_count <= 65535);
+        twcc.status_count = status_count as u16;
 
         // How many reported we have from the beginning of the queue.
         let reported_count = self.queue.iter().skip_while(|r| r.reported).count();
@@ -187,11 +313,13 @@ impl TwccRegister {
             let diff_seq = *r.seq - *prev.0;
 
             if diff_seq > 1 {
-                for range in (0..diff_seq).step_by(8192) {
+                let mut todo = diff_seq - 1;
+                while todo > 0 {
                     // max 2^13 run length in each missing chunk
-                    interims.push(ChunkInterim::Missing(range as u16));
+                    let n = todo.min(8192);
+                    interims.push(ChunkInterim::Missing(n as u16));
+                    todo -= n;
                 }
-                continue;
             }
 
             let diff_time = if r.time < prev.1 {
@@ -281,7 +409,9 @@ impl PacketChunk {
                         }
                     }
                     PacketStatus::ReceivedLargeOrNegativeDelta => {
-                        // TODO: confirm the correct logic for Single is that it only counts large deltas?
+                        // Confirmed in email with Erik Sprang.
+                        // "The intent is to just truncate the 2-bit values"
+                        // Which means 01 (received small delta) becomes 1.
                         break;
                     }
                     _ => unreachable!(),
@@ -290,7 +420,7 @@ impl PacketChunk {
             last_index = index;
         }
 
-        last_index
+        last_index + 1
     }
 
     fn pack_as_double(interims: &[ChunkInterim]) -> usize {
@@ -325,7 +455,7 @@ impl PacketChunk {
             last_index = index;
         }
 
-        last_index
+        last_index + 1
     }
 
     fn append(&mut self, i: ChunkInterim) -> Option<(usize, Delta)> {
@@ -352,11 +482,7 @@ impl PacketChunk {
                 }
             }
             (Vector(Symbol::Single(v)), Missing(c)) => {
-                // The RFC says:
-                // "packet received" (0) and "packet not received" (1)
-                // but I'm not sure I trust it. 0 for packet not received is consistent with
-                // the example given in the RFC and would align it with two bit packet status
-                // having 00 as not received.
+                // Confirmed in email that despite the RFC, 0 is not received and 1 is received (small delta).
                 assert!(c < 14);
                 *v <<= c;
                 None
@@ -376,7 +502,6 @@ impl PacketChunk {
             (Vector(Symbol::Double(v)), Received(i, s2, t)) => {
                 *v <<= 2;
                 *v |= s2 as u16;
-                assert!(s2 == PacketStatus::ReceivedLargeOrNegativeDelta);
                 if s2 == PacketStatus::ReceivedSmallDelta {
                     Some((i, Delta::Small(t as u8)))
                 } else if s2 == PacketStatus::ReceivedLargeOrNegativeDelta {
@@ -384,6 +509,85 @@ impl PacketChunk {
                 } else {
                     unreachable!()
                 }
+            }
+        }
+    }
+
+    fn write_to(&self, buf: &mut [u8]) {
+        let x = match self {
+            //     0                   1
+            //     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
+            //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            //    |T| S |       Run Length        |
+            //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            // chunk type (T):  1 bit A zero identifies this as a run length chunk.
+            // packet status symbol (S):  2 bits The symbol repeated in this run.
+            //             See above.
+            // run length (L):  13 bits An unsigned integer denoting the run length.
+            PacketChunk::Run(s, n) => {
+                let mut x = 0_u16;
+                x |= (*s as u16) << 13;
+                assert!(*n <= 8192);
+                x |= n;
+                x
+            }
+
+            // Corrected according to email exchange at the bottom..
+            //
+            //         0                   1
+            //         0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
+            //        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            //        |T|S|       symbol list         |
+            //        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+            //    chunk type (T):  1 bit A one identifies this as a status vector
+            //                chunk.
+            //    symbol size (S):  1 bit A zero means this vector contains only
+            //                "packet received" (1) and "packet not received" (0)
+            //                symbols.  This means we can compress each symbol to just
+            //                one bit, 14 in total.  A one means this vector contains
+            //                the normal 2-bit symbols, 7 in total.
+            //    symbol list:  14 bits A list of packet status symbols, 7 or 14 in
+            //                total.
+            PacketChunk::Vector(v) => {
+                let mut x: u16 = 1 << 15;
+                match v {
+                    Symbol::Single(n) => {
+                        assert!(*n <= 16384);
+                        x |= *n;
+                    }
+                    Symbol::Double(n) => {
+                        assert!(*n <= 16384);
+                        x |= 1 << 14;
+                        x |= *n;
+                    }
+                }
+                x
+            }
+        };
+        (&mut buf[..2]).copy_from_slice(&x.to_be_bytes());
+    }
+
+    fn status_count(&self) -> usize {
+        match self {
+            PacketChunk::Run(_, n) => *n as usize,
+            PacketChunk::Vector(v) => match v {
+                Symbol::Single(_) => 14,
+                Symbol::Double(_) => 7,
+            },
+        }
+    }
+}
+
+impl Delta {
+    fn write_to(&self, buf: &mut [u8]) -> usize {
+        match self {
+            Delta::Small(v) => {
+                buf[0] = *v;
+                1
+            }
+            Delta::Large(v) => {
+                (&mut buf[..2]).copy_from_slice(&v.to_be_bytes());
+                2
             }
         }
     }
@@ -423,5 +627,347 @@ impl From<u8> for PacketStatus {
             0b10 => Self::ReceivedLargeOrNegativeDelta,
             _ => Self::Unknown,
         }
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for Twcc {
+    type Error = &'static str;
+
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        if buf.len() < 20 {
+            return Err("Less than 20 bytes for start of Twcc");
+        }
+
+        let sender_ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
+        let ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]).into();
+        let base_seq = u16::from_be_bytes([buf[8], buf[9]]);
+        let status_count = u16::from_be_bytes([buf[10], buf[11]]);
+        let reference_time = u32::from_be_bytes([0, buf[12], buf[13], buf[14]]);
+        let feedback_count = buf[15];
+
+        let mut twcc = Twcc {
+            sender_ssrc,
+            ssrc,
+            base_seq,
+            status_count,
+            reference_time,
+            feedback_count,
+            chunks: vec![],
+            delta: vec![],
+        };
+
+        let mut todo = status_count as isize;
+        let mut buf = &buf[16..];
+        loop {
+            let chunk: PacketChunk = buf.try_into()?;
+
+            todo -= chunk.status_count() as isize;
+
+            if todo < 0 {
+                return Err("Incorrect status_count");
+            }
+
+            twcc.chunks.push(chunk);
+            buf = &buf[2..];
+
+            if todo == 0 {
+                break;
+            }
+        }
+
+        if twcc.chunks.is_empty() {
+            return Ok(twcc);
+        }
+
+        fn read_delta_small(buf: &[u8], n: usize) -> impl Iterator<Item = Delta> + '_ {
+            (0..n).map(|i| Delta::Small(buf[i]))
+        }
+
+        fn read_delta_large(buf: &[u8], n: usize) -> impl Iterator<Item = Delta> + '_ {
+            (0..(n * 2))
+                .step_by(2)
+                .map(|i| Delta::Large(i16::from_be_bytes([buf[i], buf[i + 1]])))
+        }
+
+        for c in &twcc.chunks {
+            match c {
+                PacketChunk::Run(PacketStatus::ReceivedSmallDelta, n) => {
+                    let n = *n as usize;
+                    twcc.delta.extend(read_delta_small(buf, n));
+                    buf = &buf[n..];
+                }
+                PacketChunk::Run(PacketStatus::ReceivedLargeOrNegativeDelta, n) => {
+                    let n = *n as usize;
+                    twcc.delta.extend(read_delta_large(buf, n));
+                    buf = &buf[n..];
+                }
+                PacketChunk::Vector(Symbol::Single(v)) => {
+                    let n = v.count_ones() as usize;
+                    twcc.delta.extend(read_delta_small(buf, n));
+                    buf = &buf[n..];
+                }
+                PacketChunk::Vector(Symbol::Double(v)) => {
+                    for n in (0..12).step_by(2) {
+                        let x = (*v >> (12 - n)) & 0b11;
+                        match PacketStatus::from(x as u8) {
+                            PacketStatus::ReceivedSmallDelta => {
+                                twcc.delta.extend(read_delta_small(buf, 1));
+                                buf = &buf[1..];
+                            }
+                            PacketStatus::ReceivedLargeOrNegativeDelta => {
+                                twcc.delta.extend(read_delta_large(buf, 1));
+                                buf = &buf[2..];
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(twcc)
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for PacketChunk {
+    type Error = &'static str;
+
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        if buf.len() < 2 {
+            return Err("Less than 2 bytes for PacketChunk");
+        }
+
+        let x = u16::from_be_bytes([buf[0], buf[1]]);
+
+        let is_vec = (x & 0b1000_0000_0000_0000) > 0;
+
+        let p = if is_vec {
+            let is_double = (x & 0b0100_0000_0000_0000) > 0;
+            let n = x & 0b0011_1111_1111_1111;
+            if is_double {
+                PacketChunk::Vector(Symbol::Double(n))
+            } else {
+                PacketChunk::Vector(Symbol::Single(n))
+            }
+        } else {
+            let s: PacketStatus = ((x >> 13) as u8).into();
+            let n = x & 0b0001_1111_1111_1111;
+            PacketChunk::Run(s, n)
+        };
+
+        Ok(p)
+    }
+}
+
+// pub enum PacketChunk {
+//     Run(PacketStatus, u16), // 13 bit repeat
+//     Vector(Symbol),
+// }
+
+// Below is a clarification of the RFC draft from an email exchange with Erik Språng (one of the authors).
+//
+// > I'm trying to implement the draft spec
+// > https://datatracker.ietf.org/doc/html/draft-holmer-rmcat-transport-wide-cc-extensions-01
+// > I found a number of errors/inconsistencies in the RFC, and wonder who I should address this to.
+// > I think the RFC could benefit from another revision.
+// >
+// > There are three problems listed below.
+// >
+// > 1. There's a contradiction between section 3.1.1 and the example in 3.1.3. First the RFC tells
+// > me 11 is Reserved, later it shows an example using 11 saying it is a run of packets received w/o
+// > recv delta. Which one is right?
+// >
+// > Section 3.1.1
+// > ...
+// > The status of a packet is described using a 2-bit symbol:
+// > ...
+// > 11 [Reserved]
+// >
+// > Section 3.1.3
+// > ...
+// > Example 2:
+// >
+// >       0                   1
+// >       0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
+// >      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// >      |0|1 1|0 0 0 0 0 0 0 0 1 1 0 0 0|
+// >      +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// >
+// >
+// >   This is a run of the "packet received, w/o recv delta" status of
+// >   length 24.
+//
+// I believe this example is in error. Packets without receive deltas was a proposal for the v1
+// protocol but was dropped iirc. Note that there is a newer header extension available, which
+// when negotiated allows send-side control over when feedback is generated  - and that provides
+// the option to omit all receive deltas from the feedback.
+//
+// > 2. In section 3.1.4 when using a 1-bit vector to indicate packet received or not received,
+// > there's a contradiction between the the definition and the example. The definition says
+// > "packet received" (0) and "packet not received" (1), while the example is the opposite way
+// > around: 0 is packet not received. Which way around is it?
+// >
+// > symbol size (S):  1 bit A zero means this vector contains only
+// >               "packet received" (0) and "packet not received" (1)
+// >               symbols.  This means we can compress each symbol to just
+// >               one bit, 14 in total.  A one means this vector contains
+// >               the normal 2-bit symbols, 7 in total.
+// > ...
+// > Example 1:
+// >
+// >        0                   1
+// >        0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
+// >       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// >       |1|0|0 1 1 1 1 1 0 0 0 1 1 1 0 0|
+// >       +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// >
+// >   This chunk contains, in order:
+// >
+// >      1x "packet not received"
+// >
+// >      5x "packet received"
+//
+// I believe the definition is wrong in this case. The intent is to just truncate the 2-bit values:
+//
+// 3.1.1.  Packet Status Symbols
+//
+//    The status of a packet is described using a 2-bit symbol:
+//
+//       00 Packet not received
+//
+//       01 Packet received, small delta
+//
+// So (0) for not received and (1) for received, small delta.
+// This also matches what the libwebrtc source code does.
+//
+// > 3. In section 3.1.4 when using a 1-bit vector, the RFC doesn't say what a "packet received" in that
+// > vector should be accompanied by in receive delta size. Is it an 8 bit delta or 16 bit
+// > delta per "packet received"?
+//
+// Same as the question above, this is a truncation to (0) for not received and (1) for
+// received, small delta.
+
+#[cfg(test)]
+mod test {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn register_write_parse_small_delta() {
+        let mut reg = TwccRegister::new(100);
+
+        let now = Instant::now();
+
+        reg.update_seq(10.into(), now + Duration::from_millis(0));
+        reg.update_seq(11.into(), now + Duration::from_millis(12));
+        reg.update_seq(12.into(), now + Duration::from_millis(23));
+        reg.update_seq(13.into(), now + Duration::from_millis(43));
+
+        let report = reg.build_report().unwrap();
+        let mut buf = vec![0_u8; 1500];
+        let n = report.write_to(&mut buf[..]);
+        buf.truncate(n);
+
+        let header: RtcpHeader = (&buf[..]).try_into().unwrap();
+        let parsed: Twcc = (&buf[4..]).try_into().unwrap();
+
+        assert_eq!(header, report.header());
+        assert_eq!(parsed, report);
+    }
+
+    #[test]
+    fn register_write_parse_small_delta_missing() {
+        let mut reg = TwccRegister::new(100);
+
+        let now = Instant::now();
+
+        reg.update_seq(10.into(), now + Duration::from_millis(0));
+        reg.update_seq(11.into(), now + Duration::from_millis(12));
+        reg.update_seq(12.into(), now + Duration::from_millis(23));
+        // 13 is not there
+        reg.update_seq(14.into(), now + Duration::from_millis(43));
+
+        let report = reg.build_report().unwrap();
+        let mut buf = vec![0_u8; 1500];
+        let n = report.write_to(&mut buf[..]);
+        buf.truncate(n);
+
+        let header: RtcpHeader = (&buf[..]).try_into().unwrap();
+        let parsed: Twcc = (&buf[4..]).try_into().unwrap();
+
+        println!("{:?}", report);
+
+        assert_eq!(header, report.header());
+        assert_eq!(parsed, report);
+    }
+
+    #[test]
+    fn register_write_parse_large_delta() {
+        let mut reg = TwccRegister::new(100);
+
+        let now = Instant::now();
+
+        reg.update_seq(10.into(), now + Duration::from_millis(0));
+        reg.update_seq(11.into(), now + Duration::from_millis(70));
+        reg.update_seq(12.into(), now + Duration::from_millis(140));
+        reg.update_seq(13.into(), now + Duration::from_millis(210));
+
+        let report = reg.build_report().unwrap();
+        let mut buf = vec![0_u8; 1500];
+        let n = report.write_to(&mut buf[..]);
+        buf.truncate(n);
+
+        let header: RtcpHeader = (&buf[..]).try_into().unwrap();
+        let parsed: Twcc = (&buf[4..]).try_into().unwrap();
+
+        assert_eq!(header, report.header());
+        assert_eq!(parsed, report);
+    }
+
+    #[test]
+    fn register_write_parse_mixed_delta() {
+        let mut reg = TwccRegister::new(100);
+
+        let now = Instant::now();
+
+        reg.update_seq(10.into(), now + Duration::from_millis(0));
+        reg.update_seq(11.into(), now + Duration::from_millis(12));
+        reg.update_seq(12.into(), now + Duration::from_millis(140));
+        reg.update_seq(13.into(), now + Duration::from_millis(152));
+
+        let report = reg.build_report().unwrap();
+        let mut buf = vec![0_u8; 1500];
+        let n = report.write_to(&mut buf[..]);
+        buf.truncate(n);
+
+        let header: RtcpHeader = (&buf[..]).try_into().unwrap();
+        let parsed: Twcc = (&buf[4..]).try_into().unwrap();
+
+        assert_eq!(header, report.header());
+        assert_eq!(parsed, report);
+    }
+
+    #[test]
+    fn too_big_time_gap_requires_two_reports() {
+        let mut reg = TwccRegister::new(100);
+
+        let now = Instant::now();
+
+        reg.update_seq(10.into(), now + Duration::from_millis(0));
+        reg.update_seq(11.into(), now + Duration::from_millis(12));
+        reg.update_seq(12.into(), now + Duration::from_millis(9000));
+
+        let _ = reg.build_report().unwrap();
+        let report2 = reg.build_report().unwrap();
+
+        // 9000 milliseconds is not possible to set as exact reference time which
+        // is in multiples of 64ms. 9000/64 = 140.625.
+        assert_eq!(report2.reference_time, 140);
+
+        // 140 * 64 = 8960
+        // So the first offset must be 40ms, i.e. 40_000us / 250us = 160
+        assert_eq!(report2.delta[0], Delta::Small(160));
     }
 }
