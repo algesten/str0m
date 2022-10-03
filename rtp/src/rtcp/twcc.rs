@@ -679,31 +679,43 @@ impl<'a> TryFrom<&'a [u8]> for Twcc {
             return Ok(twcc);
         }
 
-        fn read_delta_small(buf: &[u8], n: usize) -> impl Iterator<Item = Delta> + '_ {
-            (0..n).map(|i| Delta::Small(buf[i]))
+        fn read_delta_small(
+            buf: &[u8],
+            n: usize,
+        ) -> Result<impl Iterator<Item = Delta> + '_, &'static str> {
+            if buf.len() < n {
+                return Err("Not enough buf for small deltas");
+            }
+            Ok((0..n).map(|i| Delta::Small(buf[i])))
         }
 
-        fn read_delta_large(buf: &[u8], n: usize) -> impl Iterator<Item = Delta> + '_ {
-            (0..(n * 2))
+        fn read_delta_large(
+            buf: &[u8],
+            n: usize,
+        ) -> Result<impl Iterator<Item = Delta> + '_, &'static str> {
+            if buf.len() < n * 2 {
+                return Err("Not enough buf for large deltas");
+            }
+            Ok((0..(n * 2))
                 .step_by(2)
-                .map(|i| Delta::Large(i16::from_be_bytes([buf[i], buf[i + 1]])))
+                .map(|i| Delta::Large(i16::from_be_bytes([buf[i], buf[i + 1]]))))
         }
 
         for c in &twcc.chunks {
             match c {
                 PacketChunk::Run(PacketStatus::ReceivedSmallDelta, n) => {
                     let n = *n as usize;
-                    twcc.delta.extend(read_delta_small(buf, n));
+                    twcc.delta.extend(read_delta_small(buf, n)?);
                     buf = &buf[n..];
                 }
                 PacketChunk::Run(PacketStatus::ReceivedLargeOrNegativeDelta, n) => {
                     let n = *n as usize;
-                    twcc.delta.extend(read_delta_large(buf, n));
+                    twcc.delta.extend(read_delta_large(buf, n)?);
                     buf = &buf[n..];
                 }
                 PacketChunk::Vector(Symbol::Single(v)) => {
                     let n = v.count_ones() as usize;
-                    twcc.delta.extend(read_delta_small(buf, n));
+                    twcc.delta.extend(read_delta_small(buf, n)?);
                     buf = &buf[n..];
                 }
                 PacketChunk::Vector(Symbol::Double(v)) => {
@@ -711,11 +723,11 @@ impl<'a> TryFrom<&'a [u8]> for Twcc {
                         let x = (*v >> (12 - n)) & 0b11;
                         match PacketStatus::from(x as u8) {
                             PacketStatus::ReceivedSmallDelta => {
-                                twcc.delta.extend(read_delta_small(buf, 1));
+                                twcc.delta.extend(read_delta_small(buf, 1)?);
                                 buf = &buf[1..];
                             }
                             PacketStatus::ReceivedLargeOrNegativeDelta => {
-                                twcc.delta.extend(read_delta_large(buf, 1));
+                                twcc.delta.extend(read_delta_large(buf, 1)?);
                                 buf = &buf[2..];
                             }
                             _ => {}

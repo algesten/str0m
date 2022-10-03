@@ -71,6 +71,10 @@ impl<'a> TryFrom<&'a [u8]> for ReceiverReport {
     type Error = &'static str;
 
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        if buf.len() < 4 {
+            return Err("Less than 4 bytes for ReceiverReport");
+        }
+
         let sender_ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
 
         let mut reports = ReportList::new();
