@@ -47,6 +47,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn fuzz_rtp_header_parse() {
+        fn parse_rtp(buf: &Vec<u8>) -> bool {
+            let e = Extensions::default_mappings();
+            let _ = RtpHeader::parse(&buf, &e);
+            true
+        }
+        let result = fuzzcheck::fuzz_test(parse_rtp).default_options().launch();
+        assert!(!result.found_test_failure);
+    }
+
+    #[test]
     fn fuzz_rtcp_parse() {
         fn parse_rtcp(buf: &Vec<u8>) -> bool {
             let _ = Rtcp::read_packet(&buf);
