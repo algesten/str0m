@@ -164,18 +164,21 @@ impl TwccRegister {
     }
 
     pub fn build_report(&mut self, max_byte_size: usize) -> Option<Twcc> {
-        // First unreported sets the time_start relative offset.
+        // First unreported is the self.time_start relative offset of the next Twcc.
         let first = self.queue.iter().skip_while(|r| r.reported).next()?;
 
+        // Set once on first ever built report.
         if self.time_start.is_none() {
             self.time_start = Some(first.time);
         }
 
         let (base_seq, first_time) = (first.seq, first.time);
         let time_start = self.time_start.expect("a start time");
+
+        // The difference between our Twcc reference time and the first ever report start time.
         let first_time_rel = first_time - time_start;
 
-        // The value is to be interpreted in multiples of 64ms
+        // The value is to be interpreted in multiples of 64ms.
         let reference_time = (first_time_rel.as_micros() as u64 / 64_000) as u32;
 
         let mut twcc = Twcc {
@@ -189,26 +192,39 @@ impl TwccRegister {
             delta: Vec::new(),
         };
 
+        // Because reference time is in steps of 64ms, the first reported packet might have an
+        // offset (packet time resolution is 250us). This base_time is calculated backwards from
+        // reference time so that we can offset all packets from the "truncated" 64ms steps.
+        // The RFC says:
+        // The first recv delta in this packet is relative to the reference time.
         let base_time = time_start + Duration::from_micros(reference_time as u64 * 64_000);
 
+        // The ChunkInterim are helpers structures that hold the deltas between
+        // the registered receptions.
         let interims = self.build_interims(base_seq, base_time);
+
+        // Index into interims where we are to report from.
         let mut start = 0;
+
+        // How many packet statuses we've included in the report so far.
         let mut status_count = 0;
 
         // 20 bytes is the size of the fixed fields in Twcc.
         let mut bytes_left = max_byte_size - 20;
 
         loop {
+            // If we reach end of the interims, stop.
             if start >= interims.len() {
                 break;
             }
 
+            // If there is no space left for at least one more chunk + delta, stop.
             // 2 byte chunk + 2 byte delta + 3 byte padding
             if bytes_left < 7 {
                 break;
             }
 
-            // attempt to pack the interims in different ways to see which way consumes most chunk interims.
+            // Attempt to pack the interims in different ways to see which way consumes most chunk interims.
             let as_run = PacketChunk::pack_as_run(&interims[start..]);
             let as_single = PacketChunk::pack_as_single(&interims[start..]);
             let as_double = PacketChunk::pack_as_double(&interims[start..]);
@@ -222,6 +238,7 @@ impl TwccRegister {
                 Double,
             }
 
+            // Pick a mode for packing chunks.
             let mode = if max == as_run {
                 Mode::Run
             } else if max == as_single {
@@ -233,6 +250,7 @@ impl TwccRegister {
             assert!(max > 0);
             let stop = start + max;
 
+            // The next chunk, depending on mode.
             let mut chunk = match mode {
                 Mode::Run => {
                     let status = interims[start].status();
