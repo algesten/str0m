@@ -164,6 +164,11 @@ impl TwccRegister {
     }
 
     pub fn build_report(&mut self, max_byte_size: usize) -> Option<Twcc> {
+        if max_byte_size > 10_000 {
+            warn!("Refuse to build too large Twcc report");
+            return None;
+        }
+
         // First unreported is the self.time_start relative offset of the next Twcc.
         let first = self.queue.iter().skip_while(|r| r.reported).next()?;
 
