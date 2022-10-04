@@ -467,7 +467,7 @@ impl PacketChunk {
                 }
                 ChunkInterim::Received(_, status, _) => match status {
                     PacketStatus::ReceivedSmallDelta => {
-                        if space + 1 <= 14 {
+                        if space + 1 < 14 {
                             space += 1
                         } else {
                             // doesn't fit.
@@ -508,7 +508,7 @@ impl PacketChunk {
                 ChunkInterim::Received(_, status, _) => match status {
                     PacketStatus::ReceivedSmallDelta
                     | PacketStatus::ReceivedLargeOrNegativeDelta => {
-                        if space <= 7 {
+                        if space < 7 {
                             space += 1
                         } else {
                             // doesn't fit.
@@ -977,8 +977,6 @@ mod test {
 
         let header: RtcpHeader = (&buf[..]).try_into().unwrap();
         let parsed: Twcc = (&buf[4..]).try_into().unwrap();
-
-        println!("{:?}", report);
 
         assert_eq!(header, report.header());
         assert_eq!(parsed, report);
