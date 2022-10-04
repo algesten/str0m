@@ -1096,6 +1096,14 @@ mod test {
 
         let report = reg.build_report(1000).unwrap();
 
-        println!("{:?}", report);
+        assert_eq!(report.status_count, 8195);
+        assert_eq!(
+            report.chunks,
+            vec![
+                PacketChunk::Run(PacketStatus::ReceivedSmallDelta, 1),
+                PacketChunk::Run(PacketStatus::NotReceived, 8192),
+                PacketChunk::Vector(Symbol::Single(4096))
+            ]
+        );
     }
 }
