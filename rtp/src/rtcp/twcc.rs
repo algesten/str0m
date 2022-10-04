@@ -17,26 +17,12 @@ pub struct Twcc {
 }
 
 impl Twcc {
-    fn status_count(&self) -> u16 {
-        let tot: usize = self.chunks.iter().map(|p| p.status_count()).sum();
-
-        assert!(tot <= 65535);
-
-        tot as u16
-    }
-
     fn chunks_byte_len(&self) -> usize {
         self.chunks.len() * 2
     }
 
     fn delta_byte_len(&self) -> usize {
-        self.delta
-            .iter()
-            .map(|d| match d {
-                Delta::Small(_) => 1,
-                Delta::Large(_) => 2,
-            })
-            .sum()
+        self.delta.iter().map(|d| d.byte_len()).sum()
     }
 }
 
@@ -81,7 +67,7 @@ impl RtcpPacket for Twcc {
         (&mut buf[8..12]).copy_from_slice(&self.ssrc.to_be_bytes());
 
         (&mut buf[12..14]).copy_from_slice(&self.base_seq.to_be_bytes());
-        (&mut buf[14..16]).copy_from_slice(&self.status_count().to_be_bytes());
+        (&mut buf[14..16]).copy_from_slice(&self.status_count.to_be_bytes());
 
         (&mut buf[16..19]).copy_from_slice(&self.reference_time.to_be_bytes()[0..3]);
         buf[19] = self.feedback_count;
@@ -177,7 +163,7 @@ impl TwccRegister {
         }
     }
 
-    pub fn build_report(&mut self) -> Option<Twcc> {
+    pub fn build_report(&mut self, max_byte_size: usize) -> Option<Twcc> {
         // First unreported sets the time_start relative offset.
         let first = self.queue.iter().skip_while(|r| r.reported).next()?;
 
@@ -207,9 +193,18 @@ impl TwccRegister {
 
         let interims = self.build_interims(base_seq, base_time);
         let mut start = 0;
+        let mut status_count = 0;
+
+        // 20 bytes is the size of the fixed fields in Twcc.
+        let mut bytes_left = max_byte_size - 20;
 
         loop {
             if start >= interims.len() {
+                break;
+            }
+
+            // 2 byte chunk + 2 byte delta + 3 byte padding
+            if bytes_left < 7 {
                 break;
             }
 
@@ -253,24 +248,33 @@ impl TwccRegister {
                 }
             };
 
+            let mut actual_appended = 0;
+
             for i in start..stop {
+                if bytes_left < 7 {
+                    break;
+                }
                 if let Some((index, delta)) = chunk.append(interims[i]) {
                     // Mark the reception as reported.
                     let r = self.queue.get_mut(index).expect("reception for index");
                     r.reported = true;
 
                     twcc.delta.push(delta);
+                    bytes_left -= delta.byte_len();
                 }
+                actual_appended += 1;
+                status_count += interims[i].status_count();
+                bytes_left -= 2;
             }
 
             // single and double must be finished with 0 to fill the 14 or 7*2 respective.
             match mode {
                 Mode::Single => {
-                    let n = 14 - max;
+                    let n = 14 - actual_appended;
                     chunk.append(ChunkInterim::Missing(n as u16));
                 }
                 Mode::Double => {
-                    let n = 7 - max;
+                    let n = 7 - actual_appended;
                     chunk.append(ChunkInterim::Missing(n as u16));
                 }
                 _ => {}
@@ -281,9 +285,7 @@ impl TwccRegister {
             start = stop;
         }
 
-        let status_count: usize = twcc.chunks.iter().map(|c| c.status_count()).sum();
-        assert!(status_count <= 65535);
-        twcc.status_count = status_count as u16;
+        twcc.status_count = status_count;
 
         // How many reported we have from the beginning of the queue.
         let reported_count = self.queue.iter().skip_while(|r| r.reported).count();
@@ -364,6 +366,13 @@ impl ChunkInterim {
         match self {
             ChunkInterim::Missing(_) => PacketStatus::NotReceived,
             ChunkInterim::Received(_, s, _) => *s,
+        }
+    }
+
+    fn status_count(&self) -> u16 {
+        match self {
+            ChunkInterim::Missing(n) => *n,
+            ChunkInterim::Received(_, _, _) => 1,
         }
     }
 }
@@ -567,7 +576,7 @@ impl PacketChunk {
         (&mut buf[..2]).copy_from_slice(&x.to_be_bytes());
     }
 
-    fn status_count(&self) -> usize {
+    fn max_possible_status_count(&self) -> usize {
         match self {
             PacketChunk::Run(_, n) => *n as usize,
             PacketChunk::Vector(v) => match v {
@@ -589,6 +598,13 @@ impl Delta {
                 (&mut buf[..2]).copy_from_slice(&v.to_be_bytes());
                 2
             }
+        }
+    }
+
+    fn byte_len(&self) -> usize {
+        match self {
+            Delta::Small(_) => 1,
+            Delta::Large(_) => 2,
         }
     }
 }
@@ -661,16 +677,12 @@ impl<'a> TryFrom<&'a [u8]> for Twcc {
         loop {
             let chunk: PacketChunk = buf.try_into()?;
 
-            todo -= chunk.status_count() as isize;
-
-            if todo < 0 {
-                return Err("Incorrect status_count");
-            }
+            todo -= chunk.max_possible_status_count() as isize;
 
             twcc.chunks.push(chunk);
             buf = &buf[2..];
 
-            if todo == 0 {
+            if todo <= 0 {
                 break;
             }
         }
@@ -877,7 +889,7 @@ mod test {
         reg.update_seq(12.into(), now + Duration::from_millis(23));
         reg.update_seq(13.into(), now + Duration::from_millis(43));
 
-        let report = reg.build_report().unwrap();
+        let report = reg.build_report(1000).unwrap();
         let mut buf = vec![0_u8; 1500];
         let n = report.write_to(&mut buf[..]);
         buf.truncate(n);
@@ -901,7 +913,7 @@ mod test {
         // 13 is not there
         reg.update_seq(14.into(), now + Duration::from_millis(43));
 
-        let report = reg.build_report().unwrap();
+        let report = reg.build_report(1000).unwrap();
         let mut buf = vec![0_u8; 1500];
         let n = report.write_to(&mut buf[..]);
         buf.truncate(n);
@@ -926,7 +938,7 @@ mod test {
         reg.update_seq(12.into(), now + Duration::from_millis(140));
         reg.update_seq(13.into(), now + Duration::from_millis(210));
 
-        let report = reg.build_report().unwrap();
+        let report = reg.build_report(1000).unwrap();
         let mut buf = vec![0_u8; 1500];
         let n = report.write_to(&mut buf[..]);
         buf.truncate(n);
@@ -949,7 +961,7 @@ mod test {
         reg.update_seq(12.into(), now + Duration::from_millis(140));
         reg.update_seq(13.into(), now + Duration::from_millis(152));
 
-        let report = reg.build_report().unwrap();
+        let report = reg.build_report(1000).unwrap();
         let mut buf = vec![0_u8; 1500];
         let n = report.write_to(&mut buf[..]);
         buf.truncate(n);
@@ -971,8 +983,8 @@ mod test {
         reg.update_seq(11.into(), now + Duration::from_millis(12));
         reg.update_seq(12.into(), now + Duration::from_millis(9000));
 
-        let _ = reg.build_report().unwrap();
-        let report2 = reg.build_report().unwrap();
+        let _ = reg.build_report(1000).unwrap();
+        let report2 = reg.build_report(1000).unwrap();
 
         // 9000 milliseconds is not possible to set as exact reference time which
         // is in multiples of 64ms. 9000/64 = 140.625.
@@ -981,5 +993,41 @@ mod test {
         // 140 * 64 = 8960
         // So the first offset must be 40ms, i.e. 40_000us / 250us = 160
         assert_eq!(report2.delta[0], Delta::Small(160));
+    }
+
+    #[test]
+    fn report_padded_to_even_word() {
+        let mut reg = TwccRegister::new(100);
+
+        let now = Instant::now();
+
+        reg.update_seq(10.into(), now + Duration::from_millis(0));
+
+        let report = reg.build_report(1000).unwrap();
+        let mut buf = vec![0_u8; 1500];
+        let n = report.write_to(&mut buf[..]);
+
+        assert!(n % 4 == 0);
+    }
+
+    #[test]
+    fn report_truncated_to_max_byte_size() {
+        let mut reg = TwccRegister::new(100);
+
+        let now = Instant::now();
+
+        reg.update_seq(10.into(), now + Duration::from_millis(0));
+        reg.update_seq(11.into(), now + Duration::from_millis(12));
+        reg.update_seq(12.into(), now + Duration::from_millis(140));
+        reg.update_seq(13.into(), now + Duration::from_millis(152));
+
+        let report = reg.build_report(28).unwrap();
+
+        assert_eq!(report.status_count, 1);
+        assert_eq!(
+            report.chunks,
+            vec![PacketChunk::Vector(Symbol::Double(0b01 << 12))]
+        );
+        assert_eq!(report.delta, vec![Delta::Small(0)]);
     }
 }
