@@ -388,8 +388,19 @@ impl PacketChunk {
         assert!(!interims.is_empty());
 
         let status = interims[0].status();
+        let mut remaining = 8192; // each run can be max 2^13
+        let mut taken = 0;
 
-        interims.iter().take_while(|i| i.status() == status).count()
+        for i in interims {
+            let status_count = i.status_count() as i32;
+            if i.status() != status || remaining - status_count < 0 {
+                break;
+            }
+            remaining -= status_count;
+            taken += 1;
+        }
+
+        taken
     }
 
     fn pack_as_single(interims: &[ChunkInterim]) -> usize {
@@ -1029,5 +1040,19 @@ mod test {
             vec![PacketChunk::Vector(Symbol::Double(0b01 << 12))]
         );
         assert_eq!(report.delta, vec![Delta::Small(0)]);
+    }
+
+    #[test]
+    fn run_max_is_8192() {
+        let mut reg = TwccRegister::new(100);
+
+        let now = Instant::now();
+
+        reg.update_seq(0.into(), now + Duration::from_millis(0));
+        reg.update_seq(8194.into(), now + Duration::from_millis(10));
+
+        let report = reg.build_report(1000).unwrap();
+
+        println!("{:?}", report);
     }
 }
