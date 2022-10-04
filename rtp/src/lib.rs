@@ -44,6 +44,10 @@ pub enum RtpError {
 
 #[cfg(all(fuzzing, test))]
 mod tests {
+    use fuzzcheck::*;
+    use serde::{Deserialize, Serialize};
+    use std::time::{Duration, Instant};
+
     use super::*;
 
     #[test]
@@ -64,6 +68,57 @@ mod tests {
             true
         }
         let result = fuzzcheck::fuzz_test(parse_rtcp).default_options().launch();
+        assert!(!result.found_test_failure);
+    }
+
+    #[test]
+    fn fuzz_twcc() {
+        #[derive(Debug, Clone, DefaultMutator, Serialize, Deserialize)]
+        enum Operation {
+            Register(u16, u32),
+            BuildReport(u16),
+        }
+        fn apply_operations(opers: &Vec<Operation>) {
+            use rtcp::TwccRegister;
+            let now = Instant::now();
+            let mut reg = TwccRegister::new(100);
+            for o in opers {
+                match o {
+                    Operation::Register(seq_no, micros) => {
+                        reg.update_seq(
+                            (*seq_no as u64).into(),
+                            now + Duration::from_micros(*micros as u64),
+                        );
+                    }
+                    Operation::BuildReport(max_bytes) => {
+                        let report = match reg.build_report(*max_bytes as usize) {
+                            Some(v) => v,
+                            None => return,
+                        };
+
+                        let mut buf = vec![0_u8; 1500];
+                        let n = report.write_to(&mut buf[..]);
+                        buf.truncate(n);
+
+                        let header: RtcpHeader = match (&buf[..]).try_into() {
+                            Ok(v) => v,
+                            Err(_) => return,
+                        };
+                        let parsed: Twcc = match (&buf[4..]).try_into() {
+                            Ok(v) => v,
+                            Err(_) => return,
+                        };
+
+                        assert_eq!(header, report.header());
+                        assert_eq!(parsed, report);
+                    }
+                }
+            }
+        }
+        let result = fuzzcheck::fuzz_test(apply_operations)
+            .default_options()
+            .launch();
+        println!("{:?}", result.reason_for_stopping);
         assert!(!result.found_test_failure);
     }
 }
