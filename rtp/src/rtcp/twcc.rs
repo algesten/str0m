@@ -707,8 +707,8 @@ impl<'a> TryFrom<&'a [u8]> for Twcc {
     type Error = &'static str;
 
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
-        if buf.len() < 20 {
-            return Err("Less than 20 bytes for start of Twcc");
+        if buf.len() < 16 {
+            return Err("Less than 16 bytes for start of Twcc");
         }
 
         let sender_ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
@@ -732,16 +732,16 @@ impl<'a> TryFrom<&'a [u8]> for Twcc {
         let mut todo = status_count as isize;
         let mut buf = &buf[16..];
         loop {
+            if todo <= 0 {
+                break;
+            }
+
             let chunk: PacketChunk = buf.try_into()?;
 
             todo -= chunk.max_possible_status_count() as isize;
 
             twcc.chunks.push(chunk);
             buf = &buf[2..];
-
-            if todo <= 0 {
-                break;
-            }
         }
 
         if twcc.chunks.is_empty() {
@@ -1155,6 +1155,30 @@ mod test {
             report.delta,
             vec![Delta::Small(0), Delta::Small(40), Delta::Small(40)]
         );
+    }
+
+    #[test]
+    fn empty_twcc() {
+        let twcc = Twcc {
+            sender_ssrc: 0.into(),
+            ssrc: 0.into(),
+            base_seq: 0,
+            status_count: 0,
+            reference_time: 0,
+            feedback_count: 0,
+            chunks: vec![],
+            delta: vec![],
+        };
+
+        let mut buf = vec![0_u8; 1500];
+        let n = twcc.write_to(&mut buf[..]);
+        buf.truncate(n);
+
+        let header: RtcpHeader = (&buf[..]).try_into().unwrap();
+        let parsed: Twcc = (&buf[4..]).try_into().unwrap();
+
+        assert_eq!(header, twcc.header());
+        assert_eq!(parsed, twcc);
     }
 
     #[test]
