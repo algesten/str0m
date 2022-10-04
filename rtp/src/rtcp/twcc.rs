@@ -266,7 +266,9 @@ impl TwccRegister {
                 }
             };
 
-            let mut actual_appended = 0;
+            // How many status counts we've actually appended in the chunk far. This might be lower
+            // than max, if we abort the appending due to running out of bytes_left.
+            let mut appended_in_chunk = 0;
 
             for i in start..stop {
                 if bytes_left < 7 {
@@ -280,19 +282,20 @@ impl TwccRegister {
                     twcc.delta.push(delta);
                     bytes_left -= delta.byte_len();
                 }
-                actual_appended += 1;
+                appended_in_chunk += interims[i].status_count();
                 status_count += interims[i].status_count();
                 bytes_left -= 2;
             }
 
-            // single and double must be finished with 0 to fill the 14 or 7*2 respective.
+            // Because we bit shift the single/double for each appended interim, we must
+            // ensure the entire single/double is "full" by filling with 0 to 14 or 7*2 respective.
             match mode {
                 Mode::Single => {
-                    let n = 14 - actual_appended;
+                    let n = 14 - appended_in_chunk;
                     chunk.append(ChunkInterim::Missing(n as u16));
                 }
                 Mode::Double => {
-                    let n = 7 - actual_appended;
+                    let n = 7 - appended_in_chunk;
                     chunk.append(ChunkInterim::Missing(n as u16));
                 }
                 _ => {}
@@ -1058,6 +1061,28 @@ mod test {
             vec![PacketChunk::Vector(Symbol::Double(0b01 << 12))]
         );
         assert_eq!(report.delta, vec![Delta::Small(0)]);
+    }
+
+    #[test]
+    fn truncated_counts_gaps_correctly() {
+        let mut reg = TwccRegister::new(100);
+
+        let now = Instant::now();
+
+        reg.update_seq(10.into(), now + Duration::from_millis(0));
+        // gap
+        reg.update_seq(13.into(), now + Duration::from_millis(12));
+        reg.update_seq(14.into(), now + Duration::from_millis(140));
+        reg.update_seq(15.into(), now + Duration::from_millis(152));
+
+        let report = reg.build_report(32).unwrap();
+
+        assert_eq!(report.status_count, 4);
+        assert_eq!(
+            report.chunks,
+            vec![PacketChunk::Vector(Symbol::Double(0b01_00_00_01_00_00_00))]
+        );
+        assert_eq!(report.delta, vec![Delta::Small(0), Delta::Small(48)]);
     }
 
     #[test]
