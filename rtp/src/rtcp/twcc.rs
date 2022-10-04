@@ -348,7 +348,7 @@ impl TwccRegister {
             let diff_time = if r.time < prev.1 {
                 // negative
                 let dur = prev.1 - r.time;
-                dur.as_micros() as i32
+                dur.as_micros() as i32 * -1
             } else {
                 let dur = r.time - prev.1;
                 dur.as_micros() as i32
@@ -1104,6 +1104,29 @@ mod test {
                 PacketChunk::Run(PacketStatus::NotReceived, 8192),
                 PacketChunk::Vector(Symbol::Single(4096))
             ]
+        );
+    }
+
+    #[test]
+    fn negative_deltas() {
+        let mut reg = TwccRegister::new(100);
+
+        let now = Instant::now();
+
+        reg.update_seq(10.into(), now + Duration::from_millis(12));
+        reg.update_seq(11.into(), now + Duration::from_millis(0));
+        reg.update_seq(12.into(), now + Duration::from_millis(23));
+
+        let report = reg.build_report(1000).unwrap();
+
+        assert_eq!(report.status_count, 3);
+        assert_eq!(
+            report.chunks,
+            vec![PacketChunk::Vector(Symbol::Double(6400))]
+        );
+        assert_eq!(
+            report.delta,
+            vec![Delta::Small(0), Delta::Large(-48), Delta::Small(92)]
         );
     }
 }
