@@ -206,7 +206,7 @@ impl TwccRegister {
 
         // The ChunkInterim are helpers structures that hold the deltas between
         // the registered receptions.
-        let interims = self.build_interims(base_seq, base_time);
+        let mut interims = self.build_interims(base_seq, base_time);
 
         // Index into interims where we are to report from.
         let mut start = 0;
@@ -253,7 +253,7 @@ impl TwccRegister {
             };
 
             assert!(max > 0);
-            let stop = start + max;
+            let mut stop = start + max;
 
             // The next chunk, depending on mode.
             let mut chunk = match mode {
@@ -277,6 +277,7 @@ impl TwccRegister {
 
             for i in start..stop {
                 if bytes_left < 7 {
+                    stop = i;
                     break;
                 }
                 if let Some((index, delta)) = chunk.append(interims[i]) {
@@ -294,16 +295,35 @@ impl TwccRegister {
 
             // Because we bit shift the single/double for each appended interim, we must
             // ensure the entire single/double is "full" by filling with 0 to 14 or 7*2 respective.
-            match mode {
+            // Either this "eats into" the next missing, or we are at the end.
+            let missing = match mode {
                 Mode::Single => {
                     let n = 14 - appended_in_chunk;
                     chunk.append(ChunkInterim::Missing(n as u16));
+                    n
                 }
                 Mode::Double => {
                     let n = 7 - appended_in_chunk;
                     chunk.append(ChunkInterim::Missing(n as u16));
+                    n
                 }
-                _ => {}
+                _ => 0,
+            };
+
+            if missing > 0 && stop == (start + max) && stop < interims.len() {
+                // We must have filled in a single/double because the next
+                // interim is a "Missing" that is too big to fit.
+                assert!(matches!(mode, Mode::Single | Mode::Double));
+
+                // This also asserts that our logic holds.
+                let i = &mut interims[stop];
+                match i {
+                    ChunkInterim::Missing(n) => *n -= missing,
+                    _ => unreachable!(),
+                }
+
+                // We've attributed the missing count to this chunk.
+                status_count += missing;
             }
 
             twcc.chunks.push(chunk);
@@ -1109,6 +1129,33 @@ mod test {
                 PacketChunk::Run(PacketStatus::NotReceived, 8192),
                 PacketChunk::Vector(Symbol::Single(4096))
             ]
+        );
+    }
+
+    #[test]
+    fn single_followed_by_missing() {
+        let mut reg = TwccRegister::new(100);
+
+        let now = Instant::now();
+
+        reg.update_seq(10.into(), now + Duration::from_millis(0));
+        reg.update_seq(12.into(), now + Duration::from_millis(10));
+        reg.update_seq(100.into(), now + Duration::from_millis(20));
+
+        let report = reg.build_report(2016).unwrap();
+
+        assert_eq!(report.status_count, 91);
+        assert_eq!(
+            report.chunks,
+            vec![
+                PacketChunk::Vector(Symbol::Single(10240)),
+                PacketChunk::Run(PacketStatus::NotReceived, 76),
+                PacketChunk::Run(PacketStatus::ReceivedSmallDelta, 1)
+            ]
+        );
+        assert_eq!(
+            report.delta,
+            vec![Delta::Small(0), Delta::Small(40), Delta::Small(40)]
         );
     }
 
