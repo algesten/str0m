@@ -768,7 +768,7 @@ impl<'a> TryFrom<&'a [u8]> for Twcc {
                     buf = &buf[n..];
                 }
                 PacketChunk::Vector(Symbol::Double(v)) => {
-                    for n in (0..12).step_by(2) {
+                    for n in (0..=12).step_by(2) {
                         let x = (*v >> (12 - n)) & 0b11;
                         match PacketStatus::from(x as u8) {
                             PacketStatus::ReceivedSmallDelta => {
