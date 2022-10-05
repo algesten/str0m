@@ -151,6 +151,15 @@ impl TwccRegister {
                 // used the same twcc sequence number for two packets. Let's ignore it.
             }
             Err(idx) => {
+                if let Some(time_start) = self.time_start {
+                    // If time goes back more than 8192 millis from the time point we've
+                    // chosen as our 0, we can't represent that in the report. Let's just
+                    // forget about it and hope for the best.
+                    if time_start - time >= Duration::from_millis(8192) {
+                        return;
+                    }
+                }
+
                 self.queue.insert(
                     idx,
                     Receiption {
@@ -1146,15 +1155,46 @@ mod test {
         assert_eq!(
             report.chunks,
             vec![
-                PacketChunk::Vector(Symbol::Single(10240)),
-                PacketChunk::Run(PacketStatus::NotReceived, 76),
-                PacketChunk::Run(PacketStatus::ReceivedSmallDelta, 1)
+                Vector(Single(10240)),
+                Run(NotReceived, 76),
+                Run(ReceivedSmallDelta, 1)
             ]
         );
-        assert_eq!(
-            report.delta,
-            vec![Delta::Small(0), Delta::Small(40), Delta::Small(40)]
-        );
+        assert_eq!(report.delta, vec![Small(0), Small(40), Small(40)]);
+    }
+
+    #[test]
+    fn time_jump_small_back_for_second_report() {
+        let mut reg = TwccRegister::new(100);
+
+        let now = Instant::now();
+
+        reg.update_seq(10.into(), now + Duration::from_millis(8000));
+        let _ = reg.build_report(2016).unwrap();
+
+        reg.update_seq(9.into(), now + Duration::from_millis(0));
+        let report = reg.build_report(2016).unwrap();
+
+        println!("{:?}", report);
+
+        assert_eq!(report.status_count, 2);
+        assert_eq!(report.chunks, vec![Run(ReceivedLargeOrNegativeDelta, 2)]);
+        assert_eq!(report.delta, vec![Large(-32000), Large(32000)]);
+    }
+
+    #[test]
+    fn time_jump_large_back_for_second_report() {
+        let mut reg = TwccRegister::new(100);
+
+        let now = Instant::now();
+
+        reg.update_seq(10.into(), now + Duration::from_millis(9000));
+        let _ = reg.build_report(2016).unwrap();
+
+        reg.update_seq(9.into(), now + Duration::from_millis(0));
+        assert!(reg.build_report(2016).is_none());
+
+        assert_eq!(reg.queue.len(), 1);
     }
 
     #[test]
