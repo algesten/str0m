@@ -944,6 +944,11 @@ mod test {
 
     use super::*;
 
+    use Delta::*;
+    use PacketChunk::*;
+    use PacketStatus::*;
+    use Symbol::*;
+
     #[test]
     fn register_write_parse_small_delta() {
         let mut reg = TwccRegister::new(100);
@@ -1056,7 +1061,7 @@ mod test {
 
         // 140 * 64 = 8960
         // So the first offset must be 40ms, i.e. 40_000us / 250us = 160
-        assert_eq!(report2.delta[0], Delta::Small(160));
+        assert_eq!(report2.delta[0], Small(160));
     }
 
     #[test]
@@ -1088,11 +1093,8 @@ mod test {
         let report = reg.build_report(28).unwrap();
 
         assert_eq!(report.status_count, 1);
-        assert_eq!(
-            report.chunks,
-            vec![PacketChunk::Vector(Symbol::Double(0b01 << 12))]
-        );
-        assert_eq!(report.delta, vec![Delta::Small(0)]);
+        assert_eq!(report.chunks, vec![Vector(Double(0b01 << 12))]);
+        assert_eq!(report.delta, vec![Small(0)]);
     }
 
     #[test]
@@ -1110,11 +1112,8 @@ mod test {
         let report = reg.build_report(32).unwrap();
 
         assert_eq!(report.status_count, 4);
-        assert_eq!(
-            report.chunks,
-            vec![PacketChunk::Vector(Symbol::Double(0b01_00_00_01_00_00_00))]
-        );
-        assert_eq!(report.delta, vec![Delta::Small(0), Delta::Small(48)]);
+        assert_eq!(report.chunks, vec![Vector(Double(0b01_00_00_01_00_00_00))]);
+        assert_eq!(report.delta, vec![Small(0), Small(48)]);
     }
 
     #[test]
@@ -1132,9 +1131,9 @@ mod test {
         assert_eq!(
             report.chunks,
             vec![
-                PacketChunk::Run(PacketStatus::ReceivedSmallDelta, 1),
-                PacketChunk::Run(PacketStatus::NotReceived, 8192),
-                PacketChunk::Vector(Symbol::Single(4096))
+                Run(ReceivedSmallDelta, 1),
+                Run(NotReceived, 8192),
+                Vector(Single(4096))
             ]
         );
     }
@@ -1234,13 +1233,7 @@ mod test {
         let report = reg.build_report(1000).unwrap();
 
         assert_eq!(report.status_count, 3);
-        assert_eq!(
-            report.chunks,
-            vec![PacketChunk::Vector(Symbol::Double(6400))]
-        );
-        assert_eq!(
-            report.delta,
-            vec![Delta::Small(0), Delta::Large(-48), Delta::Small(92)]
-        );
+        assert_eq!(report.chunks, vec![Vector(Double(6400))]);
+        assert_eq!(report.delta, vec![Small(0), Large(-48), Small(92)]);
     }
 }
