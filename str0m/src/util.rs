@@ -9,8 +9,8 @@ pub fn not_happening() -> Instant {
 }
 
 pub fn already_happened() -> Instant {
-    const HOURS_24: Duration = Duration::from_secs(60 * 60);
-    static PAST: Lazy<Instant> = Lazy::new(|| Instant::now() - HOURS_24);
+    const HOURS_1: Duration = Duration::from_secs(60);
+    static PAST: Lazy<Instant> = Lazy::new(|| Instant::now() - HOURS_1);
     *PAST
 }
 
@@ -40,11 +40,19 @@ mod test {
     use super::*;
 
     #[test]
-    fn absolute_times() {
+    fn not_happening_works() {
         assert_eq!(not_happening(), not_happening());
         assert!(Instant::now() < not_happening());
+    }
+
+    #[test]
+    fn already_happened_works() {
         assert_eq!(already_happened(), already_happened());
         assert!(Instant::now() > already_happened());
+    }
+
+    #[test]
+    fn already_happened_ne() {
         assert_ne!(not_happening(), already_happened())
     }
 }
