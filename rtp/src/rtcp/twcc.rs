@@ -217,130 +217,99 @@ impl TwccRegister {
         // the registered receptions.
         let mut interims = self.build_interims(base_seq, base_time);
 
-        // Index into interims where we are to report from.
-        let mut start = 0;
-
-        // How many packet statuses we've included in the report so far.
-        let mut status_count = 0;
-
         // 20 bytes is the size of the fixed fields in Twcc.
         let mut bytes_left = max_byte_size - 20;
 
-        loop {
-            // If we reach end of the interims, stop.
-            if start >= interims.len() {
+        while !interims.is_empty() {
+            // 2 chunk + 2 large delta + 3 padding
+            const MIN_RUN_SIZE: usize = 2 + 2 + 3;
+
+            if bytes_left < MIN_RUN_SIZE {
                 break;
             }
 
-            // If there is no space left for at least one more chunk + delta, stop.
-            // 2 byte chunk + 2 byte delta + 3 byte padding
-            if bytes_left < 7 {
-                break;
-            }
+            // Chose the packet chunk type that can fit the most interims.
+            let (mut chunk, max) = {
+                let first_status = interims.front().expect("at least one interim").status();
 
-            // Attempt to pack the interims in different ways to see which way consumes most chunk interims.
-            let as_run = PacketChunk::pack_as_run(&interims[start..]);
-            let as_single = PacketChunk::pack_as_single(&interims[start..]);
-            let as_double = PacketChunk::pack_as_double(&interims[start..]);
+                let c_run = PacketChunk::Run(first_status, 0);
+                let c_single = PacketChunk::VectorSingle(0, 0);
+                let c_double = PacketChunk::VectorDouble(0, 0);
 
-            let max = as_run.max(as_single).max(as_double);
+                let max_run = c_run.append_max(interims.iter());
+                let max_single = c_single.append_max(interims.iter());
+                let max_double = c_double.append_max(interims.iter());
 
-            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-            enum Mode {
-                Run,
-                Single,
-                Double,
-            }
+                let max = max_run.max(max_single).max(max_double);
 
-            // Pick a mode for packing chunks.
-            let mode = if max == as_run {
-                Mode::Run
-            } else if max == as_single {
-                Mode::Single
-            } else {
-                Mode::Double
-            };
+                // 2 chunk + 14 small delta + 3 padding
+                const MAX_SINGLE_SIZE: usize = 2 + 14 + 3;
+                // 2 chunk + 7 large delta  + 3 padding
+                const MAX_DOUBLE_SIZE: usize = 2 + 14 + 3;
 
-            assert!(max > 0);
-            let mut stop = start + max;
-
-            // The next chunk, depending on mode.
-            let mut chunk = match mode {
-                Mode::Run => {
-                    let status = interims[start].status();
-                    PacketChunk::Run(status, 0)
-                }
-                Mode::Single => {
-                    assert!(max <= 14);
-                    PacketChunk::Vector(Symbol::Single(0))
-                }
-                Mode::Double => {
-                    assert!(max <= 7);
-                    PacketChunk::Vector(Symbol::Double(0))
+                if max == max_run {
+                    (c_run, max_run)
+                } else if max == max_single && bytes_left >= MAX_SINGLE_SIZE {
+                    (c_single, max_single)
+                } else if max == max_double && bytes_left >= MAX_DOUBLE_SIZE {
+                    (c_double, max_double)
+                } else {
+                    // fallback, since we can always do runs.
+                    (c_run, max_run)
                 }
             };
 
-            // How many status counts we've actually appended in the chunk far. This might be lower
-            // than max, if we abort the appending due to running out of bytes_left.
-            let mut appended_in_chunk = 0;
+            // we should _definitely_ be able to fit this many reported.
+            let mut todo = max;
 
-            for i in start..stop {
-                if bytes_left < 7 {
-                    stop = i;
+            loop {
+                if bytes_left < MIN_RUN_SIZE {
                     break;
                 }
-                if let Some((index, delta)) = chunk.append(interims[i]) {
-                    // Mark the reception as reported.
-                    let r = self.queue.get_mut(index).expect("reception for index");
-                    r.reported = true;
 
-                    twcc.delta.push(delta);
-                    bytes_left -= delta.byte_len();
+                if todo == 0 {
+                    break;
                 }
-                appended_in_chunk += interims[i].status_count();
-                status_count += interims[i].status_count();
-                bytes_left -= 2;
+
+                let i = match interims.front_mut() {
+                    Some(v) => v,
+                    None => break,
+                };
+
+                let appended = chunk.append(i);
+                assert!(appended > 0);
+                todo -= appended;
+                twcc.status_count += appended;
+
+                if i.consume(appended) {
+                    // it was fully consumed.
+                    if let Some(idx) = i.index() {
+                        self.queue[idx].reported = true;
+                    }
+
+                    if let Some(delta) = i.delta() {
+                        twcc.delta.push(delta);
+                        bytes_left -= delta.byte_len();
+                    }
+
+                    // move on to next interim
+                    interims.pop_front();
+                } else {
+                    // not fully consumed, then we must have run out of space in the chunk.
+                    assert!(todo == 0);
+                }
             }
 
-            // Because we bit shift the single/double for each appended interim, we must
-            // ensure the entire single/double is "full" by filling with 0 to 14 or 7*2 respective.
-            // Either this "eats into" the next missing, or we are at the end.
-            let missing = match mode {
-                Mode::Single => {
-                    let n = 14 - appended_in_chunk;
-                    chunk.append(ChunkInterim::Missing(n as u16));
-                    n
-                }
-                Mode::Double => {
-                    let n = 7 - appended_in_chunk;
-                    chunk.append(ChunkInterim::Missing(n as u16));
-                    n
-                }
-                _ => 0,
-            };
-
-            if missing > 0 && stop == (start + max) && stop < interims.len() {
-                // We must have filled in a single/double because the next
-                // interim is a "Missing" that is too big to fit.
-                assert!(matches!(mode, Mode::Single | Mode::Double));
-
-                // This also asserts that our logic holds.
-                let i = &mut interims[stop];
-                match i {
-                    ChunkInterim::Missing(n) => *n -= missing,
-                    _ => unreachable!(),
-                }
-
-                // We've attributed the missing count to this chunk.
-                status_count += missing;
+            let free = chunk.free();
+            if chunk.must_be_full() && free > 0 {
+                // this must be at the end where we can shift in missing
+                assert!(interims.is_empty());
+                chunk.append(&mut ChunkInterim::Missing(free));
             }
 
             twcc.chunks.push(chunk);
-
-            start = stop;
+            bytes_left -= 2;
         }
-
-        twcc.status_count = status_count;
 
         // How many reported we have from the beginning of the queue.
         let reported_count = self.queue.iter().skip_while(|r| r.reported).count();
@@ -356,7 +325,7 @@ impl TwccRegister {
 
     /// Interims are deltas between `Receiption` which is an intermediary format before
     /// we populate the Twcc report.
-    fn build_interims(&self, base_seq: SeqNo, base_time: Instant) -> Vec<ChunkInterim> {
+    fn build_interims(&self, base_seq: SeqNo, base_time: Instant) -> VecDeque<ChunkInterim> {
         let report_from = self
             .queue
             .iter()
@@ -364,7 +333,7 @@ impl TwccRegister {
             .skip_while(|(_, r)| r.reported);
 
         let mut prev = (base_seq, base_time);
-        let mut interims = Vec::new();
+        let mut interims = VecDeque::new();
 
         for (index, r) in report_from {
             let diff_seq = *r.seq - *prev.0;
@@ -374,7 +343,7 @@ impl TwccRegister {
                 while todo > 0 {
                     // max 2^13 run length in each missing chunk
                     let n = todo.min(8192);
-                    interims.push(ChunkInterim::Missing(n as u16));
+                    interims.push_back(ChunkInterim::Missing(n as u16));
                     todo -= n;
                 }
             }
@@ -402,7 +371,7 @@ impl TwccRegister {
                 (PacketStatus::ReceivedSmallDelta, t as i16)
             };
 
-            interims.push(ChunkInterim::Received(index, status, time));
+            interims.push_back(ChunkInterim::Received(index, status, time));
             prev = (r.seq, r.time);
         }
 
@@ -424,10 +393,34 @@ impl ChunkInterim {
         }
     }
 
-    fn status_count(&self) -> u16 {
+    fn index(&self) -> Option<usize> {
         match self {
-            ChunkInterim::Missing(n) => *n,
-            ChunkInterim::Received(_, _, _) => 1,
+            ChunkInterim::Missing(_) => None,
+            ChunkInterim::Received(i, _, _) => Some(*i),
+        }
+    }
+
+    fn delta(&self) -> Option<Delta> {
+        match self {
+            ChunkInterim::Missing(_) => None,
+            ChunkInterim::Received(_, s, d) => match *s {
+                PacketStatus::ReceivedSmallDelta => Some(Delta::Small(*d as u8)),
+                PacketStatus::ReceivedLargeOrNegativeDelta => Some(Delta::Large(*d)),
+                _ => unreachable!(),
+            },
+        }
+    }
+
+    fn consume(&mut self, n: u16) -> bool {
+        match self {
+            ChunkInterim::Missing(c) => {
+                *c -= n;
+                *c == 0
+            }
+            ChunkInterim::Received(_, _, _) => {
+                assert!(n <= 1);
+                n == 1
+            }
         }
     }
 }
@@ -435,156 +428,112 @@ impl ChunkInterim {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PacketChunk {
     Run(PacketStatus, u16), // 13 bit repeat
-    Vector(Symbol),
+    VectorSingle(u16, u16),
+    VectorDouble(u16, u16),
 }
 
 impl PacketChunk {
-    fn pack_as_run(interims: &[ChunkInterim]) -> usize {
-        assert!(!interims.is_empty());
+    fn append_max<'a>(&self, iter: impl Iterator<Item = &'a ChunkInterim>) -> u16 {
+        let mut to_fill = *self;
 
-        let status = interims[0].status();
-        let mut remaining = 8192; // each run can be max 2^13
-        let mut taken = 0;
+        let mut reached_end = true;
 
-        for i in interims {
-            let status_count = i.status_count() as i32;
-            if i.status() != status || remaining - status_count < 0 {
+        for i in iter {
+            if to_fill.free() == 0 {
+                reached_end = false;
                 break;
             }
-            remaining -= status_count;
-            taken += 1;
-        }
 
-        taken
-    }
-
-    fn pack_as_single(interims: &[ChunkInterim]) -> usize {
-        assert!(!interims.is_empty());
-
-        let mut space = 0;
-        let mut last_index = 0;
-
-        for (index, i) in interims.iter().enumerate() {
-            match i {
-                ChunkInterim::Missing(n) => {
-                    if space + n <= 14 {
-                        space += n;
-                    } else {
-                        // doesn't fit
-                        break;
-                    }
-                }
-                ChunkInterim::Received(_, status, _) => match status {
-                    PacketStatus::ReceivedSmallDelta => {
-                        if space + 1 < 14 {
-                            space += 1
-                        } else {
-                            // doesn't fit.
-                            break;
-                        }
-                    }
-                    PacketStatus::ReceivedLargeOrNegativeDelta => {
-                        // Confirmed in email with Erik Sprang.
-                        // "The intent is to just truncate the 2-bit values"
-                        // Which means 01 (received small delta) becomes 1.
-                        break;
-                    }
-                    _ => unreachable!(),
-                },
+            // The stauts is not possible to add in this chunk. This could be
+            // a large delta in a single, or a mismatching run.
+            if !to_fill.can_append_status(i.status()) {
+                reached_end = false;
+                break;
             }
-            last_index = index;
+
+            to_fill.append(i);
         }
 
-        last_index + 1
-    }
-
-    fn pack_as_double(interims: &[ChunkInterim]) -> usize {
-        assert!(!interims.is_empty());
-
-        let mut space = 0;
-        let mut last_index = 0;
-
-        for (index, i) in interims.iter().enumerate() {
-            match i {
-                ChunkInterim::Missing(n) => {
-                    if space + n <= 7 {
-                        space += n;
-                    } else {
-                        // doesn't fit
-                        break;
-                    }
-                }
-                ChunkInterim::Received(_, status, _) => match status {
-                    PacketStatus::ReceivedSmallDelta
-                    | PacketStatus::ReceivedLargeOrNegativeDelta => {
-                        if space < 7 {
-                            space += 1
-                        } else {
-                            // doesn't fit.
-                            break;
-                        }
-                    }
-                    _ => unreachable!(),
-                },
-            }
-            last_index = index;
+        // As a special case, single/double must be completely filled. However if
+        // we reached the end of the interims, we can shift in "missing" to make
+        // them full.
+        if to_fill.must_be_full() && to_fill.free() > 0 && !reached_end {
+            return 0;
         }
 
-        last_index + 1
+        self.free() - to_fill.free()
     }
 
-    fn append(&mut self, i: ChunkInterim) -> Option<(usize, Delta)> {
+    fn append(&mut self, i: &ChunkInterim) -> u16 {
         use ChunkInterim::*;
         use PacketChunk::*;
+        let free = self.free();
         match (self, i) {
-            (Run(s, c), Missing(n)) => {
-                assert!(*s == PacketStatus::NotReceived);
-                *c += n;
-                assert!(*c <= 8192);
-                None
-            }
-            (Run(s, c), Received(i, s2, t)) => {
-                assert!(*s == s2);
-                *c += 1;
-                assert!(*c <= 8192);
-                if *s == PacketStatus::ReceivedSmallDelta {
-                    assert!(t >= 0 && t <= 255);
-                    Some((i, Delta::Small(t as u8)))
-                } else if *s == PacketStatus::ReceivedLargeOrNegativeDelta {
-                    Some((i, Delta::Large(t)))
-                } else {
-                    unreachable!()
+            (Run(s, n), Missing(c)) => {
+                if *s != PacketStatus::NotReceived {
+                    return 0;
                 }
+                let max = free.min(*c);
+                *n += max;
+                max
             }
-            (Vector(Symbol::Single(v)), Missing(c)) => {
-                // Confirmed in email that despite the RFC, 0 is not received and 1 is received (small delta).
-                assert!(c < 14);
-                *v <<= c;
-                None
-            }
-            (Vector(Symbol::Single(v)), Received(i, s2, t)) => {
-                *v <<= 1;
-                *v |= 1;
-                assert!(s2 == PacketStatus::ReceivedSmallDelta);
-                assert!(t >= 0 && t <= 255);
-                Some((i, Delta::Small(t as u8)))
-            }
-            (Vector(Symbol::Double(v)), Missing(c)) => {
-                assert!(c < 7);
-                *v <<= c * 2;
-                None
-            }
-            (Vector(Symbol::Double(v)), Received(i, s2, t)) => {
-                *v <<= 2;
-                *v |= s2 as u16;
-                if s2 == PacketStatus::ReceivedSmallDelta {
-                    Some((i, Delta::Small(t as u8)))
-                } else if s2 == PacketStatus::ReceivedLargeOrNegativeDelta {
-                    Some((i, Delta::Large(t)))
-                } else {
-                    unreachable!()
+            (Run(s, n), Received(_, s2, _)) => {
+                if *s != *s2 {
+                    return 0;
                 }
+                let max = free.min(1);
+                *n += max;
+                max
             }
+            (VectorSingle(n, f), Missing(c)) => {
+                let max = free.min(*c);
+                *n <<= max;
+                *f += max;
+                max
+            }
+            (VectorSingle(n, f), Received(_, s2, _)) => {
+                if *s2 == PacketStatus::ReceivedLargeOrNegativeDelta {
+                    return 0;
+                }
+                let max = free.min(1);
+                if max == 1 {
+                    *n <<= 1;
+                    *n |= 1;
+                    *f += 1;
+                }
+                max
+            }
+            (VectorDouble(n, f), Missing(c)) => {
+                let max = free.min(*c);
+                *n <<= max * 2;
+                *f += max;
+                max
+            }
+            (VectorDouble(n, f), Received(_, s2, _)) => {
+                let max = free.min(1);
+                if max == 1 {
+                    *n <<= 2;
+                    *n |= *s2 as u16;
+                    *f += 1;
+                }
+                max
+            }
+        }
+    }
+
+    fn must_be_full(&self) -> bool {
+        match self {
+            PacketChunk::Run(_, _) => false,
+            PacketChunk::VectorSingle(_, _) => true,
+            PacketChunk::VectorDouble(_, _) => true,
+        }
+    }
+
+    fn free(&self) -> u16 {
+        match self {
+            PacketChunk::Run(_, n) => 8192 - *n,
+            PacketChunk::VectorSingle(_, filled) => 14 - *filled,
+            PacketChunk::VectorDouble(_, filled) => 7 - *filled,
         }
     }
 
@@ -623,19 +572,19 @@ impl PacketChunk {
             //                the normal 2-bit symbols, 7 in total.
             //    symbol list:  14 bits A list of packet status symbols, 7 or 14 in
             //                total.
-            PacketChunk::Vector(v) => {
+            PacketChunk::VectorSingle(n, fill) => {
+                assert!(*fill == 14);
                 let mut x: u16 = 1 << 15;
-                match v {
-                    Symbol::Single(n) => {
-                        assert!(*n <= 16384);
-                        x |= *n;
-                    }
-                    Symbol::Double(n) => {
-                        assert!(*n <= 16384);
-                        x |= 1 << 14;
-                        x |= *n;
-                    }
-                }
+                assert!(*n <= 16384);
+                x |= *n;
+                x
+            }
+            PacketChunk::VectorDouble(n, fill) => {
+                assert!(*fill == 7);
+                let mut x: u16 = 1 << 15;
+                assert!(*n <= 16384);
+                x |= 1 << 14;
+                x |= *n;
                 x
             }
         };
@@ -645,10 +594,16 @@ impl PacketChunk {
     fn max_possible_status_count(&self) -> usize {
         match self {
             PacketChunk::Run(_, n) => *n as usize,
-            PacketChunk::Vector(v) => match v {
-                Symbol::Single(_) => 14,
-                Symbol::Double(_) => 7,
-            },
+            PacketChunk::VectorSingle(_, _) => 14,
+            PacketChunk::VectorDouble(_, _) => 7,
+        }
+    }
+
+    fn can_append_status(&self, status: PacketStatus) -> bool {
+        match self {
+            PacketChunk::Run(s, _) => *s == status,
+            PacketChunk::VectorSingle(_, _) => status != PacketStatus::ReceivedLargeOrNegativeDelta,
+            PacketChunk::VectorDouble(_, _) => true,
         }
     }
 }
@@ -681,12 +636,6 @@ pub enum PacketStatus {
     ReceivedSmallDelta = 0b01,
     ReceivedLargeOrNegativeDelta = 0b10,
     Unknown = 0b11,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Symbol {
-    Single(u16),
-    Double(u16),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -791,12 +740,12 @@ impl<'a> TryFrom<&'a [u8]> for Twcc {
                     twcc.delta.extend(read_delta_large(buf, n)?);
                     buf = &buf[n..];
                 }
-                PacketChunk::Vector(Symbol::Single(v)) => {
+                PacketChunk::VectorSingle(v, _) => {
                     let n = v.count_ones() as usize;
                     twcc.delta.extend(read_delta_small(buf, n)?);
                     buf = &buf[n..];
                 }
-                PacketChunk::Vector(Symbol::Double(v)) => {
+                PacketChunk::VectorDouble(v, _) => {
                     for n in (0..=12).step_by(2) {
                         let x = (*v >> (12 - n)) & 0b11;
                         match PacketStatus::from(x as u8) {
@@ -836,9 +785,9 @@ impl<'a> TryFrom<&'a [u8]> for PacketChunk {
             let is_double = (x & 0b0100_0000_0000_0000) > 0;
             let n = x & 0b0011_1111_1111_1111;
             if is_double {
-                PacketChunk::Vector(Symbol::Double(n))
+                PacketChunk::VectorDouble(n, 7)
             } else {
-                PacketChunk::Vector(Symbol::Single(n))
+                PacketChunk::VectorSingle(n, 14)
             }
         } else {
             let s: PacketStatus = ((x >> 13) as u8).into();
@@ -947,7 +896,6 @@ mod test {
     use Delta::*;
     use PacketChunk::*;
     use PacketStatus::*;
-    use Symbol::*;
 
     #[test]
     fn register_write_parse_small_delta() {
@@ -1092,9 +1040,15 @@ mod test {
 
         let report = reg.build_report(28).unwrap();
 
-        assert_eq!(report.status_count, 1);
-        assert_eq!(report.chunks, vec![Vector(Double(0b01 << 12))]);
-        assert_eq!(report.delta, vec![Small(0)]);
+        assert_eq!(report.status_count, 2);
+        assert_eq!(report.chunks, vec![Run(ReceivedSmallDelta, 2)]);
+        assert_eq!(report.delta, vec![Small(0), Small(48)]);
+
+        let report = reg.build_report(28).unwrap();
+
+        assert_eq!(report.status_count, 2);
+        assert_eq!(report.chunks, vec![Run(ReceivedSmallDelta, 2)]);
+        assert_eq!(report.delta, vec![Small(48), Small(48)]);
     }
 
     #[test]
@@ -1112,7 +1066,14 @@ mod test {
         let report = reg.build_report(32).unwrap();
 
         assert_eq!(report.status_count, 4);
-        assert_eq!(report.chunks, vec![Vector(Double(0b01_00_00_01_00_00_00))]);
+        assert_eq!(
+            report.chunks,
+            vec![
+                Run(ReceivedSmallDelta, 1),
+                Run(NotReceived, 2),
+                Run(ReceivedSmallDelta, 1)
+            ]
+        );
         assert_eq!(report.delta, vec![Small(0), Small(48)]);
     }
 
@@ -1131,9 +1092,9 @@ mod test {
         assert_eq!(
             report.chunks,
             vec![
-                Run(ReceivedSmallDelta, 1),
-                Run(NotReceived, 8192),
-                Vector(Single(4096))
+                VectorSingle(8192, 14),
+                Run(NotReceived, 8180),
+                Run(ReceivedSmallDelta, 1)
             ]
         );
     }
@@ -1154,7 +1115,7 @@ mod test {
         assert_eq!(
             report.chunks,
             vec![
-                Vector(Single(10240)),
+                VectorSingle(10240, 14),
                 Run(NotReceived, 76),
                 Run(ReceivedSmallDelta, 1)
             ]
@@ -1233,7 +1194,42 @@ mod test {
         let report = reg.build_report(1000).unwrap();
 
         assert_eq!(report.status_count, 3);
-        assert_eq!(report.chunks, vec![Vector(Double(6400))]);
+        assert_eq!(report.chunks, vec![VectorDouble(6400, 7)]);
         assert_eq!(report.delta, vec![Small(0), Large(-48), Small(92)]);
+    }
+
+    #[test]
+    fn twcc_fuzz_fail() {
+        let mut reg = TwccRegister::new(100);
+
+        let now = Instant::now();
+
+        // [Register(, ), Register(, ), BuildReport()]
+
+        reg.update_seq(25730.into(), now + Duration::from_millis(1146699022));
+
+        // reg.build_report(9234).unwrap();
+
+        reg.update_seq(25738.into(), now + Duration::from_millis(1146699021));
+
+        println!("{:?}", reg);
+
+        let report = reg.build_report(5825).unwrap();
+
+        let mut buf = vec![0_u8; 1500];
+        let n = report.write_to(&mut buf[..]);
+        buf.truncate(n);
+
+        let header: RtcpHeader = match (&buf[..]).try_into() {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        let parsed: Twcc = match (&buf[4..]).try_into() {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+
+        assert_eq!(header, report.header());
+        assert_eq!(parsed, report);
     }
 }
