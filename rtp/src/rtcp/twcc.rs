@@ -1204,17 +1204,13 @@ mod test {
 
         let now = Instant::now();
 
-        // [Register(, ), Register(, ), BuildReport()]
+        // [Register(, ), Register(, ), Register(, ), BuildReport(43)]
 
-        reg.update_seq(25730.into(), now + Duration::from_millis(1146699022));
+        reg.update_seq(4542.into(), now + Duration::from_millis(2373281424));
+        reg.update_seq(15918.into(), now + Duration::from_millis(2373862820));
+        reg.update_seq(8405.into(), now + Duration::from_millis(2379074367));
 
-        // reg.build_report(9234).unwrap();
-
-        reg.update_seq(25738.into(), now + Duration::from_millis(1146699021));
-
-        println!("{:?}", reg);
-
-        let report = reg.build_report(5825).unwrap();
+        let report = reg.build_report(43).unwrap();
 
         let mut buf = vec![0_u8; 1500];
         let n = report.write_to(&mut buf[..]);
