@@ -23,6 +23,14 @@ impl Direction {
             _ => *self,
         }
     }
+
+    pub fn is_sending(&self) -> bool {
+        matches!(self, Direction::SendOnly | Direction::SendRecv)
+    }
+
+    pub fn is_receiving(&self) -> bool {
+        matches!(self, Direction::RecvOnly | Direction::SendRecv)
+    }
 }
 
 impl From<&str> for Direction {

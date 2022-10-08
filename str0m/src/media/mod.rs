@@ -402,7 +402,25 @@ impl Media {
                     "Mid ({}) change direction: {} -> {}",
                     self.mid, self.dir, new_dir
                 );
+
+                let was_receiving = self.dir.is_receiving();
+                let is_receiving = new_dir.is_receiving();
+
+                if was_receiving && !is_receiving {
+                    // Receive buffers are dropped straight away.
+                    self.clear_receive_buffers();
+                }
+
                 self.dir = new_dir;
+
+                let was_sending = self.dir.is_sending();
+                let is_sending = new_dir.is_sending();
+
+                if !was_sending && is_sending {
+                    // Dump the buffers when we are about to start sending. We don't do this
+                    // on sending -> not, because we want to keep the buffer to answer straggle nacks.
+                    self.clear_send_buffers();
+                }
             }
         }
 
@@ -547,6 +565,14 @@ impl Media {
             .find(|r| r.repair == Some(ssrc))
             .map(|r| r.ssrc)
     }
+
+    pub(crate) fn clear_send_buffers(&mut self) {
+        self.buffers_tx.clear();
+    }
+
+    pub(crate) fn clear_receive_buffers(&mut self) {
+        self.buffers_rx.clear();
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -652,6 +678,11 @@ impl MediaWriter<'_> {
             Some(v) => v,
             None => return Err(RtcError::UnknownPt(self.pt)),
         };
+
+        if !self.media.dir.is_sending() {
+            // Ignore any media writes while we are not sending.
+            return Ok(10_000);
+        }
 
         let is_audio = self.media.kind == MediaKind::Audio;
 

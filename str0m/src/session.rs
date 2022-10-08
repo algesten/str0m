@@ -293,6 +293,11 @@ impl Session {
 
         let time = MediaTime::new(header.timestamp as i64, clock_rate as i64);
 
+        if !media.direction().is_receiving() {
+            // Not adding unless we are supposed to be receiving.
+            return;
+        }
+
         // Buffers are unique per m-line (since PT is unique per m-line).
         let buf = media.get_buffer_rx(pt, codec);
 
