@@ -26,6 +26,9 @@ const RR_INTERVAL: Duration = Duration::from_millis(4000);
 // network conditions.
 const NACK_MIN_INTERVAL: Duration = Duration::from_millis(250);
 
+// Delay between reports of TWCC. This is deliberately very low.
+const TWCC_INTERVAL: Duration = Duration::from_millis(100);
+
 pub(crate) struct Session {
     id: SessionId,
 
@@ -38,6 +41,7 @@ pub(crate) struct Session {
     srtp_tx: Option<SrtpContext>,
     last_regular: Instant,
     last_nack: Instant,
+    last_twcc: Instant,
     feedback: VecDeque<Rtcp>,
     twcc: u64,
     twcc_register: TwccRegister,
@@ -80,6 +84,7 @@ impl Session {
             srtp_tx: None,
             last_regular: already_happened(),
             last_nack: already_happened(),
+            last_twcc: already_happened(),
             feedback: VecDeque::new(),
             twcc: 0,
             twcc_register: TwccRegister::new(100),
@@ -139,6 +144,10 @@ impl Session {
             m.handle_timeout(now);
         }
 
+        if now >= self.twcc_at() {
+            self.create_twcc_feedback(now);
+        }
+
         if now >= self.regular_feedback_at() {
             info!("Create regular feedback");
             self.last_regular = now;
@@ -155,6 +164,15 @@ impl Session {
                 }
             }
         }
+    }
+
+    fn create_twcc_feedback(&mut self, now: Instant) -> Option<()> {
+        self.last_twcc = now;
+        let mut twcc = self.twcc_register.build_report(DATAGRAM_MTU - 100)?;
+        let first_ssrc = self.first_sender_ssrc()?;
+        twcc.sender_ssrc = first_ssrc;
+        self.feedback.push_front(Rtcp::Twcc(twcc));
+        Some(())
     }
 
     pub fn handle_receive(&mut self, now: Instant, r: net::Receive) {
@@ -329,8 +347,9 @@ impl Session {
         let feedback = Rtcp::read_packet(&unprotected);
 
         for fb in RtcpFb::from_rtcp(feedback) {
-            if let RtcpFb::Twcc(_twcc) = fb {
-                todo!()
+            if let RtcpFb::Twcc(twcc) = fb {
+                info!("Fixme... receive twcc {:?}", twcc);
+                return Some(());
             }
 
             let media = self.media().find(|m| m.has_ssrc_rx(fb.ssrc()));
@@ -426,8 +445,12 @@ impl Session {
         let media_at = self.media().filter_map(|m| m.poll_timeout()).min();
         let regular_at = Some(self.regular_feedback_at());
         let nack_at = self.nack_at();
+        let twcc_at = Some(self.twcc_at());
 
-        media_at.soonest(regular_at).soonest(nack_at)
+        media_at
+            .soonest(regular_at)
+            .soonest(nack_at)
+            .soonest(twcc_at)
     }
 
     pub fn has_mid(&self, mid: Mid) -> bool {
@@ -458,6 +481,10 @@ impl Session {
         }
     }
 
+    fn twcc_at(&self) -> Instant {
+        self.last_twcc + TWCC_INTERVAL
+    }
+
     /// Helper that ensures feedback has at least one SR/RR.
     #[must_use]
     pub fn maybe_insert_dummy_rr(&mut self) -> Option<()> {
@@ -471,11 +498,7 @@ impl Session {
         }
 
         // If we don't have any sender SSRC, we simply can't send feedback at this point.
-        let first_ssrc = self
-            .media()
-            .next()
-            .and_then(|m| m.first_source_tx())
-            .map(|s| s.ssrc())?;
+        let first_ssrc = self.first_sender_ssrc()?;
 
         self.feedback
             .push_front(Rtcp::ReceiverReport(ReceiverReport {
@@ -484,6 +507,13 @@ impl Session {
             }));
 
         Some(())
+    }
+
+    fn first_sender_ssrc(&self) -> Option<Ssrc> {
+        only_media(&self.media)
+            .next()
+            .and_then(|m| m.first_source_tx())
+            .map(|s| s.ssrc())
     }
 
     pub fn new_ssrc(&self) -> Ssrc {
