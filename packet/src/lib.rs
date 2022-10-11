@@ -24,7 +24,7 @@ mod vp9;
 use vp9::{Vp9Depacketizer, Vp9Packetizer};
 
 mod buffer_rx;
-pub use buffer_rx::DepacketizingBuffer;
+pub use buffer_rx::{Depacketized, DepacketizingBuffer, RtpMeta};
 
 mod buffer_tx;
 pub use buffer_tx::{Packetized, PacketizingBuffer};

@@ -17,6 +17,7 @@ use thiserror::Error;
 pub use ice::IceConnectionState;
 
 pub use ice::Candidate;
+pub use packet::RtpMeta;
 pub use sdp::{Answer, Offer};
 
 pub mod net {
@@ -116,6 +117,7 @@ pub struct MediaData {
     pub pt: Pt,
     pub time: MediaTime,
     pub data: Vec<u8>,
+    pub meta: Vec<RtpMeta>,
 }
 
 pub enum Input<'a> {

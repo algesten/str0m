@@ -1,23 +1,49 @@
 use std::collections::VecDeque;
 use std::fmt;
+use std::time::Instant;
 
-use rtp::{MediaTime, SeqNo};
+use rtp::{MediaTime, RtpHeader, SeqNo};
 
 use crate::{CodecDepacketizer, Depacketizer, PacketError};
 
-// Internal struct to hold one pushed entry of RTP data with sequence number and marker.
-struct Rtp {
+#[derive(Clone, PartialEq, Eq)]
+/// Holds metadata incoming RTP data.
+pub struct RtpMeta {
+    pub received: Instant,
+    pub time: MediaTime,
+    pub seq_no: SeqNo,
+    pub header: RtpHeader,
+}
+
+#[derive(Clone)]
+pub struct Depacketized {
+    pub time: MediaTime,
+    pub meta: Vec<RtpMeta>,
+    pub data: Vec<u8>,
+}
+
+#[derive(Debug)]
+struct Entry {
+    meta: RtpMeta,
     data: Vec<u8>,
-    time: MediaTime,
-    seq_no: SeqNo,
-    marker: bool,
+}
+
+impl RtpMeta {
+    pub fn new(received: Instant, time: MediaTime, seq_no: SeqNo, header: RtpHeader) -> Self {
+        RtpMeta {
+            received,
+            time,
+            seq_no,
+            header,
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct DepacketizingBuffer {
     depack: CodecDepacketizer,
     last_emitted: Option<SeqNo>,
-    queue: VecDeque<Rtp>,
+    queue: VecDeque<Entry>,
 }
 
 impl DepacketizingBuffer {
@@ -29,56 +55,54 @@ impl DepacketizingBuffer {
         }
     }
 
-    pub fn push(&mut self, data: Vec<u8>, time: MediaTime, seq_no: SeqNo, marker: bool) {
+    pub fn push(&mut self, meta: RtpMeta, data: Vec<u8>) {
         // We're not emitting samples in the wrong order. If we receive
         // packets that are before the last emitted, we drop.
         if let Some(last_emitted) = self.last_emitted {
-            if seq_no <= last_emitted {
-                trace!("Drop packet before emitted: {} <= {}", seq_no, last_emitted);
+            if meta.seq_no <= last_emitted {
+                trace!("Drop before emitted: {} <= {}", meta.seq_no, last_emitted);
                 return;
             }
         }
 
-        match self.queue.binary_search_by_key(&seq_no, |r| r.seq_no) {
+        match self
+            .queue
+            .binary_search_by_key(&meta.seq_no, |r| r.meta.seq_no)
+        {
             Ok(_) => {
                 // exact same seq_no found. ignore
-                trace!("Drop exactly same packet: {}", seq_no);
+                trace!("Drop exactly same packet: {}", meta.seq_no);
                 return;
             }
             Err(i) => {
                 // i is insertion point to maintain order
-                self.queue.insert(
-                    i,
-                    Rtp {
-                        data,
-                        time,
-                        seq_no,
-                        marker,
-                    },
-                );
+                self.queue.insert(i, Entry { meta, data });
             }
         }
     }
 
-    pub fn emit_sample(&mut self) -> Option<Result<(MediaTime, Vec<u8>), PacketError>> {
+    pub fn emit_sample(&mut self) -> Option<Result<Depacketized, PacketError>> {
         let (start, stop) = self.find_contiguous()?;
 
-        let mut out = Vec::new();
+        let mut data = Vec::new();
 
-        let time = self.queue.get(start).expect("first index exist").time;
+        let time = self.queue.get(start).expect("first index exist").meta.time;
+        let mut meta = Vec::with_capacity(stop - start + 1);
 
-        for rtp in self.queue.drain(start..=stop) {
-            if let Err(e) = self.depack.depacketize(&rtp.data, &mut out) {
+        for entry in self.queue.drain(start..=stop) {
+            if let Err(e) = self.depack.depacketize(&entry.data, &mut data) {
                 return Some(Err(e));
             }
-            self.last_emitted = Some(rtp.seq_no);
+            self.last_emitted = Some(entry.meta.seq_no);
+            meta.push(entry.meta);
         }
 
         // Clean out stuff that is now too old.
         let last = self.last_emitted.expect("there to be a last emitted");
-        self.queue.retain(|r| r.seq_no > last);
+        self.queue.retain(|r| r.meta.seq_no > last);
 
-        Some(Ok((time, out)))
+        let dep = Depacketized { time, meta, data };
+        Some(Ok(dep))
     }
 
     fn find_contiguous(&self) -> Option<(usize, usize)> {
@@ -86,18 +110,18 @@ impl DepacketizingBuffer {
         let mut offset = 0;
         let mut stop = None;
 
-        for (index, rtp) in self.queue.iter().enumerate() {
+        for (index, entry) in self.queue.iter().enumerate() {
             // We are not emitting older samples.
             if let Some(last) = self.last_emitted {
-                if rtp.seq_no <= last {
+                if entry.meta.seq_no <= last {
                     continue;
                 }
             }
 
             let index = index as i64;
-            let iseq = *rtp.seq_no as i64;
+            let iseq = *entry.meta.seq_no as i64;
 
-            if self.depack.is_partition_head(&rtp.data) {
+            if self.depack.is_partition_head(&entry.data) {
                 start = Some(index);
                 offset = iseq - index;
                 stop = None;
@@ -112,7 +136,10 @@ impl DepacketizingBuffer {
                 }
             }
 
-            if self.depack.is_partition_tail(rtp.marker, &rtp.data) {
+            if self
+                .depack
+                .is_partition_tail(entry.meta.header.marker, &entry.data)
+            {
                 stop = Some(index);
             }
 
@@ -126,47 +153,24 @@ impl DepacketizingBuffer {
     }
 }
 
-impl fmt::Debug for Rtp {
+impl fmt::Debug for RtpMeta {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Rtp")
+        f.debug_struct("RtpMeta")
+            .field("received", &self.received)
+            .field("time", &self.time)
             .field("seq_no", &self.seq_no)
-            .field("marker", &self.marker)
-            .field("len", &self.data.len())
+            .field("header", &self.header)
             .finish()
     }
 }
 
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    // Chrome sends padding packets in between real RTP frames. A bit unclear why.
-    #[test]
-    fn padded_frame() {
-        let mut buf =
-            DepacketizingBuffer::new(CodecDepacketizer::Boxed(Box::new(TestDepacketizer)));
-
-        let t1 = MediaTime::new(0, 90_000);
-        buf.push(vec![1], t1, 0.into(), false);
-        buf.push(vec![2], t1, 1.into(), false);
-        buf.push(vec![3], t1, 2.into(), true);
-
-        // padding packet for same time t1 here.
-        buf.push(vec![], t1, 3.into(), false);
-
-        let t2 = MediaTime::new(1500, 90_000);
-        buf.push(vec![4], t2, 4.into(), false);
-        buf.push(vec![5], t2, 5.into(), false);
-        buf.push(vec![6], t2, 6.into(), true);
-
-        buf.push(vec![], t2, 7.into(), false);
-
-        let (rt1, d1) = buf.emit_sample().expect("sample 1").unwrap();
-        let (rt2, d2) = buf.emit_sample().expect("sample 2").unwrap();
-        assert_eq!(rt1, t1);
-        assert_eq!(rt2, t2);
-        assert_eq!(d1, vec![1, 2, 3]);
-        assert_eq!(d2, vec![4, 5, 6]);
+impl fmt::Debug for Depacketized {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Sample")
+            .field("time", &self.time)
+            .field("meta", &self.meta)
+            .field("data", &self.data.len())
+            .finish()
     }
 }
 

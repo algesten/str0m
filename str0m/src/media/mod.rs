@@ -503,11 +503,12 @@ impl Media {
         for (pt, buf) in &mut self.buffers_rx {
             if let Some(r) = buf.emit_sample() {
                 return Some(
-                    r.map(|(time, data)| MediaData {
+                    r.map(|dep| MediaData {
                         mid: self.mid,
                         pt: *pt,
-                        time,
-                        data,
+                        time: dep.time,
+                        data: dep.data,
+                        meta: dep.meta,
                     })
                     .map_err(|e| RtcError::Packet(self.mid, *pt, e)),
                 );

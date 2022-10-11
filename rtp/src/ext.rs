@@ -497,7 +497,7 @@ impl Extension {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct ExtensionValues {
     pub abs_send_time: Option<MediaTime>,
     pub voice_activity: Option<bool>,
@@ -568,7 +568,7 @@ impl fmt::Debug for ExtensionValues {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VideoTiming {
     // 0x01 = extension is set due to timer.
     // 0x02 - extension is set because the frame is larger than usual.

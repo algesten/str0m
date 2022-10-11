@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU};
+use packet::RtpMeta;
 use rtp::{extend_seq, RtcpHeader, RtpHeader, SessionId, TwccRegister};
 use rtp::{Extensions, MediaTime, Mid, ReceiverReport, ReportList, Rtcp, RtcpFb};
 use rtp::{RtcpType, SrtpContext, SrtpKey, Ssrc};
@@ -336,8 +337,9 @@ impl Session {
         // Buffers are unique per m-line (since PT is unique per m-line).
         let buf = media.get_buffer_rx(pt, codec);
 
-        trace!("Add to buffer {}", seq_no);
-        buf.push(data, time, seq_no, header.marker);
+        let meta = RtpMeta::new(now, time, seq_no, header);
+        trace!("Add to buffer {:?}", meta);
+        buf.push(meta, data);
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {

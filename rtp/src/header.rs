@@ -1,7 +1,7 @@
 use crate::ext::{ExtensionValues, Extensions};
 use crate::{MediaTime, Pt, SeqNo, Ssrc};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtpHeader {
     pub version: u8,
     pub has_padding: bool,
