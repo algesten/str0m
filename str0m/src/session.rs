@@ -8,9 +8,7 @@ use rtp::{extend_seq, RtcpHeader, RtpHeader, SessionId, TwccRegister};
 use rtp::{Extensions, MediaTime, Mid, ReceiverReport, ReportList, Rtcp, RtcpFb};
 use rtp::{RtcpType, SrtpContext, SrtpKey, Ssrc};
 use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
-use sdp::{Answer, MediaLine, Offer, Sdp};
 
-use crate::change::{Change, Changes};
 use crate::media::CodecConfig;
 use crate::session_sdp::AsMediaLine;
 use crate::util::{already_happened, Soonest};
@@ -30,14 +28,17 @@ const NACK_MIN_INTERVAL: Duration = Duration::from_millis(250);
 
 pub(crate) struct Session {
     id: SessionId,
-    media: Vec<MediaOrChannel>,
-    exts: Extensions,
+
+    // these fields are pub to allow session_sdp.rs modify them.
+    pub media: Vec<MediaOrChannel>,
+    pub exts: Extensions,
+    pub codec_config: CodecConfig,
+
     srtp_rx: Option<SrtpContext>,
     srtp_tx: Option<SrtpContext>,
     last_regular: Instant,
     last_nack: Instant,
     feedback: VecDeque<Rtcp>,
-    codec_config: CodecConfig,
     twcc: u64,
     twcc_register: TwccRegister,
 }
@@ -45,6 +46,22 @@ pub(crate) struct Session {
 pub enum MediaOrChannel {
     Media(Media),
     Channel(Channel),
+}
+
+impl MediaOrChannel {
+    pub fn as_media(&self) -> Option<&Media> {
+        match self {
+            MediaOrChannel::Media(m) => Some(m),
+            MediaOrChannel::Channel(_) => None,
+        }
+    }
+
+    pub fn as_media_mut(&mut self) -> Option<&mut Media> {
+        match self {
+            MediaOrChannel::Media(m) => Some(m),
+            MediaOrChannel::Channel(_) => None,
+        }
+    }
 }
 
 pub enum MediaEvent {
@@ -58,12 +75,12 @@ impl Session {
             id: SessionId::new(),
             media: vec![],
             exts: Extensions::default_mappings(),
+            codec_config: CodecConfig::default(),
             srtp_rx: None,
             srtp_tx: None,
             last_regular: already_happened(),
             last_nack: already_happened(),
             feedback: VecDeque::new(),
-            codec_config: CodecConfig::default(),
             twcc: 0,
             twcc_register: TwccRegister::new(100),
         }
@@ -469,161 +486,6 @@ impl Session {
         Some(())
     }
 
-    pub fn apply_offer(&mut self, offer: Offer) -> Result<(), RtcError> {
-        offer.assert_consistency()?;
-
-        self.update_session_extmaps(&offer)?;
-
-        let new_lines = self.sync_m_lines(&offer).map_err(RtcError::RemoteSdp)?;
-
-        self.add_new_lines(&new_lines)
-            .map_err(RtcError::RemoteSdp)?;
-
-        // For new lines appearing in an offer, we just add the corresponding amount of SSRC
-        // that we find in the incoming line. This is probably always correct. If there is simulcast
-        // configured, we (probably) have simulcast in both directions. If we have RTX, we have it
-        // in both directions.
-        for l in &new_lines {
-            let ssrcs: Vec<_> = l
-                .ssrc_info()
-                .iter()
-                .map(|i| (self.new_ssrc(), i.repair.is_some()))
-                .collect();
-
-            let media = self
-                .get_media(l.mid())
-                .expect("Media to be added for new m-line");
-
-            for (ssrc, is_rtx) in ssrcs {
-                media.add_source_tx(ssrc, is_rtx);
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn apply_answer(&mut self, pending: Changes, answer: Answer) -> Result<(), RtcError> {
-        answer.assert_consistency()?;
-
-        self.update_session_extmaps(&answer)?;
-
-        let new_lines = self.sync_m_lines(&answer).map_err(RtcError::RemoteSdp)?;
-
-        // The new_lines from the answer must correspond to what we sent in the offer.
-        if let Some(err) = pending.ensure_correct_answer(&new_lines) {
-            return Err(RtcError::RemoteSdp(err));
-        }
-
-        self.add_new_lines(&new_lines)
-            .map_err(RtcError::RemoteSdp)?;
-
-        // For pending AddMedia, we have outgoing SSRC communicated that needs to be added.
-        for change in pending.0 {
-            let add_media = match change {
-                Change::AddMedia(v) => v,
-                _ => continue,
-            };
-
-            let media = self
-                .get_media(add_media.mid)
-                .expect("Media to be added for pending mid");
-
-            for (ssrc, is_rtx) in add_media.ssrcs {
-                media.add_source_tx(ssrc, is_rtx);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Compares m-lines in Sdp with that already in the session.
-    ///
-    /// * Existing m-lines can apply changes (such as direction change).
-    /// * New m-lines are returned to the caller.
-    fn sync_m_lines<'a>(&mut self, sdp: &'a Sdp) -> Result<Vec<&'a MediaLine>, String> {
-        let mut new_lines = Vec::new();
-
-        // SAFETY: CodecConfig is read only and not interfering with self.get_media.
-        let config = unsafe {
-            let ptr = &self.codec_config as *const CodecConfig;
-            &*ptr
-        };
-
-        for (idx, m) in sdp.media_lines.iter().enumerate() {
-            if let Some(media) = self.get_media(m.mid()) {
-                if idx != media.index() {
-                    return index_err(m.mid());
-                }
-
-                media.apply_changes(m, config);
-            } else if let Some(chan) = self.get_channel(m.mid()) {
-                if idx != chan.index() {
-                    return index_err(m.mid());
-                }
-
-                chan.apply_changes(m);
-            } else {
-                new_lines.push(m);
-            }
-        }
-
-        fn index_err<T>(mid: Mid) -> Result<T, String> {
-            Err(format!("Changed order for m-line with mid: {}", mid))
-        }
-
-        Ok(new_lines)
-    }
-
-    /// Adds new m-lines as found in an offer or answer.
-    fn add_new_lines(&mut self, new_lines: &[&MediaLine]) -> Result<(), String> {
-        for m in new_lines {
-            let idx = self.media.len();
-
-            if m.typ.is_media() {
-                let media = (*m, idx).into();
-                self.media.push(MediaOrChannel::Media(media));
-
-                let media = only_media_mut(&mut self.media).last().unwrap();
-                media.apply_changes(m, &self.codec_config);
-            } else if m.typ.is_channel() {
-                let channel = (m.mid(), idx).into();
-                self.media.push(MediaOrChannel::Channel(channel));
-
-                let chan = self.channels().last().unwrap();
-                chan.apply_changes(m);
-            } else {
-                return Err(format!(
-                    "New m-line is neither media nor channel: {}",
-                    m.mid()
-                ));
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Update session level Extensions.
-    fn update_session_extmaps(&mut self, sdp: &Sdp) -> Result<(), RtcError> {
-        let extmaps = sdp
-            .media_lines
-            .iter()
-            .map(|m| m.extmaps())
-            .flatten()
-            // Only keep supported extensions
-            .filter(|x| x.ext.is_supported());
-
-        for x in extmaps {
-            self.exts.apply_mapping(&x);
-        }
-
-        Ok(())
-    }
-
-    /// Returns all media/channels as `AsMediaLine` trait.
-    pub fn as_media_lines(&self) -> impl Iterator<Item = &dyn AsMediaLine> {
-        self.media.iter().map(|m| m as &dyn AsMediaLine)
-    }
-
     pub fn new_ssrc(&self) -> Ssrc {
         loop {
             let ssrc: Ssrc = (rand::random::<u32>()).into();
@@ -635,17 +497,11 @@ impl Session {
 }
 
 // Helper while waiting for polonius.
-fn only_media(media: &[MediaOrChannel]) -> impl Iterator<Item = &Media> {
-    media.iter().filter_map(|m| match m {
-        MediaOrChannel::Media(m) => Some(m),
-        MediaOrChannel::Channel(_) => None,
-    })
+pub(crate) fn only_media(media: &[MediaOrChannel]) -> impl Iterator<Item = &Media> {
+    media.iter().filter_map(|m| m.as_media())
 }
 
 // Helper while waiting for polonius.
-fn only_media_mut(media: &mut [MediaOrChannel]) -> impl Iterator<Item = &mut Media> {
-    media.iter_mut().filter_map(|m| match m {
-        MediaOrChannel::Media(m) => Some(m),
-        MediaOrChannel::Channel(_) => None,
-    })
+pub(crate) fn only_media_mut(media: &mut [MediaOrChannel]) -> impl Iterator<Item = &mut Media> {
+    media.iter_mut().filter_map(|m| m.as_media_mut())
 }
