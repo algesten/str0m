@@ -150,9 +150,9 @@ where
     .map(|(hash_func, _, bytes)| SessionAttribute::Fingerprint(Fingerprint { hash_func, bytes }));
 
     let setup_val = choice((
-        string("actpass").map(|_| Setup::ActPass),
-        string("active").map(|_| Setup::Active),
-        string("passive").map(|_| Setup::Passive),
+        attempt(string("actpass").map(|_| Setup::ActPass)),
+        attempt(string("active").map(|_| Setup::Active)),
+        attempt(string("passive").map(|_| Setup::Passive)),
     ));
 
     // a=setup:actpass
@@ -170,7 +170,16 @@ where
     let unused = typed_line('a', any_value()).map(SessionAttribute::Unused);
 
     choice((
-        group, ice_lite, ice_ufrag, ice_pwd, ice_opt, finger, setup, cand, endof, unused,
+        attempt(group),
+        attempt(ice_lite),
+        attempt(ice_ufrag),
+        attempt(ice_pwd),
+        attempt(ice_opt),
+        attempt(finger),
+        attempt(setup),
+        attempt(cand),
+        attempt(endof),
+        unused,
     ))
 }
 
@@ -310,22 +319,32 @@ where
 // m=audio 64205 UDP/TLS/RTP/SAVPF 111
 // m=video 53151 UDP/TLS/RTP/SAVPF 96 97 125 107 100 101
 // m=application 54055 DTLS/SCTP 5000
+//
+// newer chrome:
+// m=application 9 UDP/DTLS/SCTP webrtc-datachannel
 fn media_line<Input>() -> impl Parser<Input, Output = (MediaType, Proto, Vec<Pt>)>
 where
     Input: Stream<Token = char>,
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
 {
     let media_type = choice((
-        string("audio").map(|_| MediaType::Audio),
-        string("video").map(|_| MediaType::Video),
-        string("application").map(|_| MediaType::Application),
+        attempt(string("audio").map(|_| MediaType::Audio)),
+        attempt(string("video").map(|_| MediaType::Video)),
+        attempt(string("application").map(|_| MediaType::Application)),
         not_sp().map(|v| MediaType::Unknown(v)),
     ));
 
     let proto_line = choice((
-        string("UDP/TLS/RTP/SAVPF").map(|_| Proto::Srtp),
-        string("DTLS/SCTP").map(|_| Proto::Sctp),
+        attempt(string("UDP/TLS/RTP/SAVPF").map(|_| Proto::Srtp)),
+        attempt(string("DTLS/SCTP").map(|_| Proto::Sctp)),
+        attempt(string("UDP/DTLS/SCTP").map(|_| Proto::Sctp)),
     ));
+
+    let parse_pt = not_sp().and_then(|s| {
+        s.parse::<u8>()
+            .map(|v| Pt::from(v))
+            .map_err(StreamErrorFor::<Input>::message_format)
+    });
 
     // m=<media> <port> <proto> <fmt> ...
     // <fmt> is: <pt> <pt> <pt> <pt>
@@ -339,14 +358,10 @@ where
             token(' '),
             proto_line, // proto:  or
             token(' '),
-            sep_by(
-                not_sp().and_then(|s| {
-                    s.parse::<u8>()
-                        .map(|v| Pt::from(v))
-                        .map_err(StreamErrorFor::<Input>::message_format)
-                }),
-                token(' '),
-            ), // <pt> <pt>
+            choice((
+                attempt(sep_by(parse_pt, token(' '))), // <pt> <pt>
+                any_value().map(|_| vec![]),
+            )),
         ),
     )
     .map(|(typ, _, _, _, proto, _, pts)| (typ, proto, pts))
@@ -384,9 +399,9 @@ where
     .map(|(hash_func, _, bytes)| MediaAttribute::Fingerprint(Fingerprint { hash_func, bytes }));
 
     let setup_val = choice((
-        string("actpass").map(|_| Setup::ActPass),
-        string("active").map(|_| Setup::Active),
-        string("passive").map(|_| Setup::Passive),
+        attempt(string("actpass").map(|_| Setup::ActPass)),
+        attempt(string("active").map(|_| Setup::Active)),
+        attempt(string("passive").map(|_| Setup::Passive)),
     ));
 
     // a=setup:actpass
@@ -439,10 +454,10 @@ where
     });
 
     let direction = choice((
-        attribute_line_flag("recvonly").map(|_| MediaAttribute::RecvOnly),
-        attribute_line_flag("sendrecv").map(|_| MediaAttribute::SendRecv),
-        attribute_line_flag("sendonly").map(|_| MediaAttribute::SendOnly),
-        attribute_line_flag("inactive").map(|_| MediaAttribute::Inactive),
+        attempt(attribute_line_flag("recvonly").map(|_| MediaAttribute::RecvOnly)),
+        attempt(attribute_line_flag("sendrecv").map(|_| MediaAttribute::SendRecv)),
+        attempt(attribute_line_flag("sendonly").map(|_| MediaAttribute::SendOnly)),
+        attempt(attribute_line_flag("inactive").map(|_| MediaAttribute::Inactive)),
     ));
 
     // // a=msid:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1
@@ -530,7 +545,7 @@ where
         }
     });
 
-    let fmtp = choice((fmtp1, fmtp2));
+    let fmtp = choice((attempt(fmtp1), attempt(fmtp2)));
 
     // a=rid:<rid-id> <direction> [pt=<fmt-list>;]<restriction>=<value>
     let rid = attribute_line(
@@ -659,30 +674,30 @@ where
     let unused = typed_line('a', any_value()).map(MediaAttribute::Unused);
 
     choice((
-        ice_ufrag,
-        ice_pwd,
-        ice_opt,
-        finger,
-        setup,
-        mid,
-        sctp_port,
-        max_message_size,
-        extmap,
-        direction,
-        msid,
-        rtcp,
-        rtcpmux,
-        rtcpmuxonly,
-        rtcprsize,
-        cand,
-        endof,
-        rtpmap,
-        rtcp_fb,
-        fmtp,
-        rid,
-        simulcast,
-        ssrc_group,
-        ssrc,
+        attempt(ice_ufrag),
+        attempt(ice_pwd),
+        attempt(ice_opt),
+        attempt(finger),
+        attempt(setup),
+        attempt(mid),
+        attempt(sctp_port),
+        attempt(max_message_size),
+        attempt(extmap),
+        attempt(direction),
+        attempt(msid),
+        attempt(rtcp),
+        attempt(rtcpmux),
+        attempt(rtcpmuxonly),
+        attempt(rtcprsize),
+        attempt(cand),
+        attempt(endof),
+        attempt(rtpmap),
+        attempt(rtcp_fb),
+        attempt(fmtp),
+        attempt(rid),
+        attempt(simulcast),
+        attempt(ssrc_group),
+        attempt(ssrc),
         unused,
     ))
 }
@@ -1081,9 +1096,10 @@ mod test {
         a=max-message-size:262144\r\n\
         ";
 
-        let parsed = sdp_parser().parse(sdp);
+        let (sdp, _) = sdp_parser().parse(sdp).unwrap();
 
-        assert!(parsed.is_ok());
+        assert!(!sdp.media_lines.is_empty());
+        assert_eq!(sdp.media_lines[0].mid().to_string(), "0");
     }
 
     #[test]

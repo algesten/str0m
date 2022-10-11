@@ -366,14 +366,14 @@ impl MediaLine {
 
         let dir_count = self.attrs.iter().filter(|a| is_dir(a)).count();
 
-        if dir_count != 1 {
+        if self.proto == Proto::Srtp && dir_count != 1 {
             return Some(format!(
                 "Expected exactly one of a=sendrecv, a=sendonly, a=recvonly, a=inactive for mid: {}",
                 self.mid()
             ));
         }
 
-        if self.pts.is_empty() {
+        if self.proto == Proto::Srtp && self.pts.is_empty() {
             return Some(format!("Expected at least one PT for mid: {}", self.mid()));
         }
 
