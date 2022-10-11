@@ -58,12 +58,12 @@ impl Into<u8> for FeedbackMessageType {
 pub enum TransportType {
     /// Nack RTCP packet.
     ///
-    /// Definition: https://www.rfc-editor.org/rfc/rfc4585#section-6.2.1
+    /// Definition: <https://www.rfc-editor.org/rfc/rfc4585#section-6.2.1>
     Nack = 1,
 
     /// Transportwide congestion control packet.
     ///
-    /// Definition: https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01
+    /// Definition: <https://tools.ietf.org/html/draft-holmer-rmcat-transport-wide-cc-extensions-01>
     TransportWide = 15,
 }
 
@@ -88,27 +88,27 @@ impl TryFrom<u8> for TransportType {
 pub enum PayloadType {
     /// PLI packet type.
     ///
-    /// Definition: https://www.rfc-editor.org/rfc/rfc4585#section-6.3.1
+    /// Definition: <https://www.rfc-editor.org/rfc/rfc4585#section-6.3.1>
     PictureLossIndication = 1,
 
     /// SLI packet type.
     ///
-    /// Definition: https://www.rfc-editor.org/rfc/rfc4585#section-6.3.2
+    /// Definition: <https://www.rfc-editor.org/rfc/rfc4585#section-6.3.2>
     SliceLossIndication = 2,
 
     /// RPSI packet type.
     ///
-    /// Definition: https://www.rfc-editor.org/rfc/rfc4585#section-6.3.3
+    /// Definition: <https://www.rfc-editor.org/rfc/rfc4585#section-6.3.3>
     ReferencePictureSelectionIndication = 3,
 
     /// FIR packet type.
     ///
-    /// Definition: https://www.rfc-editor.org/rfc/rfc5104.html#section-4.3.1
+    /// Definition: <https://www.rfc-editor.org/rfc/rfc5104.html#section-4.3.1>
     FullIntraRequest = 4,
 
     /// Application specific type.
     ///
-    /// Definition: https://www.rfc-editor.org/rfc/rfc4585#section-6.4
+    /// Definition: <https://www.rfc-editor.org/rfc/rfc4585#section-6.4>
     ApplicationLayer = 15,
 }
 
