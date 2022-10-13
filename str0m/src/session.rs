@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU};
 use packet::RtpMeta;
-use rtp::{extend_seq, RtcpHeader, RtpHeader, SessionId, TwccRegister};
+use rtp::{extend_seq, RtcpHeader, RtpHeader, SessionId, TwccReceiveRegister};
 use rtp::{Extensions, MediaTime, Mid, ReceiverReport, ReportList, Rtcp, RtcpFb};
 use rtp::{RtcpType, SrtpContext, SrtpKey, Ssrc};
 use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
@@ -45,7 +45,7 @@ pub(crate) struct Session {
     last_twcc: Instant,
     feedback: VecDeque<Rtcp>,
     twcc: u64,
-    twcc_register: TwccRegister,
+    twcc_rx_register: TwccReceiveRegister,
 }
 
 pub enum MediaOrChannel {
@@ -88,7 +88,7 @@ impl Session {
             last_twcc: already_happened(),
             feedback: VecDeque::new(),
             twcc: 0,
-            twcc_register: TwccRegister::new(100),
+            twcc_rx_register: TwccReceiveRegister::new(100),
         }
     }
 
@@ -169,7 +169,7 @@ impl Session {
 
     fn create_twcc_feedback(&mut self, now: Instant) -> Option<()> {
         self.last_twcc = now;
-        let mut twcc = self.twcc_register.build_report(DATAGRAM_MTU - 100)?;
+        let mut twcc = self.twcc_rx_register.build_report(DATAGRAM_MTU - 100)?;
         let first_ssrc = self.first_sender_ssrc()?;
         twcc.sender_ssrc = first_ssrc;
         self.feedback.push_front(Rtcp::Twcc(twcc));
@@ -222,9 +222,9 @@ impl Session {
     fn handle_rtp(&mut self, now: Instant, header: RtpHeader, buf: &[u8]) {
         trace!("Handle RTP: {:?}", header);
         if let Some(transport_cc) = header.ext_vals.transport_cc {
-            let prev = self.twcc_register.max_seq();
+            let prev = self.twcc_rx_register.max_seq();
             let extended = extend_seq(Some(*prev), transport_cc);
-            self.twcc_register.update_seq(extended.into(), now);
+            self.twcc_rx_register.update_seq(extended.into(), now);
         }
 
         let mid_in = header.ext_vals.rtp_mid;

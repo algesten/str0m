@@ -98,7 +98,7 @@ impl RtcpPacket for Twcc {
 }
 
 #[derive(Debug)]
-pub struct TwccRegister {
+pub struct TwccReceiveRegister {
     // How many packets to keep when they are reported. This is to handle packets arriving out
     // of order and where two consecutive calls to `build_report` needs to go "backwards" in
     // base_seq.
@@ -127,9 +127,9 @@ struct Receiption {
     reported: bool,
 }
 
-impl TwccRegister {
+impl TwccReceiveRegister {
     pub fn new(keep_reported: usize) -> Self {
-        TwccRegister {
+        TwccReceiveRegister {
             keep_reported,
             queue: VecDeque::new(),
             time_start: None,
@@ -899,7 +899,7 @@ mod test {
 
     #[test]
     fn register_write_parse_small_delta() {
-        let mut reg = TwccRegister::new(100);
+        let mut reg = TwccReceiveRegister::new(100);
 
         let now = Instant::now();
 
@@ -922,7 +922,7 @@ mod test {
 
     #[test]
     fn register_write_parse_small_delta_missing() {
-        let mut reg = TwccRegister::new(100);
+        let mut reg = TwccReceiveRegister::new(100);
 
         let now = Instant::now();
 
@@ -946,7 +946,7 @@ mod test {
 
     #[test]
     fn register_write_parse_large_delta() {
-        let mut reg = TwccRegister::new(100);
+        let mut reg = TwccReceiveRegister::new(100);
 
         let now = Instant::now();
 
@@ -969,7 +969,7 @@ mod test {
 
     #[test]
     fn register_write_parse_mixed_delta() {
-        let mut reg = TwccRegister::new(100);
+        let mut reg = TwccReceiveRegister::new(100);
 
         let now = Instant::now();
 
@@ -992,7 +992,7 @@ mod test {
 
     #[test]
     fn too_big_time_gap_requires_two_reports() {
-        let mut reg = TwccRegister::new(100);
+        let mut reg = TwccReceiveRegister::new(100);
 
         let now = Instant::now();
 
@@ -1014,7 +1014,7 @@ mod test {
 
     #[test]
     fn report_padded_to_even_word() {
-        let mut reg = TwccRegister::new(100);
+        let mut reg = TwccReceiveRegister::new(100);
 
         let now = Instant::now();
 
@@ -1029,7 +1029,7 @@ mod test {
 
     #[test]
     fn report_truncated_to_max_byte_size() {
-        let mut reg = TwccRegister::new(100);
+        let mut reg = TwccReceiveRegister::new(100);
 
         let now = Instant::now();
 
@@ -1053,7 +1053,7 @@ mod test {
 
     #[test]
     fn truncated_counts_gaps_correctly() {
-        let mut reg = TwccRegister::new(100);
+        let mut reg = TwccReceiveRegister::new(100);
 
         let now = Instant::now();
 
@@ -1079,7 +1079,7 @@ mod test {
 
     #[test]
     fn run_max_is_8192() {
-        let mut reg = TwccRegister::new(100);
+        let mut reg = TwccReceiveRegister::new(100);
 
         let now = Instant::now();
 
@@ -1101,7 +1101,7 @@ mod test {
 
     #[test]
     fn single_followed_by_missing() {
-        let mut reg = TwccRegister::new(100);
+        let mut reg = TwccReceiveRegister::new(100);
 
         let now = Instant::now();
 
@@ -1125,7 +1125,7 @@ mod test {
 
     #[test]
     fn time_jump_small_back_for_second_report() {
-        let mut reg = TwccRegister::new(100);
+        let mut reg = TwccReceiveRegister::new(100);
 
         let now = Instant::now();
 
@@ -1144,7 +1144,7 @@ mod test {
 
     #[test]
     fn time_jump_large_back_for_second_report() {
-        let mut reg = TwccRegister::new(100);
+        let mut reg = TwccReceiveRegister::new(100);
 
         let now = Instant::now();
 
@@ -1183,7 +1183,7 @@ mod test {
 
     #[test]
     fn negative_deltas() {
-        let mut reg = TwccRegister::new(100);
+        let mut reg = TwccReceiveRegister::new(100);
 
         let now = Instant::now();
 
@@ -1200,7 +1200,7 @@ mod test {
 
     #[test]
     fn twcc_fuzz_fail() {
-        let mut reg = TwccRegister::new(100);
+        let mut reg = TwccReceiveRegister::new(100);
 
         let now = Instant::now();
 
