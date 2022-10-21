@@ -12,15 +12,11 @@ use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
 
 use crate::media::CodecConfig;
 use crate::session_sdp::AsMediaLine;
-use crate::util::{already_happened, Soonest};
+use crate::util::{already_happened, not_happening, Soonest};
 use crate::RtcError;
 use crate::{net, MediaData};
 
 use super::{Channel, Media};
-
-// Time between regular receiver reports.
-// https://www.rfc-editor.org/rfc/rfc8829#section-5.1.2
-const RR_INTERVAL: Duration = Duration::from_millis(4000);
 
 // Minimum time we delay between sending nacks. This should be
 // set high enough to not cause additional problems in very bad
@@ -40,7 +36,6 @@ pub(crate) struct Session {
 
     srtp_rx: Option<SrtpContext>,
     srtp_tx: Option<SrtpContext>,
-    last_regular: Instant,
     last_nack: Instant,
     last_twcc: Instant,
     feedback: VecDeque<Rtcp>,
@@ -83,7 +78,6 @@ impl Session {
             codec_config: CodecConfig::default(),
             srtp_rx: None,
             srtp_tx: None,
-            last_regular: already_happened(),
             last_nack: already_happened(),
             last_twcc: already_happened(),
             feedback: VecDeque::new(),
@@ -150,10 +144,8 @@ impl Session {
         }
 
         if now >= self.regular_feedback_at() {
-            info!("Create regular feedback");
-            self.last_regular = now;
             for m in only_media_mut(&mut self.media) {
-                m.create_regular_feedback(now, &mut self.feedback);
+                m.maybe_create_regular_feedback(now, &mut self.feedback);
             }
         }
 
@@ -417,7 +409,8 @@ impl Session {
             "RTCP buffer multiple of SRTCP block size",
         );
 
-        Rtcp::write_packet(&mut self.feedback, &mut data, SRTCP_BLOCK_SIZE);
+        let len = Rtcp::write_packet(&mut self.feedback, &mut data, SRTCP_BLOCK_SIZE);
+        data.truncate(len);
 
         let srtp = self.srtp_tx.as_mut()?;
         let protected = srtp.protect_rtcp(&data);
@@ -470,7 +463,10 @@ impl Session {
     // }
 
     fn regular_feedback_at(&self) -> Instant {
-        self.last_regular + RR_INTERVAL
+        only_media(&self.media)
+            .map(|m| m.regular_feedback_at())
+            .min()
+            .unwrap_or(not_happening())
     }
 
     fn nack_at(&mut self) -> Option<Instant> {

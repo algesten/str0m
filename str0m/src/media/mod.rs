@@ -32,6 +32,21 @@ use crate::{MediaData, RtcError};
 // How often we remove unused senders/receivers.
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
 
+// Time between regular receiver reports.
+// https://www.rfc-editor.org/rfc/rfc8829#section-5.1.2
+// Should technically be 4 seconds according to spec, but libWebRTC
+// expects video to be every second, and audio every 5 seconds.
+const RR_INTERVAL_VIDEO: Duration = Duration::from_millis(1000);
+const RR_INTERVAL_AUDIO: Duration = Duration::from_millis(5000);
+
+fn rr_interval(audio: bool) -> Duration {
+    if audio {
+        RR_INTERVAL_AUDIO
+    } else {
+        RR_INTERVAL_VIDEO
+    }
+}
+
 /// Audio or video media.
 ///
 /// An m-line in SDP.
@@ -81,6 +96,9 @@ pub struct Media {
 
     /// Last time we ran cleanup.
     last_cleanup: Instant,
+
+    /// Last time we produced regular feedback (SR/RR).
+    last_regular_feedback: Instant,
 
     /// SSRC information discovered in the SDP.
     ///
@@ -320,11 +338,15 @@ impl Media {
     }
 
     /// Creates sender info and receiver reports for all senders/receivers
-    pub(crate) fn create_regular_feedback(
+    pub(crate) fn maybe_create_regular_feedback(
         &mut self,
         now: Instant,
         feedback: &mut VecDeque<Rtcp>,
     ) -> Option<()> {
+        if now < self.regular_feedback_at() {
+            return None;
+        }
+
         // If we don't have any sender sources, we can't create an SRTCP wrapper around the
         // feedback. This is because the SSRC is used to calculate the specific encryption key.
         // No sender SSRC, no encryption, no feedback possible.
@@ -347,6 +369,9 @@ impl Media {
             debug!("Created feedback RR: {:?}", rr);
             feedback.push_back(Rtcp::ReceiverReport(rr));
         }
+
+        // Update timestamp to move time when next is created.
+        self.last_regular_feedback = now;
 
         Some(())
     }
@@ -574,6 +599,10 @@ impl Media {
     pub(crate) fn clear_receive_buffers(&mut self) {
         self.buffers_rx.clear();
     }
+
+    pub(crate) fn regular_feedback_at(&self) -> Instant {
+        self.last_regular_feedback + rr_interval(self.kind == MediaKind::Audio)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -611,6 +640,7 @@ impl Default for Media {
             sources_rx: vec![],
             sources_tx: vec![],
             last_cleanup: already_happened(),
+            last_regular_feedback: already_happened(),
             ssrc_info_rx: vec![],
             buffers_rx: HashMap::new(),
             buffers_tx: HashMap::new(),
