@@ -13,7 +13,7 @@ pub struct Descriptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sdes {
     pub ssrc: Ssrc,
-    pub values: Vec<(SdesType, String)>,
+    pub values: ReportList<(SdesType, String)>,
 }
 
 #[allow(clippy::upper_case_acronyms)]
@@ -179,7 +179,7 @@ impl<'a> TryFrom<&'a [u8]> for Sdes {
         }
 
         let ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
-        let mut values = vec![];
+        let mut values = ReportList::new();
 
         let mut buf = &buf[4..];
         let mut abs = 0;

@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use net_::{Id, DATAGRAM_MTU};
 use packet::{DepacketizingBuffer, Packetized, PacketizingBuffer};
 pub use rtp::MediaTime;
-use rtp::{Extensions, NackEntry, Rtcp, RtcpFb, RtpHeader};
+use rtp::{Extensions, NackEntry, Rtcp, RtcpFb, RtpHeader, SdesType};
 use rtp::{SeqNo, Ssrc, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
 pub use rtp::{Direction, Mid, Pt};
@@ -59,7 +59,7 @@ pub struct Media {
 
     /// Unique CNAME for use in Sdes RTCP packets.
     ///
-    /// This is for _outgoing_ SDP. Incoming CNAME ca be
+    /// This is for _outgoing_ SDP. Incoming CNAME can be
     /// found in the `ssrc_info_rx`.
     cname: String,
 
@@ -357,9 +357,11 @@ impl Media {
 
         for s in &mut self.sources_tx {
             let sr = s.create_sender_report(now);
+            let ds = s.create_sdes(&self.cname);
 
             debug!("Created feedback SR: {:?}", sr);
             feedback.push_back(Rtcp::SenderReport(sr));
+            feedback.push_back(Rtcp::SourceDescription(ds));
         }
 
         for s in &mut self.sources_rx {
@@ -401,7 +403,17 @@ impl Media {
             }
             ReceptionReport(_) => todo!(),
             SourceDescription(v) => {
-                error!("SourceDescription: {:?}", v);
+                for (sdes, st) in v.values {
+                    if sdes == SdesType::CNAME {
+                        let i = self
+                            .ssrc_info_rx
+                            .iter()
+                            .find(|i| i.cname.as_ref() == Some(&st));
+                        if i.is_none() {
+                            warn!("Sdes CNAME does not match any SDP CNAME: {}", st);
+                        }
+                    }
+                }
             }
             Goodbye(v) => {
                 error!("Goodbye: {:?}", v);

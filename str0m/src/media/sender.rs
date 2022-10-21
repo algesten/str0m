@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use rtp::{ReportList, SenderInfo, SenderReport, SeqNo, Ssrc};
+use rtp::{Descriptions, ReportList, Sdes, SdesType, SenderInfo, SenderReport, SeqNo, Ssrc};
 
 use crate::util::already_happened;
 
@@ -37,6 +37,21 @@ impl SenderSource {
             sender_info: self.sender_info(now),
             reports: ReportList::new(),
         }
+    }
+
+    pub fn create_sdes(&self, cname: &str) -> Descriptions {
+        let mut s = Sdes {
+            ssrc: self.ssrc,
+            values: ReportList::new(),
+        };
+        s.values.push((SdesType::CNAME, cname.to_string()));
+
+        let mut d = Descriptions {
+            reports: ReportList::new(),
+        };
+        d.reports.push(s);
+
+        d
     }
 
     fn sender_info(&self, now: Instant) -> SenderInfo {
