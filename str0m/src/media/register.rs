@@ -93,7 +93,13 @@ impl ReceiverRegister {
             return;
         }
         let pos = (*seq % self.bits.len() as u64) as usize;
-        self.bits.set(pos, true);
+        let was_set = self.bits.replace(pos, true);
+
+        // if a bit flips from false -> true, we have received a new packet. dupe packets are
+        // not counted (i.e. true -> true) that can happen due to resends.
+        if !was_set {
+            self.received += 1;
+        }
     }
 
     pub fn update_seq(&mut self, seq: SeqNo) {
@@ -135,8 +141,6 @@ impl ReceiverRegister {
                 self.maybe_seq_jump(seq);
             }
         }
-
-        self.received += 1;
     }
 
     fn maybe_seq_jump(&mut self, seq: SeqNo) {
