@@ -12,8 +12,8 @@ pub struct Twcc {
     pub status_count: u16,
     pub reference_time: u32, // 24 bit
     pub feedback_count: u8,  // counter for each Twcc
-    pub chunks: Vec<PacketChunk>,
-    pub delta: Vec<Delta>,
+    pub chunks: VecDeque<PacketChunk>,
+    pub delta: VecDeque<Delta>,
 }
 
 impl Twcc {
@@ -23,6 +23,85 @@ impl Twcc {
 
     fn delta_byte_len(&self) -> usize {
         self.delta.iter().map(|d| d.byte_len()).sum()
+    }
+
+    pub fn into_iter(self, time_zero: Instant) -> TwccIter {
+        let millis = self.reference_time as u64 * 64;
+        let time_base = time_zero + Duration::from_millis(millis);
+        TwccIter {
+            time_base,
+            index: 0,
+            twcc: self,
+        }
+    }
+}
+
+pub struct TwccIter {
+    time_base: Instant,
+    index: usize,
+    twcc: Twcc,
+}
+
+impl Iterator for TwccIter {
+    type Item = (SeqNo, Option<Instant>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let head = self.twcc.chunks.front()?;
+
+        let (status, amount) = match head {
+            PacketChunk::Run(s, n) => {
+                use PacketStatus::*;
+                let status = match s {
+                    NotReceived | Unknown => NotReceived,
+                    ReceivedSmallDelta => ReceivedSmallDelta,
+                    PacketStatus::ReceivedLargeOrNegativeDelta => ReceivedLargeOrNegativeDelta,
+                };
+                (status, *n)
+            }
+            PacketChunk::VectorSingle(v, n) => {
+                let status = if 1 << (13 - self.index) & v > 0 {
+                    PacketStatus::ReceivedSmallDelta
+                } else {
+                    PacketStatus::NotReceived
+                };
+                (status, *n)
+            }
+            PacketChunk::VectorDouble(v, n) => {
+                let e = ((v >> (12 - self.index * 2)) & 0b11) as u8;
+                let status = PacketStatus::from(e);
+                (status, *n)
+            }
+        };
+
+        let instant = match status {
+            PacketStatus::NotReceived => None,
+            PacketStatus::ReceivedSmallDelta => match self.twcc.delta.pop_front()? {
+                Delta::Small(v) => Some(self.time_base + Duration::from_micros(250 * v as u64)),
+                Delta::Large(_) => panic!("Incorrect large delta size"),
+            },
+            PacketStatus::ReceivedLargeOrNegativeDelta => match self.twcc.delta.pop_front()? {
+                Delta::Small(_) => panic!("Incorrect small delta size"),
+                Delta::Large(v) => {
+                    let dur = Duration::from_micros(250 * v.abs() as u64);
+                    Some(if v < 0 {
+                        self.time_base - dur
+                    } else {
+                        self.time_base + dur
+                    })
+                }
+            },
+            _ => unreachable!(),
+        };
+
+        let seq = (self.twcc.base_seq as u64 + self.index as u64).into();
+
+        self.index += 1;
+        if self.index == amount as usize {
+            self.twcc.chunks.pop_front();
+            self.index = 0;
+        }
+
+        Some((seq, instant))
     }
 }
 
@@ -202,8 +281,8 @@ impl TwccReceiveRegister {
             base_seq: *base_seq as u16,
             reference_time,
             status_count: 0,
-            chunks: Vec::new(),
-            delta: Vec::new(),
+            chunks: VecDeque::new(),
+            delta: VecDeque::new(),
         };
 
         // Because reference time is in steps of 64ms, the first reported packet might have an
@@ -288,7 +367,7 @@ impl TwccReceiveRegister {
                     }
 
                     if let Some(delta) = i.delta() {
-                        twcc.delta.push(delta);
+                        twcc.delta.push_back(delta);
                         bytes_left -= delta.byte_len();
                     }
 
@@ -307,8 +386,15 @@ impl TwccReceiveRegister {
                 chunk.append(&mut ChunkInterim::Missing(free));
             }
 
-            twcc.chunks.push(chunk);
+            twcc.chunks.push_back(chunk);
             bytes_left -= 2;
+        }
+
+        // libWebRTC demands at least one chunk, or it will warn with
+        // "Buffer too small (16 bytes) to fit a FeedbackPacket. Minimum size = 18"
+        // (18 bytes here is not including the RTCP header).
+        if twcc.chunks.is_empty() {
+            return None;
         }
 
         // How many reported we have from the beginning of the queue.
@@ -683,8 +769,8 @@ impl<'a> TryFrom<&'a [u8]> for Twcc {
             status_count,
             reference_time,
             feedback_count,
-            chunks: vec![],
-            delta: vec![],
+            chunks: VecDeque::new(),
+            delta: VecDeque::new(),
         };
 
         let mut todo = status_count as isize;
@@ -698,7 +784,7 @@ impl<'a> TryFrom<&'a [u8]> for Twcc {
 
             todo -= chunk.max_possible_status_count() as isize;
 
-            twcc.chunks.push(chunk);
+            twcc.chunks.push_back(chunk);
             buf = &buf[2..];
         }
 
@@ -1135,8 +1221,6 @@ mod test {
         reg.update_seq(9.into(), now + Duration::from_millis(0));
         let report = reg.build_report(2016).unwrap();
 
-        println!("{:?}", report);
-
         assert_eq!(report.status_count, 2);
         assert_eq!(report.chunks, vec![Run(ReceivedLargeOrNegativeDelta, 2)]);
         assert_eq!(report.delta, vec![Large(-32000), Large(32000)]);
@@ -1166,8 +1250,8 @@ mod test {
             status_count: 0,
             reference_time: 0,
             feedback_count: 0,
-            chunks: vec![],
-            delta: vec![],
+            chunks: VecDeque::new(),
+            delta: VecDeque::new(),
         };
 
         let mut buf = vec![0_u8; 1500];
@@ -1194,8 +1278,26 @@ mod test {
         let report = reg.build_report(1000).unwrap();
 
         assert_eq!(report.status_count, 3);
+        assert_eq!(report.base_seq, 10);
+        assert_eq!(report.reference_time, 0);
         assert_eq!(report.chunks, vec![VectorDouble(6400, 7)]);
         assert_eq!(report.delta, vec![Small(0), Large(-48), Small(92)]);
+
+        let base = reg.time_start.unwrap();
+
+        let mut iter = report.into_iter(base);
+        assert_eq!(
+            iter.next(),
+            Some((10.into(), Some(base + Duration::from_millis(0))))
+        );
+        assert_eq!(
+            iter.next(),
+            Some((11.into(), Some(base - Duration::from_millis(12))))
+        );
+        assert_eq!(
+            iter.next(),
+            Some((12.into(), Some(base + Duration::from_millis(23))))
+        );
     }
 
     #[test]
