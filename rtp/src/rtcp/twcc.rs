@@ -197,6 +197,9 @@ pub struct TwccReceiveRegister {
     // reference time in some (unknown) time base chosen by the
     // sender of the feedback packets.
     time_start: Option<Instant>,
+
+    /// Counter that increases by one for each report generated.
+    generated_reports: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,6 +215,7 @@ impl TwccReceiveRegister {
             keep_reported,
             queue: VecDeque::new(),
             time_start: None,
+            generated_reports: 0,
         }
     }
 
@@ -277,7 +281,7 @@ impl TwccReceiveRegister {
         let mut twcc = Twcc {
             sender_ssrc: 0.into(),
             ssrc: 0.into(),
-            feedback_count: 0,
+            feedback_count: self.generated_reports as u8,
             base_seq: *base_seq as u16,
             reference_time,
             status_count: 0,
@@ -396,6 +400,8 @@ impl TwccReceiveRegister {
         if twcc.chunks.is_empty() {
             return None;
         }
+
+        self.generated_reports += 1;
 
         // How many reported we have from the beginning of the queue.
         let reported_count = self.queue.iter().skip_while(|r| r.reported).count();
