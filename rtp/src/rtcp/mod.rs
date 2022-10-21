@@ -309,12 +309,7 @@ impl Rtcp {
         }
 
         // Prune empty, however must keep the first SR/RR even if it is empty for SRTCP.
-        let mut seen_first = false;
-        feedback.retain(|f| {
-            let keep_first = !seen_first;
-            seen_first = true;
-            keep_first || !f.is_empty()
-        });
+        feedback.retain(|f| !f.is_empty());
     }
 
     fn order_no(&self) -> u8 {
