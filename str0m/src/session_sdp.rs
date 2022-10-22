@@ -163,6 +163,10 @@ impl Session {
                 .get_media(add_media.mid)
                 .expect("Media to be added for pending mid");
 
+            // the cname has already been communicated in the offer, we need to kep it the same
+            // once the m-line is created.
+            media.set_cname(add_media.cname);
+
             for (ssrc, is_rtx) in add_media.ssrcs {
                 media.add_source_tx(ssrc, is_rtx);
             }

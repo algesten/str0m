@@ -20,6 +20,7 @@ pub enum Change {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddMedia {
     pub mid: Mid,
+    pub cname: String,
     pub msid: Msid,
     pub kind: MediaKind,
     pub dir: Direction,
@@ -45,6 +46,8 @@ impl<'a> ChangeSet<'a> {
 
     pub fn add_media(&mut self, kind: MediaKind, dir: Direction) -> Mid {
         let mid = self.rtc.new_mid();
+
+        let cname = Id::<20>::random().to_string();
 
         let ssrcs = {
             // For video we do RTX channels.
@@ -75,6 +78,7 @@ impl<'a> ChangeSet<'a> {
 
         let add = AddMedia {
             mid,
+            cname,
             msid,
             kind,
             dir,

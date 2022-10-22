@@ -148,6 +148,10 @@ impl Media {
         &self.cname
     }
 
+    pub(crate) fn set_cname(&mut self, cname: String) {
+        self.cname = cname;
+    }
+
     pub(crate) fn msid(&self) -> &Msid {
         &self.msid
     }
@@ -689,6 +693,7 @@ impl From<AddMedia> for Media {
         Media {
             mid: a.mid,
             index: a.index,
+            cname: a.cname,
             msid: a.msid,
             kind: a.kind,
             dir: a.dir,
