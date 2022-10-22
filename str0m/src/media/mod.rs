@@ -50,6 +50,7 @@ fn rr_interval(audio: bool) -> Duration {
 /// Audio or video media.
 ///
 /// An m-line in SDP.
+#[derive(Debug)]
 pub struct Media {
     /// Three letter identifier of this m-line.
     mid: Mid,

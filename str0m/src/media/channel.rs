@@ -1,6 +1,7 @@
 use rtp::Mid;
 use sdp::MediaLine;
 
+#[derive(Debug)]
 pub struct Channel {
     mid: Mid,
     index: usize,

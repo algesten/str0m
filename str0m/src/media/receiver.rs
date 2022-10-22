@@ -5,6 +5,7 @@ use rtp::{MediaTime, ReceiverReport, Rtcp, RtpHeader, SenderInfo, SeqNo, Ssrc};
 use super::register::ReceiverRegister;
 use sdp::SsrcInfo;
 
+#[derive(Debug)]
 pub struct ReceiverSource {
     ssrc: Ssrc,
     is_rtx: bool,

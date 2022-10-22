@@ -17,6 +17,7 @@ pub struct Packetized {
     pub seq_no: Option<SeqNo>,
 }
 
+#[derive(Debug)]
 pub struct PacketizingBuffer {
     pack: CodecPacketizer,
     queue: VecDeque<Packetized>,

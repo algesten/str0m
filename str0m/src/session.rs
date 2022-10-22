@@ -43,6 +43,7 @@ pub(crate) struct Session {
     twcc_rx_register: TwccReceiveRegister,
 }
 
+#[derive(Debug)]
 pub enum MediaOrChannel {
     Media(Media),
     Channel(Channel),

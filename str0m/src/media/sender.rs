@@ -4,6 +4,7 @@ use rtp::{Descriptions, ReportList, Sdes, SdesType, SenderInfo, SenderReport, Se
 
 use crate::util::already_happened;
 
+#[derive(Debug)]
 pub struct SenderSource {
     ssrc: Ssrc,
     is_rtx: bool,
