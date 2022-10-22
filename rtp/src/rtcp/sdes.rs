@@ -88,6 +88,7 @@ impl Sdes {
             buf = &mut buf[2..];
             (&mut buf[..len]).copy_from_slice(bytes);
 
+            buf = &mut buf[len..];
             tot += 2 + len;
         }
 
@@ -235,5 +236,29 @@ impl<'a> TryFrom<&'a [u8]> for Sdes {
         }
 
         Ok(Sdes { ssrc, values })
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn cname_serialize_deserialize() {
+        let mut s1 = Sdes {
+            ssrc: 1.into(),
+            values: ReportList::new(),
+        };
+        s1.values.push((SdesType::CNAME, "abc123".into()));
+
+        let mut buf = vec![0; 50];
+        let n = s1.write_to(&mut buf);
+        buf.truncate(n);
+
+        println!("{:02x?}", buf);
+
+        let s2: Sdes = buf.as_slice().try_into().unwrap();
+
+        assert_eq!(s1, s2);
     }
 }
