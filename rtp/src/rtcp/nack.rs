@@ -34,7 +34,7 @@ impl RtcpPacket for Nack {
     }
 
     fn write_to(&self, buf: &mut [u8]) -> usize {
-        (&mut buf[0..4]).copy_from_slice(&0_u16.to_be_bytes());
+        self.header().write_to(&mut buf[..4]);
         (&mut buf[4..8]).copy_from_slice(&self.ssrc.to_be_bytes());
         let mut buf = &mut buf[8..];
         for r in &self.reports {
