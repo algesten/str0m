@@ -8,7 +8,7 @@ mod common;
 use common::{init_log, progress, TestRtc};
 
 #[test]
-pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
+pub fn unidirectional() -> Result<(), RtcError> {
     init_log();
 
     let mut l = TestRtc::new(info_span!("L"));
@@ -44,11 +44,8 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
 
     let mut time_l: MediaTime = l.duration().into();
     time_l = time_l.rebase(48_000);
-    let mut time_r: MediaTime = r.duration().into();
-    time_r = time_r.rebase(48_000);
 
     let data_a = vec![1_u8; 80];
-    let data_b = vec![2_u8; 80];
 
     loop {
         while l.duration() > time_l.into() {
@@ -58,18 +55,6 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
                 .get_writer(pt)
                 .write(time_l, &data_a)?;
             time_l = time_l + STEP;
-            if free == 0 {
-                break;
-            };
-        }
-
-        while r.duration() > time_r.into() {
-            let free = r
-                .media(mid)
-                .unwrap()
-                .get_writer(pt)
-                .write(time_r, &data_b)?;
-            time_r = time_r + STEP;
             if free == 0 {
                 break;
             };

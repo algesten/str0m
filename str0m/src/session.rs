@@ -1,13 +1,12 @@
 use std::collections::VecDeque;
-use std::convert::TryInto;
 use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU};
 use packet::RtpMeta;
-use rtp::{extend_seq, RtcpHeader, RtpHeader, SessionId, TwccReceiveRegister};
+use rtp::{extend_seq, RtpHeader, SessionId, TwccReceiveRegister, TwccSendRegister};
 use rtp::{Extensions, MediaTime, Mid, ReceiverReport, ReportList, Rtcp, RtcpFb};
-use rtp::{RtcpType, SrtpContext, SrtpKey, Ssrc};
+use rtp::{SrtpContext, SrtpKey, Ssrc};
 use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
 
 use crate::media::CodecConfig;
@@ -41,6 +40,7 @@ pub(crate) struct Session {
     feedback: VecDeque<Rtcp>,
     twcc: u64,
     twcc_rx_register: TwccReceiveRegister,
+    twcc_tx_register: TwccSendRegister,
 }
 
 #[derive(Debug)]
@@ -84,6 +84,7 @@ impl Session {
             feedback: VecDeque::new(),
             twcc: 0,
             twcc_rx_register: TwccReceiveRegister::new(100),
+            twcc_tx_register: TwccSendRegister::new(1000),
         }
     }
 
@@ -184,27 +185,10 @@ impl Session {
                 }
             }
             Rtcp(buf) => {
-                let r: Result<RtcpHeader, &'static str> = buf.try_into();
-                match r {
-                    Ok(v) => {
-                        // According to spec, the outer enclosing SRTCP packet should always be a SR or RR,
-                        // even if it's irrelevant and empty.
-                        use RtcpType::*;
-                        let is_sr_rr = matches!(v.rtcp_type(), SenderReport | ReceiverReport);
-
-                        if is_sr_rr {
-                            // The header in SRTP is not interesting. It's just there to fulfil
-                            // the RTCP protocol. If we fail to verify it, there packet was not
-                            // welformed.
-                            self.handle_rtcp(now, buf)?;
-                        } else {
-                            trace!("SRTCP is not SR or RR: {:?}", v.rtcp_type());
-                        }
-                    }
-                    Err(e) => {
-                        trace!("Failed to parse RTCP header: {}", e);
-                    }
-                }
+                // According to spec, the outer enclosing SRTCP packet should always be a SR or RR,
+                // even if it's irrelevant and empty.
+                // In practice I'm not sure that is happening, because libWebRTC hates empty packets.
+                self.handle_rtcp(now, buf)?;
             }
             _ => {}
         }
@@ -343,7 +327,7 @@ impl Session {
 
         for fb in RtcpFb::from_rtcp(feedback) {
             if let RtcpFb::Twcc(twcc) = fb {
-                info!("Fixme... receive twcc {:?}", twcc);
+                self.twcc_tx_register.apply_report(twcc, now);
                 return Some(());
             }
 
@@ -428,7 +412,9 @@ impl Session {
         let srtp_tx = self.srtp_tx.as_mut()?;
 
         for m in only_media_mut(&mut self.media) {
+            let twcc_seq = self.twcc;
             if let Some((header, buf, seq_no)) = m.poll_packet(now, &self.exts, &mut self.twcc) {
+                self.twcc_tx_register.register_seq(twcc_seq.into(), now);
                 let encrypted = srtp_tx.protect_rtp(&buf, &header, *seq_no);
                 return Some(DatagramSend::new(encrypted));
             }

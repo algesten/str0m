@@ -1,7 +1,8 @@
+use std::collections::vec_deque;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use crate::{FeedbackMessageType, RtcpHeader, RtcpPacket};
+use crate::{extend_seq, FeedbackMessageType, RtcpHeader, RtcpPacket};
 use crate::{RtcpType, SeqNo, Ssrc, TransportType};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,10 +26,12 @@ impl Twcc {
         self.delta.iter().map(|d| d.byte_len()).sum()
     }
 
-    pub fn into_iter(self, time_zero: Instant) -> TwccIter {
+    pub fn into_iter(self, time_zero: Instant, extend_from: SeqNo) -> TwccIter {
         let millis = self.reference_time as u64 * 64;
         let time_base = time_zero + Duration::from_millis(millis);
+        let base_seq = extend_seq(Some(*extend_from), self.base_seq);
         TwccIter {
+            base_seq,
             time_base,
             index: 0,
             twcc: self,
@@ -37,6 +40,7 @@ impl Twcc {
 }
 
 pub struct TwccIter {
+    base_seq: u64,
     time_base: Instant,
     index: usize,
     twcc: Twcc,
@@ -93,7 +97,7 @@ impl Iterator for TwccIter {
             _ => unreachable!(),
         };
 
-        let seq = (self.twcc.base_seq as u64 + self.index as u64).into();
+        let seq = (self.base_seq as u64 + self.index as u64).into();
 
         self.index += 1;
         if self.index == amount as usize {
@@ -891,10 +895,118 @@ impl<'a> TryFrom<&'a [u8]> for PacketChunk {
     }
 }
 
-// pub enum PacketChunk {
-//     Run(PacketStatus, u16), // 13 bit repeat
-//     Vector(Symbol),
-// }
+#[derive(Debug)]
+pub struct TwccSendRegister {
+    /// How many send records to keep.
+    keep: usize,
+
+    /// Circular buffer of send records.
+    queue: VecDeque<SendRecord>,
+
+    /// 0 offset for remote time in Twcc structs.
+    time_zero: Option<Instant>,
+
+    /// Last registered Twcc number.
+    last_registered: SeqNo,
+}
+
+impl<'a> IntoIterator for &'a TwccSendRegister {
+    type Item = &'a SendRecord;
+    type IntoIter = vec_deque::Iter<'a, SendRecord>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.queue.iter()
+    }
+}
+
+/// Record for a send entry in twcc.
+#[derive(Debug)]
+pub struct SendRecord {
+    /// Twcc sequence number for a packet we sent.
+    seq: SeqNo,
+
+    /// The (local) time we sent the packet represented by seq.
+    local_send_time: Instant,
+
+    ///  The (local) time we received confirmation the other side received the seq.
+    local_recv_time: Option<Instant>,
+
+    /// The remote time the other side received the seq.
+    remote_recv_time: Option<Instant>,
+}
+
+impl SendRecord {
+    /// The twcc sequence number of the packet we sent.
+    pub fn seq(&self) -> SeqNo {
+        self.seq
+    }
+
+    /// The rtt time between sending the packet and receiving the twcc report resonse.
+    pub fn rtt(&self) -> Option<Duration> {
+        let recv = self.local_recv_time?;
+        Some(recv - self.local_send_time)
+    }
+
+    /// The time indiciated by the remote side for when they received the packet.
+    pub fn remote_recv_time(&self) -> Option<Instant> {
+        self.remote_recv_time
+    }
+}
+
+impl TwccSendRegister {
+    pub fn new(keep: usize) -> Self {
+        TwccSendRegister {
+            keep,
+            queue: VecDeque::new(),
+            time_zero: None,
+            last_registered: 0.into(),
+        }
+    }
+
+    pub fn register_seq(&mut self, seq: SeqNo, now: Instant) {
+        self.last_registered = seq;
+        self.queue.push_back(SendRecord {
+            seq,
+            local_send_time: now,
+            local_recv_time: None,
+            remote_recv_time: None,
+        });
+        while self.queue.len() > self.keep {
+            self.queue.pop_front();
+        }
+    }
+
+    pub fn apply_report(&mut self, twcc: Twcc, now: Instant) -> Option<()> {
+        if self.time_zero.is_none() {
+            self.time_zero = Some(now);
+        }
+
+        let time_zero = self.time_zero.unwrap();
+
+        let mut iter = twcc.into_iter(time_zero, self.last_registered);
+        let (first_seq_no, first_instant) = iter.next()?;
+
+        let mut iter2 = self.queue.iter_mut().skip_while(|r| *r.seq < *first_seq_no);
+        let first_record = iter2.next()?;
+
+        fn update(now: Instant, r: &mut SendRecord, seq: SeqNo, instant: Option<Instant>) {
+            assert_eq!(r.seq, seq);
+            // None means the remote side did not receive the packet.
+            if let Some(i) = instant {
+                r.local_recv_time = Some(now);
+                r.remote_recv_time = Some(i);
+            }
+        }
+
+        update(now, first_record, first_seq_no, first_instant);
+
+        for ((seq, instant), record) in iter.zip(iter2) {
+            update(now, record, seq, instant);
+        }
+
+        Some(())
+    }
+}
 
 // Below is a clarification of the RFC draft from an email exchange with Erik Språng (one of the authors).
 //
@@ -1291,7 +1403,7 @@ mod test {
 
         let base = reg.time_start.unwrap();
 
-        let mut iter = report.into_iter(base);
+        let mut iter = report.into_iter(base, 10.into());
         assert_eq!(
             iter.next(),
             Some((10.into(), Some(base + Duration::from_millis(0))))
