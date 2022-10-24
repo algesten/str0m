@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU};
 use packet::RtpMeta;
-use rtp::{extend_seq, RtpHeader, SessionId, TwccReceiveRegister, TwccSendRegister};
+use rtp::{extend_seq, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
 use rtp::{Extensions, MediaTime, Mid, ReceiverReport, ReportList, Rtcp, RtcpFb};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
 use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
@@ -39,7 +39,7 @@ pub(crate) struct Session {
     last_twcc: Instant,
     feedback: VecDeque<Rtcp>,
     twcc: u64,
-    twcc_rx_register: TwccReceiveRegister,
+    twcc_rx_register: TwccRecvRegister,
     twcc_tx_register: TwccSendRegister,
 }
 
@@ -83,7 +83,7 @@ impl Session {
             last_twcc: already_happened(),
             feedback: VecDeque::new(),
             twcc: 0,
-            twcc_rx_register: TwccReceiveRegister::new(100),
+            twcc_rx_register: TwccRecvRegister::new(100),
             twcc_tx_register: TwccSendRegister::new(1000),
         }
     }

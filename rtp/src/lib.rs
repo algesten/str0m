@@ -79,9 +79,9 @@ mod tests {
             BuildReport(u16),
         }
         fn apply_operations(opers: &Vec<Operation>) {
-            use rtcp::TwccReceiveRegister;
+            use rtcp::TwccRecvRegister;
             let now = Instant::now();
-            let mut reg = TwccReceiveRegister::new(100);
+            let mut reg = TwccRecvRegister::new(100);
             for o in opers {
                 match o {
                     Operation::Register(seq_no, micros) => {
