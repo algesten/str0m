@@ -5,7 +5,7 @@ use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU};
 use packet::RtpMeta;
 use rtp::{extend_seq, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
-use rtp::{Extensions, MediaTime, Mid, ReceiverReport, ReportList, Rtcp, RtcpFb};
+use rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
 use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
 
@@ -377,12 +377,6 @@ impl Session {
             return None;
         }
 
-        // The first RTCP packet must be SR or RR, since the sender SSRC is used for the
-        // SRTCP encryption. If feedback is lacking such, we add a dummy RR.
-        // If the self.feedback already contains an SR/RR it will be sorted to appear
-        // at the front of the queue by Rtcp::write_packet below.
-        self.maybe_insert_dummy_rr()?;
-
         // The encryptable "body" must be an even number of 16.
         const ENCRYPTABLE_MTU: usize =
             DATAGRAM_MTU - SRTCP_OVERHEAD - (DATAGRAM_MTU - SRTCP_OVERHEAD) % SRTCP_BLOCK_SIZE;
@@ -468,30 +462,6 @@ impl Session {
 
     fn twcc_at(&self) -> Instant {
         self.last_twcc + TWCC_INTERVAL
-    }
-
-    /// Helper that ensures feedback has at least one SR/RR.
-    #[must_use]
-    pub fn maybe_insert_dummy_rr(&mut self) -> Option<()> {
-        let has_sr_rr = self
-            .feedback
-            .iter()
-            .any(|r| matches!(r, Rtcp::SenderReport(_) | Rtcp::ReceiverReport(_)));
-
-        if has_sr_rr {
-            return Some(());
-        }
-
-        // If we don't have any sender SSRC, we simply can't send feedback at this point.
-        let first_ssrc = self.first_sender_ssrc()?;
-
-        self.feedback
-            .push_front(Rtcp::ReceiverReport(ReceiverReport {
-                sender_ssrc: first_ssrc,
-                reports: ReportList::new(),
-            }));
-
-        Some(())
     }
 
     fn first_sender_ssrc(&self) -> Option<Ssrc> {
