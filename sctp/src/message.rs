@@ -8,6 +8,7 @@ pub enum Chunks {
     Data(Chunk<Data>),
     Sack(Chunk<Sack>),
     Heartbeat(Chunk<Heartbeat, HeartbeatParam>),
+    HeartbeatAck(Chunk<HeartbeatAck, HeartbeatParam>),
     Unknown(u8),
 }
 
@@ -22,6 +23,7 @@ impl<'a> TryFrom<&'a [u8]> for Chunks {
             2 => Chunks::InitAck(value.try_into()?),
             3 => Chunks::Sack(value.try_into()?),
             4 => Chunks::Heartbeat(value.try_into()?),
+            5 => Chunks::HeartbeatAck(value.try_into()?),
             _ => Chunks::Unknown(typ),
         };
         Ok(chunk)
@@ -36,6 +38,7 @@ impl WriteTo for Chunks {
             Chunks::Data(v) => v.write_to(buf),
             Chunks::Sack(v) => v.write_to(buf),
             Chunks::Heartbeat(v) => v.write_to(buf),
+            Chunks::HeartbeatAck(v) => v.write_to(buf),
             Chunks::Unknown(_) => 0,
         }
     }
@@ -614,6 +617,38 @@ impl<'a> TryFrom<(&'a [u8], usize)> for Heartbeat {
 }
 
 impl WriteTo for Heartbeat {
+    fn write_to(&self, _buf: &mut [u8]) -> usize {
+        0
+    }
+}
+
+pub struct HeartbeatAck;
+
+impl Flags<HeartbeatAck> {}
+
+impl ChunkPayload for HeartbeatAck {
+    fn len(&self) -> usize {
+        0
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for Chunk<HeartbeatAck, HeartbeatParam> {
+    type Error = SctpError;
+
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        Chunk::read_from(buf)
+    }
+}
+
+impl<'a> TryFrom<(&'a [u8], usize)> for HeartbeatAck {
+    type Error = SctpError;
+
+    fn try_from((_buf, _len): (&'a [u8], usize)) -> Result<Self, Self::Error> {
+        Ok(HeartbeatAck)
+    }
+}
+
+impl WriteTo for HeartbeatAck {
     fn write_to(&self, _buf: &mut [u8]) -> usize {
         0
     }
