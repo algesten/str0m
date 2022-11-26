@@ -1,5 +1,5 @@
 [workspace]
-members = ["ice", "sdp", "str0m", "net", "dtls", "rtp", "packet"]
+members = ["ice", "sdp", "str0m", "net", "dtls", "rtp", "packet", "sctp"]
 
 [profile.bench]
 debug = true
