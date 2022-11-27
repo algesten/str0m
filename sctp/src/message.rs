@@ -1,4 +1,9 @@
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 use std::marker::PhantomData;
+use tracing::warn;
+// Create alias for HMAC-SHA256
+type HmacSha256 = Hmac<Sha256>;
 
 use crate::SctpError;
 
@@ -9,21 +14,48 @@ pub enum Chunks {
     Sack(Chunk<Sack>),
     Heartbeat(Chunk<Heartbeat, HeartbeatParam>),
     HeartbeatAck(Chunk<HeartbeatAck, HeartbeatParam>),
+    CookieEcho(Chunk<CookieEcho>),
+    CookieAck(Chunk<CookieAck>),
     Unknown(u8),
+}
+
+impl Chunks {
+    pub fn parse_next(buf: &[u8]) -> Result<(Option<Self>, usize), SctpError> {
+        let length = u16::from_be_bytes([buf[2], buf[3]]) as usize;
+        if length == 0 {
+            return Ok((None, 0));
+        }
+        let chunk = Chunks::try_from(buf)?;
+        Ok((Some(chunk), length))
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ChunkType {
+    Data = 0,
+    Init = 1,
+    InitAck = 2,
+    Sack = 3,
+    Heartbeat = 4,
+    HeartbeatAck = 5,
+    CookieEcho = 10,
+    CookieAck = 11,
 }
 
 impl<'a> TryFrom<&'a [u8]> for Chunks {
     type Error = SctpError;
 
-    fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
-        let typ = value[0];
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        let typ = buf[0];
         let chunk = match typ {
-            0 => Chunks::Data(value.try_into()?),
-            1 => Chunks::Init(value.try_into()?),
-            2 => Chunks::InitAck(value.try_into()?),
-            3 => Chunks::Sack(value.try_into()?),
-            4 => Chunks::Heartbeat(value.try_into()?),
-            5 => Chunks::HeartbeatAck(value.try_into()?),
+            0 => Chunks::Data(buf.try_into()?),
+            1 => Chunks::Init(buf.try_into()?),
+            2 => Chunks::InitAck(buf.try_into()?),
+            3 => Chunks::Sack(buf.try_into()?),
+            4 => Chunks::Heartbeat(buf.try_into()?),
+            5 => Chunks::HeartbeatAck(buf.try_into()?),
+            10 => Chunks::CookieEcho(buf.try_into()?),
+            11 => Chunks::CookieAck(buf.try_into()?),
             _ => Chunks::Unknown(typ),
         };
         Ok(chunk)
@@ -39,12 +71,14 @@ impl WriteTo for Chunks {
             Chunks::Sack(v) => v.write_to(buf),
             Chunks::Heartbeat(v) => v.write_to(buf),
             Chunks::HeartbeatAck(v) => v.write_to(buf),
+            Chunks::CookieEcho(v) => v.write_to(buf),
+            Chunks::CookieAck(v) => v.write_to(buf),
             Chunks::Unknown(_) => 0,
         }
     }
 }
 
-trait WriteTo {
+pub trait WriteTo {
     fn write_to(&self, buf: &mut [u8]) -> usize;
 }
 
@@ -60,6 +94,17 @@ pub struct Chunk<T, P = NoParam> {
     pub flags: Flags<T>,
     pub value: T,
     pub params: Vec<P>,
+}
+
+impl<T, P> Chunk<T, P> {
+    pub fn new(typ: ChunkType, value: T) -> Self {
+        Chunk {
+            chunk_type: typ as u8,
+            flags: Flags::default(),
+            value,
+            params: vec![],
+        }
+    }
 }
 
 pub struct NoParam(u16);
@@ -91,11 +136,11 @@ pub struct Flags<T> {
     _ph: PhantomData<T>,
 }
 
-impl<T> Flags<T> {
-    fn new(flags: u8) -> Self {
-        Flags {
-            flags,
-            _ph: PhantomData,
+impl<T> Default for Flags<T> {
+    fn default() -> Self {
+        Self {
+            flags: 0,
+            _ph: Default::default(),
         }
     }
 }
@@ -199,7 +244,10 @@ where
 
         Ok(Chunk {
             chunk_type,
-            flags: Flags::new(flags),
+            flags: Flags {
+                flags,
+                ..Default::default()
+            },
             value,
             params,
         })
@@ -654,6 +702,80 @@ impl WriteTo for HeartbeatAck {
     }
 }
 
+pub struct CookieEcho {
+    pub cookie: Vec<u8>,
+}
+
+impl Flags<CookieEcho> {}
+
+impl ChunkPayload for CookieEcho {
+    fn len(&self) -> usize {
+        self.cookie.len()
+    }
+}
+
+impl WriteTo for CookieEcho {
+    fn write_to(&self, buf: &mut [u8]) -> usize {
+        let len = self.cookie.len();
+        (&mut buf[..len]).copy_from_slice(&self.cookie);
+        len
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for Chunk<CookieEcho> {
+    type Error = SctpError;
+
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        Chunk::read_from(buf)
+    }
+}
+
+impl<'a> TryFrom<(&'a [u8], usize)> for CookieEcho {
+    type Error = SctpError;
+
+    fn try_from((buf, len): (&'a [u8], usize)) -> Result<Self, Self::Error> {
+        if len < 4 {
+            return Err(SctpError::TooShortLength);
+        }
+
+        Ok(CookieEcho {
+            cookie: (&buf[0..len]).to_vec(),
+        })
+    }
+}
+
+pub struct CookieAck;
+
+impl Flags<CookieAck> {}
+
+impl ChunkPayload for CookieAck {
+    fn len(&self) -> usize {
+        0
+    }
+}
+
+impl WriteTo for CookieAck {
+    fn write_to(&self, _buf: &mut [u8]) -> usize {
+        0
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for Chunk<CookieAck> {
+    type Error = SctpError;
+
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        Chunk::read_from(buf)
+    }
+}
+
+impl<'a> TryFrom<(&'a [u8], usize)> for CookieAck {
+    type Error = SctpError;
+
+    fn try_from((_buf, _len): (&'a [u8], usize)) -> Result<Self, Self::Error> {
+        Ok(CookieAck)
+    }
+}
+
 fn write_param_type_and_len(buf: &mut [u8], typ: u16, len: usize) -> &mut [u8] {
     (&mut buf[0..2]).copy_from_slice(&typ.to_be_bytes());
     (&mut buf[2..4]).copy_from_slice(&(len as u16).to_be_bytes());
@@ -720,5 +842,77 @@ impl Parameter<'_> {
         } else {
             0
         }
+    }
+}
+
+pub struct StateCookie {
+    pub checksum: u32,
+    pub association_tag_local: u32,
+    pub association_tag_remote: u32,
+    pub salt: u32,
+}
+
+impl StateCookie {
+    pub fn to_bytes(&self, key: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(16);
+        self.write_to(&mut bytes);
+
+        (&mut bytes[0..4]).copy_from_slice(&0_u32.to_be_bytes());
+        let mut hmac = HmacSha256::new_from_slice(key).expect("HMAC secret");
+        hmac.update(&bytes);
+        let checksum = hmac.finalize().into_bytes();
+        (&mut bytes[0..4]).copy_from_slice(&checksum[0..4]);
+
+        bytes
+    }
+
+    pub fn from_bytes(key: &[u8], buf: &[u8]) -> Option<Self> {
+        let cookie = Self::try_from(buf).ok()?;
+
+        let mut tmp = [0_u8; 16];
+        (&mut tmp[4..]).copy_from_slice(&buf[4..16]);
+
+        let mut hmac = HmacSha256::new_from_slice(key).expect("HMAC secret");
+        hmac.update(&tmp);
+        let checksum = hmac.finalize().into_bytes();
+
+        if checksum[0..4] != cookie.checksum.to_be_bytes() {
+            warn!("Cookie validation failed");
+            return None;
+        }
+
+        Some(cookie)
+    }
+}
+
+impl WriteTo for StateCookie {
+    fn write_to(&self, buf: &mut [u8]) -> usize {
+        (&mut buf[0..4]).copy_from_slice(&self.checksum.to_be_bytes());
+        (&mut buf[4..8]).copy_from_slice(&self.association_tag_local.to_be_bytes());
+        (&mut buf[8..12]).copy_from_slice(&self.association_tag_remote.to_be_bytes());
+        (&mut buf[12..16]).copy_from_slice(&self.salt.to_be_bytes());
+        16
+    }
+}
+
+impl<'a> TryFrom<&'a [u8]> for StateCookie {
+    type Error = SctpError;
+
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        if buf.len() < 16 {
+            return Err(SctpError::TooShortLength);
+        }
+
+        let checksum = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+        let association_tag_local = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+        let association_tag_remote = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
+        let salt = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
+
+        Ok(StateCookie {
+            checksum,
+            association_tag_local,
+            association_tag_remote,
+            salt,
+        })
     }
 }

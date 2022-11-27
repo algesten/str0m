@@ -8,3 +8,8 @@ edition = "2021"
 [dependencies]
 tracing = "0.1"
 thiserror = "1"
+
+rand = "0.8"
+crc = "3"
+hmac = "0.12.1"
+sha2 = "0.10.6"
