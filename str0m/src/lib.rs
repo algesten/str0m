@@ -11,7 +11,7 @@ use ice::IceAgentEvent;
 use ice::{IceAgent, IceError};
 use net_::NetError;
 use rtp::{MediaTime, Mid, Pt, Ssrc};
-use sctp::SctpAssociation;
+use sctp::{SctpAssociation, SctpEvent};
 use sdp::{Sdp, Setup};
 use thiserror::Error;
 
@@ -405,6 +405,12 @@ impl Rtc {
                     self.sctp
                         .handle_input(sctp::SctpInput::Data(&mut v), self.last_now);
                 }
+            }
+        }
+
+        while let Some(e) = self.sctp.poll_event() {
+            match e {
+                SctpEvent::Data(v) => self.dtls.handle_input(&v)?,
             }
         }
 

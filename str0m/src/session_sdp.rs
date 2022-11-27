@@ -118,7 +118,7 @@ impl Session {
         // that we find in the incoming line. This is probably always correct. If there is simulcast
         // configured, we (probably) have simulcast in both directions. If we have RTX, we have it
         // in both directions.
-        for l in &new_lines {
+        for l in new_lines.iter().filter(|l| l.typ.is_media()) {
             let ssrcs: Vec<_> = l
                 .ssrc_info()
                 .iter()

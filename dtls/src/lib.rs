@@ -5,7 +5,7 @@ use net::{DatagramRecv, DatagramSend, Receive, DATAGRAM_MTU};
 use openssl::error::ErrorStack;
 use openssl::ssl::SslContext;
 use std::collections::VecDeque;
-use std::io::{self, ErrorKind, Read};
+use std::io::{self, ErrorKind, Read, Write};
 use std::net::SocketAddr;
 use thiserror::Error;
 
@@ -131,6 +131,11 @@ impl Dtls {
             trace!("Poll event: {:?}", x);
         }
         x
+    }
+
+    /// Handling incoming data to be sent as DTLS datagrams.
+    pub fn handle_input(&mut self, data: &[u8]) -> Result<(), DtlsError> {
+        Ok(self.tls.write_all(data)?)
     }
 
     /// Handles an incoming DTLS datagrams.

@@ -1,5 +1,6 @@
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use std::fmt::Debug;
 use std::marker::PhantomData;
 use tracing::warn;
 // Create alias for HMAC-SHA256
@@ -7,6 +8,7 @@ type HmacSha256 = Hmac<Sha256>;
 
 use crate::SctpError;
 
+#[derive(Debug)]
 pub enum Chunks {
     Init(Chunk<Init>),
     InitAck(Chunk<InitAck, InitAckParam>),
@@ -21,6 +23,9 @@ pub enum Chunks {
 
 impl Chunks {
     pub fn parse_next(buf: &[u8]) -> Result<(Option<Self>, usize), SctpError> {
+        if buf.is_empty() {
+            return Ok((None, 0));
+        }
         let length = u16::from_be_bytes([buf[2], buf[3]]) as usize;
         if length == 0 {
             return Ok((None, 0));
@@ -89,17 +94,29 @@ pub struct Header {
     pub checksum: u32,
 }
 
-pub struct Chunk<T, P = NoParam> {
+pub struct Chunk<T: Debug, P = NoParam> {
     pub chunk_type: u8,
+    pub length: usize, // only set when parsing
     pub flags: Flags<T>,
     pub value: T,
     pub params: Vec<P>,
 }
 
-impl<T, P> Chunk<T, P> {
+impl<T: Debug, P> Debug for Chunk<T, P> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Chunk")
+            .field("chunk_type", &self.chunk_type)
+            .field("length", &self.length)
+            .field("value", &self.value)
+            .finish()
+    }
+}
+
+impl<T: Debug, P> Chunk<T, P> {
     pub fn new(typ: ChunkType, value: T) -> Self {
         Chunk {
             chunk_type: typ as u8,
+            length: 0,
             flags: Flags::default(),
             value,
             params: vec![],
@@ -195,7 +212,7 @@ where
     }
 }
 
-pub trait ChunkPayload {
+pub trait ChunkPayload: Debug {
     fn len(&self) -> usize;
 }
 
@@ -215,14 +232,15 @@ where
         let chunk_type = buf[0];
         let flags = buf[1];
 
-        let length_bytes = u16::from_be_bytes([buf[2], buf[3]]) as usize;
-        if length_bytes < 4 {
+        let length = u16::from_be_bytes([buf[2], buf[3]]) as usize;
+        if length < 4 {
             return Err(SctpError::ShortPacket);
         }
 
-        let value = T::try_from((&buf[4..], length_bytes - 4))?;
+        let value = T::try_from((&buf[4..], length - 4))?;
         let param_offset = value.len() + 4;
         let mut pbuf = &buf[param_offset..];
+
         let mut params = vec![];
 
         loop {
@@ -232,6 +250,11 @@ where
 
             let untyped = read_parameter(pbuf)?;
             let padded_length = untyped.padded_length();
+
+            if padded_length == 0 {
+                break;
+            }
+
             let typed: P = untyped.into();
             params.push(typed);
 
@@ -244,6 +267,7 @@ where
 
         Ok(Chunk {
             chunk_type,
+            length,
             flags: Flags {
                 flags,
                 ..Default::default()
@@ -308,6 +332,17 @@ pub struct Data {
     pub stream_seq: u16,
     pub payload_protocol_id: u32,
     pub user_data: Vec<u8>,
+}
+
+impl Debug for Data {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Data")
+            .field("tsn", &self.tsn)
+            .field("stream_id", &self.stream_id)
+            .field("stream_seq", &self.stream_seq)
+            .field("payload_protocol_id", &self.payload_protocol_id)
+            .finish()
+    }
 }
 
 impl Flags<Data> {
@@ -375,11 +410,23 @@ pub struct Init {
     pub initial_tsn: u32,
 }
 
+impl Debug for Init {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Init")
+            .field("initiate_tag", &self.initiate_tag)
+            .field("a_rwnd", &self.a_rwnd)
+            .field("no_outbound", &self.no_outbound)
+            .field("no_inbound", &self.no_inbound)
+            .field("initial_tsn", &self.initial_tsn)
+            .finish()
+    }
+}
+
 impl Flags<Init> {}
 
 impl ChunkPayload for Init {
     fn len(&self) -> usize {
-        12
+        16
     }
 }
 
@@ -433,6 +480,12 @@ impl Flags<InitAck> {}
 pub enum InitAckParam {
     StateCookie(Vec<u8>),
     Unknown(u16),
+}
+
+impl Debug for InitAck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("InitAck").field(&self.0).finish()
+    }
 }
 
 impl From<Parameter<'_>> for InitAckParam {
@@ -507,6 +560,17 @@ pub struct Sack {
     pub a_rwnd: u32,
     pub gap_ack_blocks: Vec<GapAckBlock>,
     pub duplicate_tsns: Vec<u32>,
+}
+
+impl Debug for Sack {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Sack")
+            .field("cumulative_tsn_ack", &self.cumulative_tsn_ack)
+            .field("a_rwnd", &self.a_rwnd)
+            .field("gap_ack_blocks", &self.gap_ack_blocks.len())
+            .field("duplicate_tsns", &self.duplicate_tsns.len())
+            .finish()
+    }
 }
 
 pub struct GapAckBlock {
@@ -597,6 +661,12 @@ impl WriteTo for Sack {
 
 pub struct Heartbeat;
 
+impl Debug for Heartbeat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Heartbeat").finish()
+    }
+}
+
 impl Flags<Heartbeat> {}
 
 pub enum HeartbeatParam {
@@ -672,6 +742,12 @@ impl WriteTo for Heartbeat {
 
 pub struct HeartbeatAck;
 
+impl Debug for HeartbeatAck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HeartbeatAck").finish()
+    }
+}
+
 impl Flags<HeartbeatAck> {}
 
 impl ChunkPayload for HeartbeatAck {
@@ -704,6 +780,14 @@ impl WriteTo for HeartbeatAck {
 
 pub struct CookieEcho {
     pub cookie: Vec<u8>,
+}
+
+impl Debug for CookieEcho {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CookieEcho")
+            .field("cookie", &self.cookie.len())
+            .finish()
+    }
 }
 
 impl Flags<CookieEcho> {}
@@ -745,6 +829,12 @@ impl<'a> TryFrom<(&'a [u8], usize)> for CookieEcho {
 }
 
 pub struct CookieAck;
+
+impl Debug for CookieAck {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CookieAck").finish()
+    }
+}
 
 impl Flags<CookieAck> {}
 
@@ -828,6 +918,7 @@ fn read_parameter(buf: &[u8]) -> Result<Parameter<'_>, SctpError> {
     })
 }
 
+#[derive(Debug)]
 pub struct Parameter<'a> {
     ptype: u16,
     length: usize,
@@ -837,11 +928,7 @@ pub struct Parameter<'a> {
 impl Parameter<'_> {
     fn padded_length(&self) -> usize {
         let padding = 4 - self.length % 4;
-        if padding < 4 {
-            padding
-        } else {
-            0
-        }
+        self.length + if padding < 4 { padding } else { 0 }
     }
 }
 
@@ -854,7 +941,7 @@ pub struct StateCookie {
 
 impl StateCookie {
     pub fn to_bytes(&self, key: &[u8]) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(16);
+        let mut bytes = vec![0_u8; 16];
         self.write_to(&mut bytes);
 
         (&mut bytes[0..4]).copy_from_slice(&0_u32.to_be_bytes());

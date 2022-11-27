@@ -727,7 +727,7 @@ impl Proto {
     pub fn proto_line(&self) -> &str {
         match self {
             Proto::Srtp => "UDP/TLS/RTP/SAVPF",
-            Proto::Sctp => "DTLS/SCTP",
+            Proto::Sctp => "UDP/DTLS/SCTP",
         }
     }
 }
@@ -1291,12 +1291,17 @@ impl fmt::Display for MediaLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "m={} 9 {} ", self.typ, self.proto,)?;
         let len = self.pts.len();
-        for (idx, m) in self.pts.iter().enumerate() {
-            if idx + 1 < len {
-                write!(f, "{} ", m)?;
-            } else {
-                write!(f, "{}\r\n", m)?;
+        if self.typ.is_channel() {
+            write!(f, "webrtc-datachannel\r\n")?;
+        } else {
+            for (idx, m) in self.pts.iter().enumerate() {
+                if idx + 1 < len {
+                    write!(f, "{} ", m)?;
+                } else {
+                    write!(f, "{}", m)?;
+                }
             }
+            write!(f, "\r\n")?;
         }
         write!(f, "c=IN IP4 0.0.0.0\r\n")?;
         if let Some(bw) = &self.bw {
@@ -1344,8 +1349,8 @@ impl fmt::Display for MediaAttribute {
             }
             Setup(v) => write!(f, "a=setup:{}\r\n", v.setup_line())?,
             Mid(v) => write!(f, "a=mid:{}\r\n", v)?,
-            SctpPort(v) => write!(f, "a=sctp-port:{}", v)?,
-            MaxMessageSize(v) => write!(f, "a=max-message-size:{}", v)?,
+            SctpPort(v) => write!(f, "a=sctp-port:{}\r\n", v)?,
+            MaxMessageSize(v) => write!(f, "a=max-message-size:{}\r\n", v)?,
             ExtMap(e) => {
                 if !e.ext.is_serialized() {
                     return Ok(());

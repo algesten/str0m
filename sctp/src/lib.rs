@@ -22,6 +22,7 @@ const INIT_TIMEOUT: Duration = Duration::from_millis(1_000);
 const COOKIE_TIMEOUT: Duration = Duration::from_millis(1_000);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(30_000);
 const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
+pub const MTU: usize = 1300;
 
 /// Errors arising in packet- and depacketization.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -60,6 +61,10 @@ pub enum SctpInput<'a> {
     Data(&'a mut [u8]),
 }
 
+pub enum SctpEvent {
+    Data(Vec<u8>),
+}
+
 impl SctpAssociation {
     pub fn new() -> Self {
         let association_tag_local = loop {
@@ -81,6 +86,37 @@ impl SctpAssociation {
             close_at: None,
             cookie_secret: rand::random(),
         }
+    }
+
+    pub fn poll_event(&mut self) -> Option<SctpEvent> {
+        // If there is output data, that trumps all othera
+        if let Some(x) = self.poll_event_output() {
+            return Some(x);
+        }
+
+        None
+    }
+
+    fn poll_event_output(&mut self) -> Option<SctpEvent> {
+        let c = self.to_send.pop_front()?;
+        debug!("SEND {:?}", c);
+
+        let mut buf = vec![0_u8; MTU];
+
+        let header = Header {
+            checksum: 0,
+            source_port: 5000,
+            destination_port: 5000,
+            verification_tag: self.association_tag_remote.expect("Remote association tag"),
+        };
+        let len_h = header.write_to(&mut buf);
+        let len_c = c.write_to(&mut buf[len_h..]);
+
+        let total = len_h + len_c;
+        assert!(total % 4 == 0, "Packet must be multiple of 4");
+
+        buf.truncate(total);
+        Some(SctpEvent::Data(buf))
     }
 
     pub fn handle_input(&mut self, input: SctpInput<'_>, now: Instant) {
@@ -121,7 +157,9 @@ impl SctpAssociation {
         digest.update(data);
         let checksum = digest.finalize();
 
-        if header.checksum != checksum {
+        let is_init = data[12] == 1;
+
+        if !is_init && header.checksum != checksum {
             debug!(
                 "Drop SCTP, checksum mismatch {} != {}",
                 header.checksum, checksum
@@ -137,16 +175,21 @@ impl SctpAssociation {
                         break;
                     };
                     self.handle_chunk(chunk, now);
-                    buf = &buf[len..];
+                    let pad = 4 - len % 4;
+                    let padded = len + if pad < 4 { pad } else { 0 };
+                    buf = &buf[padded..];
                 }
                 Err(err) => {
-                    //.
+                    warn!("Failed to parse chunk: {:?}", err);
+                    break;
                 }
             }
         }
     }
 
     fn handle_chunk(&mut self, chunk: Chunks, now: Instant) {
+        debug!("RECV {:?}", chunk);
+
         match (self.state, chunk) {
             (AssociationState::Closed, Chunks::Init(v)) => self.handle_init(v, now),
             (AssociationState::CookieEchoWait, Chunks::CookieEcho(v)) => self.handle_cookie_echo(v),

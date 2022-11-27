@@ -13,10 +13,13 @@
 <body>
     <button id="cam" onClick="startCam()">Cam</button>
     <button id="mic" onClick="startMic()">Mic</button>
+    <button id="data" onClick="startDataChannel()">Data</button>
     <button id="rtc" onClick="startRtc()">Rtc</button>
     <script>
         let streamCam;
         let streamMic;
+        let startChannel = false;
+        let dataChannel;
         let rtc = new RTCPeerConnection();
         const byId = (id) => document.getElementById(id);
         const byTag = (tag) => [].slice.call(document.getElementsByTagName(tag));
@@ -36,15 +39,35 @@
             });
             byId('rtc').disabled = false;
         }
+        async function startDataChannel() {
+            byId('data').disabled = true;
+            startChannel = true;
+        }
         async function startRtc() {
             byTag('button').forEach(b => b.disabled = true);
+            if (startChannel) {
+                dataChannel = rtc.createDataChannel("myChannel");
+                dataChannel.onmessage = (event) => {
+                    console.log(`received: ${event.data}`);
+                };
+                dataChannel.onopen = () => {
+                    console.log("datachannel open");
+                };
+                dataChannel.onclose = () => {
+                    console.log("datachannel close");
+                };
+                let counter = 0;
+                setInterval(() => {
+                    dataChannel.send(`Counter ${counter}`);
+                    counter++;
+                }, 1000);
+            }
             if (streamCam) {
                 rtc.addTrack(streamCam.getTracks()[0], streamCam);
             }
             if (streamMic) {
                 rtc.addTrack(streamMic.getTracks()[0], streamMic);
             }
-
             const offer = await rtc.createOffer();
             rtc.setLocalDescription(offer);
             console.log(offer.sdp.split('\r\n'));
