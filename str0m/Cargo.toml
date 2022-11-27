@@ -17,7 +17,7 @@ net_ = { package = "net", path = "../net" }
 rtp = { path = "../rtp" }
 sdp = { path = "../sdp" }
 packet = { path = "../packet" }
-
+sctp = { path = "../sctp" }
 
 [dev-dependencies]
 rouille = { version = "3.5.0", features = ["ssl"] }

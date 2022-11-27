@@ -72,6 +72,9 @@ pub enum DtlsEvent {
     ///
     /// This should be checked against the fingerprint communicated in the SDP.
     RemoteFingerprint(Fingerprint),
+
+    /// Decrypted data from incoming DTLS traffic.
+    Data(Vec<u8>),
 }
 
 impl Dtls {
@@ -157,7 +160,7 @@ impl Dtls {
         };
         buf.truncate(n);
 
-        // TODO: Emit buffer for SCTP. Event? Or new poll queue?
+        self.events.push_back(DtlsEvent::Data(buf));
 
         Ok(())
     }
