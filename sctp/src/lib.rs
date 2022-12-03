@@ -16,12 +16,12 @@ mod message;
 // Values from here
 // https://webrtc.googlesource.com/src//+/c7b690272d85861a23d2f2688472971ecd3585f8/net/dcsctp/public/dcsctp_options.h
 
-const RTO_INIT: Duration = Duration::from_millis(500);
-const RTO_MAX: Duration = Duration::from_millis(60_000);
-const RTO_MIN: Duration = Duration::from_millis(400);
+// const RTO_INIT: Duration = Duration::from_millis(500);
+// const RTO_MAX: Duration = Duration::from_millis(60_000);
+// const RTO_MIN: Duration = Duration::from_millis(400);
 const INIT_TIMEOUT: Duration = Duration::from_millis(1_000);
 const COOKIE_TIMEOUT: Duration = Duration::from_millis(1_000);
-const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(30_000);
+// const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(30_000);
 pub const MTU: usize = 1300;
 
 /// Errors arising in packet- and depacketization.
@@ -128,6 +128,19 @@ impl SctpAssociation {
 
     fn handle_chunk(&mut self, chunk: Chunk, now: Instant) {
         debug!("RECV {:?}", chunk);
+
+        match chunk {
+            Chunk::Header(_) => {}
+            Chunk::Init(v) => self.handle_init(v, now),
+            Chunk::InitAck(v) => self.handle_init_ack(v, now),
+            Chunk::Data(_) => todo!(),
+            Chunk::Sack(_) => todo!(),
+            Chunk::Heartbeat(_) => todo!(),
+            Chunk::HeartbeatAck(_) => todo!(),
+            Chunk::CookieEcho(v) => self.handle_cookie_echo(v),
+            Chunk::CookieAck(v) => self.handle_cookie_ack(v),
+            Chunk::Unknown(_, _) => {}
+        }
     }
 
     // passive
@@ -181,7 +194,7 @@ impl SctpAssociation {
 
         self.active = true;
 
-        let ack = Init {
+        let init = Init {
             chunk: ChunkStart::default(),
             initiate_tag: self.association_tag_local,
             a_rwnd: self.a_rwnd_local,
@@ -193,7 +206,7 @@ impl SctpAssociation {
             initial_tsn: self.tsn_local,
         };
 
-        self.to_send.push_back(Chunk::Init(ack));
+        self.to_send.push_back(Chunk::Init(init));
 
         self.close_at = Some(now + INIT_TIMEOUT);
         self.set_state(AssociationState::CookieWait);

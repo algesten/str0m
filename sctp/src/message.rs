@@ -49,8 +49,9 @@ impl SctpAssociation {
 
         let mut buf = &mut vec[..];
         header.write_to(buf);
-        let mut len = header.len();
 
+        let mut len = header.len();
+        buf = &mut buf[len..];
         while let Some(next) = self.to_send.front() {
             let c_len = pad4(next.len());
 

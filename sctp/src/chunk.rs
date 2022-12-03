@@ -55,7 +55,7 @@ impl Chunk {
                 v.chunk.length = v.len();
             }
             Chunk::InitAck(v) => {
-                v.init.chunk.chunk_type = CHUNK_INIT;
+                v.init.chunk.chunk_type = CHUNK_INIT_ACK;
                 v.init.chunk.length = v.len();
             }
             Chunk::Data(v) => {
@@ -128,7 +128,7 @@ impl WriteTo for Chunk {
 
     fn len(&self) -> usize {
         match self {
-            Chunk::Header(v) => 12,
+            Chunk::Header(_) => 12,
             Chunk::Init(v) => v.len(),
             Chunk::InitAck(v) => v.len(),
             Chunk::Data(v) => v.len(),
@@ -286,11 +286,11 @@ impl TryFrom<&[u8]> for InitAck {
 impl WriteTo for InitAck {
     fn write_to(&self, buf: &mut [u8]) {
         self.init.write_to(buf);
-        write_param(&mut buf[4..], PARAM_STATE_COOKIE, &self.cookie);
+        write_param(&mut buf[20..], PARAM_STATE_COOKIE, &self.cookie);
     }
 
     fn len(&self) -> usize {
-        self.init.len() + self.cookie.len()
+        self.init.len() + self.cookie.len() + 4
     }
 }
 
