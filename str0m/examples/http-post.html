@@ -58,6 +58,9 @@
                 };
                 let counter = 0;
                 setInterval(() => {
+                    if (dataChannel.readyState != 'open') {
+                        return;
+                    }
                     dataChannel.send(`Counter ${counter}`);
                     counter++;
                 }, 1000);

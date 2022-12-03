@@ -21,7 +21,6 @@ const RTO_MIN: Duration = Duration::from_millis(400);
 const INIT_TIMEOUT: Duration = Duration::from_millis(1_000);
 const COOKIE_TIMEOUT: Duration = Duration::from_millis(1_000);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(30_000);
-const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
 pub const MTU: usize = 1300;
 
 /// Errors arising in packet- and depacketization.
@@ -63,6 +62,7 @@ pub enum SctpInput<'a> {
 
 pub enum SctpEvent {
     Data(Vec<u8>),
+    Text(String),
 }
 
 impl SctpAssociation {
@@ -98,16 +98,31 @@ impl SctpAssociation {
     }
 
     fn poll_event_output(&mut self) -> Option<SctpEvent> {
+        if let Some(data) = self.poll_event_data() {
+            return Some(SctpEvent::Data(data));
+        }
+
+        None
+    }
+
+    fn poll_event_data(&mut self) -> Option<Vec<u8>> {
         let c = self.to_send.pop_front()?;
         debug!("SEND {:?}", c);
 
         let mut buf = vec![0_u8; MTU];
 
+        let is_init = matches!(c, Chunks::Init(_));
+        let verification_tag = if is_init {
+            0
+        } else {
+            self.association_tag_remote.expect("Remote association tag")
+        };
+
         let header = Header {
             checksum: 0,
             source_port: 5000,
             destination_port: 5000,
-            verification_tag: self.association_tag_remote.expect("Remote association tag"),
+            verification_tag,
         };
         let len_h = header.write_to(&mut buf);
         let len_c = c.write_to(&mut buf[len_h..]);
@@ -116,7 +131,11 @@ impl SctpAssociation {
         assert!(total % 4 == 0, "Packet must be multiple of 4");
 
         buf.truncate(total);
-        Some(SctpEvent::Data(buf))
+
+        let checksum = sctp_crc(&buf);
+        (&mut buf[8..12]).copy_from_slice(&checksum.to_be_bytes());
+
+        Some(buf)
     }
 
     pub fn handle_input(&mut self, input: SctpInput<'_>, now: Instant) {
@@ -152,10 +171,8 @@ impl SctpAssociation {
         // 2) Replace the 32 bits of the checksum field in the received SCTP packet with
         //    0 and calculate a CRC32c checksum value of the whole received packet.
 
-        let mut digest = CRC.digest();
         (&mut data[8..12]).copy_from_slice(&0_u32.to_be_bytes());
-        digest.update(data);
-        let checksum = digest.finalize();
+        let checksum = sctp_crc(&data);
 
         let is_init = data[12] == 1;
 
@@ -199,7 +216,7 @@ impl SctpAssociation {
             (AssociationState::Established, Chunks::Sack(_)) => todo!(),
             (AssociationState::Established, Chunks::Heartbeat(_)) => todo!(),
             (AssociationState::Established, Chunks::HeartbeatAck(_)) => todo!(),
-            (state, chunk) => {
+            (_state, _chunk) => {
                 // warn
             }
         }
@@ -302,18 +319,47 @@ impl SctpAssociation {
 
         self.close_at = Some(now + COOKIE_TIMEOUT);
         self.set_state(AssociationState::CookieEchoed);
-        todo!()
     }
 
     // active
     fn handle_cookie_ack(&mut self, _ack: Chunk<CookieAck>) {
         self.close_at = None;
         self.set_state(AssociationState::Established);
-        todo!()
     }
 
     fn set_state(&mut self, state: AssociationState) {
         debug!("{:?} -> {:?}", self.state, state);
         self.state = state;
+    }
+}
+
+fn sctp_crc(buf: &[u8]) -> u32 {
+    const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
+    let mut digest = CRC.digest();
+    digest.update(&buf);
+    // The CRC library calculates something that is reverse from what we expect when
+    // writing to the wire i big endian.
+    digest.finalize().swap_bytes()
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn parse_init_ack() {
+        let mut sctp1 = SctpAssociation::new();
+        let mut sctp2 = SctpAssociation::new();
+
+        let now = Instant::now();
+        sctp1.send_init(now);
+
+        let mut packet_init = sctp1.poll_event_data().unwrap();
+
+        sctp2.handle_input(SctpInput::Data(&mut packet_init), now);
+
+        let mut packet_init_ack = sctp2.poll_event_data().unwrap();
+
+        sctp1.handle_input(SctpInput::Data(&mut packet_init_ack), now);
     }
 }

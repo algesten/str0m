@@ -411,6 +411,7 @@ impl Rtc {
         while let Some(e) = self.sctp.poll_event() {
             match e {
                 SctpEvent::Data(v) => self.dtls.handle_input(&v)?,
+                SctpEvent::Text(v) => todo!(),
             }
         }
 

@@ -94,6 +94,53 @@ pub struct Header {
     pub checksum: u32,
 }
 
+impl<'a> TryFrom<&'a [u8]> for Header {
+    type Error = SctpError;
+
+    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+        if buf.len() < 12 {
+            return Err(SctpError::ShortPacket);
+        }
+
+        let source_port = u16::from_be_bytes([buf[0], buf[1]]);
+        let destination_port = u16::from_be_bytes([buf[2], buf[3]]);
+        let verification_tag = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+        let checksum = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
+
+        Ok(Header {
+            source_port,
+            destination_port,
+            verification_tag,
+            checksum,
+        })
+    }
+}
+
+impl WriteTo for Header {
+    fn write_to(&self, buf: &mut [u8]) -> usize {
+        buf[0..2].copy_from_slice(&self.source_port.to_be_bytes());
+        buf[2..4].copy_from_slice(&self.destination_port.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.verification_tag.to_be_bytes());
+        buf[8..12].copy_from_slice(&self.checksum.to_be_bytes());
+        12
+    }
+}
+
+macro_rules! set_get_flag {
+    ($getter:ident, $setter:ident, $flag_no:expr) => {
+        pub fn $getter(&self) -> bool {
+            self.flags & (1 << $flag_no) > 0
+        }
+
+        pub fn $setter(&mut self, v: bool) {
+            if v {
+                self.flags |= (1 << $flag_no);
+            } else {
+                self.flags &= !(1 << $flag_no);
+            }
+        }
+    };
+}
 pub struct Chunk<T: Debug, P = NoParam> {
     pub chunk_type: u8,
     pub length: usize, // only set when parsing
@@ -278,54 +325,6 @@ where
     }
 }
 
-impl<'a> TryFrom<&'a [u8]> for Header {
-    type Error = SctpError;
-
-    fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
-        if buf.len() < 12 {
-            return Err(SctpError::ShortPacket);
-        }
-
-        let source_port = u16::from_be_bytes([buf[0], buf[1]]);
-        let destination_port = u16::from_be_bytes([buf[2], buf[3]]);
-        let verification_tag = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
-        let checksum = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
-
-        Ok(Header {
-            source_port,
-            destination_port,
-            verification_tag,
-            checksum,
-        })
-    }
-}
-
-impl WriteTo for Header {
-    fn write_to(&self, buf: &mut [u8]) -> usize {
-        buf[0..2].copy_from_slice(&self.source_port.to_be_bytes());
-        buf[2..4].copy_from_slice(&self.destination_port.to_be_bytes());
-        buf[4..8].copy_from_slice(&self.verification_tag.to_be_bytes());
-        buf[8..12].copy_from_slice(&self.checksum.to_be_bytes());
-        12
-    }
-}
-
-macro_rules! set_get_flag {
-    ($getter:ident, $setter:ident, $flag_no:expr) => {
-        pub fn $getter(&self) -> bool {
-            self.flags & (1 << $flag_no) > 0
-        }
-
-        pub fn $setter(&mut self, v: bool) {
-            if v {
-                self.flags |= (1 << $flag_no);
-            } else {
-                self.flags &= !(1 << $flag_no);
-            }
-        }
-    };
-}
-
 pub struct Data {
     pub tsn: u32,
     pub stream_id: u16,
@@ -472,6 +471,24 @@ impl WriteTo for Init {
         16
     }
 }
+
+// 0                   1                   2                   3
+// 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |   Type = 2    |  Chunk Flags  |         Chunk Length          |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |                         Initiate Tag                          |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |               Advertised Receiver Window Credit               |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |  Number of Outbound Streams   |   Number of Inbound Streams   |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// |                          Initial TSN                          |
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+// \                                                               \
+// /              Optional/Variable-Length Parameters              /
+// \                                                               \
+// +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
 pub struct InitAck(pub Init);
 
