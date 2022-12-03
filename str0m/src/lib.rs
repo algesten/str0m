@@ -11,7 +11,6 @@ use ice::IceAgentEvent;
 use ice::{IceAgent, IceError};
 use net_::NetError;
 use rtp::{MediaTime, Mid, Pt, Ssrc};
-use sctp::{SctpAssociation, SctpEvent};
 use sdp::{Sdp, Setup};
 use thiserror::Error;
 
@@ -88,7 +87,6 @@ pub struct Rtc {
     alive: bool,
     ice: IceAgent,
     dtls: Dtls,
-    sctp: SctpAssociation,
     setup: Setup,
     session: Session,
     remote_fingerprint: Option<Fingerprint>,
@@ -139,7 +137,6 @@ impl Rtc {
             alive: true,
             ice: IceAgent::new(),
             dtls: Dtls::new().expect("DTLS to init without problem"),
-            sctp: SctpAssociation::new(),
             setup: Setup::ActPass,
             session: Session::new(),
             remote_fingerprint: None,
@@ -402,18 +399,18 @@ impl Rtc {
                     }
                 }
                 DtlsEvent::Data(mut v) => {
-                    self.sctp
-                        .handle_input(sctp::SctpInput::Data(&mut v), self.last_now);
+                    // self.sctp
+                    //     .handle_input(sctp::SctpInput::Data(&mut v), self.last_now);
                 }
             }
         }
 
-        while let Some(e) = self.sctp.poll_event() {
-            match e {
-                SctpEvent::Data(v) => self.dtls.handle_input(&v)?,
-                SctpEvent::Text(v) => todo!(),
-            }
-        }
+        // while let Some(e) = self.sctp.poll_event() {
+        //     match e {
+        //         SctpEvent::Data(v) => self.dtls.handle_input(&v)?,
+        //         SctpEvent::Text(v) => todo!(),
+        //     }
+        // }
 
         while let Some(e) = self.session.poll_event() {
             match e {
