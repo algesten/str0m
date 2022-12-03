@@ -1,4 +1,4 @@
-use crate::SctpError;
+use crate::{pad4, SctpError};
 
 const PARAM_STATE_COOKIE: u16 = 7;
 const PARAM_HEARTBEAT_DATA: u16 = 1;
@@ -13,8 +13,10 @@ const CHUNK_COOKIE_ECHO: u8 = 10;
 const CHUNK_COOKIE_ACK: u8 = 11;
 
 pub trait WriteTo {
-    fn write_to(&self, buf: &mut [u8]) -> usize;
+    fn write_to(&self, buf: &mut [u8]);
+    fn len(&self) -> usize;
 }
+
 #[derive(Debug)]
 pub enum Chunk {
     Header(Header),
@@ -26,7 +28,118 @@ pub enum Chunk {
     HeartbeatAck(HeartbeatAck),
     CookieEcho(CookieEcho),
     CookieAck(CookieAck),
-    Unknown(u8),
+    Unknown(u8, usize),
+}
+
+impl Chunk {
+    pub fn parsed_len(&self) -> usize {
+        match self {
+            Chunk::Header(_) => 12,
+            Chunk::Init(v) => v.chunk.length,
+            Chunk::InitAck(v) => v.init.chunk.length,
+            Chunk::Data(v) => v.chunk.length,
+            Chunk::Sack(v) => v.chunk.length,
+            Chunk::Heartbeat(v) => v.chunk.length,
+            Chunk::HeartbeatAck(v) => v.heartbeat.chunk.length,
+            Chunk::CookieEcho(v) => v.chunk.length,
+            Chunk::CookieAck(v) => v.chunk.length,
+            Chunk::Unknown(_, l) => *l,
+        }
+    }
+
+    pub fn update_chunk_header(&mut self) {
+        match self {
+            Chunk::Header(_) => {}
+            Chunk::Init(v) => {
+                v.chunk.chunk_type = CHUNK_INIT;
+                v.chunk.length = v.len();
+            }
+            Chunk::InitAck(v) => {
+                v.init.chunk.chunk_type = CHUNK_INIT;
+                v.init.chunk.length = v.len();
+            }
+            Chunk::Data(v) => {
+                v.chunk.chunk_type = CHUNK_DATA;
+                v.chunk.length = v.len();
+            }
+            Chunk::Sack(v) => {
+                v.chunk.chunk_type = CHUNK_SACK;
+                v.chunk.length = v.len();
+            }
+            Chunk::Heartbeat(v) => {
+                v.chunk.chunk_type = CHUNK_HEARTBEAT;
+                v.chunk.length = v.len();
+            }
+            Chunk::HeartbeatAck(v) => {
+                v.heartbeat.chunk.chunk_type = CHUNK_HEARTBEAT_ACK;
+                v.heartbeat.chunk.length = v.len();
+            }
+            Chunk::CookieEcho(v) => {
+                v.chunk.chunk_type = CHUNK_COOKIE_ECHO;
+                v.chunk.length = v.len();
+            }
+            Chunk::CookieAck(v) => {
+                v.chunk.chunk_type = CHUNK_COOKIE_ACK;
+                v.chunk.length = v.len();
+            }
+            Chunk::Unknown(_, _) => {}
+        }
+    }
+}
+
+impl TryFrom<&[u8]> for Chunk {
+    type Error = SctpError;
+
+    fn try_from(buf: &[u8]) -> Result<Self, Self::Error> {
+        let ctype = buf[0];
+        let len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
+
+        let c = match ctype {
+            CHUNK_DATA => Chunk::Data(buf.try_into()?),
+            CHUNK_INIT => Chunk::Init(buf.try_into()?),
+            CHUNK_INIT_ACK => Chunk::InitAck(buf.try_into()?),
+            CHUNK_SACK => Chunk::Sack(buf.try_into()?),
+            CHUNK_HEARTBEAT => Chunk::Heartbeat(buf.try_into()?),
+            CHUNK_HEARTBEAT_ACK => Chunk::HeartbeatAck(buf.try_into()?),
+            CHUNK_COOKIE_ECHO => Chunk::CookieEcho(buf.try_into()?),
+            CHUNK_COOKIE_ACK => Chunk::CookieAck(buf.try_into()?),
+            _ => Chunk::Unknown(ctype, len),
+        };
+
+        Ok(c)
+    }
+}
+
+impl WriteTo for Chunk {
+    fn write_to(&self, buf: &mut [u8]) {
+        match self {
+            Chunk::Header(v) => v.write_to(buf),
+            Chunk::Init(v) => v.write_to(buf),
+            Chunk::InitAck(v) => v.write_to(buf),
+            Chunk::Data(v) => v.write_to(buf),
+            Chunk::Sack(v) => v.write_to(buf),
+            Chunk::Heartbeat(v) => v.write_to(buf),
+            Chunk::HeartbeatAck(v) => v.write_to(buf),
+            Chunk::CookieEcho(v) => v.write_to(buf),
+            Chunk::CookieAck(v) => v.write_to(buf),
+            Chunk::Unknown(_, _) => {}
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Chunk::Header(v) => 12,
+            Chunk::Init(v) => v.len(),
+            Chunk::InitAck(v) => v.len(),
+            Chunk::Data(v) => v.len(),
+            Chunk::Sack(v) => v.len(),
+            Chunk::Heartbeat(v) => v.len(),
+            Chunk::HeartbeatAck(v) => v.len(),
+            Chunk::CookieEcho(v) => v.len(),
+            Chunk::CookieAck(v) => v.len(),
+            Chunk::Unknown(_, l) => *l,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -55,16 +168,19 @@ impl TryFrom<&[u8]> for Header {
 }
 
 impl WriteTo for Header {
-    fn write_to(&self, buf: &mut [u8]) -> usize {
+    fn write_to(&self, buf: &mut [u8]) {
         buf[0..2].copy_from_slice(&self.source_port.to_be_bytes());
         buf[2..4].copy_from_slice(&self.destination_port.to_be_bytes());
         buf[4..8].copy_from_slice(&self.verification_tag.to_be_bytes());
         buf[8..12].copy_from_slice(&self.checksum.to_be_bytes());
+    }
+
+    fn len(&self) -> usize {
         12
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ChunkStart {
     pub chunk_type: u8,
     pub flags: u8,
@@ -87,10 +203,13 @@ impl TryFrom<&[u8]> for ChunkStart {
 }
 
 impl WriteTo for ChunkStart {
-    fn write_to(&self, buf: &mut [u8]) -> usize {
+    fn write_to(&self, buf: &mut [u8]) {
         buf[0] = self.chunk_type;
         buf[1] = self.flags;
         buf[2..4].copy_from_slice(&(self.length as u16).to_be_bytes());
+    }
+
+    fn len(&self) -> usize {
         4
     }
 }
@@ -126,15 +245,18 @@ impl TryFrom<&[u8]> for Init {
 }
 
 impl WriteTo for Init {
-    fn write_to(&self, buf: &mut [u8]) -> usize {
-        let n = self.chunk.write_to(buf);
-        let buf = &mut buf[n..];
+    fn write_to(&self, buf: &mut [u8]) {
+        self.chunk.write_to(buf);
+        let buf = &mut buf[4..];
         buf[0..4].copy_from_slice(&self.initiate_tag.to_be_bytes());
         buf[4..8].copy_from_slice(&self.a_rwnd.to_be_bytes());
         buf[8..10].copy_from_slice(&self.no_outbound.to_be_bytes());
         buf[10..12].copy_from_slice(&self.no_inbound.to_be_bytes());
         buf[12..16].copy_from_slice(&self.initial_tsn.to_be_bytes());
-        n + 16
+    }
+
+    fn len(&self) -> usize {
+        self.chunk.len() + 16
     }
 }
 
@@ -162,10 +284,13 @@ impl TryFrom<&[u8]> for InitAck {
 }
 
 impl WriteTo for InitAck {
-    fn write_to(&self, buf: &mut [u8]) -> usize {
-        let n = self.init.write_to(buf);
-        let pn = write_param(&mut buf[n..], PARAM_STATE_COOKIE, &self.cookie);
-        n + pn
+    fn write_to(&self, buf: &mut [u8]) {
+        self.init.write_to(buf);
+        write_param(&mut buf[4..], PARAM_STATE_COOKIE, &self.cookie);
+    }
+
+    fn len(&self) -> usize {
+        self.init.len() + self.cookie.len()
     }
 }
 
@@ -204,9 +329,9 @@ impl TryFrom<&[u8]> for Data {
 }
 
 impl WriteTo for Data {
-    fn write_to(&self, buf: &mut [u8]) -> usize {
-        let n = self.chunk.write_to(buf);
-        let buf = &mut buf[n..];
+    fn write_to(&self, buf: &mut [u8]) {
+        self.chunk.write_to(buf);
+        let buf = &mut buf[4..];
         buf[0..4].copy_from_slice(&self.tsn.to_be_bytes());
         buf[4..6].copy_from_slice(&self.stream_id.to_be_bytes());
         buf[6..8].copy_from_slice(&self.stream_seq.to_be_bytes());
@@ -214,7 +339,10 @@ impl WriteTo for Data {
         let buf = &mut buf[12..];
         let len = self.user_data.len();
         buf[..len].copy_from_slice(&self.user_data);
-        len + 12 + n
+    }
+
+    fn len(&self) -> usize {
+        self.chunk.len() + 12 + self.user_data.len()
     }
 }
 
@@ -277,9 +405,9 @@ impl TryFrom<&[u8]> for Sack {
 }
 
 impl WriteTo for Sack {
-    fn write_to(&self, buf: &mut [u8]) -> usize {
-        let n = self.chunk.write_to(buf);
-        let buf = &mut buf[n..];
+    fn write_to(&self, buf: &mut [u8]) {
+        self.chunk.write_to(buf);
+        let buf = &mut buf[4..];
 
         buf[0..4].copy_from_slice(&self.cumulative_tsn_ack.to_be_bytes());
         buf[4..8].copy_from_slice(&self.a_rwnd.to_be_bytes());
@@ -300,8 +428,10 @@ impl WriteTo for Sack {
             buf = &mut buf[4..];
             buf[0..4].copy_from_slice(&g.to_be_bytes());
         }
+    }
 
-        12 + self.gap_ack_blocks.len() * 4 + self.duplicate_tsns.len() * 4 + n
+    fn len(&self) -> usize {
+        self.chunk.len() + 12 + self.gap_ack_blocks.len() * 4 + self.duplicate_tsns.len() * 4
     }
 }
 
@@ -329,10 +459,13 @@ impl TryFrom<&[u8]> for Heartbeat {
 }
 
 impl WriteTo for Heartbeat {
-    fn write_to(&self, buf: &mut [u8]) -> usize {
-        let n = self.chunk.write_to(buf);
-        let pn = write_param(&mut buf[n..], PARAM_HEARTBEAT_DATA, &self.info);
-        n + pn
+    fn write_to(&self, buf: &mut [u8]) {
+        self.chunk.write_to(buf);
+        write_param(&mut buf[4..], PARAM_HEARTBEAT_DATA, &self.info);
+    }
+
+    fn len(&self) -> usize {
+        self.chunk.len() + self.info.len()
     }
 }
 
@@ -351,8 +484,12 @@ impl TryFrom<&[u8]> for HeartbeatAck {
 }
 
 impl WriteTo for HeartbeatAck {
-    fn write_to(&self, buf: &mut [u8]) -> usize {
+    fn write_to(&self, buf: &mut [u8]) {
         self.heartbeat.write_to(buf)
+    }
+
+    fn len(&self) -> usize {
+        self.heartbeat.len()
     }
 }
 
@@ -381,11 +518,14 @@ impl TryFrom<&[u8]> for CookieEcho {
 }
 
 impl WriteTo for CookieEcho {
-    fn write_to(&self, buf: &mut [u8]) -> usize {
-        let n = self.chunk.write_to(buf);
-        let buf = &mut buf[n..];
+    fn write_to(&self, buf: &mut [u8]) {
+        self.chunk.write_to(buf);
+        let buf = &mut buf[4..];
         buf[..self.cookie.len()].copy_from_slice(&self.cookie);
-        n + self.cookie.len()
+    }
+
+    fn len(&self) -> usize {
+        self.chunk.len() + self.cookie.len()
     }
 }
 
@@ -404,8 +544,12 @@ impl TryFrom<&[u8]> for CookieAck {
 }
 
 impl WriteTo for CookieAck {
-    fn write_to(&self, buf: &mut [u8]) -> usize {
+    fn write_to(&self, buf: &mut [u8]) {
         self.chunk.write_to(buf)
+    }
+
+    fn len(&self) -> usize {
+        self.chunk.len()
     }
 }
 
@@ -427,9 +571,7 @@ fn read_param(buf: &[u8]) -> (usize, u16, &[u8]) {
         return (0, 0, &[]);
     }
     let val = &buf[4..(len - 4)];
-    let pad = 4 - len % 4;
-    let padded_len = if pad < 4 { len + pad } else { len };
-    (padded_len, ptype, val)
+    (pad4(len), ptype, val)
 }
 
 fn write_param(buf: &mut [u8], param: u16, value: &[u8]) -> usize {
@@ -437,10 +579,5 @@ fn write_param(buf: &mut [u8], param: u16, value: &[u8]) -> usize {
     buf[0..2].copy_from_slice(&param.to_be_bytes());
     buf[2..4].copy_from_slice(&(len as u16).to_be_bytes());
     buf[4..(4 + value.len())].copy_from_slice(value);
-    let pad = 4 - len % 4;
-    if pad < 4 {
-        pad + len
-    } else {
-        len
-    }
+    pad4(len)
 }
