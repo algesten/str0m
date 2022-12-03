@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::{pad4, SctpError};
 
 const PARAM_STATE_COOKIE: u16 = 7;
@@ -260,7 +262,6 @@ impl WriteTo for Init {
     }
 }
 
-#[derive(Debug)]
 pub struct InitAck {
     pub init: Init,
     pub cookie: Vec<u8>,
@@ -294,7 +295,6 @@ impl WriteTo for InitAck {
     }
 }
 
-#[derive(Debug)]
 pub struct Data {
     pub chunk: ChunkStart,
     pub tsn: u32,
@@ -493,7 +493,6 @@ impl WriteTo for HeartbeatAck {
     }
 }
 
-#[derive(Debug)]
 pub struct CookieEcho {
     pub chunk: ChunkStart,
     pub cookie: Vec<u8>,
@@ -580,4 +579,35 @@ fn write_param(buf: &mut [u8], param: u16, value: &[u8]) -> usize {
     buf[2..4].copy_from_slice(&(len as u16).to_be_bytes());
     buf[4..(4 + value.len())].copy_from_slice(value);
     pad4(len)
+}
+
+impl fmt::Debug for InitAck {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("InitAck")
+            .field("init", &self.init)
+            .field("cookie", &self.cookie.len())
+            .finish()
+    }
+}
+
+impl fmt::Debug for CookieEcho {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CookieEcho")
+            .field("chunk", &self.chunk)
+            .field("cookie", &self.cookie.len())
+            .finish()
+    }
+}
+
+impl fmt::Debug for Data {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Data")
+            .field("chunk", &self.chunk)
+            .field("tsn", &self.tsn)
+            .field("stream_id", &self.stream_id)
+            .field("stream_seq", &self.stream_seq)
+            .field("payload_protocol_id", &self.payload_protocol_id)
+            .field("user_data", &self.user_data.len())
+            .finish()
+    }
 }

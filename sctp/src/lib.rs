@@ -1,7 +1,7 @@
 // #[macro_use]
 // extern crate tracing;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use message::{parse_chunks, StateCookie};
@@ -48,6 +48,13 @@ pub struct SctpAssociation {
     pub(crate) to_send: VecDeque<Chunk>,
     close_at: Option<Instant>,
     cookie_secret: [u8; 16],
+    streams: HashMap<u16, Stream>,
+}
+
+#[derive(Default)]
+struct Stream {
+    data: Vec<u8>,
+    stream_seq: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,6 +95,7 @@ impl SctpAssociation {
             to_send: VecDeque::new(),
             close_at: None,
             cookie_secret: rand::random(),
+            streams: HashMap::new(),
         }
     }
 
@@ -133,10 +141,10 @@ impl SctpAssociation {
             Chunk::Header(_) => {}
             Chunk::Init(v) => self.handle_init(v, now),
             Chunk::InitAck(v) => self.handle_init_ack(v, now),
-            Chunk::Data(_) => todo!(),
-            Chunk::Sack(_) => todo!(),
-            Chunk::Heartbeat(_) => todo!(),
-            Chunk::HeartbeatAck(_) => todo!(),
+            Chunk::Data(v) => self.handle_data(v, now),
+            Chunk::Sack(v) => self.handle_sack(v, now),
+            Chunk::Heartbeat(v) => self.handle_heartbeat(v, now),
+            Chunk::HeartbeatAck(v) => self.handle_heartbeat_ack(v, now),
             Chunk::CookieEcho(v) => self.handle_cookie_echo(v),
             Chunk::CookieAck(v) => self.handle_cookie_ack(v),
             Chunk::Unknown(_, _) => {}
@@ -233,6 +241,29 @@ impl SctpAssociation {
     fn set_state(&mut self, state: AssociationState) {
         debug!("{:?} -> {:?}", self.state, state);
         self.state = state;
+    }
+
+    pub(crate) fn handle_data(&mut self, data: Data, now: Instant) {
+        let flag_immediate_ack = data.chunk.flags & 0b1000 > 0;
+        let flag_unordered = data.chunk.flags & 0b0100 > 0;
+        let flag_begin = data.chunk.flags & 0b0010 > 0;
+        let flag_end = data.chunk.flags & 0b0001 > 0;
+
+        let stream = self.streams.entry(data.stream_id).or_default();
+
+        //
+    }
+
+    pub(crate) fn handle_sack(&mut self, ack: Sack, now: Instant) {
+        //
+    }
+
+    pub(crate) fn handle_heartbeat(&mut self, heart: Heartbeat, now: Instant) {
+        //
+    }
+
+    pub(crate) fn handle_heartbeat_ack(&mut self, ack: HeartbeatAck, now: Instant) {
+        //
     }
 }
 
