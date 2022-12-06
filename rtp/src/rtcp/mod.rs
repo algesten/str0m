@@ -1,3 +1,5 @@
+#![allow(clippy::unusual_byte_groupings)]
+
 mod header;
 use std::collections::VecDeque;
 

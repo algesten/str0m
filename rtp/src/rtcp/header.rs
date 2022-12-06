@@ -1,3 +1,5 @@
+#![allow(clippy::unusual_byte_groupings)]
+
 use super::{FeedbackMessageType, PayloadType, TransportType};
 
 pub(crate) const LEN_HEADER: usize = 4;

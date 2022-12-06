@@ -1,3 +1,5 @@
+#![allow(clippy::unusual_byte_groupings)]
+
 use crate::ext::{ExtensionValues, Extensions};
 use crate::{MediaTime, Pt, SeqNo, Ssrc};
 
