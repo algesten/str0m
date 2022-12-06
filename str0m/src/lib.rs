@@ -418,7 +418,7 @@ impl Rtc {
             }
         }
 
-        while let Some(e) = self.session.poll_event() {
+        if let Some(e) = self.session.poll_event() {
             match e {
                 MediaEvent::MediaData(m) => {
                     return Ok(Output::Event(Event::MediaData(m)));

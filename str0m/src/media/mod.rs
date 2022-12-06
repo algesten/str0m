@@ -538,7 +538,7 @@ impl Media {
     pub(crate) fn get_buffer_rx(&mut self, pt: Pt, codec: Codec) -> &mut DepacketizingBuffer {
         self.buffers_rx
             .entry(pt)
-            .or_insert_with(|| DepacketizingBuffer::new(codec.into()))
+            .or_insert_with(|| DepacketizingBuffer::new(codec.into(), 30))
     }
 
     pub(crate) fn poll_sample(&mut self) -> Option<Result<MediaData, RtcError>> {

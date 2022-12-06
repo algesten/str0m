@@ -107,3 +107,12 @@ num_id!(Ssrc, u32);
 num_id!(Pt, u8);
 num_id!(SessionId, u64);
 num_id!(SeqNo, u64);
+
+impl SeqNo {
+    pub fn is_next(&self, other: SeqNo) -> bool {
+        if **self >= *other {
+            return false;
+        }
+        *other - **self == 1
+    }
+}
