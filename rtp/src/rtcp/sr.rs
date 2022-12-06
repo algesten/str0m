@@ -52,14 +52,14 @@ impl SenderInfo {
         // pub rtp_time: u32,
         // pub sender_packet_count: u32,
         // pub sender_octet_count: u32,
-        (&mut buf[..4]).copy_from_slice(&self.ssrc.to_be_bytes());
+        buf[..4].copy_from_slice(&self.ssrc.to_be_bytes());
 
         let mt = self.ntp_time.as_ntp_64();
-        (&mut buf[4..12]).copy_from_slice(&mt.to_be_bytes());
+        buf[4..12].copy_from_slice(&mt.to_be_bytes());
 
-        (&mut buf[12..16]).copy_from_slice(&self.rtp_time.to_be_bytes());
-        (&mut buf[16..20]).copy_from_slice(&self.sender_packet_count.to_be_bytes());
-        (&mut buf[20..24]).copy_from_slice(&self.sender_octet_count.to_be_bytes());
+        buf[12..16].copy_from_slice(&self.rtp_time.to_be_bytes());
+        buf[16..20].copy_from_slice(&self.sender_packet_count.to_be_bytes());
+        buf[20..24].copy_from_slice(&self.sender_octet_count.to_be_bytes());
     }
 }
 

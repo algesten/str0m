@@ -232,12 +232,10 @@ pub fn extend_seq(prev_ext_seq: Option<u64>, seq: u16) -> u64 {
         } else {
             roc
         }
+    } else if prev_seq > seq + 32_768 {
+        (roc + 1) & 0xffff_ffff
     } else {
-        if prev_seq > seq + 32_768 {
-            (roc + 1) & 0xffff_ffff
-        } else {
-            roc
-        }
+        roc
     };
 
     v * 65_536 + (seq as u64)

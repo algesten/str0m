@@ -26,7 +26,7 @@ impl RtcpPacket for Pli {
 
     fn write_to(&self, buf: &mut [u8]) -> usize {
         self.header().write_to(&mut buf[..4]);
-        (&mut buf[4..8]).copy_from_slice(&self.ssrc.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.ssrc.to_be_bytes());
         8
     }
 }

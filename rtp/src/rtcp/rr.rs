@@ -39,7 +39,7 @@ impl RtcpPacket for ReceiverReport {
     fn write_to(&self, buf: &mut [u8]) -> usize {
         self.header().write_to(buf);
 
-        (&mut buf[4..8]).copy_from_slice(&self.sender_ssrc.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.sender_ssrc.to_be_bytes());
 
         for (i, r) in self.reports.iter().enumerate() {
             r.write_to(&mut buf[8 + i * 24..]);
@@ -57,13 +57,13 @@ impl WordSized for ReceptionReport {
 
 impl ReceptionReport {
     pub(crate) fn write_to(&self, buf: &mut [u8]) {
-        (&mut buf[0..4]).copy_from_slice(&self.ssrc.to_be_bytes());
-        (&mut buf[4..8]).copy_from_slice(&self.packets_lost.to_be_bytes());
+        buf[0..4].copy_from_slice(&self.ssrc.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.packets_lost.to_be_bytes());
         buf[4] = self.fraction_lost;
-        (&mut buf[8..12]).copy_from_slice(&self.max_seq.to_be_bytes());
-        (&mut buf[12..16]).copy_from_slice(&self.jitter.to_be_bytes());
-        (&mut buf[16..20]).copy_from_slice(&self.last_sr_time.to_be_bytes());
-        (&mut buf[20..24]).copy_from_slice(&self.last_sr_delay.to_be_bytes());
+        buf[8..12].copy_from_slice(&self.max_seq.to_be_bytes());
+        buf[12..16].copy_from_slice(&self.jitter.to_be_bytes());
+        buf[16..20].copy_from_slice(&self.last_sr_time.to_be_bytes());
+        buf[20..24].copy_from_slice(&self.last_sr_delay.to_be_bytes());
     }
 }
 

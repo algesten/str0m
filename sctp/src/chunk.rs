@@ -323,7 +323,7 @@ impl TryFrom<&[u8]> for Data {
             stream_id: u16::from_be_bytes([buf[4], buf[5]]),
             stream_seq: u16::from_be_bytes([buf[6], buf[7]]),
             payload_protocol_id: u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]),
-            user_data: (&buf[12..len]).to_vec(),
+            user_data: buf[12..len].to_vec(),
         })
     }
 }

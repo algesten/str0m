@@ -15,7 +15,7 @@ impl Packetizer for OpusPacketizer {
         let mut cur = 0;
         while cur < payload.len() {
             let min = mtu.min(payload.len() - cur);
-            out.push((&payload[cur..(cur + min)]).to_vec());
+            out.push(payload[cur..(cur + min)].to_vec());
             cur += mtu;
         }
 

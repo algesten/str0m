@@ -26,7 +26,7 @@ pub const FU_END_BITMASK: u8 = 0x40;
 
 pub const OUTPUT_STAP_AHEADER: u8 = 0x78;
 
-pub static ANNEXB_NALUSTART_CODE: &'static [u8] = &[0x00, 0x00, 0x00, 0x01];
+pub static ANNEXB_NALUSTART_CODE: &[u8] = &[0x00, 0x00, 0x00, 0x01];
 
 impl H264Packetizer {
     fn next_ind(nalu: &[u8], start: usize) -> (isize, isize) {
@@ -213,7 +213,7 @@ impl Depacketizer for H264Depacketizer {
                 } else {
                     out.extend_from_slice(ANNEXB_NALUSTART_CODE);
                 }
-                out.extend_from_slice(&packet);
+                out.extend_from_slice(packet);
                 Ok(())
             }
             STAPA_NALU_TYPE => {

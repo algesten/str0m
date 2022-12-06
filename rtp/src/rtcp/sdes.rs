@@ -74,7 +74,7 @@ impl RtcpPacket for Descriptions {
 
 impl Sdes {
     fn write_to(&self, buf: &mut [u8]) -> usize {
-        (&mut buf[..4]).copy_from_slice(&self.ssrc.to_be_bytes());
+        buf[..4].copy_from_slice(&self.ssrc.to_be_bytes());
         let mut tot = 4;
 
         let mut buf = &mut buf[4..];
@@ -86,7 +86,7 @@ impl Sdes {
             buf[1] = len as u8;
 
             buf = &mut buf[2..];
-            (&mut buf[..len]).copy_from_slice(bytes);
+            buf[..len].copy_from_slice(bytes);
 
             buf = &mut buf[len..];
             tot += 2 + len;
@@ -208,10 +208,8 @@ impl<'a> TryFrom<&'a [u8]> for Sdes {
                 // boundary.
 
                 let pad = 4 - abs % 4;
-                if pad < 4 {
-                    if buf.len() < pad {
-                        return Err("Not enough buf.len() for Sdes padding");
-                    }
+                if pad < 4 && buf.len() < pad {
+                    return Err("Not enough buf.len() for Sdes padding");
                 }
 
                 break;

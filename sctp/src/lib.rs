@@ -250,26 +250,26 @@ impl SctpAssociation {
         self.state = state;
     }
 
-    pub(crate) fn handle_data(&mut self, data: Data, now: Instant) {
-        let flag_immediate_ack = data.chunk.flags & 0b1000 > 0;
-        let flag_unordered = data.chunk.flags & 0b0100 > 0;
-        let flag_begin = data.chunk.flags & 0b0010 > 0;
-        let flag_end = data.chunk.flags & 0b0001 > 0;
+    pub(crate) fn handle_data(&mut self, data: Data, _now: Instant) {
+        let _flag_immediate_ack = data.chunk.flags & 0b1000 > 0;
+        let _flag_unordered = data.chunk.flags & 0b0100 > 0;
+        let _flag_begin = data.chunk.flags & 0b0010 > 0;
+        let _flag_end = data.chunk.flags & 0b0001 > 0;
 
-        let stream = self.streams.entry(data.stream_id).or_default();
+        let _stream = self.streams.entry(data.stream_id).or_default();
 
         //
     }
 
-    pub(crate) fn handle_sack(&mut self, ack: Sack, now: Instant) {
+    pub(crate) fn handle_sack(&mut self, _ack: Sack, _now: Instant) {
         //
     }
 
-    pub(crate) fn handle_heartbeat(&mut self, heart: Heartbeat, now: Instant) {
+    pub(crate) fn handle_heartbeat(&mut self, _heart: Heartbeat, _now: Instant) {
         //
     }
 
-    pub(crate) fn handle_heartbeat_ack(&mut self, ack: HeartbeatAck, now: Instant) {
+    pub(crate) fn handle_heartbeat_ack(&mut self, _ack: HeartbeatAck, _now: Instant) {
         //
     }
 }

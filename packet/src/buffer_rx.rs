@@ -77,7 +77,6 @@ impl DepacketizingBuffer {
             Ok(_) => {
                 // exact same seq_no found. ignore
                 trace!("Drop exactly same packet: {}", meta.seq_no);
-                return;
             }
             Err(i) => {
                 // i is insertion point to maintain order

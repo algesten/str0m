@@ -36,12 +36,12 @@ impl RtcpPacket for Fir {
         self.header().write_to(&mut buf[..4]);
 
         let first_ssrc = self.reports.iter().next().map(|r| *r.ssrc).unwrap_or(0);
-        (&mut buf[4..8]).copy_from_slice(&first_ssrc.to_be_bytes());
+        buf[4..8].copy_from_slice(&first_ssrc.to_be_bytes());
 
         let mut buf = &mut buf[8..];
         for r in &self.reports {
-            (&mut buf[0..4]).copy_from_slice(&r.ssrc.to_be_bytes());
-            (&mut buf[4..8]).copy_from_slice(&[r.seq_no, 0, 0, 0]);
+            buf[0..4].copy_from_slice(&r.ssrc.to_be_bytes());
+            buf[4..8].copy_from_slice(&[r.seq_no, 0, 0, 0]);
             buf = &mut buf[8..];
         }
 

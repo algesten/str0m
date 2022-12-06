@@ -82,7 +82,7 @@ pub(crate) trait BitRead {
 impl BitRead for (&[u8], usize) {
     #[inline(always)]
     fn remaining(&self) -> usize {
-        (self.0.len() * 8).checked_sub(self.1).unwrap_or(0)
+        (self.0.len() * 8).saturating_sub(self.1)
     }
 
     #[inline(always)]

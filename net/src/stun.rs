@@ -62,7 +62,7 @@ impl TransId {
 
     fn from_slice(s: &[u8]) -> Self {
         let mut t = [0_u8; 12];
-        (&mut t[..]).copy_from_slice(s);
+        t[..].copy_from_slice(s);
         TransId(t)
     }
 }
@@ -236,9 +236,8 @@ impl<'a> StunMessage<'a> {
     }
 
     pub fn to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, StunError> {
-        Ok(self
-            .do_to_bytes(password, buf)
-            .map_err(|e| StunError::Other(format!("io write: {:?}", e)))?)
+        self.do_to_bytes(password, buf)
+            .map_err(|e| StunError::Other(format!("io write: {:?}", e)))
     }
 
     fn do_to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, io::Error> {
@@ -275,13 +274,13 @@ impl<'a> StunMessage<'a> {
         let buf = buf.into_inner();
 
         let hmac = hmac_sha1(password.as_bytes(), &buf[0..i_off]);
-        (&mut buf[i_off + 4..(i_off + 4 + 20)]).copy_from_slice(&hmac);
+        buf[i_off + 4..(i_off + 4 + 20)].copy_from_slice(&hmac);
 
         // fill in correct length
-        (&mut buf[2..4]).copy_from_slice(&(attr_len as u16).to_be_bytes());
+        buf[2..4].copy_from_slice(&(attr_len as u16).to_be_bytes());
 
         let crc = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(&buf[0..f_off]) ^ 0x5354_554e;
-        (&mut buf[f_off + 4..(f_off + 4 + 4)]).copy_from_slice(&crc.to_be_bytes());
+        buf[f_off + 4..(f_off + 4 + 4)].copy_from_slice(&crc.to_be_bytes());
 
         Ok(msg_len)
     }
@@ -346,7 +345,7 @@ impl Method {
     }
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Attribute<'a> {
     MappedAddress,                // TODO
     Username(&'a str),            // < 128 utf8 chars
@@ -689,7 +688,7 @@ fn decode_str(typ: u16, buf: &[u8], len: usize) -> Result<&str, StunError> {
 
 fn encode_xor(addr: SocketAddr, buf: &mut [u8; 17], trans_id: &[u8]) -> usize {
     let port = addr.port() ^ 0x2112;
-    (&mut buf[2..4]).copy_from_slice(&port.to_be_bytes());
+    buf[2..4].copy_from_slice(&port.to_be_bytes());
     buf[1] = if addr.is_ipv4() { 1 } else { 2 };
     let ip_buf = &mut buf[4..];
     match addr {

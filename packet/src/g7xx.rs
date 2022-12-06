@@ -22,7 +22,7 @@ impl Packetizer for G7xxPacketizer {
         while payload_data_remaining > 0 {
             let current_fragment_size = std::cmp::min(mtu, payload_data_remaining);
             payloads.push(
-                (&payload[payload_data_index..payload_data_index + current_fragment_size]).to_vec(),
+                payload[payload_data_index..payload_data_index + current_fragment_size].to_vec(),
             );
 
             payload_data_remaining -= current_fragment_size;

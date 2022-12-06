@@ -1485,7 +1485,7 @@ mod test {
 
         // this is redundant given we have the direct host candidate above.
         let x1 = agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_1(), ipv4_1()));
-        assert!(x1 == false);
+        assert!(!x1);
     }
 
     #[test]

@@ -86,7 +86,7 @@ impl Iterator for TwccIter {
             PacketStatus::ReceivedLargeOrNegativeDelta => match self.twcc.delta.pop_front()? {
                 Delta::Small(_) => panic!("Incorrect small delta size"),
                 Delta::Large(v) => {
-                    let dur = Duration::from_micros(250 * v.abs() as u64);
+                    let dur = Duration::from_micros(250 * v.unsigned_abs() as u64);
                     Some(if v < 0 {
                         self.time_base - dur
                     } else {
@@ -146,13 +146,13 @@ impl RtcpPacket for Twcc {
         let len_start = buf.len();
 
         self.header().write_to(buf);
-        (&mut buf[4..8]).copy_from_slice(&self.sender_ssrc.to_be_bytes());
-        (&mut buf[8..12]).copy_from_slice(&self.ssrc.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.sender_ssrc.to_be_bytes());
+        buf[8..12].copy_from_slice(&self.ssrc.to_be_bytes());
 
-        (&mut buf[12..14]).copy_from_slice(&self.base_seq.to_be_bytes());
-        (&mut buf[14..16]).copy_from_slice(&self.status_count.to_be_bytes());
+        buf[12..14].copy_from_slice(&self.base_seq.to_be_bytes());
+        buf[14..16].copy_from_slice(&self.status_count.to_be_bytes());
 
-        (&mut buf[16..19]).copy_from_slice(&self.reference_time.to_be_bytes()[1..4]);
+        buf[16..19].copy_from_slice(&self.reference_time.to_be_bytes()[1..4]);
         buf[19] = self.feedback_count;
 
         let mut buf = &mut buf[20..];
@@ -447,13 +447,13 @@ impl TwccRecvRegister {
             let diff_time = if r.time < prev.1 {
                 // negative
                 let dur = prev.1 - r.time;
-                dur.as_micros() as i32 * -1
+                -(dur.as_micros() as i32)
             } else {
                 let dur = r.time - prev.1;
                 dur.as_micros() as i32
             };
 
-            let (status, time) = if diff_time < -8192_000 || diff_time > 8191_750 {
+            let (status, time) = if diff_time < -8_192_000 || diff_time > 8_191_750 {
                 // This is too large to be representable in deltas.
                 // Abort, make a report of what we got, and start anew.
                 break;
@@ -684,7 +684,7 @@ impl PacketChunk {
                 x
             }
         };
-        (&mut buf[..2]).copy_from_slice(&x.to_be_bytes());
+        buf[..2].copy_from_slice(&x.to_be_bytes());
     }
 
     fn max_possible_status_count(&self) -> usize {
@@ -712,7 +712,7 @@ impl Delta {
                 1
             }
             Delta::Large(v) => {
-                (&mut buf[..2]).copy_from_slice(&v.to_be_bytes());
+                buf[..2].copy_from_slice(&v.to_be_bytes());
                 2
             }
         }

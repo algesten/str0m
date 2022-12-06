@@ -169,7 +169,7 @@ impl Rtcp {
             // Add padding bytes on to the total length of the packet.
             let mut words_less_one = u16::from_be_bytes([header[2], header[3]]);
             words_less_one += pad as u16 / 4;
-            (&mut header[2..4]).copy_from_slice(&words_less_one.to_be_bytes());
+            header[2..4].copy_from_slice(&words_less_one.to_be_bytes());
 
             // Toggle padding bit
             buf[offset_prev] |= 0b00_1_00000;

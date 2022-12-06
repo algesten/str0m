@@ -35,11 +35,11 @@ impl RtcpPacket for Nack {
 
     fn write_to(&self, buf: &mut [u8]) -> usize {
         self.header().write_to(&mut buf[..4]);
-        (&mut buf[4..8]).copy_from_slice(&self.ssrc.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.ssrc.to_be_bytes());
         let mut buf = &mut buf[8..];
         for r in &self.reports {
-            (&mut buf[0..2]).copy_from_slice(&r.pid.to_be_bytes());
-            (&mut buf[2..4]).copy_from_slice(&r.blp.to_be_bytes());
+            buf[0..2].copy_from_slice(&r.pid.to_be_bytes());
+            buf[2..4].copy_from_slice(&r.blp.to_be_bytes());
             buf = &mut buf[4..];
         }
         (self.length_words() - 1) * 4
@@ -107,7 +107,7 @@ impl Iterator for NackEntryIterator {
             }
         };
         let l = extend_seq(Some(*self.2), seq_16);
-        return Some(l.into());
+        Some(l.into())
     }
 }
 

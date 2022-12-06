@@ -74,7 +74,7 @@ impl SctpAssociation {
         vec.truncate(len);
         let checksum = sctp_crc(&vec[..]);
 
-        (&mut vec[8..12]).copy_from_slice(&checksum.to_be_bytes());
+        vec[8..12].copy_from_slice(&checksum.to_be_bytes());
 
         Some(vec)
     }
@@ -83,7 +83,7 @@ impl SctpAssociation {
 fn sctp_crc(buf: &[u8]) -> u32 {
     const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
     let mut digest = CRC.digest();
-    digest.update(&buf);
+    digest.update(buf);
     // The CRC library calculates something that is reverse from what we expect when
     // writing to the wire i big endian.
     digest.finalize().swap_bytes()

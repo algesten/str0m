@@ -23,7 +23,7 @@ impl RtcpPacket for Goodbye {
         self.header().write_to(&mut buf[..4]);
         let buf = &mut buf[4..];
         for (i, s) in self.reports.iter().enumerate() {
-            (&mut buf[i * 4..(i + 1) * 4]).copy_from_slice(&s.to_be_bytes());
+            buf[i * 4..(i + 1) * 4].copy_from_slice(&s.to_be_bytes());
         }
 
         self.reports.len() * 4

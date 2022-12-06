@@ -146,7 +146,7 @@ impl SrtpContext {
         let iv = self.rtcp.salt.rtp_iv(ssrc, srtcp_index as u64);
 
         let mut output = vec![0_u8; buf.len() + SRTCP_INDEX_LEN + SRTP_HMAC_LEN];
-        (&mut output[0..8]).copy_from_slice(&buf[0..8]);
+        output[0..8].copy_from_slice(&buf[0..8]);
         let input = &buf[8..];
         let encout = &mut output[8..(8 + input.len())];
 
@@ -155,7 +155,7 @@ impl SrtpContext {
         // e is always encrypted, rest is 31 byte index.
         let e_and_si = 0x8000_0000 | srtcp_index;
         let to = &mut output[buf.len()..];
-        (&mut to[0..4]).copy_from_slice(&e_and_si.to_be_bytes());
+        to[0..4].copy_from_slice(&e_and_si.to_be_bytes());
 
         let hmac_index = output.len() - SRTP_HMAC_LEN;
         self.rtcp.hmac.rtcp_hmac(&mut output, hmac_index);
@@ -204,7 +204,7 @@ impl SrtpContext {
 
         if !is_encrypted {
             // Non-encrypted we can just return
-            return Some((&buf[0..idx_start]).to_vec());
+            return Some(buf[0..idx_start].to_vec());
         }
 
         // The SRTCP index is a 31-bit counter for the SRTCP packet.
@@ -219,7 +219,7 @@ impl SrtpContext {
         // compound packet.
         let input = &buf[8..idx_start];
         let mut output = vec![0_u8; input.len() + 8];
-        (&mut output[0..8]).copy_from_slice(&buf[0..8]);
+        output[0..8].copy_from_slice(&buf[0..8]);
 
         self.rtcp.aes.crypt(false, &iv, input, &mut output[8..]);
 
@@ -247,8 +247,8 @@ impl SrtpKey {
         let mut master = [0; ML];
         let mut salt = [0; SL];
 
-        (&mut master[0..ML]).copy_from_slice(&mat[o0..(o0 + ML)]);
-        (&mut salt[0..SL]).copy_from_slice(&mat[(ML + ML + o1)..(ML + ML + o1 + SL)]);
+        master[0..ML].copy_from_slice(&mat[o0..(o0 + ML)]);
+        salt[0..SL].copy_from_slice(&mat[(ML + ML + o1)..(ML + ML + o1 + SL)]);
 
         SrtpKey { master, salt }
     }
@@ -259,7 +259,7 @@ impl SrtpKey {
         // input layout: [salt[14] || label, round[2]] (|| is xor 7th byte)
         let mut input = [0; 16];
 
-        (&mut input[0..14]).copy_from_slice(&self.salt[..]);
+        input[0..14].copy_from_slice(&self.salt[..]);
         input[7] ^= label;
 
         let mut buf = [0; 16 + 16]; // output from each AES
@@ -272,7 +272,7 @@ impl SrtpKey {
             }
 
             // splice in round at bottom of input
-            (&mut input[14..]).copy_from_slice(&round.to_be_bytes()[..]);
+            input[14..].copy_from_slice(&round.to_be_bytes()[..]);
 
             // default key derivation function, which uses AES-128 in Counter Mode
             let mut aes = Crypter::new(Cipher::aes_128_ecb(), Mode::Encrypt, &self.master, None)
@@ -460,7 +460,7 @@ impl ToRtpIv for RtpSalt {
         let ssrc_be = ssrc.to_be_bytes();
         let srtp_be = srtp_index.to_be_bytes();
 
-        (&mut iv[4..8]).copy_from_slice(&ssrc_be);
+        iv[4..8].copy_from_slice(&ssrc_be);
 
         for i in 0..8 {
             iv[i + 6] ^= srtp_be[i];
@@ -570,7 +570,7 @@ mod test {
 
         let mut ctx_rx = SrtpContext::new(key_rx);
 
-        let decrypted = ctx_rx.unprotect_rtcp(&SRTCP);
+        let decrypted = ctx_rx.unprotect_rtcp(SRTCP);
 
         println!("{:02x?}", decrypted);
     }
@@ -581,7 +581,7 @@ mod test {
         let key_rx = SrtpKey::new(&key_mat, true);
         let mut ctx_rx = SrtpContext::new(key_rx);
 
-        let decrypted = ctx_rx.unprotect_rtcp(&SRTCP).unwrap();
+        let decrypted = ctx_rx.unprotect_rtcp(SRTCP).unwrap();
 
         // check srtcp_index will be 1
         assert_eq!(ctx_rx.srtcp_index, 0);

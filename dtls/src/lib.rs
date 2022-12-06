@@ -177,24 +177,22 @@ impl Dtls {
         if self.tls.is_handshaken() {
             // Nice. Nothing to do.
             Ok(false)
+        } else if self.tls.complete_handshake_until_block()? {
+            self.events.push_back(DtlsEvent::Connected);
+
+            let (keying_material, fingerprint) = self
+                .tls
+                .take_srtp_keying_material()
+                .expect("Exported keying material");
+
+            self.events
+                .push_back(DtlsEvent::RemoteFingerprint(fingerprint));
+
+            self.events
+                .push_back(DtlsEvent::SrtpKeyingMaterial(keying_material));
+            Ok(false)
         } else {
-            if self.tls.complete_handshake_until_block()? {
-                self.events.push_back(DtlsEvent::Connected);
-
-                let (keying_material, fingerprint) = self
-                    .tls
-                    .take_srtp_keying_material()
-                    .expect("Exported keying material");
-
-                self.events
-                    .push_back(DtlsEvent::RemoteFingerprint(fingerprint));
-
-                self.events
-                    .push_back(DtlsEvent::SrtpKeyingMaterial(keying_material));
-                Ok(false)
-            } else {
-                Ok(true)
-            }
+            Ok(true)
         }
     }
 }
@@ -229,7 +227,7 @@ impl io::Read for IoBuffer {
         // we can't fragment incoming datagrams.
         assert!(buf.len() >= n);
 
-        (&mut buf[0..n]).copy_from_slice(&self.incoming);
+        buf[0..n].copy_from_slice(&self.incoming);
         self.incoming.truncate(0);
 
         Ok(n)

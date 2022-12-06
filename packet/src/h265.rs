@@ -314,7 +314,7 @@ impl H265AggregationPacket {
             return Err(PacketError::ErrShortPacket);
         }
 
-        first_unit.nal_unit = (&payload[..first_unit.nal_unit_size as usize]).to_vec();
+        first_unit.nal_unit = payload[..first_unit.nal_unit_size as usize].to_vec();
         payload = &payload[first_unit.nal_unit_size as usize..];
 
         // Parse remaining Aggregation Units
@@ -343,7 +343,7 @@ impl H265AggregationPacket {
                 break;
             }
 
-            unit.nal_unit = (&payload[..unit.nal_unit_size as usize]).to_vec();
+            unit.nal_unit = payload[..unit.nal_unit_size as usize].to_vec();
             payload = &payload[unit.nal_unit_size as usize..];
 
             units.push(unit);
@@ -634,7 +634,7 @@ impl H265PACIPacket {
         self.payload_header = payload_header;
 
         if header_extension_size > 0 {
-            self.phes = (&payload[..header_extension_size as usize]).to_vec();
+            self.phes = payload[..header_extension_size as usize].to_vec();
         }
 
         payload = &payload[header_extension_size as usize..];

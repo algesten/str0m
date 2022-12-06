@@ -257,7 +257,7 @@ fn export_srtp_keying_material<S>(
     let x509 = ssl
         .peer_certificate()
         .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "No remote X509 cert"))?;
-    let digest: &[u8] = &x509.digest(MessageDigest::sha256())?.to_vec();
+    let digest: &[u8] = &x509.digest(MessageDigest::sha256())?;
 
     let fp = Fingerprint {
         hash_func: "sha-256".into(),

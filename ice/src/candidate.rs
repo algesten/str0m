@@ -278,7 +278,7 @@ impl Candidate {
 
         // https://datatracker.ietf.org/doc/html/rfc8445#section-5.1.2
         // MUST be a positive integer between 1 and (2**31 - 1)
-        assert!(prio >= 1 && prio <= 2_u32.pow(31) - 1);
+        assert!(prio >= 1 && prio < 2_u32.pow(31));
 
         prio
     }
@@ -326,7 +326,7 @@ impl Candidate {
 
     #[doc(hidden)]
     pub fn ufrag(&self) -> Option<&str> {
-        self.ufrag.as_ref().map(|s| s.as_str())
+        self.ufrag.as_deref()
     }
 }
 

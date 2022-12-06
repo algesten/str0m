@@ -99,7 +99,7 @@ impl RtcpHeader {
         buf[0] = 0b10_0_00000 | fmt;
         buf[1] = self.rtcp_type as u8;
 
-        (&mut buf[2..4]).copy_from_slice(&self.words_less_one.to_be_bytes());
+        buf[2..4].copy_from_slice(&self.words_less_one.to_be_bytes());
 
         4
     }
