@@ -1,4 +1,5 @@
 #![cfg_attr(fuzzing, feature(no_coverage))]
+#![allow(clippy::manual_range_contains)]
 
 #[macro_use]
 extern crate tracing;
