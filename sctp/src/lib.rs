@@ -1,12 +1,13 @@
-// #[macro_use]
-// extern crate tracing;
+#![allow(clippy::new_without_default)]
+
+#[macro_use]
+extern crate tracing;
 
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use message::{parse_chunks, StateCookie};
 use thiserror::Error;
-use tracing::debug;
 
 mod chunk;
 use chunk::*;
