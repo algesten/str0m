@@ -16,9 +16,9 @@ mod message;
 // Values from here
 // https://webrtc.googlesource.com/src//+/c7b690272d85861a23d2f2688472971ecd3585f8/net/dcsctp/public/dcsctp_options.h
 
-// const RTO_INIT: Duration = Duration::from_millis(500);
-// const RTO_MAX: Duration = Duration::from_millis(60_000);
-// const RTO_MIN: Duration = Duration::from_millis(400);
+const RTO_INIT: Duration = Duration::from_millis(500);
+const RTO_MAX: Duration = Duration::from_millis(60_000);
+const RTO_MIN: Duration = Duration::from_millis(400);
 const INIT_TIMEOUT: Duration = Duration::from_millis(1_000);
 const COOKIE_TIMEOUT: Duration = Duration::from_millis(1_000);
 // const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(30_000);
@@ -44,17 +44,18 @@ pub struct SctpAssociation {
     pub(crate) association_tag_remote: Option<u32>,
     a_rwnd_local: u32,
     a_rwnd_remote: u32,
-    tsn_local: u32,
+    tsn_local: u64,
     pub(crate) to_send: VecDeque<Chunk>,
     close_at: Option<Instant>,
     cookie_secret: [u8; 16],
     streams: HashMap<u16, Stream>,
+    cumulative_tsn_ack: u64,
 }
 
 #[derive(Default)]
 struct Stream {
     data: Vec<u8>,
-    stream_seq: u16,
+    stream_seq: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,11 +92,12 @@ impl SctpAssociation {
             association_tag_remote: None,
             a_rwnd_local: 1500,
             a_rwnd_remote: 1500,
-            tsn_local: rand::random(),
+            tsn_local: rand::random::<u32>() as u64,
             to_send: VecDeque::new(),
             close_at: None,
             cookie_secret: rand::random(),
             streams: HashMap::new(),
+            cumulative_tsn_ack: 0,
         }
     }
 
@@ -156,6 +158,7 @@ impl SctpAssociation {
         self.active = false;
         self.association_tag_remote = Some(init.initiate_tag);
         self.a_rwnd_remote = init.a_rwnd;
+        debug!("Initial a_rwnd_remote: {}", init.a_rwnd);
 
         let cookie = StateCookie::new(&self.cookie_secret);
 
@@ -166,7 +169,7 @@ impl SctpAssociation {
                 a_rwnd: self.a_rwnd_local,
                 no_outbound: u16::MAX,
                 no_inbound: u16::MAX,
-                initial_tsn: self.tsn_local,
+                initial_tsn: self.tsn_local as u32,
             },
             cookie: cookie.to_bytes(),
         };
@@ -211,7 +214,7 @@ impl SctpAssociation {
             // can be negotiated during the association setup.
             no_outbound: u16::MAX,
             no_inbound: u16::MAX,
-            initial_tsn: self.tsn_local,
+            initial_tsn: self.tsn_local as u32,
         };
 
         self.to_send.push_back(Chunk::Init(init));
@@ -222,6 +225,10 @@ impl SctpAssociation {
 
     // active
     fn handle_init_ack(&mut self, ack: InitAck, now: Instant) {
+        self.association_tag_remote = Some(ack.init.initiate_tag);
+        self.a_rwnd_remote = ack.init.a_rwnd;
+        debug!("Initial a_rwnd_remote: {}", ack.init.a_rwnd);
+
         let echo = CookieEcho {
             chunk: ChunkStart::default(),
             cookie: ack.cookie,
