@@ -543,7 +543,7 @@ impl Media {
 
     pub(crate) fn poll_sample(&mut self) -> Option<Result<MediaData, RtcError>> {
         for (pt, buf) in &mut self.buffers_rx {
-            if let Some(r) = buf.emit_sample() {
+            if let Some(r) = buf.pop() {
                 return Some(
                     r.map(|dep| MediaData {
                         mid: self.mid,

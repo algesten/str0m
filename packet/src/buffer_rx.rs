@@ -24,9 +24,10 @@ pub struct Depacketized {
 
 #[derive(Debug)]
 struct Entry {
-    emitted: bool,
     meta: RtpMeta,
     data: Vec<u8>,
+    head: bool,
+    tail: bool,
 }
 
 impl RtpMeta {
@@ -44,9 +45,9 @@ impl RtpMeta {
 pub struct DepacketizingBuffer {
     hold_back: usize,
     depack: CodecDepacketizer,
-    last_emitted: Option<SeqNo>,
     queue: VecDeque<Entry>,
     segments: Vec<(usize, usize)>,
+    last_emitted: Option<SeqNo>,
 }
 
 impl DepacketizingBuffer {
@@ -54,18 +55,18 @@ impl DepacketizingBuffer {
         DepacketizingBuffer {
             hold_back,
             depack,
-            last_emitted: None,
             queue: VecDeque::new(),
             segments: Vec::new(),
+            last_emitted: None,
         }
     }
 
     pub fn push(&mut self, meta: RtpMeta, data: Vec<u8>) {
         // We're not emitting samples in the wrong order. If we receive
         // packets that are before the last emitted, we drop.
-        if let Some(last_emitted) = self.last_emitted {
-            if meta.seq_no <= last_emitted {
-                trace!("Drop before emitted: {} <= {}", meta.seq_no, last_emitted);
+        if let Some(last) = self.last_emitted {
+            if meta.seq_no <= last {
+                trace!("Drop before emitted: {} <= {}", meta.seq_no, last);
                 return;
             }
         }
@@ -79,28 +80,33 @@ impl DepacketizingBuffer {
                 trace!("Drop exactly same packet: {}", meta.seq_no);
             }
             Err(i) => {
+                let head = self.depack.is_partition_head(&data);
+                let tail = self.depack.is_partition_tail(meta.header.marker, &data);
+
                 // i is insertion point to maintain order
                 let entry = Entry {
-                    emitted: false,
                     meta,
                     data,
+                    head,
+                    tail,
                 };
                 self.queue.insert(i, entry);
             }
         }
     }
 
-    pub fn emit_sample(&mut self) -> Option<Result<Depacketized, PacketError>> {
+    pub fn pop(&mut self) -> Option<Result<Depacketized, PacketError>> {
         self.update_segments();
+
+        // println!(
+        //     "{:?} {:?}",
+        //     self.queue.iter().map(|e| e.meta.seq_no).collect::<Vec<_>>(),
+        //     self.segments
+        // );
+
         let (start, stop) = self.segments.first()?;
 
-        let first_entry = self.queue.get(*start).expect("entry for start index");
-
-        let is_following_last_emitted = self
-            .last_emitted
-            .map(|l| l.is_next(first_entry.meta.seq_no))
-            .unwrap_or(true);
-
+        let is_following_last_emitted = self.is_following_last(*start);
         let is_more_than_hold_back = self.segments.len() >= self.hold_back;
 
         // We prefer to just release samples because they are following the last emitted.
@@ -119,10 +125,11 @@ impl DepacketizingBuffer {
             if let Err(e) = self.depack.depacketize(&entry.data, &mut data) {
                 return Some(Err(e));
             }
-            entry.emitted = true;
-            self.last_emitted = Some(entry.meta.seq_no);
             meta.push(entry.meta.clone());
         }
+
+        let last = self.queue.get(*stop).expect("entry for stop index");
+        self.last_emitted = Some(last.meta.seq_no);
 
         // We're not going to emit samples in the incorrect order, there's no point in keeping
         // stuff before the emitted range.
@@ -143,14 +150,8 @@ impl DepacketizingBuffer {
         }
 
         let mut start: Option<Start> = None;
-        let last_emitted = self.last_emitted.unwrap_or(0.into());
 
         for (index, entry) in self.queue.iter().enumerate() {
-            // We are not emitting older samples.
-            if entry.emitted || entry.meta.seq_no <= last_emitted {
-                continue;
-            }
-
             let index = index as i64;
             let iseq = *entry.meta.seq_no as i64;
             let expected_seq = start.map(|s| s.offset + index);
@@ -174,7 +175,7 @@ impl DepacketizingBuffer {
             }
 
             // Each segment can have multiple is_partition_head() == true, record the first.
-            if start.is_none() && self.depack.is_partition_head(&entry.data) {
+            if start.is_none() && entry.head {
                 start = Some(Start {
                     index,
                     time: entry.meta.time,
@@ -182,11 +183,7 @@ impl DepacketizingBuffer {
                 });
             }
 
-            let is_tail = self
-                .depack
-                .is_partition_tail(entry.meta.header.marker, &entry.data);
-
-            if start.is_some() && is_tail {
+            if start.is_some() && entry.tail {
                 // We found a contiguous sequence of packets ending with something from
                 // the packet (like the RTP marker bit) indicating it's the tail.
                 let segment = (start.unwrap().index as usize, index as usize);
@@ -196,6 +193,35 @@ impl DepacketizingBuffer {
         }
 
         None
+    }
+
+    fn is_following_last(&self, start: usize) -> bool {
+        let Some(last) = self.last_emitted else {
+            // First time we emit something.
+            return true;
+        };
+
+        // track sequence numbers are sequential
+        let mut seq = last;
+
+        // Expect all entries before start to be padding.
+        for entry in self.queue.range(0..start) {
+            if !seq.is_next(entry.meta.seq_no) {
+                // Not a sequence
+                return false;
+            }
+            // for next loop round.
+            seq = entry.meta.seq_no;
+
+            let is_padding = entry.data.is_empty() && !entry.head && !entry.tail;
+            if !is_padding {
+                return false;
+            }
+        }
+
+        let start_entry = self.queue.get(start).expect("entry for start index");
+
+        seq.is_next(start_entry.meta.seq_no)
     }
 }
 
@@ -212,10 +238,184 @@ impl fmt::Debug for RtpMeta {
 
 impl fmt::Debug for Depacketized {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Sample")
+        f.debug_struct("Depacketized")
             .field("time", &self.time)
             .field("meta", &self.meta)
             .field("data", &self.data.len())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use rtp::MediaTime;
+
+    #[test]
+    fn end_on_marker() {
+        test(&[
+            //
+            (1, 1, &[1], &[]),
+            (2, 1, &[9], &[(1, &[1, 9])]),
+        ])
+    }
+
+    #[test]
+    fn end_on_defacto() {
+        test(&[
+            (1, 1, &[1], &[]),
+            (2, 1, &[2], &[]),
+            (3, 2, &[3], &[(1, &[1, 2])]),
+        ])
+    }
+
+    #[test]
+    fn skip_padding() {
+        test(&[
+            (1, 1, &[1], &[]),
+            (2, 1, &[9], &[(1, &[1, 9])]),
+            (3, 1, &[], &[]), // padding!
+            (4, 2, &[1], &[]),
+            (5, 2, &[9], &[(2, &[1, 9])]),
+        ])
+    }
+
+    #[test]
+    fn gap_after_emit() {
+        test(&[
+            (1, 1, &[1], &[]),
+            (2, 1, &[9], &[(1, &[1, 9])]),
+            // gap
+            (4, 2, &[1], &[]),
+            (5, 2, &[9], &[]),
+        ])
+    }
+
+    #[test]
+    fn gap_after_padding() {
+        test(&[
+            (1, 1, &[1], &[]),
+            (2, 1, &[9], &[(1, &[1, 9])]),
+            (3, 1, &[], &[]), // padding!
+            // gap
+            (5, 2, &[1], &[]),
+            (6, 2, &[9], &[]),
+        ])
+    }
+
+    #[test]
+    fn single_packets() {
+        test(&[
+            (1, 1, &[1, 9], &[(1, &[1, 9])]),
+            (2, 2, &[1, 9], &[(2, &[1, 9])]),
+            (3, 3, &[1, 9], &[(3, &[1, 9])]),
+            (4, 4, &[1, 9], &[(4, &[1, 9])]),
+        ])
+    }
+
+    #[test]
+    fn packets_out_of_order() {
+        test(&[
+            (1, 1, &[1], &[]),
+            (2, 1, &[9], &[(1, &[1, 9])]),
+            (4, 2, &[9], &[]),
+            (3, 2, &[1], &[(2, &[1, 9])]),
+        ])
+    }
+
+    #[test]
+    fn packets_after_hold_out() {
+        test(&[
+            (1, 1, &[1, 9], &[(1, &[1, 9])]),
+            (3, 3, &[1, 9], &[]),
+            (4, 4, &[1, 9], &[]),
+            (5, 5, &[1, 9], &[(3, &[1, 9]), (4, &[1, 9]), (5, &[1, 9])]),
+        ])
+    }
+
+    fn test(
+        v: &[(
+            u64,   // seq
+            i64,   // time
+            &[u8], // data
+            &[(
+                i64,   // time
+                &[u8], // depacketized data
+            )],
+        )],
+    ) {
+        let depack = CodecDepacketizer::Boxed(Box::new(TestDepack));
+        let mut buf = DepacketizingBuffer::new(depack, 3);
+
+        let mut step = 1;
+
+        for (seq, time, data, checks) in v {
+            let meta = RtpMeta {
+                received: Instant::now(),
+                seq_no: (*seq).into(),
+                time: MediaTime::new(*time, 90_000),
+                header: RtpHeader {
+                    sequence_number: *seq as u16,
+                    timestamp: *time as u32,
+                    ..Default::default()
+                },
+            };
+
+            buf.push(meta, data.to_vec());
+
+            let mut depacks = vec![];
+            while let Some(res) = buf.pop() {
+                let d = res.unwrap();
+                depacks.push(d);
+            }
+
+            assert_eq!(
+                depacks.len(),
+                checks.len(),
+                "Step {}: check count not matching {} != {}",
+                step,
+                depacks.len(),
+                checks.len()
+            );
+
+            let iter = depacks.into_iter().zip(checks.iter());
+
+            for (depack, (dtime, ddata)) in iter {
+                assert_eq!(
+                    depack.time.numer(),
+                    *dtime,
+                    "Step {}: Time not matching {} != {}",
+                    step,
+                    depack.time.numer(),
+                    *dtime
+                );
+
+                assert_eq!(
+                    depack.data, *ddata,
+                    "Step {}: Data not correct {:?} != {:?}",
+                    step, depack.data, *ddata
+                );
+            }
+
+            step += 1;
+        }
+    }
+
+    #[derive(Debug)]
+    struct TestDepack;
+
+    impl Depacketizer for TestDepack {
+        fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
+            out.extend_from_slice(packet);
+            Ok(())
+        }
+
+        fn is_partition_head(&self, packet: &[u8]) -> bool {
+            !packet.is_empty() && packet[0] == 1
+        }
+
+        fn is_partition_tail(&self, _marker: bool, packet: &[u8]) -> bool {
+            !packet.is_empty() && packet.iter().any(|v| *v == 9)
+        }
     }
 }

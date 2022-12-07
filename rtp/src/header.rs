@@ -288,6 +288,23 @@ pub fn extend_seq(prev_ext_seq: Option<u64>, seq: u16) -> u64 {
 //     }
 // }
 
+impl Default for RtpHeader {
+    fn default() -> Self {
+        Self {
+            version: Default::default(),
+            has_padding: Default::default(),
+            has_extension: Default::default(),
+            marker: Default::default(),
+            payload_type: 1.into(),
+            sequence_number: Default::default(),
+            timestamp: Default::default(),
+            ssrc: 0.into(),
+            ext_vals: Default::default(),
+            header_len: Default::default(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
