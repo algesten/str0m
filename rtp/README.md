@@ -39,16 +39,3 @@ We ignore this, for now.
 # Sources
 
 * https://www.rfc-editor.org/rfc/rfc8834
-
-# ---
-
-* srtp
-* cname - synced timing
-* mid
-* header extensions - mid
-* restrictions rid - simulcast
-* ssrc
-* fec
-* sr/rr/sdes/bye
-* rtcp-fb (ccm fir, nack, nack pli, goog-remb, transport-cc)
-* data channels
