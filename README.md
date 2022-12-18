@@ -3,6 +3,18 @@ str0m
 
 Sync sans I/O WebRTC implementation in Rust.
 
+# State
+
+THIS IS NOT READY FOR PRODUCTION USE!
+
+## TODO
+
+- [ ] SCTP + data channels
+- [ ] TWCC bandwidth estimation
+- [ ] Send bandwidth pacing
+- [ ] Simulcast
+- [ ] TURN?
+
 # Usage
 
 The `http-post` example and the tests roughly illustrates how to use this library.
