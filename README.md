@@ -161,3 +161,7 @@ Dec 18 11:33:06.907  INFO str0m: MediaData(MediaData { mid: Mid(0), pt: Pt(104),
 [1]: https://github.com/quinn-rs/quinn
 [2]: https://github.com/webrtc-rs/webrtc
 [3]: https://github.com/pion/webrtc
+
+----
+
+Licensed with MIT license
