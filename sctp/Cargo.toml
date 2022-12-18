@@ -1,15 +1,23 @@
 [package]
 name = "sctp"
 version = "0.1.0"
+authors = ["Rain Liu <yliu@webrtc.rs>"]
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+description = "State machine for the SCTP protocol"
 
 [dependencies]
-tracing = "0.1"
-thiserror = "1"
-
+arbitrary = { version = "1.0.1", features = ["derive"], optional = true }
+bytes = "1"
+fxhash = "0.2.1"
 rand = "0.8"
-crc = "3"
-hmac = "0.12.1"
-sha2 = "0.10.6"
+slab = "0.4"
+thiserror = "1"
+tinyvec = { version = "1.1", features = ["alloc"] }
+crc = "2.1.0"
+tracing = "0.1"
+
+[dev-dependencies]
+assert_matches = "1.1"
+hex-literal = "0.3.0"
+tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
+lazy_static = "1"

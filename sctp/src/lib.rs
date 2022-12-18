@@ -1,71 +1,283 @@
-#![allow(clippy::new_without_default)]
+//! Low-level protocol logic for the SCTP protocol
+//!
+//! sctp-proto contains a fully deterministic implementation of SCTP protocol logic. It contains
+//! no networking code and does not get any relevant timestamps from the operating system. Most
+//! users may want to use the futures-based sctp-async API instead.
+//!
+//! The sctp-proto API might be of interest if you want to use it from a C or C++ project
+//! through C bindings or if you want to use a different event loop than the one tokio provides.
+//!
+//! The most important types are `Endpoint`, which conceptually represents the protocol state for
+//! a single socket and mostly manages configuration and dispatches incoming datagrams to the
+//! related `Association`. `Association` types contain the bulk of the protocol logic related to
+//! managing a single association and all the related state (such as streams).
+
+#![warn(rust_2018_idioms)]
+#![allow(dead_code)]
+#![allow(clippy::too_many_arguments)]
 
 #[macro_use]
 extern crate tracing;
 
-use std::collections::{HashMap, VecDeque};
-use std::time::{Duration, Instant};
+use bytes::Bytes;
+use std::sync::Arc;
+use std::time::Instant;
+use std::{
+    fmt,
+    net::{IpAddr, SocketAddr},
+    ops,
+};
 
-use message::{parse_chunks, StateCookie};
-use thiserror::Error;
+mod association;
+pub use crate::association::{
+    stats::AssociationStats,
+    stream::{ReliabilityType, Stream, StreamEvent, StreamId, StreamState},
+    Association, AssociationError, Event,
+};
 
-mod chunk;
-use chunk::*;
+pub(crate) mod chunk;
+pub use crate::chunk::{
+    chunk_payload_data::{ChunkPayloadData, PayloadProtocolIdentifier},
+    ErrorCauseCode,
+};
 
-mod message;
+mod config;
+pub use crate::config::{ClientConfig, EndpointConfig, ServerConfig, TransportConfig};
 
-// Values from here
-// https://webrtc.googlesource.com/src//+/c7b690272d85861a23d2f2688472971ecd3585f8/net/dcsctp/public/dcsctp_options.h
+mod endpoint;
+pub use crate::endpoint::{AssociationHandle, ConnectError, DatagramEvent, Endpoint};
 
-const RTO_INIT: Duration = Duration::from_millis(500);
-const RTO_MAX: Duration = Duration::from_millis(60_000);
-const RTO_MIN: Duration = Duration::from_millis(400);
-const INIT_TIMEOUT: Duration = Duration::from_millis(1_000);
-const COOKIE_TIMEOUT: Duration = Duration::from_millis(1_000);
-// const HEARTBEAT_INTERVAL: Duration = Duration::from_millis(30_000);
-pub const MTU: usize = 1300;
+mod error;
+pub use crate::error::Error as SctpError;
 
-/// Errors arising in packet- and depacketization.
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum SctpError {
-    #[error("Packet is too short")]
-    ShortPacket,
-    #[error("Length field is shorter than allowed value")]
-    TooShortLength,
-    #[error("Missing required parameter")]
-    MissingRequiredParam,
-    #[error("Incorrect CRC32")]
-    BadChecksum,
+mod packet;
+
+mod shared;
+pub use crate::shared::{AssociationEvent, AssociationId, EcnCodepoint, EndpointEvent};
+
+pub(crate) mod param;
+
+pub(crate) mod queue;
+pub use crate::queue::reassembly_queue::{Chunk, Chunks};
+
+pub(crate) mod util;
+
+/// Whether an endpoint was the initiator of an association
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum Side {
+    /// The initiator of an association
+    Client = 0,
+    /// The acceptor of an association
+    Server = 1,
 }
 
-pub struct SctpAssociation {
-    active: bool,
-    state: AssociationState,
-    association_tag_local: u32,
-    pub(crate) association_tag_remote: Option<u32>,
-    a_rwnd_local: u32,
-    a_rwnd_remote: u32,
-    tsn_local: u64,
-    pub(crate) to_send: VecDeque<Chunk>,
-    close_at: Option<Instant>,
-    cookie_secret: [u8; 16],
-    streams: HashMap<u16, Stream>,
-    cumulative_tsn_ack: u64,
+impl Default for Side {
+    fn default() -> Self {
+        Side::Client
+    }
 }
 
-#[derive(Default)]
-struct Stream {
-    data: Vec<u8>,
-    stream_seq: u64,
+impl fmt::Display for Side {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match *self {
+            Side::Client => "Client",
+            Side::Server => "Server",
+        };
+        write!(f, "{}", s)
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AssociationState {
-    Closed,
-    CookieEchoWait,
-    CookieWait,
-    CookieEchoed,
-    Established,
+impl Side {
+    #[inline]
+    /// Shorthand for `self == Side::Client`
+    pub fn is_client(self) -> bool {
+        self == Side::Client
+    }
+
+    #[inline]
+    /// Shorthand for `self == Side::Server`
+    pub fn is_server(self) -> bool {
+        self == Side::Server
+    }
+}
+
+impl ops::Not for Side {
+    type Output = Side;
+    fn not(self) -> Side {
+        match self {
+            Side::Client => Side::Server,
+            Side::Server => Side::Client,
+        }
+    }
+}
+
+use crate::packet::PartialDecode;
+
+/// Payload in Incoming/outgoing Transmit
+#[derive(Debug)]
+pub enum Payload {
+    PartialDecode(PartialDecode),
+    RawEncode(Vec<Bytes>),
+}
+
+/// Incoming/outgoing Transmit
+#[derive(Debug)]
+pub struct Transmit {
+    /// Received/Sent time
+    pub now: Instant,
+    /// The socket this datagram should be sent to
+    pub remote: SocketAddr,
+    /// Explicit congestion notification bits to set on the packet
+    pub ecn: Option<EcnCodepoint>,
+    /// Optional local IP address for the datagram
+    pub local_ip: Option<IpAddr>,
+    /// Payload of the datagram
+    pub payload: Payload,
+}
+
+pub struct RtcAssociation {
+    endpoint: Endpoint,
+    association: Option<(AssociationHandle, Association)>,
+    transmit: Option<Transmit>,
+    recs: Vec<StreamRec>,
+}
+
+struct StreamRec {
+    id: u16,
+    open: bool,
+}
+
+impl RtcAssociation {
+    pub fn new() -> Self {
+        let config = EndpointConfig::default();
+        let server_config = ServerConfig::default();
+        let endpoint = Endpoint::new(Arc::new(config), Some(Arc::new(server_config)));
+        RtcAssociation {
+            endpoint,
+            association: None,
+            transmit: None,
+            recs: vec![],
+        }
+    }
+
+    pub fn handle_input(&mut self, input: SctpInput<'_>, now: Instant) -> Result<(), SctpError> {
+        match input {
+            SctpInput::Data(data) => {
+                let remote = "127.0.0.1:5000".parse().unwrap();
+                // TODO, remove Bytes in sctp and just use &[u8].
+                let data = data.to_vec().into();
+                let r = self.endpoint.handle(now, remote, None, None, data);
+                if let Some((handle, event)) = r {
+                    match event {
+                        DatagramEvent::AssociationEvent(event) => {
+                            if let Some(a) = &mut self.association {
+                                a.1.handle_event(event);
+                            }
+                        }
+                        DatagramEvent::NewAssociation(a) => {
+                            self.association = Some((handle, a));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn poll_event(&mut self, now: Instant) -> Option<SctpEvent> {
+        while let Some(t) = self.poll_transmit(now) {
+            if let Payload::RawEncode(v) = t.payload {
+                let len = v.iter().map(|b| b.len()).sum();
+                let mut buf = vec![0; len];
+                let mut n = 0;
+                for b in v {
+                    let l = b.len();
+                    (&mut buf[n..(n + l)]).copy_from_slice(&b);
+                    n += l;
+                }
+                return Some(SctpEvent::Output(buf));
+            } else {
+                continue;
+            }
+        }
+
+        if let Some(a) = &mut self.association {
+            // propagate events between endpoint and association.
+            while let Some(e) = a.1.poll_endpoint_event() {
+                if let Some(ae) = self.endpoint.handle_event(a.0, e) {
+                    a.1.handle_event(ae);
+                }
+            }
+
+            while let Some(e) = a.1.poll() {
+                if let Event::Stream(e) = e {
+                    let streams = &mut self.recs;
+
+                    match e {
+                        StreamEvent::Readable { id } | StreamEvent::Writable { id } => {
+                            // This simply instantiates a StreamRec so we now to poll read below.
+                            stream_rec(streams, id);
+                        }
+                        StreamEvent::Finished { id } => {
+                            let rec = stream_rec(streams, id);
+                            rec.open = false
+                        }
+                        StreamEvent::Stopped { id, .. } => {
+                            let rec = stream_rec(streams, id);
+                            rec.open = false
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            // remove unused streams
+            self.recs.retain(|s| s.open);
+
+            for rec in &mut self.recs {
+                if let Ok(mut stream) = a.1.stream(rec.id) {
+                    if stream.is_readable() {
+                        if let Ok(res) = stream.read() {
+                            if let Some(c) = res {
+                                let mut buf = vec![0; c.len()];
+                                if let Ok(n) = c.read(&mut buf[..]) {
+                                    assert!(n == buf.len());
+                                    return Some(SctpEvent::Data(buf));
+                                } else {
+                                    rec.open = false;
+                                }
+                            }
+                        } else {
+                            rec.open = false;
+                        }
+                    }
+                } else {
+                    rec.open = false;
+                }
+            }
+        }
+
+        None
+    }
+
+    fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
+        if let Some(t) = self.transmit.take() {
+            return Some(t);
+        }
+
+        if let Some(t) = self.endpoint.poll_transmit() {
+            return Some(t);
+        }
+
+        if let Some(a) = &mut self.association {
+            if let Some(t) = a.1.poll_transmit(now) {
+                return Some(t);
+            }
+        }
+
+        None
+    }
 }
 
 pub enum SctpInput<'a> {
@@ -74,212 +286,17 @@ pub enum SctpInput<'a> {
 
 pub enum SctpEvent {
     Data(Vec<u8>),
-    Text(String),
+    Output(Vec<u8>),
 }
 
-impl SctpAssociation {
-    pub fn new() -> Self {
-        let association_tag_local = loop {
-            let t: u32 = rand::random();
-            // Initiate Tag values SHOULD be selected from the range of 1 to 2^32 - 1
-            if t != 0 {
-                break t;
-            }
-        };
-        SctpAssociation {
-            active: false,
-            state: AssociationState::Closed,
-            association_tag_local,
-            association_tag_remote: None,
-            a_rwnd_local: 1500,
-            a_rwnd_remote: 1500,
-            tsn_local: rand::random::<u32>() as u64,
-            to_send: VecDeque::new(),
-            close_at: None,
-            cookie_secret: rand::random(),
-            streams: HashMap::new(),
-            cumulative_tsn_ack: 0,
-        }
-    }
+fn stream_rec(streams: &mut Vec<StreamRec>, id: u16) -> &mut StreamRec {
+    let idx = streams.iter().position(|r| r.id == id);
 
-    pub fn poll_event(&mut self) -> Option<SctpEvent> {
-        // If there is output data, that trumps all othera
-        if let Some(x) = self.poll_event_output() {
-            return Some(x);
-        }
-
-        None
-    }
-
-    fn poll_event_output(&mut self) -> Option<SctpEvent> {
-        if let Some(data) = self.write_chunks() {
-            return Some(SctpEvent::Data(data));
-        }
-
-        None
-    }
-
-    pub fn handle_input(&mut self, input: SctpInput<'_>, now: Instant) -> Result<(), SctpError> {
-        match input {
-            SctpInput::Data(v) => self.handle_input_data(v, now)?,
-        }
-
-        Ok(())
-    }
-
-    fn handle_input_data(&mut self, data: &mut [u8], now: Instant) -> Result<(), SctpError> {
-        let chunks = parse_chunks(data)?;
-
-        for chunk in chunks {
-            self.handle_chunk(chunk, now);
-        }
-
-        Ok(())
-    }
-
-    fn handle_chunk(&mut self, chunk: Chunk, now: Instant) {
-        debug!("RECV {:?}", chunk);
-
-        match chunk {
-            Chunk::Header(_) => {}
-            Chunk::Init(v) => self.handle_init(v, now),
-            Chunk::InitAck(v) => self.handle_init_ack(v, now),
-            Chunk::Data(v) => self.handle_data(v, now),
-            Chunk::Sack(v) => self.handle_sack(v, now),
-            Chunk::Heartbeat(v) => self.handle_heartbeat(v, now),
-            Chunk::HeartbeatAck(v) => self.handle_heartbeat_ack(v, now),
-            Chunk::CookieEcho(v) => self.handle_cookie_echo(v),
-            Chunk::CookieAck(v) => self.handle_cookie_ack(v),
-            Chunk::Unknown(_, _) => {}
-        }
-    }
-
-    // passive
-    fn handle_init(&mut self, init: Init, now: Instant) {
-        self.active = false;
-        self.association_tag_remote = Some(init.initiate_tag);
-        self.a_rwnd_remote = init.a_rwnd;
-        debug!("Initial a_rwnd_remote: {}", init.a_rwnd);
-
-        let cookie = StateCookie::new(&self.cookie_secret);
-
-        let ack = InitAck {
-            init: Init {
-                chunk: ChunkStart::default(),
-                initiate_tag: self.association_tag_local,
-                a_rwnd: self.a_rwnd_local,
-                no_outbound: u16::MAX,
-                no_inbound: u16::MAX,
-                initial_tsn: self.tsn_local as u32,
-            },
-            cookie: cookie.to_bytes(),
-        };
-
-        self.to_send.push_back(Chunk::InitAck(ack));
-
-        self.close_at = Some(now + INIT_TIMEOUT);
-        self.set_state(AssociationState::CookieEchoWait);
-    }
-
-    // passive
-    fn handle_cookie_echo(&mut self, echo: CookieEcho) {
-        let Some(cookie) = StateCookie::try_from(echo.cookie.as_ref()).ok() else {
-            return;
-        };
-
-        if !cookie.check_valid(&self.cookie_secret) {
-            return;
-        }
-
-        let ack = CookieAck {
-            chunk: ChunkStart::default(),
-        };
-        self.to_send.push_back(Chunk::CookieAck(ack));
-
-        self.close_at = None;
-        self.set_state(AssociationState::Established);
-    }
-
-    // active
-    pub fn send_init(&mut self, now: Instant) {
-        assert_eq!(self.state, AssociationState::Closed);
-
-        self.active = true;
-
-        let init = Init {
-            chunk: ChunkStart::default(),
-            initiate_tag: self.association_tag_local,
-            a_rwnd: self.a_rwnd_local,
-            // The number of streams negotiated during SCTP association setup
-            // SHOULD be 65535, which is the maximum number of streams that
-            // can be negotiated during the association setup.
-            no_outbound: u16::MAX,
-            no_inbound: u16::MAX,
-            initial_tsn: self.tsn_local as u32,
-        };
-
-        self.to_send.push_back(Chunk::Init(init));
-
-        self.close_at = Some(now + INIT_TIMEOUT);
-        self.set_state(AssociationState::CookieWait);
-    }
-
-    // active
-    fn handle_init_ack(&mut self, ack: InitAck, now: Instant) {
-        self.association_tag_remote = Some(ack.init.initiate_tag);
-        self.a_rwnd_remote = ack.init.a_rwnd;
-        debug!("Initial a_rwnd_remote: {}", ack.init.a_rwnd);
-
-        let echo = CookieEcho {
-            chunk: ChunkStart::default(),
-            cookie: ack.cookie,
-        };
-        self.to_send.push_back(Chunk::CookieEcho(echo));
-
-        self.close_at = Some(now + COOKIE_TIMEOUT);
-        self.set_state(AssociationState::CookieEchoed);
-    }
-
-    // active
-    fn handle_cookie_ack(&mut self, _ack: CookieAck) {
-        self.close_at = None;
-        self.set_state(AssociationState::Established);
-    }
-
-    fn set_state(&mut self, state: AssociationState) {
-        debug!("{:?} -> {:?}", self.state, state);
-        self.state = state;
-    }
-
-    pub(crate) fn handle_data(&mut self, data: Data, _now: Instant) {
-        let _flag_immediate_ack = data.chunk.flags & 0b1000 > 0;
-        let _flag_unordered = data.chunk.flags & 0b0100 > 0;
-        let _flag_begin = data.chunk.flags & 0b0010 > 0;
-        let _flag_end = data.chunk.flags & 0b0001 > 0;
-
-        let _stream = self.streams.entry(data.stream_id).or_default();
-
-        //
-    }
-
-    pub(crate) fn handle_sack(&mut self, _ack: Sack, _now: Instant) {
-        //
-    }
-
-    pub(crate) fn handle_heartbeat(&mut self, _heart: Heartbeat, _now: Instant) {
-        //
-    }
-
-    pub(crate) fn handle_heartbeat_ack(&mut self, _ack: HeartbeatAck, _now: Instant) {
-        //
-    }
-}
-
-pub(crate) fn pad4(len: usize) -> usize {
-    let pad = 4 - len % 4;
-    if pad < 4 {
-        len + pad
+    if let Some(idx) = idx {
+        return &mut streams[idx];
     } else {
-        len
+        let r = StreamRec { id, open: true };
+        streams.push(r);
+        streams.last_mut().unwrap()
     }
 }
