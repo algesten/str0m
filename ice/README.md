@@ -1,6 +1,25 @@
 ice
 ===
 
+## Address discovery, STUN and TURN out of scope
+
+Trickle ice means we can add new socket addresses as and when we discover them. There
+is no meaningful difference between adding an address of a local NIC, discovering a
+reflexive address via STUN or creating a new tunnel via a TURN server.
+
+Therefore, all address discovery, such as enumerating local NICs, using a STUN or TURN
+server, are external concerns to this ICE implementation. All discovered addresses
+are added via `add_local_candidate` as and when they are discovered.
+
+## Why `a=end-of-candidates`?
+
+Signaling end of candidates seems mostly to be about going into a failed state because
+all options (candidate pairs) have been explored. For now we leave this state out of scope,
+because with trickle ice, we could, in theory just keep waiting for a new address to appear.
+
+Thus timing out an `RTCPeerConnection` (deciding it's not viable), becomes a concern for the 
+higher up layers, not the ICE agent.
+
 # Assumptions
 
 ## `a=rtcp-mux-only`
@@ -19,7 +38,7 @@ https://datatracker.ietf.org/doc/html/rfc8843#section-1.2
 
 With BUNDLE, WebRTC multiplexes all RTP/RTCP traffic over a single UDP socket between two peers, 
 there is no need to make the Ice Agent have multiple data streams per peer. Furthermore
-and full ice agent is supposed to have different sessions for each peer (reusing the agent for
+any full ice agent is supposed to have different sessions for each peer (reusing the agent for
 multiple connections), but sharing the ice agent is not a complication worth the trouble
 right now. Because we do rtcp-mux-only, we also only have one "component" (RTP) in
 our data stream.
