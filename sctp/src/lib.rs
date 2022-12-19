@@ -12,7 +12,6 @@
 //! related `Association`. `Association` types contain the bulk of the protocol logic related to
 //! managing a single association and all the related state (such as streams).
 
-#![warn(rust_2018_idioms)]
 #![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
 
@@ -136,6 +135,7 @@ pub struct Transmit {
     pub payload: Payload,
 }
 
+/// Helper to bridge `Endpoint` and `Association` into str0m `Rtc`.
 pub struct RtcAssociation {
     endpoint: Endpoint,
     association: Option<(AssociationHandle, Association)>,
@@ -143,9 +143,23 @@ pub struct RtcAssociation {
     recs: Vec<StreamRec>,
 }
 
+#[derive(Default)]
 struct StreamRec {
     id: u16,
     open: bool,
+    event_open: bool,
+    event_close: bool,
+}
+
+pub enum SctpInput<'a> {
+    Data(&'a mut [u8]),
+}
+
+pub enum SctpEvent {
+    Open(u16),
+    Close(u16),
+    Data(u16, Vec<u8>),
+    Output(Vec<u8>),
 }
 
 impl RtcAssociation {
@@ -232,28 +246,51 @@ impl RtcAssociation {
                 }
             }
 
-            // remove unused streams
-            self.recs.retain(|s| s.open);
+            // Remove unused streams.
+            // Keep open streams and streams that have been communicated as open (event_open),
+            // but not yet been communicated as closed (event_closed).
+            self.recs
+                .retain(|s| s.open || (s.event_open && !s.event_close));
 
             for rec in &mut self.recs {
+                if !rec.open {
+                    if !rec.event_close {
+                        rec.event_close = true;
+                        return Some(SctpEvent::Close(rec.id));
+                    } else {
+                        continue;
+                    }
+                }
+
                 if let Ok(mut stream) = a.1.stream(rec.id) {
                     if stream.is_readable() {
+                        if !rec.event_open {
+                            rec.event_open = true;
+                            return Some(SctpEvent::Open(rec.id));
+                        }
+
                         if let Ok(res) = stream.read() {
                             if let Some(c) = res {
                                 let mut buf = vec![0; c.len()];
                                 if let Ok(n) = c.read(&mut buf[..]) {
                                     assert!(n == buf.len());
-                                    return Some(SctpEvent::Data(buf));
+                                    return Some(SctpEvent::Data(rec.id, buf));
                                 } else {
                                     rec.open = false;
+                                    rec.event_close = true;
+                                    return Some(SctpEvent::Close(rec.id));
                                 }
                             }
                         } else {
                             rec.open = false;
+                            rec.event_close = true;
+                            return Some(SctpEvent::Close(rec.id));
                         }
                     }
                 } else {
                     rec.open = false;
+                    rec.event_close = true;
+                    return Some(SctpEvent::Close(rec.id));
                 }
             }
         }
@@ -280,22 +317,17 @@ impl RtcAssociation {
     }
 }
 
-pub enum SctpInput<'a> {
-    Data(&'a mut [u8]),
-}
-
-pub enum SctpEvent {
-    Data(Vec<u8>),
-    Output(Vec<u8>),
-}
-
 fn stream_rec(streams: &mut Vec<StreamRec>, id: u16) -> &mut StreamRec {
     let idx = streams.iter().position(|r| r.id == id);
 
     if let Some(idx) = idx {
         return &mut streams[idx];
     } else {
-        let r = StreamRec { id, open: true };
+        let r = StreamRec {
+            id,
+            open: true,
+            ..Default::default()
+        };
         streams.push(r);
         streams.last_mut().unwrap()
     }

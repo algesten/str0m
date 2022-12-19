@@ -18,3 +18,4 @@ Changes made to original code:
 
 * Added `RtcAssociation` in `lib.rs` which contains a simpler state mechanism for a
   single `Endpoint` and `Association`, suitable to integrate into str0m.
+* Export `sctp::Error` -> `SctpError`

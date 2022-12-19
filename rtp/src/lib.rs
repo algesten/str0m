@@ -11,7 +11,7 @@ use openssl::error::ErrorStack;
 use thiserror::Error;
 
 mod id;
-pub use id::{Mid, Pt, SeqNo, SessionId, Ssrc, StreamId};
+pub use id::{ChannelId, Mid, Pt, SeqNo, SessionId, Ssrc, StreamId};
 
 mod ext;
 pub use ext::{ExtMap, Extension, Extensions};

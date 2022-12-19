@@ -12,7 +12,7 @@ use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::IceAgentEvent;
 use ice::{IceAgent, IceError};
 use net_::NetError;
-use rtp::{MediaTime, Mid, Pt, Ssrc};
+use rtp::{ChannelId, MediaTime, Mid, Pt, Ssrc};
 use sctp::{RtcAssociation, SctpError, SctpEvent};
 use sdp::{Sdp, Setup};
 use thiserror::Error;
@@ -113,9 +113,11 @@ pub enum Event {
     IceCandidate(Candidate),
     IceConnectionStateChange(IceConnectionState),
     MediaAdded(Mid),
-    ChannelAdded(Mid),
     MediaData(MediaData),
     MediaError(RtcError),
+    ChannelOpen(ChannelId),
+    ChannelData(ChannelData),
+    ChannelClose(ChannelId),
 }
 
 #[derive(PartialEq, Eq)]
@@ -125,6 +127,12 @@ pub struct MediaData {
     pub time: MediaTime,
     pub data: Vec<u8>,
     pub meta: Vec<RtpMeta>,
+}
+
+#[derive(PartialEq, Eq)]
+pub struct ChannelData {
+    pub id: ChannelId,
+    pub data: Vec<u8>,
 }
 
 pub enum Input<'a> {
@@ -415,8 +423,18 @@ impl Rtc {
 
         while let Some(e) = self.sctp.poll_event(self.last_now) {
             match e {
-                SctpEvent::Data(buf) => {
-                    println!("SCTP data: {}", buf.len());
+                SctpEvent::Open(id) => {
+                    let id = id.into();
+                    return Ok(Output::Event(Event::ChannelOpen(id)));
+                }
+                SctpEvent::Close(id) => {
+                    let id = id.into();
+                    return Ok(Output::Event(Event::ChannelClose(id)));
+                }
+                SctpEvent::Data(id, data) => {
+                    let id = id.into();
+                    let data = ChannelData { id, data };
+                    return Ok(Output::Event(Event::ChannelData(data)));
                 }
                 SctpEvent::Output(data) => self.dtls.handle_input(&data)?,
             }
@@ -526,9 +544,11 @@ impl PartialEq for Event {
             (Self::IceCandidate(l0), Self::IceCandidate(r0)) => l0 == r0,
             (Self::IceConnectionStateChange(l0), Self::IceConnectionStateChange(r0)) => l0 == r0,
             (Self::MediaAdded(l0), Self::MediaAdded(r0)) => l0 == r0,
-            (Self::ChannelAdded(l0), Self::ChannelAdded(r0)) => l0 == r0,
             (Self::MediaData(m1), Self::MediaData(m2)) => m1 == m2,
             (Self::MediaError(_), Self::MediaError(_)) => false,
+            (Self::ChannelOpen(l0), Self::ChannelOpen(r0)) => l0 == r0,
+            (Self::ChannelData(l0), Self::ChannelData(r0)) => l0 == r0,
+            (Self::ChannelClose(l0), Self::ChannelClose(r0)) => l0 == r0,
             _ => false,
         }
     }
@@ -542,6 +562,15 @@ impl fmt::Debug for MediaData {
             .field("mid", &self.mid)
             .field("pt", &self.pt)
             .field("time", &self.time)
+            .field("len", &self.data.len())
+            .finish()
+    }
+}
+
+impl fmt::Debug for ChannelData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChannelData")
+            .field("id", &self.id)
             .field("len", &self.data.len())
             .finish()
     }
