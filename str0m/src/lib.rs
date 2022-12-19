@@ -13,7 +13,7 @@ use ice::IceAgentEvent;
 use ice::{IceAgent, IceError};
 use net_::NetError;
 use rtp::{ChannelId, MediaTime, Mid, Pt, Ssrc};
-use sctp::{RtcAssociation, SctpData, SctpError, SctpEvent};
+use sctp::{RtcAssociation, SctpError, SctpEvent};
 use sdp::{Sdp, Setup};
 use thiserror::Error;
 
@@ -21,6 +21,7 @@ pub use ice::IceConnectionState;
 
 pub use ice::Candidate;
 pub use packet::RtpMeta;
+pub use sctp::SctpData;
 pub use sdp::{Answer, Offer};
 
 pub mod net {
@@ -89,6 +90,7 @@ pub enum RtcError {
     Sctp(#[from] SctpError),
 }
 
+/// Main type.
 pub struct Rtc {
     alive: bool,
     ice: IceAgent,
@@ -109,6 +111,7 @@ struct SendAddr {
     destination: SocketAddr,
 }
 
+/// Events produced by [`Rtc::poll_output()`]
 #[derive(Debug)]
 pub enum Event {
     IceCandidate(Candidate),
@@ -121,6 +124,7 @@ pub enum Event {
     ChannelClose(ChannelId),
 }
 
+/// Video or audio data.
 #[derive(PartialEq, Eq)]
 pub struct MediaData {
     pub mid: Mid,
@@ -130,17 +134,20 @@ pub struct MediaData {
     pub meta: Vec<RtpMeta>,
 }
 
+/// Data channel data.
 #[derive(PartialEq, Eq)]
 pub struct ChannelData {
     pub id: ChannelId,
     pub data: SctpData,
 }
 
+/// Network input as expected by [`Rtc::handle_input()`].
 pub enum Input<'a> {
     Timeout(Instant),
     Receive(Instant, net::Receive<'a>),
 }
 
+/// Output produced by [`Rtc::poll_output()`]
 pub enum Output {
     Timeout(Instant),
     Transmit(net::Transmit),
@@ -549,6 +556,7 @@ impl Rtc {
     }
 }
 
+/// Changes waiting to be applied to the [`Rtc`].
 pub struct PendingChanges<'a> {
     rtc: &'a mut Rtc,
 }

@@ -167,6 +167,7 @@ pub enum SctpEvent {
     Output(Vec<u8>),
 }
 
+/// Holder of binary or text data.
 #[derive(PartialEq, Eq)]
 pub enum SctpData {
     String(String),

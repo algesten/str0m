@@ -33,6 +33,7 @@ pub struct AddMedia {
     pub index: usize,
 }
 
+/// Changes to apply to the m-lines of the WebRTC session.
 pub struct ChangeSet<'a> {
     rtc: &'a mut Rtc,
     changes: Changes,
