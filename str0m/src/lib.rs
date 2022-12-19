@@ -7,13 +7,13 @@ use std::net::SocketAddr;
 use std::time::Instant;
 use std::{fmt, io};
 
-use change::Changes;
+use change::{Change, Changes};
 use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::IceAgentEvent;
 use ice::{IceAgent, IceError};
 use net_::NetError;
 use rtp::{ChannelId, MediaTime, Mid, Pt, Ssrc};
-use sctp::{RtcAssociation, SctpError, SctpEvent};
+use sctp::{RtcAssociation, SctpData, SctpError, SctpEvent};
 use sdp::{Sdp, Setup};
 use thiserror::Error;
 
@@ -95,6 +95,7 @@ pub struct Rtc {
     dtls: Dtls,
     setup: Setup,
     sctp: RtcAssociation,
+    next_sctp_channel: u16,
     session: Session,
     remote_fingerprint: Option<Fingerprint>,
     pending: Option<Changes>,
@@ -115,7 +116,7 @@ pub enum Event {
     MediaAdded(Mid),
     MediaData(MediaData),
     MediaError(RtcError),
-    ChannelOpen(ChannelId),
+    ChannelOpen(ChannelId, String),
     ChannelData(ChannelData),
     ChannelClose(ChannelId),
 }
@@ -132,7 +133,7 @@ pub struct MediaData {
 #[derive(PartialEq, Eq)]
 pub struct ChannelData {
     pub id: ChannelId,
-    pub data: Vec<u8>,
+    pub data: SctpData,
 }
 
 pub enum Input<'a> {
@@ -155,6 +156,7 @@ impl Rtc {
             setup: Setup::ActPass,
             session: Session::new(),
             sctp: RtcAssociation::new(),
+            next_sctp_channel: 0, // Goes 0, 1, 2 for both DTLS server or client
             remote_fingerprint: None,
             pending: None,
             remote_addrs: vec![],
@@ -281,6 +283,7 @@ impl Rtc {
 
             // Modify session with answer
             let pending = self.pending.take().expect("pending changes");
+            self.open_pending_data_channels(&pending)?;
             self.session.apply_answer(pending, answer)?;
         } else {
             // rollback
@@ -338,6 +341,18 @@ impl Rtc {
                 break mid;
             }
         }
+    }
+
+    /// Creates the new SCTP channel.
+    pub(crate) fn new_sctp_channel(&mut self) -> ChannelId {
+        let active = self.setup == Setup::Active;
+        // RFC 8831
+        // Unless otherwise defined or negotiated, the
+        // streams are picked based on the DTLS role (the client picks even
+        // stream identifiers, and the server picks odd stream identifiers).
+        let id = self.next_sctp_channel * 2 + if active { 0 } else { 1 };
+        self.next_sctp_channel += 1;
+        id.into()
     }
 
     /// Creates an Ssrc that is not in the session already.
@@ -423,9 +438,9 @@ impl Rtc {
 
         while let Some(e) = self.sctp.poll_event(self.last_now) {
             match e {
-                SctpEvent::Open(id) => {
+                SctpEvent::Open(id, dcep) => {
                     let id = id.into();
-                    return Ok(Output::Event(Event::ChannelOpen(id)));
+                    return Ok(Output::Event(Event::ChannelOpen(id, dcep.label)));
                 }
                 SctpEvent::Close(id) => {
                     let id = id.into();
@@ -500,8 +515,8 @@ impl Rtc {
         self.session.get_media(mid)
     }
 
-    pub fn channel(&mut self, mid: Mid) -> Option<&mut Channel> {
-        self.session.get_channel(mid)
+    pub fn channel(&mut self) -> Option<&mut Channel> {
+        self.session.channel()
     }
 
     fn do_handle_timeout(&mut self, now: Instant) {
@@ -518,6 +533,16 @@ impl Rtc {
             Stun(_) => self.ice.handle_receive(now, r),
             Dtls(_) => self.dtls.handle_receive(r)?,
             Rtp(_) | Rtcp(_) => self.session.handle_receive(now, r),
+        }
+
+        Ok(())
+    }
+
+    fn open_pending_data_channels(&mut self, pending: &Changes) -> Result<(), RtcError> {
+        for p in &pending.0 {
+            if let Change::AddChannel(id, dcep) = p {
+                self.sctp.open_stream(**id, dcep)?;
+            }
         }
 
         Ok(())
@@ -546,7 +571,7 @@ impl PartialEq for Event {
             (Self::MediaAdded(l0), Self::MediaAdded(r0)) => l0 == r0,
             (Self::MediaData(m1), Self::MediaData(m2)) => m1 == m2,
             (Self::MediaError(_), Self::MediaError(_)) => false,
-            (Self::ChannelOpen(l0), Self::ChannelOpen(r0)) => l0 == r0,
+            (Self::ChannelOpen(l0, l1), Self::ChannelOpen(r0, r1)) => l0 == r0 && l1 == r1,
             (Self::ChannelData(l0), Self::ChannelData(r0)) => l0 == r0,
             (Self::ChannelClose(l0), Self::ChannelClose(r0)) => l0 == r0,
             _ => false,
@@ -571,7 +596,7 @@ impl fmt::Debug for ChannelData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ChannelData")
             .field("id", &self.id)
-            .field("len", &self.data.len())
+            .field("data", &self.data)
             .finish()
     }
 }

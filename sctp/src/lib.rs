@@ -19,6 +19,7 @@
 extern crate tracing;
 
 use bytes::Bytes;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Instant;
 use std::{
@@ -60,6 +61,9 @@ pub(crate) mod queue;
 pub use crate::queue::reassembly_queue::{Chunk, Chunks};
 
 pub(crate) mod util;
+
+mod dcep;
+pub use dcep::{DcepAck, DcepOpen};
 
 /// Whether an endpoint was the initiator of an association
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
@@ -141,6 +145,7 @@ pub struct RtcAssociation {
     association: Option<(AssociationHandle, Association)>,
     transmit: Option<Transmit>,
     recs: Vec<StreamRec>,
+    pending_open: VecDeque<u16>,
 }
 
 #[derive(Default)]
@@ -156,10 +161,16 @@ pub enum SctpInput<'a> {
 }
 
 pub enum SctpEvent {
-    Open(u16),
+    Open(u16, DcepOpen),
     Close(u16),
-    Data(u16, Vec<u8>),
+    Data(u16, SctpData),
     Output(Vec<u8>),
+}
+
+#[derive(PartialEq, Eq)]
+pub enum SctpData {
+    String(String),
+    Binary(Vec<u8>),
 }
 
 impl RtcAssociation {
@@ -172,6 +183,7 @@ impl RtcAssociation {
             association: None,
             transmit: None,
             recs: vec![],
+            pending_open: VecDeque::new(),
         }
     }
 
@@ -189,12 +201,30 @@ impl RtcAssociation {
                                 a.1.handle_event(event);
                             }
                         }
-                        DatagramEvent::NewAssociation(a) => {
+                        DatagramEvent::NewAssociation(mut a) => {
+                            // Pending open before association was up
+                            while let Some(id) = self.pending_open.pop_front() {
+                                a.open_stream(id, PayloadProtocolIdentifier::Unknown)?;
+                            }
                             self.association = Some((handle, a));
                         }
                     }
                 }
             }
+        }
+        Ok(())
+    }
+
+    pub fn open_stream(&mut self, id: u16, dcep: &DcepOpen) -> Result<(), SctpError> {
+        if let Some((_, a)) = &mut self.association {
+            let mut stream = a.open_stream(id, PayloadProtocolIdentifier::Unknown)?;
+            let mut buf = vec![0; 1500];
+            let n = dcep.marshal_to(&mut buf);
+            buf.truncate(n);
+            stream.write(&buf, PayloadProtocolIdentifier::Dcep)?;
+        } else {
+            // Open once association is up.
+            self.pending_open.push_back(id);
         }
         Ok(())
     }
@@ -262,30 +292,17 @@ impl RtcAssociation {
                     }
                 }
 
-                if let Ok(mut stream) = a.1.stream(rec.id) {
-                    if stream.is_readable() {
-                        if !rec.event_open {
-                            rec.event_open = true;
-                            return Some(SctpEvent::Open(rec.id));
+                if let Ok(stream) = a.1.stream(rec.id) {
+                    match read_from_stream(stream, rec) {
+                        Ok(Some(v)) => {
+                            return Some(v);
                         }
-
-                        if let Ok(res) = stream.read() {
-                            if let Some(c) = res {
-                                let mut buf = vec![0; c.len()];
-                                if let Ok(n) = c.read(&mut buf[..]) {
-                                    assert!(n == buf.len());
-                                    return Some(SctpEvent::Data(rec.id, buf));
-                                } else {
-                                    rec.open = false;
-                                    rec.event_close = true;
-                                    return Some(SctpEvent::Close(rec.id));
-                                }
-                            }
-                        } else {
+                        Err(_e) => {
                             rec.open = false;
                             rec.event_close = true;
                             return Some(SctpEvent::Close(rec.id));
                         }
+                        _ => {}
                     }
                 } else {
                     rec.open = false;
@@ -331,4 +348,72 @@ fn stream_rec(streams: &mut Vec<StreamRec>, id: u16) -> &mut StreamRec {
         streams.push(r);
         streams.last_mut().unwrap()
     }
+}
+
+fn read_from_stream(
+    mut stream: Stream<'_>,
+    rec: &mut StreamRec,
+) -> Result<Option<SctpEvent>, SctpError> {
+    if !stream.is_readable() {
+        return Ok(None);
+    }
+    let res = stream.read()?;
+
+    let Some(c) = res else {
+        return Ok(None);
+    };
+
+    let mut buf = vec![0; c.len()];
+    let n = c.read(&mut buf[..])?;
+    assert!(n == buf.len());
+
+    if !rec.event_open {
+        rec.event_open = true;
+        let dcep: DcepOpen = buf.as_slice().try_into()?;
+
+        stream.set_reliability_params(
+            dcep.unordered,
+            dcep.channel_type,
+            dcep.reliability_parameter,
+        )?;
+
+        let mut buf = [0];
+        DcepAck.marshal_to(&mut buf);
+        stream.write(&buf, PayloadProtocolIdentifier::Dcep)?;
+
+        return Ok(Some(SctpEvent::Open(rec.id, dcep)));
+    }
+
+    let data = match c.ppi {
+        PayloadProtocolIdentifier::String => {
+            let s = String::from_utf8(buf).map_err(|_| SctpError::Other("Bad UTF-8".into()))?;
+            SctpData::String(s)
+        }
+        PayloadProtocolIdentifier::Binary => SctpData::Binary(buf),
+        PayloadProtocolIdentifier::StringEmpty => SctpData::String(String::new()),
+        PayloadProtocolIdentifier::BinaryEmpty => SctpData::Binary(Vec::new()),
+        _ => {
+            return Err(SctpError::Other("Unexpected PPI".into()));
+        }
+    };
+
+    Ok(Some(SctpEvent::Data(rec.id, data)))
+}
+
+impl fmt::Debug for SctpData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::String(v) => f.debug_tuple("String").field(&truncate(v, 10)).finish(),
+            Self::Binary(v) => f.debug_tuple("Binary").field(&v.len()).finish(),
+        }
+    }
+}
+
+fn truncate(s: &str, n: usize) -> String {
+    let has_more = s.chars().take(n + 1).count() > n;
+    let mut r: String = s.chars().take(n).collect();
+    if has_more {
+        r.push('…');
+    }
+    r
 }

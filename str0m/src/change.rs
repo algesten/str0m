@@ -1,7 +1,8 @@
 use std::ops::Deref;
 
 use net_::Id;
-use rtp::{Direction, Mid, Ssrc};
+use rtp::{ChannelId, Direction, Mid, Ssrc};
+use sctp::{DcepOpen, ReliabilityType};
 use sdp::{MediaLine, Msid, Offer};
 
 use crate::media::{CodecConfig, CodecParams, MediaKind};
@@ -13,7 +14,8 @@ pub struct Changes(pub Vec<Change>);
 #[derive(Debug)]
 pub enum Change {
     AddMedia(AddMedia),
-    AddChannel(Mid),
+    AddChannelLine(Mid),
+    AddChannel(ChannelId, DcepOpen),
     ChangeDir(Mid, Direction),
 }
 
@@ -93,10 +95,28 @@ impl<'a> ChangeSet<'a> {
         mid
     }
 
-    pub fn add_channel(&mut self) -> Mid {
-        let mid = self.rtc.new_mid();
-        self.changes.0.push(Change::AddChannel(mid));
-        mid
+    pub fn add_channel(&mut self, label: String) -> ChannelId {
+        let has_m_line = self.rtc.channel().is_some();
+
+        if !has_m_line {
+            let mid = self.rtc.new_mid();
+            self.changes.0.push(Change::AddChannelLine(mid));
+        }
+
+        let id = self.rtc.new_sctp_channel();
+
+        let dcep = DcepOpen {
+            unordered: false,
+            channel_type: ReliabilityType::Reliable,
+            reliability_parameter: 0,
+            label,
+            priority: 0,
+            protocol: String::new(),
+        };
+
+        self.changes.0.push(Change::AddChannel(id, dcep));
+
+        0.into()
     }
 
     pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
@@ -134,7 +154,7 @@ impl Changes {
                         }
                         continue 'next;
                     }
-                    AddChannel(v) if *v == mid => {
+                    AddChannelLine(v) if *v == mid => {
                         if !l.typ.is_channel() {
                             return Some(format!(
                                 "Answer m-line for mid ({}) is not a data channel: {:?}",
@@ -156,7 +176,7 @@ impl Changes {
     fn count_new_m_lines(&self) -> usize {
         self.0
             .iter()
-            .filter(|c| matches!(c, Change::AddMedia(_) | Change::AddChannel(_)))
+            .filter(|c| matches!(c, Change::AddMedia(_) | Change::AddChannelLine(_)))
             .count()
     }
 
@@ -201,7 +221,7 @@ impl Change {
                 let media = add.into();
                 Some(MediaOrChannel::Media(media))
             }
-            AddChannel(mid) => {
+            AddChannelLine(mid) => {
                 let channel = (*mid, index).into();
                 Some(MediaOrChannel::Channel(channel))
             }

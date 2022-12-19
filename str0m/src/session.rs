@@ -99,8 +99,8 @@ impl Session {
         })
     }
 
-    pub fn channels(&mut self) -> impl Iterator<Item = &mut Channel> {
-        self.media.iter_mut().filter_map(|m| match m {
+    pub fn channel(&mut self) -> Option<&mut Channel> {
+        self.media.iter_mut().find_map(|m| match m {
             MediaOrChannel::Media(_) => None,
             MediaOrChannel::Channel(c) => Some(c),
         })
@@ -108,10 +108,6 @@ impl Session {
 
     pub fn get_media(&mut self, mid: Mid) -> Option<&mut Media> {
         self.media().find(|m| m.mid() == mid)
-    }
-
-    pub fn get_channel(&mut self, mid: Mid) -> Option<&mut Channel> {
-        self.channels().find(|m| m.mid() == mid)
     }
 
     pub fn exts(&self) -> &Extensions {

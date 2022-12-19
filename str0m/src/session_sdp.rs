@@ -195,7 +195,7 @@ impl Session {
                 }
 
                 media.apply_changes(m, config);
-            } else if let Some(chan) = self.get_channel(m.mid()) {
+            } else if let Some(chan) = self.channel() {
                 if idx != chan.index() {
                     return index_err(m.mid());
                 }
@@ -228,7 +228,7 @@ impl Session {
                 let channel = (m.mid(), idx).into();
                 self.media.push(MediaOrChannel::Channel(channel));
 
-                let chan = self.channels().last().unwrap();
+                let chan = self.channel().unwrap();
                 chan.apply_changes(m);
             } else {
                 return Err(format!(
