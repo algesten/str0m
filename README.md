@@ -149,8 +149,7 @@ need to accept the "risk". How to do this depends on browser. In Chrome you can 
 chose "Proceed to str0m.test (unsafe)". For Safari, you can similarly chose to "Visit website" despite
 the warning.
 
-4. Click "Cam" and/or "Mic" followed by "Rtc" ("Data" is pending SCTP being completed). And hopefully
-you will see something like this in the log:
+4. Click "Cam" and/or "Mic" followed by "Rtc". And hopefully you will see something like this in the log:
 
 ```
 Dec 18 11:33:06.850  INFO str0m: MediaData(MediaData { mid: Mid(0), pt: Pt(104), time: MediaTime(3099135646, 90000), len: 1464 })

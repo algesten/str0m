@@ -12,7 +12,6 @@ use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::IceAgentEvent;
 use ice::{IceAgent, IceError};
 use net_::NetError;
-use rtp::{ChannelId, MediaTime, Mid, Pt, Ssrc};
 use sctp::{RtcAssociation, SctpError, SctpEvent};
 use sdp::{Sdp, Setup};
 use thiserror::Error;
@@ -43,6 +42,8 @@ use session::{MediaEvent, Session};
 
 mod session_sdp;
 use session_sdp::AsSdpParams;
+
+pub use rtp::{ChannelId, MediaTime, Mid, Pt, Ssrc};
 
 /// Errors for the whole Rtc engine.
 #[derive(Debug, Error)]
@@ -440,6 +441,12 @@ impl Rtc {
                     self.sctp
                         .handle_input(sctp::SctpInput::Data(&mut v), self.last_now)?;
                 }
+            }
+        }
+
+        if let Some(channel) = self.session.channel() {
+            for (id, data) in channel.pending_sends() {
+                self.sctp.write(*id, data)?;
             }
         }
 

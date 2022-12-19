@@ -20,6 +20,7 @@ extern crate tracing;
 
 use bytes::Bytes;
 use std::collections::VecDeque;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Instant;
 use std::{
@@ -174,6 +175,34 @@ pub enum SctpData {
     Binary(Vec<u8>),
 }
 
+impl SctpData {
+    pub fn len(&self) -> usize {
+        match self {
+            SctpData::String(v) => v.as_bytes().len(),
+            SctpData::Binary(v) => v.len(),
+        }
+    }
+
+    pub(crate) fn ppi(&self) -> PayloadProtocolIdentifier {
+        match self {
+            SctpData::String(v) => {
+                if v.is_empty() {
+                    PayloadProtocolIdentifier::StringEmpty
+                } else {
+                    PayloadProtocolIdentifier::String
+                }
+            }
+            SctpData::Binary(v) => {
+                if v.is_empty() {
+                    PayloadProtocolIdentifier::BinaryEmpty
+                } else {
+                    PayloadProtocolIdentifier::Binary
+                }
+            }
+        }
+    }
+}
+
 impl RtcAssociation {
     pub fn new() -> Self {
         let config = EndpointConfig::default();
@@ -228,6 +257,19 @@ impl RtcAssociation {
             self.pending_open.push_back(id);
         }
         Ok(())
+    }
+
+    pub fn write(&mut self, id: u16, data: SctpData) -> Result<bool, SctpError> {
+        let Some((_, a)) = &mut self.association else {
+            return Ok(false);
+        };
+
+        let mut stream = a.stream(id)?;
+
+        let n = stream.write(&data, data.ppi())?;
+        assert!(n == data.len());
+
+        Ok(true)
     }
 
     pub fn poll_event(&mut self, now: Instant) -> Option<SctpEvent> {
@@ -417,4 +459,15 @@ fn truncate(s: &str, n: usize) -> String {
         r.push('…');
     }
     r
+}
+
+impl Deref for SctpData {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            SctpData::String(v) => v.as_bytes(),
+            SctpData::Binary(v) => v.as_slice(),
+        }
+    }
 }

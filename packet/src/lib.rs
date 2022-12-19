@@ -39,7 +39,7 @@ pub trait Packetizer: fmt::Debug {
 ///
 /// Removes any RTP specific data from the payload.
 pub trait Depacketizer: fmt::Debug {
-    /// Unpack the RTP packet into a provided Vec<u8>.
+    /// Unpack the RTP packet into a provided `Vec<u8>`.
     fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError>;
 
     /// Checks if the packet is at the beginning of a partition.
