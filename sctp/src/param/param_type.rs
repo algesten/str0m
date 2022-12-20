@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use std::fmt;
 
 /// paramType represents a SCTP INIT/INITACK parameter

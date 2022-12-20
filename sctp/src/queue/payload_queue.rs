@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::chunk::chunk_payload_data::ChunkPayloadData;
 use crate::chunk::chunk_selective_ack::GapAckBlock;
 use crate::util::*;

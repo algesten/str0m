@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use super::*;
 use crate::association::Event;
 use crate::error::{Error, Result};

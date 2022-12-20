@@ -124,8 +124,11 @@ impl<'a> Stream<'a> {
     /// Send data on the given stream
     ///
     /// Returns the number of bytes successfully written.
-    pub fn write(&mut self, data: &[u8], ppi: PayloadProtocolIdentifier) -> Result<usize> {
-        self.write_source(&mut ByteSlice::from_slice(data), ppi)
+    pub fn write(&mut self, data: &[u8]) -> Result<usize> {
+        self.write_source(
+            &mut ByteSlice::from_slice(data),
+            self.get_default_payload_type()?,
+        )
     }
 
     /// write writes len(p) bytes from p with the default Payload Protocol Identifier

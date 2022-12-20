@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::util::{AssociationIdGenerator, RandomAssociationIdGenerator};
 
 use std::fmt;

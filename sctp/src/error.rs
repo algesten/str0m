@@ -222,13 +222,6 @@ pub enum Error {
     #[error("Max Data Channel ID")]
     ErrMaxDataChannelID,
 
-    #[error("DCEP open message too small")]
-    DcepOpenTooSmall,
-    #[error("DCEP incorrect message type")]
-    DcepIncorrectMessageType,
-    #[error("DCEP bad UTF-8 string")]
-    DcepBadUtf8,
-
     #[error("{0}")]
     Other(String),
 }

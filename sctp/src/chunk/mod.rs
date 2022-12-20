@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 #[cfg(test)]
 mod chunk_test;
 

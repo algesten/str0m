@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::shared::AssociationId;
 
 use bytes::Bytes;
