@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 #[cfg(test)]
 mod endpoint_test;
 

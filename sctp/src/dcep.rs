@@ -23,7 +23,7 @@ use crate::ReliabilityType;
 
 /// Data channel establishment protocol.
 /// RFC 8832
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DcepOpen {
     pub unordered: bool,
     pub channel_type: ReliabilityType,

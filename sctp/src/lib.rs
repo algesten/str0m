@@ -12,14 +12,12 @@
 //! related `Association`. `Association` types contain the bulk of the protocol logic related to
 //! managing a single association and all the related state (such as streams).
 
-#![allow(dead_code)]
 #![allow(clippy::too_many_arguments)]
 
 #[macro_use]
 extern crate tracing;
 
 use bytes::Bytes;
-use std::collections::VecDeque;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::time::Instant;
@@ -143,10 +141,10 @@ pub struct Transmit {
 /// Helper to bridge `Endpoint` and `Association` into str0m `Rtc`.
 pub struct RtcAssociation {
     endpoint: Endpoint,
-    association: Option<(AssociationHandle, Association)>,
+    association: (AssociationHandle, Association),
     transmit: Option<Transmit>,
     recs: Vec<StreamRec>,
-    pending_open: VecDeque<u16>,
+    pushed_back_transmit: Option<Vec<u8>>,
 }
 
 #[derive(Default)]
@@ -155,6 +153,7 @@ struct StreamRec {
     open: bool,
     event_open: bool,
     event_close: bool,
+    dcep: Option<DcepOpen>,
 }
 
 pub enum SctpInput<'a> {
@@ -165,7 +164,7 @@ pub enum SctpEvent {
     Open(u16, DcepOpen),
     Close(u16),
     Data(u16, SctpData),
-    Output(Vec<u8>),
+    Transmit(Vec<u8>),
 }
 
 /// Holder of binary or text data.
@@ -188,13 +187,17 @@ impl RtcAssociation {
     pub fn new() -> Self {
         let config = EndpointConfig::default();
         let server_config = ServerConfig::default();
-        let endpoint = Endpoint::new(Arc::new(config), Some(Arc::new(server_config)));
+        let mut endpoint = Endpoint::new(Arc::new(config), Some(Arc::new(server_config)));
+        let config = ClientConfig::default();
+        let association = endpoint
+            .connect(config, "1.1.1.1:5000".parse().unwrap())
+            .expect("to create association");
         RtcAssociation {
             endpoint,
-            association: None,
+            association,
             transmit: None,
             recs: vec![],
-            pending_open: VecDeque::new(),
+            pushed_back_transmit: None,
         }
     }
 
@@ -208,16 +211,10 @@ impl RtcAssociation {
                 if let Some((handle, event)) = r {
                     match event {
                         DatagramEvent::AssociationEvent(event) => {
-                            if let Some(a) = &mut self.association {
-                                a.1.handle_event(event);
-                            }
+                            self.association.1.handle_event(event);
                         }
-                        DatagramEvent::NewAssociation(mut a) => {
-                            // Pending open before association was up
-                            while let Some(id) = self.pending_open.pop_front() {
-                                a.open_stream(id, PayloadProtocolIdentifier::Unknown)?;
-                            }
-                            self.association = Some((handle, a));
+                        DatagramEvent::NewAssociation(a) => {
+                            self.association = (handle, a);
                         }
                     }
                 }
@@ -227,25 +224,31 @@ impl RtcAssociation {
     }
 
     pub fn open_stream(&mut self, id: u16, dcep: &DcepOpen) -> Result<(), SctpError> {
-        if let Some((_, a)) = &mut self.association {
-            let mut stream = a.open_stream(id, PayloadProtocolIdentifier::Unknown)?;
-            let mut buf = vec![0; 1500];
-            let n = dcep.marshal_to(&mut buf);
-            buf.truncate(n);
-            stream.write(&buf, PayloadProtocolIdentifier::Dcep)?;
-        } else {
-            // Open once association is up.
-            self.pending_open.push_back(id);
-        }
+        let mut stream = self
+            .association
+            .1
+            .open_stream(id, PayloadProtocolIdentifier::Unknown)?;
+
+        stream.set_reliability_params(
+            dcep.unordered,
+            dcep.channel_type,
+            dcep.reliability_parameter,
+        )?;
+
+        let rec = stream_rec(&mut self.recs, id);
+
+        rec.dcep = Some(dcep.clone());
+
         Ok(())
     }
 
-    pub fn write(&mut self, id: u16, binary: bool, buf: &[u8]) -> Result<usize, SctpError> {
-        let Some((_, a)) = &mut self.association else {
-            return Ok(0);
-        };
+    pub fn is_open(&mut self, id: u16) -> bool {
+        let rec = stream_rec(&mut self.recs, id);
+        rec.open && rec.event_open
+    }
 
-        let mut stream = a.stream(id)?;
+    pub fn write(&mut self, id: u16, binary: bool, buf: &[u8]) -> Result<usize, SctpError> {
+        let mut stream = self.association.1.stream(id)?;
 
         let ppi = if buf.is_empty() {
             if binary {
@@ -274,7 +277,16 @@ impl RtcAssociation {
         Ok(n)
     }
 
+    pub fn push_back_transmit(&mut self, buf: Vec<u8>) {
+        assert!(self.pushed_back_transmit.is_none());
+        self.pushed_back_transmit = Some(buf);
+    }
+
     pub fn poll_event(&mut self, now: Instant) -> Option<SctpEvent> {
+        if let Some(buf) = self.pushed_back_transmit.take() {
+            return Some(SctpEvent::Transmit(buf));
+        }
+
         while let Some(t) = self.poll_transmit(now) {
             if let Payload::RawEncode(v) = t.payload {
                 let len = v.iter().map(|b| b.len()).sum();
@@ -285,75 +297,73 @@ impl RtcAssociation {
                     (&mut buf[n..(n + l)]).copy_from_slice(&b);
                     n += l;
                 }
-                return Some(SctpEvent::Output(buf));
+                return Some(SctpEvent::Transmit(buf));
             } else {
                 continue;
             }
         }
 
-        if let Some(a) = &mut self.association {
-            // propagate events between endpoint and association.
-            while let Some(e) = a.1.poll_endpoint_event() {
-                if let Some(ae) = self.endpoint.handle_event(a.0, e) {
-                    a.1.handle_event(ae);
+        // propagate events between endpoint and association.
+        while let Some(e) = self.association.1.poll_endpoint_event() {
+            if let Some(ae) = self.endpoint.handle_event(self.association.0, e) {
+                self.association.1.handle_event(ae);
+            }
+        }
+
+        while let Some(e) = self.association.1.poll() {
+            if let Event::Stream(e) = e {
+                let streams = &mut self.recs;
+
+                match e {
+                    StreamEvent::Readable { id } | StreamEvent::Writable { id } => {
+                        // This simply instantiates a StreamRec so we now to poll read below.
+                        stream_rec(streams, id);
+                    }
+                    StreamEvent::Finished { id } => {
+                        let rec = stream_rec(streams, id);
+                        rec.open = false
+                    }
+                    StreamEvent::Stopped { id, .. } => {
+                        let rec = stream_rec(streams, id);
+                        rec.open = false
+                    }
+                    _ => {}
                 }
             }
+        }
 
-            while let Some(e) = a.1.poll() {
-                if let Event::Stream(e) = e {
-                    let streams = &mut self.recs;
+        // Remove unused streams.
+        // Keep open streams and streams that have been communicated as open (event_open),
+        // but not yet been communicated as closed (event_closed).
+        self.recs
+            .retain(|s| s.open || (s.event_open && !s.event_close));
 
-                    match e {
-                        StreamEvent::Readable { id } | StreamEvent::Writable { id } => {
-                            // This simply instantiates a StreamRec so we now to poll read below.
-                            stream_rec(streams, id);
-                        }
-                        StreamEvent::Finished { id } => {
-                            let rec = stream_rec(streams, id);
-                            rec.open = false
-                        }
-                        StreamEvent::Stopped { id, .. } => {
-                            let rec = stream_rec(streams, id);
-                            rec.open = false
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            // Remove unused streams.
-            // Keep open streams and streams that have been communicated as open (event_open),
-            // but not yet been communicated as closed (event_closed).
-            self.recs
-                .retain(|s| s.open || (s.event_open && !s.event_close));
-
-            for rec in &mut self.recs {
-                if !rec.open {
-                    if !rec.event_close {
-                        rec.event_close = true;
-                        return Some(SctpEvent::Close(rec.id));
-                    } else {
-                        continue;
-                    }
-                }
-
-                if let Ok(stream) = a.1.stream(rec.id) {
-                    match read_from_stream(stream, rec) {
-                        Ok(Some(v)) => {
-                            return Some(v);
-                        }
-                        Err(_e) => {
-                            rec.open = false;
-                            rec.event_close = true;
-                            return Some(SctpEvent::Close(rec.id));
-                        }
-                        _ => {}
-                    }
-                } else {
-                    rec.open = false;
+        for rec in &mut self.recs {
+            if !rec.open {
+                if !rec.event_close {
                     rec.event_close = true;
                     return Some(SctpEvent::Close(rec.id));
+                } else {
+                    continue;
                 }
+            }
+
+            if let Ok(stream) = self.association.1.stream(rec.id) {
+                match read_from_stream(stream, rec) {
+                    Ok(Some(v)) => {
+                        return Some(v);
+                    }
+                    Err(_e) => {
+                        rec.open = false;
+                        rec.event_close = true;
+                        return Some(SctpEvent::Close(rec.id));
+                    }
+                    _ => {}
+                }
+            } else {
+                rec.open = false;
+                rec.event_close = true;
+                return Some(SctpEvent::Close(rec.id));
             }
         }
 
@@ -369,10 +379,8 @@ impl RtcAssociation {
             return Some(t);
         }
 
-        if let Some(a) = &mut self.association {
-            if let Some(t) = a.1.poll_transmit(now) {
-                return Some(t);
-            }
+        if let Some(t) = self.association.1.poll_transmit(now) {
+            return Some(t);
         }
 
         None
@@ -414,17 +422,34 @@ fn read_from_stream(
 
     if !rec.event_open {
         rec.event_open = true;
-        let dcep: DcepOpen = buf.as_slice().try_into()?;
 
-        stream.set_reliability_params(
-            dcep.unordered,
-            dcep.channel_type,
-            dcep.reliability_parameter,
-        )?;
+        let dcep = if let Some(dcep) = rec.dcep.take() {
+            // Channel is open locally and we send the initial DCEP
 
-        let mut buf = [0];
-        DcepAck.marshal_to(&mut buf);
-        stream.write(&buf, PayloadProtocolIdentifier::Dcep)?;
+            let mut buf = vec![0; 1500];
+            let n = dcep.marshal_to(&mut buf);
+            buf.truncate(n);
+
+            stream.write(&buf, PayloadProtocolIdentifier::Dcep)?;
+
+            dcep
+        } else {
+            // Remote side opened channel, and we are responding to the initial DCEP
+
+            let dcep: DcepOpen = buf.as_slice().try_into()?;
+
+            stream.set_reliability_params(
+                dcep.unordered,
+                dcep.channel_type,
+                dcep.reliability_parameter,
+            )?;
+
+            let mut buf = [0];
+            DcepAck.marshal_to(&mut buf);
+            stream.write(&buf, PayloadProtocolIdentifier::Dcep)?;
+
+            dcep
+        };
 
         return Ok(Some(SctpEvent::Open(rec.id, dcep)));
     }

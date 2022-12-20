@@ -459,7 +459,19 @@ impl Rtc {
                     let data = ChannelData { id, data };
                     return Ok(Output::Event(Event::ChannelData(data)));
                 }
-                SctpEvent::Output(data) => self.dtls.handle_input(&data)?,
+                SctpEvent::Transmit(data) => {
+                    println!("YAY Attempt write DTLS");
+                    if let Err(e) = self.dtls.handle_input(&data) {
+                        println!("YAY Failed: {:?}", e);
+                        if e.is_would_block() {
+                            // hold back this transmit until dtls is ready for it.
+                            self.sctp.push_back_transmit(data);
+                            break;
+                        }
+                        return Err(e.into());
+                    }
+                    println!("YAY Success!");
+                }
             }
         }
 
@@ -527,10 +539,17 @@ impl Rtc {
     ///
     /// This is only available after either the remote peer has added one data channel
     /// to the SDP, or we've locally done [`ChangeSet::add_channel()`].
-    pub fn channel(&mut self) -> Option<Channel<'_>> {
+    ///
+    /// Either way, we must wait for the [`Event::ChannelOpen`] before writing.
+    pub fn channel(&mut self, id: ChannelId) -> Option<Channel<'_>> {
         // If the m=application isn't set up, we don't provide Channel
         self.session.app()?;
-        Some(Channel { rtc: self })
+
+        if !self.sctp.is_open(*id) {
+            return None;
+        }
+
+        Some(Channel { rtc: self, id })
     }
 
     fn do_handle_timeout(&mut self, now: Instant) {
@@ -565,11 +584,12 @@ impl Rtc {
 
 pub struct Channel<'a> {
     rtc: &'a mut Rtc,
+    id: ChannelId,
 }
 
 impl Channel<'_> {
-    pub fn write(&mut self, id: ChannelId, binary: bool, buf: &[u8]) -> Result<usize, RtcError> {
-        Ok(self.rtc.sctp.write(*id, binary, buf)?)
+    pub fn write(&mut self, binary: bool, buf: &[u8]) -> Result<usize, RtcError> {
+        Ok(self.rtc.sctp.write(*self.id, binary, buf)?)
     }
 }
 

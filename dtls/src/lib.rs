@@ -26,6 +26,15 @@ pub enum DtlsError {
     Io(#[from] io::Error),
 }
 
+impl DtlsError {
+    pub fn is_would_block(&self) -> bool {
+        let DtlsError::Io(e) = self else {
+            return false;
+        };
+        e.kind() == io::ErrorKind::WouldBlock
+    }
+}
+
 /// Certificate fingerprint.
 ///
 /// DTLS uses self signed certificates, and the fingerprint is communicated via

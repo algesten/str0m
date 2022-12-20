@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::association::{
     state::{AckMode, AckState, AssociationState},
     stats::AssociationStats,
