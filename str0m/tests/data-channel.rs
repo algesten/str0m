@@ -44,8 +44,9 @@ pub fn data_channel() -> Result<(), RtcError> {
 
     loop {
         while l.duration() > time_l.into() {
-            let chan = l.channel().unwrap();
-            chan.write_string(cid, "Hello world! ".into());
+            let mut chan = l.channel().unwrap();
+            chan.write(cid, false, "Hello world! ".as_bytes())
+                .expect("to write string");
             time_l = time_l + STEP;
         }
 

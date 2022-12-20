@@ -29,7 +29,7 @@ pub mod net {
 }
 
 pub mod media;
-use media::{Channel, Media};
+use media::Media;
 
 mod change;
 pub use change::ChangeSet;
@@ -444,12 +444,6 @@ impl Rtc {
             }
         }
 
-        if let Some(channel) = self.session.channel() {
-            for (id, data) in channel.pending_sends() {
-                self.sctp.write(*id, data)?;
-            }
-        }
-
         while let Some(e) = self.sctp.poll_event(self.last_now) {
             match e {
                 SctpEvent::Open(id, dcep) => {
@@ -529,8 +523,14 @@ impl Rtc {
         self.session.get_media(mid)
     }
 
-    pub fn channel(&mut self) -> Option<&mut Channel> {
-        self.session.channel()
+    /// Obtain handle for writing to a data channel.
+    ///
+    /// This is only available after either the remote peer has added one data channel
+    /// to the SDP, or we've locally done [`ChangeSet::add_channel()`].
+    pub fn channel(&mut self) -> Option<Channel<'_>> {
+        // If the m=application isn't set up, we don't provide Channel
+        self.session.app()?;
+        Some(Channel { rtc: self })
     }
 
     fn do_handle_timeout(&mut self, now: Instant) {
@@ -560,6 +560,16 @@ impl Rtc {
         }
 
         Ok(())
+    }
+}
+
+pub struct Channel<'a> {
+    rtc: &'a mut Rtc,
+}
+
+impl Channel<'_> {
+    pub fn write(&mut self, id: ChannelId, binary: bool, buf: &[u8]) -> Result<usize, RtcError> {
+        Ok(self.rtc.sctp.write(*id, binary, buf)?)
     }
 }
 

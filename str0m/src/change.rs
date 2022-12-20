@@ -6,7 +6,7 @@ use sctp::{DcepOpen, ReliabilityType};
 use sdp::{MediaLine, Msid, Offer};
 
 use crate::media::{CodecConfig, CodecParams, MediaKind};
-use crate::session::MediaOrChannel;
+use crate::session::MediaOrApp;
 use crate::Rtc;
 
 pub struct Changes(pub Vec<Change>);
@@ -14,7 +14,7 @@ pub struct Changes(pub Vec<Change>);
 #[derive(Debug)]
 pub enum Change {
     AddMedia(AddMedia),
-    AddChannelLine(Mid),
+    AddApp(Mid),
     AddChannel(ChannelId, DcepOpen),
     ChangeDir(Mid, Direction),
 }
@@ -97,11 +97,11 @@ impl<'a> ChangeSet<'a> {
     }
 
     pub fn add_channel(&mut self, label: String) -> ChannelId {
-        let has_m_line = self.rtc.channel().is_some();
+        let has_m_line = self.rtc.session.app().is_some();
 
         if !has_m_line {
             let mid = self.rtc.new_mid();
-            self.changes.0.push(Change::AddChannelLine(mid));
+            self.changes.0.push(Change::AddApp(mid));
         }
 
         let id = self.rtc.new_sctp_channel();
@@ -155,7 +155,7 @@ impl Changes {
                         }
                         continue 'next;
                     }
-                    AddChannelLine(v) if *v == mid => {
+                    AddApp(v) if *v == mid => {
                         if !l.typ.is_channel() {
                             return Some(format!(
                                 "Answer m-line for mid ({}) is not a data channel: {:?}",
@@ -177,7 +177,7 @@ impl Changes {
     fn count_new_m_lines(&self) -> usize {
         self.0
             .iter()
-            .filter(|c| matches!(c, Change::AddMedia(_) | Change::AddChannelLine(_)))
+            .filter(|c| matches!(c, Change::AddMedia(_) | Change::AddApp(_)))
             .count()
     }
 
@@ -185,7 +185,7 @@ impl Changes {
         &'a self,
         index_start: usize,
         config: &'b CodecConfig,
-    ) -> impl Iterator<Item = MediaOrChannel> + '_ {
+    ) -> impl Iterator<Item = MediaOrApp> + '_ {
         self.0
             .iter()
             .enumerate()
@@ -210,7 +210,7 @@ impl Changes {
 }
 
 impl Change {
-    fn as_new_m_line(&self, index: usize, config: &CodecConfig) -> Option<MediaOrChannel> {
+    fn as_new_m_line(&self, index: usize, config: &CodecConfig) -> Option<MediaOrApp> {
         use Change::*;
         match self {
             AddMedia(v) => {
@@ -220,11 +220,11 @@ impl Change {
                 add.index = index;
 
                 let media = add.into();
-                Some(MediaOrChannel::Media(media))
+                Some(MediaOrApp::Media(media))
             }
-            AddChannelLine(mid) => {
+            AddApp(mid) => {
                 let channel = (*mid, index).into();
-                Some(MediaOrChannel::Channel(channel))
+                Some(MediaOrApp::App(channel))
             }
             _ => None,
         }

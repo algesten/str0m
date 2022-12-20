@@ -14,8 +14,8 @@ use sdp::{MediaLine, MediaType, Msid, SsrcInfo};
 mod codec;
 pub use codec::{CodecConfig, CodecParams};
 
-mod channel;
-pub use channel::Channel;
+mod app;
+pub(crate) use app::App;
 
 mod receiver;
 use receiver::ReceiverSource;

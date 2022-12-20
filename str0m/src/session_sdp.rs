@@ -5,11 +5,11 @@ use sdp::{Answer, MediaAttribute, MediaLine, MediaType};
 use sdp::{Offer, Proto, Sdp, SessionAttribute, Setup};
 
 use crate::change::{Change, Changes};
-use crate::media::{CodecConfig, MediaKind};
-use crate::session::{only_media_mut, MediaOrChannel};
+use crate::media::{App, CodecConfig, MediaKind};
+use crate::session::{only_media_mut, MediaOrApp};
 use crate::RtcError;
 
-use super::{Channel, Media, Session};
+use super::{Media, Session};
 
 pub struct AsSdpParams<'a> {
     pub candidates: &'a [Candidate],
@@ -195,12 +195,12 @@ impl Session {
                 }
 
                 media.apply_changes(m, config);
-            } else if let Some(chan) = self.channel() {
-                if idx != chan.index() {
+            } else if let Some(app) = self.app() {
+                if idx != app.index() {
                     return index_err(m.mid());
                 }
 
-                chan.apply_changes(m);
+                app.apply_changes(m);
             } else {
                 new_lines.push(m);
             }
@@ -220,15 +220,15 @@ impl Session {
 
             if m.typ.is_media() {
                 let media = (*m, idx).into();
-                self.media.push(MediaOrChannel::Media(media));
+                self.media.push(MediaOrApp::Media(media));
 
                 let media = only_media_mut(&mut self.media).last().unwrap();
                 media.apply_changes(m, &self.codec_config);
             } else if m.typ.is_channel() {
-                let channel = (m.mid(), idx).into();
-                self.media.push(MediaOrChannel::Channel(channel));
+                let app = (m.mid(), idx).into();
+                self.media.push(MediaOrApp::App(app));
 
-                let chan = self.channel().unwrap();
+                let chan = self.app().unwrap();
                 chan.apply_changes(m);
             } else {
                 return Err(format!(
@@ -270,7 +270,7 @@ pub trait AsMediaLine {
     fn as_media_line(&self, attrs: Vec<MediaAttribute>, exts: &Extensions) -> MediaLine;
 }
 
-impl AsMediaLine for Channel {
+impl AsMediaLine for App {
     fn mid(&self) -> Mid {
         self.mid()
     }
@@ -358,26 +358,26 @@ impl AsMediaLine for Media {
     }
 }
 
-impl AsMediaLine for MediaOrChannel {
+impl AsMediaLine for MediaOrApp {
     fn mid(&self) -> Mid {
-        use MediaOrChannel::*;
+        use MediaOrApp::*;
         match self {
             Media(v) => v.mid(),
-            Channel(v) => v.mid(),
+            App(v) => v.mid(),
         }
     }
     fn index(&self) -> usize {
-        use MediaOrChannel::*;
+        use MediaOrApp::*;
         match self {
             Media(v) => v.index(),
-            Channel(v) => v.index(),
+            App(v) => v.index(),
         }
     }
     fn as_media_line(&self, attrs: Vec<sdp::MediaAttribute>, exts: &Extensions) -> MediaLine {
-        use MediaOrChannel::*;
+        use MediaOrApp::*;
         match self {
             Media(v) => v.as_media_line(attrs, exts),
-            Channel(v) => v.as_media_line(attrs, exts),
+            App(v) => v.as_media_line(attrs, exts),
         }
     }
 }

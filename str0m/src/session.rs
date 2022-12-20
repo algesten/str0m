@@ -9,13 +9,13 @@ use rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
 use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
 
-use crate::media::CodecConfig;
+use crate::media::{App, CodecConfig};
 use crate::session_sdp::AsMediaLine;
 use crate::util::{already_happened, not_happening, Soonest};
 use crate::RtcError;
 use crate::{net, MediaData};
 
-use super::{Channel, Media};
+use super::Media;
 
 // Minimum time we delay between sending nacks. This should be
 // set high enough to not cause additional problems in very bad
@@ -29,7 +29,7 @@ pub(crate) struct Session {
     id: SessionId,
 
     // these fields are pub to allow session_sdp.rs modify them.
-    pub media: Vec<MediaOrChannel>,
+    pub media: Vec<MediaOrApp>,
     pub exts: Extensions,
     pub codec_config: CodecConfig,
 
@@ -44,23 +44,23 @@ pub(crate) struct Session {
 }
 
 #[derive(Debug)]
-pub enum MediaOrChannel {
+pub enum MediaOrApp {
     Media(Media),
-    Channel(Channel),
+    App(App),
 }
 
-impl MediaOrChannel {
+impl MediaOrApp {
     pub fn as_media(&self) -> Option<&Media> {
         match self {
-            MediaOrChannel::Media(m) => Some(m),
-            MediaOrChannel::Channel(_) => None,
+            MediaOrApp::Media(m) => Some(m),
+            MediaOrApp::App(_) => None,
         }
     }
 
     pub fn as_media_mut(&mut self) -> Option<&mut Media> {
         match self {
-            MediaOrChannel::Media(m) => Some(m),
-            MediaOrChannel::Channel(_) => None,
+            MediaOrApp::Media(m) => Some(m),
+            MediaOrApp::App(_) => None,
         }
     }
 }
@@ -94,15 +94,15 @@ impl Session {
 
     pub fn media(&mut self) -> impl Iterator<Item = &mut Media> {
         self.media.iter_mut().filter_map(|m| match m {
-            MediaOrChannel::Media(m) => Some(m),
-            MediaOrChannel::Channel(_) => None,
+            MediaOrApp::Media(m) => Some(m),
+            MediaOrApp::App(_) => None,
         })
     }
 
-    pub fn channel(&mut self) -> Option<&mut Channel> {
+    pub fn app(&mut self) -> Option<&mut App> {
         self.media.iter_mut().find_map(|m| match m {
-            MediaOrChannel::Media(_) => None,
-            MediaOrChannel::Channel(c) => Some(c),
+            MediaOrApp::Media(_) => None,
+            MediaOrApp::App(a) => Some(a),
         })
     }
 
@@ -478,11 +478,11 @@ impl Session {
 }
 
 // Helper while waiting for polonius.
-pub(crate) fn only_media(media: &[MediaOrChannel]) -> impl Iterator<Item = &Media> {
+pub(crate) fn only_media(media: &[MediaOrApp]) -> impl Iterator<Item = &Media> {
     media.iter().filter_map(|m| m.as_media())
 }
 
 // Helper while waiting for polonius.
-pub(crate) fn only_media_mut(media: &mut [MediaOrChannel]) -> impl Iterator<Item = &mut Media> {
+pub(crate) fn only_media_mut(media: &mut [MediaOrApp]) -> impl Iterator<Item = &mut Media> {
     media.iter_mut().filter_map(|m| m.as_media_mut())
 }

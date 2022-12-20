@@ -182,25 +182,6 @@ impl SctpData {
             SctpData::Binary(v) => v.len(),
         }
     }
-
-    pub(crate) fn ppi(&self) -> PayloadProtocolIdentifier {
-        match self {
-            SctpData::String(v) => {
-                if v.is_empty() {
-                    PayloadProtocolIdentifier::StringEmpty
-                } else {
-                    PayloadProtocolIdentifier::String
-                }
-            }
-            SctpData::Binary(v) => {
-                if v.is_empty() {
-                    PayloadProtocolIdentifier::BinaryEmpty
-                } else {
-                    PayloadProtocolIdentifier::Binary
-                }
-            }
-        }
-    }
 }
 
 impl RtcAssociation {
@@ -259,17 +240,38 @@ impl RtcAssociation {
         Ok(())
     }
 
-    pub fn write(&mut self, id: u16, data: SctpData) -> Result<bool, SctpError> {
+    pub fn write(&mut self, id: u16, binary: bool, buf: &[u8]) -> Result<usize, SctpError> {
         let Some((_, a)) = &mut self.association else {
-            return Ok(false);
+            return Ok(0);
         };
 
         let mut stream = a.stream(id)?;
 
-        let n = stream.write(&data, data.ppi())?;
-        assert!(n == data.len());
+        let ppi = if buf.is_empty() {
+            if binary {
+                PayloadProtocolIdentifier::BinaryEmpty
+            } else {
+                PayloadProtocolIdentifier::StringEmpty
+            }
+        } else {
+            if binary {
+                PayloadProtocolIdentifier::Binary
+            } else {
+                PayloadProtocolIdentifier::String
+            }
+        };
 
-        Ok(true)
+        // RFC 8831
+        // SCTP does not support the sending of empty user messages. Therefore, if an empty message
+        // has to be sent, the appropriate PPID (WebRTC String Empty or WebRTC Binary Empty) is used,
+        // and the SCTP user message of one zero byte is sent.
+        let buf = if buf.is_empty() { &[0] } else { buf };
+
+        let n = stream.write(&buf, ppi)?;
+
+        let n = if buf.is_empty() { 0 } else { n };
+
+        Ok(n)
     }
 
     pub fn poll_event(&mut self, now: Instant) -> Option<SctpEvent> {
