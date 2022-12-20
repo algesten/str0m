@@ -1,6 +1,7 @@
 use dtls::Fingerprint;
 use ice::{Candidate, IceCreds};
 use rtp::{Extensions, Mid};
+use sctp::RtcSctp;
 use sdp::{Answer, MediaAttribute, MediaLine, MediaType};
 use sdp::{Offer, Proto, Sdp, SessionAttribute, Setup};
 
@@ -137,7 +138,12 @@ impl Session {
         Ok(())
     }
 
-    pub fn apply_answer(&mut self, pending: Changes, answer: Answer) -> Result<(), RtcError> {
+    pub fn apply_answer(
+        &mut self,
+        pending: Changes,
+        answer: Answer,
+        sctp: &mut RtcSctp,
+    ) -> Result<(), RtcError> {
         answer.assert_consistency()?;
 
         self.update_session_extmaps(&answer)?;
@@ -156,6 +162,10 @@ impl Session {
         for change in pending.0 {
             let add_media = match change {
                 Change::AddMedia(v) => v,
+                Change::AddChannel(id, dcep) => {
+                    sctp.open_stream(*id, dcep);
+                    continue;
+                }
                 _ => continue,
             };
 

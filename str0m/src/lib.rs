@@ -7,12 +7,12 @@ use std::net::SocketAddr;
 use std::time::Instant;
 use std::{fmt, io};
 
-use change::{Change, Changes};
+use change::Changes;
 use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::IceAgentEvent;
 use ice::{IceAgent, IceError};
 use net_::NetError;
-use sctp::{RtcAssociation, SctpError, SctpEvent};
+use sctp::{RtcSctp, SctpError};
 use sdp::{Sdp, Setup};
 use thiserror::Error;
 
@@ -20,7 +20,6 @@ pub use ice::IceConnectionState;
 
 pub use ice::Candidate;
 pub use packet::RtpMeta;
-pub use sctp::SctpData;
 pub use sdp::{Answer, Offer};
 
 pub mod net {
@@ -97,7 +96,7 @@ pub struct Rtc {
     ice: IceAgent,
     dtls: Dtls,
     setup: Setup,
-    sctp: RtcAssociation,
+    sctp: RtcSctp,
     next_sctp_channel: u16,
     session: Session,
     remote_fingerprint: Option<Fingerprint>,
@@ -139,7 +138,8 @@ pub struct MediaData {
 #[derive(PartialEq, Eq)]
 pub struct ChannelData {
     pub id: ChannelId,
-    pub data: SctpData,
+    pub binary: bool,
+    pub data: Vec<u8>,
 }
 
 /// Network input as expected by [`Rtc::handle_input()`].
@@ -163,7 +163,7 @@ impl Rtc {
             dtls: Dtls::new().expect("DTLS to init without problem"),
             setup: Setup::ActPass,
             session: Session::new(),
-            sctp: RtcAssociation::new(),
+            sctp: RtcSctp::new(),
             next_sctp_channel: 0, // Goes 0, 1, 2 for both DTLS server or client
             remote_fingerprint: None,
             pending: None,
@@ -239,6 +239,9 @@ impl Rtc {
         // Modify session with offer
         self.session.apply_offer(offer)?;
 
+        // Handle potentially new m=application line.
+        self.init_sctp();
+
         let params = self.as_sdp_params(false);
         let sdp = self.session.as_sdp(params);
 
@@ -291,8 +294,10 @@ impl Rtc {
 
             // Modify session with answer
             let pending = self.pending.take().expect("pending changes");
-            self.open_pending_data_channels(&pending)?;
-            self.session.apply_answer(pending, answer)?;
+            self.session.apply_answer(pending, answer, &mut self.sctp)?;
+
+            // Handle potentially new m=application line.
+            self.init_sctp();
         } else {
             // rollback
             self.pending = None;
@@ -339,6 +344,14 @@ impl Rtc {
         }
 
         Ok(())
+    }
+
+    fn init_sctp(&mut self) {
+        // If we got an m=application line, ensure we have negotiated the
+        // SCTP association with the other side.
+        if self.session.app().is_some() && !self.sctp.is_inited() {
+            self.sctp.init(self.setup == Setup::Active);
+        }
     }
 
     /// Creates a new Mid that is not in the session already.
@@ -437,40 +450,31 @@ impl Rtc {
                         return Err(RtcError::RemoteSdp("no a=fingerprint before dtls".into()));
                     }
                 }
-                DtlsEvent::Data(mut v) => {
-                    self.sctp
-                        .handle_input(sctp::SctpInput::Data(&mut v), self.last_now)?;
+                DtlsEvent::Data(v) => {
+                    self.sctp.handle_input(self.last_now, &v);
                 }
             }
         }
 
-        while let Some(e) = self.sctp.poll_event(self.last_now) {
+        while let Some(e) = self.sctp.poll(self.last_now) {
             match e {
-                SctpEvent::Open(id, dcep) => {
-                    let id = id.into();
-                    return Ok(Output::Event(Event::ChannelOpen(id, dcep.label)));
+                sctp::SctpEvent::Transmit(v) => {
+                    self.dtls.handle_input(&v)?;
+                    continue;
                 }
-                SctpEvent::Close(id) => {
-                    let id = id.into();
-                    return Ok(Output::Event(Event::ChannelClose(id)));
+                sctp::SctpEvent::Open(id, dcep) => {
+                    return Ok(Output::Event(Event::ChannelOpen(id.into(), dcep.label)));
                 }
-                SctpEvent::Data(id, data) => {
-                    let id = id.into();
-                    let data = ChannelData { id, data };
-                    return Ok(Output::Event(Event::ChannelData(data)));
+                sctp::SctpEvent::Close(id) => {
+                    return Ok(Output::Event(Event::ChannelClose(id.into())));
                 }
-                SctpEvent::Transmit(data) => {
-                    println!("YAY Attempt write DTLS");
-                    if let Err(e) = self.dtls.handle_input(&data) {
-                        println!("YAY Failed: {:?}", e);
-                        if e.is_would_block() {
-                            // hold back this transmit until dtls is ready for it.
-                            self.sctp.push_back_transmit(data);
-                            break;
-                        }
-                        return Err(e.into());
-                    }
-                    println!("YAY Success!");
+                sctp::SctpEvent::Data(id, binary, data) => {
+                    let cd = ChannelData {
+                        id: id.into(),
+                        binary,
+                        data,
+                    };
+                    return Ok(Output::Event(Event::ChannelData(cd)));
                 }
             }
         }
@@ -545,9 +549,9 @@ impl Rtc {
         // If the m=application isn't set up, we don't provide Channel
         self.session.app()?;
 
-        if !self.sctp.is_open(*id) {
-            return None;
-        }
+        // if !self.sctp.is_open(*id) {
+        //     return None;
+        // }
 
         Some(Channel { rtc: self, id })
     }
@@ -566,16 +570,6 @@ impl Rtc {
             Stun(_) => self.ice.handle_receive(now, r),
             Dtls(_) => self.dtls.handle_receive(r)?,
             Rtp(_) | Rtcp(_) => self.session.handle_receive(now, r),
-        }
-
-        Ok(())
-    }
-
-    fn open_pending_data_channels(&mut self, pending: &Changes) -> Result<(), RtcError> {
-        for p in &pending.0 {
-            if let Change::AddChannel(id, dcep) = p {
-                self.sctp.open_stream(**id, dcep)?;
-            }
         }
 
         Ok(())
@@ -641,7 +635,8 @@ impl fmt::Debug for ChannelData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ChannelData")
             .field("id", &self.id)
-            .field("data", &self.data)
+            .field("binary", &self.binary)
+            .field("data", &self.data.len())
             .finish()
     }
 }
