@@ -28,7 +28,7 @@ pub mod net {
 }
 
 pub mod media;
-use media::Media;
+use media::{Media, MediaKind};
 
 mod change;
 pub use change::ChangeSet;
@@ -116,7 +116,7 @@ struct SendAddr {
 pub enum Event {
     IceCandidate(Candidate),
     IceConnectionStateChange(IceConnectionState),
-    MediaAdded(Mid),
+    MediaAdded(Mid, MediaKind),
     MediaData(MediaData),
     MediaError(RtcError),
     ChannelOpen(ChannelId, String),
@@ -332,10 +332,10 @@ impl Rtc {
             warn!("Missing a=setup line");
         }
 
-        info!("DTLS setup is: {:?}", self.setup);
-        assert!(self.setup != Setup::ActPass);
-
         if !self.dtls.is_inited() {
+            info!("DTLS setup is: {:?}", self.setup);
+            assert!(self.setup != Setup::ActPass);
+
             let active = self.setup == Setup::Active;
             self.dtls.set_active(active);
             if active {
@@ -487,12 +487,11 @@ impl Rtc {
         }
 
         if let Some(e) = self.session.poll_event() {
-            match e {
-                MediaEvent::MediaData(m) => {
-                    return Ok(Output::Event(Event::MediaData(m)));
-                }
-                MediaEvent::MediaError(e) => return Ok(Output::Event(Event::MediaError(e))),
-            }
+            return Ok(match e {
+                MediaEvent::Open(mid, kind) => Output::Event(Event::MediaAdded(mid, kind)),
+                MediaEvent::Data(m) => Output::Event(Event::MediaData(m)),
+                MediaEvent::Error(e) => Output::Event(Event::MediaError(e)),
+            });
         }
 
         if let Some(v) = self.ice.poll_transmit() {
@@ -614,7 +613,7 @@ impl PartialEq for Event {
         match (self, other) {
             (Self::IceCandidate(l0), Self::IceCandidate(r0)) => l0 == r0,
             (Self::IceConnectionStateChange(l0), Self::IceConnectionStateChange(r0)) => l0 == r0,
-            (Self::MediaAdded(l0), Self::MediaAdded(r0)) => l0 == r0,
+            (Self::MediaAdded(l0, l1), Self::MediaAdded(r0, r1)) => l0 == r0 && l1 == r1,
             (Self::MediaData(m1), Self::MediaData(m2)) => m1 == m2,
             (Self::MediaError(_), Self::MediaError(_)) => false,
             (Self::ChannelOpen(l0, l1), Self::ChannelOpen(r0, r1)) => l0 == r0 && l1 == r1,

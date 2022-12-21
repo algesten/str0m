@@ -124,6 +124,9 @@ pub struct Media {
     ///
     /// These have been scheduled via nacks.
     resends: VecDeque<Resend>,
+
+    /// Whether the media line needs to be advertised in an event.
+    pub(crate) need_open_event: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -662,6 +665,7 @@ impl Default for Media {
             buffers_rx: HashMap::new(),
             buffers_tx: HashMap::new(),
             resends: VecDeque::new(),
+            need_open_event: true,
         }
     }
 }

@@ -9,7 +9,7 @@ use rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
 use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
 
-use crate::media::{App, CodecConfig};
+use crate::media::{App, CodecConfig, MediaKind};
 use crate::session_sdp::AsMediaLine;
 use crate::util::{already_happened, not_happening, Soonest};
 use crate::RtcError;
@@ -66,8 +66,9 @@ impl MediaOrApp {
 }
 
 pub enum MediaEvent {
-    MediaData(MediaData),
-    MediaError(RtcError),
+    Data(MediaData),
+    Error(RtcError),
+    Open(Mid, MediaKind),
 }
 
 impl Session {
@@ -338,10 +339,15 @@ impl Session {
 
     pub fn poll_event(&mut self) -> Option<MediaEvent> {
         for media in self.media() {
+            if media.need_open_event {
+                media.need_open_event = false;
+                return Some(MediaEvent::Open(media.mid(), media.kind()));
+            }
+
             if let Some(r) = media.poll_sample() {
                 match r {
-                    Ok(v) => return Some(MediaEvent::MediaData(v)),
-                    Err(e) => return Some(MediaEvent::MediaError(e)),
+                    Ok(v) => return Some(MediaEvent::Data(v)),
+                    Err(e) => return Some(MediaEvent::Error(e)),
                 }
             }
         }

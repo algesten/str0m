@@ -495,7 +495,7 @@ impl Association {
                     };
 
                     if let Err(err) = self.handle_inbound(pkt, transmit.now) {
-                        error!("handle_inbound got err: {}", err);
+                        debug!("handle_inbound got err: {}", err);
                         let _ = self.close();
                     }
                 } else {

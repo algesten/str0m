@@ -112,7 +112,7 @@ impl Session {
 
         let new_lines = self.sync_m_lines(&offer).map_err(RtcError::RemoteSdp)?;
 
-        self.add_new_lines(&new_lines)
+        self.add_new_lines(&new_lines, true)
             .map_err(RtcError::RemoteSdp)?;
 
         // For new lines appearing in an offer, we just add the corresponding amount of SSRC
@@ -155,7 +155,7 @@ impl Session {
             return Err(RtcError::RemoteSdp(err));
         }
 
-        self.add_new_lines(&new_lines)
+        self.add_new_lines(&new_lines, false)
             .map_err(RtcError::RemoteSdp)?;
 
         // For pending AddMedia, we have outgoing SSRC communicated that needs to be added.
@@ -199,21 +199,27 @@ impl Session {
         };
 
         for (idx, m) in sdp.media_lines.iter().enumerate() {
+            if m.typ == MediaType::Application {
+                if let Some(app) = self.app() {
+                    if idx != app.index() {
+                        return index_err(m.mid());
+                    }
+
+                    app.apply_changes(m);
+                    continue;
+                }
+            }
+
             if let Some(media) = self.get_media(m.mid()) {
                 if idx != media.index() {
                     return index_err(m.mid());
                 }
 
                 media.apply_changes(m, config);
-            } else if let Some(app) = self.app() {
-                if idx != app.index() {
-                    return index_err(m.mid());
-                }
-
-                app.apply_changes(m);
-            } else {
-                new_lines.push(m);
+                continue;
             }
+
+            new_lines.push(m);
         }
 
         fn index_err<T>(mid: Mid) -> Result<T, String> {
@@ -224,7 +230,11 @@ impl Session {
     }
 
     /// Adds new m-lines as found in an offer or answer.
-    fn add_new_lines(&mut self, new_lines: &[&MediaLine]) -> Result<(), String> {
+    fn add_new_lines(
+        &mut self,
+        new_lines: &[&MediaLine],
+        need_open_event: bool,
+    ) -> Result<(), String> {
         for m in new_lines {
             let idx = self.media.len();
 
@@ -233,6 +243,7 @@ impl Session {
                 self.media.push(MediaOrApp::Media(media));
 
                 let media = only_media_mut(&mut self.media).last().unwrap();
+                media.need_open_event = need_open_event;
                 media.apply_changes(m, &self.codec_config);
             } else if m.typ.is_channel() {
                 let app = (m.mid(), idx).into();
