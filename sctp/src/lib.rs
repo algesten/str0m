@@ -42,6 +42,7 @@ pub struct RtcSctp {
     handle: AssociationHandle,
     assoc: Option<Association>,
     entries: Vec<StreamEntry>,
+    pushed_back_transmit: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,6 +112,7 @@ impl RtcSctp {
             handle: AssociationHandle(0), // temporary
             assoc: None,
             entries: vec![],
+            pushed_back_transmit: None,
         }
     }
 
@@ -148,12 +150,40 @@ impl RtcSctp {
         self.entries.push(new_entry);
     }
 
+    pub fn is_open(&self, id: u16) -> bool {
+        if self.state != RtcSctpState::Established {
+            return false;
+        }
+
+        let Some(rec) = self.entries.iter().find(|e| e.id == id) else {
+            return false;
+        };
+
+        rec.state == StreamEntryState::Open
+    }
+
     pub fn write(&mut self, id: u16, binary: bool, buf: &[u8]) -> Result<usize, SctpError> {
+        if self.state != RtcSctpState::Established {
+            return Err(SctpError::WriteBeforeEstablished);
+        }
+
         let assoc = self
             .assoc
             .as_mut()
             .ok_or(SctpError::WriteBeforeEstablished)?;
+
+        let rec = self
+            .entries
+            .iter()
+            .find(|e| e.id == id)
+            .expect("stream entry for write");
+
+        if rec.state != StreamEntryState::Open {
+            return Err(SctpError::WriteBeforeEstablished);
+        }
+
         let mut stream = assoc.stream(id)?;
+
         let ppi = if binary {
             if buf.is_empty() {
                 PayloadProtocolIdentifier::BinaryEmpty
@@ -167,6 +197,7 @@ impl RtcSctp {
                 PayloadProtocolIdentifier::String
             }
         };
+
         Ok(stream.write(buf, ppi)?)
     }
 
@@ -200,6 +231,10 @@ impl RtcSctp {
         if self.state == RtcSctpState::Uninited {
             // Need to call `init()` before any polling starts.
             return None;
+        }
+
+        if let Some(t) = self.pushed_back_transmit.take() {
+            return Some(SctpEvent::Transmit(t));
         }
 
         while let Some(t) = self.poll_transmit(now) {
@@ -238,10 +273,10 @@ impl RtcSctp {
             if let Event::Stream(se) = e {
                 match se {
                     StreamEvent::Readable { id } | StreamEvent::Writable { id } => {
-                        stream_entry(&mut self.entries, id);
+                        stream_entry(&mut self.entries, id, "readable/writable");
                     }
                     StreamEvent::Finished { id } | StreamEvent::Stopped { id, .. } => {
-                        let entry = stream_entry(&mut self.entries, id);
+                        let entry = stream_entry(&mut self.entries, id, "closed");
                         info!("Stream {} closed", id);
                         entry.do_close = true;
                     }
@@ -262,6 +297,7 @@ impl RtcSctp {
             }
 
             if want_open {
+                info!("Open stream {}", entry.id);
                 match assoc.open_stream(entry.id, PayloadProtocolIdentifier::Unknown) {
                     Ok(mut s) => {
                         let dcep = entry.dcep.as_ref().take().expect("AwaitOpen to have dcep");
@@ -403,6 +439,11 @@ impl RtcSctp {
         self.assoc.as_mut().and_then(|a| a.poll_timeout())
     }
 
+    pub fn push_back_transmit(&mut self, data: Vec<u8>) {
+        assert!(self.pushed_back_transmit.is_none());
+        self.pushed_back_transmit = Some(data);
+    }
+
     fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
         if let Some(t) = self.endpoint.poll_transmit() {
             return Some(t);
@@ -440,11 +481,16 @@ fn set_state(current_state: &mut RtcSctpState, state: RtcSctpState) {
     }
 }
 
-fn stream_entry(entries: &mut Vec<StreamEntry>, id: u16) -> &mut StreamEntry {
+fn stream_entry<'a>(
+    entries: &'a mut Vec<StreamEntry>,
+    id: u16,
+    reason: &'static str,
+) -> &'a mut StreamEntry {
     let idx = entries.iter().position(|v| v.id == id);
     if let Some(idx) = idx {
         entries.get_mut(idx).unwrap()
     } else {
+        info!("Discovered new stream {}: {}", id, reason);
         let e = StreamEntry {
             id,
             state: StreamEntryState::AwaitDcep,

@@ -39,14 +39,15 @@ pub fn data_channel() -> Result<(), RtcError> {
 
     let mut time_l: MediaTime = l.duration().into();
     time_l = time_l.rebase(48_000);
+    const STEP: MediaTime = MediaTime::new(960, 48_000);
 
     loop {
         if let Some(mut chan) = l.channel(cid) {
-            let n = chan
-                .write(false, "Hello world! ".as_bytes())
+            chan.write(false, "Hello world! ".as_bytes())
                 .expect("to write string");
-            println!("wrote {}", n);
         }
+
+        time_l = time_l + STEP;
 
         progress(&mut l, &mut r)?;
 
@@ -55,7 +56,7 @@ pub fn data_channel() -> Result<(), RtcError> {
         }
     }
 
-    println!("{:?}", r.events);
+    assert!(r.events.len() == 484);
 
     Ok(())
 }

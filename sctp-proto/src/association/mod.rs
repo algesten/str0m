@@ -480,7 +480,7 @@ impl Association {
                 }*/
 
                 if let Payload::PartialDecode(partial_decode) = transmit.payload {
-                    debug!(
+                    trace!(
                         "[{}] recving {} bytes",
                         self.side,
                         COMMON_HEADER_SIZE as usize + partial_decode.remaining.len()
@@ -2170,7 +2170,7 @@ impl Association {
         if self.ack_state == AckState::Immediate {
             self.ack_state = AckState::Idle;
             let sack = self.create_selective_ack_chunk();
-            debug!("[{}] sending SACK: {}", self.side, sack);
+            trace!("[{}] sending SACK: {}", self.side, sack);
             if let Ok(raw) = self.create_packet(vec![Box::new(sack)]).marshal() {
                 raw_packets.push(raw);
             } else {

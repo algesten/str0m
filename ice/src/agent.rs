@@ -760,7 +760,7 @@ impl IceAgent {
         // governed by timer Ta.
         if let Some(last_now) = self.last_now {
             if now < last_now + TIMING_ADVANCE {
-                debug!("Stop timeout within timing advance of last");
+                trace!("Stop timeout within timing advance of last");
                 return;
             }
         }

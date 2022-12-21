@@ -459,7 +459,14 @@ impl Rtc {
         while let Some(e) = self.sctp.poll(self.last_now) {
             match e {
                 sctp::SctpEvent::Transmit(v) => {
-                    self.dtls.handle_input(&v)?;
+                    if let Err(e) = self.dtls.handle_input(&v) {
+                        if e.is_would_block() {
+                            self.sctp.push_back_transmit(v);
+                            break;
+                        } else {
+                            return Err(e.into());
+                        }
+                    }
                     continue;
                 }
                 sctp::SctpEvent::Open(id, dcep) => {
@@ -549,9 +556,9 @@ impl Rtc {
         // If the m=application isn't set up, we don't provide Channel
         self.session.app()?;
 
-        // if !self.sctp.is_open(*id) {
-        //     return None;
-        // }
+        if !self.sctp.is_open(*id) {
+            return None;
+        }
 
         Some(Channel { rtc: self, id })
     }

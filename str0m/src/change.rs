@@ -117,7 +117,7 @@ impl<'a> ChangeSet<'a> {
 
         self.changes.0.push(Change::AddChannel(id, dcep));
 
-        0.into()
+        id
     }
 
     pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
