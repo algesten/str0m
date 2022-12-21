@@ -56,7 +56,7 @@ pub fn data_channel() -> Result<(), RtcError> {
         }
     }
 
-    assert!(r.events.len() == 484);
+    assert_eq!(r.events.len(), 453);
 
     Ok(())
 }

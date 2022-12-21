@@ -97,11 +97,12 @@ impl Iterator for TwccIter {
             _ => unreachable!(),
         };
 
-        let seq = (self.base_seq as u64 + self.index as u64).into();
+        let seq: SeqNo = (self.base_seq as u64 + self.index as u64).into();
 
         self.index += 1;
         if self.index == amount as usize {
             self.twcc.chunks.pop_front();
+            self.base_seq = *seq + 1;
             self.index = 0;
         }
 
@@ -193,6 +194,9 @@ pub struct TwccRecvRegister {
     /// next report.
     queue: VecDeque<Receiption>,
 
+    /// Flag indicating we have added things to queue that are not part of any report.
+    has_unreported: bool,
+
     /// The point in time we consider 0. All reported values are offset from this. Set to first
     /// unreported packet in first `build_reported`.
     ///
@@ -218,6 +222,7 @@ impl TwccRecvRegister {
         TwccRecvRegister {
             keep_reported,
             queue: VecDeque::new(),
+            has_unreported: false,
             time_start: None,
             generated_reports: 0,
         }
@@ -246,6 +251,8 @@ impl TwccRecvRegister {
                         return;
                     }
                 }
+
+                self.has_unreported = true;
 
                 self.queue.insert(
                     idx,
@@ -398,6 +405,8 @@ impl TwccRecvRegister {
             bytes_left -= 2;
         }
 
+        self.has_unreported = interims.is_empty();
+
         // libWebRTC demands at least one chunk, or it will warn with
         // "Buffer too small (16 bytes) to fit a FeedbackPacket. Minimum size = 18"
         // (18 bytes here is not including the RTCP header).
@@ -472,6 +481,10 @@ impl TwccRecvRegister {
         }
 
         interims
+    }
+
+    pub fn has_unreported(&self) -> bool {
+        self.has_unreported
     }
 }
 

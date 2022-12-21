@@ -425,10 +425,14 @@ impl Session {
         let nack_at = self.nack_at();
         let twcc_at = Some(self.twcc_at());
 
-        media_at
-            .soonest(regular_at)
-            .soonest(nack_at)
-            .soonest(twcc_at)
+        let timeout = (media_at, "media")
+            .soonest((regular_at, "regular"))
+            .soonest((nack_at, "nack"))
+            .soonest((twcc_at, "twcc"));
+
+        trace!("poll_timeout soonest is: {}", timeout.1);
+
+        timeout.0
     }
 
     pub fn has_mid(&self, mid: Mid) -> bool {
@@ -463,7 +467,11 @@ impl Session {
     }
 
     fn twcc_at(&self) -> Instant {
-        self.last_twcc + TWCC_INTERVAL
+        if self.twcc_rx_register.has_unreported() {
+            self.last_twcc + TWCC_INTERVAL
+        } else {
+            not_happening()
+        }
     }
 
     fn first_sender_ssrc(&self) -> Option<Ssrc> {

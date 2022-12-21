@@ -262,6 +262,8 @@ impl RtcSctp {
             }
         }
 
+        assoc.handle_timeout(now);
+
         while let Some(e) = assoc.poll() {
             if let Event::Connected = e {
                 set_state(&mut self.state, RtcSctpState::Established);

@@ -18,19 +18,19 @@ pub trait Soonest {
     fn soonest(self, other: Self) -> Self;
 }
 
-impl Soonest for Option<Instant> {
+impl Soonest for (Option<Instant>, &'static str) {
     fn soonest(self, other: Self) -> Self {
         match (self, other) {
-            (Some(v1), Some(v2)) => {
+            ((Some(v1), s1), (Some(v2), s2)) => {
                 if v1 < v2 {
-                    Some(v1)
+                    (Some(v1), s1)
                 } else {
-                    Some(v2)
+                    (Some(v2), s2)
                 }
             }
-            (None, None) => None,
-            (None, v) => v,
-            (v, None) => v,
+            ((None, _), (None, _)) => (None, ""),
+            ((None, _), (v, s)) => (v, s),
+            ((v, s), (None, _)) => (v, s),
         }
     }
 }

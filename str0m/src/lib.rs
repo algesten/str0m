@@ -514,10 +514,14 @@ impl Rtc {
             }
         }
 
-        let time = None
-            .soonest(self.ice.poll_timeout())
-            .soonest(self.session.poll_timeout())
-            .unwrap_or_else(not_happening);
+        let time_and_reason = (None, "<not happening>")
+            .soonest((self.ice.poll_timeout(), "ice"))
+            .soonest((self.session.poll_timeout(), "session"))
+            .soonest((self.sctp.poll_timeout(), "sctp"));
+
+        trace!("poll_output timeout reason: {}", time_and_reason.1);
+
+        let time = time_and_reason.0.unwrap_or_else(not_happening);
 
         // We want to guarantee time doesn't go backwards.
         let next = if time < self.last_now {
