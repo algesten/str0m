@@ -540,7 +540,10 @@ impl Rtc {
 
         match input {
             Input::Timeout(now) => self.do_handle_timeout(now),
-            Input::Receive(now, r) => self.do_handle_receive(now, r)?,
+            Input::Receive(now, r) => {
+                self.do_handle_receive(now, r)?;
+                self.do_handle_timeout(now);
+            }
         }
         Ok(())
     }

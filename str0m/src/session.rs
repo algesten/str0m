@@ -138,8 +138,10 @@ impl Session {
             m.handle_timeout(now);
         }
 
-        if now >= self.twcc_at() {
-            self.create_twcc_feedback(now);
+        if let Some(twcc_at) = self.twcc_at() {
+            if now >= twcc_at {
+                self.create_twcc_feedback(now);
+            }
         }
 
         if now >= self.regular_feedback_at() {
@@ -423,7 +425,7 @@ impl Session {
         let media_at = self.media().filter_map(|m| m.poll_timeout()).min();
         let regular_at = Some(self.regular_feedback_at());
         let nack_at = self.nack_at();
-        let twcc_at = Some(self.twcc_at());
+        let twcc_at = self.twcc_at();
 
         let timeout = (media_at, "media")
             .soonest((regular_at, "regular"))
@@ -466,11 +468,11 @@ impl Session {
         }
     }
 
-    fn twcc_at(&self) -> Instant {
+    fn twcc_at(&self) -> Option<Instant> {
         if self.twcc_rx_register.has_unreported() {
-            self.last_twcc + TWCC_INTERVAL
+            Some(self.last_twcc + TWCC_INTERVAL)
         } else {
-            not_happening()
+            None
         }
     }
 
