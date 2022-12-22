@@ -6,6 +6,7 @@ use super::list::private::WordSized;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Nack {
+    pub sender_ssrc: Ssrc,
     pub ssrc: Ssrc,
     pub reports: ReportList<NackEntry>,
 }
@@ -35,14 +36,15 @@ impl RtcpPacket for Nack {
 
     fn write_to(&self, buf: &mut [u8]) -> usize {
         self.header().write_to(&mut buf[..4]);
-        buf[4..8].copy_from_slice(&self.ssrc.to_be_bytes());
-        let mut buf = &mut buf[8..];
+        buf[4..8].copy_from_slice(&self.sender_ssrc.to_be_bytes());
+        buf[8..12].copy_from_slice(&self.ssrc.to_be_bytes());
+        let mut buf = &mut buf[12..];
         for r in &self.reports {
             buf[0..2].copy_from_slice(&r.pid.to_be_bytes());
             buf[2..4].copy_from_slice(&r.blp.to_be_bytes());
             buf = &mut buf[4..];
         }
-        (self.length_words() - 1) * 4
+        self.length_words() * 4
     }
 }
 
@@ -60,11 +62,12 @@ impl<'a> TryFrom<&'a [u8]> for Nack {
             return Err("Nack less than 12 bytes");
         }
 
-        let ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]).into();
+        let sender_ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]).into();
+        let ssrc = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]).into();
 
         let mut reports = ReportList::new();
 
-        let mut buf = &buf[8..];
+        let mut buf = &buf[12..];
         let count = buf.len() / 4;
         let max = count.min(31);
 
@@ -75,7 +78,11 @@ impl<'a> TryFrom<&'a [u8]> for Nack {
             buf = &buf[4..];
         }
 
-        Ok(Nack { ssrc, reports })
+        Ok(Nack {
+            sender_ssrc,
+            ssrc,
+            reports,
+        })
     }
 }
 

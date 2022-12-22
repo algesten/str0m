@@ -3,6 +3,7 @@ use crate::{RtcpType, Ssrc};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pli {
+    pub sender_ssrc: Ssrc,
     pub ssrc: Ssrc,
 }
 
@@ -26,8 +27,9 @@ impl RtcpPacket for Pli {
 
     fn write_to(&self, buf: &mut [u8]) -> usize {
         self.header().write_to(&mut buf[..4]);
-        buf[4..8].copy_from_slice(&self.ssrc.to_be_bytes());
-        8
+        buf[4..8].copy_from_slice(&self.sender_ssrc.to_be_bytes());
+        buf[8..12].copy_from_slice(&self.ssrc.to_be_bytes());
+        12
     }
 }
 
@@ -35,12 +37,13 @@ impl<'a> TryFrom<&'a [u8]> for Pli {
     type Error = &'static str;
 
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
-        if buf.len() < 8 {
-            return Err("Pli less than 8 bytes");
+        if buf.len() < 12 {
+            return Err("Pli less than 12 bytes");
         }
 
-        let ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]).into();
+        let sender_ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]).into();
+        let ssrc = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]).into();
 
-        Ok(Pli { ssrc })
+        Ok(Pli { sender_ssrc, ssrc })
     }
 }

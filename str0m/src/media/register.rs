@@ -291,7 +291,8 @@ impl ReceiverRegister {
         }
 
         first_missing.map(|first| Nack {
-            ssrc: 0.into(),
+            sender_ssrc: 0.into(),
+            ssrc: 0.into(), // changed when sending
             reports: NackEntry {
                 pid: (first % u16::MAX as u64) as u16,
                 blp: bitmask,
@@ -550,6 +551,7 @@ mod test {
         assert_eq!(
             reg.nack_report(),
             Some(Nack {
+                sender_ssrc: 0.into(),
                 ssrc: 0.into(),
                 reports: NackEntry {
                     pid: t.missing,
