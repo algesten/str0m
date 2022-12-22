@@ -43,6 +43,7 @@ pub struct RtcSctp {
     assoc: Option<Association>,
     entries: Vec<StreamEntry>,
     pushed_back_transmit: Option<Vec<u8>>,
+    last_now: Instant,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,6 +114,7 @@ impl RtcSctp {
             assoc: None,
             entries: vec![],
             pushed_back_transmit: None,
+            last_now: Instant::now(), // placeholder until init()
         }
     }
 
@@ -120,8 +122,10 @@ impl RtcSctp {
         self.state != RtcSctpState::Uninited
     }
 
-    pub fn init(&mut self, active: bool) {
+    pub fn init(&mut self, active: bool, now: Instant) {
         assert!(self.state == RtcSctpState::Uninited);
+
+        self.last_now = now;
 
         if active {
             info!("New local association");
@@ -227,7 +231,32 @@ impl RtcSctp {
         }
     }
 
-    pub fn poll(&mut self, now: Instant) -> Option<SctpEvent> {
+    pub fn handle_timeout(&mut self, now: Instant) {
+        if self.state == RtcSctpState::Uninited {
+            // Need to call `init()` before any timeouts are accepted.
+            return;
+        }
+
+        self.last_now = now;
+
+        // Remove closed entries.
+        self.entries.retain(|e| e.state != StreamEntryState::Closed);
+
+        let Some(assoc) = &mut self.assoc else {
+            return;
+        };
+
+        assoc.handle_timeout(now);
+
+        // propagate events between endpoint and association.
+        while let Some(e) = assoc.poll_endpoint_event() {
+            if let Some(ae) = self.endpoint.handle_event(self.handle, e) {
+                assoc.handle_event(ae);
+            }
+        }
+    }
+
+    pub fn poll(&mut self) -> Option<SctpEvent> {
         if self.state == RtcSctpState::Uninited {
             // Need to call `init()` before any polling starts.
             return None;
@@ -237,7 +266,7 @@ impl RtcSctp {
             return Some(SctpEvent::Transmit(t));
         }
 
-        while let Some(t) = self.poll_transmit(now) {
+        while let Some(t) = self.poll_transmit() {
             let Some(buf) = transmit_to_vec(t) else {
                 continue;
             };
@@ -255,19 +284,10 @@ impl RtcSctp {
             return None;
         };
 
-        // propagate events between endpoint and association.
-        while let Some(e) = assoc.poll_endpoint_event() {
-            if let Some(ae) = self.endpoint.handle_event(self.handle, e) {
-                assoc.handle_event(ae);
-            }
-        }
-
-        assoc.handle_timeout(now);
-
         while let Some(e) = assoc.poll() {
             if let Event::Connected = e {
                 set_state(&mut self.state, RtcSctpState::Established);
-                return self.poll(now);
+                return self.poll();
             }
 
             // TODO: Do we need to handle AssociationLost?
@@ -286,9 +306,6 @@ impl RtcSctp {
                 }
             }
         }
-
-        // Remove closed entries.
-        self.entries.retain(|e| e.state != StreamEntryState::Closed);
 
         for entry in &mut self.entries {
             let want_open = entry.state == StreamEntryState::AwaitOpen;
@@ -357,7 +374,7 @@ impl RtcSctp {
                     assert!(n == l);
 
                     entry.set_state(StreamEntryState::AwaitDcepAck);
-                    return self.poll(now);
+                    return self.poll();
                 }
                 _ => {}
             }
@@ -446,12 +463,12 @@ impl RtcSctp {
         self.pushed_back_transmit = Some(data);
     }
 
-    fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
+    fn poll_transmit(&mut self) -> Option<Transmit> {
         if let Some(t) = self.endpoint.poll_transmit() {
             return Some(t);
         }
 
-        if let Some(t) = self.assoc.as_mut()?.poll_transmit(now) {
+        if let Some(t) = self.assoc.as_mut()?.poll_transmit(self.last_now) {
             return Some(t);
         }
 

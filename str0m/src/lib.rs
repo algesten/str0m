@@ -350,7 +350,7 @@ impl Rtc {
         // If we got an m=application line, ensure we have negotiated the
         // SCTP association with the other side.
         if self.session.app().is_some() && !self.sctp.is_inited() {
-            self.sctp.init(self.setup == Setup::Active);
+            self.sctp.init(self.setup == Setup::Active, self.last_now);
         }
     }
 
@@ -456,7 +456,7 @@ impl Rtc {
             }
         }
 
-        while let Some(e) = self.sctp.poll(self.last_now) {
+        while let Some(e) = self.sctp.poll() {
             match e {
                 sctp::SctpEvent::Transmit(v) => {
                     if let Err(e) = self.dtls.handle_input(&v) {
@@ -572,6 +572,7 @@ impl Rtc {
     fn do_handle_timeout(&mut self, now: Instant) {
         self.last_now = now;
         self.ice.handle_timeout(now);
+        self.sctp.handle_timeout(now);
         self.session.handle_timeout(now);
     }
 
