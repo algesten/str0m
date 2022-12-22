@@ -64,7 +64,7 @@ pub struct IceAgent {
     candidate_pairs: Vec<CandidatePair>,
 
     /// Transmit packet ready to be polled by poll_transmit.
-    transmit: Option<Transmit>,
+    transmit: VecDeque<Transmit>,
 
     /// Events ready to be polled by poll_event.
     events: VecDeque<IceAgentEvent>,
@@ -242,7 +242,7 @@ impl IceAgent {
             local_candidates: vec![],
             remote_candidates: vec![],
             candidate_pairs: vec![],
-            transmit: None,
+            transmit: VecDeque::new(),
             events: VecDeque::new(),
             stun_server_queue: VecDeque::new(),
             discovered_recv: HashSet::new(),
@@ -659,7 +659,7 @@ impl IceAgent {
         self.local_candidates.clear();
         self.remote_candidates.clear();
         self.candidate_pairs.clear();
-        self.transmit = None;
+        self.transmit.clear();
         self.events.clear();
         self.discovered_recv.clear();
 
@@ -765,7 +765,7 @@ impl IceAgent {
             }
         }
 
-        if self.transmit.is_some() {
+        if !self.transmit.is_empty() {
             // Can't progress, since there is a enqueued send. The
             trace!("Stop timeout, already got enqueued transmit");
             return;
@@ -853,7 +853,7 @@ impl IceAgent {
 
     /// Poll for the next datagram to send.
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
-        let x = self.transmit.take();
+        let x = self.transmit.pop_front();
         if x.is_some() {
             trace!("Poll transmit: {:?}", x);
         }
@@ -1152,8 +1152,7 @@ impl IceAgent {
             contents: DatagramSend::new(buf),
         };
 
-        assert!(self.transmit.is_none());
-        self.transmit = Some(trans);
+        self.transmit.push_back(trans);
     }
 
     fn stun_client_binding_request(&mut self, now: Instant, pair_idx: usize) {
@@ -1199,8 +1198,7 @@ impl IceAgent {
             contents: DatagramSend::new(buf),
         };
 
-        assert!(self.transmit.is_none());
-        self.transmit = Some(trans);
+        self.transmit.push_back(trans);
     }
 
     fn stun_client_handle_response(&mut self, now: Instant, message: StunMessage<'_>) {
