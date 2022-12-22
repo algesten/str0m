@@ -1,6 +1,8 @@
 #[macro_use]
 extern crate tracing;
 
+use std::collections::VecDeque;
+use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -42,7 +44,7 @@ pub struct RtcSctp {
     handle: AssociationHandle,
     assoc: Option<Association>,
     entries: Vec<StreamEntry>,
-    pushed_back_transmit: Option<Vec<u8>>,
+    pushed_back_transmit: Option<VecDeque<Vec<u8>>>,
     last_now: Instant,
 }
 
@@ -93,7 +95,7 @@ impl StreamEntry {
 }
 
 pub enum SctpEvent {
-    Transmit(Vec<u8>),
+    Transmit(VecDeque<Vec<u8>>),
     Open(u16, DcepOpen),
     Close(u16),
     Data(u16, bool, Vec<u8>),
@@ -206,6 +208,8 @@ impl RtcSctp {
     }
 
     pub fn handle_input(&mut self, now: Instant, data: &[u8]) {
+        trace!("Handle input: {}", data.len());
+
         // TODO, remove Bytes in sctp and just use &[u8].
         let data = data.to_vec().into();
         let r = self.endpoint.handle(now, self.fake_addr, None, None, data);
@@ -237,6 +241,8 @@ impl RtcSctp {
             return;
         }
 
+        trace!("Handle timeout: {:?}", now);
+
         self.last_now = now;
 
         // Remove closed entries.
@@ -257,6 +263,16 @@ impl RtcSctp {
     }
 
     pub fn poll(&mut self) -> Option<SctpEvent> {
+        let r = self.do_poll();
+
+        if let Some(r) = &r {
+            trace!("Poll {:?}", r);
+        }
+
+        r
+    }
+
+    pub fn do_poll(&mut self) -> Option<SctpEvent> {
         if self.state == RtcSctpState::Uninited {
             // Need to call `init()` before any polling starts.
             return None;
@@ -458,7 +474,8 @@ impl RtcSctp {
         self.assoc.as_mut().and_then(|a| a.poll_timeout())
     }
 
-    pub fn push_back_transmit(&mut self, data: Vec<u8>) {
+    pub fn push_back_transmit(&mut self, data: VecDeque<Vec<u8>>) {
+        trace!("Push back transmit: {}", data.len());
         assert!(self.pushed_back_transmit.is_none());
         self.pushed_back_transmit = Some(data);
     }
@@ -476,21 +493,12 @@ impl RtcSctp {
     }
 }
 
-fn transmit_to_vec(t: Transmit) -> Option<Vec<u8>> {
+fn transmit_to_vec(t: Transmit) -> Option<VecDeque<Vec<u8>>> {
     let Payload::RawEncode(v) = t.payload else {
         return None;
     };
 
-    let len = v.iter().map(|b| b.len()).sum();
-    let mut buf = vec![0; len];
-    let mut n = 0;
-    for b in v {
-        let l = b.len();
-        (&mut buf[n..(n + l)]).copy_from_slice(&b);
-        n += l;
-    }
-
-    Some(buf)
+    Some(v.into_iter().map(|b| b.to_vec()).collect())
 }
 
 fn set_state(current_state: &mut RtcSctpState, state: RtcSctpState) {
@@ -555,5 +563,21 @@ fn ppi_adjust_buf(mut buf: Vec<u8>, ppi: PayloadProtocolIdentifier) -> Vec<u8> {
             buf
         }
         _ => buf,
+    }
+}
+
+impl fmt::Debug for SctpEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Transmit(arg0) => f.debug_tuple("Transmit").field(&arg0.len()).finish(),
+            Self::Open(arg0, arg1) => f.debug_tuple("Open").field(arg0).field(arg1).finish(),
+            Self::Close(arg0) => f.debug_tuple("Close").field(arg0).finish(),
+            Self::Data(arg0, arg1, arg2) => f
+                .debug_tuple("Data")
+                .field(arg0)
+                .field(arg1)
+                .field(&arg2.len())
+                .finish(),
+        }
     }
 }

@@ -5,6 +5,7 @@ use net::{DatagramRecv, DatagramSend, Receive, DATAGRAM_MTU};
 use openssl::error::ErrorStack;
 use openssl::ssl::SslContext;
 use std::collections::VecDeque;
+use std::fmt;
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::SocketAddr;
 use thiserror::Error;
@@ -69,7 +70,6 @@ pub struct Dtls {
 }
 
 /// Events arising from a [`Dtls`] instance.
-#[derive(Debug)]
 pub enum DtlsEvent {
     /// When the DTLS has finished handshaking.
     Connected,
@@ -261,4 +261,19 @@ impl io::Write for IoBuffer {
 pub struct DtlsSendAddress {
     pub source: SocketAddr,
     pub destination: SocketAddr,
+}
+
+impl fmt::Debug for DtlsEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Connected => write!(f, "Connected"),
+            Self::SrtpKeyingMaterial(arg0) => {
+                f.debug_tuple("SrtpKeyingMaterial").field(arg0).finish()
+            }
+            Self::RemoteFingerprint(arg0) => {
+                f.debug_tuple("RemoteFingerprint").field(arg0).finish()
+            }
+            Self::Data(arg0) => f.debug_tuple("Data").field(&arg0.len()).finish(),
+        }
+    }
 }

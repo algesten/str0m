@@ -456,16 +456,19 @@ impl Rtc {
             }
         }
 
-        while let Some(e) = self.sctp.poll() {
+        'outer: while let Some(e) = self.sctp.poll() {
             match e {
-                sctp::SctpEvent::Transmit(v) => {
-                    if let Err(e) = self.dtls.handle_input(&v) {
-                        if e.is_would_block() {
-                            self.sctp.push_back_transmit(v);
-                            break;
-                        } else {
-                            return Err(e.into());
+                sctp::SctpEvent::Transmit(mut q) => {
+                    while let Some(v) = q.front() {
+                        if let Err(e) = self.dtls.handle_input(v) {
+                            if e.is_would_block() {
+                                self.sctp.push_back_transmit(q);
+                                break 'outer;
+                            } else {
+                                return Err(e.into());
+                            }
                         }
+                        q.pop_front();
                     }
                     continue;
                 }
