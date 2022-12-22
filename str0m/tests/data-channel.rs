@@ -1,6 +1,6 @@
 use std::net::Ipv4Addr;
+use std::time::Duration;
 
-use str0m::media::MediaTime;
 use str0m::{Candidate, RtcError};
 use tracing::info_span;
 
@@ -37,21 +37,15 @@ pub fn data_channel() -> Result<(), RtcError> {
     l.last = max;
     r.last = max;
 
-    let mut time_l: MediaTime = l.duration().into();
-    time_l = time_l.rebase(48_000);
-    const STEP: MediaTime = MediaTime::new(960, 48_000);
-
     loop {
         if let Some(mut chan) = l.channel(cid) {
             chan.write(false, "Hello world! ".as_bytes())
                 .expect("to write string");
         }
 
-        time_l = time_l + STEP;
-
         progress(&mut l, &mut r)?;
 
-        if time_l > MediaTime::from_seconds(10) {
+        if l.duration() > Duration::from_secs(10) {
             break;
         }
     }

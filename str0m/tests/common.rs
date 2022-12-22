@@ -39,7 +39,7 @@ pub fn progress(l: &mut TestRtc, r: &mut TestRtc) -> Result<(), RtcError> {
 
         match f.span.in_scope(|| f.rtc.poll_output())? {
             Output::Timeout(v) => {
-                f.last = v;
+                f.last = (f.last + Duration::from_millis(100)).min(v);
                 break;
             }
             Output::Transmit(v) => {
