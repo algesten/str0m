@@ -129,7 +129,7 @@ pub struct Media {
     pub(crate) need_open_event: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Types of media.
 pub enum MediaKind {
     /// Audio media.

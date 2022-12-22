@@ -47,6 +47,10 @@ impl<'a> ChangeSet<'a> {
         }
     }
 
+    pub fn has_changes(&self) -> bool {
+        !self.changes.is_empty()
+    }
+
     pub fn add_media(&mut self, kind: MediaKind, dir: Direction) -> Mid {
         let mid = self.rtc.new_mid();
 

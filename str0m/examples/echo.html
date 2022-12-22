@@ -1,0 +1,112 @@
+<html>
+
+<head>
+    <title>WebRTC Post example</title>
+    <style>
+        body {
+            background: black;
+            color: white;
+        }
+    </style>
+</head>
+
+<body>
+    Enable
+    <button id="cam" onClick="startCam()">Cam</button>
+    <button id="mic" onClick="startMic()">Mic</button>
+    <div id="media"></div>
+    <script>
+        let streamCam;
+        let streamMic;
+        let dataChannel;
+        let rtc = new RTCPeerConnection();
+        const byId = (id) => document.getElementById(id);
+        const byTag = (tag) => [].slice.call(document.getElementsByTagName(tag));
+        var callback = null;
+        async function negotiate() {
+            const offer = await rtc.createOffer();
+            console.log('do offer', offer.sdp.split('\r\n'));
+            rtc.setLocalDescription(offer);
+            await dataChannel.send(JSON.stringify(offer));
+            const json = await new Promise((rs) => {
+                callback = rs;
+            });
+            const answer = JSON.parse(json);
+            console.log('received answer', answer.sdp.split('\r\n'));
+            rtc.setRemoteDescription(answer);
+        }
+        async function handleOffer(json) {
+            const offer = JSON.parse(json);
+            console.log('handle offer', offer.sdp.split('\r\n'));
+            rtc.setRemoteDescription(offer);
+            const answer = await rtc.createAnswer();
+            console.log('offer response', answer.sdp.split('\r\n'));
+            rtc.setLocalDescription(answer);
+            await dataChannel.send(JSON.stringify(answer));
+        }
+        async function startCam() {
+            byId('cam').disabled = true;
+            streamCam = await navigator.mediaDevices.getUserMedia({
+                video: true,
+            });
+            const tr = rtc.addTransceiver('video', {
+                direction: "sendrecv"
+            });
+            tr.sender.replaceTrack(streamCam.getTracks()[0]);
+            await negotiate();
+        }
+        async function startMic() {
+            byId('mic').disabled = true;
+            streamMic = await navigator.mediaDevices.getUserMedia({
+                audio: true,
+            });
+            const tr = rtc.addTransceiver("audio", {
+                direction: "sendrecv"
+            });
+            tr.sender.replaceTrack(streamMic.getTracks()[0]);
+            await negotiate();
+        }
+        rtc.ontrack = (e) => {
+            const track = e.track;
+            const media = new MediaStream();
+            media.addTrack(track);
+            const el = document.createElement('video');
+            el.srcObject = media;
+            el.onclick = () => {
+                el.play();
+            };
+            byId('media').appendChild(el);
+        };
+        async function startRtc() {
+            dataChannel = rtc.createDataChannel("offer/answer");
+            dataChannel.onmessage = (event) => {
+                let json = JSON.parse(event.data);
+                if (json.type == 'offer') {
+                    // no callback probably means it's an offer
+                    handleOffer(event.data);
+                } else if (json.type == 'answer') {
+                    callback(event.data);
+                    callback = null;
+                }
+            };
+            const offer = await rtc.createOffer();
+            rtc.setLocalDescription(offer);
+            console.log('POST offer', offer.sdp.split('\r\n'));
+
+            const res = await fetch('/start', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(offer),
+            });
+
+            const answer = await res.json();
+            rtc.setRemoteDescription(answer);
+            console.log('POST answer', answer.sdp.split('\r\n'));
+        }
+        startRtc();
+    </script>
+</body>
+
+</html>

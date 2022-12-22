@@ -49,9 +49,6 @@
             byTag('button').forEach(b => b.disabled = true);
             if (startChannel) {
                 dataChannel = rtc.createDataChannel("myChannel");
-                dataChannel.onmessage = (event) => {
-                    console.log(`received: ${event.data}`);
-                };
                 dataChannel.onopen = () => {
                     console.log("datachannel open");
                 };
