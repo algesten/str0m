@@ -66,6 +66,7 @@ impl RtcSctpState {
     }
 }
 
+#[derive(Debug)]
 pub struct StreamEntry {
     id: u16,
     state: StreamEntryState,

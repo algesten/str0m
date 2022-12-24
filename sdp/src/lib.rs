@@ -123,9 +123,15 @@ macro_rules! sdp_ser {
                     where
                         V: de::SeqAccess<'de>,
                     {
-                        let _typ = seq
+                        let typ: &'de str = seq
                             .next_element()?
                             .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+                        if typ != $LCName {
+                            return Err(de::Error::custom(format!(
+                                "{} type field is '{}'",
+                                $Name, typ
+                            )));
+                        }
                         let sdp: &'de str = seq
                             .next_element()?
                             .ok_or_else(|| de::Error::invalid_length(1, &self))?;
@@ -146,7 +152,14 @@ macro_rules! sdp_ser {
                                     if typ.is_some() {
                                         return Err(de::Error::duplicate_field("type"));
                                     }
-                                    typ = Some(map.next_value()?);
+                                    let value = map.next_value()?;
+                                    if value != $LCName {
+                                        return Err(de::Error::custom(format!(
+                                            "{} type field is '{}'",
+                                            $Name, value
+                                        )));
+                                    }
+                                    typ = Some(value);
                                 }
                                 Field::Sdp => {
                                     if sdp.is_some() {
