@@ -108,6 +108,7 @@ impl Session {
     pub fn apply_offer(&mut self, offer: Offer) -> Result<(), RtcError> {
         offer.assert_consistency()?;
 
+        self.id = offer.session.id;
         self.update_session_extmaps(&offer)?;
 
         let new_lines = self.sync_m_lines(&offer).map_err(RtcError::RemoteSdp)?;
@@ -239,7 +240,7 @@ impl Session {
             let idx = self.media.len();
 
             if m.typ.is_media() {
-                let media = (*m, idx).into();
+                let media = Media::from_remote_media_line(*m, idx);
                 self.media.push(MediaOrApp::Media(media));
 
                 let media = only_media_mut(&mut self.media).last().unwrap();

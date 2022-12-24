@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU};
 use packet::RtpMeta;
-use rtp::{extend_seq, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
+use rtp::{extend_seq, Direction, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
 use rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
 use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
@@ -26,7 +26,7 @@ const NACK_MIN_INTERVAL: Duration = Duration::from_millis(250);
 const TWCC_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(crate) struct Session {
-    id: SessionId,
+    pub id: SessionId,
 
     // these fields are pub to allow session_sdp.rs modify them.
     pub media: Vec<MediaOrApp>,
@@ -68,7 +68,7 @@ impl MediaOrApp {
 pub enum MediaEvent {
     Data(MediaData),
     Error(RtcError),
-    Open(Mid, MediaKind),
+    Open(Mid, MediaKind, Direction),
 }
 
 impl Session {
@@ -343,7 +343,11 @@ impl Session {
         for media in self.media() {
             if media.need_open_event {
                 media.need_open_event = false;
-                return Some(MediaEvent::Open(media.mid(), media.kind()));
+                return Some(MediaEvent::Open(
+                    media.mid(),
+                    media.kind(),
+                    media.direction(),
+                ));
             }
 
             if let Some(r) = media.poll_sample() {

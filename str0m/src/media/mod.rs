@@ -441,7 +441,10 @@ impl Media {
     pub(crate) fn apply_changes(&mut self, m: &MediaLine, config: &CodecConfig) {
         // Directional changes
         {
-            let new_dir = m.direction();
+            // All changes come from the other side, either via an incoming OFFER
+            // or a ANSWER from our OFFER. Either way, the direction is inverted to
+            // how we have it locally.
+            let new_dir = m.direction().invert();
             if self.dir != new_dir {
                 debug!(
                     "Mid ({}) change direction: {} -> {}",
@@ -449,18 +452,16 @@ impl Media {
                 );
 
                 let was_receiving = self.dir.is_receiving();
+                let was_sending = self.dir.is_sending();
                 let is_receiving = new_dir.is_receiving();
+                let is_sending = new_dir.is_sending();
+
+                self.dir = new_dir;
 
                 if was_receiving && !is_receiving {
                     // Receive buffers are dropped straight away.
                     self.clear_receive_buffers();
                 }
-
-                self.dir = new_dir;
-
-                let was_sending = self.dir.is_sending();
-                let is_sending = new_dir.is_sending();
-
                 if !was_sending && is_sending {
                     // Dump the buffers when we are about to start sending. We don't do this
                     // on sending -> not, because we want to keep the buffer to answer straggle nacks.
@@ -677,14 +678,13 @@ impl Default for Media {
     }
 }
 
-// Going from an incoming m-line in an SDP, this is used to create new Media.
-impl<'a> From<(&'a MediaLine, usize)> for Media {
-    fn from((l, index): (&'a MediaLine, usize)) -> Self {
+impl Media {
+    pub(crate) fn from_remote_media_line(l: &MediaLine, index: usize) -> Self {
         Media {
             mid: l.mid(),
             index,
             kind: l.typ.clone().into(),
-            dir: l.direction(),
+            dir: l.direction().invert(), // remove direction is reverse.
             ssrc_info_rx: l.ssrc_info(),
             params: l.rtp_params().into_iter().map(|p| p.into()).collect(),
             ..Default::default()

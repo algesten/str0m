@@ -12,6 +12,7 @@ use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::IceAgentEvent;
 use ice::{IceAgent, IceError};
 use net_::NetError;
+pub use rtp::Direction;
 use sctp::{RtcSctp, SctpError};
 use sdp::{Sdp, Setup};
 use thiserror::Error;
@@ -88,6 +89,9 @@ pub enum RtcError {
 
     #[error("{0}")]
     Sctp(#[from] SctpError),
+
+    #[error("{0}")]
+    Other(String),
 }
 
 /// Main type.
@@ -116,7 +120,7 @@ struct SendAddr {
 pub enum Event {
     IceCandidate(Candidate),
     IceConnectionStateChange(IceConnectionState),
-    MediaAdded(Mid, MediaKind),
+    MediaAdded(Mid, MediaKind, Direction),
     MediaData(MediaData),
     MediaError(RtcError),
     ChannelOpen(ChannelId, String),
@@ -492,7 +496,9 @@ impl Rtc {
 
         if let Some(e) = self.session.poll_event() {
             return Ok(match e {
-                MediaEvent::Open(mid, kind) => Output::Event(Event::MediaAdded(mid, kind)),
+                MediaEvent::Open(mid, kind, dir) => {
+                    Output::Event(Event::MediaAdded(mid, kind, dir))
+                }
                 MediaEvent::Data(m) => Output::Event(Event::MediaData(m)),
                 MediaEvent::Error(e) => Output::Event(Event::MediaError(e)),
             });
@@ -625,7 +631,9 @@ impl PartialEq for Event {
         match (self, other) {
             (Self::IceCandidate(l0), Self::IceCandidate(r0)) => l0 == r0,
             (Self::IceConnectionStateChange(l0), Self::IceConnectionStateChange(r0)) => l0 == r0,
-            (Self::MediaAdded(l0, l1), Self::MediaAdded(r0, r1)) => l0 == r0 && l1 == r1,
+            (Self::MediaAdded(l0, l1, l2), Self::MediaAdded(r0, r1, r2)) => {
+                l0 == r0 && l1 == r1 && l2 == r2
+            }
             (Self::MediaData(m1), Self::MediaData(m2)) => m1 == m2,
             (Self::MediaError(_), Self::MediaError(_)) => false,
             (Self::ChannelOpen(l0, l1), Self::ChannelOpen(r0, r1)) => l0 == r0 && l1 == r1,
