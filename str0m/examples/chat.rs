@@ -33,7 +33,6 @@ struct ClientId(u64);
 
 struct Client {
     id: ClientId,
-    alive: bool,
     rtc: Rtc,
     cid: Option<ChannelId>,
     socket: Arc<UdpSocket>,
@@ -177,7 +176,7 @@ async fn run_loop(mut rx: Receiver<RunLoopInput>) {
 
     loop {
         // Housekeeping
-        clients.retain(|c| c.alive);
+        clients.retain(|c| c.is_alive());
 
         // Future thing to do, either socket input or a timeout.
         let todo = input_or_timeout(&mut rx, timeout);
@@ -189,7 +188,7 @@ async fn run_loop(mut rx: Receiver<RunLoopInput>) {
                     let mut client = Client::new(id, rtc, socket);
 
                     // Each new client must get a reference to all open tracks from other clients.
-                    for other in clients.iter().filter(|c| c.alive) {
+                    for other in clients.iter().filter(|c| c.is_alive()) {
                         for track in &other.tracks_in {
                             client.add_remote_track(Arc::downgrade(track));
                         }
@@ -199,10 +198,10 @@ async fn run_loop(mut rx: Receiver<RunLoopInput>) {
                 }
 
                 RunLoopInput::SocketInput(id, at, source, data) => {
-                    if let Some(client) = clients.iter_mut().find(|c| c.id == id && c.alive) {
+                    if let Some(client) = clients.iter_mut().find(|c| c.id == id && c.is_alive()) {
                         if let Err(e) = client.handle_socket_input(at, source, &data) {
                             warn!("Client failed: {:?}", e);
-                            client.alive = false;
+                            client.rtc.disconnect();
                         }
                     }
                 }
@@ -240,10 +239,10 @@ async fn input_or_timeout(rx: &mut Receiver<RunLoopInput>, timeout: Instant) -> 
 /// the instances until they produce another timeout Instant.
 async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
     // Move time in all clients.
-    for client in clients.iter_mut().filter(|c| c.alive) {
+    for client in clients.iter_mut().filter(|c| c.is_alive()) {
         if let Err(e) = client.rtc.handle_input(Input::Timeout(now)) {
             warn!("Client failed: {:?}", e);
-            client.alive = false;
+            client.rtc.disconnect();
         }
     }
 
@@ -263,7 +262,7 @@ async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
         timeouts.clear(); // Every loop start begin with 0 timeouts.
 
         // Poll each client and decide what to do with transmit, timeout or events
-        for client in clients.iter_mut().filter(|c| c.alive) {
+        for client in clients.iter_mut().filter(|c| c.is_alive()) {
             match client.rtc.poll_output() {
                 Ok(v) => match v {
                     // Transmits are dispatched on the UdpSocket straight away. We are
@@ -283,7 +282,7 @@ async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
                     Output::Event(v) => {
                         if let Err(e) = client.handle_local_event(&v) {
                             warn!("Client failed: {:?}", e);
-                            client.alive = false;
+                            client.rtc.disconnect();
                         }
 
                         let te = if let Event::MediaAdded(mid, kind, _) = v {
@@ -314,7 +313,7 @@ async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
                 },
                 Err(e) => {
                     warn!("Client failed: {:?}", e);
-                    client.alive = false;
+                    client.rtc.disconnect();
                 }
             }
         }
@@ -322,7 +321,7 @@ async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
         // Propagate Tracks/Events Op other connected clients.
         for (from, te) in to_dispatch.drain(..) {
             // All clients but not the originating.
-            for client in clients.iter_mut().filter(|c| c.id != from && c.alive) {
+            for client in clients.iter_mut().filter(|c| c.id != from && c.is_alive()) {
                 match &te {
                     TrackOrEvent::Track(t) => client.add_remote_track(t.clone()),
                     TrackOrEvent::Event(e) => client.handle_event_from_other(&e),
@@ -332,7 +331,7 @@ async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
 
         // Trigger pending negotiations
         let mut any_negotiation_started = false;
-        for client in clients.iter_mut().filter(|c| c.alive) {
+        for client in clients.iter_mut().filter(|c| c.is_alive()) {
             if client.negotiate() {
                 any_negotiation_started = true;
             }
@@ -346,7 +345,7 @@ async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
         // Once all polling above is done, each client will produce a timeout. That means
         // we expect one timeout per _alive_ client. If we don't get this number of
         // timeouts, some client was still producing Transmit or Event.
-        let expected_timeouts = clients.iter().filter(|c| c.alive).count();
+        let expected_timeouts = clients.iter().filter(|c| c.is_alive()).count();
 
         if timeouts.len() == expected_timeouts {
             // All clients have timeouts, chose the smallest one, and failing that
@@ -363,13 +362,16 @@ impl Client {
     fn new(id: ClientId, rtc: Rtc, socket: Arc<UdpSocket>) -> Self {
         Client {
             id,
-            alive: true,
             rtc,
             cid: None,
             socket,
             tracks_in: vec![],
             tracks_out: vec![],
         }
+    }
+
+    fn is_alive(&self) -> bool {
+        self.rtc.is_alive()
     }
 
     fn handle_socket_input(
@@ -436,7 +438,7 @@ impl Client {
             let offer = change.apply();
             let Some(mut channel) = self.rtc.channel(cid) else {
                 warn!("Client datachannel closed");
-                self.alive = false;                
+                self.rtc.disconnect();
                 return false;
             };
             let json = serde_json::to_string(&offer).unwrap();
@@ -444,7 +446,7 @@ impl Client {
             // full and we don't manage to send the entire message.
             if let Err(e) = channel.write(false, json.as_bytes()) {
                 warn!("Client failed: {:?}", e);
-                self.alive = false;
+                self.rtc.disconnect();
                 return false;
             }
             true
@@ -524,7 +526,7 @@ impl Client {
 
         if let Err(e) = media.get_writer(local_pt).write(d.time, &d.data) {
             warn!("Client failed: {:?}", e);
-            self.alive = false;
+            self.rtc.disconnect();
         }
     }
 }

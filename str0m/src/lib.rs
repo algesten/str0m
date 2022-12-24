@@ -178,6 +178,14 @@ impl Rtc {
         }
     }
 
+    pub fn is_alive(&self) -> bool {
+        self.alive
+    }
+
+    pub fn disconnect(&mut self) {
+        self.alive = false;
+    }
+
     pub fn add_local_candidate(&mut self, c: Candidate) {
         self.ice.add_local_candidate(c);
     }
@@ -277,6 +285,9 @@ impl Rtc {
     }
 
     pub fn pending_changes(&mut self) -> Option<PendingChanges> {
+        if !self.alive {
+            return None;
+        }
         self.pending.as_ref()?;
         Some(PendingChanges { rtc: self })
     }
@@ -559,6 +570,9 @@ impl Rtc {
     }
 
     pub fn media(&mut self, mid: Mid) -> Option<&mut Media> {
+        if !self.alive {
+            return None;
+        }
         self.session.get_media(mid)
     }
 
@@ -569,6 +583,10 @@ impl Rtc {
     ///
     /// Either way, we must wait for the [`Event::ChannelOpen`] before writing.
     pub fn channel(&mut self, id: ChannelId) -> Option<Channel<'_>> {
+        if !self.alive {
+            return None;
+        }
+
         // If the m=application isn't set up, we don't provide Channel
         self.session.app()?;
 
