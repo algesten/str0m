@@ -255,7 +255,7 @@ impl Media {
         header.ext_vals.transport_cc = Some(*twcc as u16);
         *twcc += 1;
 
-        let mut buf = vec![0; DATAGRAM_MTU];
+        let mut buf = vec![0; 2000];
         let header_len = header.write_to(&mut buf, exts);
         assert!(header_len % 4 == 0, "RTP header must be multiple of 4");
         header.header_len = header_len;
