@@ -28,7 +28,7 @@ pub mod net {
 }
 
 pub mod media;
-use media::{Media, MediaKind};
+use media::{CodecParams, Media, MediaKind};
 
 mod change;
 pub use change::ChangeSet;
@@ -129,6 +129,7 @@ pub enum Event {
 pub struct MediaData {
     pub mid: Mid,
     pub pt: Pt,
+    pub codec: CodecParams,
     pub time: MediaTime,
     pub data: Vec<u8>,
     pub meta: Vec<RtpMeta>,

@@ -546,11 +546,13 @@ impl Media {
 
     pub(crate) fn poll_sample(&mut self) -> Option<Result<MediaData, RtcError>> {
         for (pt, buf) in &mut self.buffers_rx {
+            let codec = self.params.iter().find(|c| c.pt() == *pt)?.clone();
             if let Some(r) = buf.pop() {
                 return Some(
                     r.map(|dep| MediaData {
                         mid: self.mid,
                         pt: *pt,
+                        codec,
                         time: dep.time,
                         data: dep.data,
                         meta: dep.meta,
@@ -622,6 +624,11 @@ impl Media {
 
     pub(crate) fn regular_feedback_at(&self) -> Instant {
         self.last_regular_feedback + rr_interval(self.kind == MediaKind::Audio)
+    }
+
+    pub fn match_codec(&self, codec: CodecParams) -> Option<Pt> {
+        let c = self.params.iter().max_by_key(|c| c.match_score(codec))?;
+        Some(c.pt())
     }
 }
 

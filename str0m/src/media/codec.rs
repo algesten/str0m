@@ -36,6 +36,20 @@ impl CodecParams {
     pub(crate) fn inner(&self) -> &PayloadParams {
         &self.0
     }
+
+    pub(crate) fn match_score(&self, o: Self) -> usize {
+        // we don't want to compare PT
+        let pt = 0.into();
+        let c0 = CodecSpec { pt, ..self.0.codec };
+        let c1 = CodecSpec { pt, ..o.0.codec };
+
+        if c0 == c1 && self.0.fmtps == o.0.fmtps {
+            100
+        } else {
+            // TODO: fuzzy matching.
+            0
+        }
+    }
 }
 
 impl From<PayloadParams> for CodecParams {
