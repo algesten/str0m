@@ -7,6 +7,10 @@ Sync sans I/O WebRTC implementation in Rust.
 
 THIS IS NOT READY FOR PRODUCTION USE!
 
+But I have managed to transfer some kind of video.
+
+<image width="300px" src="https://user-images.githubusercontent.com/227204/209446544-f8a8d673-cb1b-4144-a0f2-42307b8d8869.gif" />
+
 # Usage
 
 The [`http-post`](https://github.com/algesten/str0m/blob/main/str0m/examples/http-post.rs) example 
