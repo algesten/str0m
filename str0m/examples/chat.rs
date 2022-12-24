@@ -111,7 +111,7 @@ pub async fn main() {
 
 #[handler]
 fn http_index() -> Html<&'static str> {
-    Html(include_str!("echo.html"))
+    Html(include_str!("chat.html"))
 }
 
 /// Start a new client. Called on "POST /start" and contains an offer SDP as body, and expects an
