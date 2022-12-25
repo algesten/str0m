@@ -29,7 +29,7 @@ pub mod net {
 }
 
 pub mod media;
-use media::{CodecParams, Media, MediaKind};
+use media::{CodecConfig, CodecParams, Media, MediaKind};
 
 mod change;
 pub use change::ChangeSet;
@@ -162,12 +162,17 @@ pub enum Output {
 
 impl Rtc {
     pub fn new() -> Self {
+        let config = RtcConfig::default();
+        Self::new_from_config(config)
+    }
+
+    pub(crate) fn new_from_config(config: RtcConfig) -> Self {
         Rtc {
             alive: true,
             ice: IceAgent::new(),
             dtls: Dtls::new().expect("DTLS to init without problem"),
             setup: Setup::ActPass,
-            session: Session::new(),
+            session: Session::new(config.codec_config),
             sctp: RtcSctp::new(),
             next_sctp_channel: 0, // Goes 0, 1, 2 for both DTLS server or client
             remote_fingerprint: None,
@@ -641,6 +646,52 @@ impl<'a> PendingChanges<'a> {
 
     pub fn rollback(self) {
         self.rtc.accept_answer(None).expect("rollback to not error");
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RtcConfig {
+    ice_lite: bool,
+    codec_config: CodecConfig,
+}
+
+impl RtcConfig {
+    pub fn new() -> Self {
+        RtcConfig::default()
+    }
+
+    pub fn ice_lite(mut self, enabled: bool) -> Self {
+        self.ice_lite = enabled;
+        self
+    }
+
+    pub fn add_default_opus(mut self) -> Self {
+        self.codec_config.add_default_opus();
+        self
+    }
+
+    pub fn add_default_vp8(mut self) -> Self {
+        self.codec_config.add_default_vp8();
+        self
+    }
+
+    pub fn add_default_h264(mut self) -> Self {
+        self.codec_config.add_default_h264();
+        self
+    }
+
+    pub fn add_default_av1(mut self) -> Self {
+        self.codec_config.add_default_av1();
+        self
+    }
+
+    pub fn add_default_vp9(mut self) -> Self {
+        self.codec_config.add_default_vp9();
+        self
+    }
+
+    pub fn build(self) -> Rtc {
+        Rtc::new_from_config(self)
     }
 }
 

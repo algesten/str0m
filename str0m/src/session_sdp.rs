@@ -6,7 +6,7 @@ use sdp::{Answer, MediaAttribute, MediaLine, MediaType};
 use sdp::{Offer, Proto, Sdp, SessionAttribute, Setup};
 
 use crate::change::{Change, Changes};
-use crate::media::{App, CodecConfig, MediaKind};
+use crate::media::{App, MediaKind};
 use crate::session::{only_media_mut, MediaOrApp};
 use crate::RtcError;
 
@@ -192,11 +192,7 @@ impl Session {
     fn sync_m_lines<'a>(&mut self, sdp: &'a Sdp) -> Result<Vec<&'a MediaLine>, String> {
         let mut new_lines = Vec::new();
 
-        // SAFETY: CodecConfig is read only and not interfering with self.get_media.
-        let config = unsafe {
-            let ptr = &self.codec_config as *const CodecConfig;
-            &*ptr
-        };
+        let config = self.codec_config().clone();
 
         for (idx, m) in sdp.media_lines.iter().enumerate() {
             if m.typ == MediaType::Application {
@@ -215,7 +211,7 @@ impl Session {
                     return index_err(m.mid());
                 }
 
-                media.apply_changes(m, config);
+                media.apply_changes(m, &config);
                 continue;
             }
 

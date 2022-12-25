@@ -72,6 +72,7 @@
             const media = new MediaStream();
             media.addTrack(track);
             const el = document.createElement('video');
+            el.controls = true;
             el.srcObject = media;
             el.onclick = () => {
                 el.play();

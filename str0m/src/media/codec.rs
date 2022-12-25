@@ -58,13 +58,27 @@ impl From<PayloadParams> for CodecParams {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct CodecConfig {
     configs: Vec<CodecParams>,
 }
 
 impl CodecConfig {
     pub fn new() -> Self {
-        CodecConfig { configs: vec![] }
+        CodecConfig::default()
+    }
+
+    /// Add default config if none is set.
+    pub(crate) fn init(mut self) -> Self {
+        if self.configs.is_empty() {
+            self.add_default_opus();
+
+            self.add_default_vp8();
+            self.add_default_h264();
+            self.add_default_av1();
+            self.add_default_vp9();
+        }
+        self
     }
 
     pub fn matches(&self, c: &CodecParams) -> bool {
@@ -219,15 +233,6 @@ impl CodecConfig {
 
 impl Default for CodecConfig {
     fn default() -> Self {
-        let mut c = CodecConfig::new();
-
-        c.add_default_opus();
-
-        c.add_default_vp8();
-        c.add_default_h264();
-        c.add_default_av1();
-        c.add_default_vp9();
-
-        c
+        CodecConfig { configs: vec![] }
     }
 }

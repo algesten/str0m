@@ -72,7 +72,7 @@ pub enum MediaEvent {
 }
 
 impl Session {
-    pub fn new() -> Self {
+    pub fn new(codec_config: CodecConfig) -> Self {
         let mut id = SessionId::new();
         // Max 2^62 - 1: https://bugzilla.mozilla.org/show_bug.cgi?id=861895
         const MAX_ID: u64 = 2_u64.pow(62) - 1;
@@ -83,7 +83,7 @@ impl Session {
             id,
             media: vec![],
             exts: Extensions::default_mappings(),
-            codec_config: CodecConfig::default(),
+            codec_config: codec_config.init(),
             srtp_rx: None,
             srtp_tx: None,
             last_nack: already_happened(),
