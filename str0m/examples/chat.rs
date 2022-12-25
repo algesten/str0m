@@ -98,7 +98,7 @@ pub async fn main() {
         .at("/", get(http_index))
         .at("/start", post(http_start).with(AddData::new(app_state)));
 
-    let listener = TcpListener::bind("127.0.0.1:3000")
+    let listener = TcpListener::bind("0.0.0.0:3000")
         .rustls(RustlsConfig::new().fallback(RustlsCertificate::new().key(KEY).cert(CERT)));
 
     tokio::spawn(async move {

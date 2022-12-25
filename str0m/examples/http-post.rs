@@ -30,7 +30,7 @@ pub fn main() {
 
     let certificate = include_bytes!("cer.pem").to_vec();
     let private_key = include_bytes!("key.pem").to_vec();
-    let server = Server::new_ssl("127.0.0.1:3000", web_request, certificate, private_key)
+    let server = Server::new_ssl("0.0.0.0:3000", web_request, certificate, private_key)
         .expect("starting the web server");
     println!("Listening on {:?}", server.server_addr().port());
     server.run();
