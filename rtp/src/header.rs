@@ -28,7 +28,7 @@ impl RtpHeader {
             marker: false,
             payload_type: pt,
             sequence_number: *seq_no as u16,
-            timestamp: ts.as_ntp_32(),
+            timestamp: ts.numer() as u32,
             ssrc,
             ext_vals: ExtensionValues::default(),
             header_len: 16,
@@ -240,53 +240,6 @@ pub fn extend_seq(prev_ext_seq: Option<u64>, seq: u16) -> u64 {
 
     v * 65_536 + (seq as u64)
 }
-
-// /// Determine number of packets expected and lost.
-// impl IngressStream {
-//     pub fn determine_loss(&mut self) {
-//         // https://tools.ietf.org/html/rfc3550#appendix-A.3
-//         let expected = (self.rtp_max_seq - self.rtp_start_seq + 1) as i64;
-//         let received = self.rtp_packet_count as i64;
-//         let lost = expected - received;
-
-//         let mut fract = 0;
-
-//         if self.rtp_packets_expected_prior != 0 && self.rtp_packets_received_prior != 0 {
-//             let expected_interval = self.rtp_packets_expected_prior - expected;
-//             let received_interval = self.rtp_packets_received_prior - received;
-
-//             let lost_interval = expected_interval - received_interval;
-
-//             if expected_interval == 0 || lost_interval <= 0 {
-//                 fract = 0;
-//             } else {
-//                 fract = (lost_interval << 8) / expected_interval;
-//             }
-//         }
-
-//         self.rtp_packets_expected_prior = expected;
-//         self.rtp_packets_received_prior = received;
-//         self.rtp_lost_packets = lost;
-//         self.rtp_packet_loss = fract as f32 / 255.0;
-//     }
-
-//     pub fn estimate_jitter(&mut self, sys_time: Ts, rtp_time: Ts) {
-//         // https://tools.ietf.org/html/rfc3550#appendix-A.8
-//         let rtp_timebase = rtp_time.denum();
-
-//         if !self.rtp_sys_time_prior.is_zero() {
-//             let transit = sys_time - rtp_time;
-//             let transit_prior = self.rtp_sys_time_prior - self.rtp_time_prior;
-//             let d = (transit - transit_prior).abs().rebase(rtp_timebase);
-
-//             self.rtp_jitter += 1.0 / 16.0 * (d.numer() as f64 - self.rtp_jitter);
-//             self.rtp_jitter_norm = self.rtp_jitter / rtp_timebase as f64;
-//         }
-
-//         self.rtp_sys_time_prior = sys_time;
-//         self.rtp_time_prior = rtp_time;
-//     }
-// }
 
 impl Default for RtpHeader {
     fn default() -> Self {

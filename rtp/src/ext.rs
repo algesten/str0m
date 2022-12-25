@@ -544,8 +544,8 @@ impl fmt::Debug for ExtensionValues {
         if let Some(t) = self.video_orient {
             write!(f, " video_orient: {}", t)?;
         }
-        if self.transport_cc.is_some() {
-            write!(f, " transport_cc: TODO")?;
+        if let Some(t) = self.transport_cc {
+            write!(f, " transport_cc: {}", t)?;
         }
         if let Some(t) = self.play_delay_min {
             write!(f, " play_delay_min: {}", t.as_seconds())?;
@@ -559,8 +559,8 @@ impl fmt::Debug for ExtensionValues {
         if let Some(t) = &self.video_timing {
             write!(f, " video_timing: {:?}", t)?;
         }
-        if self.frame_mark.is_some() {
-            write!(f, " frame_mark: TODO")?;
+        if let Some(t) = &self.frame_mark {
+            write!(f, " frame_mark: {}", t)?;
         }
 
         write!(f, " }}")?;

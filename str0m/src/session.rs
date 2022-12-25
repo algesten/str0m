@@ -456,11 +456,6 @@ impl Session {
         only_media(&self.media).any(|m| m.has_ssrc_rx(ssrc) || m.has_ssrc_tx(ssrc))
     }
 
-    // pub fn handle_sctp(&mut self, sctp) {
-    // }
-    // pub fn poll_sctp(&mut self) -> Option<Sctp> {
-    // }
-
     fn regular_feedback_at(&self) -> Instant {
         only_media(&self.media)
             .map(|m| m.regular_feedback_at())
