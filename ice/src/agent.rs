@@ -255,6 +255,13 @@ impl IceAgent {
         }
     }
 
+    /// Enable or disable ice_lite.
+    ///
+    /// Default is disabled.
+    pub fn set_ice_lite(&mut self, enabled: bool) {
+        self.ice_lite = enabled;
+    }
+
     /// Local ice credentials.
     pub fn local_credentials(&self) -> &IceCreds {
         &self.local_credentials

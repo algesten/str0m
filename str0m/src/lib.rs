@@ -167,9 +167,15 @@ impl Rtc {
     }
 
     pub(crate) fn new_from_config(config: RtcConfig) -> Self {
+        let mut ice = IceAgent::new();
+
+        if config.ice_lite {
+            ice.set_ice_lite(config.ice_lite);
+        }
+
         Rtc {
             alive: true,
-            ice: IceAgent::new(),
+            ice,
             dtls: Dtls::new().expect("DTLS to init without problem"),
             setup: Setup::ActPass,
             session: Session::new(config.codec_config),
