@@ -1245,7 +1245,7 @@ impl fmt::Display for Sdp {
 impl fmt::Display for Session {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "v=0\r\n")?;
-        write!(f, "o=- {} 2 IN IP4 127.0.0.1\r\n", self.id)?;
+        write!(f, "o=- {} 2 IN IP4 0.0.0.0\r\n", self.id)?;
         write!(f, "s=-\r\n")?;
         if let Some(bw) = &self.bw {
             write!(f, "b={}:{}\r\n", bw.typ, bw.val)?;
