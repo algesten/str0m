@@ -754,15 +754,21 @@ impl IceAgent {
     }
 
     pub fn handle_timeout(&mut self, now: Instant) {
-        trace!("Handle timeout: {:?}", now);
-
         // The generation of ordinary and triggered connectivity checks is
         // governed by timer Ta.
         if let Some(last_now) = self.last_now {
-            if now < last_now + TIMING_ADVANCE {
-                trace!("Stop timeout within timing advance of last");
+            trace!("Handle timeout after: {:?}", now - last_now);
+
+            let min_step = last_now + TIMING_ADVANCE;
+            if now < min_step {
+                trace!(
+                    "Stop timeout within timing advance of last: {:?}",
+                    min_step - now
+                );
                 return;
             }
+        } else {
+            trace!("Handle timeout: {:?}", now);
         }
 
         if !self.transmit.is_empty() {
@@ -846,7 +852,7 @@ impl IceAgent {
                 trace!("Handle next triggered pair: {:?}", pair);
                 self.stun_client_binding_request(now, idx);
             } else {
-                trace!("Next triggered pair is in the future");
+                trace!("Next triggered pair is in the future: {:?}", deadline - now);
             }
         }
     }

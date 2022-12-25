@@ -436,7 +436,7 @@ impl Session {
             .soonest((nack_at, "nack"))
             .soonest((twcc_at, "twcc"));
 
-        trace!("poll_timeout soonest is: {}", timeout.1);
+        // trace!("poll_timeout soonest is: {}", timeout.1);
 
         timeout.0
     }

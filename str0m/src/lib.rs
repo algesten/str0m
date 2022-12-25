@@ -540,7 +540,7 @@ impl Rtc {
             .soonest((self.session.poll_timeout(), "session"))
             .soonest((self.sctp.poll_timeout(), "sctp"));
 
-        trace!("poll_output timeout reason: {}", time_and_reason.1);
+        // trace!("poll_output timeout reason: {}", time_and_reason.1);
 
         let time = time_and_reason.0.unwrap_or_else(not_happening);
 

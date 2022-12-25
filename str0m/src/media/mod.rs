@@ -402,6 +402,7 @@ impl Media {
     /// Appply incoming RTCP feedback.
     pub(crate) fn handle_rtcp_fb(&mut self, now: Instant, fb: RtcpFb) -> Option<()> {
         let ssrc = fb.ssrc();
+        trace!("Handle RTCP feedback: {:?}", fb);
 
         use RtcpFb::*;
         match fb {

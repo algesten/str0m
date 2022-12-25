@@ -1,6 +1,7 @@
 use crate::{FirEntry, NackEntry, ReceptionReport, ReportList, Rtcp, Sdes, SenderInfo, Ssrc, Twcc};
 
 /// Normalization of [`Rtcp`] so we can deal with one SSRC at a time.
+#[derive(Debug)]
 pub enum RtcpFb {
     SenderInfo(SenderInfo),
     ReceptionReport(ReceptionReport),
