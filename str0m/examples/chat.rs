@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
@@ -12,19 +12,21 @@ use rtp::Direction;
 use str0m::media::MediaKind;
 use str0m::net::Receive;
 use str0m::{Answer, Candidate, ChannelId, Event, Input, Mid, Offer, Output, Rtc, RtcError};
+use systemstat::{Platform, System};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{self, Receiver, Sender};
-use tracing::warn;
+use tracing::{info, warn};
 
 #[derive(Clone)]
 struct AppState {
     id_count: Arc<AtomicU64>,
+    host_addr: IpAddr,
     handle: Sender<RunLoopInput>,
 }
 
 #[derive(Debug)]
 enum RunLoopInput {
-    NewClient(ClientId, Rtc, Arc<UdpSocket>),
+    NewClient(ClientId, Rtc, Arc<UdpSocket>, SocketAddr),
     SocketInput(ClientId, Instant, SocketAddr, Vec<u8>),
 }
 
@@ -36,6 +38,7 @@ struct Client {
     rtc: Rtc,
     cid: Option<ChannelId>,
     socket: Arc<UdpSocket>,
+    sdp_addr: SocketAddr,
     tracks_in: Vec<Arc<Track>>,
     tracks_out: Vec<TrackState>,
 }
@@ -89,8 +92,14 @@ pub async fn main() {
 
     let (tx, rx) = mpsc::channel(10);
 
+    // This is the host address we will use for UDP traffic. We bind 0.0.0.0, and receive traffic
+    // on all interfaces, but we must announce _something_ reasonable in the SDP. This is that something.
+    let host_addr = select_host_address();
+    info!("Use host addr: {:?}", host_addr);
+
     let app_state = AppState {
         id_count: Arc::new(AtomicU64::new(0)),
+        host_addr,
         handle: tx,
     };
 
@@ -108,6 +117,26 @@ pub async fn main() {
     run_loop(rx).await
 }
 
+fn select_host_address() -> IpAddr {
+    let system = System::new();
+    let networks = system.networks().unwrap();
+
+    const PREFERED_NAMES: &[&str] = &["en0", "en1", "en2", "eth0", "eth1", "eth2"];
+
+    for pref in PREFERED_NAMES {
+        if let Some(net) = networks.get(*pref) {
+            for n in &net.addrs {
+                match n.addr {
+                    systemstat::IpAddr::V4(v) => return IpAddr::V4(v),
+                    _ => {} // we could use ipv6 too
+                }
+            }
+        }
+    }
+
+    panic!("Found no usable network interface");
+}
+
 #[handler]
 fn http_index() -> Html<&'static str> {
     Html(include_str!("chat.html"))
@@ -122,12 +151,20 @@ async fn http_start(Data(app_state): Data<&AppState>, Json(offer): Json<Offer>) 
     let mut rtc = Rtc::new();
 
     // Spin up a UDP socket for the RTC
-    let socket = UdpSocket::bind("127.0.0.1:0")
+    let socket = UdpSocket::bind("0.0.0.0:0")
         .await
         .expect("binding a random UDP port");
     let socket = Arc::new(socket); // write and read are handled separately
     let addr = socket.local_addr().expect("a local socket adddress");
-    let candidate = Candidate::host(addr).expect("a host candidate");
+    info!("Bound UDP socket: {:?}", addr);
+
+    // We bind 0.0.0.0, but must have something reasonable in the SDP.
+    let port = addr.port();
+    let sdp_addr = (app_state.host_addr, port).into();
+
+    info!("Client {:?} candidate address: {:?}", client_id, sdp_addr);
+
+    let candidate = Candidate::host(sdp_addr).expect("a host candidate");
     rtc.add_local_candidate(candidate);
 
     // Create an SDP Answer.
@@ -136,7 +173,7 @@ async fn http_start(Data(app_state): Data<&AppState>, Json(offer): Json<Offer>) 
     // Provide the new Rtc instance and UdpSocket to the run loop. Do this before starting the
     // read_socket_task, since we must ensure the client is inside the run loop before
     // sending socket data for it.
-    let msg = RunLoopInput::NewClient(client_id, rtc, socket.clone());
+    let msg = RunLoopInput::NewClient(client_id, rtc, socket.clone(), sdp_addr);
     app_state.handle.send(msg).await.unwrap();
 
     // Read continuously from the socket and send to run_loop
@@ -184,8 +221,8 @@ async fn run_loop(mut rx: Receiver<RunLoopInput>) {
         match todo.await {
             InputOrTimeout::Timeout => {} // fall through
             InputOrTimeout::RunLoopInput(r) => match r {
-                RunLoopInput::NewClient(id, rtc, socket) => {
-                    let mut client = Client::new(id, rtc, socket);
+                RunLoopInput::NewClient(id, rtc, socket, sdp_addr) => {
+                    let mut client = Client::new(id, rtc, socket, sdp_addr);
 
                     // Each new client must get a reference to all open tracks from other clients.
                     for other in clients.iter().filter(|c| c.is_alive()) {
@@ -359,12 +396,13 @@ async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
 }
 
 impl Client {
-    fn new(id: ClientId, rtc: Rtc, socket: Arc<UdpSocket>) -> Self {
+    fn new(id: ClientId, rtc: Rtc, socket: Arc<UdpSocket>, sdp_addr: SocketAddr) -> Self {
         Client {
             id,
             rtc,
             cid: None,
             socket,
+            sdp_addr,
             tracks_in: vec![],
             tracks_out: vec![],
         }
@@ -380,13 +418,11 @@ impl Client {
         source: SocketAddr,
         contents: &[u8],
     ) -> Result<(), RtcError> {
-        let destination = self.socket.local_addr().unwrap();
-
         let input = Input::Receive(
             at,
             Receive {
                 source,
-                destination,
+                destination: self.sdp_addr,
                 contents: contents.try_into()?,
             },
         );
