@@ -108,7 +108,6 @@ impl Session {
     pub fn apply_offer(&mut self, offer: Offer) -> Result<(), RtcError> {
         offer.assert_consistency()?;
 
-        self.id = offer.session.id;
         self.update_session_extmaps(&offer)?;
 
         let new_lines = self.sync_m_lines(&offer).map_err(RtcError::RemoteSdp)?;

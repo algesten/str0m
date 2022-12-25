@@ -26,7 +26,7 @@ const NACK_MIN_INTERVAL: Duration = Duration::from_millis(250);
 const TWCC_INTERVAL: Duration = Duration::from_millis(100);
 
 pub(crate) struct Session {
-    pub id: SessionId,
+    id: SessionId,
 
     // these fields are pub to allow session_sdp.rs modify them.
     pub media: Vec<MediaOrApp>,
@@ -73,8 +73,14 @@ pub enum MediaEvent {
 
 impl Session {
     pub fn new() -> Self {
+        let mut id = SessionId::new();
+        // Max 2^62 - 1: https://bugzilla.mozilla.org/show_bug.cgi?id=861895
+        const MAX_ID: u64 = 2_u64.pow(62) - 1;
+        while *id > MAX_ID {
+            id = (*id >> 1).into();
+        }
         Session {
-            id: SessionId::new(),
+            id,
             media: vec![],
             exts: Extensions::default_mappings(),
             codec_config: CodecConfig::default(),
