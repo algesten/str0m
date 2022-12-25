@@ -29,6 +29,10 @@ pub struct IceAgent {
     last_now: Option<Instant>,
 
     /// Whether this agent is operating as ice-lite.
+    /// ice-lite is a minimal version of the ICE specification, intended for servers
+    /// running on a public IP address. ice-lite requires the media server to only answer
+    /// incoming STUN binding requests and acting as a controlled entity in the ICE
+    /// process itself.
     ice_lite: bool,
 
     // The default limit of candidate pairs for the checklist set is 100,
