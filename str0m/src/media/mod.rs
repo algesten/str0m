@@ -27,7 +27,7 @@ mod register;
 
 use crate::change::AddMedia;
 use crate::util::already_happened;
-use crate::{MediaData, RtcError};
+use crate::{KeyframeRequestKind, MediaData, RtcError};
 
 // How often we remove unused senders/receivers.
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
@@ -127,6 +127,9 @@ pub struct Media {
 
     /// Whether the media line needs to be advertised in an event.
     pub(crate) need_open_event: bool,
+
+    /// If we receive an rtcp request for a keyframe, this holds what kind.
+    waiting_keyframe_request: Option<KeyframeRequestKind>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -410,7 +413,10 @@ impl Media {
                 let source_rx = self.sources_rx.iter_mut().find(|s| s.ssrc() == ssrc)?;
                 source_rx.set_sender_info(now, v);
             }
-            ReceptionReport(_) => todo!(),
+            ReceptionReport(v) => {
+                // TODO: What to do with these?
+                trace!("Handle reception report: {:?}", v);
+            }
             SourceDescription(v) => {
                 for (sdes, st) in v.values {
                     if sdes == SdesType::CNAME {
@@ -431,8 +437,8 @@ impl Media {
                 let entries = list.into_iter();
                 self.handle_nack(ssrc, entries)?;
             }
-            Pli(_) => todo!(),
-            Fir(_) => todo!(),
+            Pli(_) => self.waiting_keyframe_request = Some(KeyframeRequestKind::Pli),
+            Fir(_) => self.waiting_keyframe_request = Some(KeyframeRequestKind::Fir),
             Twcc(_) => unreachable!("TWCC should be handled on session level"),
         }
 
@@ -544,6 +550,10 @@ impl Media {
         self.buffers_rx
             .entry(pt)
             .or_insert_with(|| DepacketizingBuffer::new(codec.into(), 30))
+    }
+
+    pub(crate) fn poll_keyframe_request(&mut self) -> Option<KeyframeRequestKind> {
+        self.waiting_keyframe_request.take()
     }
 
     pub(crate) fn poll_sample(&mut self) -> Option<Result<MediaData, RtcError>> {
@@ -675,6 +685,7 @@ impl Default for Media {
             buffers_tx: HashMap::new(),
             resends: VecDeque::new(),
             need_open_event: true,
+            waiting_keyframe_request: None,
         }
     }
 }

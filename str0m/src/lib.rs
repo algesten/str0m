@@ -424,7 +424,7 @@ impl Rtc {
         let o = self.do_poll_output()?;
 
         if let Output::Event(e) = &o {
-            info!("{:?}", e);
+            debug!("{:?}", e);
         }
 
         Ok(o)
@@ -535,6 +535,9 @@ impl Rtc {
                 }
                 MediaEvent::Data(m) => Output::Event(Event::MediaData(m)),
                 MediaEvent::Error(e) => Output::Event(Event::MediaError(e)),
+                MediaEvent::KeyframeRequest(mid, kind) => {
+                    Output::Event(Event::KeyframeRequest(mid, kind))
+                }
             });
         }
 

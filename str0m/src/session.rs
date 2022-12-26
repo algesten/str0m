@@ -12,8 +12,8 @@ use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
 use crate::media::{App, CodecConfig, MediaKind};
 use crate::session_sdp::AsMediaLine;
 use crate::util::{already_happened, not_happening, Soonest};
-use crate::RtcError;
 use crate::{net, MediaData};
+use crate::{KeyframeRequestKind, RtcError};
 
 use super::Media;
 
@@ -69,6 +69,7 @@ pub enum MediaEvent {
     Data(MediaData),
     Error(RtcError),
     Open(Mid, MediaKind, Direction),
+    KeyframeRequest(Mid, KeyframeRequestKind),
 }
 
 impl Session {
@@ -336,9 +337,18 @@ impl Session {
                 return Some(());
             }
 
-            let media = self.media().find(|m| m.has_ssrc_rx(fb.ssrc()));
+            let media = self.media().find(|m| {
+                if fb.is_for_rx() {
+                    m.has_ssrc_rx(fb.ssrc())
+                } else {
+                    m.has_ssrc_tx(fb.ssrc())
+                }
+            });
             if let Some(media) = media {
                 media.handle_rtcp_fb(now, fb);
+            } else {
+                // This is not necessarily a fault when starting a new track.
+                trace!("No media for feedback: {:?}", fb);
             }
         }
 
@@ -354,6 +364,10 @@ impl Session {
                     media.kind(),
                     media.direction(),
                 ));
+            }
+
+            if let Some(kind) = media.poll_keyframe_request() {
+                return Some(MediaEvent::KeyframeRequest(media.mid(), kind));
             }
 
             if let Some(r) = media.poll_sample() {

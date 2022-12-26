@@ -3,17 +3,24 @@ use crate::{FirEntry, NackEntry, ReceptionReport, ReportList, Rtcp, Sdes, Sender
 /// Normalization of [`Rtcp`] so we can deal with one SSRC at a time.
 #[derive(Debug)]
 pub enum RtcpFb {
-    SenderInfo(SenderInfo),
-    ReceptionReport(ReceptionReport),
-    SourceDescription(Sdes),
-    Goodbye(Ssrc),
-    Nack(Ssrc, ReportList<NackEntry>),
-    Pli(Ssrc),
-    Fir(FirEntry),
-    Twcc(Twcc),
+    SenderInfo(SenderInfo),            // tx -> rx
+    ReceptionReport(ReceptionReport),  // rx -> tx
+    SourceDescription(Sdes),           // tx -> rx
+    Goodbye(Ssrc),                     // tx -> rx
+    Nack(Ssrc, ReportList<NackEntry>), // rx -> tx
+    Pli(Ssrc),                         // rx -> tx
+    Fir(FirEntry),                     // rx -> tx
+    Twcc(Twcc),                        // rx -> tx
 }
 
 impl RtcpFb {
+    pub fn is_for_rx(&self) -> bool {
+        matches!(
+            self,
+            RtcpFb::SenderInfo(_) | RtcpFb::SourceDescription(_) | RtcpFb::Goodbye(_)
+        )
+    }
+
     pub fn from_rtcp<T: IntoIterator<Item = Rtcp>>(t: T) -> impl Iterator<Item = RtcpFb> {
         let mut q = Vec::new();
         let iter = t.into_iter();

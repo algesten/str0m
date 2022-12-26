@@ -410,12 +410,12 @@ impl<'a> TryFrom<&'a [u8]> for Rtcp {
                 };
 
                 match plfb {
-                    PayloadType::PictureLossIndication => return Err("TODO: PLI"),
+                    PayloadType::PictureLossIndication => Rtcp::Pli(buf.try_into()?),
                     PayloadType::SliceLossIndication => return Err("Ignore PayloadType type: SLI"),
                     PayloadType::ReferencePictureSelectionIndication => {
                         return Err("Ignore PayloadType type: RPSI")
                     }
-                    PayloadType::FullIntraRequest => return Err("TODO: FIR"),
+                    PayloadType::FullIntraRequest => Rtcp::Fir(buf.try_into()?),
                     PayloadType::ApplicationLayer => {
                         return Err("Ignore PayloadType: ApplicationLayer")
                     }
