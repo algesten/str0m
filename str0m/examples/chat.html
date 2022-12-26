@@ -51,7 +51,7 @@
                 video: true,
             });
             const tr = rtc.addTransceiver('video', {
-                direction: "sendrecv"
+                direction: "sendonly"
             });
             tr.sender.replaceTrack(streamCam.getTracks()[0]);
             await negotiate();
@@ -62,22 +62,24 @@
                 audio: true,
             });
             const tr = rtc.addTransceiver("audio", {
-                direction: "sendrecv"
+                direction: "sendonly"
             });
             tr.sender.replaceTrack(streamMic.getTracks()[0]);
             await negotiate();
         }
         rtc.ontrack = (e) => {
+            console.log('ontrack', e.track);
             const track = e.track;
             const media = new MediaStream();
             media.addTrack(track);
             const el = document.createElement('video');
             el.controls = true;
             el.srcObject = media;
-            el.onclick = () => {
-                el.play();
-            };
             byId('media').appendChild(el);
+            track.addEventListener('ended', () => {
+                console.log('track ended', track);
+                el.parentNode.removeChild(el);
+            });
         };
         async function startRtc() {
             dataChannel = rtc.createDataChannel("offer/answer");

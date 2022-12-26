@@ -11,7 +11,10 @@ use poem::{get, handler, post, EndpointExt, Route, Server};
 use rtp::Direction;
 use str0m::media::MediaKind;
 use str0m::net::Receive;
-use str0m::{Answer, Candidate, ChannelId, Event, Input, Mid, Offer, Output, Rtc, RtcError};
+use str0m::{
+    Answer, Candidate, ChannelId, Event, IceConnectionState, Input, Mid, Offer, Output, Rtc,
+    RtcError,
+};
 use systemstat::{Platform, System};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::{self, Receiver, Sender};
@@ -47,6 +50,7 @@ enum TrackState {
     ToOpen(Weak<Track>),
     Proposed(Weak<Track>, Mid),
     Open(Weak<Track>, Mid),
+    Gone,
 }
 
 impl TrackState {
@@ -209,6 +213,7 @@ async fn run_loop(mut rx: Receiver<RunLoopInput>) {
     // All current clients.
     let mut clients: Vec<Client> = vec![];
 
+    // Next timeout when the below loop will wake up to drive all clients forward.
     let mut timeout = Instant::now() + Duration::from_secs(1);
 
     loop {
@@ -445,29 +450,33 @@ impl Client {
             return false;
         };
 
-        let waiting_for_answer = self
-            .tracks_out
-            .iter()
-            .any(|t| matches!(t, TrackState::Proposed(_, _)));
-
-        // Can't start a negotiation until the current one is done.
-        if waiting_for_answer {
+        // Don't make any change if we are mid a previous SDP negotiation.
+        if self.rtc.pending_changes().is_some() {
             return false;
         }
 
         let mut change = self.rtc.create_offer();
 
         for t in &mut self.tracks_out {
-            let TrackState::ToOpen(track) = t else {
-                continue;
-            };
-
-            let Some(track) = track.upgrade() else {
-                continue;
-            };
-
-            let mid = change.add_media(track.kind, Direction::SendOnly);
-            *t = TrackState::Proposed(Arc::downgrade(&track), mid);
+            match t {
+                TrackState::ToOpen(track) => {
+                    if let Some(track) = track.upgrade() {
+                        let mid = change.add_media(track.kind, Direction::SendOnly);
+                        *t = TrackState::Proposed(Arc::downgrade(&track), mid);
+                    } else {
+                        *t = TrackState::Gone;
+                    }
+                }
+                TrackState::Open(track, mid) => {
+                    // Owning Arc is in the Client instance where track is coming in.
+                    if track.upgrade().is_none() {
+                        info!("Remove stale track: {:?}", mid);
+                        change.set_direction(*mid, Direction::Inactive);
+                        *t = TrackState::Gone;
+                    }
+                }
+                _ => {}
+            }
         }
 
         if change.has_changes() {
@@ -502,6 +511,10 @@ impl Client {
                 } else if let Ok(answer) = serde_json::from_slice::<'_, Answer>(&x.data) {
                     self.handle_answer(answer)?;
                 }
+            }
+            Event::IceConnectionStateChange(IceConnectionState::Disconnected) => {
+                // Tear down the Rtc instance marking it not possible to reconnect.
+                self.rtc.disconnect();
             }
             _ => {}
         }
