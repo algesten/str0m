@@ -194,7 +194,10 @@ impl Rtc {
     }
 
     pub fn disconnect(&mut self) {
-        self.alive = false;
+        if self.alive {
+            info!("Set alive=false");
+            self.alive = false;
+        }
     }
 
     pub fn add_local_candidate(&mut self, c: Candidate) {
@@ -232,7 +235,7 @@ impl Rtc {
             if let Some(f) = offer.fingerprint() {
                 self.remote_fingerprint = Some(f);
             } else {
-                self.alive = false;
+                self.disconnect();
                 return Err(RtcError::RemoteSdp("missing a=fingerprint".into()));
             }
         }
@@ -314,7 +317,7 @@ impl Rtc {
                 if let Some(f) = answer.fingerprint() {
                     self.remote_fingerprint = Some(f);
                 } else {
-                    self.alive = false;
+                    self.disconnect();
                     return Err(RtcError::RemoteSdp("missing a=fingerprint".into()));
                 }
             }
@@ -469,11 +472,11 @@ impl Rtc {
                     debug!("DTLS verify remote fingerprint");
                     if let Some(v2) = &self.remote_fingerprint {
                         if v1 != *v2 {
-                            self.alive = false;
+                            self.disconnect();
                             return Err(RtcError::RemoteSdp("remote fingerprint no match".into()));
                         }
                     } else {
-                        self.alive = false;
+                        self.disconnect();
                         return Err(RtcError::RemoteSdp("no a=fingerprint before dtls".into()));
                     }
                 }
