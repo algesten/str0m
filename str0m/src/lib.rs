@@ -213,11 +213,6 @@ impl Rtc {
     }
 
     pub fn create_offer(&mut self) -> ChangeSet {
-        if !self.dtls.is_inited() {
-            // The side that makes the first offer is the controlling side.
-            self.ice.set_controlling(true);
-        }
-
         ChangeSet::new(self)
     }
 
@@ -276,6 +271,11 @@ impl Rtc {
     }
 
     pub(crate) fn set_changes(&mut self, changes: Changes) -> Offer {
+        if !self.dtls.is_inited() {
+            // The side that makes the first offer is the controlling side.
+            self.ice.set_controlling(true);
+        }
+
         self.pending = Some(changes);
 
         let params = self.as_sdp_params(true);
