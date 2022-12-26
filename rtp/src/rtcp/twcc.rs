@@ -273,7 +273,11 @@ impl TwccRecvRegister {
         }
 
         // First unreported is the self.time_start relative offset of the next Twcc.
-        let first = self.queue.iter().skip_while(|r| r.reported).next()?;
+        let first = self.queue.iter().skip_while(|r| r.reported).next();
+        if first.is_none() {
+            self.has_unreported = false;
+        }
+        let first = first?;
 
         // Set once on first ever built report.
         if self.time_start.is_none() {
