@@ -3,7 +3,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use crate::Candidate;
-use net::{Id, TransId};
+use net::{Id, TransId, STUN_MAX_RTO_MILLIS};
 
 use net::{stun_resend_delay, STUN_MAX_RETRANS};
 
@@ -275,6 +275,20 @@ impl CandidatePair {
         self.binding_attempts.back().map(|b| b.request_sent)
     }
 
+    /// From the back of binding_attempts, go through all unanswered and find
+    /// the time when we started having an outage.
+    ///
+    /// The returned value is the number of unanswered attempts and the oldest time.
+    fn unanswered(&self) -> Option<(usize, Instant)> {
+        self.binding_attempts
+            .iter()
+            .rev()
+            .take_while(|b| b.respone_recv.is_none())
+            .enumerate()
+            .last()
+            .map(|(idx, b)| (idx + 1, b.request_sent))
+    }
+
     /// When we should do the next retry.
     ///
     /// Returns `None` if we are not to attempt this pair anymore.
@@ -287,7 +301,15 @@ impl CandidatePair {
             // Cheating a bit to make the nomination "skip the queue".
             now - Duration::from_secs(60)
         } else if let Some(last) = self.last_attempt_time() {
-            let send_count = self.binding_attempts.len();
+            // When we have unanswered for longer than STUN_MAX_RTO_MILLIS / 2, start
+            // checking more often.
+            let unanswered_count = self
+                .unanswered()
+                .filter(|(_, since)| now - *since > Duration::from_millis(STUN_MAX_RTO_MILLIS) / 2)
+                .map(|(count, _)| count);
+
+            let send_count = unanswered_count.unwrap_or_else(|| self.binding_attempts.len());
+
             last + stun_resend_delay(send_count)
         } else {
             // No previous attempt, do next retry straight away.
@@ -304,11 +326,7 @@ impl CandidatePair {
     ///
     /// Returns `false` if the candidate has failed.
     pub fn is_still_possible(&self, now: Instant) -> bool {
-        let unanswered = self
-            .binding_attempts
-            .iter()
-            .filter(|b| b.respone_recv.is_none())
-            .count();
+        let unanswered = self.unanswered().map(|b| b.0).unwrap_or(0);
 
         if unanswered < STUN_MAX_RETRANS {
             true
@@ -358,12 +376,13 @@ impl fmt::Debug for CandidatePair {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "CandidatePair({}-{} prio={} state={:?} attempts={} remote={} nom={:?})",
+            "CandidatePair({}-{} prio={} state={:?} attempts={} unanswered={} remote={} nom={:?})",
             self.local_idx,
             self.remote_idx,
             self.prio,
             self.state,
             self.binding_attempts.len(),
+            self.unanswered().map(|b| b.0).unwrap_or(0),
             self.remote_binding_requests,
             self.nomination_state
         )

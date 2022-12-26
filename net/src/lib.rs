@@ -14,7 +14,9 @@ use thiserror::Error;
 
 mod stun;
 pub use stun::stun_resend_delay;
-pub use stun::{StunError, StunMessage, TransId, STUN_MAX_RETRANS, STUN_TIMEOUT};
+pub use stun::{
+    StunError, StunMessage, TransId, STUN_MAX_RETRANS, STUN_MAX_RTO_MILLIS, STUN_TIMEOUT,
+};
 
 mod id;
 // this is only exported from this crate to avoid needing
@@ -64,7 +66,7 @@ pub struct Receive<'a> {
     /// The destination ip of the datagram.
     pub destination: SocketAddr,
 
-    /// Parsed contents of the datagram.    
+    /// Parsed contents of the datagram.
     pub contents: DatagramRecv<'a>,
 }
 

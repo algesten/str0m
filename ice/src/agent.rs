@@ -768,22 +768,14 @@ impl IceAgent {
         // The generation of ordinary and triggered connectivity checks is
         // governed by timer Ta.
         if let Some(last_now) = self.last_now {
-            trace!("Handle timeout after: {:?}", now - last_now);
-
             let min_step = last_now + TIMING_ADVANCE;
             if now < min_step {
-                trace!(
-                    "Stop timeout within timing advance of last: {:?}",
-                    min_step - now
-                );
                 return;
             }
-        } else {
-            trace!("Handle timeout: {:?}", now);
         }
 
         if !self.transmit.is_empty() {
-            // Can't progress, since there is a enqueued send. The
+            // Can't progress, since there is a enqueued send.
             trace!("Stop timeout, already got enqueued transmit");
             return;
         }
