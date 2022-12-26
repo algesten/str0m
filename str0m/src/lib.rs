@@ -13,7 +13,7 @@ use ice::IceAgentEvent;
 use ice::{IceAgent, IceError};
 use net_::NetError;
 pub use rtp::Direction;
-use sctp::{RtcSctp, SctpError};
+use sctp::{RtcSctp, SctpError, SctpEvent};
 use sdp::{Sdp, Setup};
 use thiserror::Error;
 
@@ -47,6 +47,7 @@ pub use rtp::{ChannelId, MediaTime, Mid, Pt, Ssrc};
 
 /// Errors for the whole Rtc engine.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum RtcError {
     /// Some problem with the remote SDP.
     #[error("remote sdp: {0}")]
@@ -117,15 +118,23 @@ struct SendAddr {
 
 /// Events produced by [`Rtc::poll_output()`]
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Event {
     IceCandidate(Candidate),
     IceConnectionStateChange(IceConnectionState),
     MediaAdded(Mid, MediaKind, Direction),
     MediaData(MediaData),
     MediaError(RtcError),
+    KeyframeRequest(Mid, KeyframeRequestKind),
     ChannelOpen(ChannelId, String),
     ChannelData(ChannelData),
     ChannelClose(ChannelId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyframeRequestKind {
+    Pli,
+    Fir,
 }
 
 /// Video or audio data.
@@ -488,7 +497,7 @@ impl Rtc {
 
         'outer: while let Some(e) = self.sctp.poll() {
             match e {
-                sctp::SctpEvent::Transmit(mut q) => {
+                SctpEvent::Transmit(mut q) => {
                     while let Some(v) = q.front() {
                         if let Err(e) = self.dtls.handle_input(v) {
                             if e.is_would_block() {
@@ -502,13 +511,13 @@ impl Rtc {
                     }
                     continue;
                 }
-                sctp::SctpEvent::Open(id, dcep) => {
+                SctpEvent::Open(id, dcep) => {
                     return Ok(Output::Event(Event::ChannelOpen(id.into(), dcep.label)));
                 }
-                sctp::SctpEvent::Close(id) => {
+                SctpEvent::Close(id) => {
                     return Ok(Output::Event(Event::ChannelClose(id.into())));
                 }
-                sctp::SctpEvent::Data(id, binary, data) => {
+                SctpEvent::Data(id, binary, data) => {
                     let cd = ChannelData {
                         id: id.into(),
                         binary,
@@ -590,6 +599,26 @@ impl Rtc {
         self.session.get_media(mid)
     }
 
+    fn do_handle_timeout(&mut self, now: Instant) {
+        self.last_now = now;
+        self.ice.handle_timeout(now);
+        self.sctp.handle_timeout(now);
+        self.session.handle_timeout(now);
+    }
+
+    fn do_handle_receive(&mut self, now: Instant, r: net::Receive) -> Result<(), RtcError> {
+        trace!("IN {:?}", r);
+        self.last_now = now;
+        use net::DatagramRecv::*;
+        match r.contents {
+            Stun(_) => self.ice.handle_receive(now, r),
+            Dtls(_) => self.dtls.handle_receive(r)?,
+            Rtp(_) | Rtcp(_) => self.session.handle_receive(now, r),
+        }
+
+        Ok(())
+    }
+
     /// Obtain handle for writing to a data channel.
     ///
     /// This is only available after either the remote peer has added one data channel
@@ -609,26 +638,6 @@ impl Rtc {
         }
 
         Some(Channel { rtc: self, id })
-    }
-
-    fn do_handle_timeout(&mut self, now: Instant) {
-        self.last_now = now;
-        self.ice.handle_timeout(now);
-        self.sctp.handle_timeout(now);
-        self.session.handle_timeout(now);
-    }
-
-    fn do_handle_receive(&mut self, now: Instant, r: net::Receive) -> Result<(), RtcError> {
-        trace!("IN {:?}", r);
-        self.last_now = now;
-        use net::DatagramRecv::*;
-        match r.contents {
-            Stun(_) => self.ice.handle_receive(now, r),
-            Dtls(_) => self.dtls.handle_receive(r)?,
-            Rtp(_) | Rtcp(_) => self.session.handle_receive(now, r),
-        }
-
-        Ok(())
     }
 }
 
