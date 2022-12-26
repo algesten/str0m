@@ -232,6 +232,7 @@ async fn run_loop(mut rx: Receiver<RunLoopInput>) {
                     // Each new client must get a reference to all open tracks from other clients.
                     for other in clients.iter().filter(|c| c.is_alive()) {
                         for track in &other.tracks_in {
+                            info!("Add track to client: {:?} {:?}", track.origin, track.mid);
                             client.add_remote_track(Arc::downgrade(track));
                         }
                     }

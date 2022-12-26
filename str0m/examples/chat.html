@@ -76,9 +76,13 @@
             el.controls = true;
             el.srcObject = media;
             byId('media').appendChild(el);
-            track.addEventListener('ended', () => {
-                console.log('track ended', track);
+            track.addEventListener('mute', () => {
+                console.log('track muted', track);
                 el.parentNode.removeChild(el);
+            });
+            track.addEventListener('unmute', () => {
+                console.log('track unmuted', track);
+                byId('media').appendChild(el);
             });
         };
         async function startRtc() {
