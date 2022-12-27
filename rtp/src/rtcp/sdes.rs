@@ -37,6 +37,10 @@ pub enum SdesType {
     NOTE = 7,
     /// Private extensions
     PRIV = 8,
+    /// Rtp stream ID.
+    RtpStreamId = 12,
+    /// Repaired rtp stream ID.
+    RepairedRtpStreamId = 13,
     /// Who knows
     Unknown,
 }
@@ -139,6 +143,8 @@ impl From<u8> for SdesType {
             6 => TOOL,
             7 => NOTE,
             8 => PRIV,
+            12 => RtpStreamId,
+            13 => RepairedRtpStreamId,
             _ => Unknown,
         }
     }
