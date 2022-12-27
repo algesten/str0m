@@ -741,6 +741,7 @@ pub struct MediaWriter<'a> {
 }
 
 impl MediaWriter<'_> {
+    #[instrument(skip_all, fields(mid = %self.media.mid()))]
     pub fn write(&mut self, ts: MediaTime, data: &[u8]) -> Result<usize, RtcError> {
         let codec = match self.codec {
             Some(v) => v,
@@ -749,6 +750,7 @@ impl MediaWriter<'_> {
 
         if !self.media.dir.is_sending() {
             // Ignore any media writes while we are not sending.
+            debug!("Ignore due to direction: {:?}", self.media.dir);
             return Ok(10_000);
         }
 
@@ -765,6 +767,7 @@ impl MediaWriter<'_> {
             PacketizingBuffer::new(codec.into(), max_retain)
         });
 
+        debug!("Write to packetizer time: {:?} bytes: {}", ts, data.len());
         if let Err(e) = buf.push_sample(ts, data, ssrc, self.sim_lvl, DATAGRAM_MTU - SRTP_OVERHEAD)
         {
             return Err(RtcError::Packet(self.media.mid, self.pt, e));

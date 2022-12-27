@@ -4,6 +4,7 @@
 extern crate tracing;
 
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use std::{fmt, io};
 
@@ -97,6 +98,7 @@ pub enum RtcError {
 
 /// Main type.
 pub struct Rtc {
+    instance_id: u64,
     alive: bool,
     ice: IceAgent,
     dtls: Dtls,
@@ -182,7 +184,10 @@ impl Rtc {
             ice.set_ice_lite(config.ice_lite);
         }
 
+        static INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
         Rtc {
+            instance_id: INSTANCE_COUNTER.fetch_add(1, Ordering::SeqCst),
             alive: true,
             ice,
             dtls: Dtls::new().expect("DTLS to init without problem"),
@@ -202,6 +207,7 @@ impl Rtc {
         self.alive
     }
 
+    #[instrument(skip_all, fields(id = self.instance_id))]
     pub fn disconnect(&mut self) {
         if self.alive {
             info!("Set alive=false");
@@ -209,10 +215,12 @@ impl Rtc {
         }
     }
 
+    #[instrument(skip_all, fields(id = self.instance_id))]
     pub fn add_local_candidate(&mut self, c: Candidate) {
         self.ice.add_local_candidate(c);
     }
 
+    #[instrument(skip_all, fields(id = self.instance_id))]
     pub fn add_remote_candidate(&mut self, c: Candidate) {
         self.ice.add_remote_candidate(c);
     }
@@ -221,11 +229,12 @@ impl Rtc {
         self.ice.state()
     }
 
+    #[instrument(skip_all, fields(id = self.instance_id))]
     pub fn create_offer(&mut self) -> ChangeSet {
         ChangeSet::new(self)
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(id = self.instance_id))]
     pub fn accept_offer(&mut self, offer: Offer) -> Result<Answer, RtcError> {
         if offer.media_lines.is_empty() {
             return Err(RtcError::RemoteSdp("No m-lines in offer".into()));
@@ -280,7 +289,7 @@ impl Rtc {
         Ok(sdp.into())
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(id = self.instance_id))]
     pub(crate) fn set_pending(&mut self, changes: Changes) -> Offer {
         if !self.dtls.is_inited() {
             // The side that makes the first offer is the controlling side.
@@ -309,6 +318,7 @@ impl Rtc {
         }
     }
 
+    #[instrument(skip_all, fields(id = self.instance_id))]
     pub fn pending_changes(&mut self) -> Option<PendingChanges> {
         if !self.alive {
             return None;
@@ -317,7 +327,7 @@ impl Rtc {
         Some(PendingChanges { rtc: self })
     }
 
-    #[instrument(skip_all)]
+    #[instrument(skip_all, fields(id = self.instance_id))]
     fn accept_answer(&mut self, answer: Option<Answer>) -> Result<(), RtcError> {
         if let Some(answer) = answer {
             self.add_ice_details(&answer)?;
@@ -423,6 +433,7 @@ impl Rtc {
         self.session.new_ssrc()
     }
 
+    #[instrument(skip_all, fields(id = self.instance_id))]
     pub fn poll_output(&mut self) -> Result<Output, RtcError> {
         let o = self.do_poll_output()?;
 
@@ -583,6 +594,7 @@ impl Rtc {
         Ok(Output::Timeout(next))
     }
 
+    #[instrument(skip_all, fields(id = self.instance_id))]
     pub fn handle_input(&mut self, input: Input) -> Result<(), RtcError> {
         if !self.alive {
             return Ok(());
@@ -598,6 +610,7 @@ impl Rtc {
         Ok(())
     }
 
+    #[instrument(skip_all, fields(id = self.instance_id))]
     pub fn media(&mut self, mid: Mid) -> Option<&mut Media> {
         if !self.alive {
             return None;
@@ -631,6 +644,7 @@ impl Rtc {
     /// to the SDP, or we've locally done [`ChangeSet::add_channel()`].
     ///
     /// Either way, we must wait for the [`Event::ChannelOpen`] before writing.
+    #[instrument(skip_all, fields(id = self.instance_id))]
     pub fn channel(&mut self, id: ChannelId) -> Option<Channel<'_>> {
         if !self.alive {
             return None;
