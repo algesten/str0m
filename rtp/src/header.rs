@@ -180,13 +180,13 @@ impl RtpHeader {
         Some(ret)
     }
 
-    /// For RTX the original sequence number is inserted befor the RTP payload.
+    /// For RTX the original sequence number is inserted before the RTP payload.
     pub fn read_original_sequence_number(buf: &[u8], seq_no: &mut u16) -> usize {
         *seq_no = u16::from_be_bytes([buf[0], buf[1]]);
         2
     }
 
-    /// For RTX the original sequence number is inserted befor the RTP payload.
+    /// For RTX the original sequence number is inserted before the RTP payload.
     pub fn write_original_sequence_number(buf: &mut [u8], seq_no: SeqNo) -> usize {
         let seq_u16 = (*seq_no) as u16;
         buf[0..2].copy_from_slice(&seq_u16.to_be_bytes());

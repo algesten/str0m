@@ -249,6 +249,11 @@ impl ReceiverRegister {
     }
 
     fn create_nack_report(&mut self) -> Option<Nack> {
+        // No nack report during probation.
+        if self.probation > 0 {
+            return None;
+        }
+
         // nack_check_from tracks where we create the next nack report from.
         let start = *self.nack_check_from;
         // MISORDER_DELAY gives us a "grace period" of receiving packets out of

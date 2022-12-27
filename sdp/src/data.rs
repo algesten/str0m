@@ -616,8 +616,8 @@ impl MediaLine {
                         continue;
                     }
 
-                    let info = by_ssrc(&mut v, ssrcs[0]);
-                    info.repair = Some(ssrcs[1]);
+                    let info = by_ssrc(&mut v, ssrcs[1]);
+                    info.repair = Some(ssrcs[0]);
                 }
                 _ => {}
             }

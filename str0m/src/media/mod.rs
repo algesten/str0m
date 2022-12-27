@@ -622,8 +622,8 @@ impl Media {
     pub(crate) fn get_repaired_rx_ssrc(&self, ssrc: Ssrc) -> Option<Ssrc> {
         self.sources_rx
             .iter()
-            .find(|r| r.repairs() == Some(ssrc))
-            .map(|r| r.ssrc())
+            .find(|r| r.ssrc() == ssrc)
+            .and_then(|r| r.repairs())
     }
 
     pub(crate) fn clear_send_buffers(&mut self) {
