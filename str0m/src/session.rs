@@ -30,6 +30,8 @@ pub(crate) struct Session {
 
     // these fields are pub to allow session_sdp.rs modify them.
     pub media: Vec<MediaOrApp>,
+    /// Extension mappings are _per BUNDLE_, but we can only have one a=group BUNDLE
+    /// in WebRTC (one ice connection), so they are effetively per session.
     pub exts: Extensions,
     pub codec_config: CodecConfig,
 

@@ -73,6 +73,9 @@ pub struct Media {
     /// Audio eller video.
     kind: MediaKind,
 
+    /// The extenions for this m-line.
+    exts: Extensions,
+
     /// Current media direction.
     ///
     /// Can be altered via negotiation.
@@ -160,6 +163,17 @@ impl Media {
 
     pub(crate) fn kind(&self) -> MediaKind {
         self.kind
+    }
+
+    pub(crate) fn set_exts(&mut self, exts: Extensions) {
+        if self.exts != exts {
+            info!("Set {:?} extensions: {:?}", self.mid, exts);
+            self.exts = exts;
+        }
+    }
+
+    pub(crate) fn exts(&self) -> &Extensions {
+        &self.exts
     }
 
     pub fn direction(&self) -> Direction {
@@ -485,7 +499,12 @@ impl Media {
         Some(())
     }
 
-    pub(crate) fn apply_changes(&mut self, m: &MediaLine, config: &CodecConfig) {
+    pub(crate) fn apply_changes(
+        &mut self,
+        m: &MediaLine,
+        config: &CodecConfig,
+        session_exts: &Extensions,
+    ) {
         // Directional changes
         {
             // All changes come from the other side, either via an incoming OFFER
@@ -548,6 +567,16 @@ impl Media {
 
                 keep
             });
+        }
+
+        // Update the extensions
+        {
+            let mut exts = Extensions::new();
+            for x in m.extmaps() {
+                exts.set_mapping(x);
+            }
+            exts.keep_same(session_exts);
+            self.set_exts(exts);
         }
 
         // SSRC changes
@@ -694,6 +723,7 @@ impl Default for Media {
                 track_id: Id::<30>::random().to_string(),
             },
             kind: MediaKind::Video,
+            exts: Extensions::new(),
             dir: Direction::SendRecv,
             params: vec![],
             sources_rx: vec![],
@@ -711,11 +741,12 @@ impl Default for Media {
 }
 
 impl Media {
-    pub(crate) fn from_remote_media_line(l: &MediaLine, index: usize) -> Self {
+    pub(crate) fn from_remote_media_line(l: &MediaLine, index: usize, exts: Extensions) -> Self {
         Media {
             mid: l.mid(),
             index,
             kind: l.typ.clone().into(),
+            exts,
             dir: l.direction().invert(), // remove direction is reverse.
             params: l.rtp_params().into_iter().map(|p| p.into()).collect(),
             ..Default::default()
@@ -724,13 +755,14 @@ impl Media {
 
     // Going from AddMedia to Media is for m-lines that are pending in a Change and are sent
     // in the offer to the other side.
-    pub(crate) fn from_add_media(a: AddMedia) -> Self {
+    pub(crate) fn from_add_media(a: AddMedia, exts: Extensions) -> Self {
         let mut media = Media {
             mid: a.mid,
             index: a.index,
             cname: a.cname,
             msid: a.msid,
             kind: a.kind,
+            exts,
             dir: a.dir,
             params: a.params,
             ..Default::default()

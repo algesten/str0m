@@ -123,31 +123,6 @@ impl Extension {
         "unknown"
     }
 
-    /// Extensions that we have implemented support for.
-    ///
-    /// Make sure this corresponds to `Extensions::default_mappings()`.
-    pub fn is_supported(&self) -> bool {
-        use Extension::*;
-        match self {
-            RtpMid => true,
-            AbsoluteSendTime => true,
-            TransportSequenceNumber => true,
-
-            // TODO below
-            AudioLevel => true,
-            RtpStreamId => false,
-            RepairedRtpStreamId => false,
-            VideoOrientation => false,
-            TransmissionTimeOffset => false,
-            PlayoutDelay => false,
-            VideoContentType => false,
-            VideoTiming => false,
-            FrameMarking => false,
-            ColorSpace => false,
-            UnknownUri => false,
-        }
-    }
-
     pub fn is_serialized(&self) -> bool {
         *self != Extension::UnknownUri
     }
@@ -207,7 +182,7 @@ impl Extension {
 // "a=extmap:14 urn:ietf:params:rtp-hdrext:toffset"
 
 /// Mapping between RTP extension id to what extension that is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Extensions([Option<Extension>; 14]);
 
 impl Extensions {
@@ -218,15 +193,28 @@ impl Extensions {
     pub fn default_mappings() -> Extensions {
         let mut exts = Self::new();
 
-        exts.apply_mapping(&ExtMap::new(2, Extension::AbsoluteSendTime));
-        exts.apply_mapping(&ExtMap::new(3, Extension::TransportSequenceNumber));
-        exts.apply_mapping(&ExtMap::new(4, Extension::RtpMid));
-        // exts.apply_mapping(&ExtMap::new(8, Extension::ColorSpace));
-        exts.apply_mapping(&ExtMap::new(10, Extension::RtpStreamId));
-        exts.apply_mapping(&ExtMap::new(11, Extension::RepairedRtpStreamId));
-        exts.apply_mapping(&ExtMap::new(13, Extension::VideoOrientation));
+        exts.set_mapping(ExtMap::new(2, Extension::AbsoluteSendTime));
+        exts.set_mapping(ExtMap::new(3, Extension::TransportSequenceNumber));
+        exts.set_mapping(ExtMap::new(4, Extension::RtpMid));
+        // exts.set_mapping(&ExtMap::new(8, Extension::ColorSpace));
+        exts.set_mapping(ExtMap::new(10, Extension::RtpStreamId));
+        exts.set_mapping(ExtMap::new(11, Extension::RepairedRtpStreamId));
+        exts.set_mapping(ExtMap::new(13, Extension::VideoOrientation));
 
         exts
+    }
+
+    pub fn set_mapping(&mut self, x: ExtMap) {
+        let new_index = x.id as usize - 1;
+        self.0[new_index] = Some(x.ext);
+    }
+
+    pub fn keep_same(&mut self, other: &Extensions) {
+        for i in 0..14 {
+            if self.0[i] != other.0[i] {
+                self.0[i] = None;
+            }
+        }
     }
 
     pub fn apply_mapping(&mut self, x: &ExtMap) {
@@ -235,17 +223,24 @@ impl Extensions {
         }
 
         // Mapping goes from 0 to 13.
-        let i = x.id as usize - 1;
+        let new_index = x.id as usize - 1;
 
-        // Remove previous mapping if we have one.
-        for (idx, m) in self.0.iter_mut().enumerate() {
-            if i != idx && *m == Some(x.ext) {
-                m.take();
-            }
+        let Some(old_index) = self
+            .0
+            .iter()
+            .enumerate()
+            .find(|(_, m)| **m == Some(x.ext))
+            .map(|(i, _)| i) else {
+                return;
+            };
+
+        if new_index == old_index {
+            return;
         }
 
-        // Put it in place
-        self.0[i] = Some(x.ext);
+        // swap them
+        self.0[old_index] = self.0[new_index].take();
+        self.0[new_index] = Some(x.ext);
     }
 
     pub fn lookup(&self, id: u8) -> Option<Extension> {
@@ -645,5 +640,22 @@ mod test {
 
         assert_eq!(ev.play_delay_min, ev2.play_delay_min);
         assert_eq!(ev.play_delay_max, ev2.play_delay_max);
+    }
+}
+
+impl fmt::Debug for Extensions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Extensions(")?;
+        let joined = self
+            .0
+            .iter()
+            .enumerate()
+            .filter_map(|(i, v)| v.map(|v| (i + 1, v)))
+            .map(|(i, v)| format!("{}={}", i, v))
+            .collect::<Vec<_>>()
+            .join(", ");
+        write!(f, "{}", joined)?;
+        write!(f, ")")?;
+        Ok(())
     }
 }

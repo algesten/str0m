@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use dtls::Fingerprint;
 use ice::{Candidate, IceCreds};
-use rtp::{Extensions, Mid};
+use rtp::Mid;
 use sctp::RtcSctp;
 use sdp::{Answer, MediaAttribute, MediaLine, MediaType, SimulcastGroups, SimulcastOption};
 use sdp::{Offer, Proto, Sdp, SessionAttribute, Setup};
@@ -57,16 +57,14 @@ impl Session {
 
             // If there are additions in the pending changes, prepend them now.
             if let Some(pending) = params.pending {
+                let exts = self.exts();
                 new_lines = pending
-                    .as_new_m_lines(new_index_start, self.codec_config())
+                    .as_new_m_lines(new_index_start, self.codec_config(), exts)
                     .collect();
             }
 
             // Add potentially new m-lines to the existing ones.
             v.extend(new_lines.iter().map(|n| n as &dyn AsMediaLine));
-
-            // Session level extension map.
-            let exts = self.exts();
 
             // Turn into sdp::MediaLine (m-line).
             let mut lines = v
@@ -77,7 +75,7 @@ impl Session {
 
                     let attrs = params.media_attributes(include_candidates);
 
-                    m.as_media_line(attrs, exts)
+                    m.as_media_line(attrs)
                 })
                 .collect::<Vec<_>>();
 
@@ -110,7 +108,7 @@ impl Session {
     pub fn apply_offer(&mut self, offer: Offer) -> Result<(), RtcError> {
         offer.assert_consistency()?;
 
-        self.update_session_extmaps(&offer)?;
+        self.update_session_extmaps(&offer);
 
         let new_lines = self.sync_m_lines(&offer).map_err(RtcError::RemoteSdp)?;
 
@@ -172,7 +170,7 @@ impl Session {
     ) -> Result<(), RtcError> {
         answer.assert_consistency()?;
 
-        self.update_session_extmaps(&answer)?;
+        self.update_session_extmaps(&answer);
 
         let new_lines = self.sync_m_lines(&answer).map_err(RtcError::RemoteSdp)?;
 
@@ -219,6 +217,7 @@ impl Session {
         let mut new_lines = Vec::new();
 
         let config = self.codec_config().clone();
+        let session_exts = self.exts().clone();
 
         for (idx, m) in sdp.media_lines.iter().enumerate() {
             if m.typ == MediaType::Application {
@@ -237,7 +236,7 @@ impl Session {
                     return index_err(m.mid());
                 }
 
-                media.apply_changes(m, &config);
+                media.apply_changes(m, &config, &session_exts);
                 continue;
             }
 
@@ -261,12 +260,14 @@ impl Session {
             let idx = self.media.len();
 
             if m.typ.is_media() {
-                let media = Media::from_remote_media_line(*m, idx);
+                let mut exts = self.exts().clone();
+                exts.keep_same(&self.exts);
+                let media = Media::from_remote_media_line(*m, idx, exts);
                 self.media.push(MediaOrApp::Media(media));
 
                 let media = only_media_mut(&mut self.media).last().unwrap();
                 media.need_open_event = need_open_event;
-                media.apply_changes(m, &self.codec_config)
+                media.apply_changes(m, &self.codec_config, &self.exts)
             } else if m.typ.is_channel() {
                 let app = (m.mid(), idx).into();
                 self.media.push(MediaOrApp::App(app));
@@ -284,21 +285,19 @@ impl Session {
         Ok(())
     }
 
-    /// Update session level Extensions.
-    fn update_session_extmaps(&mut self, sdp: &Sdp) -> Result<(), RtcError> {
-        let extmaps = sdp
-            .media_lines
-            .iter()
-            .map(|m| m.extmaps())
-            .flatten()
-            // Only keep supported extensions
-            .filter(|x| x.ext.is_supported());
+    /// Update session level Extensions from offer or answer.
+    fn update_session_extmaps(&mut self, sdp: &Sdp) {
+        let old = self.exts;
+
+        let extmaps = sdp.media_lines.iter().map(|m| m.extmaps()).flatten();
 
         for x in extmaps {
             self.exts.apply_mapping(&x);
         }
 
-        Ok(())
+        if old != self.exts {
+            info!("Updated session extensions: {:?}", self.exts);
+        }
     }
 
     /// Returns all media/channels as `AsMediaLine` trait.
@@ -310,7 +309,7 @@ impl Session {
 pub trait AsMediaLine {
     fn mid(&self) -> Mid;
     fn index(&self) -> usize;
-    fn as_media_line(&self, attrs: Vec<MediaAttribute>, exts: &Extensions) -> MediaLine;
+    fn as_media_line(&self, attrs: Vec<MediaAttribute>) -> MediaLine;
 }
 
 impl AsMediaLine for App {
@@ -320,7 +319,7 @@ impl AsMediaLine for App {
     fn index(&self) -> usize {
         self.index()
     }
-    fn as_media_line(&self, mut attrs: Vec<MediaAttribute>, _exts: &Extensions) -> MediaLine {
+    fn as_media_line(&self, mut attrs: Vec<MediaAttribute>) -> MediaLine {
         attrs.push(MediaAttribute::Mid(self.mid()));
         attrs.push(MediaAttribute::SctpPort(5000));
         attrs.push(MediaAttribute::MaxMessageSize(262144));
@@ -342,11 +341,11 @@ impl AsMediaLine for Media {
     fn index(&self) -> usize {
         self.index()
     }
-    fn as_media_line(&self, mut attrs: Vec<MediaAttribute>, exts: &Extensions) -> MediaLine {
+    fn as_media_line(&self, mut attrs: Vec<MediaAttribute>) -> MediaLine {
         attrs.push(MediaAttribute::Mid(self.mid()));
 
         let audio = self.kind() == MediaKind::Audio;
-        for e in exts.into_extmap(audio) {
+        for e in self.exts().into_extmap(audio) {
             attrs.push(MediaAttribute::ExtMap(e));
         }
 
@@ -439,11 +438,11 @@ impl AsMediaLine for MediaOrApp {
             App(v) => v.index(),
         }
     }
-    fn as_media_line(&self, attrs: Vec<sdp::MediaAttribute>, exts: &Extensions) -> MediaLine {
+    fn as_media_line(&self, attrs: Vec<sdp::MediaAttribute>) -> MediaLine {
         use MediaOrApp::*;
         match self {
-            Media(v) => v.as_media_line(attrs, exts),
-            App(v) => v.as_media_line(attrs, exts),
+            Media(v) => v.as_media_line(attrs),
+            App(v) => v.as_media_line(attrs),
         }
     }
 }

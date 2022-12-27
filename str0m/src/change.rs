@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
 use net_::Id;
-use rtp::{ChannelId, Direction, Mid, Ssrc};
+use rtp::{ChannelId, Direction, Extensions, Mid, Ssrc};
 use sctp::{DcepOpen, ReliabilityType};
 use sdp::{MediaLine, Msid, Offer};
 
@@ -193,11 +193,12 @@ impl Changes {
         &'a self,
         index_start: usize,
         config: &'b CodecConfig,
+        exts: &'b Extensions,
     ) -> impl Iterator<Item = MediaOrApp> + '_ {
         self.0
             .iter()
             .enumerate()
-            .filter_map(move |(idx, c)| c.as_new_m_line(index_start + idx, config))
+            .filter_map(move |(idx, c)| c.as_new_m_line(index_start + idx, config, exts))
     }
 
     pub(crate) fn apply_to(&self, lines: &mut [MediaLine]) {
@@ -218,7 +219,12 @@ impl Changes {
 }
 
 impl Change {
-    fn as_new_m_line(&self, index: usize, config: &CodecConfig) -> Option<MediaOrApp> {
+    fn as_new_m_line(
+        &self,
+        index: usize,
+        config: &CodecConfig,
+        exts: &Extensions,
+    ) -> Option<MediaOrApp> {
         use Change::*;
         match self {
             AddMedia(v) => {
@@ -227,7 +233,7 @@ impl Change {
                 add.params = config.all_for_kind(v.kind).map(|c| c.clone()).collect();
                 add.index = index;
 
-                let media = Media::from_add_media(add);
+                let media = Media::from_add_media(add, exts.clone());
                 Some(MediaOrApp::Media(media))
             }
             AddApp(mid) => {
