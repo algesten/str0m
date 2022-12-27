@@ -4,6 +4,7 @@ use rtp::{Direction, ExtMap, Mid, SessionId, Ssrc};
 use std::collections::HashSet;
 use std::fmt::{self};
 use std::num::ParseFloatError;
+use std::ops::Deref;
 use std::str::FromStr;
 
 use ice::{Candidate, IceCreds};
@@ -479,10 +480,27 @@ impl MediaLine {
     }
 
     pub fn simulcast(&self) -> Option<Simulcast> {
+        let mut found = None;
+
         for a in &self.attrs {
             if let MediaAttribute::Simulcast(s) = a {
-                return Some(s.clone());
+                found = Some(s.clone());
             }
+            if let MediaAttribute::Rid {
+                pt, restriction, ..
+            } = a
+            {
+                if !pt.is_empty() {
+                    warn!("Not currently supporting PT via a=rid");
+                }
+                if !restriction.is_empty() {
+                    warn!("Not currently supporting restrictions via a=rid");
+                }
+            }
+        }
+
+        if found.is_some() {
+            return found;
         }
 
         // Fallback simulcast for browser doing SDP munging.
@@ -1165,7 +1183,7 @@ pub struct Simulcast {
 }
 
 impl Simulcast {
-    pub fn flip(self) -> Self {
+    pub fn invert(self) -> Self {
         Simulcast {
             send: self.recv,
             recv: self.send,
@@ -1181,8 +1199,24 @@ impl Simulcast {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SimulcastGroups(pub Vec<SimulcastGroup>);
 
+impl Deref for SimulcastGroups {
+    type Target = [SimulcastGroup];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SimulcastGroup(pub Vec<SimulcastOption>);
+
+impl Deref for SimulcastGroup {
+    type Target = [SimulcastOption];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SimulcastOption {

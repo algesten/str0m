@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate tracing;
+
 use std::fmt;
 use std::ops::Deref;
 
@@ -9,6 +12,7 @@ use thiserror::Error;
 mod data;
 pub use data::{Codec, CodecSpec, FormatParams, Sdp, Session, SessionAttribute, Setup};
 pub use data::{MediaAttribute, MediaLine, MediaType, Msid, PayloadParams, Proto, SsrcInfo};
+pub use data::{Simulcast, SimulcastGroup, SimulcastGroups, SimulcastOption};
 
 mod parser;
 

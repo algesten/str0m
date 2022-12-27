@@ -4,7 +4,7 @@ use dtls::Fingerprint;
 use ice::{Candidate, IceCreds};
 use rtp::{Extensions, Mid};
 use sctp::RtcSctp;
-use sdp::{Answer, MediaAttribute, MediaLine, MediaType};
+use sdp::{Answer, MediaAttribute, MediaLine, MediaType, SimulcastGroups, SimulcastOption};
 use sdp::{Offer, Proto, Sdp, SessionAttribute, Setup};
 
 use crate::change::{Change, Changes};
@@ -121,6 +121,15 @@ impl Session {
         // that we find in the incoming line. This is probably always correct. If there is simulcast
         // configured, we (probably) have simulcast in both directions. If we have RTX, we have it
         // in both directions.
+        //
+        // This is the "old school" way of communicating a=ssrc lines in the SDP to prepare the sender
+        // for which SSRC belongs to which m-line. For simulcast, Chrome has started going another way
+        // where the ssrc is _NOT_ communicated with a=ssrc in advance. Instead it starts sending
+        // new streams with RTP header extensions mid, stream_id and repair_stream_id. That way we
+        // can dynamically discover which SSRC belongs to which m-line.
+        //
+        // We need to support borth the old way of a=ssrc in SDP as well as the new way. By matching
+        // incoming a=ssrc lines with outgoing, we will respond with a=ssrc when the originator sends it.
         for l in new_lines.iter().filter(|l| l.typ.is_media()) {
             let ssrcs: HashMap<_, _> = l
                 .ssrc_info()
@@ -132,12 +141,23 @@ impl Session {
                 .get_media(l.mid())
                 .expect("Media to be added for new m-line");
 
+            if let Some(s) = l.simulcast() {
+                if s.is_munged {
+                    warn!("Not supporting simulcast via munging SDP");
+                } else {
+                    if media.simulcast().is_none() {
+                        // Invert before setting, since it has a recv and send config.
+                        media.set_simulcast(s.invert());
+                    }
+                }
+            }
+
             for (new_ssrc, old_repair_ssrc) in ssrcs.values() {
                 // map old repair ssrc to corresponding new.
                 let repairs = old_repair_ssrc.and_then(|r| ssrcs.get(&r)).map(|r| r.0);
 
-                // create source.
-                media.add_source_tx(*new_ssrc, repairs);
+                // maybe create source, if not already defined.
+                media.maybe_add_source_tx(*new_ssrc, repairs);
             }
         }
 
@@ -184,7 +204,7 @@ impl Session {
             media.set_cname(add_media.cname);
 
             for (ssrc, repairs) in add_media.ssrcs {
-                media.add_source_tx(ssrc, repairs);
+                media.maybe_add_source_tx(ssrc, repairs);
             }
         }
 
@@ -345,6 +365,29 @@ impl AsMediaLine for Media {
             .flat_map(|c| [Some(c.pt()), c.pt_rtx()].into_iter())
             .filter_map(|c| c)
             .collect();
+
+        if let Some(s) = self.simulcast() {
+            fn to_rids<'a>(
+                gs: &'a SimulcastGroups,
+                direction: &'static str,
+            ) -> impl Iterator<Item = MediaAttribute> + 'a {
+                gs.iter().flat_map(|g| g.iter()).filter_map(move |o| {
+                    if let SimulcastOption::Rid(id) = o {
+                        Some(MediaAttribute::Rid {
+                            id: id.clone(),
+                            direction,
+                            pt: vec![],
+                            restriction: vec![],
+                        })
+                    } else {
+                        None
+                    }
+                })
+            }
+            attrs.extend(to_rids(&s.recv, "recv"));
+            attrs.extend(to_rids(&s.send, "send"));
+            attrs.push(MediaAttribute::Simulcast(s.clone()));
+        }
 
         // Outgoing SSRCs
         let msid = format!("{} {}", self.msid().stream_id, self.msid().track_id);

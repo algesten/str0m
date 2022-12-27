@@ -9,7 +9,7 @@ use rtp::{SeqNo, Ssrc, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
 pub use rtp::{Direction, Mid, Pt};
 pub use sdp::{Codec, FormatParams};
-use sdp::{MediaLine, MediaType, Msid};
+use sdp::{MediaLine, MediaType, Msid, Simulcast};
 
 mod codec;
 pub use codec::{CodecConfig, CodecParams};
@@ -123,6 +123,9 @@ pub struct Media {
 
     /// If we receive an rtcp request for a keyframe, this holds what kind.
     waiting_keyframe_request: Option<KeyframeRequestKind>,
+
+    /// Simulcast configuration, if set.
+    simulcast: Option<Simulcast>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -329,7 +332,7 @@ impl Media {
         }
     }
 
-    pub(crate) fn add_source_tx(&mut self, ssrc: Ssrc, repairs: Option<Ssrc>) {
+    pub(crate) fn maybe_add_source_tx(&mut self, ssrc: Ssrc, repairs: Option<Ssrc>) {
         let maybe_idx = self.sources_tx.iter().position(|r| r.ssrc() == ssrc);
 
         let s = if let Some(idx) = maybe_idx {
@@ -650,6 +653,15 @@ impl Media {
         let c = self.params.iter().max_by_key(|c| c.match_score(codec))?;
         Some(c.pt())
     }
+
+    pub(crate) fn simulcast(&self) -> Option<&Simulcast> {
+        self.simulcast.as_ref()
+    }
+
+    pub(crate) fn set_simulcast(&mut self, s: Simulcast) {
+        info!("Set simulcast: {:?}", s);
+        self.simulcast = Some(s);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -693,6 +705,7 @@ impl Default for Media {
             resends: VecDeque::new(),
             need_open_event: true,
             waiting_keyframe_request: None,
+            simulcast: None,
         }
     }
 }
@@ -724,7 +737,7 @@ impl Media {
         };
 
         for (ssrc, repairs) in a.ssrcs {
-            media.add_source_tx(ssrc, repairs);
+            media.maybe_add_source_tx(ssrc, repairs);
         }
 
         media
