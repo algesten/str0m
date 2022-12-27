@@ -235,7 +235,7 @@ impl Session {
                 return;
             }
         };
-        let source = media.get_source_rx(&header, now);
+        let source = media.get_source_rx(&header, now, true);
         let seq_no = source.update(now, &header, clock_rate);
 
         let is_rtx = source.is_rtx();
@@ -289,7 +289,7 @@ impl Session {
             trace!("Repaired {:?} -> {:?}", header.ssrc, repaired_ssrc);
             header.ssrc = repaired_ssrc;
 
-            let source = media.get_source_rx(&header, now);
+            let source = media.get_source_rx(&header, now, false);
             let orig_seq_no = source.update(now, &header, clock_rate);
 
             if !source.is_valid() {

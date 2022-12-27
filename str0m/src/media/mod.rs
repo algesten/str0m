@@ -285,24 +285,32 @@ impl Media {
         &mut self,
         header: &RtpHeader,
         now: Instant,
+        do_update_receivers: bool,
     ) -> &mut ReceiverSource {
-        let repairs_ssrc = header
-            .ext_vals
-            .rep_stream_id
-            .and_then(|id| self.sources_rx.iter().find(|r| r.stream_id() == Some(&*id)))
-            .map(|r| r.ssrc());
+        // If we do_update_receivers, we want to know which SSRC the `rep_stream_id` header corresponds
+        // to, we must figure this out before get_or_create_source_rx to fulfil the borrow checker.
+        let repairs_ssrc = match (do_update_receivers, header.ext_vals.rep_stream_id) {
+            (true, Some(id)) => self
+                .sources_rx
+                .iter()
+                .find(|r| r.stream_id() == Some(&*id))
+                .map(|r| r.ssrc()),
+            _ => None,
+        };
 
         let source = self.get_or_create_source_rx(header.ssrc, now);
 
-        if let Some(repairs) = repairs_ssrc {
-            if source.repairs().is_none() {
-                source.set_repairs(repairs);
+        if do_update_receivers {
+            if let Some(repairs) = repairs_ssrc {
+                if source.repairs().is_none() {
+                    source.set_repairs(repairs);
+                }
             }
-        }
 
-        if let Some(stream_id) = header.ext_vals.stream_id {
-            if source.stream_id().is_none() {
-                source.set_stream_id(stream_id.to_string());
+            if let Some(stream_id) = header.ext_vals.stream_id {
+                if source.stream_id().is_none() {
+                    source.set_stream_id(stream_id.to_string());
+                }
             }
         }
 

@@ -35,6 +35,7 @@ impl SenderSource {
     }
 
     pub fn set_repairs(&mut self, repairs: Ssrc) {
+        assert!(repairs != self.ssrc);
         info!("SenderSource {:?} repairs: {:?}", self.ssrc, repairs);
         self.repairs = Some(repairs);
     }
