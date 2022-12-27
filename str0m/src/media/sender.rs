@@ -7,16 +7,17 @@ use crate::util::already_happened;
 #[derive(Debug)]
 pub struct SenderSource {
     ssrc: Ssrc,
-    is_rtx: bool,
+    repairs: Option<Ssrc>,
     next_seq_no: SeqNo,
     last_used: Instant,
 }
 
 impl SenderSource {
-    pub fn new(ssrc: Ssrc, is_rtx: bool) -> Self {
+    pub fn new(ssrc: Ssrc) -> Self {
+        info!("New SenderSource: {:?}", ssrc);
         SenderSource {
             ssrc,
-            is_rtx,
+            repairs: None,
             // https://www.rfc-editor.org/rfc/rfc3550#page-13
             // The initial value of the sequence number SHOULD be random (unpredictable)
             // to make known-plaintext attacks on encryption more difficult
@@ -29,8 +30,13 @@ impl SenderSource {
         self.ssrc
     }
 
-    pub fn is_rtx(&self) -> bool {
-        self.is_rtx
+    pub fn repairs(&self) -> Option<Ssrc> {
+        self.repairs
+    }
+
+    pub fn set_repairs(&mut self, repairs: Ssrc) {
+        info!("SenderSource {:?} repairs: {:?}", self.ssrc, repairs);
+        self.repairs = Some(repairs);
     }
 
     pub fn create_sender_report(&self, now: Instant) -> SenderReport {

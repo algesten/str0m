@@ -50,10 +50,14 @@
             streamCam = await navigator.mediaDevices.getUserMedia({
                 video: true,
             });
-            const tr = rtc.addTransceiver('video', {
-                direction: "sendonly"
+            const tr = rtc.addTransceiver(streamCam.getTracks()[0], {
+                direction: "sendonly",
+                // sendEncodings: [
+                //     { rid: "h", maxBitrate: 1200 * 1024 },
+                //     { rid: "m", maxBitrate: 600 * 1024, scaleResolutionDownBy: 2 },
+                //     { rid: "l", maxBitrate: 300 * 1024, scaleResolutionDownBy: 4 }
+                // ]
             });
-            tr.sender.replaceTrack(streamCam.getTracks()[0]);
             await negotiate();
         }
         async function startMic() {
@@ -61,10 +65,9 @@
             streamMic = await navigator.mediaDevices.getUserMedia({
                 audio: true,
             });
-            const tr = rtc.addTransceiver("audio", {
+            const tr = rtc.addTransceiver(streamMic.getTracks()[0], {
                 direction: "sendonly"
             });
-            tr.sender.replaceTrack(streamMic.getTracks()[0]);
             await negotiate();
         }
         rtc.ontrack = (e) => {

@@ -5,7 +5,7 @@ use rtp::{ChannelId, Direction, Mid, Ssrc};
 use sctp::{DcepOpen, ReliabilityType};
 use sdp::{MediaLine, Msid, Offer};
 
-use crate::media::{CodecConfig, CodecParams, MediaKind};
+use crate::media::{CodecConfig, CodecParams, Media, MediaKind};
 use crate::session::MediaOrApp;
 use crate::Rtc;
 
@@ -26,7 +26,7 @@ pub struct AddMedia {
     pub msid: Msid,
     pub kind: MediaKind,
     pub dir: Direction,
-    pub ssrcs: Vec<(Ssrc, bool)>,
+    pub ssrcs: Vec<(Ssrc, Option<Ssrc>)>,
 
     // These are filled in when creating a Media from AddMedia
     pub params: Vec<CodecParams>,
@@ -68,10 +68,14 @@ impl<'a> ChangeSet<'a> {
             let ssrc_count = ssrc_base * simulcast_count;
             let mut v = Vec::with_capacity(ssrc_count);
 
+            let mut prev = 0.into();
             for i in 0..ssrc_count {
                 // Allocate SSRC that are not in use in the session already.
+                let new_ssrc = self.rtc.new_ssrc();
                 let is_rtx = has_rtx && i % 2 == 1;
-                v.push((self.rtc.new_ssrc(), is_rtx));
+                let repairs = if is_rtx { Some(prev) } else { None };
+                v.push((self.rtc.new_ssrc(), repairs));
+                prev = new_ssrc;
             }
 
             v
@@ -129,7 +133,7 @@ impl<'a> ChangeSet<'a> {
     }
 
     pub fn apply(self) -> Offer {
-        self.rtc.set_changes(self.changes)
+        self.rtc.set_pending(self.changes)
     }
 }
 
@@ -223,7 +227,7 @@ impl Change {
                 add.params = config.all_for_kind(v.kind).map(|c| c.clone()).collect();
                 add.index = index;
 
-                let media = add.into();
+                let media = Media::from_add_media(add);
                 Some(MediaOrApp::Media(media))
             }
             AddApp(mid) => {

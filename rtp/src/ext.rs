@@ -221,6 +221,10 @@ impl Extensions {
         exts.apply_mapping(&ExtMap::new(2, Extension::AbsoluteSendTime));
         exts.apply_mapping(&ExtMap::new(3, Extension::TransportSequenceNumber));
         exts.apply_mapping(&ExtMap::new(4, Extension::RtpMid));
+        // exts.apply_mapping(&ExtMap::new(8, Extension::ColorSpace));
+        exts.apply_mapping(&ExtMap::new(10, Extension::RtpStreamId));
+        exts.apply_mapping(&ExtMap::new(11, Extension::RepairedRtpStreamId));
+        exts.apply_mapping(&ExtMap::new(13, Extension::VideoOrientation));
 
         exts
     }

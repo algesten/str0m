@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use dtls::Fingerprint;
 use ice::{Candidate, IceCreds};
 use rtp::{Extensions, Mid};
@@ -120,18 +122,22 @@ impl Session {
         // configured, we (probably) have simulcast in both directions. If we have RTX, we have it
         // in both directions.
         for l in new_lines.iter().filter(|l| l.typ.is_media()) {
-            let ssrcs: Vec<_> = l
+            let ssrcs: HashMap<_, _> = l
                 .ssrc_info()
                 .iter()
-                .map(|i| (self.new_ssrc(), i.repair.is_some()))
+                .map(|s| (s.ssrc, (self.new_ssrc(), s.repair)))
                 .collect();
 
             let media = self
                 .get_media(l.mid())
                 .expect("Media to be added for new m-line");
 
-            for (ssrc, is_rtx) in ssrcs {
-                media.add_source_tx(ssrc, is_rtx);
+            for (new_ssrc, old_repair_ssrc) in ssrcs.values() {
+                // map old repair ssrc to corresponding new.
+                let repairs = old_repair_ssrc.and_then(|r| ssrcs.get(&r)).map(|r| r.0);
+
+                // create source.
+                media.add_source_tx(*new_ssrc, repairs);
             }
         }
 
@@ -177,8 +183,8 @@ impl Session {
             // once the m-line is created.
             media.set_cname(add_media.cname);
 
-            for (ssrc, is_rtx) in add_media.ssrcs {
-                media.add_source_tx(ssrc, is_rtx);
+            for (ssrc, repairs) in add_media.ssrcs {
+                media.add_source_tx(ssrc, repairs);
             }
         }
 
@@ -240,7 +246,7 @@ impl Session {
 
                 let media = only_media_mut(&mut self.media).last().unwrap();
                 media.need_open_event = need_open_event;
-                media.apply_changes(m, &self.codec_config);
+                media.apply_changes(m, &self.codec_config)
             } else if m.typ.is_channel() {
                 let app = (m.mid(), idx).into();
                 self.media.push(MediaOrApp::App(app));

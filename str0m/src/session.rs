@@ -235,9 +235,10 @@ impl Session {
                 return;
             }
         };
-        let is_rtx = media.is_rtx(header.ssrc);
-        let source = media.get_source_rx(&header, is_rtx, now);
+        let source = media.get_source_rx(&header, now);
         let seq_no = source.update(now, &header, clock_rate);
+
+        let is_rtx = source.is_rtx();
 
         // The first few packets, the source is in "probabtion". However for rtx,
         // we let them straight through, since it would be weird to require probabtion
@@ -288,7 +289,7 @@ impl Session {
             trace!("Repaired {:?} -> {:?}", header.ssrc, repaired_ssrc);
             header.ssrc = repaired_ssrc;
 
-            let source = media.get_source_rx(&header, false, now);
+            let source = media.get_source_rx(&header, now);
             let orig_seq_no = source.update(now, &header, clock_rate);
 
             if !source.is_valid() {

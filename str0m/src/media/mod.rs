@@ -9,7 +9,7 @@ use rtp::{SeqNo, Ssrc, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
 pub use rtp::{Direction, Mid, Pt};
 pub use sdp::{Codec, FormatParams};
-use sdp::{MediaLine, MediaType, Msid, SsrcInfo};
+use sdp::{MediaLine, MediaType, Msid};
 
 mod codec;
 pub use codec::{CodecConfig, CodecParams};
@@ -100,13 +100,6 @@ pub struct Media {
 
     /// Last time we produced regular feedback (SR/RR).
     last_regular_feedback: Instant,
-
-    /// SSRC information discovered in the SDP.
-    ///
-    /// This tells us which SSRC is resend (RTX) for which SSRC as well as the identifiers for
-    /// WebRTC javascript API for MediaStream and Track (MediaStream and Track are not concepts
-    /// we use in this crate).
-    ssrc_info_rx: Vec<SsrcInfo>,
 
     /// Buffers for incoming data.
     ///
@@ -227,7 +220,13 @@ impl Media {
                 // The resend ssrc. This would correspond to the RTX PT for video.
                 let ssrc_rtx = source.ssrc();
 
-                break (resend.pt, pkt, ssrc_rtx, seq_no, Some(resend.seq_no));
+                let orig_seq_no = Some(resend.seq_no);
+
+                // Check that our internal state of organizing SSRC for senders is correct.
+                assert_eq!(pkt.ssrc, resend.ssrc);
+                assert_eq!(source.repairs(), Some(resend.ssrc));
+
+                break (resend.pt, pkt, ssrc_rtx, seq_no, orig_seq_no);
             } else {
                 // exit via ? here is ok since that means there is nothing to send.
                 let (pt, pkt) = next_send_buffer(&mut self.buffers_tx)?;
@@ -285,31 +284,57 @@ impl Media {
     pub(crate) fn get_source_rx(
         &mut self,
         header: &RtpHeader,
-        is_rtx: bool,
         now: Instant,
     ) -> &mut ReceiverSource {
-        let maybe_idx = self.sources_rx.iter().position(|s| s.ssrc() == header.ssrc);
+        let repairs_ssrc = header
+            .ext_vals
+            .rep_stream_id
+            .and_then(|id| self.sources_rx.iter().find(|r| r.stream_id() == Some(&*id)))
+            .map(|r| r.ssrc());
+
+        let source = self.get_or_create_source_rx(header.ssrc, now);
+
+        if let Some(repairs) = repairs_ssrc {
+            if source.repairs().is_none() {
+                source.set_repairs(repairs);
+            }
+        }
+
+        if let Some(stream_id) = header.ext_vals.stream_id {
+            if source.stream_id().is_none() {
+                source.set_stream_id(stream_id.to_string());
+            }
+        }
+
+        source
+    }
+
+    fn get_or_create_source_rx(&mut self, ssrc: Ssrc, now: Instant) -> &mut ReceiverSource {
+        let maybe_idx = self.sources_rx.iter().position(|s| s.ssrc() == ssrc);
 
         if let Some(idx) = maybe_idx {
             &mut self.sources_rx[idx]
         } else {
-            info!(
-                "New ReceiverSource for {:?} {:?}",
-                header.ssrc, header.payload_type
-            );
-
-            let mut new_source = ReceiverSource::new(header, is_rtx, now);
-
-            // We might have info for this source already.
-            for info in &self.ssrc_info_rx {
-                if new_source.matches_ssrc_info(info) {
-                    new_source.set_ssrc_info(info);
-                    break;
-                }
-            }
-
+            let new_source = ReceiverSource::new(ssrc, now);
             self.sources_rx.push(new_source);
             self.sources_rx.last_mut().unwrap()
+        }
+    }
+
+    pub(crate) fn add_source_tx(&mut self, ssrc: Ssrc, repairs: Option<Ssrc>) {
+        let maybe_idx = self.sources_tx.iter().position(|r| r.ssrc() == ssrc);
+
+        let s = if let Some(idx) = maybe_idx {
+            &mut self.sources_tx[idx]
+        } else {
+            self.sources_tx.push(SenderSource::new(ssrc));
+            self.sources_tx.last_mut().unwrap()
+        };
+
+        if let Some(repairs) = repairs {
+            if s.repairs().is_none() {
+                s.set_repairs(repairs);
+            }
         }
     }
 
@@ -420,13 +445,17 @@ impl Media {
             SourceDescription(v) => {
                 for (sdes, st) in v.values {
                     if sdes == SdesType::CNAME {
-                        let i = self
-                            .ssrc_info_rx
-                            .iter()
-                            .find(|i| i.cname.as_ref() == Some(&st));
-                        if i.is_none() {
-                            warn!("Sdes CNAME does not match any SDP CNAME: {}", st);
+                        if st.is_empty() {
+                            // In simulcast, chrome doesn't send the SSRC lines, but
+                            // expects us to infer that from rtp headers. It does
+                            // however send the SourceDescription RTCP with an empty
+                            // string CNAME. ¯\_(ツ)_/¯
+                            return None;
                         }
+
+                        // Here we _could_ check CNAME here matches something. But
+                        // CNAMEs are a bit unfashionable with the WebRTC spec people.
+                        return None;
                     }
                 }
             }
@@ -514,31 +543,22 @@ impl Media {
         {
             let infos = m.ssrc_info();
 
-            // Might want to update the info field in any already initialized ReceiverSource.
-            for info in &infos {
-                for s in &mut self.sources_rx {
-                    if s.matches_ssrc_info(info) {
-                        s.set_ssrc_info(info);
+            // Might want to update the data in already existing receivers
+            for info in infos {
+                if let Some(repairs) = info.repair {
+                    self.get_or_create_source_rx(repairs, already_happened());
+                }
+                let r = self.get_or_create_source_rx(info.ssrc, already_happened());
+                if let Some(repairs) = info.repair {
+                    if r.repairs().is_none() {
+                        r.set_repairs(repairs);
                     }
                 }
             }
-
-            self.ssrc_info_rx = infos;
         }
     }
 
-    /// Test if we know of this SSRC either via SDP or received packets.
     pub(crate) fn has_ssrc_rx(&self, ssrc: Ssrc) -> bool {
-        let via_sdp = self
-            .ssrc_info_rx
-            .iter()
-            .any(|i| i.ssrc == ssrc || i.repair == Some(ssrc));
-
-        if via_sdp {
-            return true;
-        }
-
-        // via received packets
         self.sources_rx.iter().any(|r| r.ssrc() == ssrc)
     }
 
@@ -576,10 +596,6 @@ impl Media {
         None
     }
 
-    pub(crate) fn add_source_tx(&mut self, ssrc: Ssrc, is_rtx: bool) {
-        self.sources_tx.push(SenderSource::new(ssrc, is_rtx));
-    }
-
     pub(crate) fn handle_nack(
         &mut self,
         ssrc: Ssrc,
@@ -603,27 +619,11 @@ impl Media {
         Some(())
     }
 
-    pub(crate) fn is_rtx(&self, ssrc: Ssrc) -> bool {
-        let is_rtx_rx = self.ssrc_info_rx.iter().any(|r| r.repair == Some(ssrc));
-        if is_rtx_rx {
-            return true;
-        }
-
-        let is_rtx_tx = self
-            .sources_tx
-            .iter()
-            .find(|s| s.ssrc() == ssrc)
-            .map(|s| s.is_rtx())
-            .unwrap_or(false);
-
-        is_rtx_tx
-    }
-
     pub(crate) fn get_repaired_rx_ssrc(&self, ssrc: Ssrc) -> Option<Ssrc> {
-        self.ssrc_info_rx
+        self.sources_rx
             .iter()
-            .find(|r| r.repair == Some(ssrc))
-            .map(|r| r.ssrc)
+            .find(|r| r.repairs() == Some(ssrc))
+            .map(|r| r.ssrc())
     }
 
     pub(crate) fn clear_send_buffers(&mut self) {
@@ -680,7 +680,6 @@ impl Default for Media {
             sources_tx: vec![],
             last_cleanup: already_happened(),
             last_regular_feedback: already_happened(),
-            ssrc_info_rx: vec![],
             buffers_rx: HashMap::new(),
             buffers_tx: HashMap::new(),
             resends: VecDeque::new(),
@@ -697,23 +696,15 @@ impl Media {
             index,
             kind: l.typ.clone().into(),
             dir: l.direction().invert(), // remove direction is reverse.
-            ssrc_info_rx: l.ssrc_info(),
             params: l.rtp_params().into_iter().map(|p| p.into()).collect(),
             ..Default::default()
         }
     }
-}
 
-// Going from AddMedia to Media is for m-lines that are pending in a Change and are sent
-// in the offer to the other side.
-impl From<AddMedia> for Media {
-    fn from(a: AddMedia) -> Self {
-        let sources_tx = a
-            .ssrcs
-            .into_iter()
-            .map(|(s, r)| SenderSource::new(s, r))
-            .collect();
-        Media {
+    // Going from AddMedia to Media is for m-lines that are pending in a Change and are sent
+    // in the offer to the other side.
+    pub(crate) fn from_add_media(a: AddMedia) -> Self {
+        let mut media = Media {
             mid: a.mid,
             index: a.index,
             cname: a.cname,
@@ -721,9 +712,14 @@ impl From<AddMedia> for Media {
             kind: a.kind,
             dir: a.dir,
             params: a.params,
-            sources_tx,
             ..Default::default()
+        };
+
+        for (ssrc, repairs) in a.ssrcs {
+            media.add_source_tx(ssrc, repairs);
         }
+
+        media
     }
 }
 
@@ -785,11 +781,11 @@ fn get_source_tx(
     sources_tx: &mut Vec<SenderSource>,
     is_audio: bool,
     level: usize,
-    resend: bool,
+    is_rtx: bool,
 ) -> Option<&mut SenderSource> {
     let (per_level, resend_offset) = if is_audio { (1, 0) } else { (2, 1) };
 
-    let idx = level * per_level + if resend { resend_offset } else { 0 };
+    let idx = level * per_level + if is_rtx { resend_offset } else { 0 };
 
     sources_tx.get_mut(idx)
 }

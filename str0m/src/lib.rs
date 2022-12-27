@@ -225,6 +225,7 @@ impl Rtc {
         ChangeSet::new(self)
     }
 
+    #[instrument(skip_all)]
     pub fn accept_offer(&mut self, offer: Offer) -> Result<Answer, RtcError> {
         if offer.media_lines.is_empty() {
             return Err(RtcError::RemoteSdp("No m-lines in offer".into()));
@@ -279,7 +280,8 @@ impl Rtc {
         Ok(sdp.into())
     }
 
-    pub(crate) fn set_changes(&mut self, changes: Changes) -> Offer {
+    #[instrument(skip_all)]
+    pub(crate) fn set_pending(&mut self, changes: Changes) -> Offer {
         if !self.dtls.is_inited() {
             // The side that makes the first offer is the controlling side.
             self.ice.set_controlling(true);
@@ -315,6 +317,7 @@ impl Rtc {
         Some(PendingChanges { rtc: self })
     }
 
+    #[instrument(skip_all)]
     fn accept_answer(&mut self, answer: Option<Answer>) -> Result<(), RtcError> {
         if let Some(answer) = answer {
             self.add_ice_details(&answer)?;

@@ -1,29 +1,28 @@
 use std::time::Instant;
 
-use rtp::{MediaTime, ReceiverReport, Rtcp, RtpHeader, SenderInfo, SeqNo, Ssrc};
+use rtp::{MediaTime, ReceiverReport, ReportList, Rtcp, RtpHeader, SenderInfo, SeqNo, Ssrc};
 
 use super::register::ReceiverRegister;
-use sdp::SsrcInfo;
 
 #[derive(Debug)]
 pub struct ReceiverSource {
     ssrc: Ssrc,
-    is_rtx: bool,
-    info: Option<SsrcInfo>,
-    register: ReceiverRegister,
+    repairs: Option<Ssrc>,
+    stream_id: Option<String>,
+    register: Option<ReceiverRegister>,
     last_used: Instant,
     sender_info: Option<SenderInfo>,
     sender_info_at: Option<Instant>,
 }
 
 impl ReceiverSource {
-    pub fn new(header: &RtpHeader, is_rtx: bool, now: Instant) -> Self {
-        let base_seq = header.sequence_number(None);
+    pub fn new(ssrc: Ssrc, now: Instant) -> Self {
+        info!("New ReceiverSource: {:?}", ssrc);
         ReceiverSource {
-            ssrc: header.ssrc,
-            is_rtx,
-            info: None,
-            register: ReceiverRegister::new(base_seq),
+            ssrc,
+            repairs: None,
+            stream_id: None,
+            register: None,
             last_used: now,
             sender_info: None,
             sender_info_at: None,
@@ -34,27 +33,60 @@ impl ReceiverSource {
         self.ssrc
     }
 
+    pub fn repairs(&self) -> Option<Ssrc> {
+        self.repairs
+    }
+
+    pub fn set_repairs(&mut self, repairs: Ssrc) {
+        info!("ReceiverSource {:?} repairs: {:?}", self.ssrc, repairs);
+        self.repairs = Some(repairs);
+    }
+
     pub fn is_rtx(&self) -> bool {
-        self.is_rtx
+        self.repairs.is_some()
+    }
+
+    pub fn stream_id(&self) -> Option<&str> {
+        self.stream_id.as_ref().map(|s| s.as_str())
+    }
+
+    pub fn set_stream_id(&mut self, id: String) {
+        info!("ReceiverSource {:?} stream ID: {}", self.ssrc, id);
+        self.stream_id = Some(id);
     }
 
     pub fn update(&mut self, now: Instant, header: &RtpHeader, clock_rate: u32) -> SeqNo {
         self.last_used = now;
 
-        let seq_no = header.sequence_number(Some(self.register.max_seq()));
+        let previous = self.register.as_ref().map(|r| r.max_seq());
+        let seq_no = header.sequence_number(previous);
 
-        self.register.update_seq(seq_no);
-        self.register.update_time(now, header.timestamp, clock_rate);
+        if self.register.is_none() {
+            self.register = Some(ReceiverRegister::new(seq_no));
+        }
+
+        if let Some(register) = &mut self.register {
+            register.update_seq(seq_no);
+            register.update_time(now, header.timestamp, clock_rate);
+        }
 
         seq_no
     }
 
     pub fn is_valid(&self) -> bool {
-        self.register.is_valid()
+        self.register
+            .as_ref()
+            .map(|r| r.is_valid())
+            .unwrap_or(false)
     }
 
     pub fn create_receiver_report(&mut self, now: Instant) -> ReceiverReport {
-        let mut report = self.register.reception_report();
+        let Some(mut report) = self.register.as_mut().map(|r| r.reception_report()) else {
+            return ReceiverReport {
+                sender_ssrc: 0.into(), // set one level up
+                reports: ReportList::new(),
+            };
+        };
         report.ssrc = self.ssrc;
 
         // The middle 32 bits out of 64 in the NTP timestamp (as explained in
@@ -89,32 +121,22 @@ impl ReceiverSource {
     }
 
     pub fn has_nack(&mut self) -> bool {
-        self.register.has_nack_report()
+        self.register
+            .as_mut()
+            .map(|r| r.has_nack_report())
+            .unwrap_or(false)
     }
 
     pub fn create_nack(&mut self) -> Option<Rtcp> {
-        if let Some(mut nack) = self.register.nack_report() {
-            nack.ssrc = self.ssrc;
-            info!("Send nack: {:?}", nack);
-            return Some(Rtcp::Nack(nack));
-        }
+        let mut nack = self.register.as_mut().and_then(|r| r.nack_report())?;
+        nack.ssrc = self.ssrc;
 
-        None
+        info!("Send nack: {:?}", nack);
+        Some(Rtcp::Nack(nack))
     }
 
     pub fn set_sender_info(&mut self, now: Instant, s: SenderInfo) {
         self.sender_info = Some(s);
         self.sender_info_at = Some(now);
-    }
-
-    pub fn matches_ssrc_info(&self, info: &SsrcInfo) -> bool {
-        self.ssrc == info.ssrc || Some(self.ssrc) == info.repair
-    }
-
-    pub fn set_ssrc_info(&mut self, info: &SsrcInfo) {
-        if self.info.as_ref() != Some(info) {
-            debug!("ReceiverSource({}) set info: {:?}", self.ssrc(), info);
-            self.info = Some(info.clone());
-        }
     }
 }
