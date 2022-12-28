@@ -310,7 +310,7 @@ impl Media {
             (true, Some(id)) => self
                 .sources_rx
                 .iter()
-                .find(|r| r.rid() == Some(&*id))
+                .find(|r| r.rid() == Some(id))
                 .map(|r| r.ssrc()),
             _ => None,
         };
@@ -326,7 +326,7 @@ impl Media {
 
             if let Some(rid) = header.ext_vals.rid {
                 if source.rid().is_none() {
-                    source.set_rid(rid.to_string());
+                    source.set_rid(rid);
                 }
             }
         }
@@ -606,9 +606,14 @@ impl Media {
         self.sources_tx.iter().any(|r| r.ssrc() == ssrc)
     }
 
-    pub(crate) fn get_buffer_rx(&mut self, pt: Pt, codec: Codec) -> &mut DepacketizingBuffer {
+    pub(crate) fn get_buffer_rx(
+        &mut self,
+        pt: Pt,
+        rid: Option<Rid>,
+        codec: Codec,
+    ) -> &mut DepacketizingBuffer {
         self.buffers_rx
-            .entry((pt, None))
+            .entry((pt, rid))
             .or_insert_with(|| DepacketizingBuffer::new(codec.into(), 30))
     }
 
@@ -624,8 +629,8 @@ impl Media {
                     r.map(|dep| MediaData {
                         mid: self.mid,
                         pt: *pt,
+                        rid: *rid,
                         codec,
-                        stream: None,
                         time: dep.time,
                         data: dep.data,
                         meta: dep.meta,

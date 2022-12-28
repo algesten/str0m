@@ -145,7 +145,7 @@ pub enum KeyframeRequestKind {
 pub struct MediaData {
     pub mid: Mid,
     pub pt: Pt,
-    pub stream: Option<Rid>,
+    pub rid: Option<Rid>,
     pub codec: CodecParams,
     pub time: MediaTime,
     pub data: Vec<u8>,
@@ -766,6 +766,7 @@ impl fmt::Debug for MediaData {
         f.debug_struct("MediaData")
             .field("mid", &self.mid)
             .field("pt", &self.pt)
+            .field("rid", &self.rid)
             .field("time", &self.time)
             .field("len", &self.data.len())
             .finish()

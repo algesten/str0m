@@ -239,6 +239,7 @@ impl Session {
             }
         };
         let source = media.get_source_rx(&header, now, true);
+        let rid = source.rid();
         let seq_no = source.update(now, &header, clock_rate);
 
         let is_rtx = source.is_rtx();
@@ -322,7 +323,7 @@ impl Session {
         }
 
         // Buffers are unique per m-line (since PT is unique per m-line).
-        let buf = media.get_buffer_rx(pt, codec);
+        let buf = media.get_buffer_rx(pt, rid, codec);
 
         let meta = RtpMeta::new(now, time, seq_no, header);
         trace!("Add to buffer {:?}", meta);

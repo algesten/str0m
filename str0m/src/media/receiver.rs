@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use rtp::{MediaTime, ReceiverReport, ReportList, Rtcp, RtpHeader, SenderInfo, SeqNo, Ssrc};
+use rtp::{MediaTime, ReceiverReport, ReportList, Rid, Rtcp, RtpHeader, SenderInfo, SeqNo, Ssrc};
 
 use super::register::ReceiverRegister;
 
@@ -8,7 +8,7 @@ use super::register::ReceiverRegister;
 pub struct ReceiverSource {
     ssrc: Ssrc,
     repairs: Option<Ssrc>,
-    rid: Option<String>,
+    rid: Option<Rid>,
     register: Option<ReceiverRegister>,
     last_used: Instant,
     sender_info: Option<SenderInfo>,
@@ -47,11 +47,11 @@ impl ReceiverSource {
         self.repairs.is_some()
     }
 
-    pub fn rid(&self) -> Option<&str> {
-        self.rid.as_ref().map(|s| s.as_str())
+    pub fn rid(&self) -> Option<Rid> {
+        self.rid
     }
 
-    pub fn set_rid(&mut self, id: String) {
+    pub fn set_rid(&mut self, id: Rid) {
         info!("ReceiverSource {:?} rid: {}", self.ssrc, id);
         self.rid = Some(id);
     }
