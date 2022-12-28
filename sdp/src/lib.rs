@@ -213,7 +213,7 @@ mod test {
         let offer = Offer(sdp());
         let json = serde_json::to_string(&offer).unwrap();
 
-        assert_eq!(json, "{\"type\":\"offer\",\"sdp\":\"v=0\\r\\no=- 123 2 IN IP4 127.0.0.1\\r\\ns=-\\r\\nt=0 0\\r\\n\"}");
+        assert_eq!(json, "{\"type\":\"offer\",\"sdp\":\"v=0\\r\\no=- 123 2 IN IP4 0.0.0.0\\r\\ns=-\\r\\nt=0 0\\r\\n\"}");
 
         let offer2: Offer = serde_json::from_str(&json).unwrap();
 
@@ -225,7 +225,7 @@ mod test {
         let answer = Answer(sdp());
         let json = serde_json::to_string(&answer).unwrap();
 
-        assert_eq!(json, "{\"type\":\"answer\",\"sdp\":\"v=0\\r\\no=- 123 2 IN IP4 127.0.0.1\\r\\ns=-\\r\\nt=0 0\\r\\n\"}");
+        assert_eq!(json, "{\"type\":\"answer\",\"sdp\":\"v=0\\r\\no=- 123 2 IN IP4 0.0.0.0\\r\\ns=-\\r\\nt=0 0\\r\\n\"}");
 
         let answer2: Answer = serde_json::from_str(&json).unwrap();
 

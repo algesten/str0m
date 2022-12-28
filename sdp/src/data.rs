@@ -1567,7 +1567,7 @@ mod test {
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "mslabel".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into() },
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "label".into(), value: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() }] }] };
         assert_eq!(&format!("{}", sdp), "v=0\r\n\
-            o=- 5058682828002148772 2 IN IP4 127.0.0.1\r\n\
+            o=- 5058682828002148772 2 IN IP4 0.0.0.0\r\n\
             s=-\r\n\
             t=0 0\r\n\
             a=group:BUNDLE 0\r\n\
