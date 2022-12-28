@@ -2,7 +2,7 @@ use std::fmt;
 use std::str::from_utf8;
 
 use crate::mtime::MediaTime;
-use crate::{Direction, Mid, StreamId};
+use crate::{Direction, Mid, Rid};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExtMap {
@@ -387,19 +387,19 @@ impl Extension {
                 Some(13)
             }
             RtpStreamId => {
-                let v = ev.stream_id?;
+                let v = ev.rid?;
                 let l = v.as_bytes().len();
                 buf[..l].copy_from_slice(v.as_bytes());
                 Some(l)
             }
             RepairedRtpStreamId => {
-                let v = ev.rep_stream_id?;
+                let v = ev.rid_repair?;
                 let l = v.as_bytes().len();
                 buf[..l].copy_from_slice(v.as_bytes());
                 Some(l)
             }
             RtpMid => {
-                let v = ev.rtp_mid?;
+                let v = ev.mid?;
                 let l = v.as_bytes().len();
                 buf[..l].copy_from_slice(v.as_bytes());
                 Some(l)
@@ -471,15 +471,15 @@ impl Extension {
             }
             RtpStreamId => {
                 let s = from_utf8(buf).ok()?;
-                v.stream_id = Some(s.into());
+                v.rid = Some(s.into());
             }
             RepairedRtpStreamId => {
                 let s = from_utf8(buf).ok()?;
-                v.rep_stream_id = Some(s.into());
+                v.rid_repair = Some(s.into());
             }
             RtpMid => {
                 let s = from_utf8(buf).ok()?;
-                v.rtp_mid = Some(s.into());
+                v.mid = Some(s.into());
             }
             FrameMarking => {
                 v.frame_mark = Some(u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]));
@@ -509,9 +509,9 @@ pub struct ExtensionValues {
     pub play_delay_max: Option<MediaTime>,
     pub video_c_type: Option<u8>, // 0 = unspecified, 1 = screenshare
     pub video_timing: Option<VideoTiming>,
-    pub stream_id: Option<StreamId>,
-    pub rep_stream_id: Option<StreamId>,
-    pub rtp_mid: Option<Mid>,
+    pub rid: Option<Rid>,
+    pub rid_repair: Option<Rid>,
+    pub mid: Option<Mid>,
     pub frame_mark: Option<u32>,
 }
 
@@ -519,14 +519,14 @@ impl fmt::Debug for ExtensionValues {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ExtensionValues {{")?;
 
-        if let Some(t) = self.rtp_mid {
+        if let Some(t) = self.mid {
             write!(f, " mid: {}", t)?;
         }
-        if let Some(t) = self.stream_id {
-            write!(f, " stream_id: {}", t)?;
+        if let Some(t) = self.rid {
+            write!(f, " rid: {}", t)?;
         }
-        if let Some(t) = self.rep_stream_id {
-            write!(f, " rep_stream_id: {}", t)?;
+        if let Some(t) = self.rid_repair {
+            write!(f, " rid_repair: {}", t)?;
         }
         if let Some(t) = self.abs_send_time {
             write!(f, " abs_send_time: {}", t.as_seconds())?;

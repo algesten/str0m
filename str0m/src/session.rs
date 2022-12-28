@@ -213,7 +213,7 @@ impl Session {
             self.twcc_rx_register.update_seq(extended.into(), now);
         }
 
-        let mid_in = header.ext_vals.rtp_mid;
+        let mid_in = header.ext_vals.mid;
         let media = match only_media_mut(&mut self.media)
             .find(|m| m.has_ssrc_rx(header.ssrc) || Some(m.mid()) == mid_in)
         {

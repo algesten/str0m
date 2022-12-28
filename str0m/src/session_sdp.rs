@@ -123,7 +123,7 @@ impl Session {
         // This is the "old school" way of communicating a=ssrc lines in the SDP to prepare the sender
         // for which SSRC belongs to which m-line. For simulcast, Chrome has started going another way
         // where the ssrc is _NOT_ communicated with a=ssrc in advance. Instead it starts sending
-        // new streams with RTP header extensions mid, stream_id and repair_stream_id. That way we
+        // new streams with RTP header extensions mid, rid and rid_repair. That way we
         // can dynamically discover which SSRC belongs to which m-line.
         //
         // We need to support borth the old way of a=ssrc in SDP as well as the new way. By matching

@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use net_::{Id, DATAGRAM_MTU};
 use packet::{DepacketizingBuffer, Packetized, PacketizingBuffer};
 pub use rtp::MediaTime;
-use rtp::{Extensions, NackEntry, Rtcp, RtcpFb, RtpHeader, SdesType};
+use rtp::{Extensions, NackEntry, Rid, Rtcp, RtcpFb, RtpHeader, SdesType};
 use rtp::{SeqNo, Ssrc, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
 pub use rtp::{Direction, Mid, Pt};
@@ -108,7 +108,7 @@ pub struct Media {
     ///
     /// Video samples are often fragmented over several RTP packets. These buffers reassembles
     /// the incoming RTP to full samples.
-    buffers_rx: HashMap<Pt, DepacketizingBuffer>,
+    buffers_rx: HashMap<(Pt, Option<Rid>), DepacketizingBuffer>,
 
     /// Buffers for outgoing data.
     ///
@@ -270,7 +270,7 @@ impl Media {
         // These need to match `Extension::is_supported()` so we are sending what we are
         // declaring we support.
         header.ext_vals.abs_send_time = Some(now.into());
-        header.ext_vals.rtp_mid = Some(self.mid);
+        header.ext_vals.mid = Some(self.mid);
         header.ext_vals.transport_cc = Some(*twcc as u16);
         *twcc += 1;
 
@@ -304,13 +304,13 @@ impl Media {
         now: Instant,
         do_update_receivers: bool,
     ) -> &mut ReceiverSource {
-        // If we do_update_receivers, we want to know which SSRC the `rep_stream_id` header corresponds
+        // If we do_update_receivers, we want to know which SSRC the `rid_repair` header corresponds
         // to, we must figure this out before get_or_create_source_rx to fulfil the borrow checker.
-        let repairs_ssrc = match (do_update_receivers, header.ext_vals.rep_stream_id) {
+        let repairs_ssrc = match (do_update_receivers, header.ext_vals.rid_repair) {
             (true, Some(id)) => self
                 .sources_rx
                 .iter()
-                .find(|r| r.stream_id() == Some(&*id))
+                .find(|r| r.rid() == Some(&*id))
                 .map(|r| r.ssrc()),
             _ => None,
         };
@@ -324,9 +324,9 @@ impl Media {
                 }
             }
 
-            if let Some(stream_id) = header.ext_vals.stream_id {
-                if source.stream_id().is_none() {
-                    source.set_stream_id(stream_id.to_string());
+            if let Some(rid) = header.ext_vals.rid {
+                if source.rid().is_none() {
+                    source.set_rid(rid.to_string());
                 }
             }
         }
@@ -608,7 +608,7 @@ impl Media {
 
     pub(crate) fn get_buffer_rx(&mut self, pt: Pt, codec: Codec) -> &mut DepacketizingBuffer {
         self.buffers_rx
-            .entry(pt)
+            .entry((pt, None))
             .or_insert_with(|| DepacketizingBuffer::new(codec.into(), 30))
     }
 
@@ -617,14 +617,15 @@ impl Media {
     }
 
     pub(crate) fn poll_sample(&mut self) -> Option<Result<MediaData, RtcError>> {
-        for (pt, buf) in &mut self.buffers_rx {
-            let codec = self.params.iter().find(|c| c.pt() == *pt)?.clone();
+        for ((pt, rid), buf) in &mut self.buffers_rx {
             if let Some(r) = buf.pop() {
+                let codec = self.params.iter().find(|c| c.pt() == *pt)?.clone();
                 return Some(
                     r.map(|dep| MediaData {
                         mid: self.mid,
                         pt: *pt,
                         codec,
+                        stream: None,
                         time: dep.time,
                         data: dep.data,
                         meta: dep.meta,

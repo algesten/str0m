@@ -106,7 +106,7 @@ macro_rules! num_id {
 }
 
 str_id!(Mid, 3);
-str_id!(StreamId, 8);
+str_id!(Rid, 8);
 num_id!(Ssrc, u32);
 num_id!(Pt, u8);
 num_id!(SessionId, u64);

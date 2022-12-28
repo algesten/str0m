@@ -8,7 +8,7 @@ use super::register::ReceiverRegister;
 pub struct ReceiverSource {
     ssrc: Ssrc,
     repairs: Option<Ssrc>,
-    stream_id: Option<String>,
+    rid: Option<String>,
     register: Option<ReceiverRegister>,
     last_used: Instant,
     sender_info: Option<SenderInfo>,
@@ -21,7 +21,7 @@ impl ReceiverSource {
         ReceiverSource {
             ssrc,
             repairs: None,
-            stream_id: None,
+            rid: None,
             register: None,
             last_used: now,
             sender_info: None,
@@ -47,13 +47,13 @@ impl ReceiverSource {
         self.repairs.is_some()
     }
 
-    pub fn stream_id(&self) -> Option<&str> {
-        self.stream_id.as_ref().map(|s| s.as_str())
+    pub fn rid(&self) -> Option<&str> {
+        self.rid.as_ref().map(|s| s.as_str())
     }
 
-    pub fn set_stream_id(&mut self, id: String) {
-        info!("ReceiverSource {:?} stream ID: {}", self.ssrc, id);
-        self.stream_id = Some(id);
+    pub fn set_rid(&mut self, id: String) {
+        info!("ReceiverSource {:?} rid: {}", self.ssrc, id);
+        self.rid = Some(id);
     }
 
     pub fn update(&mut self, now: Instant, header: &RtpHeader, clock_rate: u32) -> SeqNo {

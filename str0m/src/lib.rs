@@ -14,6 +14,7 @@ use ice::IceAgentEvent;
 use ice::{IceAgent, IceError};
 use net_::NetError;
 pub use rtp::Direction;
+use rtp::Rid;
 use sctp::{RtcSctp, SctpError, SctpEvent};
 use sdp::{Sdp, Setup};
 use thiserror::Error;
@@ -144,6 +145,7 @@ pub enum KeyframeRequestKind {
 pub struct MediaData {
     pub mid: Mid,
     pub pt: Pt,
+    pub stream: Option<Rid>,
     pub codec: CodecParams,
     pub time: MediaTime,
     pub data: Vec<u8>,
