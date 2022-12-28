@@ -7,16 +7,16 @@ use rand::random;
 use net::Id;
 
 macro_rules! str_id {
-    ($id:ident) => {
+    ($id:ident, $num:tt) => {
         #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-        pub struct $id([u8; 3]);
+        pub struct $id([u8; $num]);
 
         impl $id {
             pub fn new() -> $id {
                 $id(Id::random().into_array())
             }
 
-            pub const fn from_array(a: [u8; 3]) -> $id {
+            pub const fn from_array(a: [u8; $num]) -> $id {
                 $id(a)
             }
         }
@@ -46,12 +46,16 @@ macro_rules! str_id {
 
         impl<'a> From<&'a str> for $id {
             fn from(v: &'a str) -> Self {
-                assert!(v.chars().all(|c| c.is_ascii_alphanumeric()));
+                let v = v
+                    .chars()
+                    .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                    .collect::<String>();
+
                 let bytes = v.as_bytes();
-                assert!(bytes.len() <= 3);
+                let bytes = &bytes[0..$num.min(bytes.len())];
 
                 // pad with space.
-                let mut array = [b' '; 3];
+                let mut array = [b' '; $num];
 
                 let max = bytes.len().min(array.len());
                 (&mut array[0..max]).copy_from_slice(bytes);
@@ -101,8 +105,8 @@ macro_rules! num_id {
     };
 }
 
-str_id!(Mid);
-str_id!(StreamId);
+str_id!(Mid, 3);
+str_id!(StreamId, 8);
 num_id!(Ssrc, u32);
 num_id!(Pt, u8);
 num_id!(SessionId, u64);
