@@ -411,7 +411,7 @@ impl Media {
         // If we don't have any sender sources, we can't create an SRTCP wrapper around the
         // feedback. This is because the SSRC is used to calculate the specific encryption key.
         // No sender SSRC, no encryption, no feedback possible.
-        let first_ssrc = self.first_source_tx().map(|s| s.ssrc())?;
+        let first_ssrc = self.first_source_tx().map(|s| s.ssrc()).unwrap_or(0.into());
 
         // Since we're making new sender/receiver reports, clear out previous.
         feedback.retain(|r| !matches!(r, Rtcp::SenderReport(_) | Rtcp::ReceiverReport(_)));
@@ -446,7 +446,7 @@ impl Media {
                 continue;
             }
             if let Some(nack) = s.create_nack() {
-                debug!("Created feedback NACK {:?}", nack);
+                debug!("Created feedback NACK: {:?}", nack);
                 feedback.push_back(nack);
             }
         }

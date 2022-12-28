@@ -437,6 +437,12 @@ impl Rtc {
     pub fn poll_output(&mut self) -> Result<Output, RtcError> {
         let o = self.do_poll_output()?;
 
+        match &o {
+            Output::Event(e) => debug!("{:?}", e),
+            Output::Transmit(t) => trace!("OUT {:?}", t),
+            Output::Timeout(_t) => {}
+        }
+
         if let Output::Event(e) = &o {
             debug!("{:?}", e);
         }

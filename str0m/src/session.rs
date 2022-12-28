@@ -172,8 +172,9 @@ impl Session {
     fn create_twcc_feedback(&mut self, now: Instant) -> Option<()> {
         self.last_twcc = now;
         let mut twcc = self.twcc_rx_register.build_report(DATAGRAM_MTU - 100)?;
-        let first_ssrc = self.first_sender_ssrc()?;
+        let first_ssrc = self.first_sender_ssrc().unwrap_or(0.into());
         twcc.sender_ssrc = first_ssrc;
+        debug!("Created feedback TWCC: {:?}", twcc);
         self.feedback.push_front(Rtcp::Twcc(twcc));
         Some(())
     }
