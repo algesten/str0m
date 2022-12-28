@@ -445,10 +445,6 @@ impl Rtc {
             Output::Timeout(_t) => {}
         }
 
-        if let Output::Event(e) = &o {
-            debug!("{:?}", e);
-        }
-
         Ok(o)
     }
 
