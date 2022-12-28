@@ -71,7 +71,7 @@ where
         )
             .map(|(_, _, sess, _, _)| sess),
     );
-    from_str(session_string).map(|x: u64| SessionId::from(x))
+    from_str(session_string).map(|x: u64| -> SessionId { SessionId::from(x) })
 }
 
 /// `b=<bwtype>:<bandwidth>`
@@ -331,7 +331,7 @@ where
         attempt(string("audio").map(|_| MediaType::Audio)),
         attempt(string("video").map(|_| MediaType::Video)),
         attempt(string("application").map(|_| MediaType::Application)),
-        not_sp().map(|v| MediaType::Unknown(v)),
+        not_sp().map(MediaType::Unknown),
     ));
 
     let proto_line = choice((
@@ -342,7 +342,7 @@ where
 
     let parse_pt = not_sp().and_then(|s| {
         s.parse::<u8>()
-            .map(|v| Pt::from(v))
+            .map(Pt::from)
             .map_err(StreamErrorFor::<Input>::message_format)
     });
 
@@ -484,7 +484,7 @@ where
     let pt = || {
         not_sp().and_then(|s| {
             s.parse::<u8>()
-                .map(|v| Pt::from(v))
+                .map(Pt::from)
                 .map_err(StreamErrorFor::<Input>::message_format)
         })
     };
@@ -551,7 +551,7 @@ where
     let rid = attribute_line(
         "rid",
         (
-            name().map(|v| RestrictionId::new(v)),
+            name().map(RestrictionId::new),
             token(' '),
             choice((string("send"), string("recv"))),
             optional((
@@ -642,7 +642,7 @@ where
             sep_by1(
                 not_sp().and_then(|s| {
                     s.parse::<u32>()
-                        .map(|v| Ssrc::from(v))
+                        .map(Ssrc::from)
                         .map_err(StreamErrorFor::<Input>::message_format)
                 }),
                 token(' '),
@@ -660,7 +660,7 @@ where
         (
             not_sp().and_then(|s| {
                 s.parse::<u32>()
-                    .map(|v| Ssrc::from(v))
+                    .map(Ssrc::from)
                     .map_err(StreamErrorFor::<Input>::message_format)
             }),
             token(' '),
