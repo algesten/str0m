@@ -72,7 +72,11 @@ impl Sdp {
 
         if let Some(SessionAttribute::Group { mids, .. }) = group {
             if !mids.len() == self.media_lines.len() {
-                return Some(format!("a=group mid count doesn't match m-line count"));
+                return Some(format!(
+                    "a=group mid count doesn't match m-line count {} != {}",
+                    mids.len(),
+                    self.media_lines.len()
+                ));
             }
             for (m_line, mid) in self.media_lines.iter().zip(mids.iter()) {
                 m_line.check_consistent()?;
@@ -284,7 +288,7 @@ impl MediaLine {
         let mut params: Vec<_> = rtp_maps
             .iter()
             .filter(|c| c.codec.is_audio() | c.codec.is_video())
-            .map(|c| PayloadParams::new((*c).clone()))
+            .map(|c| PayloadParams::new(**c))
             .collect();
 
         for p in &mut params {
@@ -472,7 +476,7 @@ impl MediaLine {
 
         for a in &self.attrs {
             if let MediaAttribute::ExtMap(e) = a {
-                ret.push(e.clone());
+                ret.push(*e);
             }
         }
 
@@ -561,7 +565,7 @@ impl MediaLine {
                 let group = SimulcastGroup(
                     ssrcs
                         .iter()
-                        .map(|ssrc| SimulcastOption::Ssrc((*ssrc).into()))
+                        .map(|ssrc| SimulcastOption::Ssrc(*ssrc))
                         .collect(),
                 );
 
@@ -601,7 +605,7 @@ impl MediaLine {
                     match attr.to_lowercase().as_str() {
                         "cname" => info.cname = Some(value.clone()),
                         "msid" => {
-                            let mut iter = value.split(" ");
+                            let mut iter = value.split(' ');
 
                             fn trim_and_no_minus(s: &str) -> Option<String> {
                                 let s = s.trim();
@@ -915,7 +919,7 @@ impl FormatParams {
         }
     }
 
-    fn to_format_param(&self) -> Vec<FormatParam> {
+    fn to_format_param(self) -> Vec<FormatParam> {
         use FormatParam::*;
         let mut r = Vec::with_capacity(5);
 
@@ -1097,9 +1101,9 @@ impl fmt::Display for FormatParam {
         use FormatParam::*;
         match self {
             MinPTime(v) => write!(f, "minptime={}", v),
-            UseInbandFec(v) => write!(f, "useinbandfec={}", if *v { 1 } else { 0 }),
+            UseInbandFec(v) => write!(f, "useinbandfec={}", i32::from(*v)),
             LevelAsymmetryAllowed(v) => {
-                write!(f, "level-asymmetry-allowed={}", if *v { 1 } else { 0 })
+                write!(f, "level-asymmetry-allowed={}", i32::from(*v))
             }
             PacketizationMode(v) => write!(f, "packetization-mode={}", *v),
             ProfileLevelId(v) => write!(f, "profile-level-id={:06x}", *v),
@@ -1124,7 +1128,7 @@ impl PayloadParams {
     }
 
     pub fn to_media_attrs(&self, attrs: &mut Vec<MediaAttribute>) {
-        attrs.push(MediaAttribute::RtpMap(self.codec.clone()));
+        attrs.push(MediaAttribute::RtpMap(self.codec));
 
         if self.fb_transport_cc {
             attrs.push(MediaAttribute::RtcpFb {
