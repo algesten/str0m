@@ -81,8 +81,8 @@ pub enum RtcError {
 
     /// If MediaWriter.write fails because the simulcast level
     /// used is not mapped to any SSRC.
-    #[error("No sender source (simulcast level: {0}")]
-    NoSenderSource(usize),
+    #[error("No sender source")]
+    NoSenderSource,
 
     #[error("{0}")]
     NetError(#[from] NetError),

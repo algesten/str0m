@@ -52,7 +52,7 @@ pub fn unidirectional() -> Result<(), RtcError> {
             let free = l
                 .media(mid)
                 .unwrap()
-                .get_writer(pt)
+                .get_writer(pt, None)
                 .write(time_l, &data_a)?;
             time_l = time_l + STEP;
             if free == 0 {

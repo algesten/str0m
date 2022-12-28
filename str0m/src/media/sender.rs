@@ -1,12 +1,13 @@
 use std::time::Instant;
 
-use rtp::{Descriptions, ReportList, Sdes, SdesType, SenderInfo, SenderReport, SeqNo, Ssrc};
+use rtp::{Descriptions, ReportList, Rid, Sdes, SdesType, SenderInfo, SenderReport, SeqNo, Ssrc};
 
 use crate::util::already_happened;
 
 #[derive(Debug)]
 pub struct SenderSource {
     ssrc: Ssrc,
+    rid: Option<Rid>,
     repairs: Option<Ssrc>,
     next_seq_no: SeqNo,
     last_used: Instant,
@@ -17,6 +18,7 @@ impl SenderSource {
         info!("New SenderSource: {:?}", ssrc);
         SenderSource {
             ssrc,
+            rid: None,
             repairs: None,
             // https://www.rfc-editor.org/rfc/rfc3550#page-13
             // The initial value of the sequence number SHOULD be random (unpredictable)
@@ -28,6 +30,10 @@ impl SenderSource {
 
     pub fn ssrc(&self) -> Ssrc {
         self.ssrc
+    }
+
+    pub fn rid(&self) -> Option<Rid> {
+        self.rid
     }
 
     pub fn repairs(&self) -> Option<Ssrc> {

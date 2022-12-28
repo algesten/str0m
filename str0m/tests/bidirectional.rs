@@ -55,7 +55,7 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
             let free = l
                 .media(mid)
                 .unwrap()
-                .get_writer(pt)
+                .get_writer(pt, None)
                 .write(time_l, &data_a)?;
             time_l = time_l + STEP;
             if free == 0 {
@@ -67,7 +67,7 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
             let free = r
                 .media(mid)
                 .unwrap()
-                .get_writer(pt)
+                .get_writer(pt, None)
                 .write(time_r, &data_b)?;
             time_r = time_r + STEP;
             if free == 0 {

@@ -188,14 +188,14 @@ impl Media {
         &self.params
     }
 
-    pub fn get_writer(&mut self, pt: Pt) -> MediaWriter<'_> {
+    pub fn get_writer(&mut self, pt: Pt, rid: Option<Rid>) -> MediaWriter<'_> {
         let codec = { self.codec_by_pt(pt).map(|p| p.codec()) };
 
         MediaWriter {
             media: self,
             pt,
+            rid,
             codec,
-            sim_lvl: 0,
         }
     }
 
@@ -222,12 +222,9 @@ impl Media {
                     None => continue,
                 };
 
-                let is_audio = self.kind == MediaKind::Audio;
-
                 // The send source, to get a contiguous seq_no for the resend.
                 // Audio should not be resent, so this also gates whether we are doing resends at all.
-                let source = match get_source_tx(&mut self.sources_tx, is_audio, pkt.sim_lvl, true)
-                {
+                let source = match get_source_tx(&mut self.sources_tx, pkt.rid, true) {
                     Some(v) => v,
                     None => continue,
                 };
@@ -795,8 +792,8 @@ impl From<MediaType> for MediaKind {
 pub struct MediaWriter<'a> {
     media: &'a mut Media,
     pt: Pt,
+    rid: Option<Rid>,
     codec: Option<Codec>,
-    sim_lvl: usize,
 }
 
 impl MediaWriter<'_> {
@@ -813,11 +810,9 @@ impl MediaWriter<'_> {
             return Ok(10_000);
         }
 
-        let is_audio = self.media.kind == MediaKind::Audio;
-
         // The SSRC is figured out given the simulcast level.
-        let tx = get_source_tx(&mut self.media.sources_tx, is_audio, self.sim_lvl, false)
-            .ok_or(RtcError::NoSenderSource(self.sim_lvl))?;
+        let tx = get_source_tx(&mut self.media.sources_tx, self.rid, false)
+            .ok_or(RtcError::NoSenderSource)?;
 
         let ssrc = tx.ssrc();
 
@@ -827,8 +822,7 @@ impl MediaWriter<'_> {
         });
 
         debug!("Write to packetizer time: {:?} bytes: {}", ts, data.len());
-        if let Err(e) = buf.push_sample(ts, data, ssrc, self.sim_lvl, DATAGRAM_MTU - SRTP_OVERHEAD)
-        {
+        if let Err(e) = buf.push_sample(ts, data, ssrc, self.rid, DATAGRAM_MTU - SRTP_OVERHEAD) {
             return Err(RtcError::Packet(self.media.mid, self.pt, e));
         };
 
@@ -836,18 +830,13 @@ impl MediaWriter<'_> {
     }
 }
 
-/// Get the SenderSource by providing simulcast level and maybe reset.
-///
-/// Separte in wait for polonius.
+/// Separate in wait for polonius.
 fn get_source_tx(
     sources_tx: &mut Vec<SenderSource>,
-    is_audio: bool,
-    level: usize,
+    rid: Option<Rid>,
     is_rtx: bool,
 ) -> Option<&mut SenderSource> {
-    let (per_level, resend_offset) = if is_audio { (1, 0) } else { (2, 1) };
-
-    let idx = level * per_level + if is_rtx { resend_offset } else { 0 };
-
-    sources_tx.get_mut(idx)
+    sources_tx
+        .iter_mut()
+        .find(|s| rid == s.rid() && is_rtx == s.repairs().is_some())
 }
