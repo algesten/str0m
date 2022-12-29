@@ -92,6 +92,7 @@ impl fmt::Debug for Candidate {
 }
 
 impl Candidate {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         foundation: Option<String>,
         component_id: u16,
@@ -118,6 +119,7 @@ impl Candidate {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[doc(hidden)]
     pub fn parsed(
         foundation: String,

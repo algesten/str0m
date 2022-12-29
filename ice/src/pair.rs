@@ -137,7 +137,7 @@ impl CandidatePair {
             (remote_prio, local_prio)
         };
 
-        2_u64.pow(32) * g.min(d) as u64 + 2 * g.max(d) as u64 + if g > d { 1 } else { 0 }
+        2_u64.pow(32) * g.min(d) as u64 + 2 * g.max(d) as u64 + u64::from(g > d)
     }
 
     pub fn local_idx(&self) -> usize {
@@ -308,7 +308,7 @@ impl CandidatePair {
                 .filter(|(_, since)| now - *since > Duration::from_millis(STUN_MAX_RTO_MILLIS) / 2)
                 .map(|(count, _)| count);
 
-            let send_count = unanswered_count.unwrap_or_else(|| self.binding_attempts.len());
+            let send_count = unanswered_count.unwrap_or(self.binding_attempts.len());
 
             last + stun_resend_delay(send_count)
         } else {
