@@ -612,8 +612,10 @@ mod test {
     fn abs_send_time() {
         let mut exts = Extensions::new();
         exts.0[3] = Some(Extension::AbsoluteSendTime);
-        let mut ev = ExtensionValues::default();
-        ev.abs_send_time = Some(MediaTime::new(1, FIXED_POINT_6_18));
+        let ev = ExtensionValues {
+            abs_send_time: Some(MediaTime::new(1, FIXED_POINT_6_18)),
+            ..Default::default()
+        };
 
         let mut buf = vec![0_u8; 8];
         exts.write_to(&mut buf[..], &ev);
@@ -628,9 +630,11 @@ mod test {
     fn playout_delay() {
         let mut exts = Extensions::new();
         exts.0[1] = Some(Extension::PlayoutDelay);
-        let mut ev = ExtensionValues::default();
-        ev.play_delay_min = Some(MediaTime::new(100, 100));
-        ev.play_delay_max = Some(MediaTime::new(200, 100));
+        let ev = ExtensionValues {
+            play_delay_min: Some(MediaTime::new(100, 100)),
+            play_delay_max: Some(MediaTime::new(200, 100)),
+            ..Default::default()
+        };
 
         let mut buf = vec![0_u8; 8];
         exts.write_to(&mut buf[..], &ev);

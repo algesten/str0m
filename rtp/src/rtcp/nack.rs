@@ -108,7 +108,7 @@ impl Iterator for NackEntryIterator {
                 }
                 let i = self.1 - 1;
                 self.1 += 1;
-                if 1 << (i as u16) & self.0.blp > 0 {
+                if 1 << i & self.0.blp > 0 {
                     break self.0.pid.wrapping_add(self.1 - 1);
                 }
             }

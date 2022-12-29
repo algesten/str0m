@@ -97,7 +97,7 @@ impl Iterator for TwccIter {
             _ => unreachable!(),
         };
 
-        let seq: SeqNo = (self.base_seq as u64 + self.index as u64).into();
+        let seq: SeqNo = (self.base_seq + self.index as u64).into();
 
         self.index += 1;
         if self.index == amount as usize {
@@ -243,7 +243,7 @@ impl TwccRecvRegister {
             .iter()
             .map(|r| r.seq)
             .max_by_key(|r| *r)
-            .unwrap_or(0.into())
+            .unwrap_or_else(|| 0.into())
     }
 
     pub fn update_seq(&mut self, seq: SeqNo, time: Instant) {
@@ -411,7 +411,7 @@ impl TwccRecvRegister {
             if chunk.must_be_full() && free > 0 {
                 // this must be at the end where we can shift in missing
                 assert!(interims.is_empty());
-                chunk.append(&mut ChunkInterim::Missing(free));
+                chunk.append(&ChunkInterim::Missing(free));
             }
 
             twcc.chunks.push_back(chunk);
@@ -755,9 +755,9 @@ pub enum Delta {
     Large(i16),
 }
 
-impl Into<u8> for PacketStatus {
-    fn into(self) -> u8 {
-        self as usize as u8
+impl From<PacketStatus> for u8 {
+    fn from(val: PacketStatus) -> Self {
+        val as usize as u8
     }
 }
 

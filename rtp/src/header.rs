@@ -77,6 +77,7 @@ impl RtpHeader {
 
         let len = header_len + body_len;
 
+        #[allow(clippy::needless_range_loop)]
         for i in len..(len + pad) {
             buf[i] = 0;
         }
@@ -130,7 +131,7 @@ impl RtpHeader {
 
         let buf: &[u8] = &buf[12..];
 
-        let csrc_len = 4 * csrc_count as usize;
+        let csrc_len = 4 * csrc_count;
         if buf.len() < csrc_len {
             trace!("RTP header invalid, not enough csrc");
             return None;
@@ -209,7 +210,7 @@ impl RtpHeader {
     }
 
     pub fn is_rtx_null_packet(buf: &[u8]) -> bool {
-        &buf[0..10] == &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        buf[0..10] == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     }
 
     /// Sequencer number of this RTP header given the previous number.
@@ -253,7 +254,7 @@ pub fn extend_seq(prev_ext_seq: Option<u64>, seq: u16) -> u64 {
         roc
     };
 
-    v * 65_536 + (seq as u64)
+    v * 65_536 + seq
 }
 
 impl Default for RtpHeader {
