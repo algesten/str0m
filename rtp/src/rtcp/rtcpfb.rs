@@ -1,6 +1,7 @@
 use crate::{FirEntry, NackEntry, ReceptionReport, ReportList, Rtcp, Sdes, SenderInfo, Ssrc, Twcc};
 
 /// Normalization of [`Rtcp`] so we can deal with one SSRC at a time.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum RtcpFb {
     SenderInfo(SenderInfo),            // tx -> rx

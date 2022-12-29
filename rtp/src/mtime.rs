@@ -215,9 +215,9 @@ impl From<Instant> for MediaTime {
     }
 }
 
-impl Into<Duration> for MediaTime {
-    fn into(self) -> Duration {
-        let m = self.rebase(MICROS);
+impl From<MediaTime> for Duration {
+    fn from(val: MediaTime) -> Self {
+        let m = val.rebase(MICROS);
         Duration::from_micros(m.0 as u64)
     }
 }

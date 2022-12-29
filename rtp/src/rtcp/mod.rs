@@ -54,6 +54,7 @@ pub trait RtcpPacket {
     fn write_to(&self, buf: &mut [u8]) -> usize;
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Rtcp {
     SenderReport(SenderReport),
@@ -282,6 +283,7 @@ impl Rtcp {
             let mut any_change = false;
 
             // j goes from the item _after_ i and indexes fb_b.
+            #[allow(clippy::needless_range_loop)]
             for j in i + 1..len {
                 // if fb_a is full (or empty), we don't want to move any more elements into fb_a.
                 if fb_a.is_full() || fb_a.is_empty() {

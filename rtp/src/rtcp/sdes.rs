@@ -103,6 +103,7 @@ impl Sdes {
 
         let pad = 4 - tot % 4;
         if pad < 4 {
+            #[allow(clippy::needless_range_loop)]
             for i in 0..pad {
                 buf[i] = SdesType::END as u8;
             }

@@ -38,10 +38,10 @@ impl FeedbackMessageType {
     }
 }
 
-impl Into<u8> for FeedbackMessageType {
-    fn into(self) -> u8 {
+impl From<FeedbackMessageType> for u8 {
+    fn from(val: FeedbackMessageType) -> Self {
         use FeedbackMessageType::*;
-        match self {
+        match val {
             ReceptionReport(v) | SourceCount(v) | Subtype(v) => {
                 assert!(v <= 31, "rtcp fmt when count must be <= 31");
                 v
