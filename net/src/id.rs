@@ -12,10 +12,10 @@ impl<const L: usize> Id<L> {
     pub fn random() -> Id<L> {
         let mut x = [0; L];
         let mut rng = rand::thread_rng();
-        for i in 0..L {
+        for val in x.iter_mut().take(L) {
             let y: f32 = rng.gen();
             let idx = (CHARS.len() as f32 * y).floor() as usize;
-            x[i] = CHARS[idx];
+            *val = CHARS[idx];
         }
         Id(x)
     }
