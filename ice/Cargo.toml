@@ -11,4 +11,4 @@ rand = "0.8"
 net = { path = "../net" }
 
 [dev-dependencies]
-tracing-subscriber = "0.2"
+tracing-subscriber = "0.3"

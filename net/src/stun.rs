@@ -7,7 +7,6 @@ use std::time::Duration;
 use crc::{Crc, CRC_32_ISO_HDLC};
 use hmac::Hmac;
 use hmac::Mac;
-use hmac::NewMac;
 use rand::random;
 use sha1::Sha1;
 use thiserror::Error;

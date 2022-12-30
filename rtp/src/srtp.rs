@@ -1,6 +1,6 @@
 use std::fmt;
 
-use hmac::{Hmac, Mac, NewMac};
+use hmac::{Hmac, Mac};
 use openssl::symm::{Cipher, Crypter, Mode};
 
 use dtls::KeyingMaterial;
