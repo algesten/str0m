@@ -35,8 +35,8 @@ impl RtcpPacket for Fir {
     fn write_to(&self, buf: &mut [u8]) -> usize {
         self.header().write_to(&mut buf[..4]);
 
-        let first_ssrc = self.reports.iter().next().map(|r| *r.ssrc).unwrap_or(0);
-        buf[4..8].copy_from_slice(&first_ssrc.to_be_bytes());
+        // sender SSRC
+        buf[4..8].copy_from_slice(&[0, 0, 0, 0]);
 
         let mut buf = &mut buf[8..];
         for r in &self.reports {

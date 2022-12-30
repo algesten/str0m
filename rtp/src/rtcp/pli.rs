@@ -19,14 +19,16 @@ impl RtcpPacket for Pli {
 
     fn length_words(&self) -> usize {
         // header
+        // sender SSRC
         // media SSRC
-        2
+        3
     }
 
     fn write_to(&self, buf: &mut [u8]) -> usize {
         self.header().write_to(&mut buf[..4]);
-        buf[4..8].copy_from_slice(&self.ssrc.to_be_bytes());
-        8
+        buf[4..8].copy_from_slice(&[0, 0, 0, 0]); // sender SSRC
+        buf[8..12].copy_from_slice(&self.ssrc.to_be_bytes());
+        12
     }
 }
 
