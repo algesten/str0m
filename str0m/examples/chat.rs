@@ -12,8 +12,8 @@ use rtp::Direction;
 use str0m::media::MediaKind;
 use str0m::net::Receive;
 use str0m::{
-    Answer, Candidate, ChannelId, Event, IceConnectionState, Input, Mid, Offer, Output, Rtc,
-    RtcError,
+    Answer, Candidate, ChannelId, Event, IceConnectionState, Input, KeyframeRequestKind, Mid,
+    Offer, Output, Rtc, RtcError,
 };
 use systemstat::{Platform, System};
 use tokio::net::UdpSocket;
@@ -54,15 +54,28 @@ enum TrackState {
 }
 
 impl TrackState {
-    fn local_track_mid(&self, remote_mid: Mid) -> Option<Mid> {
-        if let TrackState::Open(t, local_mid) = self {
-            if let Some(t) = t.upgrade() {
-                if t.mid == remote_mid {
-                    return Some(*local_mid);
-                }
+    fn is_open(&self) -> bool {
+        matches!(self, TrackState::Open(_, _))
+    }
+
+    fn local_mid(&self, remote_mid: Mid) -> Option<Mid> {
+        match self {
+            TrackState::Proposed(t, m) | TrackState::Open(t, m) => {
+                let t = t.upgrade()?;
+                (t.mid == remote_mid).then(|| *m)
             }
+            _ => None,
         }
-        None
+    }
+
+    fn remote_track(&self, local_mid: Mid) -> Option<Arc<Track>> {
+        match self {
+            TrackState::Proposed(t, m) | TrackState::Open(t, m) => {
+                let t = t.upgrade()?;
+                (*m == local_mid).then(|| t)
+            }
+            _ => None,
+        }
     }
 }
 
@@ -278,6 +291,13 @@ async fn input_or_timeout(rx: &mut Receiver<RunLoopInput>, timeout: Instant) -> 
     }
 }
 
+#[derive(Debug)]
+enum TrackOrEvent {
+    Track(Weak<Track>),
+    KeyframeReq(ClientId, Mid, KeyframeRequestKind),
+    Event(Event),
+}
+
 /// "drives" Client instances, which calling handle_timeout and then polling
 /// the instances until they produce another timeout Instant.
 async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
@@ -287,12 +307,6 @@ async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
             warn!("Client failed: {:?}", e);
             client.rtc.disconnect();
         }
-    }
-
-    #[derive(Debug)]
-    enum TrackOrEvent {
-        Track(Weak<Track>),
-        Event(Event),
     }
 
     // Collection of all tracks and events to dispatch from all clients.
@@ -323,29 +337,13 @@ async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
                     // Some kind of event. Track opens are handled separately, rest of
                     // events are just propagated to other clients.
                     Output::Event(v) => {
-                        if let Err(e) = client.handle_local_event(&v) {
-                            warn!("Client failed: {:?}", e);
-                            client.rtc.disconnect();
-                        }
-
-                        let te = if let Event::MediaAdded(mid, kind, _) = v {
-                            // Record of a track being open.
-                            let track = Arc::new(Track {
-                                origin: client.id,
-                                mid,
-                                kind,
-                            });
-
-                            let weak = Arc::downgrade(&track);
-
-                            // The client holds the strong reference to the track. All other
-                            // references are weak.
-                            client.add_local_track(track);
-
-                            TrackOrEvent::Track(weak)
-                        } else {
-                            // An event propagated to other clients.
-                            TrackOrEvent::Event(v)
+                        let te = match client.handle_local_event(v) {
+                            Ok(te) => te,
+                            Err(e) => {
+                                warn!("Client failed: {:?}", e);
+                                client.rtc.disconnect();
+                                continue;
+                            }
                         };
 
                         to_dispatch.push((client.id, te));
@@ -368,6 +366,12 @@ async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
                 match &te {
                     TrackOrEvent::Track(t) => client.add_remote_track(t.clone()),
                     TrackOrEvent::Event(e) => client.handle_event_from_other(&e),
+                    TrackOrEvent::KeyframeReq(id, mid, kind) => {
+                        if *id == client.id {
+                            // This is the client that has the incoming track needing a keyframe request.
+                            client.request_keyframe(*mid, *kind);
+                        }
+                    }
                 }
             }
         }
@@ -437,10 +441,6 @@ impl Client {
         Ok(())
     }
 
-    fn add_local_track(&mut self, track: Arc<Track>) {
-        self.tracks_in.push(track);
-    }
-
     fn add_remote_track(&mut self, track: Weak<Track>) {
         self.tracks_out.push(TrackState::ToOpen(track));
     }
@@ -501,8 +501,36 @@ impl Client {
         }
     }
 
-    fn handle_local_event(&mut self, e: &Event) -> Result<(), RtcError> {
-        match e {
+    fn handle_local_event(&mut self, e: Event) -> Result<TrackOrEvent, RtcError> {
+        match &e {
+            Event::MediaAdded(mid, kind, _) => {
+                // Record of a track being open.
+                let track = Arc::new(Track {
+                    origin: self.id,
+                    mid: *mid,
+                    kind: *kind,
+                });
+
+                let weak = Arc::downgrade(&track);
+
+                // The client holds the strong reference to the track. All other
+                // references are weak.
+                self.tracks_in.push(track);
+
+                return Ok(TrackOrEvent::Track(weak));
+            }
+            Event::KeyframeRequest(local_mid, _, kind) => {
+                // a keyframe request must be translated to the corresponding mid on the ingress.
+                let t = self
+                    .tracks_out
+                    .iter()
+                    .filter(|t| t.is_open())
+                    .find_map(|t| t.remote_track(*local_mid));
+
+                if let Some(t) = t {
+                    return Ok(TrackOrEvent::KeyframeReq(t.origin, t.mid, *kind));
+                }
+            }
             Event::ChannelOpen(cid, _) => {
                 self.cid = Some(*cid);
             }
@@ -520,7 +548,7 @@ impl Client {
             _ => {}
         }
 
-        Ok(())
+        Ok(TrackOrEvent::Event(e))
     }
 
     fn handle_offer(&mut self, offer: Offer) -> Result<(), RtcError> {
@@ -562,7 +590,13 @@ impl Client {
             return;
         };
 
-        let Some(local_mid) = self.tracks_out.iter().find_map(|t| t.local_track_mid(d.mid)) else {
+        let local_mid = self
+            .tracks_out
+            .iter()
+            .filter(|t| t.is_open())
+            .find_map(|t| t.local_mid(d.mid));
+
+        let Some(local_mid) = local_mid else {
             return;
         };
 
@@ -574,7 +608,18 @@ impl Client {
             return;
         };
 
-        if let Err(e) = media.get_writer(local_pt, d.rid).write(d.time, &d.data) {
+        if let Err(e) = media.get_writer(local_pt, None).write(d.time, &d.data) {
+            warn!("Client failed: {:?}", e);
+            self.rtc.disconnect();
+        }
+    }
+
+    fn request_keyframe(&mut self, mid: Mid, kind: KeyframeRequestKind) {
+        let Some(media) = self.rtc.media(mid) else {
+            return;
+        };
+
+        if let Err(e) = media.request_keyframe(None, kind) {
             warn!("Client failed: {:?}", e);
             self.rtc.disconnect();
         }
