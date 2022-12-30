@@ -1,4 +1,5 @@
 use std::net::Ipv4Addr;
+use std::time::Duration;
 
 use str0m::media::{Codec, Direction, MediaKind, MediaTime};
 use str0m::{Candidate, RtcError};
@@ -48,7 +49,8 @@ pub fn unidirectional() -> Result<(), RtcError> {
     let data_a = vec![1_u8; 80];
 
     loop {
-        while l.duration() > time_l.into() {
+        let dur_l: Duration = time_l.into();
+        while l.duration() > dur_l {
             let free = l
                 .media(mid)
                 .unwrap()
