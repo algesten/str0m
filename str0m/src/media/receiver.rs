@@ -13,6 +13,7 @@ pub struct ReceiverSource {
     last_used: Instant,
     sender_info: Option<SenderInfo>,
     sender_info_at: Option<Instant>,
+    fir_seq_no: u8,
 }
 
 impl ReceiverSource {
@@ -26,6 +27,7 @@ impl ReceiverSource {
             last_used: now,
             sender_info: None,
             sender_info_at: None,
+            fir_seq_no: 0,
         }
     }
 
@@ -139,5 +141,11 @@ impl ReceiverSource {
     pub fn set_sender_info(&mut self, now: Instant, s: SenderInfo) {
         self.sender_info = Some(s);
         self.sender_info_at = Some(now);
+    }
+
+    pub(crate) fn next_fir_seq_no(&mut self) -> u8 {
+        let x = self.fir_seq_no;
+        self.fir_seq_no = self.fir_seq_no.wrapping_add(1);
+        x
     }
 }

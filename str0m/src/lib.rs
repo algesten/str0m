@@ -79,10 +79,13 @@ pub enum RtcError {
     #[error("PT is unknown {0}")]
     UnknownPt(Pt),
 
-    /// If MediaWriter.write fails because the simulcast level
-    /// used is not mapped to any SSRC.
+    /// If MediaWriter.write fails because we can't find an SSRC to use.
     #[error("No sender source")]
     NoSenderSource,
+
+    /// If MediaWriter.request_keyframe fails because we can't find an SSRC to use.
+    #[error("No receiver source")]
+    NoReceiverSource,
 
     #[error("{0}")]
     NetError(#[from] NetError),
@@ -128,7 +131,7 @@ pub enum Event {
     MediaAdded(Mid, MediaKind, Direction),
     MediaData(MediaData),
     MediaError(RtcError),
-    KeyframeRequest(Mid, KeyframeRequestKind),
+    KeyframeRequest(Mid, Option<Rid>, KeyframeRequestKind),
     ChannelOpen(ChannelId, String),
     ChannelData(ChannelData),
     ChannelClose(ChannelId),
@@ -553,8 +556,8 @@ impl Rtc {
                 }
                 MediaEvent::Data(m) => Output::Event(Event::MediaData(m)),
                 MediaEvent::Error(e) => Output::Event(Event::MediaError(e)),
-                MediaEvent::KeyframeRequest(mid, kind) => {
-                    Output::Event(Event::KeyframeRequest(mid, kind))
+                MediaEvent::KeyframeRequest(mid, rid, kind) => {
+                    Output::Event(Event::KeyframeRequest(mid, rid, kind))
                 }
             });
         }

@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU};
 use packet::RtpMeta;
-use rtp::{extend_seq, Direction, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
+use rtp::{extend_seq, Direction, Rid, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
 use rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
 use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
@@ -71,7 +71,7 @@ pub enum MediaEvent {
     Data(MediaData),
     Error(RtcError),
     Open(Mid, MediaKind, Direction),
-    KeyframeRequest(Mid, KeyframeRequestKind),
+    KeyframeRequest(Mid, Option<Rid>, KeyframeRequestKind),
 }
 
 impl Session {
@@ -151,6 +151,10 @@ impl Session {
             if now >= twcc_at {
                 self.create_twcc_feedback(now);
             }
+        }
+
+        for m in only_media_mut(&mut self.media) {
+            m.maybe_create_keyframe_request(&mut self.feedback);
         }
 
         if now >= self.regular_feedback_at() {
@@ -371,8 +375,8 @@ impl Session {
                 ));
             }
 
-            if let Some(kind) = media.poll_keyframe_request() {
-                return Some(MediaEvent::KeyframeRequest(media.mid(), kind));
+            if let Some((rid, kind)) = media.poll_keyframe_request() {
+                return Some(MediaEvent::KeyframeRequest(media.mid(), rid, kind));
             }
 
             if let Some(r) = media.poll_sample() {
