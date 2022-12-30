@@ -425,7 +425,9 @@ impl Session {
             "RTCP buffer multiple of SRTCP block size",
         );
 
-        let len = Rtcp::write_packet(&mut self.feedback, &mut data, SRTCP_BLOCK_SIZE);
+        let first_ssrc = self.first_sender_ssrc().unwrap_or(0.into());
+
+        let len = Rtcp::write_packet(first_ssrc, &mut self.feedback, &mut data, SRTCP_BLOCK_SIZE);
         data.truncate(len);
 
         let srtp = self.srtp_tx.as_mut()?;

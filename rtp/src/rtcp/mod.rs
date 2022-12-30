@@ -113,9 +113,18 @@ impl Rtcp {
         feedback
     }
 
-    pub fn write_packet(feedback: &mut VecDeque<Rtcp>, buf: &mut [u8], pad_to: usize) -> usize {
+    pub fn write_packet(
+        sender_ssrc: Ssrc,
+        feedback: &mut VecDeque<Rtcp>,
+        buf: &mut [u8],
+        pad_to: usize,
+    ) -> usize {
         assert!(pad_to > 0, "pad_to must be more than 0");
         assert_eq!(pad_to % 4, 0, "pad_to is on a word boundary");
+
+        if feedback.is_empty() {
+            return 0;
+        }
 
         // Total length, in bytes, shrunk to be on the pad_to boundary.
         let mut total_len = buf.len();
@@ -126,6 +135,22 @@ impl Rtcp {
 
         // Pack RTCP feedback packets. Merge together ones of the same type.
         Rtcp::pack(feedback, word_capacity);
+
+        // Unwrap is ok because we check for empty above.
+        let first = feedback.front().unwrap();
+
+        let is_sr_rr = matches!(first, Rtcp::SenderReport(_) | Rtcp::ReceiverReport(_));
+
+        if !is_sr_rr {
+            // RFC says:
+            // SRTCP MUST be given packets according to that requirement in
+            // the sense that the first part MUST be a sender report or a receiver report.
+            let prepend = Rtcp::ReceiverReport(ReceiverReport {
+                sender_ssrc,
+                reports: ReportList::new(),
+            });
+            feedback.push_front(prepend);
+        }
 
         let mut offset = 0;
         let mut offset_prev = 0;
@@ -508,7 +533,7 @@ mod test {
         feedback.push_back(rr(5));
 
         let mut buf = vec![0_u8; 1360];
-        let n = Rtcp::write_packet(&mut feedback, &mut buf, 16);
+        let n = Rtcp::write_packet(1.into(), &mut feedback, &mut buf, 16);
         buf.truncate(n);
 
         let parsed = Rtcp::read_packet(&buf);

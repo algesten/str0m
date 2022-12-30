@@ -23,7 +23,7 @@ pub struct ReceptionReport {
 impl RtcpPacket for ReceiverReport {
     fn header(&self) -> RtcpHeader {
         RtcpHeader {
-            rtcp_type: RtcpType::SenderReport,
+            rtcp_type: RtcpType::ReceiverReport,
             feedback_message_type: FeedbackMessageType::ReceptionReport(self.reports.len() as u8),
             words_less_one: (self.length_words() - 1) as u16,
         }

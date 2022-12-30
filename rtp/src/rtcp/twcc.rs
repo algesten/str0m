@@ -153,7 +153,8 @@ impl RtcpPacket for Twcc {
         buf[12..14].copy_from_slice(&self.base_seq.to_be_bytes());
         buf[14..16].copy_from_slice(&self.status_count.to_be_bytes());
 
-        buf[16..19].copy_from_slice(&self.reference_time.to_be_bytes()[1..4]);
+        let ref_time = self.reference_time.to_be_bytes();
+        buf[16..19].copy_from_slice(&ref_time[1..4]);
         buf[19] = self.feedback_count;
 
         let mut buf = &mut buf[20..];

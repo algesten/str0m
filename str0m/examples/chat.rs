@@ -228,6 +228,7 @@ async fn run_loop(mut rx: Receiver<RunLoopInput>) {
 
     // Next timeout when the below loop will wake up to drive all clients forward.
     let mut timeout = Instant::now() + Duration::from_secs(1);
+    let mut now = Instant::now();
 
     loop {
         // Housekeeping
@@ -237,7 +238,8 @@ async fn run_loop(mut rx: Receiver<RunLoopInput>) {
         let todo = input_or_timeout(&mut rx, timeout);
 
         match todo.await {
-            InputOrTimeout::Timeout => {} // fall through
+            InputOrTimeout::Timeout(t) => now = t,
+
             InputOrTimeout::RunLoopInput(r) => match r {
                 RunLoopInput::NewClient(id, rtc, socket, sdp_addr) => {
                     let mut client = Client::new(id, rtc, socket, sdp_addr);
@@ -254,6 +256,7 @@ async fn run_loop(mut rx: Receiver<RunLoopInput>) {
                 }
 
                 RunLoopInput::SocketInput(id, at, source, data) => {
+                    now = at;
                     if let Some(client) = clients.iter_mut().find(|c| c.id == id && c.is_alive()) {
                         if let Err(e) = client.handle_socket_input(at, source, &data) {
                             warn!("Client failed: {:?}", e);
@@ -266,14 +269,14 @@ async fn run_loop(mut rx: Receiver<RunLoopInput>) {
 
         // Poll all clients for things to do. The returned timeout is the smallest value
         // of all polled client timeouts.
-        timeout = drive_clients(Instant::now(), &mut clients).await;
+        timeout = drive_clients(now, &mut clients).await;
     }
 }
 
 /// run_loop can wait for either input from any UdpSocket, or a timeout indicating an Rtc
 /// instance has some processing to do.
 enum InputOrTimeout {
-    Timeout,
+    Timeout(Instant),
     RunLoopInput(RunLoopInput),
 }
 
@@ -282,7 +285,7 @@ enum InputOrTimeout {
 /// handle a timeout for some client.
 async fn input_or_timeout(rx: &mut Receiver<RunLoopInput>, timeout: Instant) -> InputOrTimeout {
     if timeout < (Instant::now() + Duration::from_millis(1)) {
-        return InputOrTimeout::Timeout;
+        return InputOrTimeout::Timeout(timeout);
     }
 
     tokio::select! {
@@ -290,7 +293,7 @@ async fn input_or_timeout(rx: &mut Receiver<RunLoopInput>, timeout: Instant) -> 
             InputOrTimeout::RunLoopInput(v.unwrap())
         }
         _ = tokio::time::sleep_until(timeout.into()) => {
-            InputOrTimeout::Timeout
+            InputOrTimeout::Timeout(timeout)
         }
     }
 }
@@ -305,14 +308,6 @@ enum TrackOrEvent {
 /// "drives" Client instances, which calling handle_timeout and then polling
 /// the instances until they produce another timeout Instant.
 async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
-    // Move time in all clients.
-    for client in clients.iter_mut().filter(|c| c.is_alive()) {
-        if let Err(e) = client.rtc.handle_input(Input::Timeout(now)) {
-            warn!("Client failed: {:?}", e);
-            client.rtc.disconnect();
-        }
-    }
-
     // Collection of all tracks and events to dispatch from all clients.
     let mut to_dispatch = Vec::new();
     // Timeouts collected from clients that are not polling events or transmits.
@@ -321,6 +316,14 @@ async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
     // Continue looping until all clients produce timeouts.
     loop {
         timeouts.clear(); // Every loop start begin with 0 timeouts.
+
+        // Move time in all clients.
+        for client in clients.iter_mut().filter(|c| c.is_alive()) {
+            if let Err(e) = client.rtc.handle_input(Input::Timeout(now)) {
+                warn!("Client failed: {:?}", e);
+                client.rtc.disconnect();
+            }
+        }
 
         // Poll each client and decide what to do with transmit, timeout or events
         for client in clients.iter_mut().filter(|c| c.is_alive()) {

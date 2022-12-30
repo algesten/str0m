@@ -143,6 +143,10 @@ impl SrtpContext {
         let srtcp_index = self.srtcp_index;
         let ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
 
+        if ssrc == 0 {
+            warn!("SSRC 0 does not make a good SRTCP IV");
+        }
+
         let iv = self.rtcp.salt.rtp_iv(ssrc, srtcp_index as u64);
 
         let mut output = vec![0_u8; buf.len() + SRTCP_INDEX_LEN + SRTP_HMAC_LEN];
@@ -563,7 +567,7 @@ mod test {
     ];
 
     #[test]
-    fn unprotect_srtcp() {
+    fn unprotect_rtcp() {
         let key_mat = KeyingMaterial::new(MAT);
 
         let key_rx = SrtpKey::new(&key_mat, true);
@@ -576,7 +580,7 @@ mod test {
     }
 
     #[test]
-    fn protect_srtcp() {
+    fn protect_rtcp() {
         let key_mat = KeyingMaterial::new(MAT);
         let key_rx = SrtpKey::new(&key_mat, true);
         let mut ctx_rx = SrtpContext::new(key_rx);
