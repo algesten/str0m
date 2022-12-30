@@ -281,12 +281,16 @@ enum InputOrTimeout {
 /// _either_ receive UDP socket input from a connected client, or we need to
 /// handle a timeout for some client.
 async fn input_or_timeout(rx: &mut Receiver<RunLoopInput>, timeout: Instant) -> InputOrTimeout {
+    if timeout < (Instant::now() + Duration::from_millis(1)) {
+        return InputOrTimeout::Timeout;
+    }
+
     tokio::select! {
-        _ = tokio::time::sleep_until(timeout.into()) => {
-            InputOrTimeout::Timeout
-        }
         v = rx.recv() => {
             InputOrTimeout::RunLoopInput(v.unwrap())
+        }
+        _ = tokio::time::sleep_until(timeout.into()) => {
+            InputOrTimeout::Timeout
         }
     }
 }
