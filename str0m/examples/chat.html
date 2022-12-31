@@ -13,14 +13,19 @@
 
 <body>
     Enable
-    <button id="cam" onClick="startCam()">Cam</button>
-    <button id="mic" onClick="startMic()">Mic</button>
+    <button id="cam" onClick="startCam()" disabled>Cam</button>
+    <button id="mic" onClick="startMic()" disabled>Mic</button>
+    ICE: <span id="ice_status">new</span>
+    <div id="chan_status">Waiting for data channel.</div>
     <div id="media"></div>
     <script>
         let streamCam;
         let streamMic;
         let dataChannel;
         let rtc = new RTCPeerConnection();
+        rtc.oniceconnectionstatechange = () => {
+            byId('ice_status').innerText = rtc.iceConnectionState;
+        };
         const byId = (id) => document.getElementById(id);
         const byTag = (tag) => [].slice.call(document.getElementsByTagName(tag));
         var callback = null;
@@ -97,6 +102,7 @@
             const el = document.createElement('video');
             el.controls = true;
             el.srcObject = media;
+            el.autoplay = true;
             byId('media').appendChild(el);
             track.addEventListener('mute', () => {
                 console.log('track muted', track);
@@ -118,6 +124,11 @@
                     callback(event.data);
                     callback = null;
                 }
+            };
+            dataChannel.onopen = () => {
+                byId('chan_status').innerText = '';
+                byId('mic').disabled = false;
+                byId('cam').disabled = false;
             };
             const offer = await rtc.createOffer();
             rtc.setLocalDescription(offer);
