@@ -4,10 +4,10 @@ use std::time::{Duration, Instant};
 use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU};
 use packet::RtpMeta;
+use rtp::SRTCP_OVERHEAD;
 use rtp::{extend_seq, Direction, Rid, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
 use rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
-use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
 
 use crate::media::{App, CodecConfig, MediaKind};
 use crate::session_sdp::AsMediaLine;
@@ -414,20 +414,14 @@ impl Session {
             return None;
         }
 
-        // The encryptable "body" must be an even number of 16.
-        const ENCRYPTABLE_MTU: usize =
-            DATAGRAM_MTU - SRTCP_OVERHEAD - (DATAGRAM_MTU - SRTCP_OVERHEAD) % SRTCP_BLOCK_SIZE;
+        const ENCRYPTABLE_MTU: usize = DATAGRAM_MTU - SRTCP_OVERHEAD;
+        assert!(ENCRYPTABLE_MTU % 4 == 0);
 
         let mut data = vec![0_u8; ENCRYPTABLE_MTU];
 
-        assert!(
-            data.len() % SRTCP_BLOCK_SIZE == 0,
-            "RTCP buffer multiple of SRTCP block size",
-        );
-
         let first_ssrc = self.first_sender_ssrc().unwrap_or(0.into());
 
-        let len = Rtcp::write_packet(first_ssrc, &mut self.feedback, &mut data, SRTCP_BLOCK_SIZE);
+        let len = Rtcp::write_packet(first_ssrc, &mut self.feedback, &mut data);
         data.truncate(len);
 
         let srtp = self.srtp_tx.as_mut()?;

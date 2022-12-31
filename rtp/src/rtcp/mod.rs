@@ -113,22 +113,13 @@ impl Rtcp {
         feedback
     }
 
-    pub fn write_packet(
-        sender_ssrc: Ssrc,
-        feedback: &mut VecDeque<Rtcp>,
-        buf: &mut [u8],
-        pad_to: usize,
-    ) -> usize {
-        assert!(pad_to > 0, "pad_to must be more than 0");
-        assert_eq!(pad_to % 4, 0, "pad_to is on a word boundary");
-
+    pub fn write_packet(sender_ssrc: Ssrc, feedback: &mut VecDeque<Rtcp>, buf: &mut [u8]) -> usize {
         if feedback.is_empty() {
             return 0;
         }
 
         // Total length, in bytes, shrunk to be on the pad_to boundary.
-        let mut total_len = buf.len();
-        total_len -= total_len % pad_to;
+        let total_len = buf.len();
 
         // Capacity in words
         let word_capacity = total_len / 4;
@@ -153,7 +144,6 @@ impl Rtcp {
         }
 
         let mut offset = 0;
-        let mut offset_prev = 0;
         while let Some(fb) = feedback.front() {
             // Length of next item.
             let item_len = fb.length_words() * 4;
@@ -171,33 +161,7 @@ impl Rtcp {
             assert_eq!(written, item_len, "length_words equals write_to length");
 
             // Move offsets for the amount written.
-            offset_prev = offset;
             offset += item_len;
-        }
-
-        // Check if there is padding needed to fill up to pad_to.
-        let pad = pad_to - offset % pad_to;
-        if offset > 0 && pad_to > 1 && pad < pad_to {
-            for i in 0..pad {
-                buf[offset + i] = 0;
-            }
-            offset += pad;
-
-            // In a compound RTCP packet, padding is only
-            // required on one individual packet because the compound packet is
-            // encrypted as a whole .  Thus, padding MUST only be added to the
-            // last individual packet, and if padding is added to that packet,
-            // the padding bit MUST be set only on that packet.
-            buf[offset - 1] = pad as u8;
-            let header = &mut buf[offset_prev..];
-
-            // Add padding bytes on to the total length of the packet.
-            let mut words_less_one = u16::from_be_bytes([header[2], header[3]]);
-            words_less_one += pad as u16 / 4;
-            header[2..4].copy_from_slice(&words_less_one.to_be_bytes());
-
-            // Toggle padding bit
-            buf[offset_prev] |= 0b00_1_00000;
         }
 
         offset
@@ -470,7 +434,52 @@ fn pad_bytes_to_word(n: usize) -> usize {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::rtcp::twcc::{Delta, PacketChunk, PacketStatus};
     use crate::MediaTime;
+
+    #[test]
+    fn padding_of_rtcp() {
+        let mut queue = VecDeque::new();
+        let mut twcc = Twcc {
+            sender_ssrc: 1.into(),
+            ssrc: 0.into(),
+            base_seq: 82,
+            status_count: 3,
+            reference_time: 25,
+            feedback_count: 17,
+            chunks: VecDeque::new(),
+            delta: VecDeque::new(),
+        };
+        twcc.chunks
+            .push_back(PacketChunk::Run(PacketStatus::ReceivedSmallDelta, 3));
+        twcc.delta.push_back(Delta::Small(0x7c));
+        twcc.delta.push_back(Delta::Small(0x93));
+        twcc.delta.push_back(Delta::Small(0x84));
+        queue.push_back(Rtcp::Twcc(twcc));
+        let mut buf = vec![0; 1500];
+        let n = Rtcp::write_packet(1.into(), &mut queue, &mut buf);
+        buf.truncate(n);
+        println!("{:02x?}", buf);
+        assert_eq!(
+            &buf,
+            &[
+                // inserted RR
+                0x80, 0xc9, 0x00, 0x01, //
+                0x00, 0x00, 0x00, 0x01, // sender SSRC
+                // TWCC 0xaf got padding bit set
+                0xaf, 0xcd, 0x00, 0x06, //
+                0x00, 0x00, 0x00, 0x01, // sender SSRC
+                0x00, 0x00, 0x00, 0x00, // media SSRC
+                0x00, 0x52, // base seq
+                0x00, 0x03, // status count
+                0x00, 0x00, 0x19, // reference time
+                0x11, // feedback count
+                0x20, 0x03, // run of 3
+                0x7c, 0x93, 0x84, // three small delta
+                0x00, 0x00, 0x00 // padding
+            ]
+        );
+    }
 
     #[test]
     fn pack_sr_4_rr() {
@@ -533,7 +542,7 @@ mod test {
         feedback.push_back(rr(5));
 
         let mut buf = vec![0_u8; 1360];
-        let n = Rtcp::write_packet(1.into(), &mut feedback, &mut buf, 16);
+        let n = Rtcp::write_packet(1.into(), &mut feedback, &mut buf);
         buf.truncate(n);
 
         let parsed = Rtcp::read_packet(&buf);
