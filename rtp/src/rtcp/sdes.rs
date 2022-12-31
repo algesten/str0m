@@ -81,34 +81,31 @@ impl Sdes {
         buf[..4].copy_from_slice(&self.ssrc.to_be_bytes());
         let mut tot = 4;
 
-        {
-            let mut buf = &mut buf[4..];
-            for (t, v) in &self.values {
-                let bytes = v.as_bytes();
-                let len = bytes.len();
+        let mut buf = &mut buf[4..];
+        for (t, v) in &self.values {
+            let bytes = v.as_bytes();
+            let len = bytes.len();
 
-                buf[0] = *t as u8;
-                buf[1] = len as u8;
+            buf[0] = *t as u8;
+            buf[1] = len as u8;
 
-                buf = &mut buf[2..];
-                buf[..len].copy_from_slice(bytes);
+            buf = &mut buf[2..];
+            buf[..len].copy_from_slice(bytes);
 
-                buf = &mut buf[len..];
-                tot += 2 + len;
-            }
-
-            buf[0] = SdesType::END as u8;
-            tot += 1;
+            buf = &mut buf[len..];
+            tot += 2 + len;
         }
+
+        buf[0] = SdesType::END as u8;
+        buf = &mut buf[1..];
+        tot += 1;
 
         let pad = 4 - tot % 4;
         if pad < 4 {
             for i in 0..pad {
-                buf[tot + i] = SdesType::END as u8;
+                buf[i] = SdesType::END as u8;
             }
             tot += pad;
-            // Toggle padding bit
-            buf[0] |= 0b00_1_00000;
         }
 
         assert!(tot % 4 == 0, "Sdes is padded to word boundary");
