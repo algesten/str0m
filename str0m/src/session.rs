@@ -419,9 +419,7 @@ impl Session {
 
         let mut data = vec![0_u8; ENCRYPTABLE_MTU];
 
-        let first_ssrc = self.first_sender_ssrc().unwrap_or(0.into());
-
-        let len = Rtcp::write_packet(first_ssrc, &mut self.feedback, &mut data);
+        let len = Rtcp::write_packet(&mut self.feedback, &mut data);
         data.truncate(len);
 
         let srtp = self.srtp_tx.as_mut()?;

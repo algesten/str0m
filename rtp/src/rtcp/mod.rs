@@ -113,7 +113,7 @@ impl Rtcp {
         feedback
     }
 
-    pub fn write_packet(sender_ssrc: Ssrc, feedback: &mut VecDeque<Rtcp>, buf: &mut [u8]) -> usize {
+    pub fn write_packet(feedback: &mut VecDeque<Rtcp>, buf: &mut [u8]) -> usize {
         if feedback.is_empty() {
             return 0;
         }
@@ -126,22 +126,6 @@ impl Rtcp {
 
         // Pack RTCP feedback packets. Merge together ones of the same type.
         Rtcp::pack(feedback, word_capacity);
-
-        // Unwrap is ok because we check for empty above.
-        let first = feedback.front().unwrap();
-
-        let is_sr_rr = matches!(first, Rtcp::SenderReport(_) | Rtcp::ReceiverReport(_));
-
-        if !is_sr_rr {
-            // RFC says:
-            // SRTCP MUST be given packets according to that requirement in
-            // the sense that the first part MUST be a sender report or a receiver report.
-            let prepend = Rtcp::ReceiverReport(ReceiverReport {
-                sender_ssrc,
-                reports: ReportList::new(),
-            });
-            feedback.push_front(prepend);
-        }
 
         let mut offset = 0;
         while let Some(fb) = feedback.front() {
@@ -457,15 +441,12 @@ mod test {
         twcc.delta.push_back(Delta::Small(0x84));
         queue.push_back(Rtcp::Twcc(twcc));
         let mut buf = vec![0; 1500];
-        let n = Rtcp::write_packet(1.into(), &mut queue, &mut buf);
+        let n = Rtcp::write_packet(&mut queue, &mut buf);
         buf.truncate(n);
         println!("{:02x?}", buf);
         assert_eq!(
             &buf,
             &[
-                // inserted RR
-                0x80, 0xc9, 0x00, 0x01, //
-                0x00, 0x00, 0x00, 0x01, // sender SSRC
                 // TWCC 0xaf got padding bit set
                 0xaf, 0xcd, 0x00, 0x06, //
                 0x00, 0x00, 0x00, 0x01, // sender SSRC
@@ -542,7 +523,7 @@ mod test {
         feedback.push_back(rr(5));
 
         let mut buf = vec![0_u8; 1360];
-        let n = Rtcp::write_packet(1.into(), &mut feedback, &mut buf);
+        let n = Rtcp::write_packet(&mut feedback, &mut buf);
         buf.truncate(n);
 
         let parsed = Rtcp::read_packet(&buf);
