@@ -1,4 +1,5 @@
 #![allow(clippy::new_without_default)]
+#![allow(clippy::bool_to_int_with_if)]
 
 #[macro_use]
 extern crate tracing;

@@ -16,7 +16,7 @@ pub enum Change {
     AddMedia(AddMedia),
     AddApp(Mid),
     AddChannel(ChannelId, DcepOpen),
-    ChangeDir(Mid, Direction),
+    Direction(Mid, Direction),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,7 +129,7 @@ impl<'a> ChangeSet<'a> {
     }
 
     pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
-        self.changes.0.push(Change::ChangeDir(mid, dir));
+        self.changes.0.push(Change::Direction(mid, dir));
     }
 
     pub fn apply(self) -> Offer {
@@ -203,16 +203,12 @@ impl Changes {
 
     pub(crate) fn apply_to(&self, lines: &mut [MediaLine]) {
         for change in &self.0 {
-            use Change::*;
-            match change {
-                ChangeDir(mid, dir) => {
-                    if let Some(line) = lines.iter_mut().find(|l| l.mid() == *mid) {
-                        if let Some(dir_pos) = line.attrs.iter().position(|a| a.is_direction()) {
-                            line.attrs[dir_pos] = (*dir).into();
-                        }
+            if let Change::Direction(mid, dir) = change {
+                if let Some(line) = lines.iter_mut().find(|l| l.mid() == *mid) {
+                    if let Some(dir_pos) = line.attrs.iter().position(|a| a.is_direction()) {
+                        line.attrs[dir_pos] = (*dir).into();
                     }
                 }
-                _ => {}
             }
         }
     }
@@ -230,10 +226,10 @@ impl Change {
             AddMedia(v) => {
                 // TODO can we avoid all this cloning?
                 let mut add = v.clone();
-                add.params = config.all_for_kind(v.kind).map(|c| c.clone()).collect();
+                add.params = config.all_for_kind(v.kind).copied().collect();
                 add.index = index;
 
-                let media = Media::from_add_media(add, exts.clone());
+                let media = Media::from_add_media(add, *exts);
                 Some(MediaOrApp::Media(media))
             }
             AddApp(mid) => {

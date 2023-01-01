@@ -102,7 +102,7 @@ impl TryFrom<&[u8]> for DcepAck {
     type Error = Error;
 
     fn try_from(buf: &[u8]) -> Result<Self, Self::Error> {
-        if buf.len() < 1 {
+        if buf.is_empty() {
             return Err(Error::DcepOpenTooSmall);
         }
 
@@ -110,7 +110,7 @@ impl TryFrom<&[u8]> for DcepAck {
             return Err(Error::DcepIncorrectMessageType);
         }
 
-        return Ok(DcepAck);
+        Ok(DcepAck)
     }
 }
 

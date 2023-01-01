@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 use crate::{Depacketizer, PacketError};
 
 ///

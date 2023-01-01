@@ -53,6 +53,7 @@ pub(crate) struct Session {
     twcc_tx_register: TwccSendRegister,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum MediaOrApp {
     Media(Media),
@@ -352,7 +353,7 @@ impl Session {
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
         let srtp = self.srtp_rx.as_mut()?;
-        let unprotected = srtp.unprotect_rtcp(&buf)?;
+        let unprotected = srtp.unprotect_rtcp(buf)?;
 
         let feedback = Rtcp::read_packet(&unprotected);
 
@@ -493,7 +494,7 @@ impl Session {
         only_media(&self.media)
             .map(|m| m.regular_feedback_at())
             .min()
-            .unwrap_or(not_happening())
+            .unwrap_or_else(not_happening)
     }
 
     fn nack_at(&mut self) -> Option<Instant> {
@@ -524,11 +525,11 @@ impl Session {
     }
 
     fn first_ssrc_remote(&self) -> Ssrc {
-        self.first_ssrc_remote.unwrap_or(0.into())
+        self.first_ssrc_remote.unwrap_or_else(|| 0.into())
     }
 
     fn first_ssrc_local(&self) -> Ssrc {
-        self.first_ssrc_local.unwrap_or(0.into())
+        self.first_ssrc_local.unwrap_or_else(|| 0.into())
     }
 }
 

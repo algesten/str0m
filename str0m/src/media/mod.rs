@@ -691,7 +691,7 @@ impl Media {
     pub(crate) fn poll_sample(&mut self) -> Option<Result<MediaData, RtcError>> {
         for ((pt, rid), buf) in &mut self.buffers_rx {
             if let Some(r) = buf.pop() {
-                let codec = self.params.iter().find(|c| c.pt() == *pt)?.clone();
+                let codec = *self.params.iter().find(|c| c.pt() == *pt)?;
                 return Some(
                     r.map(|dep| MediaData {
                         mid: self.mid,
@@ -902,7 +902,7 @@ impl MediaWriter<'_> {
 
 /// Separate in wait for polonius.
 fn get_source_tx(
-    sources_tx: &mut Vec<SenderSource>,
+    sources_tx: &mut [SenderSource],
     rid: Option<Rid>,
     is_rtx: bool,
 ) -> Option<&mut SenderSource> {

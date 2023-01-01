@@ -1,3 +1,5 @@
+#![allow(clippy::new_without_default)]
+
 #[macro_use]
 extern crate tracing;
 
@@ -58,11 +60,10 @@ pub enum RtcSctpState {
 
 impl RtcSctpState {
     pub fn propagate_endpoint_to_assoc(&self) -> bool {
-        match self {
-            RtcSctpState::AwaitAssociationEstablished => true,
-            RtcSctpState::Established => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            RtcSctpState::AwaitAssociationEstablished | RtcSctpState::Established
+        )
     }
 }
 
@@ -197,12 +198,10 @@ impl RtcSctp {
             } else {
                 PayloadProtocolIdentifier::Binary
             }
+        } else if buf.is_empty() {
+            PayloadProtocolIdentifier::StringEmpty
         } else {
-            if buf.is_empty() {
-                PayloadProtocolIdentifier::StringEmpty
-            } else {
-                PayloadProtocolIdentifier::String
-            }
+            PayloadProtocolIdentifier::String
         };
 
         Ok(stream.write(buf, ppi)?)
@@ -336,7 +335,7 @@ impl RtcSctp {
                 info!("Open stream {}", entry.id);
                 match assoc.open_stream(entry.id, PayloadProtocolIdentifier::Unknown) {
                     Ok(mut s) => {
-                        let dcep = entry.dcep.as_ref().take().expect("AwaitOpen to have dcep");
+                        let dcep = entry.dcep.as_ref().expect("AwaitOpen to have dcep");
 
                         let ret = s.set_reliability_params(
                             dcep.unordered,
@@ -378,23 +377,20 @@ impl RtcSctp {
                 }
             };
 
-            match entry.state {
-                StreamEntryState::SendDcepOpen => {
-                    let dcep = entry.dcep.as_ref().expect("dcep to send");
+            if entry.state == StreamEntryState::SendDcepOpen {
+                let dcep = entry.dcep.as_ref().expect("dcep to send");
 
-                    let mut buf = vec![0; 1500];
-                    let n = dcep.marshal_to(&mut buf);
-                    buf.truncate(n);
+                let mut buf = vec![0; 1500];
+                let n = dcep.marshal_to(&mut buf);
+                buf.truncate(n);
 
-                    let l = stream
-                        .write(&buf, PayloadProtocolIdentifier::Dcep)
-                        .expect("writing dcep open");
-                    assert!(n == l);
+                let l = stream
+                    .write(&buf, PayloadProtocolIdentifier::Dcep)
+                    .expect("writing dcep open");
+                assert!(n == l);
 
-                    entry.set_state(StreamEntryState::AwaitDcepAck);
-                    return self.poll();
-                }
-                _ => {}
+                entry.set_state(StreamEntryState::AwaitDcepAck);
+                return self.poll();
             }
 
             match stream_read_data(&mut stream) {

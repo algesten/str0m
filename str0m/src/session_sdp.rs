@@ -142,11 +142,9 @@ impl Session {
             if let Some(s) = l.simulcast() {
                 if s.is_munged {
                     warn!("Not supporting simulcast via munging SDP");
-                } else {
-                    if media.simulcast().is_none() {
-                        // Invert before setting, since it has a recv and send config.
-                        media.set_simulcast(s.invert());
-                    }
+                } else if media.simulcast().is_none() {
+                    // Invert before setting, since it has a recv and send config.
+                    media.set_simulcast(s.invert());
                 }
             }
 
@@ -227,7 +225,7 @@ impl Session {
         let mut new_lines = Vec::new();
 
         let config = self.codec_config().clone();
-        let session_exts = self.exts().clone();
+        let session_exts = *self.exts();
 
         for (idx, m) in sdp.media_lines.iter().enumerate() {
             if m.typ == MediaType::Application {
@@ -270,9 +268,9 @@ impl Session {
             let idx = self.media.len();
 
             if m.typ.is_media() {
-                let mut exts = self.exts().clone();
+                let mut exts = *self.exts();
                 exts.keep_same(&self.exts);
-                let media = Media::from_remote_media_line(*m, idx, exts);
+                let media = Media::from_remote_media_line(m, idx, exts);
                 self.media.push(MediaOrApp::Media(media));
 
                 let media = only_media_mut(&mut self.media).last().unwrap();
@@ -299,7 +297,7 @@ impl Session {
     fn update_session_extmaps(&mut self, sdp: &Sdp) {
         let old = self.exts;
 
-        let extmaps = sdp.media_lines.iter().map(|m| m.extmaps()).flatten();
+        let extmaps = sdp.media_lines.iter().flat_map(|m| m.extmaps());
 
         for x in extmaps {
             self.exts.apply_mapping(&x);
@@ -372,7 +370,7 @@ impl AsMediaLine for Media {
             .codecs()
             .iter()
             .flat_map(|c| [Some(c.pt()), c.pt_rtx()].into_iter())
-            .filter_map(|c| c)
+            .flatten()
             .collect();
 
         if let Some(s) = self.simulcast() {
@@ -414,6 +412,7 @@ impl AsMediaLine for Media {
         }
 
         let count = self.source_tx_ssrcs().count();
+        #[allow(clippy::comparison_chain)]
         if count == 2 {
             attrs.push(MediaAttribute::SsrcGroup {
                 semantics: "FID".to_string(),
@@ -457,9 +456,9 @@ impl AsMediaLine for MediaOrApp {
     }
 }
 
-impl Into<MediaType> for MediaKind {
-    fn into(self) -> MediaType {
-        match self {
+impl From<MediaKind> for MediaType {
+    fn from(value: MediaKind) -> Self {
+        match value {
             MediaKind::Audio => MediaType::Audio,
             MediaKind::Video => MediaType::Video,
         }

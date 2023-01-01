@@ -1,3 +1,5 @@
+#![allow(clippy::all)]
+
 use crate::{Depacketizer, PacketError, Packetizer};
 
 /// Packetizes H264 RTP packets.

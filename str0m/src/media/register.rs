@@ -288,10 +288,8 @@ impl ReceiverRegister {
                     self.nack_check_from = (i + 1).into();
                     break;
                 }
-            } else {
-                if !did_receive {
-                    first_missing = Some(i);
-                }
+            } else if !did_receive {
+                first_missing = Some(i);
             }
         }
 
@@ -343,6 +341,8 @@ impl ReceiverRegister {
             (lost_interval << 8) / expected_interval
         } as u8;
 
+        trace!("Reception fraction lost: {}", lost);
+
         lost
     }
 
@@ -392,6 +392,8 @@ impl TimePoint {
         let tdur = (self.arrival - other.arrival).as_micros() as f32;
 
         let d = (tdur - rdur).abs();
+
+        trace!("Timepoint delta: {}", d);
 
         d
     }

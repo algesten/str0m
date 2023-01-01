@@ -137,7 +137,7 @@ impl CandidatePair {
             (remote_prio, local_prio)
         };
 
-        2_u64.pow(32) * g.min(d) as u64 + 2 * g.max(d) as u64 + u64::from(g > d)
+        2_u64.pow(32) * g.min(d) as u64 + 2 * g.max(d) as u64 + if g > d { 1 } else { 0 }
     }
 
     pub fn local_idx(&self) -> usize {

@@ -33,10 +33,6 @@ impl Default for App {
 
 impl From<(Mid, usize)> for App {
     fn from((mid, index): (Mid, usize)) -> Self {
-        App {
-            mid,
-            index,
-            ..Default::default()
-        }
+        App { mid, index }
     }
 }

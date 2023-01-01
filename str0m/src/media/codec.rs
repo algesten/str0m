@@ -58,7 +58,7 @@ impl From<PayloadParams> for CodecParams {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CodecConfig {
     configs: Vec<CodecParams>,
 }
@@ -228,11 +228,5 @@ impl CodecConfig {
                 c.codec().is_audio()
             }
         })
-    }
-}
-
-impl Default for CodecConfig {
-    fn default() -> Self {
-        CodecConfig { configs: vec![] }
     }
 }

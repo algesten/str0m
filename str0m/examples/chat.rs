@@ -63,7 +63,7 @@ impl TrackState {
         match self {
             TrackState::Proposed(t, m) | TrackState::Open(t, m) => {
                 let t = t.upgrade()?;
-                (t.mid == remote_mid).then(|| *m)
+                (t.mid == remote_mid).then_some(*m)
             }
             _ => None,
         }
@@ -73,7 +73,7 @@ impl TrackState {
         match self {
             TrackState::Proposed(t, m) | TrackState::Open(t, m) => {
                 let t = t.upgrade()?;
-                (*m == local_mid).then(|| t)
+                (*m == local_mid).then_some(t)
             }
             _ => None,
         }
@@ -282,7 +282,7 @@ async fn input_or_timeout(rx: &mut Receiver<RunLoopInput>, timeout: Instant) -> 
 
     tokio::select! {
         v = rx.recv() => {
-            return v.unwrap();
+            v.unwrap()
         }
         _ = tokio::time::sleep_until(timeout.into()) => {
             RunLoopInput::Timeout(timeout)
@@ -364,7 +364,7 @@ async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
             for client in clients.iter_mut().filter(|c| c.id != from && c.is_alive()) {
                 match &te {
                     TrackOrEvent::Track(t) => client.add_remote_track(t.clone()),
-                    TrackOrEvent::Event(e) => client.handle_event_from_other(&e),
+                    TrackOrEvent::Event(e) => client.handle_event_from_other(e),
                     TrackOrEvent::KeyframeReq(id, mid, kind) => {
                         if *id == client.id {
                             // This is the client that has the incoming track needing a keyframe request.
