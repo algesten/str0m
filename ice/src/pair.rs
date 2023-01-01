@@ -326,9 +326,10 @@ impl CandidatePair {
     ///
     /// Returns `false` if the candidate has failed.
     pub fn is_still_possible(&self, now: Instant) -> bool {
+        let attempts = self.binding_attempts.len();
         let unanswered = self.unanswered().map(|b| b.0).unwrap_or(0);
 
-        if unanswered < STUN_MAX_RETRANS {
+        if attempts < STUN_MAX_RETRANS || unanswered < STUN_MAX_RETRANS {
             true
         } else {
             // check to see if we are still waiting for the last attempt
