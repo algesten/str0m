@@ -1,6 +1,6 @@
 use std::fmt;
 
-use hmac::{Hmac, Mac, NewMac};
+use hmac::{Hmac, Mac};
 use openssl::symm::{Cipher, Crypter, Mode};
 
 use dtls::KeyingMaterial;
@@ -22,7 +22,6 @@ pub const SRTP_OVERHEAD: usize = 10;
 
 const SRTCP_INDEX_LEN: usize = 4;
 pub const SRTCP_OVERHEAD: usize = 16;
-pub const SRTCP_BLOCK_SIZE: usize = 16;
 
 #[derive(Debug)]
 pub struct SrtpContext {
@@ -142,6 +141,10 @@ impl SrtpContext {
 
         let srtcp_index = self.srtcp_index;
         let ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
+
+        if ssrc == 0 {
+            warn!("SSRC 0 does not make a good SRTCP IV");
+        }
 
         let iv = self.rtcp.salt.rtp_iv(ssrc, srtcp_index as u64);
 
@@ -562,21 +565,21 @@ mod test {
         0xB7, 0xBB, 0x52, 0x65, 0x21, 0xD1, 0xE7, 0x3C, 0x0F, 0xC0,
     ];
 
+    // #[test]
+    // fn unprotect_rtcp() {
+    //     let key_mat = KeyingMaterial::new(MAT);
+
+    //     let key_rx = SrtpKey::new(&key_mat, true);
+
+    //     let mut ctx_rx = SrtpContext::new(key_rx);
+
+    //     let decrypted = ctx_rx.unprotect_rtcp(SRTCP);
+
+    //     println!("{:02x?}", decrypted);
+    // }
+
     #[test]
-    fn unprotect_srtcp() {
-        let key_mat = KeyingMaterial::new(MAT);
-
-        let key_rx = SrtpKey::new(&key_mat, true);
-
-        let mut ctx_rx = SrtpContext::new(key_rx);
-
-        let decrypted = ctx_rx.unprotect_rtcp(SRTCP);
-
-        println!("{:02x?}", decrypted);
-    }
-
-    #[test]
-    fn protect_srtcp() {
+    fn protect_rtcp() {
         let key_mat = KeyingMaterial::new(MAT);
         let key_rx = SrtpKey::new(&key_mat, true);
         let mut ctx_rx = SrtpContext::new(key_rx);
@@ -589,6 +592,9 @@ mod test {
         let srtcp_index = SRTCP.len() - SRTP_HMAC_LEN - SRTCP_INDEX_LEN;
         let e_and_i = &SRTCP[srtcp_index..(srtcp_index + 4)];
         assert_eq!(e_and_i, &0x8000_0001_u32.to_be_bytes());
+
+        println!("{}", decrypted.len());
+        println!("{:02x?}", decrypted);
 
         // Take us back to where we started.
         let encrypted = ctx_rx.protect_rtcp(&decrypted);

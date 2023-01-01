@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use net_::{Id, DATAGRAM_MTU};
 use packet::{DepacketizingBuffer, Packetized, PacketizingBuffer};
 pub use rtp::MediaTime;
-use rtp::{Extensions, NackEntry, Rid, Rtcp, RtcpFb, RtpHeader, SdesType};
+use rtp::{Extensions, Fir, FirEntry, NackEntry, Pli, Rid, Rtcp, RtcpFb, RtpHeader, SdesType};
 use rtp::{SeqNo, Ssrc, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
 pub use rtp::{Direction, Mid, Pt};
@@ -125,7 +125,10 @@ pub struct Media {
     pub(crate) need_open_event: bool,
 
     /// If we receive an rtcp request for a keyframe, this holds what kind.
-    waiting_keyframe_request: Option<KeyframeRequestKind>,
+    keyframe_request_rx: Option<(Option<Rid>, KeyframeRequestKind)>,
+
+    /// If we are to send an rtcp request for a keyframe, this holds what kind.
+    keyframe_request_tx: Option<(Ssrc, KeyframeRequestKind)>,
 
     /// Simulcast configuration, if set.
     simulcast: Option<Simulcast>,
@@ -197,6 +200,23 @@ impl Media {
             rid,
             codec,
         }
+    }
+
+    pub fn request_keyframe(
+        &mut self,
+        rid: Option<Rid>,
+        kind: KeyframeRequestKind,
+    ) -> Result<(), RtcError> {
+        let rx = self
+            .sources_rx
+            .iter()
+            .find(|s| s.rid() == rid && !s.is_rtx())
+            .ok_or(RtcError::NoReceiverSource)?;
+
+        info!("Request keyframe ({:?}) for SSRC: {}", kind, rx.ssrc());
+        self.keyframe_request_tx = Some((rx.ssrc(), kind));
+
+        Ok(())
     }
 
     pub(crate) fn poll_packet(
@@ -387,28 +407,51 @@ impl Media {
         self.last_cleanup + CLEANUP_INTERVAL
     }
 
-    pub(crate) fn first_source_tx(&self) -> Option<&SenderSource> {
-        self.sources_tx.first()
-    }
-
     pub(crate) fn source_tx_ssrcs(&self) -> impl Iterator<Item = Ssrc> + '_ {
         self.sources_tx.iter().map(|s| s.ssrc())
+    }
+
+    pub(crate) fn maybe_create_keyframe_request(
+        &mut self,
+        sender_ssrc: Ssrc,
+        feedback: &mut VecDeque<Rtcp>,
+    ) {
+        let Some((ssrc, kind)) = self.keyframe_request_tx.take() else {
+            return;
+        };
+
+        match kind {
+            KeyframeRequestKind::Pli => feedback.push_back(Rtcp::Pli(Pli { sender_ssrc, ssrc })),
+            KeyframeRequestKind::Fir => {
+                // Unwrap is ok, because MediaWriter ensures the ReceiverSource exists.
+                let rx = self
+                    .sources_rx
+                    .iter_mut()
+                    .find(|s| s.ssrc() == ssrc)
+                    .unwrap();
+
+                feedback.push_back(Rtcp::Fir(Fir {
+                    sender_ssrc,
+                    reports: FirEntry {
+                        ssrc,
+                        seq_no: rx.next_fir_seq_no(),
+                    }
+                    .into(),
+                }));
+            }
+        }
     }
 
     /// Creates sender info and receiver reports for all senders/receivers
     pub(crate) fn maybe_create_regular_feedback(
         &mut self,
         now: Instant,
+        sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,
     ) -> Option<()> {
         if now < self.regular_feedback_at() {
             return None;
         }
-
-        // If we don't have any sender sources, we can't create an SRTCP wrapper around the
-        // feedback. This is because the SSRC is used to calculate the specific encryption key.
-        // No sender SSRC, no encryption, no feedback possible.
-        let first_ssrc = self.first_source_tx().map(|s| s.ssrc()).unwrap_or(0.into());
 
         // Since we're making new sender/receiver reports, clear out previous.
         feedback.retain(|r| !matches!(r, Rtcp::SenderReport(_) | Rtcp::ReceiverReport(_)));
@@ -424,7 +467,7 @@ impl Media {
 
         for s in &mut self.sources_rx {
             let mut rr = s.create_receiver_report(now);
-            rr.sender_ssrc = first_ssrc;
+            rr.sender_ssrc = sender_ssrc;
 
             debug!("Created feedback RR: {:?}", rr);
             feedback.push_back(Rtcp::ReceiverReport(rr));
@@ -437,32 +480,41 @@ impl Media {
     }
 
     /// Creates nack reports for receivers, if needed.
-    pub(crate) fn create_nack(&mut self, feedback: &mut VecDeque<Rtcp>) {
+    pub(crate) fn create_nack(&mut self, sender_ssrc: Ssrc, feedback: &mut VecDeque<Rtcp>) {
         for s in &mut self.sources_rx {
             if s.is_rtx() {
                 continue;
             }
-            if let Some(nack) = s.create_nack() {
+            if let Some(mut nack) = s.create_nack() {
+                nack.sender_ssrc = sender_ssrc;
                 debug!("Created feedback NACK: {:?}", nack);
-                feedback.push_back(nack);
+                feedback.push_back(Rtcp::Nack(nack));
             }
         }
     }
 
     /// Appply incoming RTCP feedback.
     pub(crate) fn handle_rtcp_fb(&mut self, now: Instant, fb: RtcpFb) -> Option<()> {
-        let ssrc = fb.ssrc();
         trace!("Handle RTCP feedback: {:?}", fb);
+
+        if fb.is_for_rx() {
+            self.handle_rtcp_fb_rx(now, fb)?;
+        } else {
+            self.handle_rtcp_fb_tx(now, fb)?;
+        }
+
+        Some(())
+    }
+
+    pub(crate) fn handle_rtcp_fb_rx(&mut self, now: Instant, fb: RtcpFb) -> Option<()> {
+        let ssrc = fb.ssrc();
+
+        let source_rx = self.sources_rx.iter_mut().find(|s| s.ssrc() == ssrc)?;
 
         use RtcpFb::*;
         match fb {
             SenderInfo(v) => {
-                let source_rx = self.sources_rx.iter_mut().find(|s| s.ssrc() == ssrc)?;
                 source_rx.set_sender_info(now, v);
-            }
-            ReceptionReport(v) => {
-                // TODO: What to do with these?
-                trace!("Handle reception report: {:?}", v);
             }
             SourceDescription(v) => {
                 for (sdes, st) in v.values {
@@ -484,13 +536,31 @@ impl Media {
             Goodbye(v) => {
                 error!("Goodbye: {:?}", v);
             }
+            _ => {}
+        }
+
+        Some(())
+    }
+
+    pub(crate) fn handle_rtcp_fb_tx(&mut self, _now: Instant, fb: RtcpFb) -> Option<()> {
+        let ssrc = fb.ssrc();
+
+        let source_tx = self.sources_tx.iter_mut().find(|s| s.ssrc() == ssrc)?;
+
+        use RtcpFb::*;
+        match fb {
+            ReceptionReport(v) => {
+                // TODO: What to do with these?
+                trace!("Handle reception report: {:?}", v);
+            }
             Nack(ssrc, list) => {
                 let entries = list.into_iter();
                 self.handle_nack(ssrc, entries)?;
             }
-            Pli(_) => self.waiting_keyframe_request = Some(KeyframeRequestKind::Pli),
-            Fir(_) => self.waiting_keyframe_request = Some(KeyframeRequestKind::Fir),
+            Pli(_) => self.keyframe_request_rx = Some((source_tx.rid(), KeyframeRequestKind::Pli)),
+            Fir(_) => self.keyframe_request_rx = Some((source_tx.rid(), KeyframeRequestKind::Fir)),
             Twcc(_) => unreachable!("TWCC should be handled on session level"),
+            _ => {}
         }
 
         Some(())
@@ -614,8 +684,8 @@ impl Media {
             .or_insert_with(|| DepacketizingBuffer::new(codec.into(), 30))
     }
 
-    pub(crate) fn poll_keyframe_request(&mut self) -> Option<KeyframeRequestKind> {
-        self.waiting_keyframe_request.take()
+    pub(crate) fn poll_keyframe_request(&mut self) -> Option<(Option<Rid>, KeyframeRequestKind)> {
+        self.keyframe_request_rx.take()
     }
 
     pub(crate) fn poll_sample(&mut self) -> Option<Result<MediaData, RtcError>> {
@@ -737,7 +807,8 @@ impl Default for Media {
             buffers_tx: HashMap::new(),
             resends: VecDeque::new(),
             need_open_event: true,
-            waiting_keyframe_request: None,
+            keyframe_request_rx: None,
+            keyframe_request_tx: None,
             simulcast: None,
         }
     }
@@ -797,7 +868,6 @@ pub struct MediaWriter<'a> {
 }
 
 impl MediaWriter<'_> {
-    #[instrument(skip_all, fields(mid = %self.media.mid()))]
     pub fn write(&mut self, ts: MediaTime, data: &[u8]) -> Result<usize, RtcError> {
         let codec = match self.codec {
             Some(v) => v,

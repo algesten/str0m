@@ -146,28 +146,33 @@ impl RtcpPacket for Twcc {
     fn write_to(&self, buf: &mut [u8]) -> usize {
         let len_start = buf.len();
 
-        self.header().write_to(buf);
-        buf[4..8].copy_from_slice(&self.sender_ssrc.to_be_bytes());
-        buf[8..12].copy_from_slice(&self.ssrc.to_be_bytes());
+        let mut total = {
+            let buf = &mut buf[..];
 
-        buf[12..14].copy_from_slice(&self.base_seq.to_be_bytes());
-        buf[14..16].copy_from_slice(&self.status_count.to_be_bytes());
+            self.header().write_to(buf);
+            buf[4..8].copy_from_slice(&self.sender_ssrc.to_be_bytes());
+            buf[8..12].copy_from_slice(&self.ssrc.to_be_bytes());
 
-        buf[16..19].copy_from_slice(&self.reference_time.to_be_bytes()[1..4]);
-        buf[19] = self.feedback_count;
+            buf[12..14].copy_from_slice(&self.base_seq.to_be_bytes());
+            buf[14..16].copy_from_slice(&self.status_count.to_be_bytes());
 
-        let mut buf = &mut buf[20..];
-        for p in &self.chunks {
-            p.write_to(buf);
-            buf = &mut buf[2..];
-        }
+            let ref_time = self.reference_time.to_be_bytes();
+            buf[16..19].copy_from_slice(&ref_time[1..4]);
+            buf[19] = self.feedback_count;
 
-        for d in &self.delta {
-            let n = d.write_to(buf);
-            buf = &mut buf[n..];
-        }
+            let mut buf = &mut buf[20..];
+            for p in &self.chunks {
+                p.write_to(buf);
+                buf = &mut buf[2..];
+            }
 
-        let mut total = len_start - buf.len();
+            for d in &self.delta {
+                let n = d.write_to(buf);
+                buf = &mut buf[n..];
+            }
+
+            len_start - buf.len()
+        };
 
         let pad = 4 - total % 4;
         if pad < 4 {
@@ -175,6 +180,8 @@ impl RtcpPacket for Twcc {
                 buf[total + i] = 0;
             }
             total += pad;
+            // Toggle padding bit
+            buf[0] |= 0b00_1_00000;
         }
 
         total
@@ -194,8 +201,11 @@ pub struct TwccRecvRegister {
     /// next report.
     queue: VecDeque<Receiption>,
 
-    /// Flag indicating we have added things to queue that are not part of any report.
-    has_unreported: bool,
+    /// Index into queue from where we start reporting on next build_report().
+    report_from: usize,
+
+    /// Interims built in this for every build_report.
+    interims: VecDeque<ChunkInterim>,
 
     /// The point in time we consider 0. All reported values are offset from this. Set to first
     /// unreported packet in first `build_reported`.
@@ -214,7 +224,6 @@ pub struct TwccRecvRegister {
 struct Receiption {
     seq: SeqNo,
     time: Instant,
-    reported: bool,
 }
 
 impl TwccRecvRegister {
@@ -222,7 +231,8 @@ impl TwccRecvRegister {
         TwccRecvRegister {
             keep_reported,
             queue: VecDeque::new(),
-            has_unreported: false,
+            report_from: 0,
+            interims: VecDeque::new(),
             time_start: None,
             generated_reports: 0,
         }
@@ -252,16 +262,11 @@ impl TwccRecvRegister {
                     }
                 }
 
-                self.has_unreported = true;
+                self.queue.insert(idx, Receiption { seq, time });
 
-                self.queue.insert(
-                    idx,
-                    Receiption {
-                        seq,
-                        time,
-                        reported: false,
-                    },
-                );
+                if idx < self.report_from {
+                    self.report_from = idx;
+                }
             }
         }
     }
@@ -273,10 +278,7 @@ impl TwccRecvRegister {
         }
 
         // First unreported is the self.time_start relative offset of the next Twcc.
-        let first = self.queue.iter().find(|r| !r.reported);
-        if first.is_none() {
-            self.has_unreported = false;
-        }
+        let first = self.queue.get(self.report_from);
         let first = first?;
 
         // Set once on first ever built report.
@@ -313,7 +315,14 @@ impl TwccRecvRegister {
 
         // The ChunkInterim are helpers structures that hold the deltas between
         // the registered receptions.
-        let mut interims = self.build_interims(base_seq, base_time);
+        build_interims(
+            &self.queue,
+            self.report_from,
+            base_seq,
+            base_time,
+            &mut self.interims,
+        );
+        let interims = &mut self.interims;
 
         // 20 bytes is the size of the fixed fields in Twcc.
         let mut bytes_left = max_byte_size - 20;
@@ -381,8 +390,8 @@ impl TwccRecvRegister {
 
                 if i.consume(appended) {
                     // it was fully consumed.
-                    if let Some(idx) = i.index() {
-                        self.queue[idx].reported = true;
+                    if matches!(i, ChunkInterim::Received(_, _, _)) {
+                        self.report_from += 1;
                     }
 
                     if let Some(delta) = i.delta() {
@@ -409,8 +418,6 @@ impl TwccRecvRegister {
             bytes_left -= 2;
         }
 
-        self.has_unreported = interims.is_empty();
-
         // libWebRTC demands at least one chunk, or it will warn with
         // "Buffer too small (16 bytes) to fit a FeedbackPacket. Minimum size = 18"
         // (18 bytes here is not including the RTCP header).
@@ -420,75 +427,73 @@ impl TwccRecvRegister {
 
         self.generated_reports += 1;
 
-        // How many reported we have from the beginning of the queue.
-        let reported_count = self.queue.iter().skip_while(|r| r.reported).count();
-
         // clean up
-        if reported_count > self.keep_reported {
-            let to_remove = reported_count - self.keep_reported;
+        if self.report_from > self.keep_reported {
+            let to_remove = self.report_from - self.keep_reported;
             self.queue.drain(..to_remove);
+            self.report_from -= to_remove;
         }
 
         Some(twcc)
     }
 
-    /// Interims are deltas between `Receiption` which is an intermediary format before
-    /// we populate the Twcc report.
-    fn build_interims(&self, base_seq: SeqNo, base_time: Instant) -> VecDeque<ChunkInterim> {
-        let report_from = self
-            .queue
-            .iter()
-            .enumerate()
-            .skip_while(|(_, r)| r.reported);
+    pub fn has_unreported(&self) -> bool {
+        self.queue.len() > self.report_from
+    }
+}
 
-        let mut prev = (base_seq, base_time);
-        let mut interims = VecDeque::new();
+/// Interims are deltas between `Receiption` which is an intermediary format before
+/// we populate the Twcc report.
+fn build_interims(
+    queue: &VecDeque<Receiption>,
+    report_from: usize,
+    base_seq: SeqNo,
+    base_time: Instant,
+    interims: &mut VecDeque<ChunkInterim>,
+) {
+    interims.clear();
+    let report_from = queue.iter().enumerate().skip(report_from);
 
-        for (index, r) in report_from {
-            let diff_seq = *r.seq - *prev.0;
+    let mut prev = (base_seq, base_time);
 
-            if diff_seq > 1 {
-                let mut todo = diff_seq - 1;
-                while todo > 0 {
-                    // max 2^13 run length in each missing chunk
-                    let n = todo.min(8192);
-                    interims.push_back(ChunkInterim::Missing(n as u16));
-                    todo -= n;
-                }
+    for (index, r) in report_from {
+        let diff_seq = *r.seq - *prev.0;
+
+        if diff_seq > 1 {
+            let mut todo = diff_seq - 1;
+            while todo > 0 {
+                // max 2^13 run length in each missing chunk
+                let n = todo.min(8192);
+                interims.push_back(ChunkInterim::Missing(n as u16));
+                todo -= n;
             }
-
-            let diff_time = if r.time < prev.1 {
-                // negative
-                let dur = prev.1 - r.time;
-                -(dur.as_micros() as i32)
-            } else {
-                let dur = r.time - prev.1;
-                dur.as_micros() as i32
-            };
-
-            let (status, time) = if diff_time < -8_192_000 || diff_time > 8_191_750 {
-                // This is too large to be representable in deltas.
-                // Abort, make a report of what we got, and start anew.
-                break;
-            } else if diff_time < 0 || diff_time > 63_750 {
-                let t = diff_time / 250;
-                assert!(t >= -32_765 && t <= 32_767);
-                (PacketStatus::ReceivedLargeOrNegativeDelta, t as i16)
-            } else {
-                let t = diff_time / 250;
-                assert!(t >= 0 && t <= 255);
-                (PacketStatus::ReceivedSmallDelta, t as i16)
-            };
-
-            interims.push_back(ChunkInterim::Received(index, status, time));
-            prev = (r.seq, r.time);
         }
 
-        interims
-    }
+        let diff_time = if r.time < prev.1 {
+            // negative
+            let dur = prev.1 - r.time;
+            -(dur.as_micros() as i32)
+        } else {
+            let dur = r.time - prev.1;
+            dur.as_micros() as i32
+        };
 
-    pub fn has_unreported(&self) -> bool {
-        self.has_unreported
+        let (status, time) = if diff_time < -8_192_000 || diff_time > 8_191_750 {
+            // This is too large to be representable in deltas.
+            // Abort, make a report of what we got, and start anew.
+            break;
+        } else if diff_time < 0 || diff_time > 63_750 {
+            let t = diff_time / 250;
+            assert!(t >= -32_765 && t <= 32_767);
+            (PacketStatus::ReceivedLargeOrNegativeDelta, t as i16)
+        } else {
+            let t = diff_time / 250;
+            assert!(t >= 0 && t <= 255);
+            (PacketStatus::ReceivedSmallDelta, t as i16)
+        };
+
+        interims.push_back(ChunkInterim::Received(index, status, time));
+        prev = (r.seq, r.time);
     }
 }
 
@@ -503,13 +508,6 @@ impl ChunkInterim {
         match self {
             ChunkInterim::Missing(_) => PacketStatus::NotReceived,
             ChunkInterim::Received(_, s, _) => *s,
-        }
-    }
-
-    fn index(&self) -> Option<usize> {
-        match self {
-            ChunkInterim::Missing(_) => None,
-            ChunkInterim::Received(i, _, _) => Some(*i),
         }
     }
 

@@ -11,6 +11,6 @@ thiserror = "1"
 rand = "0.8"
 
 # STUN
-hmac = "0.11"
-sha-1 = "0.9"
-crc = "2"
+hmac = "0.12"
+sha-1 = "0.10"
+crc = "3"

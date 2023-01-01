@@ -371,7 +371,8 @@ impl RtcSctp {
             let mut stream = match assoc.stream(entry.id) {
                 Ok(v) => v,
                 Err(e) => {
-                    warn!("Getting stream {} failed: {:?}", entry.id, e);
+                    // This is expected on browser refresh or similar abrubt shutdown.
+                    debug!("Getting stream {} failed: {:?}", entry.id, e);
                     entry.do_close = true;
                     continue;
                 }

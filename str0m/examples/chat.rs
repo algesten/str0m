@@ -12,8 +12,8 @@ use rtp::Direction;
 use str0m::media::MediaKind;
 use str0m::net::Receive;
 use str0m::{
-    Answer, Candidate, ChannelId, Event, IceConnectionState, Input, Mid, Offer, Output, Rtc,
-    RtcError,
+    Answer, Candidate, ChannelId, Event, IceConnectionState, Input, KeyframeRequestKind, Mid,
+    Offer, Output, Rtc, RtcError,
 };
 use systemstat::{Platform, System};
 use tokio::net::UdpSocket;
@@ -31,6 +31,7 @@ struct AppState {
 enum RunLoopInput {
     NewClient(ClientId, Rtc, Arc<UdpSocket>, SocketAddr),
     SocketInput(ClientId, Instant, SocketAddr, Vec<u8>),
+    Timeout(Instant),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -54,15 +55,28 @@ enum TrackState {
 }
 
 impl TrackState {
-    fn local_track_mid(&self, remote_mid: Mid) -> Option<Mid> {
-        if let TrackState::Open(t, local_mid) = self {
-            if let Some(t) = t.upgrade() {
-                if t.mid == remote_mid {
-                    return Some(*local_mid);
-                }
+    fn is_open(&self) -> bool {
+        matches!(self, TrackState::Open(_, _))
+    }
+
+    fn local_mid(&self, remote_mid: Mid) -> Option<Mid> {
+        match self {
+            TrackState::Proposed(t, m) | TrackState::Open(t, m) => {
+                let t = t.upgrade()?;
+                (t.mid == remote_mid).then(|| *m)
             }
+            _ => None,
         }
-        None
+    }
+
+    fn remote_track(&self, local_mid: Mid) -> Option<Arc<Track>> {
+        match self {
+            TrackState::Proposed(t, m) | TrackState::Open(t, m) => {
+                let t = t.upgrade()?;
+                (*m == local_mid).then(|| t)
+            }
+            _ => None,
+        }
     }
 }
 
@@ -125,15 +139,15 @@ fn select_host_address() -> IpAddr {
     let system = System::new();
     let networks = system.networks().unwrap();
 
-    const PREFERED_NAMES: &[&str] = &["en0", "en1", "en2", "eth0", "eth1", "eth2"];
-
-    for pref in PREFERED_NAMES {
-        if let Some(net) = networks.get(*pref) {
-            for n in &net.addrs {
-                match n.addr {
-                    systemstat::IpAddr::V4(v) => return IpAddr::V4(v),
-                    _ => {} // we could use ipv6 too
+    for net in networks.values() {
+        for n in &net.addrs {
+            match n.addr {
+                systemstat::IpAddr::V4(v) => {
+                    if !v.is_loopback() && !v.is_link_local() && !v.is_broadcast() {
+                        return IpAddr::V4(v);
+                    }
                 }
+                _ => {} // we could use ipv6 too
             }
         }
     }
@@ -215,6 +229,7 @@ async fn run_loop(mut rx: Receiver<RunLoopInput>) {
 
     // Next timeout when the below loop will wake up to drive all clients forward.
     let mut timeout = Instant::now() + Duration::from_secs(1);
+    let mut now = Instant::now();
 
     loop {
         // Housekeeping
@@ -224,77 +239,67 @@ async fn run_loop(mut rx: Receiver<RunLoopInput>) {
         let todo = input_or_timeout(&mut rx, timeout);
 
         match todo.await {
-            InputOrTimeout::Timeout => {} // fall through
-            InputOrTimeout::RunLoopInput(r) => match r {
-                RunLoopInput::NewClient(id, rtc, socket, sdp_addr) => {
-                    let mut client = Client::new(id, rtc, socket, sdp_addr);
+            RunLoopInput::Timeout(t) => now = t,
 
-                    // Each new client must get a reference to all open tracks from other clients.
-                    for other in clients.iter().filter(|c| c.is_alive()) {
-                        for track in &other.tracks_in {
-                            info!("Add track to client: {:?} {:?}", track.origin, track.mid);
-                            client.add_remote_track(Arc::downgrade(track));
-                        }
-                    }
+            RunLoopInput::NewClient(id, rtc, socket, sdp_addr) => {
+                let mut client = Client::new(id, rtc, socket, sdp_addr);
 
-                    clients.push(client);
-                }
-
-                RunLoopInput::SocketInput(id, at, source, data) => {
-                    if let Some(client) = clients.iter_mut().find(|c| c.id == id && c.is_alive()) {
-                        if let Err(e) = client.handle_socket_input(at, source, &data) {
-                            warn!("Client failed: {:?}", e);
-                            client.rtc.disconnect();
-                        }
+                // Each new client must get a reference to all open tracks from other clients.
+                for other in clients.iter().filter(|c| c.is_alive()) {
+                    for track in &other.tracks_in {
+                        info!("Add track to client: {:?} {:?}", track.origin, track.mid);
+                        client.add_remote_track(Arc::downgrade(track));
                     }
                 }
-            },
+
+                clients.push(client);
+            }
+
+            RunLoopInput::SocketInput(id, at, source, data) => {
+                now = at;
+                if let Some(client) = clients.iter_mut().find(|c| c.id == id && c.is_alive()) {
+                    if let Err(e) = client.handle_socket_input(at, source, &data) {
+                        warn!("Client failed: {:?}", e);
+                        client.rtc.disconnect();
+                    }
+                }
+            }
         }
 
         // Poll all clients for things to do. The returned timeout is the smallest value
         // of all polled client timeouts.
-        timeout = drive_clients(Instant::now(), &mut clients).await;
+        timeout = drive_clients(now, &mut clients).await;
     }
-}
-
-/// run_loop can wait for either input from any UdpSocket, or a timeout indicating an Rtc
-/// instance has some processing to do.
-enum InputOrTimeout {
-    Timeout,
-    RunLoopInput(RunLoopInput),
 }
 
 /// This is kind of the whole point of using async for this example. We can
 /// _either_ receive UDP socket input from a connected client, or we need to
 /// handle a timeout for some client.
-async fn input_or_timeout(rx: &mut Receiver<RunLoopInput>, timeout: Instant) -> InputOrTimeout {
+async fn input_or_timeout(rx: &mut Receiver<RunLoopInput>, timeout: Instant) -> RunLoopInput {
+    if timeout < (Instant::now() + Duration::from_millis(1)) {
+        return RunLoopInput::Timeout(timeout);
+    }
+
     tokio::select! {
-        _ = tokio::time::sleep_until(timeout.into()) => {
-            InputOrTimeout::Timeout
-        }
         v = rx.recv() => {
-            InputOrTimeout::RunLoopInput(v.unwrap())
+            return v.unwrap();
+        }
+        _ = tokio::time::sleep_until(timeout.into()) => {
+            RunLoopInput::Timeout(timeout)
         }
     }
+}
+
+#[derive(Debug)]
+enum TrackOrEvent {
+    Track(Weak<Track>),
+    KeyframeReq(ClientId, Mid, KeyframeRequestKind),
+    Event(Event),
 }
 
 /// "drives" Client instances, which calling handle_timeout and then polling
 /// the instances until they produce another timeout Instant.
 async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
-    // Move time in all clients.
-    for client in clients.iter_mut().filter(|c| c.is_alive()) {
-        if let Err(e) = client.rtc.handle_input(Input::Timeout(now)) {
-            warn!("Client failed: {:?}", e);
-            client.rtc.disconnect();
-        }
-    }
-
-    #[derive(Debug)]
-    enum TrackOrEvent {
-        Track(Weak<Track>),
-        Event(Event),
-    }
-
     // Collection of all tracks and events to dispatch from all clients.
     let mut to_dispatch = Vec::new();
     // Timeouts collected from clients that are not polling events or transmits.
@@ -303,6 +308,14 @@ async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
     // Continue looping until all clients produce timeouts.
     loop {
         timeouts.clear(); // Every loop start begin with 0 timeouts.
+
+        // Move time in all clients.
+        for client in clients.iter_mut().filter(|c| c.is_alive()) {
+            if let Err(e) = client.rtc.handle_input(Input::Timeout(now)) {
+                warn!("Client failed: {:?}", e);
+                client.rtc.disconnect();
+            }
+        }
 
         // Poll each client and decide what to do with transmit, timeout or events
         for client in clients.iter_mut().filter(|c| c.is_alive()) {
@@ -323,29 +336,13 @@ async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
                     // Some kind of event. Track opens are handled separately, rest of
                     // events are just propagated to other clients.
                     Output::Event(v) => {
-                        if let Err(e) = client.handle_local_event(&v) {
-                            warn!("Client failed: {:?}", e);
-                            client.rtc.disconnect();
-                        }
-
-                        let te = if let Event::MediaAdded(mid, kind, _) = v {
-                            // Record of a track being open.
-                            let track = Arc::new(Track {
-                                origin: client.id,
-                                mid,
-                                kind,
-                            });
-
-                            let weak = Arc::downgrade(&track);
-
-                            // The client holds the strong reference to the track. All other
-                            // references are weak.
-                            client.add_local_track(track);
-
-                            TrackOrEvent::Track(weak)
-                        } else {
-                            // An event propagated to other clients.
-                            TrackOrEvent::Event(v)
+                        let te = match client.handle_local_event(v) {
+                            Ok(te) => te,
+                            Err(e) => {
+                                warn!("Client failed: {:?}", e);
+                                client.rtc.disconnect();
+                                continue;
+                            }
                         };
 
                         to_dispatch.push((client.id, te));
@@ -368,6 +365,12 @@ async fn drive_clients(now: Instant, clients: &mut Vec<Client>) -> Instant {
                 match &te {
                     TrackOrEvent::Track(t) => client.add_remote_track(t.clone()),
                     TrackOrEvent::Event(e) => client.handle_event_from_other(&e),
+                    TrackOrEvent::KeyframeReq(id, mid, kind) => {
+                        if *id == client.id {
+                            // This is the client that has the incoming track needing a keyframe request.
+                            client.request_keyframe(*mid, *kind);
+                        }
+                    }
                 }
             }
         }
@@ -437,10 +440,6 @@ impl Client {
         Ok(())
     }
 
-    fn add_local_track(&mut self, track: Arc<Track>) {
-        self.tracks_in.push(track);
-    }
-
     fn add_remote_track(&mut self, track: Weak<Track>) {
         self.tracks_out.push(TrackState::ToOpen(track));
     }
@@ -501,8 +500,36 @@ impl Client {
         }
     }
 
-    fn handle_local_event(&mut self, e: &Event) -> Result<(), RtcError> {
-        match e {
+    fn handle_local_event(&mut self, e: Event) -> Result<TrackOrEvent, RtcError> {
+        match &e {
+            Event::MediaAdded(mid, kind, _) => {
+                // Record of a track being open.
+                let track = Arc::new(Track {
+                    origin: self.id,
+                    mid: *mid,
+                    kind: *kind,
+                });
+
+                let weak = Arc::downgrade(&track);
+
+                // The client holds the strong reference to the track. All other
+                // references are weak.
+                self.tracks_in.push(track);
+
+                return Ok(TrackOrEvent::Track(weak));
+            }
+            Event::KeyframeRequest(local_mid, _, kind) => {
+                // a keyframe request must be translated to the corresponding mid on the ingress.
+                let t = self
+                    .tracks_out
+                    .iter()
+                    .filter(|t| t.is_open())
+                    .find_map(|t| t.remote_track(*local_mid));
+
+                if let Some(t) = t {
+                    return Ok(TrackOrEvent::KeyframeReq(t.origin, t.mid, *kind));
+                }
+            }
             Event::ChannelOpen(cid, _) => {
                 self.cid = Some(*cid);
             }
@@ -520,7 +547,7 @@ impl Client {
             _ => {}
         }
 
-        Ok(())
+        Ok(TrackOrEvent::Event(e))
     }
 
     fn handle_offer(&mut self, offer: Offer) -> Result<(), RtcError> {
@@ -562,7 +589,13 @@ impl Client {
             return;
         };
 
-        let Some(local_mid) = self.tracks_out.iter().find_map(|t| t.local_track_mid(d.mid)) else {
+        let local_mid = self
+            .tracks_out
+            .iter()
+            .filter(|t| t.is_open())
+            .find_map(|t| t.local_mid(d.mid));
+
+        let Some(local_mid) = local_mid else {
             return;
         };
 
@@ -574,7 +607,18 @@ impl Client {
             return;
         };
 
-        if let Err(e) = media.get_writer(local_pt, d.rid).write(d.time, &d.data) {
+        if let Err(e) = media.get_writer(local_pt, None).write(d.time, &d.data) {
+            warn!("Client failed: {:?}", e);
+            self.rtc.disconnect();
+        }
+    }
+
+    fn request_keyframe(&mut self, mid: Mid, kind: KeyframeRequestKind) {
+        let Some(media) = self.rtc.media(mid) else {
+            return;
+        };
+
+        if let Err(e) = media.request_keyframe(None, kind) {
             warn!("Client failed: {:?}", e);
             self.rtc.disconnect();
         }

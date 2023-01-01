@@ -4,10 +4,10 @@ use std::time::{Duration, Instant};
 use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU};
 use packet::RtpMeta;
-use rtp::{extend_seq, Direction, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
+use rtp::SRTCP_OVERHEAD;
+use rtp::{extend_seq, Direction, Rid, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
 use rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
-use rtp::{SRTCP_BLOCK_SIZE, SRTCP_OVERHEAD};
 
 use crate::media::{App, CodecConfig, MediaKind};
 use crate::session_sdp::AsMediaLine;
@@ -34,6 +34,14 @@ pub(crate) struct Session {
     /// in WebRTC (one ice connection), so they are effetively per session.
     pub exts: Extensions,
     pub codec_config: CodecConfig,
+
+    /// This is the first ever discovered remote media. We use that for
+    /// special cases like the media SSRC in TWCC feedback.
+    pub first_ssrc_remote: Option<Ssrc>,
+
+    /// This is the first ever discovered local media. We use this for many
+    /// feedback cases where we need a "sender SSRC".
+    pub first_ssrc_local: Option<Ssrc>,
 
     srtp_rx: Option<SrtpContext>,
     srtp_tx: Option<SrtpContext>,
@@ -71,7 +79,7 @@ pub enum MediaEvent {
     Data(MediaData),
     Error(RtcError),
     Open(Mid, MediaKind, Direction),
-    KeyframeRequest(Mid, KeyframeRequestKind),
+    KeyframeRequest(Mid, Option<Rid>, KeyframeRequestKind),
 }
 
 impl Session {
@@ -87,6 +95,8 @@ impl Session {
             media: vec![],
             exts: Extensions::default_mappings(),
             codec_config: codec_config.init(),
+            first_ssrc_remote: None,
+            first_ssrc_local: None,
             srtp_rx: None,
             srtp_tx: None,
             last_nack: already_happened(),
@@ -147,15 +157,21 @@ impl Session {
             m.handle_timeout(now);
         }
 
+        let sender_ssrc = self.first_ssrc_local();
+
         if let Some(twcc_at) = self.twcc_at() {
             if now >= twcc_at {
-                self.create_twcc_feedback(now);
+                self.create_twcc_feedback(sender_ssrc, now);
             }
+        }
+
+        for m in only_media_mut(&mut self.media) {
+            m.maybe_create_keyframe_request(sender_ssrc, &mut self.feedback);
         }
 
         if now >= self.regular_feedback_at() {
             for m in only_media_mut(&mut self.media) {
-                m.maybe_create_regular_feedback(now, &mut self.feedback);
+                m.maybe_create_regular_feedback(now, sender_ssrc, &mut self.feedback);
             }
         }
 
@@ -163,17 +179,21 @@ impl Session {
             if now >= nack_at {
                 self.last_nack = now;
                 for m in only_media_mut(&mut self.media) {
-                    m.create_nack(&mut self.feedback);
+                    m.create_nack(sender_ssrc, &mut self.feedback);
                 }
             }
         }
     }
 
-    fn create_twcc_feedback(&mut self, now: Instant) -> Option<()> {
+    fn create_twcc_feedback(&mut self, sender_ssrc: Ssrc, now: Instant) -> Option<()> {
         self.last_twcc = now;
         let mut twcc = self.twcc_rx_register.build_report(DATAGRAM_MTU - 100)?;
-        let first_ssrc = self.first_sender_ssrc().unwrap_or(0.into());
-        twcc.sender_ssrc = first_ssrc;
+
+        // These SSRC are on medial level, but twcc is on session level,
+        // we fill in the first discovered media SSRC in each direction.
+        twcc.sender_ssrc = sender_ssrc;
+        twcc.ssrc = self.first_ssrc_remote();
+
         debug!("Created feedback TWCC: {:?}", twcc);
         self.feedback.push_front(Rtcp::Twcc(twcc));
         Some(())
@@ -371,8 +391,8 @@ impl Session {
                 ));
             }
 
-            if let Some(kind) = media.poll_keyframe_request() {
-                return Some(MediaEvent::KeyframeRequest(media.mid(), kind));
+            if let Some((rid, kind)) = media.poll_keyframe_request() {
+                return Some(MediaEvent::KeyframeRequest(media.mid(), rid, kind));
             }
 
             if let Some(r) = media.poll_sample() {
@@ -410,18 +430,12 @@ impl Session {
             return None;
         }
 
-        // The encryptable "body" must be an even number of 16.
-        const ENCRYPTABLE_MTU: usize =
-            DATAGRAM_MTU - SRTCP_OVERHEAD - (DATAGRAM_MTU - SRTCP_OVERHEAD) % SRTCP_BLOCK_SIZE;
+        const ENCRYPTABLE_MTU: usize = DATAGRAM_MTU - SRTCP_OVERHEAD;
+        assert!(ENCRYPTABLE_MTU % 4 == 0);
 
         let mut data = vec![0_u8; ENCRYPTABLE_MTU];
 
-        assert!(
-            data.len() % SRTCP_BLOCK_SIZE == 0,
-            "RTCP buffer multiple of SRTCP block size",
-        );
-
-        let len = Rtcp::write_packet(&mut self.feedback, &mut data, SRTCP_BLOCK_SIZE);
+        let len = Rtcp::write_packet(&mut self.feedback, &mut data);
         data.truncate(len);
 
         let srtp = self.srtp_tx.as_mut()?;
@@ -500,13 +514,6 @@ impl Session {
         }
     }
 
-    fn first_sender_ssrc(&self) -> Option<Ssrc> {
-        only_media(&self.media)
-            .next()
-            .and_then(|m| m.first_source_tx())
-            .map(|s| s.ssrc())
-    }
-
     pub fn new_ssrc(&self) -> Ssrc {
         loop {
             let ssrc: Ssrc = (rand::random::<u32>()).into();
@@ -514,6 +521,14 @@ impl Session {
                 break ssrc;
             }
         }
+    }
+
+    fn first_ssrc_remote(&self) -> Ssrc {
+        self.first_ssrc_remote.unwrap_or(0.into())
+    }
+
+    fn first_ssrc_local(&self) -> Ssrc {
+        self.first_ssrc_local.unwrap_or(0.into())
     }
 }
 

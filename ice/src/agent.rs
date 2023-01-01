@@ -519,7 +519,6 @@ impl IceAgent {
                 v.foundation() == REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION
                     && v.kind() == CandidateKind::PeerReflexive
                     && v.addr() == c.addr()
-                    && v.prio() == c.prio()
             });
 
         let ipv4 = c.addr().is_ipv4();
@@ -527,8 +526,8 @@ impl IceAgent {
         let remote_idx = if let Some((idx, existing)) = existing_prflx {
             // If any subsequent candidate exchanges contain this peer-reflexive
             // candidate, it will signal the actual foundation for the candidate.
-            debug!(
-                "Replace temporary peer reflexive candidate, current: {:?} replaced with: {:?}",
+            info!(
+                "Replace peer reflexive candidate, current: {:?} replaced with: {:?}",
                 existing, c
             );
             *existing = c;
@@ -560,7 +559,7 @@ impl IceAgent {
 
                 let prio =
                     CandidatePair::calculate_prio(self.controlling, remote.prio(), local.prio());
-                let pair = CandidatePair::new(*local_idx, *remote_idx, prio);
+                let mut pair = CandidatePair::new(*local_idx, *remote_idx, prio);
 
                 trace!("Form pair local: {:?} remote: {:?}", local, remote);
 
@@ -591,6 +590,8 @@ impl IceAgent {
                                 "Replace redundant pair, current: {:?} replaced with: {:?}",
                                 check, pair
                             );
+                            let was_nominated = self.candidate_pairs[check_idx].is_nominated();
+                            pair.nominate(was_nominated);
                             self.candidate_pairs[check_idx] = pair;
                         }
 
@@ -675,7 +676,7 @@ impl IceAgent {
         self.discovered_recv.clear();
 
         self.emit_event(IceAgentEvent::IceRestart(self.local_credentials.clone()));
-        self.set_connection_state(IceConnectionState::Checking);
+        self.set_connection_state(IceConnectionState::Checking, "ice restart");
     }
 
     /// Discard candidate pairs that contain the candidate identified by a local index.
@@ -1049,7 +1050,7 @@ impl IceAgent {
                 self.local_credentials.ufrag.clone(),
             );
 
-            debug!(
+            info!(
                 "Created peer reflexive remote candidate from STUN request: {:?}",
                 c
             );
@@ -1370,9 +1371,9 @@ impl IceAgent {
         }
     }
 
-    fn set_connection_state(&mut self, state: IceConnectionState) {
+    fn set_connection_state(&mut self, state: IceConnectionState, reason: &'static str) {
         if self.state != state {
-            info!("State change: {:?} -> {:?}", self.state, state);
+            info!("State change ({}): {:?} -> {:?}", reason, self.state, state);
             self.state = state;
             self.emit_event(IceAgentEvent::IceConnectionStateChange(state));
         }
@@ -1392,37 +1393,44 @@ impl IceAgent {
             }
         }
 
+        // As a special case, before the ice agent has received any add_remote_candidate() or
+        // discovered a peer reflexive via a STUN message, the agent is still viable. This is
+        // also the case for ice_restart.
+        if self.remote_candidates.is_empty() {
+            any_still_possible = true;
+        }
+
         match self.state {
             New => {
-                self.set_connection_state(Checking);
+                self.set_connection_state(Checking, "new connection");
             }
             Checking | Disconnected => {
                 if any_nomination {
                     if any_still_possible {
-                        self.set_connection_state(Connected);
+                        self.set_connection_state(Connected, "got nomination, still trying others");
                     } else {
-                        self.set_connection_state(Completed);
+                        self.set_connection_state(Completed, "got nomination, no others to try");
                     }
                 } else if !any_still_possible {
-                    self.set_connection_state(Disconnected);
+                    self.set_connection_state(Disconnected, "no possible pairs");
                 }
             }
             Connected => {
                 if any_nomination {
                     if !any_still_possible {
-                        self.set_connection_state(Completed);
+                        self.set_connection_state(Completed, "no more possible to try");
                     }
                 } else {
-                    self.set_connection_state(Disconnected);
+                    self.set_connection_state(Disconnected, "none nominated");
                 }
             }
             Completed => {
                 if any_nomination {
                     if any_still_possible {
-                        self.set_connection_state(Connected);
+                        self.set_connection_state(Connected, "got new possible");
                     }
                 } else {
-                    self.set_connection_state(Disconnected);
+                    self.set_connection_state(Disconnected, "none nominated");
                 }
             }
         }
@@ -1583,5 +1591,26 @@ mod test {
         let now2 = agent.poll_timeout().unwrap();
 
         assert!(now2 - now1 == TIMING_ADVANCE);
+    }
+
+    #[test]
+    fn no_disconnect_before_remote_candidates() {
+        let mut agent = IceAgent::new();
+
+        let now = Instant::now();
+        agent.handle_timeout(now);
+
+        while let Some(ev) = agent.poll_event() {
+            if let IceAgentEvent::IceConnectionStateChange(s) = ev {
+                assert!(s != IceConnectionState::Disconnected);
+            }
+        }
+
+        agent.handle_timeout(now + Duration::from_millis(200));
+        while let Some(ev) = agent.poll_event() {
+            if let IceAgentEvent::IceConnectionStateChange(s) = ev {
+                assert!(s != IceConnectionState::Disconnected);
+            }
+        }
     }
 }

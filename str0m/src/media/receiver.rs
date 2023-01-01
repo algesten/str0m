@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use rtp::{MediaTime, ReceiverReport, ReportList, Rid, Rtcp, RtpHeader, SenderInfo, SeqNo, Ssrc};
+use rtp::{MediaTime, Nack, ReceiverReport, ReportList, Rid, RtpHeader, SenderInfo, SeqNo, Ssrc};
 
 use super::register::ReceiverRegister;
 
@@ -13,6 +13,7 @@ pub struct ReceiverSource {
     last_used: Instant,
     sender_info: Option<SenderInfo>,
     sender_info_at: Option<Instant>,
+    fir_seq_no: u8,
 }
 
 impl ReceiverSource {
@@ -26,6 +27,7 @@ impl ReceiverSource {
             last_used: now,
             sender_info: None,
             sender_info_at: None,
+            fir_seq_no: 0,
         }
     }
 
@@ -128,16 +130,23 @@ impl ReceiverSource {
             .unwrap_or(false)
     }
 
-    pub fn create_nack(&mut self) -> Option<Rtcp> {
+    pub fn create_nack(&mut self) -> Option<Nack> {
         let mut nack = self.register.as_mut().and_then(|r| r.nack_report())?;
+        // sender set one level up
         nack.ssrc = self.ssrc;
 
         info!("Send nack: {:?}", nack);
-        Some(Rtcp::Nack(nack))
+        Some(nack)
     }
 
     pub fn set_sender_info(&mut self, now: Instant, s: SenderInfo) {
         self.sender_info = Some(s);
         self.sender_info_at = Some(now);
+    }
+
+    pub(crate) fn next_fir_seq_no(&mut self) -> u8 {
+        let x = self.fir_seq_no;
+        self.fir_seq_no = self.fir_seq_no.wrapping_add(1);
+        x
     }
 }

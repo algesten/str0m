@@ -97,7 +97,6 @@ impl Sdes {
         }
 
         buf[0] = SdesType::END as u8;
-
         buf = &mut buf[1..];
         tot += 1;
 
