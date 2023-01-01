@@ -13,10 +13,8 @@ use std::time::Instant;
 use rouille::Server;
 use rouille::{Request, Response};
 use str0m::media::MediaKind;
-use str0m::{net::Receive, Candidate, Input, Mid, Offer, Output, Rtc, RtcError};
-use str0m::{
-    Answer, ChannelData, ChannelId, Direction, IceConnectionState, KeyframeRequest, MediaData,
-};
+use str0m::{net::Receive, Candidate, IceConnectionState, Input, Offer, Output, Rtc, RtcError};
+use str0m::{Answer, ChannelData, ChannelId, Direction, Event, KeyframeRequest, MediaData, Mid};
 use systemstat::{Duration, Platform, System};
 
 fn init_log() {
@@ -194,10 +192,10 @@ fn spawn_new_client(rx: &Receiver<Rtc>) -> Option<Client> {
 fn propagate(clients: &mut [Client], to_propagate: Vec<Propagated>) {
     for p in to_propagate {
         let Some(client_id) = p.client_id() else {
-        // If the event doesn't have a client id, it can't be propagated,
-        // (it's either a noop or a timeout).
-        continue;
-    };
+            // If the event doesn't have a client id, it can't be propagated,
+            // (it's either a noop or a timeout).
+            continue;
+        };
 
         for client in &mut *clients {
             if client.id == client_id {
@@ -359,7 +357,7 @@ impl Client {
             }
             Output::Timeout(t) => Propagated::Timeout(t),
             Output::Event(e) => match e {
-                str0m::Event::IceConnectionStateChange(v) => {
+                Event::IceConnectionStateChange(v) => {
                     if v == IceConnectionState::Disconnected {
                         // Ice disconnect could result in trying to establish a new connection,
                         // but this impl just disconnects directly.
@@ -367,24 +365,14 @@ impl Client {
                     }
                     Propagated::Noop
                 }
-                str0m::Event::MediaAdded(mid, kind, _) => self.handle_media_added(mid, kind),
-                str0m::Event::MediaData(data) => Propagated::MediaData(self.id, data),
-                str0m::Event::KeyframeRequest(req) => {
-                    // Need to figure out the track_in mid that needs to handle the keyframe request.
-                    let Some(track_out) = self.tracks_out.iter().find(|t| t.mid() == Some(req.mid)) else {
-                        return Propagated::Noop;
-                    };
-                    let Some(track_in) = track_out.track_in.upgrade() else {
-                        return Propagated::Noop;
-                    };
-
-                    Propagated::KeyframeRequest(self.id, req, track_in.origin, track_in.mid)
-                }
-                str0m::Event::ChannelOpen(cid, _) => {
+                Event::MediaAdded(mid, kind, _) => self.handle_media_added(mid, kind),
+                Event::MediaData(data) => Propagated::MediaData(self.id, data),
+                Event::KeyframeRequest(req) => self.handle_incoming_keyframe_req(req),
+                Event::ChannelOpen(cid, _) => {
                     self.cid = Some(cid);
                     Propagated::Noop
                 }
-                str0m::Event::ChannelData(data) => self.handle_channel_data(data),
+                Event::ChannelData(data) => self.handle_channel_data(data),
                 _ => Propagated::Noop,
             },
         }
@@ -405,6 +393,18 @@ impl Client {
         Propagated::TrackOpen(self.id, weak)
     }
 
+    fn handle_incoming_keyframe_req(&self, req: KeyframeRequest) -> Propagated {
+        // Need to figure out the track_in mid that needs to handle the keyframe request.
+        let Some(track_out) = self.tracks_out.iter().find(|t| t.mid() == Some(req.mid)) else {
+                return Propagated::Noop;
+            };
+        let Some(track_in) = track_out.track_in.upgrade() else {
+                return Propagated::Noop;
+            };
+
+        Propagated::KeyframeRequest(self.id, req, track_in.origin, track_in.mid)
+    }
+
     fn negotiate_if_needed(&mut self) -> bool {
         if self.cid.is_none() || self.rtc.pending_changes().is_some() {
             // Don't negotiate if there is no data channel, or if we have pending changes already.
@@ -422,24 +422,24 @@ impl Client {
             }
         }
 
-        if change.has_changes() {
-            let offer = change.apply();
+        if !change.has_changes() {
+            return false;
+        }
 
-            let Some(mut channel) = self
+        let offer = change.apply();
+
+        let Some(mut channel) = self
                 .cid
                 .and_then(|id| self.rtc.channel(id)) else {
                     return false;
                 };
 
-            let json = serde_json::to_string(&offer).unwrap();
-            channel
-                .write(false, json.as_bytes())
-                .expect("to write answer");
+        let json = serde_json::to_string(&offer).unwrap();
+        channel
+            .write(false, json.as_bytes())
+            .expect("to write answer");
 
-            true
-        } else {
-            false
-        }
+        true
     }
 
     fn handle_channel_data(&mut self, d: ChannelData) -> Propagated {
