@@ -4,7 +4,6 @@
 extern crate tracing;
 
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 use std::{fmt, io};
 
@@ -102,7 +101,6 @@ pub enum RtcError {
 
 /// Main type.
 pub struct Rtc {
-    instance_id: u64,
     alive: bool,
     ice: IceAgent,
     dtls: Dtls,
@@ -189,10 +187,7 @@ impl Rtc {
             ice.set_ice_lite(config.ice_lite);
         }
 
-        static INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(0);
-
         Rtc {
-            instance_id: INSTANCE_COUNTER.fetch_add(1, Ordering::SeqCst),
             alive: true,
             ice,
             dtls: Dtls::new().expect("DTLS to init without problem"),
