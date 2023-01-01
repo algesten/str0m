@@ -1392,6 +1392,13 @@ impl IceAgent {
             }
         }
 
+        // As a special case, before the ice agent has received any add_remote_candidate() or
+        // discovered a peer reflexive via a STUN message, the agent is still viable. This is
+        // also the case for ice_restart.
+        if self.remote_candidates.is_empty() {
+            any_still_possible = true;
+        }
+
         match self.state {
             New => {
                 self.set_connection_state(Checking, "new connection");
@@ -1583,5 +1590,26 @@ mod test {
         let now2 = agent.poll_timeout().unwrap();
 
         assert!(now2 - now1 == TIMING_ADVANCE);
+    }
+
+    #[test]
+    fn no_disconnect_before_remote_candidates() {
+        let mut agent = IceAgent::new();
+
+        let now = Instant::now();
+        agent.handle_timeout(now);
+
+        while let Some(ev) = agent.poll_event() {
+            if let IceAgentEvent::IceConnectionStateChange(s) = ev {
+                assert!(s != IceConnectionState::Disconnected);
+            }
+        }
+
+        agent.handle_timeout(now + Duration::from_millis(200));
+        while let Some(ev) = agent.poll_event() {
+            if let IceAgentEvent::IceConnectionStateChange(s) = ev {
+                assert!(s != IceConnectionState::Disconnected);
+            }
+        }
     }
 }
