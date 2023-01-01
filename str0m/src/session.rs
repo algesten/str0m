@@ -157,18 +157,19 @@ impl Session {
             m.handle_timeout(now);
         }
 
+        let sender_ssrc = self.first_ssrc_local();
+
         if let Some(twcc_at) = self.twcc_at() {
             if now >= twcc_at {
-                self.create_twcc_feedback(now);
+                self.create_twcc_feedback(sender_ssrc, now);
             }
         }
 
         for m in only_media_mut(&mut self.media) {
-            m.maybe_create_keyframe_request(&mut self.feedback);
+            m.maybe_create_keyframe_request(sender_ssrc, &mut self.feedback);
         }
 
         if now >= self.regular_feedback_at() {
-            let sender_ssrc = self.first_ssrc_local();
             for m in only_media_mut(&mut self.media) {
                 m.maybe_create_regular_feedback(now, sender_ssrc, &mut self.feedback);
             }
@@ -177,7 +178,6 @@ impl Session {
         if let Some(nack_at) = self.nack_at() {
             if now >= nack_at {
                 self.last_nack = now;
-                let sender_ssrc = self.first_ssrc_local();
                 for m in only_media_mut(&mut self.media) {
                     m.create_nack(sender_ssrc, &mut self.feedback);
                 }
@@ -185,13 +185,13 @@ impl Session {
         }
     }
 
-    fn create_twcc_feedback(&mut self, now: Instant) -> Option<()> {
+    fn create_twcc_feedback(&mut self, sender_ssrc: Ssrc, now: Instant) -> Option<()> {
         self.last_twcc = now;
         let mut twcc = self.twcc_rx_register.build_report(DATAGRAM_MTU - 100)?;
 
         // These SSRC are on medial level, but twcc is on session level,
         // we fill in the first discovered media SSRC in each direction.
-        twcc.sender_ssrc = self.first_ssrc_local();
+        twcc.sender_ssrc = sender_ssrc;
         twcc.ssrc = self.first_ssrc_remote();
 
         debug!("Created feedback TWCC: {:?}", twcc);

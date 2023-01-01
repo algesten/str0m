@@ -4,6 +4,7 @@ use super::list::private::WordSized;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fir {
+    pub sender_ssrc: Ssrc,
     pub reports: ReportList<FirEntry>,
 }
 
@@ -35,8 +36,7 @@ impl RtcpPacket for Fir {
     fn write_to(&self, buf: &mut [u8]) -> usize {
         self.header().write_to(&mut buf[..4]);
 
-        // sender SSRC
-        buf[4..8].copy_from_slice(&[0, 0, 0, 0]);
+        buf[4..8].copy_from_slice(&self.sender_ssrc.to_be_bytes());
 
         let mut buf = &mut buf[8..];
         for r in &self.reports {
@@ -63,6 +63,8 @@ impl<'a> TryFrom<&'a [u8]> for Fir {
             return Err("Fir less than 16 bytes");
         }
 
+        let sender_ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
+
         let mut reports = ReportList::new();
 
         let mut buf = &buf[8..];
@@ -76,6 +78,9 @@ impl<'a> TryFrom<&'a [u8]> for Fir {
             buf = &buf[8..];
         }
 
-        Ok(Fir { reports })
+        Ok(Fir {
+            sender_ssrc,
+            reports,
+        })
     }
 }

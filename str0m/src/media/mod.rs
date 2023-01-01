@@ -411,13 +411,17 @@ impl Media {
         self.sources_tx.iter().map(|s| s.ssrc())
     }
 
-    pub(crate) fn maybe_create_keyframe_request(&mut self, feedback: &mut VecDeque<Rtcp>) {
+    pub(crate) fn maybe_create_keyframe_request(
+        &mut self,
+        sender_ssrc: Ssrc,
+        feedback: &mut VecDeque<Rtcp>,
+    ) {
         let Some((ssrc, kind)) = self.keyframe_request_tx.take() else {
             return;
         };
 
         match kind {
-            KeyframeRequestKind::Pli => feedback.push_back(Rtcp::Pli(Pli { ssrc })),
+            KeyframeRequestKind::Pli => feedback.push_back(Rtcp::Pli(Pli { sender_ssrc, ssrc })),
             KeyframeRequestKind::Fir => {
                 // Unwrap is ok, because MediaWriter ensures the ReceiverSource exists.
                 let rx = self
@@ -427,6 +431,7 @@ impl Media {
                     .unwrap();
 
                 feedback.push_back(Rtcp::Fir(Fir {
+                    sender_ssrc,
                     reports: FirEntry {
                         ssrc,
                         seq_no: rx.next_fir_seq_no(),
