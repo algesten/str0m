@@ -15,6 +15,7 @@
     Enable
     <button id="cam" onClick="startCam()" disabled>Cam</button>
     <button id="mic" onClick="startMic()" disabled>Mic</button>
+    <button id="rtc" onClick="startRtc()">Connect</button>
     ICE: <span id="ice_status">new</span>
     <div id="chan_status">Waiting for data channel.</div>
     <div id="media"></div>
@@ -146,7 +147,6 @@
             rtc.setRemoteDescription(answer);
             console.log('POST answer', answer.sdp.split('\r\n'));
         }
-        startRtc();
     </script>
 </body>
 

@@ -509,6 +509,13 @@ impl Client {
             return;
         };
 
+        if data.rid.is_some() && data.rid != Some("h".into()) {
+            // This is where we plug in a selection strategy for simulcast. For
+            // now either let rid=None through (which would be no simulcast layers)
+            // or "h" if we have simulcast (see commented out code in chat.html).
+            return;
+        }
+
         // Match outgoing pt to incoming codec.
         let Some(pt) = media.match_codec(data.codec) else {
             return;
