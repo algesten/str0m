@@ -202,7 +202,6 @@ impl Media {
         }
     }
 
-    // #[instrument(skip_all, fields(mid = %self.mid()))]
     pub fn request_keyframe(
         &mut self,
         rid: Option<Rid>,
@@ -864,7 +863,6 @@ pub struct MediaWriter<'a> {
 }
 
 impl MediaWriter<'_> {
-    // #[instrument(skip_all, fields(mid = %self.media.mid()))]
     pub fn write(&mut self, ts: MediaTime, data: &[u8]) -> Result<usize, RtcError> {
         let codec = match self.codec {
             Some(v) => v,
