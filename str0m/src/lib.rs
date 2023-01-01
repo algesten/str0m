@@ -13,9 +13,7 @@ use change::Changes;
 use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::IceAgentEvent;
 use ice::{IceAgent, IceError};
-use net_::NetError;
-pub use rtp::Direction;
-use rtp::Rid;
+use net_::{DatagramRecv, NetError};
 use sctp::{RtcSctp, SctpError, SctpEvent};
 use sdp::{Sdp, Setup};
 use thiserror::Error;
@@ -46,7 +44,7 @@ use session::{MediaEvent, Session};
 mod session_sdp;
 use session_sdp::AsSdpParams;
 
-pub use rtp::{ChannelId, MediaTime, Mid, Pt, Ssrc};
+pub use rtp::{ChannelId, Direction, MediaTime, Mid, Pt, Rid, Ssrc};
 
 /// Errors for the whole Rtc engine.
 #[derive(Debug, Error)]
@@ -131,16 +129,10 @@ pub enum Event {
     MediaAdded(Mid, MediaKind, Direction),
     MediaData(MediaData),
     MediaError(RtcError),
-    KeyframeRequest(Mid, Option<Rid>, KeyframeRequestKind),
+    KeyframeRequest(KeyframeRequest),
     ChannelOpen(ChannelId, String),
     ChannelData(ChannelData),
     ChannelClose(ChannelId),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyframeRequestKind {
-    Pli,
-    Fir,
 }
 
 /// Video or audio data.
@@ -153,6 +145,19 @@ pub struct MediaData {
     pub time: MediaTime,
     pub data: Vec<u8>,
     pub meta: Vec<RtpMeta>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyframeRequest {
+    pub mid: Mid,
+    pub rid: Option<Rid>,
+    pub kind: KeyframeRequestKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyframeRequestKind {
+    Pli,
+    Fir,
 }
 
 /// Data channel data.
@@ -544,9 +549,7 @@ impl Rtc {
                 }
                 MediaEvent::Data(m) => Output::Event(Event::MediaData(m)),
                 MediaEvent::Error(e) => Output::Event(Event::MediaError(e)),
-                MediaEvent::KeyframeRequest(mid, rid, kind) => {
-                    Output::Event(Event::KeyframeRequest(mid, rid, kind))
-                }
+                MediaEvent::KeyframeRequest(r) => Output::Event(Event::KeyframeRequest(r)),
             });
         }
 

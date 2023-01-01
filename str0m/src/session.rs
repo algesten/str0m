@@ -5,15 +5,15 @@ use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU};
 use packet::RtpMeta;
 use rtp::SRTCP_OVERHEAD;
-use rtp::{extend_seq, Direction, Rid, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
+use rtp::{extend_seq, Direction, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
 use rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
 
 use crate::media::{App, CodecConfig, MediaKind};
 use crate::session_sdp::AsMediaLine;
 use crate::util::{already_happened, not_happening, Soonest};
-use crate::{net, MediaData};
-use crate::{KeyframeRequestKind, RtcError};
+use crate::RtcError;
+use crate::{net, KeyframeRequest, MediaData};
 
 use super::Media;
 
@@ -80,7 +80,7 @@ pub enum MediaEvent {
     Data(MediaData),
     Error(RtcError),
     Open(Mid, MediaKind, Direction),
-    KeyframeRequest(Mid, Option<Rid>, KeyframeRequestKind),
+    KeyframeRequest(KeyframeRequest),
 }
 
 impl Session {
@@ -393,7 +393,11 @@ impl Session {
             }
 
             if let Some((rid, kind)) = media.poll_keyframe_request() {
-                return Some(MediaEvent::KeyframeRequest(media.mid(), rid, kind));
+                return Some(MediaEvent::KeyframeRequest(KeyframeRequest {
+                    mid: media.mid(),
+                    rid,
+                    kind,
+                }));
             }
 
             if let Some(r) = media.poll_sample() {
