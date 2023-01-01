@@ -28,7 +28,7 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// Generates association id for incoming associations
-pub trait AssociationIdGenerator: Send {
+pub trait AssociationIdGenerator: Send + Sync {
     /// Generates a new AID
     ///
     /// Association IDs MUST NOT contain any information that can be used by

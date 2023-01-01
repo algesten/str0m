@@ -772,3 +772,16 @@ impl fmt::Debug for Rtc {
         f.debug_struct("Rtc").finish()
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn rtc_is_send() {
+        fn is_send<T: Send>(_t: T) {}
+        fn is_sync<T: Sync>(_t: T) {}
+        is_send(Rtc::new());
+        is_sync(Rtc::new());
+    }
+}

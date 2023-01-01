@@ -119,7 +119,7 @@ pub enum CodecPacketizer {
     Opus(OpusPacketizer),
     Vp8(Vp8Packetizer),
     Vp9(Vp9Packetizer),
-    Boxed(Box<dyn Packetizer + Send>),
+    Boxed(Box<dyn Packetizer + Send + Sync>),
 }
 
 #[derive(Debug)]
@@ -129,7 +129,7 @@ pub enum CodecDepacketizer {
     Opus(OpusDepacketizer),
     Vp8(Vp8Depacketizer),
     Vp9(Vp9Depacketizer),
-    Boxed(Box<dyn Depacketizer + Send>),
+    Boxed(Box<dyn Depacketizer + Send + Sync>),
 }
 
 impl From<Codec> for CodecPacketizer {
