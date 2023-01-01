@@ -519,7 +519,6 @@ impl IceAgent {
                 v.foundation() == REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION
                     && v.kind() == CandidateKind::PeerReflexive
                     && v.addr() == c.addr()
-                    && v.prio() == c.prio()
             });
 
         let ipv4 = c.addr().is_ipv4();
@@ -527,8 +526,8 @@ impl IceAgent {
         let remote_idx = if let Some((idx, existing)) = existing_prflx {
             // If any subsequent candidate exchanges contain this peer-reflexive
             // candidate, it will signal the actual foundation for the candidate.
-            debug!(
-                "Replace temporary peer reflexive candidate, current: {:?} replaced with: {:?}",
+            info!(
+                "Replace peer reflexive candidate, current: {:?} replaced with: {:?}",
                 existing, c
             );
             *existing = c;
@@ -560,7 +559,7 @@ impl IceAgent {
 
                 let prio =
                     CandidatePair::calculate_prio(self.controlling, remote.prio(), local.prio());
-                let pair = CandidatePair::new(*local_idx, *remote_idx, prio);
+                let mut pair = CandidatePair::new(*local_idx, *remote_idx, prio);
 
                 trace!("Form pair local: {:?} remote: {:?}", local, remote);
 
@@ -591,6 +590,8 @@ impl IceAgent {
                                 "Replace redundant pair, current: {:?} replaced with: {:?}",
                                 check, pair
                             );
+                            let was_nominated = self.candidate_pairs[check_idx].is_nominated();
+                            pair.nominate(was_nominated);
                             self.candidate_pairs[check_idx] = pair;
                         }
 
