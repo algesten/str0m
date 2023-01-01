@@ -115,6 +115,7 @@
             });
         };
         async function startRtc() {
+            byId('rtc').disabled = true;
             dataChannel = rtc.createDataChannel("offer/answer");
             dataChannel.onmessage = (event) => {
                 let json = JSON.parse(event.data);
