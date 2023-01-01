@@ -31,6 +31,7 @@ struct AppState {
 enum RunLoopInput {
     NewClient(ClientId, Rtc, Arc<UdpSocket>, SocketAddr),
     SocketInput(ClientId, Instant, SocketAddr, Vec<u8>),
+    Timeout(Instant),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -138,15 +139,15 @@ fn select_host_address() -> IpAddr {
     let system = System::new();
     let networks = system.networks().unwrap();
 
-    const PREFERED_NAMES: &[&str] = &["en0", "en1", "en2", "eth0", "eth1", "eth2"];
-
-    for pref in PREFERED_NAMES {
-        if let Some(net) = networks.get(*pref) {
-            for n in &net.addrs {
-                match n.addr {
-                    systemstat::IpAddr::V4(v) => return IpAddr::V4(v),
-                    _ => {} // we could use ipv6 too
+    for net in networks.values() {
+        for n in &net.addrs {
+            match n.addr {
+                systemstat::IpAddr::V4(v) => {
+                    if !v.is_loopback() && !v.is_link_local() && !v.is_broadcast() {
+                        return IpAddr::V4(v);
+                    }
                 }
+                _ => {} // we could use ipv6 too
             }
         }
     }
@@ -238,33 +239,31 @@ async fn run_loop(mut rx: Receiver<RunLoopInput>) {
         let todo = input_or_timeout(&mut rx, timeout);
 
         match todo.await {
-            InputOrTimeout::Timeout(t) => now = t,
+            RunLoopInput::Timeout(t) => now = t,
 
-            InputOrTimeout::RunLoopInput(r) => match r {
-                RunLoopInput::NewClient(id, rtc, socket, sdp_addr) => {
-                    let mut client = Client::new(id, rtc, socket, sdp_addr);
+            RunLoopInput::NewClient(id, rtc, socket, sdp_addr) => {
+                let mut client = Client::new(id, rtc, socket, sdp_addr);
 
-                    // Each new client must get a reference to all open tracks from other clients.
-                    for other in clients.iter().filter(|c| c.is_alive()) {
-                        for track in &other.tracks_in {
-                            info!("Add track to client: {:?} {:?}", track.origin, track.mid);
-                            client.add_remote_track(Arc::downgrade(track));
-                        }
-                    }
-
-                    clients.push(client);
-                }
-
-                RunLoopInput::SocketInput(id, at, source, data) => {
-                    now = at;
-                    if let Some(client) = clients.iter_mut().find(|c| c.id == id && c.is_alive()) {
-                        if let Err(e) = client.handle_socket_input(at, source, &data) {
-                            warn!("Client failed: {:?}", e);
-                            client.rtc.disconnect();
-                        }
+                // Each new client must get a reference to all open tracks from other clients.
+                for other in clients.iter().filter(|c| c.is_alive()) {
+                    for track in &other.tracks_in {
+                        info!("Add track to client: {:?} {:?}", track.origin, track.mid);
+                        client.add_remote_track(Arc::downgrade(track));
                     }
                 }
-            },
+
+                clients.push(client);
+            }
+
+            RunLoopInput::SocketInput(id, at, source, data) => {
+                now = at;
+                if let Some(client) = clients.iter_mut().find(|c| c.id == id && c.is_alive()) {
+                    if let Err(e) = client.handle_socket_input(at, source, &data) {
+                        warn!("Client failed: {:?}", e);
+                        client.rtc.disconnect();
+                    }
+                }
+            }
         }
 
         // Poll all clients for things to do. The returned timeout is the smallest value
@@ -273,27 +272,20 @@ async fn run_loop(mut rx: Receiver<RunLoopInput>) {
     }
 }
 
-/// run_loop can wait for either input from any UdpSocket, or a timeout indicating an Rtc
-/// instance has some processing to do.
-enum InputOrTimeout {
-    Timeout(Instant),
-    RunLoopInput(RunLoopInput),
-}
-
 /// This is kind of the whole point of using async for this example. We can
 /// _either_ receive UDP socket input from a connected client, or we need to
 /// handle a timeout for some client.
-async fn input_or_timeout(rx: &mut Receiver<RunLoopInput>, timeout: Instant) -> InputOrTimeout {
+async fn input_or_timeout(rx: &mut Receiver<RunLoopInput>, timeout: Instant) -> RunLoopInput {
     if timeout < (Instant::now() + Duration::from_millis(1)) {
-        return InputOrTimeout::Timeout(timeout);
+        return RunLoopInput::Timeout(timeout);
     }
 
     tokio::select! {
         v = rx.recv() => {
-            InputOrTimeout::RunLoopInput(v.unwrap())
+            return v.unwrap();
         }
         _ = tokio::time::sleep_until(timeout.into()) => {
-            InputOrTimeout::Timeout(timeout)
+            RunLoopInput::Timeout(timeout)
         }
     }
 }
