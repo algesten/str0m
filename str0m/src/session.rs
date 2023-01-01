@@ -35,6 +35,14 @@ pub(crate) struct Session {
     pub exts: Extensions,
     pub codec_config: CodecConfig,
 
+    /// This is the first ever discovered remote media. We use that for
+    /// special cases like the media SSRC in TWCC feedback.
+    pub first_ssrc_remote: Option<Ssrc>,
+
+    /// This is the first ever discovered local media. We use this for many
+    /// feedback cases where we need a "sender SSRC".
+    pub first_ssrc_local: Option<Ssrc>,
+
     srtp_rx: Option<SrtpContext>,
     srtp_tx: Option<SrtpContext>,
     last_nack: Instant,
@@ -87,6 +95,8 @@ impl Session {
             media: vec![],
             exts: Extensions::default_mappings(),
             codec_config: codec_config.init(),
+            first_ssrc_remote: None,
+            first_ssrc_local: None,
             srtp_rx: None,
             srtp_tx: None,
             last_nack: already_happened(),
@@ -158,16 +168,18 @@ impl Session {
         }
 
         if now >= self.regular_feedback_at() {
+            let sender_ssrc = self.first_ssrc_local();
             for m in only_media_mut(&mut self.media) {
-                m.maybe_create_regular_feedback(now, &mut self.feedback);
+                m.maybe_create_regular_feedback(now, sender_ssrc, &mut self.feedback);
             }
         }
 
         if let Some(nack_at) = self.nack_at() {
             if now >= nack_at {
                 self.last_nack = now;
+                let sender_ssrc = self.first_ssrc_local();
                 for m in only_media_mut(&mut self.media) {
-                    m.create_nack(&mut self.feedback);
+                    m.create_nack(sender_ssrc, &mut self.feedback);
                 }
             }
         }
@@ -176,8 +188,12 @@ impl Session {
     fn create_twcc_feedback(&mut self, now: Instant) -> Option<()> {
         self.last_twcc = now;
         let mut twcc = self.twcc_rx_register.build_report(DATAGRAM_MTU - 100)?;
-        let first_ssrc = self.first_sender_ssrc().unwrap_or(0.into());
-        twcc.sender_ssrc = first_ssrc;
+
+        // These SSRC are on medial level, but twcc is on session level,
+        // we fill in the first discovered media SSRC in each direction.
+        twcc.sender_ssrc = self.first_ssrc_local();
+        twcc.ssrc = self.first_ssrc_remote();
+
         debug!("Created feedback TWCC: {:?}", twcc);
         self.feedback.push_front(Rtcp::Twcc(twcc));
         Some(())
@@ -498,13 +514,6 @@ impl Session {
         }
     }
 
-    fn first_sender_ssrc(&self) -> Option<Ssrc> {
-        only_media(&self.media)
-            .next()
-            .and_then(|m| m.first_source_tx())
-            .map(|s| s.ssrc())
-    }
-
     pub fn new_ssrc(&self) -> Ssrc {
         loop {
             let ssrc: Ssrc = (rand::random::<u32>()).into();
@@ -512,6 +521,14 @@ impl Session {
                 break ssrc;
             }
         }
+    }
+
+    fn first_ssrc_remote(&self) -> Ssrc {
+        self.first_ssrc_remote.unwrap_or(0.into())
+    }
+
+    fn first_ssrc_local(&self) -> Ssrc {
+        self.first_ssrc_local.unwrap_or(0.into())
     }
 }
 

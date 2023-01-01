@@ -408,10 +408,6 @@ impl Media {
         self.last_cleanup + CLEANUP_INTERVAL
     }
 
-    pub(crate) fn first_source_tx(&self) -> Option<&SenderSource> {
-        self.sources_tx.first()
-    }
-
     pub(crate) fn source_tx_ssrcs(&self) -> impl Iterator<Item = Ssrc> + '_ {
         self.sources_tx.iter().map(|s| s.ssrc())
     }
@@ -446,16 +442,12 @@ impl Media {
     pub(crate) fn maybe_create_regular_feedback(
         &mut self,
         now: Instant,
+        sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,
     ) -> Option<()> {
         if now < self.regular_feedback_at() {
             return None;
         }
-
-        // If we don't have any sender sources, we can't create an SRTCP wrapper around the
-        // feedback. This is because the SSRC is used to calculate the specific encryption key.
-        // No sender SSRC, no encryption, no feedback possible.
-        let first_ssrc = self.first_source_tx().map(|s| s.ssrc()).unwrap_or(0.into());
 
         // Since we're making new sender/receiver reports, clear out previous.
         feedback.retain(|r| !matches!(r, Rtcp::SenderReport(_) | Rtcp::ReceiverReport(_)));
@@ -471,7 +463,7 @@ impl Media {
 
         for s in &mut self.sources_rx {
             let mut rr = s.create_receiver_report(now);
-            rr.sender_ssrc = first_ssrc;
+            rr.sender_ssrc = sender_ssrc;
 
             debug!("Created feedback RR: {:?}", rr);
             feedback.push_back(Rtcp::ReceiverReport(rr));
@@ -484,14 +476,15 @@ impl Media {
     }
 
     /// Creates nack reports for receivers, if needed.
-    pub(crate) fn create_nack(&mut self, feedback: &mut VecDeque<Rtcp>) {
+    pub(crate) fn create_nack(&mut self, sender_ssrc: Ssrc, feedback: &mut VecDeque<Rtcp>) {
         for s in &mut self.sources_rx {
             if s.is_rtx() {
                 continue;
             }
-            if let Some(nack) = s.create_nack() {
+            if let Some(mut nack) = s.create_nack() {
+                nack.sender_ssrc = sender_ssrc;
                 debug!("Created feedback NACK: {:?}", nack);
-                feedback.push_back(nack);
+                feedback.push_back(Rtcp::Nack(nack));
             }
         }
     }

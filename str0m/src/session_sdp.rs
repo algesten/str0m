@@ -135,8 +135,8 @@ impl Session {
                 .map(|s| (s.ssrc, (self.new_ssrc(), s.repair)))
                 .collect();
 
-            let media = self
-                .get_media(l.mid())
+            let media = only_media_mut(&mut self.media)
+                .find(|m| m.mid() == l.mid())
                 .expect("Media to be added for new m-line");
 
             if let Some(s) = l.simulcast() {
@@ -150,12 +150,22 @@ impl Session {
                 }
             }
 
-            for (new_ssrc, old_repair_ssrc) in ssrcs.values() {
+            for (ssrc_remote, (ssrc_local, repairs_remote)) in &ssrcs {
                 // map old repair ssrc to corresponding new.
-                let repairs = old_repair_ssrc.and_then(|r| ssrcs.get(&r)).map(|r| r.0);
+                let repairs_local = repairs_remote.and_then(|r| ssrcs.get(&r)).map(|r| r.0);
+
+                if self.first_ssrc_remote.is_none() && repairs_remote.is_none() {
+                    debug!("First remote SSRC: {}", ssrc_remote);
+                    self.first_ssrc_remote = Some(*ssrc_remote);
+                }
+
+                if self.first_ssrc_local.is_none() && repairs_local.is_none() {
+                    debug!("First local SSRC: {}", ssrc_remote);
+                    self.first_ssrc_local = Some(*ssrc_local);
+                }
 
                 // maybe create source, if not already defined.
-                media.maybe_add_source_tx(*new_ssrc, repairs);
+                media.maybe_add_source_tx(*ssrc_local, repairs_local);
             }
         }
 
