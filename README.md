@@ -13,9 +13,13 @@ But I have managed to transfer some kind of video.
 
 # Usage
 
-The [`http-post`](https://github.com/algesten/str0m/blob/main/str0m/examples/http-post.rs) example 
+The [`http-post`](https://github.com/algesten/str0m/blob/main/str0m/examples/http-post.rs) example
 and the tests roughly illustrates how to use this library. The example shows how to run single threaded
 without any async I/O.
+
+# Join us
+
+Currently discussing str0m things on the [webrtc-rs][4] discord server, in the [#str0m channel][5]. Join us!
 
 ## Passive
 
@@ -238,6 +242,8 @@ Dec 18 11:33:06.907  INFO str0m: MediaData(MediaData { mid: Mid(0), pt: Pt(104),
 [1]: https://github.com/quinn-rs/quinn
 [2]: https://github.com/webrtc-rs/webrtc
 [3]: https://github.com/pion/webrtc
+[4]: https://github.com/webrtc-rs/webrtc
+[5]: https://discord.com/channels/800204819540869120/1057785575219941497
 
 ----
 
