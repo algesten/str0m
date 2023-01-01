@@ -675,7 +675,7 @@ impl IceAgent {
         self.discovered_recv.clear();
 
         self.emit_event(IceAgentEvent::IceRestart(self.local_credentials.clone()));
-        self.set_connection_state(IceConnectionState::Checking);
+        self.set_connection_state(IceConnectionState::Checking, "ice restart");
     }
 
     /// Discard candidate pairs that contain the candidate identified by a local index.
@@ -1049,7 +1049,7 @@ impl IceAgent {
                 self.local_credentials.ufrag.clone(),
             );
 
-            debug!(
+            info!(
                 "Created peer reflexive remote candidate from STUN request: {:?}",
                 c
             );
@@ -1370,9 +1370,9 @@ impl IceAgent {
         }
     }
 
-    fn set_connection_state(&mut self, state: IceConnectionState) {
+    fn set_connection_state(&mut self, state: IceConnectionState, reason: &'static str) {
         if self.state != state {
-            info!("State change: {:?} -> {:?}", self.state, state);
+            info!("State change ({}): {:?} -> {:?}", reason, self.state, state);
             self.state = state;
             self.emit_event(IceAgentEvent::IceConnectionStateChange(state));
         }
@@ -1394,35 +1394,35 @@ impl IceAgent {
 
         match self.state {
             New => {
-                self.set_connection_state(Checking);
+                self.set_connection_state(Checking, "new connection");
             }
             Checking | Disconnected => {
                 if any_nomination {
                     if any_still_possible {
-                        self.set_connection_state(Connected);
+                        self.set_connection_state(Connected, "got nomination, still trying others");
                     } else {
-                        self.set_connection_state(Completed);
+                        self.set_connection_state(Completed, "got nomination, no others to try");
                     }
                 } else if !any_still_possible {
-                    self.set_connection_state(Disconnected);
+                    self.set_connection_state(Disconnected, "no possible pairs");
                 }
             }
             Connected => {
                 if any_nomination {
                     if !any_still_possible {
-                        self.set_connection_state(Completed);
+                        self.set_connection_state(Completed, "no more possible to try");
                     }
                 } else {
-                    self.set_connection_state(Disconnected);
+                    self.set_connection_state(Disconnected, "none nominated");
                 }
             }
             Completed => {
                 if any_nomination {
                     if any_still_possible {
-                        self.set_connection_state(Connected);
+                        self.set_connection_state(Connected, "got new possible");
                     }
                 } else {
-                    self.set_connection_state(Disconnected);
+                    self.set_connection_state(Disconnected, "none nominated");
                 }
             }
         }
