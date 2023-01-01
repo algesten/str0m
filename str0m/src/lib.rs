@@ -169,6 +169,7 @@ pub struct ChannelData {
 }
 
 /// Network input as expected by [`Rtc::handle_input()`].
+#[derive(Debug)]
 pub enum Input<'a> {
     Timeout(Instant),
     Receive(Instant, net::Receive<'a>),
@@ -590,6 +591,31 @@ impl Rtc {
         };
 
         Ok(Output::Timeout(next))
+    }
+
+    pub fn accepts(&self, input: &Input) -> bool {
+        let Input::Receive(_, r) = input else {
+            // always accept the Input::Timeout.
+            return true;
+        };
+
+        // This should cover Dtls, Rtp and Rtcp
+        if let Some(send_addr) = &self.send_addr {
+            // TODO: This assume symmetrical routing, i.e. we are getting
+            // the incoming traffic from a remote peer from the same socket address
+            // we've nominated for sending via the ICE agent.
+            if r.source == send_addr.destination {
+                return true;
+            }
+        }
+
+        // STUN can use the ufrag/password to identify that a message belongs
+        // to this Rtc instance.
+        if let DatagramRecv::Stun(v) = &r.contents {
+            return self.ice.accepts_message(v);
+        }
+
+        false
     }
 
     pub fn handle_input(&mut self, input: Input) -> Result<(), RtcError> {
