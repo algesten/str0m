@@ -705,18 +705,20 @@ impl IceAgent {
 
             let local_creds = self.local_credentials();
             if local != local_creds.ufrag {
-                debug!(
+                trace!(
                     "Message rejected, local user mismatch: {} != {}",
-                    local, local_creds.ufrag
+                    local,
+                    local_creds.ufrag
                 );
                 return false;
             }
 
             if let Some(remote_creds) = &self.remote_credentials {
                 if remote != remote_creds.ufrag {
-                    debug!(
+                    trace!(
                         "Message rejected, remote user mismatch: {} != {}",
-                        remote, remote_creds.ufrag
+                        remote,
+                        remote_creds.ufrag
                     );
                     return false;
                 }
@@ -725,7 +727,7 @@ impl IceAgent {
 
         let (_, password) = self.stun_credentials(!message.is_response());
         if !message.check_integrity(&password) {
-            debug!("Message rejected, integrity check failed");
+            trace!("Message rejected, integrity check failed");
             return false;
         }
 
