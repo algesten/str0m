@@ -7,7 +7,7 @@ use rand::random;
 use net::Id;
 
 macro_rules! str_id {
-    ($id:ident, $num:tt) => {
+    ($id:ident, $name:literal, $num:tt) => {
         #[derive(Clone, Copy, PartialEq, Eq, Hash)]
         pub struct $id([u8; $num]);
 
@@ -31,7 +31,7 @@ macro_rules! str_id {
         impl fmt::Debug for $id {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 let s: &str = self;
-                write!(f, "Mid({})", s)
+                write!(f, "{}({})", $name, s)
             }
         }
 
@@ -105,8 +105,8 @@ macro_rules! num_id {
     };
 }
 
-str_id!(Mid, 3);
-str_id!(Rid, 8);
+str_id!(Mid, "Mid", 3);
+str_id!(Rid, "Rid", 8);
 num_id!(Ssrc, u32);
 num_id!(Pt, u8);
 num_id!(SessionId, u64);
