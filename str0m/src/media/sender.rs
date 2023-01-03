@@ -4,46 +4,30 @@ use rtp::{Descriptions, ReportList, Rid, Sdes, SdesType, SenderInfo, SenderRepor
 
 use crate::util::already_happened;
 
+use super::Source;
+
 #[derive(Debug)]
 pub struct SenderSource {
     ssrc: Ssrc,
-    rid: Option<Rid>,
     repairs: Option<Ssrc>,
+    rid: Option<Rid>,
     next_seq_no: SeqNo,
     last_used: Instant,
 }
 
 impl SenderSource {
     pub fn new(ssrc: Ssrc) -> Self {
-        info!("New SenderSource: {:?}", ssrc);
+        info!("New SenderSource: {}", ssrc);
         SenderSource {
             ssrc,
-            rid: None,
             repairs: None,
+            rid: None,
             // https://www.rfc-editor.org/rfc/rfc3550#page-13
             // The initial value of the sequence number SHOULD be random (unpredictable)
             // to make known-plaintext attacks on encryption more difficult
             next_seq_no: (rand::random::<u16>() as u64).into(),
             last_used: already_happened(),
         }
-    }
-
-    pub fn ssrc(&self) -> Ssrc {
-        self.ssrc
-    }
-
-    pub fn rid(&self) -> Option<Rid> {
-        self.rid
-    }
-
-    pub fn repairs(&self) -> Option<Ssrc> {
-        self.repairs
-    }
-
-    pub fn set_repairs(&mut self, repairs: Ssrc) {
-        assert!(repairs != self.ssrc);
-        info!("SenderSource {:?} repairs: {:?}", self.ssrc, repairs);
-        self.repairs = Some(repairs);
     }
 
     pub fn create_sender_report(&self, now: Instant) -> SenderReport {
@@ -83,5 +67,44 @@ impl SenderSource {
         let s = self.next_seq_no;
         self.next_seq_no = (*s + 1).into();
         s
+    }
+}
+
+impl Source for SenderSource {
+    fn ssrc(&self) -> Ssrc {
+        self.ssrc
+    }
+
+    fn rid(&self) -> Option<Rid> {
+        self.rid
+    }
+
+    fn set_rid(&mut self, rid: Rid) -> bool {
+        if self.rid != Some(rid) {
+            info!("SenderSource {} has Rid: {}", self.ssrc, rid);
+            self.rid = Some(rid);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn is_rtx(&self) -> bool {
+        self.repairs.is_some()
+    }
+
+    fn repairs(&self) -> Option<Ssrc> {
+        self.repairs
+    }
+
+    fn set_repairs(&mut self, repairs: Ssrc) -> bool {
+        assert!(repairs != self.ssrc);
+        if self.repairs != Some(repairs) {
+            info!("SenderSource {} repairs: {}", self.ssrc, repairs);
+            self.repairs = Some(repairs);
+            true
+        } else {
+            false
+        }
     }
 }

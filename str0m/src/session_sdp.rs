@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use dtls::Fingerprint;
 use ice::{Candidate, IceCreds};
 use rtp::Mid;
@@ -8,7 +6,7 @@ use sdp::{Answer, MediaAttribute, MediaLine, MediaType, SimulcastGroups, Simulca
 use sdp::{Offer, Proto, Sdp, SessionAttribute, Setup};
 
 use crate::change::{Change, Changes};
-use crate::media::{App, MediaKind};
+use crate::media::{App, MediaKind, Source};
 use crate::session::{only_media_mut, MediaOrApp};
 use crate::RtcError;
 
@@ -115,57 +113,7 @@ impl Session {
         self.add_new_lines(&new_lines, true)
             .map_err(RtcError::RemoteSdp)?;
 
-        // For new lines appearing in an offer, we just add the corresponding amount of SSRC
-        // that we find in the incoming line. This is probably always correct. If there is simulcast
-        // configured, we (probably) have simulcast in both directions. If we have RTX, we have it
-        // in both directions.
-        //
-        // This is the "old school" way of communicating a=ssrc lines in the SDP to prepare the sender
-        // for which SSRC belongs to which m-line. For simulcast, Chrome has started going another way
-        // where the ssrc is _NOT_ communicated with a=ssrc in advance. Instead it starts sending
-        // new streams with RTP header extensions mid, rid and rid_repair. That way we
-        // can dynamically discover which SSRC belongs to which m-line.
-        //
-        // We need to support borth the old way of a=ssrc in SDP as well as the new way. By matching
-        // incoming a=ssrc lines with outgoing, we will respond with a=ssrc when the originator sends it.
-        for l in new_lines.iter().filter(|l| l.typ.is_media()) {
-            let ssrcs: HashMap<_, _> = l
-                .ssrc_info()
-                .iter()
-                .map(|s| (s.ssrc, (self.new_ssrc(), s.repair)))
-                .collect();
-
-            let media = only_media_mut(&mut self.media)
-                .find(|m| m.mid() == l.mid())
-                .expect("Media to be added for new m-line");
-
-            if let Some(s) = l.simulcast() {
-                if s.is_munged {
-                    warn!("Not supporting simulcast via munging SDP");
-                } else if media.simulcast().is_none() {
-                    // Invert before setting, since it has a recv and send config.
-                    media.set_simulcast(s.invert());
-                }
-            }
-
-            for (ssrc_remote, (ssrc_local, repairs_remote)) in &ssrcs {
-                // map old repair ssrc to corresponding new.
-                let repairs_local = repairs_remote.and_then(|r| ssrcs.get(&r)).map(|r| r.0);
-
-                if self.first_ssrc_remote.is_none() && repairs_remote.is_none() {
-                    debug!("First remote SSRC: {}", ssrc_remote);
-                    self.first_ssrc_remote = Some(*ssrc_remote);
-                }
-
-                if self.first_ssrc_local.is_none() && repairs_local.is_none() {
-                    debug!("First local SSRC: {}", ssrc_remote);
-                    self.first_ssrc_local = Some(*ssrc_local);
-                }
-
-                // maybe create source, if not already defined.
-                media.maybe_add_source_tx(*ssrc_local, repairs_local);
-            }
-        }
+        self.equalize_sources();
 
         Ok(())
     }
@@ -190,6 +138,15 @@ impl Session {
         self.add_new_lines(&new_lines, false)
             .map_err(RtcError::RemoteSdp)?;
 
+        // Add all pending changes (since we pre-allocated SSRC communicated in the Offer).
+        self.add_pending_changes(pending, sctp);
+
+        self.equalize_sources();
+
+        Ok(())
+    }
+
+    fn add_pending_changes(&mut self, pending: Changes, sctp: &mut RtcSctp) {
         // For pending AddMedia, we have outgoing SSRC communicated that needs to be added.
         for change in pending.0 {
             let add_media = match change {
@@ -201,6 +158,12 @@ impl Session {
                 _ => continue,
             };
 
+            for (ssrc, repairs) in &add_media.ssrcs {
+                if repairs.is_none() {
+                    self.set_first_ssrc_local(*ssrc);
+                }
+            }
+
             let media = self
                 .get_media(add_media.mid)
                 .expect("Media to be added for pending mid");
@@ -210,11 +173,14 @@ impl Session {
             media.set_cname(add_media.cname);
 
             for (ssrc, repairs) in add_media.ssrcs {
-                media.maybe_add_source_tx(ssrc, repairs);
+                let tx = media.get_or_create_source_tx(ssrc);
+                if let Some(repairs) = repairs {
+                    if tx.set_repairs(repairs) {
+                        media.set_equalize_sources();
+                    }
+                }
             }
         }
-
-        Ok(())
     }
 
     /// Compares m-lines in Sdp with that already in the session.
@@ -228,26 +194,34 @@ impl Session {
         let session_exts = *self.exts();
 
         for (idx, m) in sdp.media_lines.iter().enumerate() {
-            if m.typ == MediaType::Application {
-                if let Some(app) = self.app() {
-                    if idx != app.index() {
-                        return index_err(m.mid());
-                    }
+            // First, match existing m-lines.
+            match m.typ {
+                MediaType::Application => {
+                    if let Some(app) = self.app() {
+                        if idx != app.index() {
+                            return index_err(m.mid());
+                        }
 
-                    app.apply_changes(m);
+                        app.apply_changes(m);
+                        continue;
+                    }
+                }
+                MediaType::Audio | MediaType::Video => {
+                    if let Some(media) = self.get_media(m.mid()) {
+                        if idx != media.index() {
+                            return index_err(m.mid());
+                        }
+
+                        media.apply_changes(m, &config, &session_exts);
+                        continue;
+                    }
+                }
+                _ => {
                     continue;
                 }
             }
 
-            if let Some(media) = self.get_media(m.mid()) {
-                if idx != media.index() {
-                    return index_err(m.mid());
-                }
-
-                media.apply_changes(m, &config, &session_exts);
-                continue;
-            }
-
+            // Second, discover new m-lines.
             new_lines.push(m);
         }
 

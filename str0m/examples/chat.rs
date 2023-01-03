@@ -14,7 +14,8 @@ use rouille::Server;
 use rouille::{Request, Response};
 use str0m::media::MediaKind;
 use str0m::{net::Receive, Candidate, IceConnectionState, Input, Offer, Output, Rtc, RtcError};
-use str0m::{Answer, ChannelData, ChannelId, Direction, Event, KeyframeRequest, MediaData, Mid};
+use str0m::{Answer, ChannelData, ChannelId, Direction};
+use str0m::{Event, KeyframeRequest, MediaData, Mid, Rid};
 use systemstat::{Duration, Platform, System};
 
 fn init_log() {
@@ -256,6 +257,7 @@ struct Client {
     cid: Option<ChannelId>,
     tracks_in: Vec<Arc<TrackIn>>,
     tracks_out: Vec<TrackOut>,
+    chosen_rid: Option<Rid>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,6 +310,7 @@ impl Client {
             cid: None,
             tracks_in: vec![],
             tracks_out: vec![],
+            chosen_rid: None,
         }
     }
 
@@ -393,7 +396,7 @@ impl Client {
         Propagated::TrackOpen(self.id, weak)
     }
 
-    fn handle_incoming_keyframe_req(&self, req: KeyframeRequest) -> Propagated {
+    fn handle_incoming_keyframe_req(&self, mut req: KeyframeRequest) -> Propagated {
         // Need to figure out the track_in mid that needs to handle the keyframe request.
         let Some(track_out) = self.tracks_out.iter().find(|t| t.mid() == Some(req.mid)) else {
                 return Propagated::Noop;
@@ -401,6 +404,10 @@ impl Client {
         let Some(track_in) = track_out.track_in.upgrade() else {
                 return Propagated::Noop;
             };
+
+        // This is the rid picked from incoming medidata, and to which we need to
+        // send the keyframe request.
+        req.rid = self.chosen_rid;
 
         Propagated::KeyframeRequest(self.id, req, track_in.origin, track_in.mid)
     }
@@ -516,6 +523,11 @@ impl Client {
             return;
         }
 
+        // Remember this value for keyframe requests.
+        if self.chosen_rid != data.rid {
+            self.chosen_rid = data.rid;
+        }
+
         // Match outgoing pt to incoming codec.
         let Some(pt) = media.match_codec(data.codec) else {
             return;
@@ -540,8 +552,8 @@ impl Client {
         };
 
         if let Err(e) = media.request_keyframe(req.rid, req.kind) {
-            warn!("Client ({}) failed: {:?}", *self.id, e);
-            self.rtc.disconnect();
+            // This can fail if the rid doesn't match any media.
+            info!("request_keyframe failed: {:?}", e);
         }
     }
 }

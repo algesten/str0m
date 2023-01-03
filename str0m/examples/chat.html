@@ -12,10 +12,9 @@
 </head>
 
 <body>
-    Enable
+    <button id="rtc" onClick="startRtc()">Connect</button>
     <button id="cam" onClick="startCam()" disabled>Cam</button>
     <button id="mic" onClick="startMic()" disabled>Mic</button>
-    <button id="rtc" onClick="startRtc()">Connect</button>
     ICE: <span id="ice_status">new</span>
     <div id="chan_status">Waiting for data channel.</div>
     <div id="media"></div>
@@ -52,21 +51,6 @@
             await dataChannel.send(JSON.stringify(answer));
         }
         async function startCam() {
-
-            // https://chromium.googlesource.com/external/webrtc/+/branch-heads/49/talk/media/webrtc/simulcast.cc
-            // // These tables describe from which resolution we can use how many
-            // // simulcast layers at what bitrates (maximum, target, and minimum).
-            // // Important!! Keep this table from high resolution to low resolution.
-            // const SimulcastFormat kSimulcastFormats[] = {
-            //   {1920, 1080, 3, 5000, 4000, 800},
-            //   {1280, 720, 3,  2500, 2500, 600},
-            //   {960, 540, 3, 900, 900, 450},
-            //   {640, 360, 2, 700, 500, 150},
-            //   {480, 270, 2, 450, 350, 150},
-            //   {320, 180, 1, 200, 150, 30},
-            //   {0, 0, 1, 200, 150, 30}
-            // };
-
             byId('cam').disabled = true;
             streamCam = await navigator.mediaDevices.getUserMedia({
                 video: {
@@ -77,6 +61,24 @@
             const tr = rtc.addTransceiver(streamCam.getTracks()[0], {
                 direction: "sendonly",
                 streams: [streamCam],
+                // This table shows the valid values for simulcast.
+                //
+                // https://chromium.googlesource.com/external/webrtc/+/branch-heads/49/talk/media/webrtc/simulcast.cc
+                // // These tables describe from which resolution we can use how many
+                // // simulcast layers at what bitrates (maximum, target, and minimum).
+                // // Important!! Keep this table from high resolution to low resolution.
+                // const SimulcastFormat kSimulcastFormats[] = {
+                //   {1920, 1080, 3, 5000, 4000, 800},
+                //   {1280, 720, 3,  2500, 2500, 600},
+                //   {960, 540, 3, 900, 900, 450},
+                //   {640, 360, 2, 700, 500, 150},
+                //   {480, 270, 2, 450, 350, 150},
+                //   {320, 180, 1, 200, 150, 30},
+                //   {0, 0, 1, 200, 150, 30}
+                // };
+
+                // Uncomment this to enable simulcast. The actual selected
+                // simulcast level is hardcoded in chat.rs.
                 // sendEncodings: [
                 //     { rid: "h", maxBitrate: 700 * 1024 },
                 //     { rid: "l", maxBitrate: 150 * 1024 }

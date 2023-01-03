@@ -83,8 +83,8 @@ pub enum RtcError {
     NoSenderSource,
 
     /// If MediaWriter.request_keyframe fails because we can't find an SSRC to use.
-    #[error("No receiver source")]
-    NoReceiverSource,
+    #[error("No receiver source (rid: {0:?})")]
+    NoReceiverSource(Option<Rid>),
 
     #[error("{0}")]
     NetError(#[from] NetError),

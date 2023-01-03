@@ -2,7 +2,9 @@ use std::time::Instant;
 
 use rtp::{MediaTime, Nack, ReceiverReport, ReportList, Rid, RtpHeader, SenderInfo, SeqNo, Ssrc};
 
-use super::register::ReceiverRegister;
+use crate::util::already_happened;
+
+use super::{register::ReceiverRegister, Source};
 
 #[derive(Debug)]
 pub struct ReceiverSource {
@@ -17,45 +19,18 @@ pub struct ReceiverSource {
 }
 
 impl ReceiverSource {
-    pub fn new(ssrc: Ssrc, now: Instant) -> Self {
-        info!("New ReceiverSource: {:?}", ssrc);
+    pub fn new(ssrc: Ssrc) -> Self {
+        info!("New ReceiverSource: {}", ssrc);
         ReceiverSource {
             ssrc,
             repairs: None,
             rid: None,
             register: None,
-            last_used: now,
+            last_used: already_happened(),
             sender_info: None,
             sender_info_at: None,
             fir_seq_no: 0,
         }
-    }
-
-    pub fn ssrc(&self) -> Ssrc {
-        self.ssrc
-    }
-
-    pub fn repairs(&self) -> Option<Ssrc> {
-        self.repairs
-    }
-
-    pub fn set_repairs(&mut self, repairs: Ssrc) {
-        assert!(repairs != self.ssrc);
-        info!("ReceiverSource {:?} repairs: {:?}", self.ssrc, repairs);
-        self.repairs = Some(repairs);
-    }
-
-    pub fn is_rtx(&self) -> bool {
-        self.repairs.is_some()
-    }
-
-    pub fn rid(&self) -> Option<Rid> {
-        self.rid
-    }
-
-    pub fn set_rid(&mut self, id: Rid) {
-        info!("ReceiverSource {:?} rid: {}", self.ssrc, id);
-        self.rid = Some(id);
     }
 
     pub fn update(&mut self, now: Instant, header: &RtpHeader, clock_rate: u32) -> SeqNo {
@@ -148,5 +123,45 @@ impl ReceiverSource {
         let x = self.fir_seq_no;
         self.fir_seq_no = self.fir_seq_no.wrapping_add(1);
         x
+    }
+}
+
+impl Source for ReceiverSource {
+    fn ssrc(&self) -> Ssrc {
+        self.ssrc
+    }
+
+    fn repairs(&self) -> Option<Ssrc> {
+        self.repairs
+    }
+
+    fn set_repairs(&mut self, repairs: Ssrc) -> bool {
+        assert!(repairs != self.ssrc);
+        if self.repairs != Some(repairs) {
+            info!("ReceiverSource {} repairs: {}", self.ssrc, repairs);
+            self.repairs = Some(repairs);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn is_rtx(&self) -> bool {
+        self.repairs.is_some()
+    }
+
+    fn rid(&self) -> Option<Rid> {
+        self.rid
+    }
+
+    #[must_use]
+    fn set_rid(&mut self, rid: Rid) -> bool {
+        if self.rid != Some(rid) {
+            info!("ReceiverSource {} has Rid: {}", self.ssrc, rid);
+            self.rid = Some(rid);
+            true
+        } else {
+            false
+        }
     }
 }

@@ -47,6 +47,17 @@ fn rr_interval(audio: bool) -> Duration {
     }
 }
 
+pub trait Source {
+    fn ssrc(&self) -> Ssrc;
+    fn rid(&self) -> Option<Rid>;
+    #[must_use]
+    fn set_rid(&mut self, rid: Rid) -> bool;
+    fn is_rtx(&self) -> bool;
+    fn repairs(&self) -> Option<Ssrc>;
+    #[must_use]
+    fn set_repairs(&mut self, ssrc: Ssrc) -> bool;
+}
+
 /// Audio or video media.
 ///
 /// An m-line in SDP.
@@ -132,6 +143,10 @@ pub struct Media {
 
     /// Simulcast configuration, if set.
     simulcast: Option<Simulcast>,
+
+    /// Sources are kept in "mirrored pairs", i.e. if we have a ReceiverSource
+    /// with Ssrc A and Rid B, there should be an equivalent SenderSource with Ssrc C and Rid B.
+    equalize_sources: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -211,9 +226,18 @@ impl Media {
             .sources_rx
             .iter()
             .find(|s| s.rid() == rid && !s.is_rtx())
-            .ok_or(RtcError::NoReceiverSource)?;
+            .ok_or(RtcError::NoReceiverSource(rid))?;
 
-        info!("Request keyframe ({:?}) for SSRC: {}", kind, rx.ssrc());
+        if let Some(rid) = rid {
+            info!(
+                "Request keyframe ({:?}, {:?}) SSRC: {}",
+                kind,
+                rid,
+                rx.ssrc()
+            );
+        } else {
+            info!("Request keyframe ({:?}) SSRC: {}", kind, rx.ssrc());
+        }
         self.keyframe_request_tx = Some((rx.ssrc(), kind));
 
         Ok(())
@@ -315,69 +339,83 @@ impl Media {
         Some((header, buf, seq_no))
     }
 
-    pub(crate) fn get_source_rx(
-        &mut self,
-        header: &RtpHeader,
-        now: Instant,
-        do_update_receivers: bool,
-    ) -> &mut ReceiverSource {
-        // If we do_update_receivers, we want to know which SSRC the `rid_repair` header corresponds
-        // to, we must figure this out before get_or_create_source_rx to fulfil the borrow checker.
-        let repairs_ssrc = match (do_update_receivers, header.ext_vals.rid_repair) {
-            (true, Some(id)) => self
-                .sources_rx
-                .iter()
-                .find(|r| r.rid() == Some(id))
-                .map(|r| r.ssrc()),
-            _ => None,
-        };
-
-        let source = self.get_or_create_source_rx(header.ssrc, now);
-
-        if do_update_receivers {
-            if let Some(repairs) = repairs_ssrc {
-                if source.repairs().is_none() {
-                    source.set_repairs(repairs);
-                }
-            }
-
-            if let Some(rid) = header.ext_vals.rid {
-                if source.rid().is_none() {
-                    source.set_rid(rid);
-                }
-            }
-        }
-
-        source
-    }
-
-    fn get_or_create_source_rx(&mut self, ssrc: Ssrc, now: Instant) -> &mut ReceiverSource {
-        let maybe_idx = self.sources_rx.iter().position(|s| s.ssrc() == ssrc);
+    pub(crate) fn get_or_create_source_rx(&mut self, ssrc: Ssrc) -> &mut ReceiverSource {
+        let maybe_idx = self.sources_rx.iter().position(|r| r.ssrc() == ssrc);
 
         if let Some(idx) = maybe_idx {
             &mut self.sources_rx[idx]
         } else {
-            let new_source = ReceiverSource::new(ssrc, now);
-            self.sources_rx.push(new_source);
+            self.equalize_sources = true;
+            self.sources_rx.push(ReceiverSource::new(ssrc));
             self.sources_rx.last_mut().unwrap()
         }
     }
 
-    pub(crate) fn maybe_add_source_tx(&mut self, ssrc: Ssrc, repairs: Option<Ssrc>) {
+    pub(crate) fn get_or_create_source_tx(&mut self, ssrc: Ssrc) -> &mut SenderSource {
         let maybe_idx = self.sources_tx.iter().position(|r| r.ssrc() == ssrc);
 
-        let s = if let Some(idx) = maybe_idx {
+        if let Some(idx) = maybe_idx {
             &mut self.sources_tx[idx]
         } else {
+            self.equalize_sources = true;
             self.sources_tx.push(SenderSource::new(ssrc));
             self.sources_tx.last_mut().unwrap()
-        };
+        }
+    }
 
-        if let Some(repairs) = repairs {
-            if s.repairs().is_none() {
-                s.set_repairs(repairs);
+    pub(crate) fn set_equalize_sources(&mut self) {
+        self.equalize_sources = true;
+    }
+
+    pub(crate) fn equalize_sources(&self) -> bool {
+        self.equalize_sources
+    }
+
+    pub(crate) fn do_equalize_sources(&mut self, new_ssrc: &mut impl Iterator<Item = Ssrc>) {
+        while self.sources_rx.len() < self.sources_tx.len() {
+            let ssrc = new_ssrc.next().unwrap();
+            self.get_or_create_source_rx(ssrc);
+        }
+        while self.sources_tx.len() < self.sources_rx.len() {
+            let ssrc = new_ssrc.next().unwrap();
+            self.get_or_create_source_tx(ssrc);
+        }
+
+        // Now there should be equal amount of receivers/senders.
+
+        let mut txs: Vec<_> = self
+            .sources_tx
+            .iter_mut()
+            .map(|t| t as &mut dyn Source)
+            .collect();
+
+        let mut rxs: Vec<_> = self
+            .sources_rx
+            .iter_mut()
+            .map(|t| t as &mut dyn Source)
+            .collect();
+
+        fn equalize(from: &[&mut dyn Source], to: &mut [&mut dyn Source]) {
+            for i in 0..from.len() {
+                let rx = &from[i];
+                if let Some(rid) = rx.rid() {
+                    let _ = to[i].set_rid(rid);
+                }
+                if let Some(repairs) = rx.repairs() {
+                    let j = from.iter().position(|s| s.ssrc() == repairs);
+                    if let Some(j) = j {
+                        let ssrc_tx = to[j].ssrc();
+                        let _ = to[i].set_repairs(ssrc_tx);
+                    }
+                }
             }
         }
+
+        // Now propagated rid/repairs both ways, but let rxs be dominant, so do rx -> tx first.
+        equalize(&rxs, &mut txs);
+        equalize(&txs, &mut rxs);
+
+        self.equalize_sources = false;
     }
 
     pub(crate) fn get_params(&self, header: &RtpHeader) -> Option<&CodecParams> {
@@ -647,20 +685,28 @@ impl Media {
         }
 
         // SSRC changes
+        // This will always be for ReceiverSource since any incoming a=ssrc line will be
+        // about the remote side's SSRC.
         {
             let infos = m.ssrc_info();
-
-            // Might want to update the data in already existing receivers
             for info in infos {
+                let rx = self.get_or_create_source_rx(info.ssrc);
+
                 if let Some(repairs) = info.repair {
-                    self.get_or_create_source_rx(repairs, already_happened());
-                }
-                let r = self.get_or_create_source_rx(info.ssrc, already_happened());
-                if let Some(repairs) = info.repair {
-                    if r.repairs().is_none() {
-                        r.set_repairs(repairs);
+                    if rx.set_repairs(repairs) {
+                        self.set_equalize_sources();
                     }
                 }
+            }
+        }
+
+        // Simulcast configuration
+        if let Some(s) = m.simulcast() {
+            if s.is_munged {
+                warn!("Not supporting simulcast via munging SDP");
+            } else if self.simulcast().is_none() {
+                // Invert before setting, since it has a recv and send config.
+                self.set_simulcast(s.invert());
             }
         }
     }
@@ -732,13 +778,6 @@ impl Media {
         Some(())
     }
 
-    pub(crate) fn get_repaired_rx_ssrc(&self, ssrc: Ssrc) -> Option<Ssrc> {
-        self.sources_rx
-            .iter()
-            .find(|r| r.ssrc() == ssrc)
-            .and_then(|r| r.repairs())
-    }
-
     pub(crate) fn clear_send_buffers(&mut self) {
         self.buffers_tx.clear();
     }
@@ -763,6 +802,18 @@ impl Media {
     pub(crate) fn set_simulcast(&mut self, s: Simulcast) {
         info!("Set simulcast: {:?}", s);
         self.simulcast = Some(s);
+    }
+
+    pub(crate) fn ssrc_rx_for_rid(&self, repairs: Rid) -> Option<Ssrc> {
+        self.sources_rx
+            .iter()
+            .find(|r| r.rid() == Some(repairs))
+            .map(|r| r.ssrc())
+    }
+
+    /// The number of SSRC required to equalize the senders/receivers.
+    pub(crate) fn equalize_requires_ssrcs(&self) -> usize {
+        (self.sources_tx.len() as isize - self.sources_rx.len() as isize).abs() as usize
     }
 }
 
@@ -810,6 +861,7 @@ impl Default for Media {
             keyframe_request_rx: None,
             keyframe_request_tx: None,
             simulcast: None,
+            equalize_sources: false,
         }
     }
 }
@@ -839,11 +891,17 @@ impl Media {
             exts,
             dir: a.dir,
             params: a.params,
+            equalize_sources: true,
             ..Default::default()
         };
 
         for (ssrc, repairs) in a.ssrcs {
-            media.maybe_add_source_tx(ssrc, repairs);
+            let tx = media.get_or_create_source_tx(ssrc);
+            if let Some(repairs) = repairs {
+                if tx.set_repairs(repairs) {
+                    media.set_equalize_sources();
+                }
+            }
         }
 
         media

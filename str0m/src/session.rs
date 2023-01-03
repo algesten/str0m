@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
@@ -9,7 +9,7 @@ use rtp::{extend_seq, Direction, RtpHeader, SessionId, TwccRecvRegister, TwccSen
 use rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
 
-use crate::media::{App, CodecConfig, MediaKind};
+use crate::media::{App, CodecConfig, MediaKind, Source};
 use crate::session_sdp::AsMediaLine;
 use crate::util::{already_happened, not_happening, Soonest};
 use crate::RtcError;
@@ -35,13 +35,18 @@ pub(crate) struct Session {
     pub exts: Extensions,
     pub codec_config: CodecConfig,
 
+    /// Internally all ReceiverSource and SenderSource are identified by mid/ssrc.
+    /// This map helps denormalize to that form. Sender and Receiver are mixed in
+    /// this map since Ssrc should never clash.
+    source_keys: HashMap<Ssrc, (Mid, Ssrc)>,
+
     /// This is the first ever discovered remote media. We use that for
     /// special cases like the media SSRC in TWCC feedback.
-    pub first_ssrc_remote: Option<Ssrc>,
+    first_ssrc_remote: Option<Ssrc>,
 
     /// This is the first ever discovered local media. We use this for many
     /// feedback cases where we need a "sender SSRC".
-    pub first_ssrc_local: Option<Ssrc>,
+    first_ssrc_local: Option<Ssrc>,
 
     srtp_rx: Option<SrtpContext>,
     srtp_tx: Option<SrtpContext>,
@@ -96,6 +101,7 @@ impl Session {
             media: vec![],
             exts: Extensions::default_mappings(),
             codec_config: codec_config.init(),
+            source_keys: HashMap::new(),
             first_ssrc_remote: None,
             first_ssrc_local: None,
             srtp_rx: None,
@@ -210,6 +216,7 @@ impl Session {
             Rtp(buf) => {
                 if let Some(header) = RtpHeader::parse(buf, &self.exts) {
                     self.handle_rtp(now, header, buf);
+                    self.equalize_sources();
                 } else {
                     trace!("Failed to parse RTP header");
                 }
@@ -226,6 +233,43 @@ impl Session {
         Some(())
     }
 
+    fn mid_and_ssrc_for_header(&mut self, header: &RtpHeader) -> Option<(Mid, Ssrc)> {
+        let ssrc = header.ssrc;
+
+        // A direct hit on SSRC is to prefer. The idea is that mid/rid are only sent
+        // for the initial x seconds and then we start using SSRC only instead.
+        if let Some(r) = self.source_keys.get(&ssrc) {
+            return Some(*r);
+        }
+
+        // The receiver/source might already exist in some Media.
+        let maybe_mid = only_media(&self.media)
+            .find(|m| m.has_ssrc_rx(ssrc))
+            .map(|m| m.mid());
+
+        if let Some(mid) = maybe_mid {
+            // SSRC is mapped to a Sender/Receiver in this media. Make an entry for it.
+            self.source_keys.insert(ssrc, (mid, ssrc));
+
+            return Some((mid, ssrc));
+        }
+
+        // The RTP header extension for mid might give us a clue.
+        if let Some(mid) = header.ext_vals.mid {
+            // Ensure media for this mid exists.
+            let m_exists = only_media(&self.media).any(|m| m.mid() == mid);
+
+            if m_exists {
+                // Insert an entry so we can look up on SSRC alone later.
+                self.source_keys.insert(ssrc, (mid, ssrc));
+                return Some((mid, ssrc));
+            }
+        }
+
+        // No way to map this RtpHeader.
+        None
+    }
+
     fn handle_rtp(&mut self, now: Instant, header: RtpHeader, buf: &[u8]) {
         trace!("Handle RTP: {:?}", header);
         if let Some(transport_cc) = header.ext_vals.transport_cc {
@@ -234,16 +278,16 @@ impl Session {
             self.twcc_rx_register.update_seq(extended.into(), now);
         }
 
-        let mid_in = header.ext_vals.mid;
-        let media = match only_media_mut(&mut self.media)
-            .find(|m| m.has_ssrc_rx(header.ssrc) || Some(m.mid()) == mid_in)
-        {
-            Some(v) => v,
-            None => {
-                trace!("No Media for {:?} or {:?}", mid_in, header.ssrc);
-                return;
-            }
+        // Look up mid/ssrc for this header.
+        let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(&header) else {
+            trace!("Unable to map RTP header to media: {:?}", header);
+            return;
         };
+
+        // mid_and_ssrc_for_header guarantees media for this mid exists.
+        let media = only_media_mut(&mut self.media)
+            .find(|m| m.mid() == mid)
+            .expect("media for mid");
 
         let srtp = match self.srtp_rx.as_mut() {
             Some(v) => v,
@@ -259,7 +303,36 @@ impl Session {
                 return;
             }
         };
-        let source = media.get_source_rx(&header, now, true);
+
+        // Figure out which SSRC the repairs header points out. This is here because of borrow
+        // checker ordering.
+        let ssrc_repairs = header
+            .ext_vals
+            .rid_repair
+            .and_then(|repairs| media.ssrc_rx_for_rid(repairs));
+
+        let source = media.get_or_create_source_rx(ssrc);
+
+        let mut media_need_check_source = false;
+        if let Some(rid) = header.ext_vals.rid {
+            if source.set_rid(rid) {
+                media_need_check_source = true;
+            }
+        }
+        if let Some(repairs) = ssrc_repairs {
+            if source.set_repairs(repairs) {
+                media_need_check_source = true;
+            }
+        }
+
+        // Gymnastics to appease the borrow checker.
+        let source = if media_need_check_source {
+            media.set_equalize_sources();
+            media.get_or_create_source_rx(ssrc)
+        } else {
+            source
+        };
+
         let rid = source.rid();
         let seq_no = source.update(now, &header, clock_rate);
 
@@ -304,7 +377,7 @@ impl Session {
             );
             header.sequence_number = orig_seq_16;
 
-            let repaired_ssrc = match media.get_repaired_rx_ssrc(header.ssrc) {
+            let repaired_ssrc = match source.repairs() {
                 Some(v) => v,
                 None => {
                     trace!("Can't find repaired SSRC for: {}", header.ssrc);
@@ -314,7 +387,7 @@ impl Session {
             trace!("Repaired {:?} -> {:?}", header.ssrc, repaired_ssrc);
             header.ssrc = repaired_ssrc;
 
-            let source = media.get_source_rx(&header, now, false);
+            let source = media.get_or_create_source_rx(ssrc);
             let orig_seq_no = source.update(now, &header, clock_rate);
 
             if !source.is_valid() {
@@ -324,6 +397,11 @@ impl Session {
 
             orig_seq_no
         } else {
+            if self.first_ssrc_remote.is_none() {
+                info!("First remote SSRC: {}", ssrc);
+                self.first_ssrc_remote = Some(ssrc);
+            }
+
             seq_no
         };
 
@@ -379,6 +457,40 @@ impl Session {
         }
 
         Some(())
+    }
+
+    /// Whenever there are changes to ReceiverSource/SenderSource, we need to ensure the
+    /// receivers are matched to senders. This ensure the setup is correct.
+    pub fn equalize_sources(&mut self) {
+        let required_ssrcs: usize = only_media(&self.media)
+            .map(|m| m.equalize_requires_ssrcs())
+            .sum();
+
+        // This will contain enough new SSRC to equalize the receiver/senders.
+        let mut new_ssrcs = Vec::with_capacity(required_ssrcs);
+
+        loop {
+            if new_ssrcs.len() == required_ssrcs {
+                break;
+            }
+            let ssrc = self.new_ssrc();
+
+            // There's an outside chance we randomize the same number twice.
+            if !new_ssrcs.contains(&ssrc) {
+                self.set_first_ssrc_local(ssrc);
+                new_ssrcs.push(ssrc);
+            }
+        }
+
+        let mut new_ssrcs = new_ssrcs.into_iter();
+
+        for m in only_media_mut(&mut self.media) {
+            if !m.equalize_sources() {
+                continue;
+            }
+
+            m.do_equalize_sources(&mut new_ssrcs);
+        }
     }
 
     pub fn poll_event(&mut self) -> Option<MediaEvent> {
@@ -534,6 +646,13 @@ impl Session {
 
     fn first_ssrc_local(&self) -> Ssrc {
         self.first_ssrc_local.unwrap_or_else(|| 0.into())
+    }
+
+    pub fn set_first_ssrc_local(&mut self, ssrc: Ssrc) {
+        if self.first_ssrc_local.is_none() {
+            info!("First local SSRC: {}", ssrc);
+            self.first_ssrc_local = Some(ssrc);
+        }
     }
 }
 
