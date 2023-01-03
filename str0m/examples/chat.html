@@ -100,12 +100,18 @@
         rtc.ontrack = (e) => {
             console.log('ontrack', e.track);
             const track = e.track;
-            const media = new MediaStream();
-            media.addTrack(track);
+            const domId = `media-${track.id}`;
             const el = document.createElement('video');
+            if (byId(domId)) {
+                // we aleady have this track
+                return;
+            }
+            el.id = domId;
             el.controls = true;
-            el.srcObject = media;
             el.autoplay = true;
+            const media = new MediaStream();
+            el.srcObject = media;
+            media.addTrack(track);
             byId('media').appendChild(el);
             track.addEventListener('mute', () => {
                 console.log('track muted', track);
