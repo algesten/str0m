@@ -98,20 +98,71 @@ pub enum RtcError {
     #[error("No receiver source (rid: {0:?})")]
     NoReceiverSource(Option<Rid>),
 
+    /// Parser errors from network packet parsing.
     #[error("{0}")]
     Net(#[from] error::NetError),
 
+    /// ICE agent errors.
     #[error("{0}")]
     Ice(#[from] error::IceError),
 
+    /// SCTP (data channel engine) errors.
     #[error("{0}")]
     Sctp(#[from] error::SctpError),
 
+    /// Some other error.
     #[error("{0}")]
     Other(String),
 }
 
-/// Instance that does WebRTC. Main struct of the entire lib.
+/// Instance that does WebRTC. Main struct of the entire library.
+///
+/// This is a [Sans I/O][1] implementation meaning the `Rtc` instance itself is not doing any network
+/// talking. Furthermore it has no internal threads or async tasks. All operations are synchronously
+/// happening from the calls of the public API.
+///
+/// Output from the instance can be grouped into three kinds.
+///
+/// 1. Events (such as receiving media or data channel data).
+/// 2. Network output. Data to be sent, typically from a UDP socket.
+/// 3. Timeouts. When the instance expects a time input.
+///
+/// Input to the `Rtc` instance is:
+///
+/// 1. User operations (such as sending media or data channel data).
+/// 2. Network input. Typically read from a UDP socket.
+/// 3. Timeouts. As obtained from the output above.
+///
+/// The correct use can be described like below (or seen in the examples).
+/// The TODO lines is where the user would fill in their code.
+///
+/// ```no_run
+/// # use str0m::{Rtc, Output, Input};
+/// let mut rtc = Rtc::new();
+///
+/// loop {
+///     let timeout = match rtc.poll_output().unwrap() {
+///         Output::Timeout(v) => v,
+///         Output::Transmit(t) => {
+///             // TODO: Send data to remote peer.
+///             continue; // poll again
+///         }
+///         Output::Event(e) => {
+///             // TODO: Handle event.
+///             continue; // poll again
+///         }
+///     };
+///
+///     // TODO: Wait for one of two events, reaching `timeout`
+///     //       or receiving network input. Both are encapsualted
+///     //       in the Input enum.
+///     let input: Input = todo!();
+///
+///     rtc.handle_input(input).unwrap();
+/// }
+/// ```
+///
+/// [1]: https://sans-io.readthedocs.io
 pub struct Rtc {
     alive: bool,
     ice: IceAgent,
@@ -132,16 +183,44 @@ struct SendAddr {
     destination: SocketAddr,
 }
 
-/// Events produced by [`Rtc::poll_output()`]
+/// Events produced by [`Rtc::poll_output()`].
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Event {
+    /// ICE connection state changes tells us whether the [`Rtc`] instance is
+    /// connected to the peer or not.
     IceConnectionStateChange(IceConnectionState),
+
+    /// Upon completing an SDP negotiation, and there are new m-lines. The lines
+    /// are emitted.
+    ///
+    /// Upon this event, the [`Media`] instance is available via [`Rtc::media()`].
     MediaAdded(Mid, MediaKind, Direction),
+
+    /// Incoming media data sent by the remote peer.
     MediaData(MediaData),
+
+    /// Incoming keyframe request for media that we are sending to the remote peer.
+    ///
+    /// The request is either PLI (Picture Loss Indication) or FIR (Full Intra Request).
     KeyframeRequest(KeyframeRequest),
+
+    /// A data channel has opened. The first ever data channel results in an SDP
+    /// negotiation, and this events comes at the end of that.
+    ///
+    /// The string is the channel label which is set by the opening peer and can
+    /// be used to identify the purpose of the channel when there are more than one.
+    ///
+    /// The negotiation is to set up an SCTP association via DTLS. Subsequent data
+    /// channels reuse the same association.
+    ///
+    /// Upon this event, the [`Channel`] can be obtained via [`Rtc::channel()`].
     ChannelOpen(ChannelId, String),
+
+    /// Incoming data channel data from the remote peer.
     ChannelData(ChannelData),
+
+    /// A data channel has been closed.
     ChannelClose(ChannelId),
 }
 
@@ -160,6 +239,15 @@ pub enum Output {
 }
 
 impl Rtc {
+    /// Creates a new instance with default settings.
+    ///
+    /// To configure the instance, use [`RtcConfig`].
+    ///
+    /// ```
+    /// use str0m::Rtc;
+    ///
+    /// let rtc = Rtc::new();
+    /// ```
     pub fn new() -> Self {
         let config = RtcConfig::default();
         Self::new_from_config(config)
@@ -188,10 +276,39 @@ impl Rtc {
         }
     }
 
+    /// Tests if this instance is still working.
+    ///
+    /// Certain events will straight away disconnect the `Rtc` instance, such as
+    /// the DTLS fingerprint from the SDP not matching that of the TLS negotiation
+    /// (since that would potentially indicate a MITM attack!).
+    ///
+    /// The instance can be manually disconnected using [`Rtc::disconnect()`].
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let mut rtc = Rtc::new();
+    ///
+    /// assert!(rtc.is_alive());
+    ///
+    /// rtc.disconnect();
+    /// assert!(!rtc.is_alive());
+    /// ```
     pub fn is_alive(&self) -> bool {
         self.alive
     }
 
+    /// Force disconnects the instance making [`Rtc::is_alive()`] return `false`.
+    ///
+    /// This makes [`Rtc::poll_output`] and [`Rtc::handle_input`] go inert and not
+    /// produce anymore network output or events.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let mut rtc = Rtc::new();
+    ///
+    /// rtc.disconnect();
+    /// assert!(!rtc.is_alive());
+    /// ```
     pub fn disconnect(&mut self) {
         if self.alive {
             info!("Set alive=false");
@@ -199,31 +316,130 @@ impl Rtc {
         }
     }
 
+    /// Add a local ICE candidate. Local candidates are socket addresses the `Rtc` instance
+    /// use for communicating with the peer.
+    ///
+    /// This library has no built-in discovery of local network addresses on the host
+    /// or NATed addresses via a STUN server or TURN server. The user of the library
+    /// is expected to add new local candidates as they are discovered.
+    ///
+    /// In WebRTC lingo, the `Rtc` instance is permanently in a mode of [Trickle Ice][1]. It's
+    /// however advisable to add at least one local candidate before commencing SDP negotiation.
+    ///
+    /// ```
+    /// # use str0m::{Rtc, Candidate};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let a = "127.0.0.1:5000".parse().unwrap();
+    /// let c = Candidate::host(a).unwrap();
+    ///
+    /// rtc.add_local_candidate(c);
+    /// ```
+    ///
+    /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
     pub fn add_local_candidate(&mut self, c: Candidate) {
         self.ice.add_local_candidate(c);
     }
 
+    /// Add a remote ICE candidate. Remote candidates are addresses of the peer.
+    ///
+    /// Remote candidates are typically added via receiving a remote [`Offer`] or [`Answer`].
+    /// However for the case of [Trickle Ice][1], this is the way to add remote candidaes
+    /// that are "trickled" from the other side.
+    ///
+    /// ```
+    /// # use str0m::{Rtc, Candidate};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let a = "1.2.3.4:5000".parse().unwrap();
+    /// let c = Candidate::host(a).unwrap();
+    ///
+    /// rtc.add_remote_candidate(c);
+    /// ```
+    ///
+    /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
     pub fn add_remote_candidate(&mut self, c: Candidate) {
         self.ice.add_remote_candidate(c);
     }
 
+    /// Checks current connection state. This state is also obtained via
+    /// [`Event::IceConnectionStateChange`].
+    ///
+    /// More details on connection states can be found in the [ICE RFC][1].
+    /// ```
+    /// # use str0m::{Rtc, IceConnectionState};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// assert_eq!(rtc.ice_connection_state(), IceConnectionState::New);
+    /// ```
+    ///
+    /// [1]: https://www.rfc-editor.org/rfc/rfc8445
     pub fn ice_connection_state(&self) -> IceConnectionState {
         self.ice.state()
     }
 
+    /// Make changes to the Rtc session. This is the entry point for making an [`Offer`].
+    /// The resulting [`ChangeSet`] encapsulates changes to the `Rtc` session that will
+    /// require an SDP negotiation.
+    ///
+    /// The [`ChangeSet`] allows us to make multiple changes in one go. Calling
+    /// [`ChangeSet::into_offer()`] doesn't apply the changes, but produces the [`Offer`]
+    /// that is to be sent to the remote peer. Only when the the remote peer responds with
+    /// an [`Answer`] can the changes be made to the session. The call to accept the answer
+    /// is [`PendingChanges::accept_answer()`].
+    ///
+    /// How to send the [`Offer`] to the remote peer is not up to this library. Could be websocket,
+    /// a data channel or some other method of communication. See examples for a combination
+    /// of using `HTTP POST` and data channels.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// # use str0m::media::{MediaKind, Direction};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let mut changes = rtc.create_change_set();
+    /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly);
+    /// let mid_video = changes.add_media(MediaKind::Video, Direction::SendOnly);
+    ///
+    /// let offer = changes.into_offer();
+    /// let json = serde_json::to_vec(&offer).unwrap();
+    /// ```
     pub fn create_change_set(&mut self) -> ChangeSet {
         ChangeSet::new(self)
     }
 
+    /// Accept an [`Offer`] from the remote peer. If this call returns successfully, the
+    /// changes will have been made to the session. The resulting [`Answer`] should be
+    /// sent to the remote peer.
+    ///
+    /// <b>Note. [`Rtc::pending_changes()`] from a previous non-completed [`ChangeSet`] are
+    /// rolled back when calling this function.</b>
+    ///
+    /// The incoming SDP is validated in various ways which can cause this call to fail.
+    /// Example of such problems would be an SDP without any m-lines, missing `a=fingerprint`
+    /// or if `a=group` doesn't match the number of m-lines.
+    ///
+    /// ```no_run
+    /// # use str0m::{Rtc, Offer};
+    ///  // obtain offer from remote peer.
+    /// let json_offer: &[u8] = todo!();
+    /// let offer: Offer = serde_json::from_slice(json_offer).unwrap();
+    ///
+    /// let mut rtc = Rtc::new();
+    /// let answer = rtc.accept_offer(offer).unwrap();
+    ///
+    /// // send json_answer to remote peer.
+    /// let json_answer = serde_json::to_vec(&answer).unwrap();
+    /// ```
     pub fn accept_offer(&mut self, offer: Offer) -> Result<Answer, RtcError> {
+        // rollback any pending offer.
+        self.accept_answer(None)?;
+
         if offer.media_lines.is_empty() {
             return Err(RtcError::RemoteSdp("No m-lines in offer".into()));
         }
 
         self.add_ice_details(&offer)?;
-
-        // rollback any pending offer.
-        self.accept_answer(None)?;
 
         if self.remote_fingerprint.is_none() {
             if let Some(f) = offer.fingerprint() {
@@ -297,6 +513,27 @@ impl Rtc {
         }
     }
 
+    /// Obtain pending changes from a previous [`Rtc::create_change_set()`] call.
+    /// The [`PendingChanges`] allows us to either accept a remote answer, or
+    /// rollback the changes.
+    ///
+    /// When this function returns `None` there are no pending changes. Changes are
+    /// automatically rolled back on [`Rtc::accept_offer()`]
+    ///
+    /// ```no_run
+    /// # use str0m::{Rtc, Answer};
+    /// # use str0m::media::{MediaKind, Direction};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let mut changes = rtc.create_change_set();
+    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly);
+    /// let offer = changes.into_offer();
+    ///
+    /// // send offer to remote peer, receive answer back
+    /// let answer: Answer = todo!();
+    ///
+    /// let pending = rtc.pending_changes().unwrap().accept_answer(answer);
+    /// ```
     pub fn pending_changes(&mut self) -> Option<PendingChanges> {
         if !self.alive {
             return None;
@@ -410,6 +647,21 @@ impl Rtc {
         self.session.new_ssrc()
     }
 
+    /// Poll the `Rtc` instance for output. Output can be three things, something to _Transmit_
+    /// via a UDP socket (maybe via a TURN server). An _Event_, such as receiving media data,
+    /// or a _Timeout_.
+    ///
+    /// The user of the library is expected to continuously call this function and deal with
+    /// the output until it encounters an [`Output::Timeout`] at which point no further output
+    /// is produced (if polled again, it will result in just another timeout).
+    ///
+    /// After exhausting the `poll_output`, the function will only produce more output again
+    /// when one of two things happen:
+    ///
+    /// 1. The polled timeout is reached.
+    /// 2. New network input.
+    ///
+    /// See [`Rtc`] instance documentation for how this is expected to be used in a loop.
     pub fn poll_output(&mut self) -> Result<Output, RtcError> {
         let o = self.do_poll_output()?;
 
@@ -567,6 +819,35 @@ impl Rtc {
         Ok(Output::Timeout(next))
     }
 
+    /// Check if this `Rtc` instance accepts the given input. This is used for demultiplexing
+    /// several `Rtc` instances over the same UDP server socket.
+    ///
+    /// [`Input::Timeout`] is always accepted. [`Input::Receive`] is tested against the nominated
+    /// ICE candidate. If that doesn't match and the incoming data is a STUN packet, the accept call
+    /// is delegated to the ICE agent which recognises the remote peer from `a=ufrag`/`a=password`
+    /// credentials negotiated in the SDP.
+    ///
+    /// In a server setup, the server would try to find an `Rtc` instances using [`Rtc::accepts()`].
+    /// The first found instance would be given the input via [`Rtc::handle_input()`].
+    ///
+    /// ```no_run
+    /// # use str0m::{Rtc, Input};
+    /// // A vec holding the managed rtc instances. One instance per remote peer.
+    /// let mut rtcs = vec![Rtc::new(), Rtc::new(), Rtc::new()];
+    ///
+    /// // Configure instances with local ice candidates etc.
+    ///
+    /// loop {
+    ///     // TODO poll_timeout() and handle the output.
+    ///
+    ///     let input: Input = todo!(); // read network data from socket.
+    ///     for rtc in &mut rtcs {
+    ///         if rtc.accepts(&input) {
+    ///             rtc.handle_input(input).unwrap();
+    ///         }
+    ///     }
+    /// }
+    /// ```
     pub fn accepts(&self, input: &Input) -> bool {
         let Input::Receive(_, r) = input else {
             // always accept the Input::Timeout.
@@ -592,6 +873,30 @@ impl Rtc {
         false
     }
 
+    /// Provide input to this `Rtc` instance. Input is either a [`Input::Timeout`] for some
+    /// time that was previously obtained from [`Rtc::poll_output()`], or [`Input::Receive`]
+    /// for network data.
+    ///
+    /// Both the timeout and the network data contains a [`std::time::Instant`] which drives
+    /// time forward in the instance. For network data, the intention is to record the time
+    /// of receiving the network data as precise as possible. This time is used to calculate
+    /// things like jitter and bandwidth.
+    ///
+    /// It's always okay to call [`Rtc::handle_input()`] with a timeout, also before the
+    /// time obtained via [`Rtc::poll_output()`].
+    ///
+    /// ```no_run
+    /// # use str0m::{Rtc, Input};
+    /// # use std::time::Instant;
+    /// let mut rtc = Rtc::new();
+    ///
+    /// loop {
+    ///     let timeout: Instant = todo!(); // rtc.poll_output() until we get a timeout.
+    ///
+    ///     let input: Input = todo!(); // wait for network data or timeout.
+    ///     rtc.handle_input(input);
+    /// }
+    /// ```
     pub fn handle_input(&mut self, input: Input) -> Result<(), RtcError> {
         if !self.alive {
             return Ok(());
@@ -607,6 +912,28 @@ impl Rtc {
         Ok(())
     }
 
+    /// Get a [`Media`] instance for inspecting and manipulating media. Media has a 1-1
+    /// relationship with "m-line" from the SDP. The `Media` instance is used for media
+    /// regardless of current direction.
+    ///
+    /// Apart from inspecting information about the media, there are two fundamental
+    /// operations. One is [`Media::write()`] for writing outgoing media data, the other
+    /// is [`Media::request_keyframe()`] to request a PLI/FIR keyframe for incoming media data.
+    ///
+    /// All media rows are announced via the [`Event::MediaAdded`] event. This function
+    /// will return `None` for any [`Mid`] until that event has fired. This
+    /// is also the case for the `mid` that comes from [`ChangeSet::add_media()`].
+    ///
+    /// Incoming media data is via the [`Event::MediaData`] event.
+    ///
+    /// ```no_run
+    /// # use str0m::{Rtc, media::Mid};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let mid: Mid = todo!(); // obtain Mid from Event::MediaAdded
+    /// let media = rtc.media(mid).unwrap();
+    /// // TODO write media or request keyframe.
+    /// ```
     pub fn media(&mut self, mid: Mid) -> Option<&mut Media> {
         if !self.alive {
             return None;
@@ -636,10 +963,19 @@ impl Rtc {
 
     /// Obtain handle for writing to a data channel.
     ///
-    /// This is only available after either the remote peer has added one data channel
-    /// to the SDP, or we've locally done [`ChangeSet::add_channel()`].
+    /// This is first available when a [`ChannelId`] is advertised via [`Event::ChannelOpen`].
+    /// The function returns `None` also for IDs from [`ChangeSet::add_channel()`].
     ///
-    /// Either way, we must wait for the [`Event::ChannelOpen`] before writing.
+    /// Incoming channel data is via the [`Event::ChannelData`] event.
+    ///
+    /// ```no_run
+    /// # use str0m::{Rtc, channel::ChannelId};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let cid: ChannelId = todo!(); // obtain Mid from Event::ChannelOpen
+    /// let media = rtc.channel(cid).unwrap();
+    /// // TODO write data channel data.
+    /// ```
     pub fn channel(&mut self, id: ChannelId) -> Option<Channel<'_>> {
         if !self.alive {
             return None;
@@ -671,6 +1007,17 @@ impl<'a> PendingChanges<'a> {
     }
 }
 
+/// Customised config for creating an [`Rtc`] instance.
+///
+/// ```
+/// use str0m::RtcConfig;
+///
+/// let rtc = RtcConfig::new()
+///     .ice_lite(true)
+///     .build();
+/// ```
+///
+/// Configs implement [`Clone`] to help create multiple `Rtc` instances.
 #[derive(Debug, Clone, Default)]
 pub struct RtcConfig {
     ice_lite: bool,
@@ -678,40 +1025,66 @@ pub struct RtcConfig {
 }
 
 impl RtcConfig {
+    /// Creates a new default config.
     pub fn new() -> Self {
         RtcConfig::default()
     }
 
+    /// Toggle ice lite. Ice lite is a mode for WebRTC servers with public IP address.
+    /// An [`Rtc`] instance in ice lite mode will not make STUN binding requests, but only
+    /// answer to requests from the remote peer.
+    ///
+    /// See [ICE RFC][1]
+    ///
+    /// Defaults to `false`.
+    ///
+    /// [1]: https://www.rfc-editor.org/rfc/rfc8445#page-13
     pub fn ice_lite(mut self, enabled: bool) -> Self {
         self.ice_lite = enabled;
         self
     }
 
+    /// Enable opus audio codec.
+    ///
+    /// If no codecs are explicitly toggled on, all are on.
     pub fn enable_opus(mut self) -> Self {
         self.codec_config.add_default_opus();
         self
     }
 
+    /// Enable VP8 video codec.
+    ///
+    /// If no codecs are explicitly toggled on, all are on.
     pub fn enable_vp8(mut self) -> Self {
         self.codec_config.add_default_vp8();
         self
     }
 
+    /// Enable H264 video codec.
+    ///
+    /// If no codecs are explicitly toggled on, all are on.
     pub fn enable_h264(mut self) -> Self {
         self.codec_config.add_default_h264();
         self
     }
 
+    /// Enable AV1 video codec.
+    ///
+    /// If no codecs are explicitly toggled on, all are on.
     pub fn enable_av1(mut self) -> Self {
         self.codec_config.add_default_av1();
         self
     }
 
+    /// Enable VP9 video codec.
+    ///
+    /// If no codecs are explicitly toggled on, all are on.
     pub fn enable_vp9(mut self) -> Self {
         self.codec_config.add_default_vp9();
         self
     }
 
+    /// Create a [`Rtc`] from the configuration.
     pub fn build(self) -> Rtc {
         Rtc::new_from_config(self)
     }
