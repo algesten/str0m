@@ -206,7 +206,7 @@ fn propagate(clients: &mut [Client], to_propagate: Vec<Propagated>) {
 
             match &p {
                 Propagated::TrackOpen(_, track_in) => client.handle_track_open(track_in.clone()),
-                Propagated::MediaData(_, data) => client.handle_media_data(data),
+                Propagated::MediaData(_, data) => client.handle_media_data(client_id, data),
                 Propagated::KeyframeRequest(_, req, origin, mid_in) => {
                     // Only one origin client handles the keyframe request.
                     if *origin == client.id {
@@ -503,11 +503,13 @@ impl Client {
         self.tracks_out.push(track_out);
     }
 
-    fn handle_media_data(&mut self, data: &MediaData) {
+    fn handle_media_data(&mut self, origin: ClientId, data: &MediaData) {
         // Figure out which outgoing track maps to the incoming media data.
         let Some(mid) = self.tracks_out
             .iter()
-            .find(|o| o.track_in.upgrade().map(|i| i.mid == data.mid).is_some())
+            .find(|o| o.track_in.upgrade().filter(|i|
+                i.origin == origin &&
+                i.mid == data.mid).is_some())
             .and_then(|o| o.mid()) else {
                 return;
             };
