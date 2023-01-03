@@ -35,15 +35,45 @@ use crate::RtcError;
 // How often we remove unused senders/receivers.
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
 
-/// Video or audio data.
+/// Video or audio data from the remote peer.
+///
+/// This is obtained via [`Event::MediaData`][crate::Event::MediaData].
 #[derive(PartialEq, Eq)]
 pub struct MediaData {
+    /// Identifier of the m-line in the SDP this media belongs to.
     pub mid: Mid,
+
+    /// Payload type (PT) tells which negotiated codec is being used. An m-line
+    /// can carry different codecs, the payload type can theoretically change
+    /// from one packet to the next.
     pub pt: Pt,
+
+    /// Rtp Stream Id (RID) identifies an RTP stream without refering to its
+    /// Synchronization Source (SSRC).
+    ///
+    /// This is a newer standard that is sometimes used in WebRTC to identify
+    /// a stream. Specifically when using Simulcast in Chrome.
     pub rid: Option<Rid>,
+
+    /// Codec for the payload type. Provided for convenience.
     pub codec: CodecParams,
+
+    /// The RTP media time of this packet. Media time is described as a nominator/denominator
+    /// quantity. The nominator is the timestamp field from the RTP header, the denominator
+    /// depends on whether this is an audio or video packet.
+    ///
+    /// For audio the timebase is 48kHz for video it is 90kHz.
     pub time: MediaTime,
+
+    /// The actual packet data a.k.a Sample.
+    ///
+    /// Bigger samples don't fit in one UDP packet, thus WebRTC RTP is chopping up codec
+    /// transmission units into smaller parts.
+    ///
+    /// This data is a full depacketized Sample.
     pub data: Vec<u8>,
+
+    /// The individual packet metadata that were part of making the Sample in `data`.
     pub meta: Vec<RtpMeta>,
 }
 

@@ -9,10 +9,10 @@ use crate::media::{CodecConfig, CodecParams, Media, MediaKind};
 use crate::session::MediaOrApp;
 use crate::Rtc;
 
-pub struct Changes(pub Vec<Change>);
+pub(crate) struct Changes(pub Vec<Change>);
 
 #[derive(Debug)]
-pub enum Change {
+pub(crate) enum Change {
     AddMedia(AddMedia),
     AddApp(Mid),
     AddChannel(ChannelId, DcepOpen),
@@ -34,6 +34,12 @@ pub struct AddMedia {
 }
 
 /// Changes to apply to the m-lines of the WebRTC session.
+///
+/// Get this by calling [`Rtc::create_change_set`][crate::Rtc::create_change_set()].
+///
+/// No changes are made without calling [`ChangeSet::into_offer()`], followed by sending
+/// the offer to the remote peer, receiving an answer and completing the changes using
+/// [`Rtc::pending_changes()`][crate::Rtc::pending_changes()].
 pub struct ChangeSet<'a> {
     rtc: &'a mut Rtc,
     changes: Changes,
@@ -47,10 +53,37 @@ impl<'a> ChangeSet<'a> {
         }
     }
 
+    /// Test if this change set has any changes.
+    ///
+    /// ```
+    /// # use str0m::{Rtc, media::MediaKind, media::Direction};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let mut changes = rtc.create_change_set();
+    /// assert!(!changes.has_changes());
+    ///
+    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv);
+    /// assert!(changes.has_changes());
+    /// ```
     pub fn has_changes(&self) -> bool {
         !self.changes.is_empty()
     }
 
+    /// Add audio or video media and get the `mid` that will be used.
+    ///
+    /// Each call will result in a new m-line in the offer identifed by the [`Mid`].
+    ///
+    /// The mid is not valid to use until the SDP offer-answer dance is complete and
+    /// the mid been advertised via [`Event::MediaAdded`][crate::Event::MediaAdded].
+    ///
+    /// ```
+    /// # use str0m::{Rtc, media::MediaKind, media::Direction};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let mut changes = rtc.create_change_set();
+    ///
+    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv);
+    /// ```
     pub fn add_media(&mut self, kind: MediaKind, dir: Direction) -> Mid {
         let mid = self.rtc.new_mid();
 
@@ -104,6 +137,35 @@ impl<'a> ChangeSet<'a> {
         mid
     }
 
+    /// Change the direction of an already existing m-line.
+    ///
+    /// All media m-line have a direction. The media can be added by this side via
+    /// [`ChangeSet::add_media()`] or by the remote peer. Either way, the direction
+    /// of the line can be changed at any time.
+    ///
+    /// It's possible to set the direction [`Direction::Inactive`] for media that
+    /// will not be used by the session anymore.
+    pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
+        self.changes.0.push(Change::Direction(mid, dir));
+    }
+
+    /// Add a new data channel and get the `id` that will be used.
+    ///
+    /// The first ever data channel added to a WebRTC session results in an m-line of a
+    /// special "application" type in the SDP. The m-line is for a SCTP association over
+    /// DTLS, and all data channels are multiplexed over this single association.
+    ///
+    /// The label is used to identify the data channel to the remote peer. This is mostly
+    /// useful whe multiple channels are in use at the same time.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let mut changes = rtc.create_change_set();
+    ///
+    /// let cid = changes.add_channel("my special channel".to_string());
+    /// ```
     pub fn add_channel(&mut self, label: String) -> ChannelId {
         let has_m_line = self.rtc.session.app().is_some();
 
@@ -126,10 +188,6 @@ impl<'a> ChangeSet<'a> {
         self.changes.0.push(Change::AddChannel(id, dcep));
 
         id
-    }
-
-    pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
-        self.changes.0.push(Change::Direction(mid, dir));
     }
 
     pub fn into_offer(self) -> Offer {

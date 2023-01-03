@@ -12,7 +12,7 @@ use crate::RtcError;
 
 use super::{Media, Session};
 
-pub struct AsSdpParams<'a> {
+pub(crate) struct AsSdpParams<'a> {
     pub candidates: &'a [Candidate],
     pub creds: &'a IceCreds,
     pub fingerprint: &'a Fingerprint,
