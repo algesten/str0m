@@ -1,14 +1,17 @@
+//! Media (audio/video) related content.
+
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use net_::{Id, DATAGRAM_MTU};
 use packet::{DepacketizingBuffer, Packetized, PacketizingBuffer};
-pub use rtp::MediaTime;
-use rtp::{Extensions, Fir, FirEntry, NackEntry, Pli, Rid, Rtcp, RtcpFb, RtpHeader, SdesType};
-use rtp::{SeqNo, Ssrc, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
+use rtp::{Extensions, Fir, FirEntry, NackEntry, Pli, Rtcp, RtcpFb, RtpHeader, SdesType};
+use rtp::{SeqNo, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
-pub use rtp::{Direction, Mid, Pt};
+pub use packet::RtpMeta;
+pub use rtp::{Direction, MediaTime, Mid, Pt, Rid, Ssrc};
 pub use sdp::{Codec, FormatParams};
+
 use sdp::{MediaLine, MediaType, Msid, Simulcast};
 
 mod codec;
@@ -27,11 +30,35 @@ mod register;
 
 use crate::change::AddMedia;
 use crate::util::already_happened;
-use crate::{KeyframeRequestKind, MediaData, RtcError};
+use crate::RtcError;
 
 // How often we remove unused senders/receivers.
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Video or audio data.
+#[derive(PartialEq, Eq)]
+pub struct MediaData {
+    pub mid: Mid,
+    pub pt: Pt,
+    pub rid: Option<Rid>,
+    pub codec: CodecParams,
+    pub time: MediaTime,
+    pub data: Vec<u8>,
+    pub meta: Vec<RtpMeta>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyframeRequest {
+    pub mid: Mid,
+    pub rid: Option<Rid>,
+    pub kind: KeyframeRequestKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyframeRequestKind {
+    Pli,
+    Fir,
+}
 // Time between regular receiver reports.
 // https://www.rfc-editor.org/rfc/rfc8829#section-5.1.2
 // Should technically be 4 seconds according to spec, but libWebRTC
@@ -47,7 +74,7 @@ fn rr_interval(audio: bool) -> Duration {
     }
 }
 
-pub trait Source {
+pub(crate) trait Source {
     fn ssrc(&self) -> Ssrc;
     fn rid(&self) -> Option<Rid>;
     #[must_use]

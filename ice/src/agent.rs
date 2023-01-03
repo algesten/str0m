@@ -4,11 +4,11 @@ use std::time::{Duration, Instant};
 
 use rand::random;
 
+use net::Id;
 use net::StunMessage;
 use net::TransId;
 use net::STUN_TIMEOUT;
 use net::{DatagramRecv, Receive, Transmit, DATAGRAM_MTU};
-use net::{DatagramSend, Id};
 
 use crate::pair::{CheckState, PairId};
 
@@ -102,7 +102,7 @@ struct StunRequest {
 
 const REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION: &str = "tmp_prflx";
 
-/// States the [`IceAgent`] can be in.
+/// States the ICE connection can be in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IceConnectionState {
     /// The ICE agent is gathering addresses.
@@ -1161,7 +1161,7 @@ impl IceAgent {
         let trans = Transmit {
             source: local_addr,
             destination: remote_addr,
-            contents: DatagramSend::new(buf),
+            contents: buf.into(),
         };
 
         self.transmit.push_back(trans);
@@ -1207,7 +1207,7 @@ impl IceAgent {
         let trans = Transmit {
             source: local.base(),
             destination: remote.addr(),
-            contents: DatagramSend::new(buf),
+            contents: buf.into(),
         };
 
         self.transmit.push_back(trans);

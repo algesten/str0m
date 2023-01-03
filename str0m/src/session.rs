@@ -563,7 +563,7 @@ impl Session {
             "Encrypted SRTCP should be less than MTU"
         );
 
-        Some(net::DatagramSend::new(protected))
+        Some(protected.into())
     }
 
     fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
@@ -573,8 +573,8 @@ impl Session {
             let twcc_seq = self.twcc;
             if let Some((header, buf, seq_no)) = m.poll_packet(now, &self.exts, &mut self.twcc) {
                 self.twcc_tx_register.register_seq(twcc_seq.into(), now);
-                let encrypted = srtp_tx.protect_rtp(&buf, &header, *seq_no);
-                return Some(DatagramSend::new(encrypted));
+                let protected = srtp_tx.protect_rtp(&buf, &header, *seq_no);
+                return Some(protected.into());
             }
         }
 

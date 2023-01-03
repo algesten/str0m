@@ -5,7 +5,10 @@ use std::net::{IpAddr, SocketAddr};
 
 use super::IceError;
 
-/// An ICE candidate.
+/// ICE candidates are network addresses used to connect to a peer.
+///
+/// There are different kinds of ICE candidates. The simplest kind is a
+/// host candidate which is a socket address on a local (host) network interface.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Candidate {
     /// An arbitrary string used in the freezing algorithm to
@@ -14,7 +17,7 @@ pub struct Candidate {
     /// It is the same for two candidates that
     /// have the same type, base IP address, protocol (UDP, TCP, etc.),
     /// and STUN or TURN server.  If any of these are different, then the
-    /// foundation will be different.   
+    /// foundation will be different.
     ///
     /// For remote, this is communicated,  and locally it's calculated.
     foundation: Option<String>, // 1-32 "ice chars", ALPHA / DIGIT / "+" / "/"

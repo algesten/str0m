@@ -11,26 +11,40 @@ use std::{fmt, io};
 
 use change::Changes;
 use dtls::{Dtls, DtlsEvent, Fingerprint};
+use ice::IceAgent;
 use ice::IceAgentEvent;
-use ice::{IceAgent, IceError};
-use net_::{DatagramRecv, NetError};
-use sctp::{RtcSctp, SctpError, SctpEvent};
+use net_::DatagramRecv;
+use sctp::{RtcSctp, SctpEvent};
 use sdp::{Sdp, Setup};
 use thiserror::Error;
 
 pub use ice::IceConnectionState;
 
 pub use ice::Candidate;
-pub use packet::RtpMeta;
 pub use sdp::{Answer, Offer};
 
+/// Network related types to get socket data in/out of [`Rtc`].
 pub mod net {
-    pub use dtls::DtlsError;
-    pub use net_::{DatagramRecv, DatagramSend, Receive, StunMessage, Transmit};
+    pub use net_::{DatagramRecv, DatagramSend, Receive, Transmit};
 }
 
+/// Various error types.
+pub mod error {
+    pub use dtls::DtlsError;
+    pub use ice::IceError;
+    pub use net_::NetError;
+    pub use packet::PacketError;
+    pub use rtp::RtpError;
+    pub use sctp::SctpError;
+    pub use sdp::SdpError;
+}
+
+pub mod channel;
+use channel::{Channel, ChannelData, ChannelId};
+
 pub mod media;
-use media::{CodecConfig, CodecParams, Media, MediaKind};
+use media::{CodecConfig, Direction, KeyframeRequest, MediaData};
+use media::{Media, MediaKind, Mid, Pt, Rid, Ssrc};
 
 mod change;
 pub use change::ChangeSet;
@@ -44,8 +58,6 @@ use session::{MediaEvent, Session};
 mod session_sdp;
 use session_sdp::AsSdpParams;
 
-pub use rtp::{ChannelId, Direction, MediaTime, Mid, Pt, Rid, Ssrc};
-
 /// Errors for the whole Rtc engine.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -56,11 +68,11 @@ pub enum RtcError {
 
     /// SDP errors.
     #[error("{0}")]
-    Sdp(#[from] sdp::SdpError),
+    Sdp(#[from] error::SdpError),
 
     /// RTP errors.
     #[error("{0}")]
-    Rtp(#[from] rtp::RtpError),
+    Rtp(#[from] error::RtpError),
 
     /// Other IO errors.
     #[error("{0}")]
@@ -68,11 +80,11 @@ pub enum RtcError {
 
     /// DTLS errors
     #[error("{0}")]
-    Dtls(#[from] net::DtlsError),
+    Dtls(#[from] error::DtlsError),
 
     /// RTP packetization error
     #[error("{0} {1} {2}")]
-    Packet(Mid, Pt, packet::PacketError),
+    Packet(Mid, Pt, error::PacketError),
 
     /// The PT attempted to write to is not known.
     #[error("PT is unknown {0}")]
@@ -87,19 +99,19 @@ pub enum RtcError {
     NoReceiverSource(Option<Rid>),
 
     #[error("{0}")]
-    NetError(#[from] NetError),
+    Net(#[from] error::NetError),
 
     #[error("{0}")]
-    IceError(#[from] IceError),
+    Ice(#[from] error::IceError),
 
     #[error("{0}")]
-    Sctp(#[from] SctpError),
+    Sctp(#[from] error::SctpError),
 
     #[error("{0}")]
     Other(String),
 }
 
-/// Main type.
+/// Instance that does WebRTC. Main struct of the entire lib.
 pub struct Rtc {
     alive: bool,
     ice: IceAgent,
@@ -135,40 +147,7 @@ pub enum Event {
     ChannelClose(ChannelId),
 }
 
-/// Video or audio data.
-#[derive(PartialEq, Eq)]
-pub struct MediaData {
-    pub mid: Mid,
-    pub pt: Pt,
-    pub rid: Option<Rid>,
-    pub codec: CodecParams,
-    pub time: MediaTime,
-    pub data: Vec<u8>,
-    pub meta: Vec<RtpMeta>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct KeyframeRequest {
-    pub mid: Mid,
-    pub rid: Option<Rid>,
-    pub kind: KeyframeRequestKind,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyframeRequestKind {
-    Pli,
-    Fir,
-}
-
-/// Data channel data.
-#[derive(PartialEq, Eq)]
-pub struct ChannelData {
-    pub id: ChannelId,
-    pub binary: bool,
-    pub data: Vec<u8>,
-}
-
-/// Network input as expected by [`Rtc::handle_input()`].
+/// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.
 #[derive(Debug)]
 pub enum Input<'a> {
     Timeout(Instant),
@@ -234,7 +213,7 @@ impl Rtc {
         self.ice.state()
     }
 
-    pub fn create_offer(&mut self) -> ChangeSet {
+    pub fn create_change_set(&mut self) -> ChangeSet {
         ChangeSet::new(self)
     }
 
@@ -678,18 +657,7 @@ impl Rtc {
             return None;
         }
 
-        Some(Channel { rtc: self, id })
-    }
-}
-
-pub struct Channel<'a> {
-    rtc: &'a mut Rtc,
-    id: ChannelId,
-}
-
-impl Channel<'_> {
-    pub fn write(&mut self, binary: bool, buf: &[u8]) -> Result<usize, RtcError> {
-        Ok(self.rtc.sctp.write(*self.id, binary, buf)?)
+        Some(Channel::new(id, self))
     }
 }
 
@@ -724,27 +692,27 @@ impl RtcConfig {
         self
     }
 
-    pub fn add_default_opus(mut self) -> Self {
+    pub fn enable_opus(mut self) -> Self {
         self.codec_config.add_default_opus();
         self
     }
 
-    pub fn add_default_vp8(mut self) -> Self {
+    pub fn enable_vp8(mut self) -> Self {
         self.codec_config.add_default_vp8();
         self
     }
 
-    pub fn add_default_h264(mut self) -> Self {
+    pub fn enable_h264(mut self) -> Self {
         self.codec_config.add_default_h264();
         self
     }
 
-    pub fn add_default_av1(mut self) -> Self {
+    pub fn enable_av1(mut self) -> Self {
         self.codec_config.add_default_av1();
         self
     }
 
-    pub fn add_default_vp9(mut self) -> Self {
+    pub fn enable_vp9(mut self) -> Self {
         self.codec_config.add_default_vp9();
         self
     }
@@ -782,16 +750,6 @@ impl fmt::Debug for MediaData {
             .field("rid", &self.rid)
             .field("time", &self.time)
             .field("len", &self.data.len())
-            .finish()
-    }
-}
-
-impl fmt::Debug for ChannelData {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ChannelData")
-            .field("id", &self.id)
-            .field("binary", &self.binary)
-            .field("data", &self.data.len())
             .finish()
     }
 }

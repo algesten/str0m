@@ -51,9 +51,9 @@ pub struct Transmit {
 #[derive(Debug)]
 pub struct DatagramSend(Vec<u8>);
 
-impl DatagramSend {
-    pub fn new(v: Vec<u8>) -> Self {
-        DatagramSend(v)
+impl From<Vec<u8>> for DatagramSend {
+    fn from(value: Vec<u8>) -> Self {
+        DatagramSend(value)
     }
 }
 
@@ -87,9 +87,13 @@ impl<'a> Receive<'a> {
 }
 
 pub enum DatagramRecv<'a> {
+    #[doc(hidden)]
     Stun(StunMessage<'a>),
+    #[doc(hidden)]
     Dtls(&'a [u8]),
+    #[doc(hidden)]
     Rtp(&'a [u8]),
+    #[doc(hidden)]
     Rtcp(&'a [u8]),
 }
 

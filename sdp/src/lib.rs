@@ -26,11 +26,11 @@ pub enum SdpError {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-/// SDP offer.
+/// SDP offer. Offers can be serialized via serde.
 pub struct Offer(Sdp);
 
 #[derive(Debug, PartialEq, Eq)]
-/// SDP answer.
+/// SDP answer. Answers can be serialized via serde.
 pub struct Answer(Sdp);
 
 impl Deref for Offer {

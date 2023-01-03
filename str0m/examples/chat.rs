@@ -12,10 +12,11 @@ use std::time::Instant;
 
 use rouille::Server;
 use rouille::{Request, Response};
+use str0m::channel::{ChannelData, ChannelId};
 use str0m::media::MediaKind;
+use str0m::media::{Direction, KeyframeRequest, MediaData, Mid, Rid};
 use str0m::{net::Receive, Candidate, IceConnectionState, Input, Offer, Output, Rtc, RtcError};
-use str0m::{Answer, ChannelData, ChannelId, Direction};
-use str0m::{Event, KeyframeRequest, MediaData, Mid, Rid};
+use str0m::{Answer, Event};
 use systemstat::{Duration, Platform, System};
 
 fn init_log() {
@@ -418,7 +419,7 @@ impl Client {
             return false;
         }
 
-        let mut change = self.rtc.create_offer();
+        let mut change = self.rtc.create_change_set();
 
         for track in &mut self.tracks_out {
             if let TrackOutState::ToOpen = track.state {
@@ -433,7 +434,7 @@ impl Client {
             return false;
         }
 
-        let offer = change.apply();
+        let offer = change.into_offer();
 
         let Some(mut channel) = self
                 .cid

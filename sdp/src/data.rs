@@ -20,10 +20,12 @@ pub struct Sdp {
 }
 
 impl Sdp {
+    #[doc(hidden)]
     pub fn parse(input: &str) -> Result<Sdp, SdpError> {
         Ok(sdp_parser().parse(input).map(|(sdp, _)| sdp)?)
     }
 
+    #[doc(hidden)]
     pub fn assert_consistency(&self) -> Result<(), SdpError> {
         match self.do_assert_consistency() {
             None => Ok(()),
@@ -31,18 +33,21 @@ impl Sdp {
         }
     }
 
+    #[doc(hidden)]
     pub fn fingerprint(&self) -> Option<Fingerprint> {
         self.session
             .fingerprint()
             .or_else(|| self.media_lines.iter().find_map(|m| m.fingerprint()))
     }
 
+    #[doc(hidden)]
     pub fn ice_creds(&self) -> Option<IceCreds> {
         self.session
             .ice_creds()
             .or_else(|| self.media_lines.iter().find_map(|m| m.ice_creds()))
     }
 
+    #[doc(hidden)]
     pub fn ice_candidates(&self) -> impl Iterator<Item = &Candidate> {
         let mut candidates: HashSet<&Candidate> = HashSet::new();
 
@@ -57,6 +62,7 @@ impl Sdp {
         candidates.into_iter()
     }
 
+    #[doc(hidden)]
     pub fn setup(&self) -> Option<Setup> {
         self.session
             .setup()

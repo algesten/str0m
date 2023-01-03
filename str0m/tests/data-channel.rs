@@ -19,9 +19,9 @@ pub fn data_channel() -> Result<(), RtcError> {
     l.add_local_candidate(host1);
     r.add_local_candidate(host2);
 
-    let mut change = l.create_offer();
+    let mut change = l.create_change_set();
     let cid = change.add_channel("My little channel".into());
-    let offer = change.apply();
+    let offer = change.into_offer();
 
     let answer = r.accept_offer(offer)?;
     l.pending_changes().unwrap().accept_answer(answer)?;

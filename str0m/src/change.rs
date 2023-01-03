@@ -132,7 +132,7 @@ impl<'a> ChangeSet<'a> {
         self.changes.0.push(Change::Direction(mid, dir));
     }
 
-    pub fn apply(self) -> Offer {
+    pub fn into_offer(self) -> Offer {
         self.rtc.set_pending(self.changes)
     }
 }

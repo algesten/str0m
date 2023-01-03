@@ -245,7 +245,7 @@ impl io::Read for IoBuffer {
 
 impl io::Write for IoBuffer {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let dsend = DatagramSend::new(buf.to_vec());
+        let dsend = buf.to_vec().into();
 
         self.outgoing.push_back(dsend);
 
