@@ -233,15 +233,42 @@ impl Media {
         &self.params
     }
 
-    pub fn get_writer(&mut self, pt: Pt, rid: Option<Rid>) -> MediaWriter<'_> {
+    pub fn write(
+        &mut self,
+        pt: Pt,
+        rid: Option<Rid>,
+        ts: MediaTime,
+        data: &[u8],
+    ) -> Result<usize, RtcError> {
         let codec = { self.codec_by_pt(pt).map(|p| p.codec()) };
 
-        MediaWriter {
-            media: self,
-            pt,
-            rid,
-            codec,
+        let codec = match codec {
+            Some(v) => v,
+            None => return Err(RtcError::UnknownPt(pt)),
+        };
+
+        if !self.dir.is_sending() {
+            // Ignore any media writes while we are not sending.
+            debug!("Ignore due to direction: {:?}", self.dir);
+            return Ok(10_000);
         }
+
+        // The SSRC is figured out given the simulcast level.
+        let tx = get_source_tx(&mut self.sources_tx, rid, false).ok_or(RtcError::NoSenderSource)?;
+
+        let ssrc = tx.ssrc();
+
+        let buf = self.buffers_tx.entry(pt).or_insert_with(|| {
+            let max_retain = if codec.is_audio() { 4096 } else { 2048 };
+            PacketizingBuffer::new(codec.into(), max_retain)
+        });
+
+        debug!("Write to packetizer time: {:?} bytes: {}", ts, data.len());
+        if let Err(e) = buf.push_sample(ts, data, ssrc, rid, DATAGRAM_MTU - SRTP_OVERHEAD) {
+            return Err(RtcError::Packet(self.mid, pt, e));
+        };
+
+        Ok(buf.free())
     }
 
     pub fn request_keyframe(
@@ -942,46 +969,6 @@ impl From<MediaType> for MediaKind {
             MediaType::Video => MediaKind::Video,
             _ => panic!("Not MediaType::Audio or Video"),
         }
-    }
-}
-
-pub struct MediaWriter<'a> {
-    media: &'a mut Media,
-    pt: Pt,
-    rid: Option<Rid>,
-    codec: Option<Codec>,
-}
-
-impl MediaWriter<'_> {
-    pub fn write(&mut self, ts: MediaTime, data: &[u8]) -> Result<usize, RtcError> {
-        let codec = match self.codec {
-            Some(v) => v,
-            None => return Err(RtcError::UnknownPt(self.pt)),
-        };
-
-        if !self.media.dir.is_sending() {
-            // Ignore any media writes while we are not sending.
-            debug!("Ignore due to direction: {:?}", self.media.dir);
-            return Ok(10_000);
-        }
-
-        // The SSRC is figured out given the simulcast level.
-        let tx = get_source_tx(&mut self.media.sources_tx, self.rid, false)
-            .ok_or(RtcError::NoSenderSource)?;
-
-        let ssrc = tx.ssrc();
-
-        let buf = self.media.buffers_tx.entry(self.pt).or_insert_with(|| {
-            let max_retain = if codec.is_audio() { 4096 } else { 2048 };
-            PacketizingBuffer::new(codec.into(), max_retain)
-        });
-
-        debug!("Write to packetizer time: {:?} bytes: {}", ts, data.len());
-        if let Err(e) = buf.push_sample(ts, data, ssrc, self.rid, DATAGRAM_MTU - SRTP_OVERHEAD) {
-            return Err(RtcError::Packet(self.media.mid, self.pt, e));
-        };
-
-        Ok(buf.free())
     }
 }
 

@@ -536,7 +536,7 @@ impl Client {
             return;
         };
 
-        if let Err(e) = media.get_writer(pt, None).write(data.time, &data.data) {
+        if let Err(e) = media.write(pt, None, data.time, &data.data) {
             warn!("Client ({}) failed: {:?}", *self.id, e);
             self.rtc.disconnect();
         }
