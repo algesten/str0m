@@ -51,11 +51,7 @@ pub fn unidirectional() -> Result<(), RtcError> {
     loop {
         let dur_l: Duration = time_l.into();
         while l.duration() > dur_l {
-            let free = l
-                .media(mid)
-                .unwrap()
-                .get_writer(pt, None)
-                .write(time_l, &data_a)?;
+            let free = l.media(mid).unwrap().write(pt, None, time_l, &data_a)?;
             time_l = time_l + STEP;
             if free == 0 {
                 break;
