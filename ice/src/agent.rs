@@ -184,12 +184,6 @@ pub enum IceAgentEvent {
     /// communicated in `PossibleRemote` and `NominatedLocal`.
     IceConnectionStateChange(IceConnectionState),
 
-    /// Added new local candidate.
-    ///
-    /// This happens on every accepted [`IceAgent::add_local_candidate`].
-    /// The application should use these for trickle ice.
-    NewLocalCandidate(Candidate),
-
     /// A possible remote socket for the peer.
     ///
     /// The application should associate this with the peer. There will
@@ -461,10 +455,6 @@ impl IceAgent {
             .filter(|(_, v)| !v.discarded() && v.addr().is_ipv4() == ip.is_ipv4())
             .map(|(i, _)| i)
             .collect();
-
-        if self.state != IceConnectionState::New {
-            self.emit_event(IceAgentEvent::NewLocalCandidate(c.clone()));
-        }
 
         self.local_candidates.push(c);
 
@@ -787,9 +777,6 @@ impl IceAgent {
         // switch away from New -> Checking.
         if self.state == IceConnectionState::New {
             self.emit_event(IceAgentEvent::IceRestart(self.local_credentials.clone()));
-            for c in self.local_candidates.clone() {
-                self.emit_event(IceAgentEvent::NewLocalCandidate(c));
-            }
         }
 
         self.evaluate_state(now);
