@@ -140,7 +140,6 @@ pub enum Event {
     IceConnectionStateChange(IceConnectionState),
     MediaAdded(Mid, MediaKind, Direction),
     MediaData(MediaData),
-    MediaError(RtcError),
     KeyframeRequest(KeyframeRequest),
     ChannelOpen(ChannelId, String),
     ChannelData(ChannelData),
@@ -528,7 +527,7 @@ impl Rtc {
                     Output::Event(Event::MediaAdded(mid, kind, dir))
                 }
                 MediaEvent::Data(m) => Output::Event(Event::MediaData(m)),
-                MediaEvent::Error(e) => Output::Event(Event::MediaError(e)),
+                MediaEvent::Error(e) => return Err(e),
                 MediaEvent::KeyframeRequest(r) => Output::Event(Event::KeyframeRequest(r)),
             });
         }
@@ -731,7 +730,6 @@ impl PartialEq for Event {
                 l0 == r0 && l1 == r1 && l2 == r2
             }
             (Self::MediaData(m1), Self::MediaData(m2)) => m1 == m2,
-            (Self::MediaError(_), Self::MediaError(_)) => false,
             (Self::ChannelOpen(l0, l1), Self::ChannelOpen(r0, r1)) => l0 == r0 && l1 == r1,
             (Self::ChannelData(l0), Self::ChannelData(r0)) => l0 == r0,
             (Self::ChannelClose(l0), Self::ChannelClose(r0)) => l0 == r0,
