@@ -150,7 +150,6 @@ pub fn progress(a1: &mut TestAgent, a2: &mut TestAgent) {
         use ice::IceAgentEvent::*;
         f.span.in_scope(|| match &v {
             IceRestart(v) => f.agent.set_remote_credentials(v.clone()),
-            NewLocalCandidate(v) => f.agent.add_remote_candidate(v.clone()),
             _ => {}
         });
         t.events.push((time - t.start_time, v));

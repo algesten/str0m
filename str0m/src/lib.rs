@@ -136,7 +136,6 @@ struct SendAddr {
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum Event {
-    IceCandidate(Candidate),
     IceConnectionStateChange(IceConnectionState),
     MediaAdded(Mid, MediaKind, Direction),
     MediaData(MediaData),
@@ -436,9 +435,6 @@ impl Rtc {
                 IceAgentEvent::IceConnectionStateChange(v) => {
                     return Ok(Output::Event(Event::IceConnectionStateChange(v)))
                 }
-                IceAgentEvent::NewLocalCandidate(v) => {
-                    return Ok(Output::Event(Event::IceCandidate(v)));
-                }
                 IceAgentEvent::DiscoveredRecv { source } => {
                     info!("ICE remote address: {:?}", source);
                     self.remote_addrs.push(source);
@@ -724,7 +720,6 @@ impl RtcConfig {
 impl PartialEq for Event {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::IceCandidate(l0), Self::IceCandidate(r0)) => l0 == r0,
             (Self::IceConnectionStateChange(l0), Self::IceConnectionStateChange(r0)) => l0 == r0,
             (Self::MediaAdded(l0, l1, l2), Self::MediaAdded(r0, r1, r2)) => {
                 l0 == r0 && l1 == r1 && l2 == r2

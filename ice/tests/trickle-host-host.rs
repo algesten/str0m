@@ -10,8 +10,13 @@ pub fn trickle_host_host() {
     let mut a1 = TestAgent::new(info_span!("L"));
     let mut a2 = TestAgent::new(info_span!("R"));
 
-    a1.add_local_candidate(host("3.3.3.3:9999")); // no traffic possible
-    a2.add_local_candidate(host("2.2.2.2:1000"));
+    let c1 = host("3.3.3.3:9999"); // no traffic possible
+    a1.add_local_candidate(c1.clone());
+    a2.add_remote_candidate(c1);
+    let c2 = host("2.2.2.2:1000");
+    a2.add_local_candidate(c2.clone());
+    a1.add_remote_candidate(c2);
+
     a1.set_controlling(true);
     a2.set_controlling(false);
 

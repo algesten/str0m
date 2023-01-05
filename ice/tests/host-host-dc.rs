@@ -13,8 +13,13 @@ pub fn host_host_disconnect() {
     let mut a1 = TestAgent::new(info_span!("L"));
     let mut a2 = TestAgent::new(info_span!("R"));
 
-    a1.add_local_candidate(host("1.1.1.1:1000"));
-    a2.add_local_candidate(host("2.2.2.2:1000"));
+    let c1 = host("1.1.1.1:1000");
+    a1.add_local_candidate(c1.clone());
+    a2.add_remote_candidate(c1);
+    let c2 = host("2.2.2.2:1000");
+    a2.add_local_candidate(c2.clone());
+    a1.add_remote_candidate(c2);
+
     a1.set_controlling(true);
     a2.set_controlling(false);
 
