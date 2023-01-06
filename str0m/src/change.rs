@@ -5,7 +5,7 @@ use rtp::{ChannelId, Direction, Extensions, Mid, Ssrc};
 use sctp::{DcepOpen, ReliabilityType};
 use sdp::{MediaLine, Msid, Offer};
 
-use crate::media::{CodecConfig, CodecParams, Media, MediaKind};
+use crate::media::{CodecConfig, Media, MediaKind, PayloadParams};
 use crate::session::MediaOrApp;
 use crate::Rtc;
 
@@ -29,7 +29,7 @@ pub struct AddMedia {
     pub ssrcs: Vec<(Ssrc, Option<Ssrc>)>,
 
     // These are filled in when creating a Media from AddMedia
-    pub params: Vec<CodecParams>,
+    pub params: Vec<PayloadParams>,
     pub index: usize,
 }
 

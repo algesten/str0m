@@ -325,13 +325,13 @@ impl AsMediaLine for Media {
         attrs.push(MediaAttribute::Msid(self.msid().clone()));
         attrs.push(MediaAttribute::RtcpMux);
 
-        for p in self.codecs() {
+        for p in self.payload_params() {
             p.inner().to_media_attrs(&mut attrs);
         }
 
         // The advertised payload types.
         let pts = self
-            .codecs()
+            .payload_params()
             .iter()
             .flat_map(|c| [Some(c.pt()), c.pt_rtx()].into_iter())
             .flatten()

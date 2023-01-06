@@ -898,13 +898,38 @@ pub struct CodecSpec {
     pub channels: Option<u8>,
 }
 
+/// Codec specific format parameters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct FormatParams {
+    /// Opus specific parameter.
+    ///
+    /// The minimum duration of media represented by a packet.
     pub min_p_time: Option<u8>,
+
+    /// Opus specific parameter.
+    ///
+    /// Specifies that the decoder can do Opus in-band FEC
     pub use_inband_fec: Option<bool>,
+
+    /// Whether h264 sending media encoded at a different level in the offerer-to-answerer
+    /// direction than the level in the answerer-to-offerer direction, is allowed.
     pub level_asymmetry_allowed: Option<bool>,
+
+    /// What h264 packetization mode is used.
+    ///
+    /// * 0 - single nal.
+    /// * 1 - STAP-A, FU-A is allowed. Non-interleaved.
     pub packetization_mode: Option<u8>,
+
+    /// H264 profile level.
+    ///
+    /// * 42 00 1f - 4200=baseline (B)              1f=level 3.1
+    /// * 42 e0 1f - 42e0=constrained baseline (CB) 1f=level 3.1
+    /// * 4d 00 1f - 4d00=main (M)                  1f=level 3.1
+    /// * 64 00 1f - 6400=high (H)                  1f=level 3.1
     pub profile_level_id: Option<u32>,
+
+    /// VP9 profile id.
     pub profile_id: Option<u32>,
 }
 
@@ -952,7 +977,9 @@ impl FormatParams {
     }
 }
 
+/// Known codecs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Codec {
     Opus,
     H264,
@@ -960,6 +987,8 @@ pub enum Codec {
     Vp8,
     Vp9,
     Av1,
+    /// Technically not a codec, but used in places where codecs go
+    /// in `a=rtpmap` lines.
     Rtx,
     Unknown,
 }

@@ -143,6 +143,7 @@ impl From<Codec> for CodecPacketizer {
             Codec::Av1 => unimplemented!("Missing packetizer for AV1"),
             Codec::Rtx => panic!("Cant instantiate packetizer for RTX codec"),
             Codec::Unknown => panic!("Cant instantiate packetizer for unknown codec"),
+            _ => panic!("Cant instantiate packetizer for unhandled codec"),
         }
     }
 }
@@ -158,6 +159,7 @@ impl From<Codec> for CodecDepacketizer {
             Codec::Av1 => unimplemented!("Missing depacketizer for AV1"),
             Codec::Rtx => panic!("Cant instantiate depacketizer for RTX codec"),
             Codec::Unknown => panic!("Cant instantiate depacketizer for unknown codec"),
+            _ => panic!("Cant instantiate packetizer for unhandled codec"),
         }
     }
 }

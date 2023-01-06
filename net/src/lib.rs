@@ -25,6 +25,7 @@ pub use id::Id;
 
 pub const DATAGRAM_MTU: usize = 1500;
 
+/// Errors from parsing network data.
 #[derive(Debug, Error)]
 pub enum NetError {
     #[error("{0}")]

@@ -23,6 +23,7 @@ pub use dcep::DcepOpen;
 
 use crate::dcep::DcepAck;
 
+/// Errors from the SCTP subsystem.
 #[derive(Debug, Error, Eq, Clone, PartialEq)]
 pub enum SctpError {
     #[error("{0}")]

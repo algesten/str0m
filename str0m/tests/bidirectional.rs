@@ -38,7 +38,7 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
     l.last = max;
     r.last = max;
 
-    let params = l.media(mid).unwrap().codecs()[0];
+    let params = l.media(mid).unwrap().payload_params()[0];
     assert_eq!(params.codec(), Codec::Opus);
     let pt = params.pt();
     const STEP: MediaTime = MediaTime::new(960, 48_000);
