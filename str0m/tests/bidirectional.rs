@@ -22,7 +22,7 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
 
     let mut change = l.create_change_set();
     let mid = change.add_media(MediaKind::Audio, Direction::SendRecv);
-    let offer = change.into_offer();
+    let offer = change.apply().unwrap();
 
     let answer = r.accept_offer(offer)?;
     l.pending_changes().unwrap().accept_answer(answer)?;
