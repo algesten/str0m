@@ -383,7 +383,7 @@ impl Rtc {
     /// require an SDP negotiation.
     ///
     /// The [`ChangeSet`] allows us to make multiple changes in one go. Calling
-    /// [`ChangeSet::into_offer()`] doesn't apply the changes, but produces the [`Offer`]
+    /// [`ChangeSet::apply()`] doesn't apply the changes, but produces the [`Offer`]
     /// that is to be sent to the remote peer. Only when the the remote peer responds with
     /// an [`Answer`] can the changes be made to the session. The call to accept the answer
     /// is [`PendingChanges::accept_answer()`].
@@ -401,7 +401,7 @@ impl Rtc {
     /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly);
     /// let mid_video = changes.add_media(MediaKind::Video, Direction::SendOnly);
     ///
-    /// let offer = changes.into_offer();
+    /// let offer = changes.apply().unwrap();
     /// let json = serde_json::to_vec(&offer).unwrap();
     /// ```
     pub fn create_change_set(&mut self) -> ChangeSet {
@@ -499,6 +499,15 @@ impl Rtc {
         sdp.into()
     }
 
+    pub(crate) fn apply_direct_changes(&mut self, mut changes: Changes) {
+        // Split out new channels, since that is not handled by the Session.
+        let new_channels = changes.take_new_channels();
+
+        for (id, dcep) in new_channels {
+            self.sctp.open_stream(*id, dcep);
+        }
+    }
+
     fn as_sdp_params(&self, include_pending: bool) -> AsSdpParams {
         AsSdpParams {
             candidates: self.ice.local_candidates(),
@@ -527,7 +536,7 @@ impl Rtc {
     ///
     /// let mut changes = rtc.create_change_set();
     /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly);
-    /// let offer = changes.into_offer();
+    /// let offer = changes.apply().unwrap();
     ///
     /// // send offer to remote peer, receive answer back
     /// let answer: Answer = todo!();
@@ -558,12 +567,20 @@ impl Rtc {
                 }
             }
 
+            let mut pending = self.pending.take().expect("pending changes");
+
+            // Split out new channels, since that is not handled by the Session.
+            let new_channels = pending.take_new_channels();
+
             // Modify session with answer
-            let pending = self.pending.take().expect("pending changes");
-            self.session.apply_answer(pending, answer, &mut self.sctp)?;
+            self.session.apply_answer(pending, answer)?;
 
             // Handle potentially new m=application line.
             self.init_sctp();
+
+            for (id, dcep) in new_channels {
+                self.sctp.open_stream(*id, dcep);
+            }
         } else {
             // rollback
             self.pending = None;

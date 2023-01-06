@@ -1,7 +1,6 @@
 use dtls::Fingerprint;
 use ice::{Candidate, IceCreds};
 use rtp::Mid;
-use sctp::RtcSctp;
 use sdp::{Answer, MediaAttribute, MediaLine, MediaType, SimulcastGroups, SimulcastOption};
 use sdp::{Offer, Proto, Sdp, SessionAttribute, Setup};
 
@@ -118,12 +117,7 @@ impl Session {
         Ok(())
     }
 
-    pub fn apply_answer(
-        &mut self,
-        pending: Changes,
-        answer: Answer,
-        sctp: &mut RtcSctp,
-    ) -> Result<(), RtcError> {
+    pub fn apply_answer(&mut self, pending: Changes, answer: Answer) -> Result<(), RtcError> {
         answer.assert_consistency()?;
 
         self.update_session_extmaps(&answer);
@@ -139,22 +133,18 @@ impl Session {
             .map_err(RtcError::RemoteSdp)?;
 
         // Add all pending changes (since we pre-allocated SSRC communicated in the Offer).
-        self.add_pending_changes(pending, sctp);
+        self.add_pending_changes(pending);
 
         self.equalize_sources();
 
         Ok(())
     }
 
-    fn add_pending_changes(&mut self, pending: Changes, sctp: &mut RtcSctp) {
+    fn add_pending_changes(&mut self, pending: Changes) {
         // For pending AddMedia, we have outgoing SSRC communicated that needs to be added.
         for change in pending.0 {
             let add_media = match change {
                 Change::AddMedia(v) => v,
-                Change::AddChannel(id, dcep) => {
-                    sctp.open_stream(*id, dcep);
-                    continue;
-                }
                 _ => continue,
             };
 

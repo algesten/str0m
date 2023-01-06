@@ -21,7 +21,7 @@ pub fn data_channel() -> Result<(), RtcError> {
 
     let mut change = l.create_change_set();
     let cid = change.add_channel("My little channel".into());
-    let offer = change.into_offer();
+    let offer = change.apply().unwrap();
 
     let answer = r.accept_offer(offer)?;
     l.pending_changes().unwrap().accept_answer(answer)?;

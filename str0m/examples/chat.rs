@@ -434,7 +434,9 @@ impl Client {
             return false;
         }
 
-        let offer = change.into_offer();
+        let Some(offer) = change.apply() else {
+            return false;
+        };
 
         let Some(mut channel) = self
                 .cid

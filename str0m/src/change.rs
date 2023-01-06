@@ -37,7 +37,7 @@ pub struct AddMedia {
 ///
 /// Get this by calling [`Rtc::create_change_set`][crate::Rtc::create_change_set()].
 ///
-/// No changes are made without calling [`ChangeSet::into_offer()`], followed by sending
+/// No changes are made without calling [`ChangeSet::apply()`], followed by sending
 /// the offer to the remote peer, receiving an answer and completing the changes using
 /// [`Rtc::pending_changes()`][crate::Rtc::pending_changes()].
 pub struct ChangeSet<'a> {
@@ -145,7 +145,18 @@ impl<'a> ChangeSet<'a> {
     ///
     /// It's possible to set the direction [`Direction::Inactive`] for media that
     /// will not be used by the session anymore.
+    ///
+    /// If the direction is set for media that doesn't exist, or if the direction is
+    /// the same that's already set [`ChangeSet::apply()`] not require a negotiation.
     pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
+        let Some(media) = self.rtc.session.get_media(mid) else {
+            return;
+        };
+
+        if media.direction() == dir {
+            return;
+        }
+
         self.changes.0.push(Change::Direction(mid, dir));
     }
 
@@ -154,6 +165,9 @@ impl<'a> ChangeSet<'a> {
     /// The first ever data channel added to a WebRTC session results in an m-line of a
     /// special "application" type in the SDP. The m-line is for a SCTP association over
     /// DTLS, and all data channels are multiplexed over this single association.
+    ///
+    /// That means only the first ever `add_channel` will result in an [`Offer`].
+    /// Consecutive channels will be opened without needing a negotiation.
     ///
     /// The label is used to identify the data channel to the remote peer. This is mostly
     /// useful whe multiple channels are in use at the same time.
@@ -190,12 +204,53 @@ impl<'a> ChangeSet<'a> {
         id
     }
 
-    pub fn into_offer(self) -> Offer {
-        self.rtc.set_pending(self.changes)
+    /// Attempt to apply the changes made in the change set. If this returns [`Offer`], the caller
+    /// the changes are not happening straight away, and the caller is expected to do a negotiation
+    /// with the remote peer and apply the answer using
+    /// [`Rtc::pending_changes()`][crate::Rtc::pending_changes()].
+    ///
+    /// In case this returns `None`, there either were no changes, or the changes could be applied
+    /// without doing a negotiation. Specifically for additional [`ChangeSet::add_channel()`]
+    /// after the first, there is no negotiation needed.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let changes = rtc.create_change_set();
+    /// assert_eq!(changes.apply(), None);
+    /// ```
+    pub fn apply(self) -> Option<Offer> {
+        let requires_negotiation = self.changes.iter().any(|c| c.requires_negotiation());
+
+        if requires_negotiation {
+            Some(self.rtc.set_pending(self.changes))
+        } else {
+            self.rtc.apply_direct_changes(self.changes);
+            None
+        }
     }
 }
 
 impl Changes {
+    pub fn take_new_channels(&mut self) -> Vec<(ChannelId, DcepOpen)> {
+        let mut v = vec![];
+
+        if self.0.is_empty() {
+            return v;
+        }
+
+        for i in (0..self.0.len()).rev() {
+            if matches!(&self.0[i], Change::AddChannel(_, _)) {
+                if let Change::AddChannel(id, dcep) = self.0.remove(i) {
+                    v.push((id, dcep));
+                }
+            }
+        }
+
+        v
+    }
+
     /// Tests the given lines (from answer) corresponds to changes.
     pub fn ensure_correct_answer(&self, lines: &[&MediaLine]) -> Option<String> {
         if self.count_new_m_lines() != lines.len() {
@@ -295,6 +350,15 @@ impl Change {
                 Some(MediaOrApp::App(channel))
             }
             _ => None,
+        }
+    }
+
+    fn requires_negotiation(&self) -> bool {
+        match self {
+            Change::AddMedia(_) => true,
+            Change::AddApp(_) => true,
+            Change::AddChannel(_, _) => false,
+            Change::Direction(_, _) => true,
         }
     }
 }
