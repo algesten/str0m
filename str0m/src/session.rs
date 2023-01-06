@@ -100,7 +100,7 @@ impl Session {
             id,
             media: vec![],
             exts: Extensions::default_mappings(),
-            codec_config: codec_config.init(),
+            codec_config,
             source_keys: HashMap::new(),
             first_ssrc_remote: None,
             first_ssrc_local: None,

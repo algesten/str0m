@@ -16,6 +16,10 @@ const MICROS: i64 = 1_000_000;
 /// Milliseconds in a second.
 const MILLIS: i64 = 1_000;
 
+/// Media time represented by a numerator / denominator.
+///
+/// The numerator is typically the packet time of an Rtp header. The denominator is the
+/// clock frequence of the media source (typically 90kHz for video and 48kHz for audio).
 #[derive(Debug, Clone, Copy)]
 pub struct MediaTime(i64, i64);
 
@@ -23,8 +27,8 @@ pub struct MediaTime(i64, i64);
 impl MediaTime {
     pub const ZERO: MediaTime = MediaTime(0, 1);
 
-    pub const fn new(numer: i64, denum: i64) -> MediaTime {
-        MediaTime(numer, denum)
+    pub const fn new(numer: i64, denom: i64) -> MediaTime {
+        MediaTime(numer, denom)
     }
 
     #[inline(always)]
@@ -33,7 +37,7 @@ impl MediaTime {
     }
 
     #[inline(always)]
-    pub const fn denum(&self) -> i64 {
+    pub const fn denom(&self) -> i64 {
         self.1
     }
 
@@ -116,12 +120,12 @@ impl MediaTime {
     }
 
     #[inline(always)]
-    pub const fn rebase(self, denum: i64) -> MediaTime {
-        if denum == self.1 {
+    pub const fn rebase(self, denom: i64) -> MediaTime {
+        if denom == self.1 {
             self
         } else {
-            let numer = self.0 as i128 * denum as i128 / self.1 as i128;
-            MediaTime::new(numer as i64, denum)
+            let numer = self.0 as i128 * denom as i128 / self.1 as i128;
+            MediaTime::new(numer as i64, denom)
         }
     }
 
@@ -237,7 +241,7 @@ mod test {
         let t1 = MediaTime::from_seconds(10.0);
         let t2 = t1.rebase(90_000);
         assert_eq!(t2.numer(), 90_000 * 10);
-        assert_eq!(t2.denum(), 90_000);
+        assert_eq!(t2.denom(), 90_000);
 
         println!("{}", (10.0234_f64).fract());
     }

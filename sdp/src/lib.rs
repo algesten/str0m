@@ -16,6 +16,7 @@ pub use data::{Simulcast, SimulcastGroup, SimulcastGroups, SimulcastOption};
 
 mod parser;
 
+/// Errors from parsing and serializing SDP.
 #[derive(Debug, Error)]
 pub enum SdpError {
     #[error("SDP parse: {0}")]

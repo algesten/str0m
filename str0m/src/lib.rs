@@ -35,7 +35,7 @@ pub mod error {
     pub use net_::NetError;
     pub use packet::PacketError;
     pub use rtp::RtpError;
-    pub use sctp::SctpError;
+    pub use sctp::{ProtoError, SctpError};
     pub use sdp::SdpError;
 }
 
@@ -1035,7 +1035,7 @@ impl<'a> PendingChanges<'a> {
 /// ```
 ///
 /// Configs implement [`Clone`] to help create multiple `Rtc` instances.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct RtcConfig {
     ice_lite: bool,
     codec_config: CodecConfig,
@@ -1061,9 +1061,26 @@ impl RtcConfig {
         self
     }
 
+    /// Clear all configured codecs.
+    ///
+    /// ```
+    /// # use str0m::RtcConfig;
+    ///
+    /// // For the session to use only OPUS and VP8.
+    /// let mut rtc = RtcConfig::default()
+    ///     .clear_codecs()
+    ///     .enable_opus()
+    ///     .enable_vp8()
+    ///     .build();
+    /// ```
+    pub fn clear_codecs(mut self) -> Self {
+        self.codec_config.clear();
+        self
+    }
+
     /// Enable opus audio codec.
     ///
-    /// If no codecs are explicitly toggled on, all are on.
+    /// Enabled by default.
     pub fn enable_opus(mut self) -> Self {
         self.codec_config.add_default_opus();
         self
@@ -1071,7 +1088,7 @@ impl RtcConfig {
 
     /// Enable VP8 video codec.
     ///
-    /// If no codecs are explicitly toggled on, all are on.
+    /// Enabled by default.
     pub fn enable_vp8(mut self) -> Self {
         self.codec_config.add_default_vp8();
         self
@@ -1079,31 +1096,47 @@ impl RtcConfig {
 
     /// Enable H264 video codec.
     ///
-    /// If no codecs are explicitly toggled on, all are on.
+    /// Enabled by default.
     pub fn enable_h264(mut self) -> Self {
         self.codec_config.add_default_h264();
         self
     }
 
-    /// Enable AV1 video codec.
-    ///
-    /// If no codecs are explicitly toggled on, all are on.
-    pub fn enable_av1(mut self) -> Self {
-        self.codec_config.add_default_av1();
-        self
-    }
+    // TODO: AV1 depacketizer/packetizer.
+    //
+    // /// Enable AV1 video codec.
+    // ///
+    // /// Enabled by default.
+    // pub fn enable_av1(mut self) -> Self {
+    //     self.codec_config.add_default_av1();
+    //     self
+    // }
 
     /// Enable VP9 video codec.
     ///
-    /// If no codecs are explicitly toggled on, all are on.
+    /// Enabled by default.
     pub fn enable_vp9(mut self) -> Self {
         self.codec_config.add_default_vp9();
         self
     }
 
+    /// Lower level access to precis configuration of codecs (payload types).
+    pub fn codec_config(&mut self) -> &mut CodecConfig {
+        &mut self.codec_config
+    }
+
     /// Create a [`Rtc`] from the configuration.
     pub fn build(self) -> Rtc {
         Rtc::new_from_config(self)
+    }
+}
+
+impl Default for RtcConfig {
+    fn default() -> Self {
+        Self {
+            ice_lite: Default::default(),
+            codec_config: CodecConfig::new_with_defaults(),
+        }
     }
 }
 

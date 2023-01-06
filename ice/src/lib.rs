@@ -14,6 +14,7 @@ pub use candidate::{Candidate, CandidateKind};
 
 mod pair;
 
+/// Errors from the ICE agent.
 #[derive(Debug, Error)]
 pub enum IceError {
     #[error("ICE bad candidate: {0}")]

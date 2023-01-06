@@ -534,7 +534,7 @@ impl Client {
         }
 
         // Match outgoing pt to incoming codec.
-        let Some(pt) = media.match_codec(data.codec) else {
+        let Some(pt) = media.match_params(data.params) else {
             return;
         };
 
