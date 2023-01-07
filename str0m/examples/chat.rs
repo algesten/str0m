@@ -61,7 +61,9 @@ pub fn main() {
     )
     .expect("starting the web server");
 
-    info!("Listening on {:?}", server.server_addr().port());
+    let port = server.server_addr().port();
+    info!("Connect a browser to https://{:?}:{:?}", addr.ip(), port);
+
     server.run();
 }
 
