@@ -119,13 +119,15 @@
                 return;
             }
             el.id = domId;
+            el.width = 500;
+            byId('media').appendChild(el);
             el.controls = true;
             el.autoplay = true;
-            el.width = 500;
-            const media = new MediaStream();
-            el.srcObject = media;
-            media.addTrack(track);
-            byId('media').appendChild(el);
+            setTimeout(() => {
+                const media = new MediaStream();
+                media.addTrack(track);
+                el.srcObject = media;
+            }, 1);
             track.addEventListener('mute', () => {
                 console.log('track muted', track);
                 el.parentNode.removeChild(el);
