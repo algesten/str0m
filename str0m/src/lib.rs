@@ -43,7 +43,7 @@ pub mod channel;
 use channel::{Channel, ChannelData, ChannelId};
 
 pub mod media;
-use media::{CodecConfig, Direction, KeyframeRequest, MediaData};
+use media::{CodecConfig, Direction, KeyframeRequest, KeyframeRequestKind, MediaData};
 use media::{Media, MediaKind, Mid, Pt, Rid, Ssrc};
 
 mod change;
@@ -97,6 +97,11 @@ pub enum RtcError {
     /// If MediaWriter.request_keyframe fails because we can't find an SSRC to use.
     #[error("No receiver source (rid: {0:?})")]
     NoReceiverSource(Option<Rid>),
+
+    /// The keyframe request failed because the kind of request is not enabled
+    /// by the SDP negotiation.
+    #[error("Requested feedback is not enabled: {0:?}")]
+    FeedbackNotEnabled(KeyframeRequestKind),
 
     /// Parser errors from network packet parsing.
     #[error("{0}")]

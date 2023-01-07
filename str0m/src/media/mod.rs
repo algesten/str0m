@@ -382,7 +382,38 @@ impl Media {
         Ok(buf.free())
     }
 
+    /// Test if the kind of keyframe request is possible.
+    ///
+    /// Sending a keyframe request requires the mechanic to be negotiated as a feedback mechanic
+    /// in the SDP offer/answer dance first.
+    ///
+    /// Specifically these SDP lines would enable FIR and PLI respectively (for payload type 96).
+    ///
+    /// ```text
+    /// a=rtcp-fb:96 ccm fir
+    /// a=rtcp-fb:96 nack pli
+    /// ```
+    pub fn is_request_keyframe_possible(&self, kind: KeyframeRequestKind) -> bool {
+        // TODO: It's possible to have different set of feedback enabled for different
+        // payload types. I.e. we could have FIR enabled for H264, but not for VP8.
+        // We might want to make this check more fine grained by testing which PT is
+        // in "active use" right now.
+        self.params.iter().any(|r| match kind {
+            KeyframeRequestKind::Pli => r.inner().fb_pli,
+            KeyframeRequestKind::Fir => r.inner().fb_fir,
+        })
+    }
+
     /// Request a keyframe from a remote peer sending media data.
+    ///
+    /// This can fail if the kind of request (PLI or FIR), as specified by the
+    /// [`KeyframeRequestKind`], is not negotiated in the SDP answer/offer for
+    /// this m-line.
+    ///
+    /// To ensure the call will not fail, use [`Media::is_request_keyframe_possible()`] to
+    /// check whether the feedback mechanism is enabled.
+    ///
+    /// # Example
     ///
     /// ```no_run
     /// # use str0m::{Rtc};
@@ -401,6 +432,10 @@ impl Media {
         rid: Option<Rid>,
         kind: KeyframeRequestKind,
     ) -> Result<(), RtcError> {
+        if !self.is_request_keyframe_possible(kind) {
+            return Err(RtcError::FeedbackNotEnabled(kind));
+        }
+
         let rx = self
             .sources_rx
             .iter()
