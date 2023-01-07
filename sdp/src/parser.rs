@@ -303,7 +303,7 @@ where
                 attrs,
             };
             if let Some(err) = m.check_consistent() {
-                println!("{:?}", err);
+                warn!("{:?}", err);
                 return Err(StreamErrorFor::<Input>::message_format(err));
             }
             Ok(m)
