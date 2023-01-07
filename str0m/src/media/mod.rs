@@ -234,6 +234,9 @@ pub struct Media {
     /// Sources are kept in "mirrored pairs", i.e. if we have a ReceiverSource
     /// with Ssrc A and Rid B, there should be an equivalent SenderSource with Ssrc C and Rid B.
     equalize_sources: bool,
+
+    /// Upon SDP negotiation set whether nack is enabled for this m-line.
+    enable_nack: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -640,6 +643,9 @@ impl Media {
     }
 
     pub(crate) fn has_nack(&mut self) -> bool {
+        if !self.enable_nack {
+            return false;
+        }
         self.sources_rx
             .iter_mut()
             .filter(|s| !s.is_rtx())
@@ -733,6 +739,9 @@ impl Media {
 
     /// Creates nack reports for receivers, if needed.
     pub(crate) fn create_nack(&mut self, sender_ssrc: Ssrc, feedback: &mut VecDeque<Rtcp>) {
+        if !self.enable_nack {
+            return;
+        }
         for s in &mut self.sources_rx {
             if s.is_rtx() {
                 continue;
@@ -824,6 +833,15 @@ impl Media {
         config: &CodecConfig,
         session_exts: &Extensions,
     ) {
+        // Nack enabled
+        {
+            let enabled = m.rtp_params().iter().any(|p| p.fb_nack);
+            if enabled && !self.enable_nack {
+                debug!("Enable NACK feedback ({:?})", self.mid);
+                self.enable_nack = true;
+            }
+        }
+
         // Directional changes
         {
             // All changes come from the other side, either via an incoming OFFER
@@ -1071,6 +1089,7 @@ impl Default for Media {
             keyframe_request_tx: None,
             simulcast: None,
             equalize_sources: false,
+            enable_nack: false,
         }
     }
 }
