@@ -1,3 +1,6 @@
+#[macro_use]
+extern crate tracing;
+
 use std::io::ErrorKind;
 use std::net::UdpSocket;
 use std::process;
@@ -16,7 +19,7 @@ fn init_log() {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", "debug");
+        env::set_var("RUST_LOG", "http_post=debug,str0m=debug");
     }
 
     tracing_subscriber::registry()
@@ -32,7 +35,7 @@ pub fn main() {
     let private_key = include_bytes!("key.pem").to_vec();
     let server = Server::new_ssl("0.0.0.0:3000", web_request, certificate, private_key)
         .expect("starting the web server");
-    println!("Listening on {:?}", server.server_addr().port());
+    info!("Listening on {:?}", server.server_addr().port());
     server.run();
 }
 
