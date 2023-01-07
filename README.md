@@ -11,15 +11,48 @@ But I have managed to transfer some kind of video.
 
 <image width="300px" src="https://user-images.githubusercontent.com/227204/209446544-f8a8d673-cb1b-4144-a0f2-42307b8d8869.gif" />
 
-# Usage
-
-The [`http-post`](https://github.com/algesten/str0m/blob/main/str0m/examples/http-post.rs) example
-and the tests roughly illustrates how to use this library. The example shows how to run single threaded
-without any async I/O.
-
 # Join us
 
 Currently discussing str0m things on the [webrtc-rs][4] discord server, in the [#str0m channel][5]. Join us!
+
+# Overview
+
+```
+                      +-------+
+                      |  Rtc  |-------+----------+-------+
+                      +-------+       |          |       |
+                          |           |          |       |
+                          |           |          |       |
+           - - - -    - - - - -    - - - -    - - - - - - - -
+          |  RTP  |--| Session |  |  ICE  |  | SCTP  | DTLS  |
+           - - - -    - - - - -    - - - -    - - - - - - - -
+                          |                          |
+                          |
+                 +--------+--------+                 |
+                 |                 |
+                 |                 |                 |
+             +-------+        +---------+
+             | Media |        | Channel |- - - - - - +
+             +-------+        +---------+
+                 |
+                 |
+       +---------+---------+
+       |                   |
+       |                   |
+ - - - - - - -      - - - - - - - -
+|SenderSource |    |ReceiverSource |
+ - - - - - - -      - - - - - - - -
+ ```
+
+# Usage
+
+The [`http-post`](https://github.com/algesten/str0m/blob/main/str0m/examples/http-post.rs) example
+roughly illustrates how to receive media data from a browser client. The example
+is single threaded without any async I/O.
+
+The [`chat`](https://github.com/algesten/str0m/blob/main/str0m/examples/chat.rs) example shows how
+to connect multiple browsers together and act as an SFU. The example multiplexes all traffic over
+one server UDP socket and uses two threads (one for the web server, and one for the SFU loop).
 
 ## Passive
 
@@ -149,14 +182,12 @@ which PT to use when sending.
 ```rs
 let media = rtc.media(mid).unwrap(); // 1
 let pt = media.codecs()[0]; // 2
-let writer = media.get_writer(pt); // 3
-writer.write(time, data)? // 4
+media.write(pt, None, time, data)? // 3
 ```
 
 1. Get the `Media` for this `mid`.
 2. Get the payload type (pt) for the wanted codec.
-3. Get the media writer for the payload type.
-4. Write the data.
+3. Write the data.
 
 # Design
 
