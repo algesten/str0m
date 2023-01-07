@@ -12,6 +12,7 @@ use openssl::x509::X509;
 use std::io;
 use std::mem;
 use std::ops::Deref;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
 
 use crate::DtlsError;
@@ -45,7 +46,13 @@ pub fn dtls_create_ctx() -> Result<(SslContext, Fingerprint), DtlsError> {
     ctx.set_private_key(&pkey)?;
 
     let mut x509 = X509::builder()?;
-    let serial_bn = BigNum::from_u32(1)?;
+
+    // For firefox, we must increase the serial number for each generated certificate.
+    // See https://github.com/versatica/mediasoup/issues/127#issuecomment-474460153
+    static SERIAL: AtomicU32 = AtomicU32::new(1);
+    let serial = SERIAL.fetch_add(1, Ordering::SeqCst);
+
+    let serial_bn = BigNum::from_u32(serial)?;
     let serial = Asn1Integer::from_bn(&serial_bn)?;
     x509.set_serial_number(&serial)?;
     let before = Asn1Time::from_unix(unix_time() - 3600)?;
