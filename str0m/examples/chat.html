@@ -25,6 +25,18 @@
         let rtc = new RTCPeerConnection();
         rtc.oniceconnectionstatechange = () => {
             byId('ice_status').innerText = rtc.iceConnectionState;
+            if (rtc.iceConnectionState == 'disconnected' || rtc.iceConnectionState == 'failed') {
+                if (streamCam) {
+                    streamCam.getTracks()[0]?.stop();
+                }
+                if (streamMic) {
+                    streamMic.getTracks()[0]?.stop();
+                }
+                rtc.close();
+                byId('rtc').disabled = true;
+                byId('cam').disabled = true;
+                byId('mic').disabled = true;
+            }
         };
         const byId = (id) => document.getElementById(id);
         const byTag = (tag) => [].slice.call(document.getElementsByTagName(tag));
