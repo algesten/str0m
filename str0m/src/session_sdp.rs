@@ -178,7 +178,7 @@ impl Session {
     /// * Existing m-lines can apply changes (such as direction change).
     /// * New m-lines are returned to the caller.
     fn sync_m_lines<'a>(&mut self, sdp: &'a Sdp) -> Result<Vec<&'a MediaLine>, String> {
-        let mut new_lines = Vec::new();
+        let mut new_lines = Vec::with_capacity(sdp.media_lines.len());
 
         let config = self.codec_config().clone();
         let session_exts = *self.exts();
