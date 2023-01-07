@@ -374,7 +374,7 @@ impl Media {
             PacketizingBuffer::new(codec.into(), max_retain)
         });
 
-        debug!("Write to packetizer time: {:?} bytes: {}", ts, data.len());
+        trace!("Write to packetizer time: {:?} bytes: {}", ts, data.len());
         if let Err(e) = buf.push_sample(ts, data, ssrc, rid, DATAGRAM_MTU - SRTP_OVERHEAD) {
             return Err(RtcError::Packet(self.mid, pt, e));
         };
