@@ -1,6 +1,6 @@
 use dtls::Fingerprint;
 use ice::{Candidate, IceCreds};
-use rtp::Mid;
+use rtp::{Extension, Mid};
 use sdp::{Answer, MediaAttribute, MediaLine, MediaType, SimulcastGroups, SimulcastOption};
 use sdp::{Offer, Proto, Sdp, SessionAttribute, Setup};
 
@@ -105,7 +105,7 @@ impl Session {
     pub fn apply_offer(&mut self, offer: Offer) -> Result<(), RtcError> {
         offer.assert_consistency()?;
 
-        self.update_session_extmaps(&offer);
+        self.update_session(&offer);
 
         let new_lines = self.sync_m_lines(&offer).map_err(RtcError::RemoteSdp)?;
 
@@ -120,7 +120,7 @@ impl Session {
     pub fn apply_answer(&mut self, pending: Changes, answer: Answer) -> Result<(), RtcError> {
         answer.assert_consistency()?;
 
-        self.update_session_extmaps(&answer);
+        self.update_session(&answer);
 
         let new_lines = self.sync_m_lines(&answer).map_err(RtcError::RemoteSdp)?;
 
@@ -257,8 +257,9 @@ impl Session {
         Ok(())
     }
 
-    /// Update session level Extensions from offer or answer.
-    fn update_session_extmaps(&mut self, sdp: &Sdp) {
+    /// Update session level properties like
+    /// Extensions from offer or answer.
+    fn update_session(&mut self, sdp: &Sdp) {
         let old = self.exts;
 
         let extmaps = sdp.media_lines.iter().flat_map(|m| m.extmaps());
@@ -269,6 +270,25 @@ impl Session {
 
         if old != self.exts {
             info!("Updated session extensions: {:?}", self.exts);
+        }
+
+        // Does any m-line contain a a=rtcp-fb:xx transport-cc?
+        let has_transport_cc = sdp
+            .media_lines
+            .iter()
+            .any(|m| m.rtp_params().iter().any(|p| p.fb_transport_cc));
+
+        // Is the session level sequence number enabled?
+        let has_twcc_header = self
+            .exts
+            .id_of(Extension::TransportSequenceNumber)
+            .is_some();
+
+        // Since twcc feedback is session wide and not per m-line or pt, we enable it if
+        // there are _any_ m-line with a a=rtcp-fb transport-cc parameter and the sequence
+        // number header is enabled.
+        if has_transport_cc && has_twcc_header {
+            self.enable_twcc_feedback();
         }
     }
 

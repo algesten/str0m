@@ -56,6 +56,8 @@ pub(crate) struct Session {
     twcc: u64,
     twcc_rx_register: TwccRecvRegister,
     twcc_tx_register: TwccSendRegister,
+
+    enable_twcc_feedback: bool,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -112,6 +114,7 @@ impl Session {
             twcc: 0,
             twcc_rx_register: TwccRecvRegister::new(100),
             twcc_tx_register: TwccSendRegister::new(1000),
+            enable_twcc_feedback: false,
         }
     }
 
@@ -624,7 +627,7 @@ impl Session {
     }
 
     fn twcc_at(&self) -> Option<Instant> {
-        if self.twcc_rx_register.has_unreported() {
+        if self.enable_twcc_feedback && self.twcc_rx_register.has_unreported() {
             Some(self.last_twcc + TWCC_INTERVAL)
         } else {
             None
@@ -652,6 +655,13 @@ impl Session {
         if self.first_ssrc_local.is_none() {
             info!("First local SSRC: {}", ssrc);
             self.first_ssrc_local = Some(ssrc);
+        }
+    }
+
+    pub(crate) fn enable_twcc_feedback(&mut self) {
+        if !self.enable_twcc_feedback {
+            debug!("Enable TWCC feedback");
+            self.enable_twcc_feedback = true;
         }
     }
 }

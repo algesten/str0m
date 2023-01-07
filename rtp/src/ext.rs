@@ -252,6 +252,13 @@ impl Extensions {
         }
     }
 
+    pub fn id_of(&self, e: Extension) -> Option<u8> {
+        self.0
+            .iter()
+            .position(|x| *x == Some(e))
+            .map(|p| p as u8 + 1)
+    }
+
     pub fn into_extmap(&self, audio: bool) -> impl Iterator<Item = ExtMap> + '_ {
         self.0
             .iter()
