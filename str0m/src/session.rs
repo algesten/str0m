@@ -58,6 +58,9 @@ pub(crate) struct Session {
     twcc_tx_register: TwccSendRegister,
 
     enable_twcc_feedback: bool,
+
+    // temporary buffer when getting the next (unencrypted) RTP packet from Media line.
+    poll_packet_buf: Vec<u8>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -115,6 +118,7 @@ impl Session {
             twcc_rx_register: TwccRecvRegister::new(100),
             twcc_tx_register: TwccSendRegister::new(1000),
             enable_twcc_feedback: false,
+            poll_packet_buf: vec![0; 2000],
         }
     }
 
@@ -572,9 +576,11 @@ impl Session {
     fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
         let srtp_tx = self.srtp_tx.as_mut()?;
 
+        let buf = &mut self.poll_packet_buf;
+
         for m in only_media_mut(&mut self.media) {
             let twcc_seq = self.twcc;
-            if let Some((header, buf, seq_no)) = m.poll_packet(now, &self.exts, &mut self.twcc) {
+            if let Some((header, seq_no)) = m.poll_packet(now, &self.exts, &mut self.twcc, buf) {
                 self.twcc_tx_register.register_seq(twcc_seq.into(), now);
                 let protected = srtp_tx.protect_rtp(&buf, &header, *seq_no);
                 return Some(protected.into());

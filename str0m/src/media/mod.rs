@@ -248,6 +248,14 @@ pub enum MediaKind {
     Video,
 }
 
+struct NextPacket<'a> {
+    pt: Pt,
+    pkt: &'a Packetized,
+    ssrc: Ssrc,
+    seq_no: SeqNo,
+    orig_seq_no: Option<SeqNo>,
+}
+
 impl Media {
     /// Identifier of the m-line.
     pub fn mid(&self) -> Mid {
@@ -477,62 +485,20 @@ impl Media {
         now: Instant,
         exts: &Extensions,
         twcc: &mut u64,
-    ) -> Option<(RtpHeader, Vec<u8>, SeqNo)> {
-        let (pt, pkt, ssrc, seq_no, orig_seq_no) = loop {
-            if let Some(resend) = self.resends.pop_front() {
-                // If there is no buffer for this resend, we loop to next. This is
-                // a weird situation though, since it means the other side sent a nack for
-                // an SSRC that matched this Media, but didnt match a buffer_tx.
-                let buffer = match self.buffers_tx.values().find(|p| p.has_ssrc(resend.ssrc)) {
-                    Some(v) => v,
-                    None => continue,
-                };
+        buf: &mut Vec<u8>,
+    ) -> Option<(RtpHeader, SeqNo)> {
+        let mid = self.mid;
 
-                // The seq_no could simply be too old to exist in the buffer, in which
-                // case we will not do a resend.
-                let pkt = match buffer.get(resend.seq_no) {
-                    Some(v) => v,
-                    None => continue,
-                };
-
-                // The send source, to get a contiguous seq_no for the resend.
-                // Audio should not be resent, so this also gates whether we are doing resends at all.
-                let source = match get_source_tx(&mut self.sources_tx, pkt.rid, true) {
-                    Some(v) => v,
-                    None => continue,
-                };
-
-                let seq_no = source.next_seq_no(now);
-
-                // The resend ssrc. This would correspond to the RTX PT for video.
-                let ssrc_rtx = source.ssrc();
-
-                let orig_seq_no = Some(resend.seq_no);
-
-                // Check that our internal state of organizing SSRC for senders is correct.
-                assert_eq!(pkt.ssrc, resend.ssrc);
-                assert_eq!(source.repairs(), Some(resend.ssrc));
-
-                break (resend.pt, pkt, ssrc_rtx, seq_no, orig_seq_no);
-            } else {
-                // exit via ? here is ok since that means there is nothing to send.
-                let (pt, pkt) = next_send_buffer(&mut self.buffers_tx)?;
-
-                let source = self
-                    .sources_tx
-                    .iter_mut()
-                    .find(|s| s.ssrc() == pkt.ssrc)
-                    .expect("SenderSource for packetized write");
-
-                let seq_no = source.next_seq_no(now);
-                pkt.seq_no = Some(seq_no);
-
-                break (pt, pkt, pkt.ssrc, seq_no, None);
-            }
+        let next = if let Some(next) = self.poll_packet_resend(now) {
+            next
+        } else if let Some(next) = self.poll_packet_regular(now) {
+            next
+        } else {
+            return None;
         };
 
-        let mut header = RtpHeader::new(pt, seq_no, pkt.ts, ssrc);
-        header.marker = pkt.last;
+        let mut header = RtpHeader::new(next.pt, next.seq_no, next.pkt.ts, next.ssrc);
+        header.marker = next.pkt.last;
 
         // We can fill out as many values we want here, only the negotiated ones will
         // be used when writing the RTP packet.
@@ -540,34 +506,102 @@ impl Media {
         // These need to match `Extension::is_supported()` so we are sending what we are
         // declaring we support.
         header.ext_vals.abs_send_time = Some(now.into());
-        header.ext_vals.mid = Some(self.mid);
+        header.ext_vals.mid = Some(mid);
         header.ext_vals.transport_cc = Some(*twcc as u16);
         *twcc += 1;
 
-        let mut buf = vec![0; 2000];
-        let header_len = header.write_to(&mut buf, exts);
+        buf.resize(2000, 0);
+        let header_len = header.write_to(buf, exts);
         assert!(header_len % 4 == 0, "RTP header must be multiple of 4");
         header.header_len = header_len;
 
         let mut body_out = &mut buf[header_len..];
 
         // For resends, the original seq_no is inserted before the payload.
-        if let Some(orig_seq_no) = orig_seq_no {
+        if let Some(orig_seq_no) = next.orig_seq_no {
             let n = RtpHeader::write_original_sequence_number(body_out, orig_seq_no);
             body_out = &mut body_out[n..];
         }
 
-        let body_len = pkt.data.len();
-        body_out[..body_len].copy_from_slice(&pkt.data);
+        let body_len = next.pkt.data.len();
+        body_out[..body_len].copy_from_slice(&next.pkt.data);
 
         // pad for SRTP
         let pad_len = RtpHeader::pad_packet(&mut buf[..], header_len, body_len, SRTP_BLOCK_SIZE);
 
         buf.truncate(header_len + body_len + pad_len);
 
-        Some((header, buf, seq_no))
+        Some((header, next.seq_no))
     }
 
+    fn poll_packet_resend(&mut self, now: Instant) -> Option<NextPacket<'_>> {
+        loop {
+            let resend = self.resends.pop_front()?;
+
+            // If there is no buffer for this resend, we skip to next. This is
+            // a weird situation though, since it means the other side sent a nack for
+            // an SSRC that matched this Media, but didnt match a buffer_tx.
+            let buffer = match self.buffers_tx.values().find(|p| p.has_ssrc(resend.ssrc)) {
+                Some(v) => v,
+                None => continue,
+            };
+
+            // The seq_no could simply be too old to exist in the buffer, in which
+            // case we will not do a resend.
+            let pkt = match buffer.get(resend.seq_no) {
+                Some(v) => v,
+                None => continue,
+            };
+
+            // The send source, to get a contiguous seq_no for the resend.
+            // Audio should not be resent, so this also gates whether we are doing resends at all.
+            let source = match get_source_tx(&mut self.sources_tx, pkt.rid, true) {
+                Some(v) => v,
+                None => continue,
+            };
+
+            let seq_no = source.next_seq_no(now);
+
+            // The resend ssrc. This would correspond to the RTX PT for video.
+            let ssrc_rtx = source.ssrc();
+
+            let orig_seq_no = Some(resend.seq_no);
+
+            // Check that our internal state of organizing SSRC for senders is correct.
+            assert_eq!(pkt.ssrc, resend.ssrc);
+            assert_eq!(source.repairs(), Some(resend.ssrc));
+
+            return Some(NextPacket {
+                pt: resend.pt,
+                pkt,
+                ssrc: ssrc_rtx,
+                seq_no,
+                orig_seq_no,
+            });
+        }
+    }
+
+    fn poll_packet_regular(&mut self, now: Instant) -> Option<NextPacket<'_>> {
+        // exit via ? here is ok since that means there is nothing to send.
+        let (pt, pkt) = next_send_buffer(&mut self.buffers_tx)?;
+
+        let source = self
+            .sources_tx
+            .iter_mut()
+            .find(|s| s.ssrc() == pkt.ssrc)
+            .expect("SenderSource for packetized write");
+
+        let seq_no = source.next_seq_no(now);
+        pkt.seq_no = Some(seq_no);
+
+        return Some(NextPacket {
+            pt,
+            pkt,
+            ssrc: pkt.ssrc,
+            seq_no,
+            orig_seq_no: None,
+        });
+    }
     pub(crate) fn get_or_create_source_rx(&mut self, ssrc: Ssrc) -> &mut ReceiverSource {
         let maybe_idx = self.sources_rx.iter().position(|r| r.ssrc() == ssrc);
 
