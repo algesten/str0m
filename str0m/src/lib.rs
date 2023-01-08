@@ -261,6 +261,18 @@ impl Rtc {
         Self::new_from_config(config)
     }
 
+    /// Creates a config builder that configures an [`Rtc`] instance.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let rtc = Rtc::builder()
+    ///     .ice_lite(true)
+    ///     .build();
+    /// ```
+    pub fn builder() -> RtcConfig {
+        RtcConfig::new()
+    }
+
     pub(crate) fn new_from_config(config: RtcConfig) -> Self {
         let mut ice = IceAgent::new();
 
