@@ -288,6 +288,16 @@ impl Media {
 
     /// Current direction. This can be changed using
     /// [`ChangeSet::set_direction()`][crate::ChangeSet::set_direction()] followed by an SDP negotiation.
+    ///
+    /// To test whether it's possible to send media with the current direction, use
+    ///
+    /// ```no_run
+    /// # use str0m::media::Media;
+    /// let media: Media = todo!(); // Get hold of media row.
+    /// if media.direction().is_sending() {
+    ///     // media.write(...);
+    /// }
+    /// ```
     pub fn direction(&self) -> Direction {
         self.dir
     }
@@ -327,7 +337,9 @@ impl Media {
     /// the RID in a header extension as an alternative way, making SSRC less important. Currently
     /// this is only used in Chrome when doing Simulcast.
     ///
-    /// [1]: https://datatracker.ietf.org/doc/html/rfc8852
+    /// This operation fails if the current [`Media::direction()`] does not allow sending, the
+    /// PT doesn't match a negotiated codec, or the RID (`None` or a value) does not match
+    /// anything negotiated.
     ///
     /// ```no_run
     /// # use str0m::{Rtc};
@@ -347,6 +359,8 @@ impl Media {
     ///
     /// media.write(pt, None, data.time, &data.data).unwrap();
     /// ```
+    ///
+    /// [1]: https://datatracker.ietf.org/doc/html/rfc8852
     pub fn write(
         &mut self,
         pt: Pt,
@@ -354,18 +368,16 @@ impl Media {
         ts: MediaTime,
         data: &[u8],
     ) -> Result<usize, RtcError> {
+        if !self.dir.is_sending() {
+            return Err(RtcError::NotSendingDirection(self.dir));
+        }
+
         let codec = { self.codec_by_pt(pt).map(|p| p.codec()) };
 
         let codec = match codec {
             Some(v) => v,
             None => return Err(RtcError::UnknownPt(pt)),
         };
-
-        if !self.dir.is_sending() {
-            // Ignore any media writes while we are not sending.
-            debug!("Ignore due to direction: {:?}", self.dir);
-            return Ok(10_000);
-        }
 
         // The SSRC is figured out given the simulcast level.
         let tx = get_source_tx(&mut self.sources_tx, rid, false).ok_or(RtcError::NoSenderSource)?;

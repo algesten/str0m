@@ -94,6 +94,9 @@ pub enum RtcError {
     #[error("No sender source")]
     NoSenderSource,
 
+    #[error("Direction does not allow sending: {0}")]
+    NotSendingDirection(Direction),
+
     /// If MediaWriter.request_keyframe fails because we can't find an SSRC to use.
     #[error("No receiver source (rid: {0:?})")]
     NoReceiverSource(Option<Rid>),
