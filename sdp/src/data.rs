@@ -977,6 +977,18 @@ impl FormatParams {
     }
 }
 
+impl fmt::Display for FormatParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = self
+            .to_format_param()
+            .into_iter()
+            .map(|f| f.to_string())
+            .collect::<Vec<_>>()
+            .join(";");
+        write!(f, "{}", s)
+    }
+}
+
 /// Known codecs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1575,6 +1587,14 @@ mod test {
     use rtp::Extension;
 
     use super::*;
+
+    #[test]
+    fn fmtp_param_to_string() {
+        let mut f = FormatParams::default();
+        f.min_p_time = Some(10);
+        f.use_inband_fec = Some(true);
+        assert_eq!(f.to_string(), "minptime=10;useinbandfec=1");
+    }
 
     #[test]
     fn write_sdp() {
