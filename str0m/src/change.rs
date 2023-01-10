@@ -88,10 +88,12 @@ impl<'a> ChangeSet<'a> {
         let mid = self.rtc.new_mid();
 
         let cname = if let Some(cname) = cname {
+            // https://www.rfc-editor.org/rfc/rfc8830
+            // msid-id = 1*64token-char
             cname
                 .chars()
                 .filter(|c| c.is_ascii_alphanumeric())
-                .take(20)
+                .take(64)
                 .collect()
         } else {
             Id::<20>::random().to_string()
