@@ -84,10 +84,18 @@ impl<'a> ChangeSet<'a> {
     ///
     /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv);
     /// ```
-    pub fn add_media(&mut self, kind: MediaKind, dir: Direction) -> Mid {
+    pub fn add_media(&mut self, kind: MediaKind, dir: Direction, cname: Option<String>) -> Mid {
         let mid = self.rtc.new_mid();
 
-        let cname = Id::<20>::random().to_string();
+        let cname = if let Some(cname) = cname {
+            cname
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .take(20)
+                .collect()
+        } else {
+            Id::<20>::random().to_string()
+        };
 
         let ssrcs = {
             // For video we do RTX channels.

@@ -21,7 +21,7 @@ pub fn unidirectional() -> Result<(), RtcError> {
     r.add_local_candidate(host2);
 
     let mut change = l.create_change_set();
-    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv);
+    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None);
     let offer = change.apply().unwrap();
 
     let answer = r.accept_offer(offer)?;
