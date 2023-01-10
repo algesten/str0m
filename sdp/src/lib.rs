@@ -30,9 +30,35 @@ pub enum SdpError {
 /// SDP offer. Offers can be serialized via serde.
 pub struct Offer(Sdp);
 
+impl Offer {
+    /// Takes the SDP string without any JSON wrapping and makes an `Offer`.
+    pub fn from_sdp_string(input: &str) -> Result<Self, SdpError> {
+        let sdp = Sdp::parse(input)?;
+        Ok(Offer(sdp))
+    }
+
+    /// Turns this offer into an SDP string, without any JSON wrapping.
+    pub fn to_sdp_string(&self) -> String {
+        self.0.to_string()
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 /// SDP answer. Answers can be serialized via serde.
 pub struct Answer(Sdp);
+
+impl Answer {
+    /// Takes the SDP string without any JSON wrapping and makes an `Answer`.
+    pub fn from_sdp_string(input: &str) -> Result<Self, SdpError> {
+        let sdp = Sdp::parse(input)?;
+        Ok(Answer(sdp))
+    }
+
+    /// Turns this answer into an SDP string, without any JSON wrapping.
+    pub fn to_sdp_string(&self) -> String {
+        self.0.to_string()
+    }
+}
 
 impl Deref for Offer {
     type Target = Sdp;
@@ -56,27 +82,9 @@ impl From<Sdp> for Offer {
     }
 }
 
-impl TryFrom<&str> for Offer {
-    type Error = SdpError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let sdp: Sdp = Sdp::parse(value)?;
-        Ok(Offer(sdp))
-    }
-}
-
 impl From<Sdp> for Answer {
     fn from(v: Sdp) -> Self {
         Answer(v)
-    }
-}
-
-impl TryFrom<&str> for Answer {
-    type Error = SdpError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        let sdp: Sdp = Sdp::parse(value)?;
-        Ok(Answer(sdp))
     }
 }
 
