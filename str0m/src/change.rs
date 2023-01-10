@@ -124,7 +124,7 @@ impl<'a> ChangeSet<'a> {
 
         // TODO: let user configure stream/track name.
         let msid = Msid {
-            stream_id: Id::<30>::random().to_string(),
+            stream_id: cname.clone(),
             track_id: Id::<30>::random().to_string(),
         };
 
