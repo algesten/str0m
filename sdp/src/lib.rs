@@ -56,9 +56,27 @@ impl From<Sdp> for Offer {
     }
 }
 
+impl TryFrom<&str> for Offer {
+    type Error = SdpError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let sdp: Sdp = Sdp::parse(value)?;
+        Ok(Offer(sdp))
+    }
+}
+
 impl From<Sdp> for Answer {
     fn from(v: Sdp) -> Self {
         Answer(v)
+    }
+}
+
+impl TryFrom<&str> for Answer {
+    type Error = SdpError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        let sdp: Sdp = Sdp::parse(value)?;
+        Ok(Answer(sdp))
     }
 }
 
