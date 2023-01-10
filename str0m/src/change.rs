@@ -88,13 +88,21 @@ impl<'a> ChangeSet<'a> {
         let mid = self.rtc.new_mid();
 
         let cname = if let Some(cname) = cname {
+            fn is_token_char(c: &char) -> bool {
+                // token-char = %x21 / %x23-27 / %x2A-2B / %x2D-2E / %x30-39
+                // / %x41-5A / %x5E-7E
+                let u = *c as u32;
+                u == 0x21
+                    || u >= 0x23 && u <= 0x27
+                    || u >= 0x2a && u <= 0x2b
+                    || u >= 0x2d && u <= 0x2e
+                    || u >= 0x30 && u <= 0x39
+                    || u >= 0x41 && u <= 0x5a
+                    || u >= 0x5e && u < 0x7e
+            }
             // https://www.rfc-editor.org/rfc/rfc8830
             // msid-id = 1*64token-char
-            cname
-                .chars()
-                .filter(|c| c.is_ascii_alphanumeric())
-                .take(64)
-                .collect()
+            cname.chars().filter(is_token_char).take(64).collect()
         } else {
             Id::<20>::random().to_string()
         };
