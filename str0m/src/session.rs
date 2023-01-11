@@ -554,7 +554,7 @@ impl Session {
             return None;
         }
 
-        const ENCRYPTABLE_MTU: usize = DATAGRAM_MTU - SRTCP_OVERHEAD;
+        const ENCRYPTABLE_MTU: usize = DATAGRAM_MTU - SRTCP_OVERHEAD - 14;
         assert!(ENCRYPTABLE_MTU % 4 == 0);
 
         let mut data = vec![0_u8; ENCRYPTABLE_MTU];

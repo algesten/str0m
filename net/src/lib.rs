@@ -23,7 +23,7 @@ mod id;
 // a "util" crate or similar.
 pub use id::Id;
 
-pub const DATAGRAM_MTU: usize = 1500;
+pub const DATAGRAM_MTU: usize = 1150;
 
 /// Errors from parsing network data.
 #[derive(Debug, Error)]
