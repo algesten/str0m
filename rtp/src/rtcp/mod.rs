@@ -143,7 +143,11 @@ impl Rtcp {
             let fb = feedback.pop_front().unwrap();
             let written = fb.write_to(&mut buf[offset..]);
 
-            assert_eq!(written, item_len, "length_words equals write_to length");
+            assert_eq!(
+                written, item_len,
+                "length_words equals write_to length: {:?}",
+                fb
+            );
 
             // Move offsets for the amount written.
             offset += item_len;
