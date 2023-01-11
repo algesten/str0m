@@ -463,7 +463,7 @@ mod test {
                 0x11, // feedback count
                 0x20, 0x03, // run of 3
                 0x7c, 0x93, 0x84, // three small delta
-                0x00, 0x00, 0x00 // padding
+                0x00, 0x00, 0x03 // padding
             ]
         );
     }

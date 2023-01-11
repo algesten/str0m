@@ -179,6 +179,8 @@ impl RtcpPacket for Twcc {
             for i in 0..pad {
                 buf[total + i] = 0;
             }
+            buf[total + pad - 1] = pad as u8;
+
             total += pad;
             // Toggle padding bit
             buf[0] |= 0b00_1_00000;
