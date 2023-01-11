@@ -158,9 +158,10 @@ impl Session {
                 .get_media(add_media.mid)
                 .expect("Media to be added for pending mid");
 
-            // the cname has already been communicated in the offer, we need to kep it the same
-            // once the m-line is created.
+            // the cname/msid has already been communicated in the offer, we need to kep
+            // it the same once the m-line is created.
             media.set_cname(add_media.cname);
+            media.set_msid(add_media.msid);
 
             for (ssrc, repairs) in add_media.ssrcs {
                 let tx = media.get_or_create_source_tx(ssrc);

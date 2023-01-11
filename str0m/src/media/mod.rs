@@ -279,6 +279,10 @@ impl Media {
         &self.msid
     }
 
+    pub(crate) fn set_msid(&mut self, msid: Msid) {
+        self.msid = msid;
+    }
+
     pub(crate) fn kind(&self) -> MediaKind {
         self.kind
     }
@@ -1145,6 +1149,9 @@ impl Media {
         Media {
             mid: l.mid(),
             index,
+            // These two are not reflected back, and thus added by add_pending_changes().
+            // cname,
+            // msid,
             kind: l.typ.clone().into(),
             exts,
             dir: l.direction().invert(), // remove direction is reverse.
