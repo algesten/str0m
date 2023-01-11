@@ -28,9 +28,8 @@ impl RtcpPacket for Fir {
     fn length_words(&self) -> usize {
         // header
         // sender SSRC
-        // media SSRC (ignored)
         // reports * FirEntry: SSRC + seqNo
-        1 + 2 + self.reports.len() * 2
+        1 + 1 + self.reports.len() * 2
     }
 
     fn write_to(&self, buf: &mut [u8]) -> usize {
@@ -45,7 +44,7 @@ impl RtcpPacket for Fir {
             buf = &mut buf[8..];
         }
 
-        self.reports.len() * 4
+        4 + 4 + self.reports.len() * 8
     }
 }
 
