@@ -560,6 +560,11 @@ impl Session {
         let mut data = vec![0_u8; ENCRYPTABLE_MTU];
 
         let len = Rtcp::write_packet(&mut self.feedback, &mut data);
+
+        if len == 0 {
+            return None;
+        }
+
         data.truncate(len);
 
         let srtp = self.srtp_tx.as_mut()?;
@@ -633,7 +638,8 @@ impl Session {
     }
 
     fn twcc_at(&self) -> Option<Instant> {
-        if self.enable_twcc_feedback && self.twcc_rx_register.has_unreported() {
+        let is_receiving = only_media(&self.media).any(|m| m.direction().is_receiving());
+        if is_receiving && self.enable_twcc_feedback && self.twcc_rx_register.has_unreported() {
             Some(self.last_twcc + TWCC_INTERVAL)
         } else {
             None

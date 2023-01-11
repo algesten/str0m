@@ -764,21 +764,25 @@ impl Media {
         // Since we're making new sender/receiver reports, clear out previous.
         feedback.retain(|r| !matches!(r, Rtcp::SenderReport(_) | Rtcp::ReceiverReport(_)));
 
-        for s in &mut self.sources_tx {
-            let sr = s.create_sender_report(now);
-            let ds = s.create_sdes(&self.cname);
+        if self.dir.is_sending() {
+            for s in &mut self.sources_tx {
+                let sr = s.create_sender_report(now);
+                let ds = s.create_sdes(&self.cname);
 
-            debug!("Created feedback SR: {:?}", sr);
-            feedback.push_back(Rtcp::SenderReport(sr));
-            feedback.push_back(Rtcp::SourceDescription(ds));
+                debug!("Created feedback SR: {:?}", sr);
+                feedback.push_back(Rtcp::SenderReport(sr));
+                feedback.push_back(Rtcp::SourceDescription(ds));
+            }
         }
 
-        for s in &mut self.sources_rx {
-            let mut rr = s.create_receiver_report(now);
-            rr.sender_ssrc = sender_ssrc;
+        if self.dir.is_receiving() {
+            for s in &mut self.sources_rx {
+                let mut rr = s.create_receiver_report(now);
+                rr.sender_ssrc = sender_ssrc;
 
-            debug!("Created feedback RR: {:?}", rr);
-            feedback.push_back(Rtcp::ReceiverReport(rr));
+                debug!("Created feedback RR: {:?}", rr);
+                feedback.push_back(Rtcp::ReceiverReport(rr));
+            }
         }
 
         // Update timestamp to move time when next is created.
