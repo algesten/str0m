@@ -62,7 +62,7 @@ impl<'a> ChangeSet<'a> {
     /// let mut changes = rtc.create_change_set();
     /// assert!(!changes.has_changes());
     ///
-    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv);
+    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None);
     /// assert!(changes.has_changes());
     /// ```
     pub fn has_changes(&self) -> bool {
@@ -82,7 +82,7 @@ impl<'a> ChangeSet<'a> {
     ///
     /// let mut changes = rtc.create_change_set();
     ///
-    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv);
+    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None);
     /// ```
     pub fn add_media(&mut self, kind: MediaKind, dir: Direction, cname: Option<String>) -> Mid {
         let mid = self.rtc.new_mid();

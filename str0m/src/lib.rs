@@ -418,8 +418,8 @@ impl Rtc {
     /// let mut rtc = Rtc::new();
     ///
     /// let mut changes = rtc.create_change_set();
-    /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly);
-    /// let mid_video = changes.add_media(MediaKind::Video, Direction::SendOnly);
+    /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None);
+    /// let mid_video = changes.add_media(MediaKind::Video, Direction::SendOnly, None);
     ///
     /// let offer = changes.apply().unwrap();
     /// let json = serde_json::to_vec(&offer).unwrap();
@@ -555,7 +555,7 @@ impl Rtc {
     /// let mut rtc = Rtc::new();
     ///
     /// let mut changes = rtc.create_change_set();
-    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly);
+    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None);
     /// let offer = changes.apply().unwrap();
     ///
     /// // send offer to remote peer, receive answer back
