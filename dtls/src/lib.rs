@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate tracing;
 
-use net::{DatagramRecv, DatagramSend, Receive, DATAGRAM_MTU};
+use net::{DatagramRecv, DatagramSend, Receive};
 use openssl::error::ErrorStack;
 use openssl::ssl::SslContext;
 use std::collections::VecDeque;
@@ -164,7 +164,7 @@ impl Dtls {
             return Ok(());
         }
 
-        let mut buf = vec![0; DATAGRAM_MTU];
+        let mut buf = vec![0; 2000];
         let n = match self.tls.read(&mut buf) {
             Ok(v) => v,
             Err(e) if e.kind() == ErrorKind::WouldBlock => {
