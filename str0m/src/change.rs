@@ -93,12 +93,12 @@ impl<'a> ChangeSet<'a> {
                 // / %x41-5A / %x5E-7E
                 let u = *c as u32;
                 u == 0x21
-                    || u >= 0x23 && u <= 0x27
-                    || u >= 0x2a && u <= 0x2b
-                    || u >= 0x2d && u <= 0x2e
-                    || u >= 0x30 && u <= 0x39
-                    || u >= 0x41 && u <= 0x5a
-                    || u >= 0x5e && u < 0x7e
+                    || (0x23..=0x27).contains(&u)
+                    || (0x2a..=0x2b).contains(&u)
+                    || (0x2d..=0x2e).contains(&u)
+                    || (0x30..=0x39).contains(&u)
+                    || (0x41..=0x5a).contains(&u)
+                    || (0x5e..0x7e).contains(&u)
             }
             // https://www.rfc-editor.org/rfc/rfc8830
             // msid-id = 1*64token-char

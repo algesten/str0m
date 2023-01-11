@@ -582,7 +582,7 @@ impl Session {
             let twcc_seq = self.twcc;
             if let Some((header, seq_no)) = m.poll_packet(now, &self.exts, &mut self.twcc, buf) {
                 self.twcc_tx_register.register_seq(twcc_seq.into(), now);
-                let protected = srtp_tx.protect_rtp(&buf, &header, *seq_no);
+                let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
                 return Some(protected.into());
             }
         }

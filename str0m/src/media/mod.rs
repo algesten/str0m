@@ -598,13 +598,13 @@ impl Media {
         let seq_no = source.next_seq_no(now);
         pkt.seq_no = Some(seq_no);
 
-        return Some(NextPacket {
+        Some(NextPacket {
             pt,
             pkt,
             ssrc: pkt.ssrc,
             seq_no,
             orig_seq_no: None,
-        });
+        })
     }
     pub(crate) fn get_or_create_source_rx(&mut self, ssrc: Ssrc) -> &mut ReceiverSource {
         let maybe_idx = self.sources_rx.iter().position(|r| r.ssrc() == ssrc);

@@ -680,7 +680,7 @@ mod test {
 
             if let Some(expected) = err {
                 let mut payload = Vec::new();
-                if let Err(actual) = p.depacketize(&b, &mut payload) {
+                if let Err(actual) = p.depacketize(b, &mut payload) {
                     assert_eq!(
                         expected, actual,
                         "{}: expected {}, but got {}",
@@ -691,7 +691,7 @@ mod test {
                 }
             } else {
                 let mut payload = Vec::new();
-                p.depacketize(&b, &mut payload)?;
+                p.depacketize(b, &mut payload)?;
                 assert_eq!(pkt, p, "{}: expected {:?}, but got {:?}", name, pkt, p);
                 assert_eq!(payload, expected);
             }

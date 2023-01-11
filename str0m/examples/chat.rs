@@ -247,10 +247,10 @@ fn read_socket_input<'a>(socket: &UdpSocket, buf: &'a mut Vec<u8>) -> Option<Inp
 
         Err(e) => match e.kind() {
             // Expected error for set_read_timeout(). One for windows, one for the rest.
-            ErrorKind::WouldBlock | ErrorKind::TimedOut => return None,
+            ErrorKind::WouldBlock | ErrorKind::TimedOut => None,
             _ => panic!("UdpSocket read failed: {:?}", e),
         },
-    };
+    }
 }
 
 #[derive(Debug)]
