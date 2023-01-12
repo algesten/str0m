@@ -23,7 +23,11 @@ mod id;
 // a "util" crate or similar.
 pub use id::Id;
 
+/// Targeted MTU
 pub const DATAGRAM_MTU: usize = 1150;
+
+/// Warn if any packet we are about to send is above this size.
+pub const DATAGRAM_MTU_WARN: usize = 1200;
 
 /// Errors from parsing network data.
 #[derive(Debug, Error)]

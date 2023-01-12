@@ -4,11 +4,11 @@ use std::time::{Duration, Instant};
 
 use rand::random;
 
-use net::Id;
 use net::StunMessage;
 use net::TransId;
 use net::STUN_TIMEOUT;
 use net::{DatagramRecv, Receive, Transmit, DATAGRAM_MTU};
+use net::{Id, DATAGRAM_MTU_WARN};
 
 use crate::pair::{CheckState, PairId};
 
@@ -853,7 +853,10 @@ impl IceAgent {
     /// Poll for the next datagram to send.
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
         let x = self.transmit.pop_front();
-        if x.is_some() {
+        if let Some(x) = &x {
+            if x.contents.len() > DATAGRAM_MTU_WARN {
+                warn!("ICE above MTU {}: {}", DATAGRAM_MTU_WARN, x.contents.len());
+            }
             trace!("Poll transmit: {:?}", x);
         }
         x

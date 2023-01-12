@@ -6,7 +6,7 @@ use std::sync::Arc;
 /// MTU for inbound packet (from DTLS)
 pub(crate) const RECEIVE_MTU: usize = 8192;
 /// initial MTU for outgoing packets (to DTLS)
-pub(crate) const INITIAL_MTU: u32 = 1150;
+pub(crate) const INITIAL_MTU: u32 = 1100;
 pub(crate) const INITIAL_RECV_BUF_SIZE: u32 = 1024 * 1024;
 pub(crate) const COMMON_HEADER_SIZE: u32 = 12;
 pub(crate) const DATA_CHUNK_HEADER_SIZE: u32 = 16;

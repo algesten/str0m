@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate tracing;
 
-use net::{DatagramRecv, DatagramSend, Receive};
+use net::{DatagramRecv, DatagramSend, Receive, DATAGRAM_MTU_WARN};
 use openssl::error::ErrorStack;
 use openssl::ssl::SslContext;
 use std::collections::VecDeque;
@@ -128,6 +128,9 @@ impl Dtls {
     pub fn poll_datagram(&mut self) -> Option<DatagramSend> {
         let x = self.tls.inner_mut().pop_outgoing();
         if let Some(x) = &x {
+            if x.len() > DATAGRAM_MTU_WARN {
+                warn!("DTLS above MTU {}: {}", DATAGRAM_MTU_WARN, x.len());
+            }
             trace!("Poll datagram: {}", x.len());
         }
         x

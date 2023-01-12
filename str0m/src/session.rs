@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
-use net_::{DatagramSend, DATAGRAM_MTU};
+use net_::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use packet::RtpMeta;
 use rtp::SRTCP_OVERHEAD;
 use rtp::{extend_seq, Direction, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
@@ -536,17 +536,17 @@ impl Session {
             return None;
         }
 
-        let feedback = self.poll_feedback();
-        if feedback.is_some() {
-            return feedback;
+        let x = None
+            .or_else(|| self.poll_feedback())
+            .or_else(|| self.poll_packet(now));
+
+        if let Some(x) = &x {
+            if x.len() > DATAGRAM_MTU_WARN {
+                warn!("RTP above MTU {}: {}", DATAGRAM_MTU_WARN, x.len());
+            }
         }
 
-        let packet = self.poll_packet(now);
-        if packet.is_some() {
-            return packet;
-        }
-
-        None
+        x
     }
 
     fn poll_feedback(&mut self) -> Option<net::DatagramSend> {

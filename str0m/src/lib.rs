@@ -773,21 +773,21 @@ impl Rtc {
             }
         }
 
-        'outer: while let Some(e) = self.sctp.poll() {
+        while let Some(e) = self.sctp.poll() {
             match e {
                 SctpEvent::Transmit(mut q) => {
-                    while let Some(v) = q.front() {
+                    if let Some(v) = q.front() {
                         if let Err(e) = self.dtls.handle_input(v) {
                             if e.is_would_block() {
                                 self.sctp.push_back_transmit(q);
-                                break 'outer;
+                                break;
                             } else {
                                 return Err(e.into());
                             }
                         }
                         q.pop_front();
+                        break;
                     }
-                    continue;
                 }
                 SctpEvent::Open(id, dcep) => {
                     return Ok(Output::Event(Event::ChannelOpen(id.into(), dcep.label)));
