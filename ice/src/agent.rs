@@ -809,7 +809,7 @@ impl IceAgent {
         // prune failed candidates.
         let mut any_pruned = false;
         self.candidate_pairs.retain(|p| {
-            let keep = p.is_still_possible(now);
+            let keep = p.is_still_possible(now, self.ice_lite);
             if !keep {
                 debug!("Remove failed pair: {:?}", p);
                 any_pruned = true;
@@ -827,7 +827,7 @@ impl IceAgent {
         }
 
         if self.ice_lite {
-            trace!("Stop timeout sice ice-lite do no checks");
+            trace!("Stop timeout since ice-lite do no checks");
             return;
         }
 
@@ -1117,7 +1117,7 @@ impl IceAgent {
         let remote = pair.remote_candidate(&self.remote_candidates);
         let remote_addr = remote.addr();
 
-        pair.increase_remote_binding_requests();
+        pair.increase_remote_binding_requests(req.now);
 
         if !self.controlling && !pair.is_nominated() && req.use_candidate {
             // We need to answer a nomination request with a binding request
@@ -1380,7 +1380,7 @@ impl IceAgent {
         for p in &self.candidate_pairs {
             if p.is_nominated() {
                 any_nomination = true;
-            } else if p.is_still_possible(now) {
+            } else if p.is_still_possible(now, self.ice_lite) {
                 any_still_possible = true;
             }
         }

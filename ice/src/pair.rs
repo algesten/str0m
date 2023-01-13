@@ -7,6 +7,8 @@ use net::{Id, TransId, STUN_MAX_RTO_MILLIS};
 
 use net::{stun_resend_delay, STUN_MAX_RETRANS};
 
+const MIN_TIMEOUT: Duration = Duration::from_millis(STUN_MAX_RTO_MILLIS);
+
 #[derive(Default)]
 /// A pair of candidates, local and remote, in the ice agent.
 pub struct CandidatePair {
@@ -40,6 +42,9 @@ pub struct CandidatePair {
 
     /// Number of remote binding requests we seen for this pair.
     remote_binding_requests: u64,
+
+    /// Last remote binding request.
+    remote_binding_request_time: Option<Instant>,
 
     /// State of nomination for this candidate pair.
     nomination_state: NominationState,
@@ -164,8 +169,9 @@ impl CandidatePair {
         self.state
     }
 
-    pub fn increase_remote_binding_requests(&mut self) {
+    pub fn increase_remote_binding_requests(&mut self, now: Instant) {
         self.remote_binding_requests += 1;
+        self.remote_binding_request_time = Some(now);
         trace!("Remote binding requests: {}", self.remote_binding_requests);
     }
 
@@ -316,16 +322,28 @@ impl CandidatePair {
             now
         };
 
-        // keep this cached since the calculation can happen very often.
-        self.cached_next_attempt_time = Some(next);
+        // At least do a check at this time.
+        let min = now + MIN_TIMEOUT;
 
-        next
+        let at_least = next.min(min);
+
+        // keep this cached since the calculation can happen very often.
+        self.cached_next_attempt_time = Some(at_least);
+
+        at_least
     }
 
     /// Tells if this candidate pair is still possible to use for connectivity.
     ///
     /// Returns `false` if the candidate has failed.
-    pub fn is_still_possible(&self, now: Instant) -> bool {
+    pub fn is_still_possible(&self, now: Instant, no_attempts: bool) -> bool {
+        if no_attempts {
+            // Only check if we get timeout of the entry (ice-lite).
+            if let Some(t) = self.remote_binding_request_time {
+                return now - t < MIN_TIMEOUT;
+            }
+        }
+
         let attempts = self.binding_attempts.len();
         let unanswered = self.unanswered().map(|b| b.0).unwrap_or(0);
 
@@ -377,7 +395,7 @@ impl fmt::Debug for CandidatePair {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "CandidatePair({}-{} prio={} state={:?} attempts={} unanswered={} remote={} nom={:?})",
+            "CandidatePair({}-{} prio={} state={:?} attempts={} unanswered={} remote={} last={:?} nom={:?})",
             self.local_idx,
             self.remote_idx,
             self.prio,
@@ -385,6 +403,7 @@ impl fmt::Debug for CandidatePair {
             self.binding_attempts.len(),
             self.unanswered().map(|b| b.0).unwrap_or(0),
             self.remote_binding_requests,
+            self.remote_binding_request_time,
             self.nomination_state
         )
     }
