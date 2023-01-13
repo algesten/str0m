@@ -235,6 +235,10 @@ impl Session {
             if m.typ.is_media() {
                 let mut exts = *self.exts();
                 exts.keep_same(&self.exts);
+
+                // Update the PTs to match that of the remote.
+                self.codec_config.update_pts(m);
+
                 let media = Media::from_remote_media_line(m, idx, exts);
                 self.media.push(MediaOrApp::Media(media));
 
