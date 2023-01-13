@@ -7,8 +7,8 @@ edition = "2021"
 tracing = "0.1"
 thiserror = "1"
 rand = "0.8"
-
+#
 net = { path = "../net" }
 
 [dev-dependencies]
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "std"] }

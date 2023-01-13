@@ -3,13 +3,10 @@ name = "net"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 tracing = "0.1"
 thiserror = "1"
 rand = "0.8"
-
 # STUN
 hmac = "0.12"
 sha-1 = "0.10"

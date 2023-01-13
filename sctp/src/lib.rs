@@ -205,7 +205,7 @@ impl RtcSctp {
             PayloadProtocolIdentifier::String
         };
 
-        Ok(stream.write(buf, ppi)?)
+        Ok(stream.write_with_ppi(buf, ppi)?)
     }
 
     pub fn handle_input(&mut self, now: Instant, data: &[u8]) {
@@ -386,7 +386,7 @@ impl RtcSctp {
                 buf.truncate(n);
 
                 let l = stream
-                    .write(&buf, PayloadProtocolIdentifier::Dcep)
+                    .write_with_ppi(&buf, PayloadProtocolIdentifier::Dcep)
                     .expect("writing dcep open");
                 assert!(n == l);
 
@@ -430,7 +430,7 @@ impl RtcSctp {
                             let mut obuf = [0];
                             DcepAck.marshal_to(&mut obuf);
                             let l = stream
-                                .write(&obuf, PayloadProtocolIdentifier::Dcep)
+                                .write_with_ppi(&obuf, PayloadProtocolIdentifier::Dcep)
                                 .expect("writing dcep open");
                             assert!(obuf.len() == l);
 
