@@ -1111,6 +1111,7 @@ impl FormatParam {
                 if let Ok(v) = v.parse() {
                     MinPTime(v)
                 } else {
+                    trace!("Failed to parse: {}", k);
                     Unknown
                 }
             }
@@ -1120,13 +1121,15 @@ impl FormatParam {
                 if let Ok(v) = v.parse() {
                     PacketizationMode(v)
                 } else {
+                    trace!("Failed to parse: {}", k);
                     Unknown
                 }
             }
             "profile-level-id" => {
-                if let Ok(v) = v.parse() {
+                if let Ok(v) = u32::from_str_radix(v, 16).or_else(|_| v.parse()) {
                     ProfileLevelId(v)
                 } else {
+                    trace!("Failed to parse: {}", k);
                     Unknown
                 }
             }
@@ -1134,6 +1137,7 @@ impl FormatParam {
                 if let Ok(v) = v.parse() {
                     ProfileId(v)
                 } else {
+                    trace!("Failed to parse: {}", k);
                     Unknown
                 }
             }
@@ -1141,6 +1145,7 @@ impl FormatParam {
                 if let Ok(v) = v.parse::<u8>() {
                     Apt(v.into())
                 } else {
+                    trace!("Failed to parse: {}", k);
                     Unknown
                 }
             }
