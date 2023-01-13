@@ -332,8 +332,11 @@ impl Media {
     /// This call performs matching and if a match is found, returns the _local_ PT
     /// that can be used for sending media.
     pub fn match_params(&self, params: PayloadParams) -> Option<Pt> {
-        let c = self.params.iter().max_by_key(|p| p.match_score(params))?;
-        c.match_score(params)?; // avoid None, which isn't a match.
+        let c = self
+            .params
+            .iter()
+            .max_by_key(|p| p.match_score(params.inner()))?;
+        c.match_score(params.inner())?; // avoid None, which isn't a match.
         Some(c.pt())
     }
 
@@ -1158,7 +1161,7 @@ impl Media {
             // msid,
             kind: l.typ.clone().into(),
             exts,
-            dir: l.direction().invert(), // remove direction is reverse.
+            dir: l.direction().invert(), // remote direction is reverse.
             params: l.rtp_params().into_iter().map(PayloadParams::new).collect(),
             ..Default::default()
         }

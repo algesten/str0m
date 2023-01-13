@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use sdp::{CodecSpec, PayloadParams as SdpPayloadParams};
 
 use rtp::Pt;
@@ -19,56 +21,63 @@ use super::MediaKind;
 /// a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PayloadParams(SdpPayloadParams);
+pub struct PayloadParams {
+    inner: SdpPayloadParams,
+    pt_matched_to_remote: bool,
+}
 
 impl PayloadParams {
     pub(crate) fn new(p: SdpPayloadParams) -> Self {
-        PayloadParams(p)
+        PayloadParams {
+            inner: p,
+            pt_matched_to_remote: false,
+        }
     }
 
     /// The payload type that groups these parameters.
     pub fn pt(&self) -> Pt {
-        self.0.codec.pt
+        self.inner.codec.pt
     }
 
     /// Whether these parameters are repairing some other set of parameters.
     /// This is used to, via PT, separate RTX resend streams from the main stream.
     pub fn pt_rtx(&self) -> Option<Pt> {
-        self.0.resend
+        self.inner.resend
     }
 
     /// The codec for this group of parameters.
     pub fn codec(&self) -> Codec {
-        self.0.codec.codec
+        self.inner.codec.codec
     }
 
     /// Clock rate of the codec.
     pub fn clock_rate(&self) -> u32 {
-        self.0.codec.clock_rate
+        self.inner.codec.clock_rate
     }
 
     /// Number of audio channels (if any).
     pub fn channels(&self) -> Option<u8> {
-        self.0.codec.channels
+        self.inner.codec.channels
     }
 
     /// Codec specific format parameters. This might carry additional config for
     /// things like h264.
     pub fn fmtp(&self) -> &FormatParams {
-        &self.0.fmtps
+        &self.inner.fmtps
     }
 
     pub(crate) fn inner(&self) -> &SdpPayloadParams {
-        &self.0
+        &self.inner
     }
 
-    pub(crate) fn match_score(&self, o: Self) -> Option<usize> {
+    pub(crate) fn match_score(&self, o: &SdpPayloadParams) -> Option<usize> {
         // we don't want to compare PT
         let pt = 0.into();
-        let c0 = CodecSpec { pt, ..self.0.codec };
-        let c1 = CodecSpec { pt, ..o.0.codec };
+        let codec = self.inner.codec;
+        let c0 = CodecSpec { pt, ..codec };
+        let c1 = CodecSpec { pt, ..o.codec };
 
-        if c0 == c1 && self.0.fmtps == o.0.fmtps {
+        if c0 == c1 && self.inner.fmtps == o.fmtps {
             return Some(100);
         } else {
             // TODO: fuzzy matching.
@@ -76,6 +85,31 @@ impl PayloadParams {
 
         // No match
         None
+    }
+
+    fn update_pt(&mut self, m_line_pts: &[SdpPayloadParams]) -> Option<(Pt, Pt)> {
+        let first = m_line_pts
+            .iter()
+            .find(|p| self.match_score(p) == Some(100))?;
+
+        let remote_pt = first.codec.pt;
+
+        if self.pt_matched_to_remote {
+            // just verify it's still the same.
+            if self.pt() != remote_pt {
+                warn!("Remote PT changed {} => {}", self.pt(), remote_pt);
+            }
+
+            None
+        } else {
+            let replaced = self.inner.codec.pt;
+
+            // Lock down the PT
+            self.inner.codec.pt = remote_pt;
+            self.pt_matched_to_remote = true;
+
+            Some((remote_pt, replaced))
+        }
     }
 }
 
@@ -265,5 +299,31 @@ impl CodecConfig {
                 c.codec().is_audio()
             }
         })
+    }
+
+    pub(crate) fn update_pts(&mut self, m: &sdp::MediaLine) {
+        let pts = m.rtp_params();
+        let mut replaceds = Vec::with_capacity(pts.len());
+        let mut assigneds = HashMap::with_capacity(pts.len());
+
+        for (i, p) in self.configs.iter_mut().enumerate() {
+            if let Some((assigned, replaced)) = p.update_pt(&pts[..]) {
+                replaceds.push(replaced);
+                assigneds.insert(assigned, i);
+            }
+        }
+
+        // Need to adjust potentially clashes introduced by assigning pts from the m-lines.
+        for (i, p) in self.configs.iter_mut().enumerate() {
+            if let Some(index) = assigneds.get(&p.pt()) {
+                if i != *index {
+                    // This PT has been reassigned. This unwrap is ok
+                    // because we can't have replaced something without
+                    // also get the old PT out.
+                    let r = replaceds.pop().unwrap();
+                    p.inner.codec.pt = r;
+                }
+            }
+        }
     }
 }
