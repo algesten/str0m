@@ -101,6 +101,7 @@ struct StunRequest {
 }
 
 const REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION: &str = "tmp_prflx";
+const LOCAL_RELAYED_TEMP_FOUNDATION: &str = "local_relayed";
 
 /// States the ICE connection can be in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1054,6 +1055,25 @@ impl IceAgent {
             self.remote_candidates.len() - 1
         };
 
+        let has_local = self.local_candidates.iter().any(|v| {
+            matches!(v.kind(), CandidateKind::Host | CandidateKind::Relayed)
+                && v.addr() == req.destination
+        });
+
+        if !has_local {
+            // We have no knowledge of the incomig IP. Let's pretend it's Relayed because
+            // it might be a remoted IP not directly attached to the host.
+            let c = Candidate::local_relayed(
+                req.destination,
+                LOCAL_RELAYED_TEMP_FOUNDATION.to_string(),
+                self.local_credentials.ufrag.clone(),
+            );
+
+            info!("Created local relayed candidate from STUN request: {:?}", c);
+
+            self.local_candidates.push(c);
+        }
+
         let local_idx = self
             .local_candidates
             .iter()
@@ -1067,11 +1087,7 @@ impl IceAgent {
                 matches!(v.kind(), CandidateKind::Host | CandidateKind::Relayed)
                     && v.addr() == req.destination
             })
-            // Receiving traffic for an IP address that neither is a HOST nor RELAY is a configuration
-            // fault. We need to be aware of the interfaces that the ice agent is connected to.
-            .expect(
-                "STUN request for socket that is neither a host nor a relay candidate. This is a config error.",
-            )
+            .expect("to definitely have a local candidate")
             .0;
 
         let maybe_pair = self

@@ -168,6 +168,21 @@ impl Candidate {
         ))
     }
 
+    /// Creates a local "discovered" relayed ICE candidate.
+    pub(crate) fn local_relayed(addr: SocketAddr, found: String, ufrag: String) -> Self {
+        Candidate::new(
+            Some(found),
+            1, // only RTP
+            "udp".into(),
+            None,
+            addr,
+            Some(addr),
+            CandidateKind::Relayed,
+            None,
+            Some(ufrag),
+        )
+    }
+
     /// Creates a peer reflexive ICE candidate.
     ///
     /// Peer reflexive candidates are NAT:ed addresses discovered via STUN
