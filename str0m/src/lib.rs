@@ -285,7 +285,7 @@ impl Rtc {
             ice,
             dtls: Dtls::new().expect("DTLS to init without problem"),
             setup: Setup::ActPass,
-            session: Session::new(config.codec_config),
+            session: Session::new(config.codec_config, config.ice_lite),
             sctp: RtcSctp::new(),
             next_sctp_channel: 0, // Goes 0, 1, 2 for both DTLS server or client
             remote_fingerprint: None,
