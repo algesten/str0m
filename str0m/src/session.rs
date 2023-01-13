@@ -61,6 +61,8 @@ pub(crate) struct Session {
 
     // temporary buffer when getting the next (unencrypted) RTP packet from Media line.
     poll_packet_buf: Vec<u8>,
+
+    pub ice_lite: bool,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -94,7 +96,7 @@ pub enum MediaEvent {
 }
 
 impl Session {
-    pub fn new(codec_config: CodecConfig) -> Self {
+    pub fn new(codec_config: CodecConfig, ice_lite: bool) -> Self {
         let mut id = SessionId::new();
         // Max 2^62 - 1: https://bugzilla.mozilla.org/show_bug.cgi?id=861895
         const MAX_ID: u64 = 2_u64.pow(62) - 1;
@@ -119,6 +121,7 @@ impl Session {
             twcc_tx_register: TwccSendRegister::new(1000),
             enable_twcc_feedback: false,
             poll_packet_buf: vec![0; 2000],
+            ice_lite,
         }
     }
 

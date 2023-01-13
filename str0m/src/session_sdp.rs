@@ -86,17 +86,23 @@ impl Session {
             (lines, mids)
         };
 
+        let mut attrs = vec![
+            SessionAttribute::Group {
+                typ: "BUNDLE".into(),
+                mids,
+            },
+            // a=msid-semantic: WMS
+        ];
+
+        if self.ice_lite {
+            attrs.push(SessionAttribute::IceLite);
+        }
+
         Sdp {
             session: sdp::Session {
                 id: self.id(),
                 bw: None,
-                attrs: vec![
-                    SessionAttribute::Group {
-                        typ: "BUNDLE".into(),
-                        mids,
-                    },
-                    // a=msid-semantic: WMS
-                ],
+                attrs,
             },
             media_lines,
         }
