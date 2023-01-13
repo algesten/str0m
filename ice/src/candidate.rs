@@ -357,8 +357,10 @@ impl fmt::Display for CandidateKind {
 
 fn is_valid_ip(ip: IpAddr) -> bool {
     match ip {
-        std::net::IpAddr::V4(v) => !v.is_link_local() && !v.is_broadcast() && !v.is_multicast(),
-        std::net::IpAddr::V6(v) => !v.is_multicast(),
+        IpAddr::V4(v) => {
+            !v.is_link_local() && !v.is_broadcast() && !v.is_multicast() && !v.is_unspecified()
+        }
+        IpAddr::V6(v) => !v.is_multicast() && !v.is_unspecified(),
     }
 }
 
