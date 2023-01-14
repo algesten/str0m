@@ -14,7 +14,7 @@ mod id;
 pub use id::{ChannelId, Mid, Pt, Rid, SeqNo, SessionId, Ssrc};
 
 mod ext;
-pub use ext::{ExtMap, Extension, Extensions};
+pub use ext::{ExtMap, Extension, ExtensionValues, Extensions, VideoOrientation};
 
 mod dir;
 pub use dir::Direction;

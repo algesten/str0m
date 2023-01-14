@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 
-use rtp::{MediaTime, Rid, SeqNo, Ssrc};
+use rtp::{ExtensionValues, MediaTime, Rid, SeqNo, Ssrc};
 
 use crate::{CodecPacketizer, PacketError, Packetizer};
 
@@ -12,6 +12,7 @@ pub struct Packetized {
     pub last: bool,
     pub ssrc: Ssrc,
     pub rid: Option<Rid>,
+    pub exts: ExtensionValues,
 
     /// Set when packet is first sent. This is so we can resend.
     pub seq_no: Option<SeqNo>,
@@ -41,6 +42,7 @@ impl PacketizingBuffer {
         data: &[u8],
         ssrc: Ssrc,
         rid: Option<Rid>,
+        ext_vals: ExtensionValues,
         mtu: usize,
     ) -> Result<(), PacketError> {
         let chunks = self.pack.packetize(mtu, data)?;
@@ -59,6 +61,7 @@ impl PacketizingBuffer {
                 last,
                 ssrc,
                 rid,
+                exts: ext_vals,
                 seq_no: None,
             };
 

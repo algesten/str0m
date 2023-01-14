@@ -1,7 +1,7 @@
 #![allow(clippy::unusual_byte_groupings)]
 
 use crate::ext::{ExtensionValues, Extensions};
-use crate::{MediaTime, Pt, SeqNo, Ssrc};
+use crate::{Pt, SeqNo, Ssrc};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtpHeader {
@@ -20,21 +20,6 @@ pub struct RtpHeader {
 }
 
 impl RtpHeader {
-    pub fn new(pt: Pt, seq_no: SeqNo, ts: MediaTime, ssrc: Ssrc) -> Self {
-        RtpHeader {
-            version: 2,
-            has_padding: false,
-            has_extension: true,
-            marker: false,
-            payload_type: pt,
-            sequence_number: *seq_no as u16,
-            timestamp: ts.numer() as u32,
-            ssrc,
-            ext_vals: ExtensionValues::default(),
-            header_len: 16,
-        }
-    }
-
     pub fn write_to(&self, buf: &mut [u8], exts: &Extensions) -> usize {
         buf[0] = 0b10_0_0_0000
             | if self.has_padding { 1 << 5 } else { 0 }
@@ -260,16 +245,16 @@ pub fn extend_seq(prev_ext_seq: Option<u64>, seq: u16) -> u64 {
 impl Default for RtpHeader {
     fn default() -> Self {
         Self {
-            version: Default::default(),
-            has_padding: Default::default(),
-            has_extension: Default::default(),
-            marker: Default::default(),
+            version: 2,
+            has_padding: false,
+            has_extension: true,
+            marker: false,
             payload_type: 1.into(),
-            sequence_number: Default::default(),
-            timestamp: Default::default(),
+            sequence_number: 0,
+            timestamp: 0,
             ssrc: 0.into(),
-            ext_vals: Default::default(),
-            header_len: Default::default(),
+            ext_vals: ExtensionValues::default(),
+            header_len: 16,
         }
     }
 }

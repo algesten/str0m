@@ -954,7 +954,7 @@ impl Rtc {
     /// regardless of current direction.
     ///
     /// Apart from inspecting information about the media, there are two fundamental
-    /// operations. One is [`Media::write()`] for writing outgoing media data, the other
+    /// operations. One is [`Media::writer()`] for writing outgoing media data, the other
     /// is [`Media::request_keyframe()`] to request a PLI/FIR keyframe for incoming media data.
     ///
     /// All media rows are announced via the [`Event::MediaAdded`] event. This function
