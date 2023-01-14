@@ -852,7 +852,15 @@ impl Media {
                 }
             }
             Goodbye(v) => {
-                error!("Goodbye: {:?}", v);
+                self.sources_rx.retain(|s| {
+                    let remove = s.ssrc() == v || s.repairs() == Some(v);
+
+                    if remove {
+                        trace!("Remove SourceReceiver on Goodbye: {:?}", s.ssrc());
+                    }
+
+                    !remove
+                });
             }
             _ => {}
         }
