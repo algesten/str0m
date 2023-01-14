@@ -5,11 +5,12 @@ use std::time::{Duration, Instant};
 
 use net_::{Id, DATAGRAM_MTU};
 use packet::{DepacketizingBuffer, Packetized, PacketizingBuffer};
-use rtp::{Extensions, Fir, FirEntry, NackEntry, Pli, Rtcp, RtcpFb, RtpHeader, SdesType};
+use rtp::{Extensions, Fir, FirEntry, NackEntry, Pli, Rtcp};
+use rtp::{RtcpFb, RtpHeader, SdesType, VideoOrientation};
 use rtp::{SeqNo, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
 pub use packet::RtpMeta;
-pub use rtp::{Direction, MediaTime, Mid, Pt, Rid, Ssrc};
+pub use rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 pub use sdp::{Codec, FormatParams};
 
 use sdp::{MediaLine, MediaType, Msid, Simulcast};
@@ -72,6 +73,10 @@ pub struct MediaData {
     ///
     /// This data is a full depacketized Sample.
     pub data: Vec<u8>,
+
+    /// RTP header extensions for this media data. This is taken from the
+    /// first RTP header.
+    pub ext_vals: ExtensionValues,
 
     /// The individual packet metadata that were part of making the Sample in `data`.
     pub meta: Vec<RtpMeta>,
@@ -372,16 +377,27 @@ impl Media {
     /// // Match incoming PT to an outgoing PT.
     /// let pt = media.match_params(data.params).unwrap();
     ///
-    /// media.write(pt, None, data.time, &data.data).unwrap();
+    /// media.writer(pt).write(data.time, &data.data).unwrap();
     /// ```
     ///
     /// [1]: https://datatracker.ietf.org/doc/html/rfc8852
-    pub fn write(
+    pub fn writer(&mut self, pt: Pt) -> Writer<'_> {
+        Writer {
+            media: self,
+            pt,
+            rid: None,
+            ext_vals: ExtensionValues::default(),
+        }
+    }
+
+    /// Write to the packetizer.
+    fn write(
         &mut self,
         pt: Pt,
-        rid: Option<Rid>,
         ts: MediaTime,
         data: &[u8],
+        rid: Option<Rid>,
+        ext_vals: ExtensionValues,
     ) -> Result<usize, RtcError> {
         if !self.dir.is_sending() {
             return Err(RtcError::NotSendingDirection(self.dir));
@@ -405,7 +421,8 @@ impl Media {
         });
 
         trace!("Write to packetizer time: {:?} bytes: {}", ts, data.len());
-        if let Err(e) = buf.push_sample(ts, data, ssrc, rid, DATAGRAM_MTU - SRTP_OVERHEAD) {
+        const MTU: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
+        if let Err(e) = buf.push_sample(ts, data, ssrc, rid, ext_vals, MTU) {
             return Err(RtcError::Packet(self.mid, pt, e));
         };
 
@@ -504,7 +521,15 @@ impl Media {
             return None;
         };
 
-        let mut header = RtpHeader::new(next.pt, next.seq_no, next.pkt.ts, next.ssrc);
+        let mut header = RtpHeader {
+            payload_type: next.pt,
+            sequence_number: *next.seq_no as u16,
+            timestamp: next.pkt.ts.numer() as u32,
+            ssrc: next.ssrc,
+            ext_vals: next.pkt.exts,
+            ..Default::default()
+        };
+        // ::new(next.pt, next.seq_no, next.pkt.ts, next.ssrc);
         header.marker = next.pkt.last;
 
         // We can fill out as many values we want here, only the negotiated ones will
@@ -1043,6 +1068,7 @@ impl Media {
                         params: codec,
                         time: dep.time,
                         data: dep.data,
+                        ext_vals: dep.meta[0].header.ext_vals,
                         meta: dep.meta,
                     })
                     .map_err(|e| RtcError::Packet(self.mid, *pt, e)),
@@ -1223,4 +1249,71 @@ fn get_source_tx(
     sources_tx
         .iter_mut()
         .find(|s| rid == s.rid() && is_rtx == s.repairs().is_some())
+}
+
+/// Helper obtained by [`Media::writer()`] to send media.
+///
+/// This type follows a builder pattern to allow for additional data to be sent as
+/// RTP extension headers.
+///
+/// ```no_run
+/// # use str0m::{Rtc};
+/// # use str0m::media::{PayloadParams, MediaData, Mid};
+/// let mut rtc = Rtc::new();
+///
+/// // add candidates, do SDP negotation
+/// let mid: Mid = todo!(); // obtain mid from Event::MediaAdded.
+///
+/// let media = rtc.media(mid).unwrap();
+///
+/// // Get incoming media data from another peer
+/// let data: MediaData = todo!();
+/// let video_orientation = data.ext_vals.video_orientation.unwrap();
+///
+/// // Match incoming PT to an outgoing PT.
+/// let pt = media.match_params(data.params).unwrap();
+///
+/// // Send data with video orientation added.
+/// media.writer(pt)
+///     .video_orientation(video_orientation)
+///     .write(data.time, &data.data).unwrap();
+/// ```
+pub struct Writer<'a> {
+    media: &'a mut Media,
+    pt: Pt,
+    rid: Option<Rid>,
+    ext_vals: ExtensionValues,
+}
+
+impl<'a> Writer<'a> {
+    /// Add on an Rtp Stream Id. This is typically used to separate simulcast layers.
+    pub fn rid(mut self, rid: Rid) -> Self {
+        self.rid = Some(rid);
+        self
+    }
+
+    /// Add on audio level and voice activity. These values are communicated in the same
+    /// RTP header extension, hence it makes sense setting both at the same time.
+    ///
+    /// Audio level is measured in negative decibel. 0 is max and a "normal" value might be -30.
+    pub fn audio_level(mut self, audio_level: i8, voice_activity: bool) -> Self {
+        self.ext_vals.audio_level = Some(audio_level);
+        self.ext_vals.voice_activity = Some(voice_activity);
+        self
+    }
+
+    /// Add video orientation. This can be used by a player on the receiver end to decide
+    /// whether the video requires to be rotated to show correctly.
+    pub fn video_orientation(mut self, o: VideoOrientation) -> Self {
+        self.ext_vals.video_orientation = Some(o);
+        self
+    }
+
+    /// Do the actual write of media. This consumed the builder.
+    ///
+    /// Notice that incorrect [`Pt`] values would surface as an error here, not when
+    /// doing [`Media::writer()`].
+    pub fn write(self, ts: MediaTime, data: &[u8]) -> Result<usize, RtcError> {
+        self.media.write(self.pt, ts, data, self.rid, self.ext_vals)
+    }
 }

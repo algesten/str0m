@@ -357,8 +357,8 @@ impl Extension {
                 Some(4)
             }
             VideoOrientation => {
-                let v = ev.video_orient?;
-                buf[0] = v & 3;
+                let v = ev.video_orientation?;
+                buf[0] = v as u8;
                 Some(1)
             }
             TransportSequenceNumber => {
@@ -377,7 +377,7 @@ impl Extension {
                 Some(3)
             }
             VideoContentType => {
-                let v = ev.video_c_type?;
+                let v = ev.video_content_type?;
                 buf[0] = v;
                 Some(1)
             }
@@ -447,7 +447,7 @@ impl Extension {
             }
             // 1
             VideoOrientation => {
-                v.video_orient = Some(buf[0] & 3);
+                v.video_orientation = Some(crate::ext::VideoOrientation::from(buf[0] & 3));
             }
             // 2
             TransportSequenceNumber => {
@@ -462,7 +462,7 @@ impl Extension {
             }
             // 1
             VideoContentType => {
-                v.video_c_type = Some(buf[0]);
+                v.video_content_type = Some(buf[0]);
             }
             // 13
             VideoTiming => {
@@ -503,22 +503,45 @@ impl Extension {
     }
 }
 
-#[derive(Clone, Default, PartialEq, Eq)]
+/// Values in an RTP header extension.
+///
+/// This is metadata that is available also without decrypting the SRTP packets.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExtensionValues {
-    pub abs_send_time: Option<MediaTime>,
-    pub voice_activity: Option<bool>,
+    /// Audio level is measured in negative decibel. 0 is max and a "normal" value might be -30.
     pub audio_level: Option<i8>,
+
+    /// Indication that there is sound from a voice.
+    pub voice_activity: Option<bool>,
+
+    /// Tell a receiver what rotation a video need to replay correctly.
+    pub video_orientation: Option<VideoOrientation>,
+
+    // The values below are considered internal until we have a reason to expose them.
+    // Generally we want to avoid expose experimental features unless there are strong
+    // reasons to do so.
+    #[doc(hidden)]
+    pub video_content_type: Option<u8>, // 0 = unspecified, 1 = screenshare
+    #[doc(hidden)]
     pub tx_time_offs: Option<u32>,
-    pub video_orient: Option<u8>,  // TODO map out values buf[0] & 3;
+    #[doc(hidden)]
+    pub abs_send_time: Option<MediaTime>,
+    #[doc(hidden)]
     pub transport_cc: Option<u16>, // (buf[0] << 8) | buf[1];
+    #[doc(hidden)]
     // https://webrtc.googlesource.com/src/+/refs/heads/master/docs/native-code/rtp-hdrext/playout-delay
     pub play_delay_min: Option<MediaTime>,
+    #[doc(hidden)]
     pub play_delay_max: Option<MediaTime>,
-    pub video_c_type: Option<u8>, // 0 = unspecified, 1 = screenshare
+    #[doc(hidden)]
     pub video_timing: Option<VideoTiming>,
+    #[doc(hidden)]
     pub rid: Option<Rid>,
+    #[doc(hidden)]
     pub rid_repair: Option<Rid>,
+    #[doc(hidden)]
     pub mid: Option<Mid>,
+    #[doc(hidden)]
     pub frame_mark: Option<u32>,
 }
 
@@ -547,8 +570,8 @@ impl fmt::Debug for ExtensionValues {
         if let Some(t) = self.tx_time_offs {
             write!(f, " tx_time_offs: {}", t)?;
         }
-        if let Some(t) = self.video_orient {
-            write!(f, " video_orient: {}", t)?;
+        if let Some(t) = self.video_orientation {
+            write!(f, " video_orientation: {:?}", t)?;
         }
         if let Some(t) = self.transport_cc {
             write!(f, " transport_cc: {}", t)?;
@@ -559,8 +582,8 @@ impl fmt::Debug for ExtensionValues {
         if let Some(t) = self.play_delay_max {
             write!(f, " play_delay_max: {}", t.as_seconds())?;
         }
-        if let Some(t) = self.video_c_type {
-            write!(f, " video_c_type: {}", t)?;
+        if let Some(t) = self.video_content_type {
+            write!(f, " video_content_type: {}", t)?;
         }
         if let Some(t) = &self.video_timing {
             write!(f, " video_timing: {:?}", t)?;
@@ -668,5 +691,24 @@ impl fmt::Debug for Extensions {
         write!(f, "{}", joined)?;
         write!(f, ")")?;
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoOrientation {
+    Deg0 = 0,
+    Deg90 = 3,
+    Deg180 = 2,
+    Deg270 = 1,
+}
+
+impl From<u8> for VideoOrientation {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => Self::Deg270,
+            2 => Self::Deg180,
+            3 => Self::Deg90,
+            _ => Self::Deg0,
+        }
     }
 }
