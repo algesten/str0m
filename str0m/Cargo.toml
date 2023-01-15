@@ -24,3 +24,5 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }
 systemstat = "0.2.2"
+scrap = "0.5"
+vpx-encode = "0.6.2"

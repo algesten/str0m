@@ -14,6 +14,8 @@ use str0m::net::Receive;
 use str0m::IceConnectionState;
 use str0m::{Candidate, Event, Input, Offer, Output, Rtc, RtcError};
 
+mod util;
+
 fn init_log() {
     use std::env;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -51,8 +53,10 @@ fn web_request(request: &Request) -> Response {
     let offer: Offer = serde_json::from_reader(&mut data).expect("serialized offer");
     let mut rtc = Rtc::new();
 
+    let addr = util::select_host_address();
+
     // Spin up a UDP socket for the RTC
-    let socket = UdpSocket::bind("127.0.0.1:0").expect("binding a random UDP port");
+    let socket = UdpSocket::bind(format!("{}:0", addr)).expect("binding a random UDP port");
     let addr = socket.local_addr().expect("a local socket adddress");
     let candidate = Candidate::host(addr).expect("a host candidate");
     rtc.add_local_candidate(candidate);

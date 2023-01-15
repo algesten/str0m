@@ -2,13 +2,13 @@
 extern crate tracing;
 
 use std::io::ErrorKind;
-use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::net::{SocketAddr, UdpSocket};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
 use std::sync::{Arc, Weak};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rouille::Server;
 use rouille::{Request, Response};
@@ -17,7 +17,8 @@ use str0m::media::MediaKind;
 use str0m::media::{Direction, KeyframeRequest, MediaData, Mid, Rid};
 use str0m::{net::Receive, Candidate, IceConnectionState, Input, Offer, Output, Rtc, RtcError};
 use str0m::{Answer, Event};
-use systemstat::{Duration, Platform, System};
+
+mod util;
 
 fn init_log() {
     use std::env;
@@ -40,7 +41,7 @@ pub fn main() {
     let private_key = include_bytes!("key.pem").to_vec();
 
     // Figure out some public IP address, since Firefox will not accept 127.0.0.1 for WebRTC traffic.
-    let host_addr = select_host_address();
+    let host_addr = util::select_host_address();
 
     let (tx, rx) = mpsc::sync_channel(1);
 
@@ -92,26 +93,6 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
     let body = serde_json::to_vec(&answer).expect("answer to serialize");
 
     Response::from_data("application/json", body)
-}
-
-fn select_host_address() -> IpAddr {
-    let system = System::new();
-    let networks = system.networks().unwrap();
-
-    for net in networks.values() {
-        for n in &net.addrs {
-            match n.addr {
-                systemstat::IpAddr::V4(v) => {
-                    if !v.is_loopback() && !v.is_link_local() && !v.is_broadcast() {
-                        return IpAddr::V4(v);
-                    }
-                }
-                _ => {} // we could use ipv6 too
-            }
-        }
-    }
-
-    panic!("Found no usable network interface");
 }
 
 /// This is the "main run loop" that handles all clients, reads and writes UdpSocket traffic,

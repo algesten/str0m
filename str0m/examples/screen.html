@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>WebRTC Post example</title>
+    <style>
+        body {
+            background: black;
+            color: white;
+        }
+    </style>
+</head>
+
+<body>
+    <video style="width: 1024px" id="video" controls autoplay muted playsinline></video>
+    <script>
+        let rtc = new RTCPeerConnection();
+        const byId = (id) => document.getElementById(id);
+
+        rtc.addTransceiver('video', {
+            direction: 'sendrecv',
+        });
+
+        rtc.ontrack = (e) => {
+            console.log('ontrack', e.track);
+            const track = e.track;
+            const media = new MediaStream();
+            media.addTrack(track);
+            const el = byId('video');
+            el.srcObject = media;
+        };
+
+        async function run() {
+            const offer = await rtc.createOffer();
+            console.log(offer.sdp.split('\r\n'));
+            rtc.setLocalDescription(offer);
+
+            const res = await fetch('', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(offer),
+            });
+
+            const answer = await res.json();
+            console.log(answer.sdp.split('\r\n'));
+
+            rtc.setRemoteDescription(answer);
+        }
+
+        run();
+    </script>
+</body>
+
+</html>
