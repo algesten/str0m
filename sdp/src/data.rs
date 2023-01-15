@@ -633,6 +633,12 @@ impl MediaLine {
                         _ => {}
                     }
                 }
+                _ => {}
+            }
+        }
+        // Match this second to ensure we preserve order of a=ssrc.
+        for a in &self.attrs {
+            match a {
                 MediaAttribute::SsrcGroup { semantics, ssrcs } => {
                     if semantics.to_lowercase() != "fid" {
                         continue;
