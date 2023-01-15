@@ -1,11 +1,12 @@
 use std::collections::vec_deque;
 use std::collections::VecDeque;
+use std::fmt;
 use std::time::{Duration, Instant};
 
 use crate::{extend_seq, FeedbackMessageType, RtcpHeader, RtcpPacket};
 use crate::{RtcpType, SeqNo, Ssrc, TransportType};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Twcc {
     pub sender_ssrc: Ssrc,
     pub ssrc: Ssrc,
@@ -1107,6 +1108,21 @@ impl TwccSendRegister {
 //
 // Same as the question above, this is a truncation to (0) for not received and (1) for
 // received, small delta.
+
+impl fmt::Debug for Twcc {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Twcc")
+            .field("sender_ssrc", &self.sender_ssrc)
+            .field("ssrc", &self.ssrc)
+            .field("base_seq", &self.base_seq)
+            .field("status_count", &self.status_count)
+            .field("reference_time", &self.reference_time)
+            .field("feedback_count", &self.feedback_count)
+            .field("chunks", &self.chunks)
+            .field("delta", &self.delta.len())
+            .finish()
+    }
+}
 
 #[cfg(test)]
 mod test {
