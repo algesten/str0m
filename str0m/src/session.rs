@@ -435,7 +435,6 @@ impl Session {
         let buf = media.get_buffer_rx(pt, rid, codec);
 
         let meta = RtpMeta::new(now, time, seq_no, header);
-        trace!("Add to buffer {:?}", meta);
         buf.push(meta, data);
     }
 
@@ -447,6 +446,7 @@ impl Session {
 
         for fb in RtcpFb::from_rtcp(feedback) {
             if let RtcpFb::Twcc(twcc) = fb {
+                debug!("Handle TWCC: {:?}", twcc);
                 self.twcc_tx_register.apply_report(twcc, now);
                 return Some(());
             }
@@ -589,6 +589,7 @@ impl Session {
         for m in only_media_mut(&mut self.media) {
             let twcc_seq = self.twcc;
             if let Some((header, seq_no)) = m.poll_packet(now, &self.exts, &mut self.twcc, buf) {
+                trace!("Poll RTP: {:?}", header);
                 self.twcc_tx_register.register_seq(twcc_seq.into(), now);
                 let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
                 return Some(protected.into());

@@ -178,7 +178,7 @@ fn encoder(tx: SyncSender<(MediaTime, Vec<u8>)>) {
         width: width as u32,
         height: height as u32,
         timebase: [1, 90_000],
-        bitrate: 5 * 1024 * 1024,
+        bitrate: 5 * 1024,
         codec: vpx_encode::VideoCodecId::VP8,
     };
 

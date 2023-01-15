@@ -703,7 +703,10 @@ impl Rtc {
         let o = self.do_poll_output()?;
 
         match &o {
-            Output::Event(e) => debug!("{:?}", e),
+            Output::Event(e) => match e {
+                Event::ChannelData(_) | Event::MediaData(_) => trace!("{:?}", e),
+                _ => debug!("{:?}", e),
+            },
             Output::Transmit(t) => trace!("OUT {:?}", t),
             Output::Timeout(_t) => {}
         }

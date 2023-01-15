@@ -838,7 +838,7 @@ impl Media {
 
     /// Appply incoming RTCP feedback.
     pub(crate) fn handle_rtcp_fb(&mut self, now: Instant, fb: RtcpFb) -> Option<()> {
-        trace!("Handle RTCP feedback: {:?}", fb);
+        debug!("Handle RTCP feedback: {:?}", fb);
 
         if fb.is_for_rx() {
             self.handle_rtcp_fb_rx(now, fb)?;
