@@ -193,6 +193,7 @@ impl Extensions {
     pub fn default_mappings() -> Extensions {
         let mut exts = Self::new();
 
+        exts.set_mapping(ExtMap::new(1, Extension::AudioLevel));
         exts.set_mapping(ExtMap::new(2, Extension::AbsoluteSendTime));
         exts.set_mapping(ExtMap::new(3, Extension::TransportSequenceNumber));
         exts.set_mapping(ExtMap::new(4, Extension::RtpMid));
