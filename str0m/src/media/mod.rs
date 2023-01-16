@@ -13,7 +13,7 @@ pub use packet::RtpMeta;
 pub use rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 pub use sdp::{Codec, FormatParams};
 
-use sdp::{MediaLine, MediaType, Msid, Simulcast};
+use sdp::{MediaLine, MediaType, Msid, Simulcast as SdpSimulcast};
 
 mod codec;
 pub use codec::{CodecConfig, PayloadParams};
@@ -35,6 +35,39 @@ use crate::RtcError;
 
 // How often we remove unused senders/receivers.
 const CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
+
+/// A new media m-line appeared in an SDP negotation.
+///
+/// This event fires both for negotations triggered by a remote or local offer.
+///
+/// Does not fire for application m-lines (data channel).
+#[derive(Debug, PartialEq, Eq)]
+pub struct MediaAdded {
+    /// Identifier of the new m-line.
+    pub mid: Mid,
+
+    /// The kind of media the m-line will carry.
+    pub kind: MediaKind,
+
+    /// Current direction of the m-line.
+    pub direction: Direction,
+
+    /// If simulcast is configured, this holds the Rids.
+    ///
+    /// `a=simulcast:send h;l`
+    pub simulcast: Option<Simulcast>,
+}
+
+/// Simplified information about the simulcast config from SDP.
+///
+/// The [full spec][1] covers many cases that are not used by simple simulcast.
+///
+/// [1]: https://datatracker.ietf.org/doc/html/draft-ietf-mmusic-sdp-simulcast-14
+#[derive(Debug, PartialEq, Eq)]
+pub struct Simulcast {
+    pub send: Vec<Rid>,
+    pub recv: Vec<Rid>,
+}
 
 /// Video or audio data from the remote peer.
 ///
@@ -234,7 +267,7 @@ pub struct Media {
     keyframe_request_tx: Option<(Ssrc, KeyframeRequestKind)>,
 
     /// Simulcast configuration, if set.
-    simulcast: Option<Simulcast>,
+    simulcast: Option<SdpSimulcast>,
 
     /// Sources are kept in "mirrored pairs", i.e. if we have a ReceiverSource
     /// with Ssrc A and Rid B, there should be an equivalent SenderSource with Ssrc C and Rid B.
@@ -1113,11 +1146,11 @@ impl Media {
         self.last_regular_feedback + rr_interval(self.kind == MediaKind::Audio)
     }
 
-    pub(crate) fn simulcast(&self) -> Option<&Simulcast> {
+    pub(crate) fn simulcast(&self) -> Option<&SdpSimulcast> {
         self.simulcast.as_ref()
     }
 
-    pub(crate) fn set_simulcast(&mut self, s: Simulcast) {
+    pub(crate) fn set_simulcast(&mut self, s: SdpSimulcast) {
         info!("Set simulcast: {:?}", s);
         self.simulcast = Some(s);
     }
@@ -1315,5 +1348,25 @@ impl<'a> Writer<'a> {
     /// doing [`Media::writer()`].
     pub fn write(self, ts: MediaTime, data: &[u8]) -> Result<usize, RtcError> {
         self.media.write(self.pt, ts, data, self.rid, self.ext_vals)
+    }
+}
+
+impl From<SdpSimulcast> for Simulcast {
+    fn from(s: SdpSimulcast) -> Self {
+        let send = s
+            .send
+            .iter()
+            .flat_map(|s| s.iter().map(|s| s.as_stream_id().0.as_ref()))
+            .map(Rid::from)
+            .collect();
+
+        let recv = s
+            .recv
+            .iter()
+            .flat_map(|s| s.iter().map(|s| s.as_stream_id().0.as_ref()))
+            .map(Rid::from)
+            .collect();
+
+        Simulcast { send, recv }
     }
 }

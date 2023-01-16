@@ -114,10 +114,10 @@ fn run(mut rtc: Rtc, socket: UdpSocket) -> Result<(), RtcError> {
                 if v == Event::IceConnectionStateChange(IceConnectionState::Disconnected) {
                     return Ok(());
                 }
-                if let Event::MediaAdded(m, _, _) = v {
+                if let Event::MediaAdded(m) = v {
                     // Figure out the Vp8 PT.
                     let p = rtc
-                        .media(m)
+                        .media(m.mid)
                         .unwrap()
                         .payload_params()
                         .iter()
@@ -125,7 +125,7 @@ fn run(mut rtc: Rtc, socket: UdpSocket) -> Result<(), RtcError> {
                         .map(|p| p.pt())
                         .unwrap();
 
-                    mid = Some(m);
+                    mid = Some(m.mid);
                     pt = Some(p);
 
                     let tx = tx.clone();

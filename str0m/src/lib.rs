@@ -44,7 +44,7 @@ use channel::{Channel, ChannelData, ChannelId};
 
 pub mod media;
 use media::{CodecConfig, Direction, KeyframeRequest, KeyframeRequestKind, MediaData};
-use media::{Media, MediaKind, Mid, Pt, Rid, Ssrc};
+use media::{Media, MediaAdded, Mid, Pt, Rid, Ssrc};
 
 mod change;
 pub use change::ChangeSet;
@@ -203,7 +203,7 @@ pub enum Event {
     /// are emitted.
     ///
     /// Upon this event, the [`Media`] instance is available via [`Rtc::media()`].
-    MediaAdded(Mid, MediaKind, Direction),
+    MediaAdded(MediaAdded),
 
     /// Incoming media data sent by the remote peer.
     MediaData(MediaData),
@@ -811,9 +811,7 @@ impl Rtc {
 
         if let Some(e) = self.session.poll_event() {
             return Ok(match e {
-                MediaEvent::Open(mid, kind, dir) => {
-                    Output::Event(Event::MediaAdded(mid, kind, dir))
-                }
+                MediaEvent::Added(m) => Output::Event(Event::MediaAdded(m)),
                 MediaEvent::Data(m) => Output::Event(Event::MediaData(m)),
                 MediaEvent::Error(e) => return Err(e),
                 MediaEvent::KeyframeRequest(r) => Output::Event(Event::KeyframeRequest(r)),
@@ -1167,9 +1165,7 @@ impl PartialEq for Event {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::IceConnectionStateChange(l0), Self::IceConnectionStateChange(r0)) => l0 == r0,
-            (Self::MediaAdded(l0, l1, l2), Self::MediaAdded(r0, r1, r2)) => {
-                l0 == r0 && l1 == r1 && l2 == r2
-            }
+            (Self::MediaAdded(m0), Self::MediaAdded(m1)) => m0 == m1,
             (Self::MediaData(m1), Self::MediaData(m2)) => m1 == m2,
             (Self::ChannelOpen(l0, l1), Self::ChannelOpen(r0, r1)) => l0 == r0 && l1 == r1,
             (Self::ChannelData(l0), Self::ChannelData(r0)) => l0 == r0,

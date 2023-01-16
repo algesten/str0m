@@ -5,11 +5,11 @@ use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use packet::RtpMeta;
 use rtp::SRTCP_OVERHEAD;
-use rtp::{extend_seq, Direction, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
+use rtp::{extend_seq, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
 use rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
 
-use crate::media::{App, CodecConfig, MediaKind, Source};
+use crate::media::{App, CodecConfig, MediaAdded, Source};
 use crate::session_sdp::AsMediaLine;
 use crate::util::{already_happened, not_happening, Soonest};
 use crate::RtcError;
@@ -91,7 +91,7 @@ impl MediaOrApp {
 pub enum MediaEvent {
     Data(MediaData),
     Error(RtcError),
-    Open(Mid, MediaKind, Direction),
+    Added(MediaAdded),
     KeyframeRequest(KeyframeRequest),
 }
 
@@ -507,11 +507,13 @@ impl Session {
         for media in self.media() {
             if media.need_open_event {
                 media.need_open_event = false;
-                return Some(MediaEvent::Open(
-                    media.mid(),
-                    media.kind(),
-                    media.direction(),
-                ));
+
+                return Some(MediaEvent::Added(MediaAdded {
+                    mid: media.mid(),
+                    kind: media.kind(),
+                    direction: media.direction(),
+                    simulcast: media.simulcast().map(|s| s.clone().into()),
+                }));
             }
 
             if let Some((rid, kind)) = media.poll_keyframe_request() {
