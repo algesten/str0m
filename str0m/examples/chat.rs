@@ -352,7 +352,7 @@ impl Client {
                     }
                     Propagated::Noop
                 }
-                Event::MediaAdded(mid, kind, _) => self.handle_media_added(mid, kind),
+                Event::MediaAdded(e) => self.handle_media_added(e.mid, e.kind),
                 Event::MediaData(data) => Propagated::MediaData(self.id, data),
                 Event::KeyframeRequest(req) => self.handle_incoming_keyframe_req(req),
                 Event::ChannelOpen(cid, _) => {
