@@ -260,6 +260,9 @@ pub struct Media {
     /// Whether the media line needs to be advertised in an event.
     pub(crate) need_open_event: bool,
 
+    // Whether the media line needs to be notified of a change with an event.
+    pub(crate) need_changed_event: bool,
+
     /// If we receive an rtcp request for a keyframe, this holds what kind.
     keyframe_request_rx: Option<(Option<Rid>, KeyframeRequestKind)>,
 
@@ -977,6 +980,8 @@ impl Media {
                     self.mid, self.dir, new_dir
                 );
 
+                self.need_changed_event = true;
+
                 let was_receiving = self.dir.is_receiving();
                 let was_sending = self.dir.is_sending();
                 let is_receiving = new_dir.is_receiving();
@@ -1209,6 +1214,7 @@ impl Default for Media {
             buffers_tx: HashMap::new(),
             resends: VecDeque::new(),
             need_open_event: true,
+            need_changed_event: true,
             keyframe_request_rx: None,
             keyframe_request_tx: None,
             simulcast: None,

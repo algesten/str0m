@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use packet::RtpMeta;
-use rtp::SRTCP_OVERHEAD;
 use rtp::{extend_seq, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
+use rtp::{Direction, SRTCP_OVERHEAD};
 use rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
 
@@ -90,6 +90,7 @@ impl MediaOrApp {
 
 pub enum MediaEvent {
     Data(MediaData),
+    Changed(Direction),
     Error(RtcError),
     Added(MediaAdded),
     KeyframeRequest(KeyframeRequest),
@@ -514,6 +515,11 @@ impl Session {
                     direction: media.direction(),
                     simulcast: media.simulcast().map(|s| s.clone().into()),
                 }));
+            }
+
+            if media.need_changed_event {
+                media.need_changed_event = false;
+                return Some(MediaEvent::Changed(media.direction()));
             }
 
             if let Some((rid, kind)) = media.poll_keyframe_request() {
