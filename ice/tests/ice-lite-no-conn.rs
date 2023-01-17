@@ -5,11 +5,14 @@ mod common;
 use common::{host, init_log, progress, TestAgent};
 
 #[test]
-pub fn drop_host() {
+pub fn ice_lite_no_connection() {
     init_log();
 
     let mut a1 = TestAgent::new(info_span!("L"));
     let mut a2 = TestAgent::new(info_span!("R"));
+
+    // a1 acts as "server"
+    a1.agent.set_ice_lite(true);
 
     let c1 = host("1.1.1.1:9999"); // 9999 is just dropped by propagate
     a1.add_local_candidate(c1.clone());
@@ -21,6 +24,8 @@ pub fn drop_host() {
     a2.set_controlling(false);
 
     loop {
+        // The bug we try to avoid is that _both sides_ must reach a disconnected state eventually.
+        // The ice-lite (server side) should time out after roughly 8 seconds.
         if a1.state().is_disconnected() && a2.state().is_disconnected() {
             break;
         }
