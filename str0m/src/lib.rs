@@ -208,6 +208,11 @@ pub enum Event {
     /// Incoming media data sent by the remote peer.
     MediaData(MediaData),
 
+    // Upon SDP renegotiation, a change event may be emitted.
+    //
+    // Currently only covers a change of direction.
+    MediaChanged(Direction),
+
     /// Incoming keyframe request for media that we are sending to the remote peer.
     ///
     /// The request is either PLI (Picture Loss Indication) or FIR (Full Intra Request).
@@ -812,6 +817,7 @@ impl Rtc {
         if let Some(e) = self.session.poll_event() {
             return Ok(match e {
                 MediaEvent::Added(m) => Output::Event(Event::MediaAdded(m)),
+                MediaEvent::Changed(dir) => Output::Event(Event::MediaChanged(dir)),
                 MediaEvent::Data(m) => Output::Event(Event::MediaData(m)),
                 MediaEvent::Error(e) => return Err(e),
                 MediaEvent::KeyframeRequest(r) => Output::Event(Event::KeyframeRequest(r)),
