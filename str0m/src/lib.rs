@@ -43,7 +43,7 @@ pub mod channel;
 use channel::{Channel, ChannelData, ChannelId};
 
 pub mod media;
-use media::{CodecConfig, Direction, KeyframeRequest, KeyframeRequestKind, MediaData};
+use media::{CodecConfig, Direction, KeyframeRequest, KeyframeRequestKind, MediaData, MediaChanged};
 use media::{Media, MediaAdded, Mid, Pt, Rid, Ssrc};
 
 mod change;
@@ -211,7 +211,7 @@ pub enum Event {
     // Upon SDP renegotiation, a change event may be emitted.
     //
     // Currently only covers a change of direction.
-    MediaChanged(Direction),
+    MediaChanged(MediaChanged),
 
     /// Incoming keyframe request for media that we are sending to the remote peer.
     ///
@@ -817,7 +817,7 @@ impl Rtc {
         if let Some(e) = self.session.poll_event() {
             return Ok(match e {
                 MediaEvent::Added(m) => Output::Event(Event::MediaAdded(m)),
-                MediaEvent::Changed(dir) => Output::Event(Event::MediaChanged(dir)),
+                MediaEvent::Changed(m) => Output::Event(Event::MediaChanged(m)),
                 MediaEvent::Data(m) => Output::Event(Event::MediaData(m)),
                 MediaEvent::Error(e) => return Err(e),
                 MediaEvent::KeyframeRequest(r) => Output::Event(Event::KeyframeRequest(r)),

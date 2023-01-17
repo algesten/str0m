@@ -58,6 +58,20 @@ pub struct MediaAdded {
     pub simulcast: Option<Simulcast>,
 }
 
+/// A change happening during an SDP re-negotation.
+///
+/// This event fires both for re-negotations triggered by a remote or local offer.
+///
+/// Does not fire for application m-lines (data channel).
+#[derive(Debug, PartialEq, Eq)]
+pub struct MediaChanged {
+    /// Identifier of the new m-line.
+    pub mid: Mid,
+
+    /// Current direction of the m-line.
+    pub direction: Direction,
+}
+
 /// Simplified information about the simulcast config from SDP.
 ///
 /// The [full spec][1] covers many cases that are not used by simple simulcast.

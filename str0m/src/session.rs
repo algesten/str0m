@@ -4,12 +4,12 @@ use std::time::{Duration, Instant};
 use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use packet::RtpMeta;
+use rtp::SRTCP_OVERHEAD;
 use rtp::{extend_seq, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
-use rtp::{Direction, SRTCP_OVERHEAD};
 use rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
 
-use crate::media::{App, CodecConfig, MediaAdded, Source};
+use crate::media::{App, CodecConfig, MediaAdded, MediaChanged, Source};
 use crate::session_sdp::AsMediaLine;
 use crate::util::{already_happened, not_happening, Soonest};
 use crate::RtcError;
@@ -90,7 +90,7 @@ impl MediaOrApp {
 
 pub enum MediaEvent {
     Data(MediaData),
-    Changed(Direction),
+    Changed(MediaChanged),
     Error(RtcError),
     Added(MediaAdded),
     KeyframeRequest(KeyframeRequest),
@@ -519,7 +519,10 @@ impl Session {
 
             if media.need_changed_event {
                 media.need_changed_event = false;
-                return Some(MediaEvent::Changed(media.direction()));
+                return Some(MediaEvent::Changed(MediaChanged {
+                    mid: media.mid(),
+                    direction: media.direction(),
+                }));
             }
 
             if let Some((rid, kind)) = media.poll_keyframe_request() {
