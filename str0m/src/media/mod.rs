@@ -1214,7 +1214,7 @@ impl Default for Media {
             buffers_tx: HashMap::new(),
             resends: VecDeque::new(),
             need_open_event: true,
-            need_changed_event: true,
+            need_changed_event: false,
             keyframe_request_rx: None,
             keyframe_request_tx: None,
             simulcast: None,
