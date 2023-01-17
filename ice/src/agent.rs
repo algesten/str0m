@@ -827,6 +827,16 @@ impl IceAgent {
         }
 
         if self.ice_lite {
+            // Remote binding request time is the timestamp in the CandidatePair that
+            // is used to decide whether something is timed out or not. We need all
+            // pairs to have this time set, so that pairs that don't receive any
+            // STUN binding requests eventually times out.
+            for p in &mut self.candidate_pairs {
+                if p.remote_binding_request_time().is_none() {
+                    p.increase_remote_binding_requests(now);
+                }
+            }
+
             trace!("Stop timeout since ice-lite do no checks");
             return;
         }

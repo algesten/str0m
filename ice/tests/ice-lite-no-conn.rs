@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use ice::IceAgentStats;
 use tracing::info_span;
 
@@ -32,10 +34,12 @@ pub fn ice_lite_no_connection() {
         progress(&mut a1, &mut a2);
     }
 
+    assert!(a1.time - a1.start_time > Duration::from_secs(8));
+
     assert_eq!(
         a1.stats(),
         IceAgentStats {
-            bind_request_sent: 9,
+            bind_request_sent: 0,
             bind_success_recv: 0,
             bind_request_recv: 0,
             discovered_recv_count: 0,
