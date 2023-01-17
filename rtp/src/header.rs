@@ -224,7 +224,7 @@ pub fn extend_seq(prev_ext_seq: Option<u64>, seq: u16) -> u64 {
     }
 
     let prev_index = prev_ext_seq.unwrap();
-    let roc = prev_index >> 16; // how many wrap-arounds.
+    let roc = (prev_index >> 16) as i64; // how many wrap-arounds.
     let prev_seq = prev_index & 0xffff;
 
     let v = if prev_seq < 32_768 {
@@ -239,7 +239,11 @@ pub fn extend_seq(prev_ext_seq: Option<u64>, seq: u16) -> u64 {
         roc
     };
 
-    v * 65_536 + seq
+    if v < 0 {
+        return 0;
+    }
+
+    (v as u64) * 65_536 + seq
 }
 
 impl Default for RtpHeader {
@@ -273,5 +277,10 @@ mod test {
         assert_eq!(extend_seq(Some(65_538), 1), 65_537);
         assert_eq!(extend_seq(Some(3), 3), 3);
         assert_eq!(extend_seq(Some(65_500), 65_500), 65_500);
+    }
+
+    #[test]
+    fn extend_33k_with_0_prev() {
+        assert_eq!(extend_seq(Some(0), 33_000), 281474976678120);
     }
 }
