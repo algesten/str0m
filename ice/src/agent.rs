@@ -767,12 +767,6 @@ impl IceAgent {
             }
         }
 
-        if !self.transmit.is_empty() {
-            // Can't progress, since there is a enqueued send.
-            trace!("Stop timeout, already got enqueued transmit");
-            return;
-        }
-
         // This happens exactly once because evaluate_state() below will
         // switch away from New -> Checking.
         if self.state == IceConnectionState::New {
