@@ -175,6 +175,10 @@ impl CandidatePair {
         trace!("Remote binding requests: {}", self.remote_binding_requests);
     }
 
+    pub fn remote_binding_request_time(&self) -> Option<Instant> {
+        self.remote_binding_request_time
+    }
+
     pub fn remote_binding_requests(&self) -> u64 {
         self.remote_binding_requests
     }
