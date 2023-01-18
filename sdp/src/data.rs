@@ -371,8 +371,8 @@ impl MediaLine {
 
         let setup = self.attrs.iter().filter(|a| matches!(a, Setup(_))).count();
 
-        if setup != 1 {
-            return Some(format!("Expected 1 a=setup: line for mid: {}", self.mid()));
+        if setup > 1 {
+            return Some(format!("Expected 0 or 1 a=setup: line for mid: {}", self.mid()));
         }
 
         let dir_count = self.attrs.iter().filter(|a| is_dir(a)).count();
