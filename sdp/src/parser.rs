@@ -1131,6 +1131,34 @@ mod test {
         let (c, _) = candidate().parse(a).unwrap();
         assert_eq!(c.ufrag(), Some("abc"));
     }
+
+    #[test]
+    fn parse_firefox_missing_setup_on_mid1() {
+        let sdp = "v=0\r\n\
+        o=mozilla...THIS_IS_SDPARTA-99.0 7710052215259647220 2 IN IP4 0.0.0.0\r\n\
+        s=-\r\n\
+        t=0 0\r\n\
+        a=fingerprint:sha-256 A6:64:23:37:94:7E:4B:40:F6:62:86:8C:DD:09:D5:08:7E:D4:0E:68:58:93:45:EC:99:F2:91:F7:19:72:E7:BB\r\n\
+        a=group:BUNDLE 0 hxI i1X mxk B3D kNI nbB xIZ bKm Hkn\r\n\
+        a=ice-options:trickle\r\n\
+        a=msid-semantic:WMS *\r\n\
+        m=audio 0 UDP/TLS/RTP/SAVPF 0\r\n\
+        c=IN IP4 0.0.0.0\r\n\
+        a=inactive\r\n\
+        a=mid:1\r\n\
+        a=rtpmap:0 PCMU/8000\r\n\
+        ";
+
+        let (sdp, _) = sdp_parser().parse(sdp).unwrap();
+
+        // Firefox 'a=setup' attribute can be missing
+        // the "a=setup:" sdp attribute (which should be mandatory) 
+        // - https://www.rfc-editor.org/rfc/rfc5763#section-5 
+        // - https://www.rfc-editor.org/rfc/rfc4145
+
+        assert!(sdp.media_lines[0].setup() == None); // must not crash
+    }
+
 }
 
 // Safari addTransceiver('audio', {direction: 'sendonly'}))
