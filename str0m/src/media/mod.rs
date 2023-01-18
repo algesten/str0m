@@ -926,16 +926,16 @@ impl Media {
                     }
                 }
             }
-            Goodbye(v) => {
-                self.sources_rx.retain(|s| {
-                    let remove = s.ssrc() == v || s.repairs() == Some(v);
-
-                    if remove {
-                        trace!("Remove SourceReceiver on Goodbye: {:?}", s.ssrc());
-                    }
-
-                    !remove
-                });
+            Goodbye(_v) => {
+                // For some reason, Chrome sends a Goodbye on every SDP negotation for all active
+                // m-lines. Seems strange, but lets not reset any state.
+                // self.sources_rx.retain(|s| {
+                //     let remove = s.ssrc() == v || s.repairs() == Some(v);
+                //     if remove {
+                //         trace!("Remove ReceiverSource on Goodbye: {:?}", s.ssrc());
+                //     }
+                //     !remove
+                // });
             }
             _ => {}
         }
