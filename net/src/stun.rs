@@ -502,7 +502,7 @@ impl<'a> Attribute<'a> {
                 vec.write_all(&v.to_be_bytes())?;
             }
             XorMappedAddress(v) => {
-                let mut buf = [0_u8; 17];
+                let mut buf = [0_u8; 20];
                 let len = encode_xor(*v, &mut buf, trans_id);
                 vec.write_all(&0x0020_u16.to_be_bytes())?;
                 vec.write_all(&((len as u16).to_be_bytes()))?;
@@ -685,7 +685,7 @@ fn decode_str(typ: u16, buf: &[u8], len: usize) -> Result<&str, StunError> {
     }
 }
 
-fn encode_xor(addr: SocketAddr, buf: &mut [u8; 17], trans_id: &[u8]) -> usize {
+fn encode_xor(addr: SocketAddr, buf: &mut [u8; 20], trans_id: &[u8]) -> usize {
     let port = addr.port() ^ 0x2112;
     buf[2..4].copy_from_slice(&port.to_be_bytes());
     buf[1] = if addr.is_ipv4() { 1 } else { 2 };
