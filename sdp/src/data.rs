@@ -1,4 +1,4 @@
-use combine::Parser;
+use combine::EasyParser;
 use dtls::Fingerprint;
 use rtp::{Direction, ExtMap, Mid, SessionId, Ssrc};
 use std::collections::HashSet;
@@ -22,7 +22,9 @@ pub struct Sdp {
 impl Sdp {
     #[doc(hidden)]
     pub fn parse(input: &str) -> Result<Sdp, SdpError> {
-        Ok(sdp_parser().parse(input).map(|(sdp, _)| sdp)?)
+        sdp_parser().easy_parse(input)
+            .map(|(sdp, _)| sdp)
+            .map_err(|e| SdpError::ParseError(e.to_string()))
     }
 
     #[doc(hidden)]
@@ -1605,6 +1607,34 @@ mod test {
         f.min_p_time = Some(10);
         f.use_inband_fec = Some(true);
         assert_eq!(f.to_string(), "minptime=10;useinbandfec=1");
+    }
+
+    #[test]
+    fn parse_error() {
+        let input = "v=0\r\n\
+        o=mozilla...THIS_IS_SDPARTA-99.0 7710052215259647220 2 IN IP4 0.0.0.0\r\n\
+        s=-\r\n\
+        t=0 0\r\n\
+        a=fingerprint:sha-256 A6:64:23:37:94:7E:4B:40:F6:62:86:8C:DD:09:D5:08:7E:D4:0E:68:58:93:45:EC:99:F2:91:F7:19:72:E7:BB\r\n\
+        a=group:BUNDLE 0 hxI i1X mxk B3D kNI nbB xIZ bKm Hkn\r\n\
+        a=ice-options:trickle\r\n\
+        a=msid-semantic:WMS *\r\n\
+        m=audio 0 UDP/TLS/RTP/SAVPF 0\r\n\
+        c=IN IP4 0.0.0.0\r\n\
+        a=setup:actpass\r\n\
+        a=mid:1\r\n\
+        a=rtpmap:0 PCMU/8000\r\n\
+        ";
+
+        let sdp = Sdp::parse(input);
+
+        match sdp {
+            Err(SdpError::ParseError(out)) => {
+                assert!(out.starts_with(&"Parse error at ".to_string()));
+                assert!(out.contains(&"Expected exactly one of a=sendrecv, a=sendonly, a=recvonly, a=inactive for mid: 1".to_string()));
+            }
+            _ => assert!(false)
+        }
     }
 
     #[test]
