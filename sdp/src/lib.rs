@@ -4,7 +4,6 @@ extern crate tracing;
 use std::fmt;
 use std::ops::Deref;
 
-use combine::error::StringStreamError;
 use serde::ser::SerializeStruct;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
@@ -19,8 +18,8 @@ mod parser;
 /// Errors from parsing and serializing SDP.
 #[derive(Debug, Error)]
 pub enum SdpError {
-    #[error("SDP parse: {0}")]
-    Parse(#[from] StringStreamError),
+    #[error("SDP inconsistent: {0}")]
+    ParseError(String),
 
     #[error("SDP inconsistent: {0}")]
     Inconsistent(String),
