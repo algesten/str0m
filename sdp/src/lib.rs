@@ -18,7 +18,7 @@ mod parser;
 /// Errors from parsing and serializing SDP.
 #[derive(Debug, Error)]
 pub enum SdpError {
-    #[error("SDP inconsistent: {0}")]
+    #[error("SDP parse: {0}")]
     ParseError(String),
 
     #[error("SDP inconsistent: {0}")]
