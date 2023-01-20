@@ -344,7 +344,7 @@ impl Session {
             source
         };
 
-        let rid = source.rid();
+        let mut rid = source.rid();
         let seq_no = source.update(now, &header, clock_rate);
 
         let is_rtx = source.is_rtx();
@@ -387,6 +387,9 @@ impl Session {
                 orig_seq_16
             );
             header.sequence_number = orig_seq_16;
+            if let Some(repairs_rid) = header.ext_vals.rid_repair {
+                rid = Some(repairs_rid);
+            }
 
             let repaired_ssrc = match source.repairs() {
                 Some(v) => v,
@@ -398,6 +401,10 @@ impl Session {
             trace!("Repaired {:?} -> {:?}", header.ssrc, repaired_ssrc);
             header.ssrc = repaired_ssrc;
 
+            let repaired_source = media.get_or_create_source_rx(repaired_ssrc);
+            if rid.is_none() && repaired_source.rid().is_some() {
+                rid = repaired_source.rid();
+            }
             let source = media.get_or_create_source_rx(ssrc);
             let orig_seq_no = source.update(now, &header, clock_rate);
 
