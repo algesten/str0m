@@ -1,10 +1,11 @@
 use std::fmt;
 
-use hmac::{Hmac, Mac};
+use openssl::hash::MessageDigest;
+use openssl::pkey::{PKey, Private};
+use openssl::sign::Signer;
 use openssl::symm::{Cipher, Crypter, Mode};
 
 use dtls::KeyingMaterial;
-use sha1::Sha1;
 
 use crate::header::RtpHeader;
 
@@ -93,7 +94,9 @@ impl SrtpContext {
         output[..hlen].copy_from_slice(&buf[..hlen]);
 
         let hmac_start = buf.len();
-        self.rtp.hmac.rtp_hmac(&mut output, srtp_index, hmac_start);
+        self.rtp
+            .hmac_key
+            .rtp_hmac(&mut output, srtp_index, hmac_start);
 
         output
     }
@@ -112,7 +115,7 @@ impl SrtpContext {
 
         if !self
             .rtp
-            .hmac
+            .hmac_key
             .rtp_verify(&buf[..hmac_start], srtp_index, &buf[hmac_start..])
         {
             trace!("unprotect_rtp hmac verify fail");
@@ -161,7 +164,7 @@ impl SrtpContext {
         to[0..4].copy_from_slice(&e_and_si.to_be_bytes());
 
         let hmac_index = output.len() - SRTP_HMAC_LEN;
-        self.rtcp.hmac.rtcp_hmac(&mut output, hmac_index);
+        self.rtcp.hmac_key.rtcp_hmac(&mut output, hmac_index);
 
         output
     }
@@ -184,7 +187,7 @@ impl SrtpContext {
 
         if !self
             .rtcp
-            .hmac
+            .hmac_key
             .rtcp_verify(&buf[..hmac_start], &buf[hmac_start..])
         {
             trace!("unprotect_rtcp hmac verify fail");
@@ -301,12 +304,10 @@ impl SrtpKey {
     }
 }
 
-type HmacSha1 = Hmac<Sha1>;
-
 /// Encryption/decryption derived from the SrtpKey.
 struct Derived {
     aes: AesKey,
-    hmac: HmacSha1,
+    hmac_key: PKey<Private>,
     salt: RtpSalt,
 }
 
@@ -324,11 +325,11 @@ impl Derived {
 
         // RTP SHA1 HMAC
 
-        let rtp_hmac = {
+        let rtp_hmac_key = {
             const LABEL_RTP_HMAC: u8 = 1;
             let mut hmac = [0; 20];
             srtp_key.derive(LABEL_RTP_HMAC, &mut hmac[..]);
-            HmacSha1::new_from_slice(&hmac[..]).expect("RTP hmac")
+            PKey::hmac(&hmac[..]).expect("RTP hmac key")
         };
 
         // RTP IV SALT
@@ -345,11 +346,11 @@ impl Derived {
 
         // RTCP SHA1 HMAC
 
-        let rtcp_hmac = {
+        let rtcp_hmac_key = {
             const LABEL_RTCP_HMAC: u8 = 4;
             let mut hmac = [0; 20];
             srtp_key.derive(LABEL_RTCP_HMAC, &mut hmac[..]);
-            HmacSha1::new_from_slice(&hmac[..]).expect("RTCP hmac")
+            PKey::hmac(&hmac[..]).expect("RTCP hmac key")
         };
 
         // RTCP IV SALT
@@ -360,13 +361,13 @@ impl Derived {
 
         let rtp = Derived {
             aes: rtp_aes,
-            hmac: rtp_hmac,
+            hmac_key: rtp_hmac_key,
             salt: rtp_salt,
         };
 
         let rtcp = Derived {
             aes: rtcp_aes,
-            hmac: rtcp_hmac,
+            hmac_key: rtcp_hmac_key,
             salt: rtcp_salt,
         };
 
@@ -404,51 +405,47 @@ trait RtpHmac {
     fn rtcp_verify(&self, buf: &[u8], cmp: &[u8]) -> bool;
 }
 
-impl RtpHmac for HmacSha1 {
-    fn rtp_hmac(&self, buf: &mut [u8], srtp_index: u64, hmac_start: usize) {
-        let mut hmac = self.clone();
+fn sha1(pkey: &PKey<Private>, updates: &[&[u8]], out: &mut [u8]) {
+    let mut hmac = Signer::new(MessageDigest::sha1(), pkey).unwrap();
 
+    for u in updates {
+        hmac.update(u).unwrap();
+    }
+
+    hmac.sign(out).unwrap();
+}
+
+impl RtpHmac for PKey<Private> {
+    fn rtp_hmac(&self, buf: &mut [u8], srtp_index: u64, hmac_start: usize) {
         let roc = (srtp_index >> 16) as u32;
 
-        hmac.update(&buf[..hmac_start]);
-        hmac.update(&roc.to_be_bytes());
+        let mut out = [0_u8; 32];
+        sha1(&self, &[&buf[..hmac_start], &roc.to_be_bytes()], &mut out);
 
-        let tag = hmac.finalize().into_bytes();
-
-        buf[hmac_start..(hmac_start + SRTP_HMAC_LEN)].copy_from_slice(&tag[0..SRTP_HMAC_LEN]);
+        buf[hmac_start..(hmac_start + SRTP_HMAC_LEN)].copy_from_slice(&out[0..SRTP_HMAC_LEN]);
     }
 
     fn rtp_verify(&self, buf: &[u8], srtp_index: u64, cmp: &[u8]) -> bool {
-        let mut hmac = self.clone();
-
         let roc = (srtp_index >> 16) as u32;
 
-        hmac.update(buf);
-        hmac.update(&roc.to_be_bytes());
+        let mut out = [0_u8; 32];
+        sha1(&self, &[buf, &roc.to_be_bytes()], &mut out);
 
-        let tag = hmac.finalize().into_bytes();
-
-        &tag[0..SRTP_HMAC_LEN] == cmp
+        &out[0..SRTP_HMAC_LEN] == cmp
     }
 
     fn rtcp_hmac(&self, buf: &mut [u8], hmac_index: usize) {
-        let mut hmac = self.clone();
+        let mut out = [0_u8; 32];
+        sha1(&self, &[&buf[0..hmac_index]], &mut out);
 
-        hmac.update(&buf[0..hmac_index]);
-
-        let tag = hmac.finalize().into_bytes();
-
-        buf[hmac_index..(hmac_index + SRTP_HMAC_LEN)].copy_from_slice(&tag[0..SRTP_HMAC_LEN]);
+        buf[hmac_index..(hmac_index + SRTP_HMAC_LEN)].copy_from_slice(&out[0..SRTP_HMAC_LEN]);
     }
 
     fn rtcp_verify(&self, buf: &[u8], cmp: &[u8]) -> bool {
-        let mut hmac = self.clone();
+        let mut out = [0_u8; 32];
+        sha1(&self, &[buf], &mut out);
 
-        hmac.update(buf);
-
-        let tag = hmac.finalize().into_bytes();
-
-        &tag[0..SRTP_HMAC_LEN] == cmp
+        &out[0..SRTP_HMAC_LEN] == cmp
     }
 }
 

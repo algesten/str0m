@@ -14,9 +14,6 @@ once_cell = "1"
 openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = "^0.9"
 #
-hmac = "0.12"
-sha-1 = "0.10"
-#
 dtls = { path = "../dtls" }
 net = { path = "../net" }
 

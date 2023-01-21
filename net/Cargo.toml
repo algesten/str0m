@@ -8,6 +8,6 @@ tracing = "0.1"
 thiserror = "1"
 rand = "0.8"
 # STUN
-hmac = "0.12"
-sha-1 = "0.10"
 crc = "3"
+openssl = { version = "0.10", features = ["vendored"] }
+openssl-sys = "^0.9"

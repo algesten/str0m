@@ -5,10 +5,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use crc::{Crc, CRC_32_ISO_HDLC};
-use hmac::Hmac;
-use hmac::Mac;
 use rand::random;
-use sha1::Sha1;
 use thiserror::Error;
 
 // Consult libwebrtc for default values here.
@@ -227,8 +224,9 @@ impl<'a> StunMessage<'a> {
 
     pub fn check_integrity(&self, password: &str) -> bool {
         if let Some(integ) = self.attrs.message_integrity() {
-            let comp = hmac_sha1(password.as_bytes(), self.integrity);
-            comp == integ
+            let mut out = [0; 32];
+            hmac_sha1(password.as_bytes(), self.integrity, &mut out);
+            &out[..20] == integ
         } else {
             false
         }
@@ -272,8 +270,9 @@ impl<'a> StunMessage<'a> {
 
         let buf = buf.into_inner();
 
-        let hmac = hmac_sha1(password.as_bytes(), &buf[0..i_off]);
-        buf[i_off + 4..(i_off + 4 + 20)].copy_from_slice(&hmac);
+        let mut out = [0; 32];
+        hmac_sha1(password.as_bytes(), &buf[0..i_off], &mut out);
+        buf[i_off + 4..(i_off + 4 + 20)].copy_from_slice(&out[..20]);
 
         // fill in correct length
         buf[2..4].copy_from_slice(&(attr_len as u16).to_be_bytes());
@@ -740,13 +739,17 @@ fn decode_xor(buf: &[u8], trans_id: TransId) -> Result<SocketAddr, StunError> {
     Ok(SocketAddr::new(ip, port))
 }
 
-type HmacSha1 = Hmac<Sha1>;
+pub fn hmac_sha1(secret: &[u8], payload: &[u8], out: &mut [u8]) {
+    use openssl::hash::MessageDigest;
+    use openssl::pkey::PKey;
+    use openssl::sign::Signer;
 
-pub fn hmac_sha1(secret: &[u8], payload: &[u8]) -> [u8; 20] {
-    let mut hmac = HmacSha1::new_from_slice(secret).expect("Make HMAC-SHA1");
-    hmac.update(payload);
-    let comp = hmac.finalize().into_bytes();
-    comp.into()
+    let key = PKey::hmac(secret).unwrap();
+
+    let mut signer = Signer::new(MessageDigest::sha1(), &key).unwrap();
+    signer.update(payload).unwrap();
+
+    signer.sign(out).unwrap();
 }
 
 impl<'a> fmt::Debug for StunMessage<'a> {
