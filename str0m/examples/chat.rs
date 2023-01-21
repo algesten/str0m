@@ -547,6 +547,8 @@ impl Client {
 }
 
 /// Events propagated between client.
+#[allow(clippy::large_enum_variant)]
+
 enum Propagated {
     /// When we have nothing to propagate.
     Noop,

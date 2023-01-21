@@ -1,3 +1,5 @@
+#![allow(clippy::bool_to_int_with_if)]
+
 #[macro_use]
 extern crate tracing;
 
@@ -95,7 +97,7 @@ fn run(mut rtc: Rtc, socket: UdpSocket) -> Result<(), RtcError> {
     let (tx, rx) = mpsc::sync_channel::<(MediaTime, Vec<u8>)>(5);
 
     loop {
-        if let Some((pts, data)) = rx.try_recv().ok() {
+        if let Ok((pts, data)) = rx.try_recv() {
             let media = rtc.media(mid.unwrap()).unwrap().writer(pt.unwrap());
             media.write(pts, &data).unwrap();
         }
@@ -211,10 +213,10 @@ fn encoder(tx: SyncSender<(MediaTime, Vec<u8>)>) {
 
         let pts = MediaTime::from(time);
 
-        argb_to_i420(width as usize, height as usize, &grab, &mut yuv);
+        argb_to_i420(width, height, &grab, &mut yuv);
 
-        for frame in encoder.encode(pts.numer() as i64, &yuv).unwrap() {
-            if let Err(_) = tx.send((pts, frame.data.to_vec())) {
+        for frame in encoder.encode(pts.numer(), &yuv).unwrap() {
+            if tx.send((pts, frame.data.to_vec())).is_err() {
                 // receiver gone, shut down
                 return;
             }
@@ -224,7 +226,7 @@ fn encoder(tx: SyncSender<(MediaTime, Vec<u8>)>) {
 
 fn argb_to_i420(width: usize, height: usize, src: &[u8], dest: &mut Vec<u8>) {
     fn clamp(x: i32) -> u8 {
-        x.min(255).max(0) as u8
+        x.clamp(0, 255) as u8
     }
 
     let row = ((width / 16) + if width % 16 > 0 { 1 } else { 0 }) * 16;

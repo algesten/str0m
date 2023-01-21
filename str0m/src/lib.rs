@@ -43,7 +43,8 @@ pub mod channel;
 use channel::{Channel, ChannelData, ChannelId};
 
 pub mod media;
-use media::{CodecConfig, Direction, KeyframeRequest, KeyframeRequestKind, MediaData, MediaChanged};
+use media::{CodecConfig, Direction, KeyframeRequest};
+use media::{KeyframeRequestKind, MediaChanged, MediaData};
 use media::{Media, MediaAdded, Mid, Pt, Rid, Ssrc};
 
 mod change;
@@ -194,6 +195,7 @@ struct SendAddr {
 /// Events produced by [`Rtc::poll_output()`].
 #[derive(Debug)]
 #[non_exhaustive]
+#[allow(clippy::large_enum_variant)]
 pub enum Event {
     /// ICE connection state changes tells us whether the [`Rtc`] instance is
     /// connected to the peer or not.

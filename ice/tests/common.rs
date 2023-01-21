@@ -148,9 +148,10 @@ pub fn progress(a1: &mut TestAgent, a2: &mut TestAgent) {
     while let Some(v) = t.span.in_scope(|| t.agent.poll_event()) {
         println!("Polled event: {:?}", v);
         use ice::IceAgentEvent::*;
-        f.span.in_scope(|| match &v {
-            IceRestart(v) => f.agent.set_remote_credentials(v.clone()),
-            _ => {}
+        f.span.in_scope(|| {
+            if let IceRestart(v) = &v {
+                f.agent.set_remote_credentials(v.clone())
+            }
         });
         t.events.push((time - t.start_time, v));
     }

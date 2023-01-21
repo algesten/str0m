@@ -88,6 +88,7 @@ impl MediaOrApp {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum MediaEvent {
     Data(MediaData),
     Changed(MediaChanged),

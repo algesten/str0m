@@ -1,3 +1,5 @@
+#![allow(clippy::single_match)]
+
 use combine::EasyParser;
 use dtls::Fingerprint;
 use rtp::{Direction, ExtMap, Mid, SessionId, Ssrc};
@@ -22,7 +24,8 @@ pub struct Sdp {
 impl Sdp {
     #[doc(hidden)]
     pub fn parse(input: &str) -> Result<Sdp, SdpError> {
-        sdp_parser().easy_parse(input)
+        sdp_parser()
+            .easy_parse(input)
             .map(|(sdp, _)| sdp)
             .map_err(|e| SdpError::ParseError(e.to_string()))
     }
@@ -374,7 +377,10 @@ impl MediaLine {
         let setup = self.attrs.iter().filter(|a| matches!(a, Setup(_))).count();
 
         if setup > 1 {
-            return Some(format!("Expected 0 or 1 a=setup: line for mid: {}", self.mid()));
+            return Some(format!(
+                "Expected 0 or 1 a=setup: line for mid: {}",
+                self.mid()
+            ));
         }
 
         let dir_count = self.attrs.iter().filter(|a| is_dir(a)).count();
@@ -1603,9 +1609,11 @@ mod test {
 
     #[test]
     fn fmtp_param_to_string() {
-        let mut f = FormatParams::default();
-        f.min_p_time = Some(10);
-        f.use_inband_fec = Some(true);
+        let f = FormatParams {
+            min_p_time: Some(10),
+            use_inband_fec: Some(true),
+            ..Default::default()
+        };
         assert_eq!(f.to_string(), "minptime=10;useinbandfec=1");
     }
 
@@ -1633,7 +1641,7 @@ mod test {
                 assert!(out.starts_with(&"Parse error at ".to_string()));
                 assert!(out.contains(&"Expected exactly one of a=sendrecv, a=sendonly, a=recvonly, a=inactive for mid: 1".to_string()));
             }
-            _ => assert!(false)
+            _ => panic!(),
         }
     }
 

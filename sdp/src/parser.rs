@@ -1152,13 +1152,12 @@ mod test {
         let (sdp, _) = sdp_parser().parse(sdp).unwrap();
 
         // Firefox 'a=setup' attribute can be missing
-        // the "a=setup:" sdp attribute (which should be mandatory) 
-        // - https://www.rfc-editor.org/rfc/rfc5763#section-5 
+        // the "a=setup:" sdp attribute (which should be mandatory)
+        // - https://www.rfc-editor.org/rfc/rfc5763#section-5
         // - https://www.rfc-editor.org/rfc/rfc4145
 
-        assert!(sdp.media_lines[0].setup() == None); // must not crash
+        assert!(sdp.media_lines[0].setup().is_none()); // must not crash
     }
-
 }
 
 // Safari addTransceiver('audio', {direction: 'sendonly'}))

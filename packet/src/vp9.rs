@@ -687,7 +687,7 @@ mod test {
                         name, expected, actual
                     );
                 } else {
-                    assert!(false, "{}: expected error, but got passed", name);
+                    panic!("{}: expected error, but got passed", name);
                 }
             } else {
                 let mut payload = Vec::new();
@@ -784,8 +784,7 @@ mod test {
                             p.picture_id
                         );
                     } else if p_prev.picture_id + 1 != p.picture_id {
-                        assert!(
-                            false,
+                        panic!(
                             "Picture ID next must be incremented by 1: {} -> {}",
                             p_prev.picture_id, p.picture_id,
                         );
