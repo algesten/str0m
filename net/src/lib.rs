@@ -18,6 +18,9 @@ pub use stun::{
     StunError, StunMessage, TransId, STUN_MAX_RETRANS, STUN_MAX_RTO_MILLIS, STUN_TIMEOUT,
 };
 
+mod sha1;
+pub use crate::sha1::Sha1;
+
 mod id;
 // this is only exported from this crate to avoid needing
 // a "util" crate or similar.
