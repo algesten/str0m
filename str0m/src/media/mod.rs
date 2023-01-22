@@ -113,6 +113,13 @@ pub struct MediaData {
     /// For audio the timebase is 48kHz for video it is 90kHz.
     pub time: MediaTime,
 
+    /// Whether the data is contiguous from the one just previously emitted. If this is false,
+    /// we got an interruption in RTP packets, and the data may or may not be usable in a decoder
+    /// without requesting a new keyframe.
+    ///
+    /// For audio this flag most likely doesn't matter.
+    pub contiguous: bool,
+
     /// The actual packet data a.k.a Sample.
     ///
     /// Bigger samples don't fit in one UDP packet, thus WebRTC RTP is chopping up codec
@@ -1119,6 +1126,7 @@ impl Media {
                         rid: *rid,
                         params: codec,
                         time: dep.time,
+                        contiguous: dep.contiguous,
                         data: dep.data,
                         ext_vals: dep.meta[0].header.ext_vals,
                         meta: dep.meta,
