@@ -18,6 +18,7 @@ pub struct RtpMeta {
 #[derive(Clone)]
 pub struct Depacketized {
     pub time: MediaTime,
+    pub contiguous: bool,
     pub meta: Vec<RtpMeta>,
     pub data: Vec<u8>,
 }
@@ -106,13 +107,13 @@ impl DepacketizingBuffer {
 
         let (start, stop) = self.segments.first()?;
 
-        let is_following_last_emitted = self.is_following_last(*start);
+        let contiguous = self.is_following_last(*start);
         let is_more_than_hold_back = self.segments.len() >= self.hold_back;
 
         // We prefer to just release samples because they are following the last emitted.
         // However as fallback, we "hold back" samples to let RTX mechanics fill in potential
         // gaps in the RTP sequences before letting go.
-        if !is_following_last_emitted && !is_more_than_hold_back {
+        if !contiguous && !is_more_than_hold_back {
             return None;
         }
 
@@ -135,7 +136,12 @@ impl DepacketizingBuffer {
         // stuff before the emitted range.
         self.queue.drain(0..=*stop);
 
-        let dep = Depacketized { time, meta, data };
+        let dep = Depacketized {
+            time,
+            contiguous,
+            meta,
+            data,
+        };
         Some(Ok(dep))
     }
 
