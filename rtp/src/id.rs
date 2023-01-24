@@ -2,13 +2,15 @@ use std::fmt;
 use std::ops::Deref;
 use std::str::from_utf8_unchecked;
 
+use serde::{Deserialize, Serialize};
+
 use rand::random;
 
 use net::Id;
 
 macro_rules! str_id {
     ($id:ident, $name:literal, $num:tt) => {
-        #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
         pub struct $id([u8; $num]);
 
         impl $id {

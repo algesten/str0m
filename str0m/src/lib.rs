@@ -16,6 +16,7 @@ use ice::IceAgentEvent;
 use net_::DatagramRecv;
 use sctp::{RtcSctp, SctpEvent};
 use sdp::{Sdp, Setup};
+use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats};
 use thiserror::Error;
 
 pub use ice::IceConnectionState;
@@ -58,6 +59,10 @@ use session::{MediaEvent, Session};
 
 mod session_sdp;
 use session_sdp::AsSdpParams;
+
+use crate::stats::StatsSnapshot;
+
+pub mod stats;
 
 /// Errors for the whole Rtc engine.
 #[derive(Debug, Error)]
@@ -178,6 +183,7 @@ pub struct Rtc {
     dtls: Dtls,
     setup: Setup,
     sctp: RtcSctp,
+    stats: Stats,
     next_sctp_channel: u16,
     session: Session,
     remote_fingerprint: Option<Fingerprint>,
@@ -185,6 +191,8 @@ pub struct Rtc {
     remote_addrs: Vec<SocketAddr>,
     send_addr: Option<SendAddr>,
     last_now: Instant,
+    peer_bytes_rx: u64,
+    peer_bytes_tx: u64,
 }
 
 struct SendAddr {
@@ -237,6 +245,12 @@ pub enum Event {
 
     /// A data channel has been closed.
     ChannelClose(ChannelId),
+
+    PeerStats(PeerStats),
+
+    MediaIngressStats(MediaIngressStats),
+
+    MediaEgressStats(MediaEgressStats),
 }
 
 /// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.
@@ -294,12 +308,15 @@ impl Rtc {
             setup: Setup::ActPass,
             session: Session::new(config.codec_config, config.ice_lite),
             sctp: RtcSctp::new(),
+            stats: Stats::new(),
             next_sctp_channel: 0, // Goes 0, 1, 2 for both DTLS server or client
             remote_fingerprint: None,
             pending: None,
             remote_addrs: vec![],
             send_addr: None,
             last_now: already_happened(),
+            peer_bytes_rx: 0,
+            peer_bytes_tx: 0,
         }
     }
 
@@ -714,7 +731,10 @@ impl Rtc {
                 Event::ChannelData(_) | Event::MediaData(_) => trace!("{:?}", e),
                 _ => debug!("{:?}", e),
             },
-            Output::Transmit(t) => trace!("OUT {:?}", t),
+            Output::Transmit(t) => {
+                self.peer_bytes_tx += t.contents.len() as u64;
+                trace!("OUT {:?}", t)
+            }
             Output::Timeout(_t) => {}
         }
 
@@ -826,6 +846,10 @@ impl Rtc {
             });
         }
 
+        if let Some(e) = self.stats.poll_output() {
+            return Ok(Output::Event(Event::PeerStats(e)));
+        }
+
         if let Some(v) = self.ice.poll_transmit() {
             return Ok(Output::Transmit(v));
         }
@@ -849,7 +873,8 @@ impl Rtc {
         let time_and_reason = (None, "<not happening>")
             .soonest((self.ice.poll_timeout(), "ice"))
             .soonest((self.session.poll_timeout(), "session"))
-            .soonest((self.sctp.poll_timeout(), "sctp"));
+            .soonest((self.sctp.poll_timeout(), "sctp"))
+            .soonest((self.stats.poll_timeout(), "stats"));
 
         // trace!("poll_output timeout reason: {}", time_and_reason.1);
 
@@ -989,15 +1014,31 @@ impl Rtc {
 
     fn do_handle_timeout(&mut self, now: Instant) {
         self.last_now = now;
+        info!("timeout");
         self.ice.handle_timeout(now);
         self.sctp.handle_timeout(now);
         self.session.handle_timeout(now);
+        // TODO: avoid this heavy operation if the timeout is not handled
+        let snapshot = StatsSnapshot::from(self, now);
+        self.stats.handle_timeout(snapshot);
     }
 
     fn do_handle_receive(&mut self, now: Instant, r: net::Receive) -> Result<(), RtcError> {
         trace!("IN {:?}", r);
         self.last_now = now;
         use net::DatagramRecv::*;
+
+        let bytes_rx = match r.contents {
+            // TODO: stun is already parsed (depacketized) here
+            Stun(_) => 0,
+            Dtls(v) | Rtp(v) | Rtcp(v) => v.len(),
+        };
+
+        // TODO: downgrade logging
+        info!("peer connection bytes rx {} for {:?}", bytes_rx, r.contents);
+
+        self.peer_bytes_rx += bytes_rx as u64;
+
         match r.contents {
             Stun(_) => self.ice.handle_receive(now, r),
             Dtls(_) => self.dtls.handle_receive(r)?,

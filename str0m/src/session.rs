@@ -444,7 +444,15 @@ impl Session {
         let buf = media.get_buffer_rx(pt, rid, codec);
 
         let meta = RtpMeta::new(now, time, seq_no, header);
+
+        // here we have incoming and depacketized data before it may be dropped at buffer.push()
+        let bytes_rx = data.len();
+
         buf.push(meta, data);
+
+        // TODO: is there a nicer way to make borrow-checker happy ?
+        let source = media.get_or_create_source_rx(ssrc);
+        source.bytes_rx += bytes_rx as u64;
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
