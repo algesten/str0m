@@ -13,6 +13,8 @@ once_cell = "1"
 # instead of relying on multiple TLS libraries.
 openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = "^0.9"
+# if we moved IDs geneartion to a "util" subcrate, serde dep would move out too
+serde = "1"
 #
 dtls = { path = "../dtls" }
 net = { path = "../net" }

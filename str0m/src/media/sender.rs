@@ -13,6 +13,7 @@ pub struct SenderSource {
     rid: Option<Rid>,
     next_seq_no: SeqNo,
     last_used: Instant,
+    pub bytes_tx: u64,
 }
 
 impl SenderSource {
@@ -27,6 +28,7 @@ impl SenderSource {
             // to make known-plaintext attacks on encryption more difficult
             next_seq_no: (rand::random::<u16>() as u64).into(),
             last_used: already_happened(),
+            bytes_tx: 0,
         }
     }
 

@@ -16,6 +16,7 @@ pub struct ReceiverSource {
     sender_info: Option<SenderInfo>,
     sender_info_at: Option<Instant>,
     fir_seq_no: u8,
+    pub bytes_rx: u64,
 }
 
 impl ReceiverSource {
@@ -29,6 +30,7 @@ impl ReceiverSource {
             last_used: already_happened(),
             sender_info: None,
             sender_info_at: None,
+            bytes_rx: 0,
             fir_seq_no: 0,
         }
     }

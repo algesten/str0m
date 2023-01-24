@@ -9,6 +9,7 @@ tracing = "0.1"
 rand = "0.8"
 bitvec = "1"
 once_cell = "1"
+serde = "1"
 #
 dtls = { path = "../dtls" }
 ice = { path = "../ice" }

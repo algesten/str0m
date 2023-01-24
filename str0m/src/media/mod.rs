@@ -248,12 +248,13 @@ pub struct Media {
     /// These are created first time we observe the SSRC in an incoming RTP packet.
     /// Each source keeps track of packet loss, nack, reports etc. Receiving sources are
     /// cleaned up when we haven't received any data for the SSRC for a while.
-    sources_rx: Vec<ReceiverSource>,
+    // TODO: probably not ok to make them public
+    pub sources_rx: Vec<ReceiverSource>,
 
     /// Sender sources (SSRC).
     ///
     /// Created when we configure new m-lines via Changes API.
-    sources_tx: Vec<SenderSource>,
+    pub sources_tx: Vec<SenderSource>,
 
     /// Last time we ran cleanup.
     last_cleanup: Instant,
