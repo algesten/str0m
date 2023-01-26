@@ -551,31 +551,31 @@ impl fmt::Debug for ExtensionValues {
         write!(f, "ExtensionValues {{")?;
 
         if let Some(t) = self.mid {
-            write!(f, " mid: {}", t)?;
+            write!(f, " mid: {t}")?;
         }
         if let Some(t) = self.rid {
-            write!(f, " rid: {}", t)?;
+            write!(f, " rid: {t}")?;
         }
         if let Some(t) = self.rid_repair {
-            write!(f, " rid_repair: {}", t)?;
+            write!(f, " rid_repair: {t}")?;
         }
         if let Some(t) = self.abs_send_time {
             write!(f, " abs_send_time: {}", t.as_seconds())?;
         }
         if let Some(t) = self.voice_activity {
-            write!(f, " voice_activity: {}", t)?;
+            write!(f, " voice_activity: {t}")?;
         }
         if let Some(t) = self.audio_level {
-            write!(f, " audio_level: {}", t)?;
+            write!(f, " audio_level: {t}")?;
         }
         if let Some(t) = self.tx_time_offs {
-            write!(f, " tx_time_offs: {}", t)?;
+            write!(f, " tx_time_offs: {t}")?;
         }
         if let Some(t) = self.video_orientation {
-            write!(f, " video_orientation: {:?}", t)?;
+            write!(f, " video_orientation: {t:?}")?;
         }
         if let Some(t) = self.transport_cc {
-            write!(f, " transport_cc: {}", t)?;
+            write!(f, " transport_cc: {t}")?;
         }
         if let Some(t) = self.play_delay_min {
             write!(f, " play_delay_min: {}", t.as_seconds())?;
@@ -584,13 +584,13 @@ impl fmt::Debug for ExtensionValues {
             write!(f, " play_delay_max: {}", t.as_seconds())?;
         }
         if let Some(t) = self.video_content_type {
-            write!(f, " video_content_type: {}", t)?;
+            write!(f, " video_content_type: {t}")?;
         }
         if let Some(t) = &self.video_timing {
-            write!(f, " video_timing: {:?}", t)?;
+            write!(f, " video_timing: {t:?}")?;
         }
         if let Some(t) = &self.frame_mark {
-            write!(f, " frame_mark: {}", t)?;
+            write!(f, " frame_mark: {t}")?;
         }
 
         write!(f, " }}")?;
@@ -686,10 +686,10 @@ impl fmt::Debug for Extensions {
             .iter()
             .enumerate()
             .filter_map(|(i, v)| v.map(|v| (i + 1, v)))
-            .map(|(i, v)| format!("{}={}", i, v))
+            .map(|(i, v)| format!("{i}={v}"))
             .collect::<Vec<_>>()
             .join(", ");
-        write!(f, "{}", joined)?;
+        write!(f, "{joined}")?;
         write!(f, ")")?;
         Ok(())
     }

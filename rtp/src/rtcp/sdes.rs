@@ -259,7 +259,7 @@ mod test {
         let n = s1.write_to(&mut buf);
         buf.truncate(n);
 
-        println!("{:02x?}", buf);
+        println!("{buf:02x?}");
 
         let s2: Sdes = buf.as_slice().try_into().unwrap();
 

@@ -401,8 +401,7 @@ mod test {
                 let actual = pck.packetize(mtu, payload)?;
                 assert_eq!(
                     expected[i], actual,
-                    "{}: Generated packet[{}] differs",
-                    name, i
+                    "{name}: Generated packet[{i}] differs"
                 );
             }
         }

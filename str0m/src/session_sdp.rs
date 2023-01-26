@@ -223,7 +223,7 @@ impl Session {
         }
 
         fn index_err<T>(mid: Mid) -> Result<T, String> {
-            Err(format!("Changed order for m-line with mid: {}", mid))
+            Err(format!("Changed order for m-line with mid: {mid}"))
         }
 
         Ok(new_lines)

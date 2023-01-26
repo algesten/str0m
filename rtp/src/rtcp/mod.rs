@@ -145,8 +145,7 @@ impl Rtcp {
 
             assert_eq!(
                 written, item_len,
-                "length_words equals write_to length: {:?}",
-                fb
+                "length_words equals write_to length: {fb:?}"
             );
 
             // Move offsets for the amount written.
@@ -449,7 +448,7 @@ mod test {
         let mut buf = vec![0; 1500];
         let n = Rtcp::write_packet(&mut queue, &mut buf);
         buf.truncate(n);
-        println!("{:02x?}", buf);
+        println!("{buf:02x?}");
         assert_eq!(
             &buf,
             &[

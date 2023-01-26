@@ -47,7 +47,7 @@ pub fn main() {
 
     // Spin up a UDP socket for the RTC. All WebRTC traffic is going to be multiplexed over this single
     // server socket. Clients are identified via their respective remote (UDP) socket address.
-    let socket = UdpSocket::bind(format!("{}:0", host_addr)).expect("binding a random UDP port");
+    let socket = UdpSocket::bind(format!("{host_addr}:0")).expect("binding a random UDP port");
     let addr = socket.local_addr().expect("a local socket adddress");
     info!("Bound UDP port: {}", addr);
 
@@ -229,7 +229,7 @@ fn read_socket_input<'a>(socket: &UdpSocket, buf: &'a mut Vec<u8>) -> Option<Inp
         Err(e) => match e.kind() {
             // Expected error for set_read_timeout(). One for windows, one for the rest.
             ErrorKind::WouldBlock | ErrorKind::TimedOut => None,
-            _ => panic!("UdpSocket read failed: {:?}", e),
+            _ => panic!("UdpSocket read failed: {e:?}"),
         },
     }
 }

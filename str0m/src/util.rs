@@ -10,7 +10,7 @@ pub fn not_happening() -> Instant {
 
 pub fn already_happened() -> Instant {
     const HOURS_1: Duration = Duration::from_secs(60);
-    static PAST: Lazy<Instant> = Lazy::new(|| Instant::now() - HOURS_1);
+    static PAST: Lazy<Instant> = Lazy::new(|| Instant::now().checked_sub(HOURS_1).unwrap());
     *PAST
 }
 

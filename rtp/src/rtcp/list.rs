@@ -164,9 +164,9 @@ impl<T: fmt::Debug> fmt::Debug for ReportList<T> {
         let len = self.len();
         for (i, s) in self.0.iter().filter_map(|f| f.as_ref()).enumerate() {
             if i == len - 1 {
-                write!(f, "{:?}", s)?;
+                write!(f, "{s:?}")?;
             } else {
-                write!(f, "{:?},", s)?;
+                write!(f, "{s:?},")?;
             }
         }
         write!(f, "]")

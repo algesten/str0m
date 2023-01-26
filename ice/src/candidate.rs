@@ -80,11 +80,11 @@ impl fmt::Debug for Candidate {
         write!(f, "Candidate({}={}", self.kind, self.addr)?;
         if let Some(base) = self.base {
             if base != self.addr {
-                write!(f, " base={}", base)?;
+                write!(f, " base={base}")?;
             }
         }
         if let Some(raddr) = self.raddr {
-            write!(f, " raddr={}", raddr)?;
+            write!(f, " raddr={raddr}")?;
         }
         write!(f, " prio={}", self.prio())?;
         if self.discarded {
@@ -351,7 +351,7 @@ impl fmt::Display for CandidateKind {
             CandidateKind::ServerReflexive => "srflx",
             CandidateKind::Relayed => "relay",
         };
-        write!(f, "{}", x)
+        write!(f, "{x}")
     }
 }
 
@@ -379,10 +379,10 @@ impl fmt::Display for Candidate {
             self.kind
         )?;
         if let Some((raddr, rport)) = self.raddr.as_ref().map(|r| (r.ip(), r.port())) {
-            write!(f, " raddr {} rport {}", raddr, rport)?;
+            write!(f, " raddr {raddr} rport {rport}")?;
         }
         if let Some(ufrag) = &self.ufrag {
-            write!(f, " ufrag {}", ufrag)?;
+            write!(f, " ufrag {ufrag}")?;
         }
         write!(f, "\r\n")
     }

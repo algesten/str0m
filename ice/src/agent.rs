@@ -301,7 +301,7 @@ impl IceAgent {
             (&peer.ufrag[..], &local.ufrag[..], &peer.pass[..])
         };
 
-        let username = format!("{}:{}", left, right);
+        let username = format!("{left}:{right}");
         let password = if reply {
             local.pass.clone()
         } else {

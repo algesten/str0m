@@ -56,7 +56,7 @@ fn web_request(request: &Request) -> Response {
     let addr = util::select_host_address();
 
     // Spin up a UDP socket for the RTC
-    let socket = UdpSocket::bind(format!("{}:0", addr)).expect("binding a random UDP port");
+    let socket = UdpSocket::bind(format!("{addr}:0")).expect("binding a random UDP port");
     let addr = socket.local_addr().expect("a local socket adddress");
     let candidate = Candidate::host(addr).expect("a host candidate");
     rtc.add_local_candidate(candidate);
@@ -67,7 +67,7 @@ fn web_request(request: &Request) -> Response {
     // Launch WebRTC in separate thread.
     thread::spawn(|| {
         if let Err(e) = run(rtc, socket) {
-            eprintln!("Exited: {:?}", e);
+            eprintln!("Exited: {e:?}");
             process::exit(1);
         }
     });

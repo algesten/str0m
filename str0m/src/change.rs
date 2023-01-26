@@ -307,7 +307,7 @@ impl Changes {
                 }
             }
 
-            return Some(format!("Mid in answer is not in offer: {}", mid));
+            return Some(format!("Mid in answer is not in offer: {mid}"));
         }
 
         None

@@ -581,7 +581,7 @@ mod test {
         assert_eq!(e_and_i, &0x8000_0001_u32.to_be_bytes());
 
         println!("{}", decrypted.len());
-        println!("{:02x?}", decrypted);
+        println!("{decrypted:02x?}");
 
         // Take us back to where we started.
         let encrypted = ctx_rx.protect_rtcp(&decrypted);
