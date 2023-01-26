@@ -8,17 +8,8 @@ use crate::{Mid, Rtc};
 use rtp::Rid;
 
 pub struct Stats {
-    pub peer: BitsCount,
-    last_peer: BitsCount,
-    last_now: Option<Instant>,
     last_snapshot: StatsSnapshot,
     events: VecDeque<PeerStats>,
-}
-
-#[derive(Clone, Copy)]
-pub struct BitsCount {
-    pub tx: usize,
-    pub rx: usize,
 }
 
 type Bytes = u64;
@@ -75,26 +66,18 @@ const TIMING_ADVANCE: Duration = Duration::from_secs(1);
 impl Stats {
     pub fn new() -> Stats {
         Stats {
-            last_now: None,
-            peer: BitsCount { rx: 0, tx: 0 },
-            last_peer: BitsCount { rx: 0, tx: 0 },
             last_snapshot: StatsSnapshot::new(Instant::now()),
             events: VecDeque::new(),
         }
     }
 
-    pub fn handle_timeout(&mut self, snapshot: StatsSnapshot) {
-        let now = snapshot.ts;
-        let Some(last_now) = self.last_now else {
-            self.last_now = Some(now);
-            return;
-        };
-        let min_step = last_now + TIMING_ADVANCE;
-        if now < min_step {
-            return;
-        }
+    pub fn handles_timeout(&mut self, now: Instant) -> bool {
+        let min_step = self.last_snapshot.ts + TIMING_ADVANCE;
+        now >= min_step
+    }
 
-        let elapsed = (now - last_now).as_secs_f32();
+    pub fn do_handle_timeout(&mut self, snapshot: StatsSnapshot) {
+        let elapsed = (snapshot.ts - self.last_snapshot.ts).as_secs_f32();
 
         // enqueue stas and timestampt them so they can be sent out
 
@@ -103,20 +86,19 @@ impl Stats {
             peer_bitrate_tx: (snapshot.peer_tx - self.last_snapshot.peer_tx) as f32 * 8.0 / elapsed,
             bitrate_rx: (snapshot.rx - self.last_snapshot.rx) as f32 * 8.0 / elapsed,
             bitrate_tx: (snapshot.tx - self.last_snapshot.tx) as f32 * 8.0 / elapsed,
-            ts: now,
+            ts: snapshot.ts,
         };
 
         self.events.push_back(event);
-        self.last_peer = self.peer;
 
         self.last_snapshot = snapshot;
-        self.last_now = Some(now);
     }
 
     /// Poll for the next time to call [`self::handle_timeout`].
+    ///
+    /// NOTE: we only need Option<_> to conform to .soonest() (see caller)
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        let last_now = self.last_now?;
-
+        let last_now = self.last_snapshot.ts;
         Some(last_now + TIMING_ADVANCE)
     }
 
