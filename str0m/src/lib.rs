@@ -1018,9 +1018,10 @@ impl Rtc {
         self.ice.handle_timeout(now);
         self.sctp.handle_timeout(now);
         self.session.handle_timeout(now);
-        // TODO: avoid this heavy operation if the timeout is not handled
-        let snapshot = StatsSnapshot::from(self, now);
-        self.stats.handle_timeout(snapshot);
+        if self.stats.handles_timeout(now) {
+            let snapshot = StatsSnapshot::from(self, now);
+            self.stats.do_handle_timeout(snapshot)
+        }
     }
 
     fn do_handle_receive(&mut self, now: Instant, r: net::Receive) -> Result<(), RtcError> {
