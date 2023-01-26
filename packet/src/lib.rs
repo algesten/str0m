@@ -31,6 +31,8 @@ pub use buffer_rx::{Depacketized, DepacketizingBuffer, RtpMeta};
 mod buffer_tx;
 pub use buffer_tx::{Packetized, PacketizingBuffer};
 
+mod bwe;
+
 /// Packetizes some bytes for use as RTP packet.
 pub trait Packetizer: fmt::Debug {
     /// Chunk the data up into RTP packets.
