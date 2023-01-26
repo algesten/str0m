@@ -10,7 +10,7 @@ use super::Source;
 pub struct SenderSource {
     ssrc: Ssrc,
     repairs: Option<Ssrc>,
-    rid: Option<Rid>,
+    pub rid: Option<Rid>,
     next_seq_no: SeqNo,
     last_used: Instant,
     pub bytes_tx: u64,

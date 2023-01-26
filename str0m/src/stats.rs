@@ -1,25 +1,27 @@
-use serde::{Deserialize, Serialize};
+use itertools::Itertools;
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
 
-use crate::{Mid, Rtc};
+use crate::{media::Source, Mid, Rtc};
 use rtp::Rid;
 
 pub struct Stats {
     last_snapshot: StatsSnapshot,
-    events: VecDeque<PeerStats>,
+    events: VecDeque<StatEvent>,
 }
 
 type Bytes = u64;
 
 pub struct StatsSnapshot {
-    pub peer_tx: Bytes,
-    pub peer_rx: Bytes,
-    pub tx: Bytes,
-    pub rx: Bytes,
-    pub ts: Instant,
+    peer_tx: Bytes,
+    peer_rx: Bytes,
+    tx: Bytes,
+    rx: Bytes,
+    ingress: HashMap<(Mid, Option<Rid>), Bytes>,
+    egress: HashMap<(Mid, Option<Rid>), Bytes>,
+    ts: Instant,
 }
 
 impl StatsSnapshot {
@@ -32,6 +34,8 @@ impl StatsSnapshot {
             peer_tx: 0,
             tx: 0,
             rx: 0,
+            ingress: HashMap::new(),
+            egress: HashMap::new(),
             ts,
         }
     }
@@ -51,11 +55,39 @@ impl StatsSnapshot {
             .map(|s| s.bytes_tx)
             .sum();
 
+        let egress = {
+            let mut data: HashMap<(Mid, Option<Rid>), Bytes> = HashMap::new();
+
+            for media in session.media() {
+                let mid = media.mid();
+                for (rid, receiver) in media.sources_rx.iter().group_by(|s| s.rid()).into_iter() {
+                    let total: Bytes = receiver.map(|s| s.bytes_rx).sum();
+                    data.insert((mid, rid), total);
+                }
+            }
+            data
+        };
+
+        let ingress = {
+            let mut data: HashMap<(Mid, Option<Rid>), Bytes> = HashMap::new();
+
+            for media in session.media() {
+                let mid = media.mid();
+                for (rid, sender) in media.sources_tx.iter().group_by(|s| s.rid()).into_iter() {
+                    let total: Bytes = sender.map(|s| s.bytes_tx).sum();
+                    data.insert((mid, rid), total);
+                }
+            }
+            data
+        };
+
         StatsSnapshot {
             peer_tx,
             peer_rx,
             tx,
             rx,
+            ingress,
+            egress,
             ts: now,
         }
     }
@@ -66,18 +98,24 @@ const TIMING_ADVANCE: Duration = Duration::from_secs(1);
 impl Stats {
     pub fn new() -> Stats {
         Stats {
+            // by starting with the current time we can generate stats right away
             last_snapshot: StatsSnapshot::new(Instant::now()),
             events: VecDeque::new(),
         }
     }
 
+    /// returns true if we want to handle the timeout
+    ///
+    /// This is used to give the caller a chance to collect inputs only if needed
     pub fn handles_timeout(&mut self, now: Instant) -> bool {
         let min_step = self.last_snapshot.ts + TIMING_ADVANCE;
         now >= min_step
     }
 
+    /// Actually handles the timeout advancing the internal state and preparing the output
     pub fn do_handle_timeout(&mut self, snapshot: StatsSnapshot) {
         let elapsed = (snapshot.ts - self.last_snapshot.ts).as_secs_f32();
+        let ts = snapshot.ts;
 
         // enqueue stas and timestampt them so they can be sent out
 
@@ -89,7 +127,39 @@ impl Stats {
             ts: snapshot.ts,
         };
 
-        self.events.push_back(event);
+        self.events.push_back(StatEvent::PeerStats(event));
+
+        for ((mid, rid), total) in &snapshot.ingress {
+            let (mid, rid, total) = (*mid, *rid, *total);
+            let key = (mid, rid);
+            let bytes = self.last_snapshot.ingress.get(&key).unwrap_or(&0_u64);
+            let bitrate_rx = (total - bytes) as f32 * 8.0 / elapsed;
+            let event = MediaIngressStats {
+                mid,
+                rid,
+                bitrate_rx,
+                ts,
+                // TODO
+                remote: RemoteEgressStats { bitrate_rx: 0.0 },
+            };
+            self.events.push_back(StatEvent::MediaIngressStats(event));
+        }
+
+        for ((mid, rid), total) in &snapshot.egress {
+            let (mid, rid, total) = (*mid, *rid, *total);
+            let key = (mid, rid);
+            let bytes = self.last_snapshot.ingress.get(&key).unwrap_or(&0_u64);
+            let bitrate_tx = (total - bytes) as f32 * 8.0 / elapsed;
+            let event = MediaEgressStats {
+                mid,
+                rid,
+                bitrate_tx,
+                ts,
+                // TODO
+                remote: RemoteIngressStats { bitrate_rx: 0.0 },
+            };
+            self.events.push_back(StatEvent::MediaEgressStats(event));
+        }
 
         self.last_snapshot = snapshot;
     }
@@ -102,12 +172,20 @@ impl Stats {
         Some(last_now + TIMING_ADVANCE)
     }
 
-    pub fn poll_output(&mut self) -> Option<PeerStats> {
+    pub fn poll_output(&mut self) -> Option<StatEvent> {
         self.events.pop_front()
     }
 }
 
-// TODO: removed other derives to quickly add Instant, rethink
+// Output events
+
+#[derive(Debug, Clone)]
+pub enum StatEvent {
+    PeerStats(PeerStats),
+    MediaEgressStats(MediaEgressStats),
+    MediaIngressStats(MediaIngressStats),
+}
+
 #[derive(Debug, Clone)]
 pub struct PeerStats {
     pub peer_bitrate_rx: f32,
@@ -117,31 +195,34 @@ pub struct PeerStats {
     pub ts: Instant,
 }
 
-// TODO: ztuff below
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MediaEgressStats {
     pub mid: Mid,
     pub rid: Option<Rid>,
 
     pub bitrate_tx: f32,
+    pub ts: Instant,
     // TODO
     pub remote: RemoteIngressStats,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RemoteIngressStats {
     pub bitrate_rx: f32,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MediaIngressStats {
-    pub bitrate_tx: f32,
+    pub mid: Mid,
+    pub rid: Option<Rid>,
+
+    pub bitrate_rx: f32,
+    pub ts: Instant,
     // TODO
     pub remote: RemoteEgressStats,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct RemoteEgressStats {
     pub bitrate_rx: f32,
 }
