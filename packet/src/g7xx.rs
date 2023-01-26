@@ -31,6 +31,10 @@ impl Packetizer for G7xxPacketizer {
 
         Ok(payloads)
     }
+
+    fn is_audio(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]

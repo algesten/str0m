@@ -110,6 +110,10 @@ impl Packetizer for Vp8Packetizer {
 
         Ok(payloads)
     }
+
+    fn is_audio(&self) -> bool {
+        true
+    }
 }
 
 /// Depacketizes VP8 RTP packets.

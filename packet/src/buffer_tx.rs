@@ -1,9 +1,11 @@
 use std::collections::VecDeque;
 use std::fmt;
+use std::time::Instant;
 
 use rtp::{ExtensionValues, MediaTime, Rid, SeqNo, Ssrc};
 
-use crate::{CodecPacketizer, PacketError, Packetizer};
+use crate::pacer::PacketKind;
+use crate::{CodecPacketizer, PacketError, Packetizer, QueueState};
 
 pub struct Packetized {
     pub data: Vec<u8>,
@@ -22,6 +24,7 @@ pub struct PacketizedMeta {
     pub ssrc: Ssrc,
     pub rid: Option<Rid>,
     pub ext_vals: ExtensionValues,
+    pub queued_at: Instant,
 }
 
 #[derive(Debug)]
@@ -29,6 +32,7 @@ pub struct PacketizingBuffer {
     pack: CodecPacketizer,
     queue: VecDeque<Packetized>,
     emit_next: usize,
+    last_emit: Option<Instant>,
     max_retain: usize,
 }
 
@@ -38,6 +42,7 @@ impl PacketizingBuffer {
             pack,
             queue: VecDeque::new(),
             emit_next: 0,
+            last_emit: None,
             max_retain,
         }
     }
@@ -79,9 +84,10 @@ impl PacketizingBuffer {
         Ok(())
     }
 
-    pub fn poll_next(&mut self) -> Option<&mut Packetized> {
+    pub fn poll_next(&mut self, now: Instant) -> Option<&mut Packetized> {
         let next = self.queue.get_mut(self.emit_next)?;
         self.emit_next += 1;
+        self.last_emit = Some(now);
         Some(next)
     }
 
@@ -102,6 +108,42 @@ impl PacketizingBuffer {
 
     pub fn free(&self) -> usize {
         self.max_retain - self.queue.len() + self.emit_next
+    }
+
+    pub fn queue_state(&self, now: Instant) -> QueueState {
+        let kind = if self.is_audio() {
+            PacketKind::Audio
+        } else {
+            PacketKind::Video
+        };
+
+        let mut state = self
+            .queued_packets()
+            .fold(QueueState::new(kind), |mut state, packet| {
+                state.packet_count += 1;
+                state.total_queue_time += now.saturating_duration_since(packet.meta.queued_at);
+                state.size += packet.data.len().into();
+
+                state
+            });
+
+        state.update_last_send_time(self.last_emit);
+        state.update_leading_queue_time(self.leading_queue_time());
+
+        state
+    }
+
+    fn leading_queue_time(&self) -> Option<Instant> {
+        self.queued_packets().next().map(|p| p.meta.queued_at)
+    }
+
+    fn is_audio(&self) -> bool {
+        self.pack.is_audio()
+    }
+
+    /// An iterator over all packets that are queued, but have not yet been sent.
+    fn queued_packets(&self) -> impl Iterator<Item = &Packetized> {
+        (self.emit_next..).map_while(|idx| self.queue.get(idx))
     }
 }
 

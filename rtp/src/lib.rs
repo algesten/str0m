@@ -33,7 +33,7 @@ mod rtcp;
 pub use rtcp::*;
 
 mod bandwidth;
-pub use bandwidth::Bitrate;
+pub use bandwidth::{Bitrate, DataSize};
 
 /// Errors that can arise in RTP.
 #[derive(Debug, Error)]

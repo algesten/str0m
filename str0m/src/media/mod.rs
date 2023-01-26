@@ -149,7 +149,7 @@ impl Media<'_> {
             .handle_input(Input::Timeout(now))
             .expect("handle_input timeout to be ok");
 
-        self.m_line_mut().writer(pt)
+        self.m_line_mut().writer(now, pt)
     }
 
     /// Test if the kind of keyframe request is possible.
@@ -233,6 +233,7 @@ impl Media<'_> {
 /// ```
 pub struct Writer<'a> {
     m_line: &'a mut MLine,
+    now: Instant,
     pt: Pt,
     rid: Option<Rid>,
     ext_vals: ExtensionValues,
@@ -279,7 +280,14 @@ impl<'a> Writer<'a> {
         rtp_time: MediaTime,
         data: &[u8],
     ) -> Result<usize, RtcError> {
-        self.m_line
-            .write(self.pt, wallclock, rtp_time, data, self.rid, self.ext_vals)
+        self.m_line.write(
+            self.now,
+            self.pt,
+            wallclock,
+            rtp_time,
+            data,
+            self.rid,
+            self.ext_vals,
+        )
     }
 }
