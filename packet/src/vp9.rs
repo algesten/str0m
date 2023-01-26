@@ -683,16 +683,15 @@ mod test {
                 if let Err(actual) = p.depacketize(b, &mut payload) {
                     assert_eq!(
                         expected, actual,
-                        "{}: expected {}, but got {}",
-                        name, expected, actual
+                        "{name}: expected {expected}, but got {actual}"
                     );
                 } else {
-                    panic!("{}: expected error, but got passed", name);
+                    panic!("{name}: expected error, but got passed");
                 }
             } else {
                 let mut payload = Vec::new();
                 p.depacketize(b, &mut payload)?;
-                assert_eq!(pkt, p, "{}: expected {:?}, but got {:?}", name, pkt, p);
+                assert_eq!(pkt, p, "{name}: expected {pkt:?}, but got {p:?}");
                 assert_eq!(payload, expected);
             }
         }
@@ -760,7 +759,7 @@ mod test {
             for b in &bs {
                 actual.extend(pck.packetize(mtu, b)?);
             }
-            assert_eq!(expected, actual, "{}: Payloaded packet", name);
+            assert_eq!(expected, actual, "{name}: Payloaded packet");
         }
 
         //"PictureIDOverflow"

@@ -520,7 +520,7 @@ mod test {
 
         for i in 4..1000 {
             let arrival = if i % 2 == 0 {
-                start + i * dur - off
+                start + i * dur.checked_sub(off).unwrap()
             } else {
                 start + i * dur + off
             };

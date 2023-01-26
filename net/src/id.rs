@@ -35,6 +35,6 @@ impl<const L: usize> fmt::Display for Id<L> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // SAFETY: we know this is ascii chars.
         let s = unsafe { from_utf8_unchecked(&self.0) };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }

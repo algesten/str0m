@@ -234,7 +234,7 @@ impl<'a> StunMessage<'a> {
 
     pub fn to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, StunError> {
         self.do_to_bytes(password, buf)
-            .map_err(|e| StunError::Other(format!("io write: {:?}", e)))
+            .map_err(|e| StunError::Other(format!("io write: {e:?}")))
     }
 
     fn do_to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, io::Error> {
@@ -461,7 +461,7 @@ impl<'a> Attribute<'a> {
                 }
             }
             UseCandidate => 0,
-            _ => panic!("No length for: {:?}", self),
+            _ => panic!("No length for: {self:?}"),
         }
     }
 
@@ -513,7 +513,7 @@ impl<'a> Attribute<'a> {
                 vec.write_all(&0x0025_u16.to_be_bytes())?;
                 vec.write_all(&0_u16.to_be_bytes())?;
             }
-            _ => panic!("Can't write bytes for: {:?}", self),
+            _ => panic!("Can't write bytes for: {self:?}"),
         }
 
         Ok(())
@@ -577,8 +577,7 @@ impl<'a> Attribute<'a> {
                         let class = buf[6] as u16 * 100;
                         if class < 300 || class > 699 {
                             return Err(StunError::Parse(format!(
-                                "Error class is not in range: {}",
-                                class
+                                "Error class is not in range: {class}"
                             )));
                         }
                         let code = class + (buf[7] % 100) as u16;
@@ -676,13 +675,12 @@ impl<'a> Attribute<'a> {
 fn decode_str(typ: u16, buf: &[u8], len: usize) -> Result<&str, StunError> {
     if len > 128 {
         return Err(StunError::Parse(format!(
-            "0x{:04x?} too long str len: {}",
-            typ, len
+            "0x{typ:04x?} too long str len: {len}"
         )));
     }
     match str::from_utf8(&buf[0..len]).ok() {
         Some(v) => Ok(v),
-        None => Err(StunError::Parse(format!("0x{:04x?} malformed utf-8", typ))),
+        None => Err(StunError::Parse(format!("0x{typ:04x?} malformed utf-8"))),
     }
 }
 
@@ -734,7 +732,7 @@ fn decode_xor(buf: &[u8], trans_id: TransId) -> Result<SocketAddr, StunError> {
             IpAddr::V6(bytes.into())
         }
         e => {
-            return Err(StunError::Parse(format!("Invalid address family: {:?}", e)));
+            return Err(StunError::Parse(format!("Invalid address family: {e:?}")));
         }
     };
 

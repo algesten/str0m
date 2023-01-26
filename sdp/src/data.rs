@@ -93,7 +93,7 @@ impl Sdp {
                 m_line.check_consistent()?;
                 let m = m_line.mid();
                 if m != *mid {
-                    return Some(format!("Mid order not matching a=group {} != {}", m, mid));
+                    return Some(format!("Mid order not matching a=group {m} != {mid}"));
                 }
             }
         } else {
@@ -999,7 +999,7 @@ impl fmt::Display for FormatParams {
             .map(|f| f.to_string())
             .collect::<Vec<_>>()
             .join(";");
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
@@ -1172,7 +1172,7 @@ impl fmt::Display for FormatParam {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use FormatParam::*;
         match self {
-            MinPTime(v) => write!(f, "minptime={}", v),
+            MinPTime(v) => write!(f, "minptime={v}"),
             UseInbandFec(v) => write!(f, "useinbandfec={}", i32::from(*v)),
             LevelAsymmetryAllowed(v) => {
                 write!(f, "level-asymmetry-allowed={}", i32::from(*v))
@@ -1180,7 +1180,7 @@ impl fmt::Display for FormatParam {
             PacketizationMode(v) => write!(f, "packetization-mode={}", *v),
             ProfileLevelId(v) => write!(f, "profile-level-id={:06x}", *v),
             ProfileId(v) => write!(f, "profile-id={}", *v),
-            Apt(v) => write!(f, "apt={}", v),
+            Apt(v) => write!(f, "apt={v}"),
             Unknown => Ok(()),
         }
     }
@@ -1320,9 +1320,9 @@ impl fmt::Display for SimulcastGroups {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (idx, a) in self.0.iter().enumerate() {
             if idx + 1 == self.0.len() {
-                write!(f, "{}", a)?;
+                write!(f, "{a}")?;
             } else {
-                write!(f, "{},", a)?;
+                write!(f, "{a},")?;
             }
         }
         Ok(())
@@ -1346,7 +1346,7 @@ impl fmt::Display for Sdp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.session)?;
         for m in &self.media_lines {
-            write!(f, "{}", m)?;
+            write!(f, "{m}")?;
         }
         Ok(())
     }
@@ -1362,7 +1362,7 @@ impl fmt::Display for Session {
         }
         write!(f, "t=0 0\r\n")?;
         for a in &self.attrs {
-            write!(f, "{}", a)?;
+            write!(f, "{a}")?;
         }
         Ok(())
     }
@@ -1377,9 +1377,9 @@ impl fmt::Display for SessionAttribute {
                 write!(f, "a=group:{} {}\r\n", typ, mids.join(" "))?;
             }
             IceLite => write!(f, "a=ice-lite\r\n")?,
-            IceUfrag(v) => write!(f, "a=ice-ufrag:{}\r\n", v)?,
-            IcePwd(v) => write!(f, "a=ice-pwd:{}\r\n", v)?,
-            IceOptions(v) => write!(f, "a=ice-options:{}\r\n", v)?,
+            IceUfrag(v) => write!(f, "a=ice-ufrag:{v}\r\n")?,
+            IcePwd(v) => write!(f, "a=ice-pwd:{v}\r\n")?,
+            IceOptions(v) => write!(f, "a=ice-options:{v}\r\n")?,
             Fingerprint(v) => {
                 write!(
                     f,
@@ -1389,9 +1389,9 @@ impl fmt::Display for SessionAttribute {
                 )?;
             }
             Setup(v) => write!(f, "a=setup:{}\r\n", v.setup_line())?,
-            Candidate(c) => write!(f, "{}", c)?,
+            Candidate(c) => write!(f, "{c}")?,
             EndOfCandidates => write!(f, "a=end-of-candidates\r\n")?,
-            Unused(v) => write!(f, "a={}\r\n", v)?,
+            Unused(v) => write!(f, "a={v}\r\n")?,
         }
         Ok(())
     }
@@ -1406,9 +1406,9 @@ impl fmt::Display for MediaLine {
         } else {
             for (idx, m) in self.pts.iter().enumerate() {
                 if idx + 1 < len {
-                    write!(f, "{} ", m)?;
+                    write!(f, "{m} ")?;
                 } else {
-                    write!(f, "{}", m)?;
+                    write!(f, "{m}")?;
                 }
             }
             write!(f, "\r\n")?;
@@ -1418,7 +1418,7 @@ impl fmt::Display for MediaLine {
             write!(f, "b={}:{}\r\n", bw.typ, bw.val)?;
         }
         for a in &self.attrs {
-            write!(f, "{}", a)?;
+            write!(f, "{a}")?;
         }
         Ok(())
     }
@@ -1430,7 +1430,7 @@ impl fmt::Display for MediaType {
             MediaType::Audio => write!(f, "audio"),
             MediaType::Video => write!(f, "video"),
             MediaType::Application => write!(f, "application"),
-            MediaType::Unknown(v) => write!(f, "{}", v),
+            MediaType::Unknown(v) => write!(f, "{v}"),
         }
     }
 }
@@ -1445,10 +1445,10 @@ impl fmt::Display for MediaAttribute {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use MediaAttribute::*;
         match self {
-            Rtcp(v) => write!(f, "a=rtcp:{}\r\n", v)?,
-            IceUfrag(v) => write!(f, "a=ice-ufrag:{}\r\n", v)?,
-            IcePwd(v) => write!(f, "a=ice-pwd:{}\r\n", v)?,
-            IceOptions(v) => write!(f, "a=ice-options:{}\r\n", v)?,
+            Rtcp(v) => write!(f, "a=rtcp:{v}\r\n")?,
+            IceUfrag(v) => write!(f, "a=ice-ufrag:{v}\r\n")?,
+            IcePwd(v) => write!(f, "a=ice-pwd:{v}\r\n")?,
+            IceOptions(v) => write!(f, "a=ice-options:{v}\r\n")?,
             Fingerprint(v) => {
                 write!(
                     f,
@@ -1458,16 +1458,16 @@ impl fmt::Display for MediaAttribute {
                 )?;
             }
             Setup(v) => write!(f, "a=setup:{}\r\n", v.setup_line())?,
-            Mid(v) => write!(f, "a=mid:{}\r\n", v)?,
-            SctpPort(v) => write!(f, "a=sctp-port:{}\r\n", v)?,
-            MaxMessageSize(v) => write!(f, "a=max-message-size:{}\r\n", v)?,
+            Mid(v) => write!(f, "a=mid:{v}\r\n")?,
+            SctpPort(v) => write!(f, "a=sctp-port:{v}\r\n")?,
+            MaxMessageSize(v) => write!(f, "a=max-message-size:{v}\r\n")?,
             ExtMap(e) => {
                 if !e.ext.is_serialized() {
                     return Ok(());
                 }
                 write!(f, "a=extmap:{}", e.id)?;
                 if let Some(d) = &e.direction {
-                    write!(f, "/{}", d)?;
+                    write!(f, "/{d}")?;
                 }
                 write!(f, " {}", e.ext.as_uri())?;
                 // if let Some(e) = &e.ext {
@@ -1485,23 +1485,23 @@ impl fmt::Display for MediaAttribute {
             RtcpMux => write!(f, "a=rtcp-mux\r\n")?,
             RtcpMuxOnly => write!(f, "a=rtcp-mux-only\r\n")?,
             RtcpRsize => write!(f, "a=rtcp-rsize\r\n")?,
-            Candidate(c) => write!(f, "{}", c)?,
+            Candidate(c) => write!(f, "{c}")?,
             EndOfCandidates => write!(f, "a=end-of-candidates\r\n")?,
             RtpMap(c) => {
                 write!(f, "a=rtpmap:{} {}/{}", c.pt, c.codec, c.clock_rate)?;
                 if let Some(e) = c.channels {
-                    write!(f, "/{}", e)?;
+                    write!(f, "/{e}")?;
                 }
                 write!(f, "\r\n")?;
             }
-            RtcpFb { pt, value } => write!(f, "a=rtcp-fb:{} {}\r\n", pt, value)?,
+            RtcpFb { pt, value } => write!(f, "a=rtcp-fb:{pt} {value}\r\n")?,
             Fmtp { pt, values } => {
-                write!(f, "a=fmtp:{} ", pt)?;
+                write!(f, "a=fmtp:{pt} ")?;
                 for (idx, v) in values.iter().enumerate() {
                     if idx + 1 < values.len() {
-                        write!(f, "{};", v)?;
+                        write!(f, "{v};")?;
                     } else {
-                        write!(f, "{}\r\n", v)?;
+                        write!(f, "{v}\r\n")?;
                     }
                 }
             }
@@ -1518,9 +1518,9 @@ impl fmt::Display for MediaAttribute {
                         write!(f, " pt=")?;
                     }
                     if idx + 1 == pt.len() {
-                        write!(f, "{}", p)?;
+                        write!(f, "{p}")?;
                     } else {
-                        write!(f, "{},", p)?;
+                        write!(f, "{p},")?;
                     }
                 }
                 for (idx, (k, v)) in restriction.iter().enumerate() {
@@ -1532,9 +1532,9 @@ impl fmt::Display for MediaAttribute {
                         }
                     }
                     if idx + 1 == restriction.len() {
-                        write!(f, "{}={}", k, v)?;
+                        write!(f, "{k}={v}")?;
                     } else {
-                        write!(f, "{}={};", k, v)?;
+                        write!(f, "{k}={v};")?;
                     }
                 }
                 write!(f, "\r\n")?;
@@ -1556,18 +1556,18 @@ impl fmt::Display for MediaAttribute {
                 }
                 write!(f, "a=simulcast:")?;
                 if !send.0.is_empty() {
-                    write!(f, "send {}", send)?;
+                    write!(f, "send {send}")?;
                 }
                 if !recv.0.is_empty() {
                     if !send.0.is_empty() {
                         write!(f, " ")?;
                     }
-                    write!(f, "recv {}", recv)?;
+                    write!(f, "recv {recv}")?;
                 }
                 write!(f, "\r\n")?;
             }
             SsrcGroup { semantics, ssrcs } => {
-                write!(f, "a=ssrc-group:{} ", semantics)?;
+                write!(f, "a=ssrc-group:{semantics} ")?;
                 for (idx, ssrc) in ssrcs.iter().enumerate() {
                     if idx + 1 < ssrcs.len() {
                         write!(f, "{} ", **ssrc)?;
@@ -1579,7 +1579,7 @@ impl fmt::Display for MediaAttribute {
             Ssrc { ssrc, attr, value } => {
                 write!(f, "a=ssrc:{} {}:{}\r\n", **ssrc, attr, value)?;
             }
-            Unused(v) => write!(f, "a={}\r\n", v)?,
+            Unused(v) => write!(f, "a={v}\r\n")?,
         }
         Ok(())
     }
@@ -1592,9 +1592,9 @@ impl<'a> std::fmt::Display for FingerprintFmt<'a> {
         let last = self.0.len() - 1;
         for (idx, b) in self.0.iter().enumerate() {
             if idx < last {
-                write!(f, "{:02X}:", b)?;
+                write!(f, "{b:02X}:")?;
             } else {
-                write!(f, "{:02X}", b)?;
+                write!(f, "{b:02X}")?;
             }
         }
         Ok(())
@@ -1680,7 +1680,7 @@ mod test {
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "msid".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1".into() },
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "mslabel".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into() },
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "label".into(), value: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() }] }] };
-        assert_eq!(&format!("{}", sdp), "v=0\r\n\
+        assert_eq!(&format!("{sdp}"), "v=0\r\n\
             o=- 5058682828002148772 2 IN IP4 0.0.0.0\r\n\
             s=-\r\n\
             t=0 0\r\n\

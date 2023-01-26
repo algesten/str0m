@@ -146,7 +146,7 @@ pub fn progress(a1: &mut TestAgent, a2: &mut TestAgent) {
     t.time = tim_t;
 
     while let Some(v) = t.span.in_scope(|| t.agent.poll_event()) {
-        println!("Polled event: {:?}", v);
+        println!("Polled event: {v:?}");
         use ice::IceAgentEvent::*;
         f.span.in_scope(|| {
             if let IceRestart(v) = &v {
