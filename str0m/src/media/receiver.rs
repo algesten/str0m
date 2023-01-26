@@ -1,8 +1,10 @@
 use std::time::Instant;
 
-use rtp::{MediaTime, Nack, ReceiverReport, ReportList, Rid, RtpHeader, SenderInfo, SeqNo, Ssrc};
+use rtp::{
+    MediaTime, Mid, Nack, ReceiverReport, ReportList, Rid, RtpHeader, SenderInfo, SeqNo, Ssrc,
+};
 
-use crate::util::already_happened;
+use crate::{stats::StatsSnapshot, util::already_happened};
 
 use super::{register::ReceiverRegister, Source};
 
@@ -16,7 +18,7 @@ pub struct ReceiverSource {
     sender_info: Option<SenderInfo>,
     sender_info_at: Option<Instant>,
     fir_seq_no: u8,
-    pub bytes_rx: u64,
+    bytes_rx: u64,
 }
 
 impl ReceiverSource {
@@ -121,10 +123,23 @@ impl ReceiverSource {
         self.sender_info_at = Some(now);
     }
 
+    pub fn update_recv_bytes(&mut self, amount: u64) {
+        self.bytes_rx += amount;
+    }
+
     pub(crate) fn next_fir_seq_no(&mut self) -> u8 {
         let x = self.fir_seq_no;
         self.fir_seq_no = self.fir_seq_no.wrapping_add(1);
         x
+    }
+
+    pub fn visit_stats(&self, mid: Mid, snapshot: &mut StatsSnapshot) {
+        let key = (mid, self.rid);
+        if let Some(v) = snapshot.ingress.get_mut(&key) {
+            *v += self.bytes_rx;
+        } else {
+            snapshot.ingress.insert(key, self.bytes_rx);
+        }
     }
 }
 

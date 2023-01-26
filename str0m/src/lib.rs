@@ -246,10 +246,15 @@ pub enum Event {
     /// A data channel has been closed.
     ChannelClose(ChannelId),
 
+    /// Statistics event for the Rtc instance
+    ///
+    /// Includes both media traffic (rtp payload) as well as all traffic
     PeerStats(PeerStats),
 
+    /// Aggregated statistics for each media (mid, rid) in the ingress direction
     MediaIngressStats(MediaIngressStats),
 
+    /// Aggregated statistics for each media (mid, rid) in the egress direction
     MediaEgressStats(MediaEgressStats),
 }
 
@@ -1018,12 +1023,12 @@ impl Rtc {
 
     fn do_handle_timeout(&mut self, now: Instant) {
         self.last_now = now;
-        info!("timeout");
         self.ice.handle_timeout(now);
         self.sctp.handle_timeout(now);
         self.session.handle_timeout(now);
-        if self.stats.handles_timeout(now) {
-            let snapshot = StatsSnapshot::from(self, now);
+        if self.stats.wants_timeout(now) {
+            let mut snapshot = StatsSnapshot::new(now);
+            self.visit_stats(&mut snapshot);
             self.stats.do_handle_timeout(snapshot)
         }
     }
@@ -1038,9 +1043,6 @@ impl Rtc {
             Stun(_) => 0,
             Dtls(v) | Rtp(v) | Rtcp(v) => v.len(),
         };
-
-        // TODO: downgrade logging
-        info!("peer connection bytes rx {} for {:?}", bytes_rx, r.contents);
 
         self.peer_bytes_rx += bytes_rx as u64;
 
@@ -1081,6 +1083,12 @@ impl Rtc {
         }
 
         Some(Channel::new(id, self))
+    }
+
+    fn visit_stats(&mut self, snapshot: &mut StatsSnapshot) {
+        snapshot.peer_rx = self.peer_bytes_rx;
+        snapshot.peer_tx = self.peer_bytes_tx;
+        self.session.visit_stats(snapshot);
     }
 }
 

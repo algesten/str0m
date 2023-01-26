@@ -30,6 +30,7 @@ use sender::SenderSource;
 mod register;
 
 use crate::change::AddMedia;
+use crate::stats::StatsSnapshot;
 use crate::util::already_happened;
 use crate::RtcError;
 
@@ -248,13 +249,12 @@ pub struct Media {
     /// These are created first time we observe the SSRC in an incoming RTP packet.
     /// Each source keeps track of packet loss, nack, reports etc. Receiving sources are
     /// cleaned up when we haven't received any data for the SSRC for a while.
-    // TODO: probably not ok to make them public
-    pub sources_rx: Vec<ReceiverSource>,
+    sources_rx: Vec<ReceiverSource>,
 
     /// Sender sources (SSRC).
     ///
     /// Created when we configure new m-lines via Changes API.
-    pub sources_tx: Vec<SenderSource>,
+    sources_tx: Vec<SenderSource>,
 
     /// Last time we ran cleanup.
     last_cleanup: Instant,
@@ -650,6 +650,8 @@ impl Media {
                 None => continue,
             };
 
+            source.update_sent_bytes(pkt.data.len() as u64, true);
+
             let seq_no = source.next_seq_no(now);
 
             // The resend ssrc. This would correspond to the RTX PT for video.
@@ -680,6 +682,8 @@ impl Media {
             .iter_mut()
             .find(|s| s.ssrc() == pkt.ssrc)
             .expect("SenderSource for packetized write");
+
+        source.update_sent_bytes(pkt.data.len() as u64, false);
 
         let seq_no = source.next_seq_no(now);
         pkt.seq_no = Some(seq_no);
@@ -1193,6 +1197,15 @@ impl Media {
     /// The number of SSRC required to equalize the senders/receivers.
     pub(crate) fn equalize_requires_ssrcs(&self) -> usize {
         (self.sources_tx.len() as isize - self.sources_rx.len() as isize).unsigned_abs()
+    }
+
+    pub fn visit_stats(&self, snapshot: &mut StatsSnapshot) {
+        for s in &self.sources_rx {
+            s.visit_stats(self.mid, snapshot);
+        }
+        for s in &self.sources_tx {
+            s.visit_stats(self.mid, snapshot);
+        }
     }
 }
 
