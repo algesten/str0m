@@ -1,8 +1,10 @@
 use std::time::Instant;
 
-use rtp::{Descriptions, ReportList, Rid, Sdes, SdesType, SenderInfo, SenderReport, SeqNo, Ssrc};
+use rtp::{
+    Descriptions, Mid, ReportList, Rid, Sdes, SdesType, SenderInfo, SenderReport, SeqNo, Ssrc,
+};
 
-use crate::util::already_happened;
+use crate::{stats::StatsSnapshot, util::already_happened};
 
 use super::Source;
 
@@ -10,10 +12,11 @@ use super::Source;
 pub struct SenderSource {
     ssrc: Ssrc,
     repairs: Option<Ssrc>,
-    pub rid: Option<Rid>,
+    rid: Option<Rid>,
     next_seq_no: SeqNo,
     last_used: Instant,
-    pub bytes_tx: u64,
+    bytes_tx: u64,
+    bytes_tx_resent: u64,
 }
 
 impl SenderSource {
@@ -29,6 +32,7 @@ impl SenderSource {
             next_seq_no: (rand::random::<u16>() as u64).into(),
             last_used: already_happened(),
             bytes_tx: 0,
+            bytes_tx_resent: 0,
         }
     }
 
@@ -69,6 +73,24 @@ impl SenderSource {
         let s = self.next_seq_no;
         self.next_seq_no = (*s + 1).into();
         s
+    }
+
+    pub fn update_sent_bytes(&mut self, amount: u64, is_resend: bool) {
+        if is_resend {
+            self.bytes_tx_resent += amount;
+        } else {
+            self.bytes_tx += amount;
+        }
+    }
+
+    pub fn visit_stats(&self, mid: Mid, snapshot: &mut StatsSnapshot) {
+        let key = (mid, self.rid);
+        let bytes_tx = self.bytes_tx + self.bytes_tx_resent;
+        if let Some(v) = snapshot.egress.get_mut(&key) {
+            *v += bytes_tx;
+        } else {
+            snapshot.egress.insert(key, bytes_tx);
+        }
     }
 }
 

@@ -11,6 +11,7 @@ use rtp::{SrtpContext, SrtpKey, Ssrc};
 
 use crate::media::{App, CodecConfig, MediaAdded, MediaChanged, Source};
 use crate::session_sdp::AsMediaLine;
+use crate::stats::StatsSnapshot;
 use crate::util::{already_happened, not_happening, Soonest};
 use crate::RtcError;
 use crate::{net, KeyframeRequest, MediaData};
@@ -451,8 +452,9 @@ impl Session {
         buf.push(meta, data);
 
         // TODO: is there a nicer way to make borrow-checker happy ?
+        // this should go away with the refactoring of the entire handle_rtp() function
         let source = media.get_or_create_source_rx(ssrc);
-        source.bytes_rx += bytes_rx as u64;
+        source.update_recv_bytes(bytes_rx as u64);
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
@@ -705,6 +707,12 @@ impl Session {
         if !self.enable_twcc_feedback {
             debug!("Enable TWCC feedback");
             self.enable_twcc_feedback = true;
+        }
+    }
+
+    pub fn visit_stats(&mut self, snapshot: &mut StatsSnapshot) {
+        for media in self.media() {
+            media.visit_stats(snapshot)
         }
     }
 }
