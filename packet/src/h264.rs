@@ -187,6 +187,10 @@ impl Packetizer for H264Packetizer {
 
         Ok(payloads)
     }
+
+    fn is_audio(&self) -> bool {
+        false
+    }
 }
 
 /// Depacketizes H264 RTP packets.

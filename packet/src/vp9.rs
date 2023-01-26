@@ -127,6 +127,10 @@ impl Packetizer for Vp9Packetizer {
 
         Ok(payloads)
     }
+
+    fn is_audio(&self) -> bool {
+        false
+    }
 }
 
 /// Depacketizes VP9 RTP packets.

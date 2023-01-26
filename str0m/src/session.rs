@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
-use packet::RtpMeta;
+use packet::{NullPacer, Pacer, PacerImpl, PollOutcome, RtpMeta};
 use rtp::SRTCP_OVERHEAD;
 use rtp::{extend_seq, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
 use rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
@@ -60,6 +60,9 @@ pub(crate) struct Session {
 
     enable_twcc_feedback: bool,
 
+    /// A pacer for sending RTP at specific rate.
+    pacer: PacerImpl,
+
     // temporary buffer when getting the next (unencrypted) RTP packet from Media line.
     poll_packet_buf: Vec<u8>,
 
@@ -108,6 +111,8 @@ impl Session {
         while *id > MAX_ID {
             id = (*id >> 1).into();
         }
+        let pacer = PacerImpl::Null(NullPacer::default());
+
         Session {
             id,
             m_lines: vec![],
@@ -127,6 +132,7 @@ impl Session {
             // packet size of 1000 bytes.
             twcc_tx_register: TwccSendRegister::new(2500),
             enable_twcc_feedback: false,
+            pacer,
             poll_packet_buf: vec![0; 2000],
             ice_lite,
         }
@@ -207,6 +213,8 @@ impl Session {
                 }
             }
         }
+
+        update_queue_states(now, &mut self.m_lines, &mut self.pacer);
     }
 
     fn create_twcc_feedback(&mut self, sender_ssrc: Ssrc, now: Instant) -> Option<()> {
@@ -627,23 +635,32 @@ impl Session {
     fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
         let srtp_tx = self.srtp_tx.as_mut()?;
 
+        // Figure out which, if any, queue to poll
+        let queue_id = match self.pacer.poll_action() {
+            PollOutcome::PollQueue(queue_id) => queue_id,
+            PollOutcome::Nothing => {
+                return None;
+            }
+        };
+
+        // NB: Cannot use mline_index_mut here due to borrowing woes around self, need split
+        // borrowing.
+        let mline = self.m_lines[queue_id.as_usize()]
+            .as_m_line_mut()
+            .expect("index is MLine");
         let buf = &mut self.poll_packet_buf;
 
-        for m in only_m_line_mut(&mut self.m_lines) {
-            let twcc_seq = self.twcc;
-            if let Some((header, seq_no)) = m.poll_packet(now, &self.exts, &mut self.twcc, buf) {
-                trace!("Poll RTP: {:?}", header);
-                let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
-                self.twcc_tx_register
-                    .register_seq(twcc_seq.into(), now, protected.len());
+        let twcc_seq = self.twcc;
+        if let Some((header, seq_no)) = mline.poll_packet(now, &self.exts, &mut self.twcc, buf) {
+            trace!("Poll RTP: {:?}", header);
 
-                // const EGRESS_PACKET_LOSS_PERCENT: u64 = 5;
-                // if twcc_seq % (100 / EGRESS_PACKET_LOSS_PERCENT) == 0 {
-                //     return None;
-                // }
+            self.pacer.register_send(now, buf.len().into(), queue_id);
+            let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
-                return Some(protected.into());
-            }
+            self.twcc_tx_register
+                .register_seq(twcc_seq.into(), now, protected.len());
+
+            return Some(protected.into());
         }
 
         None
@@ -654,11 +671,13 @@ impl Session {
         let regular_at = Some(self.regular_feedback_at());
         let nack_at = self.nack_at();
         let twcc_at = self.twcc_at();
+        let pacing_at = self.pacer.poll_timeout();
 
         let timeout = (m_line_at, "m_line")
             .soonest((regular_at, "regular"))
             .soonest((nack_at, "nack"))
-            .soonest((twcc_at, "twcc"));
+            .soonest((twcc_at, "twcc"))
+            .soonest((pacing_at, "pacing"));
 
         // trace!("poll_timeout soonest is: {}", timeout.1);
 
@@ -746,6 +765,11 @@ impl Session {
     pub fn m_line_by_index_mut(&mut self, index: usize) -> &mut MLine {
         self.m_lines[index].as_m_line_mut().expect("index is MLine")
     }
+}
+
+fn update_queue_states(now: Instant, m_lines: &mut [MLineOrApp], pacer: &mut PacerImpl) {
+    let iter = only_m_line_mut(m_lines).map(|m| m.buffers_tx_queue_state(now));
+    pacer.handle_timeout(now, iter);
 }
 
 // Helper while waiting for polonius.

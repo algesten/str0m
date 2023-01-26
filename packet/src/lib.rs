@@ -34,10 +34,18 @@ pub use buffer_tx::{Packetized, PacketizedMeta, PacketizingBuffer};
 
 mod bwe;
 
+mod pacer;
+pub use pacer::{
+    LeakyBucketPacer, NullPacer, Pacer, PacerImpl, PacketKind, PollOutcome, QueueId, QueueState,
+};
+
 /// Packetizes some bytes for use as RTP packet.
 pub trait Packetizer: fmt::Debug {
     /// Chunk the data up into RTP packets.
     fn packetize(&mut self, mtu: usize, b: &[u8]) -> Result<Vec<Vec<u8>>, PacketError>;
+
+    /// Whether this is an audio codec.
+    fn is_audio(&self) -> bool;
 }
 
 /// Codec specific information
@@ -196,6 +204,19 @@ impl Packetizer for CodecPacketizer {
             Vp8(v) => v.packetize(mtu, b),
             Vp9(v) => v.packetize(mtu, b),
             Boxed(v) => v.packetize(mtu, b),
+        }
+    }
+
+    fn is_audio(&self) -> bool {
+        use CodecPacketizer::*;
+        match self {
+            G711(v) => v.is_audio(),
+            G722(v) => v.is_audio(),
+            H264(v) => v.is_audio(),
+            Opus(v) => v.is_audio(),
+            Vp8(v) => v.is_audio(),
+            Vp9(v) => v.is_audio(),
+            Boxed(v) => v.is_audio(),
         }
     }
 }

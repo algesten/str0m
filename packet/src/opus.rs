@@ -21,6 +21,10 @@ impl Packetizer for OpusPacketizer {
 
         Ok(out)
     }
+
+    fn is_audio(&self) -> bool {
+        true
+    }
 }
 
 /// Depacketizes Opus RTP packets.

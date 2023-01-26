@@ -2,12 +2,14 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use net_::{Id, DATAGRAM_MTU};
-use packet::{DepacketizingBuffer, Packetized, PacketizedMeta, PacketizingBuffer};
+use packet::{
+    DepacketizingBuffer, Packetized, PacketizedMeta, PacketizingBuffer, QueueId, QueueState,
+};
 use rtp::{Extensions, Fir, FirEntry, NackEntry, Pli, Rtcp};
 use rtp::{RtcpFb, RtpHeader, SdesType};
 use rtp::{SeqNo, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
-pub use packet::RtpMeta;
+pub use packet::{PacketKind, RtpMeta};
 pub use rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 pub use sdp::{Codec, FormatParams};
 
@@ -213,9 +215,10 @@ impl MLine {
         Some(c.pt())
     }
 
-    pub fn writer(&mut self, pt: Pt) -> Writer<'_> {
+    pub fn writer(&mut self, now: Instant, pt: Pt) -> Writer<'_> {
         Writer {
             m_line: self,
+            now,
             pt,
             rid: None,
             ext_vals: ExtensionValues::default(),
@@ -223,8 +226,10 @@ impl MLine {
     }
 
     /// Write to the packetizer.
+    #[allow(clippy::too_many_arguments)]
     pub fn write(
         &mut self,
+        now: Instant,
         pt: Pt,
         wallclock: Instant,
         rtp_time: MediaTime,
@@ -268,6 +273,7 @@ impl MLine {
             ssrc,
             rid,
             ext_vals,
+            queued_at: now,
         };
 
         if let Err(e) = buf.push_sample(data, meta, mtu) {
@@ -437,7 +443,7 @@ impl MLine {
 
     fn poll_packet_regular(&mut self, now: Instant) -> Option<NextPacket<'_>> {
         // exit via ? here is ok since that means there is nothing to send.
-        let (pt, pkt) = next_send_buffer(&mut self.buffers_tx)?;
+        let (pt, pkt) = next_send_buffer(&mut self.buffers_tx, now)?;
 
         let source = self
             .sources_tx
@@ -992,6 +998,30 @@ impl MLine {
         }
     }
 
+    /// Return the queue state for outbound RTP traffic for this mline.
+    ///
+    /// For the purposes of pacing each mline is treated as its own packet queue. Internally this
+    /// is spread across many [`PacketizingBuffer`] which is where the actual packets are queued.
+    pub fn buffers_tx_queue_state(&self, now: Instant) -> QueueState {
+        let kind = if self.kind() == MediaKind::Audio {
+            PacketKind::Audio
+        } else {
+            PacketKind::Video
+        };
+        let mut state = self
+            .buffers_tx
+            .values()
+            .fold(QueueState::new(kind), |mut state, b| {
+                state.merge(&b.queue_state(now));
+
+                state
+            });
+
+        state.id = QueueId::new(self.index() as u64);
+
+        state
+    }
+
     // returns the corresponding rtx pt counterpart, if any
     fn pt_rtx(&self, pt: Pt) -> Option<Pt> {
         self.payload_params()
@@ -1010,9 +1040,10 @@ struct Resend {
 
 fn next_send_buffer(
     buffers_tx: &mut HashMap<Pt, PacketizingBuffer>,
+    now: Instant,
 ) -> Option<(Pt, &mut Packetized)> {
     for (pt, buf) in buffers_tx {
-        if let Some(pkt) = buf.poll_next() {
+        if let Some(pkt) = buf.poll_next(now) {
             assert!(pkt.seq_no.is_none());
             return Some((*pt, pkt));
         }
