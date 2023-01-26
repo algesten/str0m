@@ -1443,7 +1443,10 @@ mod test {
         );
         assert_eq!(
             iter.next(),
-            Some((11.into(), Some(base.checked_sub(Duration::from_millis(12)).unwrap())))
+            Some((
+                11.into(),
+                Some(base.checked_sub(Duration::from_millis(12)).unwrap())
+            ))
         );
         assert_eq!(
             iter.next(),
