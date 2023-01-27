@@ -520,7 +520,7 @@ mod test {
 
         for i in 4..1000 {
             let arrival = if i % 2 == 0 {
-                start + i * dur.checked_sub(off).unwrap()
+                start + (i * dur).checked_sub(off).unwrap()
             } else {
                 start + i * dur + off
             };
@@ -528,7 +528,11 @@ mod test {
         }
 
         // jitter should converge on 20.0
-        assert!((20.0 - reg.jitter).abs() < 0.01);
+        assert!(
+            (20.0 - reg.jitter).abs() < 0.01,
+            "Expected jitter to converge at 20.0, jitter was: {}",
+            reg.jitter
+        );
     }
 
     #[test]
