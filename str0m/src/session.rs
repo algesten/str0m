@@ -714,6 +714,8 @@ impl Session {
         for media in self.media() {
             media.visit_stats(snapshot)
         }
+        snapshot.tx = snapshot.egress.values().sum();
+        snapshot.rx = snapshot.ingress.values().sum();
     }
 }
 

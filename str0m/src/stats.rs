@@ -7,7 +7,7 @@ use crate::Mid;
 use rtp::Rid;
 
 pub struct Stats {
-    last_snapshot: StatsSnapshot,
+    last_now: Instant,
     events: VecDeque<StatEvent>,
 }
 
@@ -49,15 +49,15 @@ pub enum StatEvent {
 /// This event is generated roughly every second
 #[derive(Debug, Clone)]
 pub struct PeerStats {
-    // ingress bandwidth used
-    pub peer_bitrate_rx: f32,
-    // egress bandwidth used
-    pub peer_bitrate_tx: f32,
-    // ingress bandwidth used, only counting media traffic (rtp payload)
-    pub bitrate_rx: f32,
-    // egress bandwidth used, only counting media traffic (rtp payload)
-    pub bitrate_tx: f32,
-    // timestampt when this report event was generated
+    // total bytes transmitted
+    pub peer_bytes_rx: u64,
+    // total bytes received
+    pub peer_bytes_tx: u64,
+    // total bytes transmitted, only counting media traffic (rtp payload)
+    pub bytes_rx: u64,
+    // total bytes received, only counting media traffic (rtp payload)
+    pub bytes_tx: u64,
+    // timestamp when this event was generated
     pub ts: Instant,
 }
 
@@ -69,7 +69,9 @@ pub struct MediaEgressStats {
     pub mid: Mid,
     pub rid: Option<Rid>,
 
-    pub bitrate_tx: f32,
+    // total bytes transmitted
+    pub bytes_tx: u64,
+    // timestamp when this event was generated
     pub ts: Instant,
     // TODO
     // pub remote: RemoteIngressStats,
@@ -77,7 +79,8 @@ pub struct MediaEgressStats {
 
 #[derive(Debug, Clone)]
 pub struct RemoteIngressStats {
-    pub bitrate_rx: f32,
+    // total bytes received
+    pub bytes_rx: u64,
 }
 
 /// An event carrying stats for every (mid, rid) in ingress direction
@@ -88,7 +91,9 @@ pub struct MediaIngressStats {
     pub mid: Mid,
     pub rid: Option<Rid>,
 
-    pub bitrate_rx: f32,
+    // total bytes received
+    pub bytes_rx: u64,
+    // timestamp when this event was generated
     pub ts: Instant,
     // TODO
     // pub remote: RemoteEgressStats,
@@ -96,7 +101,8 @@ pub struct MediaIngressStats {
 
 #[derive(Debug, Clone)]
 pub struct RemoteEgressStats {
-    pub bitrate_rx: f32,
+    // total bytes transmitted
+    pub bytes_tx: u64,
 }
 
 const TIMING_ADVANCE: Duration = Duration::from_secs(1);
@@ -109,7 +115,7 @@ impl Stats {
     pub fn new() -> Stats {
         Stats {
             // by starting with the current time we can generate stats right on first timeout
-            last_snapshot: StatsSnapshot::new(Instant::now()),
+            last_now: Instant::now(),
             events: VecDeque::new(),
         }
     }
@@ -118,36 +124,32 @@ impl Stats {
     ///
     /// The caller can use this to conpute the snapshot only if needed, before calling [`Stats::do_handle_timeout`]
     pub fn wants_timeout(&mut self, now: Instant) -> bool {
-        let min_step = self.last_snapshot.ts + TIMING_ADVANCE;
+        let min_step = self.last_now + TIMING_ADVANCE;
         now >= min_step
     }
 
     /// Actually handles the timeout advancing the internal state and preparing the output
     pub fn do_handle_timeout(&mut self, snapshot: StatsSnapshot) {
-        let elapsed = (snapshot.ts - self.last_snapshot.ts).as_secs_f32();
         let ts = snapshot.ts;
 
         // enqueue stas and timestampt them so they can be sent out
 
         let event = PeerStats {
-            peer_bitrate_rx: (snapshot.peer_rx - self.last_snapshot.peer_rx) as f32 * 8.0 / elapsed,
-            peer_bitrate_tx: (snapshot.peer_tx - self.last_snapshot.peer_tx) as f32 * 8.0 / elapsed,
-            bitrate_rx: (snapshot.rx - self.last_snapshot.rx) as f32 * 8.0 / elapsed,
-            bitrate_tx: (snapshot.tx - self.last_snapshot.tx) as f32 * 8.0 / elapsed,
+            peer_bytes_rx: snapshot.peer_rx,
+            peer_bytes_tx: snapshot.peer_tx,
+            bytes_rx: snapshot.rx,
+            bytes_tx: snapshot.tx,
             ts: snapshot.ts,
         };
 
         self.events.push_back(StatEvent::PeerStats(event));
 
         for ((mid, rid), total) in &snapshot.ingress {
-            let (mid, rid, total) = (*mid, *rid, *total);
-            let key = (mid, rid);
-            let bytes = self.last_snapshot.ingress.get(&key).unwrap_or(&0_u64);
-            let bitrate_rx = (total - bytes) as f32 * 8.0 / elapsed;
+            let (mid, rid, bytes_rx) = (*mid, *rid, *total);
             let event = MediaIngressStats {
                 mid,
                 rid,
-                bitrate_rx,
+                bytes_rx,
                 ts,
             };
 
@@ -155,27 +157,25 @@ impl Stats {
         }
 
         for ((mid, rid), total) in &snapshot.egress {
-            let (mid, rid, total) = (*mid, *rid, *total);
-            let key = (mid, rid);
-            let bytes = self.last_snapshot.ingress.get(&key).unwrap_or(&0_u64);
-            let bitrate_tx = (total - bytes) as f32 * 8.0 / elapsed;
+            let (mid, rid, bytes_tx) = (*mid, *rid, *total);
             let event = MediaEgressStats {
                 mid,
                 rid,
-                bitrate_tx,
+                bytes_tx,
                 ts,
             };
+
             self.events.push_back(StatEvent::MediaEgressStats(event));
         }
 
-        self.last_snapshot = snapshot;
+        self.last_now = snapshot.ts;
     }
 
     /// Poll for the next time to call [`Stats::wants_timeout`] and [`Stats::do_handle_timeout`].
     ///
     /// NOTE: we only need Option<_> to conform to .soonest() (see caller)
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        let last_now = self.last_snapshot.ts;
+        let last_now = self.last_now;
         Some(last_now + TIMING_ADVANCE)
     }
 
