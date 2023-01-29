@@ -32,6 +32,9 @@ pub use srtp::{SRTCP_OVERHEAD, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 mod rtcp;
 pub use rtcp::*;
 
+mod bandwidth;
+pub use bandwidth::Bitrate;
+
 /// Errors that can arise in RTP.
 #[derive(Debug, Error)]
 pub enum RtpError {
