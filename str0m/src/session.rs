@@ -121,7 +121,9 @@ impl Session {
             feedback: VecDeque::new(),
             twcc: 0,
             twcc_rx_register: TwccRecvRegister::new(100),
-            twcc_tx_register: TwccSendRegister::new(1000),
+            // Enough to accurately measure received bandwidths up to 20Mbit/s, assuming an average
+            // packet size of 1000 bytes.
+            twcc_tx_register: TwccSendRegister::new(2500),
             enable_twcc_feedback: false,
             poll_packet_buf: vec![0; 2000],
             ice_lite,
@@ -619,8 +621,9 @@ impl Session {
             let twcc_seq = self.twcc;
             if let Some((header, seq_no)) = m.poll_packet(now, &self.exts, &mut self.twcc, buf) {
                 trace!("Poll RTP: {:?}", header);
-                self.twcc_tx_register.register_seq(twcc_seq.into(), now);
                 let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
+                self.twcc_tx_register
+                    .register_seq(twcc_seq.into(), now, protected.len());
                 return Some(protected.into());
             }
         }

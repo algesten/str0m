@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
+use crate::Bitrate;
 use crate::{extend_seq, FeedbackMessageType, RtcpHeader, RtcpPacket};
 use crate::{RtcpType, SeqNo, Ssrc, TransportType};
 
@@ -951,6 +952,9 @@ pub struct SendRecord {
 
     /// The remote time the other side received the seq.
     remote_recv_time: Option<Instant>,
+
+    /// Size in bytes of the payload sent.
+    size: u16,
 }
 
 impl SendRecord {
@@ -981,13 +985,16 @@ impl TwccSendRegister {
         }
     }
 
-    pub fn register_seq(&mut self, seq: SeqNo, now: Instant) {
+    pub fn register_seq(&mut self, seq: SeqNo, now: Instant, size: usize) {
         self.last_registered = seq;
         self.queue.push_back(SendRecord {
             seq,
             local_send_time: now,
             local_recv_time: None,
             remote_recv_time: None,
+            // In practice the max sizes is constrained by the MTU and will max out around 1200
+            // bytes, hence this cast is fine.
+            size: size as u16,
         });
         while self.queue.len() > self.keep {
             self.queue.pop_front();
@@ -1023,6 +1030,66 @@ impl TwccSendRegister {
         }
 
         Some(())
+    }
+
+    /// Calculate the observed bitrate in bits per second, looking backwards over a window in time.
+    ///
+    /// Returns [`None`] if the window is too large to provide an accurate measurement.
+    /// Returns [`None`] if the last acknowledge packet was sent more than `2 * window` ago.
+    ///
+    /// ## Accuracy
+    ///
+    /// This is based on packets that have been acknowledged by the receiving side, as such it can
+    /// be slightly wrong.
+    pub fn observed_bitrate(&self, window: Duration, now: Instant) -> Option<Bitrate> {
+        if self.queue.is_empty() {
+            return None;
+        }
+
+        let first = self.queue.front()?;
+        // Find the last record that has been acknowledged. Because TWCC reports are only sent
+        // periodically it's probable that more recent entries in the queue have not yet been
+        // acknowledged.
+        let last = self
+            .queue
+            .iter()
+            .rev()
+            .find(|s| s.remote_recv_time.is_some())?;
+        let last_remote_recv_time = last.remote_recv_time()?;
+        let cutoff = last_remote_recv_time.checked_sub(window)?;
+
+        // Window too large
+        let total_window = last.local_send_time - first.local_send_time;
+        if total_window < window {
+            return None;
+        }
+
+        // Last acknowledged packet too old
+        if last.local_send_time < now.checked_sub(window * 2)? {
+            return None;
+        }
+
+        let sum: u64 = self
+            .queue
+            .iter()
+            .rev()
+            .skip_while(|record| record.seq > last.seq)
+            .take_while(|record| record.remote_recv_time.map(|r| r > cutoff).unwrap_or(true))
+            .filter_map(|record| {
+                // If we have this field we have handled a TWCC report for the packet.
+                // TODO: Maybe this should ignore packets that were explicitly marked lost?
+                if record.remote_recv_time.is_some() {
+                    Some(record.size as u64)
+                } else {
+                    None
+                }
+            })
+            .sum();
+        let bits = sum as f64 * 8.0;
+        let seconds = window.as_millis() as f64 / 1000.0;
+        let result = ((1.0 / seconds) * bits).floor() as u64;
+
+        Some(result.into())
     }
 }
 
