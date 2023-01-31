@@ -1014,19 +1014,43 @@ impl TwccSendRegister {
         let mut iter2 = self.queue.iter_mut().skip_while(|r| *r.seq < *first_seq_no);
         let first_record = iter2.next()?;
 
-        fn update(now: Instant, r: &mut SendRecord, seq: SeqNo, instant: Option<Instant>) {
-            assert_eq!(r.seq, seq);
+        fn update(now: Instant, r: &mut SendRecord, seq: SeqNo, instant: Option<Instant>) -> bool {
+            if r.seq != seq {
+                return false;
+            }
+
             // None means the remote side did not receive the packet.
             if let Some(i) = instant {
                 r.local_recv_time = Some(now);
                 r.remote_recv_time = Some(i);
             }
+
+            true
         }
 
-        update(now, first_record, first_seq_no, first_instant);
+        let mut problematic_seq = None;
+
+        if !update(now, first_record, first_seq_no, first_instant) {
+            problematic_seq = Some((first_record.seq, first_seq_no));
+        }
 
         for ((seq, instant), record) in iter.zip(iter2) {
-            update(now, record, seq, instant);
+            if problematic_seq.is_some() {
+                break;
+            }
+
+            if !update(now, record, seq, instant) {
+                problematic_seq = Some((record.seq, seq));
+            }
+        }
+
+        if let Some((record_seq, report_seq)) = problematic_seq {
+            let queue_tail: Vec<_> = self.queue.iter().rev().take(100).collect();
+            panic!(
+                "Unexpected TWCC sequence when applying TWCC report. \
+                    Send Record Seq({record_seq}) does not match Report Seq({report_seq}).\
+                    \nLast 100 entires in queue: {queue_tail:?}"
+            );
         }
 
         Some(())
