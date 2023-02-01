@@ -49,7 +49,7 @@ pub struct TwccIter {
 }
 
 impl Iterator for TwccIter {
-    type Item = (SeqNo, Option<Instant>);
+    type Item = (SeqNo, PacketStatus, Option<Instant>);
 
     fn next(&mut self) -> Option<Self::Item> {
         let head = self.twcc.chunks.front()?;
@@ -108,7 +108,7 @@ impl Iterator for TwccIter {
             self.index = 0;
         }
 
-        Some((seq, instant))
+        Some((seq, status, instant))
     }
 }
 
@@ -953,6 +953,10 @@ pub struct SendRecord {
     /// The remote time the other side received the seq.
     remote_recv_time: Option<Instant>,
 
+    /// The packet status reported by the remote side in feedback packets.
+    /// [`None`] until a status is determined.
+    packet_status: Option<PacketStatus>,
+
     /// Size in bytes of the payload sent.
     size: u16,
 }
@@ -992,6 +996,7 @@ impl TwccSendRegister {
             local_send_time: now,
             local_recv_time: None,
             remote_recv_time: None,
+            packet_status: None,
             // In practice the max sizes is constrained by the MTU and will max out around 1200
             // bytes, hence this cast is fine.
             size: size as u16,
@@ -1011,16 +1016,23 @@ impl TwccSendRegister {
 
         let mut iter = twcc
             .into_iter(time_zero, self.last_registered)
-            .skip_while(|(seq, _)| seq < &head_seq);
-        let (first_seq_no, first_instant) = iter.next()?;
+            .skip_while(|(seq, _, _)| seq < &head_seq);
+        let (first_seq_no, first_status, first_instant) = iter.next()?;
 
         let mut iter2 = self.queue.iter_mut().skip_while(|r| *r.seq < *first_seq_no);
         let first_record = iter2.next()?;
 
-        fn update(now: Instant, r: &mut SendRecord, seq: SeqNo, instant: Option<Instant>) -> bool {
+        fn update(
+            now: Instant,
+            r: &mut SendRecord,
+            seq: SeqNo,
+            status: PacketStatus,
+            instant: Option<Instant>,
+        ) -> bool {
             if r.seq != seq {
                 return false;
             }
+            r.packet_status = Some(status);
 
             // None means the remote side did not receive the packet.
             if let Some(i) = instant {
@@ -1038,16 +1050,16 @@ impl TwccSendRegister {
 
         let mut problematic_seq = None;
 
-        if !update(now, first_record, first_seq_no, first_instant) {
+        if !update(now, first_record, first_seq_no, first_status, first_instant) {
             problematic_seq = Some((first_record.seq, first_seq_no));
         }
 
-        for ((seq, instant), record) in iter.zip(iter2) {
+        for ((seq, status, instant), record) in iter.zip(iter2) {
             if problematic_seq.is_some() {
                 break;
             }
 
-            if !update(now, record, seq, instant) {
+            if !update(now, record, seq, status, instant) {
                 problematic_seq = Some((record.seq, seq));
             }
         }
@@ -1544,18 +1556,27 @@ mod test {
         let mut iter = report.into_iter(base, 10.into());
         assert_eq!(
             iter.next(),
-            Some((10.into(), Some(base + Duration::from_millis(0))))
+            Some((
+                10.into(),
+                PacketStatus::ReceivedSmallDelta,
+                Some(base + Duration::from_millis(0))
+            ))
         );
         assert_eq!(
             iter.next(),
             Some((
                 11.into(),
+                PacketStatus::ReceivedLargeOrNegativeDelta,
                 Some(base.checked_sub(Duration::from_millis(12)).unwrap())
             ))
         );
         assert_eq!(
             iter.next(),
-            Some((12.into(), Some(base + Duration::from_millis(23))))
+            Some((
+                12.into(),
+                PacketStatus::ReceivedSmallDelta,
+                Some(base + Duration::from_millis(23))
+            ))
         );
     }
 
