@@ -1115,6 +1115,12 @@ impl TwccSendRegister {
 
         Some(result.into())
     }
+
+    pub fn send_record(&self, seq: SeqNo) -> Option<&SendRecord> {
+        let index = self.queue.binary_search_by_key(&seq, |r| r.seq).ok()?;
+
+        Some(&self.queue[index])
+    }
 }
 
 // Below is a clarification of the RFC draft from an email exchange with Erik Språng (one of the authors).
@@ -1574,5 +1580,69 @@ mod test {
 
         assert_eq!(header, report.header());
         assert_eq!(parsed, report);
+    }
+
+    #[test]
+    fn test_send_register_apply_report_for_old_seq_numbers() {
+        let mut reg = TwccSendRegister::new(25);
+        let mut now = Instant::now();
+
+        for i in 0..50 {
+            reg.register_seq(i.into(), now, 0);
+            now = now + Duration::from_micros(15);
+        }
+
+        // At this point the front of the internal queue should be seq no 25.
+        //
+        // Set time zero base with empty packet
+        reg.apply_report(
+            Twcc {
+                sender_ssrc: Ssrc::new(),
+                ssrc: Ssrc::new(),
+                base_seq: 0,
+                status_count: 0,
+                reference_time: 0,
+                feedback_count: 0,
+                chunks: [].into(),
+                delta: [].into(),
+            },
+            now,
+        );
+        now = now + Duration::from_millis(35);
+
+        reg.apply_report(
+            Twcc {
+                sender_ssrc: Ssrc::new(),
+                ssrc: Ssrc::new(),
+                base_seq: 20,
+                status_count: 8,
+                reference_time: 35,
+                feedback_count: 0,
+                chunks: [PacketChunk::Run(PacketStatus::ReceivedSmallDelta, 8)].into(),
+                delta: [
+                    Delta::Small(10),
+                    Delta::Small(10),
+                    Delta::Small(10),
+                    Delta::Small(10),
+                    Delta::Small(10),
+                    Delta::Small(10),
+                    Delta::Small(10),
+                    Delta::Small(10),
+                ]
+                .into(),
+            },
+            now,
+        );
+
+        for seq in 25..=27 {
+            let record = reg
+                .send_record(seq.into())
+                .unwrap_or_else(|| panic!("Should have send record for seq {seq}"));
+
+            assert!(
+                record.local_recv_time.is_some(),
+                "Report should have recorded local_recv_time for {seq}"
+            );
+        }
     }
 }
