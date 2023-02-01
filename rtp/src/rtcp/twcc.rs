@@ -1120,9 +1120,11 @@ impl TwccSendRegister {
             .skip_while(|record| record.seq > last.seq)
             .take_while(|record| record.remote_recv_time.map(|r| r > cutoff).unwrap_or(true))
             .filter_map(|record| {
-                // If we have this field we have handled a TWCC report for the packet.
-                // TODO: Maybe this should ignore packets that were explicitly marked lost?
-                if record.remote_recv_time.is_some() {
+                if record
+                    .packet_status
+                    .map(|s| !matches!(s, PacketStatus::NotReceived | PacketStatus::Unknown))
+                    .unwrap_or(false)
+                {
                     Some(record.size as u64)
                 } else {
                     None
