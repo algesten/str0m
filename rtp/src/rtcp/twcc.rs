@@ -1007,8 +1007,11 @@ impl TwccSendRegister {
         }
 
         let time_zero = self.time_zero.unwrap();
+        let head_seq = self.queue.front().map(|r| r.seq)?;
 
-        let mut iter = twcc.into_iter(time_zero, self.last_registered);
+        let mut iter = twcc
+            .into_iter(time_zero, self.last_registered)
+            .skip_while(|(seq, _)| seq < &head_seq);
         let (first_seq_no, first_instant) = iter.next()?;
 
         let mut iter2 = self.queue.iter_mut().skip_while(|r| *r.seq < *first_seq_no);
@@ -1026,6 +1029,11 @@ impl TwccSendRegister {
             }
 
             true
+        }
+
+        if first_record.seq != first_seq_no {
+            // Old report for which we no longer have any send records.
+            return None;
         }
 
         let mut problematic_seq = None;
@@ -1049,7 +1057,7 @@ impl TwccSendRegister {
             panic!(
                 "Unexpected TWCC sequence when applying TWCC report. \
                     Send Record Seq({record_seq}) does not match Report Seq({report_seq}).\
-                    \nLast 100 entires in queue: {queue_tail:?}"
+                    \nLast 100 entires in queue: {queue_tail:?}."
             );
         }
 
