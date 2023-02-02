@@ -5,7 +5,10 @@ use rtp::{
     Ssrc,
 };
 
-use crate::{stats::StatsSnapshot, util::already_happened};
+use crate::{
+    stats::{MediaEgressStats, StatsSnapshot},
+    util::already_happened,
+};
 
 use super::Source;
 
@@ -106,16 +109,20 @@ impl SenderSource {
         }
     }
 
-    pub fn visit_stats(&self, mid: Mid, snapshot: &mut StatsSnapshot) {
-        let key = (mid, self.rid);
+    pub fn visit_stats(&self, now: Instant, mid: Mid, snapshot: &mut StatsSnapshot) {
         if self.bytes == 0 {
             return;
         }
-        if let Some(v) = snapshot.egress.get_mut(&key) {
-            *v += self.bytes;
-        } else {
-            snapshot.egress.insert(key, self.bytes);
-        }
+        snapshot.egress.push(MediaEgressStats {
+            mid,
+            rid: self.rid,
+            bytes: self.bytes,
+            packets: self.packets,
+            firs: self.firs,
+            plis: self.plis,
+            nacks: self.nacks,
+            ts: now,
+        });
     }
 }
 
