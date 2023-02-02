@@ -4,7 +4,10 @@ use rtp::{
     MediaTime, Mid, Nack, ReceiverReport, ReportList, Rid, RtpHeader, SenderInfo, SeqNo, Ssrc,
 };
 
-use crate::{stats::StatsSnapshot, util::already_happened};
+use crate::{
+    stats::{MediaIngressStats, StatsSnapshot},
+    util::already_happened,
+};
 
 use super::{register::ReceiverRegister, KeyframeRequestKind, Source};
 
@@ -153,16 +156,20 @@ impl ReceiverSource {
         x
     }
 
-    pub fn visit_stats(&self, mid: Mid, snapshot: &mut StatsSnapshot) {
-        let key = (mid, self.rid);
-        if self.bytes_rx == 0 {
+    pub fn visit_stats(&self, now: Instant, mid: Mid, snapshot: &mut StatsSnapshot) {
+        if self.bytes == 0 {
             return;
         }
-        if let Some(v) = snapshot.ingress.get_mut(&key) {
-            *v += self.bytes;
-        } else {
-            snapshot.ingress.insert(key, self.bytes);
-        }
+        snapshot.ingress.push(MediaIngressStats {
+            mid,
+            rid: self.rid,
+            bytes: self.bytes,
+            packets: self.packets,
+            ts: now,
+            firs: self.firs,
+            plis: self.plis,
+            nacks: self.nacks,
+        });
     }
 }
 

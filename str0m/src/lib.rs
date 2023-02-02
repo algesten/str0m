@@ -1028,7 +1028,7 @@ impl Rtc {
         self.session.handle_timeout(now);
         if self.stats.wants_timeout(now) {
             let mut snapshot = StatsSnapshot::new(now);
-            self.visit_stats(&mut snapshot);
+            self.visit_stats(now, &mut snapshot);
             self.stats.do_handle_timeout(snapshot)
         }
     }
@@ -1085,10 +1085,10 @@ impl Rtc {
         Some(Channel::new(id, self))
     }
 
-    fn visit_stats(&mut self, snapshot: &mut StatsSnapshot) {
+    fn visit_stats(&mut self, now: Instant, snapshot: &mut StatsSnapshot) {
         snapshot.peer_rx = self.peer_bytes_rx;
         snapshot.peer_tx = self.peer_bytes_tx;
-        self.session.visit_stats(snapshot);
+        self.session.visit_stats(now, snapshot);
     }
 }
 

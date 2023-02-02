@@ -16,7 +16,7 @@ pub struct StatsSnapshot {
     pub peer_rx: u64,
     pub tx: u64,
     pub rx: u64,
-    pub ingress: HashMap<(Mid, Option<Rid>), u64>,
+    pub ingress: Vec<MediaIngressStats>,
     pub egress: HashMap<(Mid, Option<Rid>), u64>,
     ts: Instant,
 }
@@ -28,7 +28,7 @@ impl StatsSnapshot {
             peer_tx: 0,
             tx: 0,
             rx: 0,
-            ingress: HashMap::new(),
+            ingress: Vec::new(),
             egress: HashMap::new(),
             ts,
         }
@@ -92,7 +92,16 @@ pub struct MediaIngressStats {
     pub rid: Option<Rid>,
 
     // total bytes received
-    pub bytes_rx: u64,
+    pub bytes: u64,
+    // total number of rtp packets received
+    pub packets: u64,
+    // number of firs sent
+    pub firs: u64,
+    // number of plis sent
+    pub plis: u64,
+    // number of nacks sent
+    pub nacks: u64,
+
     // timestamp when this event was generated
     pub ts: Instant,
     // TODO
@@ -144,15 +153,7 @@ impl Stats {
 
         self.events.push_back(StatEvent::PeerStats(event));
 
-        for ((mid, rid), total) in &snapshot.ingress {
-            let (mid, rid, bytes_rx) = (*mid, *rid, *total);
-            let event = MediaIngressStats {
-                mid,
-                rid,
-                bytes_rx,
-                ts,
-            };
-
+        for event in snapshot.ingress {
             self.events.push_back(StatEvent::MediaIngressStats(event));
         }
 
