@@ -1209,7 +1209,7 @@ impl Media {
             s.visit_stats(now, self.mid, snapshot);
         }
         for s in &self.sources_tx {
-            s.visit_stats(self.mid, snapshot);
+            s.visit_stats(now, self.mid, snapshot);
         }
     }
 }

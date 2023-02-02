@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::VecDeque,
     time::{Duration, Instant},
 };
 
@@ -17,7 +17,7 @@ pub struct StatsSnapshot {
     pub tx: u64,
     pub rx: u64,
     pub ingress: Vec<MediaIngressStats>,
-    pub egress: HashMap<(Mid, Option<Rid>), u64>,
+    pub egress: Vec<MediaEgressStats>,
     ts: Instant,
 }
 
@@ -29,7 +29,7 @@ impl StatsSnapshot {
             tx: 0,
             rx: 0,
             ingress: Vec::new(),
-            egress: HashMap::new(),
+            egress: Vec::new(),
             ts,
         }
     }
@@ -68,9 +68,16 @@ pub struct PeerStats {
 pub struct MediaEgressStats {
     pub mid: Mid,
     pub rid: Option<Rid>,
-
     // total bytes transmitted
-    pub bytes_tx: u64,
+    pub bytes: u64,
+    // total number of rtp packets transmitted
+    pub packets: u64,
+    // number of firs received
+    pub firs: u64,
+    // number of plis received
+    pub plis: u64,
+    // number of nacks received
+    pub nacks: u64,
     // timestamp when this event was generated
     pub ts: Instant,
     // TODO
@@ -90,7 +97,6 @@ pub struct RemoteIngressStats {
 pub struct MediaIngressStats {
     pub mid: Mid,
     pub rid: Option<Rid>,
-
     // total bytes received
     pub bytes: u64,
     // total number of rtp packets received
@@ -101,7 +107,6 @@ pub struct MediaIngressStats {
     pub plis: u64,
     // number of nacks sent
     pub nacks: u64,
-
     // timestamp when this event was generated
     pub ts: Instant,
     // TODO
@@ -139,8 +144,6 @@ impl Stats {
 
     /// Actually handles the timeout advancing the internal state and preparing the output
     pub fn do_handle_timeout(&mut self, snapshot: StatsSnapshot) {
-        let ts = snapshot.ts;
-
         // enqueue stas and timestampt them so they can be sent out
 
         let event = PeerStats {
@@ -157,15 +160,7 @@ impl Stats {
             self.events.push_back(StatEvent::MediaIngressStats(event));
         }
 
-        for ((mid, rid), total) in &snapshot.egress {
-            let (mid, rid, bytes_tx) = (*mid, *rid, *total);
-            let event = MediaEgressStats {
-                mid,
-                rid,
-                bytes_tx,
-                ts,
-            };
-
+        for event in snapshot.egress {
             self.events.push_back(StatEvent::MediaEgressStats(event));
         }
 
