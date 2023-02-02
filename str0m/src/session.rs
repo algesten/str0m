@@ -713,12 +713,12 @@ impl Session {
         }
     }
 
-    pub fn visit_stats(&mut self, snapshot: &mut StatsSnapshot) {
+    pub fn visit_stats(&mut self, now: Instant, snapshot: &mut StatsSnapshot) {
         for media in self.media() {
-            media.visit_stats(snapshot)
+            media.visit_stats(now, snapshot)
         }
         snapshot.tx = snapshot.egress.values().sum();
-        snapshot.rx = snapshot.ingress.values().sum();
+        snapshot.rx = snapshot.ingress.iter().map(|s| s.bytes).sum();
     }
 }
 
