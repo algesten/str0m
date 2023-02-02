@@ -652,7 +652,7 @@ impl Media {
                 None => continue,
             };
 
-            source.update_sent_bytes(pkt.data.len() as u64, true);
+            source.update_packet_counts(pkt.data.len() as u64, true);
 
             let seq_no = source.next_seq_no(now);
 
@@ -685,7 +685,7 @@ impl Media {
             .find(|s| s.ssrc() == pkt.ssrc)
             .expect("SenderSource for packetized write");
 
-        source.update_sent_bytes(pkt.data.len() as u64, false);
+        source.update_packet_counts(pkt.data.len() as u64, false);
 
         let seq_no = source.next_seq_no(now);
         pkt.seq_no = Some(seq_no);
@@ -820,25 +820,25 @@ impl Media {
             return;
         };
 
+        // Unwrap is ok, because MediaWriter ensures the ReceiverSource exists.
+        let rx = self
+            .sources_rx
+            .iter_mut()
+            .find(|s| s.ssrc() == ssrc)
+            .unwrap();
+
+        rx.update_with_keyframe_request(kind);
+
         match kind {
             KeyframeRequestKind::Pli => feedback.push_back(Rtcp::Pli(Pli { sender_ssrc, ssrc })),
-            KeyframeRequestKind::Fir => {
-                // Unwrap is ok, because MediaWriter ensures the ReceiverSource exists.
-                let rx = self
-                    .sources_rx
-                    .iter_mut()
-                    .find(|s| s.ssrc() == ssrc)
-                    .unwrap();
-
-                feedback.push_back(Rtcp::Fir(Fir {
-                    sender_ssrc,
-                    reports: FirEntry {
-                        ssrc,
-                        seq_no: rx.next_fir_seq_no(),
-                    }
-                    .into(),
-                }));
-            }
+            KeyframeRequestKind::Fir => feedback.push_back(Rtcp::Fir(Fir {
+                sender_ssrc,
+                reports: FirEntry {
+                    ssrc,
+                    seq_no: rx.next_fir_seq_no(),
+                }
+                .into(),
+            })),
         }
     }
 
@@ -896,6 +896,7 @@ impl Media {
                 nack.sender_ssrc = sender_ssrc;
                 debug!("Created feedback NACK: {:?}", nack);
                 feedback.push_back(Rtcp::Nack(nack));
+                s.update_with_nack();
             }
         }
     }
@@ -961,6 +962,8 @@ impl Media {
         let ssrc = fb.ssrc();
 
         let source_tx = self.sources_tx.iter_mut().find(|s| s.ssrc() == ssrc)?;
+
+        source_tx.update_with_feedback(&fb);
 
         use RtcpFb::*;
         match fb {

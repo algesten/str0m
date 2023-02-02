@@ -6,7 +6,7 @@ use rtp::{
 
 use crate::{stats::StatsSnapshot, util::already_happened};
 
-use super::{register::ReceiverRegister, Source};
+use super::{register::ReceiverRegister, KeyframeRequestKind, Source};
 
 #[derive(Debug)]
 pub struct ReceiverSource {
@@ -18,7 +18,11 @@ pub struct ReceiverSource {
     sender_info: Option<SenderInfo>,
     sender_info_at: Option<Instant>,
     fir_seq_no: u8,
-    bytes_rx: u64,
+    bytes: u64,
+    packets: u64,
+    firs: u64,
+    plis: u64,
+    nacks: u64,
 }
 
 impl ReceiverSource {
@@ -32,8 +36,12 @@ impl ReceiverSource {
             last_used: already_happened(),
             sender_info: None,
             sender_info_at: None,
-            bytes_rx: 0,
             fir_seq_no: 0,
+            bytes: 0,
+            packets: 0,
+            firs: 0,
+            plis: 0,
+            nacks: 0,
         }
     }
 
@@ -123,8 +131,20 @@ impl ReceiverSource {
         self.sender_info_at = Some(now);
     }
 
-    pub fn update_recv_bytes(&mut self, amount: u64) {
-        self.bytes_rx += amount;
+    pub fn update_packet_counts(&mut self, bytes: u64) {
+        self.packets += 1;
+        self.bytes += bytes;
+    }
+
+    pub fn update_with_keyframe_request(&mut self, req: KeyframeRequestKind) {
+        match req {
+            KeyframeRequestKind::Pli => self.plis += 1,
+            KeyframeRequestKind::Fir => self.firs += 1,
+        }
+    }
+
+    pub fn update_with_nack(&mut self) {
+        self.nacks += 1;
     }
 
     pub(crate) fn next_fir_seq_no(&mut self) -> u8 {
@@ -139,9 +159,9 @@ impl ReceiverSource {
             return;
         }
         if let Some(v) = snapshot.ingress.get_mut(&key) {
-            *v += self.bytes_rx;
+            *v += self.bytes;
         } else {
-            snapshot.ingress.insert(key, self.bytes_rx);
+            snapshot.ingress.insert(key, self.bytes);
         }
     }
 }

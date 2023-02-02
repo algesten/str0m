@@ -1,7 +1,8 @@
 use std::time::Instant;
 
 use rtp::{
-    Descriptions, Mid, ReportList, Rid, Sdes, SdesType, SenderInfo, SenderReport, SeqNo, Ssrc,
+    Descriptions, Mid, ReportList, Rid, RtcpFb, Sdes, SdesType, SenderInfo, SenderReport, SeqNo,
+    Ssrc,
 };
 
 use crate::{stats::StatsSnapshot, util::already_happened};
@@ -15,8 +16,15 @@ pub struct SenderSource {
     rid: Option<Rid>,
     next_seq_no: SeqNo,
     last_used: Instant,
-    bytes_tx: u64,
-    bytes_tx_resent: u64,
+    // bytes includes resent
+    bytes: u64,
+    bytes_resent: u64,
+    // packets includes resent
+    packets: u64,
+    packets_resent: u64,
+    firs: u64,
+    plis: u64,
+    nacks: u64,
 }
 
 impl SenderSource {
@@ -31,8 +39,13 @@ impl SenderSource {
             // to make known-plaintext attacks on encryption more difficult
             next_seq_no: (rand::random::<u16>() as u64).into(),
             last_used: already_happened(),
-            bytes_tx: 0,
-            bytes_tx_resent: 0,
+            bytes: 0,
+            bytes_resent: 0,
+            packets: 0,
+            packets_resent: 0,
+            firs: 0,
+            plis: 0,
+            nacks: 0,
         }
     }
 
@@ -75,24 +88,33 @@ impl SenderSource {
         s
     }
 
-    pub fn update_sent_bytes(&mut self, amount: u64, is_resend: bool) {
+    pub fn update_packet_counts(&mut self, bytes: u64, is_resend: bool) {
+        self.packets += 1;
+        self.bytes += bytes;
         if is_resend {
-            self.bytes_tx_resent += amount;
-        } else {
-            self.bytes_tx += amount;
+            self.bytes_resent += bytes;
+            self.packets_resent += 1;
+        }
+    }
+
+    pub fn update_with_feedback(&mut self, fb: &RtcpFb) {
+        match fb {
+            RtcpFb::Nack(_, _) => self.nacks += 1,
+            RtcpFb::Pli(_) => self.plis += 1,
+            RtcpFb::Fir(_) => self.firs += 1,
+            _ => {}
         }
     }
 
     pub fn visit_stats(&self, mid: Mid, snapshot: &mut StatsSnapshot) {
         let key = (mid, self.rid);
-        if self.bytes_tx == 0 {
+        if self.bytes == 0 {
             return;
         }
-        let bytes_tx = self.bytes_tx + self.bytes_tx_resent;
         if let Some(v) = snapshot.egress.get_mut(&key) {
-            *v += bytes_tx;
+            *v += self.bytes;
         } else {
-            snapshot.egress.insert(key, bytes_tx);
+            snapshot.egress.insert(key, self.bytes);
         }
     }
 }

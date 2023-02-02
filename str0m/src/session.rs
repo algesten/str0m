@@ -456,7 +456,7 @@ impl Session {
         // TODO: is there a nicer way to make borrow-checker happy ?
         // this should go away with the refactoring of the entire handle_rtp() function
         let source = media.get_or_create_source_rx(ssrc);
-        source.update_recv_bytes(bytes_rx as u64);
+        source.update_packet_counts(bytes_rx as u64);
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
