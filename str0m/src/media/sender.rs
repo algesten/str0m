@@ -85,6 +85,9 @@ impl SenderSource {
 
     pub fn visit_stats(&self, mid: Mid, snapshot: &mut StatsSnapshot) {
         let key = (mid, self.rid);
+        if self.bytes_tx == 0 {
+            return;
+        }
         let bytes_tx = self.bytes_tx + self.bytes_tx_resent;
         if let Some(v) = snapshot.egress.get_mut(&key) {
             *v += bytes_tx;
