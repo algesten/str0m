@@ -717,8 +717,8 @@ impl Session {
         for media in self.media() {
             media.visit_stats(now, snapshot)
         }
-        snapshot.tx = snapshot.egress.iter().map(|s| s.bytes).sum();
-        snapshot.rx = snapshot.ingress.iter().map(|s| s.bytes).sum();
+        snapshot.tx = snapshot.egress.values().map(|s| s.bytes).sum();
+        snapshot.rx = snapshot.ingress.values().map(|s| s.bytes).sum();
     }
 }
 
