@@ -160,16 +160,28 @@ impl ReceiverSource {
         if self.bytes == 0 {
             return;
         }
-        snapshot.ingress.push(MediaIngressStats {
-            mid,
-            rid: self.rid,
-            bytes: self.bytes,
-            packets: self.packets,
-            ts: now,
-            firs: self.firs,
-            plis: self.plis,
-            nacks: self.nacks,
-        });
+        let key = (mid, self.rid);
+        if let Some(stat) = snapshot.ingress.get_mut(&key) {
+            stat.bytes += self.bytes;
+            stat.packets += self.packets;
+            stat.firs += self.firs;
+            stat.plis += self.plis;
+            stat.nacks += self.nacks;
+        } else {
+            snapshot.ingress.insert(
+                key,
+                MediaIngressStats {
+                    mid,
+                    rid: self.rid,
+                    bytes: self.bytes,
+                    packets: self.packets,
+                    ts: now,
+                    firs: self.firs,
+                    plis: self.plis,
+                    nacks: self.nacks,
+                },
+            );
+        }
     }
 }
 

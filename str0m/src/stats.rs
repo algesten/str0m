@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     time::{Duration, Instant},
 };
 
@@ -16,8 +16,8 @@ pub struct StatsSnapshot {
     pub peer_rx: u64,
     pub tx: u64,
     pub rx: u64,
-    pub ingress: Vec<MediaIngressStats>,
-    pub egress: Vec<MediaEgressStats>,
+    pub ingress: HashMap<(Mid, Option<Rid>), MediaIngressStats>,
+    pub egress: HashMap<(Mid, Option<Rid>), MediaEgressStats>,
     ts: Instant,
 }
 
@@ -28,8 +28,8 @@ impl StatsSnapshot {
             peer_tx: 0,
             tx: 0,
             rx: 0,
-            ingress: Vec::new(),
-            egress: Vec::new(),
+            ingress: HashMap::new(),
+            egress: HashMap::new(),
             ts,
         }
     }
@@ -143,7 +143,7 @@ impl Stats {
     }
 
     /// Actually handles the timeout advancing the internal state and preparing the output
-    pub fn do_handle_timeout(&mut self, snapshot: StatsSnapshot) {
+    pub fn do_handle_timeout(&mut self, snapshot: &mut StatsSnapshot) {
         // enqueue stas and timestampt them so they can be sent out
 
         let event = PeerStats {
@@ -156,11 +156,11 @@ impl Stats {
 
         self.events.push_back(StatEvent::PeerStats(event));
 
-        for event in snapshot.ingress {
+        for (_, event) in snapshot.ingress.drain() {
             self.events.push_back(StatEvent::MediaIngressStats(event));
         }
 
-        for event in snapshot.egress {
+        for (_, event) in snapshot.egress.drain() {
             self.events.push_back(StatEvent::MediaEgressStats(event));
         }
 

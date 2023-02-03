@@ -1029,7 +1029,7 @@ impl Rtc {
         if self.stats.wants_timeout(now) {
             let mut snapshot = StatsSnapshot::new(now);
             self.visit_stats(now, &mut snapshot);
-            self.stats.do_handle_timeout(snapshot)
+            self.stats.do_handle_timeout(&mut snapshot);
         }
     }
 

@@ -113,16 +113,28 @@ impl SenderSource {
         if self.bytes == 0 {
             return;
         }
-        snapshot.egress.push(MediaEgressStats {
-            mid,
-            rid: self.rid,
-            bytes: self.bytes,
-            packets: self.packets,
-            firs: self.firs,
-            plis: self.plis,
-            nacks: self.nacks,
-            ts: now,
-        });
+        let key = (mid, self.rid);
+        if let Some(stat) = snapshot.ingress.get_mut(&key) {
+            stat.bytes += self.bytes;
+            stat.packets += self.packets;
+            stat.firs += self.firs;
+            stat.plis += self.plis;
+            stat.nacks += self.nacks;
+        } else {
+            snapshot.egress.insert(
+                key,
+                MediaEgressStats {
+                    mid,
+                    rid: self.rid,
+                    bytes: self.bytes,
+                    packets: self.packets,
+                    firs: self.firs,
+                    plis: self.plis,
+                    nacks: self.nacks,
+                    ts: now,
+                },
+            );
+        }
     }
 }
 
