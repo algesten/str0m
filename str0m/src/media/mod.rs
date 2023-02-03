@@ -1200,15 +1200,11 @@ impl Media {
     }
 
     pub fn visit_stats(&self, snapshot: &mut StatsSnapshot) {
-        if self.direction().is_receiving() {
-            for s in &self.sources_rx {
-                s.visit_stats(self.mid, snapshot);
-            }
+        for s in &self.sources_rx {
+            s.visit_stats(self.mid, snapshot);
         }
-        if self.direction().is_sending() {
-            for s in &self.sources_tx {
-                s.visit_stats(self.mid, snapshot);
-            }
+        for s in &self.sources_tx {
+            s.visit_stats(self.mid, snapshot);
         }
     }
 }
