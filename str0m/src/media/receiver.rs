@@ -135,6 +135,9 @@ impl ReceiverSource {
 
     pub fn visit_stats(&self, mid: Mid, snapshot: &mut StatsSnapshot) {
         let key = (mid, self.rid);
+        if self.bytes_rx == 0 {
+            return;
+        }
         if let Some(v) = snapshot.ingress.get_mut(&key) {
             *v += self.bytes_rx;
         } else {
