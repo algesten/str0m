@@ -58,7 +58,9 @@ impl RtpHeader {
         block_size: usize,
     ) -> usize {
         let pad = block_size - body_len % block_size;
-        let pad = if pad == block_size { 0 } else { pad };
+        if pad == block_size {
+            return 0;
+        }
 
         let len = header_len + body_len;
 
@@ -68,10 +70,8 @@ impl RtpHeader {
         }
         buf[len + pad - 1] = pad as u8;
 
-        if pad > 0 {
-            // set the padding bit
-            buf[0] |= 0b00_1_0_0000;
-        }
+        // set the padding bit
+        buf[0] |= 0b00_1_0_0000;
 
         pad
     }
