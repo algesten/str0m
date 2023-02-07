@@ -479,8 +479,10 @@ impl Media {
         });
 
         trace!("Write to packetizer time: {:?} bytes: {}", ts, data.len());
-        const MTU: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
-        if let Err(e) = buf.push_sample(ts, data, ssrc, rid, ext_vals, MTU) {
+        let mut mtu: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
+        // align to SRTP block size to minimize padding needs
+        mtu = mtu - mtu % SRTP_BLOCK_SIZE;
+        if let Err(e) = buf.push_sample(ts, data, ssrc, rid, ext_vals, mtu) {
             return Err(RtcError::Packet(self.mid, pt, e));
         };
 
