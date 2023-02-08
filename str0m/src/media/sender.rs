@@ -19,10 +19,12 @@ pub struct SenderSource {
     rid: Option<Rid>,
     next_seq_no: SeqNo,
     last_used: Instant,
-    // bytes includes resent
+    // count of bytes sent, including retransmissions
+    // <https://www.w3.org/TR/webrtc-stats/#dom-rtcsentrtpstreamstats-bytessent>
     bytes: u64,
     bytes_resent: u64,
-    // packets includes resent
+    // count of packets sent, including retransmissions
+    // <https://www.w3.org/TR/webrtc-stats/#summary>
     packets: u64,
     packets_resent: u64,
     firs: u64,
