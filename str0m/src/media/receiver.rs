@@ -21,7 +21,9 @@ pub struct ReceiverSource {
     sender_info: Option<SenderInfo>,
     sender_info_at: Option<Instant>,
     fir_seq_no: u8,
+    // count of bytes received, including retransmissions
     bytes: u64,
+    // count of packets received, including retransmissions
     packets: u64,
     firs: u64,
     plis: u64,

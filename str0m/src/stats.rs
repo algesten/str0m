@@ -68,9 +68,11 @@ pub struct PeerStats {
 pub struct MediaEgressStats {
     pub mid: Mid,
     pub rid: Option<Rid>,
-    // total bytes transmitted
+    // total bytes sent, including retransmissions
+    // https://www.w3.org/TR/webrtc-stats/#dom-rtcsentrtpstreamstats-bytessent
     pub bytes: u64,
-    // total number of rtp packets transmitted
+    // total number of rtp packets sent, including retransmissions
+    // https://www.w3.org/TR/webrtc-stats/#dom-rtcsentrtpstreamstats-packetssent
     pub packets: u64,
     // number of firs received
     pub firs: u64,
@@ -97,9 +99,9 @@ pub struct RemoteIngressStats {
 pub struct MediaIngressStats {
     pub mid: Mid,
     pub rid: Option<Rid>,
-    // total bytes received
+    // total bytes received, including retransmissions
     pub bytes: u64,
-    // total number of rtp packets received
+    // total number of rtp packets received, including retransmissions
     pub packets: u64,
     // number of firs sent
     pub firs: u64,
