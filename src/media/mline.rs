@@ -336,7 +336,7 @@ impl MLine {
         twcc: &mut u64,
         pad_size: Option<usize>,
         buf: &mut Vec<u8>,
-    ) -> Option<(RtpHeader, SeqNo)> {
+    ) -> Option<(RtpHeader, SeqNo, Option<Instant>)> {
         let mid = self.mid;
 
         let next = if let Some(next) = self.poll_packet_resend_to_cap(now) {
@@ -414,7 +414,8 @@ impl MLine {
         };
         buf.truncate(header_len + body_len);
 
-        Some((header, next.seq_no))
+        let queued_at = next.body.queued_at();
+        Some((header, next.seq_no, queued_at))
     }
 
     fn poll_packet_resend_to_cap(&mut self, now: Instant) -> Option<NextPacket> {
@@ -1197,6 +1198,16 @@ impl<'a> NextPacketBody<'a> {
         match self {
             Regular { .. } => None,
             Resend { orig_seq_no, .. } => *orig_seq_no,
+            Padding { .. } => None,
+        }
+    }
+
+    fn queued_at(&self) -> Option<Instant> {
+        use NextPacketBody::*;
+        match self {
+            Regular { pkt } => Some(pkt.meta.queued_at),
+            // TODO: Accurate queued_at for resends
+            Resend { .. } => None,
             Padding { .. } => None,
         }
     }

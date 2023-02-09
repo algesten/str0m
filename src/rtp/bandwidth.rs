@@ -17,6 +17,10 @@ impl Bitrate {
         Bitrate(bps as f64)
     }
 
+    pub const fn kbps(kbps: u64) -> Self {
+        Self::new(kbps * 10_u64.pow(3))
+    }
+
     pub const fn gbps(gbps: u64) -> Self {
         Self::new(gbps * 10_u64.pow(9))
     }
@@ -54,6 +58,14 @@ impl Mul<Duration> for Bitrate {
         let bytes = bits / 8.0;
 
         DataSize::bytes(bytes.round() as u64)
+    }
+}
+
+impl Mul<f64> for Bitrate {
+    type Output = Bitrate;
+
+    fn mul(self, rhs: f64) -> Self::Output {
+        Bitrate(self.0 * rhs)
     }
 }
 

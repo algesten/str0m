@@ -32,6 +32,7 @@ mod buffer_tx;
 pub use buffer_tx::{Packetized, PacketizedMeta, PacketizingBuffer};
 
 mod bwe;
+pub use bwe::SendSideBandwithEstimator;
 
 mod pacer;
 pub use pacer::{

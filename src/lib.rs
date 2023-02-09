@@ -299,6 +299,9 @@ pub enum Event {
 
     /// Aggregated statistics for each media (mid, rid) in the egress direction
     MediaEgressStats(MediaEgressStats),
+
+    /// A new estimate from the bandwidth estimation subsystem.
+    EgressBitrateEstimate(u64),
 }
 
 /// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.
@@ -361,7 +364,7 @@ impl Rtc {
             ice,
             dtls: Dtls::new().expect("DTLS to init without problem"),
             setup: Setup::ActPass,
-            session: Session::new(config.codec_config, config.ice_lite),
+            session: Session::new(config.codec_config, config.ice_lite, config.use_bwe),
             sctp: RtcSctp::new(),
             stats: Stats::new(config.stats_interval),
             next_sctp_channel: 0, // Goes 0, 1, 2 for both DTLS server or client
@@ -898,6 +901,9 @@ impl Rtc {
                 MediaEvent::Data(m) => Output::Event(Event::MediaData(m)),
                 MediaEvent::Error(e) => return Err(e),
                 MediaEvent::KeyframeRequest(r) => Output::Event(Event::KeyframeRequest(r)),
+                MediaEvent::EgressBitrateEstimate(b) => {
+                    Output::Event(Event::EgressBitrateEstimate(b))
+                }
             });
         }
 
@@ -1153,6 +1159,45 @@ impl Rtc {
     fn m_line_mut(&mut self, index: usize) -> &mut MLine {
         self.session.m_line_by_index_mut(index)
     }
+
+    /// Configure the BWE system.
+    ///
+    /// Configure the bandwidth estimation system with the current bitrate and the desired maximum bitrate.
+    /// **Note:** This only has an effect if BWE has been enabled via `RtcConfig::use_bwe`.
+    ///
+    /// * `current_bitrate` A best estimate of the bitrate that's currently being sent. The more
+    /// accurate this value is the better bandwidth estimation performs. Only video bitrate is
+    /// relevant here, audio can be ignored.
+    /// * `desired_bitrate` The bitrate that is the desired target where BWE should stop probing
+    /// for higher bitrates. This might not be reached if the link cannot sustain the bitrate.
+    ///
+    /// ## Example
+    ///
+    /// Say you have a video track with three ingress simulcast layers: `low` at 250Kbits/, `medium` at 750Kbits/,
+    /// and `high` at 1.5Mbit/s. Starting on the low layer call
+    ///
+    /// ```no_run
+    /// rtc.configure_bwe(250_000, 1_500_000)
+    /// ````
+    ///
+    /// When a new estimate is made available that indicates a switch to the medium layer is
+    /// possible, make the switch and then update the configuration:
+    ///
+    /// ```no_run
+    /// rtc.configure_bwe(750_000, 1_500_000)
+    /// ````
+    ///
+    /// As mentioned above this works better if the current bitrate matches closely what you are
+    /// actually intending to send. This can be achieved by measuring the observed ingress bitrate
+    pub fn configure_bwe(
+        &mut self,
+        current_bitrate_bps: u64,
+        desired_bitrate_bps: u64,
+        now: Instant,
+    ) {
+        self.session
+            .configure_bwe(current_bitrate_bps, desired_bitrate_bps, now);
+    }
 }
 
 /// Changes waiting to be applied to the [`Rtc`].
@@ -1190,6 +1235,8 @@ pub struct RtcConfig {
     ice_lite: bool,
     codec_config: CodecConfig,
     stats_interval: Duration,
+    /// Whether to use Bandwidth Estimation to discover the egress bandwidth.
+    use_bwe: bool,
 }
 
 impl RtcConfig {
@@ -1285,6 +1332,13 @@ impl RtcConfig {
         self
     }
 
+    /// Whether to use bandwidth estimation to discover the available send bandwidth.
+    pub fn use_bwe(mut self, use_bwe: bool) -> Self {
+        self.use_bwe = use_bwe;
+
+        self
+    }
+
     /// Create a [`Rtc`] from the configuration.
     pub fn build(self) -> Rtc {
         Rtc::new_from_config(self)
@@ -1297,6 +1351,7 @@ impl Default for RtcConfig {
             ice_lite: Default::default(),
             codec_config: CodecConfig::new_with_defaults(),
             stats_interval: Duration::from_secs(1),
+            use_bwe: false,
         }
     }
 }
