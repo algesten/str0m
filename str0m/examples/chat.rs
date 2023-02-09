@@ -500,7 +500,7 @@ impl Client {
                 return;
             };
 
-        let Some(media) = self.rtc.media(mid) else {
+        let Some(mut media) = self.rtc.media(mid) else {
             return;
         };
 
@@ -535,7 +535,7 @@ impl Client {
             return;
         }
 
-        let Some(media) = self.rtc.media(mid_in) else {
+        let Some(mut media) = self.rtc.media(mid_in) else {
             return;
         };
 

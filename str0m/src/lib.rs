@@ -44,9 +44,9 @@ pub mod channel;
 use channel::{Channel, ChannelData, ChannelId};
 
 pub mod media;
-use media::{CodecConfig, Direction, KeyframeRequest};
+use media::{CodecConfig, Direction, KeyframeRequest, Media};
 use media::{KeyframeRequestKind, MediaChanged, MediaData};
-use media::{Media, MediaAdded, Mid, Pt, Rid, Ssrc};
+use media::{MLine, MediaAdded, Mid, Pt, Rid, Ssrc};
 
 mod change;
 pub use change::ChangeSet;
@@ -998,7 +998,7 @@ impl Rtc {
     ///
     /// Apart from inspecting information about the media, there are two fundamental
     /// operations. One is [`Media::writer()`] for writing outgoing media data, the other
-    /// is [`Media::request_keyframe()`] to request a PLI/FIR keyframe for incoming media data.
+    /// is [`Media::request_keyframe()`][crate::media::Media] to request a PLI/FIR keyframe for incoming media data.
     ///
     /// All media rows are announced via the [`Event::MediaAdded`] event. This function
     /// will return `None` for any [`Mid`] until that event has fired. This
@@ -1014,11 +1014,13 @@ impl Rtc {
     /// let media = rtc.media(mid).unwrap();
     /// // TODO write media or request keyframe.
     /// ```
-    pub fn media(&mut self, mid: Mid) -> Option<&mut Media> {
+    pub fn media(&mut self, mid: Mid) -> Option<Media<'_>> {
         if !self.alive {
             return None;
         }
-        self.session.get_media(mid)
+        let trans = self.session.m_line_by_mid_mut(mid)?;
+        let index = trans.index();
+        Some(Media::new(self, index))
     }
 
     fn do_handle_timeout(&mut self, now: Instant) {
@@ -1089,6 +1091,14 @@ impl Rtc {
         snapshot.peer_rx = self.peer_bytes_rx;
         snapshot.peer_tx = self.peer_bytes_tx;
         self.session.visit_stats(now, snapshot);
+    }
+
+    fn m_line(&self, index: usize) -> &MLine {
+        self.session.m_line_by_index(index)
+    }
+
+    fn m_line_mut(&mut self, index: usize) -> &mut MLine {
+        self.session.m_line_by_index_mut(index)
     }
 }
 

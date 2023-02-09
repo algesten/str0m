@@ -5,8 +5,8 @@ use rtp::{ChannelId, Direction, Extensions, Mid, Ssrc};
 use sctp::{DcepOpen, ReliabilityType};
 use sdp::{MediaLine, Msid, Offer};
 
-use crate::media::{CodecConfig, Media, MediaKind, PayloadParams};
-use crate::session::MediaOrApp;
+use crate::media::{CodecConfig, MLine, MediaKind, PayloadParams};
+use crate::session::MLineOrApp;
 use crate::Rtc;
 
 pub(crate) struct Changes(pub Vec<Change>);
@@ -167,7 +167,7 @@ impl<'a> ChangeSet<'a> {
     /// If the direction is set for media that doesn't exist, or if the direction is
     /// the same that's already set [`ChangeSet::apply()`] not require a negotiation.
     pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
-        let Some(media) = self.rtc.session.get_media(mid) else {
+        let Some(media) = self.rtc.session.m_line_by_mid_mut(mid) else {
             return;
         };
 
@@ -325,7 +325,7 @@ impl Changes {
         index_start: usize,
         config: &'b CodecConfig,
         exts: &'b Extensions,
-    ) -> impl Iterator<Item = MediaOrApp> + '_ {
+    ) -> impl Iterator<Item = MLineOrApp> + '_ {
         self.0
             .iter()
             .enumerate()
@@ -351,7 +351,7 @@ impl Change {
         index: usize,
         config: &CodecConfig,
         exts: &Extensions,
-    ) -> Option<MediaOrApp> {
+    ) -> Option<MLineOrApp> {
         use Change::*;
         match self {
             AddMedia(v) => {
@@ -360,12 +360,12 @@ impl Change {
                 add.params = config.all_for_kind(v.kind).copied().collect();
                 add.index = index;
 
-                let media = Media::from_add_media(add, *exts);
-                Some(MediaOrApp::Media(media))
+                let m_line = MLine::from_add_media(add, *exts);
+                Some(MLineOrApp::MLine(m_line))
             }
             AddApp(mid) => {
                 let channel = (*mid, index).into();
-                Some(MediaOrApp::App(channel))
+                Some(MLineOrApp::App(channel))
             }
             _ => None,
         }

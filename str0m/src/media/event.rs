@@ -1,0 +1,165 @@
+pub use packet::RtpMeta;
+pub use rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
+pub use sdp::{Codec, FormatParams};
+
+use sdp::Simulcast as SdpSimulcast;
+
+use super::PayloadParams;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Types of media.
+pub enum MediaKind {
+    /// Audio media.
+    Audio,
+    /// Video media.
+    Video,
+}
+
+impl From<SdpSimulcast> for Simulcast {
+    fn from(s: SdpSimulcast) -> Self {
+        let send = s
+            .send
+            .iter()
+            .flat_map(|s| s.iter().map(|s| s.as_stream_id().0.as_ref()))
+            .map(Rid::from)
+            .collect();
+
+        let recv = s
+            .recv
+            .iter()
+            .flat_map(|s| s.iter().map(|s| s.as_stream_id().0.as_ref()))
+            .map(Rid::from)
+            .collect();
+
+        Simulcast { send, recv }
+    }
+}
+
+/// A new media m-line appeared in an SDP negotation.
+///
+/// This event fires both for negotations triggered by a remote or local offer.
+///
+/// Does not fire for application m-lines (data channel).
+#[derive(Debug, PartialEq, Eq)]
+pub struct MediaAdded {
+    /// Identifier of the new m-line.
+    pub mid: Mid,
+
+    /// The kind of media the m-line will carry.
+    pub kind: MediaKind,
+
+    /// Current direction of the m-line.
+    pub direction: Direction,
+
+    /// If simulcast is configured, this holds the Rids.
+    ///
+    /// `a=simulcast:send h;l`
+    pub simulcast: Option<Simulcast>,
+}
+
+/// A change happening during an SDP re-negotation.
+///
+/// This event fires both for re-negotations triggered by a remote or local offer.
+///
+/// Does not fire for application m-lines (data channel).
+#[derive(Debug, PartialEq, Eq)]
+pub struct MediaChanged {
+    /// Identifier of the new m-line.
+    pub mid: Mid,
+
+    /// Current direction of the m-line.
+    pub direction: Direction,
+}
+
+/// Simplified information about the simulcast config from SDP.
+///
+/// The [full spec][1] covers many cases that are not used by simple simulcast.
+///
+/// [1]: https://datatracker.ietf.org/doc/html/draft-ietf-mmusic-sdp-simulcast-14
+#[derive(Debug, PartialEq, Eq)]
+pub struct Simulcast {
+    pub send: Vec<Rid>,
+    pub recv: Vec<Rid>,
+}
+
+/// Video or audio data from the remote peer.
+///
+/// This is obtained via [`Event::MediaData`][crate::Event::MediaData].
+#[derive(PartialEq, Eq)]
+pub struct MediaData {
+    /// Identifier of the m-line in the SDP this media belongs to.
+    pub mid: Mid,
+
+    /// Payload type (PT) tells which negotiated codec is being used. An m-line
+    /// can carry different codecs, the payload type can theoretically change
+    /// from one packet to the next.
+    pub pt: Pt,
+
+    /// Rtp Stream Id (RID) identifies an RTP stream without refering to its
+    /// Synchronization Source (SSRC).
+    ///
+    /// This is a newer standard that is sometimes used in WebRTC to identify
+    /// a stream. Specifically when using Simulcast in Chrome.
+    pub rid: Option<Rid>,
+
+    /// Parameters for the codec. This is used to match incoming PT to ougoing PT.
+    pub params: PayloadParams,
+
+    /// The RTP media time of this packet. Media time is described as a nominator/denominator
+    /// quantity. The nominator is the timestamp field from the RTP header, the denominator
+    /// depends on whether this is an audio or video packet.
+    ///
+    /// For audio the timebase is 48kHz for video it is 90kHz.
+    pub time: MediaTime,
+
+    /// Whether the data is contiguous from the one just previously emitted. If this is false,
+    /// we got an interruption in RTP packets, and the data may or may not be usable in a decoder
+    /// without requesting a new keyframe.
+    ///
+    /// For audio this flag most likely doesn't matter.
+    pub contiguous: bool,
+
+    /// The actual packet data a.k.a Sample.
+    ///
+    /// Bigger samples don't fit in one UDP packet, thus WebRTC RTP is chopping up codec
+    /// transmission units into smaller parts.
+    ///
+    /// This data is a full depacketized Sample.
+    pub data: Vec<u8>,
+
+    /// RTP header extensions for this media data. This is taken from the
+    /// first RTP header.
+    pub ext_vals: ExtensionValues,
+
+    /// The individual packet metadata that were part of making the Sample in `data`.
+    pub meta: Vec<RtpMeta>,
+}
+
+/// Details for an incoming a keyframe request (PLI or FIR).
+///
+/// This is obtained via the [`Event::KeyframeRequest`][crate::Event::KeyframeRequest].
+///
+/// Sending a keyframe request is done via [`Media::request_keyframe()`][crate::media::Media].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyframeRequest {
+    /// The media identifier this keyframe request is for.
+    pub mid: Mid,
+
+    /// Rid the keyframe request is for. Relevant when doing simulcast.
+    pub rid: Option<Rid>,
+
+    /// The kind of keyframe request (PLI or FIR).
+    pub kind: KeyframeRequestKind,
+}
+
+/// Type of keyframe request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyframeRequestKind {
+    /// Picture Loss Indiciation (PLI) is a less severe keyframe request that can be
+    /// automatically generated by an SFU or by the end peer.
+    Pli,
+
+    /// Full Intra Request (PLI) is a more severe keyframe request that should only
+    /// be used when it's impossible for an end peer to show a video stream.
+    Fir,
+}
