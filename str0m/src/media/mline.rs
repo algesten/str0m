@@ -338,7 +338,7 @@ impl MLine {
         twcc: &mut u64,
         pad_size: Option<usize>,
         buf: &mut Vec<u8>,
-    ) -> Option<(RtpHeader, SeqNo)> {
+    ) -> Option<(RtpHeader, SeqNo, Option<Instant>)> {
         let mid = self.mid;
 
         let next = if let Some(next) = self.poll_packet_resend_to_cap(now) {
@@ -416,7 +416,8 @@ impl MLine {
         };
         buf.truncate(header_len + body_len);
 
-        Some((header, next.seq_no))
+        let queued_at = next.body.queued_at();
+        Some((header, next.seq_no, queued_at))
     }
 
     fn poll_packet_resend_to_cap(&mut self, now: Instant) -> Option<NextPacket> {
@@ -515,44 +516,44 @@ impl MLine {
         // it's hard to construct.
 
         // This first scope tries to send a spurious (unasked for) resend of a packet already sent.
-        {
-            let pt = self
-                .buffers_tx
-                .iter()
-                .map(|(pt, buffer)| (pt, buffer.history_size()))
-                .filter(|(_, size)| *size > 0)
-                // Use the last PT i.e. the one that has the most RTX history, this is a poor
-                // approximation for most recent sends.
-                .max_by_key(|(_, size)| *size)
-                .map(|(pt, _)| *pt);
+        // {
+        //     let pt = self
+        //         .buffers_tx
+        //         .iter()
+        //         .map(|(pt, buffer)| (pt, buffer.history_size()))
+        //         .filter(|(_, size)| *size > 0)
+        //         // Use the last PT i.e. the one that has the most RTX history, this is a poor
+        //         // approximation for most recent sends.
+        //         .max_by_key(|(_, size)| *size)
+        //         .map(|(pt, _)| *pt);
 
-            // If we find a pt above, we do a spurious (unasked for) resend of this packet.
-            if let Some(pt) = pt {
-                let buffer = get_buffer_tx(&self.buffers_tx, pt)
-                    .expect("the buffer to exist as verified previously");
+        //     // If we find a pt above, we do a spurious (unasked for) resend of this packet.
+        //     if let Some(pt) = pt {
+        //         let buffer = get_buffer_tx(&self.buffers_tx, pt)
+        //             .expect("the buffer to exist as verified previously");
 
-                // Find a historic packet that is smaller than this max size. The max size
-                // is a headroom since we can accept slightly larger padding than asked for.
-                let max_size = pad_size * 2;
-                let packet = buffer.historic_packet_smaller_than(max_size)?;
+        //         // Find a historic packet that is smaller than this max size. The max size
+        //         // is a headroom since we can accept slightly larger padding than asked for.
+        //         let max_size = pad_size * 2;
+        //         let packet = buffer.historic_packet_smaller_than(max_size)?;
 
-                let seq_no = packet
-                    .seq_no
-                    .expect("this packet to have been sent and therefore have a sequence number");
+        //         let seq_no = packet
+        //             .seq_no
+        //             .expect("this packet to have been sent and therefore have a sequence number");
 
-                // Piggy-back on regular resends.
-                // We should never add padding as long as there are resends.
-                assert!(self.resends.is_empty());
-                self.resends.push_front(Resend {
-                    pt,
-                    ssrc: packet.meta.ssrc,
-                    seq_no,
-                    queued_at: now,
-                });
+        //         // Piggy-back on regular resends.
+        //         // We should never add padding as long as there are resends.
+        //         assert!(self.resends.is_empty());
+        //         self.resends.push_front(Resend {
+        //             pt,
+        //             ssrc: packet.meta.ssrc,
+        //             seq_no,
+        //             queued_at: now,
+        //         });
 
-                return self.poll_packet_resend(now, true);
-            }
-        }
+        //         return self.poll_packet_resend(now, true);
+        //     }
+        // }
 
         // This second scope sends an empty padding packet. This is a fallback strategy if we fail
         // to find a suitable rtx packet above.
@@ -1115,6 +1116,14 @@ impl MLine {
         }
     }
 
+    pub fn last_rtt(&self) -> Option<f32> {
+        self.sources_tx
+            .iter()
+            .filter_map(|s| s.last_rtt())
+            .min_by_key(|(_, rr_at)| *rr_at)
+            .map(|(rtt, _)| rtt)
+    }
+
     /// Return the queue state for outbound RTP traffic for this mline.
     ///
     /// For the purposes of pacing each mline is treated as its own packet queue. Internally this
@@ -1199,6 +1208,16 @@ impl<'a> NextPacketBody<'a> {
         match self {
             Regular { .. } => None,
             Resend { orig_seq_no, .. } => *orig_seq_no,
+            Padding { .. } => None,
+        }
+    }
+
+    fn queued_at(&self) -> Option<Instant> {
+        use NextPacketBody::*;
+        match self {
+            Regular { pkt } => Some(pkt.meta.queued_at),
+            // TODO: Accurate queued_at for resends
+            Resend { .. } => None,
             Padding { .. } => None,
         }
     }

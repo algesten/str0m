@@ -66,7 +66,7 @@ use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use net_::DatagramRecv;
-use rtp_::{InstantExt, Ssrc};
+use rtp_::{Bitrate, InstantExt, Ssrc};
 use sctp::{RtcSctp, SctpEvent};
 use sdp::{Sdp, Setup};
 use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent};
@@ -291,6 +291,9 @@ pub enum Event {
 
     /// Aggregated statistics for each media (mid, rid) in the egress direction
     MediaEgressStats(MediaEgressStats),
+
+    /// A new estimate from the bandwidth estimation subsystem.
+    EgressBitrateEstimate(Bitrate),
 }
 
 /// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.
@@ -890,6 +893,9 @@ impl Rtc {
                 MediaEvent::Data(m) => Output::Event(Event::MediaData(m)),
                 MediaEvent::Error(e) => return Err(e),
                 MediaEvent::KeyframeRequest(r) => Output::Event(Event::KeyframeRequest(r)),
+                MediaEvent::EgressBitrateEstimate(b) => {
+                    Output::Event(Event::EgressBitrateEstimate(b))
+                }
             });
         }
 
@@ -1144,6 +1150,20 @@ impl Rtc {
 
     fn m_line_mut(&mut self, index: usize) -> &mut MLine {
         self.session.m_line_by_index_mut(index)
+    }
+
+    /// Set the target pacing bitrate for sending and the padding rate if any.
+    ///
+    /// When setting a given bitrate and having configured BWE, the caller MUST attempt to send at
+    /// roughly the bitrate they specified.
+    pub fn set_send_pacing_bitrates(
+        &mut self,
+        pacing_bitrate: Bitrate,
+        padding_bitrate: Bitrate,
+        now: Instant,
+    ) {
+        self.session
+            .set_send_pacing_rates(pacing_bitrate, padding_bitrate, now);
     }
 }
 

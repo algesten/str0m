@@ -36,6 +36,9 @@ pub(crate) struct SenderSource {
     rtt: Option<f32>,
     // losses collecter from RR (known packets, lost ratio)
     losses: Vec<(u64, f32)>,
+
+    /// The last time a reception report was received and applied for this
+    last_reception_report: Option<Instant>,
     // The last media time (RTP time) and wallclock that was written.
     rtp_and_wallclock: Option<(MediaTime, Instant)>,
 }
@@ -61,6 +64,7 @@ impl SenderSource {
             nacks: 0,
             rtt: None,
             losses: Vec::new(),
+            last_reception_report: None,
             rtp_and_wallclock: None,
         }
     }
@@ -220,6 +224,14 @@ impl SenderSource {
 
     pub fn update_clocks(&mut self, rtp_time: MediaTime, wallclock: Instant) {
         self.rtp_and_wallclock = Some((rtp_time, wallclock));
+    }
+
+    /// The last RTT(roundtrip) value for this source if any.
+    ///
+    /// Returns the last RTT value and the time when this was recorded.
+    pub fn last_rtt(&self) -> Option<(f32, Instant)> {
+        self.last_reception_report
+            .and_then(|rr_at| self.rtt.map(|rtt| (rtt, rr_at)))
     }
 }
 

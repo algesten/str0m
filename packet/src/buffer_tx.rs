@@ -78,7 +78,7 @@ impl PacketizingBuffer {
         // Scale back retained count to max_retain
         while self.queue.len() > self.max_retain {
             self.queue.pop_front();
-            self.emit_next -= 1;
+            self.emit_next = self.emit_next.saturating_sub(1);
         }
 
         Ok(())

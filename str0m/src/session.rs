@@ -3,10 +3,12 @@ use std::time::{Duration, Instant};
 
 use dtls::KeyingMaterial;
 use net_::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
-use packet::{NullPacer, Pacer, PacerImpl, PollOutcome, RtpMeta};
+use packet::{
+    LeakyBucketPacer, NullPacer, Pacer, PacerImpl, PollOutcome, RtpMeta, SendSideBandwithEstimator,
+};
 use rtp_::SRTCP_OVERHEAD;
 use rtp_::{extend_seq, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
-use rtp_::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
+use rtp_::{Bitrate, Extensions, MediaTime, Mid, Rtcp, RtcpFb};
 use rtp_::{SrtpContext, SrtpKey, Ssrc};
 
 use crate::media::{App, CodecConfig, MediaAdded, MediaChanged, Source};
@@ -58,6 +60,8 @@ pub(crate) struct Session {
     twcc_rx_register: TwccRecvRegister,
     twcc_tx_register: TwccSendRegister,
 
+    bwe: SendSideBandwithEstimator,
+
     enable_twcc_feedback: bool,
 
     /// A pacer for sending RTP at specific rate.
@@ -101,6 +105,7 @@ pub enum MediaEvent {
     Error(RtcError),
     Added(MediaAdded),
     KeyframeRequest(KeyframeRequest),
+    EgressBitrateEstimate(Bitrate),
 }
 
 impl Session {
@@ -111,7 +116,11 @@ impl Session {
         while *id > MAX_ID {
             id = (*id >> 1).into();
         }
-        let pacer = PacerImpl::Null(NullPacer::default());
+        let initial_bitrate = 300_000.into();
+        let pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(
+            initial_bitrate,
+            Duration::from_millis(40),
+        ));
 
         Session {
             id,
@@ -131,6 +140,7 @@ impl Session {
             // Enough to accurately measure received bandwidths up to 20Mbit/s, assuming an average
             // packet size of 1000 bytes.
             twcc_tx_register: TwccSendRegister::new(2500),
+            bwe: SendSideBandwithEstimator::new(initial_bitrate),
             enable_twcc_feedback: false,
             pacer,
             poll_packet_buf: vec![0; 2000],
@@ -488,7 +498,16 @@ impl Session {
         for fb in RtcpFb::from_rtcp(feedback) {
             if let RtcpFb::Twcc(twcc) = fb {
                 debug!("Handle TWCC: {:?}", twcc);
-                self.twcc_tx_register.apply_report(twcc, now);
+                let range = self.twcc_tx_register.apply_report(twcc, now);
+                let observed_bitrate = self
+                    .twcc_tx_register
+                    .observed_bitrate(Duration::from_millis(500), now);
+                let records = range.and_then(|range| self.twcc_tx_register.send_records(range));
+
+                if let (Some(observed_bitrate), Some(records)) = (observed_bitrate, records) {
+                    self.bwe.update(&records, observed_bitrate, now);
+                }
+
                 return Some(());
             }
 
@@ -501,6 +520,11 @@ impl Session {
             });
             if let Some(m_line) = m_line {
                 m_line.handle_rtcp_fb(now, fb);
+                if let Some(rtt_ms) = m_line.last_rtt() {
+                    // TODO: Decide on microseconds vs milliseconds
+                    // TODO: Decide on f32 vs f64
+                    self.bwe.update_rtt(rtt_ms as f64 * 1000.0);
+                }
             } else {
                 // This is not necessarily a fault when starting a new track.
                 trace!("No m-line for feedback: {:?}", fb);
@@ -545,6 +569,10 @@ impl Session {
     }
 
     pub fn poll_event(&mut self) -> Option<MediaEvent> {
+        if let Some(bitrate_estimate) = self.bwe.poll_estimate() {
+            return Some(MediaEvent::EgressBitrateEstimate(bitrate_estimate));
+        }
+
         for m_line in self.m_lines() {
             if m_line.need_open_event {
                 m_line.need_open_event = false;
@@ -654,16 +682,50 @@ impl Session {
         let twcc_seq = self.twcc;
         let pad_size = pad_size.map(|p| p.as_bytes_usize());
 
-        if let Some((header, seq_no)) =
+        if let Some((header, seq_no, queued_at)) =
             mline.poll_packet(now, &self.exts, &mut self.twcc, pad_size, buf)
         {
             trace!("Poll RTP: {:?}", header);
+            if let Some(queued_at) = queued_at {
+                {
+                    use std::time::SystemTime;
 
-            self.pacer.register_send(now, buf.len().into(), queue_id);
+                    let now = SystemTime::now();
+                    let since_epoch = now.duration_since(SystemTime::UNIX_EPOCH).unwrap();
+                    let unix_time_ms = since_epoch.as_millis();
+                    let delay = Instant::now().duration_since(queued_at).as_millis();
+                    println!("QUEUE_DELAY {},{},{}", header.ssrc, delay, unix_time_ms);
+                }
+            }
+            let kind = if pad_size.is_some() && queued_at.is_none() {
+                "padding"
+            } else {
+                "media"
+            };
+
+            {
+                use std::time::SystemTime;
+
+                let now = SystemTime::now();
+                let since_epoch = now.duration_since(SystemTime::UNIX_EPOCH).unwrap();
+                let unix_time_ms = since_epoch.as_millis();
+                let size = buf.len();
+                println!(
+                    "PACKET_SENT {},{},{},{}",
+                    header.ssrc,
+                    size * 8,
+                    kind,
+                    unix_time_ms
+                );
+            }
+
+            let payload_size = buf.len();
+            self.pacer
+                .register_send(now, buf.len().into(), queue_id, kind == "media");
             let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
             self.twcc_tx_register
-                .register_seq(twcc_seq.into(), now, protected.len());
+                .register_seq(twcc_seq.into(), now, payload_size);
 
             return Some(protected.into());
         }
@@ -769,6 +831,18 @@ impl Session {
 
     pub fn m_line_by_index_mut(&mut self, index: usize) -> &mut MLine {
         self.m_lines[index].as_m_line_mut().expect("index is MLine")
+    }
+
+    pub(crate) fn set_send_pacing_rates(
+        &mut self,
+        pacing_bitrate: Bitrate,
+        padding_bitrate: Bitrate,
+        now: Instant,
+    ) {
+        self.pacer
+            .set_pacing_rate(pacing_bitrate, padding_bitrate, now);
+        self.bwe
+            .set_is_probing(padding_bitrate > Bitrate::ZERO, now);
     }
 }
 
