@@ -131,6 +131,7 @@ impl SenderSource {
             stat.firs += self.firs;
             stat.plis += self.plis;
             stat.nacks += self.nacks;
+            stat.rtt = self.rtt;
         } else {
             snapshot.egress.insert(
                 key,
@@ -142,6 +143,7 @@ impl SenderSource {
                     firs: self.firs,
                     plis: self.plis,
                     nacks: self.nacks,
+                    rtt: self.rtt,
                     ts: now,
                 },
             );
