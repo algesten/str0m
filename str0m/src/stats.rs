@@ -80,6 +80,8 @@ pub struct MediaEgressStats {
     pub plis: u64,
     // number of nacks received
     pub nacks: u64,
+    // round-trip-time (ms) extracted from the last RTCP receiver report
+    pub rtt: Option<f32>,
     // timestamp when this event was generated
     pub ts: Instant,
     // TODO
