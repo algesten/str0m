@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use rtp::{
     Descriptions, Mid, ReportList, Rid, RtcpFb, Sdes, SdesType, SenderInfo, SenderReport, SeqNo,
@@ -7,7 +7,7 @@ use rtp::{
 
 use crate::{
     stats::{MediaEgressStats, StatsSnapshot},
-    util::already_happened,
+    util::{already_happened, calculate_rtt_ms, unix2ntp},
 };
 
 use super::Source;
@@ -30,6 +30,9 @@ pub struct SenderSource {
     firs: u64,
     plis: u64,
     nacks: u64,
+    // round trip time (ms)
+    // Can be null in case of missing or bad reports
+    rtt: Option<f32>,
 }
 
 impl SenderSource {
@@ -51,6 +54,7 @@ impl SenderSource {
             firs: 0,
             plis: 0,
             nacks: 0,
+            rtt: None,
         }
     }
 
@@ -107,6 +111,11 @@ impl SenderSource {
             RtcpFb::Nack(_, _) => self.nacks += 1,
             RtcpFb::Pli(_) => self.plis += 1,
             RtcpFb::Fir(_) => self.firs += 1,
+            RtcpFb::ReceptionReport(v) => {
+                let now = (unix2ntp(SystemTime::now()) >> 16) as u32;
+                let rtt = calculate_rtt_ms(now, v.last_sr_delay, v.last_sr_time);
+                self.rtt = rtt;
+            }
             _ => {}
         }
     }

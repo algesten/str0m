@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use once_cell::sync::Lazy;
 
@@ -33,6 +33,55 @@ impl Soonest for (Option<Instant>, &'static str) {
             ((v, s), (None, _)) => (v, s),
         }
     }
+}
+
+/// Calculate the round trip time for a given peer as described in
+/// [RFC3550 6.4.1](https://datatracker.ietf.org/doc/html/rfc3550#section-6.4.1).
+///
+/// ## Params
+///
+/// - `now` the current middle 32 bits of an NTP timestamp for the current time.
+/// - `delay` the delay(`DLSR`) since last sender report expressed as fractions of a second in 32 bits.
+/// - `last_report` the middle 32 bits of an NTP timestamp for the most recent sender report(LSR) or Receiver Report(LRR).
+pub fn calculate_rtt_ms(now: u32, delay: u32, last_report: u32) -> Option<f32> {
+    // [10 Nov 1995 11:33:25.125 UTC]       [10 Nov 1995 11:33:36.5 UTC]
+    // n                 SR(n)              A=b710:8000 (46864.500 s)
+    // ---------------------------------------------------------------->
+    //                    v                 ^
+    // ntp_sec =0xb44db705 v               ^ dlsr=0x0005:4000 (    5.250s)
+    // ntp_frac=0x20000000  v             ^  lsr =0xb705:2000 (46853.125s)
+    //   (3024992005.125 s)  v           ^
+    // r                      v         ^ RR(n)
+    // ---------------------------------------------------------------->
+    //                        |<-DLSR->|
+    //                         (5.250 s)
+    //
+    // A     0xb710:8000 (46864.500 s)
+    // DLSR -0x0005:4000 (    5.250 s)
+    // LSR  -0xb705:2000 (46853.125 s)
+    // -------------------------------
+    // delay 0x0006:2000 (    6.125 s)
+
+    let rtt = now.checked_sub(delay)?.checked_sub(last_report)?;
+    let rtt_seconds = rtt >> 16;
+    let rtt_fraction = (rtt & (u16::MAX as u32)) as f32 / (u16::MAX as u32) as f32;
+
+    Some(rtt_seconds as f32 * 1000.0 + rtt_fraction * 1000.0)
+}
+
+pub fn unix2ntp(st: SystemTime) -> u64 {
+    let u = st
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| Duration::from_secs(0))
+        .as_nanos() as u64;
+    let mut s = u / 1_000_000_000;
+    s += 0x83AA7E80; //offset in seconds between unix epoch and ntp epoch
+    let mut f = u % 1_000_000_000;
+    f <<= 32;
+    f /= 1_000_000_000;
+    s <<= 32;
+
+    s | f
 }
 
 #[cfg(test)]
