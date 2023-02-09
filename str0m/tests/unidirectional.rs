@@ -53,9 +53,8 @@ pub fn unidirectional() -> Result<(), RtcError> {
         while l.duration() > dur_l {
             let free = l
                 .media(mid)
-                .map(|m| m.writer(pt))
-                .unwrap()
-                .write(time_l, &data_a)?;
+                .map(|mut m| m.writer(pt).write(time_l, &data_a))
+                .unwrap()?;
             time_l = time_l + STEP;
             if free == 0 {
                 break;

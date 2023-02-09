@@ -6,10 +6,10 @@ use sdp::{Offer, Proto, Sdp, SessionAttribute, Setup};
 
 use crate::change::{Change, Changes};
 use crate::media::{App, MediaKind, Source};
-use crate::session::{only_media_mut, MediaOrApp};
+use crate::session::{only_m_line_mut, MLineOrApp};
 use crate::RtcError;
 
-use super::{Media, Session};
+use super::{MLine, Session};
 
 pub(crate) struct AsSdpParams<'a> {
     pub candidates: &'a [Candidate],
@@ -161,7 +161,7 @@ impl Session {
             }
 
             let media = self
-                .get_media(add_media.mid)
+                .m_line_by_mid_mut(add_media.mid)
                 .expect("Media to be added for pending mid");
 
             // the cname/msid has already been communicated in the offer, we need to kep
@@ -204,7 +204,7 @@ impl Session {
                     }
                 }
                 MediaType::Audio | MediaType::Video => {
-                    if let Some(media) = self.get_media(m.mid()) {
+                    if let Some(media) = self.m_line_by_mid_mut(m.mid()) {
                         if idx != media.index() {
                             return index_err(m.mid());
                         }
@@ -236,7 +236,7 @@ impl Session {
         need_open_event: bool,
     ) -> Result<(), String> {
         for m in new_lines {
-            let idx = self.media.len();
+            let idx = self.m_lines.len();
 
             if m.typ.is_media() {
                 let mut exts = *self.exts();
@@ -245,15 +245,15 @@ impl Session {
                 // Update the PTs to match that of the remote.
                 self.codec_config.update_pts(m);
 
-                let media = Media::from_remote_media_line(m, idx, exts);
-                self.media.push(MediaOrApp::Media(media));
+                let media = MLine::from_remote_media_line(m, idx, exts);
+                self.m_lines.push(MLineOrApp::MLine(media));
 
-                let media = only_media_mut(&mut self.media).last().unwrap();
+                let media = only_m_line_mut(&mut self.m_lines).last().unwrap();
                 media.need_open_event = need_open_event;
                 media.apply_changes(m, &self.codec_config, &self.exts)
             } else if m.typ.is_channel() {
                 let app = (m.mid(), idx).into();
-                self.media.push(MediaOrApp::App(app));
+                self.m_lines.push(MLineOrApp::App(app));
 
                 let chan = self.app().unwrap();
                 chan.apply_changes(m);
@@ -305,7 +305,7 @@ impl Session {
 
     /// Returns all media/channels as `AsMediaLine` trait.
     pub fn as_media_lines(&self) -> impl Iterator<Item = &dyn AsMediaLine> {
-        self.media.iter().map(|m| m as &dyn AsMediaLine)
+        self.m_lines.iter().map(|m| m as &dyn AsMediaLine)
     }
 }
 
@@ -337,7 +337,7 @@ impl AsMediaLine for App {
     }
 }
 
-impl AsMediaLine for Media {
+impl AsMediaLine for MLine {
     fn mid(&self) -> Mid {
         self.mid()
     }
@@ -427,25 +427,25 @@ impl AsMediaLine for Media {
     }
 }
 
-impl AsMediaLine for MediaOrApp {
+impl AsMediaLine for MLineOrApp {
     fn mid(&self) -> Mid {
-        use MediaOrApp::*;
+        use MLineOrApp::*;
         match self {
-            Media(v) => v.mid(),
+            MLine(v) => v.mid(),
             App(v) => v.mid(),
         }
     }
     fn index(&self) -> usize {
-        use MediaOrApp::*;
+        use MLineOrApp::*;
         match self {
-            Media(v) => v.index(),
+            MLine(v) => v.index(),
             App(v) => v.index(),
         }
     }
     fn as_media_line(&self, attrs: Vec<sdp::MediaAttribute>) -> MediaLine {
-        use MediaOrApp::*;
+        use MLineOrApp::*;
         match self {
-            Media(v) => v.as_media_line(attrs),
+            MLine(v) => v.as_media_line(attrs),
             App(v) => v.as_media_line(attrs),
         }
     }

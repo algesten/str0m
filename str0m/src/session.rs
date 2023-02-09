@@ -16,7 +16,7 @@ use crate::util::{already_happened, not_happening, Soonest};
 use crate::RtcError;
 use crate::{net, KeyframeRequest, MediaData};
 
-use super::Media;
+use super::MLine;
 
 // Minimum time we delay between sending nacks. This should be
 // set high enough to not cause additional problems in very bad
@@ -30,7 +30,7 @@ pub(crate) struct Session {
     id: SessionId,
 
     // these fields are pub to allow session_sdp.rs modify them.
-    pub media: Vec<MediaOrApp>,
+    pub m_lines: Vec<MLineOrApp>,
     /// Extension mappings are _per BUNDLE_, but we can only have one a=group BUNDLE
     /// in WebRTC (one ice connection), so they are effetively per session.
     pub exts: Extensions,
@@ -68,23 +68,25 @@ pub(crate) struct Session {
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
-pub enum MediaOrApp {
-    Media(Media),
+pub enum MLineOrApp {
+    /// A regular m-line with media.
+    MLine(MLine),
+    /// An app m-line for SCTP association.
     App(App),
 }
 
-impl MediaOrApp {
-    pub fn as_media(&self) -> Option<&Media> {
+impl MLineOrApp {
+    pub fn as_m_line(&self) -> Option<&MLine> {
         match self {
-            MediaOrApp::Media(m) => Some(m),
-            MediaOrApp::App(_) => None,
+            MLineOrApp::MLine(m) => Some(m),
+            MLineOrApp::App(_) => None,
         }
     }
 
-    pub fn as_media_mut(&mut self) -> Option<&mut Media> {
+    pub fn as_m_line_mut(&mut self) -> Option<&mut MLine> {
         match self {
-            MediaOrApp::Media(m) => Some(m),
-            MediaOrApp::App(_) => None,
+            MLineOrApp::MLine(m) => Some(m),
+            MLineOrApp::App(_) => None,
         }
     }
 }
@@ -108,7 +110,7 @@ impl Session {
         }
         Session {
             id,
-            media: vec![],
+            m_lines: vec![],
             exts: Extensions::default_mappings(),
             codec_config,
             source_keys: HashMap::new(),
@@ -134,22 +136,22 @@ impl Session {
         self.id
     }
 
-    pub fn media(&mut self) -> impl Iterator<Item = &mut Media> {
-        self.media.iter_mut().filter_map(|m| match m {
-            MediaOrApp::Media(m) => Some(m),
-            MediaOrApp::App(_) => None,
+    pub fn m_lines(&mut self) -> impl Iterator<Item = &mut MLine> {
+        self.m_lines.iter_mut().filter_map(|m| match m {
+            MLineOrApp::MLine(m) => Some(m),
+            MLineOrApp::App(_) => None,
         })
     }
 
     pub fn app(&mut self) -> Option<&mut App> {
-        self.media.iter_mut().find_map(|m| match m {
-            MediaOrApp::Media(_) => None,
-            MediaOrApp::App(a) => Some(a),
+        self.m_lines.iter_mut().find_map(|m| match m {
+            MLineOrApp::MLine(_) => None,
+            MLineOrApp::App(a) => Some(a),
         })
     }
 
-    pub fn get_media(&mut self, mid: Mid) -> Option<&mut Media> {
-        self.media().find(|m| m.mid() == mid)
+    pub fn m_line_by_mid_mut(&mut self, mid: Mid) -> Option<&mut MLine> {
+        self.m_lines().find(|m| m.mid() == mid)
     }
 
     pub fn exts(&self) -> &Extensions {
@@ -175,7 +177,7 @@ impl Session {
     }
 
     pub fn handle_timeout(&mut self, now: Instant) {
-        for m in &mut self.media() {
+        for m in &mut self.m_lines() {
             m.handle_timeout(now);
         }
 
@@ -187,12 +189,12 @@ impl Session {
             }
         }
 
-        for m in only_media_mut(&mut self.media) {
+        for m in only_m_line_mut(&mut self.m_lines) {
             m.maybe_create_keyframe_request(sender_ssrc, &mut self.feedback);
         }
 
         if now >= self.regular_feedback_at() {
-            for m in only_media_mut(&mut self.media) {
+            for m in only_m_line_mut(&mut self.m_lines) {
                 m.maybe_create_regular_feedback(now, sender_ssrc, &mut self.feedback);
             }
         }
@@ -200,7 +202,7 @@ impl Session {
         if let Some(nack_at) = self.nack_at() {
             if now >= nack_at {
                 self.last_nack = now;
-                for m in only_media_mut(&mut self.media) {
+                for m in only_m_line_mut(&mut self.m_lines) {
                     m.create_nack(sender_ssrc, &mut self.feedback);
                 }
             }
@@ -258,7 +260,7 @@ impl Session {
         }
 
         // The receiver/source might already exist in some Media.
-        let maybe_mid = only_media(&self.media)
+        let maybe_mid = only_m_line(&self.m_lines)
             .find(|m| m.has_ssrc_rx(ssrc))
             .map(|m| m.mid());
 
@@ -272,7 +274,7 @@ impl Session {
         // The RTP header extension for mid might give us a clue.
         if let Some(mid) = header.ext_vals.mid {
             // Ensure media for this mid exists.
-            let m_exists = only_media(&self.media).any(|m| m.mid() == mid);
+            let m_exists = only_m_line(&self.m_lines).any(|m| m.mid() == mid);
 
             if m_exists {
                 // Insert an entry so we can look up on SSRC alone later.
@@ -300,9 +302,9 @@ impl Session {
         };
 
         // mid_and_ssrc_for_header guarantees media for this mid exists.
-        let media = only_media_mut(&mut self.media)
+        let m_lines = only_m_line_mut(&mut self.m_lines)
             .find(|m| m.mid() == mid)
-            .expect("media for mid");
+            .expect("m-line for mid");
 
         let srtp = match self.srtp_rx.as_mut() {
             Some(v) => v,
@@ -311,7 +313,7 @@ impl Session {
                 return;
             }
         };
-        let clock_rate = match media.get_params(&header) {
+        let clock_rate = match m_lines.get_params(&header) {
             Some(v) => v.clock_rate(),
             None => {
                 trace!("No codec params for {:?}", header.payload_type);
@@ -324,26 +326,26 @@ impl Session {
         let ssrc_repairs = header
             .ext_vals
             .rid_repair
-            .and_then(|repairs| media.ssrc_rx_for_rid(repairs));
+            .and_then(|repairs| m_lines.ssrc_rx_for_rid(repairs));
 
-        let source = media.get_or_create_source_rx(ssrc);
+        let source = m_lines.get_or_create_source_rx(ssrc);
 
-        let mut media_need_check_source = false;
+        let mut m_line_need_check_source = false;
         if let Some(rid) = header.ext_vals.rid {
             if source.set_rid(rid) {
-                media_need_check_source = true;
+                m_line_need_check_source = true;
             }
         }
         if let Some(repairs) = ssrc_repairs {
             if source.set_repairs(repairs) {
-                media_need_check_source = true;
+                m_line_need_check_source = true;
             }
         }
 
         // Gymnastics to appease the borrow checker.
-        let source = if media_need_check_source {
-            media.set_equalize_sources();
-            media.get_or_create_source_rx(ssrc)
+        let source = if m_line_need_check_source {
+            m_lines.set_equalize_sources();
+            m_lines.get_or_create_source_rx(ssrc)
         } else {
             source
         };
@@ -405,11 +407,11 @@ impl Session {
             trace!("Repaired {:?} -> {:?}", header.ssrc, repaired_ssrc);
             header.ssrc = repaired_ssrc;
 
-            let repaired_source = media.get_or_create_source_rx(repaired_ssrc);
+            let repaired_source = m_lines.get_or_create_source_rx(repaired_ssrc);
             if rid.is_none() && repaired_source.rid().is_some() {
                 rid = repaired_source.rid();
             }
-            let source = media.get_or_create_source_rx(ssrc);
+            let source = m_lines.get_or_create_source_rx(ssrc);
             let orig_seq_no = source.update(now, &header, clock_rate);
 
             if !source.is_valid() {
@@ -430,7 +432,7 @@ impl Session {
         // Parameters using the PT in the header. This will return the same CodecParams
         // instance regardless of whether this being a resend PT or not.
         // unwrap: is ok because we checked above.
-        let params = media.get_params(&header).unwrap();
+        let params = m_lines.get_params(&header).unwrap();
 
         // This is the "main" PT and it will differ to header.payload_type if this is a resend.
         let pt = params.pt();
@@ -438,13 +440,13 @@ impl Session {
 
         let time = MediaTime::new(header.timestamp as i64, clock_rate as i64);
 
-        if !media.direction().is_receiving() {
+        if !m_lines.direction().is_receiving() {
             // Not adding unless we are supposed to be receiving.
             return;
         }
 
         // Buffers are unique per m-line (since PT is unique per m-line).
-        let buf = media.get_buffer_rx(pt, rid, codec);
+        let buf = m_lines.get_buffer_rx(pt, rid, codec);
 
         let meta = RtpMeta::new(now, time, seq_no, header);
 
@@ -455,7 +457,7 @@ impl Session {
 
         // TODO: is there a nicer way to make borrow-checker happy ?
         // this should go away with the refactoring of the entire handle_rtp() function
-        let source = media.get_or_create_source_rx(ssrc);
+        let source = m_lines.get_or_create_source_rx(ssrc);
         source.update_packet_counts(bytes_rx as u64);
     }
 
@@ -472,18 +474,18 @@ impl Session {
                 return Some(());
             }
 
-            let media = self.media().find(|m| {
+            let m_line = self.m_lines().find(|m| {
                 if fb.is_for_rx() {
                     m.has_ssrc_rx(fb.ssrc())
                 } else {
                     m.has_ssrc_tx(fb.ssrc())
                 }
             });
-            if let Some(media) = media {
-                media.handle_rtcp_fb(now, fb);
+            if let Some(m_line) = m_line {
+                m_line.handle_rtcp_fb(now, fb);
             } else {
                 // This is not necessarily a fault when starting a new track.
-                trace!("No media for feedback: {:?}", fb);
+                trace!("No m-line for feedback: {:?}", fb);
             }
         }
 
@@ -493,7 +495,7 @@ impl Session {
     /// Whenever there are changes to ReceiverSource/SenderSource, we need to ensure the
     /// receivers are matched to senders. This ensure the setup is correct.
     pub fn equalize_sources(&mut self) {
-        let required_ssrcs: usize = only_media(&self.media)
+        let required_ssrcs: usize = only_m_line(&self.m_lines)
             .map(|m| m.equalize_requires_ssrcs())
             .sum();
 
@@ -515,7 +517,7 @@ impl Session {
 
         let mut new_ssrcs = new_ssrcs.into_iter();
 
-        for m in only_media_mut(&mut self.media) {
+        for m in only_m_line_mut(&mut self.m_lines) {
             if !m.equalize_sources() {
                 continue;
             }
@@ -525,35 +527,35 @@ impl Session {
     }
 
     pub fn poll_event(&mut self) -> Option<MediaEvent> {
-        for media in self.media() {
-            if media.need_open_event {
-                media.need_open_event = false;
+        for m_line in self.m_lines() {
+            if m_line.need_open_event {
+                m_line.need_open_event = false;
 
                 return Some(MediaEvent::Added(MediaAdded {
-                    mid: media.mid(),
-                    kind: media.kind(),
-                    direction: media.direction(),
-                    simulcast: media.simulcast().map(|s| s.clone().into()),
+                    mid: m_line.mid(),
+                    kind: m_line.kind(),
+                    direction: m_line.direction(),
+                    simulcast: m_line.simulcast().map(|s| s.clone().into()),
                 }));
             }
 
-            if media.need_changed_event {
-                media.need_changed_event = false;
+            if m_line.need_changed_event {
+                m_line.need_changed_event = false;
                 return Some(MediaEvent::Changed(MediaChanged {
-                    mid: media.mid(),
-                    direction: media.direction(),
+                    mid: m_line.mid(),
+                    direction: m_line.direction(),
                 }));
             }
 
-            if let Some((rid, kind)) = media.poll_keyframe_request() {
+            if let Some((rid, kind)) = m_line.poll_keyframe_request() {
                 return Some(MediaEvent::KeyframeRequest(KeyframeRequest {
-                    mid: media.mid(),
+                    mid: m_line.mid(),
                     rid,
                     kind,
                 }));
             }
 
-            if let Some(r) = media.poll_sample() {
+            if let Some(r) = m_line.poll_sample() {
                 match r {
                     Ok(v) => return Some(MediaEvent::Data(v)),
                     Err(e) => return Some(MediaEvent::Error(e)),
@@ -617,7 +619,7 @@ impl Session {
 
         let buf = &mut self.poll_packet_buf;
 
-        for m in only_media_mut(&mut self.media) {
+        for m in only_m_line_mut(&mut self.m_lines) {
             let twcc_seq = self.twcc;
             if let Some((header, seq_no)) = m.poll_packet(now, &self.exts, &mut self.twcc, buf) {
                 trace!("Poll RTP: {:?}", header);
@@ -632,12 +634,12 @@ impl Session {
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        let media_at = self.media().filter_map(|m| m.poll_timeout()).min();
+        let m_line_at = self.m_lines().filter_map(|m| m.poll_timeout()).min();
         let regular_at = Some(self.regular_feedback_at());
         let nack_at = self.nack_at();
         let twcc_at = self.twcc_at();
 
-        let timeout = (media_at, "media")
+        let timeout = (m_line_at, "m_line")
             .soonest((regular_at, "regular"))
             .soonest((nack_at, "nack"))
             .soonest((twcc_at, "twcc"));
@@ -648,23 +650,23 @@ impl Session {
     }
 
     pub fn has_mid(&self, mid: Mid) -> bool {
-        self.media.iter().any(|m| m.mid() == mid)
+        self.m_lines.iter().any(|m| m.mid() == mid)
     }
 
     /// Test if the ssrc is known in the session at all, as sender or receiver.
     pub fn has_ssrc(&self, ssrc: Ssrc) -> bool {
-        only_media(&self.media).any(|m| m.has_ssrc_rx(ssrc) || m.has_ssrc_tx(ssrc))
+        only_m_line(&self.m_lines).any(|m| m.has_ssrc_rx(ssrc) || m.has_ssrc_tx(ssrc))
     }
 
     fn regular_feedback_at(&self) -> Instant {
-        only_media(&self.media)
+        only_m_line(&self.m_lines)
             .map(|m| m.regular_feedback_at())
             .min()
             .unwrap_or_else(not_happening)
     }
 
     fn nack_at(&mut self) -> Option<Instant> {
-        let need_nack = self.media().any(|s| s.has_nack());
+        let need_nack = self.m_lines().any(|s| s.has_nack());
 
         if need_nack {
             Some(self.last_nack + NACK_MIN_INTERVAL)
@@ -674,7 +676,7 @@ impl Session {
     }
 
     fn twcc_at(&self) -> Option<Instant> {
-        let is_receiving = only_media(&self.media).any(|m| m.direction().is_receiving());
+        let is_receiving = only_m_line(&self.m_lines).any(|m| m.direction().is_receiving());
         if is_receiving && self.enable_twcc_feedback && self.twcc_rx_register.has_unreported() {
             Some(self.last_twcc + TWCC_INTERVAL)
         } else {
@@ -714,20 +716,28 @@ impl Session {
     }
 
     pub fn visit_stats(&mut self, now: Instant, snapshot: &mut StatsSnapshot) {
-        for media in self.media() {
-            media.visit_stats(now, snapshot)
+        for m_line in self.m_lines() {
+            m_line.visit_stats(now, snapshot)
         }
         snapshot.tx = snapshot.egress.values().map(|s| s.bytes).sum();
         snapshot.rx = snapshot.ingress.values().map(|s| s.bytes).sum();
     }
+
+    pub fn m_line_by_index(&self, index: usize) -> &MLine {
+        self.m_lines[index].as_m_line().expect("index is MLine")
+    }
+
+    pub fn m_line_by_index_mut(&mut self, index: usize) -> &mut MLine {
+        self.m_lines[index].as_m_line_mut().expect("index is MLine")
+    }
 }
 
 // Helper while waiting for polonius.
-pub(crate) fn only_media(media: &[MediaOrApp]) -> impl Iterator<Item = &Media> {
-    media.iter().filter_map(|m| m.as_media())
+pub(crate) fn only_m_line(m_lines: &[MLineOrApp]) -> impl Iterator<Item = &MLine> {
+    m_lines.iter().filter_map(|m| m.as_m_line())
 }
 
 // Helper while waiting for polonius.
-pub(crate) fn only_media_mut(media: &mut [MediaOrApp]) -> impl Iterator<Item = &mut Media> {
-    media.iter_mut().filter_map(|m| m.as_media_mut())
+pub(crate) fn only_m_line_mut(m_lines: &mut [MLineOrApp]) -> impl Iterator<Item = &mut MLine> {
+    m_lines.iter_mut().filter_map(|m| m.as_m_line_mut())
 }
