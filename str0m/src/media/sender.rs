@@ -116,7 +116,7 @@ impl SenderSource {
             return;
         }
         let key = (mid, self.rid);
-        if let Some(stat) = snapshot.ingress.get_mut(&key) {
+        if let Some(stat) = snapshot.egress.get_mut(&key) {
             stat.bytes += self.bytes;
             stat.packets += self.packets;
             stat.firs += self.firs;
