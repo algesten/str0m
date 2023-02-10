@@ -124,6 +124,8 @@ pub struct MediaIngressStats {
     pub plis: u64,
     /// Number of nacks sent.
     pub nacks: u64,
+    /// Round-trip-time (ms) extracted from the last RTCP XR DLRR report block.
+    pub rtt: Option<f32>,
     /// Timestamp when this event was generated.
     pub ts: Instant,
     // TODO

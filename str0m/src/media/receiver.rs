@@ -29,6 +29,9 @@ pub(crate) struct ReceiverSource {
     firs: u64,
     plis: u64,
     nacks: u64,
+    // round trip time (ms)
+    // Can be null in case of missing or bad reports
+    rtt: Option<f32>,
 }
 
 impl ReceiverSource {
@@ -48,6 +51,7 @@ impl ReceiverSource {
             firs: 0,
             plis: 0,
             nacks: 0,
+            rtt: None,
         }
     }
 
@@ -147,7 +151,7 @@ impl ReceiverSource {
         Some(nack)
     }
 
-    pub fn set_sender_info(&mut self, now: Instant, s: SenderInfo) {
+    fn set_sender_info(&mut self, now: Instant, s: SenderInfo) {
         self.sender_info = Some(s);
         self.sender_info_at = Some(now);
     }
@@ -168,6 +172,21 @@ impl ReceiverSource {
         self.nacks += 1;
     }
 
+    pub fn update_with_feedback(&mut self, fb: &RtcpFb, now: Instant) {
+        use RtcpFb::*;
+        match fb {
+            SenderInfo(v) => {
+                self.set_sender_info(now, *v);
+            }
+            DlrrItem(v) => {
+                let now = (unix2ntp(SystemTime::now()) >> 16) as u32;
+                let rtt = calculate_rtt_ms(now, v.last_rr_delay, v.last_rr_time);
+                self.rtt = rtt;
+            },
+            _ => {}
+        }
+    }
+
     pub(crate) fn next_fir_seq_no(&mut self) -> u8 {
         let x = self.fir_seq_no;
         self.fir_seq_no = self.fir_seq_no.wrapping_add(1);
@@ -185,6 +204,7 @@ impl ReceiverSource {
             stat.firs += self.firs;
             stat.plis += self.plis;
             stat.nacks += self.nacks;
+            stat.rtt = self.rtt;
         } else {
             snapshot.ingress.insert(
                 key,
@@ -197,6 +217,7 @@ impl ReceiverSource {
                     firs: self.firs,
                     plis: self.plis,
                     nacks: self.nacks,
+                    rtt: self.rtt,
                 },
             );
         }
