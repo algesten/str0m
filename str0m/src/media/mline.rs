@@ -666,11 +666,10 @@ impl MLine {
 
         let source_rx = self.sources_rx.iter_mut().find(|s| s.ssrc() == ssrc)?;
 
+        source_rx.update_with_feedback(&fb, now);
+
         use RtcpFb::*;
         match fb {
-            SenderInfo(v) => {
-                source_rx.set_sender_info(now, v);
-            }
             SourceDescription(v) => {
                 for (sdes, st) in v.values {
                     if sdes == SdesType::CNAME {
