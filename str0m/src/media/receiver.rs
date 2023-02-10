@@ -1,12 +1,13 @@
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 use rtp::{
-    MediaTime, Mid, Nack, ReceiverReport, ReportList, Rid, RtpHeader, SenderInfo, SeqNo, Ssrc,
+    ExtendedReport, MediaTime, Mid, Nack, ReceiverReferenceTime, ReceiverReport, ReportBlock,
+    ReportList, Rid, RtpHeader, SenderInfo, SeqNo, Ssrc, RtcpFb,
 };
 
 use crate::{
     stats::{MediaIngressStats, StatsSnapshot},
-    util::already_happened,
+    util::{already_happened, unix2ntp, calculate_rtt_ms},
 };
 
 use super::{register::ReceiverRegister, KeyframeRequestKind, Source};
@@ -112,6 +113,21 @@ impl ReceiverSource {
         ReceiverReport {
             sender_ssrc: 0.into(), // set one level up
             reports: report.into(),
+        }
+    }
+
+    pub fn create_extended_receiver_report(
+        &self,
+        now: Instant,
+    ) -> ExtendedReport {
+        // we only want to report our time to measure RTT,
+        // the source will answer with Dlrr feedback, allowing us to calculate RTT
+        let block = ReportBlock::ReceiverReferenceTime(ReceiverReferenceTime {
+            ntp_time: now.into(),
+        });
+        ExtendedReport {
+            sender_ssrc: self.ssrc,
+            blocks: vec![block],
         }
     }
 

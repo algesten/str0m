@@ -19,6 +19,7 @@ mod rr;
 pub use rr::{ReceiverReport, ReceptionReport};
 
 mod xr;
+pub use xr::{Dlrr, DlrrItem, ExtendedReport, ReceiverReferenceTime, ReportBlock};
 
 mod sdes;
 pub use sdes::{Descriptions, Sdes, SdesType};
@@ -61,6 +62,7 @@ pub trait RtcpPacket {
 pub enum Rtcp {
     SenderReport(SenderReport),
     ReceiverReport(ReceiverReport),
+    ExtendedReport(ExtendedReport),
     SourceDescription(Descriptions),
     Goodbye(Goodbye),
     Nack(Nack),
@@ -204,6 +206,7 @@ impl Rtcp {
         match self {
             Rtcp::SenderReport(v) => v.reports.is_full(),
             Rtcp::ReceiverReport(v) => v.reports.is_full(),
+            Rtcp::ExtendedReport(_) => false,
             Rtcp::SourceDescription(v) => v.reports.is_full(),
             Rtcp::Goodbye(v) => v.reports.is_full(),
             Rtcp::Nack(v) => v.reports.is_full(),
@@ -221,6 +224,8 @@ impl Rtcp {
             Rtcp::SenderReport(_) => false,
             // ReceiverReport can become empty.
             Rtcp::ReceiverReport(v) => v.reports.is_empty(),
+            // ExtendedReport can become empty.
+            Rtcp::ExtendedReport(v) => v.blocks.is_empty(),
             // SourceDescription can become empty.
             Rtcp::SourceDescription(v) => v.reports.is_empty(),
             // Goodbye can become empty,
@@ -307,9 +312,10 @@ impl Rtcp {
             Pli(_) => 4,
             Fir(_) => 5,
             Twcc(_) => 6,
+            ExtendedReport(_) => 10,
 
             // Goodbye last since they remove stuff.
-            Goodbye(_) => 10,
+            Goodbye(_) => 11,
         }
     }
 }
@@ -319,6 +325,7 @@ impl RtcpPacket for Rtcp {
         match self {
             Rtcp::SenderReport(v) => v.header(),
             Rtcp::ReceiverReport(v) => v.header(),
+            Rtcp::ExtendedReport(v) => v.header(),
             Rtcp::SourceDescription(v) => v.header(),
             Rtcp::Goodbye(v) => v.header(),
             Rtcp::Nack(v) => v.header(),
@@ -332,6 +339,7 @@ impl RtcpPacket for Rtcp {
         match self {
             Rtcp::SenderReport(v) => v.length_words(),
             Rtcp::ReceiverReport(v) => v.length_words(),
+            Rtcp::ExtendedReport(v) => v.length_words(),
             Rtcp::SourceDescription(v) => v.length_words(),
             Rtcp::Goodbye(v) => v.length_words(),
             Rtcp::Nack(v) => v.length_words(),
@@ -345,6 +353,7 @@ impl RtcpPacket for Rtcp {
         match self {
             Rtcp::SenderReport(v) => v.write_to(buf),
             Rtcp::ReceiverReport(v) => v.write_to(buf),
+            Rtcp::ExtendedReport(v) => v.write_to(buf),
             Rtcp::SourceDescription(v) => v.write_to(buf),
             Rtcp::Goodbye(v) => v.write_to(buf),
             Rtcp::Nack(v) => v.write_to(buf),
@@ -401,7 +410,9 @@ impl<'a> TryFrom<&'a [u8]> for Rtcp {
                     }
                 }
             }
-            RtcpType::ExtendedReport => return Err("TODO: XR"),
+            RtcpType::ExtendedReport => {
+                Rtcp::ExtendedReport(buf.try_into()?)
+            },
         })
     }
 }
