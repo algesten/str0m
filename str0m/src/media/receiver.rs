@@ -1,13 +1,13 @@
 use std::time::{Instant, SystemTime};
 
 use rtp::{
-    ExtendedReport, MediaTime, Mid, Nack, ReceiverReferenceTime, ReceiverReport, ReportBlock,
-    ReportList, Rid, RtpHeader, SenderInfo, SeqNo, Ssrc, RtcpFb,
+    DlrrItem, ExtendedReport, MediaTime, Mid, Nack, ReceiverReport, ReportBlock, ReportList, Rid,
+    Rrtr, RtpHeader, SenderInfo, SeqNo, Ssrc,
 };
 
 use crate::{
     stats::{MediaIngressStats, StatsSnapshot},
-    util::{already_happened, unix2ntp, calculate_rtt_ms},
+    util::{already_happened, calculate_rtt_ms, unix2ntp},
 };
 
 use super::{register::ReceiverRegister, KeyframeRequestKind, Source};
@@ -120,13 +120,10 @@ impl ReceiverSource {
         }
     }
 
-    pub fn create_extended_receiver_report(
-        &self,
-        now: Instant,
-    ) -> ExtendedReport {
+    pub fn create_extended_receiver_report(&self, now: Instant) -> ExtendedReport {
         // we only want to report our time to measure RTT,
         // the source will answer with Dlrr feedback, allowing us to calculate RTT
-        let block = ReportBlock::ReceiverReferenceTime(ReceiverReferenceTime {
+        let block = ReportBlock::Rrtr(Rrtr {
             ntp_time: now.into(),
         });
         ExtendedReport {
@@ -151,7 +148,7 @@ impl ReceiverSource {
         Some(nack)
     }
 
-    fn set_sender_info(&mut self, now: Instant, s: SenderInfo) {
+    pub fn set_sender_info(&mut self, now: Instant, s: SenderInfo) {
         self.sender_info = Some(s);
         self.sender_info_at = Some(now);
     }
@@ -172,19 +169,10 @@ impl ReceiverSource {
         self.nacks += 1;
     }
 
-    pub fn update_with_feedback(&mut self, fb: &RtcpFb, now: Instant) {
-        use RtcpFb::*;
-        match fb {
-            SenderInfo(v) => {
-                self.set_sender_info(now, *v);
-            }
-            DlrrItem(v) => {
-                let now = (unix2ntp(SystemTime::now()) >> 16) as u32;
-                let rtt = calculate_rtt_ms(now, v.last_rr_delay, v.last_rr_time);
-                self.rtt = rtt;
-            },
-            _ => {}
-        }
+    pub fn set_dlrr_item(&mut self, dlrr: DlrrItem) {
+        let now = (unix2ntp(SystemTime::now()) >> 16) as u32;
+        let rtt = calculate_rtt_ms(now, dlrr.last_rr_delay, dlrr.last_rr_time);
+        self.rtt = rtt;
     }
 
     pub(crate) fn next_fir_seq_no(&mut self) -> u8 {

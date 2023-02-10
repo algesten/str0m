@@ -22,7 +22,7 @@ pub struct ExtendedReport {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReportBlock {
-    ReceiverReferenceTime(ReceiverReferenceTime),
+    Rrtr(Rrtr),
     Dlrr(Dlrr),
 }
 
@@ -97,7 +97,7 @@ impl RtcpPacket for ExtendedReport {
 
         for block in self.blocks.iter() {
             len += match block {
-                ReportBlock::ReceiverReferenceTime(b) => b.write_to(&mut buf[len..]),
+                ReportBlock::Rrtr(b) => b.write_to(&mut buf[len..]),
                 ReportBlock::Dlrr(b) => b.write_to(&mut buf[len..]),
             };
         }
@@ -109,7 +109,7 @@ impl RtcpPacket for ExtendedReport {
 impl ReportBlock {
     pub fn len(&self) -> usize {
         match self {
-            Self::ReceiverReferenceTime(_) => ReceiverReferenceTime::len(),
+            Self::Rrtr(_) => Rrtr::len(),
             Self::Dlrr(v) => v.len(),
         }
     }
@@ -119,7 +119,7 @@ impl ReportBlock {
     }
 }
 
-impl ReceiverReferenceTime {
+impl Rrtr {
     fn write_to(&self, buf: &mut [u8]) -> usize {
         // block type
         buf[0] = 4_u8;
@@ -198,33 +198,33 @@ impl<'a> TryFrom<&'a [u8]> for ReportBlock {
     type Error = &'static str;
 
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
-        if buf.len() == 0 {
-            return Err("not enough data")
+        if buf.is_empty() {
+            return Err("not enough data");
         }
 
         let block_type: u8 = buf[0];
         match block_type {
             4 => {
-                let block = ReceiverReferenceTime::try_from(buf)?;
-                Ok(Self::ReceiverReferenceTime(block))
-            },
+                let block = Rrtr::try_from(buf)?;
+                Ok(Self::Rrtr(block))
+            }
             5 => {
                 let block = Dlrr::try_from(buf)?;
                 Ok(Self::Dlrr(block))
-            },
-            _ => Err("unknown block type")
+            }
+            _ => Err("unknown block type"),
         }
     }
 }
 
-impl<'a> TryFrom<&'a [u8]> for ReceiverReferenceTime {
+impl<'a> TryFrom<&'a [u8]> for Rrtr {
     type Error = &'static str;
 
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
         let ntp_time = u64::from_be_bytes(buf[4..4 + 8].try_into().unwrap());
         let ntp_time = MediaTime::from_ntp_64(ntp_time);
 
-        Ok(ReceiverReferenceTime { ntp_time })
+        Ok(Rrtr { ntp_time })
     }
 }
 
