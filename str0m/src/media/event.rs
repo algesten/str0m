@@ -78,7 +78,9 @@ pub struct MediaChanged {
 /// [1]: https://datatracker.ietf.org/doc/html/draft-ietf-mmusic-sdp-simulcast-14
 #[derive(Debug, PartialEq, Eq)]
 pub struct Simulcast {
+    /// The RID used for sending simulcast.
     pub send: Vec<Rid>,
+    /// The RID used for receiving simulcast.
     pub recv: Vec<Rid>,
 }
 

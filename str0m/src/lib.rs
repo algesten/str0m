@@ -1,6 +1,58 @@
+//! str0m
+//! =====
+//!
+//! A WebRTC implementation in Rust.
+//!
+//! This is a [Sans I/O][1] implementation meaning the `Rtc` instance itself is not doing any network
+//! talking. Furthermore it has no internal threads or async tasks. All operations are synchronously
+//! happening from the calls of the public API.
+//!
+//! Output from the instance can be grouped into three kinds.
+//!
+//! 1. Events (such as receiving media or data channel data).
+//! 2. Network output. Data to be sent, typically from a UDP socket.
+//! 3. Timeouts. When the instance expects a time input.
+//!
+//! Input to the `Rtc` instance is:
+//!
+//! 1. User operations (such as sending media or data channel data).
+//! 2. Network input. Typically read from a UDP socket.
+//! 3. Timeouts. As obtained from the output above.
+//!
+//! The correct use can be described like below (or seen in the examples).
+//! The TODO lines is where the user would fill in their code.
+//!
+//! ```no_run
+//! # use str0m::{Rtc, Output, Input};
+//! let mut rtc = Rtc::new();
+//!
+//! loop {
+//!     let timeout = match rtc.poll_output().unwrap() {
+//!         Output::Timeout(v) => v,
+//!         Output::Transmit(t) => {
+//!             // TODO: Send data to remote peer.
+//!             continue; // poll again
+//!         }
+//!         Output::Event(e) => {
+//!             // TODO: Handle event.
+//!             continue; // poll again
+//!         }
+//!     };
+//!
+//!     // TODO: Wait for one of two events, reaching `timeout`
+//!     //       or receiving network input. Both are encapsualted
+//!     //       in the Input enum.
+//!     let input: Input = todo!();
+//!
+//!     rtc.handle_input(input).unwrap();
+//! }
+//! ```
+//!
+//! [1]: https://sans-io.readthedocs.io
 #![allow(clippy::new_without_default)]
 #![allow(clippy::bool_to_int_with_if)]
 #![allow(clippy::assertions_on_constants)]
+#![deny(missing_docs)]
 
 #[macro_use]
 extern crate tracing;
@@ -100,6 +152,7 @@ pub enum RtcError {
     #[error("No sender source")]
     NoSenderSource,
 
+    /// Direction does not allow sending of Media data.
     #[error("Direction does not allow sending: {0}")]
     NotSendingDirection(Direction),
 
@@ -131,24 +184,7 @@ pub enum RtcError {
 
 /// Instance that does WebRTC. Main struct of the entire library.
 ///
-/// This is a [Sans I/O][1] implementation meaning the `Rtc` instance itself is not doing any network
-/// talking. Furthermore it has no internal threads or async tasks. All operations are synchronously
-/// happening from the calls of the public API.
-///
-/// Output from the instance can be grouped into three kinds.
-///
-/// 1. Events (such as receiving media or data channel data).
-/// 2. Network output. Data to be sent, typically from a UDP socket.
-/// 3. Timeouts. When the instance expects a time input.
-///
-/// Input to the `Rtc` instance is:
-///
-/// 1. User operations (such as sending media or data channel data).
-/// 2. Network input. Typically read from a UDP socket.
-/// 3. Timeouts. As obtained from the output above.
-///
-/// The correct use can be described like below (or seen in the examples).
-/// The TODO lines is where the user would fill in their code.
+/// ## Usage
 ///
 /// ```no_run
 /// # use str0m::{Rtc, Output, Input};
@@ -175,8 +211,6 @@ pub enum RtcError {
 ///     rtc.handle_input(input).unwrap();
 /// }
 /// ```
-///
-/// [1]: https://sans-io.readthedocs.io
 pub struct Rtc {
     alive: bool,
     ice: IceAgent,
@@ -218,9 +252,9 @@ pub enum Event {
     /// Incoming media data sent by the remote peer.
     MediaData(MediaData),
 
-    // Upon SDP renegotiation, a change event may be emitted.
-    //
-    // Currently only covers a change of direction.
+    /// Upon SDP renegotiation, a change event may be emitted.
+    ///
+    ///. Currently only covers a change of direction.
     MediaChanged(MediaChanged),
 
     /// Incoming keyframe request for media that we are sending to the remote peer.
@@ -261,14 +295,21 @@ pub enum Event {
 /// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.
 #[derive(Debug)]
 pub enum Input<'a> {
+    /// A timeout without any network input.
     Timeout(Instant),
+    /// Network input.
     Receive(Instant, net::Receive<'a>),
 }
 
 /// Output produced by [`Rtc::poll_output()`]
 pub enum Output {
+    /// When the [`Rtc`] instance expects an [`Input::Timeout`].
     Timeout(Instant),
+
+    /// Network data that is to be sent.
     Transmit(net::Transmit),
+
+    /// Some event such as media data arriving from the remote peer or connection events.
     Event(Event),
 }
 
@@ -1108,10 +1149,14 @@ pub struct PendingChanges<'a> {
 }
 
 impl<'a> PendingChanges<'a> {
+    /// For a previously created [`ChangeSet`] with following OFFER, accept the
+    /// remote peer's [`Answer`].
     pub fn accept_answer(self, answer: Answer) -> Result<(), RtcError> {
         self.rtc.accept_answer(Some(answer))
     }
 
+    /// For a previously created [`ChangeSet`] with following OFFER, discard the
+    /// changes and do no modification to the session.
     pub fn rollback(self) {
         self.rtc.accept_answer(None).expect("rollback to not error");
     }

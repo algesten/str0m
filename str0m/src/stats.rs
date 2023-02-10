@@ -22,7 +22,7 @@ pub struct StatsSnapshot {
 }
 
 impl StatsSnapshot {
-    pub fn new(ts: Instant) -> StatsSnapshot {
+    pub(crate) fn new(ts: Instant) -> StatsSnapshot {
         StatsSnapshot {
             peer_rx: 0,
             peer_tx: 0,
