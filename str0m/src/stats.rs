@@ -10,7 +10,7 @@ use rtp::Rid;
 
 pub(crate) struct Stats {
     last_now: Instant,
-    events: VecDeque<StatEvent>,
+    events: VecDeque<StatsEvent>,
 }
 
 pub(crate) struct StatsSnapshot {
@@ -40,10 +40,10 @@ impl StatsSnapshot {
 // Output events
 
 #[derive(Debug, Clone)]
-pub(crate) enum StatEvent {
-    PeerStats(PeerStats),
-    MediaEgressStats(MediaEgressStats),
-    MediaIngressStats(MediaIngressStats),
+pub(crate) enum StatsEvent {
+    Peer(PeerStats),
+    MediaEgress(MediaEgressStats),
+    MediaIngress(MediaIngressStats),
 }
 
 /// An event representing the Peer statistics
@@ -172,14 +172,14 @@ impl Stats {
             ts: snapshot.ts,
         };
 
-        self.events.push_back(StatEvent::PeerStats(event));
+        self.events.push_back(StatsEvent::Peer(event));
 
         for (_, event) in snapshot.ingress.drain() {
-            self.events.push_back(StatEvent::MediaIngressStats(event));
+            self.events.push_back(StatsEvent::MediaIngress(event));
         }
 
         for (_, event) in snapshot.egress.drain() {
-            self.events.push_back(StatEvent::MediaEgressStats(event));
+            self.events.push_back(StatsEvent::MediaEgress(event));
         }
 
         self.last_now = snapshot.ts;
@@ -194,7 +194,7 @@ impl Stats {
     }
 
     /// Return any events ready for delivery
-    pub fn poll_output(&mut self) -> Option<StatEvent> {
+    pub fn poll_output(&mut self) -> Option<StatsEvent> {
         self.events.pop_front()
     }
 }

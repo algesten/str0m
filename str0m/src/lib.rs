@@ -68,7 +68,7 @@ use ice::IceAgentEvent;
 use net_::DatagramRecv;
 use sctp::{RtcSctp, SctpEvent};
 use sdp::{Sdp, Setup};
-use stats::{MediaEgressStats, MediaIngressStats, PeerStats, StatEvent, Stats};
+use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent};
 use thiserror::Error;
 
 pub use ice::IceConnectionState;
@@ -894,9 +894,9 @@ impl Rtc {
 
         if let Some(e) = self.stats.poll_output() {
             return Ok(match e {
-                StatEvent::PeerStats(s) => Output::Event(Event::PeerStats(s)),
-                StatEvent::MediaIngressStats(s) => Output::Event(Event::MediaIngressStats(s)),
-                StatEvent::MediaEgressStats(s) => Output::Event(Event::MediaEgressStats(s)),
+                StatsEvent::Peer(s) => Output::Event(Event::PeerStats(s)),
+                StatsEvent::MediaIngress(s) => Output::Event(Event::MediaIngressStats(s)),
+                StatsEvent::MediaEgress(s) => Output::Event(Event::MediaEgressStats(s)),
             });
         }
 
