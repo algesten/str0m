@@ -85,8 +85,8 @@ impl SenderSource {
             ssrc: self.ssrc,
             ntp_time: now.into(),
             rtp_time: 0,
-            sender_packet_count: 0,
-            sender_octet_count: 0,
+            sender_packet_count: self.packets as u32,
+            sender_octet_count: self.bytes as u32,
         }
     }
 
