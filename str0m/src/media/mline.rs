@@ -666,10 +666,11 @@ impl MLine {
 
         let source_rx = self.sources_rx.iter_mut().find(|s| s.ssrc() == ssrc)?;
 
-        source_rx.update_with_feedback(&fb, now);
-
         use RtcpFb::*;
         match fb {
+            SenderInfo(v) => {
+                source_rx.set_sender_info(now, v);
+            }
             SourceDescription(v) => {
                 for (sdes, st) in v.values {
                     if sdes == SdesType::CNAME {
@@ -686,6 +687,9 @@ impl MLine {
                         return None;
                     }
                 }
+            }
+            DlrrItem(v) => {
+                source_rx.set_dlrr_item(v);
             }
             Goodbye(_v) => {
                 // For some reason, Chrome sends a Goodbye on every SDP negotation for all active

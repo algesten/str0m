@@ -19,7 +19,7 @@ mod rr;
 pub use rr::{ReceiverReport, ReceptionReport};
 
 mod xr;
-pub use xr::{Dlrr, DlrrItem, ExtendedReport, ReceiverReferenceTime, ReportBlock};
+pub use xr::{Dlrr, DlrrItem, ExtendedReport, ReportBlock, Rrtr};
 
 mod sdes;
 pub use sdes::{Descriptions, Sdes, SdesType};
@@ -206,7 +206,7 @@ impl Rtcp {
         match self {
             Rtcp::SenderReport(v) => v.reports.is_full(),
             Rtcp::ReceiverReport(v) => v.reports.is_full(),
-            Rtcp::ExtendedReport(_) => false,
+            Rtcp::ExtendedReport(_) => true,
             Rtcp::SourceDescription(v) => v.reports.is_full(),
             Rtcp::Goodbye(v) => v.reports.is_full(),
             Rtcp::Nack(v) => v.reports.is_full(),
@@ -410,9 +410,7 @@ impl<'a> TryFrom<&'a [u8]> for Rtcp {
                     }
                 }
             }
-            RtcpType::ExtendedReport => {
-                Rtcp::ExtendedReport(buf.try_into()?)
-            },
+            RtcpType::ExtendedReport => Rtcp::ExtendedReport(buf.try_into()?),
         })
     }
 }
