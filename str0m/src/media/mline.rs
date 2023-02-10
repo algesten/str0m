@@ -617,6 +617,10 @@ impl MLine {
 
                 debug!("Created feedback RR: {:?}", rr);
                 feedback.push_back(Rtcp::ReceiverReport(rr));
+
+                let er = s.create_extended_receiver_report(now);
+                debug!("Created feedback extended receiver report: {:?}", er);
+                feedback.push_back(Rtcp::ExtendedReport(er));
             }
         }
 
