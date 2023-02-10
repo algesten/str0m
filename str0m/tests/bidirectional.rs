@@ -54,9 +54,10 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
     loop {
         let dur_l: Duration = time_l.into();
         while l.duration() > dur_l {
+            let wallclock = l.start + Duration::from_micros(time_l.as_micros() as u64);
             let free = l
                 .media(mid)
-                .map(|mut m| m.writer(pt).write(time_l, &data_a))
+                .map(|mut m| m.writer(pt).write(wallclock, time_l, &data_a))
                 .unwrap()?;
             time_l = time_l + STEP;
             if free == 0 {
@@ -66,9 +67,10 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
 
         let dur_r: Duration = time_r.into();
         while r.duration() > dur_r {
+            let wallclock = r.start + Duration::from_micros(time_r.as_micros() as u64);
             let free = r
                 .media(mid)
-                .map(|mut m| m.writer(pt).write(time_r, &data_b))
+                .map(|mut m| m.writer(pt).write(wallclock, time_r, &data_b))
                 .unwrap()?;
             time_r = time_r + STEP;
             if free == 0 {

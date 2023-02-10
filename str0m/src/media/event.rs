@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 pub use packet::RtpMeta;
 pub use rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 pub use sdp::{Codec, FormatParams};
@@ -113,6 +115,11 @@ pub struct MediaData {
     ///
     /// For audio the timebase is 48kHz for video it is 90kHz.
     pub time: MediaTime,
+
+    /// The time of the [`Input::Receive`][crate::Input::Receive] that caused this MediaData.
+    ///
+    /// In simple SFU setups this can be used as wallclock for [`Writer::write`][crate::media::Writer].
+    pub network_time: Instant,
 
     /// Whether the data is contiguous from the one just previously emitted. If this is false,
     /// we got an interruption in RTP packets, and the data may or may not be usable in a decoder

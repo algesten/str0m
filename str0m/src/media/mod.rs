@@ -1,5 +1,7 @@
 //! Media (audio/video) related content.
 
+use std::time::Instant;
+
 use rtp::VideoOrientation;
 
 pub use packet::RtpMeta;
@@ -132,7 +134,7 @@ impl Media<'_> {
     /// // Match incoming PT to an outgoing PT.
     /// let pt = media.match_params(data.params).unwrap();
     ///
-    /// media.writer(pt).write(data.time, &data.data).unwrap();
+    /// media.writer(pt).write(data.network_time, data.time, &data.data).unwrap();
     /// ```
     ///
     /// [1]: https://datatracker.ietf.org/doc/html/rfc8852
@@ -216,7 +218,7 @@ impl Media<'_> {
 /// // Send data with video orientation added.
 /// media.writer(pt)
 ///     .video_orientation(video_orientation)
-///     .write(data.time, &data.data).unwrap();
+///     .write(data.network_time, data.time, &data.data).unwrap();
 /// ```
 pub struct Writer<'a> {
     m_line: &'a mut MLine,
@@ -251,10 +253,17 @@ impl<'a> Writer<'a> {
 
     /// Do the actual write of media. This consumed the builder.
     ///
+    /// Regarding `wallclock` and `ts`, the wallclock is the real world time that corresponds to
+    /// the `MediaTime`. For an SFU, this can be hard to know, since RTP packets typically only
+    /// contain the media time (RTP time). In the simplest SFU setup, the wallclock could simply
+    /// be the arrival time of the incoming RTP data (see
+    /// [`MediaData::network_time`][crate::media::MediaData]). For better synchronization the SFU
+    /// probably needs to weigh in clock drifts and data provided via the statistics.
+    ///
     /// Notice that incorrect [`Pt`] values would surface as an error here, not when
     /// doing [`Media::writer()`].
-    pub fn write(self, ts: MediaTime, data: &[u8]) -> Result<usize, RtcError> {
+    pub fn write(self, wallclock: Instant, ts: MediaTime, data: &[u8]) -> Result<usize, RtcError> {
         self.m_line
-            .write(self.pt, ts, data, self.rid, self.ext_vals)
+            .write(self.pt, wallclock, ts, data, self.rid, self.ext_vals)
     }
 }

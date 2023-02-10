@@ -1,9 +1,7 @@
 use std::time::{Instant, SystemTime};
 
-use rtp::{
-    Descriptions, Mid, ReportList, Rid, RtcpFb, Sdes, SdesType, SenderInfo, SenderReport, SeqNo,
-    Ssrc,
-};
+use rtp::{Descriptions, MediaTime, Mid, ReportList, Rid, RtcpFb, Sdes, SdesType, SenderInfo};
+use rtp::{SenderReport, SeqNo, Ssrc};
 
 use crate::{
     stats::{MediaEgressStats, StatsSnapshot},
@@ -33,6 +31,8 @@ pub(crate) struct SenderSource {
     // round trip time (ms)
     // Can be null in case of missing or bad reports
     rtt: Option<f32>,
+    // The last media time (RTP time) and wallclock that was written.
+    rtp_and_wallclock: Option<(MediaTime, Instant)>,
 }
 
 impl SenderSource {
@@ -55,6 +55,7 @@ impl SenderSource {
             plis: 0,
             nacks: 0,
             rtt: None,
+            rtp_and_wallclock: None,
         }
     }
 
@@ -81,13 +82,32 @@ impl SenderSource {
     }
 
     fn sender_info(&self, now: Instant) -> SenderInfo {
+        let rtp_time = self.current_rtp_time(now).map(|t| t.numer()).unwrap_or(0);
+
         SenderInfo {
             ssrc: self.ssrc,
             ntp_time: now.into(),
-            rtp_time: 0,
+            rtp_time: rtp_time as u32,
             sender_packet_count: self.packets as u32,
             sender_octet_count: self.bytes as u32,
         }
+    }
+
+    fn current_rtp_time(&self, now: Instant) -> Option<MediaTime> {
+        // This is the RTP time and the wallclock from the last written media.
+        // We use that as an offset to current time (now), to calculate the
+        // current RTP time.
+        let (t, w) = self.rtp_and_wallclock?;
+
+        // We assume the media was written some time in the past.
+        let offset = now - w;
+
+        let base = t.denom();
+
+        // This might be in the wrong base.
+        let rtp_time = t + offset.into();
+
+        Some(rtp_time.rebase(base))
     }
 
     pub fn next_seq_no(&mut self, now: Instant) -> SeqNo {
@@ -148,6 +168,10 @@ impl SenderSource {
                 },
             );
         }
+    }
+
+    pub fn update_clocks(&mut self, rtp_time: rtp::MediaTime, wallclock: Instant) {
+        self.rtp_and_wallclock = Some((rtp_time, wallclock));
     }
 }
 
