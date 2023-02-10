@@ -226,6 +226,7 @@ impl MLine {
     pub fn write(
         &mut self,
         pt: Pt,
+        wallclock: Instant,
         ts: MediaTime,
         data: &[u8],
         rid: Option<Rid>,
@@ -246,6 +247,7 @@ impl MLine {
         let tx = get_source_tx(&mut self.sources_tx, rid, false).ok_or(RtcError::NoSenderSource)?;
 
         let ssrc = tx.ssrc();
+        tx.update_clocks(ts, wallclock);
 
         let buf = self.buffers_tx.entry(pt).or_insert_with(|| {
             let max_retain = if codec.is_audio() { 4096 } else { 2048 };
@@ -877,6 +879,7 @@ impl MLine {
                         rid: *rid,
                         params: codec,
                         time: dep.time,
+                        network_time: dep.meta[0].received,
                         contiguous: dep.contiguous,
                         data: dep.data,
                         ext_vals: dep.meta[0].header.ext_vals,
