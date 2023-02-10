@@ -18,6 +18,8 @@ pub use sr::{SenderInfo, SenderReport};
 mod rr;
 pub use rr::{ReceiverReport, ReceptionReport};
 
+mod xr;
+
 mod sdes;
 pub use sdes::{Descriptions, Sdes, SdesType};
 
