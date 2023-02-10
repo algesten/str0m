@@ -13,7 +13,7 @@ use crate::{
 use super::Source;
 
 #[derive(Debug)]
-pub struct SenderSource {
+pub(crate) struct SenderSource {
     ssrc: Ssrc,
     repairs: Option<Ssrc>,
     rid: Option<Rid>,

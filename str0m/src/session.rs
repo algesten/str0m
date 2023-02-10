@@ -68,7 +68,7 @@ pub(crate) struct Session {
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
-pub enum MLineOrApp {
+pub(crate) enum MLineOrApp {
     /// A regular m-line with media.
     MLine(MLine),
     /// An app m-line for SCTP association.

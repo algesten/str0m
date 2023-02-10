@@ -1,3 +1,5 @@
+//! Statistics data carried by [`Event`][crate::Event].
+
 use std::{
     collections::{HashMap, VecDeque},
     time::{Duration, Instant},
@@ -6,12 +8,12 @@ use std::{
 use crate::Mid;
 use rtp::Rid;
 
-pub struct Stats {
+pub(crate) struct Stats {
     last_now: Instant,
     events: VecDeque<StatEvent>,
 }
 
-pub struct StatsSnapshot {
+pub(crate) struct StatsSnapshot {
     pub peer_tx: u64,
     pub peer_rx: u64,
     pub tx: u64,
@@ -38,7 +40,7 @@ impl StatsSnapshot {
 // Output events
 
 #[derive(Debug, Clone)]
-pub enum StatEvent {
+pub(crate) enum StatEvent {
     PeerStats(PeerStats),
     MediaEgressStats(MediaEgressStats),
     MediaIngressStats(MediaIngressStats),
@@ -49,15 +51,15 @@ pub enum StatEvent {
 /// This event is generated roughly every second
 #[derive(Debug, Clone)]
 pub struct PeerStats {
-    // total bytes transmitted
+    /// Total bytes transmitted.
     pub peer_bytes_rx: u64,
-    // total bytes received
+    /// Total bytes received.
     pub peer_bytes_tx: u64,
-    // total bytes transmitted, only counting media traffic (rtp payload)
+    /// Total bytes transmitted, only counting media traffic (rtp payload).
     pub bytes_rx: u64,
-    // total bytes received, only counting media traffic (rtp payload)
+    /// Total bytes received, only counting media traffic (rtp payload).
     pub bytes_tx: u64,
-    // timestamp when this event was generated
+    /// Timestamp when this event was generated.
     pub ts: Instant,
 }
 
@@ -66,31 +68,40 @@ pub struct PeerStats {
 /// note: when simulcast is disabled, `rid` is `None`
 #[derive(Debug, Clone)]
 pub struct MediaEgressStats {
+    /// The identifier of the m-line these stats are for.
     pub mid: Mid,
+    /// The Rid identifier in case of simulcast.
     pub rid: Option<Rid>,
-    // total bytes sent, including retransmissions
-    // https://www.w3.org/TR/webrtc-stats/#dom-rtcsentrtpstreamstats-bytessent
+    /// Total bytes sent, including retransmissions.
+    ///
+    /// Spec equivalent to [`RTCSentRtpStreamStats.bytesSent`][1].
+    ///
+    /// [1]: https://www.w3.org/TR/webrtc-stats/#dom-rtcsentrtpstreamstats-bytessent
     pub bytes: u64,
-    // total number of rtp packets sent, including retransmissions
-    // https://www.w3.org/TR/webrtc-stats/#dom-rtcsentrtpstreamstats-packetssent
+    /// Total number of rtp packets sent, including retransmissions
+    ///
+    /// Spec equivalent of [`RTCSentRtpStreamStats.packetsSent`][1].
+    ///
+    /// [1]: https://www.w3.org/TR/webrtc-stats/#dom-rtcsentrtpstreamstats-packetssent
     pub packets: u64,
-    // number of firs received
+    /// Number of firs received.
     pub firs: u64,
-    // number of plis received
+    /// Number of plis received.
     pub plis: u64,
-    // number of nacks received
+    /// Number of nacks received.
     pub nacks: u64,
-    // round-trip-time (ms) extracted from the last RTCP receiver report
+    /// Round-trip-time (ms) extracted from the last RTCP receiver report.
     pub rtt: Option<f32>,
-    // timestamp when this event was generated
+    /// Timestamp when this event was generated
     pub ts: Instant,
     // TODO
     // pub remote: RemoteIngressStats,
 }
 
+/// Stats as reported by the remote side (via RTCP ReceiverReports).
 #[derive(Debug, Clone)]
 pub struct RemoteIngressStats {
-    // total bytes received
+    /// Total bytes received.
     pub bytes_rx: u64,
 }
 
@@ -99,27 +110,30 @@ pub struct RemoteIngressStats {
 /// note: when simulcast is disabled, `rid` is `None`
 #[derive(Debug, Clone)]
 pub struct MediaIngressStats {
+    /// The identifier of the m-line these stats are for.
     pub mid: Mid,
+    /// The Rid identifier in case of simulcast.
     pub rid: Option<Rid>,
-    // total bytes received, including retransmissions
+    /// Total bytes received, including retransmissions.
     pub bytes: u64,
-    // total number of rtp packets received, including retransmissions
+    /// Total number of rtp packets received, including retransmissions.
     pub packets: u64,
-    // number of firs sent
+    /// Number of firs sent.
     pub firs: u64,
-    // number of plis sent
+    /// Number of plis sent.
     pub plis: u64,
-    // number of nacks sent
+    /// Number of nacks sent.
     pub nacks: u64,
-    // timestamp when this event was generated
+    /// Timestamp when this event was generated.
     pub ts: Instant,
     // TODO
     // pub remote: RemoteEgressStats,
 }
 
+/// Stats as reported by the remote side (via RTCP SenderReports).
 #[derive(Debug, Clone)]
 pub struct RemoteEgressStats {
-    // total bytes transmitted
+    /// Total bytes transmitted.
     pub bytes_tx: u64,
 }
 

@@ -12,7 +12,7 @@ use crate::{
 use super::{register::ReceiverRegister, KeyframeRequestKind, Source};
 
 #[derive(Debug)]
-pub struct ReceiverSource {
+pub(crate) struct ReceiverSource {
     ssrc: Ssrc,
     repairs: Option<Ssrc>,
     rid: Option<Rid>,

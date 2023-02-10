@@ -51,7 +51,7 @@ fn rr_interval(audio: bool) -> Duration {
     }
 }
 #[derive(Debug)]
-pub struct MLine {
+pub(crate) struct MLine {
     /// Three letter identifier of this m-line.
     mid: Mid,
 
