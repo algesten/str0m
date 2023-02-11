@@ -433,6 +433,8 @@ fn pad_bytes_to_word(n: usize) -> usize {
 
 #[cfg(test)]
 mod test {
+    use std::time::Instant;
+
     use super::*;
     use crate::rtcp::twcc::{Delta, PacketChunk, PacketStatus};
     use crate::MediaTime;
@@ -480,7 +482,8 @@ mod test {
 
     #[test]
     fn pack_sr_4_rr() {
-        let now = MediaTime::now();
+        let time = Instant::now();
+        let now = MediaTime::new_ntp_time(time);
         let mut queue = VecDeque::new();
         queue.push_back(rr(3));
         queue.push_back(rr(4));
@@ -531,7 +534,8 @@ mod test {
 
     #[test]
     fn roundtrip_sr_rr() {
-        let now = MediaTime::now();
+        let time = Instant::now();
+        let now = MediaTime::new_ntp_time(time);
         let mut feedback = VecDeque::new();
         feedback.push_back(sr(1, now));
         feedback.push_back(rr(3));

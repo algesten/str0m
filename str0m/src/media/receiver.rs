@@ -124,7 +124,7 @@ impl ReceiverSource {
         // we only want to report our time to measure RTT,
         // the source will answer with Dlrr feedback, allowing us to calculate RTT
         let block = ReportBlock::Rrtr(Rrtr {
-            ntp_time: now.into(),
+            ntp_time: MediaTime::new_ntp_time(now),
         });
         ExtendedReport {
             sender_ssrc: self.ssrc,

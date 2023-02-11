@@ -339,7 +339,7 @@ impl MLine {
         //
         // These need to match `Extension::is_supported()` so we are sending what we are
         // declaring we support.
-        header.ext_vals.abs_send_time = Some(now.into());
+        header.ext_vals.abs_send_time = Some(MediaTime::new_ntp_time(now));
         header.ext_vals.mid = Some(mid);
         header.ext_vals.transport_cc = Some(*twcc as u16);
         *twcc += 1;

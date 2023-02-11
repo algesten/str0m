@@ -20,7 +20,7 @@ mod dir;
 pub use dir::Direction;
 
 mod mtime;
-pub use mtime::MediaTime;
+pub use mtime::{InstantExt, MediaTime};
 
 mod header;
 pub use header::{extend_seq, RtpHeader};

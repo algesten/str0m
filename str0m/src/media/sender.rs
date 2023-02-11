@@ -86,7 +86,7 @@ impl SenderSource {
 
         SenderInfo {
             ssrc: self.ssrc,
-            ntp_time: now.into(),
+            ntp_time: MediaTime::new_ntp_time(now),
             rtp_time: rtp_time as u32,
             sender_packet_count: self.packets as u32,
             sender_octet_count: self.bytes as u32,
