@@ -1,5 +1,4 @@
 use std::cmp::Ordering;
-use std::convert::TryInto;
 use std::ops::{Add, Sub};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -31,6 +30,18 @@ impl MediaTime {
         MediaTime(numer, denom)
     }
 
+    pub fn new_unix_time(time: Instant) -> Self {
+        let dur = time.to_unix_duration();
+        let micros = dur.as_micros() as i64;
+        MediaTime(micros, MICROS)
+    }
+
+    pub fn new_ntp_time(time: Instant) -> Self {
+        let dur = time.to_ntp_duration();
+        let micros = dur.as_micros() as i64;
+        MediaTime(micros, MICROS)
+    }
+
     #[inline(always)]
     pub const fn numer(&self) -> i64 {
         self.0
@@ -39,10 +50,6 @@ impl MediaTime {
     #[inline(always)]
     pub const fn denom(&self) -> i64 {
         self.1
-    }
-
-    pub fn now() -> MediaTime {
-        Instant::now().into()
     }
 
     #[inline(always)]
@@ -187,35 +194,48 @@ impl Add for MediaTime {
     }
 }
 
-impl From<Instant> for MediaTime {
-    fn from(v: Instant) -> Self {
+pub trait InstantExt {
+    /// Convert an Instant to a Duration for unix time.
+    ///
+    /// First ever time must be "now".
+    ///
+    /// panics if `time` goes backwards, i.e. we use this for one Instant and then an earlier Instant.
+    fn to_unix_duration(&self) -> Duration;
+
+    /// Convert an Instant to a Duration for ntp time.
+    fn to_ntp_duration(&self) -> Duration;
+}
+
+impl InstantExt for Instant {
+    fn to_unix_duration(&self) -> Duration {
         // This is a bit fishy. We "freeze" a moment in time for Instant and SystemTime,
         // so we can make relative comparisons of Instant - Instant and translate that to
         // SystemTime - unix epoch. Hopefully the error is quite small.
         static TIME_START: Lazy<(Instant, SystemTime)> =
             Lazy::new(|| (Instant::now(), SystemTime::now()));
 
+        if *self < TIME_START.0 {
+            panic!("Time must not go backwards from first ever Instant");
+        }
+
+        let duration_since_time_0 = self.duration_since(TIME_START.0);
+        let system_time = TIME_START.1 + duration_since_time_0;
+
+        system_time
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("clock to go forwards from unix epoch")
+    }
+
+    fn to_ntp_duration(&self) -> Duration {
         // RTP spec "wallclock" uses NTP time, which starts at 1900-01-01.
         //
         // https://tools.ietf.org/html/rfc868
         //
         // 365 days * 70 years + 17 leap year days
         // (365 * 70 + 17) * 86400 = 2208988800
-        const MICROS_1900: i64 = 2_208_988_800 * MICROS;
+        const MICROS_1900: Duration = Duration::from_micros(2_208_988_800 * MICROS as u64);
 
-        let duration_since_time_0 = v.duration_since(TIME_START.0);
-        let system_time = TIME_START.1 + duration_since_time_0;
-
-        let duration_since_epoch = system_time
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("clock to go forwards from unix epoch");
-
-        let duration_micros: i64 = duration_since_epoch
-            .as_micros()
-            .try_into()
-            .expect("u64 to represent micros since unix epoch");
-
-        MediaTime::from_micros(duration_micros + MICROS_1900)
+        self.to_unix_duration() + MICROS_1900
     }
 }
 
@@ -249,7 +269,7 @@ mod test {
     #[test]
     fn from_instant() {
         let now = Instant::now();
-        let m: MediaTime = now.into();
+        let m = MediaTime::new_ntp_time(now);
         assert!(m.as_seconds() > 3871711275.0);
     }
 }

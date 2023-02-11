@@ -66,6 +66,7 @@ use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use net_::DatagramRecv;
+use rtp::InstantExt;
 use sctp::{RtcSctp, SctpEvent};
 use sdp::{Sdp, Setup};
 use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent};
@@ -1065,6 +1066,9 @@ impl Rtc {
     }
 
     fn do_handle_timeout(&mut self, now: Instant) {
+        // We assume this first "now" is a time 0 start point for calculating ntp/unix time offsets.
+        // This initializes the conversion of Instant -> NTP/Unix time.
+        let _ = now.to_unix_duration();
         self.last_now = now;
         self.ice.handle_timeout(now);
         self.sctp.handle_timeout(now);
