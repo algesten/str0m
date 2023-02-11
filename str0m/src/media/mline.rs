@@ -713,20 +713,22 @@ impl MLine {
 
         let source_tx = self.sources_tx.iter_mut().find(|s| s.ssrc() == ssrc)?;
 
-        source_tx.update_with_feedback(now, &fb);
-
         use RtcpFb::*;
         match fb {
-            ReceptionReport(v) => {
-                // TODO: What to do with these?
-                trace!("Handle reception report: {:?}", v);
-            }
+            ReceptionReport(r) => source_tx.update_with_rr(now, r),
             Nack(ssrc, list) => {
+                source_tx.increase_nacks();
                 let entries = list.into_iter();
                 self.handle_nack(ssrc, entries)?;
             }
-            Pli(_) => self.keyframe_request_rx = Some((source_tx.rid(), KeyframeRequestKind::Pli)),
-            Fir(_) => self.keyframe_request_rx = Some((source_tx.rid(), KeyframeRequestKind::Fir)),
+            Pli(_) => {
+                source_tx.increase_plis();
+                self.keyframe_request_rx = Some((source_tx.rid(), KeyframeRequestKind::Pli));
+            }
+            Fir(_) => {
+                source_tx.increase_firs();
+                self.keyframe_request_rx = Some((source_tx.rid(), KeyframeRequestKind::Fir));
+            }
             Twcc(_) => unreachable!("TWCC should be handled on session level"),
             _ => {}
         }
