@@ -1,11 +1,13 @@
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 
-use rtp::{Descriptions, MediaTime, Mid, ReportList, Rid, RtcpFb, Sdes, SdesType, SenderInfo};
+use rtp::{
+    Descriptions, InstantExt, MediaTime, Mid, ReportList, Rid, RtcpFb, Sdes, SdesType, SenderInfo,
+};
 use rtp::{SenderReport, SeqNo, Ssrc};
 
 use crate::{
     stats::{MediaEgressStats, StatsSnapshot},
-    util::{already_happened, calculate_rtt_ms, unix2ntp},
+    util::{already_happened, calculate_rtt_ms},
 };
 
 use super::Source;
@@ -126,14 +128,14 @@ impl SenderSource {
         }
     }
 
-    pub fn update_with_feedback(&mut self, fb: &RtcpFb) {
+    pub fn update_with_feedback(&mut self, now: Instant, fb: &RtcpFb) {
         match fb {
             RtcpFb::Nack(_, _) => self.nacks += 1,
             RtcpFb::Pli(_) => self.plis += 1,
             RtcpFb::Fir(_) => self.firs += 1,
             RtcpFb::ReceptionReport(v) => {
-                let now = (unix2ntp(SystemTime::now()) >> 16) as u32;
-                let rtt = calculate_rtt_ms(now, v.last_sr_delay, v.last_sr_time);
+                let ntp_time = now.to_ntp_duration();
+                let rtt = calculate_rtt_ms(ntp_time, v.last_sr_delay, v.last_sr_time);
                 self.rtt = rtt;
             }
             _ => {}

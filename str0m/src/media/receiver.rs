@@ -1,13 +1,13 @@
-use std::time::{Instant, SystemTime};
+use std::time::Instant;
 
 use rtp::{
-    DlrrItem, ExtendedReport, MediaTime, Mid, Nack, ReceiverReport, ReportBlock, ReportList, Rid,
-    Rrtr, RtpHeader, SenderInfo, SeqNo, Ssrc,
+    DlrrItem, ExtendedReport, InstantExt, MediaTime, Mid, Nack, ReceiverReport, ReportBlock,
+    ReportList, Rid, Rrtr, RtpHeader, SenderInfo, SeqNo, Ssrc,
 };
 
 use crate::{
     stats::{MediaIngressStats, StatsSnapshot},
-    util::{already_happened, calculate_rtt_ms, unix2ntp},
+    util::{already_happened, calculate_rtt_ms},
 };
 
 use super::{register::ReceiverRegister, KeyframeRequestKind, Source};
@@ -169,9 +169,9 @@ impl ReceiverSource {
         self.nacks += 1;
     }
 
-    pub fn set_dlrr_item(&mut self, dlrr: DlrrItem) {
-        let now = (unix2ntp(SystemTime::now()) >> 16) as u32;
-        let rtt = calculate_rtt_ms(now, dlrr.last_rr_delay, dlrr.last_rr_time);
+    pub fn set_dlrr_item(&mut self, now: Instant, dlrr: DlrrItem) {
+        let ntp_time = now.to_ntp_duration();
+        let rtt = calculate_rtt_ms(ntp_time, dlrr.last_rr_delay, dlrr.last_rr_time);
         self.rtt = rtt;
     }
 
