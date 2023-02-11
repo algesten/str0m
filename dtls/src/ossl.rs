@@ -302,6 +302,12 @@ where
     }
 }
 
+// TODO: Refactor away this use of System::now, to instead go via InstantExt
+// and base the time on the first Instant. This would require lazy init of
+// Dtls, or that we pass a first ever Instant into the creation of Rtc.
+//
+// This is not a super high priority since it's only used for setting a before
+// time in the generated certificate, and one hour back from that.
 pub fn unix_time() -> i64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)

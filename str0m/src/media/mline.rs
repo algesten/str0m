@@ -689,7 +689,7 @@ impl MLine {
                 }
             }
             DlrrItem(v) => {
-                source_rx.set_dlrr_item(v);
+                source_rx.set_dlrr_item(now, v);
             }
             Goodbye(_v) => {
                 // For some reason, Chrome sends a Goodbye on every SDP negotation for all active
@@ -708,12 +708,12 @@ impl MLine {
         Some(())
     }
 
-    pub fn handle_rtcp_fb_tx(&mut self, _now: Instant, fb: RtcpFb) -> Option<()> {
+    pub fn handle_rtcp_fb_tx(&mut self, now: Instant, fb: RtcpFb) -> Option<()> {
         let ssrc = fb.ssrc();
 
         let source_tx = self.sources_tx.iter_mut().find(|s| s.ssrc() == ssrc)?;
 
-        source_tx.update_with_feedback(&fb);
+        source_tx.update_with_feedback(now, &fb);
 
         use RtcpFb::*;
         match fb {

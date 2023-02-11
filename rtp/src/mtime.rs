@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::ops::{Add, Sub};
 use std::time::{Duration, Instant, SystemTime};
 
-use once_cell::sync::Lazy;
+use once_cell::sync::OnceCell;
 
 /// 2^32 as float.
 const F32: f64 = 4_294_967_296.0;
@@ -211,15 +211,17 @@ impl InstantExt for Instant {
         // This is a bit fishy. We "freeze" a moment in time for Instant and SystemTime,
         // so we can make relative comparisons of Instant - Instant and translate that to
         // SystemTime - unix epoch. Hopefully the error is quite small.
-        static TIME_START: Lazy<(Instant, SystemTime)> =
-            Lazy::new(|| (Instant::now(), SystemTime::now()));
+        static TIME_START: OnceCell<(Instant, SystemTime)> = OnceCell::new();
+        let _ = TIME_START.set((*self, SystemTime::now()));
 
-        if *self < TIME_START.0 {
+        let tstart = TIME_START.get().unwrap();
+
+        if *self < tstart.0 {
             panic!("Time must not go backwards from first ever Instant");
         }
 
-        let duration_since_time_0 = self.duration_since(TIME_START.0);
-        let system_time = TIME_START.1 + duration_since_time_0;
+        let duration_since_time_0 = self.duration_since(tstart.0);
+        let system_time = tstart.1 + duration_since_time_0;
 
         system_time
             .duration_since(SystemTime::UNIX_EPOCH)
