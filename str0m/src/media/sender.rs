@@ -1,7 +1,8 @@
 use std::time::Instant;
 
 use rtp::{
-    Descriptions, InstantExt, MediaTime, Mid, ReportList, Rid, RtcpFb, Sdes, SdesType, SenderInfo,
+    Descriptions, InstantExt, MediaTime, Mid, ReceptionReport, ReportList, Rid, Sdes, SdesType,
+    SenderInfo,
 };
 use rtp::{SenderReport, SeqNo, Ssrc};
 
@@ -128,18 +129,22 @@ impl SenderSource {
         }
     }
 
-    pub fn update_with_feedback(&mut self, now: Instant, fb: &RtcpFb) {
-        match fb {
-            RtcpFb::Nack(_, _) => self.nacks += 1,
-            RtcpFb::Pli(_) => self.plis += 1,
-            RtcpFb::Fir(_) => self.firs += 1,
-            RtcpFb::ReceptionReport(v) => {
-                let ntp_time = now.to_ntp_duration();
-                let rtt = calculate_rtt_ms(ntp_time, v.last_sr_delay, v.last_sr_time);
-                self.rtt = rtt;
-            }
-            _ => {}
-        }
+    pub fn increase_nacks(&mut self) {
+        self.nacks += 1;
+    }
+
+    pub fn increase_plis(&mut self) {
+        self.plis += 1;
+    }
+
+    pub fn increase_firs(&mut self) {
+        self.firs += 1;
+    }
+
+    pub fn update_with_rr(&mut self, now: Instant, r: ReceptionReport) {
+        let ntp_time = now.to_ntp_duration();
+        let rtt = calculate_rtt_ms(ntp_time, r.last_sr_delay, r.last_sr_time);
+        self.rtt = rtt;
     }
 
     pub fn visit_stats(&self, now: Instant, mid: Mid, snapshot: &mut StatsSnapshot) {
