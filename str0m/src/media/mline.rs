@@ -227,7 +227,7 @@ impl MLine {
         &mut self,
         pt: Pt,
         wallclock: Instant,
-        ts: MediaTime,
+        rtp_time: MediaTime,
         data: &[u8],
         rid: Option<Rid>,
         ext_vals: ExtensionValues,
@@ -247,18 +247,23 @@ impl MLine {
         let tx = get_source_tx(&mut self.sources_tx, rid, false).ok_or(RtcError::NoSenderSource)?;
 
         let ssrc = tx.ssrc();
-        tx.update_clocks(ts, wallclock);
+        tx.update_clocks(rtp_time, wallclock);
 
         let buf = self.buffers_tx.entry(pt).or_insert_with(|| {
             let max_retain = if codec.is_audio() { 4096 } else { 2048 };
             PacketizingBuffer::new(codec.into(), max_retain)
         });
 
-        trace!("Write to packetizer time: {:?} bytes: {}", ts, data.len());
+        trace!(
+            "Write to packetizer rtp_time: {:?} bytes: {}",
+            rtp_time,
+            data.len()
+        );
         let mut mtu: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
         // align to SRTP block size to minimize padding needs
         mtu = mtu - mtu % SRTP_BLOCK_SIZE;
-        if let Err(e) = buf.push_sample(ts, data, ssrc, rid, ext_vals, mtu) {
+
+        if let Err(e) = buf.push_sample(rtp_time, data, ssrc, rid, ext_vals, mtu) {
             return Err(RtcError::Packet(self.mid, pt, e));
         };
 
@@ -326,7 +331,7 @@ impl MLine {
         let mut header = RtpHeader {
             payload_type: next.pt,
             sequence_number: *next.seq_no as u16,
-            timestamp: next.pkt.ts.numer() as u32,
+            timestamp: next.pkt.rtp_time.numer() as u32,
             ssrc: next.ssrc,
             ext_vals: next.pkt.exts,
             ..Default::default()

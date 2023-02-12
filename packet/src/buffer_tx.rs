@@ -6,7 +6,7 @@ use rtp::{ExtensionValues, MediaTime, Rid, SeqNo, Ssrc};
 use crate::{CodecPacketizer, PacketError, Packetizer};
 
 pub struct Packetized {
-    pub ts: MediaTime,
+    pub rtp_time: MediaTime,
     pub data: Vec<u8>,
     pub first: bool,
     pub last: bool,
@@ -38,7 +38,7 @@ impl PacketizingBuffer {
 
     pub fn push_sample(
         &mut self,
-        ts: MediaTime,
+        rtp_time: MediaTime,
         data: &[u8],
         ssrc: Ssrc,
         rid: Option<Rid>,
@@ -55,7 +55,7 @@ impl PacketizingBuffer {
             let last = idx == len - 1;
 
             let rtp = Packetized {
-                ts,
+                rtp_time,
                 data,
                 first,
                 last,
@@ -103,7 +103,7 @@ impl PacketizingBuffer {
 impl fmt::Debug for Packetized {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Packetized")
-            .field("ts", &self.ts)
+            .field("rtp_time", &self.rtp_time)
             .field("len", &self.data.len())
             .field("first", &self.first)
             .field("last", &self.last)

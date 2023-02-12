@@ -253,7 +253,7 @@ impl<'a> Writer<'a> {
 
     /// Do the actual write of media. This consumed the builder.
     ///
-    /// Regarding `wallclock` and `ts`, the wallclock is the real world time that corresponds to
+    /// Regarding `wallclock` and `rtp_time`, the wallclock is the real world time that corresponds to
     /// the `MediaTime`. For an SFU, this can be hard to know, since RTP packets typically only
     /// contain the media time (RTP time). In the simplest SFU setup, the wallclock could simply
     /// be the arrival time of the incoming RTP data (see
@@ -262,8 +262,13 @@ impl<'a> Writer<'a> {
     ///
     /// Notice that incorrect [`Pt`] values would surface as an error here, not when
     /// doing [`Media::writer()`].
-    pub fn write(self, wallclock: Instant, ts: MediaTime, data: &[u8]) -> Result<usize, RtcError> {
+    pub fn write(
+        self,
+        wallclock: Instant,
+        rtp_time: MediaTime,
+        data: &[u8],
+    ) -> Result<usize, RtcError> {
         self.m_line
-            .write(self.pt, wallclock, ts, data, self.rid, self.ext_vals)
+            .write(self.pt, wallclock, rtp_time, data, self.rid, self.ext_vals)
     }
 }

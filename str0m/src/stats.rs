@@ -20,11 +20,11 @@ pub(crate) struct StatsSnapshot {
     pub rx: u64,
     pub ingress: HashMap<(Mid, Option<Rid>), MediaIngressStats>,
     pub egress: HashMap<(Mid, Option<Rid>), MediaEgressStats>,
-    ts: Instant,
+    timestamp: Instant,
 }
 
 impl StatsSnapshot {
-    pub(crate) fn new(ts: Instant) -> StatsSnapshot {
+    pub(crate) fn new(timestamp: Instant) -> StatsSnapshot {
         StatsSnapshot {
             peer_rx: 0,
             peer_tx: 0,
@@ -32,7 +32,7 @@ impl StatsSnapshot {
             rx: 0,
             ingress: HashMap::new(),
             egress: HashMap::new(),
-            ts,
+            timestamp,
         }
     }
 }
@@ -60,7 +60,7 @@ pub struct PeerStats {
     /// Total bytes received, only counting media traffic (rtp payload).
     pub bytes_tx: u64,
     /// Timestamp when this event was generated.
-    pub ts: Instant,
+    pub timestamp: Instant,
 }
 
 /// An event carrying stats for every (mid, rid) in egress direction
@@ -93,7 +93,7 @@ pub struct MediaEgressStats {
     /// Round-trip-time (ms) extracted from the last RTCP receiver report.
     pub rtt: Option<f32>,
     /// Timestamp when this event was generated
-    pub ts: Instant,
+    pub timestamp: Instant,
     // TODO
     // pub remote: RemoteIngressStats,
 }
@@ -127,7 +127,7 @@ pub struct MediaIngressStats {
     /// Round-trip-time (ms) extracted from the last RTCP XR DLRR report block.
     pub rtt: Option<f32>,
     /// Timestamp when this event was generated.
-    pub ts: Instant,
+    pub timestamp: Instant,
     // TODO
     // pub remote: RemoteEgressStats,
 }
@@ -171,7 +171,7 @@ impl Stats {
             peer_bytes_tx: snapshot.peer_tx,
             bytes_rx: snapshot.rx,
             bytes_tx: snapshot.tx,
-            ts: snapshot.ts,
+            timestamp: snapshot.timestamp,
         };
 
         self.events.push_back(StatsEvent::Peer(event));
@@ -184,7 +184,7 @@ impl Stats {
             self.events.push_back(StatsEvent::MediaEgress(event));
         }
 
-        self.last_now = snapshot.ts;
+        self.last_now = snapshot.timestamp;
     }
 
     /// Poll for the next time to call [`Stats::wants_timeout`] and [`Stats::do_handle_timeout`].

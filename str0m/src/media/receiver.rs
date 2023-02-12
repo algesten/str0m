@@ -201,7 +201,7 @@ impl ReceiverSource {
                     rid: self.rid,
                     bytes: self.bytes,
                     packets: self.packets,
-                    ts: now,
+                    timestamp: now,
                     firs: self.firs,
                     plis: self.plis,
                     nacks: self.nacks,
