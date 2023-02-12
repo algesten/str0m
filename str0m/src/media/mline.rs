@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use net_::{Id, DATAGRAM_MTU};
-use packet::{DepacketizingBuffer, Packetized, PacketizingBuffer};
+use packet::{DepacketizingBuffer, Packetized, PacketizedMeta, PacketizingBuffer};
 use rtp::{Extensions, Fir, FirEntry, NackEntry, Pli, Rtcp};
 use rtp::{RtcpFb, RtpHeader, SdesType};
 use rtp::{SeqNo, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
@@ -263,7 +263,14 @@ impl MLine {
         // align to SRTP block size to minimize padding needs
         mtu = mtu - mtu % SRTP_BLOCK_SIZE;
 
-        if let Err(e) = buf.push_sample(rtp_time, data, ssrc, rid, ext_vals, mtu) {
+        let meta = PacketizedMeta {
+            rtp_time,
+            ssrc,
+            rid,
+            ext_vals,
+        };
+
+        if let Err(e) = buf.push_sample(data, meta, mtu) {
             return Err(RtcError::Packet(self.mid, pt, e));
         };
 
@@ -331,9 +338,9 @@ impl MLine {
         let mut header = RtpHeader {
             payload_type: next.pt,
             sequence_number: *next.seq_no as u16,
-            timestamp: next.pkt.rtp_time.numer() as u32,
+            timestamp: next.pkt.meta.rtp_time.numer() as u32,
             ssrc: next.ssrc,
-            ext_vals: next.pkt.exts,
+            ext_vals: next.pkt.meta.ext_vals,
             ..Default::default()
         };
         // ::new(next.pt, next.seq_no, next.pkt.ts, next.ssrc);
@@ -394,7 +401,7 @@ impl MLine {
 
             // The send source, to get a contiguous seq_no for the resend.
             // Audio should not be resent, so this also gates whether we are doing resends at all.
-            let source = match get_source_tx(&mut self.sources_tx, pkt.rid, true) {
+            let source = match get_source_tx(&mut self.sources_tx, pkt.meta.rid, true) {
                 Some(v) => v,
                 None => continue,
             };
@@ -409,7 +416,7 @@ impl MLine {
             let orig_seq_no = Some(resend.seq_no);
 
             // Check that our internal state of organizing SSRC for senders is correct.
-            assert_eq!(pkt.ssrc, resend.ssrc);
+            assert_eq!(pkt.meta.ssrc, resend.ssrc);
             assert_eq!(source.repairs(), Some(resend.ssrc));
 
             return Some(NextPacket {
@@ -429,7 +436,7 @@ impl MLine {
         let source = self
             .sources_tx
             .iter_mut()
-            .find(|s| s.ssrc() == pkt.ssrc)
+            .find(|s| s.ssrc() == pkt.meta.ssrc)
             .expect("SenderSource for packetized write");
 
         source.update_packet_counts(pkt.data.len() as u64, false);
@@ -440,7 +447,7 @@ impl MLine {
         Some(NextPacket {
             pt,
             pkt,
-            ssrc: pkt.ssrc,
+            ssrc: pkt.meta.ssrc,
             seq_no,
             orig_seq_no: None,
         })

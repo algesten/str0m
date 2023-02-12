@@ -6,16 +6,22 @@ use rtp::{ExtensionValues, MediaTime, Rid, SeqNo, Ssrc};
 use crate::{CodecPacketizer, PacketError, Packetizer};
 
 pub struct Packetized {
-    pub rtp_time: MediaTime,
     pub data: Vec<u8>,
     pub first: bool,
     pub last: bool,
-    pub ssrc: Ssrc,
-    pub rid: Option<Rid>,
-    pub exts: ExtensionValues,
+
+    pub meta: PacketizedMeta,
 
     /// Set when packet is first sent. This is so we can resend.
     pub seq_no: Option<SeqNo>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PacketizedMeta {
+    pub rtp_time: MediaTime,
+    pub ssrc: Ssrc,
+    pub rid: Option<Rid>,
+    pub ext_vals: ExtensionValues,
 }
 
 #[derive(Debug)]
@@ -38,11 +44,8 @@ impl PacketizingBuffer {
 
     pub fn push_sample(
         &mut self,
-        rtp_time: MediaTime,
         data: &[u8],
-        ssrc: Ssrc,
-        rid: Option<Rid>,
-        ext_vals: ExtensionValues,
+        meta: PacketizedMeta,
         mtu: usize,
     ) -> Result<(), PacketError> {
         let chunks = self.pack.packetize(mtu, data)?;
@@ -55,13 +58,12 @@ impl PacketizingBuffer {
             let last = idx == len - 1;
 
             let rtp = Packetized {
-                rtp_time,
-                data,
                 first,
                 last,
-                ssrc,
-                rid,
-                exts: ext_vals,
+                data,
+
+                meta,
+
                 seq_no: None,
             };
 
@@ -88,7 +90,10 @@ impl PacketizingBuffer {
     }
 
     pub fn has_ssrc(&self, ssrc: Ssrc) -> bool {
-        self.queue.front().map(|p| p.ssrc == ssrc).unwrap_or(false)
+        self.queue
+            .front()
+            .map(|p| p.meta.ssrc == ssrc)
+            .unwrap_or(false)
     }
 
     pub fn first_seq_no(&self) -> Option<SeqNo> {
@@ -103,11 +108,11 @@ impl PacketizingBuffer {
 impl fmt::Debug for Packetized {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Packetized")
-            .field("rtp_time", &self.rtp_time)
+            .field("rtp_time", &self.meta.rtp_time)
             .field("len", &self.data.len())
             .field("first", &self.first)
             .field("last", &self.last)
-            .field("ssrc", &self.ssrc)
+            .field("ssrc", &self.meta.ssrc)
             .field("seq_no", &self.seq_no)
             .finish()
     }

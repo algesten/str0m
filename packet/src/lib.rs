@@ -29,7 +29,7 @@ mod buffer_rx;
 pub use buffer_rx::{Depacketized, DepacketizingBuffer, RtpMeta};
 
 mod buffer_tx;
-pub use buffer_tx::{Packetized, PacketizingBuffer};
+pub use buffer_tx::{Packetized, PacketizedMeta, PacketizingBuffer};
 
 mod bwe;
 
