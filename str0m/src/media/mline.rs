@@ -520,8 +520,7 @@ impl MLine {
         self.equalize_sources = false;
     }
 
-    pub fn get_params(&self, header: &RtpHeader) -> Option<&PayloadParams> {
-        let pt = header.payload_type;
+    pub fn get_params(&self, pt: Pt) -> Option<&PayloadParams> {
         self.params
             .iter()
             .find(|p| p.inner().codec.pt == pt || p.inner().resend == Some(pt))

@@ -313,7 +313,7 @@ impl Session {
                 return;
             }
         };
-        let clock_rate = match m_lines.get_params(&header) {
+        let clock_rate = match m_lines.get_params(header.payload_type) {
             Some(v) => v.clock_rate(),
             None => {
                 trace!("No codec params for {:?}", header.payload_type);
@@ -432,7 +432,7 @@ impl Session {
         // Parameters using the PT in the header. This will return the same CodecParams
         // instance regardless of whether this being a resend PT or not.
         // unwrap: is ok because we checked above.
-        let params = m_lines.get_params(&header).unwrap();
+        let params = m_lines.get_params(header.payload_type).unwrap();
 
         // This is the "main" PT and it will differ to header.payload_type if this is a resend.
         let pt = params.pt();
