@@ -419,6 +419,11 @@ impl Session {
                 return;
             }
 
+            let params = m_line.get_params(header.payload_type).unwrap();
+            if let Some(pt) = params.pt_rtx() {
+                header.payload_type = pt;
+            }
+
             orig_seq_no
         } else {
             if self.first_ssrc_remote.is_none() {
