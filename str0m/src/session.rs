@@ -302,7 +302,7 @@ impl Session {
         };
 
         // mid_and_ssrc_for_header guarantees media for this mid exists.
-        let m_lines = only_m_line_mut(&mut self.m_lines)
+        let m_line = only_m_line_mut(&mut self.m_lines)
             .find(|m| m.mid() == mid)
             .expect("m-line for mid");
 
@@ -313,7 +313,7 @@ impl Session {
                 return;
             }
         };
-        let clock_rate = match m_lines.get_params(header.payload_type) {
+        let clock_rate = match m_line.get_params(header.payload_type) {
             Some(v) => v.clock_rate(),
             None => {
                 trace!("No codec params for {:?}", header.payload_type);
@@ -326,9 +326,9 @@ impl Session {
         let ssrc_repairs = header
             .ext_vals
             .rid_repair
-            .and_then(|repairs| m_lines.ssrc_rx_for_rid(repairs));
+            .and_then(|repairs| m_line.ssrc_rx_for_rid(repairs));
 
-        let source = m_lines.get_or_create_source_rx(ssrc);
+        let source = m_line.get_or_create_source_rx(ssrc);
 
         let mut m_line_need_check_source = false;
         if let Some(rid) = header.ext_vals.rid {
@@ -344,8 +344,8 @@ impl Session {
 
         // Gymnastics to appease the borrow checker.
         let source = if m_line_need_check_source {
-            m_lines.set_equalize_sources();
-            m_lines.get_or_create_source_rx(ssrc)
+            m_line.set_equalize_sources();
+            m_line.get_or_create_source_rx(ssrc)
         } else {
             source
         };
@@ -407,11 +407,11 @@ impl Session {
             trace!("Repaired {:?} -> {:?}", header.ssrc, repaired_ssrc);
             header.ssrc = repaired_ssrc;
 
-            let repaired_source = m_lines.get_or_create_source_rx(repaired_ssrc);
+            let repaired_source = m_line.get_or_create_source_rx(repaired_ssrc);
             if rid.is_none() && repaired_source.rid().is_some() {
                 rid = repaired_source.rid();
             }
-            let source = m_lines.get_or_create_source_rx(ssrc);
+            let source = m_line.get_or_create_source_rx(ssrc);
             let orig_seq_no = source.update(now, &header, clock_rate);
 
             if !source.is_valid() {
@@ -432,7 +432,7 @@ impl Session {
         // Parameters using the PT in the header. This will return the same CodecParams
         // instance regardless of whether this being a resend PT or not.
         // unwrap: is ok because we checked above.
-        let params = m_lines.get_params(header.payload_type).unwrap();
+        let params = m_line.get_params(header.payload_type).unwrap();
 
         // This is the "main" PT and it will differ to header.payload_type if this is a resend.
         let pt = params.pt();
@@ -440,13 +440,13 @@ impl Session {
 
         let time = MediaTime::new(header.timestamp as i64, clock_rate as i64);
 
-        if !m_lines.direction().is_receiving() {
+        if !m_line.direction().is_receiving() {
             // Not adding unless we are supposed to be receiving.
             return;
         }
 
         // Buffers are unique per m-line (since PT is unique per m-line).
-        let buf = m_lines.get_buffer_rx(pt, rid, codec);
+        let buf = m_line.get_buffer_rx(pt, rid, codec);
 
         let meta = RtpMeta::new(now, time, seq_no, header);
 
@@ -457,7 +457,7 @@ impl Session {
 
         // TODO: is there a nicer way to make borrow-checker happy ?
         // this should go away with the refactoring of the entire handle_rtp() function
-        let source = m_lines.get_or_create_source_rx(ssrc);
+        let source = m_line.get_or_create_source_rx(ssrc);
         source.update_packet_counts(bytes_rx as u64);
     }
 
