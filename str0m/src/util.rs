@@ -71,7 +71,7 @@ pub fn calculate_rtt_ms(ntp_time: Duration, delay: u32, last_report: u32) -> Opt
     let now_fract = ((now_fract_ns * u32::MAX as u64) / 1_000_000_000) as u32;
 
     // Combine the final 2x16 bits together.
-    let now = (now_secs as u32) | (now_fract >> 16);
+    let now = (now_secs as u32) << 16 | (now_fract >> 16);
 
     let rtt = now.checked_sub(delay)?.checked_sub(last_report)?;
     let rtt_seconds = rtt >> 16;
