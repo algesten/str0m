@@ -16,7 +16,7 @@ use super::{RtcpHeader, RtcpPacket};
 /// <https://datatracker.ietf.org/doc/html/rfc3611#page-21>
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtendedReport {
-    pub sender_ssrc: Ssrc,
+    pub ssrc: Ssrc,
     pub blocks: Vec<ReportBlock>,
 }
 
@@ -68,7 +68,7 @@ pub struct Dlrr {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DlrrItem {
-    pub receiver_ssrc: Ssrc,
+    pub ssrc: Ssrc,
     pub last_rr_time: u32,
     pub last_rr_delay: u32,
 }
@@ -92,7 +92,7 @@ impl RtcpPacket for ExtendedReport {
     fn write_to(&self, buf: &mut [u8]) -> usize {
         let mut len = self.header().write_to(buf);
 
-        buf[4..8].copy_from_slice(&self.sender_ssrc.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.ssrc.to_be_bytes());
         len += 4;
 
         for block in self.blocks.iter() {
@@ -153,7 +153,7 @@ impl Dlrr {
         let mut buf = &mut buf[4..];
 
         for item in self.items.iter() {
-            buf[0..4].copy_from_slice(&item.receiver_ssrc.to_be_bytes());
+            buf[0..4].copy_from_slice(&item.ssrc.to_be_bytes());
             buf[4..8].copy_from_slice(&item.last_rr_time.to_be_bytes());
             buf[8..12].copy_from_slice(&item.last_rr_delay.to_be_bytes());
             buf = &mut buf[4..];
@@ -175,7 +175,7 @@ impl<'a> TryFrom<&'a [u8]> for ExtendedReport {
             return Err("Less than 4 bytes for ExtendedReport");
         }
 
-        let sender_ssrc = u32::from_be_bytes(buf[..4].try_into().unwrap()).into();
+        let ssrc = u32::from_be_bytes(buf[..4].try_into().unwrap()).into();
 
         let mut blocks: Vec<ReportBlock> = Vec::new();
         let mut buf = &buf[4..];
@@ -187,10 +187,7 @@ impl<'a> TryFrom<&'a [u8]> for ExtendedReport {
             buf = &buf[len..];
         }
 
-        Ok(ExtendedReport {
-            sender_ssrc,
-            blocks,
-        })
+        Ok(ExtendedReport { ssrc, blocks })
     }
 }
 
@@ -241,11 +238,11 @@ impl<'a> TryFrom<&'a [u8]> for Dlrr {
         let mut buf = &buf[4..];
 
         for _ in 0..blocks {
-            let receiver_ssrc = u32::from_be_bytes(buf[0..4].try_into().unwrap()).into();
+            let ssrc = u32::from_be_bytes(buf[0..4].try_into().unwrap()).into();
             let last_rr_time = u32::from_be_bytes(buf[4..8].try_into().unwrap());
             let last_rr_delay = u32::from_be_bytes(buf[8..12].try_into().unwrap());
             items.push(DlrrItem {
-                receiver_ssrc,
+                ssrc,
                 last_rr_time,
                 last_rr_delay,
             });
