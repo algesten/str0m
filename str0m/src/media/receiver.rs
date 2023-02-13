@@ -127,7 +127,7 @@ impl ReceiverSource {
             ntp_time: MediaTime::new_ntp_time(now),
         });
         ExtendedReport {
-            sender_ssrc: self.ssrc,
+            ssrc: self.ssrc,
             blocks: vec![block],
         }
     }

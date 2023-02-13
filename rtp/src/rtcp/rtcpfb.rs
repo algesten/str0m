@@ -45,7 +45,7 @@ impl RtcpFb {
                 Rtcp::ExtendedReport(v) => {
                     for block in v.blocks {
                         match block {
-                            ReportBlock::Rrtr(b) => q.push(RtcpFb::Rrtr((b, v.sender_ssrc))),
+                            ReportBlock::Rrtr(b) => q.push(RtcpFb::Rrtr((b, v.ssrc))),
                             ReportBlock::Dlrr(v) => {
                                 q.extend(v.items.iter().map(|i| RtcpFb::DlrrItem(*i)))
                             }
@@ -79,7 +79,7 @@ impl RtcpFb {
         match self {
             RtcpFb::SenderInfo(v) => v.ssrc,
             RtcpFb::ReceptionReport(v) => v.ssrc,
-            RtcpFb::DlrrItem(v) => v.receiver_ssrc,
+            RtcpFb::DlrrItem(v) => v.ssrc,
             RtcpFb::Rrtr((_, ssrc)) => *ssrc,
             RtcpFb::SourceDescription(v) => v.ssrc,
             RtcpFb::Goodbye(v) => *v,
