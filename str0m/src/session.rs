@@ -288,6 +288,11 @@ impl Session {
     }
 
     fn handle_rtp(&mut self, now: Instant, header: RtpHeader, buf: &[u8]) {
+        // const INGRESS_PACKET_LOSS_PERCENT: u16 = 5;
+        // if header.sequence_number % (100 / INGRESS_PACKET_LOSS_PERCENT) == 0 {
+        //     return;
+        // }
+
         trace!("Handle RTP: {:?}", header);
         if let Some(transport_cc) = header.ext_vals.transport_cc {
             let prev = self.twcc_rx_register.max_seq();
@@ -631,6 +636,12 @@ impl Session {
                 let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
                 self.twcc_tx_register
                     .register_seq(twcc_seq.into(), now, protected.len());
+
+                // const EGRESS_PACKET_LOSS_PERCENT: u64 = 5;
+                // if twcc_seq % (100 / EGRESS_PACKET_LOSS_PERCENT) == 0 {
+                //     return None;
+                // }
+
                 return Some(protected.into());
             }
         }
