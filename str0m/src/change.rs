@@ -125,7 +125,7 @@ impl<'a> ChangeSet<'a> {
                 let new_ssrc = self.rtc.new_ssrc();
                 let is_rtx = has_rtx && i % 2 == 1;
                 let repairs = if is_rtx { Some(prev) } else { None };
-                v.push((self.rtc.new_ssrc(), repairs));
+                v.push((new_ssrc, repairs));
                 prev = new_ssrc;
             }
 
