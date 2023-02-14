@@ -32,6 +32,7 @@ pub(crate) struct ReceiverSource {
     // round trip time (ms)
     // Can be null in case of missing or bad reports
     rtt: Option<f32>,
+    loss: Option<f32>,
 }
 
 impl ReceiverSource {
@@ -52,6 +53,7 @@ impl ReceiverSource {
             plis: 0,
             nacks: 0,
             rtt: None,
+            loss: None,
         }
     }
 
@@ -118,6 +120,10 @@ impl ReceiverSource {
             sender_ssrc: 0.into(), // set one level up
             reports: report.into(),
         }
+    }
+
+    pub fn update_loss(&mut self, fraction_lost: u8) {
+        self.loss = Some(fraction_lost as f32 / u8::MAX as f32)
     }
 
     pub fn create_extended_receiver_report(&self, now: Instant) -> ExtendedReport {
@@ -193,6 +199,7 @@ impl ReceiverSource {
             stat.plis += self.plis;
             stat.nacks += self.nacks;
             stat.rtt = self.rtt;
+            stat.loss = self.loss;
         } else {
             snapshot.ingress.insert(
                 key,
@@ -206,6 +213,7 @@ impl ReceiverSource {
                     plis: self.plis,
                     nacks: self.nacks,
                     rtt: self.rtt,
+                    loss: self.loss,
                 },
             );
         }

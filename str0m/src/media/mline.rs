@@ -626,6 +626,11 @@ impl MLine {
                 let mut rr = s.create_receiver_report(now);
                 rr.sender_ssrc = sender_ssrc;
 
+                if !rr.reports.is_empty() {
+                    let l = rr.reports[rr.reports.len() - 1].fraction_lost;
+                    s.update_loss(l);
+                }
+
                 debug!("Created feedback RR: {:?}", rr);
                 feedback.push_back(Rtcp::ReceiverReport(rr));
 
