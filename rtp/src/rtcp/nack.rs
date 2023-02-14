@@ -62,12 +62,12 @@ impl<'a> TryFrom<&'a [u8]> for Nack {
             return Err("Nack less than 12 bytes");
         }
 
-        let sender_ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]).into();
-        let ssrc = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]).into();
+        let sender_ssrc = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]).into();
+        let ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]).into();
 
         let mut reports = ReportList::new();
 
-        let mut buf = &buf[12..];
+        let mut buf = &buf[8..];
         let count = buf.len() / 4;
         let max = count.min(31);
 
