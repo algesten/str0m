@@ -420,7 +420,7 @@ impl MLine {
             assert_eq!(source.repairs(), Some(resend.ssrc));
 
             return Some(NextPacket {
-                pt: resend.pt,
+                pt: self.pt_rtx(resend.pt)?,
                 pkt,
                 ssrc: ssrc_rtx,
                 seq_no,
@@ -980,6 +980,14 @@ impl MLine {
         for s in &self.sources_tx {
             s.visit_stats(now, self.mid, snapshot);
         }
+    }
+
+    // returns the corresponding rtx pt counterpart, if any
+    fn pt_rtx(&self, pt: Pt) -> Option<Pt> {
+        self.payload_params()
+            .iter()
+            .find(|p| p.pt() == pt)?
+            .pt_rtx()
     }
 }
 
