@@ -364,18 +364,24 @@ impl MLine {
         let mut body_out = &mut buf[header_len..];
 
         // For resends, the original seq_no is inserted before the payload.
+        let mut original_seq_len = 0;
         if let Some(orig_seq_no) = next.orig_seq_no {
-            let n = RtpHeader::write_original_sequence_number(body_out, orig_seq_no);
-            body_out = &mut body_out[n..];
+            original_seq_len = RtpHeader::write_original_sequence_number(body_out, orig_seq_no);
+            body_out = &mut body_out[original_seq_len..];
         }
 
         let body_len = next.pkt.data.len();
         body_out[..body_len].copy_from_slice(&next.pkt.data);
 
         // pad for SRTP
-        let pad_len = RtpHeader::pad_packet(&mut buf[..], header_len, body_len, SRTP_BLOCK_SIZE);
+        let pad_len = RtpHeader::pad_packet(
+            &mut buf[..],
+            header_len,
+            body_len + original_seq_len,
+            SRTP_BLOCK_SIZE,
+        );
 
-        buf.truncate(header_len + body_len + pad_len);
+        buf.truncate(header_len + body_len + original_seq_len + pad_len);
 
         Some((header, next.seq_no))
     }
