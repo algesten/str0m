@@ -34,6 +34,7 @@ pub(crate) struct SenderSource {
     // round trip time (ms)
     // Can be null in case of missing or bad reports
     rtt: Option<f32>,
+    loss: Option<f32>,
     // The last media time (RTP time) and wallclock that was written.
     rtp_and_wallclock: Option<(MediaTime, Instant)>,
 }
@@ -58,6 +59,7 @@ impl SenderSource {
             plis: 0,
             nacks: 0,
             rtt: None,
+            loss: None,
             rtp_and_wallclock: None,
         }
     }
@@ -145,6 +147,8 @@ impl SenderSource {
         let ntp_time = now.to_ntp_duration();
         let rtt = calculate_rtt_ms(ntp_time, r.last_sr_delay, r.last_sr_time);
         self.rtt = rtt;
+
+        self.loss = Some(r.fraction_lost as f32 / u8::MAX as f32);
     }
 
     pub fn visit_stats(&self, now: Instant, mid: Mid, snapshot: &mut StatsSnapshot) {
@@ -159,6 +163,7 @@ impl SenderSource {
             stat.plis += self.plis;
             stat.nacks += self.nacks;
             stat.rtt = self.rtt;
+            stat.loss = self.loss;
         } else {
             snapshot.egress.insert(
                 key,
@@ -171,6 +176,7 @@ impl SenderSource {
                     plis: self.plis,
                     nacks: self.nacks,
                     rtt: self.rtt,
+                    loss: self.loss,
                     timestamp: now,
                 },
             );
