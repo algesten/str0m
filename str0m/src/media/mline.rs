@@ -886,7 +886,7 @@ impl MLine {
     ) -> &mut DepacketizingBuffer {
         self.buffers_rx
             .entry((pt, rid))
-            .or_insert_with(|| DepacketizingBuffer::new(codec.into(), 100))
+            .or_insert_with(|| DepacketizingBuffer::new(codec.into(), 30))
     }
 
     pub fn poll_keyframe_request(&mut self) -> Option<(Option<Rid>, KeyframeRequestKind)> {
