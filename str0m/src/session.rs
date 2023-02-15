@@ -21,7 +21,7 @@ use super::MLine;
 // Minimum time we delay between sending nacks. This should be
 // set high enough to not cause additional problems in very bad
 // network conditions.
-const NACK_MIN_INTERVAL: Duration = Duration::from_millis(250);
+const NACK_MIN_INTERVAL: Duration = Duration::from_millis(100);
 
 // Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(100);
