@@ -173,8 +173,8 @@ impl ReceiverSource {
         }
     }
 
-    pub fn update_with_nack(&mut self, count: u64) {
-        self.nacks += count;
+    pub fn update_with_nack(&mut self) {
+        self.nacks += 1;
     }
 
     pub fn set_dlrr_item(&mut self, now: Instant, dlrr: DlrrItem) {
