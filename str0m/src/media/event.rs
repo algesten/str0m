@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 pub use packet::RtpMeta;
+use rtp::SeqNo;
 pub use rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 pub use sdp::{Codec, FormatParams};
 
@@ -142,6 +143,16 @@ pub struct MediaData {
 
     /// The individual packet metadata that were part of making the Sample in `data`.
     pub meta: Vec<RtpMeta>,
+}
+
+impl MediaData {
+    /// The packet range this was built from.
+    pub(crate) fn packet_range(&self) -> Option<(SeqNo, SeqNo)> {
+        let first = self.meta.first()?;
+        let last = self.meta.last()?;
+
+        Some((first.seq_no, last.seq_no))
+    }
 }
 
 /// Details for an incoming a keyframe request (PLI or FIR).
