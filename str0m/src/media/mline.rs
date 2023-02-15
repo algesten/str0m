@@ -665,10 +665,9 @@ impl MLine {
                 for mut nack in nacks {
                     nack.sender_ssrc = sender_ssrc;
 
-                    let num_nacks = nack.reports.len() as u64;
                     debug!("Created feedback NACK: {:?}", nack);
                     feedback.push_back(Rtcp::Nack(nack));
-                    s.update_with_nack(num_nacks);
+                    s.update_with_nack();
                 }
             }
         }
