@@ -1306,7 +1306,6 @@ impl fmt::Debug for MediaData {
             .field("rid", &self.rid)
             .field("time", &self.time)
             .field("len", &self.data.len())
-            .field("packet_range", &self.packet_range())
             .finish()
     }
 }
