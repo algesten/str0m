@@ -31,6 +31,26 @@ impl<T> ReportList<T> {
         self.len() == 0
     }
 
+    pub fn lists_from_iter(iterator: impl IntoIterator<Item = T>) -> Vec<Self> {
+        let mut result = vec![];
+        let mut current = Self::default();
+
+        for (i, item) in iterator.into_iter().enumerate() {
+            if i % 31 == 0 && i != 0 {
+                result.push(current);
+                current = Self::default();
+            }
+
+            current.push(item);
+        }
+
+        if !current.is_empty() {
+            result.push(current);
+        }
+
+        result
+    }
+
     pub(crate) fn is_full(&self) -> bool {
         self.len() == 31
     }
@@ -170,5 +190,20 @@ impl<T: fmt::Debug> fmt::Debug for ReportList<T> {
             }
         }
         write!(f, "]")
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::ReportList;
+
+    #[test]
+    fn test_lists_from_iter() {
+        let lists = ReportList::lists_from_iter(0..66);
+
+        assert_eq!(lists.len(), 3);
+        assert_eq!(lists[0].len(), 31);
+        assert_eq!(lists[1].len(), 31);
+        assert_eq!(lists[2].len(), 4);
     }
 }
