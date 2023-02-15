@@ -1,7 +1,6 @@
 use std::time::Instant;
 
-use bitvec::prelude::*;
-use rtp::{Nack, NackEntry, ReceptionReport, SeqNo};
+use rtp::{Nack, NackEntry, ReceptionReport, ReportList, SeqNo};
 
 const MAX_DROPOUT: u64 = 3000;
 const MAX_MISORDER: u64 = 100;
@@ -10,8 +9,8 @@ const MISORDER_DELAY: u64 = 4;
 
 #[derive(Debug)]
 pub struct ReceiverRegister {
-    /// Bit array to keep track of lost packets.
-    bits: BitArr!(for MAX_DROPOUT as usize * 2, in usize),
+    /// Keep track of packet status.
+    packet_status: Vec<PacketStatus>,
 
     /// First ever sequence number observed.
     base_seq: SeqNo,
@@ -48,14 +47,12 @@ pub struct ReceiverRegister {
 
     /// Previously received time point.
     time_point_prior: Option<TimePoint>,
-
-    nack_report: Option<Nack>,
 }
 
 impl ReceiverRegister {
     pub fn new(base_seq: SeqNo) -> Self {
         ReceiverRegister {
-            bits: BitArray::default(),
+            packet_status: vec![PacketStatus::default(); MAX_DROPOUT as usize],
             base_seq,
             // ensure first update_seq considers the first packet sequential
             max_seq: base_seq.wrapping_sub(1).into(),
@@ -67,7 +64,6 @@ impl ReceiverRegister {
             jitter: 0.0,
             nack_check_from: base_seq,
             time_point_prior: None,
-            nack_report: None,
         }
     }
 
@@ -79,26 +75,87 @@ impl ReceiverRegister {
         self.received_prior = 0;
         self.expected_prior = 0;
         self.jitter = 0.0;
-        self.bits.fill(false);
-        self.set_bit(seq);
+        self.packet_status.fill(PacketStatus::default());
+        self.record_received(seq, 0);
         self.nack_check_from = seq;
         self.time_point_prior = None;
-        self.nack_report = None;
     }
 
     /// Set a bit indicating we've received a packet.
-    fn set_bit(&mut self, seq: SeqNo) {
+    fn record_received(&mut self, seq: SeqNo, forward_delta: u64) {
         // Do not set if it's lower than our nack_check_from, since we already sent a NACK for that.
         if *seq < *self.nack_check_from {
             return;
         }
-        let pos = (*seq % self.bits.len() as u64) as usize;
-        let was_set = self.bits.replace(pos, true);
+
+        let did_wrap = (*seq / self.packet_status.len() as u64)
+            != (seq.saturating_sub(forward_delta) / self.packet_status.len() as u64);
+
+        let pos = self.packet_index(*seq);
+        let was_set = self.packet_status[pos].received;
+        self.packet_status[pos].received = true;
+
+        if did_wrap {
+            // The indices wrapped around the end of `packet_status`, we clear any entries between
+            // the current sequence number and nack_check_from.
+            let start = (*seq + 1).into();
+            let end = self.nack_check_from;
+            trace!(
+                "ReceiveRegister wrapped, clearing all entries from {start} to {end} on receiving {seq}"
+            );
+
+            self.reset_receceived(start, end);
+        }
+
+        // Move nack_check_from forward
+        let check_up_to = (*self.max_seq).saturating_sub(MISORDER_DELAY);
+        let new_nack_check_from: Option<SeqNo> = {
+            if check_up_to.saturating_sub(*self.nack_check_from) > MAX_MISORDER {
+                // If nack_check_from is falling too far behind bring it forward by discarding
+                // older packets.
+                let forced_nack_check_from = check_up_to - MAX_MISORDER;
+                trace!(
+                    "Forcing nack_check_from forward from {} to {} on non-consecutive packet run",
+                    self.nack_check_from,
+                    forced_nack_check_from
+                );
+                Some(forced_nack_check_from.into())
+            } else {
+                let consecutive_unil = (*self.nack_check_from..=check_up_to)
+                    .take_while(|seq| self.packet_status[self.packet_index(*seq)].received)
+                    .last()
+                    .map(Into::into);
+
+                if let Some(new) = consecutive_unil {
+                    if new != self.nack_check_from {
+                        trace!(
+                            "Moving nack_check_from forward from {} to {} on consecutive packet run",
+                            self.nack_check_from, new
+                        );
+                    }
+                }
+
+                consecutive_unil
+            }
+        };
+
+        if let Some(new_nack_check_from) = new_nack_check_from {
+            self.reset_receceived(self.nack_check_from, new_nack_check_from);
+            self.nack_check_from = new_nack_check_from;
+        }
 
         // if a bit flips from false -> true, we have received a new packet. dupe packets are
         // not counted (i.e. true -> true) that can happen due to resends.
         if !was_set {
             self.received += 1;
+        }
+    }
+
+    fn reset_receceived(&mut self, start: SeqNo, end: SeqNo) {
+        for seq in *start..*end {
+            let index = self.packet_index(seq);
+            // Reset state
+            self.packet_status[index] = PacketStatus::default();
         }
     }
 
@@ -125,7 +182,7 @@ impl ReceiverRegister {
                 // in order, with permissible gap
                 self.max_seq = seq;
                 self.bad_seq = None;
-                self.set_bit(seq);
+                self.record_received(seq, udelta);
             } else {
                 // the sequence number made a very large jump
                 self.maybe_seq_jump(seq)
@@ -135,7 +192,7 @@ impl ReceiverRegister {
             let udelta = *self.max_seq - *seq;
 
             if udelta < MAX_MISORDER {
-                self.set_bit(seq);
+                self.record_received(seq, 0);
             } else {
                 // the sequence number is too far in the past
                 self.maybe_seq_jump(seq);
@@ -236,22 +293,9 @@ impl ReceiverRegister {
     }
 
     pub fn has_nack_report(&mut self) -> bool {
-        if self.nack_report.is_none() {
-            self.nack_report = self.create_nack_report();
-        }
-        self.nack_report.is_some()
-    }
-
-    pub fn nack_report(&mut self) -> Option<Nack> {
-        self.nack_report
-            .take()
-            .or_else(|| self.create_nack_report())
-    }
-
-    fn create_nack_report(&mut self) -> Option<Nack> {
         // No nack report during probation.
         if self.probation > 0 {
-            return None;
+            return false;
         }
 
         // nack_check_from tracks where we create the next nack report from.
@@ -261,47 +305,80 @@ impl ReceiverRegister {
         let stop = *self.max_seq - MISORDER_DELAY;
 
         if stop < start {
-            return None;
+            return false;
         }
 
+        (start..stop).any(|seq| self.packet_status[self.packet_index(seq)].should_nack())
+    }
+
+    pub fn nack_reports(&mut self) -> Vec<Nack> {
+        self.create_nack_reports()
+    }
+
+    fn create_nack_reports(&mut self) -> Vec<Nack> {
+        // No nack report during probation.
+        if self.probation > 0 {
+            return vec![];
+        }
+
+        // nack_check_from tracks where we create the next nack report from.
+        let start = *self.nack_check_from;
+        // MISORDER_DELAY gives us a "grace period" of receiving packets out of
+        // order without reporting it as a NACK straight away.
+        let stop = *self.max_seq - MISORDER_DELAY;
+
+        if stop < start {
+            return vec![];
+        }
+
+        let mut nacks = vec![];
         let mut first_missing = None;
         let mut bitmask = 0;
 
-        // this might be changed again if we end the loop early
-        self.nack_check_from = stop.into();
-
         for i in start..stop {
-            let j = (i % self.bits.len() as u64) as usize;
+            let j = self.packet_index(i);
 
-            // zero the bit and know if we received the packet.
-            let did_receive = self.bits.replace(j, false);
+            let should_nack = self.packet_status[j].should_nack();
 
             if let Some(first) = first_missing {
-                if !did_receive {
+                if should_nack {
                     let o = (i - (first + 1)) as u16;
                     bitmask |= 1 << o;
+                    self.packet_status[j].nack_count += 1;
                 }
 
                 if i - first == 16 {
-                    // early break because we can report max 17 valus each report.
-                    // reset check_from.
-                    self.nack_check_from = (i + 1).into();
-                    break;
+                    nacks.push(NackEntry {
+                        pid: (first % u16::MAX as u64) as u16,
+                        blp: bitmask,
+                    });
+                    bitmask = 0;
+                    first_missing = None;
                 }
-            } else if !did_receive {
+            } else if should_nack {
+                self.packet_status[j].nack_count += 1;
                 first_missing = Some(i);
             }
         }
 
-        first_missing.map(|first| Nack {
-            sender_ssrc: 0.into(),
-            ssrc: 0.into(), // changed when sending
-            reports: NackEntry {
+        if let Some(first) = first_missing {
+            nacks.push(NackEntry {
                 pid: (first % u16::MAX as u64) as u16,
                 blp: bitmask,
-            }
-            .into(),
-        })
+            });
+        }
+
+        let reports = ReportList::lists_from_iter(nacks).into_iter();
+
+        reports
+            .map(|reports| {
+                Nack {
+                    sender_ssrc: 0.into(),
+                    ssrc: 0.into(), // changed when sending
+                    reports,
+                }
+            })
+            .collect()
     }
 
     /// Create a new reception report.
@@ -364,6 +441,10 @@ impl ReceiverRegister {
     fn expected(&self) -> i64 {
         *self.max_seq as i64 - *self.base_seq as i64 + 1
     }
+
+    fn packet_index(&self, seq: u64) -> usize {
+        (seq % self.packet_status.len() as u64) as usize
+    }
 }
 
 /// Helper to keep a time point for jitter calculation.
@@ -396,6 +477,21 @@ impl TimePoint {
         trace!("Timepoint delta: {}", d);
 
         d
+    }
+}
+
+/// The max number of NACKs we perform for a single packet:
+const MAX_NACKS: u8 = 5;
+
+#[derive(Debug, Default, Clone, Copy)]
+struct PacketStatus {
+    received: bool,
+    nack_count: u8,
+}
+
+impl PacketStatus {
+    fn should_nack(&self) -> bool {
+        !self.received && self.nack_count < MAX_NACKS
     }
 }
 
@@ -536,15 +632,15 @@ mod test {
     }
 
     #[test]
-    fn nack_report_none() {
+    fn nack_reports_empty() {
         let mut reg = ReceiverRegister::new(14.into());
         for i in [100, 101, 102, 103, 104, 105, 106] {
             reg.update_seq(i.into());
         }
-        assert_eq!(reg.nack_report(), None);
-        assert_eq!(reg.nack_report(), None);
-        assert_eq!(reg.nack_report(), None);
-        assert_eq!(reg.nack_report(), None);
+        assert!(reg.nack_reports().is_empty());
+        assert!(reg.nack_reports().is_empty());
+        assert!(reg.nack_reports().is_empty());
+        assert!(reg.nack_reports().is_empty());
     }
 
     struct Test {
@@ -560,8 +656,8 @@ mod test {
             reg.update_seq((*i).into());
         }
         assert_eq!(
-            reg.nack_report(),
-            Some(Nack {
+            reg.nack_reports(),
+            vec![Nack {
                 sender_ssrc: 0.into(),
                 ssrc: 0.into(),
                 reports: NackEntry {
@@ -569,7 +665,7 @@ mod test {
                     blp: t.bitmask,
                 }
                 .into()
-            })
+            }]
         );
         assert_eq!(reg.nack_check_from, t.check_from.into());
     }
@@ -580,7 +676,7 @@ mod test {
             seq: &[100, 101, 103, 104, 105, 106, 107],
             missing: 102,
             bitmask: 0,
-            check_from: 103,
+            check_from: 101,
         });
     }
 
@@ -590,7 +686,7 @@ mod test {
             seq: &[100, 101, 104, 105, 106, 107, 108],
             missing: 102,
             bitmask: 0b0000_0000_0000_0001,
-            check_from: 104,
+            check_from: 101,
         });
     }
 
@@ -600,7 +696,7 @@ mod test {
             seq: &[100, 101, 103, 105, 106, 107, 108, 109, 110],
             missing: 102,
             bitmask: 0b0000_0000_0000_0010,
-            check_from: 106,
+            check_from: 101,
         });
     }
 
@@ -614,7 +710,7 @@ mod test {
             ],
             missing: 102,
             bitmask: 0b0000_0000_0000_0000,
-            check_from: 119,
+            check_from: 101,
         });
     }
 
@@ -628,7 +724,7 @@ mod test {
             ],
             missing: 102,
             bitmask: 0b1000_0000_0000_0000,
-            check_from: 119,
+            check_from: 101,
         });
     }
 
@@ -642,8 +738,92 @@ mod test {
         ] {
             reg.update_seq((*i).into());
         }
-        assert_eq!(reg.nack_report(), None);
+        assert!(reg.nack_reports().is_empty());
         assert_eq!(reg.nack_check_from, 125.into());
+    }
+
+    #[test]
+    fn nack_report_rtx() {
+        let mut reg = ReceiverRegister::new(14.into());
+        for i in &[
+            100, 101, 102, 103, 104, 105, //
+        ] {
+            reg.update_seq((*i).into());
+        }
+        assert!(reg.nack_reports().is_empty());
+        assert_eq!(reg.nack_check_from, 101.into());
+
+        for i in &[
+            106, 108, 109, 110, 111, 112, 113, 114, 115, //
+        ] {
+            reg.update_seq((*i).into());
+        }
+        assert!(!reg.nack_reports().is_empty());
+        assert_eq!(reg.nack_check_from, 106.into());
+
+        reg.update_seq(107.into()); // Got 107 via RTX
+
+        let nacks = reg.nack_reports();
+        assert!(
+            nacks.is_empty(),
+            "Expected no NACKs to be generated after repairing the stream, got {nacks:?}"
+        );
+        assert_eq!(reg.nack_check_from, 111.into());
+    }
+
+    #[test]
+    fn nack_report_rollover_rtx() {
+        let mut reg = ReceiverRegister::new(14.into());
+        for i in &[
+            100, 101, 102, 103, 104, 105, //
+        ] {
+            reg.update_seq((*i).into());
+        }
+        assert!(reg.nack_reports().is_empty());
+        assert_eq!(reg.nack_check_from, 101.into());
+
+        for i in &[
+            106, 108, 109, 110, 111, 112, 113, 114, 115, //
+        ] {
+            reg.update_seq((*i).into());
+        }
+        assert!(!reg.nack_reports().is_empty());
+        assert_eq!(reg.nack_check_from, 106.into());
+
+        reg.update_seq(107.into()); // Got 107 via RTX
+
+        assert_eq!(reg.nack_check_from, 111.into());
+
+        for i in 116..(3106) {
+            reg.update_seq(i.into());
+        }
+        assert_eq!(reg.nack_check_from, 3101.into());
+
+        for i in &[
+            106, 108, 109, 110, 111, 112, 113, 114, 115, //
+        ] {
+            reg.update_seq((*i + 3000).into()); // Missing 107 again
+        }
+
+        assert_eq!(reg.nack_check_from, 3106.into());
+    }
+
+    #[test]
+    fn nack_check_forward_at_boundary() {
+        let mut reg = ReceiverRegister::new(2996.into());
+        for i in 2996..=3003 {
+            reg.update_seq((i).into());
+        }
+        assert!(reg.nack_reports().is_empty());
+        assert_eq!(reg.nack_check_from, 2999.into());
+
+        for i in 3004..=3008 {
+            reg.update_seq((i).into());
+        }
+
+        let nacks = reg.nack_reports();
+        assert!(nacks.is_empty(), "Expected empty NACKs got {nacks:?}");
+        assert_eq!(reg.nack_check_from, 3004.into());
     }
 
     #[test]
