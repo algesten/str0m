@@ -416,8 +416,8 @@ impl Session {
             if rid.is_none() && repaired_source.rid().is_some() {
                 rid = repaired_source.rid();
             }
+            let orig_seq_no = repaired_source.update(now, &header, clock_rate);
             let source = m_line.get_or_create_source_rx(ssrc);
-            let orig_seq_no = source.update(now, &header, clock_rate);
 
             if !source.is_valid() {
                 trace!("Repaired source is not (yet) valid, probably probation");

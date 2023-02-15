@@ -145,13 +145,15 @@ impl ReceiverSource {
             .unwrap_or(false)
     }
 
-    pub fn create_nack(&mut self) -> Option<Nack> {
-        let mut nack = self.register.as_mut().and_then(|r| r.nack_report())?;
-        // sender set one level up
-        nack.ssrc = self.ssrc;
+    pub fn create_nacks(&mut self) -> Option<Vec<Nack>> {
+        let mut nacks = self.register.as_mut().map(|r| r.nack_reports())?;
+        for nack in &mut nacks {
+            // sender set one level up,
+            nack.ssrc = self.ssrc;
+        }
 
-        info!("Send nack: {:?}", nack);
-        Some(nack)
+        info!("Send nacks: {:?}", nacks);
+        Some(nacks)
     }
 
     pub fn set_sender_info(&mut self, now: Instant, s: SenderInfo) {
@@ -171,8 +173,8 @@ impl ReceiverSource {
         }
     }
 
-    pub fn update_with_nack(&mut self) {
-        self.nacks += 1;
+    pub fn update_with_nack(&mut self, count: u64) {
+        self.nacks += count;
     }
 
     pub fn set_dlrr_item(&mut self, now: Instant, dlrr: DlrrItem) {

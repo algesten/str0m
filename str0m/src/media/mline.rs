@@ -661,11 +661,15 @@ impl MLine {
             if s.is_rtx() {
                 continue;
             }
-            if let Some(mut nack) = s.create_nack() {
-                nack.sender_ssrc = sender_ssrc;
-                debug!("Created feedback NACK: {:?}", nack);
-                feedback.push_back(Rtcp::Nack(nack));
-                s.update_with_nack();
+            if let Some(nacks) = s.create_nacks() {
+                for mut nack in nacks {
+                    nack.sender_ssrc = sender_ssrc;
+
+                    let num_nacks = nack.reports.len() as u64;
+                    debug!("Created feedback NACK: {:?}", nack);
+                    feedback.push_back(Rtcp::Nack(nack));
+                    s.update_with_nack(num_nacks);
+                }
             }
         }
     }
