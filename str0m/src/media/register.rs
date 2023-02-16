@@ -110,32 +110,38 @@ impl ReceiverRegister {
         // Move nack_check_from forward
         let check_up_to = (*self.max_seq).saturating_sub(MISORDER_DELAY);
         let new_nack_check_from: Option<SeqNo> = {
-            if check_up_to.saturating_sub(*self.nack_check_from) > MAX_MISORDER {
-                // If nack_check_from is falling too far behind bring it forward by discarding
-                // older packets.
-                let forced_nack_check_from = check_up_to - MAX_MISORDER;
-                trace!(
-                    "Forcing nack_check_from forward from {} to {} on non-consecutive packet run",
-                    self.nack_check_from,
-                    forced_nack_check_from
-                );
-                Some(forced_nack_check_from.into())
-            } else {
-                let consecutive_unil = (*self.nack_check_from..=check_up_to)
-                    .take_while(|seq| self.packet_status[self.packet_index(*seq)].received)
-                    .last()
-                    .map(Into::into);
+            // Check if we can move forward because we have a consecutive run of packets
+            let consecutive_unil = (*self.nack_check_from..=check_up_to)
+                .take_while(|seq| self.packet_status[self.packet_index(*seq)].received)
+                .last()
+                .map(Into::into);
 
-                if let Some(new) = consecutive_unil {
-                    if new != self.nack_check_from {
+            match consecutive_unil {
+                Some(new) if new != self.nack_check_from => {
+                    trace!(
+                        "Moving nack_check_from forward from {} to {} on consecutive packet run",
+                        self.nack_check_from,
+                        new
+                    );
+
+                    Some(new)
+                }
+                _ => {
+                    // No consecutive run, make sure we don't let nack_check_from fall too far
+                    if check_up_to.saturating_sub(*self.nack_check_from) > MAX_MISORDER {
+                        // If nack_check_from is falling too far behind bring it forward by discarding
+                        // older packets.
+                        let forced_nack_check_from = check_up_to - MAX_MISORDER;
                         trace!(
-                            "Moving nack_check_from forward from {} to {} on consecutive packet run",
-                            self.nack_check_from, new
-                        );
+                        "Forcing nack_check_from forward from {} to {} on non-consecutive packet run",
+                        self.nack_check_from,forced_nack_check_from
+                    );
+
+                        Some(forced_nack_check_from.into())
+                    } else {
+                        None
                     }
                 }
-
-                consecutive_unil
             }
         };
 
@@ -824,6 +830,32 @@ mod test {
         let nacks = reg.nack_reports();
         assert!(nacks.is_empty(), "Expected empty NACKs got {nacks:?}");
         assert_eq!(reg.nack_check_from, 3004.into());
+    }
+
+    #[test]
+    fn nack_check_forward_at_u16_boundary() {
+        let mut reg = ReceiverRegister::new(65500.into());
+        for i in 65500..=65534 {
+            reg.update_seq((i).into());
+        }
+        assert!(reg.nack_reports().is_empty());
+        assert_eq!(reg.nack_check_from, 65530.into());
+
+        for i in 65536..=65566 {
+            reg.update_seq((i).into());
+        }
+
+        assert!(!reg.nack_reports().is_empty());
+        assert_eq!(reg.nack_check_from, 65534.into());
+
+        for i in 65567..=65666 {
+            reg.update_seq((i).into());
+        }
+
+        reg.update_seq(65535.into());
+
+        assert!(reg.nack_reports().is_empty());
+        assert_eq!(reg.nack_check_from, 65662.into());
     }
 
     #[test]
