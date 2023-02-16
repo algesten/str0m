@@ -150,10 +150,15 @@ impl<'a, T> Iterator for Iter<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.1 > 30 {
+            return None;
+        }
+
         let n = self.0 .0[self.1].as_ref();
         if n.is_some() {
             self.1 += 1;
         }
+
         n
     }
 }
@@ -205,5 +210,20 @@ mod test {
         assert_eq!(lists[0].len(), 31);
         assert_eq!(lists[1].len(), 31);
         assert_eq!(lists[2].len(), 4);
+    }
+
+    #[test]
+    fn test_max_length_iter() {
+        let list = {
+            let mut list = ReportList::new();
+            for i in 1..=31 {
+                list.push(i);
+            }
+
+            list
+        };
+        let sum: u64 = list.iter().sum();
+
+        assert_eq!(sum, 496);
     }
 }
