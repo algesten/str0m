@@ -11,6 +11,7 @@ use rtp::Rid;
 pub(crate) struct Stats {
     last_now: Instant,
     events: VecDeque<StatsEvent>,
+    interval: Duration,
 }
 
 pub(crate) struct StatsSnapshot {
@@ -143,18 +144,17 @@ pub struct RemoteEgressStats {
     pub bytes_tx: u64,
 }
 
-const TIMING_ADVANCE: Duration = Duration::from_secs(1);
-
 impl Stats {
     /// Create a new stats instance
     ///
     /// The internal state is market with the current `Instant::now()`.
     /// This allows us to emit stats right away at the first upcoming timeout
-    pub fn new() -> Stats {
+    pub fn new(interval: Duration) -> Stats {
         Stats {
             // by starting with the current time we can generate stats right on first timeout
             last_now: Instant::now(),
             events: VecDeque::new(),
+            interval,
         }
     }
 
@@ -162,7 +162,7 @@ impl Stats {
     ///
     /// The caller can use this to conpute the snapshot only if needed, before calling [`Stats::do_handle_timeout`]
     pub fn wants_timeout(&mut self, now: Instant) -> bool {
-        let min_step = self.last_now + TIMING_ADVANCE;
+        let min_step = self.last_now + self.interval;
         now >= min_step
     }
 
@@ -196,7 +196,7 @@ impl Stats {
     /// NOTE: we only need Option<_> to conform to .soonest() (see caller)
     pub fn poll_timeout(&mut self) -> Option<Instant> {
         let last_now = self.last_now;
-        Some(last_now + TIMING_ADVANCE)
+        Some(last_now + self.interval)
     }
 
     /// Return any events ready for delivery

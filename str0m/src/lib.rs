@@ -58,7 +58,7 @@
 extern crate tracing;
 
 use std::net::SocketAddr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use std::{fmt, io};
 
 use change::Changes;
@@ -355,7 +355,7 @@ impl Rtc {
             setup: Setup::ActPass,
             session: Session::new(config.codec_config, config.ice_lite),
             sctp: RtcSctp::new(),
-            stats: Stats::new(),
+            stats: Stats::new(config.stats_interval),
             next_sctp_channel: 0, // Goes 0, 1, 2 for both DTLS server or client
             remote_fingerprint: None,
             pending: None,
@@ -1181,6 +1181,7 @@ impl<'a> PendingChanges<'a> {
 pub struct RtcConfig {
     ice_lite: bool,
     codec_config: CodecConfig,
+    stats_interval: Duration,
 }
 
 impl RtcConfig {
@@ -1267,6 +1268,15 @@ impl RtcConfig {
         &mut self.codec_config
     }
 
+    /// Set the interval between statistics events
+    /// This includes Event::MediaEgressStats, Event::MediaIngressStats, Event::MediaEgressStats
+    ///
+    /// Defaults to `Duration::from_secs(1)`.
+    pub fn set_stats_interval(mut self, interval: Duration) -> Self {
+        self.stats_interval = interval;
+        self
+    }
+
     /// Create a [`Rtc`] from the configuration.
     pub fn build(self) -> Rtc {
         Rtc::new_from_config(self)
@@ -1278,6 +1288,7 @@ impl Default for RtcConfig {
         Self {
             ice_lite: Default::default(),
             codec_config: CodecConfig::new_with_defaults(),
+            stats_interval: Duration::from_secs(1),
         }
     }
 }
