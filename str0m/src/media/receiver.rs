@@ -193,6 +193,7 @@ impl ReceiverSource {
         if self.bytes == 0 {
             return;
         }
+        let main = !self.is_rtx();
         let key = (mid, self.rid);
         if let Some(stat) = snapshot.ingress.get_mut(&key) {
             stat.bytes += self.bytes;
@@ -200,8 +201,10 @@ impl ReceiverSource {
             stat.firs += self.firs;
             stat.plis += self.plis;
             stat.nacks += self.nacks;
-            stat.rtt = self.rtt;
-            stat.loss = self.loss;
+            if main {
+                stat.rtt = self.rtt;
+                stat.loss = self.loss;
+            }
         } else {
             snapshot.ingress.insert(
                 key,
@@ -214,8 +217,8 @@ impl ReceiverSource {
                     firs: self.firs,
                     plis: self.plis,
                     nacks: self.nacks,
-                    rtt: self.rtt,
-                    loss: self.loss,
+                    rtt: if main { self.rtt } else { None },
+                    loss: if main { self.loss } else { None },
                 },
             );
         }
