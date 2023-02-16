@@ -360,6 +360,18 @@ impl Client {
                     Propagated::Noop
                 }
                 Event::ChannelData(data) => self.handle_channel_data(data),
+                Event::MediaIngressStats(data) => {
+                    info!("{:?}", data);
+                    Propagated::Noop
+                }
+                Event::MediaEgressStats(data) => {
+                    info!("{:?}", data);
+                    Propagated::Noop
+                }
+                Event::PeerStats(data) => {
+                    info!("{:?}", data);
+                    Propagated::Noop
+                }
                 _ => Propagated::Noop,
             },
         }
