@@ -167,6 +167,10 @@ impl<T> Iterator for IterOwned<T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.1 > 30 {
+            return None;
+        }
+
         let n = self.0 .0[self.1].take();
         if n.is_some() {
             self.1 += 1;
@@ -223,6 +227,21 @@ mod test {
             list
         };
         let sum: u64 = list.iter().sum();
+
+        assert_eq!(sum, 496);
+    }
+
+    #[test]
+    fn test_max_length_into_iter() {
+        let list = {
+            let mut list = ReportList::new();
+            for i in 1..=31 {
+                list.push(i);
+            }
+
+            list
+        };
+        let sum: u64 = list.into_iter().sum();
 
         assert_eq!(sum, 496);
     }
