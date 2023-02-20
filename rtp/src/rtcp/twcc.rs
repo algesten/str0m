@@ -99,6 +99,9 @@ impl Iterator for TwccIter {
             _ => unreachable!(),
         };
 
+        if let Some(new_timebase) = instant {
+            self.time_base = new_timebase;
+        }
         let seq: SeqNo = (self.base_seq + self.index as u64).into();
 
         self.index += 1;
@@ -1577,7 +1580,7 @@ mod test {
             Some((
                 12.into(),
                 PacketStatus::ReceivedSmallDelta,
-                Some(base + Duration::from_millis(23))
+                Some(base + Duration::from_millis(11))
             ))
         );
     }
@@ -1675,5 +1678,95 @@ mod test {
                 "Report should have recorded local_recv_time for {seq}"
             );
         }
+    }
+
+    #[test]
+    fn test_twcc_iter_correct_deltas() {
+        let twcc = Twcc {
+            sender_ssrc: 0.into(),
+            ssrc: 0.into(),
+            base_seq: 1,
+            status_count: 12,
+            reference_time: 1337,
+            feedback_count: 0,
+            chunks: [
+                PacketChunk::Run(PacketStatus::ReceivedSmallDelta, 2),
+                PacketChunk::VectorDouble(0b1101_0010_0101_0000, 7),
+                PacketChunk::Run(PacketStatus::ReceivedLargeOrNegativeDelta, 3),
+            ]
+            .into(),
+            delta: [
+                // Run of length 2
+                Delta::Small(10),
+                Delta::Small(15),
+                // Double status vector with 4 deltas
+                Delta::Small(7),
+                Delta::Large(280),
+                Delta::Small(3),
+                Delta::Small(13),
+                // Run of length 3
+                Delta::Large(-37),
+                Delta::Large(32),
+                Delta::Large(89),
+            ]
+            .into(),
+        };
+
+        let now = Instant::now();
+        let base = now + Duration::from_millis(1337 * 64);
+        let expeceted = vec![
+            (
+                1.into(),
+                PacketStatus::ReceivedSmallDelta,
+                Some(base + Duration::from_micros(10 * 250)),
+            ),
+            (
+                2.into(),
+                PacketStatus::ReceivedSmallDelta,
+                Some(base + Duration::from_micros(25 * 250)),
+            ),
+            (
+                3.into(),
+                PacketStatus::ReceivedSmallDelta,
+                Some(base + Duration::from_micros(32 * 250)),
+            ),
+            (4.into(), PacketStatus::NotReceived, None),
+            (
+                5.into(),
+                PacketStatus::ReceivedLargeOrNegativeDelta,
+                Some(base + Duration::from_micros(312 * 250)),
+            ),
+            (
+                6.into(),
+                PacketStatus::ReceivedSmallDelta,
+                Some(base + Duration::from_micros(315 * 250)),
+            ),
+            (
+                7.into(),
+                PacketStatus::ReceivedSmallDelta,
+                Some(base + Duration::from_micros(328 * 250)),
+            ),
+            (8.into(), PacketStatus::NotReceived, None),
+            (9.into(), PacketStatus::NotReceived, None),
+            (
+                10.into(),
+                PacketStatus::ReceivedLargeOrNegativeDelta,
+                Some(base + Duration::from_micros(291 * 250)),
+            ),
+            (
+                11.into(),
+                PacketStatus::ReceivedLargeOrNegativeDelta,
+                Some(base + Duration::from_micros(323 * 250)),
+            ),
+            (
+                12.into(),
+                PacketStatus::ReceivedLargeOrNegativeDelta,
+                Some(base + Duration::from_micros(412 * 250)),
+            ),
+        ];
+
+        let result: Vec<_> = twcc.into_iter(now, 1.into()).collect();
+
+        assert_eq!(result, expeceted);
     }
 }
