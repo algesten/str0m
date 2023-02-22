@@ -3,17 +3,30 @@ str0m
 
 Sync sans I/O WebRTC implementation in Rust.
 
+# Join us
+
+Currently discussing str0m things on the [webrtc-rs][4] discord server, in the [#str0m channel][5]. Join us!
+
 # State
 
 THIS IS NOT READY FOR PRODUCTION USE!
 
-But I have managed to transfer some kind of video.
+We have managed to transfer video and data.
 
 <image width="300px" src="https://user-images.githubusercontent.com/227204/209446544-f8a8d673-cb1b-4144-a0f2-42307b8d8869.gif" />
 
-# Join us
+## Maturity
 
-Currently discussing str0m things on the [webrtc-rs][4] discord server, in the [#str0m channel][5]. Join us!
+Str0m was originally developed by Martin Algesten of [Lookback][https://www.lookback.com]. We use str0m at
+Lookback for a specific use case: str0m as a server SFU (as opposed to peer-2-peer). That means we are heavily
+testing and developing the parts needed for our use case. Str0m is intended to be an all-purpose WebRTC
+library, which means it should also work for peer-2-peer (mostly thinking about the ICE agent), but
+these areas have not received as much attention and testing.
+
+While performance appears to be very good, only some attempts have been made to discover and optimize
+bottlenecks. For instance, while str0m probably never be allocation free, there might be unnecessary
+allocations and cloning that could be improved. Another area is to make sure the crypto parts use
+efficient algorithms and hardware acceleration as far as possible.
 
 # Overview
 
@@ -34,14 +47,6 @@ Currently discussing str0m things on the [webrtc-rs][4] discord server, in the [
              +-------+        +---------+
              | Media |        | Channel |- - - - - - +
              +-------+        +---------+
-                 |
-                 |
-       +---------+---------+
-       |                   |
-       |                   |
- - - - - - - -      - - - - - - - -
-|SenderSource |    |ReceiverSource |
- - - - - - - -      - - - - - - - -
  ```
 
 # Usage
@@ -201,6 +206,36 @@ Sans I/O is a pattern where we turn both network input/output as well as time pa
 input to the API. This means str0m has no internal threads, just an enormous state machine that
 is driven forward by different kinds of input.
 
+## Sample or RTP level?
+
+All codecs such as h264, vp8, vp9 outputs what we call "Samples" where a sample is a time coded
+chunk of encoded data that typically represents one frame. Samples are not suitable to use directly in
+UDP (RTP) packets - for one they are too big. Samples are therefore further chunked up by codec specific
+packetizers into RTP packets.
+
+Str0m's API currently operate on the "sample level". From an architectural point of view, all things
+RTP are considered an internal detail that are largely abstracted away from the user. This is different from
+many other RTP libraries where the RTP packets themselves are the the API surface towards the user
+(when building an SFU one would often talk about "forwarding RTP packets", while with str0m
+we would "forward samples").
+
+Whether this is a good idea is still an open question. It certainly makes for cleaner abstractions. However
+plans for an RTP level API are also there: https://github.com/algesten/str0m/issues/5
+
+## NIC enumeration and TURN (and STUN)
+
+The [ICE RFC][6] talks about "gathering ice candidates". This means inspecting the local network interfaces
+and potentially binding UDP sockets on each usable interface. Since str0m is Sans I/O, this part is
+outside the scope of what str0m does. How the user figures out local IP addresses, via config or via
+looking up local NICs is not something str0m cares about.
+
+TURN is a way of obtaining IP addresses that can be used as fallback in case direct connections
+fail. We consider TURN similar to enumerating local network interfaces – it's a way of obtaining sockets.
+
+All discovered candidates, be they local (NIC) or remote sockets (TURN), are added to str0m and str0m
+will perform the task of ICE agent, forming "candidate pairs" and figuring out the best connection while
+the actual task of sending the network traffic is left to the user.
+
 ### Input
 
 1. Incoming network data
@@ -275,6 +310,7 @@ Dec 18 11:33:06.907  INFO str0m: MediaData(MediaData { mid: Mid(0), pt: Pt(104),
 [3]: https://github.com/pion/webrtc
 [4]: https://github.com/webrtc-rs/webrtc
 [5]: https://discord.com/channels/800204819540869120/1057785575219941497
+[6]: https://www.rfc-editor.org/rfc/rfc8445#page-8
 
 ----
 
