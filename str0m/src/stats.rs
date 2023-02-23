@@ -93,7 +93,8 @@ pub struct MediaEgressStats {
     pub nacks: u64,
     /// Round-trip-time (ms) extracted from the last RTCP receiver report.
     pub rtt: Option<f32>,
-    /// Fraction of packets lost extracted from the last RTCP receiver report.
+    /// Fraction of packets lost averaged from the RTCP receiver reports received.
+    /// `None` if no reports have been received since the last event
     pub loss: Option<f32>,
     /// Timestamp when this event was generated
     pub timestamp: Instant,

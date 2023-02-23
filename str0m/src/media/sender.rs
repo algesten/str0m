@@ -1,8 +1,8 @@
 use std::time::Instant;
 
 use rtp::{
-    Descriptions, InstantExt, MediaTime, Mid, ReceptionReport, ReportList, Rid, Sdes, SdesType,
-    SenderInfo,
+    extend_seq, Descriptions, InstantExt, MediaTime, Mid, ReceptionReport, ReportList, Rid, Sdes,
+    SdesType, SenderInfo,
 };
 use rtp::{SenderReport, SeqNo, Ssrc};
 
@@ -34,7 +34,8 @@ pub(crate) struct SenderSource {
     // round trip time (ms)
     // Can be null in case of missing or bad reports
     rtt: Option<f32>,
-    loss: Option<f32>,
+    // losses collecter from RR (known packets, lost ratio)
+    losses: Vec<(u64, f32)>,
     // The last media time (RTP time) and wallclock that was written.
     rtp_and_wallclock: Option<(MediaTime, Instant)>,
 }
@@ -59,7 +60,7 @@ impl SenderSource {
             plis: 0,
             nacks: 0,
             rtt: None,
-            loss: None,
+            losses: Vec::new(),
             rtp_and_wallclock: None,
         }
     }
@@ -148,15 +149,46 @@ impl SenderSource {
         let rtt = calculate_rtt_ms(ntp_time, r.last_sr_delay, r.last_sr_time);
         self.rtt = rtt;
 
-        self.loss = Some(r.fraction_lost as f32 / u8::MAX as f32);
+        let ext_seq = {
+            let prev = self.losses.last().map(|s| s.0).unwrap_or(r.max_seq as u64);
+            let next = (r.max_seq & 0xffff) as u16;
+            extend_seq(Some(prev), next)
+        };
+
+        self.losses
+            .push((ext_seq, r.fraction_lost as f32 / u8::MAX as f32));
     }
 
-    pub fn visit_stats(&self, now: Instant, mid: Mid, snapshot: &mut StatsSnapshot) {
+    pub fn visit_stats(&mut self, now: Instant, mid: Mid, snapshot: &mut StatsSnapshot) {
         if self.bytes == 0 {
             return;
         }
         let main = !self.is_rtx();
         let key = (mid, self.rid);
+
+        let loss = if main {
+            let mut value = 0_f32;
+            let mut total_weight = 0_u64;
+
+            // just in case we received RRs out of order
+            self.losses.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+            // average known RR losses weighted by their number of packets
+            for it in self.losses.windows(2) {
+                let [prev, next] = it else { continue };
+                let weight = next.0.saturating_sub(prev.0);
+                value += next.1 * weight as f32;
+                total_weight += weight;
+            }
+
+            let result = value / total_weight as f32;
+            result.is_finite().then_some(result)
+        } else {
+            None
+        };
+
+        self.losses.drain(..self.losses.len().saturating_sub(1));
+
         if let Some(stat) = snapshot.egress.get_mut(&key) {
             stat.bytes += self.bytes;
             stat.packets += self.packets;
@@ -165,7 +197,7 @@ impl SenderSource {
             stat.nacks += self.nacks;
             if main {
                 stat.rtt = self.rtt;
-                stat.loss = self.loss;
+                stat.loss = loss;
             }
         } else {
             snapshot.egress.insert(
@@ -179,7 +211,7 @@ impl SenderSource {
                     plis: self.plis,
                     nacks: self.nacks,
                     rtt: if main { self.rtt } else { None },
-                    loss: if main { self.loss } else { None },
+                    loss: if main { loss } else { None },
                     timestamp: now,
                 },
             );
