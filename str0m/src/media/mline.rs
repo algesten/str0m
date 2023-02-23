@@ -982,11 +982,11 @@ impl MLine {
         (self.sources_tx.len() as isize - self.sources_rx.len() as isize).unsigned_abs()
     }
 
-    pub fn visit_stats(&self, now: Instant, snapshot: &mut StatsSnapshot) {
+    pub fn visit_stats(&mut self, now: Instant, snapshot: &mut StatsSnapshot) {
         for s in &self.sources_rx {
             s.visit_stats(now, self.mid, snapshot);
         }
-        for s in &self.sources_tx {
+        for s in &mut self.sources_tx {
             s.visit_stats(now, self.mid, snapshot);
         }
     }
