@@ -1,6 +1,6 @@
 [package]
-name = "packet"
-version = "0.1.0"
+name = "str0m-packet"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]
@@ -8,5 +8,5 @@ tracing = "0.1"
 thiserror = "1"
 rand = "0.8"
 #
-rtp = { path = "../rtp" }
-sdp = { path = "../sdp" }
+rtp = { path = "../rtp", package = "str0m-rtp", version = "0.0.1" }
+sdp = { path = "../sdp", package = "str0m-sdp", version = "0.0.1" }

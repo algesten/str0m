@@ -1,6 +1,6 @@
 [package]
-name = "sdp"
-version = "0.1.0"
+name = "str0m-sdp"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]
@@ -9,9 +9,9 @@ thiserror = "1"
 serde = "1"
 combine = "4"
 #
-dtls = { path = "../dtls" }
-ice = { path = "../ice" }
-rtp = { path = "../rtp" }
+dtls = { path = "../dtls", package = "str0m-dtls", version = "0.0.1" }
+ice = { path = "../ice", package = "str0m-ice", version = "0.0.1" }
+rtp = { path = "../rtp", package = "str0m-rtp", version = "0.0.1" }
 
 [dev-dependencies]
 serde_json = "1.0"

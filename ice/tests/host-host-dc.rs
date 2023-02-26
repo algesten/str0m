@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use ice::{IceAgentEvent, IceAgentStats, IceConnectionState};
+use str0m_ice::{IceAgentEvent, IceAgentStats, IceConnectionState};
 use tracing::info_span;
 
 mod common;

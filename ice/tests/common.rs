@@ -3,8 +3,8 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
 
-use ice::{Candidate, IceAgent, IceAgentEvent};
 use net::Receive;
+use str0m_ice::{Candidate, IceAgent, IceAgentEvent};
 use tracing::Span;
 
 pub fn init_log() {
@@ -147,7 +147,7 @@ pub fn progress(a1: &mut TestAgent, a2: &mut TestAgent) {
 
     while let Some(v) = t.span.in_scope(|| t.agent.poll_event()) {
         println!("Polled event: {v:?}");
-        use ice::IceAgentEvent::*;
+        use str0m_ice::IceAgentEvent::*;
         f.span.in_scope(|| {
             if let IceRestart(v) = &v {
                 f.agent.set_remote_credentials(v.clone())

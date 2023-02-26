@@ -1,6 +1,6 @@
 [package]
-name = "ice"
-version = "0.1.0"
+name = "str0m-ice"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]
@@ -8,7 +8,7 @@ tracing = "0.1"
 thiserror = "1"
 rand = "0.8"
 #
-net = { path = "../net" }
+net = { path = "../net", package = "str0m-net", version = "0.0.1" }
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }

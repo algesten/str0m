@@ -1,6 +1,6 @@
 [package]
-name = "sctp"
-version = "0.1.0"
+name = "str0m-sctp"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]

@@ -1,3 +1,7 @@
+//! This crate is an internal detail of [str0m](https://crates.io/crates/str0m).
+//!
+//! No guarantees are made about the stability of the API. Do not use.
+
 #![cfg_attr(fuzzing, feature(no_coverage))]
 #![allow(clippy::manual_range_contains)]
 #![allow(clippy::new_without_default)]

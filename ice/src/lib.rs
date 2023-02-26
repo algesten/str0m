@@ -1,3 +1,7 @@
+//! This crate is an internal detail of [str0m](https://crates.io/crates/str0m).
+//!
+//! No guarantees are made about the stability of the API. Do not use.
+
 #![allow(clippy::new_without_default)]
 #![allow(clippy::bool_to_int_with_if)]
 

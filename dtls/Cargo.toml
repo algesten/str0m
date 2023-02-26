@@ -1,6 +1,6 @@
 [package]
-name = "dtls"
-version = "0.1.0"
+name = "str0m-dtls"
+version = "0.0.1"
 edition = "2021"
 
 [dependencies]
@@ -10,4 +10,4 @@ thiserror = "1"
 openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = "^0.9"
 #
-net = { path = "../net" }
+net = { path = "../net", package = "str0m-net", version = "0.0.1" }
