@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use rtp::{Nack, NackEntry, ReceptionReport, ReportList, SeqNo};
+use rtp_::{Nack, NackEntry, ReceptionReport, ReportList, SeqNo};
 
 const MAX_DROPOUT: u64 = 3000;
 const MAX_MISORDER: u64 = 100;

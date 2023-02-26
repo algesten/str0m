@@ -2,10 +2,9 @@
 
 use std::time::Instant;
 
-use rtp::VideoOrientation;
+pub use rtp_::VideoOrientation;
 
-pub use packet::RtpMeta;
-pub use rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
+pub use rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
 pub use sdp::{Codec, FormatParams};
 
 use crate::{Input, Rtc, RtcError};
@@ -27,6 +26,12 @@ mod register;
 
 mod mline;
 pub(crate) use mline::{MLine, Source};
+
+/// Half internal structures regarding RTP level.
+pub mod rtp {
+    pub use packet::RtpMeta;
+    pub use rtp_::{ExtensionValues, RtpHeader, SeqNo, Ssrc};
+}
 
 /// Audio or video media. An m-line in the SDP.
 ///

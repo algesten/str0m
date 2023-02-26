@@ -2,15 +2,14 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use net_::{Id, DATAGRAM_MTU};
-use packet::{
-    DepacketizingBuffer, Packetized, PacketizedMeta, PacketizingBuffer, QueueId, QueueState,
-};
-use rtp::{Extensions, Fir, FirEntry, NackEntry, Pli, Rtcp};
-use rtp::{RtcpFb, RtpHeader, SdesType};
-use rtp::{SeqNo, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
+use packet::{DepacketizingBuffer, PacketKind, Packetized};
+use packet::{PacketizedMeta, PacketizingBuffer, QueueId, QueueState};
+use rtp_::{Extensions, Fir, FirEntry, NackEntry, Pli, Rtcp};
+use rtp_::{RtcpFb, RtpHeader, SdesType};
+use rtp_::{SeqNo, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
-pub use packet::{PacketKind, RtpMeta};
-pub use rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
+pub use packet::RtpMeta;
+pub use rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 pub use sdp::{Codec, FormatParams};
 
 use sdp::{MediaLine, MediaType, Msid, Simulcast as SdpSimulcast};

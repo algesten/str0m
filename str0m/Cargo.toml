@@ -12,8 +12,8 @@ serde = "1"
 #
 dtls = { path = "../dtls", package = "str0m-dtls", version = "0.0.1" }
 ice = { path = "../ice", package = "str0m-ice", version = "0.0.1" }
-net_ = { package = "str0m-net", path = "../net", version = "0.0.1" }
-rtp = { path = "../rtp", package = "str0m-rtp", version = "0.0.1" }
+net_ = { path = "../net", package = "str0m-net", pversion = "0.0.1" }
+rtp_ = { path = "../rtp", package = "str0m-rtp", version = "0.0.1" }
 sdp = { path = "../sdp", package = "str0m-sdp", version = "0.0.1" }
 packet = { path = "../packet", package = "str0m-packet", version = "0.0.1" }
 sctp = { path = "../sctp", package = "str0m-sctp", version = "0.0.1" }

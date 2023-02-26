@@ -33,6 +33,7 @@ struct Entry {
 }
 
 impl RtpMeta {
+    #[doc(hidden)]
     pub fn new(received: Instant, time: MediaTime, seq_no: SeqNo, header: RtpHeader) -> Self {
         RtpMeta {
             received,
