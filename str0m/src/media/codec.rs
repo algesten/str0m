@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use sdp::{CodecSpec, PayloadParams as SdpPayloadParams};
 
-use rtp::Pt;
+use rtp_::Pt;
 use sdp::{Codec, FormatParams};
 
 use super::MediaKind;

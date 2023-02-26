@@ -1,10 +1,10 @@
 use std::time::Instant;
 
-use rtp::{
+use rtp_::{
     extend_seq, Descriptions, InstantExt, MediaTime, Mid, ReceptionReport, ReportList, Rid, Sdes,
     SdesType, SenderInfo,
 };
-use rtp::{SenderReport, SeqNo, Ssrc};
+use rtp_::{SenderReport, SeqNo, Ssrc};
 
 use crate::{
     stats::{MediaEgressStats, StatsSnapshot},
@@ -218,7 +218,7 @@ impl SenderSource {
         }
     }
 
-    pub fn update_clocks(&mut self, rtp_time: rtp::MediaTime, wallclock: Instant) {
+    pub fn update_clocks(&mut self, rtp_time: MediaTime, wallclock: Instant) {
         self.rtp_and_wallclock = Some((rtp_time, wallclock));
     }
 }

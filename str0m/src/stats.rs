@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::Mid;
-use rtp::Rid;
+use rtp_::Rid;
 
 pub(crate) struct Stats {
     last_now: Instant,

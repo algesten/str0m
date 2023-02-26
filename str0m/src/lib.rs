@@ -66,7 +66,7 @@ use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use net_::DatagramRecv;
-use rtp::InstantExt;
+use rtp_::{InstantExt, Ssrc};
 use sctp::{RtcSctp, SctpEvent};
 use sdp::{Sdp, Setup};
 use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent};
@@ -88,7 +88,7 @@ pub mod error {
     pub use ice::IceError;
     pub use net_::NetError;
     pub use packet::PacketError;
-    pub use rtp::RtpError;
+    pub use rtp_::RtpError;
     pub use sctp::{ProtoError, SctpError};
     pub use sdp::SdpError;
 }
@@ -99,7 +99,7 @@ use channel::{Channel, ChannelData, ChannelId};
 pub mod media;
 use media::{CodecConfig, Direction, KeyframeRequest, Media};
 use media::{KeyframeRequestKind, MediaChanged, MediaData};
-use media::{MLine, MediaAdded, Mid, Pt, Rid, Ssrc};
+use media::{MLine, MediaAdded, Mid, Pt, Rid};
 
 pub use packet::{CodecExtra, Vp8CodecExtra};
 

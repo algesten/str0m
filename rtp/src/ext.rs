@@ -695,11 +695,16 @@ impl fmt::Debug for Extensions {
     }
 }
 
+/// How the video is rotated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VideoOrientation {
+    /// Not rotated.
     Deg0 = 0,
+    /// 90 degress clockwise.
     Deg90 = 3,
+    /// Upside down.
     Deg180 = 2,
+    /// 90 degrees counter clockwise.
     Deg270 = 1,
 }
 

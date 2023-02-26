@@ -1,6 +1,6 @@
 use dtls::Fingerprint;
 use ice::{Candidate, IceCreds};
-use rtp::{Extension, Mid};
+use rtp_::{Extension, Mid};
 use sdp::{Answer, MediaAttribute, MediaLine, MediaType, SimulcastGroups, SimulcastOption};
 use sdp::{Offer, Proto, Sdp, SessionAttribute, Setup};
 

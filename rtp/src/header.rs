@@ -3,6 +3,7 @@
 use crate::ext::{ExtensionValues, Extensions};
 use crate::{Pt, SeqNo, Ssrc};
 
+/// Parsed header from an RTP packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtpHeader {
     pub version: u8,
@@ -20,6 +21,7 @@ pub struct RtpHeader {
 }
 
 impl RtpHeader {
+    #[doc(hidden)]
     pub fn write_to(&self, buf: &mut [u8], exts: &Extensions) -> usize {
         buf[0] = 0b10_0_0_0000
             | if self.has_padding { 1 << 5 } else { 0 }
@@ -51,6 +53,7 @@ impl RtpHeader {
         16 + ext_len
     }
 
+    #[doc(hidden)]
     pub fn pad_packet(
         buf: &mut [u8],
         header_len: usize,
@@ -76,6 +79,7 @@ impl RtpHeader {
         pad
     }
 
+    #[doc(hidden)]
     pub fn parse(buf: &[u8], exts: &Extensions) -> Option<RtpHeader> {
         let orig_len = buf.len();
         if buf.len() < 12 {
@@ -182,18 +186,21 @@ impl RtpHeader {
     }
 
     /// For RTX the original sequence number is inserted before the RTP payload.
+    #[doc(hidden)]
     pub fn read_original_sequence_number(buf: &[u8], seq_no: &mut u16) -> usize {
         *seq_no = u16::from_be_bytes([buf[0], buf[1]]);
         2
     }
 
     /// For RTX the original sequence number is inserted before the RTP payload.
+    #[doc(hidden)]
     pub fn write_original_sequence_number(buf: &mut [u8], seq_no: SeqNo) -> usize {
         let seq_u16 = (*seq_no) as u16;
         buf[0..2].copy_from_slice(&seq_u16.to_be_bytes());
         2
     }
 
+    #[doc(hidden)]
     pub fn is_rtx_null_packet(buf: &[u8]) -> bool {
         buf[0..10] == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     }
@@ -201,6 +208,7 @@ impl RtpHeader {
     /// Sequencer number of this RTP header given the previous number.
     ///
     /// The logic detects wrap-arounds of the 16-bit RTP sequence number.
+    #[doc(hidden)]
     pub fn sequence_number(&self, previous: Option<SeqNo>) -> SeqNo {
         let e_seq = extend_seq(previous.map(|v| *v), self.sequence_number);
         e_seq.into()

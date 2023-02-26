@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
 use net_::Id;
-use rtp::{ChannelId, Direction, Extensions, Mid, Ssrc};
+use rtp_::{ChannelId, Direction, Extensions, Mid, Ssrc};
 use sctp::{DcepOpen, ReliabilityType};
 use sdp::{MediaLine, Msid, Offer};
 
