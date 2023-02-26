@@ -1,4 +1,4 @@
-use ice::IceAgentStats;
+use str0m_ice::IceAgentStats;
 use tracing::info_span;
 
 mod common;
