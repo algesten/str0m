@@ -52,9 +52,10 @@ pub fn unidirectional() -> Result<(), RtcError> {
         let dur_l: Duration = time_l.into();
         while l.duration() > dur_l {
             let wallclock = l.start + Duration::from_micros(time_l.as_micros() as u64);
+            let now = wallclock; // NB these are not the same in actual code.
             let free = l
                 .media(mid)
-                .map(|mut m| m.writer(pt).write(wallclock, time_l, &data_a))
+                .map(|mut m| m.writer(pt, now).write(wallclock, time_l, &data_a))
                 .unwrap()?;
             time_l = time_l + STEP;
             if free == 0 {

@@ -8,7 +8,7 @@ pub use packet::RtpMeta;
 pub use rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 pub use sdp::{Codec, FormatParams};
 
-use crate::{Rtc, RtcError};
+use crate::{Input, Rtc, RtcError};
 
 mod event;
 pub use event::*;
@@ -109,6 +109,10 @@ impl Media<'_> {
     /// parameters with the configured ones in this `Media` instance. It's also possible to
     /// manually match the codec using [`Media::payload_params()`].
     ///
+    /// The `now` parameter is required to know the exact time the data is enqueued. This has a
+    /// side effect of driving the time of the `Rtc` instance forward. I.e. passing the `now` here
+    /// is the same driving time forward with `handle_input()`.
+    ///
     /// `rid` is [Rtp Stream Identifier][1]. In classic RTP, individual RTP packets are identified
     /// via an RTP header value `SSRC` (Synchronization Source). However it's been proposed to send
     /// the RID in a header extension as an alternative way, making SSRC less important. Currently
@@ -121,6 +125,7 @@ impl Media<'_> {
     /// ```no_run
     /// # use str0m::{Rtc};
     /// # use str0m::media::{PayloadParams, MediaData, Mid};
+    /// # use std::time::Instant;
     /// let mut rtc = Rtc::new();
     ///
     /// // add candidates, do SDP negotation
@@ -134,11 +139,16 @@ impl Media<'_> {
     /// // Match incoming PT to an outgoing PT.
     /// let pt = media.match_params(data.params).unwrap();
     ///
-    /// media.writer(pt).write(data.network_time, data.time, &data.data).unwrap();
+    /// media.writer(pt, Instant::now()).write(data.network_time, data.time, &data.data).unwrap();
     /// ```
     ///
     /// [1]: https://datatracker.ietf.org/doc/html/rfc8852
-    pub fn writer(&mut self, pt: Pt) -> Writer<'_> {
+    pub fn writer(&mut self, pt: Pt, now: Instant) -> Writer<'_> {
+        // Handle_input with a Input::Timeout can't fail, hence the expect.
+        self.rtc
+            .handle_input(Input::Timeout(now))
+            .expect("handle_input timeout to be ok");
+
         self.m_line_mut().writer(pt)
     }
 
@@ -201,6 +211,7 @@ impl Media<'_> {
 /// ```no_run
 /// # use str0m::{Rtc};
 /// # use str0m::media::{PayloadParams, MediaData, Mid};
+/// # use std::time::Instant;
 /// let mut rtc = Rtc::new();
 ///
 /// // add candidates, do SDP negotation
@@ -216,7 +227,7 @@ impl Media<'_> {
 /// let pt = media.match_params(data.params).unwrap();
 ///
 /// // Send data with video orientation added.
-/// media.writer(pt)
+/// media.writer(pt, Instant::now())
 ///     .video_orientation(video_orientation)
 ///     .write(data.network_time, data.time, &data.data).unwrap();
 /// ```
