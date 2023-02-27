@@ -20,6 +20,7 @@ mod opus;
 use opus::{OpusDepacketizer, OpusPacketizer};
 
 mod vp8;
+pub use vp8::Vp8CodecExtra;
 use vp8::{Vp8Depacketizer, Vp8Packetizer};
 
 mod vp9;
@@ -39,12 +40,28 @@ pub trait Packetizer: fmt::Debug {
     fn packetize(&mut self, mtu: usize, b: &[u8]) -> Result<Vec<Vec<u8>>, PacketError>;
 }
 
+/// Codec specific information
+///
+/// Contains additional codec specific information which are deemed useful for
+/// managing and repackaging the sample
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodecExtra {
+    /// No extra information available
+    None,
+    Vp8(Vp8CodecExtra),
+}
+
 /// Depacketizes an RTP payload.
 ///
 /// Removes any RTP specific data from the payload.
 pub trait Depacketizer: fmt::Debug {
     /// Unpack the RTP packet into a provided `Vec<u8>`.
-    fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError>;
+    fn depacketize(
+        &mut self,
+        packet: &[u8],
+        out: &mut Vec<u8>,
+        codec_extra: &mut CodecExtra,
+    ) -> Result<(), PacketError>;
 
     /// Checks if the packet is at the beginning of a partition.
     ///
@@ -184,15 +201,20 @@ impl Packetizer for CodecPacketizer {
 }
 
 impl Depacketizer for CodecDepacketizer {
-    fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
+    fn depacketize(
+        &mut self,
+        packet: &[u8],
+        out: &mut Vec<u8>,
+        extra: &mut CodecExtra,
+    ) -> Result<(), PacketError> {
         use CodecDepacketizer::*;
         match self {
-            H264(v) => v.depacketize(packet, out),
-            H265(v) => v.depacketize(packet, out),
-            Opus(v) => v.depacketize(packet, out),
-            Vp8(v) => v.depacketize(packet, out),
-            Vp9(v) => v.depacketize(packet, out),
-            Boxed(v) => v.depacketize(packet, out),
+            H264(v) => v.depacketize(packet, out, extra),
+            H265(v) => v.depacketize(packet, out, extra),
+            Opus(v) => v.depacketize(packet, out, extra),
+            Vp8(v) => v.depacketize(packet, out, extra),
+            Vp9(v) => v.depacketize(packet, out, extra),
+            Boxed(v) => v.depacketize(packet, out, extra),
         }
     }
 

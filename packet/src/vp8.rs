@@ -1,6 +1,20 @@
-use crate::{BitRead, Depacketizer, PacketError, Packetizer};
+use crate::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
 
 pub const VP8_HEADER_SIZE: usize = 1;
+
+/// Vp8 information describing the depacketized / packetized data
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Vp8CodecExtra {
+    /// True if the frame can be discarded safely, without causing decoding problems
+    /// No other frames are encoded depending on this frame
+    pub discardable: bool,
+    /// True if the frame is encoded only depending on a frame on layer 0.
+    /// This attribute can only be true for frames on layer 1
+    pub sync: bool,
+    /// Index of the vp8 temporal layer.
+    /// Only 2 layers are possible in WebRTC
+    pub layer_index: u8,
+}
 
 /// Packetizes VP8 RTP packets.
 #[derive(Default, Debug, Copy, Clone)]
@@ -136,7 +150,12 @@ pub struct Vp8Depacketizer {
 
 impl Depacketizer for Vp8Depacketizer {
     /// depacketize parses the passed byte slice and stores the result in the VP8Packet this method is called upon
-    fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
+    fn depacketize(
+        &mut self,
+        packet: &[u8],
+        out: &mut Vec<u8>,
+        extra: &mut CodecExtra,
+    ) -> Result<(), PacketError> {
         let payload_len = packet.len();
         if payload_len < 4 {
             return Err(PacketError::ErrShortPacket);
@@ -219,6 +238,12 @@ impl Depacketizer for Vp8Depacketizer {
         }
 
         out.extend_from_slice(&packet[payload_index..]);
+
+        *extra = CodecExtra::Vp8(Vp8CodecExtra {
+            discardable: self.n == 1,
+            sync: self.y == 1,
+            layer_index: self.tid,
+        });
         Ok(())
     }
 
@@ -243,36 +268,38 @@ mod test {
     #[test]
     fn test_vp8_unmarshal() -> Result<(), PacketError> {
         let mut pck = Vp8Depacketizer::default();
+        let mut extra = CodecExtra::None;
 
         // Empty packet
         let empty_bytes = &[];
         let mut payload = Vec::new();
-        let result = pck.depacketize(empty_bytes, &mut payload);
+        let result = pck.depacketize(empty_bytes, &mut payload, &mut extra);
         assert!(result.is_err(), "Result should be err in case of error");
 
         // Payload smaller than header size
         let small_bytes = &[0x00, 0x11, 0x22];
         let mut payload = Vec::new();
-        let result = pck.depacketize(small_bytes, &mut payload);
+        let result = pck.depacketize(small_bytes, &mut payload, &mut extra);
         assert!(result.is_err(), "Result should be err in case of error");
 
         // Payload smaller than header size
         let small_bytes = &[0x00, 0x11];
         let mut payload = Vec::new();
-        let result = pck.depacketize(small_bytes, &mut payload);
+        let result = pck.depacketize(small_bytes, &mut payload, &mut extra);
         assert!(result.is_err(), "Result should be err in case of error");
 
         // Normal packet
         let raw_bytes = &[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x90];
         let mut payload = Vec::new();
-        pck.depacketize(raw_bytes, &mut payload)
+        pck.depacketize(raw_bytes, &mut payload, &mut extra)
             .expect("Normal packet");
         assert!(!payload.is_empty(), "Payload must be not empty");
 
         // Header size, only X
         let raw_bytes = &[0x80, 0x00, 0x00, 0x00];
         let mut payload = Vec::new();
-        pck.depacketize(raw_bytes, &mut payload).expect("Only X");
+        pck.depacketize(raw_bytes, &mut payload, &mut extra)
+            .expect("Only X");
         assert!(!payload.is_empty(), "Payload must be not empty");
         assert_eq!(pck.x, 1, "X must be 1");
         assert_eq!(pck.i, 0, "I must be 0");
@@ -283,7 +310,7 @@ mod test {
         // Header size, X and I, PID 16bits
         let raw_bytes = &[0x80, 0x80, 0x81, 0x00, 0x00];
         let mut payload = Vec::new();
-        pck.depacketize(raw_bytes, &mut payload)
+        pck.depacketize(raw_bytes, &mut payload, &mut extra)
             .expect("X and I, PID 16bits");
         assert!(!payload.is_empty(), "Payload must be not empty");
         assert_eq!(pck.x, 1, "X must be 1");
@@ -295,7 +322,8 @@ mod test {
         // Header size, X and L
         let raw_bytes = &[0x80, 0x40, 0x00, 0x00];
         let mut payload = Vec::new();
-        pck.depacketize(raw_bytes, &mut payload).expect("X and L");
+        pck.depacketize(raw_bytes, &mut payload, &mut extra)
+            .expect("X and L");
         assert!(!payload.is_empty(), "Payload must be not empty");
         assert_eq!(pck.x, 1, "X must be 1");
         assert_eq!(pck.i, 0, "I must be 0");
@@ -306,7 +334,8 @@ mod test {
         // Header size, X and T
         let raw_bytes = &[0x80, 0x20, 0x00, 0x00];
         let mut payload = Vec::new();
-        pck.depacketize(raw_bytes, &mut payload).expect("X and T");
+        pck.depacketize(raw_bytes, &mut payload, &mut extra)
+            .expect("X and T");
         assert!(!payload.is_empty(), "Payload must be not empty");
         assert_eq!(pck.x, 1, "X must be 1");
         assert_eq!(pck.i, 0, "I must be 0");
@@ -317,7 +346,8 @@ mod test {
         // Header size, X and K
         let raw_bytes = &[0x80, 0x10, 0x00, 0x00];
         let mut payload = Vec::new();
-        pck.depacketize(raw_bytes, &mut payload).expect("X and K");
+        pck.depacketize(raw_bytes, &mut payload, &mut extra)
+            .expect("X and K");
         assert!(!payload.is_empty(), "Payload must be not empty");
         assert_eq!(pck.x, 1, "X must be 1");
         assert_eq!(pck.i, 0, "I must be 0");
@@ -328,7 +358,7 @@ mod test {
         // Header size, all flags and 8bit picture_id
         let raw_bytes = &[0xff, 0xff, 0x00, 0x00, 0x00, 0x00];
         let mut payload = Vec::new();
-        pck.depacketize(raw_bytes, &mut payload)
+        pck.depacketize(raw_bytes, &mut payload, &mut extra)
             .expect("all flags and 8bit picture_id");
         assert!(!payload.is_empty(), "Payload must be not empty");
         assert_eq!(pck.x, 1, "X must be 1");
@@ -340,7 +370,7 @@ mod test {
         // Header size, all flags and 16bit picture_id
         let raw_bytes = &[0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x00];
         let mut payload = Vec::new();
-        pck.depacketize(raw_bytes, &mut payload)
+        pck.depacketize(raw_bytes, &mut payload, &mut extra)
             .expect("all flags and 16bit picture_id");
         assert!(!payload.is_empty(), "Payload must be not empty");
         assert_eq!(pck.x, 1, "X must be 1");

@@ -1,6 +1,6 @@
 #![allow(clippy::all)]
 
-use crate::{Depacketizer, PacketError, Packetizer};
+use crate::{CodecExtra, Depacketizer, PacketError, Packetizer};
 
 /// Packetizes H264 RTP packets.
 #[derive(Default, Debug, Clone)]
@@ -198,7 +198,12 @@ pub struct H264Depacketizer {
 
 impl Depacketizer for H264Depacketizer {
     /// depacketize parses the passed byte slice and stores the result in the H264Packet this method is called upon
-    fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
+    fn depacketize(
+        &mut self,
+        packet: &[u8],
+        out: &mut Vec<u8>,
+        _: &mut CodecExtra,
+    ) -> Result<(), PacketError> {
         if packet.len() <= 2 {
             return Err(PacketError::ErrShortPacket);
         }
@@ -417,14 +422,16 @@ mod test {
             ..Default::default()
         };
 
+        let mut extra = CodecExtra::None;
+
         let data = &[];
         let mut out = Vec::new();
-        let result = pkt.depacketize(data, &mut out);
+        let result = pkt.depacketize(data, &mut out, &mut extra);
         assert!(result.is_err(), "Unmarshal did not fail on nil payload");
 
         let data = &[0x00, 0x00];
         let mut out = Vec::new();
-        let result = pkt.depacketize(data, &mut out);
+        let result = pkt.depacketize(data, &mut out, &mut extra);
         assert!(
             result.is_err(),
             "Unmarshal accepted a packet that is too small for a payload and header"
@@ -432,28 +439,28 @@ mod test {
 
         let data = &[0xFF, 0x00, 0x00];
         let mut out = Vec::new();
-        let result = pkt.depacketize(data, &mut out);
+        let result = pkt.depacketize(data, &mut out, &mut extra);
         assert!(
             result.is_err(),
             "Unmarshal accepted a packet with a NALU Type we don't handle"
         );
 
         let mut out = Vec::new();
-        let result = pkt.depacketize(incomplete_single_payload_multi_nalu, &mut out);
+        let result = pkt.depacketize(incomplete_single_payload_multi_nalu, &mut out, &mut extra);
         assert!(
             result.is_err(),
             "Unmarshal accepted a STAP-A packet with insufficient data"
         );
 
         let mut out = Vec::new();
-        pkt.depacketize(single_payload, &mut out)?;
+        pkt.depacketize(single_payload, &mut out, &mut extra)?;
         assert_eq!(
             out, single_payload_unmarshaled,
             "Unmarshaling a single payload shouldn't modify the payload"
         );
 
         let mut out = Vec::new();
-        avc_pkt.depacketize(single_payload, &mut out)?;
+        avc_pkt.depacketize(single_payload, &mut out, &mut extra)?;
         assert_eq!(
             out, single_payload_unmarshaled_avc,
             "Unmarshaling a single payload into avc stream shouldn't modify the payload"
@@ -461,7 +468,7 @@ mod test {
 
         let mut large_out = Vec::new();
         for p in &large_payload_packetized {
-            pkt.depacketize(*p, &mut large_out)?;
+            pkt.depacketize(*p, &mut large_out, &mut extra)?;
         }
         assert_eq!(
             large_out, large_payload,
@@ -470,7 +477,7 @@ mod test {
 
         let mut large_out_avc = Vec::new();
         for p in &large_payload_packetized {
-            avc_pkt.depacketize(*p, &mut large_out_avc)?;
+            avc_pkt.depacketize(*p, &mut large_out_avc, &mut extra)?;
         }
         assert_eq!(
             large_out_avc, large_payload_avc,
@@ -478,14 +485,14 @@ mod test {
         );
 
         let mut out = Vec::new();
-        pkt.depacketize(single_payload_multi_nalu, &mut out)?;
+        pkt.depacketize(single_payload_multi_nalu, &mut out, &mut extra)?;
         assert_eq!(
             out, single_payload_multi_nalu_unmarshaled,
             "Failed to unmarshal a single packet with multiple NALUs"
         );
 
         let mut out = Vec::new();
-        avc_pkt.depacketize(single_payload_multi_nalu, &mut out)?;
+        avc_pkt.depacketize(single_payload_multi_nalu, &mut out, &mut extra)?;
         assert_eq!(
             out, single_payload_multi_nalu_unmarshaled_avc,
             "Failed to unmarshal a single packet with multiple NALUs into avc stream"

@@ -918,6 +918,7 @@ impl MLine {
                         data: dep.data,
                         ext_vals: dep.meta[0].header.ext_vals,
                         meta: dep.meta,
+                        codec_extra: dep.codec_extra,
                     })
                     .map_err(|e| RtcError::Packet(self.mid, *pt, e)),
                 );
