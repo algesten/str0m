@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use rtp::{MediaTime, RtpHeader, SeqNo};
 
-use crate::{CodecDepacketizer, Depacketizer, PacketError};
+use crate::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError};
 
 #[derive(Clone, PartialEq, Eq)]
 /// Holds metadata incoming RTP data.
@@ -21,6 +21,7 @@ pub struct Depacketized {
     pub contiguous: bool,
     pub meta: Vec<RtpMeta>,
     pub data: Vec<u8>,
+    pub codec_extra: CodecExtra,
 }
 
 #[derive(Debug)]
@@ -118,12 +119,16 @@ impl DepacketizingBuffer {
         }
 
         let mut data = Vec::new();
+        let mut codec_extra = CodecExtra::None;
 
         let time = self.queue.get(*start).expect("first index exist").meta.time;
         let mut meta = Vec::with_capacity(stop - start + 1);
 
         for entry in self.queue.range_mut(*start..=*stop) {
-            if let Err(e) = self.depack.depacketize(&entry.data, &mut data) {
+            if let Err(e) = self
+                .depack
+                .depacketize(&entry.data, &mut data, &mut codec_extra)
+            {
                 return Some(Err(e));
             }
             meta.push(entry.meta.clone());
@@ -141,6 +146,7 @@ impl DepacketizingBuffer {
             contiguous,
             meta,
             data,
+            codec_extra,
         };
         Some(Ok(dep))
     }
@@ -411,7 +417,12 @@ mod test {
     struct TestDepack;
 
     impl Depacketizer for TestDepack {
-        fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
+        fn depacketize(
+            &mut self,
+            packet: &[u8],
+            out: &mut Vec<u8>,
+            _: &mut CodecExtra,
+        ) -> Result<(), PacketError> {
             out.extend_from_slice(packet);
             Ok(())
         }

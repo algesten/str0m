@@ -1,4 +1,4 @@
-use crate::{BitRead, Depacketizer, PacketError, Packetizer};
+use crate::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
 
 use std::fmt;
 use std::sync::Arc;
@@ -190,7 +190,12 @@ pub struct Vp9Depacketizer {
 
 impl Depacketizer for Vp9Depacketizer {
     /// depacketize parses the passed byte slice and stores the result in the Vp9Packet this method is called upon
-    fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
+    fn depacketize(
+        &mut self,
+        packet: &[u8],
+        out: &mut Vec<u8>,
+        _: &mut CodecExtra,
+    ) -> Result<(), PacketError> {
         if packet.is_empty() {
             return Err(PacketError::ErrShortPacket);
         }
@@ -680,7 +685,8 @@ mod test {
 
             if let Some(expected) = err {
                 let mut payload = Vec::new();
-                if let Err(actual) = p.depacketize(b, &mut payload) {
+                let mut extra = CodecExtra::None;
+                if let Err(actual) = p.depacketize(b, &mut payload, &mut extra) {
                     assert_eq!(
                         expected, actual,
                         "{name}: expected {expected}, but got {actual}"
@@ -690,7 +696,8 @@ mod test {
                 }
             } else {
                 let mut payload = Vec::new();
-                p.depacketize(b, &mut payload)?;
+                let mut extra = CodecExtra::None;
+                p.depacketize(b, &mut payload, &mut extra)?;
                 assert_eq!(pkt, p, "{name}: expected {pkt:?}, but got {p:?}");
                 assert_eq!(payload, expected);
             }
@@ -773,7 +780,8 @@ mod test {
                 let res = pck.packetize(4, &[0x01])?;
                 let mut p = Vp9Depacketizer::default();
                 let mut payload = Vec::new();
-                p.depacketize(&res[0], &mut payload)?;
+                let mut extra = CodecExtra::None;
+                p.depacketize(&res[0], &mut payload, &mut extra)?;
 
                 if i > 0 {
                     if p_prev.picture_id == 0x7FFF {

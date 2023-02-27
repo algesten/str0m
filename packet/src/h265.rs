@@ -1,6 +1,6 @@
 #![allow(clippy::all)]
 
-use crate::{Depacketizer, PacketError};
+use crate::{CodecExtra, Depacketizer, PacketError};
 
 ///
 /// Network Abstraction Unit Header implementation
@@ -736,7 +736,12 @@ impl H265Depacketizer {
 
 impl Depacketizer for H265Depacketizer {
     /// depacketize parses the passed byte slice and stores the result in the H265Packet this method is called upon
-    fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
+    fn depacketize(
+        &mut self,
+        packet: &[u8],
+        out: &mut Vec<u8>,
+        _: &mut CodecExtra,
+    ) -> Result<(), PacketError> {
         if packet.len() <= H265NALU_HEADER_SIZE {
             return Err(PacketError::ErrShortPacket);
         }
@@ -1628,7 +1633,8 @@ mod test {
             }
 
             let mut out = Vec::new();
-            let result = pck.depacketize(&cur.raw, &mut out);
+            let mut extra = CodecExtra::None;
+            let result = pck.depacketize(&cur.raw, &mut out, &mut extra);
 
             if cur.expected_err.is_some() && result.is_ok() {
                 assert!(false, "should error");
@@ -1684,7 +1690,8 @@ mod test {
         for cur in tests {
             let mut pck = H265Depacketizer::default();
             let mut out = Vec::new();
-            let _ = pck.depacketize(&cur, &mut out)?;
+            let mut extra = CodecExtra::None;
+            let _ = pck.depacketize(&cur, &mut out, &mut extra)?;
         }
 
         Ok(())

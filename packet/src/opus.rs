@@ -1,4 +1,4 @@
-use crate::{Depacketizer, PacketError, Packetizer};
+use crate::{CodecExtra, Depacketizer, PacketError, Packetizer};
 
 /// Packetizes Opus RTP packets.
 #[derive(Default, Debug, Copy, Clone)]
@@ -28,7 +28,12 @@ impl Packetizer for OpusPacketizer {
 pub struct OpusDepacketizer;
 
 impl Depacketizer for OpusDepacketizer {
-    fn depacketize(&mut self, packet: &[u8], out: &mut Vec<u8>) -> Result<(), PacketError> {
+    fn depacketize(
+        &mut self,
+        packet: &[u8],
+        out: &mut Vec<u8>,
+        _: &mut CodecExtra,
+    ) -> Result<(), PacketError> {
         if packet.is_empty() {
             Err(PacketError::ErrShortPacket)
         } else {
@@ -53,17 +58,18 @@ mod test {
     #[test]
     fn test_opus_unmarshal() -> Result<(), PacketError> {
         let mut pck = OpusDepacketizer::default();
+        let mut extra = CodecExtra::None;
 
         // Empty packet
         let empty_bytes = &[];
         let mut out = Vec::new();
-        let result = pck.depacketize(empty_bytes, &mut out);
+        let result = pck.depacketize(empty_bytes, &mut out, &mut extra);
         assert!(result.is_err(), "Result should be err in case of error");
 
         // Normal packet
         let raw_bytes: &[u8] = &[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x90];
         let mut out = Vec::new();
-        pck.depacketize(raw_bytes, &mut out)?;
+        pck.depacketize(raw_bytes, &mut out, &mut extra)?;
         assert_eq!(raw_bytes, &out, "Payload must be same");
 
         Ok(())

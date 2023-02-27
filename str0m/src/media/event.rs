@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use packet::CodecExtra;
 pub use packet::RtpMeta;
 pub use rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 pub use sdp::{Codec, FormatParams};
@@ -142,6 +143,9 @@ pub struct MediaData {
 
     /// The individual packet metadata that were part of making the Sample in `data`.
     pub meta: Vec<RtpMeta>,
+
+    /// Additional codec specific information
+    pub codec_extra: CodecExtra,
 }
 
 /// Details for an incoming a keyframe request (PLI or FIR).
