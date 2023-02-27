@@ -9,7 +9,7 @@ use rtp::{extend_seq, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
 use rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
 use rtp::{SrtpContext, SrtpKey, Ssrc};
 
-use crate::media::{App, CodecConfig, MediaAdded, MediaChanged, Source};
+use crate::media::{App, CodecConfig, MediaAdded, MediaChanged, MediaKind, Source};
 use crate::session_sdp::AsMediaLine;
 use crate::stats::StatsSnapshot;
 use crate::util::{already_happened, not_happening, Soonest};
@@ -626,12 +626,37 @@ impl Session {
 
     fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
         let srtp_tx = self.srtp_tx.as_mut()?;
+        // Only temporary to measure actual queuing delay for BWE work.
+        let real_now = Instant::now();
 
         let buf = &mut self.poll_packet_buf;
 
         for m in only_m_line_mut(&mut self.m_lines) {
             let twcc_seq = self.twcc;
-            if let Some((header, seq_no)) = m.poll_packet(now, &self.exts, &mut self.twcc, buf) {
+            if let Some((header, seq_no, queued_at)) =
+                m.poll_packet(now, &self.exts, &mut self.twcc, buf)
+            {
+                if let Some(queued_at) = queued_at {
+                    let delta_us = if real_now < queued_at {
+                        // Out of order
+                        let diff = queued_at
+                            .checked_duration_since(real_now)
+                            .map(|d| -(d.as_micros() as i64));
+                        warn!(?diff, "Packet sent before it was queued, clock drift?");
+                        diff.unwrap()
+                    } else {
+                        real_now
+                            .checked_duration_since(queued_at)
+                            .map(|d| d.as_micros() as i64)
+                            .unwrap()
+                    };
+                    let kind = if m.kind() == MediaKind::Audio {
+                        "audio"
+                    } else {
+                        "video"
+                    };
+                    println!("QUEUE_STAT {},{},{}", header.ssrc, delta_us, kind);
+                }
                 trace!("Poll RTP: {:?}", header);
                 let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
                 self.twcc_tx_register

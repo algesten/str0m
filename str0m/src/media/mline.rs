@@ -104,6 +104,9 @@ pub(crate) struct MLine {
     /// Last time we produced regular feedback (SR/RR).
     last_regular_feedback: Instant,
 
+    /// Last reference time for `now`, set ahead of writing.
+    last_now: Instant,
+
     /// Buffers for incoming data.
     ///
     /// Video samples are often fragmented over several RTP packets. These buffers reassembles
@@ -150,6 +153,7 @@ struct NextPacket<'a> {
     ssrc: Ssrc,
     seq_no: SeqNo,
     orig_seq_no: Option<SeqNo>,
+    queued_at: Option<Instant>,
 }
 
 impl MLine {
@@ -268,6 +272,7 @@ impl MLine {
             ssrc,
             rid,
             ext_vals,
+            queued_at: self.last_now,
         };
 
         if let Err(e) = buf.push_sample(data, meta, mtu) {
@@ -324,7 +329,7 @@ impl MLine {
         exts: &Extensions,
         twcc: &mut u64,
         buf: &mut Vec<u8>,
-    ) -> Option<(RtpHeader, SeqNo)> {
+    ) -> Option<(RtpHeader, SeqNo, Option<Instant>)> {
         let mid = self.mid;
 
         let next = if let Some(next) = self.poll_packet_resend(now) {
@@ -383,7 +388,7 @@ impl MLine {
 
         buf.truncate(header_len + body_len + original_seq_len + pad_len);
 
-        Some((header, next.seq_no))
+        Some((header, next.seq_no, next.queued_at))
     }
 
     fn poll_packet_resend(&mut self, now: Instant) -> Option<NextPacket<'_>> {
@@ -431,6 +436,7 @@ impl MLine {
                 ssrc: ssrc_rtx,
                 seq_no,
                 orig_seq_no,
+                queued_at: None,
             });
         }
     }
@@ -456,6 +462,7 @@ impl MLine {
             ssrc: pkt.meta.ssrc,
             seq_no,
             orig_seq_no: None,
+            queued_at: Some(pkt.meta.queued_at),
         })
     }
 
@@ -557,6 +564,7 @@ impl MLine {
     pub fn handle_timeout(&mut self, now: Instant) {
         // TODO(martin): more cleanup
         self.last_cleanup = now;
+        self.last_now = now;
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
@@ -1037,6 +1045,7 @@ impl Default for MLine {
             sources_tx: vec![],
             last_cleanup: already_happened(),
             last_regular_feedback: already_happened(),
+            last_now: already_happened(),
             buffers_rx: HashMap::new(),
             buffers_tx: HashMap::new(),
             resends: VecDeque::new(),

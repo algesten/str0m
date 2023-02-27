@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::fmt;
+use std::time::Instant;
 
 use rtp::{ExtensionValues, MediaTime, Rid, SeqNo, Ssrc};
 
@@ -22,6 +23,7 @@ pub struct PacketizedMeta {
     pub ssrc: Ssrc,
     pub rid: Option<Rid>,
     pub ext_vals: ExtensionValues,
+    pub queued_at: Instant,
 }
 
 #[derive(Debug)]
