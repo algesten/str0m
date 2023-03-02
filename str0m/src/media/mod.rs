@@ -144,12 +144,18 @@ impl Media<'_> {
     ///
     /// [1]: https://datatracker.ietf.org/doc/html/rfc8852
     pub fn writer(&mut self, pt: Pt, now: Instant) -> Writer<'_> {
-        // Handle_input with a Input::Timeout can't fail, hence the expect.
-        self.rtc
-            .handle_input(Input::Timeout(now))
-            .expect("handle_input timeout to be ok");
+        let media = Media {
+            rtc: self.rtc,
+            index: self.index,
+        };
 
-        self.m_line_mut().writer(now, pt)
+        Writer {
+            media,
+            now,
+            pt,
+            rid: None,
+            ext_vals: ExtensionValues::default(),
+        }
     }
 
     /// Test if the kind of keyframe request is possible.
@@ -232,7 +238,7 @@ impl Media<'_> {
 ///     .write(data.network_time, data.time, &data.data).unwrap();
 /// ```
 pub struct Writer<'a> {
-    m_line: &'a mut MLine,
+    media: Media<'a>,
     now: Instant,
     pt: Pt,
     rid: Option<Rid>,
@@ -275,12 +281,14 @@ impl<'a> Writer<'a> {
     /// Notice that incorrect [`Pt`] values would surface as an error here, not when
     /// doing [`Media::writer()`].
     pub fn write(
-        self,
+        mut self,
         wallclock: Instant,
         rtp_time: MediaTime,
         data: &[u8],
     ) -> Result<usize, RtcError> {
-        self.m_line.write(
+        let m_line = self.media.m_line_mut();
+
+        let n = m_line.write(
             self.now,
             self.pt,
             wallclock,
@@ -288,6 +296,14 @@ impl<'a> Writer<'a> {
             data,
             self.rid,
             self.ext_vals,
-        )
+        )?;
+
+        // Handle_input with a Input::Timeout can't fail, hence the expect.
+        self.media
+            .rtc
+            .handle_input(Input::Timeout(self.now))
+            .expect("handle_input with Timeout to not panic");
+
+        Ok(n)
     }
 }

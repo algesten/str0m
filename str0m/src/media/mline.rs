@@ -22,7 +22,7 @@ use crate::RtcError;
 
 use super::receiver::ReceiverSource;
 use super::sender::SenderSource;
-use super::{CodecConfig, KeyframeRequestKind, MediaData, MediaKind, PayloadParams, Writer};
+use super::{CodecConfig, KeyframeRequestKind, MediaData, MediaKind, PayloadParams};
 
 pub(crate) trait Source {
     fn ssrc(&self) -> Ssrc;
@@ -213,16 +213,6 @@ impl MLine {
             .max_by_key(|p| p.match_score(params.inner()))?;
         c.match_score(params.inner())?; // avoid None, which isn't a match.
         Some(c.pt())
-    }
-
-    pub fn writer(&mut self, now: Instant, pt: Pt) -> Writer<'_> {
-        Writer {
-            m_line: self,
-            now,
-            pt,
-            rid: None,
-            ext_vals: ExtensionValues::default(),
-        }
     }
 
     /// Write to the packetizer.
