@@ -152,8 +152,13 @@ impl Pacer for NullPacer {
         // Pick a queue using round robin, prioritize the least recently sent on queue.
         let to_send_on = non_empty_queues.min_by_key(|q| self.last_sends.get(&q.id));
 
-        self.need_immediate_timeout = true;
-        to_send_on.into()
+        let result = to_send_on.into();
+
+        if matches!(result, PollOutcome::PollQueue(_)) {
+            self.need_immediate_timeout = true;
+        }
+
+        result
     }
 
     fn register_send(&mut self, now: Instant, _packet_size: DataSize, from: QueueId) {
