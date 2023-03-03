@@ -386,19 +386,10 @@ impl MLine {
         loop {
             let resend = self.resends.pop_front()?;
 
-            // If there is no buffer for this resend, we skip to next. This is
-            // a weird situation though, since it means the other side sent a nack for
-            // an SSRC that matched this Media, but didnt match a buffer_tx.
-            let buffer = match self.buffers_tx.values().find(|p| p.has_ssrc(resend.ssrc)) {
-                Some(v) => v,
-                None => continue,
-            };
-
             // The seq_no could simply be too old to exist in the buffer, in which
             // case we will not do a resend.
-            let pkt = match buffer.get(resend.seq_no) {
-                Some(v) => v,
-                None => continue,
+            let Some(pkt) = packet_for_resend(&self.buffers_tx, &resend) else {
+                continue;
             };
 
             // The send source, to get a contiguous seq_no for the resend.
@@ -740,7 +731,7 @@ impl MLine {
             Nack(ssrc, list) => {
                 source_tx.increase_nacks();
                 let entries = list.into_iter();
-                self.handle_nack(ssrc, entries)?;
+                self.handle_nack(ssrc, entries, now)?;
             }
             Pli(_) => {
                 source_tx.increase_plis();
@@ -927,6 +918,7 @@ impl MLine {
         &mut self,
         ssrc: Ssrc,
         entries: impl Iterator<Item = NackEntry>,
+        now: Instant,
     ) -> Option<()> {
         // Figure out which packetizing buffer has been used to send the entries that been nack'ed.
         let (pt, buffer) = self.buffers_tx.iter_mut().find(|(_, p)| p.has_ssrc(ssrc))?;
@@ -941,6 +933,7 @@ impl MLine {
             ssrc,
             pt: *pt,
             seq_no,
+            queued_at: now,
         }));
 
         Some(())
@@ -1009,6 +1002,17 @@ impl MLine {
 
         state.id = QueueId::new(self.index() as u64);
 
+        for resend in &self.resends {
+            let Some(original_packet) = packet_for_resend(&self.buffers_tx, resend) else {
+                continue;
+            };
+
+            state.packet_count += 1;
+            state.size += original_packet.data.len().into();
+            state.total_queue_time += now.saturating_duration_since(resend.queued_at);
+            state.update_leading_queue_time(Some(resend.queued_at));
+        }
+
         state
     }
 
@@ -1026,6 +1030,7 @@ struct Resend {
     pub ssrc: Ssrc,
     pub pt: Pt,
     pub seq_no: SeqNo,
+    pub queued_at: Instant,
 }
 
 fn next_send_buffer(
@@ -1039,6 +1044,19 @@ fn next_send_buffer(
         }
     }
     None
+}
+
+fn packet_for_resend<'p>(
+    buffers_tx: &'p HashMap<Pt, PacketizingBuffer>,
+    resend: &Resend,
+) -> Option<&'p Packetized> {
+    // If there is no buffer for this resend, we return None. This is
+    // a weird situation though, since it means the other side sent a nack for
+    // an SSRC that matched this Media, but didnt match a buffer_tx.
+    let buffer = buffers_tx.values().find(|p| p.has_ssrc(resend.ssrc))?;
+
+    // The seq_no could simply be too old to exist in the buffer, in which case we'll return None
+    buffer.get(resend.seq_no)
 }
 
 impl Default for MLine {
