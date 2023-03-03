@@ -332,6 +332,7 @@ impl ReceiverRegister {
         // MISORDER_DELAY gives us a "grace period" of receiving packets out of
         // order without reporting it as a NACK straight away.
         let stop = *self.max_seq - MISORDER_DELAY;
+        let u16max = u16::MAX as u64 + 1_u64;
 
         if stop < start {
             return vec![];
@@ -355,7 +356,7 @@ impl ReceiverRegister {
 
                 if i - first == 16 {
                     nacks.push(NackEntry {
-                        pid: (first % u16::MAX as u64) as u16,
+                        pid: (first % u16max) as u16,
                         blp: bitmask,
                     });
                     bitmask = 0;
@@ -369,7 +370,7 @@ impl ReceiverRegister {
 
         if let Some(first) = first_missing {
             nacks.push(NackEntry {
-                pid: (first % u16::MAX as u64) as u16,
+                pid: (first % u16max) as u16,
                 blp: bitmask,
             });
         }
@@ -396,7 +397,7 @@ impl ReceiverRegister {
             ssrc: 0.into(),
             fraction_lost: self.fraction_lost(),
             packets_lost: self.packets_lost(),
-            max_seq: (*self.max_seq % (u32::MAX as u64)) as u32,
+            max_seq: (*self.max_seq % ((u32::MAX as u64) + 1_u64)) as u32,
             jitter: self.jitter as u32,
             last_sr_time: 0,
             last_sr_delay: 0,
@@ -812,6 +813,28 @@ mod test {
         }
 
         assert_eq!(reg.nack_check_from, 3106.into());
+    }
+
+    #[test]
+    fn nack_check_on_seq_rollover() {
+        let range = 65530..65541 + MISORDER_DELAY;
+        let missing = [65535_u64, 65536_u64, 65537_u64];
+        let expected = [65535_u16, 0_u16, 1_u16];
+
+        for (missing, expected) in missing.iter().zip(expected.iter()) {
+            let mut seqs: Vec<_> = range.clone().collect();
+            let mut reg = ReceiverRegister::new(seqs[0].into());
+
+            seqs.retain(|x| *x != *missing);
+            for i in seqs.as_slice() {
+                reg.update_seq((*i).into());
+            }
+
+            let reports = reg.create_nack_reports();
+            let nack = reports.get(0).unwrap();
+            let pid = nack.reports.get(0).unwrap().pid;
+            assert_eq!(pid, *expected);
+        }
     }
 
     #[test]
