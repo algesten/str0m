@@ -99,7 +99,7 @@ impl fmt::Debug for Candidate {
 
 impl Candidate {
     #[allow(clippy::too_many_arguments)]
-    fn new(
+    pub fn new(
         foundation: Option<String>,
         component_id: u16,
         proto: String,
@@ -166,6 +166,48 @@ impl Candidate {
             addr,
             Some(addr),
             CandidateKind::Host,
+            None,
+            None,
+        ))
+    }
+
+    /// Creates a server reflexive ICE candidate.
+    ///
+    /// Server reflexive candidates are local sockets mapped to external ip discovered via a STUN binding request.
+    pub fn server_reflexive(addr: SocketAddr) -> Result<Self, IceError> {
+        if !is_valid_ip(addr.ip()) {
+            return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
+        }
+
+        Ok(Candidate::new(
+            None,
+            1, // only RTP
+            "udp".into(),
+            None,
+            addr,
+            Some(addr),
+            CandidateKind::ServerReflexive,
+            None,
+            None,
+        ))
+    }
+
+    /// Creates a relayed ICE candidate.
+    ///
+    /// Relayed candidates are server sockets relaying traffic to a local socket. Allocate a TURN addr to use as a local candidate.
+    pub fn relayed(addr: SocketAddr, network_type: String) -> Result<Self, IceError> {
+        if !is_valid_ip(addr.ip()) {
+            return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
+        }
+
+        Ok(Candidate::new(
+            None,
+            1, // only RTP
+            network_type.into(),
+            None,
+            addr,
+            Some(addr),
+            CandidateKind::Relayed,
             None,
             None,
         ))
