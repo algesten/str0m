@@ -2,6 +2,8 @@ use std::time::{Duration, Instant};
 
 use once_cell::sync::Lazy;
 
+pub mod value_history;
+
 pub fn not_happening() -> Instant {
     const YEARS_100: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 100);
     static FUTURE: Lazy<Instant> = Lazy::new(|| Instant::now() + YEARS_100);
