@@ -4,9 +4,9 @@ use std::time::{Duration, Instant};
 use net_::{Id, DATAGRAM_MTU};
 use packet::{DepacketizingBuffer, PacketKind, Packetized};
 use packet::{PacketizedMeta, PacketizingBuffer, QueueId, QueueState};
+use rtp_::{DataSize, SeqNo, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 use rtp_::{Extensions, Fir, FirEntry, NackEntry, Pli, Rtcp};
 use rtp_::{RtcpFb, RtpHeader, SdesType};
-use rtp_::{SeqNo, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
 pub use packet::RtpMeta;
 pub use rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
@@ -44,6 +44,9 @@ const CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
 // expects video to be every second, and audio every 5 seconds.
 const RR_INTERVAL_VIDEO: Duration = Duration::from_millis(1000);
 const RR_INTERVAL_AUDIO: Duration = Duration::from_millis(5000);
+
+// Max in the RFC 3550 is 255 bytes, we limit it to be modulus 32 for SRTP and to match libWebRTC
+const MAX_PADDING_PACKET_SIZE: DataSize = DataSize::bytes(224);
 
 fn rr_interval(audio: bool) -> Duration {
     if audio {
@@ -152,12 +155,22 @@ pub(crate) struct MLine {
     bytes_retransmitted: ValueHistory<u64>,
 }
 
-struct NextPacket<'a> {
-    pt: Pt,
-    pkt: &'a Packetized,
-    ssrc: Ssrc,
-    seq_no: SeqNo,
-    orig_seq_no: Option<SeqNo>,
+enum NextPacket<'a> {
+    /// A regular packetized packet or a resend of a previous packet
+    ResendOrRegular {
+        pt: Pt,
+        pkt: &'a Packetized,
+        ssrc: Ssrc,
+        seq_no: SeqNo,
+        orig_seq_no: Option<SeqNo>,
+    },
+    /// An empty padding packet to be generated.
+    Padding {
+        pt: Pt,
+        ssrc: Ssrc,
+        seq_no: SeqNo,
+        len: u8,
+    },
 }
 
 impl MLine {
@@ -328,7 +341,6 @@ impl MLine {
         buf: &mut Vec<u8>,
     ) -> Option<(RtpHeader, SeqNo)> {
         let mid = self.mid;
-
         let next = if let Some(next) = self.poll_packet_resend(now) {
             next
         } else if let Some(next) = self.poll_packet_regular(now) {
@@ -337,55 +349,7 @@ impl MLine {
             return None;
         };
 
-        let mut header = RtpHeader {
-            payload_type: next.pt,
-            sequence_number: *next.seq_no as u16,
-            timestamp: next.pkt.meta.rtp_time.numer() as u32,
-            ssrc: next.ssrc,
-            ext_vals: next.pkt.meta.ext_vals,
-            ..Default::default()
-        };
-        // ::new(next.pt, next.seq_no, next.pkt.ts, next.ssrc);
-        header.marker = next.pkt.last;
-
-        // We can fill out as many values we want here, only the negotiated ones will
-        // be used when writing the RTP packet.
-        //
-        // These need to match `Extension::is_supported()` so we are sending what we are
-        // declaring we support.
-        header.ext_vals.abs_send_time = Some(MediaTime::new_ntp_time(now));
-        header.ext_vals.mid = Some(mid);
-        header.ext_vals.transport_cc = Some(*twcc as u16);
-        *twcc += 1;
-
-        buf.resize(2000, 0);
-        let header_len = header.write_to(buf, exts);
-        assert!(header_len % 4 == 0, "RTP header must be multiple of 4");
-        header.header_len = header_len;
-
-        let mut body_out = &mut buf[header_len..];
-
-        // For resends, the original seq_no is inserted before the payload.
-        let mut original_seq_len = 0;
-        if let Some(orig_seq_no) = next.orig_seq_no {
-            original_seq_len = RtpHeader::write_original_sequence_number(body_out, orig_seq_no);
-            body_out = &mut body_out[original_seq_len..];
-        }
-
-        let body_len = next.pkt.data.len();
-        body_out[..body_len].copy_from_slice(&next.pkt.data);
-
-        // pad for SRTP
-        let pad_len = RtpHeader::pad_packet(
-            &mut buf[..],
-            header_len,
-            body_len + original_seq_len,
-            SRTP_BLOCK_SIZE,
-        );
-
-        buf.truncate(header_len + body_len + original_seq_len + pad_len);
-
-        Some((header, next.seq_no))
+        Some(finalize_packet(next, now, exts, twcc, mid, buf))
     }
 
     fn poll_packet_resend(&mut self, now: Instant) -> Option<NextPacket<'_>> {
@@ -432,7 +396,7 @@ impl MLine {
             assert_eq!(pkt.meta.ssrc, resend.ssrc);
             assert_eq!(source.repairs(), Some(resend.ssrc));
 
-            return Some(NextPacket {
+            return Some(NextPacket::ResendOrRegular {
                 pt: self.pt_rtx(resend.pt)?,
                 pkt,
                 ssrc: ssrc_rtx,
@@ -458,13 +422,88 @@ impl MLine {
         let seq_no = source.next_seq_no(now);
         pkt.seq_no = Some(seq_no);
 
-        Some(NextPacket {
+        Some(NextPacket::ResendOrRegular {
             pt,
             pkt,
             ssrc: pkt.meta.ssrc,
             seq_no,
             orig_seq_no: None,
         })
+    }
+
+    pub fn create_padding_packet(
+        &mut self,
+        target_size: DataSize,
+        now: Instant,
+        exts: &Extensions,
+        twcc: &mut u64,
+        buf: &mut Vec<u8>,
+    ) -> Option<(RtpHeader, SeqNo)> {
+        let pt_to_use = {
+            let mut vec: Vec<_> = self
+                .buffers_tx
+                .iter()
+                .map(|(pt, buffer)| (pt, buffer.history_size()))
+                .filter(|(_, size)| *size > 0)
+                .collect();
+            vec.sort_by_key(|(_, size)| *size);
+
+            // Use the last PT i.e. the one that has the most RTX history, this is a poor
+            // approximation for most recent sends.
+            vec.last().map(|(pt, _)| **pt)
+        };
+
+        let mut next = None;
+        if let Some(pt_to_use) = pt_to_use {
+            let max_size = target_size * 2_u64;
+
+            let buffer = get_buffer_tx(&self.buffers_tx, pt_to_use)
+                .expect("the buffer to exist as verified previously");
+            let packet = buffer
+                .last_history_packet()
+                .expect("the buffer to have some packet history");
+
+            if packet.data.len() < max_size.as_bytes_usize() {
+                let rtx_pt = self.pt_rtx(pt_to_use)?;
+                let source = match get_source_tx(&mut self.sources_tx, packet.meta.rid, true) {
+                    Some(v) => v,
+                    None => return None,
+                };
+                let seq_no = source.next_seq_no(now);
+
+                next = Some(NextPacket::ResendOrRegular {
+                    pt: rtx_pt,
+                    pkt: packet,
+                    ssrc: source.ssrc(),
+                    seq_no,
+                    orig_seq_no: Some(packet.seq_no.expect(
+                        "this packet to have been sent and therefore have a sequence number",
+                    )),
+                });
+            }
+        }
+
+        if next.is_none() {
+            // NB: If we cannot generate padding here for some reason we'll get stuck forever.
+            let pt_to_use = self.buffers_tx.keys().next()?;
+            let rtx_pt = self.pt_rtx(*pt_to_use)?;
+            let source = match get_source_tx(&mut self.sources_tx, None, true) {
+                Some(v) => v,
+                None => return None,
+            };
+            let padding = target_size.max(MAX_PADDING_PACKET_SIZE);
+
+            let seq_no = source.next_seq_no(now);
+
+            next = Some(NextPacket::Padding {
+                pt: rtx_pt,
+                ssrc: source.ssrc(),
+                seq_no,
+                len: padding.as_bytes_usize() as u8,
+            })
+        }
+
+        next.map(|n| finalize_packet(n, now, exts, twcc, self.mid, buf))
     }
 
     pub fn get_or_create_source_rx(&mut self, ssrc: Ssrc) -> &mut ReceiverSource {
@@ -1169,6 +1208,111 @@ impl From<MediaType> for MediaKind {
     }
 }
 
+#[allow(clippy::unusual_byte_groupings)]
+fn finalize_packet(
+    next: NextPacket,
+    now: Instant,
+    exts: &Extensions,
+    twcc: &mut u64,
+    mid: Mid,
+    buf: &mut Vec<u8>,
+) -> (RtpHeader, SeqNo) {
+    let (mut header, seq_no, orig_seq_no) = match next {
+        NextPacket::ResendOrRegular {
+            pt,
+            pkt,
+            ssrc,
+            seq_no,
+            orig_seq_no,
+        } => {
+            let header = RtpHeader {
+                payload_type: pt,
+                sequence_number: *seq_no as u16,
+                timestamp: pkt.meta.rtp_time.numer() as u32,
+                ssrc,
+                ext_vals: pkt.meta.ext_vals,
+                marker: pkt.last,
+                ..Default::default()
+            };
+
+            (header, seq_no, orig_seq_no)
+        }
+        NextPacket::Padding {
+            pt, ssrc, seq_no, ..
+        } => {
+            let header = RtpHeader {
+                payload_type: pt,
+                sequence_number: *seq_no as u16,
+                timestamp: 0,
+                ssrc,
+                ..Default::default()
+            };
+
+            (header, seq_no, None)
+        }
+    };
+
+    // We can fill out as many values we want here, only the negotiated ones will
+    // be used when writing the RTP packet.
+    //
+    // These need to match `Extension::is_supported()` so we are sending what we are
+    // declaring we support.
+    header.ext_vals.abs_send_time = Some(MediaTime::new_ntp_time(now));
+    header.ext_vals.mid = Some(mid);
+    header.ext_vals.transport_cc = Some(*twcc as u16);
+    *twcc += 1;
+
+    buf.resize(2000, 0);
+    let header_len = header.write_to(buf, exts);
+    assert!(header_len % 4 == 0, "RTP header must be multiple of 4");
+    header.header_len = header_len;
+
+    let mut body_out = &mut buf[header_len..];
+
+    // For resends, the original seq_no is inserted before the payload.
+    let mut original_seq_len = 0;
+    if let Some(orig_seq_no) = orig_seq_no {
+        original_seq_len = RtpHeader::write_original_sequence_number(body_out, orig_seq_no);
+        body_out = &mut body_out[original_seq_len..];
+    }
+
+    match next {
+        NextPacket::ResendOrRegular { pkt, .. } => {
+            let body_len = pkt.data.len();
+            body_out[..body_len].copy_from_slice(&pkt.data);
+
+            // pad for SRTP
+            let pad_len = RtpHeader::pad_packet(
+                &mut buf[..],
+                header_len,
+                body_len + original_seq_len,
+                SRTP_BLOCK_SIZE,
+            );
+
+            buf.truncate(header_len + body_len + original_seq_len + pad_len);
+        }
+        NextPacket::Padding { len, .. } => {
+            let rounded_len = if len as usize % SRTP_BLOCK_SIZE == 0 {
+                len as usize
+            } else {
+                ((len as usize / SRTP_BLOCK_SIZE) + 1) * SRTP_BLOCK_SIZE
+            }
+            .min(MAX_PADDING_PACKET_SIZE.as_bytes_usize());
+            let mut body = vec![0_u8; rounded_len];
+            if let Some(last_byte) = body.last_mut() {
+                *last_byte = len;
+            }
+
+            body_out[..rounded_len].copy_from_slice(&body);
+            // set the padding bit
+            buf[0] |= 0b00_1_0_0000;
+            buf.truncate(header_len + rounded_len);
+        }
+    }
+
+    (header, seq_no)
+}
+
 /// Separate in wait for polonius.
 fn get_source_tx(
     sources_tx: &mut [SenderSource],
@@ -1178,4 +1322,12 @@ fn get_source_tx(
     sources_tx
         .iter_mut()
         .find(|s| rid == s.rid() && is_rtx == s.repairs().is_some())
+}
+
+/// Separate in wait for polonius.
+fn get_buffer_tx(
+    buffers_tx: &HashMap<Pt, PacketizingBuffer>,
+    pt: Pt,
+) -> Option<&PacketizingBuffer> {
+    buffers_tx.get(&pt)
 }

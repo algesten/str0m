@@ -636,8 +636,9 @@ impl Session {
         let srtp_tx = self.srtp_tx.as_mut()?;
 
         // Figure out which, if any, queue to poll
-        let queue_id = match self.pacer.poll_action() {
-            PollOutcome::PollQueue(queue_id) => queue_id,
+        let (queue_id, padding_size) = match self.pacer.poll_action() {
+            PollOutcome::PollQueue(queue_id) => (queue_id, None),
+            PollOutcome::PollPadding(queue_id, padding_size) => (queue_id, Some(padding_size)),
             PollOutcome::Nothing => {
                 return None;
             }
@@ -651,7 +652,11 @@ impl Session {
         let buf = &mut self.poll_packet_buf;
 
         let twcc_seq = self.twcc;
-        if let Some((header, seq_no)) = mline.poll_packet(now, &self.exts, &mut self.twcc, buf) {
+        let result = padding_size
+            .map(|p| mline.create_padding_packet(p, now, &self.exts, &mut self.twcc, buf))
+            .unwrap_or_else(|| mline.poll_packet(now, &self.exts, &mut self.twcc, buf));
+
+        if let Some((header, seq_no)) = result {
             trace!("Poll RTP: {:?}", header);
 
             self.pacer.register_send(now, buf.len().into(), queue_id);
