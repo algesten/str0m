@@ -18,6 +18,7 @@ use sdp::{MediaLine, MediaType, Msid, Simulcast as SdpSimulcast};
 use crate::change::AddMedia;
 use crate::stats::StatsSnapshot;
 use crate::util::already_happened;
+use crate::util::value_history::ValueHistory;
 use crate::RtcError;
 
 use super::receiver::ReceiverSource;
@@ -144,6 +145,12 @@ pub(crate) struct MLine {
 
     /// Upon SDP negotiation set whether nack is enabled for this m-line.
     enable_nack: bool,
+
+    /// history of bytes transmitted on this m-line
+    bytes_transmitted: ValueHistory<u64>,
+
+    /// history of bytes re-transmitted
+    bytes_retransmitted: ValueHistory<u64>,
 }
 
 struct NextPacket<'a> {
@@ -399,7 +406,21 @@ impl MLine {
                 None => continue,
             };
 
+            let from = now.checked_sub(Duration::from_secs(1)).unwrap_or(now);
+            let bytes_transmitted = self.bytes_transmitted.sum_since(from);
+            let bytes_retransmitted = self.bytes_retransmitted.sum_since(from);
+            let ratio =
+                bytes_retransmitted as f32 / (bytes_retransmitted + bytes_transmitted) as f32;
+            let ratio = if ratio.is_finite() { ratio } else { 0_f32 };
+
+            if ratio > 0.15_f32 {
+                // we have been retransmitting too much, assume congestion
+                // and skip retransmissions
+                continue;
+            }
+
             source.update_packet_counts(pkt.data.len() as u64, true);
+            self.bytes_retransmitted.push(now, pkt.data.len() as u64);
 
             let seq_no = source.next_seq_no(now);
 
@@ -433,6 +454,7 @@ impl MLine {
             .expect("SenderSource for packetized write");
 
         source.update_packet_counts(pkt.data.len() as u64, false);
+        self.bytes_transmitted.push(now, pkt.data.len() as u64);
 
         let seq_no = source.next_seq_no(now);
         pkt.seq_no = Some(seq_no);
@@ -1087,6 +1109,8 @@ impl Default for MLine {
             simulcast: None,
             equalize_sources: false,
             enable_nack: false,
+            bytes_transmitted: ValueHistory::new(0, Duration::from_secs(2)),
+            bytes_retransmitted: ValueHistory::new(0, Duration::from_secs(2)),
         }
     }
 }
