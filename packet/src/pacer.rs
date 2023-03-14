@@ -524,7 +524,7 @@ impl QueueState {
     pub fn new(queue_kind: PacketKind) -> Self {
         Self {
             id: QueueId(0),
-            size: 0.into(),
+            size: 0_usize.into(),
             packet_count: 0,
             total_queue_time: Duration::ZERO,
             queue_kind,
@@ -945,7 +945,7 @@ mod test {
 
         let outcome = pacer.poll_action();
         let (_, size) = outcome.expect_pading("When the media debt is cleared out, there's  nothing in the queue, and a padding rate is configured the pacer should generate padding");
-        assert_eq!(size, 2.into());
+        assert_eq!(size, 2_usize.into());
 
         enqueue_packet_noisy(
             &mut pacer,
@@ -974,7 +974,7 @@ mod test {
 
         let mut state = QueueState {
             id: QueueId(1),
-            size: 10.into(),
+            size: 10_usize.into(),
             packet_count: 1332,
             total_queue_time: duration_ms(1_000),
             queue_kind: PacketKind::Video,
@@ -984,7 +984,7 @@ mod test {
 
         let other = QueueState {
             id: QueueId(2),
-            size: 30.into(),
+            size: 30_usize.into(),
             packet_count: 5,
             total_queue_time: duration_ms(337),
             queue_kind: PacketKind::Video,
@@ -995,7 +995,7 @@ mod test {
         state.merge(&other);
 
         assert_eq!(state.id, QueueId(1));
-        assert_eq!(state.size, 40.into());
+        assert_eq!(state.size, 40_usize.into());
         assert_eq!(state.packet_count, 1337);
         assert_eq!(state.total_queue_time, duration_ms(1337));
 

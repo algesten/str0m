@@ -652,11 +652,10 @@ impl Session {
         let buf = &mut self.poll_packet_buf;
 
         let twcc_seq = self.twcc;
-        let result = padding_size
-            .map(|p| mline.create_padding_packet(p, now, &self.exts, &mut self.twcc, buf))
-            .unwrap_or_else(|| mline.poll_packet(now, &self.exts, &mut self.twcc, buf));
 
-        if let Some((header, seq_no)) = result {
+        if let Some((header, seq_no)) =
+            mline.poll_packet(now, &self.exts, &mut self.twcc, padding_size, buf)
+        {
             trace!("Poll RTP: {:?}", header);
 
             self.pacer.register_send(now, buf.len().into(), queue_id);

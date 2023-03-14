@@ -101,6 +101,12 @@ impl From<usize> for DataSize {
     }
 }
 
+impl From<u8> for DataSize {
+    fn from(value: u8) -> Self {
+        Self(value as u64)
+    }
+}
+
 impl Div<Duration> for DataSize {
     type Output = Bitrate;
 
