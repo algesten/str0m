@@ -13,6 +13,8 @@ pub struct Bitrate(f64);
 impl Bitrate {
     /// A bitrate of zero bit/s.
     pub const ZERO: Self = Self::bps(0);
+    /// The maximum bitrate that can be represented.
+    pub const MAX: Self = Self::bps(u64::MAX);
 
     /// Create a bitrate of some bit per second(bps).
     pub const fn bps(bps: u64) -> Self {
