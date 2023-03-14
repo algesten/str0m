@@ -636,7 +636,7 @@ impl Session {
         let srtp_tx = self.srtp_tx.as_mut()?;
 
         // Figure out which, if any, queue to poll
-        let (queue_id, padding_size) = match self.pacer.poll_action() {
+        let (queue_id, pad_size) = match self.pacer.poll_action() {
             PollOutcome::PollQueue(queue_id) => (queue_id, None),
             PollOutcome::PollPadding(queue_id, padding_size) => (queue_id, Some(padding_size)),
             PollOutcome::Nothing => {
@@ -652,9 +652,10 @@ impl Session {
         let buf = &mut self.poll_packet_buf;
 
         let twcc_seq = self.twcc;
+        let pad_size = pad_size.map(|p| p.as_bytes_usize());
 
         if let Some((header, seq_no)) =
-            mline.poll_packet(now, &self.exts, &mut self.twcc, padding_size, buf)
+            mline.poll_packet(now, &self.exts, &mut self.twcc, pad_size, buf)
         {
             trace!("Poll RTP: {:?}", header);
 

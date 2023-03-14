@@ -40,7 +40,7 @@ mod bandwidth;
 pub use bandwidth::{Bitrate, DataSize};
 
 // Max in the RFC 3550 is 255 bytes, we limit it to be modulus 16 for SRTP and to match libWebRTC
-pub const MAX_PADDING_PACKET_SIZE: DataSize = DataSize::bytes(224);
+pub const MAX_PADDING_PACKET_SIZE: usize = 224;
 
 /// Errors that can arise in RTP.
 #[derive(Debug, Error)]

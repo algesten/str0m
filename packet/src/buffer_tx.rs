@@ -158,6 +158,22 @@ impl PacketizingBuffer {
     fn queued_packets(&self) -> impl Iterator<Item = &Packetized> {
         (self.emit_next..).map_while(|idx| self.queue.get(idx))
     }
+
+    /// Find a historic packet that is smaller than the given max_size.
+    pub fn historic_packet_smaller_than(&self, max_size: usize) -> Option<&Packetized> {
+        for packet in self.queue.iter().rev() {
+            // as long as seq_no is none, the packet has not been sent.
+            if packet.seq_no.is_none() {
+                continue;
+            }
+
+            if packet.data.len() < max_size {
+                return Some(packet);
+            }
+        }
+
+        None
+    }
 }
 
 impl fmt::Debug for Packetized {
