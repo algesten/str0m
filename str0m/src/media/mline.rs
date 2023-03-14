@@ -514,6 +514,7 @@ impl MLine {
             .map(|(pt, _)| *pt);
 
         if let Some(pt_to_use) = pt_to_use {
+            // Attempt to resend a previous packet as RTX
             let max_size = target_size * 2_u64;
 
             let buffer = get_buffer_tx(&self.buffers_tx, pt_to_use)
@@ -543,6 +544,9 @@ impl MLine {
                 });
             }
         }
+
+        // If we couldn't find a suitable packet to resend, generate an empty padding packet
+        // instead.
 
         // NB: If we cannot generate padding here for some reason we'll get stuck forever.
         let pt_to_use = self.buffers_tx.keys().next()?;
