@@ -101,8 +101,6 @@ use media::{CodecConfig, Direction, KeyframeRequest, Media};
 use media::{KeyframeRequestKind, MediaChanged, MediaData};
 use media::{MLine, MediaAdded, Mid, Pt, Rid};
 
-pub use packet::{CodecExtra, Vp8CodecExtra};
-
 mod change;
 pub use change::ChangeSet;
 

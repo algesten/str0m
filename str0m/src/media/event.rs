@@ -1,12 +1,12 @@
 use std::time::Instant;
 
-use packet::{CodecExtra, RtpMeta};
 use rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
-pub use sdp::{Codec, FormatParams};
-
 use sdp::Simulcast as SdpSimulcast;
 
+pub use sdp::{Codec, FormatParams};
+
 use super::PayloadParams;
+use crate::media::rtp::{CodecExtra, RtpMeta};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Types of media.

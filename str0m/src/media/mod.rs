@@ -30,6 +30,7 @@ pub(crate) use mline::{MLine, Source};
 /// Half internal structures regarding RTP level.
 pub mod rtp {
     pub use packet::RtpMeta;
+    pub use packet::{CodecExtra, Vp8CodecExtra};
     pub use rtp_::{ExtensionValues, RtpHeader, SeqNo, Ssrc};
 }
 
