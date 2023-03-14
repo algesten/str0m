@@ -23,6 +23,9 @@ use arrival_group::{ArrivalGroupAccumulator, InterGroupDelayDelta};
 use rate_control::RateControl;
 use trendline_estimator::TrendlineEstimator;
 
+pub mod loss_controller;
+pub mod super_instant;
+
 const MAX_RTT_HISTORY_WINDOW: usize = 32;
 const INITIAL_BITRATE_WINDOW: Duration = Duration::from_millis(500);
 const BITRATE_WINDOW: Duration = Duration::from_millis(150);
