@@ -4,70 +4,57 @@
 //! Much of this code has been ported from the libWebRTC implementations. The complete system has
 //! not been ported, only a smaller part that corresponds roughly to the IETF draft is implemented.
 
-mod acked_bitrate_estimator;
-mod arrival_group;
-pub(crate) mod macros;
-mod rate_control;
-mod trendline_estimator;
-
 use std::cmp::Ordering;
-use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
 use crate::rtp_::{Bitrate, DataSize, SeqNo, TwccSendRecord};
-use crate::util::already_happened;
+
+mod acked_bitrate_estimator;
+mod arrival_group;
+mod delay_controller;
+mod loss_controller;
+pub(crate) mod macros;
+mod rate_control;
+mod super_instant;
+mod trendline_estimator;
 
 use acked_bitrate_estimator::AckedBitrateEstimator;
-use arrival_group::{ArrivalGroupAccumulator, InterGroupDelayDelta};
-use rate_control::RateControl;
-use trendline_estimator::TrendlineEstimator;
+use arrival_group::InterGroupDelayDelta;
+use delay_controller::DelayController;
+use loss_controller::LossController;
+use macros::log_loss;
 
-const MAX_RTT_HISTORY_WINDOW: usize = 32;
 const INITIAL_BITRATE_WINDOW: Duration = Duration::from_millis(500);
 const BITRATE_WINDOW: Duration = Duration::from_millis(150);
-const UPDATE_INTERVAL: Duration = Duration::from_millis(25);
-/// The maximum time we keep updating our estimate without receiving a TWCC report.
-const MAX_TWCC_GAP: Duration = Duration::from_millis(500);
+const STARTUP_PAHSE: Duration = Duration::from_secs(2);
 
 /// Main entry point for the Googcc inspired BWE implementation.
 ///
 /// This takes as input packet statuses recorded at send time and enriched by TWCC reports and produces as its output a periodic
 /// estimate of the available send bitrate.
 pub struct SendSideBandwithEstimator {
-    arrival_group_accumulator: ArrivalGroupAccumulator,
-    trendline_estimator: TrendlineEstimator,
-    rate_control: RateControl,
+    delay_controller: DelayController,
+    loss_controller: Option<LossController>,
     acked_bitrate_estimator: AckedBitrateEstimator,
-    /// Last estimate produced, unlike [`next_estimate`] this will always have a value after the
-    /// first estimate.
-    last_estimate: Option<Bitrate>,
-    /// History of the max RTT derived for each TWCC report.
-    max_rtt_history: VecDeque<Duration>,
-    /// Calculated mean of max_rtt_history.
-    mean_max_rtt: Option<Duration>,
-
-    /// The next time we should poll.
-    next_timeout: Instant,
-    /// The last time we ingested a TWCC report.
-    last_twcc_report: Instant,
+    started_at: Option<Instant>,
 }
 
 impl SendSideBandwithEstimator {
-    pub fn new(initial_bitrate: Bitrate) -> Self {
+    pub fn new(initial_bitrate: Bitrate, enable_loss_controller: bool) -> Self {
         Self {
-            arrival_group_accumulator: ArrivalGroupAccumulator::default(),
-            trendline_estimator: TrendlineEstimator::new(20),
+            delay_controller: DelayController::new(initial_bitrate),
+            loss_controller: enable_loss_controller
+                .then(LossController::new)
+                .map(|mut l| {
+                    l.set_bandwidth_estimate(initial_bitrate);
+                    l
+                }),
             acked_bitrate_estimator: AckedBitrateEstimator::new(
                 INITIAL_BITRATE_WINDOW,
                 BITRATE_WINDOW,
             ),
-            rate_control: RateControl::new(initial_bitrate, Bitrate::kbps(40), Bitrate::gbps(10)),
-            last_estimate: None,
-            max_rtt_history: VecDeque::default(),
-            mean_max_rtt: None,
-            next_timeout: already_happened(),
-            last_twcc_report: already_happened(),
+            started_at: None,
         }
     }
 
@@ -77,125 +64,92 @@ impl SendSideBandwithEstimator {
         records: impl Iterator<Item = &'t TwccSendRecord>,
         now: Instant,
     ) {
-        let mut acked: Vec<AckedPacket> = Vec::new();
+        let _ = self.started_at.get_or_insert(now);
+
+        let send_records: Vec<_> = records.collect();
+        let mut acked_packets = vec![];
 
         let mut max_rtt = None;
-        for record in records {
-            let Ok(acked_packet) = record.try_into() else {
+        let mut count = 0;
+        let mut lost = 0;
+        for record in send_records.iter() {
+            count += 1;
+            let Ok(acked_packet) = (*record).try_into() else {
+                lost += 1;
                 continue;
             };
-            acked.push(acked_packet);
+            acked_packets.push(acked_packet);
             max_rtt = max_rtt.max(record.rtt());
         }
-        acked.sort_by(AckedPacket::order_by_receive_time);
+        acked_packets.sort_by(AckedPacket::order_by_receive_time);
 
-        for acked_packet in acked {
+        for acked_packet in acked_packets.iter() {
             self.acked_bitrate_estimator
                 .update(acked_packet.remote_recv_time, acked_packet.size);
-
-            if let Some(delay_variation) = self
-                .arrival_group_accumulator
-                .accumulate_packet(acked_packet)
-            {
-                crate::packet::bwe::macros::log_delay_variation!(delay_variation.delay_delta);
-
-                // Got a new delay variation, add it to the trendline
-                self.trendline_estimator
-                    .add_delay_observation(delay_variation, now);
-            }
         }
 
-        if let Some(rtt) = max_rtt {
-            self.add_max_rtt(rtt);
-        }
+        let acked_bitrate = self.acked_bitrate_estimator.current_estimate();
+        let Some(delay_estimate) = self
+            .delay_controller
+            .update(&acked_packets, acked_bitrate, now)
+        else {
+            return;
+        };
 
-        let new_hypothesis = self.trendline_estimator.hypothesis();
+        let Some(loss_controller) = &mut self.loss_controller else {
+            return;
+        };
 
-        self.update_estimate(
-            new_hypothesis,
-            self.acked_bitrate_estimator.current_estimate(),
-            self.mean_max_rtt,
-            now,
-        );
-        self.last_twcc_report = now;
-    }
+        let loss = if count == 0 {
+            0.0
+        } else {
+            lost as f64 / count as f64
+        };
+        log_loss!(loss);
 
-    pub(crate) fn poll_timeout(&self) -> Instant {
-        self.next_timeout
-    }
-
-    pub(crate) fn handle_timeout(&mut self, now: Instant) {
-        if !self.trendline_hypothesis_valid(now) {
-            // We haven't received a TWCC report in a while. The trendline hypothesis can
-            // no longer be considered valid. We need another TWCC report before we can update
-            // estimates.
-            let next_timeout_in = self
-                .mean_max_rtt
-                .unwrap_or(MAX_TWCC_GAP)
-                .min(UPDATE_INTERVAL);
-
-            // Set this even if we didn't update, otherwise we get stuck in a poll -> handle loop
-            // that starves the run loop.
-            self.next_timeout = now + next_timeout_in;
+        // In start up with no loss, let delay controller be in charge
+        if in_startup_phase(self.started_at, now) && loss <= 0.001 {
+            loss_controller.set_bandwidth_estimate(delay_estimate);
             return;
         }
 
-        self.update_estimate(
-            self.trendline_estimator.hypothesis(),
-            self.acked_bitrate_estimator.current_estimate(),
-            self.mean_max_rtt,
-            now,
-        );
+        if let Some(acked_bitrate) = acked_bitrate {
+            loss_controller.set_acknowledged_bitrate(acked_bitrate);
+        }
+        loss_controller.update_bandwidth_estimate(&send_records, delay_estimate);
+    }
+
+    pub(crate) fn poll_timeout(&self) -> Instant {
+        self.delay_controller.poll_timeout()
+    }
+
+    pub(crate) fn handle_timeout(&mut self, now: Instant) {
+        self.delay_controller
+            .handle_timeout(self.acked_bitrate_estimator.current_estimate(), now);
     }
 
     /// Get the latest estimate.
     pub(crate) fn last_estimate(&self) -> Option<Bitrate> {
-        self.last_estimate
-    }
+        let delay_estimate = self.delay_controller.last_estimate();
 
-    fn add_max_rtt(&mut self, max_rtt: Duration) {
-        while self.max_rtt_history.len() > MAX_RTT_HISTORY_WINDOW {
-            self.max_rtt_history.pop_front();
+        let Some(loss_estimate) = self
+            .loss_controller
+            .as_ref()
+            .map(|l| l.get_loss_based_result().bandwidth_estimate)
+        else {
+            return delay_estimate;
+        };
+
+        match (delay_estimate, loss_estimate) {
+            (Some(de), Some(le)) => Some(de.min(le)),
+            (None, le @ Some(_)) => le,
+            (de @ Some(_), None) => de,
+            (None, None) => None,
         }
-        self.max_rtt_history.push_back(max_rtt);
-
-        let sum = self
-            .max_rtt_history
-            .iter()
-            .fold(Duration::ZERO, |acc, rtt| acc + *rtt);
-
-        self.mean_max_rtt = Some(sum / self.max_rtt_history.len() as u32);
     }
 
-    fn update_estimate(
-        &mut self,
-        hypothesis: BandwithUsage,
-        observed_bitrate: Option<Bitrate>,
-        mean_max_rtt: Option<Duration>,
-        now: Instant,
-    ) {
-        if let Some(observed_bitrate) = observed_bitrate {
-            self.rate_control
-                .update(hypothesis.into(), observed_bitrate, mean_max_rtt, now);
-            let estimated_rate = self.rate_control.estimated_bitrate();
-
-            crate::packet::bwe::macros::log_bitrate_estimate!(estimated_rate.as_f64());
-            self.last_estimate = Some(estimated_rate);
-        }
-
-        // Set this even if we didn't update, otherwise we get stuck in a poll -> handle loop
-        // that starves the run loop.
-        self.next_timeout = now + UPDATE_INTERVAL;
-    }
-
-    /// Whether the current trendline hypothesis is valid i.e. not too old.
-    fn trendline_hypothesis_valid(&self, now: Instant) -> bool {
-        now.duration_since(self.last_twcc_report)
-            <= self
-                .mean_max_rtt
-                .map(|rtt| rtt * 2)
-                .unwrap_or(MAX_TWCC_GAP)
-                .min(UPDATE_INTERVAL * 2)
+    pub(crate) fn reset(&mut self, init_bitrate: Bitrate) {
+        *self = Self::new(init_bitrate, self.loss_controller.is_some());
     }
 }
 
@@ -212,9 +166,16 @@ pub struct AckedPacket {
     /// instants of the same type i.e. those that represent a TWCC reported receive time for this
     /// session.
     remote_recv_time: Instant,
+    /// The local time when received confirmation that the other side received the seq i.e. when we
+    /// received the TWCC report for this packet.
+    local_recv_time: Instant,
 }
 
 impl AckedPacket {
+    fn rtt(&self) -> Duration {
+        self.local_recv_time - self.local_send_time
+    }
+
     fn order_by_receive_time(lhs: &Self, rhs: &Self) -> Ordering {
         if lhs.remote_recv_time != rhs.remote_recv_time {
             lhs.remote_recv_time.cmp(&rhs.remote_recv_time)
@@ -226,11 +187,21 @@ impl AckedPacket {
     }
 }
 
+// NB: Extracted for lifetime reasons
+fn in_startup_phase(started_at: Option<Instant>, now: Instant) -> bool {
+    started_at
+        .map(|s| now.duration_since(s) <= STARTUP_PAHSE)
+        .unwrap_or(false)
+}
+
 impl TryFrom<&TwccSendRecord> for AckedPacket {
     type Error = ();
 
     fn try_from(value: &TwccSendRecord) -> Result<Self, Self::Error> {
         let Some(remote_recv_time) = value.remote_recv_time() else {
+            return Err(());
+        };
+        let Some(local_recv_time) = value.local_recv_time() else {
             return Err(());
         };
 
@@ -239,23 +210,24 @@ impl TryFrom<&TwccSendRecord> for AckedPacket {
             size: value.size().into(),
             local_send_time: value.local_send_time(),
             remote_recv_time,
+            local_recv_time,
         })
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BandwithUsage {
+enum BandwidthUsage {
     Overuse,
     Normal,
     Underuse,
 }
 
-impl fmt::Display for BandwithUsage {
+impl fmt::Display for BandwidthUsage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BandwithUsage::Overuse => write!(f, "overuse"),
-            BandwithUsage::Normal => write!(f, "normal"),
-            BandwithUsage::Underuse => write!(f, "underuse"),
+            BandwidthUsage::Overuse => write!(f, "overuse"),
+            BandwidthUsage::Normal => write!(f, "normal"),
+            BandwidthUsage::Underuse => write!(f, "underuse"),
         }
     }
 }

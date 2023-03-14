@@ -1035,6 +1035,11 @@ impl TwccSendRecord {
         self.local_send_time
     }
 
+    /// The time we received this TWCC record. [`None`] if no feedback has been received yet.
+    pub fn local_recv_time(&self) -> Option<Instant> {
+        self.recv_report.as_ref().map(|r| r.local_recv_time)
+    }
+
     pub fn size(&self) -> usize {
         self.size as usize
     }
@@ -1051,7 +1056,7 @@ impl TwccSendRecord {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct TwccRecvReport {
     ///  The (local) time we received confirmation the other side received the seq.
     local_recv_time: Instant,

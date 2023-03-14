@@ -22,6 +22,12 @@ macro_rules! log_bitrate_estimate {
     }
 }
 
+macro_rules! log_loss_based_bitrate_estimate {
+    ($($arg:expr),+) => {
+        crate::log_stat!("LOSS_BITRATE_ESTIMATE", $($arg),+);
+    }
+}
+
 macro_rules! log_rate_control_state {
     ($($arg:expr),+) => {
         crate::log_stat!("RATE_CONTROL_STATE", $($arg),+);
@@ -52,8 +58,23 @@ macro_rules! log_pacer_padding_debt {
     }
 }
 
+macro_rules! log_inherent_loss {
+    ($($arg:expr),+) => {
+        crate::log_stat!("INHERENT_LOSS", $($arg),+);
+    }
+}
+
+macro_rules! log_loss {
+    ($($arg:expr),+) => {
+        crate::log_stat!("LOSS", $($arg),+);
+    }
+}
+
 pub(crate) use log_bitrate_estimate;
 pub(crate) use log_delay_variation;
+pub(crate) use log_inherent_loss;
+pub(crate) use log_loss;
+pub(crate) use log_loss_based_bitrate_estimate;
 pub(crate) use log_pacer_media_debt;
 pub(crate) use log_pacer_padding_debt;
 pub(crate) use log_rate_control_applied_change;

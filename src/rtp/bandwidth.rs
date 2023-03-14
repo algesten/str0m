@@ -13,6 +13,12 @@ pub struct Bitrate(f64);
 impl Bitrate {
     /// A bitrate of zero bit/s.
     pub const ZERO: Self = Self::bps(0);
+    /// The maximum bitrate that can be represented.
+    pub const MAX: Self = Self::bps(u64::MAX);
+    /// Positive infinity, useful as an invalid value with comparison semantics
+    pub const INFINITY: Self = Self(f64::INFINITY);
+    /// Negative infinity, useful as an invalid value with comparison semantics
+    pub const NEG_INFINITY: Self = Self(f64::NEG_INFINITY);
 
     /// Create a bitrate of some bit per second(bps).
     pub const fn bps(bps: u64) -> Self {
@@ -57,6 +63,16 @@ impl Bitrate {
     /// Return the maximum bitrate between `self` and `other`.
     pub fn max(&self, other: Self) -> Self {
         Self(self.0.max(other.0))
+    }
+
+    /// Whether this bitrate is valid
+    pub fn is_valid(&self) -> bool {
+        self.0.is_finite()
+    }
+
+    /// Turn self into `Option<Bitrate>` based on its validity
+    pub fn as_valid(&self) -> Option<Bitrate> {
+        self.is_valid().then_some(*self)
     }
 }
 
@@ -150,6 +166,10 @@ impl DataSize {
     pub fn saturating_sub(self, rhs: Self) -> Self {
         Self(self.0.saturating_sub(rhs.0))
     }
+
+    pub(crate) fn as_kb(&self) -> f64 {
+        self.0 as f64 / 1000.0
+    }
 }
 
 impl From<usize> for DataSize {
@@ -187,6 +207,14 @@ impl Div<Bitrate> for DataSize {
     }
 }
 
+impl Div<f64> for Bitrate {
+    type Output = Bitrate;
+
+    fn div(self, rhs: f64) -> Self::Output {
+        Self(self.0 / rhs)
+    }
+}
+
 impl Mul<u64> for DataSize {
     type Output = DataSize;
 
@@ -198,6 +226,17 @@ impl Mul<u64> for DataSize {
 impl AddAssign<DataSize> for DataSize {
     fn add_assign(&mut self, rhs: DataSize) {
         self.0 += rhs.0;
+    }
+}
+
+impl Sub<DataSize> for DataSize {
+    type Output = DataSize;
+
+    fn sub(self, rhs: DataSize) -> Self::Output {
+        let mut res = self;
+        res -= rhs;
+
+        res
     }
 }
 
@@ -300,5 +339,13 @@ mod test {
         let duration = size / rate;
 
         assert_eq!(duration.as_millis(), 40);
+    }
+
+    #[test]
+    fn test_bitrate_div_f64() {
+        let rate = Bitrate::kbps(2_500);
+        let new_rate = rate / 2.0;
+
+        assert_eq!(new_rate, Bitrate::kbps(1250));
     }
 }
