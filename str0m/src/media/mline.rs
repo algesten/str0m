@@ -500,6 +500,13 @@ impl MLine {
         // We only produce padding packet if there is an asked for padding size.
         let pad_size = pad_size?;
 
+        // Only do padding packets if we are using RTX, or we will increase the seq_no
+        // on the main SSRC for filler stuff.
+        let has_rtx = self.sources_tx.iter().any(|s| s.is_rtx());
+        if !has_rtx {
+            return None;
+        }
+
         // TODO: This function should be split into two halves, but because of the borrow checker
         // it's hard to construct.
 
@@ -547,19 +554,12 @@ impl MLine {
         {
             let pt = *self.buffers_tx.keys().next()?;
             let pt_rtx = self.pt_rtx(pt)?;
-            let ssrc_rtx = {
-                let ssrc_rtx = self
-                    .sources_tx
-                    .iter()
-                    .find(|s| s.is_rtx())
-                    .map(|s| s.ssrc());
-
-                // no rtx?
-                let ssrc = self.sources_tx.first().map(|s| s.ssrc());
-
-                // This handles the case where the m-line doesn't use separate RTX channels.
-                ssrc_rtx.or(ssrc)
-            }?;
+            let ssrc_rtx = self
+                .sources_tx
+                .iter()
+                .find(|s| s.is_rtx())
+                .map(|s| s.ssrc())
+                .expect("at least one rtx source");
 
             let padding = pad_size.max(MAX_PADDING_PACKET_SIZE);
 
