@@ -156,7 +156,8 @@ impl PacketizingBuffer {
 
     /// An iterator over all packets that are queued, but have not yet been sent.
     fn queued_packets(&self) -> impl Iterator<Item = &Packetized> {
-        (self.emit_next..).map_while(|idx| self.queue.get(idx))
+        // seq_no is some as long as packet has not been sent
+        self.queue.iter().skip_while(|p| p.seq_no.is_some())
     }
 
     /// Find a historic packet that is smaller than the given max_size.
