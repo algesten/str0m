@@ -627,7 +627,7 @@ mod packet;
 
 #[path = "rtp/mod.rs"]
 mod rtp_;
-use rtp_::Bitrate;
+use rtp_::{Bitrate, DataSize};
 use rtp_::{Extension, ExtensionMap};
 
 /// Low level RTP access.
@@ -1830,13 +1830,19 @@ pub struct RtcConfig {
     exts: ExtensionMap,
     stats_interval: Option<Duration>,
     /// Whether to use Bandwidth Estimation to discover the egress bandwidth.
-    bwe_initial_bitrate: Option<Bitrate>,
+    bwe_config: Option<BweConfig>,
     reordering_size_audio: usize,
     reordering_size_video: usize,
     send_buffer_audio: usize,
     send_buffer_video: usize,
     rtp_mode: bool,
     enable_raw_packets: bool,
+}
+
+#[derive(Debug, Clone)]
+struct BweConfig {
+    initial_bitrate: Bitrate,
+    enable_loss_controller: bool,
 }
 
 impl RtcConfig {
@@ -2079,7 +2085,25 @@ impl RtcConfig {
     ///
     /// This includes setting the initial estimate to start with.
     pub fn enable_bwe(mut self, initial_estimate: Option<Bitrate>) -> Self {
-        self.bwe_initial_bitrate = initial_estimate;
+        match initial_estimate {
+            Some(b) => {
+                let conf = self.bwe_config.get_or_insert(BweConfig::new(b));
+                conf.initial_bitrate = b;
+            }
+            None => {
+                self.bwe_config = None;
+            }
+        }
+
+        self
+    }
+
+    /// Enable the experimental loss based BWE subsystem.
+    /// Defaults to disabled for now, will be enabled by default in the future.
+    pub fn enable_experimental_loss_based_bwe(mut self, enabled: bool) -> Self {
+        if let Some(c) = &mut self.bwe_config {
+            c.enable_loss_controller = enabled;
+        }
 
         self
     }
@@ -2094,7 +2118,7 @@ impl RtcConfig {
     /// assert_eq!(config.bwe_initial_bitrate(), None);
     /// ```
     pub fn bwe_initial_bitrate(&self) -> Option<Bitrate> {
-        self.bwe_initial_bitrate
+        self.bwe_config.as_ref().map(|c| c.initial_bitrate)
     }
 
     /// Sets the number of packets held back for reordering audio packets.
@@ -2265,6 +2289,15 @@ impl RtcConfig {
     }
 }
 
+impl BweConfig {
+    fn new(initial_bitrate: Bitrate) -> Self {
+        Self {
+            initial_bitrate,
+            enable_loss_controller: false,
+        }
+    }
+}
+
 impl Default for RtcConfig {
     fn default() -> Self {
         Self {
@@ -2275,7 +2308,7 @@ impl Default for RtcConfig {
             codec_config: CodecConfig::new_with_defaults(),
             exts: ExtensionMap::standard(),
             stats_interval: None,
-            bwe_initial_bitrate: None,
+            bwe_config: None,
             reordering_size_audio: 15,
             reordering_size_video: 30,
             send_buffer_audio: 50,

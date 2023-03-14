@@ -109,10 +109,11 @@ impl Session {
         while *id > MAX_ID {
             id = (*id >> 1).into();
         }
-        let (pacer, bwe) = if let Some(rate) = config.bwe_initial_bitrate {
+        let (pacer, bwe) = if let Some(config) = &config.bwe_config {
+            let rate = config.initial_bitrate;
             let pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(rate * PACING_FACTOR * 2.0));
 
-            let send_side_bwe = SendSideBandwithEstimator::new(rate);
+            let send_side_bwe = SendSideBandwithEstimator::new(rate, config.enable_loss_controller);
             let bwe = Bwe {
                 bwe: send_side_bwe,
                 desired_bitrate: Bitrate::ZERO,
@@ -946,11 +947,11 @@ impl Bwe {
         self.bwe.handle_timeout(now);
     }
 
-    pub fn reset(&mut self, init_bitrate: Bitrate) {
-        self.bwe = SendSideBandwithEstimator::new(init_bitrate);
+    fn reset(&mut self, init_bitrate: Bitrate) {
+        self.bwe.reset(init_bitrate);
     }
 
-    pub fn update<'t>(
+    fn update<'t>(
         &mut self,
         records: impl Iterator<Item = &'t crate::rtp_::TwccSendRecord>,
         now: Instant,
