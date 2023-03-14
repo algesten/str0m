@@ -97,7 +97,7 @@ impl RtpHeader {
         } else {
             ((pad_len as usize / block_size) + 1) * block_size
         }
-        .min(MAX_PADDING_PACKET_SIZE.as_bytes_usize());
+        .min(MAX_PADDING_PACKET_SIZE);
 
         for i in 0..rounded_len.saturating_sub(1) {
             buf[header_len + i] = 0;

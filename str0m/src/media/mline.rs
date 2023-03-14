@@ -4,9 +4,9 @@ use std::time::{Duration, Instant};
 use net_::{Id, DATAGRAM_MTU};
 use packet::{DepacketizingBuffer, PacketKind, Packetized};
 use packet::{PacketizedMeta, PacketizingBuffer, QueueId, QueueState};
-use rtp_::{DataSize, SeqNo, MAX_PADDING_PACKET_SIZE, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 use rtp_::{Extensions, Fir, FirEntry, NackEntry, Pli, Rtcp};
 use rtp_::{RtcpFb, RtpHeader, SdesType};
+use rtp_::{SeqNo, MAX_PADDING_PACKET_SIZE, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
 pub use packet::RtpMeta;
 pub use rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
@@ -336,16 +336,16 @@ impl MLine {
         now: Instant,
         exts: &Extensions,
         twcc: &mut u64,
-        pad_size: Option<DataSize>,
+        pad_size: Option<usize>,
         buf: &mut Vec<u8>,
     ) -> Option<(RtpHeader, SeqNo)> {
         let mid = self.mid;
 
-        let next = if let Some(next) = self.poll_packet_padding(now, pad_size) {
-            next
-        } else if let Some(next) = self.poll_packet_resend(now) {
+        let next = if let Some(next) = self.poll_packet_resend(now) {
             next
         } else if let Some(next) = self.poll_packet_regular(now) {
+            next
+        } else if let Some(next) = self.poll_packet_padding(now, pad_size) {
             next
         } else {
             return None;
@@ -496,77 +496,82 @@ impl MLine {
         })
     }
 
-    fn poll_packet_padding(
-        &mut self,
-        now: Instant,
-        pad_size: Option<DataSize>,
-    ) -> Option<NextPacket<'_>> {
-        let target_size = pad_size?;
+    fn poll_packet_padding(&mut self, now: Instant, pad_size: Option<usize>) -> Option<NextPacket> {
+        // We only produce padding packet if there is an asked for padding size.
+        let pad_size = pad_size?;
 
-        let pt_to_use = self
-            .buffers_tx
-            .iter()
-            .map(|(pt, buffer)| (pt, buffer.history_size()))
-            .filter(|(_, size)| *size > 0)
-            // Use the last PT i.e. the one that has the most RTX history, this is a poor
-            // approximation for most recent sends.
-            .max_by_key(|(_, size)| *size)
-            .map(|(pt, _)| *pt);
+        // TODO: This function should be split into two halves, but because of the borrow checker
+        // it's hard to construct.
 
-        if let Some(pt_to_use) = pt_to_use {
-            // Attempt to resend a previous packet as RTX
-            let max_size = target_size * 2_u64;
+        // This first scope tries to send a spurious (unasked for) resend of a packet already sent.
+        {
+            let pt = self
+                .buffers_tx
+                .iter()
+                .map(|(pt, buffer)| (pt, buffer.history_size()))
+                .filter(|(_, size)| *size > 0)
+                // Use the last PT i.e. the one that has the most RTX history, this is a poor
+                // approximation for most recent sends.
+                .max_by_key(|(_, size)| *size)
+                .map(|(pt, _)| *pt);
 
-            let buffer = get_buffer_tx(&self.buffers_tx, pt_to_use)
-                .expect("the buffer to exist as verified previously");
-            let packet = buffer
-                .last_history_packet()
-                .expect("the buffer to have some packet history");
+            // If we find a pt above, we do a spurious (unasked for) resend of this packet.
+            if let Some(pt) = pt {
+                let buffer = get_buffer_tx(&self.buffers_tx, pt)
+                    .expect("the buffer to exist as verified previously");
 
-            if packet.data.len() < max_size.as_bytes_usize() {
-                let rtx_pt = self.pt_rtx(pt_to_use)?;
-                let source = match get_source_tx(&mut self.sources_tx, packet.meta.rid, true) {
-                    Some(v) => v,
-                    None => return None,
-                };
-                let seq_no = source.next_seq_no(now);
+                // Find a historic packet that is smaller than this max size. The max size
+                // is a headroom since we can accept slightly larger padding than asked for.
+                let max_size = pad_size * 2;
+                let packet = buffer.historic_packet_smaller_than(max_size)?;
 
-                return Some(NextPacket {
-                    pt: rtx_pt,
-                    ssrc: source.ssrc(),
+                let seq_no = packet
+                    .seq_no
+                    .expect("this packet to have been sent and therefore have a sequence number");
+
+                // piggy-back on regular resends.
+                self.resends.push_front(Resend {
+                    pt,
+                    ssrc: packet.meta.ssrc,
                     seq_no,
-                    body: NextPacketBody::Resend {
-                        pkt: packet,
-                        orig_seq_no: Some(packet.seq_no.expect(
-                            "this packet to have been sent and therefore have a sequence number",
-                        )),
-                    },
+                    queued_at: now,
                 });
+
+                return self.poll_packet_resend(now);
             }
         }
 
-        // If we couldn't find a suitable packet to resend, generate an empty padding packet
-        // instead.
-
+        // This second scope sends an empty padding packet. This is a fallback strategy if we fail
+        // to find a suitable rtx packet above.
         // NB: If we cannot generate padding here for some reason we'll get stuck forever.
-        let pt_to_use = self.buffers_tx.keys().next()?;
-        let rtx_pt = self.pt_rtx(*pt_to_use)?;
-        let source = match get_source_tx(&mut self.sources_tx, None, true) {
-            Some(v) => v,
-            None => return None,
-        };
-        let padding = target_size.max(MAX_PADDING_PACKET_SIZE);
+        {
+            let pt = *self.buffers_tx.keys().next()?;
+            let pt_rtx = self.pt_rtx(pt)?;
+            let ssrc_rtx = {
+                let ssrc_rtx = self
+                    .sources_tx
+                    .iter()
+                    .find(|s| s.is_rtx())
+                    .map(|s| s.ssrc());
 
-        let seq_no = source.next_seq_no(now);
+                // no rtx?
+                let ssrc = self.sources_tx.first().map(|s| s.ssrc());
 
-        Some(NextPacket {
-            pt: rtx_pt,
-            ssrc: source.ssrc(),
-            seq_no,
-            body: NextPacketBody::Padding {
-                len: padding.as_bytes_usize() as u8,
-            },
-        })
+                // This handles the case where the m-line doesn't use separate RTX channels.
+                ssrc_rtx.or(ssrc)
+            }?;
+
+            let padding = pad_size.max(MAX_PADDING_PACKET_SIZE);
+
+            let seq_no = self.get_or_create_source_tx(ssrc_rtx).next_seq_no(now);
+
+            Some(NextPacket {
+                pt: pt_rtx,
+                ssrc: ssrc_rtx,
+                seq_no,
+                body: NextPacketBody::Padding { len: padding as u8 },
+            })
+        }
     }
 
     pub fn get_or_create_source_rx(&mut self, ssrc: Ssrc) -> &mut ReceiverSource {
