@@ -341,7 +341,7 @@ impl MLine {
     ) -> Option<(RtpHeader, SeqNo)> {
         let mid = self.mid;
 
-        let next = if let Some(next) = self.poll_packet_resend(now) {
+        let next = if let Some(next) = self.poll_packet_resend_to_cap(now) {
             next
         } else if let Some(next) = self.poll_packet_regular(now) {
             next
@@ -419,7 +419,23 @@ impl MLine {
         Some((header, next.seq_no))
     }
 
-    fn poll_packet_resend(&mut self, now: Instant) -> Option<NextPacket<'_>> {
+    fn poll_packet_resend_to_cap(&mut self, now: Instant) -> Option<NextPacket> {
+        let from = now.checked_sub(Duration::from_secs(1)).unwrap_or(now);
+        let bytes_transmitted = self.bytes_transmitted.sum_since(from);
+        let bytes_retransmitted = self.bytes_retransmitted.sum_since(from);
+        let ratio = bytes_retransmitted as f32 / (bytes_retransmitted + bytes_transmitted) as f32;
+        let ratio = if ratio.is_finite() { ratio } else { 0_f32 };
+
+        // If we hit the cap, stop doing resends.
+        if ratio > 0.15_f32 {
+            self.resends.clear();
+            return None;
+        }
+
+        self.poll_packet_resend(now, false)
+    }
+
+    fn poll_packet_resend(&mut self, now: Instant, is_padding: bool) -> Option<NextPacket<'_>> {
         loop {
             let resend = self.resends.pop_front()?;
 
@@ -436,21 +452,10 @@ impl MLine {
                 None => continue,
             };
 
-            let from = now.checked_sub(Duration::from_secs(1)).unwrap_or(now);
-            let bytes_transmitted = self.bytes_transmitted.sum_since(from);
-            let bytes_retransmitted = self.bytes_retransmitted.sum_since(from);
-            let ratio =
-                bytes_retransmitted as f32 / (bytes_retransmitted + bytes_transmitted) as f32;
-            let ratio = if ratio.is_finite() { ratio } else { 0_f32 };
-
-            if ratio > 0.15_f32 {
-                // we have been retransmitting too much, assume congestion
-                // and skip retransmissions
-                continue;
+            if !is_padding {
+                source.update_packet_counts(pkt.data.len() as u64, true);
+                self.bytes_retransmitted.push(now, pkt.data.len() as u64);
             }
-
-            source.update_packet_counts(pkt.data.len() as u64, true);
-            self.bytes_retransmitted.push(now, pkt.data.len() as u64);
 
             let seq_no = source.next_seq_no(now);
 
@@ -535,7 +540,9 @@ impl MLine {
                     .seq_no
                     .expect("this packet to have been sent and therefore have a sequence number");
 
-                // piggy-back on regular resends.
+                // Piggy-back on regular resends.
+                // We should never add padding as long as there are resends.
+                assert!(self.resends.is_empty());
                 self.resends.push_front(Resend {
                     pt,
                     ssrc: packet.meta.ssrc,
@@ -543,7 +550,7 @@ impl MLine {
                     queued_at: now,
                 });
 
-                return self.poll_packet_resend(now);
+                return self.poll_packet_resend(now, true);
             }
         }
 
