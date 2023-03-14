@@ -104,6 +104,8 @@ pub struct QueueState {
     pub total_queue_time: Duration,
     /// The kind of packets this queue contains.
     pub queue_kind: PacketKind,
+    /// Whether the m-line has RTX.
+    pub has_rtx: bool,
     // The last time a packet was sent from this queue.
     last_send_time: Option<Instant>,
     // The time the packet at the front of the queue was queued.
@@ -528,6 +530,7 @@ impl QueueState {
             packet_count: 0,
             total_queue_time: Duration::ZERO,
             queue_kind,
+            has_rtx: false,
             last_send_time: None,
             leading_packet_queue_time: None,
         }
@@ -978,6 +981,7 @@ mod test {
             packet_count: 1332,
             total_queue_time: duration_ms(1_000),
             queue_kind: PacketKind::Video,
+            has_rtx: true,
             last_send_time: Some(now + duration_ms(500)),
             leading_packet_queue_time: None,
         };
@@ -988,6 +992,7 @@ mod test {
             packet_count: 5,
             total_queue_time: duration_ms(337),
             queue_kind: PacketKind::Video,
+            has_rtx: false,
             last_send_time: None,
             leading_packet_queue_time: Some(now + duration_ms(19)),
         };
@@ -1226,6 +1231,7 @@ mod test {
                     packet_count: self.packet_count,
                     total_queue_time: self.total_time_spent_queued,
                     queue_kind: self.kind,
+                    has_rtx: self.kind == PacketKind::Video,
                     last_send_time: self.last_send_time,
                     leading_packet_queue_time: self.queue.iter().next().map(|p| p.queued_at),
                 }

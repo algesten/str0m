@@ -502,8 +502,7 @@ impl MLine {
 
         // Only do padding packets if we are using RTX, or we will increase the seq_no
         // on the main SSRC for filler stuff.
-        let has_rtx = self.sources_tx.iter().any(|s| s.is_rtx());
-        if !has_rtx {
+        if !self.has_tx_rtx() {
             return None;
         }
 
@@ -1141,6 +1140,8 @@ impl MLine {
             state.update_leading_queue_time(Some(resend.queued_at));
         }
 
+        state.has_rtx = self.has_tx_rtx();
+
         state
     }
 
@@ -1150,6 +1151,11 @@ impl MLine {
             .iter()
             .find(|p| p.pt() == pt)?
             .pt_rtx()
+    }
+
+    /// Test if any source_tx in this channel has rtx.
+    fn has_tx_rtx(&self) -> bool {
+        self.sources_tx.iter().any(|s| s.is_rtx())
     }
 }
 
