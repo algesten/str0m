@@ -16,7 +16,7 @@ impl RtcpPacket for Goodbye {
 
     fn length_words(&self) -> usize {
         // each ssrc is one word
-        self.reports.len()
+        1 + self.reports.len()
     }
 
     fn write_to(&self, buf: &mut [u8]) -> usize {
@@ -26,7 +26,7 @@ impl RtcpPacket for Goodbye {
             buf[i * 4..(i + 1) * 4].copy_from_slice(&s.to_be_bytes());
         }
 
-        self.reports.len() * 4
+        self.length_words() * 4
     }
 }
 
