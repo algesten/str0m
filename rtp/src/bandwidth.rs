@@ -86,6 +86,10 @@ impl DataSize {
         self.0 as f64
     }
 
+    pub fn as_bytes_usize(&self) -> usize {
+        self.0 as usize
+    }
+
     pub fn saturating_sub(self, rhs: Self) -> Self {
         Self(self.0.saturating_sub(rhs.0))
     }
@@ -93,6 +97,12 @@ impl DataSize {
 
 impl From<usize> for DataSize {
     fn from(value: usize) -> Self {
+        Self(value as u64)
+    }
+}
+
+impl From<u8> for DataSize {
+    fn from(value: u8) -> Self {
         Self(value as u64)
     }
 }
@@ -117,6 +127,14 @@ impl Div<Bitrate> for DataSize {
         let seconds = bits / rhs.as_f64();
 
         Duration::from_secs_f64(seconds)
+    }
+}
+
+impl Mul<u64> for DataSize {
+    type Output = DataSize;
+
+    fn mul(self, rhs: u64) -> Self::Output {
+        Self(self.0 * rhs)
     }
 }
 

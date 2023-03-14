@@ -83,7 +83,7 @@ impl SrtpContext {
         let input = &buf[hlen..];
         assert!(
             input.len() % SRTP_BLOCK_SIZE == 0,
-            "RTP body padded to 16 block size"
+            "RTP body should be padded to 16 byte block size, {header:?} with body length {} was not", input.len()
         );
 
         let mut output = vec![0_u8; buf.len() + SRTP_HMAC_LEN];

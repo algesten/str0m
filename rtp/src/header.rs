@@ -1,7 +1,7 @@
 #![allow(clippy::unusual_byte_groupings)]
 
 use crate::ext::{ExtensionValues, Extensions};
-use crate::{Pt, SeqNo, Ssrc};
+use crate::{Pt, SeqNo, Ssrc, MAX_PADDING_PACKET_SIZE};
 
 /// Parsed header from an RTP packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +77,37 @@ impl RtpHeader {
         buf[0] |= 0b00_1_0_0000;
 
         pad
+    }
+
+    #[doc(hidden)]
+    /// Write a packet consisting entirely of padding and write.
+    pub fn create_padding_packet(
+        buf: &mut [u8],
+        pad_len: u8,
+        header_len: usize,
+        block_size: usize,
+    ) -> usize {
+        if pad_len == 0 {
+            warn!("Not generating padding packet with zero length");
+            return 0;
+        }
+
+        let rounded_len = if pad_len as usize % block_size == 0 {
+            pad_len as usize
+        } else {
+            ((pad_len as usize / block_size) + 1) * block_size
+        }
+        .min(MAX_PADDING_PACKET_SIZE.as_bytes_usize());
+
+        for i in 0..rounded_len.saturating_sub(1) {
+            buf[header_len + i] = 0;
+        }
+        buf[header_len + rounded_len.saturating_sub(1)] = rounded_len as u8;
+
+        // set the padding bit
+        buf[0] |= 0b00_1_0_0000;
+
+        rounded_len
     }
 
     #[doc(hidden)]
@@ -290,5 +321,15 @@ mod test {
     #[test]
     fn extend_33k_with_0_prev() {
         assert_eq!(extend_seq(Some(0), 33_000), 281474976678120);
+    }
+
+    #[test]
+    fn test_generate_one_length_padding_packet() {
+        let mut buf = vec![6; 255];
+        RtpHeader::create_padding_packet(&mut buf, 1, 10, 16);
+
+        let mut expected = vec![0; 16];
+        expected[15] = 16;
+        assert_eq!(&buf[10..26], &expected);
     }
 }

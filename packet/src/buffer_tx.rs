@@ -133,8 +133,21 @@ impl PacketizingBuffer {
         state
     }
 
-    fn leading_queue_time(&self) -> Option<Instant> {
+    /// The size of the resend history in this buffer.
+    pub fn history_size(&self) -> usize {
+        self.emit_next
+    }
+
+    pub fn leading_queue_time(&self) -> Option<Instant> {
         self.queued_packets().next().map(|p| p.meta.queued_at)
+    }
+
+    pub fn last_history_packet(&self) -> Option<&Packetized> {
+        if self.emit_next == 0 {
+            return None;
+        }
+
+        self.queue.get(self.emit_next - 1)
     }
 
     fn is_audio(&self) -> bool {
