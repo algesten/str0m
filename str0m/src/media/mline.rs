@@ -341,7 +341,7 @@ impl MLine {
     ) -> Option<(RtpHeader, SeqNo)> {
         let mid = self.mid;
 
-        let next = if let Some(next) = pad_size.and_then(|p| self.create_padding_packet(p, now)) {
+        let next = if let Some(next) = self.poll_packet_padding(now, pad_size) {
             next
         } else if let Some(next) = self.poll_packet_resend(now) {
             next
@@ -385,7 +385,7 @@ impl MLine {
             body_out = &mut body_out[original_seq_len..];
         }
 
-        match next.body {
+        let body_len = match next.body {
             NextPacketBody::Regular { pkt } | NextPacketBody::Resend { pkt, .. } => {
                 let body_len = pkt.data.len();
                 body_out[..body_len].copy_from_slice(&pkt.data);
@@ -398,7 +398,7 @@ impl MLine {
                     SRTP_BLOCK_SIZE,
                 );
 
-                buf.truncate(header_len + body_len + original_seq_len + pad_len);
+                body_len + original_seq_len + pad_len
             }
             NextPacketBody::Padding { len } => {
                 let len = RtpHeader::create_padding_packet(
@@ -411,9 +411,10 @@ impl MLine {
                     return None;
                 }
 
-                buf.truncate(header_len + len);
+                len
             }
-        }
+        };
+        buf.truncate(header_len + body_len);
 
         Some((header, next.seq_no))
     }
@@ -495,20 +496,22 @@ impl MLine {
         })
     }
 
-    fn create_padding_packet(&mut self, target_size: DataSize, now: Instant) -> Option<NextPacket> {
-        let pt_to_use = {
-            let mut vec: Vec<_> = self
-                .buffers_tx
-                .iter()
-                .map(|(pt, buffer)| (pt, buffer.history_size()))
-                .filter(|(_, size)| *size > 0)
-                .collect();
-            vec.sort_by_key(|(_, size)| *size);
+    fn poll_packet_padding(
+        &mut self,
+        now: Instant,
+        pad_size: Option<DataSize>,
+    ) -> Option<NextPacket<'_>> {
+        let target_size = pad_size?;
 
+        let pt_to_use = self
+            .buffers_tx
+            .iter()
+            .map(|(pt, buffer)| (pt, buffer.history_size()))
+            .filter(|(_, size)| *size > 0)
             // Use the last PT i.e. the one that has the most RTX history, this is a poor
             // approximation for most recent sends.
-            vec.last().map(|(pt, _)| **pt)
-        };
+            .max_by_key(|(_, size)| *size)
+            .map(|(pt, _)| *pt);
 
         if let Some(pt_to_use) = pt_to_use {
             let max_size = target_size * 2_u64;
