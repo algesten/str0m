@@ -627,7 +627,7 @@ mod packet;
 
 #[path = "rtp/mod.rs"]
 mod rtp_;
-use rtp_::Bitrate;
+use rtp_::{Bitrate, DataSize};
 use rtp_::{Extension, ExtensionMap};
 
 /// Low level RTP access.
