@@ -23,6 +23,10 @@ use arrival_group::{ArrivalGroupAccumulator, InterGroupDelayDelta};
 use rate_control::RateControl;
 use trendline_estimator::TrendlineEstimator;
 
+use self::loss_controller::NaiveLossController;
+
+pub mod loss_controller;
+
 const MAX_RTT_HISTORY_WINDOW: usize = 32;
 const INITIAL_BITRATE_WINDOW: Duration = Duration::from_millis(500);
 const BITRATE_WINDOW: Duration = Duration::from_millis(150);
@@ -37,6 +41,7 @@ pub struct SendSideBandwithEstimator {
     trendline_estimator: TrendlineEstimator,
     rate_control: RateControl,
     acked_bitrate_estimator: AckedBitrateEstimator,
+    loss_controller: NaiveLossController,
     /// Last unpolled bitrate estimate. [`None`] before the first poll and after each poll that,
     /// updated when we get a new estimate.
     next_estimate: Option<Bitrate>,
@@ -60,6 +65,7 @@ impl SendSideBandwithEstimator {
                 BITRATE_WINDOW,
             ),
             rate_control: RateControl::new(initial_bitrate, Bitrate::kbps(40), Bitrate::gbps(10)),
+            loss_controller: NaiveLossController::new(Some(initial_bitrate)),
             next_estimate: None,
             last_estimate: None,
             max_rtt_history: VecDeque::default(),
@@ -76,7 +82,13 @@ impl SendSideBandwithEstimator {
         let mut acked: Vec<AckedPacket> = Vec::new();
 
         let mut max_rtt = None;
+        let mut num_lost = 0_u64;
+        let mut num_received = 0_u64;
         for record in records {
+            if record.remote_recv_time().is_none() {
+                num_lost += 1;
+            }
+            num_received += 1;
             let Ok(acked_packet) = record.try_into() else {
                 continue;
             };
@@ -106,6 +118,9 @@ impl SendSideBandwithEstimator {
         }
 
         let new_hypothesis = self.trendline_estimator.hypothesis();
+
+        self.loss_controller
+            .update(num_lost, num_received, new_hypothesis);
 
         self.update_estimate(
             new_hypothesis,
@@ -168,7 +183,13 @@ impl SendSideBandwithEstimator {
         if let Some(observed_bitrate) = observed_bitrate {
             self.rate_control
                 .update(hypothesis.into(), observed_bitrate, mean_max_rtt, now);
-            let estimated_rate = self.rate_control.estimated_bitrate();
+
+            let estimated_rate =
+                if let Some(loss_based_estimate) = self.loss_controller.get_estimated_bitrate() {
+                    loss_based_estimate.min(self.rate_control.estimated_bitrate())
+                } else {
+                    self.rate_control.estimated_bitrate()
+                };
 
             crate::packet::bwe::macros::log_bitrate_estimate!(estimated_rate.as_f64());
             self.next_estimate = Some(estimated_rate);
@@ -226,7 +247,7 @@ impl TryFrom<&TwccSendRecord> for AckedPacket {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BandwithUsage {
+pub enum BandwithUsage {
     Overuse,
     Normal,
     Underuse,
