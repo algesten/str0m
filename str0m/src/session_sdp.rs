@@ -1,11 +1,11 @@
-use dtls::Fingerprint;
-use ice::{Candidate, IceCreds};
-use rtp_::{Extension, Mid};
-use sdp::{Answer, MediaAttribute, MediaLine, MediaType, SimulcastGroups, SimulcastOption};
-use sdp::{Offer, Proto, Sdp, SessionAttribute, Setup};
-
 use crate::change::{Change, Changes};
+use crate::dtls::Fingerprint;
+use crate::ice::{Candidate, IceCreds};
 use crate::media::{App, MediaKind, Source};
+use crate::rtp_::{Extension, Mid};
+use crate::sdp;
+use crate::sdp::{Answer, MediaAttribute, MediaLine, MediaType, SimulcastGroups, SimulcastOption};
+use crate::sdp::{Offer, Proto, Sdp, SessionAttribute, Setup};
 use crate::session::{only_m_line_mut, MLineOrApp};
 use crate::RtcError;
 
@@ -348,7 +348,7 @@ impl AsMediaLine for MLine {
         attrs.push(MediaAttribute::Mid(self.mid()));
 
         let audio = self.kind() == MediaKind::Audio;
-        for e in self.exts().into_extmap(audio) {
+        for e in self.exts().as_extmap(audio) {
             attrs.push(MediaAttribute::ExtMap(e));
         }
 
@@ -357,7 +357,7 @@ impl AsMediaLine for MLine {
         attrs.push(MediaAttribute::RtcpMux);
 
         for p in self.payload_params() {
-            p.inner().to_media_attrs(&mut attrs);
+            p.inner().as_media_attrs(&mut attrs);
         }
 
         // The advertised payload types.

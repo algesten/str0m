@@ -1,5 +1,5 @@
-use rtp_::Mid;
-use sdp::MediaLine;
+use crate::rtp_::Mid;
+use crate::sdp::MediaLine;
 
 /// m=application m-line. There can only be one of these in the SDP.
 #[derive(Debug)]

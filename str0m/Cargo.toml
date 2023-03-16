@@ -9,14 +9,22 @@ tracing = "0.1"
 rand = "0.8"
 once_cell = "1"
 serde = "1"
-#
-dtls = { path = "../dtls", package = "str0m-dtls", version = "0.0.1" }
-ice = { path = "../ice", package = "str0m-ice", version = "0.0.1" }
-net_ = { path = "../net", package = "str0m-net", pversion = "0.0.1" }
-rtp_ = { path = "../rtp", package = "str0m-rtp", version = "0.0.1" }
-sdp = { path = "../sdp", package = "str0m-sdp", version = "0.0.1" }
-packet = { path = "../packet", package = "str0m-packet", version = "0.0.1" }
-sctp = { path = "../sctp", package = "str0m-sctp", version = "0.0.1" }
+sctp-proto = "0.1.3"
+combine = "4"
+# Sadly no DTLS support in rustls.
+openssl = { version = "0.10", features = ["vendored"] }
+openssl-sys = "^0.9"
+# STUN
+hmac = "0.12"
+crc = "3"
+
+# asm feature breaks on windows, but it is much faster than openssl
+[target.'cfg(unix)'.dependencies]
+sha-1 = { version = "0.10", features = ["asm"] }
+
+[target.'cfg(windows)'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+openssl-sys = "^0.9"
 
 [dev-dependencies]
 rouille = { version = "3.5.0", features = ["ssl"] }

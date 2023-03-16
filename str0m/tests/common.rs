@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
 
-use net_::Receive;
+use str0m::net::Receive;
 use str0m::{Event, Input, Output, Rtc, RtcError};
 use tracing::Span;
 

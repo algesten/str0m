@@ -57,6 +57,14 @@
 #[macro_use]
 extern crate tracing;
 
+mod dtls;
+mod ice;
+mod net_;
+mod packet;
+mod rtp_;
+mod sctp;
+mod sdp;
+
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use std::{fmt, io};
@@ -79,18 +87,18 @@ pub use sdp::{Answer, Offer};
 
 /// Network related types to get socket data in/out of [`Rtc`].
 pub mod net {
-    pub use net_::{DatagramRecv, DatagramSend, Receive, Transmit};
+    pub use crate::net_::{DatagramRecv, DatagramSend, Receive, Transmit};
 }
 
 /// Various error types.
 pub mod error {
-    pub use dtls::DtlsError;
-    pub use ice::IceError;
-    pub use net_::NetError;
-    pub use packet::PacketError;
-    pub use rtp_::RtpError;
-    pub use sctp::{ProtoError, SctpError};
-    pub use sdp::SdpError;
+    pub use crate::dtls::DtlsError;
+    pub use crate::ice::IceError;
+    pub use crate::net_::NetError;
+    pub use crate::packet::PacketError;
+    pub use crate::rtp_::RtpError;
+    pub use crate::sctp::{ProtoError, SctpError};
+    pub use crate::sdp::SdpError;
 }
 
 pub mod channel;

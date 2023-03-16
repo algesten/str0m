@@ -1,9 +1,9 @@
 use std::ops::Deref;
 
-use net_::Id;
-use rtp_::{ChannelId, Direction, Extensions, Mid, Ssrc};
-use sctp::{DcepOpen, ReliabilityType};
-use sdp::{MediaLine, Msid, Offer};
+use crate::net_::Id;
+use crate::rtp_::{ChannelId, Direction, Extensions, Mid, Ssrc};
+use crate::sctp::{DcepOpen, ReliabilityType};
+use crate::sdp::{MediaLine, Msid, Offer};
 
 use crate::media::{CodecConfig, MLine, MediaKind, PayloadParams};
 use crate::session::MLineOrApp;
