@@ -1,9 +1,0 @@
-[package]
-name = "str0m-sctp"
-version = "0.0.1"
-edition = "2021"
-
-[dependencies]
-sctp-proto = "0.1.3"
-tracing = "0.1"
-thiserror = "1"
