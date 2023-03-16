@@ -2,7 +2,7 @@ use crate::change::{Change, Changes};
 use crate::dtls::Fingerprint;
 use crate::ice::{Candidate, IceCreds};
 use crate::media::{App, MediaKind, Source};
-use crate::rtp_::{Extension, Mid};
+use crate::rtp::{Extension, Mid};
 use crate::sdp;
 use crate::sdp::{Answer, MediaAttribute, MediaLine, MediaType, SimulcastGroups, SimulcastOption};
 use crate::sdp::{Offer, Proto, Sdp, SessionAttribute, Setup};

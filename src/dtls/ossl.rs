@@ -14,7 +14,7 @@ use std::ops::Deref;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
 
-use crate::net_::DATAGRAM_MTU;
+use crate::io::DATAGRAM_MTU;
 use crate::Fingerprint;
 
 use super::DtlsError;

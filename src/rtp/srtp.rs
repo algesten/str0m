@@ -3,7 +3,7 @@ use std::fmt;
 use openssl::symm::{Cipher, Crypter, Mode};
 
 use crate::dtls::KeyingMaterial;
-use crate::net_::Sha1;
+use crate::io::Sha1;
 
 use super::header::RtpHeader;
 

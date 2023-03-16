@@ -9,7 +9,7 @@ use std::str::FromStr;
 
 use crate::dtls::Fingerprint;
 use crate::ice::{Candidate, IceCreds};
-use crate::rtp_::{Direction, ExtMap, Mid, Pt, SessionId, Ssrc};
+use crate::rtp::{Direction, ExtMap, Mid, Pt, SessionId, Ssrc};
 
 use super::parser::sdp_parser;
 use super::SdpError;
@@ -1605,7 +1605,7 @@ impl<'a> std::fmt::Display for FingerprintFmt<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::rtp_::Extension;
+    use crate::rtp::Extension;
 
     use super::*;
 

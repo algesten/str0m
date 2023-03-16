@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::rtp_::Pt;
+use crate::rtp::Pt;
 use crate::sdp::{self, Codec, FormatParams};
 use crate::sdp::{CodecSpec, PayloadParams as SdpPayloadParams};
 

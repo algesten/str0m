@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-pub use crate::rtp_::ChannelId;
+pub use crate::rtp::ChannelId;
 
 use crate::{Rtc, RtcError};
 

@@ -6,7 +6,7 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::net::SocketAddr;
 use thiserror::Error;
 
-use crate::net_::{DatagramRecv, DatagramSend, Receive, DATAGRAM_MTU_WARN};
+use crate::io::{DatagramRecv, DatagramSend, Receive, DATAGRAM_MTU_WARN};
 
 mod ossl;
 pub use ossl::KeyingMaterial;

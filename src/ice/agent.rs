@@ -4,9 +4,9 @@ use std::time::{Duration, Instant};
 
 use rand::random;
 
-use crate::net_::{DatagramRecv, Receive, Transmit, DATAGRAM_MTU};
-use crate::net_::{Id, DATAGRAM_MTU_WARN};
-use crate::net_::{StunMessage, TransId, STUN_TIMEOUT};
+use crate::io::{DatagramRecv, Receive, Transmit, DATAGRAM_MTU};
+use crate::io::{Id, DATAGRAM_MTU_WARN};
+use crate::io::{StunMessage, TransId, STUN_TIMEOUT};
 
 use super::candidate::{Candidate, CandidateKind};
 use super::pair::{CandidatePair, CheckState, PairId};

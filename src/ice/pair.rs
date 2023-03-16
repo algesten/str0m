@@ -2,8 +2,8 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::net_::{stun_resend_delay, STUN_MAX_RETRANS};
-use crate::net_::{Id, TransId, STUN_MAX_RTO_MILLIS};
+use crate::io::{stun_resend_delay, STUN_MAX_RETRANS};
+use crate::io::{Id, TransId, STUN_MAX_RTO_MILLIS};
 use crate::Candidate;
 
 const MIN_TIMEOUT: Duration = Duration::from_millis(STUN_MAX_RTO_MILLIS);

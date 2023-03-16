@@ -1,8 +1,8 @@
 use std::time::Instant;
 
-use crate::rtp_::{extend_seq, Descriptions, InstantExt, MediaTime, Mid, ReceptionReport};
-use crate::rtp_::{ReportList, Rid, Sdes, SdesType, SenderInfo};
-use crate::rtp_::{SenderReport, SeqNo, Ssrc};
+use crate::rtp::{extend_seq, Descriptions, InstantExt, MediaTime, Mid, ReceptionReport};
+use crate::rtp::{ReportList, Rid, Sdes, SdesType, SenderInfo};
+use crate::rtp::{SenderReport, SeqNo, Ssrc};
 
 use crate::{
     stats::{MediaEgressStats, StatsSnapshot},

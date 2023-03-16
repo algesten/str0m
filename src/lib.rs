@@ -59,22 +59,22 @@ extern crate tracing;
 
 mod dtls;
 mod ice;
-mod net_;
+mod io;
 mod packet;
-mod rtp_;
+mod rtp;
 mod sctp;
 mod sdp;
 
+use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
-use std::{fmt, io};
 
 use change::Changes;
 use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::IceAgent;
 use ice::IceAgentEvent;
-use net_::DatagramRecv;
-use rtp_::{InstantExt, Ssrc};
+use io::DatagramRecv;
+use rtp::{InstantExt, Ssrc};
 use sctp::{RtcSctp, SctpEvent};
 use sdp::{Sdp, Setup};
 use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent};
@@ -87,16 +87,16 @@ pub use sdp::{Answer, Offer};
 
 /// Network related types to get socket data in/out of [`Rtc`].
 pub mod net {
-    pub use crate::net_::{DatagramRecv, DatagramSend, Receive, Transmit};
+    pub use crate::io::{DatagramRecv, DatagramSend, Receive, Transmit};
 }
 
 /// Various error types.
 pub mod error {
     pub use crate::dtls::DtlsError;
     pub use crate::ice::IceError;
-    pub use crate::net_::NetError;
+    pub use crate::io::NetError;
     pub use crate::packet::PacketError;
-    pub use crate::rtp_::RtpError;
+    pub use crate::rtp::RtpError;
     pub use crate::sctp::{ProtoError, SctpError};
     pub use crate::sdp::SdpError;
 }
@@ -143,7 +143,7 @@ pub enum RtcError {
 
     /// Other IO errors.
     #[error("{0}")]
-    Io(#[from] io::Error),
+    Io(#[from] std::io::Error),
 
     /// DTLS errors
     #[error("{0}")]

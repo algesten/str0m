@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::Instant;
 
-use crate::rtp_::{MediaTime, RtpHeader, SeqNo};
+use crate::rtp::{MediaTime, RtpHeader, SeqNo};
 
 use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError};
 
@@ -266,7 +266,7 @@ impl fmt::Debug for Depacketized {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::rtp_::MediaTime;
+    use crate::rtp::MediaTime;
 
     #[test]
     fn end_on_marker() {

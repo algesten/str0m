@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::rtp_::{Mid, Rid};
+use crate::rtp::{Mid, Rid};
 
 pub(crate) struct Stats {
     last_now: Instant,

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use rand::random;
 
-use crate::net_::Id;
+use crate::io::Id;
 
 macro_rules! str_id {
     ($id:ident, $name:literal, $num:tt) => {

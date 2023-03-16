@@ -217,7 +217,7 @@ sdp_ser!(Answer, "Answer", "answer");
 
 #[cfg(test)]
 mod test {
-    use crate::rtp_::SessionId;
+    use crate::rtp::SessionId;
 
     use super::*;
 

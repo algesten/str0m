@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::Instant;
 
-use crate::rtp_::{ExtensionValues, MediaTime, Rid, SeqNo, Ssrc};
+use crate::rtp::{ExtensionValues, MediaTime, Rid, SeqNo, Ssrc};
 
 use super::pacer::PacketKind;
 use super::{CodecPacketizer, PacketError, Packetizer, QueueState};

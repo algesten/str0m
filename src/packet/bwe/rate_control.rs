@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use crate::rtp_::Bitrate;
+use crate::rtp::Bitrate;
 
 // Recommended values from https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02#section-5
 /// Smoothing factor applied to moving stats for observed bitrates when we are in the decreasing

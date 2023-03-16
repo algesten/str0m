@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::rtp_::{Bitrate, DataSize};
+use crate::rtp::{Bitrate, DataSize};
 
 const MAX_BITRATE: Bitrate = Bitrate::gbps(10);
 const MAX_DEBT_IN_TIME: Duration = Duration::from_millis(500);
@@ -579,7 +579,7 @@ impl From<Option<&QueueState>> for PollOutcome {
 mod test {
     use std::time::{Duration, Instant};
 
-    use crate::rtp_::{DataSize, RtpHeader};
+    use crate::rtp::{DataSize, RtpHeader};
 
     use super::{LeakyBucketPacer, Pacer, PacketKind, PollOutcome, QueueId, QueueState};
 
@@ -1080,7 +1080,7 @@ mod test {
         use std::collections::VecDeque;
         use std::time::{Duration, Instant};
 
-        use crate::rtp_::{DataSize, RtpHeader};
+        use crate::rtp::{DataSize, RtpHeader};
 
         use super::{PacketKind, QueueId, QueueState};
 

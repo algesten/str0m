@@ -1,7 +1,7 @@
 use std::time::Instant;
 
-use crate::rtp_::{DlrrItem, ExtendedReport, InstantExt, MediaTime, Mid, Nack, ReceiverReport};
-use crate::rtp_::{ReportBlock, ReportList, Rid, Rrtr, RtpHeader, SenderInfo, SeqNo, Ssrc};
+use crate::rtp::{DlrrItem, ExtendedReport, InstantExt, MediaTime, Mid, Nack, ReceiverReport};
+use crate::rtp::{ReportBlock, ReportList, Rid, Rrtr, RtpHeader, SenderInfo, SeqNo, Ssrc};
 
 use crate::{
     stats::{MediaIngressStats, StatsSnapshot},

@@ -1,7 +1,7 @@
 use std::ops::Deref;
 
-use crate::net_::Id;
-use crate::rtp_::{ChannelId, Direction, Extensions, Mid, Ssrc};
+use crate::io::Id;
+use crate::rtp::{ChannelId, Direction, Extensions, Mid, Ssrc};
 use crate::sctp::{DcepOpen, ReliabilityType};
 use crate::sdp::{MediaLine, Msid, Offer};
 

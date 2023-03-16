@@ -2,8 +2,8 @@
 
 use std::time::Instant;
 
-pub use crate::rtp_::VideoOrientation;
-pub use crate::rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
+pub use crate::rtp::VideoOrientation;
+pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
 pub use crate::sdp::{Codec, FormatParams};
 
 use crate::{Input, Rtc, RtcError};
@@ -30,7 +30,7 @@ pub(crate) use mline::{MLine, Source};
 pub mod rtp {
     pub use crate::packet::RtpMeta;
     pub use crate::packet::{CodecExtra, Vp8CodecExtra};
-    pub use crate::rtp_::{ExtensionValues, RtpHeader, SeqNo, Ssrc};
+    pub use crate::rtp::{ExtensionValues, RtpHeader, SeqNo, Ssrc};
 }
 
 /// Audio or video media. An m-line in the SDP.

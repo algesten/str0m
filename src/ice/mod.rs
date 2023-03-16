@@ -72,7 +72,7 @@ mod test {
     use std::ops::{Deref, DerefMut};
     use std::time::{Duration, Instant};
 
-    use crate::net_::Receive;
+    use crate::io::Receive;
     use tracing::Span;
 
     pub fn sock(s: impl Into<String>) -> SocketAddr {

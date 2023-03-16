@@ -2,13 +2,13 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::dtls::KeyingMaterial;
+use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::media::{App, CodecConfig, MediaAdded, MediaChanged, Source};
-use crate::net_::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::packet::{NullPacer, Pacer, PacerImpl, PollOutcome, RtpMeta};
-use crate::rtp_::SRTCP_OVERHEAD;
-use crate::rtp_::{extend_seq, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
-use crate::rtp_::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
-use crate::rtp_::{SrtpContext, SrtpKey, Ssrc};
+use crate::rtp::SRTCP_OVERHEAD;
+use crate::rtp::{extend_seq, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
+use crate::rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
+use crate::rtp::{SrtpContext, SrtpKey, Ssrc};
 use crate::session_sdp::AsMediaLine;
 use crate::stats::StatsSnapshot;
 use crate::util::{already_happened, not_happening, Soonest};
@@ -235,7 +235,7 @@ impl Session {
     }
 
     fn do_handle_receive(&mut self, now: Instant, r: net::Receive) -> Option<()> {
-        use crate::net_::DatagramRecv::*;
+        use crate::io::DatagramRecv::*;
         match r.contents {
             Rtp(buf) => {
                 if let Some(header) = RtpHeader::parse(buf, &self.exts) {

@@ -10,7 +10,7 @@ use {
 
 use crate::dtls::Fingerprint;
 use crate::ice::{Candidate, CandidateKind};
-use crate::rtp_::{Direction, ExtMap, Extension, Mid, Pt, SessionId, Ssrc};
+use crate::rtp::{Direction, ExtMap, Extension, Mid, Pt, SessionId, Ssrc};
 
 use super::data::*;
 
