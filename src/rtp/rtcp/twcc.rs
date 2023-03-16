@@ -1,6 +1,7 @@
 use std::collections::vec_deque;
 use std::collections::VecDeque;
 use std::fmt;
+use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
 use super::Bitrate;
@@ -923,7 +924,7 @@ pub struct TwccSendRegister {
     keep: usize,
 
     /// Circular buffer of send records.
-    queue: VecDeque<SendRecord>,
+    queue: VecDeque<TwccSendRecord>,
 
     /// 0 offset for remote time in Twcc structs.
     time_zero: Option<Instant>,
@@ -933,8 +934,8 @@ pub struct TwccSendRegister {
 }
 
 impl<'a> IntoIterator for &'a TwccSendRegister {
-    type Item = &'a SendRecord;
-    type IntoIter = vec_deque::Iter<'a, SendRecord>;
+    type Item = &'a TwccSendRecord;
+    type IntoIter = vec_deque::Iter<'a, TwccSendRecord>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.queue.iter()
@@ -943,43 +944,52 @@ impl<'a> IntoIterator for &'a TwccSendRegister {
 
 /// Record for a send entry in twcc.
 #[derive(Debug)]
-pub struct SendRecord {
+pub struct TwccSendRecord {
     /// Twcc sequence number for a packet we sent.
     seq: SeqNo,
 
     /// The (local) time we sent the packet represented by seq.
     local_send_time: Instant,
 
-    ///  The (local) time we received confirmation the other side received the seq.
-    local_recv_time: Option<Instant>,
-
-    /// The remote time the other side received the seq.
-    remote_recv_time: Option<Instant>,
-
-    /// The packet status reported by the remote side in feedback packets.
-    /// [`None`] until a status is determined.
-    packet_status: Option<PacketStatus>,
-
     /// Size in bytes of the payload sent.
     size: u16,
+
+    recv_report: Option<TwccRecvReport>,
 }
 
-impl SendRecord {
+impl TwccSendRecord {
     /// The twcc sequence number of the packet we sent.
     pub fn seq(&self) -> SeqNo {
         self.seq
     }
 
-    /// The rtt time between sending the packet and receiving the twcc report resonse.
-    pub fn rtt(&self) -> Option<Duration> {
-        let recv = self.local_recv_time?;
-        Some(recv - self.local_send_time)
+    /// The time we sent the packet.
+    pub fn local_send_time(&self) -> Instant {
+        self.local_send_time
     }
 
-    /// The time indiciated by the remote side for when they received the packet.
+    /// The time indicated by the remote side for when they received the packet.
     pub fn remote_recv_time(&self) -> Option<Instant> {
-        self.remote_recv_time
+        self.recv_report.as_ref().and_then(|r| r.remote_recv_time)
     }
+
+    /// The rtt time between sending the packet and receiving the twcc report resonse.
+    pub fn rtt(&self) -> Option<Duration> {
+        let recv_report = self.recv_report.as_ref()?;
+        Some(recv_report.local_recv_time - self.local_send_time)
+    }
+}
+
+#[derive(Debug)]
+pub struct TwccRecvReport {
+    ///  The (local) time we received confirmation the other side received the seq.
+    local_recv_time: Instant,
+
+    /// The remote time the other side received the seq.
+    remote_recv_time: Option<Instant>,
+
+    /// The reported packet status.
+    packet_status: PacketStatus,
 }
 
 impl TwccSendRegister {
@@ -994,22 +1004,25 @@ impl TwccSendRegister {
 
     pub fn register_seq(&mut self, seq: SeqNo, now: Instant, size: usize) {
         self.last_registered = seq;
-        self.queue.push_back(SendRecord {
+        self.queue.push_back(TwccSendRecord {
             seq,
             local_send_time: now,
-            local_recv_time: None,
-            remote_recv_time: None,
-            packet_status: None,
             // In practice the max sizes is constrained by the MTU and will max out around 1200
             // bytes, hence this cast is fine.
             size: size as u16,
+            // The recv report, derived from TWCC feedback later.
+            recv_report: None,
         });
         while self.queue.len() > self.keep {
             self.queue.pop_front();
         }
     }
 
-    pub fn apply_report(&mut self, twcc: Twcc, now: Instant) -> Option<()> {
+    /// Apply a TWCC RTCP report.
+    ///
+    /// Returns a range of the sequence numbers for the applied packets if the report was
+    /// successfully applied.
+    pub fn apply_report(&mut self, twcc: Twcc, now: Instant) -> Option<RangeInclusive<SeqNo>> {
         if self.time_zero.is_none() {
             self.time_zero = Some(now);
         }
@@ -1027,21 +1040,20 @@ impl TwccSendRegister {
 
         fn update(
             now: Instant,
-            r: &mut SendRecord,
+            r: &mut TwccSendRecord,
             seq: SeqNo,
-            status: PacketStatus,
+            packet_status: PacketStatus,
             instant: Option<Instant>,
         ) -> bool {
             if r.seq != seq {
                 return false;
             }
-            r.packet_status = Some(status);
-
-            // None means the remote side did not receive the packet.
-            if let Some(i) = instant {
-                r.local_recv_time = Some(now);
-                r.remote_recv_time = Some(i);
-            }
+            let recv_report = TwccRecvReport {
+                local_recv_time: now,
+                packet_status,
+                remote_recv_time: instant,
+            };
+            r.recv_report = Some(recv_report);
 
             true
         }
@@ -1057,6 +1069,7 @@ impl TwccSendRegister {
             problematic_seq = Some((first_record.seq, first_seq_no));
         }
 
+        let mut last_seq_no = first_seq_no;
         for ((seq, status, instant), record) in iter.zip(iter2) {
             if problematic_seq.is_some() {
                 break;
@@ -1065,6 +1078,7 @@ impl TwccSendRegister {
             if !update(now, record, seq, status, instant) {
                 problematic_seq = Some((record.seq, seq));
             }
+            last_seq_no = seq;
         }
 
         if let Some((record_seq, report_seq)) = problematic_seq {
@@ -1076,7 +1090,7 @@ impl TwccSendRegister {
             );
         }
 
-        Some(())
+        Some(first_seq_no..=last_seq_no)
     }
 
     /// Calculate the observed bitrate in bits per second, looking backwards over a window in time.
@@ -1101,7 +1115,7 @@ impl TwccSendRegister {
             .queue
             .iter()
             .rev()
-            .find(|s| s.remote_recv_time.is_some())?;
+            .find(|s| s.remote_recv_time().is_some())?;
         let last_remote_recv_time = last.remote_recv_time()?;
         let cutoff = last_remote_recv_time.checked_sub(window)?;
 
@@ -1121,11 +1135,22 @@ impl TwccSendRegister {
             .iter()
             .rev()
             .skip_while(|record| record.seq > last.seq)
-            .take_while(|record| record.remote_recv_time.map(|r| r > cutoff).unwrap_or(true))
+            .take_while(|record| {
+                record
+                    .remote_recv_time()
+                    .map(|r| r > cutoff)
+                    .unwrap_or(true)
+            })
             .filter_map(|record| {
                 if record
-                    .packet_status
-                    .map(|s| !matches!(s, PacketStatus::NotReceived | PacketStatus::Unknown))
+                    .recv_report
+                    .as_ref()
+                    .map(|r| {
+                        !matches!(
+                            r.packet_status,
+                            PacketStatus::NotReceived | PacketStatus::Unknown
+                        )
+                    })
                     .unwrap_or(false)
                 {
                     Some(record.size as u64)
@@ -1141,10 +1166,55 @@ impl TwccSendRegister {
         Some(result.into())
     }
 
-    pub fn send_record(&self, seq: SeqNo) -> Option<&SendRecord> {
+    pub fn send_record(&self, seq: SeqNo) -> Option<&TwccSendRecord> {
         let index = self.queue.binary_search_by_key(&seq, |r| r.seq).ok()?;
 
         Some(&self.queue[index])
+    }
+
+    /// Get all send records in a range.
+    pub fn send_records(
+        &self,
+        range: RangeInclusive<SeqNo>,
+    ) -> Option<impl Iterator<Item = &TwccSendRecord>> {
+        let first_index = self
+            .queue
+            .binary_search_by_key(range.start(), |r| r.seq)
+            .ok()?;
+
+        let current = *range.start();
+
+        Some(TwccSendRecordsIter {
+            range,
+            index: first_index,
+            current,
+            queue: &self.queue,
+        })
+    }
+}
+
+#[derive()]
+struct TwccSendRecordsIter<'a> {
+    range: RangeInclusive<SeqNo>,
+    current: SeqNo,
+    index: usize,
+    queue: &'a VecDeque<TwccSendRecord>,
+}
+
+impl<'a> Iterator for TwccSendRecordsIter<'a> {
+    type Item = &'a TwccSendRecord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current > *self.range.end() || self.current < *self.range.start() {
+            return None;
+        }
+
+        let item = &self.queue[self.index];
+        assert!(self.current == item.seq);
+        self.current = self.current.next();
+        self.index += 1;
+
+        Some(item)
     }
 }
 
@@ -1674,8 +1744,8 @@ mod test {
                 .unwrap_or_else(|| panic!("Should have send record for seq {seq}"));
 
             assert!(
-                record.local_recv_time.is_some(),
-                "Report should have recorded local_recv_time for {seq}"
+                record.recv_report.is_some(),
+                "Report should have recorded recv_report for {seq}"
             );
         }
     }
@@ -1768,5 +1838,51 @@ mod test {
         let result: Vec<_> = twcc.into_iter(now, 1.into()).collect();
 
         assert_eq!(result, expeceted);
+    }
+
+    #[test]
+    fn test_twcc_register_send_records() {
+        let mut reg = TwccSendRegister::new(25);
+        let mut now = Instant::now();
+        for i in 0..25 {
+            reg.register_seq(i.into(), now, 0);
+            now = now + Duration::from_micros(15);
+        }
+
+        let range = reg
+            .apply_report(
+                Twcc {
+                    sender_ssrc: Ssrc::new(),
+                    ssrc: Ssrc::new(),
+                    base_seq: 0,
+                    status_count: 8,
+                    reference_time: 35,
+                    feedback_count: 0,
+                    chunks: [PacketChunk::Run(PacketStatus::ReceivedSmallDelta, 8)].into(),
+                    delta: [
+                        Delta::Small(10),
+                        Delta::Small(10),
+                        Delta::Small(10),
+                        Delta::Small(10),
+                        Delta::Small(10),
+                        Delta::Small(10),
+                        Delta::Small(10),
+                        Delta::Small(10),
+                    ]
+                    .into(),
+                },
+                now,
+            )
+            .expect("apply_report to return Some(_)");
+
+        assert_eq!(range, 0.into()..=7.into());
+
+        let iter = reg
+            .send_records(range)
+            .expect("send_records to return Some(_)");
+        assert_eq!(
+            iter.map(|r| *r.seq).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 4, 5, 6, 7]
+        );
     }
 }
