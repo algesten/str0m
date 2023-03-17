@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::rtp::{Bitrate, SeqNo, TwccSendRecord};
 
-use arrival_group::{ArrivalGroupAccumulator, InterGroupDelayVariation};
+use arrival_group::{ArrivalGroupAccumulator, InterGroupDelayDelta};
 use rate_control::RateControl;
 use trendline_estimator::TrendlineEstimator;
 
@@ -63,7 +63,7 @@ impl SendSideBandwithEstimator {
                 .arrival_group_accumulator
                 .accumulate_packet(acked_packet)
             {
-                crate::packet::bwe::macros::log_delay_variation!(delay_variation.delay);
+                crate::packet::bwe::macros::log_delay_variation!(delay_variation.delay_delta);
 
                 // Got a new delay variation, add it to the trendline
                 self.trendline_estimator
@@ -87,8 +87,8 @@ impl SendSideBandwithEstimator {
     }
 
     /// Poll for an estimate.
-    pub(crate) fn poll_estimate(&mut self) -> Option<u64> {
-        self.next_estimate.take().map(|b| b.as_u64())
+    pub(crate) fn poll_estimate(&mut self) -> Option<Bitrate> {
+        self.next_estimate.take().map(|b| b)
     }
 
     /// Get the latest estimate.

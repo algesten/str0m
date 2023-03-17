@@ -1,12 +1,12 @@
 use std::collections::VecDeque;
 use std::ops::RangeInclusive;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use super::{BandwithUsage, InterGroupDelayVariation};
+use super::{BandwithUsage, InterGroupDelayDelta};
 
 const SMOOTHING_COEF: f64 = 0.9;
 const OVER_USE_THRESHOLD_DEFAULT_MS: f64 = 12.5;
-const OVER_USE_TIME_THRESHOLD_MS: f64 = 10.0;
+const OVER_USE_TIME_THRESHOLD: Duration = Duration::from_millis(10);
 const MAX_ADOPT_OFFSET_MS: f64 = 15.0;
 const THRESHOLD_GAIN: f64 = 4.0;
 
@@ -69,7 +69,7 @@ impl TrendlineEstimator {
 
     pub(super) fn add_delay_observation(
         &mut self,
-        delay_variation: InterGroupDelayVariation,
+        delay_variation: InterGroupDelayDelta,
         now: Instant,
     ) {
         if self.history.is_empty() {
@@ -88,7 +88,7 @@ impl TrendlineEstimator {
                     .iter()
                     .zip(self.history.iter().skip(1))
                     .fold(true, |acc, (a, b)| {
-                        acc && a.remote_recv_time <= b.remote_recv_time
+                        acc && a.remote_recv_time_ms <= b.remote_recv_time_ms
                     }),
                 "Out of order history {:?}",
                 self.history
@@ -101,35 +101,28 @@ impl TrendlineEstimator {
         self.hypothesis
     }
 
-    fn do_add_to_history(&mut self, variation: InterGroupDelayVariation, now: Instant) {
-        if self.zero_time.is_none() {
-            self.zero_time = Some(variation.last_remote_recv_time);
-        }
+    fn do_add_to_history(&mut self, variation: InterGroupDelayDelta, now: Instant) {
+        let zero_time = *self
+            .zero_time
+            .get_or_insert(variation.last_remote_recv_time);
+
         self.num_delay_variations += 1;
         self.num_delay_variations = self.num_delay_variations.min(*DELAY_COUNT_RANGE.end());
-        self.accumulated_delay += variation.delay;
+        self.accumulated_delay += variation.delay_delta;
         self.smoothed_delay =
             self.smoothed_delay * SMOOTHING_COEF + (1.0 - SMOOTHING_COEF) * self.accumulated_delay;
 
-        // SAFETY: zero_time was set above if it wasn't already Some(_)
-        let remote_recv_time = variation
-            .last_remote_recv_time
-            .saturating_duration_since(self.zero_time.unwrap())
-            .as_millis() as f64;
+        let remote_recv_time = variation.last_remote_recv_time - zero_time;
         let timing = Timing {
             at: now,
-            remote_recv_time,
-            smoothed_delay: self.smoothed_delay,
+            remote_recv_time_ms: remote_recv_time.as_millis() as f64,
+            smoothed_delay_ms: self.smoothed_delay,
         };
 
         self.history.push_back(timing);
     }
 
-    fn update_trendline(
-        &mut self,
-        variation: InterGroupDelayVariation,
-        now: Instant,
-    ) -> Option<()> {
+    fn update_trendline(&mut self, variation: InterGroupDelayDelta, now: Instant) -> Option<()> {
         let trend = self.linear_fit().unwrap_or(self.previous_trend);
         trace!("Computed trend {:?}", trend);
         crate::packet::bwe::macros::log_trendline_estimate!(trend);
@@ -144,15 +137,15 @@ impl TrendlineEstimator {
         assert!(self.history.len() > 2);
 
         let (sum_x, sum_y) = self.history.iter().fold((0.0, 0.0), |acc, t| {
-            (acc.0 + t.remote_recv_time, acc.1 + t.smoothed_delay)
+            (acc.0 + t.remote_recv_time_ms, acc.1 + t.smoothed_delay_ms)
         });
 
         let avg_x = sum_x / self.history.len() as f64;
         let avg_y = sum_y / self.history.len() as f64;
 
         let (numerator, denomenator) = self.history.iter().fold((0.0, 0.0), |acc, t| {
-            let x = t.remote_recv_time;
-            let y = t.smoothed_delay;
+            let x = t.remote_recv_time_ms;
+            let y = t.smoothed_delay_ms;
 
             let numerator = acc.0 + (x - avg_x) * (y - avg_y);
             let denomenator = acc.1 + (x - avg_x).powi(2);
@@ -167,7 +160,7 @@ impl TrendlineEstimator {
         Some(numerator / denomenator)
     }
 
-    fn detect(&mut self, trend: f64, variation: InterGroupDelayVariation, now: Instant) {
+    fn detect(&mut self, trend: f64, variation: InterGroupDelayDelta, now: Instant) {
         if self.num_delay_variations < 2 {
             self.update_hypothesis(BandwithUsage::Normal);
         }
@@ -180,6 +173,7 @@ impl TrendlineEstimator {
             modified_trend,
             self.delay_threshold
         );
+
         if modified_trend > self.delay_threshold {
             let overuse = match &mut self.overuse {
                 Some(o) => {
@@ -192,7 +186,7 @@ impl TrendlineEstimator {
                         // Initialize the timer. Assume that we've been
                         // over-using half of the time since the previous
                         // sample.
-                        time_overusing: variation.send_delta / 2.0,
+                        time_overusing: variation.send_delta / 2,
                     };
                     self.overuse = Some(new_overuse);
 
@@ -202,13 +196,13 @@ impl TrendlineEstimator {
 
             overuse.count += 1;
             trace!(
-                timeoverusing = overuse.time_overusing,
+                timeoverusing = ?overuse.time_overusing,
                 trend,
                 previous_trend = self.previous_trend,
                 "Trendline Estimator: Maybe overusing"
             );
 
-            if overuse.time_overusing > OVER_USE_TIME_THRESHOLD_MS
+            if overuse.time_overusing > OVER_USE_TIME_THRESHOLD
                 && overuse.count > 1
                 && trend > self.previous_trend
             {
@@ -232,27 +226,28 @@ impl TrendlineEstimator {
         if self.last_threshold_update.is_none() {
             self.last_threshold_update = Some(now);
         }
+        let abs_modified_trend = modified_trend.abs();
 
-        if modified_trend.abs() > self.delay_threshold + MAX_ADOPT_OFFSET_MS {
+        if abs_modified_trend > self.delay_threshold + MAX_ADOPT_OFFSET_MS {
             // Avoid adapting the threshold to big latency spikes, caused e.g.,
             // by a sudden capacity drop.
             self.last_threshold_update = Some(now);
             return;
         }
 
-        let k = if modified_trend.abs() < self.delay_threshold {
+        let k = if abs_modified_trend < self.delay_threshold {
             K_DOWN
         } else {
             K_UP
         };
-        let time_delta_ms = now
+        let time_delta = now
             .saturating_duration_since(
                 self.last_threshold_update
                     .expect("last_threshold_update must have been set"),
             )
             .as_millis() as f64;
         self.delay_threshold +=
-            k * (modified_trend.abs() - self.delay_threshold) * time_delta_ms.min(100.0);
+            k * (abs_modified_trend - self.delay_threshold) * time_delta.min(100.0);
         self.last_threshold_update = Some(now);
         self.delay_threshold = self.delay_threshold.clamp(6.0, 600.0);
 
@@ -275,20 +270,20 @@ impl TrendlineEstimator {
 #[derive(Debug)]
 struct Timing {
     at: Instant,
-    remote_recv_time: f64,
-    smoothed_delay: f64,
+    remote_recv_time_ms: f64,
+    smoothed_delay_ms: f64,
 }
 
 struct Overuse {
     count: usize,
-    time_overusing: f64,
+    time_overusing: Duration,
 }
 
 #[cfg(test)]
 mod test {
     use std::time::{Duration, Instant};
 
-    use super::{InterGroupDelayVariation, TrendlineEstimator};
+    use super::{InterGroupDelayDelta, TrendlineEstimator};
     // TODO: Fix tests
 
     // #[test]
@@ -343,12 +338,12 @@ mod test {
 
     fn delay_variation(
         delay: f64,
-        send_delta: f64,
+        send_delta: Duration,
         last_remote_recv_time: Instant,
-    ) -> InterGroupDelayVariation {
-        InterGroupDelayVariation {
+    ) -> InterGroupDelayDelta {
+        InterGroupDelayDelta {
             send_delta,
-            delay,
+            delay_delta: delay,
             last_remote_recv_time,
         }
     }

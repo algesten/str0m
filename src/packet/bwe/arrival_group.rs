@@ -9,47 +9,38 @@ const BURST_TIME_INTERVAL: Duration = Duration::from_millis(5);
 
 #[derive(Debug, Default)]
 pub struct ArrivalGroup {
-    first_seq_no: Option<SeqNo>,
+    first: Option<(SeqNo, Instant)>,
     last_seq_no: Option<SeqNo>,
-    first_local_send_time: Option<Instant>,
-    local_send_time: Option<Instant>,
-    remote_recv_time: Option<Instant>,
+    last_local_send_time: Option<Instant>,
+    last_remote_recv_time: Option<Instant>,
     size: usize,
 }
 
 impl ArrivalGroup {
     /// Maybe add a packet to the group.
     ///
-    /// ## Return
-    ///
-    /// * [`Belongs::Belongs`] if the packet belongs to the group and was added.
-    /// * [`Belongs::NewGroup`] if the packet is the start of a new group and thus wasn't added.
-    ///                         The caller should create a new group and add this packet to the
-    ///                         group.
-    /// * [`Belongs::Skipped`] if the packet was skipped i.e. because it was out of order.
-    fn add_packet(&mut self, packet: AckedPacket) -> Belongs {
-        let belongs = self.belongs_to_group(&packet);
-
-        if belongs == Belongs::NewGroup || belongs == Belongs::Skipped {
-            return belongs;
+    /// Returns [`true`] if a new group needs to be created and [`false`] otherwise.
+    fn add_packet(&mut self, packet: AckedPacket) -> bool {
+        match self.belongs_to_group(&packet) {
+            Belongs::NewGroup => return true,
+            Belongs::Skipped => return false,
+            Belongs::Belongs => {}
         }
 
-        self.remote_recv_time = Some(packet.remote_recv_time);
-
-        if self.first_local_send_time.is_none() {
-            self.first_local_send_time = Some(packet.local_send_time);
-            self.first_seq_no = Some(packet.seq_no);
+        if self.first.is_none() {
+            self.first = Some((packet.seq_no, packet.local_send_time));
         }
 
-        self.local_send_time = self.local_send_time.max(Some(packet.local_send_time));
+        self.last_remote_recv_time = Some(packet.remote_recv_time);
+        self.last_local_send_time = self.last_local_send_time.max(Some(packet.local_send_time));
         self.size += 1;
-        self.last_seq_no = Some(packet.seq_no);
+        self.last_seq_no = self.last_seq_no.max(Some(packet.seq_no));
 
-        Belongs::Belongs
+        false
     }
 
     fn belongs_to_group(&self, packet: &AckedPacket) -> Belongs {
-        let Some(first_local_send_time) = self.first_local_send_time else {
+        let Some((_, first_local_send_time)) = self.first else {
             // Start of the group
             return Belongs::Belongs;
         };
@@ -76,29 +67,33 @@ impl ArrivalGroup {
             return Belongs::Skipped;
         };
 
-        let inter_group_delay_variation = inter_arrival_time.as_secs_f64()
+        let inter_group_delay_delta = inter_arrival_time.as_secs_f64()
             - (packet.local_send_time - self.local_send_time()).as_secs_f64();
 
-        return (inter_group_delay_variation < 0.0 && inter_arrival_time < BURST_TIME_INTERVAL)
-            .into();
+        if inter_group_delay_delta < 0.0 && inter_arrival_time < BURST_TIME_INTERVAL {
+            Belongs::Belongs
+        } else {
+            Belongs::NewGroup
+        }
     }
 
-    /// Calculate the inter group delay variation between self and a subsequent group.
-    pub(super) fn inter_group_delay_variation(&self, other: &Self) -> f64 {
-        let arrival_variation = self.arrival_variation(&other);
-        let departure_variation = self.departure_variation(&other);
+    /// Calculate the inter group delay delta between self and a subsequent group.
+    pub(super) fn inter_group_delay_delta(&self, other: &Self) -> Option<f64> {
+        let first_seq_no = self.first.map(|(s, _)| s)?;
+        let last_seq_no = self.last_seq_no?;
 
-        assert!(arrival_variation >= 0.0);
+        let arrival_delta = self.arrival_delta(other).as_millis() as f64;
+        let departure_delta = self.departure_delta(other).as_millis() as f64;
 
-        let result = arrival_variation - departure_variation;
-        let first_seq_no = self.first_seq_no.unwrap();
-        let last_seq_no = self.last_seq_no.unwrap();
-        trace!("Delay variation for group({first_seq_no}..={last_seq_no}. {result} = {arrival_variation} - {departure_variation}");
+        assert!(arrival_delta >= 0.0);
 
-        result
+        let result = arrival_delta - departure_delta;
+        trace!("Delay delta for group({first_seq_no}..={last_seq_no}. {result:?} = {arrival_delta:?} - {departure_delta:?}");
+
+        Some(result)
     }
 
-    pub(super) fn departure_variation(&self, other: &Self) -> f64 {
+    pub(super) fn departure_delta(&self, other: &Self) -> Duration {
         other
             .local_send_time()
             .checked_duration_since(self.local_send_time())
@@ -109,10 +104,9 @@ impl ArrivalGroup {
                     self.local_send_time()
                 )
             })
-            .as_millis() as f64
     }
 
-    fn arrival_variation(&self, other: &Self) -> f64 {
+    fn arrival_delta(&self, other: &Self) -> Duration {
         other
             .remote_recv_time()
             .checked_duration_since(self.remote_recv_time())
@@ -124,14 +118,14 @@ impl ArrivalGroup {
                     other,
                     self,
                 )
-            }) .as_millis() as f64
+            })
     }
 
     /// The local send time i.e. departure time, for the group.
     ///
     /// Panics if the group doesn't have at least one packet.
     fn local_send_time(&self) -> Instant {
-        self.local_send_time
+        self.last_local_send_time
             .expect("local_send_time to only be called on non-empty groups")
     }
 
@@ -139,7 +133,7 @@ impl ArrivalGroup {
     ///
     /// Panics if the group doesn't have at least one packet.
     fn remote_recv_time(&self) -> Instant {
-        self.remote_recv_time
+        self.last_remote_recv_time
             .expect("remote_recv_time to only be called on non-empty groups")
     }
 }
@@ -161,16 +155,6 @@ impl Belongs {
     }
 }
 
-impl From<bool> for Belongs {
-    fn from(value: bool) -> Self {
-        if value {
-            Belongs::Belongs
-        } else {
-            Belongs::NewGroup
-        }
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct ArrivalGroupAccumulator {
     previous_group: Option<ArrivalGroup>,
@@ -180,52 +164,56 @@ pub struct ArrivalGroupAccumulator {
 impl ArrivalGroupAccumulator {
     /// Accumulate a packet.
     ///
-    /// If adding this packet produced a new delay variation it is returned.
+    /// If adding this packet produced a new delay delta it is returned.
     pub(super) fn accumulate_packet(
         &mut self,
         packet: AckedPacket,
-    ) -> Option<InterGroupDelayVariation> {
-        let add_outcome = self.current_group.add_packet(packet);
+    ) -> Option<InterGroupDelayDelta> {
+        let need_new_group = self.current_group.add_packet(packet);
 
-        if !add_outcome.new_group() {
+        if !need_new_group {
             return None;
         }
 
         // Variation between previous group and current.
-        let delay_variation = self.inter_group_delay_variation();
+        let delay_delta = self.inter_group_delay_delta();
         let send_delta = self.send_delta();
+        let last_remote_recv_time = self.previous_group.as_ref().map(|g| g.remote_recv_time());
 
-        let current_group = mem::replace(&mut self.current_group, ArrivalGroup::default());
+        let current_group = mem::take(&mut self.current_group);
         self.previous_group = Some(current_group);
 
         self.current_group.add_packet(packet);
 
-        delay_variation.map(|delay| InterGroupDelayVariation {
-            send_delta: send_delta.unwrap(),
-            delay,
-            last_remote_recv_time: packet.remote_recv_time,
+        Some(InterGroupDelayDelta {
+            send_delta: send_delta?,
+            delay_delta: delay_delta?,
+            last_remote_recv_time: last_remote_recv_time?,
         })
     }
 
-    fn inter_group_delay_variation(&self) -> Option<f64> {
+    fn inter_group_delay_delta(&self) -> Option<f64> {
         self.previous_group
             .as_ref()
-            .map(|prev| prev.inter_group_delay_variation(&self.current_group))
+            .and_then(|prev| prev.inter_group_delay_delta(&self.current_group))
     }
 
-    fn send_delta(&self) -> Option<f64> {
+    fn send_delta(&self) -> Option<Duration> {
         self.previous_group
             .as_ref()
-            .map(|prev| prev.departure_variation(&self.current_group))
+            .map(|prev| prev.departure_delta(&self.current_group))
     }
 }
 
+/// The calculate delay delta between two groups of packets.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct InterGroupDelayVariation {
-    pub(super) send_delta: f64,
-    /// The delay variation.
-    pub(super) delay: f64,
-    /// The reported receive time for the last packet in the arrival group.
+pub(super) struct InterGroupDelayDelta {
+    /// The delta between the send times of the two groups i.e. delta between the last packet sent
+    /// in each group.
+    pub(super) send_delta: Duration,
+    /// The delay delta between the two groups.
+    pub(super) delay_delta: f64,
+    /// The reported receive time for the last packet in the first arrival group.
     pub(super) last_remote_recv_time: Instant,
 }
 

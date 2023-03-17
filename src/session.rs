@@ -104,7 +104,7 @@ pub enum MediaEvent {
     Error(RtcError),
     Added(MediaAdded),
     KeyframeRequest(KeyframeRequest),
-    EgressBitrateEstimate(u64),
+    EgressBitrateEstimate(Bitrate),
 }
 
 impl Session {

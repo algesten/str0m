@@ -74,7 +74,7 @@ use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use io::DatagramRecv;
-use rtp::{InstantExt, Ssrc};
+use rtp::{Bitrate, InstantExt, Ssrc};
 use sctp::{RtcSctp, SctpEvent};
 use sdp::{Sdp, Setup};
 use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent};
@@ -301,7 +301,7 @@ pub enum Event {
     MediaEgressStats(MediaEgressStats),
 
     /// A new estimate from the bandwidth estimation subsystem.
-    EgressBitrateEstimate(u64),
+    EgressBitrateEstimate(Bitrate),
 }
 
 /// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.
@@ -1166,7 +1166,7 @@ impl Rtc {
     /// **Note:** This only has an effect if BWE has been enabled via `RtcConfig::use_bwe`.
     ///
     /// * `current_bitrate` A best estimate of the bitrate that's currently being sent. The more
-    /// accurate this value is the better bandwidth estimation performs. Only video bitrate is
+    /// accurate this value is, the better bandwidth estimation performs. Only video bitrate is
     /// relevant here, audio can be ignored.
     /// * `desired_bitrate` The bitrate that is the desired target where BWE should stop probing
     /// for higher bitrates. This might not be reached if the link cannot sustain the bitrate.
