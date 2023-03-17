@@ -174,7 +174,6 @@ impl TrendlineEstimator {
             self.delay_threshold
         );
 
-        dbg!(modified_trend, self.delay_threshold);
         if modified_trend > self.delay_threshold {
             let overuse = match &mut self.overuse {
                 Some(o) => {

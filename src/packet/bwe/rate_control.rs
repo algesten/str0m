@@ -42,7 +42,6 @@ pub(super) struct RateControl {
     last_rtt: Option<Duration>,
 
     is_probing: bool,
-    stoppped_probing_at: Option<Instant>,
 }
 
 impl RateControl {
@@ -61,7 +60,6 @@ impl RateControl {
             last_estimate_update: None,
             last_rtt: None,
             is_probing: true,
-            stoppped_probing_at: None,
         }
     }
 
@@ -105,12 +103,6 @@ impl RateControl {
             return;
         }
         self.is_probing = is_probing;
-
-        if !is_probing {
-            self.stoppped_probing_at = Some(now);
-        } else {
-            self.stoppped_probing_at = None;
-        }
     }
 
     fn increase(&mut self, observed_bitrate: Bitrate, now: Instant) {
@@ -155,15 +147,7 @@ impl RateControl {
         };
         let max = observed_bitrate.as_f64() * MAX_ESTIMATE_RATIO;
 
-        // Give ourselves a bit of leeway to establish the new bitrate when we stop probing.
-        // Without this we'll immediately cap the bitrate down heavily compared to the estimate
-        // from before
-        if !self.is_probing
-            && self
-                .stoppped_probing_at
-                .map(|t| now.duration_since(t) > Duration::from_millis(1500))
-                .unwrap_or(false)
-        {
+        if !self.is_probing {
             // If we aren't probing to find a higher bitrate don't exceed the observed bitrate too
             // much.
             new_estimate = max.min(new_estimate);

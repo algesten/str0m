@@ -845,7 +845,7 @@ impl Session {
         now: Instant,
     ) {
         const PACING_FACTOR: f64 = 2.5;
-        const PADDING_FACTOR: f64 = 0.7;
+        const PADDING_FACTOR: f64 = 0.97;
 
         if let Some(bwe) = &mut self.bwe {
             let pacing_rate = (current_bitrate_bps as f64 * PACING_FACTOR).round() as u64;
