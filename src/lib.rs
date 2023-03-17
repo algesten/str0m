@@ -1390,6 +1390,42 @@ impl fmt::Debug for Rtc {
     }
 }
 
+/// Log a CSV like stat to stdout.
+///
+/// ```no_run
+/// log_stat!("MY_STAT", 1, "hello", 3);
+/// ```
+///
+/// will result in the following being printed
+/// ```
+/// MY_STAT 1, hello, 3, {unix_timestamp_ms}
+/// ````
+///
+/// These logs can be easily grepped for, parsed and graphed otherwise analyzed.
+///
+/// This macro turns into a NO-OP if the `log_stats` feature is not enabled
+macro_rules! log_stat {
+    ($name:expr, $($arg:expr),+) => {
+        #[cfg(feature = "log_stats")]
+        {
+            use std::time::SystemTime;
+            use std::io::{self, Write};
+
+            let now = SystemTime::now();
+            let since_epoch = now.duration_since(SystemTime::UNIX_EPOCH).unwrap();
+            let unix_time_ms = since_epoch.as_millis();
+            let mut lock = io::stdout().lock();
+            write!(lock, "{} ", $name).expect("Failed to write to stdout");
+
+            $(
+                write!(lock, "{},", $arg).expect("Failed to write to stdout");
+            )+
+            writeln!(lock, "{}", unix_time_ms).expect("Failed to write to stdout");
+        }
+    };
+}
+pub(crate) use log_stat;
+
 #[cfg(test)]
 mod test {
     use super::*;

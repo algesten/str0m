@@ -336,7 +336,7 @@ impl MLine {
         twcc: &mut u64,
         pad_size: Option<usize>,
         buf: &mut Vec<u8>,
-    ) -> Option<(RtpHeader, SeqNo, Option<Instant>)> {
+    ) -> Option<(RtpHeader, SeqNo)> {
         let mid = self.mid;
 
         let next = if let Some(next) = self.poll_packet_resend_to_cap(now) {
@@ -414,8 +414,16 @@ impl MLine {
         };
         buf.truncate(header_len + body_len);
 
-        let queued_at = next.body.queued_at();
-        Some((header, next.seq_no, queued_at))
+        #[cfg(feature = "log_stats")]
+        if let Some(delay) = next
+            .body
+            .queued_at()
+            .map(|i| Instant::now().duration_since(i))
+        {
+            crate::log_stat!("QUEUE_DELAY", header.ssrc, delay.as_millis());
+        }
+
+        Some((header, next.seq_no))
     }
 
     fn poll_packet_resend_to_cap(&mut self, now: Instant) -> Option<NextPacket> {
@@ -1202,6 +1210,7 @@ impl<'a> NextPacketBody<'a> {
         }
     }
 
+    #[cfg(feature = "log_stats")]
     fn queued_at(&self) -> Option<Instant> {
         use NextPacketBody::*;
         match self {

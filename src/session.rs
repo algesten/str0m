@@ -687,42 +687,17 @@ impl Session {
         let twcc_seq = self.twcc;
         let pad_size = pad_size.map(|p| p.as_bytes_usize());
 
-        if let Some((header, seq_no, queued_at)) =
+        if let Some((header, seq_no)) =
             mline.poll_packet(now, &self.exts, &mut self.twcc, pad_size, buf)
         {
             trace!("Poll RTP: {:?}", header);
-            if let Some(queued_at) = queued_at {
-                {
-                    use std::time::SystemTime;
-
-                    let now = SystemTime::now();
-                    let since_epoch = now.duration_since(SystemTime::UNIX_EPOCH).unwrap();
-                    let unix_time_ms = since_epoch.as_millis();
-                    let delay = Instant::now().duration_since(queued_at).as_millis();
-                    println!("QUEUE_DELAY {},{},{}", header.ssrc, delay, unix_time_ms);
-                }
-            }
-            let kind = if pad_size.is_some() && queued_at.is_none() {
+            let kind = if pad_size.is_some() {
                 "padding"
             } else {
                 "media"
             };
 
-            {
-                use std::time::SystemTime;
-
-                let now = SystemTime::now();
-                let since_epoch = now.duration_since(SystemTime::UNIX_EPOCH).unwrap();
-                let unix_time_ms = since_epoch.as_millis();
-                let size = buf.len();
-                println!(
-                    "PACKET_SENT {},{},{},{}",
-                    header.ssrc,
-                    size * 8,
-                    kind,
-                    unix_time_ms
-                );
-            }
+            crate::log_stat!("PACKET_SENT", header.ssrc, buf.len(), kind);
 
             let payload_size = buf.len();
             self.pacer

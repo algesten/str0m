@@ -3,6 +3,9 @@ name = "str0m"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+log_stats = []
+
 [dependencies]
 thiserror = "1"
 tracing = "0.1"
