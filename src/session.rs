@@ -813,12 +813,7 @@ impl Session {
         self.m_lines[index].as_m_line_mut().expect("index is MLine")
     }
 
-    pub(crate) fn configure_bwe(
-        &mut self,
-        current_bitrate_bps: u64,
-        desired_birrate_bps: u64,
-        now: Instant,
-    ) {
+    pub(crate) fn configure_bwe(&mut self, current_bitrate_bps: u64, desired_birrate_bps: u64) {
         const PACING_FACTOR: f64 = 2.5;
         const PADDING_FACTOR: f64 = 0.97;
 
@@ -833,9 +828,8 @@ impl Session {
                 None => Bitrate::ZERO,
             };
 
-            self.pacer
-                .set_pacing_rate(pacing_rate.into(), padding_rate, now);
-            bwe.set_is_probing(padding_rate > Bitrate::ZERO, now);
+            self.pacer.set_pacing_rate(pacing_rate.into(), padding_rate);
+            bwe.set_is_probing(padding_rate > Bitrate::ZERO);
         }
     }
 }

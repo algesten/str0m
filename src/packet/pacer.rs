@@ -16,10 +16,10 @@ pub enum PacerImpl {
 }
 
 impl Pacer for PacerImpl {
-    fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate, padding_bitrate: Bitrate, now: Instant) {
+    fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate, padding_bitrate: Bitrate) {
         match self {
-            PacerImpl::Null(v) => v.set_pacing_rate(pacing_bitrate, padding_bitrate, now),
-            PacerImpl::LeakyBucket(v) => v.set_pacing_rate(pacing_bitrate, padding_bitrate, now),
+            PacerImpl::Null(v) => v.set_pacing_rate(pacing_bitrate, padding_bitrate),
+            PacerImpl::LeakyBucket(v) => v.set_pacing_rate(pacing_bitrate, padding_bitrate),
         }
     }
 
@@ -65,7 +65,7 @@ impl Pacer for PacerImpl {
 pub trait Pacer {
     /// Set the pacing bitrate to send and the padding rate. The pacing rate can be exceeded if required to drain excessively
     /// long packet queues.
-    fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate, padding_bitrate: Bitrate, now: Instant);
+    fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate, padding_bitrate: Bitrate);
 
     /// Poll for a timeout.
     fn poll_timeout(&self) -> Option<Instant>;
@@ -139,12 +139,7 @@ pub struct NullPacer {
 }
 
 impl Pacer for NullPacer {
-    fn set_pacing_rate(
-        &mut self,
-        _target_bitrate: Bitrate,
-        _padding_bitrate: Bitrate,
-        _now: Instant,
-    ) {
+    fn set_pacing_rate(&mut self, _target_bitrate: Bitrate, _padding_bitrate: Bitrate) {
         // We don't care
     }
 
@@ -229,13 +224,8 @@ pub struct LeakyBucketPacer {
 }
 
 impl Pacer for LeakyBucketPacer {
-    fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate, padding_bitrate: Bitrate, now: Instant) {
+    fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate, padding_bitrate: Bitrate) {
         self.pacing_bitrate = pacing_bitrate;
-
-        let elapsed = self.update_handle_time_and_get_elapsed(now);
-        // Clear the debt with the previous values since padding rate can increase when we are
-        // probing and would cause padding debt to always remain at zero.
-        self.clear_debt(elapsed);
 
         if padding_bitrate != Bitrate::ZERO {
             self.last_non_zero_padding_bitrate = Some(padding_bitrate);
@@ -976,7 +966,7 @@ mod test {
         let mut pacer = LeakyBucketPacer::new((10 * 200).into(), duration_ms(40));
         // 2,000 bits per second, 10 bytes per pacing interval(40ms) with padding at 3,000 bits per
         // second, 15 bytes per pacing interval(40ms)
-        pacer.set_pacing_rate((10 * 200).into(), (15 * 200).into(), now);
+        pacer.set_pacing_rate((10 * 200).into(), (15 * 200).into());
         pacer.handle_timeout(now + duration_ms(1), queue.queue_state());
         queue.update_average_queue_time(now + duration_ms(1));
 

@@ -103,8 +103,8 @@ impl SendSideBandwithEstimator {
         self.last_estimate
     }
 
-    pub(crate) fn set_is_probing(&mut self, is_probing: bool, now: Instant) {
-        self.rate_control.set_is_probing(is_probing, now);
+    pub(crate) fn set_is_probing(&mut self, is_probing: bool) {
+        self.rate_control.set_is_probing(is_probing);
     }
 
     fn add_max_rtt(&mut self, max_rtt: Duration) {

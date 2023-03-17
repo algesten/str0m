@@ -100,7 +100,7 @@ impl RateControl {
         self.estimated_bitrate
     }
 
-    pub(super) fn set_is_probing(&mut self, is_probing: bool, now: Instant) {
+    pub(super) fn set_is_probing(&mut self, is_probing: bool) {
         if self.is_probing == is_probing {
             return;
         }

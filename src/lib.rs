@@ -1189,14 +1189,9 @@ impl Rtc {
     ///
     /// As mentioned above this works better if the current bitrate matches closely what you are
     /// actually intending to send. This can be achieved by measuring the observed ingress bitrate
-    pub fn configure_bwe(
-        &mut self,
-        current_bitrate_bps: u64,
-        desired_bitrate_bps: u64,
-        now: Instant,
-    ) {
+    pub fn configure_bwe(&mut self, current_bitrate_bps: u64, desired_bitrate_bps: u64) {
         self.session
-            .configure_bwe(current_bitrate_bps, desired_bitrate_bps, now);
+            .configure_bwe(current_bitrate_bps, desired_bitrate_bps);
     }
 }
 
