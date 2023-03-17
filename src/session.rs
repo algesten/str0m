@@ -851,10 +851,10 @@ impl Session {
             let pacing_rate = (current_bitrate_bps as f64 * PACING_FACTOR).round() as u64;
             let padding_rate = match bwe.last_estimate() {
                 // If the estimate exceeds the desired bitrate we don't need to use probing to
-                // discover if we can send more.
+                // discover a higher bitrate.
                 Some(estimate) if estimate.as_u64() > desired_birrate_bps => Bitrate::ZERO,
                 Some(estimate) => estimate * PADDING_FACTOR,
-                // Before we the first estimate let's not pad.
+                // Before we have the first we don't do any padding.
                 None => Bitrate::ZERO,
             };
 
