@@ -60,15 +60,14 @@ impl RateControl {
         }
     }
 
-    /// Update the estimated round trip time(from TWCC or RR).
-    pub(super) fn update_rtt(&mut self, rtt: Duration) {
-        self.last_rtt = Some(rtt);
-    }
-
     /// Update with input from the delay controller.
-    pub(super) fn update(&mut self, signal: Signal, observed_bitrate: Bitrate, now: Instant) {
-        self.state = self.state.transition(signal);
+    pub(super) fn update(&mut self, signal: Signal, observed_bitrate: Bitrate, rtt: Option<Duration>, now: Instant) {
         self.last_observed_bitrate = Some(observed_bitrate);
+        if let Some(rtt) = rtt {
+            self.last_rtt = Some(rtt);
+        }
+
+        self.state = self.state.transition(signal);
         crate::packet::bwe::macros::log_rate_control_observed_bitrate!(
             observed_bitrate.as_f64(),
             self.averaged_observed_bitrate

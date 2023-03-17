@@ -82,11 +82,12 @@ impl SendSideBandwithEstimator {
 
         let new_hypothesis = self.trendline_estimator.hypothesis();
 
-        if let Some(rtt) = self.mean_max_rtt() {
-            self.rate_control.update_rtt(rtt);
-        }
-        self.rate_control
-            .update(new_hypothesis.into(), observed_bitrate, now);
+        self.rate_control.update(
+            new_hypothesis.into(),
+            observed_bitrate,
+            self.mean_max_rtt(),
+            now,
+        );
         let estimated_rate = self.rate_control.estimated_bitrate();
 
         self.update_estimate(estimated_rate);
