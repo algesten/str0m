@@ -1,6 +1,3 @@
-// TODO: Remove this when we integrated RateControl
-#![allow(unused)]
-
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -417,87 +414,94 @@ mod test {
             assert_eq!(rate_controller.estimated_bitrate().as_u64(), 100_000);
         }
 
-        // #[test]
-        // fn test_normal_yields_multiplicative_increase() {
-        //     let now = Instant::now();
-        //     let mut rate_controller = make_control(100_000);
-        //     // Seed last estimate value
-        //     rate_controller.update(Signal::Normal, now);
+        #[test]
+        fn test_normal_yields_multiplicative_increase() {
+            let now = Instant::now();
+            let mut rate_controller = make_control(100_000);
+            // Seed last estimate value
+            rate_controller.update(Signal::Normal, 85_000.into(), now);
+            assert_eq!(
+                rate_controller.estimated_bitrate().as_u64(),
+                101_000,
+                "Initial estimate should increase by the minimum(1Kbit/s)"
+            );
 
-        //     rate_controller.update(Signal::Normal, now + duration_ms(500));
-        //     assert_eq!(rate_controller.estimated_bitrate().as_u64(), 103924);
+            rate_controller.update(Signal::Normal, 95_000.into(), now + duration_ms(500));
+            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 104_963);
 
-        //     rate_controller.update(Signal::Normal, now + duration_ms(1000));
-        //     assert_eq!(rate_controller.estimated_bitrate().as_u64(), 108001);
-        // }
+            rate_controller.update(Signal::Normal, 97_000.into(), now + duration_ms(1000));
+            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 109_081);
+        }
 
-        // #[test]
-        // fn test_normal_to_under_use_yields_hold() {
-        //     let now = Instant::now();
-        //     let mut rate_controller = make_control(100_000);
-        //     // Seed last estimate value
-        //     rate_controller.update(Signal::Normal, now);
+        #[test]
+        fn test_normal_to_under_use_yields_hold() {
+            let now = Instant::now();
+            let mut rate_controller = make_control(100_000);
+            // Seed last estimate value
+            rate_controller.update(Signal::Normal, 85_000.into(), now);
+            assert_eq!(
+                rate_controller.estimated_bitrate().as_u64(),
+                101_000,
+                "Initial estimate should increase by the minimum(1Kbit/s)"
+            );
 
-        //     // Should remain in increase and increase estimate
-        //     rate_controller.update(Signal::Normal, now + duration_ms(500));
-        //     assert_eq!(rate_controller.estimated_bitrate().as_u64(), 103924);
+            // Should remain in increase and increase estimate
+            rate_controller.update(Signal::Normal, 95_000.into(), now + duration_ms(500));
+            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 104_963);
 
-        //     // Should transition to hold
-        //     rate_controller.update(Signal::Underuse, now + duration_ms(1000));
-        //     assert_eq!(rate_controller.estimated_bitrate().as_u64(), 103924);
+            // Should transition to hold
+            rate_controller.update(Signal::Underuse, 97_000.into(), now + duration_ms(1000));
+            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 104_963);
 
-        //     // Should remain in hold and not modify estimates
-        //     rate_controller.update(Signal::Underuse, now + duration_ms(2000));
-        //     assert_eq!(rate_controller.estimated_bitrate().as_u64(), 103924);
-        // }
+            // Should remain in hold and not modify estimates
+            rate_controller.update(Signal::Underuse, 97_000.into(), now + duration_ms(2000));
+            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 104_963);
+        }
 
-        // #[test]
-        // fn test_immediate_overuse() {
-        //     let now = Instant::now();
-        //     let mut rate_controller = make_control(100_000);
-        //     // Seed last estimate value
-        //     rate_controller.update(Signal::Normal, now);
+        #[test]
+        fn test_immediate_overuse() {
+            let now = Instant::now();
+            let mut rate_controller = make_control(100_000);
+            // Seed last estimate value
+            rate_controller.update(Signal::Normal, 85_000.into(), now);
 
-        //     rate_controller.update(Signal::Overuse, now + duration_ms(500));
-        //     assert_eq!(rate_controller.estimated_bitrate().as_u64(), 85_000);
+            rate_controller.update(Signal::Overuse, 90_000.into(), now + duration_ms(500));
+            assert_eq!(
+                rate_controller.estimated_bitrate().as_u64(), 76_500,
+                "When overuse is detected we should reduce the estimate to 85% of the obeserved rate immediately"
+            );
+        }
 
-        //     rate_controller.update(Signal::Overuse, now + duration_ms(100));
-        //     assert_eq!(rate_controller.estimated_bitrate().as_u64(), 72250);
-        // }
+        #[test]
+        fn test_immediate_overuse_then_stable() {
+            let now = Instant::now();
+            let mut rate_controller = make_control(100_000);
+            // Seed last estimate value
+            rate_controller.update(Signal::Normal, 85_000.into(), now);
+            rate_controller.update_rtt(duration_ms(80));
 
-        // #[test]
-        // fn test_immediate_overuse_then_stable() {
-        //     let now = Instant::now();
-        //     let mut rate_controller = make_control(100_000);
-        //     // Seed last estimate value
-        //     rate_controller.update(Signal::Normal, now);
-        //     rate_controller.update_rtt(80.0 * 1000.0);
+            rate_controller.update(Signal::Overuse, 90_000.into(), now + duration_ms(500));
+            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 76_500);
 
-        //     rate_controller.update(Signal::Overuse, now + duration_ms(500));
-        //     assert_eq!(rate_controller.estimated_bitrate().as_u64(), 85_000);
+            rate_controller.update(Signal::Overuse, 75_000.into(), now + duration_ms(1000));
+            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 63_750);
 
-        //     rate_controller.update_observed_bitrate(75_000.into());
-        //     rate_controller.update(Signal::Overuse, now + duration_ms(1000));
-        //     assert_eq!(rate_controller.estimated_bitrate().as_u64(), 72250);
+            rate_controller.update(Signal::Normal, 60_000.into(), now + duration_ms(1500));
+            // NB: This matches libWebRTC but diverges from the spec
+            assert_eq!(
+                rate_controller.estimated_bitrate().as_u64(), 66_251, 
+                "After adjusting on overuse we immediately return to increase on the next normal signal"
+            );
 
-        //     rate_controller.update_observed_bitrate(70_000.into());
-        //     rate_controller.update(Signal::Normal, now + duration_ms(1500));
-        //     assert_eq!(rate_controller.estimated_bitrate().as_u64(), 72250);
+            rate_controller.update(Signal::Normal, 60_000.into(), now + duration_ms(2500));
+            assert_eq!(
+                rate_controller.estimated_bitrate().as_u64(), 71_552, 
+            );
 
-        //     rate_controller.update(Signal::Normal, now + duration_ms(2500));
-        //     assert_eq!(rate_controller.estimated_bitrate().as_u64(), 78030);
-
-        //     rate_controller.update_observed_bitrate(76_000.into());
-        //     rate_controller.update(Signal::Overuse, now + duration_ms(3000));
-        //     assert_eq!(rate_controller.estimated_bitrate().as_u64(), 66326);
-
-        //     rate_controller.update(Signal::Normal, now + duration_ms(3500));
-        //     assert_eq!(rate_controller.estimated_bitrate().as_u64(), 66326);
-
-        //     // NB: Additive increase because we are nearing convergence
-        //     rate_controller.update(Signal::Normal, now + duration_ms(3550));
-        //     assert_eq!(rate_controller.estimated_bitrate().as_u64(), 67326);
-        // }
+            // NB: Additive increase because we are nearing convergence
+            rate_controller.update(Signal::Normal, 70_000.into(), now + duration_ms(3500));
+            assert_eq!(rate_controller.estimated_bitrate().as_u64(), 72552);
+        }
     }
 
     fn duration_ms(ms: u64) -> Duration {
