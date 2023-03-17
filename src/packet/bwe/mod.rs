@@ -1,3 +1,9 @@
+//! Googcc Bandwidth Estimation based on TWCC feedback as described in
+//! https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02 and implemented in libWebRTC.
+//!
+//! Much of this code has been ported from the libWebRTC implementations. The complete system has
+//! not been ported, only a smaller part that corresponds roughly to the IETF draft is implemented.
+
 mod arrival_group;
 pub(crate) mod macros;
 mod rate_control;
@@ -15,21 +21,21 @@ use trendline_estimator::TrendlineEstimator;
 
 const MAX_RTT_HISTORY_WINDOW: usize = 32;
 
-#[derive(Debug, Copy, Clone)]
-pub struct AckedPacket {
-    seq_no: SeqNo,
-    local_send_time: Instant,
-    remote_recv_time: Instant,
-}
-
+/// Main entry point for the Googcc inspired BWE implementation.
+///
+/// This takes as input packet statuses recorded at send time and enriched by TWCC reports and produces as its output a periodic
+/// estimate of the available send bitrate.
 pub struct SendSideBandwithEstimator {
     arrival_group_accumulator: ArrivalGroupAccumulator,
     trendline_estimator: TrendlineEstimator,
     rate_control: RateControl,
-    /// Last unpolled bitrate estimate.
+    /// Last unpolled bitrate estimate. [`None`] before the first poll and after each poll that,
+    /// updated when we get a new estimate.
     next_estimate: Option<Bitrate>,
-    /// Last estimate produced
+    /// Last estimate produced, unlike [`next_estimate`] this will always have a value after the
+    /// first estimate.
     last_estimate: Option<Bitrate>,
+    /// History of the max RTT derived for each TWCC report.
     max_rtt_history: VecDeque<Duration>,
 }
 
@@ -88,7 +94,7 @@ impl SendSideBandwithEstimator {
 
     /// Poll for an estimate.
     pub(crate) fn poll_estimate(&mut self) -> Option<Bitrate> {
-        self.next_estimate.take().map(|b| b)
+        self.next_estimate.take()
     }
 
     /// Get the latest estimate.
@@ -125,6 +131,19 @@ impl SendSideBandwithEstimator {
         self.next_estimate = Some(estimated_rate);
         self.last_estimate = Some(estimated_rate);
     }
+}
+
+/// A RTP packet that has been sent and acknowledged by the receiver in a TWCC report.
+#[derive(Debug, Copy, Clone)]
+pub struct AckedPacket {
+    /// The TWCC sequence number
+    seq_no: SeqNo,
+    /// When we sent the packet
+    local_send_time: Instant,
+    /// When the packet was received at the remote, note this Instant is only usable with other
+    /// instants of the same type i..e those that represent a TWCC reported receive time for this
+    /// session.
+    remote_recv_time: Instant,
 }
 
 impl TryFrom<&TwccSendRecord> for AckedPacket {
