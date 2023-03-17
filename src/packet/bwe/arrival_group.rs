@@ -246,7 +246,7 @@ mod test {
             let mut packets = vec![];
 
             packets.push(AckedPacket {
-                seq_no: 1.into(),
+                seq_no: 0.into(),
                 local_send_time: now,
                 remote_recv_time: now + duration_us(150),
             });
@@ -289,6 +289,112 @@ mod test {
         }
 
         assert_eq!(group.size, 4, "Expected group to contain 4 packets");
+    }
+
+    #[test]
+    fn test_arrival_group_out_order_arrival_ignored() {
+        let now = Instant::now();
+        let packets = {
+            let mut packets = vec![];
+
+            packets.push(AckedPacket {
+                seq_no: 0.into(),
+                local_send_time: now,
+                remote_recv_time: now + duration_us(150),
+            });
+
+            packets.push(AckedPacket {
+                seq_no: 1.into(),
+                local_send_time: now + duration_us(50),
+                remote_recv_time: now + duration_us(225),
+            });
+
+            packets.push(AckedPacket {
+                seq_no: 2.into(),
+                local_send_time: now + duration_us(1005),
+                remote_recv_time: now + duration_us(1140),
+            });
+
+            packets.push(AckedPacket {
+                seq_no: 3.into(),
+                local_send_time: now + duration_us(4995),
+                remote_recv_time: now + duration_us(5001),
+            });
+
+            // Should be skipped
+            packets.push(AckedPacket {
+                seq_no: 4.into(),
+                local_send_time: now + duration_us(5001),
+                remote_recv_time: now + duration_us(5000),
+            });
+
+            // Should not belong
+            packets.push(AckedPacket {
+                seq_no: 5.into(),
+                local_send_time: now + duration_us(5700),
+                remote_recv_time: now + duration_us(6000),
+            });
+
+            packets
+        };
+
+        let mut group = ArrivalGroup::default();
+
+        for p in packets {
+            let need_new_group = group.belongs_to_group(&p).new_group();
+            if !need_new_group {
+                group.add_packet(p);
+            }
+        }
+
+        assert_eq!(group.size, 4, "Expected group to contain 4 packets");
+    }
+
+    #[test]
+    fn test_arrival_group_arrival_membership() {
+        let now = Instant::now();
+        let packets = {
+            let mut packets = vec![];
+
+            packets.push(AckedPacket {
+                seq_no: 0.into(),
+                local_send_time: now,
+                remote_recv_time: now + duration_us(150),
+            });
+
+            packets.push(AckedPacket {
+                seq_no: 1.into(),
+                local_send_time: now + duration_us(50),
+                remote_recv_time: now + duration_us(225),
+            });
+
+            packets.push(AckedPacket {
+                seq_no: 2.into(),
+                local_send_time: now + duration_us(5152),
+                // Just less than 5ms inter arrival delta
+                remote_recv_time: now + duration_us(5224),
+            });
+
+            // Should not belong
+            packets.push(AckedPacket {
+                seq_no: 3.into(),
+                local_send_time: now + duration_us(5700),
+                remote_recv_time: now + duration_us(6000),
+            });
+
+            packets
+        };
+
+        let mut group = ArrivalGroup::default();
+
+        for p in packets {
+            let need_new_group = group.belongs_to_group(&p).new_group();
+            if !need_new_group {
+                group.add_packet(p);
+            }
+        }
+
+        assert_eq!(group.size, 3, "Expected group to contain 4 packets");
     }
 
     fn duration_us(us: u64) -> Duration {
