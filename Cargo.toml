@@ -29,10 +29,6 @@ serde = { version = "1.0.152", features = ["derive"] }
 [target.'cfg(unix)'.dependencies]
 sha-1 = { version = "0.10.1", features = ["asm"] }
 
-# [target.'cfg(windows)'.dependencies]
-# openssl = { version = "0.10.45", features = ["vendored"] }
-# openssl-sys = "0.9.80"
-
 [dev-dependencies]
 rouille = { version = "3.5.0", features = ["ssl"] }
 serde_json = "1.0"
