@@ -30,22 +30,24 @@
 //!
 //! ```no_run
 //! # use str0m::{Rtc, Candidate};
-//! let mut rtc = Rtc::new(); // 1
+//! #
+//! // Instantiate a new Rtc instance.
+//! let mut rtc = Rtc::new();
+//!
+//! //  Add some ICE candidate such as a locally bound UDP port.
 //! let addr = "1.2.3.4:5000".parse().unwrap();
 //! let candidate = Candidate::host(addr).unwrap();
-//! rtc.add_local_candidate(candidate); // 2
-//! let offer = todo!();
-//! let answer = rtc.accept_offer(offer).unwrap(); // 3
-//! // 4
-//! ```
+//! rtc.add_local_candidate(candidate);
 //!
-//! 1. Instantiate a new Rtc instance.
-//! 2. Add some ICE candidate such as a locally bound UDP port.
-//! 3. Accept an incoming offer from the remote peer get the corresponding answer. The candidates
-//! in 2 will be communicated in the answer. Similarly to the standard WebRTC API, how offer/answer are
-//! transported between the `Rtc` instance and the client is a separate concern, but typically
-//! done via HTTP POST or a WebSocket.
-//! 4. Go to _Run loop_ below.
+//! // Accept an incoming offer from the remote peer
+//! // and get the corresponding answer.
+//! let offer = todo!();
+//! let answer = rtc.accept_offer(offer).unwrap();
+//!
+//! // Forward the answer to the remote peer.
+//!
+//! // Go to _run loop_
+//! ```
 //!
 //! ## Active
 //!
@@ -55,30 +57,34 @@
 //! ```no_run
 //! # use str0m::{Rtc, Candidate};
 //! # use str0m::media::{MediaKind, Direction};
+//! #
+//! // Instantiate a new Rtc instance.
+//! let mut rtc = Rtc::new();
 //!
-//! let mut rtc = Rtc::new(); // 1
+//! // Add some ICE candidate such as a locally bound UDP port.
 //! let addr = "1.2.3.4:5000".parse().unwrap();
 //! let candidate = Candidate::host(addr).unwrap();
-//! rtc.add_local_candidate(candidate); // 2
-//! let mut change = rtc.create_change_set(); // 3
-//! let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None); // 4
-//! let offer = change.apply(); // 5
-//! let answer = todo!(); // receive answer from remote pper
-//! // 6
-//! rtc.pending_changes().unwrap().accept_answer(answer).unwrap(); // 7
-//! // 8
-//! ```
+//! rtc.add_local_candidate(candidate);
 //!
-//! 1. Instantiate a new Rtc instance.
-//! 2. Add some ICE candidate such as a locally bound UDP port.
-//! 3. Create a `ChangeSet`. The change set is a builder pattern that lets us make multiple changes
-//! before sending the offer.
-//! 4. Do some change. A valid OFFER needs at least one "m-line" (media).
-//! 5. Get the offer.
-//! 6. Forward the offer to the remote peer and await the answer. How to transfer this is
-//! outside the scope for this library.
-//! 7. Apply answer.
-//! 8. Go to _Run loop_ below.
+//! // Create a `ChangeSet`. The change lets us make multiple changes
+//! // before sending the offer.
+//! let mut change = rtc.create_change_set();
+//!
+//! // Do some change. A valid OFFER needs at least one "m-line" (media).
+//! let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None);
+//!
+//! // Get the offer.
+//! let offer = change.apply();
+//!
+//! // Forward the offer to the remote peer and await the answer.
+//! // How to transfer this is outside the scope for this library.
+//! let answer = todo!();
+//!
+//! // Apply answer.
+//! rtc.pending_changes().unwrap().accept_answer(answer).unwrap();
+//!
+//! // Go to _run loop_
+//! ```
 //!
 //! ## Run loop
 //!
@@ -90,45 +96,63 @@
 //! # use std::io::ErrorKind;
 //! # use std::net::UdpSocket;
 //! # use std::time::Instant;
+//! # let rtc = Rtc::new();
+//! #
+//! // Buffer for reading incoming UDP packet.s
 //! let mut buf = vec![0; 2000];
-//! let socket: UdpSocket = todo!();
-//! let rtc = Rtc::new();
-//! loop {
-//!     // Poll output until we get a timeout. The timeout means we are either awaiting UDP socket input
-//!     // or the timeout to happen.
-//!     let timeout = match rtc.poll_output().unwrap() { // 1
-//!         Output::Timeout(v) => v, // 2
 //!
+//! // A UdpSocket we obtained _somehow_.
+//! let socket: UdpSocket = todo!();
+//!
+//! loop {
+//!     // Poll output until we get a timeout. The timeout means we
+//!     // are either awaiting UDP socket input or the timeout to happen.
+//!     let timeout = match rtc.poll_output().unwrap() {
+//!         // Stop polling when we get the timeout.
+//!         Output::Timeout(v) => v,
+//!
+//!         // Transmit this data to the remote peer. Typically via
+//!         // a UDP socket. The destination IP comes from the ICE
+//!         // agent. It might change during the session.
 //!         Output::Transmit(v) => {
-//!             // Transmit data via the bound UDP socket.
 //!             socket.send_to(&v.contents, v.destination).unwrap();
 //!             continue;
 //!         }
 //!
+//!         // Events are mainly incoming media data from the remote
+//!         // peer, but also data channel data and statistics.
 //!         Output::Event(v) => {
-//!             // Handle events from the Rtc instance.
 //!
 //!             // Abort if we disconnect.
 //!             if v == Event::IceConnectionStateChange(IceConnectionState::Disconnected) {
 //!                 return;
 //!             }
+//!
+//!             // TODO: handle more cases of v here.
+//!
 //!             continue;
 //!         }
 //!     };
 //!
-//!     let timeout = timeout - Instant::now();
+//!     // Duration until timeout.
+//!     let duration = timeout - Instant::now();
 //!
 //!     // socket.set_read_timeout(Some(0)) is not ok
-//!     if timeout.is_zero() {
+//!     if duration.is_zero() {
+//!         // Drive time forwards in rtc straight away.
 //!         rtc.handle_input(Input::Timeout(Instant::now())).unwrap();
 //!         continue;
 //!     }
 //!
-//!     socket.set_read_timeout(Some(timeout)).unwrap();
+//!     socket.set_read_timeout(Some(duration)).unwrap();
+//!
+//!     // Scale up buffer to receive an entire UDP packet.
 //!     buf.resize(2000, 0);
 //!
-//!     let input = match socket.recv_from(&mut buf) { // 3
+//!     // Try to receive
+//!     let input = match socket.recv_from(&mut buf) {
 //!         Ok((n, source)) => {
+//!             // UDP data received before timeout.
 //!             buf.truncate(n);
 //!             Input::Receive(
 //!                 Instant::now(),
@@ -141,24 +165,22 @@
 //!         }
 //!
 //!         Err(e) => match e.kind() {
-//!             // Expected error for set_read_timeout(). One for windows, one for the rest.
-//!             ErrorKind::WouldBlock | ErrorKind::TimedOut => Input::Timeout(Instant::now()),
-//!             _ => return, // abort
+//!             // Expected error for set_read_timeout().
+//!             // One for windows, one for the rest.
+//!             ErrorKind::WouldBlock
+//!                 | ErrorKind::TimedOut => Input::Timeout(Instant::now()),
+//!
+//!             e => {
+//!                 eprintln!("Error: {:?}", e);
+//!                 return; // abort
+//!             }
 //!         },
 //!     };
 //!
-//!     rtc.handle_input(input).unwrap(); // 4
+//!     // Input is either a Timeout or Receive of data. Both drive forward.
+//!     rtc.handle_input(input).unwrap();
 //! }
 //! ```
-//!
-//! 1. Call `rtc.poll_output()`, the output can be of three kinds:
-//! a. Transmit. Some UDP data that needs transmitting.
-//! b. Event. Some state change, or incoming media data.
-//! c. Timeout. The time the `Rtc` instance needs time to be moved forward.
-//! 2. Keep doing 1 until we get a `c` timeout.
-//! 3. Await the time in 2, or receive UDP input data.
-//! 4. Push UDP data or the timeout from 2 using `rtc.handle_input(<time or input data>)`.
-//! 5. Repeat from 1.
 //!
 //! ## Sending media data
 //!
@@ -172,19 +194,25 @@
 //! # use str0m::media::Mid;
 //! # use std::time::Instant;
 //! # let rtc: Rtc = todo!();
-//! let mid: Mid = todo!(); // obtain mid from Event::MediaAdded
-//! let media = rtc.media(mid).unwrap(); // 1
-//! let pt = media.payload_params()[0].pt(); // 2
-//! let writer = media.writer(pt, Instant::now());
-//! let wallclock = todo!(); // the absolute time of the data
-//! let media_time = todo!(); // the media time, in RTP time
-//! let data = todo!(); // the actual data
-//! writer.write(wallclock, media_time, data).unwrap(); // 3
-//! ```
+//! #
+//! // Obtain mid from Event::MediaAdded
+//! let mid: Mid = todo!();
 //!
-//! 1. Get the `Media` for this `mid`.
-//! 2. Get the payload type (pt) for the wanted codec.
-//! 3. Write the data.
+//! // Get the `Media` for this `mid`
+//! let media = rtc.media(mid).unwrap();
+//!
+//! // Get the payload type (pt) for the wanted codec.
+//! let pt = media.payload_params()[0].pt();
+//!
+//! // Create a media writer for the payload type.
+//! let writer = media.writer(pt, Instant::now());
+//!
+//! // Write the data
+//! let wallclock = todo!();  // Absolute time of the data
+//! let media_time = todo!(); // Media time, in RTP time
+//! let data = todo!();       // Actual data
+//! writer.write(wallclock, media_time, data).unwrap();
+//! ```
 //!
 //! ## State
 //!
