@@ -4,6 +4,8 @@ use std::time::{Duration, Instant};
 
 use crate::rtp::{Bitrate, DataSize};
 
+use super::MediaKind;
+
 const MAX_BITRATE: Bitrate = Bitrate::gbps(10);
 const MAX_DEBT_IN_TIME: Duration = Duration::from_millis(500);
 const MAX_PADDING_PACKET_SIZE: DataSize = DataSize::bytes(1_000);
@@ -103,7 +105,7 @@ pub struct QueueState {
     /// The total time the packets in the queue have spent queued.
     pub total_queue_time: Duration,
     /// The kind of packets this queue contains.
-    pub queue_kind: PacketKind,
+    pub queue_kind: MediaKind,
     /// Whether the m-line has RTX.
     pub has_rtx: bool,
     // The last time a packet was sent from this queue.
@@ -497,21 +499,6 @@ impl LeakyBucketPacer {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PacketKind {
-    Audio,
-    Video,
-}
-
-impl fmt::Display for PacketKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PacketKind::Audio => write!(f, "audio"),
-            PacketKind::Video => write!(f, "video"),
-        }
-    }
-}
-
 impl QueueId {
     pub fn new(id: u64) -> Self {
         Self(id)
@@ -523,7 +510,7 @@ impl QueueId {
 }
 
 impl QueueState {
-    pub fn new(queue_kind: PacketKind) -> Self {
+    pub fn new(queue_kind: MediaKind) -> Self {
         Self {
             id: QueueId(0),
             size: 0_usize.into(),
@@ -562,7 +549,7 @@ impl QueueState {
     }
 
     pub fn is_audio(&self) -> bool {
-        self.queue_kind == PacketKind::Audio
+        self.queue_kind == MediaKind::Audio
     }
 }
 
@@ -581,7 +568,7 @@ mod test {
 
     use crate::rtp::{DataSize, RtpHeader};
 
-    use super::{LeakyBucketPacer, Pacer, PacketKind, PollOutcome, QueueId, QueueState};
+    use super::{LeakyBucketPacer, MediaKind, Pacer, PollOutcome, QueueId, QueueState};
 
     use queue::{Queue, QueuedPacket};
 
@@ -635,7 +622,7 @@ mod test {
             &mut queue,
             1,
             5,
-            PacketKind::Video,
+            MediaKind::Video,
             now + duration_ms(21),
         );
 
@@ -654,7 +641,7 @@ mod test {
             &mut queue,
             2,
             8,
-            PacketKind::Video,
+            MediaKind::Video,
             now + duration_ms(27),
         );
         enqueue_packet_noisy(
@@ -662,7 +649,7 @@ mod test {
             &mut queue,
             3,
             25,
-            PacketKind::Video,
+            MediaKind::Video,
             now + duration_ms(28),
         );
 
@@ -701,7 +688,7 @@ mod test {
             &mut queue,
             4,
             12,
-            PacketKind::Video,
+            MediaKind::Video,
             now + duration_ms(45),
         );
         enqueue_packet_noisy(
@@ -709,7 +696,7 @@ mod test {
             &mut queue,
             5,
             25,
-            PacketKind::Video,
+            MediaKind::Video,
             now + duration_ms(47),
         );
 
@@ -724,7 +711,7 @@ mod test {
             &mut queue,
             6,
             100,
-            PacketKind::Audio,
+            MediaKind::Audio,
             now + duration_ms(52),
         );
 
@@ -736,7 +723,7 @@ mod test {
             now + duration_ms(52),
             "Sixth packet(audio) should be released despite too much media debt because audio packets are not paced",
             |packet| {
-                assert_eq!(packet.kind, PacketKind::Audio);
+                assert_eq!(packet.kind, MediaKind::Audio);
                 assert_eq!(packet.header.sequence_number, 6);
             },
         );
@@ -783,7 +770,7 @@ mod test {
             &mut queue,
             1,
             22,
-            PacketKind::Video,
+            MediaKind::Video,
             now + duration_ms(21),
         );
 
@@ -808,7 +795,7 @@ mod test {
             &mut queue,
             2,
             8,
-            PacketKind::Video,
+            MediaKind::Video,
             // Debt will be just slightly above what can be drained in 40 ms
             // after 66ms
             now + duration_ms(66),
@@ -823,7 +810,7 @@ mod test {
             &mut queue,
             3,
             5,
-            PacketKind::Video,
+            MediaKind::Video,
             now + duration_ms(70),
         );
         // Drain packet 2
@@ -842,7 +829,7 @@ mod test {
             &mut queue,
             4,
             1200,
-            PacketKind::Video,
+            MediaKind::Video,
             now + duration_ms(71),
         );
 
@@ -877,7 +864,7 @@ mod test {
             &mut queue,
             5,
             40,
-            PacketKind::Video,
+            MediaKind::Video,
             now + duration_ms(81),
         );
 
@@ -902,7 +889,7 @@ mod test {
             &mut queue,
             1,
             22,
-            PacketKind::Video,
+            MediaKind::Video,
             now + duration_ms(21),
         );
 
@@ -927,7 +914,7 @@ mod test {
             &mut queue,
             2,
             8,
-            PacketKind::Video,
+            MediaKind::Video,
             now + duration_ms(70),
         );
 
@@ -955,7 +942,7 @@ mod test {
             &mut queue,
             3,
             15,
-            PacketKind::Video,
+            MediaKind::Video,
             now + duration_ms(165),
         );
 
@@ -980,7 +967,7 @@ mod test {
             size: 10_usize.into(),
             packet_count: 1332,
             total_queue_time: duration_ms(1_000),
-            queue_kind: PacketKind::Video,
+            queue_kind: MediaKind::Video,
             has_rtx: true,
             last_send_time: Some(now + duration_ms(500)),
             leading_packet_queue_time: None,
@@ -991,7 +978,7 @@ mod test {
             size: 30_usize.into(),
             packet_count: 5,
             total_queue_time: duration_ms(337),
-            queue_kind: PacketKind::Video,
+            queue_kind: MediaKind::Video,
             has_rtx: false,
             last_send_time: None,
             leading_packet_queue_time: Some(now + duration_ms(19)),
@@ -1043,7 +1030,7 @@ mod test {
         queue: &mut Queue,
         seq_no: u16,
         size: usize,
-        kind: PacketKind,
+        kind: MediaKind,
         now: Instant,
     ) {
         let (header, payload, kind) = make_packet(seq_no, size, kind);
@@ -1067,7 +1054,7 @@ mod test {
         Duration::from_millis(ms)
     }
 
-    fn make_packet(seq_no: u16, size: usize, kind: PacketKind) -> (RtpHeader, Vec<u8>, PacketKind) {
+    fn make_packet(seq_no: u16, size: usize, kind: MediaKind) -> (RtpHeader, Vec<u8>, MediaKind) {
         let mut header = RtpHeader::default();
         header.sequence_number = seq_no;
         let data = vec![0; size];
@@ -1082,7 +1069,7 @@ mod test {
 
         use crate::rtp::{DataSize, RtpHeader};
 
-        use super::{PacketKind, QueueId, QueueState};
+        use super::{MediaKind, QueueId, QueueState};
 
         // A packet queue
         pub(super) struct Queue {
@@ -1096,7 +1083,7 @@ mod test {
             pub(super) queued_at: Instant,
             pub(super) header: RtpHeader,
             pub(super) payload: Vec<u8>,
-            pub(super) kind: PacketKind,
+            pub(super) kind: MediaKind,
         }
 
         impl Queue {
@@ -1140,10 +1127,10 @@ mod test {
                 }
             }
 
-            fn queue_for_kind_mut(&mut self, kind: PacketKind) -> &mut Inner {
+            fn queue_for_kind_mut(&mut self, kind: MediaKind) -> &mut Inner {
                 match kind {
-                    PacketKind::Audio => &mut self.audio_queue,
-                    PacketKind::Video => &mut self.video_queue,
+                    MediaKind::Audio => &mut self.audio_queue,
+                    MediaKind::Video => &mut self.video_queue,
                 }
             }
         }
@@ -1151,8 +1138,8 @@ mod test {
         impl Default for Queue {
             fn default() -> Self {
                 Self {
-                    audio_queue: Inner::new(QueueId(0), PacketKind::Audio),
-                    video_queue: Inner::new(QueueId(1), PacketKind::Video),
+                    audio_queue: Inner::new(QueueId(0), MediaKind::Audio),
+                    video_queue: Inner::new(QueueId(1), MediaKind::Video),
                 }
             }
         }
@@ -1170,11 +1157,11 @@ mod test {
             packet_count: u32,
             total_time_spent_queued: Duration,
             last_update: Option<Instant>,
-            kind: PacketKind,
+            kind: MediaKind,
         }
 
         impl Inner {
-            fn new(id: QueueId, kind: PacketKind) -> Self {
+            fn new(id: QueueId, kind: MediaKind) -> Self {
                 Self {
                     id,
                     last_send_time: None,
@@ -1231,7 +1218,7 @@ mod test {
                     packet_count: self.packet_count,
                     total_queue_time: self.total_time_spent_queued,
                     queue_kind: self.kind,
-                    has_rtx: self.kind == PacketKind::Video,
+                    has_rtx: self.kind == MediaKind::Video,
                     last_send_time: self.last_send_time,
                     leading_packet_queue_time: self.queue.iter().next().map(|p| p.queued_at),
                 }

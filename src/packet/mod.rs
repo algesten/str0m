@@ -4,7 +4,7 @@
 use std::fmt;
 use thiserror::Error;
 
-use crate::sdp::Codec;
+use crate::sdp::{Codec, MediaType};
 
 mod g7xx;
 use g7xx::{G711Packetizer, G722Packetizer};
@@ -34,9 +34,16 @@ pub use buffer_tx::{Packetized, PacketizedMeta, PacketizingBuffer};
 mod bwe;
 
 mod pacer;
-pub use pacer::{
-    LeakyBucketPacer, NullPacer, Pacer, PacerImpl, PacketKind, PollOutcome, QueueId, QueueState,
-};
+pub use pacer::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl, PollOutcome, QueueId, QueueState};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Types of media.
+pub enum MediaKind {
+    /// Audio media.
+    Audio,
+    /// Video media.
+    Video,
+}
 
 /// Packetizes some bytes for use as RTP packet.
 pub trait Packetizer: fmt::Debug {
@@ -261,6 +268,25 @@ impl Depacketizer for CodecDepacketizer {
             Vp8(v) => v.is_partition_tail(marker, packet),
             Vp9(v) => v.is_partition_tail(marker, packet),
             Boxed(v) => v.is_partition_tail(marker, packet),
+        }
+    }
+}
+
+impl From<MediaType> for MediaKind {
+    fn from(v: MediaType) -> Self {
+        match v {
+            MediaType::Audio => MediaKind::Audio,
+            MediaType::Video => MediaKind::Video,
+            _ => panic!("Not MediaType::Audio or Video"),
+        }
+    }
+}
+
+impl fmt::Display for MediaKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            MediaKind::Audio => write!(f, "audio"),
+            MediaKind::Video => write!(f, "video"),
         }
     }
 }
