@@ -214,6 +214,64 @@
 //! writer.write(wallclock, media_time, data).unwrap();
 //! ```
 //!
+//! ## Media time, wallclock and local time
+//!
+//! str0m has three main concepts of time. "now", media time and wallclock.
+//!
+//! ### Now
+//!
+//! Some calls in str0m, such as `Rtc::handle_input` takes a `now` argument
+//! that is a `std::time::Intant`. These calls "drive the time forward" in
+//! the internal state. This is used for everything like deciding when
+//! to produce various feedback reports (RTCP) to remote peers, to
+//! bandwidth estimation (BWE) and statistics.
+//!
+//! Str0m has _no internal clock_ calls. I.e. str0m never calls
+//! `Instant::now()` itself. All time is external input. That means it's
+//! possible to construct test cases driving an `Rtc` instance faster
+//! than realtime (see the [integration tests][intg]).
+//!
+//! ### Media time
+//!
+//! Each RTP header has a 32 bit number that str0m calls _media time_.
+//! Media time is in some time base that is dependent on the codec,
+//! however all codecs in str0m use 90_000Hz for video and 48_000Hz
+//! for audio.
+//!
+//! For video the `MediaTime` type is `<timestamp>/90_000` str0m extends
+//! the 32 bit number in the RTP header to 64 bit taking into account
+//! "rollover". 64 bit is such a large number the user doesn't need to
+//! think about rollovers.
+//!
+//! ### Wallclock
+//!
+//! With _wallclock_ str0m means the time a sample of media was produced
+//! at an originating source. I.e. if we are talking into a microphone the
+//! wallclock is the NTP time the sound is sampled.
+//!
+//! We can't know the exact wallclock for media from a remote peer since
+//! not every device is synchronized with NTP. Every sender does
+//! periodically produce a Sender Report (SR) that contain the peer's
+//! idea of its wallclock, however this number can be very wrong compared to
+//! "real" NTP time.
+//!
+//! Furthermore, not all remote devices will have a linear idea of
+//! time passing that exactly matches the local time. A minute on the
+//! remote peer might not be exactly one minute locally.
+//!
+//! These timestamps become important when handling simultaneous audio from
+//! multiple peers.
+//!
+//! When writing media we need to provide str0m with an estimated wallclock.
+//! The simplest strategy is to only trust local time and use arrival time
+//! of the incoming UDP packet. Another simple strategy is to lock some
+//! time T at the first UDP packet, and then offset each wallclock using
+//! `MediaTime`, i.e. for video we could have `T + <media time>/90_000`
+//!
+//! A production worthy SFU probably needs an even more sophisticated
+//! strategy weighing in all possible time sources to get a good estimate
+//! of the remote wallclock for a packet.
+//!
 //! ## State
 //!
 //! Str0m was originally developed by Martin Algesten of
@@ -406,6 +464,7 @@
 //! [lookback]:   https://www.lookback.com
 //! [x-post]:     https://github.com/algesten/str0m/blob/main/examples/http-post.rs
 //! [x-chat]:     https://github.com/algesten/str0m/blob/main/examples/chat.rs
+//! [intg]:       https://github.com/algesten/str0m/blob/main/tests/unidirectional.rs#L12
 //!
 //! ---
 
