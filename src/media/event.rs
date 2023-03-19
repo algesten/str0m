@@ -8,14 +8,7 @@ pub use crate::sdp::{Codec, FormatParams};
 use super::PayloadParams;
 use crate::media::rtp::{CodecExtra, RtpMeta};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-/// Types of media.
-pub enum MediaKind {
-    /// Audio media.
-    Audio,
-    /// Video media.
-    Video,
-}
+pub use crate::packet::MediaKind;
 
 impl From<SdpSimulcast> for Simulcast {
     fn from(s: SdpSimulcast) -> Self {

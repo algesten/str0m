@@ -7,12 +7,12 @@ pub use crate::sdp::{Codec, FormatParams};
 
 use crate::change::AddMedia;
 use crate::io::{Id, DATAGRAM_MTU};
-use crate::packet::{DepacketizingBuffer, PacketKind, Packetized};
+use crate::packet::{DepacketizingBuffer, MediaKind, Packetized};
 use crate::packet::{PacketizedMeta, PacketizingBuffer, QueueId, QueueState};
 use crate::rtp::{Extensions, Fir, FirEntry, NackEntry, Pli, Rtcp};
 use crate::rtp::{RtcpFb, RtpHeader, SdesType};
 use crate::rtp::{SeqNo, MAX_PADDING_PACKET_SIZE, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
-use crate::sdp::{MediaLine, MediaType, Msid, Simulcast as SdpSimulcast};
+use crate::sdp::{MediaLine, Msid, Simulcast as SdpSimulcast};
 use crate::stats::StatsSnapshot;
 use crate::util::already_happened;
 use crate::util::value_history::ValueHistory;
@@ -20,7 +20,7 @@ use crate::RtcError;
 
 use super::receiver::ReceiverSource;
 use super::sender::SenderSource;
-use super::{CodecConfig, KeyframeRequestKind, MediaData, MediaKind, PayloadParams};
+use super::{CodecConfig, KeyframeRequestKind, MediaData, PayloadParams};
 
 pub(crate) trait Source {
     fn ssrc(&self) -> Ssrc;
@@ -1119,9 +1119,9 @@ impl MLine {
     /// is spread across many [`PacketizingBuffer`] which is where the actual packets are queued.
     pub fn buffers_tx_queue_state(&self, now: Instant) -> QueueState {
         let kind = if self.kind() == MediaKind::Audio {
-            PacketKind::Audio
+            MediaKind::Audio
         } else {
-            PacketKind::Video
+            MediaKind::Video
         };
         let mut state = self
             .buffers_tx
@@ -1312,16 +1312,6 @@ impl MLine {
         }
 
         media
-    }
-}
-
-impl From<MediaType> for MediaKind {
-    fn from(v: MediaType) -> Self {
-        match v {
-            MediaType::Audio => MediaKind::Audio,
-            MediaType::Video => MediaKind::Video,
-            _ => panic!("Not MediaType::Audio or Video"),
-        }
     }
 }
 
