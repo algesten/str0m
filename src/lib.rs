@@ -272,7 +272,7 @@
 //! strategy weighing in all possible time sources to get a good estimate
 //! of the remote wallclock for a packet.
 //!
-//! ## State
+//! # Project status
 //!
 //! Str0m was originally developed by Martin Algesten of
 //! [Lookback][lookback]. We use str0m for a specific use case: str0m as a
