@@ -1,4 +1,4 @@
-use super::{PacketError, Packetizer};
+use super::{MediaKind, PacketError, Packetizer};
 
 /// Packetizes G711 RTP packets.
 pub type G711Packetizer = G7xxPacketizer;
@@ -32,8 +32,8 @@ impl Packetizer for G7xxPacketizer {
         Ok(payloads)
     }
 
-    fn is_audio(&self) -> bool {
-        true
+    fn media_kind(&self) -> MediaKind {
+        MediaKind::Audio
     }
 }
 

@@ -1,4 +1,4 @@
-use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
+use super::{CodecExtra, Depacketizer, MediaKind, PacketError, Packetizer};
 
 /// Packetizes Opus RTP packets.
 #[derive(Default, Debug, Copy, Clone)]
@@ -22,8 +22,8 @@ impl Packetizer for OpusPacketizer {
         Ok(out)
     }
 
-    fn is_audio(&self) -> bool {
-        true
+    fn media_kind(&self) -> MediaKind {
+        MediaKind::Audio
     }
 }
 

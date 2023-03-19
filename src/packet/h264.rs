@@ -1,6 +1,6 @@
 #![allow(clippy::all)]
 
-use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
+use super::{CodecExtra, Depacketizer, MediaKind, PacketError, Packetizer};
 
 /// Packetizes H264 RTP packets.
 #[derive(Default, Debug, Clone)]
@@ -188,8 +188,8 @@ impl Packetizer for H264Packetizer {
         Ok(payloads)
     }
 
-    fn is_audio(&self) -> bool {
-        false
+    fn media_kind(&self) -> MediaKind {
+        MediaKind::Video
     }
 }
 

@@ -1,4 +1,4 @@
-use super::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
+use super::{BitRead, CodecExtra, Depacketizer, MediaKind, PacketError, Packetizer};
 
 pub const VP8_HEADER_SIZE: usize = 1;
 
@@ -111,8 +111,8 @@ impl Packetizer for Vp8Packetizer {
         Ok(payloads)
     }
 
-    fn is_audio(&self) -> bool {
-        true
+    fn media_kind(&self) -> MediaKind {
+        MediaKind::Video
     }
 }
 

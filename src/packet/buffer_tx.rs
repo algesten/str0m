@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use crate::rtp::{ExtensionValues, MediaTime, Rid, SeqNo, Ssrc};
 
-use super::pacer::PacketKind;
+use super::MediaKind;
 use super::{CodecPacketizer, PacketError, Packetizer, QueueState};
 
 pub struct Packetized {
@@ -111,11 +111,7 @@ impl PacketizingBuffer {
     }
 
     pub fn queue_state(&self, now: Instant) -> QueueState {
-        let kind = if self.is_audio() {
-            PacketKind::Audio
-        } else {
-            PacketKind::Video
-        };
+        let kind = self.media_kind();
 
         let mut state = self
             .queued_packets()
@@ -142,8 +138,8 @@ impl PacketizingBuffer {
         self.queued_packets().next().map(|p| p.meta.queued_at)
     }
 
-    fn is_audio(&self) -> bool {
-        self.pack.is_audio()
+    fn media_kind(&self) -> MediaKind {
+        self.pack.media_kind()
     }
 
     /// An iterator over all packets that are queued, but have not yet been sent.
