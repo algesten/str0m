@@ -465,8 +465,6 @@
 //! [x-post]:     https://github.com/algesten/str0m/blob/main/examples/http-post.rs
 //! [x-chat]:     https://github.com/algesten/str0m/blob/main/examples/chat.rs
 //! [intg]:       https://github.com/algesten/str0m/blob/main/tests/unidirectional.rs#L12
-//!
-//! ---
 
 #![allow(clippy::new_without_default)]
 #![allow(clippy::bool_to_int_with_if)]
