@@ -1,4 +1,4 @@
-use super::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
+use super::{BitRead, CodecExtra, Depacketizer, MediaKind, PacketError, Packetizer};
 
 use std::fmt;
 use std::sync::Arc;
@@ -128,8 +128,8 @@ impl Packetizer for Vp9Packetizer {
         Ok(payloads)
     }
 
-    fn is_audio(&self) -> bool {
-        false
+    fn media_kind(&self) -> MediaKind {
+        MediaKind::Video
     }
 }
 
