@@ -19,12 +19,12 @@ impl Bitrate {
         Bitrate(bps as f64)
     }
 
-    /// Create a bitrate of some **Kilobit** per second(kbps).
+    /// Create a bitrate of some **Kilobits** per second(kbps).
     pub const fn kbps(kbps: u64) -> Self {
         Self::bps(kbps * 10_u64.pow(3))
     }
 
-    /// Create a bitrate of some **Megabit** per second(mbps).
+    /// Create a bitrate of some **Megabits** per second(mbps).
     pub const fn mbps(mbps: u64) -> Self {
         Self::bps(mbps * 10_u64.pow(6))
     }
