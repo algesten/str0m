@@ -813,22 +813,28 @@ impl Session {
         self.m_lines[index].as_m_line_mut().expect("index is MLine")
     }
 
-    pub(crate) fn configure_bwe(&mut self, current_bitrate_bps: u64, desired_birrate_bps: u64) {
+    pub(crate) fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {
         const PACING_FACTOR: f64 = 2.5;
+
+        let pacing_rate = current_bitrate * PACING_FACTOR;
+
+        self.pacer.set_pacing_rate(pacing_rate);
+    }
+
+    pub(crate) fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
         const PADDING_FACTOR: f64 = 0.97;
 
         if let Some(bwe) = &mut self.bwe {
-            let pacing_rate = (current_bitrate_bps as f64 * PACING_FACTOR).round() as u64;
             let padding_rate = match bwe.last_estimate() {
                 // If the estimate exceeds the desired bitrate we don't need to use probing to
                 // discover a higher bitrate.
-                Some(estimate) if estimate.as_u64() > desired_birrate_bps => Bitrate::ZERO,
+                Some(estimate) if estimate > desired_bitrate => Bitrate::ZERO,
                 Some(estimate) => estimate * PADDING_FACTOR,
                 // Before we have the first we don't do any padding.
                 None => Bitrate::ZERO,
             };
 
-            self.pacer.set_pacing_rate(pacing_rate.into(), padding_rate);
+            self.pacer.set_padding_rate(padding_rate);
             bwe.set_is_probing(padding_rate > Bitrate::ZERO);
         }
     }

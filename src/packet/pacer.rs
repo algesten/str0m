@@ -16,10 +16,17 @@ pub enum PacerImpl {
 }
 
 impl Pacer for PacerImpl {
-    fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate, padding_bitrate: Bitrate) {
+    fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate) {
         match self {
-            PacerImpl::Null(v) => v.set_pacing_rate(pacing_bitrate, padding_bitrate),
-            PacerImpl::LeakyBucket(v) => v.set_pacing_rate(pacing_bitrate, padding_bitrate),
+            PacerImpl::Null(v) => v.set_pacing_rate(pacing_bitrate),
+            PacerImpl::LeakyBucket(v) => v.set_pacing_rate(pacing_bitrate),
+        }
+    }
+
+    fn set_padding_rate(&mut self, padding_bitrate: Bitrate) {
+        match self {
+            PacerImpl::Null(v) => v.set_padding_rate(padding_bitrate),
+            PacerImpl::LeakyBucket(v) => v.set_padding_rate(padding_bitrate),
         }
     }
 
@@ -63,9 +70,12 @@ impl Pacer for PacerImpl {
 /// The pacer is responsible for ensuring correct pacing of packets onto the network at a given
 /// bitrate.
 pub trait Pacer {
-    /// Set the pacing bitrate to send and the padding rate. The pacing rate can be exceeded if required to drain excessively
+    /// Set the pacing bitrate. The pacing rate can be exceeded if required to drain excessively
     /// long packet queues.
-    fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate, padding_bitrate: Bitrate);
+    fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate);
+
+    /// Set the padding bitrate to send when there's no media to send
+    fn set_padding_rate(&mut self, padding_bitrate: Bitrate);
 
     /// Poll for a timeout.
     fn poll_timeout(&self) -> Option<Instant>;
@@ -139,10 +149,13 @@ pub struct NullPacer {
 }
 
 impl Pacer for NullPacer {
-    fn set_pacing_rate(&mut self, _target_bitrate: Bitrate, _padding_bitrate: Bitrate) {
+    fn set_pacing_rate(&mut self, _padding_bitrate: Bitrate) {
         // We don't care
     }
 
+    fn set_padding_rate(&mut self, _padding_bitrate: Bitrate) {
+        // We don't care
+    }
     fn poll_timeout(&self) -> Option<Instant> {
         if self.need_immediate_timeout {
             self.last_sends.values().min().copied()
@@ -224,9 +237,13 @@ pub struct LeakyBucketPacer {
 }
 
 impl Pacer for LeakyBucketPacer {
-    fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate, padding_bitrate: Bitrate) {
+    fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate) {
         self.pacing_bitrate = pacing_bitrate;
 
+        self.maybe_update_adjusted_bitrate();
+    }
+
+    fn set_padding_rate(&mut self, padding_bitrate: Bitrate) {
         if padding_bitrate != Bitrate::ZERO {
             self.last_non_zero_padding_bitrate = Some(padding_bitrate);
         }
@@ -966,7 +983,8 @@ mod test {
         let mut pacer = LeakyBucketPacer::new((10 * 200).into(), duration_ms(40));
         // 2,000 bits per second, 10 bytes per pacing interval(40ms) with padding at 3,000 bits per
         // second, 15 bytes per pacing interval(40ms)
-        pacer.set_pacing_rate((10 * 200).into(), (15 * 200).into());
+        pacer.set_pacing_rate((10 * 200).into());
+        pacer.set_padding_rate((15 * 200).into());
         pacer.handle_timeout(now + duration_ms(1), queue.queue_state());
         queue.update_average_queue_time(now + duration_ms(1));
 
