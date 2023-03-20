@@ -415,11 +415,7 @@ impl MLine {
         buf.truncate(header_len + body_len);
 
         #[cfg(feature = "log_stats")]
-        if let Some(delay) = next
-            .body
-            .queued_at()
-            .map(|i| Instant::now().duration_since(i))
-        {
+        if let Some(delay) = next.body.queued_at().map(|i| now.duration_since(i)) {
             crate::log_stat!("QUEUE_DELAY", header.ssrc, delay.as_millis());
         }
 
