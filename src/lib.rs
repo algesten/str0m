@@ -1178,6 +1178,9 @@ impl Rtc {
     /// Staring at the lower layer, call:
     ///
     /// ```no_run
+    /// # use str0m::{Rtc};
+    /// let mut rtc = Rtc::new();
+    ///
     /// rtc.set_bwe_current_bitrate(250_000.into())
     /// ````
     ///
@@ -1185,6 +1188,9 @@ impl Rtc {
     /// possible, make the switch and then update the configuration:
     ///
     /// ```no_run
+    /// # use str0m::{Rtc};
+    /// let mut rtc = Rtc::new();
+    ///
     /// rtc.set_bwe_current_bitrate(750_000.into())
     /// ````
     ///
@@ -1411,12 +1417,13 @@ impl fmt::Debug for Rtc {
 
 /// Log a CSV like stat to stdout.
 ///
-/// ```no_run
+/// ```ignore
 /// log_stat!("MY_STAT", 1, "hello", 3);
 /// ```
 ///
 /// will result in the following being printed
-/// ```
+///
+/// ```ignore
 /// MY_STAT 1, hello, 3, {unix_timestamp_ms}
 /// ````
 ///
