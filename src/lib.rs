@@ -1847,10 +1847,10 @@ impl fmt::Debug for Rtc {
 ///
 /// These logs can be easily grepped for, parsed and graphed, or otherwise analyzed.
 ///
-/// This macro turns into a NO-OP if the `log_stats` feature is not enabled
+/// This macro turns into a NO-OP if the `_internal_dont_use_log_stats` feature is not enabled
 macro_rules! log_stat {
     ($name:expr, $($arg:expr),+) => {
-        #[cfg(feature = "log_stats")]
+        #[cfg(feature = "_internal_dont_use_log_stats")]
         {
             use std::time::SystemTime;
             use std::io::{self, Write};

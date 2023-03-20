@@ -692,7 +692,7 @@ impl Session {
         {
             trace!("Poll RTP: {:?}", header);
 
-            #[cfg(feature = "log_stats")]
+            #[cfg(feature = "_internal_dont_use_log_stats")]
             {
                 let kind = if pad_size.is_some() {
                     "padding"
