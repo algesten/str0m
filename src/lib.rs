@@ -74,7 +74,7 @@ use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use io::DatagramRecv;
-use rtp::{Bitrate, InstantExt, Ssrc};
+use rtp::{InstantExt, Ssrc};
 use sctp::{RtcSctp, SctpEvent};
 use sdp::{Sdp, Setup};
 use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent};
@@ -83,6 +83,7 @@ use thiserror::Error;
 pub use ice::IceConnectionState;
 
 pub use ice::Candidate;
+pub use rtp::Bitrate;
 pub use sdp::{Answer, Offer};
 
 /// Network related types to get socket data in/out of [`Rtc`].
@@ -1177,21 +1178,21 @@ impl Rtc {
     /// `medium` with `maxBitrate` set to 750Kbits/, and `high` with `maxBitrate` 1.5Mbit/s.
     /// Staring at the lower layer, call:
     ///
-    /// ```no_run
-    /// # use str0m::Rtc;
+    /// ```
+    /// # use str0m::{Rtc, Bitrate};
     /// let mut rtc = Rtc::new();
     ///
-    /// rtc.set_bwe_current_bitrate(250_000.into())
+    /// rtc.set_bwe_current_bitrate(Bitrate::kbps(250));
     /// ````
     ///
     /// When a new estimate is made available that indicates a switch to the medium layer is
     /// possible, make the switch and then update the configuration:
     ///
     /// ```
-    /// # use str0m::Rtc;
+    /// # use str0m::{Rtc, Bitrate};
     /// let mut rtc = Rtc::new();
     ///
-    /// rtc.set_bwe_current_bitrate(750_000.into())
+    /// rtc.set_bwe_current_bitrate(Bitrate::kbps(750));
     /// ````
     ///
     /// ## Accuracy
