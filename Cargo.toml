@@ -11,7 +11,7 @@ categories = ["web-programming", "multimedia", "network-programming"]
 edition = "2021"
 
 [features]
-log_stats = []
+_internal_dont_use_log_stats = []
 
 [dependencies]
 thiserror = "1.0.38"
