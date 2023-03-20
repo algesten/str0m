@@ -24,7 +24,7 @@ impl ArrivalGroup {
         match self.belongs_to_group(&packet) {
             Belongs::NewGroup => return true,
             Belongs::Skipped => return false,
-            Belongs::Belongs => {}
+            Belongs::Yes => {}
         }
 
         if self.first.is_none() {
@@ -42,7 +42,7 @@ impl ArrivalGroup {
     fn belongs_to_group(&self, packet: &AckedPacket) -> Belongs {
         let Some((_, first_local_send_time)) = self.first else {
             // Start of the group
-            return Belongs::Belongs;
+            return Belongs::Yes;
         };
 
         let Some(send_diff) = packet
@@ -55,7 +55,7 @@ impl ArrivalGroup {
 
         if send_diff < BURST_TIME_INTERVAL {
             // Sent within the same burst interval
-            return Belongs::Belongs;
+            return Belongs::Yes;
         }
 
         let inter_arrival_time = packet
@@ -71,7 +71,7 @@ impl ArrivalGroup {
             - (packet.local_send_time - self.local_send_time()).as_secs_f64();
 
         if inter_group_delay_delta < 0.0 && inter_arrival_time < BURST_TIME_INTERVAL {
-            Belongs::Belongs
+            Belongs::Yes
         } else {
             Belongs::NewGroup
         }
@@ -142,7 +142,7 @@ impl ArrivalGroup {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Belongs {
     /// The packet is belongs to the group.
-    Belongs,
+    Yes,
     /// The packet is does not belong to the group, a new group should be created.
     NewGroup,
     /// The packet was skipped and a decision wasn't made.
@@ -234,7 +234,7 @@ mod test {
                 local_send_time: now,
                 remote_recv_time: now + duration_us(10),
             }),
-            Belongs::Belongs,
+            Belongs::Yes,
             "Any packet should belong to an empty arrival group"
         );
     }
