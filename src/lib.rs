@@ -1178,7 +1178,7 @@ impl Rtc {
     /// Staring at the lower layer, call:
     ///
     /// ```no_run
-    /// # use str0m::{Rtc};
+    /// # use str0m::Rtc;
     /// let mut rtc = Rtc::new();
     ///
     /// rtc.set_bwe_current_bitrate(250_000.into())
@@ -1187,8 +1187,8 @@ impl Rtc {
     /// When a new estimate is made available that indicates a switch to the medium layer is
     /// possible, make the switch and then update the configuration:
     ///
-    /// ```no_run
-    /// # use str0m::{Rtc};
+    /// ```
+    /// # use str0m::Rtc;
     /// let mut rtc = Rtc::new();
     ///
     /// rtc.set_bwe_current_bitrate(750_000.into())
@@ -1423,11 +1423,11 @@ impl fmt::Debug for Rtc {
 ///
 /// will result in the following being printed
 ///
-/// ```ignore
+/// ```text
 /// MY_STAT 1, hello, 3, {unix_timestamp_ms}
 /// ````
 ///
-/// These logs can be easily grepped for, parsed and graphed otherwise analyzed.
+/// These logs can be easily grepped for, parsed and graphed, or otherwise analyzed.
 ///
 /// This macro turns into a NO-OP if the `log_stats` feature is not enabled
 macro_rules! log_stat {
