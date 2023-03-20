@@ -1,5 +1,5 @@
 //! Googcc Bandwidth Estimation based on TWCC feedback as described in
-//! https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02 and implemented in libWebRTC.
+//! <https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02> and implemented in libWebRTC.
 //!
 //! Much of this code has been ported from the libWebRTC implementations. The complete system has
 //! not been ported, only a smaller part that corresponds roughly to the IETF draft is implemented.
