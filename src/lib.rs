@@ -500,6 +500,7 @@ use thiserror::Error;
 pub use ice::IceConnectionState;
 
 pub use ice::Candidate;
+pub use rtp::Bitrate;
 pub use sdp::{Answer, Offer};
 
 /// Network related types to get socket data in/out of [`Rtc`].
@@ -716,6 +717,9 @@ pub enum Event {
 
     /// Aggregated statistics for each media (mid, rid) in the egress direction
     MediaEgressStats(MediaEgressStats),
+
+    /// A new estimate from the bandwidth estimation subsystem.
+    EgressBitrateEstimate(Bitrate),
 }
 
 /// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.
@@ -778,7 +782,7 @@ impl Rtc {
             ice,
             dtls: Dtls::new().expect("DTLS to init without problem"),
             setup: Setup::ActPass,
-            session: Session::new(config.codec_config, config.ice_lite),
+            session: Session::new(config.codec_config, config.ice_lite, config.use_bwe),
             sctp: RtcSctp::new(),
             stats: Stats::new(config.stats_interval),
             next_sctp_channel: 0, // Goes 0, 1, 2 for both DTLS server or client
@@ -1315,6 +1319,9 @@ impl Rtc {
                 MediaEvent::Data(m) => Output::Event(Event::MediaData(m)),
                 MediaEvent::Error(e) => return Err(e),
                 MediaEvent::KeyframeRequest(r) => Output::Event(Event::KeyframeRequest(r)),
+                MediaEvent::EgressBitrateEstimate(b) => {
+                    Output::Event(Event::EgressBitrateEstimate(b))
+                }
             });
         }
 
@@ -1570,6 +1577,70 @@ impl Rtc {
     fn m_line_mut(&mut self, index: usize) -> &mut MLine {
         self.session.m_line_by_index_mut(index)
     }
+
+    /// Configure the current bitrate.
+    ///
+    /// Configure the bandwidth estimation system with the current bitrate.
+    /// **Note:** This only has an effect if BWE has been enabled via `RtcConfig::use_bwe`.
+    ///
+    /// * `current_bitrate` an estimate of the current bitrate being sent. When the media is
+    /// produced by encoders this value should be the sum of all the target bitrates for these
+    /// encoders, when the media originates from another WebRTC client it should be the sum of the
+    /// configure bitrates for all tracks being sent. This value should only account for video i.e.
+    /// audio bitrates should be ignored.
+    ///
+    /// ## Example
+    ///
+    /// Say you have a video track with three ingress simulcast layers: `low` with `maxBitrate` set to 250Kbits/,
+    /// `medium` with `maxBitrate` set to 750Kbits/, and `high` with `maxBitrate` 1.5Mbit/s.
+    /// Staring at the lower layer, call:
+    ///
+    /// ```
+    /// # use str0m::{Rtc, Bitrate};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// rtc.set_bwe_current_bitrate(Bitrate::kbps(250));
+    /// ````
+    ///
+    /// When a new estimate is made available that indicates a switch to the medium layer is
+    /// possible, make the switch and then update the configuration:
+    ///
+    /// ```
+    /// # use str0m::{Rtc, Bitrate};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// rtc.set_bwe_current_bitrate(Bitrate::kbps(750));
+    /// ````
+    ///
+    /// ## Accuracy
+    ///
+    /// When the original media is derived from another WebRTC implementation that support BWE it's
+    /// advisable to use the value from `RTCOutboundRtpStreamStats.targetBitrate` from `getStats`
+    /// rather than the `maxBitrate` values from `RTCRtpEncodingParameters`.
+    pub fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {
+        self.session.set_bwe_current_bitrate(current_bitrate);
+    }
+
+    /// Configure the desired bitrate.
+    ///
+    /// Configure the bandwidth estimation system with the desired bitrate.
+    /// **Note:** This only has an effect if BWE has been enabled via `RtcConfig::use_bwe`.
+    ///
+    /// * `desired_bitrate` The bitrate you would like to eventually send at. The BWE system will
+    /// try to reach this bitrate by probing with padding packets. You should allocate your media
+    /// bitrate based on the estimated the BWE system produces via
+    /// [`Event::EgressBitrateEstimate`]. This rate might not be reached if the network link cannot
+    /// sustain the desired bitrate.
+    ///
+    /// ## Example
+    ///
+    /// Say you have three simulcast video tracks each with a high layer configured at 1.5Mbit/s.
+    /// You should then set the desired bitrate to 4.5Mbit/s(or slightly higher). If the network
+    /// link can sustain 4.5Mbit/s there will eventually be an [`Event::EgressBitrateEstimate`]
+    /// with this estimate.
+    pub fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
+        self.session.set_bwe_desired_bitrate(desired_bitrate);
+    }
 }
 
 /// Changes waiting to be applied to the [`Rtc`].
@@ -1607,6 +1678,8 @@ pub struct RtcConfig {
     ice_lite: bool,
     codec_config: CodecConfig,
     stats_interval: Duration,
+    /// Whether to use Bandwidth Estimation to discover the egress bandwidth.
+    use_bwe: bool,
 }
 
 impl RtcConfig {
@@ -1702,6 +1775,13 @@ impl RtcConfig {
         self
     }
 
+    /// Whether to use bandwidth estimation to discover the available send bandwidth.
+    pub fn use_bwe(mut self, use_bwe: bool) -> Self {
+        self.use_bwe = use_bwe;
+
+        self
+    }
+
     /// Create a [`Rtc`] from the configuration.
     pub fn build(self) -> Rtc {
         Rtc::new_from_config(self)
@@ -1714,6 +1794,7 @@ impl Default for RtcConfig {
             ice_lite: Default::default(),
             codec_config: CodecConfig::new_with_defaults(),
             stats_interval: Duration::from_secs(1),
+            use_bwe: false,
         }
     }
 }
@@ -1751,6 +1832,43 @@ impl fmt::Debug for Rtc {
         f.debug_struct("Rtc").finish()
     }
 }
+
+/// Log a CSV like stat to stdout.
+///
+/// ```ignore
+/// log_stat!("MY_STAT", 1, "hello", 3);
+/// ```
+///
+/// will result in the following being printed
+///
+/// ```text
+/// MY_STAT 1, hello, 3, {unix_timestamp_ms}
+/// ````
+///
+/// These logs can be easily grepped for, parsed and graphed, or otherwise analyzed.
+///
+/// This macro turns into a NO-OP if the `log_stats` feature is not enabled
+macro_rules! log_stat {
+    ($name:expr, $($arg:expr),+) => {
+        #[cfg(feature = "log_stats")]
+        {
+            use std::time::SystemTime;
+            use std::io::{self, Write};
+
+            let now = SystemTime::now();
+            let since_epoch = now.duration_since(SystemTime::UNIX_EPOCH).unwrap();
+            let unix_time_ms = since_epoch.as_millis();
+            let mut lock = io::stdout().lock();
+            write!(lock, "{} ", $name).expect("Failed to write to stdout");
+
+            $(
+                write!(lock, "{},", $arg).expect("Failed to write to stdout");
+            )+
+            writeln!(lock, "{}", unix_time_ms).expect("Failed to write to stdout");
+        }
+    };
+}
+pub(crate) use log_stat;
 
 #[cfg(test)]
 mod test {

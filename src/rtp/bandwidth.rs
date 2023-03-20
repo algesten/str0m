@@ -11,24 +11,40 @@ use std::time::Duration;
 pub struct Bitrate(f64);
 
 impl Bitrate {
-    pub const ZERO: Self = Self::new(0);
+    /// A bitrate of zero bit/s.
+    pub const ZERO: Self = Self::bps(0);
 
-    pub const fn new(bps: u64) -> Self {
+    /// Create a bitrate of some bit per second(bps).
+    pub const fn bps(bps: u64) -> Self {
         Bitrate(bps as f64)
     }
 
-    pub const fn gbps(gbps: u64) -> Self {
-        Self::new(gbps * 10_u64.pow(9))
+    /// Create a bitrate of some **Kilobits** per second(kbps).
+    pub const fn kbps(kbps: u64) -> Self {
+        Self::bps(kbps * 10_u64.pow(3))
     }
 
+    /// Create a bitrate of some **Megabits** per second(mbps).
+    pub const fn mbps(mbps: u64) -> Self {
+        Self::bps(mbps * 10_u64.pow(6))
+    }
+
+    /// Create a bitrate of some **Gigabits** per second(gbps).
+    pub const fn gbps(gbps: u64) -> Self {
+        Self::bps(gbps * 10_u64.pow(9))
+    }
+
+    /// The number of bits per second as f64.
     pub fn as_f64(&self) -> f64 {
         self.0
     }
 
+    /// The number of bits per second rounded upwards as u64.
     pub fn as_u64(&self) -> u64 {
         self.0.ceil() as u64
     }
 
+    /// Clamp the value between a min and a max.
     pub fn clamp(&self, min: Self, max: Self) -> Self {
         Self(self.0.clamp(min.0, max.0))
     }
@@ -36,7 +52,7 @@ impl Bitrate {
 
 impl From<u64> for Bitrate {
     fn from(value: u64) -> Self {
-        Self::new(value)
+        Self::bps(value)
     }
 }
 
@@ -54,6 +70,14 @@ impl Mul<Duration> for Bitrate {
         let bytes = bits / 8.0;
 
         DataSize::bytes(bytes.round() as u64)
+    }
+}
+
+impl Mul<f64> for Bitrate {
+    type Output = Bitrate;
+
+    fn mul(self, rhs: f64) -> Self::Output {
+        Bitrate(self.0 * rhs)
     }
 }
 
@@ -182,43 +206,43 @@ mod test {
 
     #[test]
     fn test_bitrate_display() {
-        let rate = Bitrate::new(1);
+        let rate = Bitrate::bps(1);
         assert_eq!(rate.to_string(), "1bit/s");
 
-        let rate = Bitrate::new(12);
+        let rate = Bitrate::bps(12);
         assert_eq!(rate.to_string(), "12bit/s");
 
-        let rate = Bitrate::new(123);
+        let rate = Bitrate::bps(123);
         assert_eq!(rate.to_string(), "123bit/s");
 
-        let rate = Bitrate::new(1234);
+        let rate = Bitrate::bps(1234);
         assert_eq!(rate.to_string(), "1.234kbit/s");
 
-        let rate = Bitrate::new(12345);
+        let rate = Bitrate::bps(12345);
         assert_eq!(rate.to_string(), "12.345kbit/s");
 
-        let rate = Bitrate::new(123456);
+        let rate = Bitrate::bps(123456);
         assert_eq!(rate.to_string(), "123.456kbit/s");
 
-        let rate = Bitrate::new(1234567);
+        let rate = Bitrate::bps(1234567);
         assert_eq!(rate.to_string(), "1.235Mbit/s");
 
-        let rate = Bitrate::new(12345678);
+        let rate = Bitrate::bps(12345678);
         assert_eq!(rate.to_string(), "12.346Mbit/s");
 
-        let rate = Bitrate::new(123456789);
+        let rate = Bitrate::bps(123456789);
         assert_eq!(rate.to_string(), "123.457Mbit/s");
 
-        let rate = Bitrate::new(1234567898);
+        let rate = Bitrate::bps(1234567898);
         assert_eq!(rate.to_string(), "1.235Gbit/s");
 
-        let rate = Bitrate::new(12345678987);
+        let rate = Bitrate::bps(12345678987);
         assert_eq!(rate.to_string(), "12.346Gbit/s");
 
-        let rate = Bitrate::new(123456789876);
+        let rate = Bitrate::bps(123456789876);
         assert_eq!(rate.to_string(), "123.457Gbit/s");
 
-        let rate = Bitrate::new(1234567898765);
+        let rate = Bitrate::bps(1234567898765);
         assert_eq!(rate.to_string(), "1.235Tbit/s");
     }
 
@@ -233,7 +257,7 @@ mod test {
     #[test]
     fn test_data_size_div_bitrate() {
         let size = DataSize::bytes(12_500);
-        let rate = Bitrate::new(2_500_000);
+        let rate = Bitrate::kbps(2_500);
         let duration = size / rate;
 
         assert_eq!(duration.as_millis(), 40);

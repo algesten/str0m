@@ -414,6 +414,11 @@ impl MLine {
         };
         buf.truncate(header_len + body_len);
 
+        #[cfg(feature = "log_stats")]
+        if let Some(delay) = next.body.queued_at().map(|i| now.duration_since(i)) {
+            crate::log_stat!("QUEUE_DELAY", header.ssrc, delay.as_millis());
+        }
+
         Some((header, next.seq_no))
     }
 
@@ -1197,6 +1202,17 @@ impl<'a> NextPacketBody<'a> {
         match self {
             Regular { .. } => None,
             Resend { orig_seq_no, .. } => *orig_seq_no,
+            Padding { .. } => None,
+        }
+    }
+
+    #[cfg(feature = "log_stats")]
+    fn queued_at(&self) -> Option<Instant> {
+        use NextPacketBody::*;
+        match self {
+            Regular { pkt } => Some(pkt.meta.queued_at),
+            // TODO: Accurate queued_at for resends
+            Resend { .. } => None,
             Padding { .. } => None,
         }
     }

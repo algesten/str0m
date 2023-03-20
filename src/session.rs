@@ -4,10 +4,12 @@ use std::time::{Duration, Instant};
 use crate::dtls::KeyingMaterial;
 use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::media::{App, CodecConfig, MediaAdded, MediaChanged, Source};
-use crate::packet::{NullPacer, Pacer, PacerImpl, PollOutcome, RtpMeta};
+use crate::packet::{
+    LeakyBucketPacer, NullPacer, Pacer, PacerImpl, PollOutcome, RtpMeta, SendSideBandwithEstimator,
+};
 use crate::rtp::SRTCP_OVERHEAD;
 use crate::rtp::{extend_seq, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
-use crate::rtp::{Extensions, MediaTime, Mid, Rtcp, RtcpFb};
+use crate::rtp::{Bitrate, Extensions, MediaTime, Mid, Rtcp, RtcpFb};
 use crate::rtp::{SrtpContext, SrtpKey, Ssrc};
 use crate::session_sdp::AsMediaLine;
 use crate::stats::StatsSnapshot;
@@ -57,6 +59,8 @@ pub(crate) struct Session {
     twcc_rx_register: TwccRecvRegister,
     twcc_tx_register: TwccSendRegister,
 
+    bwe: Option<SendSideBandwithEstimator>,
+
     enable_twcc_feedback: bool,
 
     /// A pacer for sending RTP at specific rate.
@@ -100,17 +104,30 @@ pub enum MediaEvent {
     Error(RtcError),
     Added(MediaAdded),
     KeyframeRequest(KeyframeRequest),
+    EgressBitrateEstimate(Bitrate),
 }
 
 impl Session {
-    pub fn new(codec_config: CodecConfig, ice_lite: bool) -> Self {
+    pub fn new(codec_config: CodecConfig, ice_lite: bool, use_bwe: bool) -> Self {
         let mut id = SessionId::new();
         // Max 2^62 - 1: https://bugzilla.mozilla.org/show_bug.cgi?id=861895
         const MAX_ID: u64 = 2_u64.pow(62) - 1;
         while *id > MAX_ID {
             id = (*id >> 1).into();
         }
-        let pacer = PacerImpl::Null(NullPacer::default());
+        let (pacer, bwe) = if use_bwe {
+            let initial_bitrate = 300_000.into();
+            let pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(
+                initial_bitrate,
+                Duration::from_millis(40),
+            ));
+
+            let bwe = SendSideBandwithEstimator::new(initial_bitrate);
+
+            (pacer, Some(bwe))
+        } else {
+            (PacerImpl::Null(NullPacer::default()), None)
+        };
 
         Session {
             id,
@@ -130,6 +147,7 @@ impl Session {
             // Enough to accurately measure received bandwidths up to 20Mbit/s, assuming an average
             // packet size of 1000 bytes.
             twcc_tx_register: TwccSendRegister::new(2500),
+            bwe,
             enable_twcc_feedback: false,
             pacer,
             poll_packet_buf: vec![0; 2000],
@@ -487,7 +505,19 @@ impl Session {
         for fb in RtcpFb::from_rtcp(feedback) {
             if let RtcpFb::Twcc(twcc) = fb {
                 debug!("Handle TWCC: {:?}", twcc);
-                self.twcc_tx_register.apply_report(twcc, now);
+                let range = self.twcc_tx_register.apply_report(twcc, now);
+
+                if let Some(bwe) = &mut self.bwe {
+                    let observed_bitrate = self
+                        .twcc_tx_register
+                        .observed_bitrate(Duration::from_millis(500), now);
+                    let records = range.and_then(|range| self.twcc_tx_register.send_records(range));
+
+                    if let (Some(observed_bitrate), Some(records)) = (observed_bitrate, records) {
+                        bwe.update(records, observed_bitrate, now);
+                    }
+                }
+
                 return Some(());
             }
 
@@ -544,6 +574,10 @@ impl Session {
     }
 
     pub fn poll_event(&mut self) -> Option<MediaEvent> {
+        if let Some(bitrate_estimate) = self.bwe.as_mut().and_then(|bwe| bwe.poll_estimate()) {
+            return Some(MediaEvent::EgressBitrateEstimate(bitrate_estimate));
+        }
+
         for m_line in self.m_lines() {
             if m_line.need_open_event {
                 m_line.need_open_event = false;
@@ -658,11 +692,23 @@ impl Session {
         {
             trace!("Poll RTP: {:?}", header);
 
+            #[cfg(feature = "log_stats")]
+            {
+                let kind = if pad_size.is_some() {
+                    "padding"
+                } else {
+                    "media"
+                };
+
+                crate::log_stat!("PACKET_SENT", header.ssrc, buf.len(), kind);
+            }
+
+            let payload_size = buf.len();
             self.pacer.register_send(now, buf.len().into(), queue_id);
             let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
             self.twcc_tx_register
-                .register_seq(twcc_seq.into(), now, protected.len());
+                .register_seq(twcc_seq.into(), now, payload_size);
 
             return Some(protected.into());
         }
@@ -768,6 +814,32 @@ impl Session {
 
     pub fn m_line_by_index_mut(&mut self, index: usize) -> &mut MLine {
         self.m_lines[index].as_m_line_mut().expect("index is MLine")
+    }
+
+    pub(crate) fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {
+        const PACING_FACTOR: f64 = 2.5;
+
+        let pacing_rate = current_bitrate * PACING_FACTOR;
+
+        self.pacer.set_pacing_rate(pacing_rate);
+    }
+
+    pub(crate) fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
+        const PADDING_FACTOR: f64 = 0.97;
+
+        if let Some(bwe) = &mut self.bwe {
+            let padding_rate = match bwe.last_estimate() {
+                // If the estimate exceeds the desired bitrate we don't need to use probing to
+                // discover a higher bitrate.
+                Some(estimate) if estimate > desired_bitrate => Bitrate::ZERO,
+                Some(estimate) => estimate * PADDING_FACTOR,
+                // Before we have the first we don't do any padding.
+                None => Bitrate::ZERO,
+            };
+
+            self.pacer.set_padding_rate(padding_rate);
+            bwe.set_is_probing(padding_rate > Bitrate::ZERO);
+        }
     }
 }
 
