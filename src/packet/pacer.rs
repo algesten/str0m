@@ -51,16 +51,10 @@ impl Pacer for PacerImpl {
         }
     }
 
-    fn register_send(
-        &mut self,
-        now: Instant,
-        packet_size: DataSize,
-        from: QueueId,
-        is_media: bool,
-    ) {
+    fn register_send(&mut self, now: Instant, packet_size: DataSize, from: QueueId) {
         match self {
-            PacerImpl::Null(v) => v.register_send(now, packet_size, from, is_media),
-            PacerImpl::LeakyBucket(v) => v.register_send(now, packet_size, from, is_media),
+            PacerImpl::Null(v) => v.register_send(now, packet_size, from),
+            PacerImpl::LeakyBucket(v) => v.register_send(now, packet_size, from),
         }
     }
 }
@@ -95,9 +89,9 @@ pub trait Pacer {
 
     /// Register a packet having been sent.
     ///
-    /// **MUST** be called each time [`Pacer::poll_action`] produces [`PollOutcome::PollQueue`]
-    /// after the packet is sent.
-    fn register_send(&mut self, now: Instant, packet_size: DataSize, from: QueueId, is_media: bool);
+    /// **MUST** be called each time [`Pacer::poll_action`] produces [`PollOutcome::PollQueue`] or
+    /// [`PollOutcome::PollPadding`]` after the packet is sent.
+    fn register_send(&mut self, now: Instant, packet_size: DataSize, from: QueueId);
 }
 
 /// A unique identifier for a given packet queue. Should be immutable.
@@ -184,13 +178,7 @@ impl Pacer for NullPacer {
         result
     }
 
-    fn register_send(
-        &mut self,
-        now: Instant,
-        _packet_size: DataSize,
-        from: QueueId,
-        _is_media: bool,
-    ) {
+    fn register_send(&mut self, now: Instant, _packet_size: DataSize, from: QueueId) {
         let e = self.last_sends.entry(from).or_insert(now);
         *e = now;
     }
@@ -341,24 +329,15 @@ impl Pacer for LeakyBucketPacer {
         next
     }
 
-    fn register_send(
-        &mut self,
-        now: Instant,
-        packet_size: DataSize,
-        _from: QueueId,
-        is_media: bool,
-    ) {
+    fn register_send(&mut self, now: Instant, packet_size: DataSize, _from: QueueId) {
         self.last_send_time = Some(now);
 
-        if is_media {
-            self.media_debt += packet_size;
-            self.media_debt = self
-                .media_debt
-                .min(self.adjusted_bitrate * MAX_DEBT_IN_TIME);
-            crate::packet::bwe::macros::log_pacer_media_debt!(self.media_debt.as_bytes_usize());
-        } else {
-            self.add_padding_debt(packet_size);
-        }
+        self.media_debt += packet_size;
+        self.media_debt = self
+            .media_debt
+            .min(self.adjusted_bitrate * MAX_DEBT_IN_TIME);
+        crate::packet::bwe::macros::log_pacer_media_debt!(self.media_debt.as_bytes_usize());
+        self.add_padding_debt(packet_size);
     }
 }
 
@@ -539,6 +518,7 @@ impl LeakyBucketPacer {
 
         if queued_packets == 0 {
             let should_send_padding = self.padding_debt == DataSize::ZERO
+                && self.media_debt == DataSize::ZERO
                 && self.padding_bitrate > Bitrate::ZERO
                 && self.last_send_time.is_some()
                 && self.padding_to_add == DataSize::ZERO
@@ -1113,7 +1093,7 @@ mod test {
         let packet = queue.next_packet().unwrap();
         let packet_size = packet.size();
         do_asserts(packet);
-        pacer.register_send(now, packet_size, qid, todo!());
+        pacer.register_send(now, packet_size, qid);
         queue.register_send(qid, now);
 
         let timeout = pacer.poll_timeout();

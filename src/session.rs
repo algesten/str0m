@@ -691,17 +691,20 @@ impl Session {
             mline.poll_packet(now, &self.exts, &mut self.twcc, pad_size, buf)
         {
             trace!("Poll RTP: {:?}", header);
-            let kind = if pad_size.is_some() {
-                "padding"
-            } else {
-                "media"
-            };
 
-            crate::log_stat!("PACKET_SENT", header.ssrc, buf.len(), kind);
+            #[cfg(feature = "log_stats")]
+            {
+                let kind = if pad_size.is_some() {
+                    "padding"
+                } else {
+                    "media"
+                };
+
+                crate::log_stat!("PACKET_SENT", header.ssrc, buf.len(), kind);
+            }
 
             let payload_size = buf.len();
-            self.pacer
-                .register_send(now, buf.len().into(), queue_id, kind == "media");
+            self.pacer.register_send(now, buf.len().into(), queue_id);
             let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
             self.twcc_tx_register
