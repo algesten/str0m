@@ -5,7 +5,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::rtp::{Mid, Rid};
+use crate::{
+    rtp::{Mid, Rid},
+    Bitrate,
+};
 
 pub(crate) struct Stats {
     last_now: Instant,
@@ -20,6 +23,7 @@ pub(crate) struct StatsSnapshot {
     pub rx: u64,
     pub ingress: HashMap<(Mid, Option<Rid>), MediaIngressStats>,
     pub egress: HashMap<(Mid, Option<Rid>), MediaEgressStats>,
+    pub bwe_tx: Option<Bitrate>,
     timestamp: Instant,
 }
 
@@ -32,6 +36,7 @@ impl StatsSnapshot {
             rx: 0,
             ingress: HashMap::new(),
             egress: HashMap::new(),
+            bwe_tx: None,
             timestamp,
         }
     }
@@ -61,6 +66,8 @@ pub struct PeerStats {
     pub bytes_tx: u64,
     /// Timestamp when this event was generated.
     pub timestamp: Instant,
+    /// The last egress bandwidth estimate from the BWE subsystem, if enabled.
+    pub bwe_tx: Option<Bitrate>,
 }
 
 /// An event carrying stats for every (mid, rid) in egress direction
@@ -176,6 +183,7 @@ impl Stats {
             bytes_rx: snapshot.rx,
             bytes_tx: snapshot.tx,
             timestamp: snapshot.timestamp,
+            bwe_tx: snapshot.bwe_tx,
         };
 
         self.events.push_back(StatsEvent::Peer(event));

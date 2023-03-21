@@ -806,6 +806,7 @@ impl Session {
         }
         snapshot.tx = snapshot.egress.values().map(|s| s.bytes).sum();
         snapshot.rx = snapshot.ingress.values().map(|s| s.bytes).sum();
+        snapshot.bwe_tx = self.bwe.as_ref().and_then(|bwe| bwe.last_estimate());
     }
 
     pub fn m_line_by_index(&self, index: usize) -> &MLine {
