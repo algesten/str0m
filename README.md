@@ -31,7 +31,6 @@ For passive connections, i.e. where the media and initial OFFER is
 made by a remote peer, we need these steps to open the connection.
 
 ```rust
-#
 // Instantiate a new Rtc instance.
 let mut rtc = Rtc::new();
 
@@ -43,7 +42,7 @@ rtc.add_local_candidate(candidate);
 // Accept an incoming offer from the remote peer
 // and get the corresponding answer.
 let offer = todo!();
-let answer = rtc.accept_offer(offer).unwrap();
+let answer = SdpStrategy.accept_offer(&mut rtc, offer).unwrap();
 
 // Forward the answer to the remote peer.
 
@@ -67,20 +66,20 @@ rtc.add_local_candidate(candidate);
 
 // Create a `ChangeSet`. The change lets us make multiple changes
 // before sending the offer.
-let mut change = rtc.create_change_set();
+let mut change = rtc.create_change_set(SdpStrategy);
 
 // Do some change. A valid OFFER needs at least one "m-line" (media).
 let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None);
 
 // Get the offer.
-let offer = change.apply();
+let (offer, pending) = change.apply().unwrap();
 
 // Forward the offer to the remote peer and await the answer.
 // How to transfer this is outside the scope for this library.
 let answer = todo!();
 
 // Apply answer.
-rtc.pending_changes().unwrap().accept_answer(answer).unwrap();
+pending.accept_answer(&mut rtc, answer).unwrap();
 
 // Go to _run loop_
 ```
@@ -177,7 +176,7 @@ loop {
 
 ### Sending media data
 
-When creating the m-line, we can decide which codecs to support, which
+When creating the media, we can decide which codecs to support, which
 is then negotiated with the remote side. Each codec corresponds to a
 "payload type" (PT). To send media data we need to figure out which PT
 to use when sending.

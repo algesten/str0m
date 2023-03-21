@@ -117,7 +117,7 @@ pub struct QueueState {
     pub total_queue_time: Duration,
     /// The kind of packets this queue contains.
     pub queue_kind: MediaKind,
-    /// Whether the m-line has RTX.
+    /// Whether the media has RTX.
     pub has_rtx: bool,
     // The last time a packet was sent from this queue.
     last_send_time: Option<Instant>,

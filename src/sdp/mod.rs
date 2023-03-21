@@ -25,13 +25,13 @@ pub enum SdpError {
 
 #[derive(Debug, PartialEq, Eq)]
 /// SDP offer. Offers can be serialized via serde.
-pub struct Offer(Sdp);
+pub struct SdpOffer(Sdp);
 
-impl Offer {
+impl SdpOffer {
     /// Takes the SDP string without any JSON wrapping and makes an `Offer`.
     pub fn from_sdp_string(input: &str) -> Result<Self, SdpError> {
         let sdp = Sdp::parse(input)?;
-        Ok(Offer(sdp))
+        Ok(SdpOffer(sdp))
     }
 
     /// Turns this offer into an SDP string, without any JSON wrapping.
@@ -42,13 +42,13 @@ impl Offer {
 
 #[derive(Debug, PartialEq, Eq)]
 /// SDP answer. Answers can be serialized via serde.
-pub struct Answer(Sdp);
+pub struct SdpAnswer(Sdp);
 
-impl Answer {
+impl SdpAnswer {
     /// Takes the SDP string without any JSON wrapping and makes an `Answer`.
     pub fn from_sdp_string(input: &str) -> Result<Self, SdpError> {
         let sdp = Sdp::parse(input)?;
-        Ok(Answer(sdp))
+        Ok(SdpAnswer(sdp))
     }
 
     /// Turns this answer into an SDP string, without any JSON wrapping.
@@ -57,7 +57,7 @@ impl Answer {
     }
 }
 
-impl Deref for Offer {
+impl Deref for SdpOffer {
     type Target = Sdp;
 
     fn deref(&self) -> &Self::Target {
@@ -65,7 +65,7 @@ impl Deref for Offer {
     }
 }
 
-impl Deref for Answer {
+impl Deref for SdpAnswer {
     type Target = Sdp;
 
     fn deref(&self) -> &Self::Target {
@@ -73,15 +73,15 @@ impl Deref for Answer {
     }
 }
 
-impl From<Sdp> for Offer {
+impl From<Sdp> for SdpOffer {
     fn from(v: Sdp) -> Self {
-        Offer(v)
+        SdpOffer(v)
     }
 }
 
-impl From<Sdp> for Answer {
+impl From<Sdp> for SdpAnswer {
     fn from(v: Sdp) -> Self {
-        Answer(v)
+        SdpAnswer(v)
     }
 }
 
@@ -212,8 +212,8 @@ macro_rules! sdp_ser {
     };
 }
 
-sdp_ser!(Offer, "Offer", "offer");
-sdp_ser!(Answer, "Answer", "answer");
+sdp_ser!(SdpOffer, "Offer", "offer");
+sdp_ser!(SdpAnswer, "Answer", "answer");
 
 #[cfg(test)]
 mod test {
@@ -234,24 +234,24 @@ mod test {
 
     #[test]
     fn serialize_deserialize_offer() {
-        let offer = Offer(sdp());
+        let offer = SdpOffer(sdp());
         let json = serde_json::to_string(&offer).unwrap();
 
         assert_eq!(json, "{\"type\":\"offer\",\"sdp\":\"v=0\\r\\no=- 123 2 IN IP4 0.0.0.0\\r\\ns=-\\r\\nt=0 0\\r\\n\"}");
 
-        let offer2: Offer = serde_json::from_str(&json).unwrap();
+        let offer2: SdpOffer = serde_json::from_str(&json).unwrap();
 
         assert_eq!(offer, offer2);
     }
 
     #[test]
     fn serialize_deserialize_answer() {
-        let answer = Answer(sdp());
+        let answer = SdpAnswer(sdp());
         let json = serde_json::to_string(&answer).unwrap();
 
         assert_eq!(json, "{\"type\":\"answer\",\"sdp\":\"v=0\\r\\no=- 123 2 IN IP4 0.0.0.0\\r\\ns=-\\r\\nt=0 0\\r\\n\"}");
 
-        let answer2: Answer = serde_json::from_str(&json).unwrap();
+        let answer2: SdpAnswer = serde_json::from_str(&json).unwrap();
 
         assert_eq!(answer, answer2);
     }

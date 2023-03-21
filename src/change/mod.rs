@@ -1,15 +1,34 @@
+//! Ways of changing the Rtc session
+
 use std::ops::Deref;
 
 use crate::io::Id;
 use crate::rtp::{ChannelId, Direction, Extensions, Mid, Ssrc};
 use crate::sctp::{DcepOpen, ReliabilityType};
-use crate::sdp::{MediaLine, Msid, Offer};
+use crate::sdp::{MediaLine, Msid};
 
-use crate::media::{CodecConfig, MLine, MediaKind, PayloadParams};
-use crate::session::MLineOrApp;
+use crate::media::{CodecConfig, MediaInner, MediaKind, PayloadParams};
+use crate::session::MediaOrApp;
 use crate::Rtc;
 
 pub(crate) struct Changes(pub Vec<Change>);
+
+mod sdp;
+pub use sdp::{SdpAnswer, SdpOffer, SdpPendingOffer, SdpStrategy};
+
+/// Strategy for changing the [`Rtc`][crate::Rtc] session.
+///
+/// One common strategy is [`SdpStrategy`][crate::change::SdpStrategy].
+pub trait ChangeStrategy: Sized {
+    /// The type [`ChangeSet::apply`] produces.
+    type Apply;
+
+    #[doc(hidden)]
+    fn apply(&self, change_id: usize, rtc: &mut Rtc, changes: ChangesWrapper) -> Self::Apply;
+}
+
+#[doc(hidden)]
+pub struct ChangesWrapper(Changes);
 
 #[derive(Debug)]
 pub(crate) enum Change {
@@ -20,7 +39,7 @@ pub(crate) enum Change {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AddMedia {
+pub(crate) struct AddMedia {
     pub mid: Mid,
     pub cname: String,
     pub msid: Msid,
@@ -33,22 +52,27 @@ pub struct AddMedia {
     pub index: usize,
 }
 
-/// Changes to apply to the m-lines of the WebRTC session.
+/// Changes to apply to the WebRTC session.
 ///
 /// Get this by calling [`Rtc::create_change_set`][crate::Rtc::create_change_set()].
 ///
-/// No changes are made without calling [`ChangeSet::apply()`], followed by sending
-/// the offer to the remote peer, receiving an answer and completing the changes using
-/// [`Rtc::pending_changes()`][crate::Rtc::pending_changes()].
-pub struct ChangeSet<'a> {
-    rtc: &'a mut Rtc,
-    changes: Changes,
+/// For [`SdpStrategy`]: No changes are made without calling [`ChangeSet::apply()`], followed
+/// by sending the offer to the remote peer, receiving an answer and completing the changes using
+/// [`SdpPendingOffer`].
+pub struct ChangeSet<'a, Strategy>
+where
+    Strategy: ChangeStrategy,
+{
+    pub(crate) rtc: &'a mut Rtc,
+    pub(crate) changes: Changes,
+    strategy: Strategy,
 }
 
-impl<'a> ChangeSet<'a> {
-    pub(crate) fn new(rtc: &'a mut Rtc) -> Self {
+impl<'a, Strategy: ChangeStrategy> ChangeSet<'a, Strategy> {
+    pub(crate) fn new(rtc: &'a mut Rtc, strategy: Strategy) -> Self {
         ChangeSet {
             rtc,
+            strategy,
             changes: Changes(vec![]),
         }
     }
@@ -57,9 +81,10 @@ impl<'a> ChangeSet<'a> {
     ///
     /// ```
     /// # use str0m::{Rtc, media::MediaKind, media::Direction};
+    /// # use str0m::change::SdpStrategy;
     /// let mut rtc = Rtc::new();
     ///
-    /// let mut changes = rtc.create_change_set();
+    /// let mut changes = rtc.create_change_set(SdpStrategy);
     /// assert!(!changes.has_changes());
     ///
     /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None);
@@ -71,16 +96,17 @@ impl<'a> ChangeSet<'a> {
 
     /// Add audio or video media and get the `mid` that will be used.
     ///
-    /// Each call will result in a new m-line in the offer identifed by the [`Mid`].
+    /// For [`SdpStrategy`]: Each call will result in a new m-line in the offer identifed by the [`Mid`].
     ///
     /// The mid is not valid to use until the SDP offer-answer dance is complete and
     /// the mid been advertised via [`Event::MediaAdded`][crate::Event::MediaAdded].
     ///
     /// ```
     /// # use str0m::{Rtc, media::MediaKind, media::Direction};
+    /// # use str0m::change::SdpStrategy;
     /// let mut rtc = Rtc::new();
     ///
-    /// let mut changes = rtc.create_change_set();
+    /// let mut changes = rtc.create_change_set(SdpStrategy);
     ///
     /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None);
     /// ```
@@ -155,9 +181,9 @@ impl<'a> ChangeSet<'a> {
         mid
     }
 
-    /// Change the direction of an already existing m-line.
+    /// Change the direction of an already existing media.
     ///
-    /// All media m-line have a direction. The media can be added by this side via
+    /// All media have a direction. The media can be added by this side via
     /// [`ChangeSet::add_media()`] or by the remote peer. Either way, the direction
     /// of the line can be changed at any time.
     ///
@@ -167,7 +193,7 @@ impl<'a> ChangeSet<'a> {
     /// If the direction is set for media that doesn't exist, or if the direction is
     /// the same that's already set [`ChangeSet::apply()`] not require a negotiation.
     pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
-        let Some(media) = self.rtc.session.m_line_by_mid_mut(mid) else {
+        let Some(media) = self.rtc.session.media_by_mid_mut(mid) else {
             return;
         };
 
@@ -180,11 +206,11 @@ impl<'a> ChangeSet<'a> {
 
     /// Add a new data channel and get the `id` that will be used.
     ///
-    /// The first ever data channel added to a WebRTC session results in an m-line of a
-    /// special "application" type in the SDP. The m-line is for a SCTP association over
+    /// For [`SdpStrategy`]: The first ever data channel added to a WebRTC session results in a media
+    /// of a special "application" type in the SDP. The m-line is for a SCTP association over
     /// DTLS, and all data channels are multiplexed over this single association.
     ///
-    /// That means only the first ever `add_channel` will result in an [`Offer`].
+    /// That means only the first ever `add_channel` will result in an [`SdpOffer`].
     /// Consecutive channels will be opened without needing a negotiation.
     ///
     /// The label is used to identify the data channel to the remote peer. This is mostly
@@ -192,16 +218,17 @@ impl<'a> ChangeSet<'a> {
     ///
     /// ```
     /// # use str0m::Rtc;
+    /// # use str0m::change::SdpStrategy;
     /// let mut rtc = Rtc::new();
     ///
-    /// let mut changes = rtc.create_change_set();
+    /// let mut changes = rtc.create_change_set(SdpStrategy);
     ///
     /// let cid = changes.add_channel("my special channel".to_string());
     /// ```
     pub fn add_channel(&mut self, label: String) -> ChannelId {
-        let has_m_line = self.rtc.session.app().is_some();
+        let has_media = self.rtc.session.app().is_some();
 
-        if !has_m_line {
+        if !has_media {
             let mid = self.rtc.new_mid();
             self.changes.0.push(Change::AddApp(mid));
         }
@@ -222,31 +249,33 @@ impl<'a> ChangeSet<'a> {
         id
     }
 
-    /// Attempt to apply the changes made in the change set. If this returns [`Offer`], the caller
-    /// the changes are not happening straight away, and the caller is expected to do a negotiation
-    /// with the remote peer and apply the answer using
-    /// [`Rtc::pending_changes()`][crate::Rtc::pending_changes()].
+    /// Attempt to apply the changes made in the change set. What that means depends on the
+    /// used [`ChangeStrategy`].
+    ///
+    /// For [`SdpStrategy`]: If this returns [`SdpOffer`], the caller the changes are
+    /// not happening straight away, and the caller is expected to do a negotiation with the remote
+    /// peer and apply the answer using [`SdpPendingOffer`].
     ///
     /// In case this returns `None`, there either were no changes, or the changes could be applied
     /// without doing a negotiation. Specifically for additional [`ChangeSet::add_channel()`]
     /// after the first, there is no negotiation needed.
     ///
+    /// The [`SdpPendingOffer`] is valid until the next time we call this function, at which
+    /// point using it will raise an error. Using [`SdpStrategy::accept_offer()`] will also invalidate
+    /// the current [`SdpPendingOffer`].
+    ///
     /// ```
     /// # use str0m::Rtc;
+    /// # use str0m::change::SdpStrategy;
     /// let mut rtc = Rtc::new();
     ///
-    /// let changes = rtc.create_change_set();
-    /// assert_eq!(changes.apply(), None);
+    /// let changes = rtc.create_change_set(SdpStrategy);
+    /// assert!(changes.apply().is_none());
     /// ```
-    pub fn apply(self) -> Option<Offer> {
-        let requires_negotiation = self.changes.iter().any(|c| c.requires_negotiation());
-
-        if requires_negotiation {
-            Some(self.rtc.set_pending(self.changes))
-        } else {
-            self.rtc.apply_direct_changes(self.changes);
-            None
-        }
+    pub fn apply(self) -> Strategy::Apply {
+        let change_id = self.rtc.next_change_id();
+        self.strategy
+            .apply(change_id, self.rtc, ChangesWrapper(self.changes))
     }
 }
 
@@ -270,11 +299,11 @@ impl Changes {
     }
 
     /// Tests the given lines (from answer) corresponds to changes.
-    pub fn ensure_correct_answer(&self, lines: &[&MediaLine]) -> Option<String> {
-        if self.count_new_m_lines() != lines.len() {
+    fn ensure_correct_answer(&self, lines: &[&MediaLine]) -> Option<String> {
+        if self.count_new_medias() != lines.len() {
             return Some(format!(
                 "Differing m-line count in offer vs answer: {} != {}",
-                self.count_new_m_lines(),
+                self.count_new_medias(),
                 lines.len()
             ));
         }
@@ -313,23 +342,23 @@ impl Changes {
         None
     }
 
-    fn count_new_m_lines(&self) -> usize {
+    fn count_new_medias(&self) -> usize {
         self.0
             .iter()
             .filter(|c| matches!(c, Change::AddMedia(_) | Change::AddApp(_)))
             .count()
     }
 
-    pub fn as_new_m_lines<'a, 'b: 'a>(
+    pub fn as_new_medias<'a, 'b: 'a>(
         &'a self,
         index_start: usize,
         config: &'b CodecConfig,
         exts: &'b Extensions,
-    ) -> impl Iterator<Item = MLineOrApp> + '_ {
+    ) -> impl Iterator<Item = MediaOrApp> + '_ {
         self.0
             .iter()
             .enumerate()
-            .filter_map(move |(idx, c)| c.as_new_m_line(index_start + idx, config, exts))
+            .filter_map(move |(idx, c)| c.as_ned_media(index_start + idx, config, exts))
     }
 
     pub(crate) fn apply_to(&self, lines: &mut [MediaLine]) {
@@ -346,12 +375,12 @@ impl Changes {
 }
 
 impl Change {
-    fn as_new_m_line(
+    fn as_ned_media(
         &self,
         index: usize,
         config: &CodecConfig,
         exts: &Extensions,
-    ) -> Option<MLineOrApp> {
+    ) -> Option<MediaOrApp> {
         use Change::*;
         match self {
             AddMedia(v) => {
@@ -360,23 +389,14 @@ impl Change {
                 add.params = config.all_for_kind(v.kind).copied().collect();
                 add.index = index;
 
-                let m_line = MLine::from_add_media(add, *exts);
-                Some(MLineOrApp::MLine(m_line))
+                let media = MediaInner::from_add_media(add, *exts);
+                Some(MediaOrApp::Media(media))
             }
             AddApp(mid) => {
                 let channel = (*mid, index).into();
-                Some(MLineOrApp::App(channel))
+                Some(MediaOrApp::App(channel))
             }
             _ => None,
-        }
-    }
-
-    fn requires_negotiation(&self) -> bool {
-        match self {
-            Change::AddMedia(_) => true,
-            Change::AddApp(_) => true,
-            Change::AddChannel(_, _) => false,
-            Change::Direction(_, _) => true,
         }
     }
 }

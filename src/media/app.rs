@@ -1,7 +1,7 @@
 use crate::rtp::Mid;
 use crate::sdp::MediaLine;
 
-/// m=application m-line. There can only be one of these in the SDP.
+/// App media. There can only be one of these in the session.
 #[derive(Debug)]
 pub struct App {
     mid: Mid,
@@ -17,9 +17,7 @@ impl App {
         self.index
     }
 
-    pub(crate) fn apply_changes(&mut self, _m: &MediaLine) {
-        // nothing can be changed on the m-line for application, right?
-    }
+    pub(crate) fn apply_changes(&mut self, _m: &MediaLine) {}
 }
 
 impl Default for App {

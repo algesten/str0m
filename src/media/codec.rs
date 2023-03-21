@@ -86,8 +86,8 @@ impl PayloadParams {
         None
     }
 
-    fn update_pt(&mut self, m_line_pts: &[SdpPayloadParams]) -> Option<(Pt, Pt)> {
-        let first = m_line_pts
+    fn update_pt(&mut self, media_pts: &[SdpPayloadParams]) -> Option<(Pt, Pt)> {
+        let first = media_pts
             .iter()
             .find(|p| self.match_score(p) == Some(100))?;
 
@@ -312,7 +312,7 @@ impl CodecConfig {
             }
         }
 
-        // Need to adjust potentially clashes introduced by assigning pts from the m-lines.
+        // Need to adjust potentially clashes introduced by assigning pts from the medias.
         for (i, p) in self.configs.iter_mut().enumerate() {
             if let Some(index) = assigneds.get(&p.pt()) {
                 if i != *index {

@@ -10,9 +10,11 @@ use std::time::Instant;
 use rouille::Server;
 use rouille::{Request, Response};
 
+use str0m::change::SdpOffer;
+use str0m::change::SdpStrategy;
 use str0m::net::Receive;
 use str0m::IceConnectionState;
-use str0m::{Candidate, Event, Input, Offer, Output, Rtc, RtcError};
+use str0m::{Candidate, Event, Input, Output, Rtc, RtcError};
 
 mod util;
 
@@ -50,7 +52,7 @@ fn web_request(request: &Request) -> Response {
     // Expected POST SDP Offers.
     let mut data = request.data().expect("body to be available");
 
-    let offer: Offer = serde_json::from_reader(&mut data).expect("serialized offer");
+    let offer: SdpOffer = serde_json::from_reader(&mut data).expect("serialized offer");
     let mut rtc = Rtc::new();
 
     let addr = util::select_host_address();
@@ -62,7 +64,9 @@ fn web_request(request: &Request) -> Response {
     rtc.add_local_candidate(candidate);
 
     // Create an SDP Answer.
-    let answer = rtc.accept_offer(offer).expect("offer to be accepted");
+    let answer = SdpStrategy
+        .accept_offer(&mut rtc, offer)
+        .expect("offer to be accepted");
 
     // Launch WebRTC in separate thread.
     thread::spawn(|| {

@@ -12,11 +12,12 @@ use std::time::{Duration, Instant};
 
 use rouille::Server;
 use rouille::{Request, Response};
+use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer, SdpStrategy};
 use str0m::channel::{ChannelData, ChannelId};
 use str0m::media::MediaKind;
 use str0m::media::{Direction, KeyframeRequest, MediaData, Mid, Rid};
-use str0m::{net::Receive, Candidate, IceConnectionState, Input, Offer, Output, Rtc, RtcError};
-use str0m::{Answer, Event};
+use str0m::Event;
+use str0m::{net::Receive, Candidate, IceConnectionState, Input, Output, Rtc, RtcError};
 
 mod util;
 
@@ -77,7 +78,7 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
     // Expected POST SDP Offers.
     let mut data = request.data().expect("body to be available");
 
-    let offer: Offer = serde_json::from_reader(&mut data).expect("serialized offer");
+    let offer: SdpOffer = serde_json::from_reader(&mut data).expect("serialized offer");
     let mut rtc = Rtc::builder()
         .ice_lite(true)
         .set_stats_interval(Duration::from_secs(5))
@@ -88,7 +89,9 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
     rtc.add_local_candidate(candidate);
 
     // Create an SDP Answer.
-    let answer = rtc.accept_offer(offer).expect("offer to be accepted");
+    let answer = SdpStrategy
+        .accept_offer(&mut rtc, offer)
+        .expect("offer to be accepted");
 
     // The Rtc instance is shipped off to the main run loop.
     tx.send(rtc).expect("to send Rtc instance");
@@ -241,6 +244,7 @@ fn read_socket_input<'a>(socket: &UdpSocket, buf: &'a mut Vec<u8>) -> Option<Inp
 struct Client {
     id: ClientId,
     rtc: Rtc,
+    pending: Option<SdpPendingOffer>,
     cid: Option<ChannelId>,
     tracks_in: Vec<Arc<TrackIn>>,
     tracks_out: Vec<TrackOut>,
@@ -294,6 +298,7 @@ impl Client {
         Client {
             id: ClientId(next_id),
             rtc,
+            pending: None,
             cid: None,
             tracks_in: vec![],
             tracks_out: vec![],
@@ -412,12 +417,12 @@ impl Client {
     }
 
     fn negotiate_if_needed(&mut self) -> bool {
-        if self.cid.is_none() || self.rtc.pending_changes().is_some() {
+        if self.cid.is_none() || self.pending.is_some() {
             // Don't negotiate if there is no data channel, or if we have pending changes already.
             return false;
         }
 
-        let mut change = self.rtc.create_change_set();
+        let mut change = self.rtc.create_change_set(SdpStrategy);
 
         for track in &mut self.tracks_out {
             if let TrackOutState::ToOpen = track.state {
@@ -432,7 +437,7 @@ impl Client {
             return false;
         }
 
-        let Some(offer) = change.apply() else {
+        let Some((offer, pending)) = change.apply() else {
             return false;
         };
 
@@ -447,21 +452,25 @@ impl Client {
             .write(false, json.as_bytes())
             .expect("to write answer");
 
+        self.pending = Some(pending);
+
         true
     }
 
     fn handle_channel_data(&mut self, d: ChannelData) -> Propagated {
-        if let Ok(offer) = serde_json::from_slice::<'_, Offer>(&d.data) {
+        if let Ok(offer) = serde_json::from_slice::<'_, SdpOffer>(&d.data) {
             self.handle_offer(offer);
-        } else if let Ok(answer) = serde_json::from_slice::<'_, Answer>(&d.data) {
+        } else if let Ok(answer) = serde_json::from_slice::<'_, SdpAnswer>(&d.data) {
             self.handle_answer(answer);
         }
 
         Propagated::Noop
     }
 
-    fn handle_offer(&mut self, offer: Offer) {
-        let answer = self.rtc.accept_offer(offer).expect("offer to be accepted");
+    fn handle_offer(&mut self, offer: SdpOffer) {
+        let answer = SdpStrategy
+            .accept_offer(&mut self.rtc, offer)
+            .expect("offer to be accepted");
 
         // Keep local track state in sync, cancelling any pending negotiation
         // so we can redo it after this offer is handled.
@@ -482,10 +491,10 @@ impl Client {
             .expect("to write answer");
     }
 
-    fn handle_answer(&mut self, answer: Answer) {
-        if let Some(pending) = self.rtc.pending_changes() {
+    fn handle_answer(&mut self, answer: SdpAnswer) {
+        if let Some(pending) = self.pending.take() {
             pending
-                .accept_answer(answer)
+                .accept_answer(&mut self.rtc, answer)
                 .expect("answer to be accepted");
 
             for track in &mut self.tracks_out {
