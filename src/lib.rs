@@ -1546,7 +1546,7 @@ impl Rtc {
     /// let mut rtc = Rtc::new();
     ///
     /// let cid: ChannelId = todo!(); // obtain Mid from Event::ChannelOpen
-    /// let media = rtc.channel(cid).unwrap();
+    /// let channel = rtc.channel(cid).unwrap();
     /// // TODO write data channel data.
     /// ```
     pub fn channel(&mut self, id: ChannelId) -> Option<Channel<'_>> {
