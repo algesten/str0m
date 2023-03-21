@@ -28,18 +28,18 @@ pub struct ChannelData {
 ///
 /// Get this handle from [`Rtc::channel()`][crate::Rtc::channel()].
 pub struct Channel<'a> {
-    id: ChannelId,
+    sctp_channel: u16,
     rtc: &'a mut Rtc,
 }
 
 impl<'a> Channel<'a> {
-    pub(crate) fn new(id: ChannelId, rtc: &'a mut Rtc) -> Self {
-        Channel { rtc, id }
+    pub(crate) fn new(sctp_channel: u16, rtc: &'a mut Rtc) -> Self {
+        Channel { rtc, sctp_channel }
     }
 
     /// Write data to the remote peer and indicate whether it's text or binary.
     pub fn write(&mut self, binary: bool, buf: &[u8]) -> Result<usize, RtcError> {
-        Ok(self.rtc.sctp.write(*self.id, binary, buf)?)
+        Ok(self.rtc.sctp.write(self.sctp_channel, binary, buf)?)
     }
 }
 

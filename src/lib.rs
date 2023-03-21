@@ -645,7 +645,6 @@ pub struct Rtc {
     setup: Setup,
     sctp: RtcSctp,
     stats: Stats,
-    next_sctp_channel: u16,
     session: Session,
     remote_fingerprint: Option<Fingerprint>,
     pending: Option<Changes>,
@@ -654,11 +653,23 @@ pub struct Rtc {
     last_now: Instant,
     peer_bytes_rx: u64,
     peer_bytes_tx: u64,
+    sctp_allocations: Vec<SctpChannelAllocation>,
 }
 
 struct SendAddr {
     source: SocketAddr,
     destination: SocketAddr,
+}
+
+/// External-to-internal mapping of `ChannelId` to _actual_ SCTP channel.
+/// This is necessary because before the initial OFFER/ANSWER we don't know
+/// whether we are active or passive in the DTLS/SCTP setup.
+struct SctpChannelAllocation {
+    /// The outward channel id. This increases 0, 1, 2, 3...
+    public: ChannelId,
+    /// The internal channel id. If we're SCTP client, this goes
+    /// 0, 2, 4... and if we're server 1, 3, 5...
+    sctp_channel: Option<u16>,
 }
 
 /// Events produced by [`Rtc::poll_output()`].
@@ -785,7 +796,6 @@ impl Rtc {
             session: Session::new(config.codec_config, config.ice_lite, config.use_bwe),
             sctp: RtcSctp::new(),
             stats: Stats::new(config.stats_interval),
-            next_sctp_channel: 0, // Goes 0, 1, 2 for both DTLS server or client
             remote_fingerprint: None,
             pending: None,
             remote_addrs: vec![],
@@ -793,6 +803,7 @@ impl Rtc {
             last_now: already_happened(),
             peer_bytes_rx: 0,
             peer_bytes_tx: 0,
+            sctp_allocations: vec![],
         }
     }
 
@@ -925,6 +936,10 @@ impl Rtc {
     /// let json = serde_json::to_vec(&offer).unwrap();
     /// ```
     pub fn create_change_set(&mut self) -> ChangeSet {
+        // Ensure we have no channels allocated from a previous ChangeSet
+        // that was never ChangeSet::apply().
+        self.sctp_allocations.retain(|s| s.sctp_channel.is_some());
+
         ChangeSet::new(self)
     }
 
@@ -1154,6 +1169,15 @@ impl Rtc {
         // SCTP association with the other side.
         if self.session.app().is_some() && !self.sctp.is_inited() {
             self.sctp.init(self.setup == Setup::Active, self.last_now);
+
+            for s in self
+                .sctp_allocations
+                .iter_mut()
+                .filter(|s| s.sctp_channel.is_none())
+            {
+                let c = self.sctp.next_sctp_channel();
+                s.sctp_channel = Some(c);
+            }
         }
     }
 
@@ -1169,14 +1193,10 @@ impl Rtc {
 
     /// Creates the new SCTP channel.
     pub(crate) fn new_sctp_channel(&mut self) -> ChannelId {
-        let active = self.setup == Setup::Active;
-        // RFC 8831
-        // Unless otherwise defined or negotiated, the
-        // streams are picked based on the DTLS role (the client picks even
-        // stream identifiers, and the server picks odd stream identifiers).
-        let id = self.next_sctp_channel * 2 + if active { 0 } else { 1 };
-        self.next_sctp_channel += 1;
-        id.into()
+        // If SCTP is not started, we will not allocate this now, see init_sctp().
+        let sctp_channel = self.sctp.is_inited().then(|| self.sctp.next_sctp_channel());
+
+        self.associate_new_sctp(sctp_channel)
     }
 
     /// Creates an Ssrc that is not in the session already.
@@ -1295,8 +1315,10 @@ impl Rtc {
                         break;
                     }
                 }
-                SctpEvent::Open(id, dcep) => {
-                    return Ok(Output::Event(Event::ChannelOpen(id.into(), dcep.label)));
+                SctpEvent::Open(sctp_channel, dcep) => {
+                    let id = self.associate_new_sctp(Some(sctp_channel));
+
+                    return Ok(Output::Event(Event::ChannelOpen(id, dcep.label)));
                 }
                 SctpEvent::Close(id) => {
                     return Ok(Output::Event(Event::ChannelClose(id.into())));
@@ -1557,11 +1579,17 @@ impl Rtc {
         // If the m=application isn't set up, we don't provide Channel
         self.session.app()?;
 
-        if !self.sctp.is_open(*id) {
+        let sctp_channel = self
+            .sctp_allocations
+            .iter()
+            .find(|s| s.public == id)
+            .and_then(|s| s.sctp_channel)?;
+
+        if !self.sctp.is_open(sctp_channel) {
             return None;
         }
 
-        Some(Channel::new(id, self))
+        Some(Channel::new(sctp_channel, self))
     }
 
     fn visit_stats(&mut self, now: Instant, snapshot: &mut StatsSnapshot) {
@@ -1576,6 +1604,21 @@ impl Rtc {
 
     fn m_line_mut(&mut self, index: usize) -> &mut MLine {
         self.session.m_line_by_index_mut(index)
+    }
+
+    fn associate_new_sctp(&mut self, sctp_channel: Option<u16>) -> ChannelId {
+        let id = self.sctp_allocations.len() as u16;
+
+        let alloc = SctpChannelAllocation {
+            public: id.into(),
+            sctp_channel,
+        };
+
+        let ret = alloc.public;
+
+        self.sctp_allocations.push(alloc);
+
+        ret
     }
 
     /// Configure the current bitrate.
