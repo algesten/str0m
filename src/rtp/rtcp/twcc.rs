@@ -563,7 +563,7 @@ impl PacketChunk {
                 break;
             }
 
-            // The stauts is not possible to add in this chunk. This could be
+            // The status is not possible to add in this chunk. This could be
             // a large delta in a single, or a mismatching run.
             if !to_fill.can_append_status(i.status()) {
                 reached_end = false;
@@ -1316,6 +1316,7 @@ impl fmt::Debug for Twcc {
     }
 }
 
+#[allow(clippy::assign_op_pattern)]
 #[cfg(test)]
 mod test {
     use std::time::Duration;
@@ -1784,7 +1785,7 @@ mod test {
 
         let now = Instant::now();
         let base = now + Duration::from_millis(1337 * 64);
-        let expeceted = vec![
+        let expected = vec![
             (
                 1.into(),
                 PacketStatus::ReceivedSmallDelta,
@@ -1837,7 +1838,7 @@ mod test {
 
         let result: Vec<_> = twcc.into_iter(now, 1.into()).collect();
 
-        assert_eq!(result, expeceted);
+        assert_eq!(result, expected);
     }
 
     #[test]

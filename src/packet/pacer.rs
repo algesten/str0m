@@ -1126,8 +1126,10 @@ mod test {
     }
 
     fn make_packet(seq_no: u16, size: usize, kind: MediaKind) -> (RtpHeader, Vec<u8>, MediaKind) {
-        let mut header = RtpHeader::default();
-        header.sequence_number = seq_no;
+        let mut header = RtpHeader {
+            sequence_number: seq_no,
+            ..Default::default()
+        };
         let data = vec![0; size];
 
         (header, data, kind)
