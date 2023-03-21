@@ -52,6 +52,7 @@ where
     }
 }
 
+#[allow(clippy::unchecked_duration_subtraction)]
 #[cfg(test)]
 mod test {
     use std::time::{Duration, Instant};
@@ -73,7 +74,7 @@ mod test {
         let sum = h.sum_since(now - Duration::from_millis(1600));
         assert_eq!(sum, 44);
 
-        h.push(now, 0); // the oldes element will be discarded
+        h.push(now, 0); // the oldest element will be discarded
         let sum = h.sum_since(now - Duration::from_millis(1600));
         assert_eq!(sum, 22);
     }

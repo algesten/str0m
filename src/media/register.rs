@@ -801,7 +801,7 @@ mod test {
 
         assert_eq!(reg.nack_check_from, 111.into());
 
-        for i in 116..(3106) {
+        for i in 116..3106 {
             reg.update_seq(i.into());
         }
         assert_eq!(reg.nack_check_from, 3101.into());

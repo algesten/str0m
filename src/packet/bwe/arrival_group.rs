@@ -242,6 +242,7 @@ mod test {
     #[test]
     fn test_arrival_group_all_packets_sent_within_burst_interval_belong() {
         let now = Instant::now();
+        #[allow(clippy::vec_init_then_push)]
         let packets = {
             let mut packets = vec![];
 
@@ -294,6 +295,7 @@ mod test {
     #[test]
     fn test_arrival_group_out_order_arrival_ignored() {
         let now = Instant::now();
+        #[allow(clippy::vec_init_then_push)]
         let packets = {
             let mut packets = vec![];
 
@@ -353,6 +355,7 @@ mod test {
     #[test]
     fn test_arrival_group_arrival_membership() {
         let now = Instant::now();
+        #[allow(clippy::vec_init_then_push)]
         let packets = {
             let mut packets = vec![];
 
