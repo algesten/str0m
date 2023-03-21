@@ -50,6 +50,7 @@ pub struct RtcSctp {
     entries: Vec<StreamEntry>,
     pushed_back_transmit: Option<VecDeque<Vec<u8>>>,
     last_now: Instant,
+    next_sctp_channel: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +122,7 @@ impl RtcSctp {
             entries: vec![],
             pushed_back_transmit: None,
             last_now: Instant::now(), // placeholder until init()
+            next_sctp_channel: 0,
         }
     }
 
@@ -130,6 +132,12 @@ impl RtcSctp {
 
     pub fn init(&mut self, active: bool, now: Instant) {
         assert!(self.state == RtcSctpState::Uninited);
+
+        // RFC 8831
+        // Unless otherwise defined or negotiated, the
+        // streams are picked based on the DTLS role (the client picks even
+        // stream identifiers, and the server picks odd stream identifiers).
+        self.next_sctp_channel = if active { 0 } else { 1 };
 
         self.last_now = now;
 
@@ -490,6 +498,12 @@ impl RtcSctp {
         }
 
         None
+    }
+
+    pub(crate) fn next_sctp_channel(&mut self) -> u16 {
+        let i = self.next_sctp_channel;
+        self.next_sctp_channel += 2;
+        i
     }
 }
 
