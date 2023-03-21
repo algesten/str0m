@@ -20,7 +20,7 @@ use crate::RtcError;
 
 use super::receiver::ReceiverSource;
 use super::sender::SenderSource;
-use super::{CodecConfig, KeyframeRequestKind, MediaData, PayloadParams};
+use super::{KeyframeRequestKind, MediaData, PayloadParams};
 
 pub(crate) trait Source {
     fn ssrc(&self) -> Ssrc;
@@ -51,8 +51,8 @@ fn rr_interval(audio: bool) -> Duration {
     }
 }
 #[derive(Debug)]
-pub(crate) struct MLine {
-    /// Three letter identifier of this m-line.
+pub(crate) struct MediaInner {
+    /// Three letter identifier of this media.
     mid: Mid,
 
     /// The index of this media line in the Session::media Vec.
@@ -73,7 +73,7 @@ pub(crate) struct MLine {
     /// Audio or video.
     kind: MediaKind,
 
-    /// The extensions for this m-line.
+    /// The extensions for this media.
     exts: Extensions,
 
     /// Current media direction.
@@ -95,7 +95,7 @@ pub(crate) struct MLine {
 
     /// Sender sources (SSRC).
     ///
-    /// Created when we configure new m-lines via Changes API.
+    /// Created when we configure new media via Changes API.
     sources_tx: Vec<SenderSource>,
 
     /// Last time we ran cleanup.
@@ -140,13 +140,13 @@ pub(crate) struct MLine {
     /// with Ssrc A and Rid B, there should be an equivalent SenderSource with Ssrc C and Rid B.
     equalize_sources: bool,
 
-    /// Upon SDP negotiation set whether nack is enabled for this m-line.
+    /// Tells whether nack is enabled for this media.
     enable_nack: bool,
 
-    /// history of bytes transmitted on this m-line
+    /// History of bytes transmitted on this media.
     bytes_transmitted: ValueHistory<u64>,
 
-    /// history of bytes re-transmitted
+    /// History of bytes re-transmitted.
     bytes_retransmitted: ValueHistory<u64>,
 }
 
@@ -169,7 +169,7 @@ enum NextPacketBody<'a> {
     Padding { len: u8 },
 }
 
-impl MLine {
+impl MediaInner {
     pub fn mid(&self) -> Mid {
         self.mid
     }
@@ -885,122 +885,60 @@ impl MLine {
         Some(())
     }
 
-    pub fn apply_changes(
-        &mut self,
-        m: &MediaLine,
-        config: &CodecConfig,
-        session_exts: &Extensions,
-    ) {
-        // Nack enabled
-        {
-            let enabled = m.rtp_params().iter().any(|p| p.fb_nack);
-            if enabled && !self.enable_nack {
-                debug!("Enable NACK feedback ({:?})", self.mid);
-                self.enable_nack = true;
+    pub fn enable_nack(&mut self) {
+        debug!("Enable NACK feedback ({:?})", self.mid);
+        self.enable_nack = true;
+    }
+
+    pub fn set_direction(&mut self, new_dir: Direction) {
+        if self.dir == new_dir {
+            return;
+        }
+        debug!(
+            "Mid ({}) change direction: {} -> {}",
+            self.mid, self.dir, new_dir
+        );
+
+        self.need_changed_event = true;
+
+        let was_receiving = self.dir.is_receiving();
+        let was_sending = self.dir.is_sending();
+        let is_receiving = new_dir.is_receiving();
+        let is_sending = new_dir.is_sending();
+
+        self.dir = new_dir;
+
+        if was_receiving && !is_receiving {
+            // Receive buffers are dropped straight away.
+            self.clear_receive_buffers();
+        }
+        if !was_sending && is_sending {
+            // Dump the buffers when we are about to start sending. We don't do this
+            // on sending -> not, because we want to keep the buffer to answer straggle nacks.
+            self.clear_send_buffers();
+        }
+    }
+
+    pub fn retain_pts(&mut self, pts: &[Pt]) {
+        let mut new_pts = HashSet::new();
+
+        for p_new in pts {
+            new_pts.insert(*p_new);
+
+            if self.codec_by_pt(*p_new).is_none() {
+                debug!("Ignoring new pt ({}) in mid: {}", p_new, self.mid);
             }
         }
 
-        // Directional changes
-        {
-            // All changes come from the other side, either via an incoming OFFER
-            // or a ANSWER from our OFFER. Either way, the direction is inverted to
-            // how we have it locally.
-            let new_dir = m.direction().invert();
-            if self.dir != new_dir {
-                debug!(
-                    "Mid ({}) change direction: {} -> {}",
-                    self.mid, self.dir, new_dir
-                );
+        self.params.retain(|p| {
+            let keep = new_pts.contains(&p.pt());
 
-                self.need_changed_event = true;
-
-                let was_receiving = self.dir.is_receiving();
-                let was_sending = self.dir.is_sending();
-                let is_receiving = new_dir.is_receiving();
-                let is_sending = new_dir.is_sending();
-
-                self.dir = new_dir;
-
-                if was_receiving && !is_receiving {
-                    // Receive buffers are dropped straight away.
-                    self.clear_receive_buffers();
-                }
-                if !was_sending && is_sending {
-                    // Dump the buffers when we are about to start sending. We don't do this
-                    // on sending -> not, because we want to keep the buffer to answer straggle nacks.
-                    self.clear_send_buffers();
-                }
-            }
-        }
-
-        // Changes in PT
-        {
-            let params: Vec<PayloadParams> = m
-                .rtp_params()
-                .into_iter()
-                .map(PayloadParams::new)
-                .filter(|m| config.matches(m))
-                .collect();
-            let mut new_pts = HashSet::new();
-
-            for p_new in params {
-                new_pts.insert(p_new.pt());
-
-                if let Some(p_old) = self.codec_by_pt(p_new.pt()) {
-                    if *p_old != p_new {
-                        debug!("Ignore change in mid ({}) for pt: {}", self.mid, p_new.pt());
-                    }
-                } else {
-                    debug!("Ignoring new pt ({}) in mid: {}", p_new.pt(), self.mid);
-                }
+            if !keep {
+                debug!("Mid ({}) remove pt: {}", self.mid, p.pt());
             }
 
-            self.params.retain(|p| {
-                let keep = new_pts.contains(&p.pt());
-
-                if !keep {
-                    debug!("Mid ({}) remove pt: {}", self.mid, p.pt());
-                }
-
-                keep
-            });
-        }
-
-        // Update the extensions
-        {
-            let mut exts = Extensions::new();
-            for x in m.extmaps() {
-                exts.set_mapping(x);
-            }
-            exts.keep_same(session_exts);
-            self.set_exts(exts);
-        }
-
-        // SSRC changes
-        // This will always be for ReceiverSource since any incoming a=ssrc line will be
-        // about the remote side's SSRC.
-        {
-            let infos = m.ssrc_info();
-            for info in infos {
-                let rx = self.get_or_create_source_rx(info.ssrc);
-
-                if let Some(repairs) = info.repair {
-                    if rx.set_repairs(repairs) {
-                        self.set_equalize_sources();
-                    }
-                }
-            }
-        }
-
-        // Simulcast configuration
-        if let Some(s) = m.simulcast() {
-            if s.is_munged {
-                warn!("Not supporting simulcast via munging SDP");
-            } else if self.simulcast().is_none() {
-                // Invert before setting, since it has a recv and send config.
-                self.set_simulcast(s.invert());
-            }
-        }
+            keep
+        });
     }
 
     pub fn has_ssrc_rx(&self, ssrc: Ssrc) -> bool {
@@ -1118,9 +1056,9 @@ impl MLine {
         }
     }
 
-    /// Return the queue state for outbound RTP traffic for this mline.
+    /// Return the queue state for outbound RTP traffic for this media.
     ///
-    /// For the purposes of pacing each mline is treated as its own packet queue. Internally this
+    /// For the purposes of pacing each media is treated as its own packet queue. Internally this
     /// is spread across many [`PacketizingBuffer`] which is where the actual packets are queued.
     pub fn buffers_tx_queue_state(&self, now: Instant) -> QueueState {
         let kind = if self.kind() == MediaKind::Audio {
@@ -1252,7 +1190,7 @@ fn packet_for_resend<'p>(
     buffer.get(resend.seq_no)
 }
 
-impl Default for MLine {
+impl Default for MediaInner {
     fn default() -> Self {
         Self {
             mid: Mid::new(),
@@ -1286,9 +1224,9 @@ impl Default for MLine {
     }
 }
 
-impl MLine {
+impl MediaInner {
     pub fn from_remote_media_line(l: &MediaLine, index: usize, exts: Extensions) -> Self {
-        MLine {
+        MediaInner {
             mid: l.mid(),
             index,
             // These two are not reflected back, and thus added by add_pending_changes().
@@ -1302,10 +1240,10 @@ impl MLine {
         }
     }
 
-    // Going from AddMedia to Media is for m-lines that are pending in a Change and are sent
+    // Going from AddMedia to Media for pending in a Change and are sent
     // in the offer to the other side.
     pub fn from_add_media(a: AddMedia, exts: Extensions) -> Self {
-        let mut media = MLine {
+        let mut media = MediaInner {
             mid: a.mid,
             index: a.index,
             cname: a.cname,

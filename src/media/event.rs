@@ -30,20 +30,20 @@ impl From<SdpSimulcast> for Simulcast {
     }
 }
 
-/// A new media m-line appeared in an SDP negotation.
+/// A new media appeared in an Rtc session.
 ///
 /// This event fires both for negotations triggered by a remote or local offer.
 ///
-/// Does not fire for application m-lines (data channel).
+/// Does not fire for application media (data channel).
 #[derive(Debug, PartialEq, Eq)]
 pub struct MediaAdded {
-    /// Identifier of the new m-line.
+    /// Identifier of the new media.
     pub mid: Mid,
 
-    /// The kind of media the m-line will carry.
+    /// The kind of media carried.
     pub kind: MediaKind,
 
-    /// Current direction of the m-line.
+    /// Current direction.
     pub direction: Direction,
 
     /// If simulcast is configured, this holds the Rids.
@@ -56,13 +56,13 @@ pub struct MediaAdded {
 ///
 /// This event fires both for re-negotations triggered by a remote or local offer.
 ///
-/// Does not fire for application m-lines (data channel).
+/// Does not fire for application media (data channel).
 #[derive(Debug, PartialEq, Eq)]
 pub struct MediaChanged {
-    /// Identifier of the new m-line.
+    /// Identifier of the new media.
     pub mid: Mid,
 
-    /// Current direction of the m-line.
+    /// Current direction.
     pub direction: Direction,
 }
 
@@ -84,10 +84,10 @@ pub struct Simulcast {
 /// This is obtained via [`Event::MediaData`][crate::Event::MediaData].
 #[derive(PartialEq, Eq)]
 pub struct MediaData {
-    /// Identifier of the m-line in the SDP this media belongs to.
+    /// Identifier of the media in the session this media belongs to.
     pub mid: Mid,
 
-    /// Payload type (PT) tells which negotiated codec is being used. An m-line
+    /// Payload type (PT) tells which negotiated codec is being used. Each media
     /// can carry different codecs, the payload type can theoretically change
     /// from one packet to the next.
     pub pt: Pt,

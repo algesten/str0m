@@ -58,7 +58,7 @@ impl Sdp {
         // Session level ice candidates.
         candidates.extend(self.session.ice_candidates());
 
-        // M-line level ice candidates.
+        // Ice candidates.
         for m in &self.media_lines {
             candidates.extend(m.ice_candidates());
         }
@@ -88,9 +88,9 @@ impl Sdp {
                     self.media_lines.len()
                 ));
             }
-            for (m_line, mid) in self.media_lines.iter().zip(mids.iter()) {
-                m_line.check_consistent()?;
-                let m = m_line.mid();
+            for (media, mid) in self.media_lines.iter().zip(mids.iter()) {
+                media.check_consistent()?;
+                let m = media.mid();
                 if m != *mid {
                     return Some(format!("Mid order not matching a=group {m} != {mid}"));
                 }

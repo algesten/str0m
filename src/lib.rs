@@ -30,7 +30,7 @@
 //!
 //! ```no_run
 //! # use str0m::{Rtc, Candidate};
-//! #
+//! # use str0m::change::SdpStrategy;
 //! // Instantiate a new Rtc instance.
 //! let mut rtc = Rtc::new();
 //!
@@ -42,7 +42,7 @@
 //! // Accept an incoming offer from the remote peer
 //! // and get the corresponding answer.
 //! let offer = todo!();
-//! let answer = rtc.accept_offer(offer).unwrap();
+//! let answer = SdpStrategy.accept_offer(&mut rtc, offer).unwrap();
 //!
 //! // Forward the answer to the remote peer.
 //!
@@ -57,6 +57,7 @@
 //! ```no_run
 //! # use str0m::{Rtc, Candidate};
 //! # use str0m::media::{MediaKind, Direction};
+//! # use str0m::change::SdpStrategy;
 //! #
 //! // Instantiate a new Rtc instance.
 //! let mut rtc = Rtc::new();
@@ -68,20 +69,20 @@
 //!
 //! // Create a `ChangeSet`. The change lets us make multiple changes
 //! // before sending the offer.
-//! let mut change = rtc.create_change_set();
+//! let mut change = rtc.create_change_set(SdpStrategy);
 //!
 //! // Do some change. A valid OFFER needs at least one "m-line" (media).
 //! let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None);
 //!
 //! // Get the offer.
-//! let offer = change.apply();
+//! let (offer, pending) = change.apply().unwrap();
 //!
 //! // Forward the offer to the remote peer and await the answer.
 //! // How to transfer this is outside the scope for this library.
 //! let answer = todo!();
 //!
 //! // Apply answer.
-//! rtc.pending_changes().unwrap().accept_answer(answer).unwrap();
+//! pending.accept_answer(&mut rtc, answer).unwrap();
 //!
 //! // Go to _run loop_
 //! ```
@@ -184,7 +185,7 @@
 //!
 //! ## Sending media data
 //!
-//! When creating the m-line, we can decide which codecs to support, which
+//! When creating the media, we can decide which codecs to support, which
 //! is then negotiated with the remote side. Each codec corresponds to a
 //! "payload type" (PT). To send media data we need to figure out which PT
 //! to use when sending.
@@ -486,14 +487,13 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use change::Changes;
 use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use io::DatagramRecv;
 use rtp::{InstantExt, Ssrc};
 use sctp::{RtcSctp, SctpEvent};
-use sdp::{Sdp, Setup};
+use sdp::Setup;
 use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent};
 use thiserror::Error;
 
@@ -501,7 +501,6 @@ pub use ice::IceConnectionState;
 
 pub use ice::Candidate;
 pub use rtp::Bitrate;
-pub use sdp::{Answer, Offer};
 
 /// Network related types to get socket data in/out of [`Rtc`].
 pub mod net {
@@ -525,19 +524,16 @@ use channel::{Channel, ChannelData, ChannelId};
 pub mod media;
 use media::{CodecConfig, Direction, KeyframeRequest, Media};
 use media::{KeyframeRequestKind, MediaChanged, MediaData};
-use media::{MLine, MediaAdded, Mid, Pt, Rid};
+use media::{MediaAdded, MediaInner, Mid, Pt, Rid};
 
-mod change;
-pub use change::ChangeSet;
+pub mod change;
+use change::{ChangeSet, ChangeStrategy, Changes};
 
 mod util;
 pub(crate) use util::*;
 
 mod session;
 use session::{MediaEvent, Session};
-
-mod session_sdp;
-use session_sdp::AsSdpParams;
 
 use crate::stats::StatsSnapshot;
 
@@ -588,7 +584,7 @@ pub enum RtcError {
     NoReceiverSource(Option<Rid>),
 
     /// The keyframe request failed because the kind of request is not enabled
-    /// by the SDP negotiation.
+    /// in the media.
     #[error("Requested feedback is not enabled: {0:?}")]
     FeedbackNotEnabled(KeyframeRequestKind),
 
@@ -603,6 +599,17 @@ pub enum RtcError {
     /// SCTP (data channel engine) errors.
     #[error("{0}")]
     Sctp(#[from] error::SctpError),
+
+    /// [`ChangeSet`] was not done in a correct order.
+    ///
+    /// For [`SdpStrategy`][change::SdpStrategy]:
+    ///
+    /// 1. We created an [`SdpOffer`][change::SdpOffer].
+    /// 2. The remote side created an [`SdpOffer`][change::SdpOffer] at the same time.
+    /// 3. We applied the remote side [`SdpStrategy::accept_offer()`][change::SdpOffer].
+    /// 4. The we used the [`SdpPendingOffer`][change::SdpPendingOffer] created in step 1.
+    #[error("Changes made out of order")]
+    ChangesOutOfOrder,
 
     /// Some other error.
     #[error("{0}")]
@@ -647,13 +654,13 @@ pub struct Rtc {
     stats: Stats,
     session: Session,
     remote_fingerprint: Option<Fingerprint>,
-    pending: Option<Changes>,
     remote_addrs: Vec<SocketAddr>,
     send_addr: Option<SendAddr>,
     last_now: Instant,
     peer_bytes_rx: u64,
     peer_bytes_tx: u64,
     sctp_allocations: Vec<SctpChannelAllocation>,
+    change_counter: usize,
 }
 
 struct SendAddr {
@@ -681,8 +688,7 @@ pub enum Event {
     /// connected to the peer or not.
     IceConnectionStateChange(IceConnectionState),
 
-    /// Upon completing an SDP negotiation, and there are new m-lines. The lines
-    /// are emitted.
+    /// Upon adding new media to the session. The lines are emitted.
     ///
     /// Upon this event, the [`Media`] instance is available via [`Rtc::media()`].
     MediaAdded(MediaAdded),
@@ -690,7 +696,7 @@ pub enum Event {
     /// Incoming media data sent by the remote peer.
     MediaData(MediaData),
 
-    /// Upon SDP renegotiation, a change event may be emitted.
+    /// Changes to the media may be emitted.
     ///
     ///. Currently only covers a change of direction.
     MediaChanged(MediaChanged),
@@ -700,8 +706,7 @@ pub enum Event {
     /// The request is either PLI (Picture Loss Indication) or FIR (Full Intra Request).
     KeyframeRequest(KeyframeRequest),
 
-    /// A data channel has opened. The first ever data channel results in an SDP
-    /// negotiation, and this events comes at the end of that.
+    /// A data channel has opened.
     ///
     /// The string is the channel label which is set by the opening peer and can
     /// be used to identify the purpose of the channel when there are more than one.
@@ -710,6 +715,9 @@ pub enum Event {
     /// channels reuse the same association.
     ///
     /// Upon this event, the [`Channel`] can be obtained via [`Rtc::channel()`].
+    ///
+    /// For [`SdpStrategy`][crate::change::SdpStrategy]: The first ever data channel results in an SDP
+    /// negotiation, and this events comes at the end of that.
     ChannelOpen(ChannelId, String),
 
     /// Incoming data channel data from the remote peer.
@@ -797,20 +805,20 @@ impl Rtc {
             sctp: RtcSctp::new(),
             stats: Stats::new(config.stats_interval),
             remote_fingerprint: None,
-            pending: None,
             remote_addrs: vec![],
             send_addr: None,
             last_now: already_happened(),
             peer_bytes_rx: 0,
             peer_bytes_tx: 0,
             sctp_allocations: vec![],
+            change_counter: 0,
         }
     }
 
     /// Tests if this instance is still working.
     ///
     /// Certain events will straight away disconnect the `Rtc` instance, such as
-    /// the DTLS fingerprint from the SDP not matching that of the TLS negotiation
+    /// the DTLS fingerprint from the setup not matching that of the TLS negotiation
     /// (since that would potentially indicate a MITM attack!).
     ///
     /// The instance can be manually disconnected using [`Rtc::disconnect()`].
@@ -855,7 +863,7 @@ impl Rtc {
     /// is expected to add new local candidates as they are discovered.
     ///
     /// In WebRTC lingo, the `Rtc` instance is permanently in a mode of [Trickle Ice][1]. It's
-    /// however advisable to add at least one local candidate before commencing SDP negotiation.
+    /// however advisable to add at least one local candidate before starting the instance.
     ///
     /// ```
     /// # use str0m::{Rtc, Candidate};
@@ -874,7 +882,9 @@ impl Rtc {
 
     /// Add a remote ICE candidate. Remote candidates are addresses of the peer.
     ///
-    /// Remote candidates are typically added via receiving a remote [`Offer`] or [`Answer`].
+    /// For [`SdpStrategy`][change::SdpStrategy]: Remote candidates are typically added via
+    /// receiving a remote [`SdpOffer`][change::SdpOffer] or [`SdpAnswer`][change::SdpAnswer].
+    ///
     /// However for the case of [Trickle Ice][1], this is the way to add remote candidaes
     /// that are "trickled" from the other side.
     ///
@@ -909,129 +919,40 @@ impl Rtc {
         self.ice.state()
     }
 
-    /// Make changes to the Rtc session. This is the entry point for making an [`Offer`].
-    /// The resulting [`ChangeSet`] encapsulates changes to the `Rtc` session that will
-    /// require an SDP negotiation.
+    /// Make changes to the Rtc session.
+    ///
+    /// The resulting [`ChangeSet`] encapsulates changes to the `Rtc` session that will be applied.
+    /// How the changes are applied is up to the used [`ChangeStrategy`]. A common such strategy is
+    /// [`SdpStrategy`][change::SdpStrategy].
+    ///
+    /// For [`SdpStrategy`][crate::change::SdpStrategy]: This is the entry point for making an
+    /// [`SdpOffer`][change::SdpOffer] require an SDP negotiation.
     ///
     /// The [`ChangeSet`] allows us to make multiple changes in one go. Calling
-    /// [`ChangeSet::apply()`] doesn't apply the changes, but produces the [`Offer`]
+    /// [`ChangeSet::apply()`] doesn't apply the changes, but produces the [`SdpOffer`][change::SdpOffer]
     /// that is to be sent to the remote peer. Only when the the remote peer responds with
-    /// an [`Answer`] can the changes be made to the session. The call to accept the answer
-    /// is [`PendingChanges::accept_answer()`].
+    /// an [`SdpAnswer`][change::SdpAnswer] can the changes be made to the session. The call to
+    /// accept the answer is [`SdpPendingOffer`][change::SdpPendingOffer].
     ///
-    /// How to send the [`Offer`] to the remote peer is not up to this library. Could be websocket,
-    /// a data channel or some other method of communication. See examples for a combination
-    /// of using `HTTP POST` and data channels.
+    /// How to send the [`SdpOffer`][change::SdpOffer] to the remote peer is not up to this library.
+    /// Could be websocket, a data channel or some other method of communication. See examples for a
+    /// combinationof using `HTTP POST` and data channels.
     ///
     /// ```
     /// # use str0m::Rtc;
     /// # use str0m::media::{MediaKind, Direction};
+    /// # use str0m::change::SdpStrategy;
     /// let mut rtc = Rtc::new();
     ///
-    /// let mut changes = rtc.create_change_set();
+    /// let mut changes = rtc.create_change_set(SdpStrategy);
     /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None);
     /// let mid_video = changes.add_media(MediaKind::Video, Direction::SendOnly, None);
     ///
-    /// let offer = changes.apply().unwrap();
+    /// let (offer, pending) = changes.apply().unwrap();
     /// let json = serde_json::to_vec(&offer).unwrap();
     /// ```
-    pub fn create_change_set(&mut self) -> ChangeSet {
-        // Ensure we have no channels allocated from a previous ChangeSet
-        // that was never ChangeSet::apply().
-        self.sctp_allocations.retain(|s| s.sctp_channel.is_some());
-
-        ChangeSet::new(self)
-    }
-
-    /// Accept an [`Offer`] from the remote peer. If this call returns successfully, the
-    /// changes will have been made to the session. The resulting [`Answer`] should be
-    /// sent to the remote peer.
-    ///
-    /// <b>Note. [`Rtc::pending_changes()`] from a previous non-completed [`ChangeSet`] are
-    /// rolled back when calling this function.</b>
-    ///
-    /// The incoming SDP is validated in various ways which can cause this call to fail.
-    /// Example of such problems would be an SDP without any m-lines, missing `a=fingerprint`
-    /// or if `a=group` doesn't match the number of m-lines.
-    ///
-    /// ```no_run
-    /// # use str0m::{Rtc, Offer};
-    ///  // obtain offer from remote peer.
-    /// let json_offer: &[u8] = todo!();
-    /// let offer: Offer = serde_json::from_slice(json_offer).unwrap();
-    ///
-    /// let mut rtc = Rtc::new();
-    /// let answer = rtc.accept_offer(offer).unwrap();
-    ///
-    /// // send json_answer to remote peer.
-    /// let json_answer = serde_json::to_vec(&answer).unwrap();
-    /// ```
-    pub fn accept_offer(&mut self, offer: Offer) -> Result<Answer, RtcError> {
-        // rollback any pending offer.
-        self.accept_answer(None)?;
-
-        if offer.media_lines.is_empty() {
-            return Err(RtcError::RemoteSdp("No m-lines in offer".into()));
-        }
-
-        self.add_ice_details(&offer)?;
-
-        if self.remote_fingerprint.is_none() {
-            if let Some(f) = offer.fingerprint() {
-                self.remote_fingerprint = Some(f);
-            } else {
-                self.disconnect();
-                return Err(RtcError::RemoteSdp("missing a=fingerprint".into()));
-            }
-        }
-
-        if !self.dtls.is_inited() {
-            // The side that makes the first offer is the controlling side.
-            self.ice.set_controlling(false);
-        }
-
-        // If we receive an offer, we are not allowed to answer with actpass.
-        if self.setup == Setup::ActPass {
-            let remote_setup = offer.setup().unwrap_or(Setup::Active);
-            self.setup = if remote_setup == Setup::ActPass {
-                Setup::Passive
-            } else {
-                remote_setup.invert()
-            };
-            debug!(
-                "Change setup for answer: {} -> {}",
-                Setup::ActPass,
-                self.setup
-            );
-        }
-
-        // Ensure setup=active/passive is corresponding remote and init dtls.
-        self.init_setup_dtls(&offer)?;
-
-        // Modify session with offer
-        self.session.apply_offer(offer)?;
-
-        // Handle potentially new m=application line.
-        self.init_sctp();
-
-        let params = self.as_sdp_params(false);
-        let sdp = self.session.as_sdp(params);
-
-        Ok(sdp.into())
-    }
-
-    pub(crate) fn set_pending(&mut self, changes: Changes) -> Offer {
-        if !self.dtls.is_inited() {
-            // The side that makes the first offer is the controlling side.
-            self.ice.set_controlling(true);
-        }
-
-        self.pending = Some(changes);
-
-        let params = self.as_sdp_params(true);
-        let sdp = self.session.as_sdp(params);
-
-        sdp.into()
+    pub fn create_change_set<S: ChangeStrategy>(&mut self, strategy: S) -> ChangeSet<S> {
+        ChangeSet::new(self, strategy)
     }
 
     pub(crate) fn apply_direct_changes(&mut self, mut changes: Changes) {
@@ -1043,112 +964,13 @@ impl Rtc {
         }
     }
 
-    fn as_sdp_params(&self, include_pending: bool) -> AsSdpParams {
-        AsSdpParams {
-            candidates: self.ice.local_candidates(),
-            creds: self.ice.local_credentials(),
-            fingerprint: self.dtls.local_fingerprint(),
-            setup: self.setup,
-            pending: if include_pending {
-                &self.pending
-            } else {
-                &None
-            },
-        }
-    }
-
-    /// Obtain pending changes from a previous [`Rtc::create_change_set()`] call.
-    /// The [`PendingChanges`] allows us to either accept a remote answer, or
-    /// rollback the changes.
-    ///
-    /// When this function returns `None` there are no pending changes. Changes are
-    /// automatically rolled back on [`Rtc::accept_offer()`]
-    ///
-    /// ```no_run
-    /// # use str0m::{Rtc, Answer};
-    /// # use str0m::media::{MediaKind, Direction};
-    /// let mut rtc = Rtc::new();
-    ///
-    /// let mut changes = rtc.create_change_set();
-    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None);
-    /// let offer = changes.apply().unwrap();
-    ///
-    /// // send offer to remote peer, receive answer back
-    /// let answer: Answer = todo!();
-    ///
-    /// let pending = rtc.pending_changes().unwrap().accept_answer(answer);
-    /// ```
-    pub fn pending_changes(&mut self) -> Option<PendingChanges> {
-        if !self.alive {
-            return None;
-        }
-        self.pending.as_ref()?;
-        Some(PendingChanges { rtc: self })
-    }
-
-    fn accept_answer(&mut self, answer: Option<Answer>) -> Result<(), RtcError> {
-        if let Some(answer) = answer {
-            self.add_ice_details(&answer)?;
-
-            // Ensure setup=active/passive is corresponding remote and init dtls.
-            self.init_setup_dtls(&answer)?;
-
-            if self.remote_fingerprint.is_none() {
-                if let Some(f) = answer.fingerprint() {
-                    self.remote_fingerprint = Some(f);
-                } else {
-                    self.disconnect();
-                    return Err(RtcError::RemoteSdp("missing a=fingerprint".into()));
-                }
-            }
-
-            let mut pending = self.pending.take().expect("pending changes");
-
-            // Split out new channels, since that is not handled by the Session.
-            let new_channels = pending.take_new_channels();
-
-            // Modify session with answer
-            self.session.apply_answer(pending, answer)?;
-
-            // Handle potentially new m=application line.
-            self.init_sctp();
-
-            for (id, dcep) in new_channels {
-                self.sctp.open_stream(*id, dcep);
-            }
-        } else {
-            // rollback
-            self.pending = None;
-        }
-
-        Ok(())
-    }
-
-    fn add_ice_details(&mut self, sdp: &Sdp) -> Result<(), RtcError> {
-        if let Some(creds) = sdp.ice_creds() {
-            self.ice.set_remote_credentials(creds);
-        } else {
-            return Err(RtcError::RemoteSdp("missing a=ice-ufrag/pwd".into()));
-        }
-
-        for r in sdp.ice_candidates() {
-            self.ice.add_remote_candidate(r.clone());
-        }
-
-        Ok(())
-    }
-
-    fn init_setup_dtls(&mut self, remote_sdp: &Sdp) -> Result<(), RtcError> {
-        if let Some(remote_setup) = remote_sdp.setup() {
-            self.setup = self.setup.compare_to_remote(remote_setup).ok_or_else(|| {
-                RtcError::RemoteSdp(format!(
-                    "impossible setup {:?} != {:?}",
-                    self.setup, remote_setup
-                ))
-            })?;
-        } else {
-            warn!("Missing a=setup line");
-        }
+    fn init_dtls(&mut self, remote_setup: Setup) -> Result<(), RtcError> {
+        self.setup = self.setup.compare_to_remote(remote_setup).ok_or_else(|| {
+            RtcError::RemoteSdp(format!(
+                "impossible setup {:?} != {:?}",
+                self.setup, remote_setup
+            ))
+        })?;
 
         if !self.dtls.is_inited() {
             info!("DTLS setup is: {:?}", self.setup);
@@ -1514,7 +1336,7 @@ impl Rtc {
         if !self.alive {
             return None;
         }
-        let trans = self.session.m_line_by_mid_mut(mid)?;
+        let trans = self.session.media_by_mid_mut(mid)?;
         let index = trans.index();
         Some(Media::new(self, index))
     }
@@ -1598,12 +1420,12 @@ impl Rtc {
         self.session.visit_stats(now, snapshot);
     }
 
-    fn m_line(&self, index: usize) -> &MLine {
-        self.session.m_line_by_index(index)
+    fn media_inner(&self, index: usize) -> &MediaInner {
+        self.session.media_by_index(index)
     }
 
-    fn m_line_mut(&mut self, index: usize) -> &mut MLine {
-        self.session.m_line_by_index_mut(index)
+    fn media_inner_mut(&mut self, index: usize) -> &mut MediaInner {
+        self.session.media_by_index_mut(index)
     }
 
     fn associate_new_sctp(&mut self, sctp_channel: Option<u16>) -> ChannelId {
@@ -1684,24 +1506,15 @@ impl Rtc {
     pub fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
         self.session.set_bwe_desired_bitrate(desired_bitrate);
     }
-}
 
-/// Changes waiting to be applied to the [`Rtc`].
-pub struct PendingChanges<'a> {
-    rtc: &'a mut Rtc,
-}
-
-impl<'a> PendingChanges<'a> {
-    /// For a previously created [`ChangeSet`] with following OFFER, accept the
-    /// remote peer's [`Answer`].
-    pub fn accept_answer(self, answer: Answer) -> Result<(), RtcError> {
-        self.rtc.accept_answer(Some(answer))
+    fn is_correct_change_id(&self, change_id: usize) -> bool {
+        self.change_counter == change_id + 1
     }
 
-    /// For a previously created [`ChangeSet`] with following OFFER, discard the
-    /// changes and do no modification to the session.
-    pub fn rollback(self) {
-        self.rtc.accept_answer(None).expect("rollback to not error");
+    fn next_change_id(&mut self) -> usize {
+        let n = self.change_counter;
+        self.change_counter += 1;
+        n
     }
 }
 

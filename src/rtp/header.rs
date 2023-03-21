@@ -201,7 +201,7 @@ impl RtpHeader {
             }
 
             if ext_type == 0xbede {
-                // each m-line has a specific extmap mapping.
+                // each media has a specific extmap mapping.
                 exts.parse(&buf[..ext_len], &mut ext);
             }
 

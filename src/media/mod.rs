@@ -23,8 +23,8 @@ mod sender;
 
 mod register;
 
-mod mline;
-pub(crate) use mline::{MLine, Source};
+mod inner;
+pub(crate) use inner::{MediaInner, Source};
 
 /// Half internal structures regarding RTP level.
 pub mod rtp {
@@ -33,10 +33,11 @@ pub mod rtp {
     pub use crate::rtp::{ExtensionValues, RtpHeader, SeqNo, Ssrc};
 }
 
-/// Audio or video media. An m-line in the SDP.
+/// Audio or video media.
 ///
-/// Instances of [`Media`] are obtained via [`Rtc::media()`][crate::Rtc::media()]. The instance
-/// only exists for m-lines that have passed the offer/answer SDP negotiation.
+/// For [`SdpStrategy`][crate::change::SdpStrategy]: Instances of [`Media`] are obtained via
+/// [`Rtc::media()`][crate::Rtc::media()]. The instance only exists for lines passed the
+/// offer/answer SDP negotiation.
 ///
 /// This is mainly a handle to send outgoing media, but also contains information about the media.
 ///
@@ -56,17 +57,17 @@ pub struct Media<'a> {
 }
 
 impl Media<'_> {
-    fn m_line(&self) -> &MLine {
-        self.rtc.m_line(self.index)
+    fn inner(&self) -> &MediaInner {
+        self.rtc.media_inner(self.index)
     }
 
-    fn m_line_mut(&mut self) -> &mut MLine {
-        self.rtc.m_line_mut(self.index)
+    fn inner_mut(&mut self) -> &mut MediaInner {
+        self.rtc.media_inner_mut(self.index)
     }
 
-    /// Identifier of the m-line.
+    /// Identifier of the media.
     pub fn mid(&self) -> Mid {
-        self.m_line().mid()
+        self.inner().mid()
     }
 
     /// The index of the line in the SDP. Once negotiated this cannot change.
@@ -87,27 +88,27 @@ impl Media<'_> {
     /// }
     /// ```
     pub fn direction(&self) -> Direction {
-        self.m_line().direction()
+        self.inner().direction()
     }
 
-    /// The negotiated payload parameters for this m-line.
+    /// The negotiated payload parameters for this media.
     pub fn payload_params(&self) -> &[PayloadParams] {
-        self.m_line().payload_params()
+        self.inner().payload_params()
     }
 
     /// Match the given parameters to the configured parameters for this [`Media`].
     ///
     /// In a server scenario, a certain codec configuration might not have the same
     /// payload type (PT) for two different peers. We will have incoming data with one
-    /// PT and need to match that against the PT of the outgoing `Media`/m-line.
+    /// PT and need to match that against the PT of the outgoing [`Media`].
     ///
     /// This call performs matching and if a match is found, returns the _local_ PT
     /// that can be used for sending media.
     pub fn match_params(&self, params: PayloadParams) -> Option<Pt> {
-        self.m_line().match_params(params)
+        self.inner().match_params(params)
     }
 
-    /// Send outgoing media data via this m-line.
+    /// Send outgoing media data.
     ///
     /// The `pt` is the payload type for sending and must match the codec of the media data.
     /// This is typically done using [`Media::match_params()`] to compare an incoming set of
@@ -128,7 +129,7 @@ impl Media<'_> {
     /// anything negotiated.
     ///
     /// ```no_run
-    /// # use str0m::{Rtc};
+    /// # use str0m::Rtc;
     /// # use str0m::media::{PayloadParams, MediaData, Mid};
     /// # use std::time::Instant;
     /// let mut rtc = Rtc::new();
@@ -175,14 +176,14 @@ impl Media<'_> {
     /// a=rtcp-fb:96 nack pli
     /// ```
     pub fn is_request_keyframe_possible(&self, kind: KeyframeRequestKind) -> bool {
-        self.m_line().is_request_keyframe_possible(kind)
+        self.inner().is_request_keyframe_possible(kind)
     }
 
     /// Request a keyframe from a remote peer sending media data.
     ///
-    /// This can fail if the kind of request (PLI or FIR), as specified by the
-    /// [`KeyframeRequestKind`], is not negotiated in the SDP answer/offer for
-    /// this m-line.
+    /// For [`SdpStrategy`][crate::change::SdpStrategy]: This can fail if the kind of request
+    /// (PLI or FIR), as specified by the [`KeyframeRequestKind`], is not negotiated in the SDP
+    /// answer/offer for this m-line.
     ///
     /// To ensure the call will not fail, use [`Media::is_request_keyframe_possible()`] to
     /// check whether the feedback mechanism is enabled.
@@ -190,7 +191,7 @@ impl Media<'_> {
     /// # Example
     ///
     /// ```no_run
-    /// # use str0m::{Rtc};
+    /// # use str0m::Rtc;
     /// # use str0m::media::{Mid, KeyframeRequestKind};
     /// let mut rtc = Rtc::new();
     ///
@@ -206,7 +207,7 @@ impl Media<'_> {
         rid: Option<Rid>,
         kind: KeyframeRequestKind,
     ) -> Result<(), RtcError> {
-        self.m_line_mut().request_keyframe(rid, kind)
+        self.inner_mut().request_keyframe(rid, kind)
     }
 
     pub(crate) fn new(rtc: &mut Rtc, index: usize) -> Media {
@@ -220,7 +221,7 @@ impl Media<'_> {
 /// RTP extension headers.
 ///
 /// ```no_run
-/// # use str0m::{Rtc};
+/// # use str0m::Rtc;
 /// # use str0m::media::{PayloadParams, MediaData, Mid};
 /// # use std::time::Instant;
 /// let mut rtc = Rtc::new();
@@ -291,9 +292,9 @@ impl<'a> Writer<'a> {
         rtp_time: MediaTime,
         data: &[u8],
     ) -> Result<usize, RtcError> {
-        let m_line = self.media.m_line_mut();
+        let media = self.media.inner_mut();
 
-        let n = m_line.write(
+        let n = media.write(
             self.now,
             self.pt,
             wallclock,

@@ -75,7 +75,7 @@ pub struct PeerStats {
 /// note: when simulcast is disabled, `rid` is `None`
 #[derive(Debug, Clone)]
 pub struct MediaEgressStats {
-    /// The identifier of the m-line these stats are for.
+    /// The identifier of the media these stats are for.
     pub mid: Mid,
     /// The Rid identifier in case of simulcast.
     pub rid: Option<Rid>,
@@ -120,7 +120,7 @@ pub struct RemoteIngressStats {
 /// note: when simulcast is disabled, `rid` is `None`
 #[derive(Debug, Clone)]
 pub struct MediaIngressStats {
-    /// The identifier of the m-line these stats are for.
+    /// The identifier of the media these stats are for.
     pub mid: Mid,
     /// The Rid identifier in case of simulcast.
     pub rid: Option<Rid>,

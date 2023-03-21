@@ -1,6 +1,7 @@
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
+use str0m::change::SdpStrategy;
 use str0m::{Candidate, RtcError};
 use tracing::info_span;
 
@@ -19,12 +20,12 @@ pub fn data_channel() -> Result<(), RtcError> {
     l.add_local_candidate(host1);
     r.add_local_candidate(host2);
 
-    let mut change = l.create_change_set();
+    let mut change = l.create_change_set(SdpStrategy);
     let cid = change.add_channel("My little channel".into());
-    let offer = change.apply().unwrap();
+    let (offer, pending) = change.apply().unwrap();
 
-    let answer = r.accept_offer(offer)?;
-    l.pending_changes().unwrap().accept_answer(answer)?;
+    let answer = SdpStrategy.accept_offer(&mut r.rtc, offer)?;
+    pending.accept_answer(&mut l.rtc, answer)?;
 
     loop {
         if l.ice_connection_state().is_connected() || r.ice_connection_state().is_connected() {
