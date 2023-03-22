@@ -825,7 +825,7 @@ impl Session {
     }
 
     pub(crate) fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
-        const PADDING_FACTOR: f64 = 0.97;
+        const PADDING_FACTOR: f64 = 1.03;
 
         if let Some(bwe) = &mut self.bwe {
             let padding_rate = match bwe.last_estimate() {
