@@ -134,18 +134,18 @@ impl RtcSctp {
         self.state != RtcSctpState::Uninited
     }
 
-    pub fn init(&mut self, active: bool, now: Instant) {
+    pub fn init(&mut self, client: bool, now: Instant) {
         assert!(self.state == RtcSctpState::Uninited);
 
         // RFC 8831
         // Unless otherwise defined or negotiated, the
         // streams are picked based on the DTLS role (the client picks even
         // stream identifiers, and the server picks odd stream identifiers).
-        self.next_sctp_channel = if active { 0 } else { 1 };
+        self.next_sctp_channel = if client { 0 } else { 1 };
 
         self.last_now = now;
 
-        if active {
+        if client {
             info!("New local association");
             let (handle, assoc) = self
                 .endpoint

@@ -32,9 +32,8 @@ pub mod rtp {
 
 /// Audio or video media.
 ///
-/// For [`SdpStrategy`][crate::change::SdpStrategy]: Instances of [`Media`] are obtained via
-/// [`Rtc::media()`][crate::Rtc::media()]. The instance only exists for lines passed the
-/// offer/answer SDP negotiation.
+/// For SDP: Instances of [`Media`] are obtained via [`Rtc::media()`][crate::Rtc::media()].
+/// The instance only exists for lines passed the offer/answer SDP negotiation.
 ///
 /// This is mainly a handle to send outgoing media, but also contains information about the media.
 ///
@@ -73,7 +72,7 @@ impl Media<'_> {
     }
 
     /// Current direction. This can be changed using
-    /// [`ChangeSet::set_direction()`][crate::ChangeSet::set_direction()] followed by an SDP negotiation.
+    /// [`SdpChanges::set_direction()`][crate::SdpChanges::set_direction()] followed by an SDP negotiation.
     ///
     /// To test whether it's possible to send media with the current direction, use
     ///
@@ -178,9 +177,8 @@ impl Media<'_> {
 
     /// Request a keyframe from a remote peer sending media data.
     ///
-    /// For [`SdpStrategy`][crate::change::SdpStrategy]: This can fail if the kind of request
-    /// (PLI or FIR), as specified by the [`KeyframeRequestKind`], is not negotiated in the SDP
-    /// answer/offer for this m-line.
+    /// For SDP: This can fail if the kind of request (PLI or FIR), as specified by the
+    /// [`KeyframeRequestKind`], is not negotiated in the SDP answer/offer for this m-line.
     ///
     /// To ensure the call will not fail, use [`Media::is_request_keyframe_possible()`] to
     /// check whether the feedback mechanism is enabled.

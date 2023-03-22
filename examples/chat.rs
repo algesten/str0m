@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use rouille::Server;
 use rouille::{Request, Response};
-use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer, SdpStrategy};
+use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::channel::{ChannelData, ChannelId};
 use str0m::media::MediaKind;
 use str0m::media::{Direction, KeyframeRequest, MediaData, Mid, Rid};
@@ -89,8 +89,9 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
     rtc.add_local_candidate(candidate);
 
     // Create an SDP Answer.
-    let answer = SdpStrategy
-        .accept_offer(&mut rtc, offer)
+    let answer = rtc
+        .sdp_changes()
+        .accept_offer(offer)
         .expect("offer to be accepted");
 
     // The Rtc instance is shipped off to the main run loop.
@@ -422,7 +423,7 @@ impl Client {
             return false;
         }
 
-        let mut change = self.rtc.create_change_set(SdpStrategy);
+        let mut change = self.rtc.sdp_changes();
 
         for track in &mut self.tracks_out {
             if let TrackOutState::ToOpen = track.state {
@@ -468,8 +469,10 @@ impl Client {
     }
 
     fn handle_offer(&mut self, offer: SdpOffer) {
-        let answer = SdpStrategy
-            .accept_offer(&mut self.rtc, offer)
+        let answer = self
+            .rtc
+            .sdp_changes()
+            .accept_offer(offer)
             .expect("offer to be accepted");
 
         // Keep local track state in sync, cancelling any pending negotiation

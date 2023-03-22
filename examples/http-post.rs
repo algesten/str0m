@@ -11,7 +11,6 @@ use rouille::Server;
 use rouille::{Request, Response};
 
 use str0m::change::SdpOffer;
-use str0m::change::SdpStrategy;
 use str0m::net::Receive;
 use str0m::IceConnectionState;
 use str0m::{Candidate, Event, Input, Output, Rtc, RtcError};
@@ -64,8 +63,9 @@ fn web_request(request: &Request) -> Response {
     rtc.add_local_candidate(candidate);
 
     // Create an SDP Answer.
-    let answer = SdpStrategy
-        .accept_offer(&mut rtc, offer)
+    let answer = rtc
+        .sdp_changes()
+        .accept_offer(offer)
         .expect("offer to be accepted");
 
     // Launch WebRTC in separate thread.
