@@ -1,7 +1,6 @@
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
-use str0m::change::SdpStrategy;
 use str0m::media::{Codec, Direction, MediaKind, MediaTime};
 use str0m::{Candidate, RtcError};
 use tracing::info_span;
@@ -21,11 +20,11 @@ pub fn unidirectional() -> Result<(), RtcError> {
     l.add_local_candidate(host1);
     r.add_local_candidate(host2);
 
-    let mut change = l.create_change_set(SdpStrategy);
+    let mut change = l.sdp_changes();
     let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None);
     let (offer, pending) = change.apply().unwrap();
 
-    let answer = SdpStrategy.accept_offer(&mut r.rtc, offer)?;
+    let answer = r.rtc.sdp_changes().accept_offer(offer)?;
     pending.accept_answer(&mut l.rtc, answer)?;
 
     loop {

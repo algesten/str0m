@@ -114,6 +114,11 @@ impl Dtls {
         self.tls.set_active(active);
     }
 
+    /// If set_active, returns what was set.
+    pub fn is_active(&self) -> Option<bool> {
+        self.tls.is_active()
+    }
+
     /// The local fingerprint.
     ///
     /// To be communicated in SDP offers sent to the remote peer.

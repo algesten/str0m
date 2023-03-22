@@ -30,7 +30,6 @@
 //!
 //! ```no_run
 //! # use str0m::{Rtc, Candidate};
-//! # use str0m::change::SdpStrategy;
 //! // Instantiate a new Rtc instance.
 //! let mut rtc = Rtc::new();
 //!
@@ -42,7 +41,7 @@
 //! // Accept an incoming offer from the remote peer
 //! // and get the corresponding answer.
 //! let offer = todo!();
-//! let answer = SdpStrategy.accept_offer(&mut rtc, offer).unwrap();
+//! let answer = rtc.sdp_changes().accept_offer(offer).unwrap();
 //!
 //! // Forward the answer to the remote peer.
 //!
@@ -57,7 +56,6 @@
 //! ```no_run
 //! # use str0m::{Rtc, Candidate};
 //! # use str0m::media::{MediaKind, Direction};
-//! # use str0m::change::SdpStrategy;
 //! #
 //! // Instantiate a new Rtc instance.
 //! let mut rtc = Rtc::new();
@@ -67,9 +65,9 @@
 //! let candidate = Candidate::host(addr).unwrap();
 //! rtc.add_local_candidate(candidate);
 //!
-//! // Create a `ChangeSet`. The change lets us make multiple changes
+//! // Create a `SdpChanges`. The change lets us make multiple changes
 //! // before sending the offer.
-//! let mut change = rtc.create_change_set(SdpStrategy);
+//! let mut change = rtc.sdp_changes();
 //!
 //! // Do some change. A valid OFFER needs at least one "m-line" (media).
 //! let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None);
@@ -487,13 +485,14 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use change::{DirectApi, SdpChanges};
 use dtls::{Dtls, DtlsEvent, Fingerprint};
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use io::DatagramRecv;
 use rtp::{InstantExt, Ssrc};
 use sctp::{RtcSctp, SctpEvent};
-use sdp::Setup;
+
 use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent};
 use thiserror::Error;
 
@@ -527,7 +526,6 @@ use media::{KeyframeRequestKind, MediaChanged, MediaData};
 use media::{MediaAdded, MediaInner, Mid, Pt, Rid};
 
 pub mod change;
-use change::{ChangeSet, ChangeStrategy, Changes};
 
 mod util;
 pub(crate) use util::*;
@@ -600,13 +598,13 @@ pub enum RtcError {
     #[error("{0}")]
     Sctp(#[from] error::SctpError),
 
-    /// [`ChangeSet`] was not done in a correct order.
+    /// [`SdpChanges`] was not done in a correct order.
     ///
-    /// For [`SdpStrategy`][change::SdpStrategy]:
+    /// For [`SdpChanges`][change::SdpChanges]:
     ///
     /// 1. We created an [`SdpOffer`][change::SdpOffer].
     /// 2. The remote side created an [`SdpOffer`][change::SdpOffer] at the same time.
-    /// 3. We applied the remote side [`SdpStrategy::accept_offer()`][change::SdpOffer].
+    /// 3. We applied the remote side [`SdpChanges::accept_offer()`][change::SdpOffer].
     /// 4. The we used the [`SdpPendingOffer`][change::SdpPendingOffer] created in step 1.
     #[error("Changes made out of order")]
     ChangesOutOfOrder,
@@ -649,7 +647,6 @@ pub struct Rtc {
     alive: bool,
     ice: IceAgent,
     dtls: Dtls,
-    setup: Setup,
     sctp: RtcSctp,
     stats: Stats,
     session: Session,
@@ -716,7 +713,7 @@ pub enum Event {
     ///
     /// Upon this event, the [`Channel`] can be obtained via [`Rtc::channel()`].
     ///
-    /// For [`SdpStrategy`][crate::change::SdpStrategy]: The first ever data channel results in an SDP
+    /// For [`SdpChanges`]: The first ever data channel results in an SDP
     /// negotiation, and this events comes at the end of that.
     ChannelOpen(ChannelId, String),
 
@@ -800,7 +797,6 @@ impl Rtc {
             alive: true,
             ice,
             dtls: Dtls::new().expect("DTLS to init without problem"),
-            setup: Setup::ActPass,
             session: Session::new(config.codec_config, config.ice_lite, config.bwe),
             sctp: RtcSctp::new(),
             stats: Stats::new(config.stats_interval),
@@ -882,7 +878,7 @@ impl Rtc {
 
     /// Add a remote ICE candidate. Remote candidates are addresses of the peer.
     ///
-    /// For [`SdpStrategy`][change::SdpStrategy]: Remote candidates are typically added via
+    /// For [`SdpChanges`]: Remote candidates are typically added via
     /// receiving a remote [`SdpOffer`][change::SdpOffer] or [`SdpAnswer`][change::SdpAnswer].
     ///
     /// However for the case of [Trickle Ice][1], this is the way to add remote candidaes
@@ -922,87 +918,67 @@ impl Rtc {
         self.ice.state()
     }
 
-    /// Make changes to the Rtc session.
+    /// Make changes to the Rtc session via SDP.
     ///
-    /// The resulting [`ChangeSet`] encapsulates changes to the `Rtc` session that will be applied.
-    /// How the changes are applied is up to the used [`ChangeStrategy`]. A common such strategy is
-    /// [`SdpStrategy`][change::SdpStrategy].
-    ///
-    /// For [`SdpStrategy`][crate::change::SdpStrategy]: This is the entry point for making an
-    /// [`SdpOffer`][change::SdpOffer] require an SDP negotiation.
-    ///
-    /// The [`ChangeSet`] allows us to make multiple changes in one go. Calling
-    /// [`ChangeSet::apply()`] doesn't apply the changes, but produces the [`SdpOffer`][change::SdpOffer]
-    /// that is to be sent to the remote peer. Only when the the remote peer responds with
-    /// an [`SdpAnswer`][change::SdpAnswer] can the changes be made to the session. The call to
-    /// accept the answer is [`SdpPendingOffer`][change::SdpPendingOffer].
-    ///
-    /// How to send the [`SdpOffer`][change::SdpOffer] to the remote peer is not up to this library.
-    /// Could be websocket, a data channel or some other method of communication. See examples for a
-    /// combinationof using `HTTP POST` and data channels.
-    ///
-    /// ```
+    /// ```no_run
     /// # use str0m::Rtc;
     /// # use str0m::media::{MediaKind, Direction};
-    /// # use str0m::change::SdpStrategy;
+    /// # use str0m::change::SdpAnswer;
     /// let mut rtc = Rtc::new();
     ///
-    /// let mut changes = rtc.create_change_set(SdpStrategy);
+    /// let mut changes = rtc.sdp_changes();
     /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None);
     /// let mid_video = changes.add_media(MediaKind::Video, Direction::SendOnly, None);
     ///
     /// let (offer, pending) = changes.apply().unwrap();
     /// let json = serde_json::to_vec(&offer).unwrap();
+    ///
+    /// // Send json OFFER to remote peer. Receive an answer back.
+    /// let answer: SdpAnswer = todo!();
+    ///
+    /// pending.accept_answer(&mut rtc, answer).unwrap();
     /// ```
-    pub fn create_change_set<S: ChangeStrategy>(&mut self, strategy: S) -> ChangeSet<S> {
-        ChangeSet::new(self, strategy)
+    pub fn sdp_changes(&mut self) -> SdpChanges {
+        SdpChanges::new(self)
     }
 
-    pub(crate) fn apply_direct_changes(&mut self, mut changes: Changes) {
-        // Split out new channels, since that is not handled by the Session.
-        let new_channels = changes.take_new_channels();
+    /// Makes direct changes to the Rtc session.
+    ///
+    /// This is a low level API. For "normal" use via SDP, see [`Rtc::sdp_changes()`].
+    pub fn direct_api(&mut self) -> DirectApi {
+        DirectApi::new(self)
+    }
 
-        for (id, dcep) in new_channels {
-            self.sctp.open_stream(*id, dcep);
+    fn init_dtls(&mut self, active: bool) -> Result<(), RtcError> {
+        if self.dtls.is_inited() {
+            return Ok(());
         }
-    }
 
-    fn init_dtls(&mut self, remote_setup: Setup) -> Result<(), RtcError> {
-        self.setup = self.setup.compare_to_remote(remote_setup).ok_or_else(|| {
-            RtcError::RemoteSdp(format!(
-                "impossible setup {:?} != {:?}",
-                self.setup, remote_setup
-            ))
-        })?;
+        info!("DTLS setup is: {:?}", active);
+        self.dtls.set_active(active);
 
-        if !self.dtls.is_inited() {
-            info!("DTLS setup is: {:?}", self.setup);
-            assert!(self.setup != Setup::ActPass);
-
-            let active = self.setup == Setup::Active;
-            self.dtls.set_active(active);
-            if active {
-                self.dtls.handle_handshake()?;
-            }
+        if active {
+            self.dtls.handle_handshake()?;
         }
 
         Ok(())
     }
 
-    fn init_sctp(&mut self) {
+    fn init_sctp(&mut self, client: bool) {
         // If we got an m=application line, ensure we have negotiated the
         // SCTP association with the other side.
-        if self.session.app().is_some() && !self.sctp.is_inited() {
-            self.sctp.init(self.setup == Setup::Active, self.last_now);
+        if self.session.app().is_none() || self.sctp.is_inited() {
+            return;
+        }
+        self.sctp.init(client, self.last_now);
 
-            for s in self
-                .sctp_allocations
-                .iter_mut()
-                .filter(|s| s.sctp_channel.is_none())
-            {
-                let c = self.sctp.next_sctp_channel();
-                s.sctp_channel = Some(c);
-            }
+        for s in self
+            .sctp_allocations
+            .iter_mut()
+            .filter(|s| s.sctp_channel.is_none())
+        {
+            let c = self.sctp.next_sctp_channel();
+            s.sctp_channel = Some(c);
         }
     }
 
@@ -1102,8 +1078,7 @@ impl Rtc {
                 }
                 DtlsEvent::SrtpKeyingMaterial(mat) => {
                     info!("DTLS set SRTP keying material");
-                    assert!(self.setup != Setup::ActPass);
-                    let active = self.setup == Setup::Active;
+                    let active = self.dtls.is_active().expect("DTLS must be inited by now");
                     self.session.set_keying_material(mat, active);
                 }
                 DtlsEvent::RemoteFingerprint(v1) => {
@@ -1363,7 +1338,7 @@ impl Rtc {
     ///
     /// All media rows are announced via the [`Event::MediaAdded`] event. This function
     /// will return `None` for any [`Mid`] until that event has fired. This
-    /// is also the case for the `mid` that comes from [`ChangeSet::add_media()`].
+    /// is also the case for the `mid` that comes from [`SdpChanges::add_media()`].
     ///
     /// Incoming media data is via the [`Event::MediaData`] event.
     ///
@@ -1379,15 +1354,15 @@ impl Rtc {
         if !self.alive {
             return None;
         }
-        let trans = self.session.media_by_mid_mut(mid)?;
-        let index = trans.index();
+        let inner = self.session.media_by_mid_mut(mid)?;
+        let index = inner.index();
         Some(Media::new(self, index))
     }
 
     /// Obtain handle for writing to a data channel.
     ///
     /// This is first available when a [`ChannelId`] is advertised via [`Event::ChannelOpen`].
-    /// The function returns `None` also for IDs from [`ChangeSet::add_channel()`].
+    /// The function returns `None` also for IDs from [`SdpChanges::add_channel()`].
     ///
     /// Incoming channel data is via the [`Event::ChannelData`] event.
     ///

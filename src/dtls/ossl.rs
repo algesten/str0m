@@ -118,13 +118,14 @@ impl std::fmt::Debug for KeyingMaterial {
 }
 
 pub struct TlsStream<S> {
+    active: Option<bool>,
     state: State<S>,
     keying_mat: Option<(KeyingMaterial, Fingerprint)>,
     exported: bool,
 }
 
 pub enum State<S> {
-    Init(Ssl, S, Option<bool>),
+    Init(Ssl, S),
     Handshaking(MidHandshakeSslStream<S>),
     Established(SslStream<S>),
     Empty,
@@ -136,27 +137,28 @@ where
 {
     pub fn new(ssl: Ssl, stream: S) -> Self {
         TlsStream {
-            state: State::Init(ssl, stream, None),
+            active: None,
+            state: State::Init(ssl, stream),
             keying_mat: None,
             exported: false,
         }
     }
 
     pub fn is_inited(&self) -> bool {
-        match &self.state {
-            State::Init(_, _, v) => v.is_some(),
-            _ => true,
-        }
+        let state_init = matches!(self.state, State::Init(_, _));
+        !state_init
+    }
+
+    pub fn is_active(&self) -> Option<bool> {
+        self.active
     }
 
     pub fn set_active(&mut self, active: bool) {
-        match &mut self.state {
-            State::Init(_, _, v) => {
-                assert!(v.is_none(), "set_active should called exactly once");
-                *v = Some(active);
-            }
-            _ => panic!("set_active must be called before handshaking"),
-        }
+        assert!(
+            self.active.is_none(),
+            "set_active should called exactly once"
+        );
+        self.active = Some(active);
     }
 
     pub fn complete_handshake_until_block(&mut self) -> Result<bool, DtlsError> {
@@ -176,7 +178,8 @@ where
     }
 
     pub fn handshaken(&mut self) -> Result<&mut SslStream<S>, io::Error> {
-        let v = self.state.handshaken()?;
+        let active = self.is_active().expect("set_active must be called");
+        let v = self.state.handshaken(active)?;
 
         // first time we complete the handshake, we extract the keying material for SRTP.
         if !self.exported {
@@ -194,7 +197,7 @@ where
 
     pub fn inner_mut(&mut self) -> &mut S {
         match &mut self.state {
-            State::Init(_, s, _) => s,
+            State::Init(_, s) => s,
             State::Handshaking(v) => v.get_mut(),
             State::Established(v) => v.get_mut(),
             State::Empty => panic!("inner_mut on empty dtls state"),
@@ -206,7 +209,7 @@ impl<S> State<S>
 where
     S: io::Read + io::Write,
 {
-    fn handshaken(&mut self) -> Result<&mut SslStream<S>, io::Error> {
+    fn handshaken(&mut self, active: bool) -> Result<&mut SslStream<S>, io::Error> {
         if let State::Established(v) = self {
             return Ok(v);
         }
@@ -215,8 +218,7 @@ where
 
         let result = match taken {
             State::Empty | State::Established(_) => unreachable!(),
-            State::Init(ssl, stream, active) => {
-                let active = active.expect("set_active to be called before handshake");
+            State::Init(ssl, stream) => {
                 if active {
                     debug!("Connect");
                     ssl.connect(stream)
@@ -235,7 +237,7 @@ where
                 let _ = mem::replace(self, State::Established(v));
 
                 // recursively return the &mut SslStream.
-                self.handshaken()
+                self.handshaken(active)
             }
             Err(e) => Err(match e {
                 HandshakeError::WouldBlock(e) => {

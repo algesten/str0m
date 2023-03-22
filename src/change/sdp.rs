@@ -1,55 +1,46 @@
 //! Strategy that amends the [`Rtc`] via SDP OFFER/ANSWER negotiation.
 
 use std::fmt;
+use std::ops::{Deref, DerefMut};
 
-use crate::change::{Change, Changes};
+use sctp_proto::ReliabilityType;
+
 use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
 use crate::ice::{Candidate, IceCreds};
+use crate::io::Id;
 use crate::media::MediaInner;
 use crate::media::{CodecConfig, MediaKind, PayloadParams, Source};
-use crate::rtp::{Extension, Extensions, Mid, Pt};
+use crate::rtp::{Direction, Extension, Extensions, Mid, Pt, Ssrc};
 use crate::sctp::DcepOpen;
-use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Sdp};
+use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
 use crate::sdp::{Proto, SessionAttribute, Setup};
 use crate::sdp::{SimulcastGroups, SimulcastOption};
 use crate::session::Session;
 use crate::Rtc;
 use crate::RtcError;
 
-use super::{ChangeStrategy, ChangesWrapper};
-
 pub use crate::sdp::{SdpAnswer, SdpOffer};
 
-/// Sdp change strategy.
-///
-/// Provides the Offer/Answer dance.
-pub struct SdpStrategy;
-
-impl ChangeStrategy for SdpStrategy {
-    type Apply = Option<(SdpOffer, SdpPendingOffer)>;
-
-    fn apply(&self, change_id: usize, rtc: &mut Rtc, changes: ChangesWrapper) -> Self::Apply {
-        let changes = changes.0;
-        let requires_negotiation = changes.iter().any(requires_negotiation);
-
-        if requires_negotiation {
-            let offer = create_offer(rtc, &changes);
-            let pending = SdpPendingOffer { change_id, changes };
-            Some((offer, pending))
-        } else {
-            rtc.apply_direct_changes(changes);
-            None
-        }
-    }
+/// Changes to the Rtc via SDP Offer/Answer dance.
+pub struct SdpChanges<'a> {
+    rtc: &'a mut Rtc,
+    changes: Changes,
 }
 
-impl SdpStrategy {
+impl<'a> SdpChanges<'a> {
+    pub(crate) fn new(rtc: &'a mut Rtc) -> Self {
+        SdpChanges {
+            rtc,
+            changes: Changes::default(),
+        }
+    }
+
     /// Accept an [`SdpOffer`] from the remote peer. If this call returns successfully, the
     /// changes will have been made to the session. The resulting [`SdpAnswer`] should be
     /// sent to the remote peer.
     ///
-    /// <b>Note. Pending changes from a previous non-completed [`ChangeSet`][super::ChangeSet] will be
+    /// <b>Note. Pending changes from a previous non-completed [`SdpChanges`][super::SdpChanges] will be
     /// considered rolled back when calling this function.</b>
     ///
     /// The incoming SDP is validated in various ways which can cause this call to fail.
@@ -58,83 +49,276 @@ impl SdpStrategy {
     ///
     /// ```no_run
     /// # use str0m::Rtc;
-    /// # use str0m::change::{SdpOffer, SdpStrategy};
+    /// # use str0m::change::{SdpOffer};
     /// // obtain offer from remote peer.
     /// let json_offer: &[u8] = todo!();
     /// let offer: SdpOffer = serde_json::from_slice(json_offer).unwrap();
     ///
     /// let mut rtc = Rtc::new();
-    /// let answer = SdpStrategy.accept_offer(&mut rtc, offer).unwrap();
+    /// let answer = rtc.sdp_changes().accept_offer(offer).unwrap();
     ///
     /// // send json_answer to remote peer.
     /// let json_answer = serde_json::to_vec(&answer).unwrap();
     /// ```
-    pub fn accept_offer(&self, rtc: &mut Rtc, offer: SdpOffer) -> Result<SdpAnswer, RtcError> {
+    pub fn accept_offer(mut self, offer: SdpOffer) -> Result<SdpAnswer, RtcError> {
         // Invalidate any outstanding PendingOffer.
-        rtc.next_change_id();
+        self.rtc.next_change_id();
 
         if offer.media_lines.is_empty() {
             return Err(RtcError::RemoteSdp("No m-lines in offer".into()));
         }
 
-        add_ice_details(rtc, &offer)?;
+        add_ice_details(self.rtc, &offer)?;
 
-        if rtc.remote_fingerprint.is_none() {
+        if self.rtc.remote_fingerprint.is_none() {
             if let Some(f) = offer.fingerprint() {
-                rtc.remote_fingerprint = Some(f);
+                self.rtc.remote_fingerprint = Some(f);
             } else {
-                rtc.disconnect();
+                self.rtc.disconnect();
                 return Err(RtcError::RemoteSdp("missing a=fingerprint".into()));
             }
         }
 
-        if !rtc.dtls.is_inited() {
+        if !self.rtc.dtls.is_inited() {
             // The side that makes the first offer is the controlling side.
-            rtc.ice.set_controlling(false);
-        }
-
-        // If we receive an offer, we are not allowed to answer with actpass.
-        if rtc.setup == Setup::ActPass {
-            let remote_setup = offer.setup().unwrap_or(Setup::Active);
-            rtc.setup = if remote_setup == Setup::ActPass {
-                Setup::Passive
-            } else {
-                remote_setup.invert()
-            };
-            debug!(
-                "Change setup for answer: {} -> {}",
-                Setup::ActPass,
-                rtc.setup
-            );
+            self.rtc.ice.set_controlling(false);
         }
 
         // Ensure setup=active/passive is corresponding remote and init dtls.
-        init_dtls(rtc, &offer)?;
+        init_dtls(self.rtc, &offer)?;
 
         // Modify session with offer
-        apply_offer(&mut rtc.session, offer)?;
+        apply_offer(&mut self.rtc.session, offer)?;
 
         // Handle potentially new m=application line.
-        rtc.init_sctp();
+        let client = self.rtc.dtls.is_active().expect("DTLS active to be set");
+        self.rtc.init_sctp(client);
 
-        let params = AsSdpParams::new(rtc, None);
-        let sdp = as_sdp(&rtc.session, params);
+        let params = AsSdpParams::new(self.rtc, None);
+        let sdp = as_sdp(&self.rtc.session, params);
 
         Ok(sdp.into())
     }
+
+    /// Test if this change set has any changes.
+    ///
+    /// ```
+    /// # use str0m::{Rtc, media::MediaKind, media::Direction};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let mut changes = rtc.sdp_changes();
+    /// assert!(!changes.has_changes());
+    ///
+    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None);
+    /// assert!(changes.has_changes());
+    /// ```
+    pub fn has_changes(&self) -> bool {
+        !self.changes.0.is_empty()
+    }
+
+    /// Add audio or video media and get the `mid` that will be used.
+    ///
+    /// Each call will result in a new m-line in the offer identifed by the [`Mid`].
+    ///
+    /// The mid is not valid to use until the SDP offer-answer dance is complete and
+    /// the mid been advertised via [`Event::MediaAdded`][crate::Event::MediaAdded].
+    ///
+    /// ```
+    /// # use str0m::{Rtc, media::MediaKind, media::Direction};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let mut changes = rtc.sdp_changes();
+    ///
+    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None);
+    /// ```
+    pub fn add_media(&mut self, kind: MediaKind, dir: Direction, cname: Option<String>) -> Mid {
+        let mid = self.rtc.new_mid();
+
+        let cname = if let Some(cname) = cname {
+            fn is_token_char(c: &char) -> bool {
+                // token-char = %x21 / %x23-27 / %x2A-2B / %x2D-2E / %x30-39
+                // / %x41-5A / %x5E-7E
+                let u = *c as u32;
+                u == 0x21
+                    || (0x23..=0x27).contains(&u)
+                    || (0x2a..=0x2b).contains(&u)
+                    || (0x2d..=0x2e).contains(&u)
+                    || (0x30..=0x39).contains(&u)
+                    || (0x41..=0x5a).contains(&u)
+                    || (0x5e..0x7e).contains(&u)
+            }
+            // https://www.rfc-editor.org/rfc/rfc8830
+            // msid-id = 1*64token-char
+            cname.chars().filter(is_token_char).take(64).collect()
+        } else {
+            Id::<20>::random().to_string()
+        };
+
+        let ssrcs = {
+            // For video we do RTX channels.
+            let has_rtx = kind == MediaKind::Video;
+
+            let ssrc_base = if has_rtx { 2 } else { 1 };
+
+            // TODO: allow configuring simulcast
+            let simulcast_count = 1;
+
+            let ssrc_count = ssrc_base * simulcast_count;
+            let mut v = Vec::with_capacity(ssrc_count);
+
+            let mut prev = 0.into();
+            for i in 0..ssrc_count {
+                // Allocate SSRC that are not in use in the session already.
+                let new_ssrc = self.rtc.new_ssrc();
+                let is_rtx = has_rtx && i % 2 == 1;
+                let repairs = if is_rtx { Some(prev) } else { None };
+                v.push((new_ssrc, repairs));
+                prev = new_ssrc;
+            }
+
+            v
+        };
+
+        // TODO: let user configure stream/track name.
+        let msid = Msid {
+            stream_id: cname.clone(),
+            track_id: Id::<30>::random().to_string(),
+        };
+
+        let add = AddMedia {
+            mid,
+            cname,
+            msid,
+            kind,
+            dir,
+            ssrcs,
+
+            // Added later
+            params: vec![],
+            index: 0,
+        };
+
+        self.changes.0.push(Change::AddMedia(add));
+        mid
+    }
+
+    /// Change the direction of an already existing media.
+    ///
+    /// All media have a direction. The media can be added by this side via
+    /// [`SdpChanges::add_media()`] or by the remote peer. Either way, the direction
+    /// of the line can be changed at any time.
+    ///
+    /// It's possible to set the direction [`Direction::Inactive`] for media that
+    /// will not be used by the session anymore.
+    ///
+    /// If the direction is set for media that doesn't exist, or if the direction is
+    /// the same that's already set [`SdpChanges::apply()`] not require a negotiation.
+    pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
+        let Some(media) = self.rtc.session.media_by_mid_mut(mid) else {
+            return;
+        };
+
+        if media.direction() == dir {
+            return;
+        }
+
+        self.changes.0.push(Change::Direction(mid, dir));
+    }
+
+    /// Add a new data channel and get the `id` that will be used.
+    ///
+    /// The first ever data channel added to a WebRTC session results in a media
+    /// of a special "application" type in the SDP. The m-line is for a SCTP association over
+    /// DTLS, and all data channels are multiplexed over this single association.
+    ///
+    /// That means only the first ever `add_channel` will result in an [`SdpOffer`].
+    /// Consecutive channels will be opened without needing a negotiation.
+    ///
+    /// The label is used to identify the data channel to the remote peer. This is mostly
+    /// useful whe multiple channels are in use at the same time.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let mut changes = rtc.sdp_changes();
+    ///
+    /// let cid = changes.add_channel("my special channel".to_string());
+    /// ```
+    pub fn add_channel(&mut self, label: String) -> ChannelId {
+        let has_media = self.rtc.session.app().is_some();
+
+        if !has_media {
+            let mid = self.rtc.new_mid();
+            self.changes.0.push(Change::AddApp(mid));
+        }
+
+        let id = self.rtc.new_sctp_channel();
+
+        let dcep = DcepOpen {
+            unordered: false,
+            channel_type: ReliabilityType::Reliable,
+            reliability_parameter: 0,
+            label,
+            priority: 0,
+            protocol: String::new(),
+        };
+
+        self.changes.0.push(Change::AddChannel(id, dcep));
+
+        id
+    }
+    /// Attempt to apply the changes made in the change set.
+    ///
+    /// If this returns [`SdpOffer`], the caller the changes are
+    /// not happening straight away, and the caller is expected to do a negotiation with the remote
+    /// peer and apply the answer using [`SdpPendingOffer`].
+    ///
+    /// In case this returns `None`, there either were no changes, or the changes could be applied
+    /// without doing a negotiation. Specifically for additional [`SdpChanges::add_channel()`]
+    /// after the first, there is no negotiation needed.
+    ///
+    /// The [`SdpPendingOffer`] is valid until the next time we call this function, at which
+    /// point using it will raise an error. Using [`SdpChanges::accept_offer()`] will also invalidate
+    /// the current [`SdpPendingOffer`].
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let changes = rtc.sdp_changes();
+    /// assert!(changes.apply().is_none());
+    /// ```
+    pub fn apply(self) -> Option<(SdpOffer, SdpPendingOffer)> {
+        let change_id = self.rtc.next_change_id();
+
+        let requires_negotiation = self.changes.0.iter().any(requires_negotiation);
+
+        if requires_negotiation {
+            let offer = create_offer(self.rtc, &self.changes);
+            let pending = SdpPendingOffer {
+                change_id,
+                changes: self.changes,
+            };
+            Some((offer, pending))
+        } else {
+            apply_direct_changes(self.rtc, self.changes);
+            None
+        }
+    }
 }
 
-/// Pending offer from a previous [`Rtc::create_change_set()`] call.
+/// Pending offer from a previous [`Rtc::sdp_changes()`] call.
 ///
 /// This allows us to either accept a remote answer, or rollback the changes.
 ///
 /// ```no_run
 /// # use str0m::Rtc;
 /// # use str0m::media::{MediaKind, Direction};
-/// # use str0m::change::{SdpStrategy, SdpAnswer};
+/// # use str0m::change::SdpAnswer;
 /// let mut rtc = Rtc::new();
 ///
-/// let mut changes = rtc.create_change_set(SdpStrategy);
+/// let mut changes = rtc.sdp_changes();
 /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None);
 /// let (offer, pending) = changes.apply().unwrap();
 ///
@@ -152,16 +336,16 @@ impl SdpPendingOffer {
     /// Accept an answer to a previously created [`SdpOffer`].
     ///
     /// This function returns an [`RtcError::ChangesOutOfOrder`] if we have created and applied another
-    /// [`ChangeSet`][super::ChangeSet] before calling this. The same also happens if we use
-    /// [`SdpStrategy::accept_offer()`] before using this pending instance.
+    /// [`SdpChanges`][super::SdpChanges] before calling this. The same also happens if we use
+    /// [`SdpChanges::accept_offer()`] before using this pending instance.
     ///
     /// ```no_run
     /// # use str0m::Rtc;
     /// # use str0m::media::{MediaKind, Direction};
-    /// # use str0m::change::{SdpStrategy, SdpAnswer};
+    /// # use str0m::change::SdpAnswer;
     /// let mut rtc = Rtc::new();
     ///
-    /// let mut changes = rtc.create_change_set(SdpStrategy);
+    /// let mut changes = rtc.sdp_changes();
     /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None);
     /// let (offer, pending) = changes.apply().unwrap();
     ///
@@ -196,7 +380,8 @@ impl SdpPendingOffer {
         apply_answer(&mut rtc.session, self.changes, answer)?;
 
         // Handle potentially new m=application line.
-        rtc.init_sctp();
+        let client = rtc.dtls.is_active().expect("DTLS to be inited");
+        rtc.init_sctp(client);
 
         for (id, dcep) in new_channels {
             rtc.sctp.open_stream(*id, dcep);
@@ -212,12 +397,60 @@ impl SdpPendingOffer {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct Changes(pub Vec<Change>);
+
+#[derive(Debug)]
+pub(crate) enum Change {
+    AddMedia(AddMedia),
+    AddApp(Mid),
+    AddChannel(ChannelId, DcepOpen),
+    Direction(Mid, Direction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AddMedia {
+    pub mid: Mid,
+    pub cname: String,
+    pub msid: Msid,
+    pub kind: MediaKind,
+    pub dir: Direction,
+    pub ssrcs: Vec<(Ssrc, Option<Ssrc>)>,
+
+    // These are filled in when creating a Media from AddMedia
+    pub params: Vec<PayloadParams>,
+    pub index: usize,
+}
+
+impl Deref for Changes {
+    type Target = Vec<Change>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Changes {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 fn requires_negotiation(c: &Change) -> bool {
     match c {
         Change::AddMedia(_) => true,
         Change::AddApp(_) => true,
         Change::AddChannel(_, _) => false,
         Change::Direction(_, _) => true,
+    }
+}
+
+fn apply_direct_changes(rtc: &mut Rtc, mut changes: Changes) {
+    // Split out new channels, since that is not handled by the Session.
+    let new_channels = changes.take_new_channels();
+
+    for (id, dcep) in new_channels {
+        rtc.sctp.open_stream(*id, dcep);
     }
 }
 
@@ -248,11 +481,21 @@ fn add_ice_details(rtc: &mut Rtc, sdp: &Sdp) -> Result<(), RtcError> {
 }
 
 fn init_dtls(rtc: &mut Rtc, remote_sdp: &Sdp) -> Result<(), RtcError> {
-    if let Some(remote_setup) = remote_sdp.setup() {
-        rtc.init_dtls(remote_setup)?;
-    } else {
-        warn!("Missing a=setup line");
-    }
+    let setup = match remote_sdp.setup() {
+        Some(v) => match v {
+            // Remote being ActPass, we take Passive role.
+            Setup::ActPass => Setup::Passive,
+            _ => v.invert(),
+        },
+
+        None => {
+            warn!("Missing a=setup line");
+            Setup::Passive
+        }
+    };
+
+    let active = setup == Setup::Active;
+    rtc.init_dtls(active)?;
 
     Ok(())
 }
@@ -733,7 +976,11 @@ impl<'a, 'b> AsSdpParams<'a, 'b> {
             candidates: rtc.ice.local_candidates(),
             creds: rtc.ice.local_credentials(),
             fingerprint: rtc.dtls.local_fingerprint(),
-            setup: rtc.setup,
+            setup: match rtc.dtls.is_active() {
+                Some(true) => Setup::Active,
+                Some(false) => Setup::Passive,
+                None => Setup::ActPass,
+            },
             pending,
         }
     }
@@ -893,17 +1140,17 @@ mod test {
         let mut rtc1 = Rtc::new();
         let mut rtc2 = Rtc::new();
 
-        let mut change1 = rtc1.create_change_set(SdpStrategy);
+        let mut change1 = rtc1.sdp_changes();
         change1.add_channel("ch1".into());
         let (offer1, pending1) = change1.apply().unwrap();
 
-        let mut change2 = rtc2.create_change_set(SdpStrategy);
+        let mut change2 = rtc2.sdp_changes();
         change2.add_channel("ch2".into());
         let (offer2, _) = change2.apply().unwrap();
 
         // invalidates pending1
-        let _ = SdpStrategy.accept_offer(&mut rtc1, offer2).unwrap();
-        let answer2 = SdpStrategy.accept_offer(&mut rtc2, offer1).unwrap();
+        let _ = rtc1.sdp_changes().accept_offer(offer2).unwrap();
+        let answer2 = rtc2.sdp_changes().accept_offer(offer1).unwrap();
 
         let r = pending1.accept_answer(&mut rtc1, answer2);
 
