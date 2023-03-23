@@ -1,3 +1,4 @@
+use crate::dtls::Fingerprint;
 use crate::ice::IceCreds;
 use crate::rtp::Direction;
 use crate::rtp::Mid;
@@ -38,6 +39,14 @@ impl<'a> DirectApi<'a> {
     /// the ICE session to authenticate and exchange connectivity checks with the remote peer.
     pub fn local_ice_credentials(&self) -> &IceCreds {
         self.rtc.ice.local_credentials()
+    }
+
+    /// Returns a reference to the local DTLS fingerprint used by this peer connection.
+    ///
+    /// The DTLS fingerprint is a hash of the local SSL/TLS certificate used to authenticate the
+    /// peer connection and establish a secure communication channel between the peers.
+    pub fn local_dtls_fingerprint(&self) -> &Fingerprint {
+        self.rtc.dtls.local_fingerprint()
     }
 
     /// Set direction on some media.

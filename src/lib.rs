@@ -486,7 +486,7 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use change::{DirectApi, SdpChanges};
-use dtls::{Dtls, DtlsEvent, Fingerprint};
+use dtls::{Dtls, DtlsEvent};
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use io::DatagramRecv;
@@ -498,6 +498,7 @@ use thiserror::Error;
 
 pub use ice::IceConnectionState;
 
+pub use dtls::Fingerprint;
 pub use ice::Candidate;
 pub use rtp::Bitrate;
 
