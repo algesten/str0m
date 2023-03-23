@@ -58,6 +58,11 @@ pub(crate) struct MediaInner {
     /// The index of this media line in the Session::media Vec.
     index: usize,
 
+    /// When converting media lines to SDP, it's easier to represent the app m-line
+    /// as a MediaInner. This field is true when we do that. No Session::medias will have
+    /// this set to true – they only exist temporarily.
+    pub(crate) app_tmp: bool,
+
     /// Unique CNAME for use in Sdes RTCP packets.
     ///
     /// This is for _outgoing_ SDP. Incoming CNAME can be
@@ -1195,6 +1200,7 @@ impl Default for MediaInner {
         Self {
             mid: Mid::new(),
             index: 0,
+            app_tmp: false,
             cname: Id::<20>::random().to_string(),
             msid: Msid {
                 stream_id: Id::<30>::random().to_string(),
@@ -1266,6 +1272,15 @@ impl MediaInner {
         }
 
         media
+    }
+
+    pub fn from_app_tmp(mid: Mid, index: usize) -> MediaInner {
+        MediaInner {
+            mid,
+            index,
+            app_tmp: true,
+            ..Default::default()
+        }
     }
 }
 

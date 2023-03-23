@@ -3,15 +3,17 @@
 use std::fmt;
 
 use crate::change::{Change, Changes};
+use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
 use crate::ice::{Candidate, IceCreds};
 use crate::media::MediaInner;
-use crate::media::{App, CodecConfig, MediaKind, PayloadParams, Source};
+use crate::media::{CodecConfig, MediaKind, PayloadParams, Source};
 use crate::rtp::{Extension, Extensions, Mid, Pt};
+use crate::sctp::DcepOpen;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Sdp};
 use crate::sdp::{Proto, SessionAttribute, Setup};
 use crate::sdp::{SimulcastGroups, SimulcastOption};
-use crate::session::{only_inner_mut, AsIndexedLine, MediaOrApp, Session};
+use crate::session::Session;
 use crate::Rtc;
 use crate::RtcError;
 
@@ -257,7 +259,7 @@ fn init_dtls(rtc: &mut Rtc, remote_sdp: &Sdp) -> Result<(), RtcError> {
 
 fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
     let (media_lines, mids) = {
-        let mut v = as_media_lines(session).collect::<Vec<_>>();
+        let mut v = as_media_lines(session);
 
         let mut new_lines = vec![];
 
@@ -408,12 +410,10 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
         // First, match existing m-lines.
         match m.typ {
             MediaType::Application => {
-                if let Some(app) = session.app() {
-                    if idx != app.index() {
+                if let Some((_, index)) = session.app() {
+                    if idx != *index {
                         return index_err(m.mid());
                     }
-
-                    app.apply_changes(m);
                     continue;
                 }
             }
@@ -450,7 +450,7 @@ fn add_new_lines(
     need_open_event: bool,
 ) -> Result<(), String> {
     for m in new_lines {
-        let idx = session.medias.len();
+        let idx = session.line_count();
 
         if m.typ.is_media() {
             let mut exts = *session.exts();
@@ -459,18 +459,13 @@ fn add_new_lines(
             // Update the PTs to match that of the remote.
             session.codec_config.update_pts(m);
 
-            let media = MediaInner::from_remote_media_line(m, idx, exts);
-            session.medias.push(MediaOrApp::Media(media));
-
-            let media = only_inner_mut(&mut session.medias).last().unwrap();
+            let mut media = MediaInner::from_remote_media_line(m, idx, exts);
             media.need_open_event = need_open_event;
-            update_media(media, m, &session.codec_config, &session.exts);
-        } else if m.typ.is_channel() {
-            let app = (m.mid(), idx).into();
-            session.medias.push(MediaOrApp::App(app));
+            update_media(&mut media, m, &session.codec_config, &session.exts);
 
-            let chan = session.app().unwrap();
-            chan.apply_changes(m);
+            session.add_media(media);
+        } else if m.typ.is_channel() {
+            session.set_app(m.mid(), idx)?;
         } else {
             return Err(format!(
                 "New m-line is neither media nor channel: {}",
@@ -518,8 +513,15 @@ fn update_session(session: &mut Session, sdp: &Sdp) {
 }
 
 /// Returns all media/channels as `AsMediaLine` trait.
-fn as_media_lines(session: &Session) -> impl Iterator<Item = &dyn AsSdpMediaLine> {
-    session.medias.iter().map(|m| m as &dyn AsSdpMediaLine)
+fn as_media_lines(session: &Session) -> Vec<&dyn AsSdpMediaLine> {
+    let mut v = vec![];
+
+    if let Some(app) = session.app() {
+        v.push(app as &dyn AsSdpMediaLine);
+    }
+    v.extend(session.medias().iter().map(|m| m as &dyn AsSdpMediaLine));
+    v.sort_by_key(|f| f.index());
+    v
 }
 
 fn update_media(
@@ -585,13 +587,21 @@ fn update_media(
     }
 }
 
-trait AsSdpMediaLine: AsIndexedLine {
+trait AsSdpMediaLine {
+    fn mid(&self) -> Mid;
+    fn index(&self) -> usize;
     fn as_media_line(&self, attrs: Vec<MediaAttribute>) -> MediaLine;
 }
 
-impl AsSdpMediaLine for App {
+impl AsSdpMediaLine for (Mid, usize) {
+    fn mid(&self) -> Mid {
+        self.0
+    }
+    fn index(&self) -> usize {
+        self.1
+    }
     fn as_media_line(&self, mut attrs: Vec<MediaAttribute>) -> MediaLine {
-        attrs.push(MediaAttribute::Mid(self.mid()));
+        attrs.push(MediaAttribute::Mid(self.0));
         attrs.push(MediaAttribute::SctpPort(5000));
         attrs.push(MediaAttribute::MaxMessageSize(262144));
 
@@ -606,7 +616,18 @@ impl AsSdpMediaLine for App {
 }
 
 impl AsSdpMediaLine for MediaInner {
+    fn mid(&self) -> Mid {
+        MediaInner::mid(self)
+    }
+    fn index(&self) -> usize {
+        MediaInner::index(self)
+    }
     fn as_media_line(&self, mut attrs: Vec<MediaAttribute>) -> MediaLine {
+        if self.app_tmp {
+            let app = (self.mid(), self.index());
+            return app.as_media_line(attrs);
+        }
+
         attrs.push(MediaAttribute::Mid(self.mid()));
 
         let audio = self.kind() == MediaKind::Audio;
@@ -689,16 +710,6 @@ impl AsSdpMediaLine for MediaInner {
     }
 }
 
-impl AsSdpMediaLine for MediaOrApp {
-    fn as_media_line(&self, attrs: Vec<sdp::MediaAttribute>) -> MediaLine {
-        use MediaOrApp::*;
-        match self {
-            Media(v) => v.as_media_line(attrs),
-            App(v) => v.as_media_line(attrs),
-        }
-    }
-}
-
 impl From<MediaKind> for MediaType {
     fn from(value: MediaKind) -> Self {
         match value {
@@ -752,6 +763,124 @@ impl<'a, 'b> AsSdpParams<'a, 'b> {
 impl fmt::Debug for SdpPendingOffer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SdpPendingOffer").finish()
+    }
+}
+
+impl Changes {
+    pub fn take_new_channels(&mut self) -> Vec<(ChannelId, DcepOpen)> {
+        let mut v = vec![];
+
+        if self.0.is_empty() {
+            return v;
+        }
+
+        for i in (0..self.0.len()).rev() {
+            if matches!(&self.0[i], Change::AddChannel(_, _)) {
+                if let Change::AddChannel(id, dcep) = self.0.remove(i) {
+                    v.push((id, dcep));
+                }
+            }
+        }
+
+        v
+    }
+
+    /// Tests the given lines (from answer) corresponds to changes.
+    fn ensure_correct_answer(&self, lines: &[&MediaLine]) -> Option<String> {
+        if self.count_new_medias() != lines.len() {
+            return Some(format!(
+                "Differing m-line count in offer vs answer: {} != {}",
+                self.count_new_medias(),
+                lines.len()
+            ));
+        }
+
+        'next: for l in lines {
+            let mid = l.mid();
+
+            for m in &self.0 {
+                use Change::*;
+                match m {
+                    AddMedia(v) if v.mid == mid => {
+                        if !l.typ.is_media() {
+                            return Some(format!(
+                                "Answer m-line for mid ({}) is not of media type: {:?}",
+                                mid, l.typ
+                            ));
+                        }
+                        continue 'next;
+                    }
+                    AddApp(v) if *v == mid => {
+                        if !l.typ.is_channel() {
+                            return Some(format!(
+                                "Answer m-line for mid ({}) is not a data channel: {:?}",
+                                mid, l.typ
+                            ));
+                        }
+                        continue 'next;
+                    }
+                    _ => {}
+                }
+            }
+
+            return Some(format!("Mid in answer is not in offer: {mid}"));
+        }
+
+        None
+    }
+
+    fn count_new_medias(&self) -> usize {
+        self.0
+            .iter()
+            .filter(|c| matches!(c, Change::AddMedia(_) | Change::AddApp(_)))
+            .count()
+    }
+
+    pub fn as_new_medias<'a, 'b: 'a>(
+        &'a self,
+        index_start: usize,
+        config: &'b CodecConfig,
+        exts: &'b Extensions,
+    ) -> impl Iterator<Item = MediaInner> + '_ {
+        self.0
+            .iter()
+            .enumerate()
+            .filter_map(move |(idx, c)| c.as_new_media(index_start + idx, config, exts))
+    }
+
+    pub(crate) fn apply_to(&self, lines: &mut [MediaLine]) {
+        for change in &self.0 {
+            if let Change::Direction(mid, dir) = change {
+                if let Some(line) = lines.iter_mut().find(|l| l.mid() == *mid) {
+                    if let Some(dir_pos) = line.attrs.iter().position(|a| a.is_direction()) {
+                        line.attrs[dir_pos] = (*dir).into();
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Change {
+    fn as_new_media(
+        &self,
+        index: usize,
+        config: &CodecConfig,
+        exts: &Extensions,
+    ) -> Option<MediaInner> {
+        use Change::*;
+        match self {
+            AddMedia(v) => {
+                // TODO can we avoid all this cloning?
+                let mut add = v.clone();
+                add.params = config.all_for_kind(v.kind).copied().collect();
+                add.index = index;
+
+                Some(MediaInner::from_add_media(add, *exts))
+            }
+            AddApp(mid) => Some(MediaInner::from_app_tmp(*mid, index)),
+            _ => None,
+        }
     }
 }
 

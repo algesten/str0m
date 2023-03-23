@@ -3,12 +3,11 @@
 use std::ops::Deref;
 
 use crate::io::Id;
-use crate::rtp::{ChannelId, Direction, Extensions, Mid, Ssrc};
+use crate::rtp::{ChannelId, Direction, Mid, Ssrc};
 use crate::sctp::{DcepOpen, ReliabilityType};
-use crate::sdp::{MediaLine, Msid};
+use crate::sdp::Msid;
 
-use crate::media::{CodecConfig, MediaInner, MediaKind, PayloadParams};
-use crate::session::MediaOrApp;
+use crate::media::{MediaKind, PayloadParams};
 use crate::Rtc;
 
 pub(crate) struct Changes(pub Vec<Change>);
@@ -276,128 +275,6 @@ impl<'a, Strategy: ChangeStrategy> ChangeSet<'a, Strategy> {
         let change_id = self.rtc.next_change_id();
         self.strategy
             .apply(change_id, self.rtc, ChangesWrapper(self.changes))
-    }
-}
-
-impl Changes {
-    pub fn take_new_channels(&mut self) -> Vec<(ChannelId, DcepOpen)> {
-        let mut v = vec![];
-
-        if self.0.is_empty() {
-            return v;
-        }
-
-        for i in (0..self.0.len()).rev() {
-            if matches!(&self.0[i], Change::AddChannel(_, _)) {
-                if let Change::AddChannel(id, dcep) = self.0.remove(i) {
-                    v.push((id, dcep));
-                }
-            }
-        }
-
-        v
-    }
-
-    /// Tests the given lines (from answer) corresponds to changes.
-    fn ensure_correct_answer(&self, lines: &[&MediaLine]) -> Option<String> {
-        if self.count_new_medias() != lines.len() {
-            return Some(format!(
-                "Differing m-line count in offer vs answer: {} != {}",
-                self.count_new_medias(),
-                lines.len()
-            ));
-        }
-
-        'next: for l in lines {
-            let mid = l.mid();
-
-            for m in &self.0 {
-                use Change::*;
-                match m {
-                    AddMedia(v) if v.mid == mid => {
-                        if !l.typ.is_media() {
-                            return Some(format!(
-                                "Answer m-line for mid ({}) is not of media type: {:?}",
-                                mid, l.typ
-                            ));
-                        }
-                        continue 'next;
-                    }
-                    AddApp(v) if *v == mid => {
-                        if !l.typ.is_channel() {
-                            return Some(format!(
-                                "Answer m-line for mid ({}) is not a data channel: {:?}",
-                                mid, l.typ
-                            ));
-                        }
-                        continue 'next;
-                    }
-                    _ => {}
-                }
-            }
-
-            return Some(format!("Mid in answer is not in offer: {mid}"));
-        }
-
-        None
-    }
-
-    fn count_new_medias(&self) -> usize {
-        self.0
-            .iter()
-            .filter(|c| matches!(c, Change::AddMedia(_) | Change::AddApp(_)))
-            .count()
-    }
-
-    pub fn as_new_medias<'a, 'b: 'a>(
-        &'a self,
-        index_start: usize,
-        config: &'b CodecConfig,
-        exts: &'b Extensions,
-    ) -> impl Iterator<Item = MediaOrApp> + '_ {
-        self.0
-            .iter()
-            .enumerate()
-            .filter_map(move |(idx, c)| c.as_ned_media(index_start + idx, config, exts))
-    }
-
-    pub(crate) fn apply_to(&self, lines: &mut [MediaLine]) {
-        for change in &self.0 {
-            if let Change::Direction(mid, dir) = change {
-                if let Some(line) = lines.iter_mut().find(|l| l.mid() == *mid) {
-                    if let Some(dir_pos) = line.attrs.iter().position(|a| a.is_direction()) {
-                        line.attrs[dir_pos] = (*dir).into();
-                    }
-                }
-            }
-        }
-    }
-}
-
-impl Change {
-    fn as_ned_media(
-        &self,
-        index: usize,
-        config: &CodecConfig,
-        exts: &Extensions,
-    ) -> Option<MediaOrApp> {
-        use Change::*;
-        match self {
-            AddMedia(v) => {
-                // TODO can we avoid all this cloning?
-                let mut add = v.clone();
-                add.params = config.all_for_kind(v.kind).copied().collect();
-                add.index = index;
-
-                let media = MediaInner::from_add_media(add, *exts);
-                Some(MediaOrApp::Media(media))
-            }
-            AddApp(mid) => {
-                let channel = (*mid, index).into();
-                Some(MediaOrApp::App(channel))
-            }
-            _ => None,
-        }
     }
 }
 

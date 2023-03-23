@@ -14,9 +14,6 @@ pub use event::*;
 mod codec;
 pub use codec::{CodecConfig, PayloadParams};
 
-mod app;
-pub(crate) use app::App;
-
 mod receiver;
 
 mod sender;
