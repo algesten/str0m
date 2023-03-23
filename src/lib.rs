@@ -1399,7 +1399,7 @@ impl Rtc {
         }
 
         // If the m=application isn't set up, we don't provide Channel
-        self.session.app()?;
+        (*self.session.app())?;
 
         let sctp_channel = self
             .sctp_allocations
