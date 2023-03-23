@@ -801,7 +801,7 @@ impl Rtc {
             ice,
             dtls: Dtls::new().expect("DTLS to init without problem"),
             setup: Setup::ActPass,
-            session: Session::new(config.codec_config, config.ice_lite, config.use_bwe),
+            session: Session::new(config.codec_config, config.ice_lite, config.bwe),
             sctp: RtcSctp::new(),
             stats: Stats::new(config.stats_interval),
             remote_fingerprint: None,
@@ -1419,7 +1419,7 @@ impl Rtc {
 
     /// Configure the Bandwidth Estimate (BWE) subsystem.
     ///
-    /// Only relevant if BWE was enabled in the [`RtcConfig::use_bwe()`]
+    /// Only relevant if BWE was enabled in the [`RtcConfig::enable_bwe()`]
     pub fn bwe(&mut self) -> Bwe {
         Bwe(self)
     }
@@ -1481,7 +1481,7 @@ pub struct RtcConfig {
     codec_config: CodecConfig,
     stats_interval: Duration,
     /// Whether to use Bandwidth Estimation to discover the egress bandwidth.
-    use_bwe: bool,
+    bwe: bool,
 }
 
 impl RtcConfig {
@@ -1572,14 +1572,14 @@ impl RtcConfig {
     /// This includes Event::MediaEgressStats, Event::MediaIngressStats, Event::MediaEgressStats
     ///
     /// Defaults to `Duration::from_secs(1)`.
-    pub fn set_stats_interval(mut self, interval: Duration) -> Self {
+    pub fn stats_interval(mut self, interval: Duration) -> Self {
         self.stats_interval = interval;
         self
     }
 
     /// Whether to use bandwidth estimation to discover the available send bandwidth.
-    pub fn use_bwe(mut self, use_bwe: bool) -> Self {
-        self.use_bwe = use_bwe;
+    pub fn enable_bwe(mut self) -> Self {
+        self.bwe = true;
 
         self
     }
@@ -1593,10 +1593,10 @@ impl RtcConfig {
 impl Default for RtcConfig {
     fn default() -> Self {
         Self {
-            ice_lite: Default::default(),
+            ice_lite: false,
             codec_config: CodecConfig::new_with_defaults(),
             stats_interval: Duration::from_secs(1),
-            use_bwe: false,
+            bwe: false,
         }
     }
 }
@@ -1642,7 +1642,7 @@ impl<'a> Bwe<'a> {
     /// Configure the current bitrate.
     ///
     /// Configure the bandwidth estimation system with the current bitrate.
-    /// **Note:** This only has an effect if BWE has been enabled via `RtcConfig::use_bwe`.
+    /// **Note:** This only has an effect if BWE has been enabled via [`RtcConfig::enable_bwe`].
     ///
     /// * `current_bitrate` an estimate of the current bitrate being sent. When the media is
     /// produced by encoders this value should be the sum of all the target bitrates for these
@@ -1685,7 +1685,7 @@ impl<'a> Bwe<'a> {
     /// Configure the desired bitrate.
     ///
     /// Configure the bandwidth estimation system with the desired bitrate.
-    /// **Note:** This only has an effect if BWE has been enabled via `RtcConfig::use_bwe`.
+    /// **Note:** This only has an effect if BWE has been enabled via [`RtcConfig::enable_bwe`].
     ///
     /// * `desired_bitrate` The bitrate you would like to eventually send at. The BWE system will
     /// try to reach this bitrate by probing with padding packets. You should allocate your media
