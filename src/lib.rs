@@ -1313,37 +1313,6 @@ impl Rtc {
         Ok(())
     }
 
-    /// Get a [`Media`] instance for inspecting and manipulating media. Media has a 1-1
-    /// relationship with "m-line" from the SDP. The `Media` instance is used for media
-    /// regardless of current direction.
-    ///
-    /// Apart from inspecting information about the media, there are two fundamental
-    /// operations. One is [`Media::writer()`] for writing outgoing media data, the other
-    /// is [`Media::request_keyframe()`][crate::media::Media] to request a PLI/FIR keyframe for incoming media data.
-    ///
-    /// All media rows are announced via the [`Event::MediaAdded`] event. This function
-    /// will return `None` for any [`Mid`] until that event has fired. This
-    /// is also the case for the `mid` that comes from [`ChangeSet::add_media()`].
-    ///
-    /// Incoming media data is via the [`Event::MediaData`] event.
-    ///
-    /// ```no_run
-    /// # use str0m::{Rtc, media::Mid};
-    /// let mut rtc = Rtc::new();
-    ///
-    /// let mid: Mid = todo!(); // obtain Mid from Event::MediaAdded
-    /// let media = rtc.media(mid).unwrap();
-    /// // TODO write media or request keyframe.
-    /// ```
-    pub fn media(&mut self, mid: Mid) -> Option<Media<'_>> {
-        if !self.alive {
-            return None;
-        }
-        let trans = self.session.media_by_mid_mut(mid)?;
-        let index = trans.index();
-        Some(Media::new(self, index))
-    }
-
     fn do_handle_timeout(&mut self, now: Instant) {
         // We assume this first "now" is a time 0 start point for calculating ntp/unix time offsets.
         // This initializes the conversion of Instant -> NTP/Unix time.
@@ -1379,6 +1348,37 @@ impl Rtc {
         }
 
         Ok(())
+    }
+
+    /// Get a [`Media`] instance for inspecting and manipulating media. Media has a 1-1
+    /// relationship with "m-line" from the SDP. The `Media` instance is used for media
+    /// regardless of current direction.
+    ///
+    /// Apart from inspecting information about the media, there are two fundamental
+    /// operations. One is [`Media::writer()`] for writing outgoing media data, the other
+    /// is [`Media::request_keyframe()`][crate::media::Media] to request a PLI/FIR keyframe for incoming media data.
+    ///
+    /// All media rows are announced via the [`Event::MediaAdded`] event. This function
+    /// will return `None` for any [`Mid`] until that event has fired. This
+    /// is also the case for the `mid` that comes from [`ChangeSet::add_media()`].
+    ///
+    /// Incoming media data is via the [`Event::MediaData`] event.
+    ///
+    /// ```no_run
+    /// # use str0m::{Rtc, media::Mid};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let mid: Mid = todo!(); // obtain Mid from Event::MediaAdded
+    /// let media = rtc.media(mid).unwrap();
+    /// // TODO write media or request keyframe.
+    /// ```
+    pub fn media(&mut self, mid: Mid) -> Option<Media<'_>> {
+        if !self.alive {
+            return None;
+        }
+        let trans = self.session.media_by_mid_mut(mid)?;
+        let index = trans.index();
+        Some(Media::new(self, index))
     }
 
     /// Obtain handle for writing to a data channel.
