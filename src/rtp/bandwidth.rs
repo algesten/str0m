@@ -48,6 +48,10 @@ impl Bitrate {
     pub fn clamp(&self, min: Self, max: Self) -> Self {
         Self(self.0.clamp(min.0, max.0))
     }
+
+    pub(crate) fn min(&self, other: Self) -> Self {
+        Self(self.0.min(other.0))
+    }
 }
 
 impl From<u64> for Bitrate {

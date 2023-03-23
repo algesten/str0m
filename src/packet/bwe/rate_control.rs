@@ -37,8 +37,6 @@ pub(super) struct RateControl {
     last_estimate_update: Option<Instant>,
     // Last RTT estimate in micro-seconds
     last_rtt: Option<Duration>,
-
-    is_probing: bool,
 }
 
 impl RateControl {
@@ -56,7 +54,6 @@ impl RateControl {
             averaged_observed_bitrate: MovingAverage::new(OBSERVED_BIT_RATE_SMOOTHING_FACTOR),
             last_estimate_update: None,
             last_rtt: None,
-            is_probing: true,
         }
     }
 
@@ -100,13 +97,6 @@ impl RateControl {
         self.estimated_bitrate
     }
 
-    pub(super) fn set_is_probing(&mut self, is_probing: bool) {
-        if self.is_probing == is_probing {
-            return;
-        }
-        self.is_probing = is_probing;
-    }
-
     fn increase(&mut self, observed_bitrate: Bitrate, now: Instant) {
         let last_estimate_update = match self.last_estimate_update {
             Some(n) => n,
@@ -148,12 +138,7 @@ impl RateControl {
             self.estimated_bitrate.as_f64() + increase
         };
         let max = observed_bitrate.as_f64() * MAX_ESTIMATE_RATIO;
-
-        if !self.is_probing {
-            // If we aren't probing to find a higher bitrate don't exceed the observed bitrate too
-            // much.
-            new_estimate = max.min(new_estimate);
-        }
+        new_estimate = max.min(new_estimate);
 
         self.update_estimate(new_estimate.into(), now);
     }
