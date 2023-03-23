@@ -11,7 +11,11 @@ pub struct DirectApi<'a> {
 }
 
 impl<'a> DirectApi<'a> {
-    pub(crate) fn new(rtc: &'a mut Rtc) -> Self {
+    /// Creates a new instance of the `DirectApi` struct with the specified `Rtc` instance.
+    ///
+    /// The `DirectApi` struct provides a high-level API for interacting with a WebRTC peer connection,
+    /// and the `Rtc` instance provides low-level access to the underlying WebRTC functionality.
+    pub fn new(rtc: &'a mut Rtc) -> Self {
         DirectApi { rtc }
     }
 
