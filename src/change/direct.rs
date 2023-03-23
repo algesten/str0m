@@ -49,6 +49,11 @@ impl<'a> DirectApi<'a> {
         self.rtc.dtls.local_fingerprint()
     }
 
+    /// Sets the remote ICE credentials.
+    pub fn remote_ice_credentials(&mut self, remote_ice_credentials: IceCreds) {
+        self.rtc.ice.set_remote_credentials(remote_ice_credentials);
+    }
+
     /// Set direction on some media.
     pub fn set_direction(&mut self, mid: Mid, dir: Direction) -> Result<(), RtcError> {
         let media = self
