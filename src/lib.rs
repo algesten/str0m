@@ -1417,6 +1417,13 @@ impl Rtc {
         Some(Channel::new(sctp_channel, self))
     }
 
+    /// Configure the Bandwidth Estimate (BWE) subsystem.
+    ///
+    /// Only relevant if BWE was enabled in the [`RtcConfig::use_bwe()`]
+    pub fn bwe(&mut self) -> Bwe {
+        Bwe(self)
+    }
+
     fn visit_stats(&mut self, now: Instant, snapshot: &mut StatsSnapshot) {
         snapshot.peer_rx = self.peer_bytes_rx;
         snapshot.peer_tx = self.peer_bytes_tx;
@@ -1444,70 +1451,6 @@ impl Rtc {
         self.sctp_allocations.push(alloc);
 
         ret
-    }
-
-    /// Configure the current bitrate.
-    ///
-    /// Configure the bandwidth estimation system with the current bitrate.
-    /// **Note:** This only has an effect if BWE has been enabled via `RtcConfig::use_bwe`.
-    ///
-    /// * `current_bitrate` an estimate of the current bitrate being sent. When the media is
-    /// produced by encoders this value should be the sum of all the target bitrates for these
-    /// encoders, when the media originates from another WebRTC client it should be the sum of the
-    /// configure bitrates for all tracks being sent. This value should only account for video i.e.
-    /// audio bitrates should be ignored.
-    ///
-    /// ## Example
-    ///
-    /// Say you have a video track with three ingress simulcast layers: `low` with `maxBitrate` set to 250Kbits/,
-    /// `medium` with `maxBitrate` set to 750Kbits/, and `high` with `maxBitrate` 1.5Mbit/s.
-    /// Staring at the lower layer, call:
-    ///
-    /// ```
-    /// # use str0m::{Rtc, Bitrate};
-    /// let mut rtc = Rtc::new();
-    ///
-    /// rtc.set_bwe_current_bitrate(Bitrate::kbps(250));
-    /// ````
-    ///
-    /// When a new estimate is made available that indicates a switch to the medium layer is
-    /// possible, make the switch and then update the configuration:
-    ///
-    /// ```
-    /// # use str0m::{Rtc, Bitrate};
-    /// let mut rtc = Rtc::new();
-    ///
-    /// rtc.set_bwe_current_bitrate(Bitrate::kbps(750));
-    /// ````
-    ///
-    /// ## Accuracy
-    ///
-    /// When the original media is derived from another WebRTC implementation that support BWE it's
-    /// advisable to use the value from `RTCOutboundRtpStreamStats.targetBitrate` from `getStats`
-    /// rather than the `maxBitrate` values from `RTCRtpEncodingParameters`.
-    pub fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {
-        self.session.set_bwe_current_bitrate(current_bitrate);
-    }
-
-    /// Configure the desired bitrate.
-    ///
-    /// Configure the bandwidth estimation system with the desired bitrate.
-    /// **Note:** This only has an effect if BWE has been enabled via `RtcConfig::use_bwe`.
-    ///
-    /// * `desired_bitrate` The bitrate you would like to eventually send at. The BWE system will
-    /// try to reach this bitrate by probing with padding packets. You should allocate your media
-    /// bitrate based on the estimated the BWE system produces via
-    /// [`Event::EgressBitrateEstimate`]. This rate might not be reached if the network link cannot
-    /// sustain the desired bitrate.
-    ///
-    /// ## Example
-    ///
-    /// Say you have three simulcast video tracks each with a high layer configured at 1.5Mbit/s.
-    /// You should then set the desired bitrate to 4.5Mbit/s(or slightly higher). If the network
-    /// link can sustain 4.5Mbit/s there will eventually be an [`Event::EgressBitrateEstimate`]
-    /// with this estimate.
-    pub fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
-        self.session.set_bwe_desired_bitrate(desired_bitrate);
     }
 
     fn is_correct_change_id(&self, change_id: usize) -> bool {
@@ -1689,6 +1632,75 @@ impl fmt::Debug for MediaData {
 impl fmt::Debug for Rtc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Rtc").finish()
+    }
+}
+
+/// Access to the Bandwidth Estimate subsystem.
+pub struct Bwe<'a>(&'a mut Rtc);
+
+impl<'a> Bwe<'a> {
+    /// Configure the current bitrate.
+    ///
+    /// Configure the bandwidth estimation system with the current bitrate.
+    /// **Note:** This only has an effect if BWE has been enabled via `RtcConfig::use_bwe`.
+    ///
+    /// * `current_bitrate` an estimate of the current bitrate being sent. When the media is
+    /// produced by encoders this value should be the sum of all the target bitrates for these
+    /// encoders, when the media originates from another WebRTC client it should be the sum of the
+    /// configure bitrates for all tracks being sent. This value should only account for video i.e.
+    /// audio bitrates should be ignored.
+    ///
+    /// ## Example
+    ///
+    /// Say you have a video track with three ingress simulcast layers: `low` with `maxBitrate` set to 250Kbits/,
+    /// `medium` with `maxBitrate` set to 750Kbits/, and `high` with `maxBitrate` 1.5Mbit/s.
+    /// Staring at the lower layer, call:
+    ///
+    /// ```
+    /// # use str0m::{Rtc, Bitrate};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// rtc.bwe().set_current_bitrate(Bitrate::kbps(250));
+    /// ````
+    ///
+    /// When a new estimate is made available that indicates a switch to the medium layer is
+    /// possible, make the switch and then update the configuration:
+    ///
+    /// ```
+    /// # use str0m::{Rtc, Bitrate};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// rtc.bwe().set_current_bitrate(Bitrate::kbps(750));
+    /// ````
+    ///
+    /// ## Accuracy
+    ///
+    /// When the original media is derived from another WebRTC implementation that support BWE it's
+    /// advisable to use the value from `RTCOutboundRtpStreamStats.targetBitrate` from `getStats`
+    /// rather than the `maxBitrate` values from `RTCRtpEncodingParameters`.
+    pub fn set_current_bitrate(&mut self, current_bitrate: Bitrate) {
+        self.0.session.set_bwe_current_bitrate(current_bitrate);
+    }
+
+    /// Configure the desired bitrate.
+    ///
+    /// Configure the bandwidth estimation system with the desired bitrate.
+    /// **Note:** This only has an effect if BWE has been enabled via `RtcConfig::use_bwe`.
+    ///
+    /// * `desired_bitrate` The bitrate you would like to eventually send at. The BWE system will
+    /// try to reach this bitrate by probing with padding packets. You should allocate your media
+    /// bitrate based on the estimated the BWE system produces via
+    /// [`Event::EgressBitrateEstimate`]. This rate might not be reached if the network link cannot
+    /// sustain the desired bitrate.
+    ///
+    /// ## Example
+    ///
+    /// Say you have three simulcast video tracks each with a high layer configured at 1.5Mbit/s.
+    /// You should then set the desired bitrate to 4.5Mbit/s(or slightly higher). If the network
+    /// link can sustain 4.5Mbit/s there will eventually be an [`Event::EgressBitrateEstimate`]
+    /// with this estimate.
+    pub fn set_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
+        self.0.session.set_bwe_desired_bitrate(desired_bitrate);
     }
 }
 
