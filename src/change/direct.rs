@@ -1,3 +1,4 @@
+use crate::ice::IceCreds;
 use crate::rtp::Direction;
 use crate::rtp::Mid;
 use crate::Rtc;
@@ -29,6 +30,14 @@ impl<'a> DirectApi<'a> {
     /// meaning it will respond to connectivity checks sent by the controlling agent.
     pub fn ice_controlling(&mut self, controlling: bool) {
         self.rtc.ice.set_controlling(controlling);
+    }
+
+    /// Returns a reference to the local ICE credentials used by this peer connection.
+    ///
+    /// The ICE credentials consist of the username and password used by the ICE agent during
+    /// the ICE session to authenticate and exchange connectivity checks with the remote peer.
+    pub fn local_ice_credentials(&self) -> &IceCreds {
+        self.rtc.ice.local_credentials()
     }
 
     /// Set direction on some media.
