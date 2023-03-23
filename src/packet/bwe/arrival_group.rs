@@ -9,7 +9,7 @@ const BURST_TIME_INTERVAL: Duration = Duration::from_millis(5);
 
 #[derive(Debug, Default)]
 pub struct ArrivalGroup {
-    first: Option<(SeqNo, Instant)>,
+    first: Option<(SeqNo, Instant, Instant)>,
     last_seq_no: Option<SeqNo>,
     last_local_send_time: Option<Instant>,
     last_remote_recv_time: Option<Instant>,
@@ -28,7 +28,11 @@ impl ArrivalGroup {
         }
 
         if self.first.is_none() {
-            self.first = Some((packet.seq_no, packet.local_send_time));
+            self.first = Some((
+                packet.seq_no,
+                packet.local_send_time,
+                packet.remote_recv_time,
+            ));
         }
 
         self.last_remote_recv_time = Some(packet.remote_recv_time);
@@ -40,7 +44,7 @@ impl ArrivalGroup {
     }
 
     fn belongs_to_group(&self, packet: &AckedPacket) -> Belongs {
-        let Some((_, first_local_send_time)) = self.first else {
+        let Some((_, first_local_send_time, first_remote_recv_time)) = self.first else {
             // Start of the group
             return Belongs::Yes;
         };
@@ -70,7 +74,10 @@ impl ArrivalGroup {
         let inter_group_delay_delta = inter_arrival_time.as_secs_f64()
             - (packet.local_send_time - self.local_send_time()).as_secs_f64();
 
-        if inter_group_delay_delta < 0.0 && inter_arrival_time < BURST_TIME_INTERVAL {
+        if inter_group_delay_delta < 0.0
+            && inter_arrival_time < BURST_TIME_INTERVAL
+            && packet.remote_recv_time - first_remote_recv_time < Duration::from_millis(100)
+        {
             Belongs::Yes
         } else {
             Belongs::NewGroup
@@ -79,7 +86,7 @@ impl ArrivalGroup {
 
     /// Calculate the inter group delay delta between self and a subsequent group.
     pub(super) fn inter_group_delay_delta(&self, other: &Self) -> Option<f64> {
-        let first_seq_no = self.first.map(|(s, _)| s)?;
+        let first_seq_no = self.first.map(|(s, _, _)| s)?;
         let last_seq_no = self.last_seq_no?;
 
         let arrival_delta = self.arrival_delta(other).as_millis() as f64;

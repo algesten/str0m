@@ -138,7 +138,7 @@ pub struct AckedPacket {
     /// When we sent the packet
     local_send_time: Instant,
     /// When the packet was received at the remote, note this Instant is only usable with other
-    /// instants of the same type i..e those that represent a TWCC reported receive time for this
+    /// instants of the same type i.e. those that represent a TWCC reported receive time for this
     /// session.
     remote_recv_time: Instant,
 }
