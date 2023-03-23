@@ -835,17 +835,12 @@ impl Session {
         const PADDING_FACTOR: f64 = 1.03;
 
         if let Some(bwe) = &mut self.bwe {
-            let padding_rate = match bwe.last_estimate() {
-                // If the estimate exceeds the desired bitrate we don't need to use probing to
-                // discover a higher bitrate.
-                Some(estimate) if estimate > desired_bitrate => Bitrate::ZERO,
-                Some(estimate) => estimate * PADDING_FACTOR,
-                // Before we have the first we don't do any padding.
-                None => Bitrate::ZERO,
-            };
+            let padding_rate = bwe
+                .last_estimate()
+                .map(|bwe| (bwe * PADDING_FACTOR).min(desired_bitrate))
+                .unwrap_or(Bitrate::ZERO);
 
             self.pacer.set_padding_rate(padding_rate);
-            bwe.set_is_probing(padding_rate > Bitrate::ZERO);
         }
     }
 
