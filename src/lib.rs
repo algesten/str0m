@@ -915,6 +915,9 @@ impl Rtc {
     /// ```
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc8445
+    // TODO decide if we actually want this both as an event and as a call.
+    // If we have this as a call, why don't we also have the DTLS and SCTP states?
+    #[doc(hidden)]
     pub fn ice_connection_state(&self) -> IceConnectionState {
         self.ice.state()
     }
