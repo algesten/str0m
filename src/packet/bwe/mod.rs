@@ -9,6 +9,7 @@ pub(crate) mod macros;
 mod rate_control;
 mod trendline_estimator;
 
+use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -58,13 +59,19 @@ impl SendSideBandwithEstimator {
         observed_bitrate: Bitrate,
         now: Instant,
     ) {
+        let mut acked: Vec<AckedPacket> = Vec::new();
+
         let mut max_rtt = None;
         for record in records {
             let Ok(acked_packet) = record.try_into() else {
                 continue;
             };
+            acked.push(acked_packet);
             max_rtt = max_rtt.max(record.rtt());
+        }
+        acked.sort_by(AckedPacket::order_by_receive_time);
 
+        for acked_packet in acked {
             if let Some(delay_variation) = self
                 .arrival_group_accumulator
                 .accumulate_packet(acked_packet)
@@ -76,6 +83,7 @@ impl SendSideBandwithEstimator {
                     .add_delay_observation(delay_variation, now);
             }
         }
+
         if let Some(rtt) = max_rtt {
             self.add_max_rtt(rtt);
         }
@@ -141,6 +149,18 @@ pub struct AckedPacket {
     /// instants of the same type i.e. those that represent a TWCC reported receive time for this
     /// session.
     remote_recv_time: Instant,
+}
+
+impl AckedPacket {
+    fn order_by_receive_time(lhs: &Self, rhs: &Self) -> Ordering {
+        if lhs.remote_recv_time != rhs.remote_recv_time {
+            lhs.remote_recv_time.cmp(&rhs.remote_recv_time)
+        } else if lhs.local_send_time != rhs.local_send_time {
+            lhs.local_send_time.cmp(&rhs.local_send_time)
+        } else {
+            lhs.seq_no.cmp(&rhs.seq_no)
+        }
+    }
 }
 
 impl TryFrom<&TwccSendRecord> for AckedPacket {
