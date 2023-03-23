@@ -155,9 +155,9 @@ impl IceConnectionState {
 /// By matching IceCreds in STUN to SDP, we know which STUN belongs to which Peer.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IceCreds {
-    // From a=ice-ufrag
+    /// From a=ice-ufrag
     pub ufrag: String,
-    // From a=ice-pwd
+    /// From a=ice-pwd
     pub pass: String,
 }
 
@@ -173,7 +173,7 @@ pub struct IceAgentStats {
 /// Events from an [`IceAgent`].
 #[derive(Debug, PartialEq, Eq)]
 pub enum IceAgentEvent {
-    /// The agent resarted (or started).
+    /// The agent restarted (or started).
     IceRestart(IceCreds),
 
     /// Connection state changed.
@@ -211,6 +211,7 @@ pub enum IceAgentEvent {
 }
 
 impl IceCreds {
+    /// Creates a new instance of `IceCreds` with random values for the username fragment and password.
     pub fn new() -> Self {
         // Username Fragment and Password:  Values used to perform connectivity
         // checks.  The values MUST be unguessable, with at least 128 bits of
@@ -569,7 +570,7 @@ impl IceAgent {
                     if redundant {
                         if check.prio() >= pair.prio() {
                             // skip this new pair since there is a redundant pair already in the
-                            // list with higher/equal prio.
+                            // list with higher/equal priority.
                             debug!(
                                 "Reject redundant pair, current: {:?} rejected: {:?}",
                                 check, pair
@@ -1571,7 +1572,7 @@ mod test {
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 
-        // this local candidate is redundant, but has higher prio than then existing pair.
+        // this local candidate is redundant, but has higher priority than then existing pair.
         // it replaces the existing pair.
         agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
 

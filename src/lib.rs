@@ -496,7 +496,7 @@ use sctp::{RtcSctp, SctpEvent};
 use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent};
 use thiserror::Error;
 
-pub use ice::IceConnectionState;
+pub use ice::{IceConnectionState, IceCreds};
 
 pub use dtls::Fingerprint;
 pub use ice::Candidate;
