@@ -81,7 +81,7 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
     let offer: SdpOffer = serde_json::from_reader(&mut data).expect("serialized offer");
     let mut rtc = Rtc::builder()
         .ice_lite(true)
-        .set_stats_interval(Duration::from_secs(5))
+        .stats_interval(Duration::from_secs(5))
         .build();
 
     // Add the shared UDP socket as a host candidate
