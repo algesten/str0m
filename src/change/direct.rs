@@ -19,6 +19,18 @@ impl<'a> DirectApi<'a> {
         DirectApi { rtc }
     }
 
+    /// Sets the ICE controlling flag for this peer connection.
+    ///
+    /// If `controlling` is `true`, this peer connection is set as the ICE controlling agent,
+    /// meaning it will take the initiative to send connectivity checks and control the pace of
+    /// connectivity checks sent between two peers during the ICE session.
+    ///
+    /// If `controlling` is `false`, this peer connection is set as the ICE controlled agent,
+    /// meaning it will respond to connectivity checks sent by the controlling agent.
+    pub fn ice_controlling(&mut self, controlling: bool) {
+        self.rtc.ice.set_controlling(controlling);
+    }
+
     /// Set direction on some media.
     pub fn set_direction(&mut self, mid: Mid, dir: Direction) -> Result<(), RtcError> {
         let media = self
