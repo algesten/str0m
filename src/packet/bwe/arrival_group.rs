@@ -88,8 +88,8 @@ impl ArrivalGroup {
         let first_seq_no = self.first.map(|(s, _, _)| s)?;
         let last_seq_no = self.last_seq_no?;
 
-        let arrival_delta = self.arrival_delta(other).as_secs_f64() / 1000.0;
-        let departure_delta = self.departure_delta(other).as_secs_f64() / 1000.0;
+        let arrival_delta = self.arrival_delta(other)?.as_secs_f64() / 1000.0;
+        let departure_delta = self.departure_delta(other)?.as_secs_f64() / 1000.0;
 
         assert!(arrival_delta >= 0.0);
 
@@ -99,32 +99,16 @@ impl ArrivalGroup {
         Some(result)
     }
 
-    pub(super) fn departure_delta(&self, other: &Self) -> Duration {
+    pub(super) fn departure_delta(&self, other: &Self) -> Option<Duration> {
         other
             .local_send_time()
             .checked_duration_since(self.local_send_time())
-            .unwrap_or_else(|| {
-                panic!(
-                    "other.departure_time() = {:?} to be later than self.departure_time() = {:?}",
-                    other.local_send_time(),
-                    self.local_send_time()
-                )
-            })
     }
 
-    fn arrival_delta(&self, other: &Self) -> Duration {
+    fn arrival_delta(&self, other: &Self) -> Option<Duration> {
         other
             .remote_recv_time()
             .checked_duration_since(self.remote_recv_time())
-            .unwrap_or_else(|| {
-                panic!(
-                    "other.arrival_time() = {:?} to be later than self.arrival_time() = {:?}, other {:?}, self: {:?}",
-                    other.remote_recv_time(),
-                    self.remote_recv_time(),
-                    other,
-                    self,
-                )
-            })
     }
 
     /// The local send time i.e. departure time, for the group.
@@ -207,7 +191,7 @@ impl ArrivalGroupAccumulator {
     fn send_delta(&self) -> Option<Duration> {
         self.previous_group
             .as_ref()
-            .map(|prev| prev.departure_delta(&self.current_group))
+            .and_then(|prev| prev.departure_delta(&self.current_group))
     }
 }
 
