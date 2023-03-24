@@ -26,6 +26,9 @@ const NACK_MIN_INTERVAL: Duration = Duration::from_millis(100);
 // Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(100);
 
+const PACING_FACTOR: f64 = 2.5;
+const PADDING_FACTOR: f64 = 1.03;
+
 pub(crate) struct Session {
     id: SessionId,
 
@@ -97,10 +100,12 @@ impl Session {
         }
         let (pacer, bwe) = if use_bwe {
             let initial_bitrate = 300_000.into();
-            let pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(
-                initial_bitrate,
+            let mut pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(
+                initial_bitrate * PACING_FACTOR * 2.0,
                 Duration::from_millis(40),
             ));
+
+            pacer.set_padding_rate(initial_bitrate * PADDING_FACTOR);
 
             let bwe = SendSideBandwithEstimator::new(initial_bitrate);
 
@@ -824,16 +829,12 @@ impl Session {
     }
 
     pub(crate) fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {
-        const PACING_FACTOR: f64 = 2.5;
-
         let pacing_rate = current_bitrate * PACING_FACTOR;
 
         self.pacer.set_pacing_rate(pacing_rate);
     }
 
     pub(crate) fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
-        const PADDING_FACTOR: f64 = 1.03;
-
         if let Some(bwe) = &mut self.bwe {
             let padding_rate = bwe
                 .last_estimate()
