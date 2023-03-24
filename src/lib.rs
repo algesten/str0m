@@ -80,7 +80,7 @@
 //! let answer = todo!();
 //!
 //! // Apply answer.
-//! pending.accept_answer(&mut rtc, answer).unwrap();
+//! rtc.sdp_changes().accept_answer(pending, answer).unwrap();
 //!
 //! // Go to _run loop_
 //! ```
@@ -937,7 +937,7 @@ impl Rtc {
     /// // Send json OFFER to remote peer. Receive an answer back.
     /// let answer: SdpAnswer = todo!();
     ///
-    /// pending.accept_answer(&mut rtc, answer).unwrap();
+    /// rtc.sdp_changes().accept_answer(pending, answer).unwrap();
     /// ```
     pub fn sdp_changes(&mut self) -> SdpChanges {
         SdpChanges::new(self)

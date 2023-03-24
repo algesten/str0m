@@ -496,8 +496,9 @@ impl Client {
 
     fn handle_answer(&mut self, answer: SdpAnswer) {
         if let Some(pending) = self.pending.take() {
-            pending
-                .accept_answer(&mut self.rtc, answer)
+            self.rtc
+                .sdp_changes()
+                .accept_answer(pending, answer)
                 .expect("answer to be accepted");
 
             for track in &mut self.tracks_out {
