@@ -100,7 +100,73 @@ impl<'a> SdpChanges<'a> {
         Ok(sdp.into())
     }
 
-    /// Test if this change set has any changes.
+    /// Accept an answer to a previously created [`SdpOffer`].
+    ///
+    /// This function returns an [`RtcError::ChangesOutOfOrder`] if we have created and applied another
+    /// [`SdpChanges`][super::SdpChanges] before calling this. The same also happens if we use
+    /// [`SdpChanges::accept_offer()`] before using this pending instance.
+    ///
+    /// ```no_run
+    /// # use str0m::Rtc;
+    /// # use str0m::media::{MediaKind, Direction};
+    /// # use str0m::change::SdpAnswer;
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let mut changes = rtc.sdp_changes();
+    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None);
+    /// let (offer, pending) = changes.apply().unwrap();
+    ///
+    /// // send offer to remote peer, receive answer back
+    /// let answer: SdpAnswer = todo!();
+    ///
+    /// rtc.sdp_changes().accept_answer(pending, answer).unwrap();
+    /// ```
+    pub fn accept_answer(
+        mut self,
+        mut pending: SdpPendingOffer,
+        answer: SdpAnswer,
+    ) -> Result<(), RtcError> {
+        // Ensure we don't use the wrong changes below. We must use that of pending.
+        drop(self.changes);
+
+        if !self.rtc.is_correct_change_id(pending.change_id) {
+            return Err(RtcError::ChangesOutOfOrder);
+        }
+
+        add_ice_details(self.rtc, &answer)?;
+
+        // Ensure setup=active/passive is corresponding remote and init dtls.
+        init_dtls(self.rtc, &answer)?;
+
+        if self.rtc.remote_fingerprint.is_none() {
+            if let Some(f) = answer.fingerprint() {
+                self.rtc.remote_fingerprint = Some(f);
+            } else {
+                self.rtc.disconnect();
+                return Err(RtcError::RemoteSdp("missing a=fingerprint".into()));
+            }
+        }
+
+        // Split out new channels, since that is not handled by the Session.
+        let new_channels = pending.changes.take_new_channels();
+
+        // Modify session with answer
+        apply_answer(&mut self.rtc.session, pending.changes, answer)?;
+
+        // Handle potentially new m=application line.
+        let client = self.rtc.dtls.is_active().expect("DTLS to be inited");
+        self.rtc.init_sctp(client);
+
+        for (id, dcep) in new_channels {
+            self.rtc.sctp.open_stream(*id, dcep);
+        }
+
+        Ok(())
+    }
+
+    /// Test if any changes have been made.
+    ///
+    /// If changes have been made, nothing happens until we call [`SdpChanges::apply()`].
     ///
     /// ```
     /// # use str0m::{Rtc, media::MediaKind, media::Direction};
@@ -268,7 +334,7 @@ impl<'a> SdpChanges<'a> {
 
         id
     }
-    /// Attempt to apply the changes made in the change set.
+    /// Attempt to apply the changes made.
     ///
     /// If this returns [`SdpOffer`], the caller the changes are
     /// not happening straight away, and the caller is expected to do a negotiation with the remote
@@ -310,7 +376,9 @@ impl<'a> SdpChanges<'a> {
 
 /// Pending offer from a previous [`Rtc::sdp_changes()`] call.
 ///
-/// This allows us to either accept a remote answer, or rollback the changes.
+/// This allows us to accept a remote answer. No changes have been made to the session
+/// before we call [`SdpChanges::accept_answer()`], which means that rolling back a
+/// change is as simple as dropping this instance.
 ///
 /// ```no_run
 /// # use str0m::Rtc;
@@ -325,76 +393,11 @@ impl<'a> SdpChanges<'a> {
 /// // send offer to remote peer, receive answer back
 /// let answer: SdpAnswer = todo!();
 ///
-/// pending.accept_answer(&mut rtc, answer).unwrap();
+/// rtc.sdp_changes().accept_answer(pending, answer).unwrap();
 /// ```
 pub struct SdpPendingOffer {
     change_id: usize,
     changes: Changes,
-}
-
-impl SdpPendingOffer {
-    /// Accept an answer to a previously created [`SdpOffer`].
-    ///
-    /// This function returns an [`RtcError::ChangesOutOfOrder`] if we have created and applied another
-    /// [`SdpChanges`][super::SdpChanges] before calling this. The same also happens if we use
-    /// [`SdpChanges::accept_offer()`] before using this pending instance.
-    ///
-    /// ```no_run
-    /// # use str0m::Rtc;
-    /// # use str0m::media::{MediaKind, Direction};
-    /// # use str0m::change::SdpAnswer;
-    /// let mut rtc = Rtc::new();
-    ///
-    /// let mut changes = rtc.sdp_changes();
-    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None);
-    /// let (offer, pending) = changes.apply().unwrap();
-    ///
-    /// // send offer to remote peer, receive answer back
-    /// let answer: SdpAnswer = todo!();
-    ///
-    /// pending.accept_answer(&mut rtc, answer).unwrap();
-    /// ```
-    pub fn accept_answer(mut self, rtc: &mut Rtc, answer: SdpAnswer) -> Result<(), RtcError> {
-        if !rtc.is_correct_change_id(self.change_id) {
-            return Err(RtcError::ChangesOutOfOrder);
-        }
-
-        add_ice_details(rtc, &answer)?;
-
-        // Ensure setup=active/passive is corresponding remote and init dtls.
-        init_dtls(rtc, &answer)?;
-
-        if rtc.remote_fingerprint.is_none() {
-            if let Some(f) = answer.fingerprint() {
-                rtc.remote_fingerprint = Some(f);
-            } else {
-                rtc.disconnect();
-                return Err(RtcError::RemoteSdp("missing a=fingerprint".into()));
-            }
-        }
-
-        // Split out new channels, since that is not handled by the Session.
-        let new_channels = self.changes.take_new_channels();
-
-        // Modify session with answer
-        apply_answer(&mut rtc.session, self.changes, answer)?;
-
-        // Handle potentially new m=application line.
-        let client = rtc.dtls.is_active().expect("DTLS to be inited");
-        rtc.init_sctp(client);
-
-        for (id, dcep) in new_channels {
-            rtc.sctp.open_stream(*id, dcep);
-        }
-
-        Ok(())
-    }
-
-    /// Abort these pending changes.
-    pub fn rollback(self) {
-        // TODO: some Rtc state to keep track of that we don't apply
-        // rolled back pending.
-    }
 }
 
 #[derive(Default)]
@@ -1152,7 +1155,7 @@ mod test {
         let _ = rtc1.sdp_changes().accept_offer(offer2).unwrap();
         let answer2 = rtc2.sdp_changes().accept_offer(offer1).unwrap();
 
-        let r = pending1.accept_answer(&mut rtc1, answer2);
+        let r = rtc1.sdp_changes().accept_answer(pending1, answer2);
 
         assert!(matches!(r, Err(RtcError::ChangesOutOfOrder)));
     }

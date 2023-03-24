@@ -79,7 +79,7 @@ let (offer, pending) = change.apply().unwrap();
 let answer = todo!();
 
 // Apply answer.
-pending.accept_answer(&mut rtc, answer).unwrap();
+rtc.sdp_changes().accept_answer(pending, answer).unwrap();
 
 // Go to _run loop_
 ```

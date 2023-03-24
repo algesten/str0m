@@ -25,7 +25,7 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
     let (offer, pending) = change.apply().unwrap();
 
     let answer = r.rtc.sdp_changes().accept_offer(offer)?;
-    pending.accept_answer(&mut l.rtc, answer)?;
+    l.rtc.sdp_changes().accept_answer(pending, answer)?;
 
     loop {
         if l.ice_connection_state().is_connected() || r.ice_connection_state().is_connected() {
