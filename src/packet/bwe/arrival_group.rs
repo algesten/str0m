@@ -195,7 +195,7 @@ impl ArrivalGroupAccumulator {
         Some(InterGroupDelayDelta {
             send_delta: send_delta?,
             delay_delta: delay_delta?,
-            last_remote_recv_time: last_remote_recv_time?,
+            last_remote_recv_time,
         })
     }
 
