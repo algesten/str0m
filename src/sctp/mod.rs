@@ -108,7 +108,11 @@ pub enum SctpEvent {
 
 impl RtcSctp {
     pub fn new() -> Self {
-        let config = EndpointConfig::default();
+        let mut config = EndpointConfig::default();
+        // Default here is 1200, I've seen warnings that are 77 over.
+        // DTLS above MTU 1200: 1277
+        // Let's try 1120, see if we can avoid warnings.
+        config.max_payload_size(1120);
         let server_config = ServerConfig::default();
         let endpoint = Endpoint::new(Arc::new(config), Some(Arc::new(server_config)));
         let fake_addr = "1.1.1.1:5000".parse().unwrap();
