@@ -89,8 +89,8 @@ impl ArrivalGroup {
         let first_seq_no = self.first.map(|(s, _, _)| s)?;
         let last_seq_no = self.last_seq_no?;
 
-        let arrival_delta = self.arrival_delta(other).as_millis() as f64;
-        let departure_delta = self.departure_delta(other).as_millis() as f64;
+        let arrival_delta = self.arrival_delta(other).as_secs_f64() / 1000.0;
+        let departure_delta = self.departure_delta(other).as_secs_f64() / 1000.0;
 
         assert!(arrival_delta >= 0.0);
 
@@ -185,7 +185,7 @@ impl ArrivalGroupAccumulator {
         // Variation between previous group and current.
         let delay_delta = self.inter_group_delay_delta();
         let send_delta = self.send_delta();
-        let last_remote_recv_time = self.previous_group.as_ref().map(|g| g.remote_recv_time());
+        let last_remote_recv_time = self.current_group.remote_recv_time();
 
         let current_group = mem::take(&mut self.current_group);
         self.previous_group = Some(current_group);
