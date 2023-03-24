@@ -115,7 +115,7 @@ impl TrendlineEstimator {
         let remote_recv_time = variation.last_remote_recv_time - zero_time;
         let timing = Timing {
             at: now,
-            remote_recv_time_ms: remote_recv_time.as_millis() as f64,
+            remote_recv_time_ms: remote_recv_time.as_secs_f64() / 1000.0,
             smoothed_delay_ms: self.smoothed_delay,
         };
 
