@@ -145,7 +145,7 @@ impl Session {
         self.id
     }
 
-    pub(crate) fn set_app(&mut self, mid: Mid, index: usize) -> Result<(), String> {
+    pub fn set_app(&mut self, mid: Mid, index: usize) -> Result<(), String> {
         if let Some((mid_existing, index_existing)) = self.app {
             if mid_existing != mid {
                 return Err(format!("App mid changed {} != {}", mid, mid_existing,));
@@ -798,7 +798,7 @@ impl Session {
         }
     }
 
-    pub(crate) fn enable_twcc_feedback(&mut self) {
+    pub fn enable_twcc_feedback(&mut self) {
         if !self.enable_twcc_feedback {
             debug!("Enable TWCC feedback");
             self.enable_twcc_feedback = true;
@@ -828,13 +828,13 @@ impl Session {
             .expect("index is media")
     }
 
-    pub(crate) fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {
+    pub fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {
         let pacing_rate = current_bitrate * PACING_FACTOR;
 
         self.pacer.set_pacing_rate(pacing_rate);
     }
 
-    pub(crate) fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
+    pub fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
         if let Some(bwe) = &mut self.bwe {
             let padding_rate = bwe
                 .last_estimate()
@@ -845,15 +845,15 @@ impl Session {
         }
     }
 
-    pub(crate) fn line_count(&self) -> usize {
+    pub fn line_count(&self) -> usize {
         self.medias.len() + if self.app.is_some() { 1 } else { 0 }
     }
 
-    pub(crate) fn add_media(&mut self, media: MediaInner) {
+    pub fn add_media(&mut self, media: MediaInner) {
         self.medias.push(media);
     }
 
-    pub(crate) fn medias(&self) -> &[MediaInner] {
+    pub fn medias(&self) -> &[MediaInner] {
         &self.medias
     }
 
