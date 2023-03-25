@@ -661,7 +661,7 @@ impl Session {
         Some(protected.into())
     }
 
-    fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
+    pub fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
         let srtp_tx = self.srtp_tx.as_mut()?;
 
         // Figure out which, if any, queue to poll

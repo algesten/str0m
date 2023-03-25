@@ -283,6 +283,8 @@ impl<'a> Writer<'a> {
     ///
     /// Notice that incorrect [`Pt`] values would surface as an error here, not when
     /// doing [`Media::writer()`].
+    ///
+    /// If you write media before `IceConnectionState` is `Connected` it will be dropped.
     pub fn write(
         mut self,
         wallclock: Instant,

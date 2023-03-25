@@ -1198,6 +1198,10 @@ impl Rtc {
                 };
                 return Ok(Output::Transmit(t));
             }
+        } else {
+            while let Some(_) = self.session.poll_datagram(self.last_now) {
+                // flush all packets until we have send_addr
+            }
         }
 
         let time_and_reason = (None, "<not happening>")
