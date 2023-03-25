@@ -31,10 +31,6 @@ impl Packetizer for G7xxPacketizer {
 
         Ok(payloads)
     }
-
-    fn media_kind(&self) -> MediaKind {
-        MediaKind::Audio
-    }
 }
 
 #[cfg(test)]

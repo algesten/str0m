@@ -7,8 +7,8 @@ pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 pub use crate::sdp::{Codec, FormatParams};
 
 use crate::io::{Id, DATAGRAM_MTU};
-use crate::packet::{DepacketizingBuffer, MediaKind, Packetized};
-use crate::packet::{PacketizedMeta, PacketizingBuffer, QueueId, QueueState};
+use crate::packet::{DepacketizingBuffer, MediaKind, Packetized, QueueSnapshot};
+use crate::packet::{PacketizedMeta, PacketizingBuffer, QueueState};
 use crate::rtp::{Extensions, Fir, FirEntry, NackEntry, Pli, Rtcp};
 use crate::rtp::{RtcpFb, RtpHeader, SdesType};
 use crate::rtp::{SeqNo, MAX_PADDING_PACKET_SIZE, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
@@ -444,12 +444,19 @@ impl MediaInner {
     }
 
     fn poll_packet_resend(&mut self, now: Instant, is_padding: bool) -> Option<NextPacket<'_>> {
-        loop {
+        let (resend, source) = loop {
             let resend = self.resends.pop_front()?;
+
+            // If there is no buffer for this resend, we return None. This is
+            // a weird situation though, since it means the other side sent a nack for
+            // an SSRC that matched this Media, but didnt match a buffer_tx.
+            let buffer = self.buffers_tx.values().find(|p| p.has_ssrc(resend.ssrc))?;
+
+            let pkt = buffer.get(resend.seq_no);
 
             // The seq_no could simply be too old to exist in the buffer, in which
             // case we will not do a resend.
-            let Some(pkt) = packet_for_resend(&self.buffers_tx, &resend) else {
+            let Some(pkt) = pkt else {
                 continue;
             };
 
@@ -460,29 +467,41 @@ impl MediaInner {
                 None => continue,
             };
 
-            if !is_padding {
-                source.update_packet_counts(pkt.data.len() as u64, true);
-                self.bytes_retransmitted.push(now, pkt.data.len() as u64);
-            }
+            break (resend, source);
+        };
 
-            let seq_no = source.next_seq_no(now);
+        // get_and_mark_as_unaccounted() requires a mut reference to buffer, which we can't do in the
+        // above loop (waiting for polonius). The solution is to look the buffer up again after the loop.
+        let buffer = self.buffers_tx.get_mut(&resend.pt).unwrap();
+        let pkt = buffer
+            .get_and_unmark_as_accounted(now, resend.seq_no)
+            .unwrap();
 
-            // The resend ssrc. This would correspond to the RTX PT for video.
-            let ssrc_rtx = source.ssrc();
-
-            let orig_seq_no = Some(resend.seq_no);
-
-            // Check that our internal state of organizing SSRC for senders is correct.
-            assert_eq!(pkt.meta.ssrc, resend.ssrc);
-            assert_eq!(source.repairs(), Some(resend.ssrc));
-
-            return Some(NextPacket {
-                pt: self.pt_rtx(resend.pt)?,
-                ssrc: ssrc_rtx,
-                seq_no,
-                body: NextPacketBody::Resend { pkt, orig_seq_no },
-            });
+        if !is_padding {
+            source.update_packet_counts(pkt.data.len() as u64, true);
+            self.bytes_retransmitted.push(now, pkt.data.len() as u64);
         }
+
+        let seq_no = source.next_seq_no(now);
+
+        // The resend ssrc. This would correspond to the RTX PT for video.
+        let ssrc_rtx = source.ssrc();
+
+        let orig_seq_no = Some(resend.seq_no);
+
+        // Check that our internal state of organizing SSRC for senders is correct.
+        assert_eq!(pkt.meta.ssrc, resend.ssrc);
+        assert_eq!(source.repairs(), Some(resend.ssrc));
+
+        // If the resent PT doesn't exist, the state is not correct as per above.
+        let pt = pt_rtx(&self.params, resend.pt).expect("Resend PT");
+
+        Some(NextPacket {
+            pt,
+            ssrc: ssrc_rtx,
+            seq_no,
+            body: NextPacketBody::Resend { pkt, orig_seq_no },
+        })
     }
 
     fn poll_packet_regular(&mut self, now: Instant) -> Option<NextPacket<'_>> {
@@ -567,7 +586,7 @@ impl MediaInner {
         // NB: If we cannot generate padding here for some reason we'll get stuck forever.
         {
             let pt = *self.buffers_tx.keys().next()?;
-            let pt_rtx = self.pt_rtx(pt)?;
+            let pt_rtx = pt_rtx(&self.params, pt)?;
             let ssrc_rtx = self
                 .sources_tx
                 .iter()
@@ -1009,12 +1028,19 @@ impl MediaInner {
         let iter = entries.flat_map(|n| n.into_iter(seq_no));
 
         // Schedule all resends. They will be handled on next poll_packet
-        self.resends.extend(iter.map(|seq_no| Resend {
-            ssrc,
-            pt: *pt,
-            seq_no,
-            queued_at: now,
-        }));
+        for seq_no in iter {
+            // This keeps the TotalQueue updated in the buffer so the QueueState will
+            // account for resends.
+            buffer.mark_as_unaccounted(now, seq_no);
+
+            let resend = Resend {
+                ssrc,
+                pt: *pt,
+                seq_no,
+                queued_at: now,
+            };
+            self.resends.push_back(resend);
+        }
 
         Some(())
     }
@@ -1065,51 +1091,33 @@ impl MediaInner {
     ///
     /// For the purposes of pacing each media is treated as its own packet queue. Internally this
     /// is spread across many [`PacketizingBuffer`] which is where the actual packets are queued.
-    pub fn buffers_tx_queue_state(&self, now: Instant) -> QueueState {
-        let kind = if self.kind() == MediaKind::Audio {
-            MediaKind::Audio
-        } else {
-            MediaKind::Video
+    pub fn buffers_tx_queue_state(&mut self, now: Instant) -> QueueState {
+        let init = QueueSnapshot::default();
+        let snapshot = self.buffers_tx.values_mut().fold(init, |mut snap, b| {
+            snap.merge(&b.queue_snapshot(now));
+
+            snap
+        });
+
+        let state = QueueState {
+            mid: self.mid,
+            is_audio: self.kind == MediaKind::Audio,
+            use_for_padding: self.has_tx_rtx(),
+            snapshot,
         };
-        let mut state = self
-            .buffers_tx
-            .values()
-            .fold(QueueState::new(kind), |mut state, b| {
-                state.merge(&b.queue_state(now));
-
-                state
-            });
-
-        state.id = QueueId::new(self.index() as u64);
-
-        for resend in &self.resends {
-            let Some(original_packet) = packet_for_resend(&self.buffers_tx, resend) else {
-                continue;
-            };
-
-            state.packet_count += 1;
-            state.size += original_packet.data.len().into();
-            state.total_queue_time += now.saturating_duration_since(resend.queued_at);
-            state.update_leading_queue_time(Some(resend.queued_at));
-        }
-
-        state.has_rtx = self.has_tx_rtx();
 
         state
-    }
-
-    // returns the corresponding rtx pt counterpart, if any
-    fn pt_rtx(&self, pt: Pt) -> Option<Pt> {
-        self.payload_params()
-            .iter()
-            .find(|p| p.pt() == pt)?
-            .pt_rtx()
     }
 
     /// Test if any source_tx in this channel has rtx.
     fn has_tx_rtx(&self) -> bool {
         self.sources_tx.iter().any(|s| s.is_rtx())
     }
+}
+
+// returns the corresponding rtx pt counterpart, if any
+fn pt_rtx(params: &[PayloadParams], pt: Pt) -> Option<Pt> {
+    params.iter().find(|p| p.pt() == pt)?.pt_rtx()
 }
 
 impl<'a> NextPacketBody<'a> {
@@ -1180,19 +1188,6 @@ fn next_send_buffer(
         }
     }
     None
-}
-
-fn packet_for_resend<'p>(
-    buffers_tx: &'p HashMap<Pt, PacketizingBuffer>,
-    resend: &Resend,
-) -> Option<&'p Packetized> {
-    // If there is no buffer for this resend, we return None. This is
-    // a weird situation though, since it means the other side sent a nack for
-    // an SSRC that matched this Media, but didnt match a buffer_tx.
-    let buffer = buffers_tx.values().find(|p| p.has_ssrc(resend.ssrc))?;
-
-    // The seq_no could simply be too old to exist in the buffer, in which case we'll return None
-    buffer.get(resend.seq_no)
 }
 
 impl Default for MediaInner {

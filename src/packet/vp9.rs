@@ -127,10 +127,6 @@ impl Packetizer for Vp9Packetizer {
 
         Ok(payloads)
     }
-
-    fn media_kind(&self) -> MediaKind {
-        MediaKind::Video
-    }
 }
 
 /// Depacketizes VP9 RTP packets.

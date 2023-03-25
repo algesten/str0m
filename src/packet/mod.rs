@@ -35,7 +35,8 @@ mod bwe;
 pub use bwe::SendSideBandwithEstimator;
 
 mod pacer;
-pub use pacer::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl, PollOutcome, QueueId, QueueState};
+pub use pacer::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl, PollOutcome};
+pub use pacer::{QueueSnapshot, QueueState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Types of media.
@@ -50,9 +51,6 @@ pub enum MediaKind {
 pub trait Packetizer: fmt::Debug {
     /// Chunk the data up into RTP packets.
     fn packetize(&mut self, mtu: usize, b: &[u8]) -> Result<Vec<Vec<u8>>, PacketError>;
-
-    /// What kind of packetizer this is. Audio or Video.
-    fn media_kind(&self) -> MediaKind;
 }
 
 /// Codec specific information
@@ -213,19 +211,6 @@ impl Packetizer for CodecPacketizer {
             Vp8(v) => v.packetize(mtu, b),
             Vp9(v) => v.packetize(mtu, b),
             Boxed(v) => v.packetize(mtu, b),
-        }
-    }
-
-    fn media_kind(&self) -> MediaKind {
-        use CodecPacketizer::*;
-        match self {
-            G711(v) => v.media_kind(),
-            G722(v) => v.media_kind(),
-            H264(v) => v.media_kind(),
-            Opus(v) => v.media_kind(),
-            Vp8(v) => v.media_kind(),
-            Vp9(v) => v.media_kind(),
-            Boxed(v) => v.media_kind(),
         }
     }
 }
