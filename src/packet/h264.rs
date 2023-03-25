@@ -187,10 +187,6 @@ impl Packetizer for H264Packetizer {
 
         Ok(payloads)
     }
-
-    fn media_kind(&self) -> MediaKind {
-        MediaKind::Video
-    }
 }
 
 /// Depacketizes H264 RTP packets.

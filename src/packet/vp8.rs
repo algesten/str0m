@@ -110,10 +110,6 @@ impl Packetizer for Vp8Packetizer {
 
         Ok(payloads)
     }
-
-    fn media_kind(&self) -> MediaKind {
-        MediaKind::Video
-    }
 }
 
 /// Depacketizes VP8 RTP packets.

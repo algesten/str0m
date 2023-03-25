@@ -1,11 +1,11 @@
 use std::collections::VecDeque;
 use std::fmt;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::rtp::{ExtensionValues, MediaTime, Rid, SeqNo, Ssrc};
 
 use super::MediaKind;
-use super::{CodecPacketizer, PacketError, Packetizer, QueueState};
+use super::{CodecPacketizer, PacketError, Packetizer, QueueSnapshot};
 
 pub struct Packetized {
     pub data: Vec<u8>,
@@ -16,6 +16,8 @@ pub struct Packetized {
 
     /// Set when packet is first sent. This is so we can resend.
     pub seq_no: Option<SeqNo>,
+    /// Whether this packetized is counted towards the TotalQueue
+    pub count_as_unsent: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -24,6 +26,7 @@ pub struct PacketizedMeta {
     pub ssrc: Ssrc,
     pub rid: Option<Rid>,
     pub ext_vals: ExtensionValues,
+    #[doc(hidden)]
     pub queued_at: Instant,
 }
 
@@ -31,9 +34,12 @@ pub struct PacketizedMeta {
 pub struct PacketizingBuffer {
     pack: CodecPacketizer,
     queue: VecDeque<Packetized>,
+
     emit_next: usize,
     last_emit: Option<Instant>,
     max_retain: usize,
+
+    total: TotalQueue,
 }
 
 impl PacketizingBuffer {
@@ -41,9 +47,12 @@ impl PacketizingBuffer {
         PacketizingBuffer {
             pack,
             queue: VecDeque::new(),
+
             emit_next: 0,
             last_emit: None,
             max_retain,
+
+            total: TotalQueue::default(),
         }
     }
 
@@ -55,12 +64,18 @@ impl PacketizingBuffer {
     ) -> Result<(), PacketError> {
         let chunks = self.pack.packetize(mtu, data)?;
         let len = chunks.len();
+        let now = meta.queued_at;
 
         assert!(len <= self.max_retain, "Must retain at least chunked count");
 
         for (idx, data) in chunks.into_iter().enumerate() {
             let first = idx == 0;
             let last = idx == len - 1;
+
+            // The queue_time for a new entry is ZERO since we expect packets to be
+            // enqueued straight away. If we get rid of the now: Instant in media
+            // writing to only rely on handle_timeout, this might not hold true.
+            self.total.increase(now, Duration::ZERO, data.len());
 
             let rtp = Packetized {
                 first,
@@ -70,6 +85,7 @@ impl PacketizingBuffer {
                 meta,
 
                 seq_no: None,
+                count_as_unsent: true,
             };
 
             self.queue.push_back(rtp);
@@ -77,7 +93,13 @@ impl PacketizingBuffer {
 
         // Scale back retained count to max_retain
         while self.queue.len() > self.max_retain {
-            self.queue.pop_front();
+            let p = self.queue.pop_front();
+            if let Some(p) = p {
+                if p.count_as_unsent {
+                    let queue_time = now - p.meta.queued_at;
+                    self.total.decrease(p.data.len(), queue_time);
+                }
+            }
             self.emit_next -= 1;
         }
 
@@ -86,6 +108,11 @@ impl PacketizingBuffer {
 
     pub fn poll_next(&mut self, now: Instant) -> Option<&mut Packetized> {
         let next = self.queue.get_mut(self.emit_next)?;
+        if next.count_as_unsent {
+            next.count_as_unsent = false;
+            let queue_time = now - next.meta.queued_at;
+            self.total.decrease(next.data.len(), queue_time);
+        }
         self.emit_next += 1;
         self.last_emit = Some(now);
         Some(next)
@@ -93,6 +120,36 @@ impl PacketizingBuffer {
 
     pub fn get(&self, seq_no: SeqNo) -> Option<&Packetized> {
         self.queue.iter().find(|r| r.seq_no == Some(seq_no))
+    }
+
+    // Used when we get a resend to account for resends in the TotalQueue.
+    pub fn mark_as_unaccounted(&mut self, now: Instant, seq_no: SeqNo) {
+        let Some(p) = self.queue.iter_mut().find(|r| r.seq_no == Some(seq_no)) else {
+            return;
+        };
+
+        if !p.count_as_unsent {
+            p.count_as_unsent = true;
+            let queue_time = now - p.meta.queued_at;
+            self.total.increase(now, queue_time, p.data.len());
+        }
+    }
+
+    // Used when we handle a resend to update TotalQueue.
+    pub fn get_and_unmark_as_accounted(
+        &mut self,
+        now: Instant,
+        seq_no: SeqNo,
+    ) -> Option<&Packetized> {
+        let p = self.queue.iter_mut().find(|r| r.seq_no == Some(seq_no))?;
+
+        if p.count_as_unsent {
+            p.count_as_unsent = false;
+            let queue_time = now - p.meta.queued_at;
+            self.total.decrease(p.data.len(), queue_time);
+        }
+
+        Some(p)
     }
 
     pub fn has_ssrc(&self, ssrc: Ssrc) -> bool {
@@ -110,42 +167,23 @@ impl PacketizingBuffer {
         self.max_retain - self.queue.len() + self.emit_next
     }
 
-    pub fn queue_state(&self, now: Instant) -> QueueState {
-        let kind = self.media_kind();
+    pub fn queue_snapshot(&mut self, now: Instant) -> QueueSnapshot {
+        // This changes the total.total_queue_time.
+        self.total.move_time_forward(now);
 
-        let mut state = self
-            .queued_packets()
-            .fold(QueueState::new(kind), |mut state, packet| {
-                state.packet_count += 1;
-                state.total_queue_time += now.saturating_duration_since(packet.meta.queued_at);
-                state.size += packet.data.len().into();
-
-                state
-            });
-
-        state.update_last_send_time(self.last_emit);
-        state.update_leading_queue_time(self.leading_queue_time());
-
-        state
+        QueueSnapshot {
+            created_at: now,
+            size: self.total.unsent_size,
+            packet_count: self.total.unsent_count as u32,
+            total_queue_time: self.total.queue_time,
+            last_emitted: self.last_emit,
+            first_unsent: self.queue.get(self.emit_next).map(|p| p.meta.queued_at),
+        }
     }
 
     /// The size of the resend history in this buffer.
     pub fn history_size(&self) -> usize {
         self.emit_next
-    }
-
-    pub fn leading_queue_time(&self) -> Option<Instant> {
-        self.queued_packets().next().map(|p| p.meta.queued_at)
-    }
-
-    fn media_kind(&self) -> MediaKind {
-        self.pack.media_kind()
-    }
-
-    /// An iterator over all packets that are queued, but have not yet been sent.
-    fn queued_packets(&self) -> impl Iterator<Item = &Packetized> {
-        // seq_no is some as long as packet has not been sent
-        self.queue.iter().skip_while(|p| p.seq_no.is_some())
     }
 
     /// Find a historic packet that is smaller than the given max_size.
@@ -162,6 +200,80 @@ impl PacketizingBuffer {
         }
 
         None
+    }
+}
+
+// Total queue time in buffer. This lovely drawing explains how to add more time.
+//
+// -time--------------------------------------------------------->
+//
+// +--------------+
+// |              |
+// +--------------+
+//      +---------+                          Already
+//      |         |                           queued
+//      +---------+                         durations
+//          +-----+
+//          |     |
+//          +-----+
+//                       +-+
+//                       | |         <-----  Add next
+//                       +-+                  packet
+//
+//
+//
+// +--------------+--------+
+// |              |@@@@@@@@|
+// +--------------+--------+
+//      +---------+--------+                 The @ is
+//      |         |@@@@@@@@|                  what's
+//      +---------+--------+                  added
+//          +-----+--------+
+//          |     |@@@@@@@@|
+//          +-----+--------+
+//                       +-+
+//                       |@|
+//                       +-+
+#[derive(Debug, Default)]
+struct TotalQueue {
+    unsent_count: usize,
+    unsent_size: usize,
+    last: Option<Instant>,
+    queue_time: Duration,
+}
+
+impl TotalQueue {
+    fn move_time_forward(&mut self, now: Instant) {
+        if let Some(last) = self.last {
+            assert!(self.unsent_count > 0);
+            assert!(self.unsent_size > 0);
+            let from_last = now - last;
+            self.queue_time += from_last * (self.unsent_count as u32);
+            self.last = Some(now);
+        } else {
+            assert!(self.unsent_count == 0);
+            assert!(self.unsent_size == 0);
+            assert!(self.queue_time == Duration::ZERO);
+        }
+    }
+
+    fn increase(&mut self, now: Instant, queue_time: Duration, size: usize) {
+        self.move_time_forward(now);
+        self.unsent_count += 1;
+        self.unsent_size += size;
+        self.queue_time += queue_time;
+        self.last = Some(now);
+    }
+
+    fn decrease(&mut self, size: usize, queue_time: Duration) {
+        self.unsent_count -= 1;
+        self.unsent_size -= size;
+        self.queue_time -= queue_time;
+        if self.unsent_count == 0 {
+            self.unsent_size = 0;
+            self.last = None;
+            self.queue_time = Duration::ZERO;
+        }
     }
 }
 

@@ -21,10 +21,6 @@ impl Packetizer for OpusPacketizer {
 
         Ok(out)
     }
-
-    fn media_kind(&self) -> MediaKind {
-        MediaKind::Audio
-    }
 }
 
 /// Depacketizes Opus RTP packets.

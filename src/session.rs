@@ -221,7 +221,11 @@ impl Session {
             }
         }
 
-        update_queue_states(now, &mut self.medias, &mut self.pacer);
+        let iter = self
+            .medias
+            .iter_mut()
+            .map(|m| m.buffers_tx_queue_state(now));
+        self.pacer.handle_timeout(now, iter);
     }
 
     fn create_twcc_feedback(&mut self, sender_ssrc: Ssrc, now: Instant) -> Option<()> {
@@ -665,9 +669,9 @@ impl Session {
         let srtp_tx = self.srtp_tx.as_mut()?;
 
         // Figure out which, if any, queue to poll
-        let (queue_id, pad_size) = match self.pacer.poll_action() {
-            PollOutcome::PollQueue(queue_id) => (queue_id, None),
-            PollOutcome::PollPadding(queue_id, padding_size) => (queue_id, Some(padding_size)),
+        let (mid, pad_size) = match self.pacer.poll_action() {
+            PollOutcome::PollQueue(mid) => (mid, None),
+            PollOutcome::PollPadding(mid, pad_size) => (mid, Some(pad_size)),
             PollOutcome::Nothing => {
                 return None;
             }
@@ -678,12 +682,11 @@ impl Session {
         let media = self
             .medias
             .iter_mut()
-            .find(|m| m.index() == queue_id.as_usize())
+            .find(|m| m.mid() == mid)
             .expect("index is media");
         let buf = &mut self.poll_packet_buf;
 
         let twcc_seq = self.twcc;
-        let pad_size = pad_size.map(|p| p.as_bytes_usize());
 
         if let Some((header, seq_no)) =
             media.poll_packet(now, &self.exts, &mut self.twcc, pad_size, buf)
@@ -702,7 +705,7 @@ impl Session {
             }
 
             let payload_size = buf.len();
-            self.pacer.register_send(now, buf.len().into(), queue_id);
+            self.pacer.register_send(now, buf.len().into(), mid);
             let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
             self.twcc_tx_register
@@ -862,9 +865,4 @@ impl Session {
             m.clear_send_buffers();
         }
     }
-}
-
-fn update_queue_states(now: Instant, medias: &mut [MediaInner], pacer: &mut PacerImpl) {
-    let iter = medias.iter_mut().map(|m| m.buffers_tx_queue_state(now));
-    pacer.handle_timeout(now, iter);
 }
