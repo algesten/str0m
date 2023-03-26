@@ -856,6 +856,12 @@ impl Session {
     pub(crate) fn medias(&self) -> &[MediaInner] {
         &self.medias
     }
+
+    pub(crate) fn clear_send_buffers(&mut self) {
+        for m in &mut self.medias {
+            m.clear_send_buffers();
+        }
+    }
 }
 
 fn update_queue_states(now: Instant, medias: &mut [MediaInner], pacer: &mut PacerImpl) {
