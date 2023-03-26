@@ -1,3 +1,4 @@
+use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
 use crate::ice::IceCreds;
 use crate::rtp::Direction;
@@ -70,6 +71,11 @@ impl<'a> DirectApi<'a> {
         media.set_direction(dir);
 
         Ok(())
+    }
+
+    ///
+    pub fn add_prenegotiated_channel(&mut self, id: ChannelId) {
+        self.rtc.sctp.open_prenegotiated_stream(*id);
     }
 
     /// Start the DTLS subsystem.

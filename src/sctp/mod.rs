@@ -16,6 +16,7 @@ pub use sctp_proto::ReliabilityType;
 
 mod dcep;
 pub use dcep::DcepOpen;
+pub type DcOptions = DcepOpen;
 
 use dcep::DcepAck;
 
@@ -33,12 +34,22 @@ pub enum SctpError {
     /// The initial DCEP is not valid.
     #[error("DCEP open message too small")]
     DcepOpenTooSmall,
+
     /// The initial DCEP is not the correct message type.
     #[error("DCEP incorrect message type")]
     DcepIncorrectMessageType,
+
     /// The initial DCEP cant be read as utf-8.
     #[error("DCEP bad UTF-8 string")]
     DcepBadUtf8,
+
+    /// SCTP isn't initialized
+    #[error("SCTP not initialized")]
+    NotInitialized,
+
+    /// SCTP open stream failed
+    #[error("SCTP open stream failed")]
+    OpenStreamFailed,
 }
 
 pub struct RtcSctp {
@@ -172,6 +183,31 @@ impl RtcSctp {
         self.entries.push(new_entry);
     }
 
+    pub fn open_prenegotiated_stream(&mut self, id: u16) -> Result<(), SctpError> {
+        let assoc = self.assoc.as_mut().ok_or(SctpError::NotInitialized)?;
+
+        let unordered = false;
+        let reliability = ReliabilityType::Reliable;
+        let reliability_parameter = 1000;
+
+        // Note: it doesn't seem like the default is used.
+        let mut stream = assoc
+            .open_stream(id, PayloadProtocolIdentifier::Unknown)
+            .map_err(|_| SctpError::OpenStreamFailed)?;
+
+        stream
+            .set_reliability_params(unordered, reliability, reliability_parameter)
+            .map_err(|_| SctpError::OpenStreamFailed)?;
+
+        self.entries.push(StreamEntry {
+            id,
+            state: StreamEntryState::Open,
+            do_close: false,
+            dcep: None,
+        });
+        Ok(())
+    }
+
     pub fn is_open(&self, id: u16) -> bool {
         if self.state != RtcSctpState::Established {
             return false;
@@ -234,11 +270,15 @@ impl RtcSctp {
 
         match event {
             DatagramEvent::NewAssociation(a) => {
-                info!("New remote association");
-                // Remote side initiated the association
-                self.assoc = Some(a);
-                self.handle = handle;
-                set_state(&mut self.state, RtcSctpState::AwaitAssociationEstablished);
+                if self.assoc.is_some() {
+                    warn!("New remote association even though we already have a local one. Ignoring the remote one.");
+                } else {
+                    info!("New remote association");
+                    // Remote side initiated the association
+                    self.assoc = Some(a);
+                    self.handle = handle;
+                    set_state(&mut self.state, RtcSctpState::AwaitAssociationEstablished);
+                }
             }
             DatagramEvent::AssociationEvent(event) => {
                 self.assoc
@@ -412,7 +452,7 @@ impl RtcSctp {
                     if ppi != PayloadProtocolIdentifier::Dcep {
                         if entry.state != StreamEntryState::Open {
                             warn!(
-                                "Received DCEP for not open stream {}: {:?}",
+                                "Received data for non open stream {}: {:?}",
                                 entry.id, entry.state
                             );
                             entry.do_close = true;
@@ -475,7 +515,10 @@ impl RtcSctp {
                     }
                 }
                 Ok(None) => continue,
-                Err(_) => entry.do_close = true,
+                Err(e) => {
+                    warn!("Close stream {} because of error reading: {e:?}", entry.id);
+                    entry.do_close = true;
+                }
             }
         }
 
