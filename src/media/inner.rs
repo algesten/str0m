@@ -153,6 +153,9 @@ pub(crate) struct MediaInner {
 
     /// History of bytes re-transmitted.
     bytes_retransmitted: ValueHistory<u64>,
+
+    /// Merged queue state, set to None if we need to recalculate it.
+    queue_state: Option<QueueState>,
 }
 
 struct NextPacket<'a> {
@@ -285,6 +288,9 @@ impl MediaInner {
             ext_vals,
             queued_at: now,
         };
+
+        // Invalidate cached queue_state.
+        self.queue_state = None;
 
         if let Err(e) = buf.push_sample(data, meta, mtu) {
             return Err(RtcError::Packet(self.mid, pt, e));
@@ -477,6 +483,9 @@ impl MediaInner {
             .get_and_unmark_as_accounted(now, resend.seq_no)
             .unwrap();
 
+        // Force recaching since packetizer changed.
+        self.queue_state = None;
+
         if !is_padding {
             source.update_packet_counts(pkt.data.len() as u64, true);
             self.bytes_retransmitted.push(now, pkt.data.len() as u64);
@@ -507,6 +516,9 @@ impl MediaInner {
     fn poll_packet_regular(&mut self, now: Instant) -> Option<NextPacket<'_>> {
         // exit via ? here is ok since that means there is nothing to send.
         let (pt, pkt) = next_send_buffer(&mut self.buffers_tx, now)?;
+
+        // Force recaching since packetizer changed.
+        self.queue_state = None;
 
         let source = self
             .sources_tx
@@ -1027,6 +1039,9 @@ impl MediaInner {
         let seq_no = buffer.first_seq_no()?;
         let iter = entries.flat_map(|n| n.into_iter(seq_no));
 
+        // Invalidate cached queue_state.
+        self.queue_state = None;
+
         // Schedule all resends. They will be handled on next poll_packet
         for seq_no in iter {
             // This keeps the TotalQueue updated in the buffer so the QueueState will
@@ -1092,6 +1107,11 @@ impl MediaInner {
     /// For the purposes of pacing each media is treated as its own packet queue. Internally this
     /// is spread across many [`PacketizingBuffer`] which is where the actual packets are queued.
     pub fn buffers_tx_queue_state(&mut self, now: Instant) -> QueueState {
+        // If it is cached, we don't need to recalculate it.
+        if let Some(queue_state) = self.queue_state {
+            return queue_state;
+        }
+
         let init = QueueSnapshot::default();
         let snapshot = self.buffers_tx.values_mut().fold(init, |mut snap, b| {
             snap.merge(&b.queue_snapshot(now));
@@ -1105,6 +1125,9 @@ impl MediaInner {
             use_for_padding: self.has_tx_rtx(),
             snapshot,
         };
+
+        // Cache it.
+        self.queue_state = Some(state);
 
         state
     }
@@ -1221,6 +1244,7 @@ impl Default for MediaInner {
             enable_nack: false,
             bytes_transmitted: ValueHistory::new(0, Duration::from_secs(2)),
             bytes_retransmitted: ValueHistory::new(0, Duration::from_secs(2)),
+            queue_state: None,
         }
     }
 }

@@ -175,7 +175,7 @@ impl PacketizingBuffer {
             created_at: now,
             size: self.total.unsent_size,
             packet_count: self.total.unsent_count as u32,
-            total_queue_time: self.total.queue_time,
+            total_queue_time_origin: self.total.queue_time,
             last_emitted: self.last_emit,
             first_unsent: self.queue.get(self.emit_next).map(|p| p.meta.queued_at),
         }
