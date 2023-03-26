@@ -49,16 +49,16 @@ pub mod rtp {
 /// ```
 pub struct Media<'a> {
     rtc: &'a mut Rtc,
-    index: usize,
+    mid: Mid,
 }
 
 impl Media<'_> {
     fn inner(&self) -> &MediaInner {
-        self.rtc.media_inner(self.index)
+        self.rtc.media_inner(self.mid)
     }
 
     fn inner_mut(&mut self) -> &mut MediaInner {
-        self.rtc.media_inner_mut(self.index)
+        self.rtc.media_inner_mut(self.mid)
     }
 
     /// Identifier of the media.
@@ -68,7 +68,7 @@ impl Media<'_> {
 
     /// The index of the line in the SDP. Once negotiated this cannot change.
     pub fn index(&self) -> usize {
-        self.index
+        self.inner().index()
     }
 
     /// Current direction. This can be changed using
@@ -148,7 +148,7 @@ impl Media<'_> {
     pub fn writer(&mut self, pt: Pt, now: Instant) -> Writer<'_> {
         let media = Media {
             rtc: self.rtc,
-            index: self.index,
+            mid: self.mid,
         };
 
         Writer {
@@ -205,8 +205,8 @@ impl Media<'_> {
         self.inner_mut().request_keyframe(rid, kind)
     }
 
-    pub(crate) fn new(rtc: &mut Rtc, index: usize) -> Media {
-        Media { rtc, index }
+    pub(crate) fn new(rtc: &mut Rtc, mid: Mid) -> Media {
+        Media { rtc, mid }
     }
 }
 

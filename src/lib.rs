@@ -1355,9 +1355,9 @@ impl Rtc {
         if !self.alive {
             return None;
         }
-        let inner = self.session.media_by_mid_mut(mid)?;
-        let index = inner.index();
-        Some(Media::new(self, index))
+        // Check the media exists. After this we don't check again going via Rtc::media_by_mid
+        self.session.media_by_mid(mid)?;
+        Some(Media::new(self, mid))
     }
 
     /// Obtain handle for writing to a data channel.
@@ -1409,14 +1409,6 @@ impl Rtc {
         self.session.visit_stats(now, snapshot);
     }
 
-    fn media_inner(&self, index: usize) -> &MediaInner {
-        self.session.media_by_index(index)
-    }
-
-    fn media_inner_mut(&mut self, index: usize) -> &mut MediaInner {
-        self.session.media_by_index_mut(index)
-    }
-
     fn associate_new_sctp(&mut self, sctp_channel: Option<u16>) -> ChannelId {
         let id = self.sctp_allocations.len() as u16;
 
@@ -1440,6 +1432,18 @@ impl Rtc {
         let n = self.change_counter;
         self.change_counter += 1;
         n
+    }
+
+    fn media_inner(&self, mid: Mid) -> &MediaInner {
+        self.session
+            .media_by_mid(mid)
+            .expect("mid to match a media")
+    }
+
+    fn media_inner_mut(&mut self, mid: Mid) -> &mut MediaInner {
+        self.session
+            .media_by_mid_mut(mid)
+            .expect("mid to match a media")
     }
 }
 
