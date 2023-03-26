@@ -110,7 +110,7 @@ pub struct QueueSnapshot {
     pub packet_count: u32,
     /// Accumulation of all queue time at the time point `created_at`. To use this
     /// Look at `total_queue_time(now)` which allows getting the queue time at a later Instant.
-    pub total_queue_time: Duration,
+    pub total_queue_time_origin: Duration,
     /// Last time something was emitted from this queue.
     pub last_emitted: Option<Instant>,
     /// Time the first unsent packet has spent in the queue.
@@ -123,7 +123,7 @@ impl Default for QueueSnapshot {
             created_at: not_happening(),
             size: Default::default(),
             packet_count: Default::default(),
-            total_queue_time: Default::default(),
+            total_queue_time_origin: Default::default(),
             last_emitted: Default::default(),
             first_unsent: Default::default(),
         }
@@ -132,7 +132,7 @@ impl Default for QueueSnapshot {
 
 /// The state of a single upstream queue.
 /// The pacer manages packets across several upstream queues.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct QueueState {
     pub mid: Mid,
     pub is_audio: bool,
@@ -541,7 +541,7 @@ impl LeakyBucketPacer {
                 .iter()
                 .fold((Duration::ZERO, 0, DataSize::ZERO), |acc, q| {
                     (
-                        acc.0 + q.snapshot.total_queue_time,
+                        acc.0 + q.snapshot.total_queue_time(now),
                         acc.1 + q.snapshot.packet_count,
                         acc.2 + DataSize::from(q.snapshot.size),
                     )
@@ -595,9 +595,10 @@ impl LeakyBucketPacer {
 impl QueueSnapshot {
     /// Merge other into self.
     pub fn merge(&mut self, other: &Self) {
+        self.created_at = self.created_at.min(other.created_at);
         self.size += other.size;
         self.packet_count += other.packet_count;
-        self.total_queue_time += other.total_queue_time;
+        self.total_queue_time_origin += other.total_queue_time_origin;
         self.last_emitted = self.last_emitted.max(other.last_emitted);
         self.first_unsent = match (self.first_unsent, other.first_unsent) {
             (None, None) => None,
@@ -605,6 +606,10 @@ impl QueueSnapshot {
             (Some(v1), None) => Some(v1),
             (Some(v1), Some(v2)) => Some(v1.min(v2)),
         };
+    }
+
+    fn total_queue_time(&self, now: Instant) -> Duration {
+        self.total_queue_time_origin + self.packet_count * (now - self.created_at)
     }
 }
 
@@ -1026,7 +1031,7 @@ mod test {
                 created_at: now,
                 size: 10_usize.into(),
                 packet_count: 1332,
-                total_queue_time: duration_ms(1_000),
+                total_queue_time_origin: duration_ms(1_000),
                 last_emitted: Some(now + duration_ms(500)),
                 first_unsent: None,
             },
@@ -1040,7 +1045,7 @@ mod test {
                 created_at: now,
                 size: 30_usize.into(),
                 packet_count: 5,
-                total_queue_time: duration_ms(337),
+                total_queue_time_origin: duration_ms(337),
                 last_emitted: None,
                 first_unsent: Some(now + duration_ms(19)),
             },
@@ -1051,7 +1056,7 @@ mod test {
         assert_eq!(state.mid, Mid::from("001"));
         assert_eq!(state.snapshot.size, 40_usize);
         assert_eq!(state.snapshot.packet_count, 1337);
-        assert_eq!(state.snapshot.total_queue_time, duration_ms(1337));
+        assert_eq!(state.snapshot.total_queue_time_origin, duration_ms(1337));
 
         assert_eq!(state.snapshot.last_emitted, Some(now + duration_ms(500)));
         assert_eq!(state.snapshot.first_unsent, Some(now + duration_ms(19)));
@@ -1283,7 +1288,7 @@ mod test {
                         created_at: now,
                         size: self.queue.iter().map(QueuedPacket::size).sum(),
                         packet_count: self.packet_count,
-                        total_queue_time: self.total_time_spent_queued,
+                        total_queue_time_origin: self.total_time_spent_queued,
                         last_emitted: self.last_send_time,
                         first_unsent: self.queue.iter().next().map(|p| p.queued_at),
                     },
