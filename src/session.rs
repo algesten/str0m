@@ -163,6 +163,10 @@ impl Session {
         &self.app
     }
 
+    pub fn media_by_mid(&self, mid: Mid) -> Option<&MediaInner> {
+        self.medias.iter().find(|m| m.mid() == mid)
+    }
+
     pub fn media_by_mid_mut(&mut self, mid: Mid) -> Option<&mut MediaInner> {
         self.medias.iter_mut().find(|m| m.mid() == mid)
     }
@@ -815,20 +819,6 @@ impl Session {
         snapshot.tx = snapshot.egress.values().map(|s| s.bytes).sum();
         snapshot.rx = snapshot.ingress.values().map(|s| s.bytes).sum();
         snapshot.bwe_tx = self.bwe.as_ref().and_then(|bwe| bwe.last_estimate());
-    }
-
-    pub fn media_by_index(&self, index: usize) -> &MediaInner {
-        self.medias
-            .iter()
-            .find(|m| m.index() == index)
-            .expect("index is media")
-    }
-
-    pub fn media_by_index_mut(&mut self, index: usize) -> &mut MediaInner {
-        self.medias
-            .iter_mut()
-            .find(|m| m.index() == index)
-            .expect("index is media")
     }
 
     pub fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {
