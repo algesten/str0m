@@ -42,7 +42,7 @@ rtc.add_local_candidate(candidate);
 // Accept an incoming offer from the remote peer
 // and get the corresponding answer.
 let offer = todo!();
-let answer = rtc.sdp_changes().accept_offer(offer).unwrap();
+let answer = rtc.sdp_api().accept_offer(offer).unwrap();
 
 // Forward the answer to the remote peer.
 
@@ -64,9 +64,9 @@ let addr = "1.2.3.4:5000".parse().unwrap();
 let candidate = Candidate::host(addr).unwrap();
 rtc.add_local_candidate(candidate);
 
-// Create a `SdpChanges`. The change lets us make multiple changes
+// Create a `SdpApi`. The change lets us make multiple changes
 // before sending the offer.
-let mut change = rtc.sdp_changes();
+let mut change = rtc.sdp_api();
 
 // Do some change. A valid OFFER needs at least one "m-line" (media).
 let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None);
@@ -79,7 +79,7 @@ let (offer, pending) = change.apply().unwrap();
 let answer = todo!();
 
 // Apply answer.
-rtc.sdp_changes().accept_answer(pending, answer).unwrap();
+rtc.sdp_api().accept_answer(pending, answer).unwrap();
 
 // Go to _run loop_
 ```

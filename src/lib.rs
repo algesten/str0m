@@ -41,7 +41,7 @@
 //! // Accept an incoming offer from the remote peer
 //! // and get the corresponding answer.
 //! let offer = todo!();
-//! let answer = rtc.sdp_changes().accept_offer(offer).unwrap();
+//! let answer = rtc.sdp_api().accept_offer(offer).unwrap();
 //!
 //! // Forward the answer to the remote peer.
 //!
@@ -65,9 +65,9 @@
 //! let candidate = Candidate::host(addr).unwrap();
 //! rtc.add_local_candidate(candidate);
 //!
-//! // Create a `SdpChanges`. The change lets us make multiple changes
+//! // Create a `SdpApi`. The change lets us make multiple changes
 //! // before sending the offer.
-//! let mut change = rtc.sdp_changes();
+//! let mut change = rtc.sdp_api();
 //!
 //! // Do some change. A valid OFFER needs at least one "m-line" (media).
 //! let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None);
@@ -80,7 +80,7 @@
 //! let answer = todo!();
 //!
 //! // Apply answer.
-//! rtc.sdp_changes().accept_answer(pending, answer).unwrap();
+//! rtc.sdp_api().accept_answer(pending, answer).unwrap();
 //!
 //! // Go to _run loop_
 //! ```
@@ -485,7 +485,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use change::{DirectApi, SdpChanges};
+use change::{DirectApi, SdpApi};
 use dtls::{Dtls, DtlsEvent};
 use ice::IceAgent;
 use ice::IceAgentEvent;
@@ -599,13 +599,13 @@ pub enum RtcError {
     #[error("{0}")]
     Sctp(#[from] error::SctpError),
 
-    /// [`SdpChanges`] was not done in a correct order.
+    /// [`SdpApi`] was not done in a correct order.
     ///
-    /// For [`SdpChanges`][change::SdpChanges]:
+    /// For [`SdpApi`][change::SdpApi]:
     ///
     /// 1. We created an [`SdpOffer`][change::SdpOffer].
     /// 2. The remote side created an [`SdpOffer`][change::SdpOffer] at the same time.
-    /// 3. We applied the remote side [`SdpChanges::accept_offer()`][change::SdpOffer].
+    /// 3. We applied the remote side [`SdpApi::accept_offer()`][change::SdpOffer].
     /// 4. The we used the [`SdpPendingOffer`][change::SdpPendingOffer] created in step 1.
     #[error("Changes made out of order")]
     ChangesOutOfOrder,
@@ -714,7 +714,7 @@ pub enum Event {
     ///
     /// Upon this event, the [`Channel`] can be obtained via [`Rtc::channel()`].
     ///
-    /// For [`SdpChanges`]: The first ever data channel results in an SDP
+    /// For [`SdpApi`]: The first ever data channel results in an SDP
     /// negotiation, and this events comes at the end of that.
     ChannelOpen(ChannelId, String),
 
@@ -879,7 +879,7 @@ impl Rtc {
 
     /// Add a remote ICE candidate. Remote candidates are addresses of the peer.
     ///
-    /// For [`SdpChanges`]: Remote candidates are typically added via
+    /// For [`SdpApi`]: Remote candidates are typically added via
     /// receiving a remote [`SdpOffer`][change::SdpOffer] or [`SdpAnswer`][change::SdpAnswer].
     ///
     /// However for the case of [Trickle Ice][1], this is the way to add remote candidaes
@@ -927,7 +927,7 @@ impl Rtc {
     /// # use str0m::change::SdpAnswer;
     /// let mut rtc = Rtc::new();
     ///
-    /// let mut changes = rtc.sdp_changes();
+    /// let mut changes = rtc.sdp_api();
     /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None);
     /// let mid_video = changes.add_media(MediaKind::Video, Direction::SendOnly, None);
     ///
@@ -937,15 +937,15 @@ impl Rtc {
     /// // Send json OFFER to remote peer. Receive an answer back.
     /// let answer: SdpAnswer = todo!();
     ///
-    /// rtc.sdp_changes().accept_answer(pending, answer).unwrap();
+    /// rtc.sdp_api().accept_answer(pending, answer).unwrap();
     /// ```
-    pub fn sdp_changes(&mut self) -> SdpChanges {
-        SdpChanges::new(self)
+    pub fn sdp_api(&mut self) -> SdpApi {
+        SdpApi::new(self)
     }
 
     /// Makes direct changes to the Rtc session.
     ///
-    /// This is a low level API. For "normal" use via SDP, see [`Rtc::sdp_changes()`].
+    /// This is a low level API. For "normal" use via SDP, see [`Rtc::sdp_api()`].
     pub fn direct_api(&mut self) -> DirectApi {
         DirectApi::new(self)
     }
@@ -1339,7 +1339,7 @@ impl Rtc {
     ///
     /// All media rows are announced via the [`Event::MediaAdded`] event. This function
     /// will return `None` for any [`Mid`] until that event has fired. This
-    /// is also the case for the `mid` that comes from [`SdpChanges::add_media()`].
+    /// is also the case for the `mid` that comes from [`SdpApi::add_media()`].
     ///
     /// Incoming media data is via the [`Event::MediaData`] event.
     ///
@@ -1363,7 +1363,7 @@ impl Rtc {
     /// Obtain handle for writing to a data channel.
     ///
     /// This is first available when a [`ChannelId`] is advertised via [`Event::ChannelOpen`].
-    /// The function returns `None` also for IDs from [`SdpChanges::add_channel()`].
+    /// The function returns `None` also for IDs from [`SdpApi::add_channel()`].
     ///
     /// Incoming channel data is via the [`Event::ChannelData`] event.
     ///

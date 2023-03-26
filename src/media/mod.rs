@@ -72,7 +72,7 @@ impl Media<'_> {
     }
 
     /// Current direction. This can be changed using
-    /// [`SdpChanges::set_direction()`][crate::SdpChanges::set_direction()] followed by an SDP negotiation.
+    /// [`SdpApi::set_direction()`][crate::SdpApi::set_direction()] followed by an SDP negotiation.
     ///
     /// To test whether it's possible to send media with the current direction, use
     ///

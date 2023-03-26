@@ -23,14 +23,14 @@ use crate::RtcError;
 pub use crate::sdp::{SdpAnswer, SdpOffer};
 
 /// Changes to the Rtc via SDP Offer/Answer dance.
-pub struct SdpChanges<'a> {
+pub struct SdpApi<'a> {
     rtc: &'a mut Rtc,
     changes: Changes,
 }
 
-impl<'a> SdpChanges<'a> {
+impl<'a> SdpApi<'a> {
     pub(crate) fn new(rtc: &'a mut Rtc) -> Self {
-        SdpChanges {
+        SdpApi {
             rtc,
             changes: Changes::default(),
         }
@@ -40,7 +40,7 @@ impl<'a> SdpChanges<'a> {
     /// changes will have been made to the session. The resulting [`SdpAnswer`] should be
     /// sent to the remote peer.
     ///
-    /// <b>Note. Pending changes from a previous non-completed [`SdpChanges`][super::SdpChanges] will be
+    /// <b>Note. Pending changes from a previous non-completed [`SdpApi`][super::SdpApi] will be
     /// considered rolled back when calling this function.</b>
     ///
     /// The incoming SDP is validated in various ways which can cause this call to fail.
@@ -55,7 +55,7 @@ impl<'a> SdpChanges<'a> {
     /// let offer: SdpOffer = serde_json::from_slice(json_offer).unwrap();
     ///
     /// let mut rtc = Rtc::new();
-    /// let answer = rtc.sdp_changes().accept_offer(offer).unwrap();
+    /// let answer = rtc.sdp_api().accept_offer(offer).unwrap();
     ///
     /// // send json_answer to remote peer.
     /// let json_answer = serde_json::to_vec(&answer).unwrap();
@@ -103,8 +103,8 @@ impl<'a> SdpChanges<'a> {
     /// Accept an answer to a previously created [`SdpOffer`].
     ///
     /// This function returns an [`RtcError::ChangesOutOfOrder`] if we have created and applied another
-    /// [`SdpChanges`][super::SdpChanges] before calling this. The same also happens if we use
-    /// [`SdpChanges::accept_offer()`] before using this pending instance.
+    /// [`SdpApi`][super::SdpApi] before calling this. The same also happens if we use
+    /// [`SdpApi::accept_offer()`] before using this pending instance.
     ///
     /// ```no_run
     /// # use str0m::Rtc;
@@ -112,14 +112,14 @@ impl<'a> SdpChanges<'a> {
     /// # use str0m::change::SdpAnswer;
     /// let mut rtc = Rtc::new();
     ///
-    /// let mut changes = rtc.sdp_changes();
+    /// let mut changes = rtc.sdp_api();
     /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None);
     /// let (offer, pending) = changes.apply().unwrap();
     ///
     /// // send offer to remote peer, receive answer back
     /// let answer: SdpAnswer = todo!();
     ///
-    /// rtc.sdp_changes().accept_answer(pending, answer).unwrap();
+    /// rtc.sdp_api().accept_answer(pending, answer).unwrap();
     /// ```
     pub fn accept_answer(
         mut self,
@@ -166,13 +166,13 @@ impl<'a> SdpChanges<'a> {
 
     /// Test if any changes have been made.
     ///
-    /// If changes have been made, nothing happens until we call [`SdpChanges::apply()`].
+    /// If changes have been made, nothing happens until we call [`SdpApi::apply()`].
     ///
     /// ```
     /// # use str0m::{Rtc, media::MediaKind, media::Direction};
     /// let mut rtc = Rtc::new();
     ///
-    /// let mut changes = rtc.sdp_changes();
+    /// let mut changes = rtc.sdp_api();
     /// assert!(!changes.has_changes());
     ///
     /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None);
@@ -193,7 +193,7 @@ impl<'a> SdpChanges<'a> {
     /// # use str0m::{Rtc, media::MediaKind, media::Direction};
     /// let mut rtc = Rtc::new();
     ///
-    /// let mut changes = rtc.sdp_changes();
+    /// let mut changes = rtc.sdp_api();
     ///
     /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None);
     /// ```
@@ -271,14 +271,14 @@ impl<'a> SdpChanges<'a> {
     /// Change the direction of an already existing media.
     ///
     /// All media have a direction. The media can be added by this side via
-    /// [`SdpChanges::add_media()`] or by the remote peer. Either way, the direction
+    /// [`SdpApi::add_media()`] or by the remote peer. Either way, the direction
     /// of the line can be changed at any time.
     ///
     /// It's possible to set the direction [`Direction::Inactive`] for media that
     /// will not be used by the session anymore.
     ///
     /// If the direction is set for media that doesn't exist, or if the direction is
-    /// the same that's already set [`SdpChanges::apply()`] not require a negotiation.
+    /// the same that's already set [`SdpApi::apply()`] not require a negotiation.
     pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
         let Some(media) = self.rtc.session.media_by_mid_mut(mid) else {
             return;
@@ -307,7 +307,7 @@ impl<'a> SdpChanges<'a> {
     /// # use str0m::Rtc;
     /// let mut rtc = Rtc::new();
     ///
-    /// let mut changes = rtc.sdp_changes();
+    /// let mut changes = rtc.sdp_api();
     ///
     /// let cid = changes.add_channel("my special channel".to_string());
     /// ```
@@ -341,18 +341,18 @@ impl<'a> SdpChanges<'a> {
     /// peer and apply the answer using [`SdpPendingOffer`].
     ///
     /// In case this returns `None`, there either were no changes, or the changes could be applied
-    /// without doing a negotiation. Specifically for additional [`SdpChanges::add_channel()`]
+    /// without doing a negotiation. Specifically for additional [`SdpApi::add_channel()`]
     /// after the first, there is no negotiation needed.
     ///
     /// The [`SdpPendingOffer`] is valid until the next time we call this function, at which
-    /// point using it will raise an error. Using [`SdpChanges::accept_offer()`] will also invalidate
+    /// point using it will raise an error. Using [`SdpApi::accept_offer()`] will also invalidate
     /// the current [`SdpPendingOffer`].
     ///
     /// ```
     /// # use str0m::Rtc;
     /// let mut rtc = Rtc::new();
     ///
-    /// let changes = rtc.sdp_changes();
+    /// let changes = rtc.sdp_api();
     /// assert!(changes.apply().is_none());
     /// ```
     pub fn apply(self) -> Option<(SdpOffer, SdpPendingOffer)> {
@@ -374,10 +374,10 @@ impl<'a> SdpChanges<'a> {
     }
 }
 
-/// Pending offer from a previous [`Rtc::sdp_changes()`] call.
+/// Pending offer from a previous [`Rtc::sdp_api()`] call.
 ///
 /// This allows us to accept a remote answer. No changes have been made to the session
-/// before we call [`SdpChanges::accept_answer()`], which means that rolling back a
+/// before we call [`SdpApi::accept_answer()`], which means that rolling back a
 /// change is as simple as dropping this instance.
 ///
 /// ```no_run
@@ -386,14 +386,14 @@ impl<'a> SdpChanges<'a> {
 /// # use str0m::change::SdpAnswer;
 /// let mut rtc = Rtc::new();
 ///
-/// let mut changes = rtc.sdp_changes();
+/// let mut changes = rtc.sdp_api();
 /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None);
 /// let (offer, pending) = changes.apply().unwrap();
 ///
 /// // send offer to remote peer, receive answer back
 /// let answer: SdpAnswer = todo!();
 ///
-/// rtc.sdp_changes().accept_answer(pending, answer).unwrap();
+/// rtc.sdp_api().accept_answer(pending, answer).unwrap();
 /// ```
 pub struct SdpPendingOffer {
     change_id: usize,
@@ -1143,19 +1143,19 @@ mod test {
         let mut rtc1 = Rtc::new();
         let mut rtc2 = Rtc::new();
 
-        let mut change1 = rtc1.sdp_changes();
+        let mut change1 = rtc1.sdp_api();
         change1.add_channel("ch1".into());
         let (offer1, pending1) = change1.apply().unwrap();
 
-        let mut change2 = rtc2.sdp_changes();
+        let mut change2 = rtc2.sdp_api();
         change2.add_channel("ch2".into());
         let (offer2, _) = change2.apply().unwrap();
 
         // invalidates pending1
-        let _ = rtc1.sdp_changes().accept_offer(offer2).unwrap();
-        let answer2 = rtc2.sdp_changes().accept_offer(offer1).unwrap();
+        let _ = rtc1.sdp_api().accept_offer(offer2).unwrap();
+        let answer2 = rtc2.sdp_api().accept_offer(offer1).unwrap();
 
-        let r = rtc1.sdp_changes().accept_answer(pending1, answer2);
+        let r = rtc1.sdp_api().accept_answer(pending1, answer2);
 
         assert!(matches!(r, Err(RtcError::ChangesOutOfOrder)));
     }

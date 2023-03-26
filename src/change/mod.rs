@@ -2,7 +2,7 @@
 
 mod sdp;
 pub(crate) use sdp::AddMedia;
-pub use sdp::{SdpAnswer, SdpChanges, SdpOffer, SdpPendingOffer};
+pub use sdp::{SdpAnswer, SdpApi, SdpOffer, SdpPendingOffer};
 
 mod direct;
 pub use direct::DirectApi;
