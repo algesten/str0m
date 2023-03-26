@@ -20,12 +20,12 @@ pub fn unidirectional() -> Result<(), RtcError> {
     l.add_local_candidate(host1);
     r.add_local_candidate(host2);
 
-    let mut change = l.sdp_changes();
+    let mut change = l.sdp_api();
     let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None);
     let (offer, pending) = change.apply().unwrap();
 
-    let answer = r.rtc.sdp_changes().accept_offer(offer)?;
-    l.rtc.sdp_changes().accept_answer(pending, answer)?;
+    let answer = r.rtc.sdp_api().accept_offer(offer)?;
+    l.rtc.sdp_api().accept_answer(pending, answer)?;
 
     loop {
         if l.ice_connection_state().is_connected() || r.ice_connection_state().is_connected() {

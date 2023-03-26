@@ -90,7 +90,7 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
 
     // Create an SDP Answer.
     let answer = rtc
-        .sdp_changes()
+        .sdp_api()
         .accept_offer(offer)
         .expect("offer to be accepted");
 
@@ -423,7 +423,7 @@ impl Client {
             return false;
         }
 
-        let mut change = self.rtc.sdp_changes();
+        let mut change = self.rtc.sdp_api();
 
         for track in &mut self.tracks_out {
             if let TrackOutState::ToOpen = track.state {
@@ -471,7 +471,7 @@ impl Client {
     fn handle_offer(&mut self, offer: SdpOffer) {
         let answer = self
             .rtc
-            .sdp_changes()
+            .sdp_api()
             .accept_offer(offer)
             .expect("offer to be accepted");
 
@@ -497,7 +497,7 @@ impl Client {
     fn handle_answer(&mut self, answer: SdpAnswer) {
         if let Some(pending) = self.pending.take() {
             self.rtc
-                .sdp_changes()
+                .sdp_api()
                 .accept_answer(pending, answer)
                 .expect("answer to be accepted");
 

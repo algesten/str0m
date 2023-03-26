@@ -64,7 +64,7 @@ fn web_request(request: &Request) -> Response {
 
     // Create an SDP Answer.
     let answer = rtc
-        .sdp_changes()
+        .sdp_api()
         .accept_offer(offer)
         .expect("offer to be accepted");
 
