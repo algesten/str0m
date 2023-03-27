@@ -236,9 +236,13 @@ impl PacketizingBuffer {
 //                       +-+
 #[derive(Debug, Default)]
 struct TotalQueue {
+    /// Number of unsent packets.
     unsent_count: usize,
+    /// The data size (bytes) of the unsent packets.
     unsent_size: usize,
+    /// When we last added some value to `queue_time`.
     last: Option<Instant>,
+    /// The total queue time of all the unsent packets.
     queue_time: Duration,
 }
 
@@ -270,9 +274,9 @@ impl TotalQueue {
         self.unsent_size -= size;
         self.queue_time -= queue_time;
         if self.unsent_count == 0 {
-            self.unsent_size = 0;
+            assert!(self.unsent_size == 0);
+            assert!(self.queue_time == Duration::ZERO);
             self.last = None;
-            self.queue_time = Duration::ZERO;
         }
     }
 }

@@ -47,6 +47,18 @@ pub enum MediaKind {
     Video,
 }
 
+impl MediaKind {
+    /// Tests if this is `MediaKind::Audio`
+    pub fn is_audio(&self) -> bool {
+        *self == MediaKind::Audio
+    }
+
+    /// Tests if this is `MediaKind::Video`
+    pub fn is_video(&self) -> bool {
+        *self == MediaKind::Video
+    }
+}
+
 /// Packetizes some bytes for use as RTP packet.
 pub trait Packetizer: fmt::Debug {
     /// Chunk the data up into RTP packets.

@@ -1121,8 +1121,8 @@ impl MediaInner {
 
         let state = QueueState {
             mid: self.mid,
-            is_audio: self.kind == MediaKind::Audio,
-            use_for_padding: self.has_tx_rtx(),
+            is_audio: self.kind.is_audio(),
+            use_for_padding: self.kind.is_video() && self.has_tx_rtx(),
             snapshot,
         };
 
