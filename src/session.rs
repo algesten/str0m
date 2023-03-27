@@ -100,12 +100,10 @@ impl Session {
         }
         let (pacer, bwe) = if use_bwe {
             let initial_bitrate = 300_000.into();
-            let mut pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(
+            let pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(
                 initial_bitrate * PACING_FACTOR * 2.0,
                 Duration::from_millis(40),
             ));
-
-            pacer.set_padding_rate(initial_bitrate * PADDING_FACTOR);
 
             let bwe = SendSideBandwithEstimator::new(initial_bitrate);
 
