@@ -65,6 +65,7 @@ impl PacketizingBuffer {
         let chunks = self.pack.packetize(mtu, data)?;
         let len = chunks.len();
         let now = meta.queued_at;
+        self.total.move_time_forward(now);
 
         assert!(len <= self.max_retain, "Must retain at least chunked count");
 
@@ -107,6 +108,7 @@ impl PacketizingBuffer {
     }
 
     pub fn poll_next(&mut self, now: Instant) -> Option<&mut Packetized> {
+        self.total.move_time_forward(now);
         let next = self.queue.get_mut(self.emit_next)?;
         if next.count_as_unsent {
             next.count_as_unsent = false;
@@ -124,6 +126,7 @@ impl PacketizingBuffer {
 
     // Used when we get a resend to account for resends in the TotalQueue.
     pub fn mark_as_unaccounted(&mut self, now: Instant, seq_no: SeqNo) {
+        self.total.move_time_forward(now);
         let Some(p) = self.queue.iter_mut().find(|r| r.seq_no == Some(seq_no)) else {
             return;
         };
@@ -141,6 +144,7 @@ impl PacketizingBuffer {
         now: Instant,
         seq_no: SeqNo,
     ) -> Option<&Packetized> {
+        self.total.move_time_forward(now);
         let p = self.queue.iter_mut().find(|r| r.seq_no == Some(seq_no))?;
 
         if p.count_as_unsent {
@@ -168,7 +172,6 @@ impl PacketizingBuffer {
     }
 
     pub fn queue_snapshot(&mut self, now: Instant) -> QueueSnapshot {
-        // This changes the total.total_queue_time.
         self.total.move_time_forward(now);
 
         QueueSnapshot {
@@ -262,7 +265,6 @@ impl TotalQueue {
     }
 
     fn increase(&mut self, now: Instant, queue_time: Duration, size: usize) {
-        self.move_time_forward(now);
         self.unsent_count += 1;
         self.unsent_size += size;
         self.queue_time += queue_time;
