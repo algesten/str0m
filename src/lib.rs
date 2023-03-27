@@ -798,7 +798,12 @@ impl Rtc {
             alive: true,
             ice,
             dtls: Dtls::new().expect("DTLS to init without problem"),
-            session: Session::new(config.codec_config, config.ice_lite, config.bwe),
+            session: Session::new(
+                config.codec_config,
+                config.ice_lite,
+                config.bwe,
+                config.bwe_initial_bitrate,
+            ),
             sctp: RtcSctp::new(),
             stats: Stats::new(config.stats_interval),
             remote_fingerprint: None,
@@ -1468,6 +1473,7 @@ pub struct RtcConfig {
     stats_interval: Duration,
     /// Whether to use Bandwidth Estimation to discover the egress bandwidth.
     bwe: bool,
+    bwe_initial_bitrate: Bitrate,
 }
 
 impl RtcConfig {
@@ -1563,9 +1569,14 @@ impl RtcConfig {
         self
     }
 
-    /// Whether to use bandwidth estimation to discover the available send bandwidth.
-    pub fn enable_bwe(mut self) -> Self {
+    /// Enables the estimation of the available send bandwidth.
+    /// This includes setting the initial estimate (which otherwise defaults to 1500kbps)
+    pub fn enable_bwe(mut self, initial_estimate: Option<Bitrate>) -> Self {
         self.bwe = true;
+
+        if let Some(initial) = initial_estimate {
+            self.bwe_initial_bitrate = initial;
+        }
 
         self
     }
@@ -1583,6 +1594,7 @@ impl Default for RtcConfig {
             codec_config: CodecConfig::new_with_defaults(),
             stats_interval: Duration::from_secs(1),
             bwe: false,
+            bwe_initial_bitrate: Bitrate::kbps(1500),
         }
     }
 }
