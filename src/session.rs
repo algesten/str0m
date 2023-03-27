@@ -91,7 +91,12 @@ pub enum MediaEvent {
 }
 
 impl Session {
-    pub fn new(codec_config: CodecConfig, ice_lite: bool, use_bwe: bool) -> Self {
+    pub fn new(
+        codec_config: CodecConfig,
+        ice_lite: bool,
+        use_bwe: bool,
+        bwe_initial_estimate: Bitrate,
+    ) -> Self {
         let mut id = SessionId::new();
         // Max 2^62 - 1: https://bugzilla.mozilla.org/show_bug.cgi?id=861895
         const MAX_ID: u64 = 2_u64.pow(62) - 1;
@@ -99,13 +104,12 @@ impl Session {
             id = (*id >> 1).into();
         }
         let (pacer, bwe) = if use_bwe {
-            let initial_bitrate = 1500_000.into();
             let pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(
-                initial_bitrate * PACING_FACTOR * 2.0,
+                bwe_initial_estimate * PACING_FACTOR * 2.0,
                 Duration::from_millis(40),
             ));
 
-            let bwe = SendSideBandwithEstimator::new(initial_bitrate);
+            let bwe = SendSideBandwithEstimator::new(bwe_initial_estimate);
 
             (pacer, Some(bwe))
         } else {
