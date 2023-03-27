@@ -145,8 +145,7 @@ where
     }
 
     pub fn is_inited(&self) -> bool {
-        let state_init = matches!(self.state, State::Init(_, _));
-        !state_init
+        self.active.is_some()
     }
 
     pub fn is_active(&self) -> Option<bool> {
