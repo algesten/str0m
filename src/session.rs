@@ -99,7 +99,7 @@ impl Session {
             id = (*id >> 1).into();
         }
         let (pacer, bwe) = if use_bwe {
-            let initial_bitrate = 300_000.into();
+            let initial_bitrate = 1500_000.into();
             let pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(
                 initial_bitrate * PACING_FACTOR * 2.0,
                 Duration::from_millis(40),
