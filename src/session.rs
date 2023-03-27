@@ -94,8 +94,7 @@ impl Session {
     pub fn new(
         codec_config: CodecConfig,
         ice_lite: bool,
-        use_bwe: bool,
-        bwe_initial_estimate: Bitrate,
+        bwe_initial_bitrate: Option<Bitrate>,
     ) -> Self {
         let mut id = SessionId::new();
         // Max 2^62 - 1: https://bugzilla.mozilla.org/show_bug.cgi?id=861895
@@ -103,13 +102,13 @@ impl Session {
         while *id > MAX_ID {
             id = (*id >> 1).into();
         }
-        let (pacer, bwe) = if use_bwe {
+        let (pacer, bwe) = if let Some(rate) = bwe_initial_bitrate {
             let pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(
-                bwe_initial_estimate * PACING_FACTOR * 2.0,
+                rate * PACING_FACTOR * 2.0,
                 Duration::from_millis(40),
             ));
 
-            let bwe = SendSideBandwithEstimator::new(bwe_initial_estimate);
+            let bwe = SendSideBandwithEstimator::new(rate);
 
             (pacer, Some(bwe))
         } else {
