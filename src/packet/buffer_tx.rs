@@ -277,7 +277,7 @@ impl TotalQueue {
         self.queue_time -= queue_time;
         if self.unsent_count == 0 {
             assert!(self.unsent_size == 0);
-            assert!(self.queue_time == Duration::ZERO);
+            self.queue_time = Duration::ZERO;
             self.last = None;
         }
     }
