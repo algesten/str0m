@@ -1063,7 +1063,10 @@ impl Rtc {
                     source,
                     destination,
                 } => {
-                    info!("ICE nominated send: {:?}", source);
+                    info!(
+                        "ICE nominated send from: {:?} to: {:?}",
+                        source, destination
+                    );
                     self.send_addr = Some(SendAddr {
                         source,
                         destination,
