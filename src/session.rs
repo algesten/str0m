@@ -511,13 +511,10 @@ impl Session {
                 let range = self.twcc_tx_register.apply_report(twcc, now);
 
                 if let Some(bwe) = &mut self.bwe {
-                    let observed_bitrate = self
-                        .twcc_tx_register
-                        .observed_bitrate(Duration::from_millis(500), now);
                     let records = range.and_then(|range| self.twcc_tx_register.send_records(range));
 
-                    if let (Some(observed_bitrate), Some(records)) = (observed_bitrate, records) {
-                        bwe.update(records, observed_bitrate, now);
+                    if let Some(records) = records {
+                        bwe.update(records, now);
                     }
                 }
 

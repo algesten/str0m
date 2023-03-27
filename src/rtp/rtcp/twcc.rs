@@ -4,7 +4,6 @@ use std::fmt;
 use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
-use super::Bitrate;
 use super::{extend_seq, FeedbackMessageType, RtcpHeader, RtcpPacket};
 use super::{RtcpType, SeqNo, Ssrc, TransportType};
 
@@ -968,6 +967,10 @@ impl TwccSendRecord {
         self.local_send_time
     }
 
+    pub fn size(&self) -> usize {
+        self.size as usize
+    }
+
     /// The time indicated by the remote side for when they received the packet.
     pub fn remote_recv_time(&self) -> Option<Instant> {
         self.recv_report.as_ref().and_then(|r| r.remote_recv_time)
@@ -987,9 +990,6 @@ pub struct TwccRecvReport {
 
     /// The remote time the other side received the seq.
     remote_recv_time: Option<Instant>,
-
-    /// The reported packet status.
-    packet_status: PacketStatus,
 }
 
 impl TwccSendRegister {
@@ -1033,7 +1033,7 @@ impl TwccSendRegister {
         let mut iter = twcc
             .into_iter(time_zero, self.last_registered)
             .skip_while(|(seq, _, _)| seq < &head_seq);
-        let (first_seq_no, first_status, first_instant) = iter.next()?;
+        let (first_seq_no, _, first_instant) = iter.next()?;
 
         let mut iter2 = self.queue.iter_mut().skip_while(|r| *r.seq < *first_seq_no);
         let first_record = iter2.next()?;
@@ -1042,7 +1042,6 @@ impl TwccSendRegister {
             now: Instant,
             r: &mut TwccSendRecord,
             seq: SeqNo,
-            packet_status: PacketStatus,
             instant: Option<Instant>,
         ) -> bool {
             if r.seq != seq {
@@ -1050,7 +1049,6 @@ impl TwccSendRegister {
             }
             let recv_report = TwccRecvReport {
                 local_recv_time: now,
-                packet_status,
                 remote_recv_time: instant,
             };
             r.recv_report = Some(recv_report);
@@ -1065,17 +1063,17 @@ impl TwccSendRegister {
 
         let mut problematic_seq = None;
 
-        if !update(now, first_record, first_seq_no, first_status, first_instant) {
+        if !update(now, first_record, first_seq_no, first_instant) {
             problematic_seq = Some((first_record.seq, first_seq_no));
         }
 
         let mut last_seq_no = first_seq_no;
-        for ((seq, status, instant), record) in iter.zip(iter2) {
+        for ((seq, _, instant), record) in iter.zip(iter2) {
             if problematic_seq.is_some() {
                 break;
             }
 
-            if !update(now, record, seq, status, instant) {
+            if !update(now, record, seq, instant) {
                 problematic_seq = Some((record.seq, seq));
             }
             last_seq_no = seq;
@@ -1091,79 +1089,6 @@ impl TwccSendRegister {
         }
 
         Some(first_seq_no..=last_seq_no)
-    }
-
-    /// Calculate the observed bitrate in bits per second, looking backwards over a window in time.
-    ///
-    /// Returns [`None`] if the window is too large to provide an accurate measurement.
-    /// Returns [`None`] if the last acknowledge packet was sent more than `2 * window` ago.
-    ///
-    /// ## Accuracy
-    ///
-    /// This is based on packets that have been acknowledged by the receiving side, as such it can
-    /// be slightly wrong.
-    pub fn observed_bitrate(&self, window: Duration, now: Instant) -> Option<Bitrate> {
-        if self.queue.is_empty() {
-            return None;
-        }
-
-        let first = self.queue.front()?;
-        // Find the last record that has been acknowledged. Because TWCC reports are only sent
-        // periodically it's probable that more recent entries in the queue have not yet been
-        // acknowledged.
-        let last = self
-            .queue
-            .iter()
-            .rev()
-            .find(|s| s.remote_recv_time().is_some())?;
-        let last_remote_recv_time = last.remote_recv_time()?;
-        let cutoff = last_remote_recv_time.checked_sub(window)?;
-
-        // Window too large
-        let total_window = last.local_send_time - first.local_send_time;
-        if total_window < window {
-            return None;
-        }
-
-        // Last acknowledged packet too old
-        if last.local_send_time < now.checked_sub(window * 2)? {
-            return None;
-        }
-
-        let sum: u64 = self
-            .queue
-            .iter()
-            .rev()
-            .skip_while(|record| record.seq > last.seq)
-            .take_while(|record| {
-                record
-                    .remote_recv_time()
-                    .map(|r| r > cutoff)
-                    .unwrap_or(true)
-            })
-            .filter_map(|record| {
-                if record
-                    .recv_report
-                    .as_ref()
-                    .map(|r| {
-                        !matches!(
-                            r.packet_status,
-                            PacketStatus::NotReceived | PacketStatus::Unknown
-                        )
-                    })
-                    .unwrap_or(false)
-                {
-                    Some(record.size as u64)
-                } else {
-                    None
-                }
-            })
-            .sum();
-        let bits = sum as f64 * 8.0;
-        let seconds = window.as_millis() as f64 / 1000.0;
-        let result = ((1.0 / seconds) * bits).floor() as u64;
-
-        Some(result.into())
     }
 
     pub fn send_record(&self, seq: SeqNo) -> Option<&TwccSendRecord> {

@@ -4,6 +4,7 @@
 //! Much of this code has been ported from the libWebRTC implementations. The complete system has
 //! not been ported, only a smaller part that corresponds roughly to the IETF draft is implemented.
 
+mod acked_bitrate_estimator;
 mod arrival_group;
 pub(crate) mod macros;
 mod rate_control;
@@ -14,13 +15,16 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::rtp::{Bitrate, SeqNo, TwccSendRecord};
+use crate::rtp::{Bitrate, DataSize, SeqNo, TwccSendRecord};
 
+use acked_bitrate_estimator::AckedBitrateEstimator;
 use arrival_group::{ArrivalGroupAccumulator, InterGroupDelayDelta};
 use rate_control::RateControl;
 use trendline_estimator::TrendlineEstimator;
 
 const MAX_RTT_HISTORY_WINDOW: usize = 32;
+const INITIAL_BITRATE_WINDOW: Duration = Duration::from_millis(500);
+const BITRATE_WINDOW: Duration = Duration::from_millis(150);
 
 /// Main entry point for the Googcc inspired BWE implementation.
 ///
@@ -30,6 +34,7 @@ pub struct SendSideBandwithEstimator {
     arrival_group_accumulator: ArrivalGroupAccumulator,
     trendline_estimator: TrendlineEstimator,
     rate_control: RateControl,
+    acked_bitrate_estimator: AckedBitrateEstimator,
     /// Last unpolled bitrate estimate. [`None`] before the first poll and after each poll that,
     /// updated when we get a new estimate.
     next_estimate: Option<Bitrate>,
@@ -45,6 +50,10 @@ impl SendSideBandwithEstimator {
         Self {
             arrival_group_accumulator: ArrivalGroupAccumulator::default(),
             trendline_estimator: TrendlineEstimator::new(20),
+            acked_bitrate_estimator: AckedBitrateEstimator::new(
+                INITIAL_BITRATE_WINDOW,
+                BITRATE_WINDOW,
+            ),
             rate_control: RateControl::new(initial_bitrate, Bitrate::kbps(40), Bitrate::gbps(10)),
             next_estimate: None,
             last_estimate: None,
@@ -56,7 +65,6 @@ impl SendSideBandwithEstimator {
     pub(crate) fn update<'t>(
         &mut self,
         records: impl Iterator<Item = &'t TwccSendRecord>,
-        observed_bitrate: Bitrate,
         now: Instant,
     ) {
         let mut acked: Vec<AckedPacket> = Vec::new();
@@ -72,6 +80,9 @@ impl SendSideBandwithEstimator {
         acked.sort_by(AckedPacket::order_by_receive_time);
 
         for acked_packet in acked {
+            self.acked_bitrate_estimator
+                .update(acked_packet.remote_recv_time, acked_packet.size);
+
             if let Some(delay_variation) = self
                 .arrival_group_accumulator
                 .accumulate_packet(acked_packet)
@@ -90,15 +101,17 @@ impl SendSideBandwithEstimator {
 
         let new_hypothesis = self.trendline_estimator.hypothesis();
 
-        self.rate_control.update(
-            new_hypothesis.into(),
-            observed_bitrate,
-            self.mean_max_rtt(),
-            now,
-        );
-        let estimated_rate = self.rate_control.estimated_bitrate();
+        if let Some(observed_bitrate) = self.acked_bitrate_estimator.current_estimate() {
+            self.rate_control.update(
+                new_hypothesis.into(),
+                observed_bitrate,
+                self.mean_max_rtt(),
+                now,
+            );
+            let estimated_rate = self.rate_control.estimated_bitrate();
 
-        self.update_estimate(estimated_rate);
+            self.update_estimate(estimated_rate);
+        }
     }
 
     /// Poll for an estimate.
@@ -143,6 +156,8 @@ impl SendSideBandwithEstimator {
 pub struct AckedPacket {
     /// The TWCC sequence number
     seq_no: SeqNo,
+    /// The size of the packets in bytes.
+    size: DataSize,
     /// When we sent the packet
     local_send_time: Instant,
     /// When the packet was received at the remote, note this Instant is only usable with other
@@ -173,6 +188,7 @@ impl TryFrom<&TwccSendRecord> for AckedPacket {
 
         Ok(Self {
             seq_no: value.seq(),
+            size: value.size().into(),
             local_send_time: value.local_send_time(),
             remote_recv_time,
         })

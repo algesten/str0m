@@ -211,6 +211,8 @@ pub(super) struct InterGroupDelayDelta {
 mod test {
     use std::time::{Duration, Instant};
 
+    use crate::rtp::DataSize;
+
     use super::{AckedPacket, ArrivalGroup, Belongs};
 
     #[test]
@@ -221,6 +223,7 @@ mod test {
         assert_eq!(
             group.belongs_to_group(&AckedPacket {
                 seq_no: 1.into(),
+                size: DataSize::ZERO,
                 local_send_time: now,
                 remote_recv_time: now + duration_us(10),
             }),
@@ -238,24 +241,28 @@ mod test {
 
             packets.push(AckedPacket {
                 seq_no: 0.into(),
+                size: DataSize::ZERO,
                 local_send_time: now,
                 remote_recv_time: now + duration_us(150),
             });
 
             packets.push(AckedPacket {
                 seq_no: 1.into(),
+                size: DataSize::ZERO,
                 local_send_time: now + duration_us(50),
                 remote_recv_time: now + duration_us(225),
             });
 
             packets.push(AckedPacket {
                 seq_no: 2.into(),
+                size: DataSize::ZERO,
                 local_send_time: now + duration_us(1005),
                 remote_recv_time: now + duration_us(1140),
             });
 
             packets.push(AckedPacket {
                 seq_no: 3.into(),
+                size: DataSize::ZERO,
                 local_send_time: now + duration_us(4995),
                 remote_recv_time: now + duration_us(5001),
             });
@@ -263,6 +270,7 @@ mod test {
             // Should not belong
             packets.push(AckedPacket {
                 seq_no: 4.into(),
+                size: DataSize::ZERO,
                 local_send_time: now + duration_us(5700),
                 remote_recv_time: now + duration_us(6000),
             });
@@ -291,24 +299,28 @@ mod test {
 
             packets.push(AckedPacket {
                 seq_no: 0.into(),
+                size: DataSize::ZERO,
                 local_send_time: now,
                 remote_recv_time: now + duration_us(150),
             });
 
             packets.push(AckedPacket {
                 seq_no: 1.into(),
+                size: DataSize::ZERO,
                 local_send_time: now + duration_us(50),
                 remote_recv_time: now + duration_us(225),
             });
 
             packets.push(AckedPacket {
                 seq_no: 2.into(),
+                size: DataSize::ZERO,
                 local_send_time: now + duration_us(1005),
                 remote_recv_time: now + duration_us(1140),
             });
 
             packets.push(AckedPacket {
                 seq_no: 3.into(),
+                size: DataSize::ZERO,
                 local_send_time: now + duration_us(4995),
                 remote_recv_time: now + duration_us(5001),
             });
@@ -316,6 +328,7 @@ mod test {
             // Should be skipped
             packets.push(AckedPacket {
                 seq_no: 4.into(),
+                size: DataSize::ZERO,
                 local_send_time: now + duration_us(5001),
                 remote_recv_time: now + duration_us(5000),
             });
@@ -323,6 +336,7 @@ mod test {
             // Should not belong
             packets.push(AckedPacket {
                 seq_no: 5.into(),
+                size: DataSize::ZERO,
                 local_send_time: now + duration_us(5700),
                 remote_recv_time: now + duration_us(6000),
             });
@@ -351,18 +365,21 @@ mod test {
 
             packets.push(AckedPacket {
                 seq_no: 0.into(),
+                size: DataSize::ZERO,
                 local_send_time: now,
                 remote_recv_time: now + duration_us(150),
             });
 
             packets.push(AckedPacket {
                 seq_no: 1.into(),
+                size: DataSize::ZERO,
                 local_send_time: now + duration_us(50),
                 remote_recv_time: now + duration_us(225),
             });
 
             packets.push(AckedPacket {
                 seq_no: 2.into(),
+                size: DataSize::ZERO,
                 local_send_time: now + duration_us(5152),
                 // Just less than 5ms inter arrival delta
                 remote_recv_time: now + duration_us(5224),
@@ -371,6 +388,7 @@ mod test {
             // Should not belong
             packets.push(AckedPacket {
                 seq_no: 3.into(),
+                size: DataSize::ZERO,
                 local_send_time: now + duration_us(5700),
                 remote_recv_time: now + duration_us(6000),
             });
