@@ -500,7 +500,7 @@ impl LeakyBucketPacer {
                 // If all queues are empty and we have a padding rate wait until we have drained
                 // either the media debt to send media or the padding debt to send padding.
                 let mut drain_debt_time = (self.media_debt / self.adjusted_bitrate)
-                    .min(self.padding_debt / padding_bitrate);
+                    .max(self.padding_debt / padding_bitrate);
                 let padding_queue = self
                     .queue_states
                     .iter()
