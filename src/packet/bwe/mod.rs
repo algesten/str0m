@@ -16,6 +16,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use crate::rtp::{Bitrate, DataSize, SeqNo, TwccSendRecord};
+use crate::util::already_happened;
 
 use acked_bitrate_estimator::AckedBitrateEstimator;
 use arrival_group::{ArrivalGroupAccumulator, InterGroupDelayDelta};
@@ -25,6 +26,7 @@ use trendline_estimator::TrendlineEstimator;
 const MAX_RTT_HISTORY_WINDOW: usize = 32;
 const INITIAL_BITRATE_WINDOW: Duration = Duration::from_millis(500);
 const BITRATE_WINDOW: Duration = Duration::from_millis(150);
+const UPDATE_INTERVAL: Duration = Duration::from_millis(25);
 
 /// Main entry point for the Googcc inspired BWE implementation.
 ///
@@ -43,6 +45,9 @@ pub struct SendSideBandwithEstimator {
     last_estimate: Option<Bitrate>,
     /// History of the max RTT derived for each TWCC report.
     max_rtt_history: VecDeque<Duration>,
+
+    /// The last time we updated the estimate.
+    last_update: Instant,
 }
 
 impl SendSideBandwithEstimator {
@@ -58,6 +63,7 @@ impl SendSideBandwithEstimator {
             next_estimate: None,
             last_estimate: None,
             max_rtt_history: VecDeque::default(),
+            last_update: already_happened(),
         }
     }
 
@@ -101,22 +107,30 @@ impl SendSideBandwithEstimator {
 
         let new_hypothesis = self.trendline_estimator.hypothesis();
 
-        if let Some(observed_bitrate) = self.acked_bitrate_estimator.current_estimate() {
-            self.rate_control.update(
-                new_hypothesis.into(),
-                observed_bitrate,
-                self.mean_max_rtt(),
-                now,
-            );
-            let estimated_rate = self.rate_control.estimated_bitrate();
-
-            self.update_estimate(estimated_rate);
-        }
+        self.update_estimate(
+            new_hypothesis,
+            self.acked_bitrate_estimator.current_estimate(),
+            self.mean_max_rtt(),
+            now,
+        );
     }
 
     /// Poll for an estimate.
     pub(crate) fn poll_estimate(&mut self) -> Option<Bitrate> {
         self.next_estimate.take()
+    }
+
+    pub(crate) fn poll_timeout(&self) -> Instant {
+        self.last_update + UPDATE_INTERVAL
+    }
+
+    pub(crate) fn handle_timeout(&mut self, now: Instant) {
+        self.update_estimate(
+            self.trendline_estimator.hypothesis(),
+            self.acked_bitrate_estimator.current_estimate(),
+            self.mean_max_rtt(),
+            now,
+        );
     }
 
     /// Get the latest estimate.
@@ -144,10 +158,26 @@ impl SendSideBandwithEstimator {
         Some(sum / self.max_rtt_history.len() as u32)
     }
 
-    fn update_estimate(&mut self, estimated_rate: Bitrate) {
-        crate::packet::bwe::macros::log_bitrate_estimate!(estimated_rate.as_f64());
-        self.next_estimate = Some(estimated_rate);
-        self.last_estimate = Some(estimated_rate);
+    fn update_estimate(
+        &mut self,
+        hypothesis: BandwithUsage,
+        observed_bitrate: Option<Bitrate>,
+        mean_max_rtt: Option<Duration>,
+        now: Instant,
+    ) {
+        if let Some(observed_bitrate) = observed_bitrate {
+            self.rate_control
+                .update(hypothesis.into(), observed_bitrate, mean_max_rtt, now);
+            let estimated_rate = self.rate_control.estimated_bitrate();
+
+            crate::packet::bwe::macros::log_bitrate_estimate!(estimated_rate.as_f64());
+            self.next_estimate = Some(estimated_rate);
+            self.last_estimate = Some(estimated_rate);
+        }
+
+        // Set this even if we didn't update, otherwise we get stuck in a poll -> handle loop
+        // that starves the run loop.
+        self.last_update = now;
     }
 }
 

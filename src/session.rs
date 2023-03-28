@@ -229,6 +229,9 @@ impl Session {
             .iter_mut()
             .map(|m| m.buffers_tx_queue_state(now));
         self.pacer.handle_timeout(now, iter);
+        if let Some(bwe) = self.bwe.as_mut() {
+            bwe.handle_timeout(now);
+        }
     }
 
     fn create_twcc_feedback(&mut self, sender_ssrc: Ssrc, now: Instant) -> Option<()> {
@@ -727,12 +730,14 @@ impl Session {
         let nack_at = self.nack_at();
         let twcc_at = self.twcc_at();
         let pacing_at = self.pacer.poll_timeout();
+        let bwe_at = self.bwe.as_ref().map(|bwe| bwe.poll_timeout());
 
         let timeout = (media, "media")
             .soonest((regular_at, "regular"))
             .soonest((nack_at, "nack"))
             .soonest((twcc_at, "twcc"))
-            .soonest((pacing_at, "pacing"));
+            .soonest((pacing_at, "pacing"))
+            .soonest((bwe_at, "bwe"));
 
         // trace!("poll_timeout soonest is: {}", timeout.1);
 
