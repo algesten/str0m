@@ -1,7 +1,9 @@
+use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
 use crate::ice::IceCreds;
 use crate::rtp::Direction;
 use crate::rtp::Mid;
+use crate::sctp::ChannelConfig;
 use crate::Rtc;
 use crate::RtcError;
 
@@ -29,7 +31,7 @@ impl<'a> DirectApi<'a> {
     ///
     /// If `controlling` is `false`, this peer connection is set as the ICE controlled agent,
     /// meaning it will respond to connectivity checks sent by the controlling agent.
-    pub fn ice_controlling(&mut self, controlling: bool) {
+    pub fn set_ice_controlling(&mut self, controlling: bool) {
         self.rtc.ice.set_controlling(controlling);
     }
 
@@ -37,12 +39,12 @@ impl<'a> DirectApi<'a> {
     ///
     /// The ICE credentials consist of the username and password used by the ICE agent during
     /// the ICE session to authenticate and exchange connectivity checks with the remote peer.
-    pub fn local_ice_credentials(&self) -> &IceCreds {
-        self.rtc.ice.local_credentials()
+    pub fn local_ice_credentials(&self) -> IceCreds {
+        self.rtc.ice.local_credentials().clone()
     }
 
     /// Sets the remote ICE credentials.
-    pub fn remote_ice_credentials(&mut self, remote_ice_credentials: IceCreds) {
+    pub fn set_remote_ice_credentials(&mut self, remote_ice_credentials: IceCreds) {
         self.rtc.ice.set_remote_credentials(remote_ice_credentials);
     }
 
@@ -50,13 +52,13 @@ impl<'a> DirectApi<'a> {
     ///
     /// The DTLS fingerprint is a hash of the local SSL/TLS certificate used to authenticate the
     /// peer connection and establish a secure communication channel between the peers.
-    pub fn local_dtls_fingerprint(&self) -> &Fingerprint {
-        self.rtc.dtls.local_fingerprint()
+    pub fn local_dtls_fingerprint(&self) -> Fingerprint {
+        self.rtc.dtls.local_fingerprint().clone()
     }
 
     /// Sets the remote DTLS fingerprint.
-    pub fn remote_fingerprint(&mut self, dtls_fingerprint: &Fingerprint) {
-        self.rtc.remote_fingerprint = Some(dtls_fingerprint.clone());
+    pub fn set_remote_fingerprint(&mut self, dtls_fingerprint: Fingerprint) {
+        self.rtc.remote_fingerprint = Some(dtls_fingerprint);
     }
 
     /// Set direction on some media.
@@ -80,5 +82,17 @@ impl<'a> DirectApi<'a> {
     /// Start the SCTP over DTLS.
     pub fn start_sctp(&mut self, client: bool) {
         self.rtc.init_sctp(client)
+    }
+
+    /// Create a new data channel.
+    pub fn create_data_channel(&mut self, config: ChannelConfig) -> ChannelId {
+        let id = self.rtc.chan.new_channel(&config);
+        self.rtc.chan.confirm(id, config);
+        id
+    }
+
+    /// Set whether to enable ice-lite.
+    pub fn set_ice_lite(&mut self, ice_lite: bool) {
+        self.rtc.ice.set_ice_lite(ice_lite);
     }
 }

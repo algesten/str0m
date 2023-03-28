@@ -852,7 +852,7 @@ impl IceAgent {
                 trace!("Handle next triggered pair: {:?}", pair);
                 self.stun_client_binding_request(now, idx);
             } else {
-                trace!("Next triggered pair is in the future: {:?}", deadline - now);
+                // trace!("Next triggered pair is in the future: {:?}", deadline - now);
             }
         }
     }
@@ -876,8 +876,11 @@ impl IceAgent {
         // if we never called handle_timeout, there will be no current time.
         let last_now = self.last_now?;
 
-        // We must empty the queued replies as soon as possible.
-        if !self.stun_server_queue.is_empty() {
+        let has_request = !self.stun_server_queue.is_empty();
+        let has_transmit = !self.transmit.is_empty();
+
+        // We must empty the queued replies or stuff to send as soon as possible.
+        if has_request || has_transmit {
             return Some(last_now + TIMING_ADVANCE);
         }
 

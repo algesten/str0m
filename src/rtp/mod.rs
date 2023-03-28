@@ -8,7 +8,7 @@ use openssl::error::ErrorStack;
 use thiserror::Error;
 
 mod id;
-pub use id::{ChannelId, Mid, Pt, Rid, SeqNo, SessionId, Ssrc};
+pub use id::{Mid, Pt, Rid, SeqNo, SessionId, Ssrc};
 
 mod ext;
 pub use ext::{ExtMap, Extension, ExtensionValues, Extensions, VideoOrientation};

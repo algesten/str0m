@@ -12,10 +12,10 @@ use sctp_proto::{Event, Payload, PayloadProtocolIdentifier, ServerConfig};
 use thiserror::Error;
 
 pub use sctp_proto::Error as ProtoError;
-pub use sctp_proto::ReliabilityType;
+use sctp_proto::ReliabilityType;
 
 mod dcep;
-pub use dcep::DcepOpen;
+use dcep::DcepOpen;
 
 use dcep::DcepAck;
 
@@ -50,7 +50,7 @@ pub struct RtcSctp {
     entries: Vec<StreamEntry>,
     pushed_back_transmit: Option<VecDeque<Vec<u8>>>,
     last_now: Instant,
-    next_sctp_channel: u16,
+    client: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,20 +72,91 @@ impl RtcSctpState {
 
 #[derive(Debug)]
 pub struct StreamEntry {
-    id: u16,
+    /// Config as provided when opening the channel. This is None if we discover
+    /// the channel from the remote peer before getting a DcepOpen or local open_stream.
+    config: Option<ChannelConfig>,
+    /// Current state
     state: StreamEntryState,
+    /// Actual stream id. Negotiated or automatically allocated.
+    id: u16,
+    /// If we are to close this entry.
     do_close: bool,
-    dcep: Option<DcepOpen>,
 }
 
+pub enum SctpEvent {
+    Transmit {
+        packets: VecDeque<Vec<u8>>,
+    },
+    Open {
+        id: u16,
+        label: String,
+    },
+    Close {
+        id: u16,
+    },
+    Data {
+        id: u16,
+        binary: bool,
+        data: Vec<u8>,
+    },
+}
+
+/// These are the possible paths:
+/// ```text
+/// local inited, in-band                                     AwaitOpen -> AwaitDcepAck -> Open
+/// local inited, out-of-band                                 AwaitOpen                 -> Open
+/// remote inited, in-band     AwaitConfig -> (receive dcep)                            -> Open
+/// remote inited, out-of-band AwaitConfig -> (open_stream)                             -> Open
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamEntryState {
+    /// A new stream declared locally, not discovered from remote.
     AwaitOpen,
-    SendDcepOpen,
-    AwaitDcep,
+    /// A new stream, discovered from remote. It can either be in-band or out-of band
+    /// We will either receive DcepOpen in-band, or a open_stream() call out-of-band.
+    AwaitConfig,
+    /// If we have sent DcepOpen and are waiting for the ack.
     AwaitDcepAck,
+    /// Stream is open, ready to send data.
     Open,
+    /// If some error occurs.
     Closed,
+}
+
+/// (Low level) configuration for a data channel.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+pub struct ChannelConfig {
+    /// The label to use for the user to identify the channel.
+    pub label: String,
+    /// Whether channel is guaranteed ordered delivery of messages.
+    pub ordered: bool,
+    /// The reliability setting, which can allow to drop messages.
+    pub reliability: Reliability,
+    /// Whether channel is negotiated in-band (DCEP) or out-of-band.
+    /// None means in-band negotiated. Some(stream_id) means out-of-band.
+    pub negotiated: Option<u16>,
+    /// Protocol name.
+    ///
+    /// Defaults to ""
+    pub protocol: String,
+}
+
+/// Reliability setting of a data channel.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Reliability {
+    /// Packets are delivered in order, with retransmits.
+    #[default]
+    Reliable,
+    /// Packets delivered out of order with a max lifetime.
+    MaxPacketLifetime {
+        /// The lifetime of a packet in milliseconds.
+        lifetime: u16,
+    },
+    /// Packets delivered out of order with a max number of retransmits.
+    MaxRetransmits {
+        /// Number of retransmits before giving up.
+        retransmits: u16,
+    },
 }
 
 impl StreamEntry {
@@ -97,13 +168,28 @@ impl StreamEntry {
         self.state = state;
         true
     }
-}
 
-pub enum SctpEvent {
-    Transmit(VecDeque<Vec<u8>>),
-    Open(u16, DcepOpen),
-    Close(u16),
-    Data(u16, bool, Vec<u8>),
+    #[must_use]
+    fn configure_reliability(&mut self, stream: &mut Stream) -> bool {
+        let dcep: DcepOpen = self.config.as_ref().expect("config to be set").into();
+
+        let ret = stream.set_reliability_params(
+            dcep.unordered,
+            dcep.channel_type,
+            dcep.reliability_parameter,
+        );
+
+        if let Err(e) = ret {
+            warn!(
+                "Failed to set reliability params on stream {}: {:?}",
+                self.id, e
+            );
+            self.do_close = true;
+            return false;
+        }
+
+        true
+    }
 }
 
 impl RtcSctp {
@@ -126,7 +212,7 @@ impl RtcSctp {
             entries: vec![],
             pushed_back_transmit: None,
             last_now: Instant::now(), // placeholder until init()
-            next_sctp_channel: 0,
+            client: false,
         }
     }
 
@@ -137,12 +223,7 @@ impl RtcSctp {
     pub fn init(&mut self, client: bool, now: Instant) {
         assert!(self.state == RtcSctpState::Uninited);
 
-        // RFC 8831
-        // Unless otherwise defined or negotiated, the
-        // streams are picked based on the DTLS role (the client picks even
-        // stream identifiers, and the server picks odd stream identifiers).
-        self.next_sctp_channel = if client { 0 } else { 1 };
-
+        self.client = client;
         self.last_now = now;
 
         if client {
@@ -159,17 +240,60 @@ impl RtcSctp {
         }
     }
 
-    pub fn open_stream(&mut self, id: u16, dcep: DcepOpen) {
-        // New entries are added in state AwaitOpen, and the poll() function
-        // will create the corresponding streams once the association is established.
-        let new_entry = StreamEntry {
-            id,
-            state: StreamEntryState::AwaitOpen,
-            do_close: false,
-            dcep: Some(dcep),
-        };
+    pub fn is_client(&self) -> bool {
+        self.client
+    }
 
-        self.entries.push(new_entry);
+    /// Opens a new stream.
+    pub fn open_stream(&mut self, id: u16, config: ChannelConfig) {
+        // The channel might already have arrived via SCTP, and if it is negotiated out-of-band
+        // we are waiting for the configuration.
+        let entry = stream_entry(
+            &mut self.entries,
+            id,
+            StreamEntryState::AwaitOpen,
+            "open_stream",
+        );
+
+        let in_band = config.negotiated.is_none();
+
+        // Stream should not already have a config, we are either waiting for DcepOpen, or this is
+        // out-of-band configuration, in which case this call is setting the config.
+        if entry.config.is_some() {
+            warn!("Stream is already configured: {}", id);
+            entry.do_close = true;
+            return;
+        } else {
+            entry.config = Some(config);
+        }
+
+        // If we are in AwaitConfig, the stream was discovered from the remote peer before
+        // we got to do open_stream. This means we _must_ be in the out-of-band track,
+        // since we shouldn't call open_stream on remotely started in-band.
+        if entry.state == StreamEntryState::AwaitConfig {
+            if in_band {
+                warn!("open_stream in-band negotiation for remote stream: {}", id);
+                entry.do_close = true;
+            } else {
+                // out-of-band where remote started. We can go to Open, but must configure the local
+                // stream for it first.
+
+                // The association must be open since we don't get AwaitConfig state without
+                // polling from the remote peer.
+                let mut stream = self
+                    .assoc
+                    .as_mut()
+                    .expect("association to be open")
+                    .stream(entry.id)
+                    .expect("stream of entry in AwaitConfig");
+
+                if !entry.configure_reliability(&mut stream) {
+                    return;
+                }
+
+                entry.set_state(StreamEntryState::Open);
+            }
+        }
     }
 
     pub fn is_open(&self, id: u16) -> bool {
@@ -293,7 +417,7 @@ impl RtcSctp {
         }
 
         if let Some(t) = self.pushed_back_transmit.take() {
-            return Some(SctpEvent::Transmit(t));
+            return Some(SctpEvent::Transmit { packets: t });
         }
 
         while let Some(t) = self.poll_transmit() {
@@ -301,7 +425,7 @@ impl RtcSctp {
                 continue;
             };
 
-            return Some(SctpEvent::Transmit(buf));
+            return Some(SctpEvent::Transmit { packets: buf });
         }
 
         // Don't progress to move data between association and endpoint until we have an
@@ -325,10 +449,20 @@ impl RtcSctp {
             if let Event::Stream(se) = e {
                 match se {
                     StreamEvent::Readable { id } | StreamEvent::Writable { id } => {
-                        stream_entry(&mut self.entries, id, "readable/writable");
+                        stream_entry(
+                            &mut self.entries,
+                            id,
+                            StreamEntryState::AwaitConfig,
+                            "readable/writable",
+                        );
                     }
                     StreamEvent::Finished { id } | StreamEvent::Stopped { id, .. } => {
-                        let entry = stream_entry(&mut self.entries, id, "closed");
+                        let entry = stream_entry(
+                            &mut self.entries,
+                            id,
+                            StreamEntryState::AwaitConfig,
+                            "closed",
+                        );
                         info!("Stream {} closed", id);
                         entry.do_close = true;
                     }
@@ -337,36 +471,47 @@ impl RtcSctp {
             }
         }
 
+        // Must wait for association state to be established before opening streams.
+        if self.state != RtcSctpState::Established {
+            return None;
+        }
+
         for entry in &mut self.entries {
             let want_open = entry.state == StreamEntryState::AwaitOpen;
-            let can_open = self.state == RtcSctpState::Established;
-
-            if want_open && !can_open {
-                continue;
-            }
 
             if want_open {
                 info!("Open stream {}", entry.id);
                 match assoc.open_stream(entry.id, PayloadProtocolIdentifier::Unknown) {
                     Ok(mut s) => {
-                        let dcep = entry.dcep.as_ref().expect("AwaitOpen to have dcep");
-
-                        let ret = s.set_reliability_params(
-                            dcep.unordered,
-                            dcep.channel_type,
-                            dcep.reliability_parameter,
-                        );
-
-                        if let Err(e) = ret {
-                            warn!(
-                                "Failed to set reliability params on stream {}: {:?}",
-                                entry.id, e
-                            );
-                            entry.do_close = true;
+                        if !entry.configure_reliability(&mut s) {
                             continue;
                         }
 
-                        entry.set_state(StreamEntryState::SendDcepOpen);
+                        let config = entry.config.as_ref().expect("config if AwaitOpen");
+                        let dcep: DcepOpen = config.into();
+
+                        let in_band = config.negotiated.is_none();
+
+                        let next_state = if in_band {
+                            let mut buf = vec![0; 1500];
+                            let n = dcep.marshal_to(&mut buf);
+                            buf.truncate(n);
+
+                            let l = s
+                                .write_with_ppi(&buf, PayloadProtocolIdentifier::Dcep)
+                                .expect("writing dcep open");
+                            assert!(n == l);
+
+                            StreamEntryState::AwaitDcepAck
+                        } else {
+                            StreamEntryState::Open
+                        };
+
+                        entry.set_state(next_state);
+
+                        // Start over with polling, since we might have caused some network traffic by
+                        // writing the DcepOpen.
+                        return self.do_poll();
                     }
                     Err(e) => {
                         warn!("Opening stream {} failed: {:?}", entry.id, e);
@@ -378,7 +523,7 @@ impl RtcSctp {
 
             if entry.do_close && entry.state != StreamEntryState::Closed {
                 entry.set_state(StreamEntryState::Closed);
-                return Some(SctpEvent::Close(entry.id));
+                return Some(SctpEvent::Close { id: entry.id });
             }
 
             let mut stream = match assoc.stream(entry.id) {
@@ -391,47 +536,30 @@ impl RtcSctp {
                 }
             };
 
-            if entry.state == StreamEntryState::SendDcepOpen {
-                let dcep = entry.dcep.as_ref().expect("dcep to send");
-
-                let mut buf = vec![0; 1500];
-                let n = dcep.marshal_to(&mut buf);
-                buf.truncate(n);
-
-                let l = stream
-                    .write_with_ppi(&buf, PayloadProtocolIdentifier::Dcep)
-                    .expect("writing dcep open");
-                assert!(n == l);
-
-                entry.set_state(StreamEntryState::AwaitDcepAck);
-                return self.poll();
-            }
-
             match stream_read_data(&mut stream) {
                 Ok(Some((buf, ppi))) => {
                     if ppi != PayloadProtocolIdentifier::Dcep {
-                        if entry.state != StreamEntryState::Open {
-                            warn!(
-                                "Received DCEP for not open stream {}: {:?}",
-                                entry.id, entry.state
-                            );
-                            entry.do_close = true;
-                            continue;
-                        }
-
+                        // This is the normal path for incoming data.
                         let buf = ppi_adjust_buf(buf, ppi);
                         let binary = matches!(
                             ppi,
                             PayloadProtocolIdentifier::Binary
                                 | PayloadProtocolIdentifier::BinaryEmpty
                         );
-                        return Some(SctpEvent::Data(entry.id, binary, buf));
+                        return Some(SctpEvent::Data {
+                            id: entry.id,
+                            binary,
+                            data: buf,
+                        });
                     }
 
-                    // it's Dcep
+                    // It's Dcep, either a DcepOpen or DcepAck.
                     match entry.state {
-                        StreamEntryState::AwaitDcep => {
-                            let dcep = match buf.as_slice().try_into() {
+                        // We are in AwaitConfig state which means we are either going to get it via
+                        // the DcepOpen, or by an out-of-band configuration via open_stream.
+                        // This indicates we are doing in-band.
+                        StreamEntryState::AwaitConfig => {
+                            let dcep: DcepOpen = match buf.as_slice().try_into() {
                                 Ok(v) => v,
                                 Err(e) => {
                                     warn!("Failed to read incoming DCEP {}: {:?}", entry.id, e);
@@ -439,6 +567,12 @@ impl RtcSctp {
                                     continue;
                                 }
                             };
+
+                            if entry.config.is_none() {
+                                entry.config = Some((&dcep).into());
+                            } else {
+                                warn!("Received DcepOpen for configured stream: {}", entry.id);
+                            }
 
                             let mut obuf = [0];
                             DcepAck.marshal_to(&mut obuf);
@@ -448,7 +582,11 @@ impl RtcSctp {
                             assert!(obuf.len() == l);
 
                             entry.set_state(StreamEntryState::Open);
-                            return Some(SctpEvent::Open(entry.id, dcep));
+
+                            return Some(SctpEvent::Open {
+                                id: entry.id,
+                                label: dcep.label,
+                            });
                         }
                         StreamEntryState::AwaitDcepAck => {
                             let res: Result<DcepAck, _> = buf.as_slice().try_into();
@@ -459,10 +597,13 @@ impl RtcSctp {
                                 continue;
                             }
 
-                            let dcep = entry.dcep.take().expect("dcep when ack");
-
                             entry.set_state(StreamEntryState::Open);
-                            return Some(SctpEvent::Open(entry.id, dcep));
+                            let config = entry.config.as_ref().expect("config when DcepAck");
+
+                            return Some(SctpEvent::Open {
+                                id: entry.id,
+                                label: config.label.clone(),
+                            });
                         }
                         _ => {
                             warn!(
@@ -503,12 +644,6 @@ impl RtcSctp {
 
         None
     }
-
-    pub(crate) fn next_sctp_channel(&mut self) -> u16 {
-        let i = self.next_sctp_channel;
-        self.next_sctp_channel += 2;
-        i
-    }
 }
 
 fn transmit_to_vec(t: Transmit) -> Option<VecDeque<Vec<u8>>> {
@@ -529,18 +664,19 @@ fn set_state(current_state: &mut RtcSctpState, state: RtcSctpState) {
 fn stream_entry<'a>(
     entries: &'a mut Vec<StreamEntry>,
     id: u16,
+    initial_state: StreamEntryState,
     reason: &'static str,
 ) -> &'a mut StreamEntry {
     let idx = entries.iter().position(|v| v.id == id);
     if let Some(idx) = idx {
         entries.get_mut(idx).unwrap()
     } else {
-        info!("Discovered new stream {}: {}", id, reason);
+        info!("New stream {} ({:?}): {}", id, initial_state, reason);
         let e = StreamEntry {
+            config: None,
+            state: initial_state,
             id,
-            state: StreamEntryState::AwaitDcep,
             do_close: false,
-            dcep: None,
         };
         entries.push(e);
         entries.last_mut().unwrap()
@@ -587,15 +723,74 @@ fn ppi_adjust_buf(mut buf: Vec<u8>, ppi: PayloadProtocolIdentifier) -> Vec<u8> {
 impl fmt::Debug for SctpEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Transmit(arg0) => f.debug_tuple("Transmit").field(&arg0.len()).finish(),
-            Self::Open(arg0, arg1) => f.debug_tuple("Open").field(arg0).field(arg1).finish(),
-            Self::Close(arg0) => f.debug_tuple("Close").field(arg0).finish(),
-            Self::Data(arg0, arg1, arg2) => f
-                .debug_tuple("Data")
-                .field(arg0)
-                .field(arg1)
-                .field(&arg2.len())
+            Self::Transmit { packets } => f
+                .debug_struct("Transmit")
+                .field("packets", &packets.len())
                 .finish(),
+            Self::Open { id, label } => f
+                .debug_struct("Open")
+                .field("id", id)
+                .field("label", label)
+                .finish(),
+            Self::Close { id } => f.debug_struct("Close").field("id", id).finish(),
+            Self::Data { id, binary, data } => f
+                .debug_struct("Data")
+                .field("id", id)
+                .field("binary", binary)
+                .field("data", &data.len())
+                .finish(),
+        }
+    }
+}
+
+impl From<&ChannelConfig> for DcepOpen {
+    fn from(v: &ChannelConfig) -> Self {
+        let (channel_type, reliability_parameter) = (&v.reliability).into();
+        DcepOpen {
+            unordered: !v.ordered,
+            channel_type,
+            reliability_parameter,
+            priority: 0,
+            label: v.label.clone(),
+            protocol: v.protocol.clone(),
+        }
+    }
+}
+
+impl From<&Reliability> for (ReliabilityType, u32) {
+    fn from(v: &Reliability) -> Self {
+        match v {
+            Reliability::Reliable => (ReliabilityType::Reliable, 0),
+            Reliability::MaxPacketLifetime { lifetime } => {
+                (ReliabilityType::Timed, *lifetime as u32)
+            }
+            Reliability::MaxRetransmits { retransmits } => {
+                (ReliabilityType::Rexmit, *retransmits as u32)
+            }
+        }
+    }
+}
+
+impl From<&DcepOpen> for ChannelConfig {
+    fn from(v: &DcepOpen) -> Self {
+        ChannelConfig {
+            label: v.label.clone(),
+            ordered: !v.unordered,
+            reliability: (v.channel_type, v.reliability_parameter).into(),
+            negotiated: None,
+            protocol: v.protocol.clone(),
+        }
+    }
+}
+
+impl From<(ReliabilityType, u32)> for Reliability {
+    fn from((r, p): (ReliabilityType, u32)) -> Self {
+        match r {
+            ReliabilityType::Reliable => Reliability::Reliable,
+            ReliabilityType::Rexmit => Reliability::MaxRetransmits {
+                retransmits: p as u16,
+            },
+            ReliabilityType::Timed => Reliability::MaxPacketLifetime { lifetime: p as u16 },
         }
     }
 }
