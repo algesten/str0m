@@ -11,7 +11,7 @@ const MAX_BITRATE: Bitrate = Bitrate::gbps(10);
 const MAX_DEBT_IN_TIME: Duration = Duration::from_millis(500);
 const MAX_PADDING_PACKET_SIZE: DataSize = DataSize::bytes(224);
 const PADDING_BURST_INTERVAL: Duration = Duration::from_millis(5);
-const MAX_CONSECUTIVE_PADDING_BURSTS: usize = 10;
+const MAX_CONSECUTIVE_PADDING_PACKETS: usize = 5_000;
 
 pub enum PacerImpl {
     Null(NullPacer),
@@ -229,9 +229,9 @@ pub struct LeakyBucketPacer {
     /// When this is set to a non-zero value we return padding until we have added as much padding as specified by this
     /// value. The reason for this is that we want to send padding as bursts when we do send it.
     padding_to_add: DataSize,
-    /// Number padding bursts sent. Used to limit the total number of padding bursts we send
+    /// Number padding packets sent since the last media. Used to limit the total size of padding bursts we send
     /// without interleaving some media.
-    consecutive_padding_bursts_sent: usize,
+    consecutive_padding_packets_sent: usize,
     /// The current pacing i.e. how frequently we clear out debt and when we are exceeding the
     /// target bitrate how long we wait to send.
     pacing: Duration,
@@ -345,11 +345,11 @@ impl Pacer for LeakyBucketPacer {
         match next {
             PollOutcome::PollQueue(_) => {
                 self.need_immediate_timeout = true;
-                self.consecutive_padding_bursts_sent = 0;
+                self.consecutive_padding_packets_sent = 0;
             }
             PollOutcome::PollPadding(_, _) => {
                 self.need_immediate_timeout = true;
-                self.consecutive_padding_bursts_sent += 1;
+                self.consecutive_padding_packets_sent += 1;
             }
             _ => {}
         }
@@ -384,7 +384,7 @@ impl LeakyBucketPacer {
             media_debt: DataSize::ZERO,
             padding_debt: DataSize::ZERO,
             padding_to_add: DataSize::ZERO,
-            consecutive_padding_bursts_sent: 0,
+            consecutive_padding_packets_sent: 0,
             pacing,
             queue_limit: DEFAULT_QUEUE_LIMIT,
             queue_states: vec![],
@@ -452,8 +452,8 @@ impl LeakyBucketPacer {
             queues.min_by_key(|q| q.snapshot.last_emitted)
         };
 
-        let too_many_padding_bursts =
-            self.consecutive_padding_bursts_sent >= MAX_CONSECUTIVE_PADDING_BURSTS;
+        let too_many_padding_packets =
+            self.consecutive_padding_packets_sent >= MAX_CONSECUTIVE_PADDING_PACKETS;
         match (
             non_empty_queue,
             self.adjusted_bitrate,
@@ -461,7 +461,7 @@ impl LeakyBucketPacer {
             self.padding_to_add,
         ) {
             (None, _, _, padding_to_add)
-                if padding_to_add > DataSize::ZERO && !too_many_padding_bursts =>
+                if padding_to_add > DataSize::ZERO && !too_many_padding_packets =>
             {
                 // If we have padding to send, send it on the most recently used queue.
                 let queue = self
@@ -495,7 +495,7 @@ impl LeakyBucketPacer {
             (None, _, padding_bitrate, padding_to_add)
                 if padding_bitrate > Bitrate::ZERO
                     && padding_to_add == DataSize::ZERO
-                    && !too_many_padding_bursts =>
+                    && !too_many_padding_packets =>
             {
                 // If all queues are empty and we have a padding rate wait until we have drained
                 // either the media debt to send media or the padding debt to send padding.
@@ -553,7 +553,7 @@ impl LeakyBucketPacer {
                 && self.padding_bitrate > Bitrate::ZERO
                 && self.last_send_time.is_some()
                 && self.padding_to_add == DataSize::ZERO
-                && self.consecutive_padding_bursts_sent < MAX_CONSECUTIVE_PADDING_BURSTS;
+                && self.consecutive_padding_packets_sent < MAX_CONSECUTIVE_PADDING_PACKETS;
 
             if should_send_padding {
                 // No queues and no debt, generate some padding.
