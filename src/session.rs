@@ -130,9 +130,7 @@ impl Session {
             feedback: VecDeque::new(),
             twcc: 0,
             twcc_rx_register: TwccRecvRegister::new(100),
-            // Enough to accurately measure received bandwidths up to 20Mbit/s, assuming an average
-            // packet size of 1000 bytes.
-            twcc_tx_register: TwccSendRegister::new(2500),
+            twcc_tx_register: TwccSendRegister::new(1000),
             bwe,
             enable_twcc_feedback: false,
             pacer,
