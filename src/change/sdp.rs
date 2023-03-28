@@ -3,8 +3,6 @@
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
-use sctp_proto::ReliabilityType;
-
 use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
 use crate::ice::{Candidate, IceCreds};
@@ -12,7 +10,7 @@ use crate::io::Id;
 use crate::media::MediaInner;
 use crate::media::{CodecConfig, MediaKind, PayloadParams, Source};
 use crate::rtp::{Direction, Extension, Extensions, Mid, Pt, Ssrc};
-use crate::sctp::DcepOpen;
+use crate::sctp::ChannelConfig;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
 use crate::sdp::{Proto, SessionAttribute, Setup};
 use crate::sdp::{SimulcastGroups, SimulcastOption};
@@ -92,7 +90,9 @@ impl<'a> SdpApi<'a> {
 
         // Handle potentially new m=application line.
         let client = self.rtc.dtls.is_active().expect("DTLS active to be set");
-        self.rtc.init_sctp(client);
+        if self.rtc.session.app().is_some() {
+            self.rtc.init_sctp(client);
+        }
 
         let params = AsSdpParams::new(self.rtc, None);
         let sdp = as_sdp(&self.rtc.session, params);
@@ -155,10 +155,12 @@ impl<'a> SdpApi<'a> {
 
         // Handle potentially new m=application line.
         let client = self.rtc.dtls.is_active().expect("DTLS to be inited");
-        self.rtc.init_sctp(client);
+        if self.rtc.session.app().is_some() {
+            self.rtc.init_sctp(client);
+        }
 
-        for (id, dcep) in new_channels {
-            self.rtc.sctp.open_stream(*id, dcep);
+        for (id, config) in new_channels {
+            self.rtc.chan.confirm(id, config);
         }
 
         Ok(())
@@ -319,18 +321,14 @@ impl<'a> SdpApi<'a> {
             self.changes.0.push(Change::AddApp(mid));
         }
 
-        let id = self.rtc.new_sctp_channel();
-
-        let dcep = DcepOpen {
-            unordered: false,
-            channel_type: ReliabilityType::Reliable,
-            reliability_parameter: 0,
+        let config = ChannelConfig {
             label,
-            priority: 0,
-            protocol: String::new(),
+            ..Default::default()
         };
 
-        self.changes.0.push(Change::AddChannel(id, dcep));
+        let id = self.rtc.chan.new_channel(&config);
+
+        self.changes.0.push(Change::AddChannel((id, config)));
 
         id
     }
@@ -407,7 +405,7 @@ pub(crate) struct Changes(pub Vec<Change>);
 pub(crate) enum Change {
     AddMedia(AddMedia),
     AddApp(Mid),
-    AddChannel(ChannelId, DcepOpen),
+    AddChannel((ChannelId, ChannelConfig)),
     Direction(Mid, Direction),
 }
 
@@ -443,7 +441,7 @@ fn requires_negotiation(c: &Change) -> bool {
     match c {
         Change::AddMedia(_) => true,
         Change::AddApp(_) => true,
-        Change::AddChannel(_, _) => false,
+        Change::AddChannel(_) => false,
         Change::Direction(_, _) => true,
     }
 }
@@ -452,8 +450,8 @@ fn apply_direct_changes(rtc: &mut Rtc, mut changes: Changes) {
     // Split out new channels, since that is not handled by the Session.
     let new_channels = changes.take_new_channels();
 
-    for (id, dcep) in new_channels {
-        rtc.sctp.open_stream(*id, dcep);
+    for (id, config) in new_channels {
+        rtc.chan.confirm(id, config);
     }
 }
 
@@ -1017,7 +1015,7 @@ impl fmt::Debug for SdpPendingOffer {
 }
 
 impl Changes {
-    pub fn take_new_channels(&mut self) -> Vec<(ChannelId, DcepOpen)> {
+    pub fn take_new_channels(&mut self) -> Vec<(ChannelId, ChannelConfig)> {
         let mut v = vec![];
 
         if self.0.is_empty() {
@@ -1025,9 +1023,9 @@ impl Changes {
         }
 
         for i in (0..self.0.len()).rev() {
-            if matches!(&self.0[i], Change::AddChannel(_, _)) {
-                if let Change::AddChannel(id, dcep) = self.0.remove(i) {
-                    v.push((id, dcep));
+            if matches!(&self.0[i], Change::AddChannel(_)) {
+                if let Change::AddChannel(id) = self.0.remove(i) {
+                    v.push(id);
                 }
             }
         }

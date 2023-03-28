@@ -519,7 +519,7 @@ pub mod error {
 }
 
 pub mod channel;
-use channel::{Channel, ChannelData, ChannelId};
+use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
 
 pub mod media;
 use media::{CodecConfig, Direction, KeyframeRequest, Media};
@@ -649,6 +649,7 @@ pub struct Rtc {
     ice: IceAgent,
     dtls: Dtls,
     sctp: RtcSctp,
+    chan: ChannelHandler,
     stats: Stats,
     session: Session,
     remote_fingerprint: Option<Fingerprint>,
@@ -657,24 +658,12 @@ pub struct Rtc {
     last_now: Instant,
     peer_bytes_rx: u64,
     peer_bytes_tx: u64,
-    sctp_allocations: Vec<SctpChannelAllocation>,
     change_counter: usize,
 }
 
 struct SendAddr {
     source: SocketAddr,
     destination: SocketAddr,
-}
-
-/// External-to-internal mapping of `ChannelId` to _actual_ SCTP channel.
-/// This is necessary because before the initial OFFER/ANSWER we don't know
-/// whether we are active or passive in the DTLS/SCTP setup.
-struct SctpChannelAllocation {
-    /// The outward channel id. This increases 0, 1, 2, 3...
-    public: ChannelId,
-    /// The internal channel id. If we're SCTP client, this goes
-    /// 0, 2, 4... and if we're server 1, 3, 5...
-    sctp_channel: Option<u16>,
 }
 
 /// Events produced by [`Rtc::poll_output()`].
@@ -804,6 +793,7 @@ impl Rtc {
                 config.bwe_initial_bitrate,
             ),
             sctp: RtcSctp::new(),
+            chan: ChannelHandler::default(),
             stats: Stats::new(config.stats_interval),
             remote_fingerprint: None,
             remote_addrs: vec![],
@@ -811,7 +801,6 @@ impl Rtc {
             last_now: already_happened(),
             peer_bytes_rx: 0,
             peer_bytes_tx: 0,
-            sctp_allocations: vec![],
             change_counter: 0,
         }
     }
@@ -972,19 +961,11 @@ impl Rtc {
     fn init_sctp(&mut self, client: bool) {
         // If we got an m=application line, ensure we have negotiated the
         // SCTP association with the other side.
-        if self.session.app().is_none() || self.sctp.is_inited() {
+        if self.sctp.is_inited() {
             return;
         }
-        self.sctp.init(client, self.last_now);
 
-        for s in self
-            .sctp_allocations
-            .iter_mut()
-            .filter(|s| s.sctp_channel.is_none())
-        {
-            let c = self.sctp.next_sctp_channel();
-            s.sctp_channel = Some(c);
-        }
+        self.sctp.init(client, self.last_now);
     }
 
     /// Creates a new Mid that is not in the session already.
@@ -995,14 +976,6 @@ impl Rtc {
                 break mid;
             }
         }
-    }
-
-    /// Creates the new SCTP channel.
-    pub(crate) fn new_sctp_channel(&mut self) -> ChannelId {
-        // If SCTP is not started, we will not allocate this now, see init_sctp().
-        let sctp_channel = self.sctp.is_inited().then(|| self.sctp.next_sctp_channel());
-
-        self.associate_new_sctp(sctp_channel)
     }
 
     /// Creates an Ssrc that is not in the session already.
@@ -1109,34 +1082,38 @@ impl Rtc {
 
         while let Some(e) = self.sctp.poll() {
             match e {
-                SctpEvent::Transmit(mut q) => {
-                    if let Some(v) = q.front() {
+                SctpEvent::Transmit { mut packets } => {
+                    if let Some(v) = packets.front() {
                         if let Err(e) = self.dtls.handle_input(v) {
                             if e.is_would_block() {
-                                self.sctp.push_back_transmit(q);
+                                self.sctp.push_back_transmit(packets);
                                 break;
                             } else {
                                 return Err(e.into());
                             }
                         }
-                        q.pop_front();
+                        packets.pop_front();
                         break;
                     }
                 }
-                SctpEvent::Open(sctp_channel, dcep) => {
-                    let id = self.associate_new_sctp(Some(sctp_channel));
-
-                    return Ok(Output::Event(Event::ChannelOpen(id, dcep.label)));
+                SctpEvent::Open { id, label } => {
+                    self.chan.ensure_channel_id_for(id);
+                    let id = self.chan.channel_id_by_stream_id(id).unwrap();
+                    return Ok(Output::Event(Event::ChannelOpen(id, label)));
                 }
-                SctpEvent::Close(id) => {
-                    return Ok(Output::Event(Event::ChannelClose(id.into())));
-                }
-                SctpEvent::Data(id, binary, data) => {
-                    let cd = ChannelData {
-                        id: id.into(),
-                        binary,
-                        data,
+                SctpEvent::Close { id } => {
+                    let Some(id) = self.chan.channel_id_by_stream_id(id) else {
+                        warn!("Drop ChannelClose event for id: {:?}", id);
+                        continue;
                     };
+                    return Ok(Output::Event(Event::ChannelClose(id)));
+                }
+                SctpEvent::Data { id, binary, data } => {
+                    let Some(id) = self.chan.channel_id_by_stream_id(id) else {
+                        warn!("Drop ChannelData event for id: {:?}", id);
+                        continue;
+                    };
+                    let cd = ChannelData { id, binary, data };
                     return Ok(Output::Event(Event::ChannelData(cd)));
                 }
             }
@@ -1190,6 +1167,7 @@ impl Rtc {
             .soonest((self.ice.poll_timeout(), "ice"))
             .soonest((self.session.poll_timeout(), "session"))
             .soonest((self.sctp.poll_timeout(), "sctp"))
+            .soonest((self.chan.poll_timeout(&self.sctp), "chan"))
             .soonest((self.stats.poll_timeout(), "stats"));
 
         // trace!("poll_output timeout reason: {}", time_and_reason.1);
@@ -1306,6 +1284,7 @@ impl Rtc {
         self.last_now = now;
         self.ice.handle_timeout(now);
         self.sctp.handle_timeout(now);
+        self.chan.handle_timeout(now, &mut self.sctp);
         self.session.handle_timeout(now);
         if self.stats.wants_timeout(now) {
             let mut snapshot = StatsSnapshot::new(now);
@@ -1387,20 +1366,13 @@ impl Rtc {
             return None;
         }
 
-        // If the m=application isn't set up, we don't provide Channel
-        (*self.session.app())?;
+        let sctp_stream_id = self.chan.stream_id_by_channel_id(id)?;
 
-        let sctp_channel = self
-            .sctp_allocations
-            .iter()
-            .find(|s| s.public == id)
-            .and_then(|s| s.sctp_channel)?;
-
-        if !self.sctp.is_open(sctp_channel) {
+        if !self.sctp.is_open(sctp_stream_id) {
             return None;
         }
 
-        Some(Channel::new(sctp_channel, self))
+        Some(Channel::new(sctp_stream_id, self))
     }
 
     /// Configure the Bandwidth Estimate (BWE) subsystem.
@@ -1414,21 +1386,6 @@ impl Rtc {
         snapshot.peer_rx = self.peer_bytes_rx;
         snapshot.peer_tx = self.peer_bytes_tx;
         self.session.visit_stats(now, snapshot);
-    }
-
-    fn associate_new_sctp(&mut self, sctp_channel: Option<u16>) -> ChannelId {
-        let id = self.sctp_allocations.len() as u16;
-
-        let alloc = SctpChannelAllocation {
-            public: id.into(),
-            sctp_channel,
-        };
-
-        let ret = alloc.public;
-
-        self.sctp_allocations.push(alloc);
-
-        ret
     }
 
     fn is_correct_change_id(&self, change_id: usize) -> bool {
