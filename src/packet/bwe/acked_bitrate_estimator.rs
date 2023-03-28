@@ -55,11 +55,8 @@ impl AckedBitrateEstimator {
         packet_size: DataSize,
         window: Duration,
     ) -> Option<Bitrate> {
-        if self
-            .last_update
-            .map(|ls| receive_time < ls)
-            .unwrap_or(false)
-        {
+        let time_moved_back = Some(receive_time) < self.last_update;
+        if time_moved_back {
             // Time moved backwards, reset state
             self.sum = DataSize::ZERO;
             self.current_window = Duration::ZERO;
