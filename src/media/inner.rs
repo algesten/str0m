@@ -440,9 +440,21 @@ impl MediaInner {
         let ratio = bytes_retransmitted as f32 / (bytes_retransmitted + bytes_transmitted) as f32;
         let ratio = if ratio.is_finite() { ratio } else { 0_f32 };
 
-        // If we hit the cap, stop doing resends.
+        // If we hit the cap, stop doing resends by clearing those we have queued.
         if ratio > 0.15_f32 {
-            self.resends.clear();
+            for resend in self.resends.drain(..) {
+                let Some(buffer) = self
+                    .buffers_tx
+                    .values_mut()
+                    .find(|p| p.has_ssrc(resend.ssrc)) else {
+                        continue;
+                    };
+                // Unmark the resend so they don't count as queued anymore.
+                let _ = buffer.get_and_unmark_as_accounted(now, resend.seq_no);
+            }
+            // Invalidate cached queue state.
+            self.queue_state = None;
+
             return None;
         }
 
