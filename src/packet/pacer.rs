@@ -3,7 +3,7 @@ use std::fmt;
 use std::time::{Duration, Instant};
 
 use crate::rtp::{Bitrate, DataSize, Mid};
-use crate::util::not_happening;
+use crate::util::{already_happened, not_happening};
 
 use super::MediaKind;
 
@@ -54,10 +54,10 @@ impl Pacer for PacerImpl {
         }
     }
 
-    fn register_send(&mut self, now: Instant, packet_size: DataSize, from: Mid) {
+    fn register_send(&mut self, now: Instant, packet_size: DataSize, is_audio: bool) {
         match self {
-            PacerImpl::Null(v) => v.register_send(now, packet_size, from),
-            PacerImpl::LeakyBucket(v) => v.register_send(now, packet_size, from),
+            PacerImpl::Null(v) => v.register_send(now, packet_size, is_audio),
+            PacerImpl::LeakyBucket(v) => v.register_send(now, packet_size, is_audio),
         }
     }
 }
@@ -94,7 +94,7 @@ pub trait Pacer {
     ///
     /// **MUST** be called each time [`Pacer::poll_action`] produces [`PollOutcome::PollQueue`] or
     /// [`PollOutcome::PollPadding`]` after the packet is sent.
-    fn register_send(&mut self, now: Instant, packet_size: DataSize, from: Mid);
+    fn register_send(&mut self, now: Instant, packet_size: DataSize, is_audio: bool);
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -155,7 +155,6 @@ pub enum PollOutcome {
 /// A null pacer that doesn't pace.
 #[derive(Debug, Default)]
 pub struct NullPacer {
-    last_sends: HashMap<Mid, Instant>,
     queue_states: Vec<QueueState>,
     need_immediate_timeout: bool,
 }
@@ -170,7 +169,7 @@ impl Pacer for NullPacer {
     }
     fn poll_timeout(&self) -> Option<Instant> {
         if self.need_immediate_timeout {
-            self.last_sends.values().min().copied()
+            Some(already_happened())
         } else {
             None
         }
@@ -188,7 +187,7 @@ impl Pacer for NullPacer {
             .iter()
             .filter(|q| q.snapshot.packet_count > 0);
         // Pick a queue using round robin, prioritize the least recently sent on queue.
-        let to_send_on = non_empty_queues.min_by_key(|q| self.last_sends.get(&q.mid));
+        let to_send_on = non_empty_queues.min_by_key(|q| q.snapshot.last_emitted);
 
         let result = to_send_on.into();
 
@@ -199,10 +198,7 @@ impl Pacer for NullPacer {
         result
     }
 
-    fn register_send(&mut self, now: Instant, _packet_size: DataSize, from: Mid) {
-        let e = self.last_sends.entry(from).or_insert(now);
-        *e = now;
-    }
+    fn register_send(&mut self, _now: Instant, _packet_size: DataSize, _is_audio: bool) {}
 }
 
 /// A leaky bucket pacer that can overshoot the target bitrate when required.
@@ -243,6 +239,8 @@ pub struct LeakyBucketPacer {
     need_immediate_timeout: bool,
     ///
     next_poll_outcome: Option<PollOutcome>,
+    /// Whether audio is accounted for or not.
+    account_for_audio: bool,
 }
 
 impl Pacer for LeakyBucketPacer {
@@ -357,8 +355,12 @@ impl Pacer for LeakyBucketPacer {
         next
     }
 
-    fn register_send(&mut self, now: Instant, packet_size: DataSize, _from: Mid) {
+    fn register_send(&mut self, now: Instant, packet_size: DataSize, is_audio: bool) {
         self.last_send_time = Some(now);
+
+        if is_audio && !self.account_for_audio {
+            return;
+        }
 
         self.media_debt += packet_size;
         self.media_debt = self
@@ -390,6 +392,7 @@ impl LeakyBucketPacer {
             queue_states: vec![],
             need_immediate_timeout: false,
             next_poll_outcome: None,
+            account_for_audio: false,
         }
     }
 

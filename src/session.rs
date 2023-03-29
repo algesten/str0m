@@ -708,7 +708,8 @@ impl Session {
             }
 
             let payload_size = buf.len();
-            self.pacer.register_send(now, buf.len().into(), mid);
+            self.pacer
+                .register_send(now, buf.len().into(), media.kind().is_audio());
             let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
             self.twcc_tx_register
