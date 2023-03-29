@@ -472,7 +472,9 @@ impl LeakyBucketPacer {
 
                 (now, queue, true)
             }
-            (Some(queue), bitrate, _, _) if bitrate > Bitrate::ZERO => {
+            (Some(queue), bitrate, _, _)
+                if bitrate > Bitrate::ZERO && self.adjusted_bitrate > Bitrate::ZERO =>
+            {
                 // If we have a non-empty queue send on it as soon as possible, possibly waiting
                 // for the next pacing interval.
                 let drain_debt_time = self.media_debt / self.adjusted_bitrate;
@@ -495,6 +497,7 @@ impl LeakyBucketPacer {
             (None, _, padding_bitrate, padding_to_add)
                 if padding_bitrate > Bitrate::ZERO
                     && padding_to_add == DataSize::ZERO
+                    && self.adjusted_bitrate > Bitrate::ZERO
                     && !too_many_padding_packets =>
             {
                 // If all queues are empty and we have a padding rate wait until we have drained
