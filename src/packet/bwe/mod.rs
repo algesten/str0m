@@ -37,7 +37,7 @@ pub struct SendSideBandwithEstimator {
     trendline_estimator: TrendlineEstimator,
     rate_control: RateControl,
     acked_bitrate_estimator: AckedBitrateEstimator,
-    /// Last unpolled bitrate estimate. [`None`] before the first poll and after each poll that,
+    /// Last unpolled bitrate estimate. [`None`] before the first poll and after each poll,
     /// updated when we get a new estimate.
     next_estimate: Option<Bitrate>,
     /// Last estimate produced, unlike [`next_estimate`] this will always have a value after the
