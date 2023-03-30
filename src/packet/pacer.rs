@@ -778,8 +778,8 @@ mod test {
             now + duration_ms(52),
         );
 
-        // // Audio packets are unpaced and we should be able to send it out even if we have too much
-        // // media debt.
+        // Audio packets are unpaced and we should be able to send it out even if we have too much
+        // media debt.
         assert_poll_success(
             &mut pacer,
             &mut queue,
@@ -1032,7 +1032,7 @@ mod test {
             use_for_padding: true,
             snapshot: QueueSnapshot {
                 created_at: now,
-                size: 10_usize.into(),
+                size: 10_usize,
                 packet_count: 1332,
                 total_queue_time_origin: duration_ms(1_000),
                 last_emitted: Some(now + duration_ms(500)),
@@ -1046,7 +1046,7 @@ mod test {
             use_for_padding: false,
             snapshot: QueueSnapshot {
                 created_at: now,
-                size: 30_usize.into(),
+                size: 30_usize,
                 packet_count: 5,
                 total_queue_time_origin: duration_ms(337),
                 last_emitted: None,
@@ -1114,7 +1114,7 @@ mod test {
         };
         queue.enqueue_packet(queued_packet);
 
-        // Matches the queueing behaviour when the pacer is used in real code.
+        // Matches the queueing behavior when the pacer is used in real code.
         // Each packet being queued causes time to move forward in the pacer and the queue.
         queue.update_average_queue_time(now);
         pacer.handle_timeout(now, queue.queue_state(now));
@@ -1218,7 +1218,7 @@ mod test {
 
         impl QueuedPacket {
             pub(super) fn size(&self) -> usize {
-                self.payload.len().into()
+                self.payload.len()
             }
         }
 
