@@ -66,7 +66,7 @@ impl ArrivalGroup {
             .checked_duration_since(self.remote_recv_time());
 
         let Some(inter_arrival_time) = inter_arrival_time else {
-            warn!("Out of order arrival");
+            info!("TWCC: Out of order arrival");
             return Belongs::Skipped;
         };
 
