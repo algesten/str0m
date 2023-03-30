@@ -19,7 +19,7 @@ pub struct CandidatePair {
     /// Index into the remote_candidates list in IceAgent.
     remote_idx: usize,
 
-    /// Index into local_candidates for the last succesful
+    /// Index into local_candidates for the last successful
     /// response. This forms the "valid pair" logic in the spec.
     valid_idx: Option<usize>,
 
@@ -242,7 +242,7 @@ impl CandidatePair {
         self.binding_attempts.iter().any(|b| b.trans_id == trans_id)
     }
 
-    /// Marks a binding request attempt as having a succesful response.
+    /// Marks a binding request attempt as having a successful response.
     ///
     /// ### Panics
     ///

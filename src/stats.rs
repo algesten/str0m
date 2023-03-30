@@ -167,7 +167,7 @@ impl Stats {
 
     /// Returns true if we want to handle the timeout
     ///
-    /// The caller can use this to conpute the snapshot only if needed, before calling [`Stats::do_handle_timeout`]
+    /// The caller can use this to compute the snapshot only if needed, before calling [`Stats::do_handle_timeout`]
     pub fn wants_timeout(&mut self, now: Instant) -> bool {
         let min_step = self.last_now + self.interval;
         now >= min_step
@@ -175,7 +175,7 @@ impl Stats {
 
     /// Actually handles the timeout advancing the internal state and preparing the output
     pub fn do_handle_timeout(&mut self, snapshot: &mut StatsSnapshot) {
-        // enqueue stas and timestampt them so they can be sent out
+        // enqueue stats and timestamp them so they can be sent out
 
         let event = PeerStats {
             peer_bytes_rx: snapshot.peer_rx,

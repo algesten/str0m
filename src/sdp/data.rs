@@ -1256,7 +1256,7 @@ impl PayloadParams {
 pub struct Simulcast {
     pub send: SimulcastGroups,
     pub recv: SimulcastGroups,
-    /// If this is created synthentically for a munged SDP.
+    /// If this is created synthetically for a munged SDP.
     pub is_munged: bool,
 }
 
@@ -1553,7 +1553,7 @@ impl fmt::Display for MediaAttribute {
                     "Empty a=simulcast"
                 );
                 if *is_munged {
-                    // dont' write
+                    // don't write
                     return Ok(());
                 }
                 write!(f, "a=simulcast:")?;

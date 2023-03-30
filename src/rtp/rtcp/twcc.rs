@@ -976,7 +976,7 @@ impl TwccSendRecord {
         self.recv_report.as_ref().and_then(|r| r.remote_recv_time)
     }
 
-    /// The rtt time between sending the packet and receiving the twcc report resonse.
+    /// The rtt time between sending the packet and receiving the twcc report response.
     pub fn rtt(&self) -> Option<Duration> {
         let recv_report = self.recv_report.as_ref()?;
         Some(recv_report.local_recv_time - self.local_send_time)

@@ -145,7 +145,7 @@ impl Dtls {
 
     /// Set whether this instance is active or passive.
     ///
-    /// i.e. initiating the client helo or not. This must be called
+    /// i.e. initiating the client hello or not. This must be called
     /// exactly once before starting to handshake (I/O).
     pub fn set_active(&mut self, active: bool) {
         self.tls.set_active(active);

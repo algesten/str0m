@@ -41,7 +41,7 @@ pub(crate) struct Session {
     app: Option<(Mid, usize)>,
 
     /// Extension mappings are _per BUNDLE_, but we can only have one a=group BUNDLE
-    /// in WebRTC (one ice connection), so they are effetively per session.
+    /// in WebRTC (one ice connection), so they are effectively per session.
     pub exts: Extensions,
     pub codec_config: CodecConfig,
 
@@ -389,8 +389,8 @@ impl Session {
 
         let is_rtx = source.is_rtx();
 
-        // The first few packets, the source is in "probabtion". However for rtx,
-        // we let them straight through, since it would be weird to require probabtion
+        // The first few packets, the source is in "probation". However for rtx,
+        // we let them straight through, since it would be weird to require probation
         // time for resends (they are not contiguous) in the receiver register.
         if !is_rtx && !source.is_valid() {
             trace!("Source is not (yet) valid, probably probation");

@@ -106,7 +106,7 @@ where
     typed_line('a', (string(attribute)).map(|_| ()))
 }
 
-/// a=foo:bar lines belongin before the first m= line
+/// a=foo:bar lines belonging before the first m= line
 fn session_attribute_line<Input>() -> impl Parser<Input, Output = SessionAttribute>
 where
     Input: Stream<Token = char>,
@@ -367,7 +367,7 @@ where
     .map(|(typ, _, _, _, proto, _, pts)| (typ, proto, pts))
 }
 
-/// a=foo:bar lines belongin before the first m= line
+/// a=foo:bar lines belonging before the first m= line
 fn media_attribute_line<Input>() -> impl Parser<Input, Output = MediaAttribute>
 where
     Input: Stream<Token = char>,

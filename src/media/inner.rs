@@ -467,7 +467,7 @@ impl MediaInner {
 
             // If there is no buffer for this resend, we return None. This is
             // a weird situation though, since it means the other side sent a nack for
-            // an SSRC that matched this Media, but didnt match a buffer_tx.
+            // an SSRC that matched this Media, but didn't match a buffer_tx.
             let buffer = self.buffers_tx.values().find(|p| p.has_ssrc(resend.ssrc))?;
 
             let pkt = buffer.get(resend.seq_no);
@@ -845,7 +845,7 @@ impl MediaInner {
         }
     }
 
-    /// Appply incoming RTCP feedback.
+    /// Apply incoming RTCP feedback.
     pub fn handle_rtcp_fb(&mut self, now: Instant, fb: RtcpFb) -> Option<()> {
         debug!("Handle RTCP feedback: {:?}", fb);
 
@@ -889,7 +889,7 @@ impl MediaInner {
                 source_rx.set_dlrr_item(now, v);
             }
             Goodbye(_v) => {
-                // For some reason, Chrome sends a Goodbye on every SDP negotation for all active
+                // For some reason, Chrome sends a Goodbye on every SDP negotiation for all active
                 // m-lines. Seems strange, but lets not reset any state.
                 // self.sources_rx.retain(|s| {
                 //     let remove = s.ssrc() == v || s.repairs() == Some(v);
