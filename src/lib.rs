@@ -220,7 +220,7 @@
 //! ### Now
 //!
 //! Some calls in str0m, such as `Rtc::handle_input` takes a `now` argument
-//! that is a `std::time::Intant`. These calls "drive the time forward" in
+//! that is a `std::time::Instant`. These calls "drive the time forward" in
 //! the internal state. This is used for everything like deciding when
 //! to produce various feedback reports (RTCP) to remote peers, to
 //! bandwidth estimation (BWE) and statistics.
@@ -637,7 +637,7 @@ pub enum RtcError {
 ///     };
 ///
 ///     // TODO: Wait for one of two events, reaching `timeout`
-///     //       or receiving network input. Both are encapsualted
+///     //       or receiving network input. Both are encapsulated
 ///     //       in the Input enum.
 ///     let input: Input = todo!();
 ///
@@ -875,7 +875,7 @@ impl Rtc {
     /// For [`SdpApi`]: Remote candidates are typically added via
     /// receiving a remote [`SdpOffer`][change::SdpOffer] or [`SdpAnswer`][change::SdpAnswer].
     ///
-    /// However for the case of [Trickle Ice][1], this is the way to add remote candidaes
+    /// However for the case of [Trickle Ice][1], this is the way to add remote candidates
     /// that are "trickled" from the other side.
     ///
     /// ```
@@ -1189,7 +1189,7 @@ impl Rtc {
     ///
     /// [`Input::Timeout`] is always accepted. [`Input::Receive`] is tested against the nominated
     /// ICE candidate. If that doesn't match and the incoming data is a STUN packet, the accept call
-    /// is delegated to the ICE agent which recognises the remote peer from `a=ufrag`/`a=password`
+    /// is delegated to the ICE agent which recognizes the remote peer from `a=ufrag`/`a=password`
     /// credentials negotiated in the SDP.
     ///
     /// In a server setup, the server would try to find an `Rtc` instances using [`Rtc::accepts()`].
@@ -1411,7 +1411,7 @@ impl Rtc {
     }
 }
 
-/// Customised config for creating an [`Rtc`] instance.
+/// Customized config for creating an [`Rtc`] instance.
 ///
 /// ```
 /// use str0m::RtcConfig;

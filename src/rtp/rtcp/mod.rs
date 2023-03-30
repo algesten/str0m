@@ -266,7 +266,7 @@ impl Rtcp {
                 &mut *fb_a_ptr
             };
 
-            // if we mananage to merge anything into fb_a.
+            // if we manage to merge anything into fb_a.
             let mut any_change = false;
 
             // j goes from the item _after_ i and indexes fb_b.

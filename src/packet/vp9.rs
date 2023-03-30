@@ -184,7 +184,7 @@ pub struct Vp9Depacketizer {
     pub pgtid: Vec<u8>,
     /// Switching up point of pictures in a Picture Group
     pub pgu: Vec<bool>,
-    /// Reference indecies of pictures in a Picture Group
+    /// Reference indices of pictures in a Picture Group
     pub pgpdiff: Vec<Vec<u8>>,
 }
 

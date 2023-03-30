@@ -410,7 +410,7 @@ impl Client {
                 return Propagated::Noop;
             };
 
-        // This is the rid picked from incoming medidata, and to which we need to
+        // This is the rid picked from incoming mediadata, and to which we need to
         // send the keyframe request.
         req.rid = self.chosen_rid;
 

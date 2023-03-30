@@ -42,7 +42,7 @@ pub mod rtp {
 ///
 /// let mut rtc = Rtc::new();
 ///
-/// // add candidates, do SDP negotation
+/// // add candidates, do SDP negotiation
 /// let mid: Mid = todo!(); // obtain mid from Event::MediaAdded.
 ///
 /// let media = rtc.media(mid).unwrap();
@@ -130,7 +130,7 @@ impl Media<'_> {
     /// # use std::time::Instant;
     /// let mut rtc = Rtc::new();
     ///
-    /// // add candidates, do SDP negotation
+    /// // add candidates, do SDP negotiation
     /// let mid: Mid = todo!(); // obtain mid from Event::MediaAdded.
     ///
     /// let media = rtc.media(mid).unwrap();
@@ -190,7 +190,7 @@ impl Media<'_> {
     /// # use str0m::media::{Mid, KeyframeRequestKind};
     /// let mut rtc = Rtc::new();
     ///
-    /// // add candidates, do SDP negotation
+    /// // add candidates, do SDP negotiation
     /// let mid: Mid = todo!(); // obtain mid from Event::MediaAdded.
     ///
     /// let media = rtc.media(mid).unwrap();
@@ -221,7 +221,7 @@ impl Media<'_> {
 /// # use std::time::Instant;
 /// let mut rtc = Rtc::new();
 ///
-/// // add candidates, do SDP negotation
+/// // add candidates, do SDP negotiation
 /// let mid: Mid = todo!(); // obtain mid from Event::MediaAdded.
 ///
 /// let media = rtc.media(mid).unwrap();
