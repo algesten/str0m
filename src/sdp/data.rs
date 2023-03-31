@@ -903,11 +903,16 @@ impl MediaAttribute {
     }
 }
 
+/// %%%% public
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CodecSpec {
+    ///
     pub pt: Pt,
+    ///
     pub codec: Codec,
+    ///
     pub clock_rate: u32,
+    ///
     pub channels: Option<u8>,
 }
 
@@ -947,7 +952,8 @@ pub struct FormatParams {
 }
 
 impl FormatParams {
-    fn set_attributes(&mut self, values: &[FormatParam]) {
+    ///
+    pub fn set_attributes(&mut self, values: &[FormatParam]) {
         use FormatParam::*;
         for v in values {
             match v {
@@ -1002,6 +1008,7 @@ impl fmt::Display for FormatParams {
     }
 }
 
+// %%%% public
 /// Known codecs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -1070,6 +1077,7 @@ impl fmt::Display for Codec {
     }
 }
 
+// %%%% want this to public
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PayloadParams {
     pub codec: CodecSpec,
@@ -1081,6 +1089,7 @@ pub struct PayloadParams {
     pub fb_pli: bool,
 }
 
+/// %%%% want this to public
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FormatParam {
     /// The minimum duration of media represented by a packet.
@@ -1120,6 +1129,7 @@ pub enum FormatParam {
 }
 
 impl FormatParam {
+    ///
     pub fn parse(k: &str, v: &str) -> Self {
         use FormatParam::*;
         match k {

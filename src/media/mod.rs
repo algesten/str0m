@@ -4,7 +4,7 @@ use std::time::Instant;
 
 pub use crate::rtp::VideoOrientation;
 pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
-pub use crate::sdp::{Codec, FormatParams};
+pub use crate::sdp::{Codec, CodecSpec, FormatParam, FormatParams};
 
 use crate::{Input, Rtc, RtcError};
 
@@ -12,7 +12,7 @@ mod event;
 pub use event::*;
 
 mod codec;
-pub use codec::{CodecConfig, PayloadParams};
+pub use codec::{CodecConfig, PayloadParams, SdpPayloadParams};
 
 mod receiver;
 
