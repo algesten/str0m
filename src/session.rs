@@ -10,7 +10,7 @@ use crate::packet::{
 };
 use crate::rtp::SRTCP_OVERHEAD;
 use crate::rtp::{extend_seq, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
-use crate::rtp::{Bitrate, Extensions, MediaTime, Mid, Rtcp, RtcpFb};
+use crate::rtp::{Bitrate, ExtensionMap, MediaTime, Mid, Rtcp, RtcpFb};
 use crate::rtp::{SrtpContext, SrtpKey, Ssrc};
 use crate::stats::StatsSnapshot;
 use crate::util::{already_happened, not_happening, Soonest};
@@ -43,7 +43,7 @@ pub(crate) struct Session {
 
     /// Extension mappings are _per BUNDLE_, but we can only have one a=group BUNDLE
     /// in WebRTC (one ice connection), so they are effectively per session.
-    pub exts: Extensions,
+    pub exts: ExtensionMap,
     pub codec_config: CodecConfig,
 
     /// Internally all ReceiverSource and SenderSource are identified by mid/ssrc.
@@ -120,7 +120,7 @@ impl Session {
             id,
             medias: vec![],
             app: None,
-            exts: Extensions::default_mappings(),
+            exts: ExtensionMap::standard(),
             codec_config,
             source_keys: HashMap::new(),
             first_ssrc_remote: None,
@@ -171,7 +171,7 @@ impl Session {
         self.medias.iter_mut().find(|m| m.mid() == mid)
     }
 
-    pub fn exts(&self) -> &Extensions {
+    pub fn exts(&self) -> &ExtensionMap {
         &self.exts
     }
 

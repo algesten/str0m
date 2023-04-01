@@ -1,6 +1,6 @@
 #![allow(clippy::unusual_byte_groupings)]
 
-use super::ext::{ExtensionValues, Extensions};
+use super::ext::{ExtensionMap, ExtensionValues};
 use super::{Pt, SeqNo, Ssrc, MAX_PADDING_PACKET_SIZE};
 
 /// Parsed header from an RTP packet.
@@ -34,7 +34,7 @@ pub struct RtpHeader {
 
 impl RtpHeader {
     #[doc(hidden)]
-    pub fn write_to(&self, buf: &mut [u8], exts: &Extensions) -> usize {
+    pub fn write_to(&self, buf: &mut [u8], exts: &ExtensionMap) -> usize {
         buf[0] = 0b10_0_0_0000
             | if self.has_padding { 1 << 5 } else { 0 }
             | if self.has_extension { 1 << 4 } else { 0 };
@@ -123,7 +123,7 @@ impl RtpHeader {
     }
 
     #[doc(hidden)]
-    pub fn parse(buf: &[u8], exts: &Extensions) -> Option<RtpHeader> {
+    pub fn parse(buf: &[u8], exts: &ExtensionMap) -> Option<RtpHeader> {
         let orig_len = buf.len();
         if buf.len() < 12 {
             trace!("RTP header too short < 12: {}", buf.len());

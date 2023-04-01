@@ -24,7 +24,7 @@ pub(crate) use inner::{MediaInner, Source};
 pub mod rtp {
     pub use crate::packet::RtpMeta;
     pub use crate::packet::{CodecExtra, Vp8CodecExtra};
-    pub use crate::rtp::{ExtensionValues, RtpHeader, SeqNo, Ssrc};
+    pub use crate::rtp::{Extension, ExtensionMap, ExtensionValues, RtpHeader, SeqNo, Ssrc};
 }
 
 /// Audio or video media.
