@@ -8,6 +8,10 @@ use crate::rtp::Pt;
 use crate::sdp::FormatParam;
 use crate::sdp::MediaLine;
 
+// These really don't belong anywhere, but I guess they're kind of related
+// to codecs etc.
+pub use crate::packet::{CodecExtra, Vp8CodecExtra};
+
 /// Group of parameters for a payload type (PT).
 ///
 /// In the SDP a payload type has a number of associated parameters. See example below:

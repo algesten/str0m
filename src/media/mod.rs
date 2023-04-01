@@ -23,7 +23,6 @@ pub(crate) use inner::{MediaInner, Source};
 /// Half internal structures regarding RTP level.
 pub mod rtp {
     pub use crate::packet::RtpMeta;
-    pub use crate::packet::{CodecExtra, Vp8CodecExtra};
     pub use crate::rtp::{Extension, ExtensionMap, ExtensionValues, RtpHeader, SeqNo, Ssrc};
 }
 
