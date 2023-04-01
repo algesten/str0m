@@ -512,12 +512,14 @@ where
     )
     .map(|(pt, _, codec, _, clock_rate, opt_channels)| {
         let channels = opt_channels.map(|(_, e)| e);
-        MediaAttribute::RtpMap(CodecSpec {
+        MediaAttribute::RtpMap {
             pt,
-            codec: codec.as_str().into(),
-            clock_rate,
-            channels,
-        })
+            value: RtpMap {
+                codec: codec.as_str().into(),
+                clock_rate,
+                channels,
+            },
+        }
     });
 
     // a=rtcp-fb:111 transport-cc

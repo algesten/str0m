@@ -1,10 +1,11 @@
+//! Media formats and parameters
+
 use std::collections::HashMap;
+use std::fmt;
 
+use crate::media::MediaKind;
 use crate::rtp::Pt;
-use crate::sdp::{self, Codec, FormatParams};
-use crate::sdp::{CodecSpec, PayloadParams as SdpPayloadParams};
-
-use super::MediaKind;
+use crate::sdp;
 
 /// Group of parameters for a payload type (PT).
 ///
@@ -19,64 +20,165 @@ use super::MediaKind;
 /// a=rtcp-fb:96 nack pli
 /// a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PayloadParams {
-    inner: SdpPayloadParams,
-    pt_matched_to_remote: bool,
+    /// The payload type that groups these parameters.
+    pub(crate) pt: Pt,
+
+    /// Whether these parameters are repairing some other set of parameters.
+    /// This is used to, via PT, separate RTX resend streams from the main stream.
+    pub(crate) resend: Option<Pt>,
+
+    /// The codec with settings for this group of parameters.
+    pub(crate) spec: CodecSpec,
+
+    /// Whether the payload use the TWCC feedback mechanic.
+    pub(crate) fb_transport_cc: bool,
+
+    /// Whether the payload uses NACK to request resends.
+    pub(crate) fb_nack: bool,
+
+    /// Whether the payload uses the PLI (Picture Loss Indication) mechanic.
+    pub(crate) fb_pli: bool,
+
+    /// Whether the payload uses the FIR (Full Intra Request) mechanic.
+    pub(crate) fb_fir: bool,
+
+    /// Internal field whether the payload is matched to the remote. This is used in SDP
+    /// negotiation.
+    pub(crate) pt_matched_to_remote: bool,
+}
+
+/// Codec specification
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CodecSpec {
+    /// The codec identifier.
+    pub codec: Codec,
+
+    /// Clock rate of the codec.
+    pub clock_rate: u32,
+
+    /// Number of audio channels (if any).
+    pub channels: Option<u8>,
+
+    /// Codec specific format parameters. This might carry additional config for
+    /// things like h264.
+    pub format: FormatParams,
+}
+
+/// Known codecs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+#[allow(missing_docs)]
+pub enum Codec {
+    Opus,
+    H264,
+    // TODO show this when we support h265.
+    #[doc(hidden)]
+    H265,
+    Vp8,
+    Vp9,
+    // TODO show this when we support Av1.
+    #[doc(hidden)]
+    Av1,
+    /// Technically not a codec, but used in places where codecs go
+    /// in `a=rtpmap` lines.
+    #[doc(hidden)]
+    Rtx,
+    #[doc(hidden)]
+    Unknown,
+}
+
+/// Codec specific format parameters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct FormatParams {
+    /// Opus specific parameter.
+    ///
+    /// The minimum duration of media represented by a packet.
+    pub min_p_time: Option<u8>,
+
+    /// Opus specific parameter.
+    ///
+    /// Specifies that the decoder can do Opus in-band FEC
+    pub use_inband_fec: Option<bool>,
+
+    /// Whether h264 sending media encoded at a different level in the offerer-to-answerer
+    /// direction than the level in the answerer-to-offerer direction, is allowed.
+    pub level_asymmetry_allowed: Option<bool>,
+
+    /// What h264 packetization mode is used.
+    ///
+    /// * 0 - single nal.
+    /// * 1 - STAP-A, FU-A is allowed. Non-interleaved.
+    pub packetization_mode: Option<u8>,
+
+    /// H264 profile level.
+    ///
+    /// * 42 00 1f - 4200=baseline (B)              1f=level 3.1
+    /// * 42 e0 1f - 42e0=constrained baseline (CB) 1f=level 3.1
+    /// * 4d 00 1f - 4d00=main (M)                  1f=level 3.1
+    /// * 64 00 1f - 6400=high (H)                  1f=level 3.1
+    pub profile_level_id: Option<u32>,
+
+    /// VP9 profile id.
+    pub profile_id: Option<u32>,
+}
+
+/// Session config for all codecs.
+#[derive(Debug, Clone, Default)]
+pub struct CodecConfig {
+    configs: Vec<PayloadParams>,
 }
 
 impl PayloadParams {
-    pub(crate) fn new(p: SdpPayloadParams) -> Self {
+    /// Creates new payload params.
+    ///
+    /// * `pt` is the payload type RTP mapping in the session.
+    /// * `resend` is the payload type used for (RTX) resend channel.
+    /// * `spec` configures details about the codec.
+    pub fn new(pt: Pt, resend: Option<Pt>, spec: CodecSpec) -> Self {
+        let is_video = spec.codec.is_video();
+
         PayloadParams {
-            inner: p,
+            pt,
+            resend,
+
+            spec,
+
+            // Both audio and video use TWCC
+            fb_transport_cc: true,
+
+            // Only true for video.
+            fb_fir: is_video,
+            fb_nack: is_video,
+            fb_pli: is_video,
+
             pt_matched_to_remote: false,
         }
     }
 
     /// The payload type that groups these parameters.
     pub fn pt(&self) -> Pt {
-        self.inner.codec.pt
+        self.pt
     }
 
     /// Whether these parameters are repairing some other set of parameters.
     /// This is used to, via PT, separate RTX resend streams from the main stream.
-    pub fn pt_rtx(&self) -> Option<Pt> {
-        self.inner.resend
+    pub fn resend(&self) -> Option<Pt> {
+        self.resend
     }
 
-    /// The codec for this group of parameters.
-    pub fn codec(&self) -> Codec {
-        self.inner.codec.codec
+    /// The codec with settings for this group of parameters.
+    pub fn spec(&self) -> CodecSpec {
+        self.spec
     }
 
-    /// Clock rate of the codec.
-    pub fn clock_rate(&self) -> u32 {
-        self.inner.codec.clock_rate
-    }
-
-    /// Number of audio channels (if any).
-    pub fn channels(&self) -> Option<u8> {
-        self.inner.codec.channels
-    }
-
-    /// Codec specific format parameters. This might carry additional config for
-    /// things like h264.
-    pub fn fmtp(&self) -> &FormatParams {
-        &self.inner.fmtps
-    }
-
-    pub(crate) fn inner(&self) -> &SdpPayloadParams {
-        &self.inner
-    }
-
-    pub(crate) fn match_score(&self, o: &SdpPayloadParams) -> Option<usize> {
+    pub(crate) fn match_score(&self, o: &PayloadParams) -> Option<usize> {
         // we don't want to compare PT
-        let pt = 0.into();
-        let codec = self.inner.codec;
-        let c0 = CodecSpec { pt, ..codec };
-        let c1 = CodecSpec { pt, ..o.codec };
+        let c0 = self.spec;
+        let c1 = o.spec;
 
-        if c0 == c1 && self.inner.fmtps == o.fmtps {
+        if c0 == c1 {
             return Some(100);
         } else {
             // TODO: fuzzy matching.
@@ -86,36 +188,30 @@ impl PayloadParams {
         None
     }
 
-    fn update_pt(&mut self, media_pts: &[SdpPayloadParams]) -> Option<(Pt, Pt)> {
+    fn update_pt(&mut self, media_pts: &[PayloadParams]) -> Option<(Pt, Pt)> {
         let first = media_pts
             .iter()
             .find(|p| self.match_score(p) == Some(100))?;
 
-        let remote_pt = first.codec.pt;
+        let remote_pt = first.pt;
 
         if self.pt_matched_to_remote {
             // just verify it's still the same.
-            if self.pt() != remote_pt {
-                warn!("Remote PT changed {} => {}", self.pt(), remote_pt);
+            if self.pt != remote_pt {
+                warn!("Remote PT changed {} => {}", self.pt, remote_pt);
             }
 
             None
         } else {
-            let replaced = self.inner.codec.pt;
+            let replaced = self.pt;
 
             // Lock down the PT
-            self.inner.codec.pt = remote_pt;
+            self.pt = remote_pt;
             self.pt_matched_to_remote = true;
 
             Some((remote_pt, replaced))
         }
     }
-}
-
-/// Session config for all codecs.
-#[derive(Debug, Clone, Default)]
-pub struct CodecConfig {
-    configs: Vec<PayloadParams>,
 }
 
 impl CodecConfig {
@@ -143,9 +239,7 @@ impl CodecConfig {
     }
 
     pub(crate) fn matches(&self, c: &PayloadParams) -> bool {
-        self.configs.iter().any(|x| {
-            x.codec() == c.codec() && x.clock_rate() == c.clock_rate() && x.fmtp() == c.fmtp()
-        })
+        self.configs.iter().any(|x| x.spec == c.spec)
     }
 
     /// Manually configure a payload type.
@@ -156,7 +250,7 @@ impl CodecConfig {
         codec: Codec,
         clock_rate: u32,
         channels: Option<u8>,
-        fmtps: FormatParams,
+        format: FormatParams,
     ) {
         let (fb_transport_cc, fb_fir, fb_nack, fb_pli, resend) = if codec.is_video() {
             (true, true, true, true, resend)
@@ -164,22 +258,23 @@ impl CodecConfig {
             (true, false, false, false, None)
         };
 
-        let p = SdpPayloadParams {
-            codec: CodecSpec {
-                pt,
+        let p = PayloadParams {
+            pt,
+            spec: CodecSpec {
                 codec,
                 clock_rate,
                 channels,
+                format,
             },
-            fmtps,
             resend,
             fb_transport_cc,
             fb_fir,
             fb_nack,
             fb_pli,
+            pt_matched_to_remote: false,
         };
 
-        self.configs.push(PayloadParams::new(p));
+        self.configs.push(p);
     }
 
     /// Convenience for adding a h264 payload type.
@@ -291,11 +386,11 @@ impl CodecConfig {
     }
 
     pub(crate) fn all_for_kind(&self, kind: MediaKind) -> impl Iterator<Item = &PayloadParams> {
-        self.configs.iter().filter(move |c| {
+        self.configs.iter().filter(move |params| {
             if kind == MediaKind::Video {
-                c.codec().is_video()
+                params.spec.codec.is_video()
             } else {
-                c.codec().is_audio()
+                params.spec.codec.is_audio()
             }
         })
     }
@@ -314,15 +409,72 @@ impl CodecConfig {
 
         // Need to adjust potentially clashes introduced by assigning pts from the medias.
         for (i, p) in self.configs.iter_mut().enumerate() {
-            if let Some(index) = assigneds.get(&p.pt()) {
+            if let Some(index) = assigneds.get(&p.pt) {
                 if i != *index {
                     // This PT has been reassigned. This unwrap is ok
                     // because we can't have replaced something without
                     // also get the old PT out.
                     let r = replaceds.pop().unwrap();
-                    p.inner.codec.pt = r;
+                    p.pt = r;
                 }
             }
+        }
+    }
+}
+
+impl fmt::Display for FormatParams {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = self
+            .to_format_param()
+            .into_iter()
+            .map(|f| f.to_string())
+            .collect::<Vec<_>>()
+            .join(";");
+        write!(f, "{s}")
+    }
+}
+
+impl Codec {
+    /// Tells if codec is audio.
+    pub fn is_audio(&self) -> bool {
+        use Codec::*;
+        matches!(self, Opus)
+    }
+
+    /// Tells if codec is video.
+    pub fn is_video(&self) -> bool {
+        use Codec::*;
+        matches!(self, H264 | Vp8 | Vp9 | Av1)
+    }
+}
+
+impl<'a> From<&'a str> for Codec {
+    fn from(v: &'a str) -> Self {
+        let lc = v.to_ascii_lowercase();
+        match &lc[..] {
+            "opus" => Codec::Opus,
+            "h264" => Codec::H264,
+            "h265" => Codec::H265,
+            "vp8" => Codec::Vp8,
+            "vp9" => Codec::Vp9,
+            "av1" => Codec::Av1,
+            "rtx" => Codec::Rtx, // resends
+            _ => Codec::Unknown,
+        }
+    }
+}
+
+impl fmt::Display for Codec {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Codec::Opus => write!(f, "opus"),
+            Codec::H264 => write!(f, "H264"),
+            Codec::H265 => write!(f, "H265"),
+            Codec::Vp8 => write!(f, "VP8"),
+            Codec::Vp9 => write!(f, "VP9"),
+            Codec::Av1 => write!(f, "AV1"),
+            Codec::Rtx => write!(f, "rtx"),
+            Codec::Unknown => write!(f, "unknown"),
         }
     }
 }

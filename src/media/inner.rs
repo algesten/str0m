@@ -2,9 +2,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::change::AddMedia;
+use crate::format::Codec;
 pub use crate::packet::RtpMeta;
 pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
-pub use crate::sdp::{Codec, FormatParams};
 
 use crate::io::{Id, DATAGRAM_MTU};
 use crate::packet::{DepacketizingBuffer, MediaKind, Packetized, QueueSnapshot};
@@ -230,11 +230,8 @@ impl MediaInner {
     }
 
     pub fn match_params(&self, params: PayloadParams) -> Option<Pt> {
-        let c = self
-            .params
-            .iter()
-            .max_by_key(|p| p.match_score(params.inner()))?;
-        c.match_score(params.inner())?; // avoid None, which isn't a match.
+        let c = self.params.iter().max_by_key(|p| p.match_score(&params))?;
+        c.match_score(&params)?; // avoid None, which isn't a match.
         Some(c.pt())
     }
 
@@ -254,11 +251,8 @@ impl MediaInner {
             return Err(RtcError::NotSendingDirection(self.dir));
         }
 
-        let codec = { self.codec_by_pt(pt).map(|p| p.codec()) };
-
-        let codec = match codec {
-            Some(v) => v,
-            None => return Err(RtcError::UnknownPt(pt)),
+        let Some(spec) = self.codec_by_pt(pt).map(|p| p.spec()) else {
+            return Err(RtcError::UnknownPt(pt));
         };
 
         // The SSRC is figured out given the simulcast level.
@@ -268,8 +262,8 @@ impl MediaInner {
         tx.update_clocks(rtp_time, wallclock);
 
         let buf = self.buffers_tx.entry(pt).or_insert_with(|| {
-            let max_retain = if codec.is_audio() { 4096 } else { 2048 };
-            PacketizingBuffer::new(codec.into(), max_retain)
+            let max_retain = if spec.codec.is_audio() { 4096 } else { 2048 };
+            PacketizingBuffer::new(spec.codec.into(), max_retain)
         });
 
         trace!(
@@ -305,8 +299,8 @@ impl MediaInner {
         // We might want to make this check more fine grained by testing which PT is
         // in "active use" right now.
         self.params.iter().any(|r| match kind {
-            KeyframeRequestKind::Pli => r.inner().fb_pli,
-            KeyframeRequestKind::Fir => r.inner().fb_fir,
+            KeyframeRequestKind::Pli => r.fb_pli,
+            KeyframeRequestKind::Fir => r.fb_fir,
         })
     }
 
@@ -713,7 +707,7 @@ impl MediaInner {
     pub fn get_params(&self, pt: Pt) -> Option<&PayloadParams> {
         self.params
             .iter()
-            .find(|p| p.inner().codec.pt == pt || p.inner().resend == Some(pt))
+            .find(|p| p.pt() == pt || p.resend == Some(pt))
     }
 
     pub fn has_nack(&mut self) -> bool {
@@ -1152,7 +1146,7 @@ impl MediaInner {
 
 // returns the corresponding rtx pt counterpart, if any
 fn pt_rtx(params: &[PayloadParams], pt: Pt) -> Option<Pt> {
-    params.iter().find(|p| p.pt() == pt)?.pt_rtx()
+    params.iter().find(|p| p.pt() == pt)?.resend
 }
 
 impl<'a> NextPacketBody<'a> {
@@ -1272,7 +1266,7 @@ impl MediaInner {
             kind: l.typ.clone().into(),
             exts,
             dir: l.direction().invert(), // remote direction is reverse.
-            params: l.rtp_params().into_iter().map(PayloadParams::new).collect(),
+            params: l.rtp_params(),
             ..Default::default()
         }
     }
