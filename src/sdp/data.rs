@@ -309,7 +309,9 @@ impl MediaLine {
             for (pt, values) in fmtps.iter() {
                 // find matching a=fmtp line, if it exists.
                 if **pt == p.pt {
-                    p.spec.format.set_attributes(values);
+                    for param in values.iter() {
+                        p.spec.format.set_param(param);
+                    }
                 }
 
                 // find resend pt, if there is one.
@@ -907,50 +909,6 @@ impl MediaAttribute {
     pub fn is_direction(&self) -> bool {
         use MediaAttribute::*;
         matches!(self, RecvOnly | SendRecv | SendOnly | Inactive)
-    }
-}
-
-impl FormatParams {
-    fn set_attributes(&mut self, values: &[FormatParam]) {
-        use FormatParam::*;
-        for v in values {
-            match v {
-                MinPTime(v) => self.min_p_time = Some(*v),
-                UseInbandFec(v) => self.use_inband_fec = Some(*v),
-                LevelAsymmetryAllowed(v) => self.level_asymmetry_allowed = Some(*v),
-                PacketizationMode(v) => self.packetization_mode = Some(*v),
-                ProfileLevelId(v) => self.profile_level_id = Some(*v),
-                ProfileId(v) => self.profile_id = Some(*v),
-                Apt(_) => {}
-                Unknown => {}
-            }
-        }
-    }
-
-    pub(crate) fn to_format_param(self) -> Vec<FormatParam> {
-        use FormatParam::*;
-        let mut r = Vec::with_capacity(5);
-
-        if let Some(v) = self.min_p_time {
-            r.push(MinPTime(v));
-        }
-        if let Some(v) = self.use_inband_fec {
-            r.push(UseInbandFec(v));
-        }
-        if let Some(v) = self.level_asymmetry_allowed {
-            r.push(LevelAsymmetryAllowed(v));
-        }
-        if let Some(v) = self.packetization_mode {
-            r.push(PacketizationMode(v));
-        }
-        if let Some(v) = self.profile_level_id {
-            r.push(ProfileLevelId(v));
-        }
-        if let Some(v) = self.profile_id {
-            r.push(ProfileId(v));
-        }
-
-        r
     }
 }
 
