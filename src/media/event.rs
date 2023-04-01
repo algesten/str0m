@@ -4,7 +4,8 @@ use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
 use crate::sdp::Simulcast as SdpSimulcast;
 
 use super::PayloadParams;
-use crate::media::rtp::{CodecExtra, RtpMeta};
+use crate::format::CodecExtra;
+use crate::media::rtp::RtpMeta;
 
 pub use crate::packet::MediaKind;
 
