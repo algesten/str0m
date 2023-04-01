@@ -123,7 +123,8 @@ impl Media<'_> {
     ///
     /// ```no_run
     /// # use str0m::Rtc;
-    /// # use str0m::media::{PayloadParams, MediaData, Mid};
+    /// # use str0m::media::{MediaData, Mid};
+    /// # use str0m::format::PayloadParams;
     /// # use std::time::Instant;
     /// let mut rtc = Rtc::new();
     ///
@@ -214,7 +215,8 @@ impl Media<'_> {
 ///
 /// ```no_run
 /// # use str0m::Rtc;
-/// # use str0m::media::{PayloadParams, MediaData, Mid};
+/// # use str0m::media::{MediaData, Mid};
+/// # use str0m::format::PayloadParams;
 /// # use std::time::Instant;
 /// let mut rtc = Rtc::new();
 ///

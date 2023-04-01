@@ -487,6 +487,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use change::Fingerprint;
 use change::{DirectApi, SdpApi};
 use dtls::{Dtls, DtlsEvent};
 use format::CodecConfig;
@@ -499,9 +500,8 @@ use sctp::{RtcSctp, SctpEvent};
 use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent};
 use thiserror::Error;
 
-pub use ice::{IceConnectionState, IceCreds};
+pub use ice::IceConnectionState;
 
-pub use dtls::Fingerprint;
 pub use ice::Candidate;
 pub use rtp::Bitrate;
 
