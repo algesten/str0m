@@ -1464,8 +1464,8 @@ impl RtcConfig {
     /// // For the session to use only OPUS and VP8.
     /// let mut rtc = RtcConfig::default()
     ///     .clear_codecs()
-    ///     .enable_opus()
-    ///     .enable_vp8()
+    ///     .enable_opus(true)
+    ///     .enable_vp8(true)
     ///     .build();
     /// ```
     pub fn clear_codecs(mut self) -> Self {
@@ -1476,24 +1476,24 @@ impl RtcConfig {
     /// Enable opus audio codec.
     ///
     /// Enabled by default.
-    pub fn enable_opus(mut self) -> Self {
-        self.codec_config.add_default_opus();
+    pub fn enable_opus(mut self, enabled: bool) -> Self {
+        self.codec_config.enabe_opus(enabled);
         self
     }
 
     /// Enable VP8 video codec.
     ///
     /// Enabled by default.
-    pub fn enable_vp8(mut self) -> Self {
-        self.codec_config.add_default_vp8();
+    pub fn enable_vp8(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_vp8(enabled);
         self
     }
 
     /// Enable H264 video codec.
     ///
     /// Enabled by default.
-    pub fn enable_h264(mut self) -> Self {
-        self.codec_config.add_default_h264();
+    pub fn enable_h264(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_h264(enabled);
         self
     }
 
@@ -1510,8 +1510,8 @@ impl RtcConfig {
     /// Enable VP9 video codec.
     ///
     /// Enabled by default.
-    pub fn enable_vp9(mut self) -> Self {
-        self.codec_config.add_default_vp9();
+    pub fn enable_vp9(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_vp9(enabled);
         self
     }
 
@@ -1544,10 +1544,13 @@ impl RtcConfig {
         self
     }
 
-    /// Enables the estimation of the available send bandwidth.
+    /// Enables estimation of available bandwidth (BWE).
+    ///
+    /// None disables the BWE. This is an estimation of the send bandwidth, not receive.
+    ///
     /// This includes setting the initial estimate to start with.
-    pub fn enable_bwe(mut self, initial_estimate: Bitrate) -> Self {
-        self.bwe_initial_bitrate = Some(initial_estimate);
+    pub fn enable_bwe(mut self, initial_estimate: Option<Bitrate>) -> Self {
+        self.bwe_initial_bitrate = initial_estimate;
 
         self
     }

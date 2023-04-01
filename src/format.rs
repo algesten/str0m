@@ -228,12 +228,12 @@ impl CodecConfig {
     /// Creates a new config with all default configurations enabled.
     pub fn new_with_defaults() -> Self {
         let mut c = Self::new();
-        c.add_default_opus();
+        c.enabe_opus(true);
 
-        c.add_default_vp8();
-        c.add_default_h264();
+        c.enable_vp8(true);
+        c.enable_h264(true);
         // c.add_default_av1();
-        c.add_default_vp9();
+        c.enable_vp9(true);
 
         c
     }
@@ -306,7 +306,11 @@ impl CodecConfig {
     }
 
     /// Add a default OPUS payload type.
-    pub fn add_default_opus(&mut self) {
+    pub fn enabe_opus(&mut self, enabled: bool) {
+        self.configs.retain(|c| c.spec.codec != Codec::Opus);
+        if !enabled {
+            return;
+        }
         self.add_config(
             111.into(),
             None,
@@ -322,7 +326,11 @@ impl CodecConfig {
     }
 
     /// Add a default VP8 payload type.
-    pub fn add_default_vp8(&mut self) {
+    pub fn enable_vp8(&mut self, enabled: bool) {
+        self.configs.retain(|c| c.spec.codec != Codec::Vp8);
+        if !enabled {
+            return;
+        }
         self.add_config(
             96.into(),
             Some(97.into()),
@@ -334,7 +342,11 @@ impl CodecConfig {
     }
 
     /// Add a default H264 payload type.
-    pub fn add_default_h264(&mut self) {
+    pub fn enable_h264(&mut self, enabled: bool) {
+        self.configs.retain(|c| c.spec.codec != Codec::H264);
+        if !enabled {
+            return;
+        }
         const PARAMS: &[(u8, u8, bool, u32)] = &[
             (127, 121, true, 0x42001f),
             (125, 107, false, 0x42001f),
@@ -365,7 +377,11 @@ impl CodecConfig {
     // }
 
     /// Add a default VP9 payload type.
-    pub fn add_default_vp9(&mut self) {
+    pub fn enable_vp9(&mut self, enabled: bool) {
+        self.configs.retain(|c| c.spec.codec != Codec::Vp9);
+        if !enabled {
+            return;
+        }
         self.add_config(
             98.into(),
             Some(99.into()),
