@@ -13,7 +13,7 @@ use crate::format::CodecSpec;
 use crate::format::FormatParams;
 use crate::format::PayloadParams;
 use crate::ice::{Candidate, IceCreds};
-use crate::rtp::{Direction, ExtMap, Mid, Pt, SessionId, Ssrc};
+use crate::rtp::{Direction, Extension, Mid, Pt, SessionId, Ssrc};
 
 use super::parser::sdp_parser;
 use super::SdpError;
@@ -490,12 +490,12 @@ impl MediaLine {
             .any(|a| matches!(a, MediaAttribute::EndOfCandidates))
     }
 
-    pub fn extmaps(&self) -> Vec<ExtMap> {
+    pub fn extmaps(&self) -> Vec<(u8, Extension)> {
         let mut ret = vec![];
 
         for a in &self.attrs {
-            if let MediaAttribute::ExtMap(e) = a {
-                ret.push(*e);
+            if let MediaAttribute::ExtMap { id, ext } = a {
+                ret.push((*id, *ext));
             }
         }
 
@@ -849,7 +849,10 @@ pub enum MediaAttribute {
     MaxMessageSize(usize),
     // a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level
     // a=extmap:2 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
-    ExtMap(ExtMap),
+    ExtMap {
+        id: u8, // 1-14 inclusive,
+        ext: Extension,
+    },
     RecvOnly, // a=recvonly
     SendRecv, // a=sendrecv
     SendOnly, // a=sendonly
@@ -1315,15 +1318,15 @@ impl fmt::Display for MediaAttribute {
             Mid(v) => write!(f, "a=mid:{v}\r\n")?,
             SctpPort(v) => write!(f, "a=sctp-port:{v}\r\n")?,
             MaxMessageSize(v) => write!(f, "a=max-message-size:{v}\r\n")?,
-            ExtMap(e) => {
-                if !e.ext.is_serialized() {
+            ExtMap { id, ext } => {
+                if !ext.is_serialized() {
                     return Ok(());
                 }
-                write!(f, "a=extmap:{}", e.id)?;
-                if let Some(d) = &e.direction {
-                    write!(f, "/{d}")?;
-                }
-                write!(f, " {}", e.ext.as_uri())?;
+                write!(f, "a=extmap:{}", id)?;
+                // if let Some(d) = &e.direction {
+                //     write!(f, "/{d}")?;
+                // }
+                write!(f, " {}", ext.as_uri())?;
                 // if let Some(e) = &e.ext {
                 //     write!(f, " {}", e)?;
                 // }
@@ -1542,12 +1545,12 @@ mod test {
                         MediaAttribute::Fingerprint(Fingerprint { hash_func: "sha-256".into(), bytes: vec![140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8, 128, 168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73, 37, 115, 70, 96, 32, 220] }),
                         MediaAttribute::Setup(Setup::ActPass),
                         MediaAttribute::Mid("0".into()),
-                        MediaAttribute::ExtMap(ExtMap { id: 1, direction: None, ext: Extension::AudioLevel }),
-                        MediaAttribute::ExtMap(ExtMap { id: 2, direction: None, ext: Extension::AbsoluteSendTime }),
-                        MediaAttribute::ExtMap(ExtMap { id: 3, direction: None, ext: Extension::TransportSequenceNumber }),
-                        MediaAttribute::ExtMap(ExtMap { id: 4, direction: None, ext: Extension::RtpMid }),
-                        MediaAttribute::ExtMap(ExtMap { id: 5, direction: None, ext: Extension::RtpStreamId }),
-                        MediaAttribute::ExtMap(ExtMap { id: 6, direction: None, ext: Extension::RepairedRtpStreamId }),
+                        MediaAttribute::ExtMap{ id: 1, ext: Extension::AudioLevel },
+                        MediaAttribute::ExtMap{ id: 2, ext: Extension::AbsoluteSendTime },
+                        MediaAttribute::ExtMap{ id: 3, ext: Extension::TransportSequenceNumber },
+                        MediaAttribute::ExtMap{ id: 4, ext: Extension::RtpMid },
+                        MediaAttribute::ExtMap{ id: 5, ext: Extension::RtpStreamId },
+                        MediaAttribute::ExtMap{ id: 6, ext: Extension::RepairedRtpStreamId },
                         MediaAttribute::SendRecv,
                         MediaAttribute::Msid(Msid { stream_id: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(), track_id: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() }),
                         MediaAttribute::RtcpMux,

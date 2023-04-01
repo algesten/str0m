@@ -10,7 +10,7 @@ use {
 
 use crate::dtls::Fingerprint;
 use crate::ice::{Candidate, CandidateKind};
-use crate::rtp::{Direction, ExtMap, Extension, Mid, Pt, SessionId, Ssrc};
+use crate::rtp::{Direction, Extension, Mid, Pt, SessionId, Ssrc};
 
 use super::data::*;
 
@@ -445,13 +445,7 @@ where
             optional((token(' '), any_value())),
         ),
     )
-    .map(|(id, dir_opt, _, ext_type, _ext_opt)| {
-        MediaAttribute::ExtMap(ExtMap {
-            id,
-            direction: dir_opt.map(|(_, d)| d),
-            ext: ext_type,
-        })
-    });
+    .map(|(id, _dir_opt, _, ext, _ext_opt)| MediaAttribute::ExtMap { id, ext });
 
     let direction = choice((
         attempt(attribute_line_flag("recvonly").map(|_| MediaAttribute::RecvOnly)),

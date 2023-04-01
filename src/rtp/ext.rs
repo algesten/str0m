@@ -2,49 +2,51 @@ use std::fmt;
 use std::str::from_utf8;
 
 use super::mtime::MediaTime;
-use super::{Direction, Mid, Rid};
+use super::{Mid, Rid};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ExtMap {
-    pub id: u8,                       // 1-14 inclusive, 0 and 15 are reserved.
-    pub direction: Option<Direction>, // recvonly, sendrecv, sendonly, inactive
-    pub ext: Extension,
-}
-
-impl ExtMap {
-    pub fn new(id: u8, ext: Extension) -> Self {
-        ExtMap {
-            id,
-            direction: None,
-            ext,
-        }
-    }
-}
-
+/// RTP header extensions.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Extension {
+    /// <http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time>
     AbsoluteSendTime,
+    /// <urn:ietf:params:rtp-hdrext:ssrc-audio-level>
     AudioLevel,
+    /// <urn:ietf:params:rtp-hdrext:toffset>
+    ///
     /// Use when a RTP packet is delayed by a send queue to indicate an offset in the "transmitter".
     /// It effectively means we can set a timestamp offset exactly when the UDP packet leaves the
     /// server.
     TransmissionTimeOffset,
+    /// <urn:3gpp:video-orientation>
     VideoOrientation,
+    /// <http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01>
     TransportSequenceNumber,
+    /// <http://www.webrtc.org/experiments/rtp-hdrext/playout-delay>
     PlayoutDelay,
+    /// <http://www.webrtc.org/experiments/rtp-hdrext/video-content-type>
     VideoContentType,
+    /// <http://www.webrtc.org/experiments/rtp-hdrext/video-timing>
     VideoTiming,
+    /// <urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id>
+    ///
     /// UTF8 encoded identifier for the RTP stream. Not the same as SSRC, this is is designed to
     /// avoid running out of SSRC for very large sessions.
     RtpStreamId,
+    /// <urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id>
+    ///
     /// UTF8 encoded identifier referencing another RTP stream's RtpStreamId. If we see
     /// this extension type, we know the stream is a repair stream.
     RepairedRtpStreamId,
+    /// <urn:ietf:params:rtp-hdrext:sdes:mid>
     RtpMid,
+    /// <http://tools.ietf.org/html/draft-ietf-avtext-framemarking-07>
     FrameMarking,
+    /// <http://www.webrtc.org/experiments/rtp-hdrext/color-space>
     ColorSpace,
+    /// Not recognized URI
     UnknownUri,
 }
+
 /// Mapping of extension URI to our enum
 const EXT_URI: &[(Extension, &str)] = &[
     (
@@ -102,6 +104,7 @@ const EXT_URI: &[(Extension, &str)] = &[
 ];
 
 impl Extension {
+    /// Parses an extension from a URI.
     pub fn from_uri(uri: &str) -> Self {
         for (t, spec) in EXT_URI.iter() {
             if *spec == uri {
@@ -114,6 +117,7 @@ impl Extension {
         Extension::UnknownUri
     }
 
+    /// Represents the extension as an URI.
     pub fn as_uri(&self) -> &'static str {
         for (t, spec) in EXT_URI.iter() {
             if t == self {
@@ -123,7 +127,7 @@ impl Extension {
         "unknown"
     }
 
-    pub fn is_serialized(&self) -> bool {
+    pub(crate) fn is_serialized(&self) -> bool {
         *self != Extension::UnknownUri
     }
 
@@ -183,34 +187,45 @@ impl Extension {
 
 /// Mapping between RTP extension id to what extension that is.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Extensions([Option<Extension>; 14]);
+pub struct ExtensionMap([Option<Extension>; 14]);
 
-impl Extensions {
-    pub fn new() -> Self {
-        Extensions([None; 14])
+impl ExtensionMap {
+    /// Create an empty map.
+    pub fn empty() -> Self {
+        ExtensionMap([None; 14])
     }
 
-    pub fn default_mappings() -> Extensions {
-        let mut exts = Self::new();
+    /// Creates a map with the "standard" mappings.
+    ///
+    /// The standard are taken from Chrome.
+    pub fn standard() -> Self {
+        let mut exts = Self::empty();
 
-        exts.set_mapping(ExtMap::new(1, Extension::AudioLevel));
-        exts.set_mapping(ExtMap::new(2, Extension::AbsoluteSendTime));
-        exts.set_mapping(ExtMap::new(3, Extension::TransportSequenceNumber));
-        exts.set_mapping(ExtMap::new(4, Extension::RtpMid));
+        exts.set(1, Extension::AudioLevel);
+        exts.set(2, Extension::AbsoluteSendTime);
+        exts.set(3, Extension::TransportSequenceNumber);
+        exts.set(4, Extension::RtpMid);
         // exts.set_mapping(&ExtMap::new(8, Extension::ColorSpace));
-        exts.set_mapping(ExtMap::new(10, Extension::RtpStreamId));
-        exts.set_mapping(ExtMap::new(11, Extension::RepairedRtpStreamId));
-        exts.set_mapping(ExtMap::new(13, Extension::VideoOrientation));
+        exts.set(10, Extension::RtpStreamId);
+        exts.set(11, Extension::RepairedRtpStreamId);
+        exts.set(13, Extension::VideoOrientation);
 
         exts
     }
 
-    pub fn set_mapping(&mut self, x: ExtMap) {
-        let new_index = x.id as usize - 1;
-        self.0[new_index] = Some(x.ext);
+    /// Set a mapping for an extension.
+    ///
+    /// The id must be 1-14 inclusive (1-indexed).
+    pub fn set(&mut self, id: u8, ext: Extension) {
+        if id < 1 || id > 14 {
+            debug!("Set RTP extension out of range 1-14: {}", id);
+            return;
+        }
+        let idx = id as usize - 1;
+        self.0[idx] = Some(ext);
     }
 
-    pub fn keep_same(&mut self, other: &Extensions) {
+    pub(crate) fn keep_same(&mut self, other: &ExtensionMap) {
         for i in 0..14 {
             if self.0[i] != other.0[i] {
                 self.0[i] = None;
@@ -218,19 +233,19 @@ impl Extensions {
         }
     }
 
-    pub fn apply_mapping(&mut self, x: &ExtMap) {
-        if x.id < 1 && x.id > 14 {
+    pub(crate) fn apply(&mut self, id: u8, ext: Extension) {
+        if id < 1 || id > 14 {
             return;
         }
 
         // Mapping goes from 0 to 13.
-        let new_index = x.id as usize - 1;
+        let new_index = id as usize - 1;
 
         let Some(old_index) = self
             .0
             .iter()
             .enumerate()
-            .find(|(_, m)| **m == Some(x.ext))
+            .find(|(_, m)| **m == Some(ext))
             .map(|(i, _)| i) else {
                 return;
             };
@@ -241,9 +256,12 @@ impl Extensions {
 
         // swap them
         self.0[old_index] = self.0[new_index].take();
-        self.0[new_index] = Some(x.ext);
+        self.0[new_index] = Some(ext);
     }
 
+    /// Look up the extension for the id.
+    ///
+    /// The id must be 1-14 inclusive (1-indexed).
     pub fn lookup(&self, id: u8) -> Option<Extension> {
         if id >= 1 && id <= 14 {
             self.0[id as usize - 1]
@@ -253,6 +271,9 @@ impl Extensions {
         }
     }
 
+    /// Finds the id for an extension (if mapped).
+    ///
+    /// The returned id will be 1-based.
     pub fn id_of(&self, e: Extension) -> Option<u8> {
         self.0
             .iter()
@@ -260,21 +281,17 @@ impl Extensions {
             .map(|p| p as u8 + 1)
     }
 
-    pub fn as_extmap(&self, audio: bool) -> impl Iterator<Item = ExtMap> + '_ {
+    pub(crate) fn iter(&self, audio: bool) -> impl Iterator<Item = (u8, Extension)> + '_ {
         self.0
             .iter()
             .enumerate()
             .filter_map(|(i, e)| e.as_ref().map(|e| (i, e)))
             .filter(move |(_, e)| if audio { e.is_audio() } else { e.is_video() })
-            .map(|(i, e)| ExtMap {
-                id: (i + 1) as u8,
-                direction: None,
-                ext: *e,
-            })
+            .map(|(i, e)| ((i + 1) as u8, *e))
     }
 
     // https://tools.ietf.org/html/rfc5285
-    pub fn parse(&self, mut buf: &[u8], ext_vals: &mut ExtensionValues) {
+    pub(crate) fn parse(&self, mut buf: &[u8], ext_vals: &mut ExtensionValues) {
         loop {
             if buf.is_empty() {
                 return;
@@ -313,7 +330,7 @@ impl Extensions {
         }
     }
 
-    pub fn write_to(&self, ext_buf: &mut [u8], ev: &ExtensionValues) -> usize {
+    pub(crate) fn write_to(&self, ext_buf: &mut [u8], ev: &ExtensionValues) -> usize {
         let orig_len = ext_buf.len();
         let mut b = ext_buf;
 
@@ -335,7 +352,7 @@ impl Extensions {
 const FIXED_POINT_6_18: i64 = 262_144; // 2 ^ 18
 
 impl Extension {
-    pub fn write_to(&self, buf: &mut [u8], ev: &ExtensionValues) -> Option<usize> {
+    pub(crate) fn write_to(&self, buf: &mut [u8], ev: &ExtensionValues) -> Option<usize> {
         use Extension::*;
         match self {
             AbsoluteSendTime => {
@@ -428,7 +445,7 @@ impl Extension {
         }
     }
 
-    pub fn parse_value(&self, buf: &[u8], v: &mut ExtensionValues) -> Option<()> {
+    pub(crate) fn parse_value(&self, buf: &[u8], v: &mut ExtensionValues) -> Option<()> {
         use Extension::*;
         match self {
             // 3
@@ -641,7 +658,7 @@ mod test {
 
     #[test]
     fn abs_send_time() {
-        let mut exts = Extensions::new();
+        let mut exts = ExtensionMap::empty();
         exts.0[3] = Some(Extension::AbsoluteSendTime);
         let ev = ExtensionValues {
             abs_send_time: Some(MediaTime::new(1, FIXED_POINT_6_18)),
@@ -659,7 +676,7 @@ mod test {
 
     #[test]
     fn playout_delay() {
-        let mut exts = Extensions::new();
+        let mut exts = ExtensionMap::empty();
         exts.0[1] = Some(Extension::PlayoutDelay);
         let ev = ExtensionValues {
             play_delay_min: Some(MediaTime::new(100, 100)),
@@ -678,7 +695,7 @@ mod test {
     }
 }
 
-impl fmt::Debug for Extensions {
+impl fmt::Debug for ExtensionMap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Extensions(")?;
         let joined = self

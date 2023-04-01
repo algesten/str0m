@@ -11,7 +11,7 @@ mod id;
 pub use id::{Mid, Pt, Rid, SeqNo, SessionId, Ssrc};
 
 mod ext;
-pub use ext::{ExtMap, Extension, ExtensionValues, Extensions, VideoOrientation};
+pub use ext::{Extension, ExtensionMap, ExtensionValues, VideoOrientation};
 
 mod dir;
 pub use dir::Direction;
@@ -58,7 +58,7 @@ mod tests {
     #[test]
     fn fuzz_rtp_header_parse() {
         fn parse_rtp(buf: &Vec<u8>) -> bool {
-            let e = Extensions::default_mappings();
+            let e = ExtensionMap::standard();
             let _ = RtpHeader::parse(&buf, &e);
             true
         }

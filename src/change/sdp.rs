@@ -11,7 +11,7 @@ use crate::ice::{Candidate, IceCreds};
 use crate::io::Id;
 use crate::media::MediaInner;
 use crate::media::{MediaKind, Source};
-use crate::rtp::{Direction, Extension, Extensions, Mid, Pt, Ssrc};
+use crate::rtp::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
 use crate::sdp::{Proto, SessionAttribute, Setup};
@@ -730,8 +730,8 @@ fn update_session(session: &mut Session, sdp: &Sdp) {
 
     let extmaps = sdp.media_lines.iter().flat_map(|m| m.extmaps());
 
-    for x in extmaps {
-        session.exts.apply_mapping(&x);
+    for (id, ext) in extmaps {
+        session.exts.apply(id, ext);
     }
 
     if old != session.exts {
@@ -774,7 +774,7 @@ fn update_media(
     media: &mut MediaInner,
     m: &MediaLine,
     config: &CodecConfig,
-    session_exts: &Extensions,
+    session_exts: &ExtensionMap,
 ) {
     // Nack enabled for any payload
     let nack_enabled = m.rtp_params().iter().any(|p| p.fb_nack);
@@ -800,9 +800,9 @@ fn update_media(
     media.retain_pts(&params);
 
     // Narrowing of Rtp header extension mappings.
-    let mut exts = Extensions::new();
-    for x in m.extmaps() {
-        exts.set_mapping(x);
+    let mut exts = ExtensionMap::empty();
+    for (id, ext) in m.extmaps() {
+        exts.set(id, ext);
     }
     exts.keep_same(session_exts);
     media.set_exts(exts);
@@ -876,8 +876,8 @@ impl AsSdpMediaLine for MediaInner {
         attrs.push(MediaAttribute::Mid(self.mid()));
 
         let audio = self.kind() == MediaKind::Audio;
-        for e in self.exts().as_extmap(audio) {
-            attrs.push(MediaAttribute::ExtMap(e));
+        for (id, ext) in self.exts().iter(audio) {
+            attrs.push(MediaAttribute::ExtMap { id, ext });
         }
 
         attrs.push(self.direction().into());
@@ -1089,7 +1089,7 @@ impl Changes {
         &'a self,
         index_start: usize,
         config: &'b CodecConfig,
-        exts: &'b Extensions,
+        exts: &'b ExtensionMap,
     ) -> impl Iterator<Item = MediaInner> + '_ {
         self.0
             .iter()
@@ -1115,7 +1115,7 @@ impl Change {
         &self,
         index: usize,
         config: &CodecConfig,
-        exts: &Extensions,
+        exts: &ExtensionMap,
     ) -> Option<MediaInner> {
         use Change::*;
         match self {

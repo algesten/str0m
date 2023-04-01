@@ -9,7 +9,7 @@ pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 use crate::io::{Id, DATAGRAM_MTU};
 use crate::packet::{DepacketizingBuffer, MediaKind, Packetized, QueueSnapshot};
 use crate::packet::{PacketizedMeta, PacketizingBuffer, QueueState};
-use crate::rtp::{Extensions, Fir, FirEntry, NackEntry, Pli, Rtcp};
+use crate::rtp::{ExtensionMap, Fir, FirEntry, NackEntry, Pli, Rtcp};
 use crate::rtp::{RtcpFb, RtpHeader, SdesType};
 use crate::rtp::{SeqNo, MAX_PADDING_PACKET_SIZE, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 use crate::sdp::{MediaLine, Msid, Simulcast as SdpSimulcast};
@@ -79,7 +79,7 @@ pub(crate) struct MediaInner {
     kind: MediaKind,
 
     /// The extensions for this media.
-    exts: Extensions,
+    exts: ExtensionMap,
 
     /// Current media direction.
     ///
@@ -206,14 +206,14 @@ impl MediaInner {
         self.kind
     }
 
-    pub fn set_exts(&mut self, exts: Extensions) {
+    pub fn set_exts(&mut self, exts: ExtensionMap) {
         if self.exts != exts {
             info!("Set {:?} extensions: {:?}", self.mid, exts);
             self.exts = exts;
         }
     }
 
-    pub fn exts(&self) -> &Extensions {
+    pub fn exts(&self) -> &ExtensionMap {
         &self.exts
     }
 
@@ -337,7 +337,7 @@ impl MediaInner {
     pub fn poll_packet(
         &mut self,
         now: Instant,
-        exts: &Extensions,
+        exts: &ExtensionMap,
         twcc: &mut u64,
         pad_size: Option<usize>,
         buf: &mut Vec<u8>,
@@ -1231,7 +1231,7 @@ impl Default for MediaInner {
                 track_id: Id::<30>::random().to_string(),
             },
             kind: MediaKind::Video,
-            exts: Extensions::new(),
+            exts: ExtensionMap::empty(),
             dir: Direction::SendRecv,
             params: vec![],
             sources_rx: vec![],
@@ -1256,7 +1256,7 @@ impl Default for MediaInner {
 }
 
 impl MediaInner {
-    pub fn from_remote_media_line(l: &MediaLine, index: usize, exts: Extensions) -> Self {
+    pub fn from_remote_media_line(l: &MediaLine, index: usize, exts: ExtensionMap) -> Self {
         MediaInner {
             mid: l.mid(),
             index,
@@ -1273,7 +1273,7 @@ impl MediaInner {
 
     // Going from AddMedia to Media for pending in a Change and are sent
     // in the offer to the other side.
-    pub fn from_add_media(a: AddMedia, exts: Extensions) -> Self {
+    pub fn from_add_media(a: AddMedia, exts: ExtensionMap) -> Self {
         let mut media = MediaInner {
             mid: a.mid,
             index: a.index,
