@@ -6,3 +6,6 @@ pub use sdp::{SdpAnswer, SdpApi, SdpOffer, SdpPendingOffer};
 
 mod direct;
 pub use direct::DirectApi;
+
+pub use crate::dtls::Fingerprint;
+pub use crate::ice::IceCreds;
