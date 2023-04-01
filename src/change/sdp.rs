@@ -5,10 +5,12 @@ use std::ops::{Deref, DerefMut};
 
 use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
+use crate::format::CodecConfig;
+use crate::format::PayloadParams;
 use crate::ice::{Candidate, IceCreds};
 use crate::io::Id;
 use crate::media::MediaInner;
-use crate::media::{CodecConfig, MediaKind, PayloadParams, Source};
+use crate::media::{MediaKind, Source};
 use crate::rtp::{Direction, Extension, Extensions, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
@@ -792,7 +794,6 @@ fn update_media(
     let params: Vec<Pt> = m
         .rtp_params()
         .into_iter()
-        .map(PayloadParams::new)
         .filter(|p| config.matches(p))
         .map(|p| p.pt())
         .collect();
@@ -884,14 +885,14 @@ impl AsSdpMediaLine for MediaInner {
         attrs.push(MediaAttribute::RtcpMux);
 
         for p in self.payload_params() {
-            p.inner().as_media_attrs(&mut attrs);
+            p.as_media_attrs(&mut attrs);
         }
 
         // The advertised payload types.
         let pts = self
             .payload_params()
             .iter()
-            .flat_map(|c| [Some(c.pt()), c.pt_rtx()].into_iter())
+            .flat_map(|c| [Some(c.pt()), c.resend].into_iter())
             .flatten()
             .collect();
 

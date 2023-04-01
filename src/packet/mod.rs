@@ -4,7 +4,8 @@
 use std::fmt;
 use thiserror::Error;
 
-use crate::sdp::{Codec, MediaType};
+use crate::format::Codec;
+use crate::sdp::MediaType;
 
 mod g7xx;
 use g7xx::{G711Packetizer, G722Packetizer};

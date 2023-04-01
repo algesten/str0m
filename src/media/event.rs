@@ -3,8 +3,6 @@ use std::time::Instant;
 use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
 use crate::sdp::Simulcast as SdpSimulcast;
 
-pub use crate::sdp::{Codec, FormatParams};
-
 use super::PayloadParams;
 use crate::media::rtp::{CodecExtra, RtpMeta};
 

@@ -481,12 +481,15 @@ mod rtp;
 mod sctp;
 mod sdp;
 
+pub mod format;
+
 use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use change::{DirectApi, SdpApi};
 use dtls::{Dtls, DtlsEvent};
+use format::CodecConfig;
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use io::DatagramRecv;
@@ -522,7 +525,7 @@ pub mod channel;
 use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
 
 pub mod media;
-use media::{CodecConfig, Direction, KeyframeRequest, Media};
+use media::{Direction, KeyframeRequest, Media};
 use media::{KeyframeRequestKind, MediaChanged, MediaData};
 use media::{MediaAdded, MediaInner, Mid, Pt, Rid};
 

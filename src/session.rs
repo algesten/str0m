@@ -2,8 +2,9 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::dtls::KeyingMaterial;
+use crate::format::CodecConfig;
 use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
-use crate::media::{CodecConfig, MediaAdded, MediaChanged, Source};
+use crate::media::{MediaAdded, MediaChanged, Source};
 use crate::packet::{
     LeakyBucketPacer, NullPacer, Pacer, PacerImpl, PollOutcome, RtpMeta, SendSideBandwithEstimator,
 };
@@ -348,7 +349,7 @@ impl Session {
             }
         };
         let clock_rate = match media.get_params(header.payload_type) {
-            Some(v) => v.clock_rate(),
+            Some(v) => v.spec().clock_rate,
             None => {
                 trace!("No codec params for {:?}", header.payload_type);
                 return;
@@ -454,7 +455,7 @@ impl Session {
             }
 
             let params = media.get_params(header.payload_type).unwrap();
-            if let Some(pt) = params.pt_rtx() {
+            if let Some(pt) = params.resend() {
                 header.payload_type = pt;
             }
 
@@ -475,7 +476,7 @@ impl Session {
 
         // This is the "main" PT and it will differ to header.payload_type if this is a resend.
         let pt = params.pt();
-        let codec = params.codec();
+        let codec = params.spec().codec;
 
         let time = MediaTime::new(header.timestamp as i64, clock_rate as i64);
 
