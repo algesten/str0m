@@ -6,8 +6,8 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 mod data;
+pub use data::{FormatParam, Sdp, Session, SessionAttribute, Setup};
 pub use data::{MediaAttribute, MediaLine, MediaType, Msid, Proto, SsrcInfo};
-pub use data::{Sdp, Session, SessionAttribute, Setup};
 pub use data::{Simulcast, SimulcastGroup, SimulcastGroups, SimulcastOption};
 
 mod parser;

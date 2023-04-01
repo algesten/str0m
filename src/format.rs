@@ -5,7 +5,8 @@ use std::fmt;
 
 use crate::media::MediaKind;
 use crate::rtp::Pt;
-use crate::sdp;
+use crate::sdp::FormatParam;
+use crate::sdp::MediaLine;
 
 /// Group of parameters for a payload type (PT).
 ///
@@ -395,7 +396,7 @@ impl CodecConfig {
         })
     }
 
-    pub(crate) fn update_pts(&mut self, m: &sdp::MediaLine) {
+    pub(crate) fn update_pts(&mut self, m: &MediaLine) {
         let pts = m.rtp_params();
         let mut replaceds = Vec::with_capacity(pts.len());
         let mut assigneds = HashMap::with_capacity(pts.len());
@@ -419,6 +420,70 @@ impl CodecConfig {
                 }
             }
         }
+    }
+}
+
+impl FormatParams {
+    /// Parse an fmtp line to create a FormatParams.
+    ///
+    /// Example `minptime=10;useinbandfec=1`.
+    pub fn parse_line(line: &str) -> Self {
+        let key_vals = line.split(';').filter_map(|pair| {
+            let mut kv = pair.split('=');
+            match (kv.next(), kv.next()) {
+                (Some(k), Some(v)) => Some((k.trim(), v.trim())),
+                _ => None,
+            }
+        });
+
+        let mut p = FormatParams::default();
+
+        for (k, v) in key_vals {
+            let param = FormatParam::parse(k, v);
+            p.set_param(&param);
+        }
+
+        p
+    }
+
+    pub(crate) fn set_param(&mut self, param: &FormatParam) {
+        use FormatParam::*;
+        match param {
+            MinPTime(v) => self.min_p_time = Some(*v),
+            UseInbandFec(v) => self.use_inband_fec = Some(*v),
+            LevelAsymmetryAllowed(v) => self.level_asymmetry_allowed = Some(*v),
+            PacketizationMode(v) => self.packetization_mode = Some(*v),
+            ProfileLevelId(v) => self.profile_level_id = Some(*v),
+            ProfileId(v) => self.profile_id = Some(*v),
+            Apt(_) => {}
+            Unknown => {}
+        }
+    }
+
+    pub(crate) fn to_format_param(self) -> Vec<FormatParam> {
+        use FormatParam::*;
+        let mut r = Vec::with_capacity(5);
+
+        if let Some(v) = self.min_p_time {
+            r.push(MinPTime(v));
+        }
+        if let Some(v) = self.use_inband_fec {
+            r.push(UseInbandFec(v));
+        }
+        if let Some(v) = self.level_asymmetry_allowed {
+            r.push(LevelAsymmetryAllowed(v));
+        }
+        if let Some(v) = self.packetization_mode {
+            r.push(PacketizationMode(v));
+        }
+        if let Some(v) = self.profile_level_id {
+            r.push(ProfileLevelId(v));
+        }
+        if let Some(v) = self.profile_id {
+            r.push(ProfileId(v));
+        }
+
+        r
     }
 }
 
