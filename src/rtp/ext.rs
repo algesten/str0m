@@ -213,6 +213,12 @@ impl ExtensionMap {
         exts
     }
 
+    pub(crate) fn clear(&mut self) {
+        for i in &mut self.0 {
+            *i = None;
+        }
+    }
+
     /// Set a mapping for an extension.
     ///
     /// The id must be 1-14 inclusive (1-indexed).
