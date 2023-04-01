@@ -494,7 +494,7 @@ use format::CodecConfig;
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use io::DatagramRecv;
-use rtp::{InstantExt, Ssrc};
+use rtp::{Extension, ExtensionMap, InstantExt, Ssrc};
 use sctp::{RtcSctp, SctpEvent};
 
 use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent};
@@ -790,11 +790,7 @@ impl Rtc {
             alive: true,
             ice,
             dtls: Dtls::new().expect("DTLS to init without problem"),
-            session: Session::new(
-                config.codec_config,
-                config.ice_lite,
-                config.bwe_initial_bitrate,
-            ),
+            session: Session::new(&config),
             sctp: RtcSctp::new(),
             chan: ChannelHandler::default(),
             stats: Stats::new(config.stats_interval),
@@ -1429,6 +1425,7 @@ impl Rtc {
 pub struct RtcConfig {
     ice_lite: bool,
     codec_config: CodecConfig,
+    exts: ExtensionMap,
     stats_interval: Duration,
     /// Whether to use Bandwidth Estimation to discover the egress bandwidth.
     bwe_initial_bitrate: Option<Bitrate>,
@@ -1452,6 +1449,11 @@ impl RtcConfig {
     pub fn ice_lite(mut self, enabled: bool) -> Self {
         self.ice_lite = enabled;
         self
+    }
+
+    /// Lower level access to precis configuration of codecs (payload types).
+    pub fn codec_config(&mut self) -> &mut CodecConfig {
+        &mut self.codec_config
     }
 
     /// Clear all configured codecs.
@@ -1513,9 +1515,24 @@ impl RtcConfig {
         self
     }
 
-    /// Lower level access to precis configuration of codecs (payload types).
-    pub fn codec_config(&mut self) -> &mut CodecConfig {
-        &mut self.codec_config
+    /// Configure the RTP extension mappings.
+    pub fn extension_map(&mut self) -> &mut ExtensionMap {
+        &mut self.exts
+    }
+
+    /// Clear out the standard extension mappings.
+    pub fn clear_extension_map(mut self) -> Self {
+        self.exts.clear();
+
+        self
+    }
+
+    /// Set an extension mapping.
+    ///
+    /// The id must be 1-14 inclusive (1-indexed).
+    pub fn set_extension_map(mut self, id: u8, ext: Extension) -> Self {
+        self.exts.set(id, ext);
+        self
     }
 
     /// Set the interval between statistics events
@@ -1546,6 +1563,7 @@ impl Default for RtcConfig {
         Self {
             ice_lite: false,
             codec_config: CodecConfig::new_with_defaults(),
+            exts: ExtensionMap::standard(),
             stats_interval: Duration::from_secs(1),
             bwe_initial_bitrate: None,
         }

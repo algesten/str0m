@@ -14,8 +14,8 @@ use crate::rtp::{Bitrate, ExtensionMap, MediaTime, Mid, Rtcp, RtcpFb};
 use crate::rtp::{SrtpContext, SrtpKey, Ssrc};
 use crate::stats::StatsSnapshot;
 use crate::util::{already_happened, not_happening, Soonest};
-use crate::RtcError;
 use crate::{net, KeyframeRequest, MediaData};
+use crate::{RtcConfig, RtcError};
 
 use super::MediaInner;
 
@@ -92,18 +92,14 @@ pub enum MediaEvent {
 }
 
 impl Session {
-    pub fn new(
-        codec_config: CodecConfig,
-        ice_lite: bool,
-        bwe_initial_bitrate: Option<Bitrate>,
-    ) -> Self {
+    pub fn new(config: &RtcConfig) -> Self {
         let mut id = SessionId::new();
         // Max 2^62 - 1: https://bugzilla.mozilla.org/show_bug.cgi?id=861895
         const MAX_ID: u64 = 2_u64.pow(62) - 1;
         while *id > MAX_ID {
             id = (*id >> 1).into();
         }
-        let (pacer, bwe) = if let Some(rate) = bwe_initial_bitrate {
+        let (pacer, bwe) = if let Some(rate) = config.bwe_initial_bitrate {
             let pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(
                 rate * PACING_FACTOR * 2.0,
                 Duration::from_millis(40),
@@ -120,8 +116,8 @@ impl Session {
             id,
             medias: vec![],
             app: None,
-            exts: ExtensionMap::standard(),
-            codec_config,
+            exts: config.exts,
+            codec_config: config.codec_config.clone(),
             source_keys: HashMap::new(),
             first_ssrc_remote: None,
             first_ssrc_local: None,
@@ -137,7 +133,7 @@ impl Session {
             enable_twcc_feedback: false,
             pacer,
             poll_packet_buf: vec![0; 2000],
-            ice_lite,
+            ice_lite: config.ice_lite,
         }
     }
 
