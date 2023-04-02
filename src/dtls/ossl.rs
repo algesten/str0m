@@ -3,7 +3,7 @@ use openssl::bn::BigNum;
 use openssl::ec::EcKey;
 use openssl::hash::MessageDigest;
 use openssl::nid::Nid;
-use openssl::pkey::PKey;
+use openssl::pkey::{PKey, Private};
 use openssl::rsa::Rsa;
 use openssl::ssl::{HandshakeError, MidHandshakeSslStream, Ssl, SslStream};
 use openssl::ssl::{SslContext, SslContextBuilder, SslMethod, SslOptions, SslVerifyMode};
@@ -29,7 +29,64 @@ extern "C" {
     pub fn DTLSv1_2_method() -> *const openssl_sys::SSL_METHOD;
 }
 
-pub fn dtls_create_ctx() -> Result<(SslContext, Fingerprint), DtlsError> {
+/// Certificate used for DTLS.
+#[derive(Debug, Clone)]
+pub struct DtlsCert {
+    pkey: PKey<Private>,
+    x509: X509,
+}
+
+impl DtlsCert {
+    /// Creates a new (self signed) DTLS certificate.
+    pub fn new() -> Self {
+        Self::self_signed().expect("create dtls cert")
+    }
+
+    fn self_signed() -> Result<Self, DtlsError> {
+        let f4 = BigNum::from_u32(RSA_F4).unwrap();
+        let key = Rsa::generate_with_e(2048, &f4)?;
+        let pkey = PKey::from_rsa(key)?;
+
+        let mut x509b = X509::builder()?;
+
+        // For firefox, we must increase the serial number for each generated certificate.
+        // See https://github.com/versatica/mediasoup/issues/127#issuecomment-474460153
+        static SERIAL: AtomicU32 = AtomicU32::new(1);
+        let serial = SERIAL.fetch_add(1, Ordering::SeqCst);
+
+        let serial_bn = BigNum::from_u32(serial)?;
+        let serial = Asn1Integer::from_bn(&serial_bn)?;
+        x509b.set_serial_number(&serial)?;
+        let before = Asn1Time::from_unix(unix_time() - 3600)?;
+        x509b.set_not_before(&before)?;
+        let after = Asn1Time::days_from_now(7)?;
+        x509b.set_not_after(&after)?;
+        x509b.set_pubkey(&pkey)?;
+
+        x509b.sign(&pkey, MessageDigest::sha1())?;
+        let x509 = x509b.build();
+
+        Ok(DtlsCert { pkey, x509 })
+    }
+
+    /// Produce a (public) fingerprint of the cert.
+    ///
+    /// This is sent via SDP to the other peer to lock down the DTLS
+    /// to this specific certificate.
+    pub fn fingerprint(&self) -> Fingerprint {
+        let digest: &[u8] = &self
+            .x509
+            .digest(MessageDigest::sha256())
+            .expect("digest to fingerprint");
+
+        Fingerprint {
+            hash_func: "sha-256".into(),
+            bytes: digest.to_vec(),
+        }
+    }
+}
+
+pub fn dtls_create_ctx(cert: &DtlsCert) -> Result<SslContext, DtlsError> {
     let method = unsafe { SslMethod::from_ptr(DTLSv1_2_method()) };
     let mut ctx = SslContextBuilder::new(method)?;
 
@@ -41,31 +98,8 @@ pub fn dtls_create_ctx() -> Result<(SslContext, Fingerprint), DtlsError> {
     mode.insert(SslVerifyMode::FAIL_IF_NO_PEER_CERT);
     ctx.set_verify_callback(mode, |_ok, _ctx| true);
 
-    let f4 = BigNum::from_u32(RSA_F4).unwrap();
-    let key = Rsa::generate_with_e(2048, &f4)?;
-    let pkey = PKey::from_rsa(key)?;
-    ctx.set_private_key(&pkey)?;
-
-    let mut x509 = X509::builder()?;
-
-    // For firefox, we must increase the serial number for each generated certificate.
-    // See https://github.com/versatica/mediasoup/issues/127#issuecomment-474460153
-    static SERIAL: AtomicU32 = AtomicU32::new(1);
-    let serial = SERIAL.fetch_add(1, Ordering::SeqCst);
-
-    let serial_bn = BigNum::from_u32(serial)?;
-    let serial = Asn1Integer::from_bn(&serial_bn)?;
-    x509.set_serial_number(&serial)?;
-    let before = Asn1Time::from_unix(unix_time() - 3600)?;
-    x509.set_not_before(&before)?;
-    let after = Asn1Time::days_from_now(7)?;
-    x509.set_not_after(&after)?;
-    x509.set_pubkey(&pkey)?;
-
-    x509.sign(&pkey, MessageDigest::sha1())?;
-    let cert = x509.build();
-
-    ctx.set_certificate(&cert)?;
+    ctx.set_private_key(&cert.pkey)?;
+    ctx.set_certificate(&cert.x509)?;
 
     let mut options = SslOptions::empty();
     options.insert(SslOptions::SINGLE_ECDH_USE);
@@ -74,13 +108,7 @@ pub fn dtls_create_ctx() -> Result<(SslContext, Fingerprint), DtlsError> {
 
     let ctx = ctx.build();
 
-    let digest: &[u8] = &cert.digest(MessageDigest::sha256())?;
-    let fp = Fingerprint {
-        hash_func: "sha-256".into(),
-        bytes: digest.to_vec(),
-    };
-
-    Ok((ctx, fp))
+    Ok(ctx)
 }
 
 pub fn dtls_ssl_create(ctx: &SslContext) -> Result<Ssl, DtlsError> {

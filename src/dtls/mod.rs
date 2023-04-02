@@ -9,8 +9,8 @@ use thiserror::Error;
 use crate::io::{DatagramRecv, DatagramSend, Receive, DATAGRAM_MTU_WARN};
 
 mod ossl;
-pub use ossl::KeyingMaterial;
 use ossl::{dtls_create_ctx, dtls_ssl_create, TlsStream};
+pub use ossl::{DtlsCert, KeyingMaterial};
 
 /// Errors that can arise in DTLS.
 #[derive(Debug, Error)]
@@ -87,14 +87,17 @@ impl std::str::FromStr for Fingerprint {
 
 /// Encapsulation of DTLS.
 pub struct Dtls {
+    /// Certificate for the DTLS session.
+    _cert: DtlsCert,
+
+    /// The fingerprint of the certificate.
+    fingerprint: Fingerprint,
+
     /// Context belongs together with Fingerprint.
     ///
     /// This just needs to be kept alive since it pins the entire openssl context
     /// from which `Ssl` is created.
     _context: SslContext,
-
-    /// The local fingerprint communicated via SDP to remote.
-    fingerprint: Fingerprint,
 
     /// The actual openssl TLS stream.
     tls: TlsStream<IoBuffer>,
@@ -125,12 +128,14 @@ impl Dtls {
     ///
     /// `active` indicates whether this side should initiate the handshake or not.
     /// This in turn is governed by the `a=setup` SDP attribute.
-    pub fn new() -> Result<Self, DtlsError> {
-        let (_context, fingerprint) = dtls_create_ctx()?;
-        let ssl = dtls_ssl_create(&_context)?;
+    pub fn new(cert: DtlsCert) -> Result<Self, DtlsError> {
+        let fingerprint = cert.fingerprint();
+        let context = dtls_create_ctx(&cert)?;
+        let ssl = dtls_ssl_create(&context)?;
         Ok(Dtls {
-            _context,
+            _cert: cert,
             fingerprint,
+            _context: context,
             tls: TlsStream::new(ssl, IoBuffer::default()),
             events: VecDeque::new(),
         })

@@ -489,10 +489,12 @@ use std::time::{Duration, Instant};
 
 use change::Fingerprint;
 use change::{DirectApi, SdpApi};
+use dtls::DtlsCert;
 use dtls::{Dtls, DtlsEvent};
 use format::CodecConfig;
 use ice::IceAgent;
 use ice::IceAgentEvent;
+use ice::IceCreds;
 use io::DatagramRecv;
 use rtp::{Extension, ExtensionMap, InstantExt, Ssrc};
 use sctp::{RtcSctp, SctpEvent};
@@ -780,8 +782,9 @@ impl Rtc {
     }
 
     pub(crate) fn new_from_config(config: RtcConfig) -> Self {
-        let mut ice = IceAgent::new();
+        let session = Session::new(&config);
 
+        let mut ice = IceAgent::with_local_credentials(config.local_ice_credentials);
         if config.ice_lite {
             ice.set_ice_lite(config.ice_lite);
         }
@@ -789,8 +792,8 @@ impl Rtc {
         Rtc {
             alive: true,
             ice,
-            dtls: Dtls::new().expect("DTLS to init without problem"),
-            session: Session::new(&config),
+            dtls: Dtls::new(config.dtls_cert).expect("DTLS to init without problem"),
+            session,
             sctp: RtcSctp::new(),
             chan: ChannelHandler::default(),
             stats: Stats::new(config.stats_interval),
@@ -1423,6 +1426,8 @@ impl Rtc {
 /// Configs implement [`Clone`] to help create multiple `Rtc` instances.
 #[derive(Debug, Clone)]
 pub struct RtcConfig {
+    local_ice_credentials: IceCreds,
+    dtls_cert: DtlsCert,
     ice_lite: bool,
     codec_config: CodecConfig,
     exts: ExtensionMap,
@@ -1435,6 +1440,18 @@ impl RtcConfig {
     /// Creates a new default config.
     pub fn new() -> Self {
         RtcConfig::default()
+    }
+
+    /// The auto generated local ice credentials.
+    pub fn local_ice_credentials(&self) -> &IceCreds {
+        &self.local_ice_credentials
+    }
+
+    /// The configured DtlsCert.
+    ///
+    /// The certificate is uniquely created per new RtcConfig.
+    pub fn dtls_cert(&self) -> &DtlsCert {
+        &self.dtls_cert
     }
 
     /// Toggle ice lite. Ice lite is a mode for WebRTC servers with public IP address.
@@ -1580,6 +1597,8 @@ impl RtcConfig {
 impl Default for RtcConfig {
     fn default() -> Self {
         Self {
+            local_ice_credentials: IceCreds::new(),
+            dtls_cert: DtlsCert::new(),
             ice_lite: false,
             codec_config: CodecConfig::new_with_defaults(),
             exts: ExtensionMap::standard(),
