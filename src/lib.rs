@@ -772,7 +772,7 @@ impl Rtc {
     /// ```
     /// # use str0m::Rtc;
     /// let rtc = Rtc::builder()
-    ///     .ice_lite(true)
+    ///     .set_ice_lite(true)
     ///     .build();
     /// ```
     pub fn builder() -> RtcConfig {
@@ -1416,7 +1416,7 @@ impl Rtc {
 /// use str0m::RtcConfig;
 ///
 /// let rtc = RtcConfig::new()
-///     .ice_lite(true)
+///     .set_ice_lite(true)
 ///     .build();
 /// ```
 ///
@@ -1446,7 +1446,7 @@ impl RtcConfig {
     /// Defaults to `false`.
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc8445#page-13
-    pub fn ice_lite(mut self, enabled: bool) -> Self {
+    pub fn set_ice_lite(mut self, enabled: bool) -> Self {
         self.ice_lite = enabled;
         self
     }
@@ -1527,10 +1527,12 @@ impl RtcConfig {
         self
     }
 
-    /// Set an extension mapping.
+    /// Set an extension mapping on session level.
+    ///
+    /// The media level will be capped by the extension enabled on session level.
     ///
     /// The id must be 1-14 inclusive (1-indexed).
-    pub fn set_extension_map(mut self, id: u8, ext: Extension) -> Self {
+    pub fn set_extension(mut self, id: u8, ext: Extension) -> Self {
         self.exts.set(id, ext);
         self
     }
@@ -1539,7 +1541,7 @@ impl RtcConfig {
     /// This includes Event::MediaEgressStats, Event::MediaIngressStats, Event::MediaEgressStats
     ///
     /// Defaults to `Duration::from_secs(1)`.
-    pub fn stats_interval(mut self, interval: Duration) -> Self {
+    pub fn set_stats_interval(mut self, interval: Duration) -> Self {
         self.stats_interval = interval;
         self
     }
