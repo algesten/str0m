@@ -1516,6 +1516,20 @@ impl RtcConfig {
     }
 
     /// Configure the RTP extension mappings.
+    ///
+    /// The default extension map is
+    ///
+    /// ```
+    /// # use str0m::media::rtp::{Extension, ExtensionMap};
+    /// let exts = ExtensionMap::standard();
+    /// assert_eq!(exts.id_of(Extension::AudioLevel), Some(1));
+    /// assert_eq!(exts.id_of(Extension::AbsoluteSendTime), Some(2));
+    /// assert_eq!(exts.id_of(Extension::TransportSequenceNumber), Some(3));
+    /// assert_eq!(exts.id_of(Extension::RtpMid), Some(4));
+    /// assert_eq!(exts.id_of(Extension::RtpStreamId), Some(10));
+    /// assert_eq!(exts.id_of(Extension::RepairedRtpStreamId), Some(11));
+    /// assert_eq!(exts.id_of(Extension::VideoOrientation), Some(13));
+    /// ```
     pub fn extension_map(&mut self) -> &mut ExtensionMap {
         &mut self.exts
     }
