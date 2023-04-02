@@ -209,7 +209,7 @@ str0m has three main concepts of time. "now", media time and wallclock.
 #### Now
 
 Some calls in str0m, such as `Rtc::handle_input` takes a `now` argument
-that is a `std::time::Intant`. These calls "drive the time forward" in
+that is a `std::time::Instant`. These calls "drive the time forward" in
 the internal state. This is used for everything like deciding when
 to produce various feedback reports (RTCP) to remote peers, to
 bandwidth estimation (BWE) and statistics.
