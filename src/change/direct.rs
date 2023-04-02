@@ -1,11 +1,19 @@
 use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
+use crate::format::PayloadParams;
 use crate::ice::IceCreds;
+use crate::io::Id;
+use crate::media::MediaInner;
+use crate::media::MediaKind;
 use crate::rtp::Direction;
+use crate::rtp::ExtensionMap;
 use crate::rtp::Mid;
 use crate::sctp::ChannelConfig;
+use crate::sdp::Msid;
 use crate::Rtc;
 use crate::RtcError;
+
+use super::AddMedia;
 
 /// Direct change strategy.
 ///
@@ -110,5 +118,98 @@ impl<'a> DirectApi<'a> {
     /// [`Self::create_data_channel()`]
     pub fn sctp_stream_id_by_channel_id(&self, id: ChannelId) -> Option<u16> {
         self.rtc.chan.stream_id_by_channel_id(id)
+    }
+
+    /// create local media
+    #[allow(clippy::too_many_arguments)] // TODO: clean up
+    pub fn create_local_media(
+        &mut self,
+        mid: Mid,           // mid is needed
+        kind: MediaKind,    // mediakind is needed
+        dir: Direction,     // should we just do send and receive and ignore sendrecv?
+        index: usize,       // is index needed?
+        exts: ExtensionMap, // should we use this but without assigning ids? just have a vector of extensions?
+        params: Vec<PayloadParams>,
+        cname: Option<String>, // do we need this one?
+    ) {
+        let cname = if let Some(cname) = cname {
+            fn is_token_char(c: &char) -> bool {
+                // token-char = %x21 / %x23-27 / %x2A-2B / %x2D-2E / %x30-39
+                // / %x41-5A / %x5E-7E
+                let u = *c as u32;
+                u == 0x21
+                    || (0x23..=0x27).contains(&u)
+                    || (0x2a..=0x2b).contains(&u)
+                    || (0x2d..=0x2e).contains(&u)
+                    || (0x30..=0x39).contains(&u)
+                    || (0x41..=0x5a).contains(&u)
+                    || (0x5e..0x7e).contains(&u)
+            }
+            // https://www.rfc-editor.org/rfc/rfc8830
+            // msid-id = 1*64token-char
+            cname.chars().filter(is_token_char).take(64).collect()
+        } else {
+            Id::<20>::random().to_string()
+        };
+
+        let ssrcs = {
+            // For video we do RTX channels.
+            let has_rtx = kind == MediaKind::Video;
+
+            let ssrc_base = if has_rtx { 2 } else { 1 };
+
+            // TODO: allow configuring simulcast
+            let simulcast_count = 1;
+
+            let ssrc_count = ssrc_base * simulcast_count;
+            let mut v = Vec::with_capacity(ssrc_count);
+
+            let mut prev = 0.into();
+            for i in 0..ssrc_count {
+                // Allocate SSRC that are not in use in the session already.
+                let new_ssrc = self.rtc.new_ssrc();
+                let is_rtx = has_rtx && i % 2 == 1;
+                let repairs = if is_rtx { Some(prev) } else { None };
+                v.push((new_ssrc, repairs));
+                prev = new_ssrc;
+            }
+
+            v
+        };
+
+        let msid = Msid {
+            stream_id: cname.clone(),
+            track_id: Id::<30>::random().to_string(),
+        };
+
+        let add = AddMedia {
+            mid,
+            cname,
+            msid,
+            kind,
+            dir,
+            ssrcs,
+            params,
+            index,
+        };
+
+        let mut media = MediaInner::from_add_media(add, exts);
+        media.need_open_event = true;
+        self.rtc.session.add_media(media);
+    }
+
+    /// create remote media
+    pub fn create_remote_media(
+        &mut self,
+        mid: Mid,
+        kind: MediaKind,
+        dir: Direction,
+        index: usize,
+        exts: ExtensionMap,
+        params: Vec<PayloadParams>,
+    ) {
+        let media = MediaInner::new_from_remote(mid, kind, index, exts, dir, params);
+        self.rtc.session.add_media(media);
+        // TODO: not clear what's gonna happen here, my guess is that when it sees a rtp with Mid it will generate a open event
     }
 }

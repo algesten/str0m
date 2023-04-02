@@ -1531,6 +1531,25 @@ impl Default for MediaInner {
 }
 
 impl MediaInner {
+    pub fn new_from_remote(
+        mid: Mid,
+        kind: MediaKind,
+        index: usize,
+        exts: ExtensionMap,
+        dir: Direction,
+        params: Vec<PayloadParams>,
+    ) -> Self {
+        MediaInner {
+            mid,
+            index,
+            kind,
+            exts,
+            dir,
+            params,
+            ..Default::default()
+        }
+    }
+
     pub fn from_remote_media_line(l: &MediaLine, index: usize, exts: ExtensionMap) -> Self {
         MediaInner {
             mid: l.mid(),
