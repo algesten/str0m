@@ -226,12 +226,17 @@ impl IceCreds {
 }
 
 impl IceAgent {
+    #[allow(unused)]
     pub fn new() -> Self {
+        Self::with_local_credentials(IceCreds::new())
+    }
+
+    pub fn with_local_credentials(local_credentials: IceCreds) -> Self {
         IceAgent {
             last_now: None,
             ice_lite: false,
             max_candidate_pairs: None,
-            local_credentials: IceCreds::new(),
+            local_credentials,
             remote_credentials: None,
             controlling: false,
             control_tie_breaker: random(),
