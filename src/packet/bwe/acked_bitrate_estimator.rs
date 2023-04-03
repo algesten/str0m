@@ -3,6 +3,13 @@ use std::time::{Duration, Instant};
 use crate::rtp::DataSize;
 use crate::Bitrate;
 
+// Ported from libWebRTC's src/modules/congestion_controller/goog_cc/bitrate_estimator.cc at
+// `9f3ccf291e`.
+
+const SMALL_SAMPLE_THRESHOLD: DataSize = DataSize::bytes(2000);
+const SMALL_SAMPLE_UNCERTAINTY: f64 = 25.0;
+const UNCERTAINTY: f64 = 10.0;
+
 pub struct AckedBitrateEstimator {
     /// The initial window to use for the first estimate.
     initial_window: Duration,
@@ -10,6 +17,8 @@ pub struct AckedBitrateEstimator {
     window: Duration,
     /// The estimate of the acked bitrate.
     estimate: Option<Bitrate>,
+    /// The estimated variance.
+    estimate_var: f64,
     /// The sum in the current window.
     sum: DataSize,
     /// The size of the current window.
@@ -24,6 +33,7 @@ impl AckedBitrateEstimator {
             initial_window,
             window,
             estimate: None,
+            estimate_var: 50.0,
             sum: DataSize::ZERO,
             current_window: Duration::ZERO,
             last_update: None,
@@ -37,12 +47,45 @@ impl AckedBitrateEstimator {
         } else {
             self.window
         };
-        let Some(update) = self.update_window(receive_time, packet_size, window) else {
+        let Some((sample_estimate, is_small_sample)) = self.update_window(receive_time, packet_size, window) else {
             // No update
             return;
         };
 
-        self.estimate = Some(update);
+        let Some(estimate) = self.estimate else {
+            // This is the initial estimate, use it to initialize the estimate.
+            self.estimate = Some(sample_estimate);
+            return;
+        };
+
+        let scale = if is_small_sample && sample_estimate < estimate {
+            SMALL_SAMPLE_UNCERTAINTY
+        } else {
+            UNCERTAINTY
+        };
+
+        let sample_estimate_bps = sample_estimate.as_f64();
+        let estimate_bps = estimate.as_f64();
+        // Define the sample uncertainty as a function of how far away it is from the
+        // current estimate. With low values of uncertainty_symmetry_cap_ we add more
+        // uncertainty to increases than to decreases. For higher values we approach
+        // symmetry.
+        let sample_uncertainty =
+            scale * (estimate_bps - sample_estimate_bps) / (estimate_bps + 0.0);
+        let sample_var = sample_uncertainty.powf(2.0);
+
+        // Update a bayesian estimate of the rate, weighting it lower if the sample
+        // uncertainty is large.
+        // The bitrate estimate uncertainty is increased with each update to model
+        // that the bitrate changes over time.
+        let pred_bitrate_estimate_var = self.estimate_var + 5.0;
+        let mut new_estimate = (sample_var * estimate_bps
+            + pred_bitrate_estimate_var * sample_estimate_bps)
+            / (sample_var + pred_bitrate_estimate_var);
+        new_estimate = new_estimate.max(0.0);
+        self.estimate = Some(Bitrate::bps(new_estimate.ceil() as u64));
+        self.estimate_var =
+            (sample_var * pred_bitrate_estimate_var) / (sample_var + pred_bitrate_estimate_var);
     }
 
     pub(super) fn current_estimate(&self) -> Option<Bitrate> {
@@ -54,7 +97,7 @@ impl AckedBitrateEstimator {
         receive_time: Instant,
         packet_size: DataSize,
         window: Duration,
-    ) -> Option<Bitrate> {
+    ) -> Option<(Bitrate, bool)> {
         let time_moved_back = Some(receive_time) < self.last_update;
         if time_moved_back {
             // Time moved backwards, reset state
@@ -80,7 +123,9 @@ impl AckedBitrateEstimator {
 
         let mut estimate = None;
 
+        let mut is_small = false;
         if self.current_window >= window {
+            is_small = self.sum < SMALL_SAMPLE_THRESHOLD;
             estimate = Some(self.sum / window);
             self.sum = DataSize::ZERO;
             self.current_window -= window;
@@ -88,7 +133,7 @@ impl AckedBitrateEstimator {
 
         self.sum += packet_size;
 
-        estimate
+        estimate.map(|e| (e, false))
     }
 }
 
