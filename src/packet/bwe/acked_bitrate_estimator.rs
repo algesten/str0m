@@ -72,7 +72,7 @@ impl AckedBitrateEstimator {
         // uncertainty to increases than to decreases. For higher values we approach
         // symmetry.
         let sample_uncertainty =
-            scale * (estimate_bps - sample_estimate_bps) / (estimate_bps.max(25_000.0));
+            scale * (estimate_bps - sample_estimate_bps).abs() / (estimate_bps.max(25_000.0));
         let sample_var = sample_uncertainty.powf(2.0);
 
         // Update a bayesian estimate of the rate, weighting it lower if the sample
