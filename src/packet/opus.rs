@@ -21,6 +21,11 @@ impl Packetizer for OpusPacketizer {
 
         Ok(out)
     }
+
+    fn is_marker(&mut self, data: &[u8], previous: Option<&[u8]>, last: bool) -> bool {
+        // TODO: dtx
+        false
+    }
 }
 
 /// Depacketizes Opus RTP packets.

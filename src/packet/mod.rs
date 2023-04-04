@@ -64,6 +64,8 @@ impl MediaKind {
 pub trait Packetizer: fmt::Debug {
     /// Chunk the data up into RTP packets.
     fn packetize(&mut self, mtu: usize, b: &[u8]) -> Result<Vec<Vec<u8>>, PacketError>;
+
+    fn is_marker(&mut self, data: &[u8], previous: Option<&[u8]>, last: bool) -> bool;
 }
 
 /// Codec specific information
@@ -224,6 +226,18 @@ impl Packetizer for CodecPacketizer {
             Vp8(v) => v.packetize(mtu, b),
             Vp9(v) => v.packetize(mtu, b),
             Boxed(v) => v.packetize(mtu, b),
+        }
+    }
+
+    fn is_marker(&mut self, data: &[u8], previous: Option<&[u8]>, last: bool) -> bool {
+        match self {
+            CodecPacketizer::G711(v) => v.is_marker(data, previous, last),
+            CodecPacketizer::G722(v) => v.is_marker(data, previous, last),
+            CodecPacketizer::Opus(v) => v.is_marker(data, previous, last),
+            CodecPacketizer::H264(v) => v.is_marker(data, previous, last),
+            CodecPacketizer::Vp8(v) => v.is_marker(data, previous, last),
+            CodecPacketizer::Vp9(v) => v.is_marker(data, previous, last),
+            CodecPacketizer::Boxed(v) => v.is_marker(data, previous, last),
         }
     }
 }

@@ -187,6 +187,10 @@ impl Packetizer for H264Packetizer {
 
         Ok(payloads)
     }
+
+    fn is_marker(&mut self, data: &[u8], previous: Option<&[u8]>, last: bool) -> bool {
+        last
+    }
 }
 
 /// Depacketizes H264 RTP packets.
