@@ -287,7 +287,16 @@ impl Pacer for LeakyBucketPacer {
         self.clear_debt(elapsed);
         self.maybe_update_adjusted_bitrate(now);
 
-        if self.next_poll_outcome.is_some() {
+        // We skip recalculating the next poll outcome if we already have one, with the exception
+        // when the next action is padding. The reason we still recalculate if the outcome is
+        // padding is that something more important might still be required i.e. we might have
+        // queued media packets.
+        let recalculate = matches!(
+            self.next_poll_outcome,
+            Some(PollOutcome::PollPadding(_, _)) | None
+        );
+
+        if !recalculate {
             return;
         }
         self.next_send_time = None;
