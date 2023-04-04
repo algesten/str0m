@@ -69,6 +69,7 @@ pub(crate) struct Session {
     twcc_tx_register: TwccSendRegister,
 
     bwe: Option<SendSideBandwithEstimator>,
+    bwe_desired_bitrate: Bitrate,
 
     enable_twcc_feedback: bool,
 
@@ -130,6 +131,7 @@ impl Session {
             twcc_rx_register: TwccRecvRegister::new(100),
             twcc_tx_register: TwccSendRegister::new(1000),
             bwe,
+            bwe_desired_bitrate: Bitrate::ZERO,
             enable_twcc_feedback: false,
             pacer,
             poll_packet_buf: vec![0; 2000],
@@ -515,6 +517,9 @@ impl Session {
                         bwe.update(records, now);
                     }
                 }
+                // Not in the above if due to lifetime issues, still okay because the method
+                // doesn't do anything when BWE isn't configured.
+                self.configure_pacer_padding();
 
                 return Some(());
             }
@@ -826,14 +831,8 @@ impl Session {
     }
 
     pub fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
-        if let Some(bwe) = &mut self.bwe {
-            let padding_rate = bwe
-                .last_estimate()
-                .map(|bwe| (bwe * PADDING_FACTOR).min(desired_bitrate))
-                .unwrap_or(Bitrate::ZERO);
-
-            self.pacer.set_padding_rate(padding_rate);
-        }
+        self.bwe_desired_bitrate = desired_bitrate;
+        self.configure_pacer_padding();
     }
 
     pub fn line_count(&self) -> usize {
@@ -852,5 +851,18 @@ impl Session {
         for m in &mut self.medias {
             m.clear_send_buffers();
         }
+    }
+
+    fn configure_pacer_padding(&mut self) {
+        let Some(bwe) = self.bwe.as_ref() else {
+            return;
+        };
+
+        let padding_rate = bwe
+            .last_estimate()
+            .map(|bwe| (bwe * PADDING_FACTOR).min(self.bwe_desired_bitrate))
+            .unwrap_or(Bitrate::ZERO);
+
+        self.pacer.set_padding_rate(padding_rate);
     }
 }
