@@ -1171,8 +1171,8 @@ impl<'a> NextPacketBody<'a> {
     fn marker(&self) -> bool {
         use NextPacketBody::*;
         match self {
-            Regular { pkt } => pkt.last,
-            Resend { pkt, .. } => pkt.last,
+            Regular { pkt } => pkt.marker,
+            Resend { pkt, .. } => pkt.marker,
             Padding { .. } => false,
         }
     }

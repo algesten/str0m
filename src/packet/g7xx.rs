@@ -31,6 +31,10 @@ impl Packetizer for G7xxPacketizer {
 
         Ok(payloads)
     }
+
+    fn is_marker(&mut self, data: &[u8], previous: Option<&[u8]>, last: bool) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

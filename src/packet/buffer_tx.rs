@@ -10,7 +10,7 @@ use super::{CodecPacketizer, PacketError, Packetizer, QueueSnapshot};
 pub struct Packetized {
     pub data: Vec<u8>,
     pub first: bool,
-    pub last: bool,
+    pub marker: bool,
 
     pub meta: PacketizedMeta,
 
@@ -73,6 +73,9 @@ impl PacketizingBuffer {
             let first = idx == 0;
             let last = idx == len - 1;
 
+            let previous_data = self.queue.back().map(|p| p.data.as_slice());
+            let marker = self.pack.is_marker(data.as_slice(), previous_data, last);
+
             // The queue_time for a new entry is ZERO since we expect packets to be
             // enqueued straight away. If we get rid of the now: Instant in media
             // writing to only rely on handle_timeout, this might not hold true.
@@ -80,7 +83,7 @@ impl PacketizingBuffer {
 
             let rtp = Packetized {
                 first,
-                last,
+                marker,
                 data,
 
                 meta,
@@ -289,7 +292,7 @@ impl fmt::Debug for Packetized {
             .field("rtp_time", &self.meta.rtp_time)
             .field("len", &self.data.len())
             .field("first", &self.first)
-            .field("last", &self.last)
+            .field("last", &self.marker)
             .field("ssrc", &self.meta.ssrc)
             .field("seq_no", &self.seq_no)
             .finish()
