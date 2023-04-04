@@ -28,7 +28,7 @@ const NACK_MIN_INTERVAL: Duration = Duration::from_millis(100);
 const TWCC_INTERVAL: Duration = Duration::from_millis(100);
 
 const PACING_FACTOR: f64 = 2.5;
-const PADDING_FACTOR: f64 = 1.03;
+const PADDING_FACTOR: f64 = 1.00;
 
 pub(crate) struct Session {
     id: SessionId,
