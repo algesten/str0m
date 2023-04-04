@@ -69,7 +69,7 @@ rtc.add_local_candidate(candidate);
 let mut change = rtc.sdp_api();
 
 // Do some change. A valid OFFER needs at least one "m-line" (media).
-let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None);
+let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
 
 // Get the offer.
 let (offer, pending) = change.apply().unwrap();

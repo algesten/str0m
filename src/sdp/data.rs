@@ -197,6 +197,10 @@ pub enum SessionAttribute {
         typ: String,    // BUNDLE, LS etc
         mids: Vec<Mid>, // 0 1 2 3
     },
+    MsidSemantic {
+        semantic: String, // WMS
+        stream_ids: Vec<String>,
+    },
     IceLite,
     IceUfrag(String),
     IcePwd(String),
@@ -1232,6 +1236,17 @@ impl fmt::Display for SessionAttribute {
             Group { typ, mids } => {
                 let mids: Vec<_> = mids.iter().map(|m| m.to_string()).collect();
                 write!(f, "a=group:{} {}\r\n", typ, mids.join(" "))?;
+            }
+            MsidSemantic {
+                semantic,
+                stream_ids,
+            } => {
+                write!(
+                    f,
+                    "a=msid-semantic: {} {}\r\n",
+                    semantic,
+                    stream_ids.join(" ")
+                )?;
             }
             IceLite => write!(f, "a=ice-lite\r\n")?,
             IceUfrag(v) => write!(f, "a=ice-ufrag:{v}\r\n")?,

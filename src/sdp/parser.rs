@@ -124,6 +124,23 @@ where
     )
     .map(|(typ, _, mids)| SessionAttribute::Group { typ, mids });
 
+    // a=msid-semantic: WMS 9ce81ef6-c7cb-4da5-8f5f-3e7cc9b5f9b0
+    let msid_semantic = attribute_line(
+        "msid-semantic",
+        (
+            optional(token(' ')),
+            not_sp(),
+            token(' '),
+            sep_by1(not_sp(), token(' ')),
+        ),
+    )
+    .map(
+        |(_, semantic, _, stream_ids)| SessionAttribute::MsidSemantic {
+            semantic,
+            stream_ids,
+        },
+    );
+
     // a=ice-lite
     let ice_lite = attribute_line_flag("ice-lite").map(|_| SessionAttribute::IceLite);
 
@@ -171,6 +188,7 @@ where
 
     choice((
         attempt(group),
+        attempt(msid_semantic),
         attempt(ice_lite),
         attempt(ice_ufrag),
         attempt(ice_pwd),
@@ -973,7 +991,10 @@ mod test {
                                 ]
                             }),
                             SessionAttribute::IceOptions("trickle".to_string()),
-                            SessionAttribute::Unused("msid-semantic:WMS *".into())
+                            SessionAttribute::MsidSemantic {
+                                semantic: "WMS".into(),
+                                stream_ids: vec!["*".into()]
+                            },
                         ]
                     },
                     media_lines: vec![]
