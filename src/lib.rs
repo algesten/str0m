@@ -70,7 +70,7 @@
 //! let mut change = rtc.sdp_api();
 //!
 //! // Do some change. A valid OFFER needs at least one "m-line" (media).
-//! let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None);
+//! let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
 //!
 //! // Get the offer.
 //! let (offer, pending) = change.apply().unwrap();
@@ -923,8 +923,8 @@ impl Rtc {
     /// let mut rtc = Rtc::new();
     ///
     /// let mut changes = rtc.sdp_api();
-    /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None);
-    /// let mid_video = changes.add_media(MediaKind::Video, Direction::SendOnly, None);
+    /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
+    /// let mid_video = changes.add_media(MediaKind::Video, Direction::SendOnly, None, None);
     ///
     /// let (offer, pending) = changes.apply().unwrap();
     /// let json = serde_json::to_vec(&offer).unwrap();
