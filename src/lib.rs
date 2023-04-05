@@ -1159,9 +1159,6 @@ impl Rtc {
                 };
                 return Ok(Output::Transmit(t));
             }
-        } else {
-            // Keep send buffers empty until we have ice connected.
-            self.session.clear_send_buffers();
         }
 
         let time_and_reason = (None, "<not happening>")

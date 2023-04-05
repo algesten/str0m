@@ -847,12 +847,6 @@ impl Session {
         &self.medias
     }
 
-    pub(crate) fn clear_send_buffers(&mut self) {
-        for m in &mut self.medias {
-            m.clear_send_buffers();
-        }
-    }
-
     fn configure_pacer_padding(&mut self) {
         let Some(bwe) = self.bwe.as_ref() else {
             return;
