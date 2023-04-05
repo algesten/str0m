@@ -20,7 +20,7 @@ const MILLIS: i64 = 1_000;
 /// Media time represented by a numerator / denominator.
 ///
 /// The numerator is typically the packet time of an Rtp header. The denominator is the
-/// clock frequence of the media source (typically 90kHz for video and 48kHz for audio).
+/// clock frequency of the media source (typically 90kHz for video and 48kHz for audio).
 #[derive(Debug, Clone, Copy)]
 pub struct MediaTime(i64, i64);
 
