@@ -1490,7 +1490,7 @@ impl RtcConfig {
     ///
     /// Enabled by default.
     pub fn enable_opus(mut self, enabled: bool) -> Self {
-        self.codec_config.enabe_opus(enabled);
+        self.codec_config.enable_opus(enabled);
         self
     }
 

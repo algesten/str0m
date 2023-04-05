@@ -228,7 +228,7 @@ impl CodecConfig {
     /// Creates a new config with all default configurations enabled.
     pub fn new_with_defaults() -> Self {
         let mut c = Self::new();
-        c.enabe_opus(true);
+        c.enable_opus(true);
 
         c.enable_vp8(true);
         c.enable_h264(true);
@@ -306,7 +306,7 @@ impl CodecConfig {
     }
 
     /// Add a default OPUS payload type.
-    pub fn enabe_opus(&mut self, enabled: bool) {
+    pub fn enable_opus(&mut self, enabled: bool) {
         self.configs.retain(|c| c.spec.codec != Codec::Opus);
         if !enabled {
             return;
