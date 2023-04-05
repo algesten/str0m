@@ -676,6 +676,9 @@ struct SendAddr {
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
 pub enum Event {
+    /// Emitted when we got ICE connection and established DTLS.
+    Connected,
+
     /// ICE connection state changes tells us whether the [`Rtc`] instance is
     /// connected to the peer or not.
     IceConnectionStateChange(IceConnectionState),
@@ -1043,10 +1046,13 @@ impl Rtc {
             }
         }
 
+        let mut dtls_connected = false;
+
         while let Some(e) = self.dtls.poll_event() {
             match e {
                 DtlsEvent::Connected => {
                     debug!("DTLS connected");
+                    dtls_connected = true;
                 }
                 DtlsEvent::SrtpKeyingMaterial(mat) => {
                     info!("DTLS set SRTP keying material");
@@ -1069,6 +1075,10 @@ impl Rtc {
                     self.sctp.handle_input(self.last_now, &v);
                 }
             }
+        }
+
+        if dtls_connected {
+            return Ok(Output::Event(Event::Connected));
         }
 
         while let Some(e) = self.sctp.poll() {
