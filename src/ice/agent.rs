@@ -99,6 +99,10 @@ struct StunRequest {
 const REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION: &str = "tmp_prflx";
 
 /// States the ICE connection can be in.
+///
+/// More details on connection states can be found in the [ICE RFC][1].
+///
+/// [1]: https://www.rfc-editor.org/rfc/rfc8445
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IceConnectionState {
     /// The ICE agent is gathering addresses.
