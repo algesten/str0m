@@ -251,6 +251,10 @@ impl Dtls {
             Ok(true)
         }
     }
+
+    pub(crate) fn is_connected(&self) -> bool {
+        self.tls.is_connected()
+    }
 }
 
 #[derive(Default)]
