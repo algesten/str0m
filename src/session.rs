@@ -583,6 +583,11 @@ impl Session {
             return Some(MediaEvent::EgressBitrateEstimate(bitrate_estimate));
         }
 
+        // If we're not ready to flow media, don't send any events.
+        if !self.ready_for_srtp() {
+            return None;
+        }
+
         for media in &mut self.medias {
             if media.need_open_event {
                 media.need_open_event = false;
@@ -620,6 +625,10 @@ impl Session {
         }
 
         None
+    }
+
+    fn ready_for_srtp(&self) -> bool {
+        self.srtp_rx.is_some() && self.srtp_tx.is_some()
     }
 
     pub fn poll_datagram(&mut self, now: Instant) -> Option<net::DatagramSend> {
