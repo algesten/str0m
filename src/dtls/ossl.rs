@@ -180,6 +180,10 @@ where
         self.active
     }
 
+    pub fn is_connected(&self) -> bool {
+        matches!(self.state, State::Established(_))
+    }
+
     pub fn set_active(&mut self, active: bool) {
         assert!(
             self.active.is_none(),
