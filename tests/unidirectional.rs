@@ -29,7 +29,7 @@ pub fn unidirectional() -> Result<(), RtcError> {
     l.rtc.sdp_api().accept_answer(pending, answer)?;
 
     loop {
-        if l.ice_connection_state().is_connected() || r.ice_connection_state().is_connected() {
+        if l.is_connected() || r.is_connected() {
             break;
         }
         progress(&mut l, &mut r)?;

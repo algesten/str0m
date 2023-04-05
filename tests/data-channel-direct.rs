@@ -51,7 +51,7 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
     r.direct_api().create_data_channel(config);
 
     loop {
-        if l.ice_connection_state().is_connected() || r.ice_connection_state().is_connected() {
+        if l.is_connected() || r.is_connected() {
             break;
         }
         progress(&mut l, &mut r)?;
