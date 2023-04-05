@@ -5,7 +5,6 @@ use crate::sdp::Simulcast as SdpSimulcast;
 
 use super::PayloadParams;
 use crate::format::CodecExtra;
-use crate::media::rtp::RtpMeta;
 
 pub use crate::packet::MediaKind;
 
@@ -131,9 +130,6 @@ pub struct MediaData {
     /// RTP header extensions for this media data. This is taken from the
     /// first RTP header.
     pub ext_vals: ExtensionValues,
-
-    /// The individual packet metadata that were part of making the Sample in `data`.
-    pub meta: Vec<RtpMeta>,
 
     /// Additional codec specific information
     pub codec_extra: CodecExtra,
