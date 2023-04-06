@@ -71,8 +71,11 @@ impl DepacketizingBuffer {
     pub fn push(&mut self, meta: RtpMeta, data: Vec<u8>) {
         // We're not emitting samples in the wrong order. If we receive
         // packets that are before the last emitted, we drop.
+        //
+        // As a special case, per popular demand, if hold_back is 0, we do emit
+        // out of order packets.
         if let Some(last) = self.last_emitted {
-            if meta.seq_no <= last {
+            if meta.seq_no <= last && self.hold_back > 0 {
                 trace!("Drop before emitted: {} <= {}", meta.seq_no, last);
                 return;
             }
@@ -350,6 +353,26 @@ mod test {
         ])
     }
 
+    #[test]
+    fn packets_with_hold_0() {
+        test0(&[
+            (1, 1, &[1, 9], &[(1, &[1, 9])]),
+            (3, 3, &[1, 9], &[(3, &[1, 9])]),
+            (4, 4, &[1, 9], &[(4, &[1, 9])]),
+            (5, 5, &[1, 9], &[(5, &[1, 9])]),
+        ])
+    }
+
+    #[test]
+    fn out_of_order_packets_with_hold_0() {
+        test0(&[
+            (3, 1, &[1, 9], &[(1, &[1, 9])]),
+            (1, 3, &[1, 9], &[(3, &[1, 9])]),
+            (5, 4, &[1, 9], &[(4, &[1, 9])]),
+            (2, 5, &[1, 9], &[(5, &[1, 9])]),
+        ])
+    }
+
     fn test(
         v: &[(
             u64,   // seq
@@ -361,8 +384,37 @@ mod test {
             )],
         )],
     ) {
+        test_n(3, v)
+    }
+
+    fn test0(
+        v: &[(
+            u64,   // seq
+            i64,   // time
+            &[u8], // data
+            &[(
+                i64,   // time
+                &[u8], // depacketized data
+            )],
+        )],
+    ) {
+        test_n(0, v)
+    }
+
+    fn test_n(
+        hold_back: usize,
+        v: &[(
+            u64,   // seq
+            i64,   // time
+            &[u8], // data
+            &[(
+                i64,   // time
+                &[u8], // depacketized data
+            )],
+        )],
+    ) {
         let depack = CodecDepacketizer::Boxed(Box::new(TestDepack));
-        let mut buf = DepacketizingBuffer::new(depack, 3);
+        let mut buf = DepacketizingBuffer::new(depack, hold_back);
 
         let mut step = 1;
 

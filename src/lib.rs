@@ -1430,6 +1430,8 @@ pub struct RtcConfig {
     stats_interval: Duration,
     /// Whether to use Bandwidth Estimation to discover the egress bandwidth.
     bwe_initial_bitrate: Option<Bitrate>,
+    reordering_size_audio: usize,
+    reordering_size_video: usize,
 }
 
 impl RtcConfig {
@@ -1584,6 +1586,39 @@ impl RtcConfig {
         self
     }
 
+    /// Sets the number of packets held back for reordering audio packets.
+    ///
+    /// Str0m tries to deliver the samples in order. This number determines how many
+    /// packets to "wait" before releasing media
+    /// [`contiguous: false`][crate::media::MediaData::contiguous].
+    ///
+    /// Setting this to 0 enables a special mode where we will emit `MediaData` data out of order. This
+    /// works on the assumption that we never split an audio sample over several RTP packets.
+    ///
+    /// Default: 15
+    pub fn set_reordering_size_audio(mut self, size: usize) -> Self {
+        self.reordering_size_audio = size;
+
+        self
+    }
+
+    /// Sets the number of packets held back for reordering video packets.
+    ///
+    /// Str0m tries to deliver the samples in order. This number determines how many
+    /// packets to "wait" before releasing media with gaps.
+    ///
+    /// This must be at least as big as the number of packets the biggest keyframe can be split over.
+    ///
+    /// WARNING: video is very different to audio. Setting this value too low will result in
+    /// missing video data. The 0 (as described for audio) is not relevant for video.
+    ///
+    /// Default: 30
+    pub fn set_reordering_size_video(mut self, size: usize) -> Self {
+        self.reordering_size_video = size;
+
+        self
+    }
+
     /// Create a [`Rtc`] from the configuration.
     pub fn build(self) -> Rtc {
         Rtc::new_from_config(self)
@@ -1600,6 +1635,8 @@ impl Default for RtcConfig {
             exts: ExtensionMap::standard(),
             stats_interval: Duration::from_secs(1),
             bwe_initial_bitrate: None,
+            reordering_size_audio: 15,
+            reordering_size_video: 30,
         }
     }
 }
