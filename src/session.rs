@@ -27,8 +27,8 @@ const NACK_MIN_INTERVAL: Duration = Duration::from_millis(100);
 // Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(100);
 
-const PACING_FACTOR: f64 = 2.5;
-const PADDING_FACTOR: f64 = 1.00;
+const PACING_FACTOR: f64 = 1.1;
+const PADDING_FACTOR: f64 = 1.0;
 
 pub(crate) struct Session {
     id: SessionId,
@@ -68,8 +68,7 @@ pub(crate) struct Session {
     twcc_rx_register: TwccRecvRegister,
     twcc_tx_register: TwccSendRegister,
 
-    bwe: Option<SendSideBandwithEstimator>,
-    bwe_desired_bitrate: Bitrate,
+    bwe: Option<Bwe>,
 
     enable_twcc_feedback: bool,
 
@@ -106,7 +105,12 @@ impl Session {
                 Duration::from_millis(40),
             ));
 
-            let bwe = SendSideBandwithEstimator::new(rate);
+            let send_side_bwe = SendSideBandwithEstimator::new(rate);
+            let bwe = Bwe {
+                bwe: send_side_bwe,
+                desired_bitrate: Bitrate::ZERO,
+                current_bitrate: rate,
+            };
 
             (pacer, Some(bwe))
         } else {
@@ -131,7 +135,6 @@ impl Session {
             twcc_rx_register: TwccRecvRegister::new(100),
             twcc_tx_register: TwccSendRegister::new(1000),
             bwe,
-            bwe_desired_bitrate: Bitrate::ZERO,
             enable_twcc_feedback: false,
             pacer,
             poll_packet_buf: vec![0; 2000],
@@ -519,7 +522,7 @@ impl Session {
                 }
                 // Not in the above if due to lifetime issues, still okay because the method
                 // doesn't do anything when BWE isn't configured.
-                self.configure_pacer_padding();
+                self.configure_pacer();
 
                 return Some(());
             }
@@ -834,14 +837,17 @@ impl Session {
     }
 
     pub fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {
-        let pacing_rate = current_bitrate * PACING_FACTOR;
-
-        self.pacer.set_pacing_rate(pacing_rate);
+        if let Some(bwe) = self.bwe.as_mut() {
+            bwe.current_bitrate = current_bitrate;
+            self.configure_pacer();
+        }
     }
 
     pub fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
-        self.bwe_desired_bitrate = desired_bitrate;
-        self.configure_pacer_padding();
+        if let Some(bwe) = self.bwe.as_mut() {
+            bwe.desired_bitrate = desired_bitrate;
+            self.configure_pacer();
+        }
     }
 
     pub fn line_count(&self) -> usize {
@@ -856,16 +862,50 @@ impl Session {
         &self.medias
     }
 
-    fn configure_pacer_padding(&mut self) {
+    fn configure_pacer(&mut self) {
         let Some(bwe) = self.bwe.as_ref() else {
             return;
         };
 
         let padding_rate = bwe
             .last_estimate()
-            .map(|bwe| (bwe * PADDING_FACTOR).min(self.bwe_desired_bitrate))
+            .map(|estimate| (estimate * PADDING_FACTOR).min(bwe.desired_bitrate))
             .unwrap_or(Bitrate::ZERO);
 
         self.pacer.set_padding_rate(padding_rate);
+        let pacing_rate = (bwe.current_bitrate * PACING_FACTOR).max(padding_rate);
+        self.pacer.set_pacing_rate(pacing_rate);
+    }
+}
+
+struct Bwe {
+    bwe: SendSideBandwithEstimator,
+    desired_bitrate: Bitrate,
+    current_bitrate: Bitrate,
+}
+
+impl Bwe {
+    fn handle_timeout(&mut self, now: Instant) {
+        self.bwe.handle_timeout(now);
+    }
+
+    pub(crate) fn update<'t>(
+        &mut self,
+        records: impl Iterator<Item = &'t crate::rtp::TwccSendRecord>,
+        now: Instant,
+    ) {
+        self.bwe.update(records, now);
+    }
+
+    fn poll_estimate(&mut self) -> Option<Bitrate> {
+        self.bwe.poll_estimate()
+    }
+
+    fn poll_timeout(&self) -> Instant {
+        self.bwe.poll_timeout()
+    }
+
+    fn last_estimate(&self) -> Option<Bitrate> {
+        self.bwe.last_estimate()
     }
 }
