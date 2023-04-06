@@ -80,6 +80,9 @@ pub(crate) struct Session {
     poll_packet_buf: Vec<u8>,
 
     pub ice_lite: bool,
+
+    pub reorder_buffer_size_audio: usize,
+    pub reorder_buffer_size_video: usize,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -136,6 +139,9 @@ impl Session {
             pacer,
             poll_packet_buf: vec![0; 2000],
             ice_lite: config.ice_lite,
+            // should we keep default here?
+            reorder_buffer_size_audio: 3,
+            reorder_buffer_size_video: 30,
         }
     }
 
@@ -175,6 +181,11 @@ impl Session {
 
     pub fn codec_config(&self) -> &CodecConfig {
         &self.codec_config
+    }
+
+    pub fn set_reorder_buffer_size(&mut self, audio: usize, video: usize) {
+        self.reorder_buffer_size_audio = audio;
+        self.reorder_buffer_size_video = video;
     }
 
     pub fn set_keying_material(&mut self, mat: KeyingMaterial, active: bool) {

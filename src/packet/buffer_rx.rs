@@ -63,7 +63,7 @@ impl DepacketizingBuffer {
             hold_back,
             depack,
             queue: VecDeque::new(),
-            segments: Vec::new(),
+            segments: Vec::with_capacity(hold_back),
             last_emitted: None,
         }
     }

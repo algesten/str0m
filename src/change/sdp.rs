@@ -734,6 +734,10 @@ fn add_new_lines(
 
             let mut media = MediaInner::from_remote_media_line(m, idx, exts);
             media.need_open_event = need_open_event;
+            media.set_reorder_buffer_sizes(
+                session.reorder_buffer_size_audio,
+                session.reorder_buffer_size_video,
+            );
             update_media(&mut media, m, &session.codec_config, &session.exts);
 
             session.add_media(media);
