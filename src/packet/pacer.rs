@@ -1295,7 +1295,7 @@ mod test {
                 QueueState {
                     mid: self.mid,
                     is_audio: self.is_audio,
-                    use_for_padding: !self.is_audio,
+                    use_for_padding: !self.is_audio && self.last_send_time.is_some(),
                     snapshot: QueueSnapshot {
                         created_at: now,
                         size: self.queue.iter().map(QueuedPacket::size).sum(),
