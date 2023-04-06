@@ -119,6 +119,9 @@ pub(crate) struct MediaInner {
     /// These have been scheduled via nacks.
     resends: VecDeque<Resend>,
 
+    /// Queue of packets to send for padding.
+    padding: VecDeque<PaddingOrResend>,
+
     /// Whether the media line needs to be advertised in an event.
     pub(crate) need_open_event: bool,
 
@@ -165,6 +168,17 @@ pub(crate) struct MediaInner {
 
     /// Whether we are running in RTP-mode.
     pub(crate) rtp_mode: bool,
+}
+
+#[derive(Debug)]
+enum PaddingOrResend {
+    Padding {
+        ssrc: Ssrc,
+        pt: Pt,
+        requested_at: Instant,
+        size: usize,
+    },
+    Resend(Resend),
 }
 
 struct NextPacket<'a> {
@@ -424,17 +438,16 @@ impl MediaInner {
         now: Instant,
         exts: &ExtensionMap,
         twcc: &mut u64,
-        pad_size: Option<usize>,
         buf: &mut Vec<u8>,
-    ) -> Option<(RtpHeader, SeqNo)> {
+    ) -> Option<(RtpHeader, SeqNo, bool, usize)> {
         let mid = self.mid;
 
-        let next = if let Some(next) = self.poll_packet_resend_to_cap(now) {
-            next
+        let (next, is_padding) = if let Some(next) = self.poll_packet_resend_to_cap(now) {
+            (next, false)
         } else if let Some(next) = self.poll_packet_regular(now) {
-            next
-        } else if let Some(next) = self.poll_packet_padding(now, pad_size) {
-            next
+            (next, false)
+        } else if let Some(next) = self.poll_packet_padding(now) {
+            (next, true)
         } else {
             return None;
         };
@@ -509,7 +522,7 @@ impl MediaInner {
             crate::log_stat!("QUEUE_DELAY", header.ssrc, delay.as_millis());
         }
 
-        Some((header, next.seq_no))
+        Some((header, next.seq_no, is_padding, body_len))
     }
 
     fn poll_packet_resend_to_cap(&mut self, now: Instant) -> Option<NextPacket> {
@@ -622,86 +635,178 @@ impl MediaInner {
         })
     }
 
-    fn poll_packet_padding(&mut self, now: Instant, pad_size: Option<usize>) -> Option<NextPacket> {
-        // We only produce padding packet if there is an asked for padding size.
-        let pad_size = pad_size?;
+    fn poll_packet_padding(&mut self, now: Instant) -> Option<NextPacket> {
+        loop {
+            let padding_or_resend = self.padding.pop_front()?;
 
+            // Force recaching since padding changed.
+            self.queue_state = None;
+
+            match padding_or_resend {
+                PaddingOrResend::Padding { ssrc, pt, size, .. } => {
+                    let source_tx = get_or_create_source_tx(
+                        &mut self.sources_tx,
+                        &mut self.equalize_sources,
+                        ssrc,
+                    );
+                    let seq_no = source_tx.next_seq_no(now, None);
+
+                    trace!("Generating padding packet of size {size} on {ssrc} with pt: {pt}");
+                    return Some(NextPacket {
+                        pt,
+                        ssrc,
+                        seq_no,
+                        body: NextPacketBody::Padding { len: size as u8 },
+                    });
+                }
+                PaddingOrResend::Resend(resend) => {
+                    // If there is no buffer for this padding, we return None. This is
+                    // a weird situation though, since it means we queued padding for a buffer we don't
+                    // have.
+                    let buffer = self
+                        .buffers_tx
+                        .values()
+                        .find(|p| p.has_ssrc(padding_or_resend.ssrc()))?;
+
+                    let pkt = buffer.get(resend.seq_no);
+
+                    // The seq_no could simply be too old to exist in the buffer, in which
+                    // case we will not do a resend.
+                    let Some(pkt) = pkt else {
+                        continue;
+                    };
+
+                    // The send source, to get a contiguous seq_no for the resend.
+                    // Audio should not be resent, so this also gates whether we are doing resends at all.
+                    let source = match get_source_tx(&mut self.sources_tx, pkt.meta.rid, true) {
+                        Some(v) => v,
+                        None => continue,
+                    };
+
+                    let seq_no = source.next_seq_no(now, None);
+
+                    // The resend ssrc. This would correspond to the RTX PT for video.
+                    let ssrc_rtx = source.ssrc();
+
+                    let orig_seq_no = Some(resend.seq_no);
+
+                    // Check that our internal state of organizing SSRC for senders is correct.
+                    assert_eq!(pkt.meta.ssrc, resend.ssrc);
+                    assert_eq!(source.repairs(), Some(resend.ssrc));
+
+                    // If the resent PT doesn't exist, the state is not correct as per above.
+                    let pt = pt_rtx(&self.params, resend.pt).expect("Resend PT");
+
+                    return Some(NextPacket {
+                        pt,
+                        ssrc: ssrc_rtx,
+                        seq_no,
+                        body: NextPacketBody::Resend { pkt, orig_seq_no },
+                    });
+                }
+            };
+        }
+    }
+
+    /// Queue some padding to be sent later.
+    pub fn queue_padding(&mut self, now: Instant, mut pad_size: usize) {
         // Only do padding packets if we are using RTX, or we will increase the seq_no
         // on the main SSRC for filler stuff.
         if !self.has_tx_rtx() {
-            return None;
+            return;
         }
+        assert!(
+            self.queue_state
+                .map(|q| q.snapshot.packet_count == 0)
+                .unwrap_or(true),
+            "Attempted to queue padding when there were other packets queued"
+        );
 
-        // TODO: This function should be split into two halves, but because of the borrow checker
-        // it's hard to construct.
+        while pad_size > 0 {
+            // TODO: This function should be split into two halves, but because of the borrow checker
+            // it's hard to construct.
 
-        // This first scope tries to send a spurious (unasked for) resend of a packet already sent.
-        {
-            let pt = self
-                .buffers_tx
-                .iter()
-                .map(|(pt, buffer)| (pt, buffer.history_size()))
-                .filter(|(_, size)| *size > 0)
-                // Use the last PT i.e. the one that has the most RTX history, this is a poor
-                // approximation for most recent sends.
-                .max_by_key(|(_, size)| *size)
-                .map(|(pt, _)| *pt);
+            // This first scope tries to send a spurious (unasked for) resend of a packet already sent.
+            {
+                let pt = self
+                    .buffers_tx
+                    .iter()
+                    .map(|(pt, buffer)| (pt, buffer.history_size()))
+                    .filter(|(_, size)| *size > 0)
+                    // Use the last PT i.e. the one that has the most RTX history, this is a poor
+                    // approximation for most recent sends.
+                    .max_by_key(|(_, size)| *size)
+                    .map(|(pt, _)| *pt);
 
-            // If we find a pt above, we do a spurious (unasked for) resend of this packet.
-            if let Some(pt) = pt {
-                let buffer = get_buffer_tx(&self.buffers_tx, pt)
-                    .expect("the buffer to exist as verified previously");
+                // If we find a pt above, we do a spurious (unasked for) resend of this packet.
+                if let Some(pt) = pt {
+                    let buffer = get_buffer_tx(&self.buffers_tx, pt)
+                        .expect("the buffer to exist as verified previously");
 
-                // Find a historic packet that is smaller than this max size. The max size
-                // is a headroom since we can accept slightly larger padding than asked for.
-                let max_size = pad_size * 2;
-                if let Some(packet) = buffer.historic_packet_smaller_than(max_size) {
-                    let seq_no = packet.seq_no.expect(
-                        "this packet to have been sent and therefore have a sequence number",
-                    );
+                    // Find a historic packet that is smaller than this max size. The max size
+                    // is a headroom since we can accept slightly larger padding than asked for.
+                    let max_size = pad_size * 2;
+                    if let Some(packet) = buffer.historic_packet_smaller_than(max_size) {
+                        let seq_no = packet.seq_no.expect(
+                            "this packet to have been sent and therefore have a sequence number",
+                        );
+                        // Saturating sub because we can overflow and want to stop when that
+                        // happens.
+                        pad_size = pad_size.saturating_sub(packet.data.len());
+                        trace!(
+                            "Queued {} bytes worth of resend padding, seq_no = {seq_no}",
+                            packet.data.len()
+                        );
 
-                    // Piggy-back on regular resends.
-                    // We should never add padding as long as there are resends.
-                    assert!(self.resends.is_empty());
-                    self.resends.push_front(Resend {
-                        pt,
-                        ssrc: packet.meta.ssrc,
-                        seq_no,
-                        body_size: packet.data.len(),
-                        queued_at: now,
-                    });
+                        self.padding.push_back(PaddingOrResend::Resend(Resend {
+                            pt,
+                            body_size: packet.data.len(),
+                            ssrc: packet.meta.ssrc,
+                            seq_no,
+                            queued_at: now,
+                        }));
 
-                    return self.poll_packet_resend(now, true);
+                        continue;
+                    }
                 }
+            }
+
+            // This second scope sends an empty padding packet. This is a fallback strategy if we fail
+            // to find a suitable rtx packet above.
+            // NB: If we cannot generate padding here for some reason we'll get stuck forever.
+            {
+                let Some(&pt) = self.buffers_tx.keys().next() else {
+                    return;
+                };
+                let Some(pt_rtx) = pt_rtx(&self.params, pt) else {
+                    warn!("Found no PT to send raw padding on");
+                    return;
+                };
+                let ssrc_rtx = self
+                    .sources_tx
+                    .iter()
+                    .find(|s| s.is_rtx())
+                    .map(|s| s.ssrc())
+                    .expect("at least one rtx source");
+
+                let padding = pad_size.clamp(SRTP_BLOCK_SIZE, MAX_PADDING_PACKET_SIZE);
+
+                // Saturating sub because we can overflow and want to stop when that
+                // happens.
+                pad_size = pad_size.saturating_sub(padding);
+
+                trace!("Queued {padding} bytes worth of raw padding");
+                self.padding.push_back(PaddingOrResend::Padding {
+                    ssrc: ssrc_rtx,
+                    pt: pt_rtx,
+                    requested_at: now,
+                    size: padding,
+                });
             }
         }
 
-        // This second scope sends an empty padding packet. This is a fallback strategy if we fail
-        // to find a suitable rtx packet above.
-        // NB: If we cannot generate padding here for some reason we'll get stuck forever.
-        {
-            let pt = *self.buffers_tx.keys().next()?;
-            let pt_rtx = pt_rtx(&self.params, pt)?;
-            let ssrc_rtx = self
-                .sources_tx
-                .iter()
-                .find(|s| s.is_rtx())
-                .map(|s| s.ssrc())
-                .expect("at least one rtx source");
-
-            let padding = pad_size.max(MAX_PADDING_PACKET_SIZE);
-
-            let seq_no = self
-                .get_or_create_source_tx(ssrc_rtx)
-                .next_seq_no(now, None);
-
-            Some(NextPacket {
-                pt: pt_rtx,
-                ssrc: ssrc_rtx,
-                seq_no,
-                body: NextPacketBody::Padding { len: padding as u8 },
-            })
-        }
+        // Clear queue state cache
+        self.queue_state = None;
     }
 
     pub fn get_or_create_source_rx(&mut self, ssrc: Ssrc) -> &mut ReceiverSource {
@@ -1224,6 +1329,8 @@ impl MediaInner {
             snapshot.merge(&snap);
         }
 
+        snapshot.merge(&self.padding_snapshot(now));
+
         let state = QueueState {
             mid: self.mid,
             is_audio: self.kind.is_audio(),
@@ -1240,6 +1347,45 @@ impl MediaInner {
     /// Test if any source_tx in this channel has rtx.
     fn has_tx_rtx(&self) -> bool {
         self.sources_tx.iter().any(|s| s.is_rtx())
+    }
+
+    fn padding_snapshot(&self, now: Instant) -> QueueSnapshot {
+        let (padding_count, padding_size, padding_queue_time, first_unsent) = self
+            .padding
+            .iter()
+            .fold((0_u32, 0, Duration::ZERO, None), |acc, p| {
+                let is_first = acc.1 == 0;
+                match p {
+                    PaddingOrResend::Padding {
+                        requested_at, size, ..
+                    } => (
+                        acc.0 + 1,
+                        acc.1 + size,
+                        acc.2 + now.duration_since(*requested_at),
+                        if is_first { Some(*requested_at) } else { acc.3 },
+                    ),
+                    PaddingOrResend::Resend(Resend {
+                        body_size,
+                        queued_at,
+                        ..
+                    }) => (
+                        acc.0 + 1,
+                        acc.1 + body_size,
+                        acc.2 + now.duration_since(*queued_at),
+                        if is_first { Some(*queued_at) } else { acc.3 },
+                    ),
+                }
+            });
+
+        QueueSnapshot {
+            created_at: now,
+            size: padding_size,
+            packet_count: padding_count,
+            total_queue_time_origin: padding_queue_time,
+            last_emitted: None,
+            first_unsent,
+            priority: 5,
+        }
     }
 }
 
@@ -1289,10 +1435,19 @@ impl<'a> NextPacketBody<'a> {
     fn queued_at(&self) -> Option<Instant> {
         use NextPacketBody::*;
         match self {
-            Regular { pkt } => Some(pkt.meta.queued_at),
+            Regular { pkt } => Some(pkt.queued_at),
             // TODO: Accurate queued_at for resends
             Resend { .. } => None,
             Padding { .. } => None,
+        }
+    }
+}
+
+impl PaddingOrResend {
+    fn ssrc(&self) -> Ssrc {
+        match self {
+            PaddingOrResend::Padding { ssrc, .. } => *ssrc,
+            PaddingOrResend::Resend(resend) => resend.ssrc,
         }
     }
 }
@@ -1340,6 +1495,7 @@ impl Default for MediaInner {
             buffers_rx: HashMap::new(),
             buffers_tx: HashMap::new(),
             resends: VecDeque::new(),
+            padding: VecDeque::new(),
             need_open_event: true,
             need_changed_event: false,
             keyframe_request_rx: None,
@@ -1427,4 +1583,21 @@ fn get_buffer_tx(
     pt: Pt,
 ) -> Option<&PacketizingBuffer> {
     buffers_tx.get(&pt)
+}
+
+/// Separate in wait for polonius.
+fn get_or_create_source_tx<'a>(
+    sources_tx: &'a mut Vec<SenderSource>,
+    equalize_sources: &'a mut bool,
+    ssrc: Ssrc,
+) -> &'a mut SenderSource {
+    let maybe_idx = sources_tx.iter().position(|r| r.ssrc() == ssrc);
+
+    if let Some(idx) = maybe_idx {
+        &mut sources_tx[idx]
+    } else {
+        *equalize_sources = true;
+        sources_tx.push(SenderSource::new(ssrc));
+        sources_tx.last_mut().unwrap()
+    }
 }

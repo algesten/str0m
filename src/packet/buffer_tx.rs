@@ -186,6 +186,7 @@ impl PacketizingBuffer {
             total_queue_time_origin: self.total.queue_time,
             last_emitted: self.last_emit,
             first_unsent: self.queue.get(self.emit_next).map(|p| p.queued_at),
+            priority: if self.total.unsent_count > 0 { 0 } else { 10 },
         }
     }
 

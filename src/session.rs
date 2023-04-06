@@ -722,28 +722,29 @@ impl Session {
             .iter_mut()
             .find(|m| m.mid() == mid)
             .expect("index is media");
+
+        if let Some(pad_size) = pad_size {
+            media.queue_padding(now, pad_size);
+            return None;
+        }
+
         let buf = &mut self.poll_packet_buf;
 
         let twcc_seq = self.twcc;
 
-        if let Some((header, seq_no)) =
-            media.poll_packet(now, &self.exts, &mut self.twcc, pad_size, buf)
+        if let Some((header, seq_no, is_padding, payload_size)) =
+            media.poll_packet(now, &self.exts, &mut self.twcc, buf)
         {
-            trace!("Poll RTP: {:?}", header);
+            trace!(payload_size, is_padding, "Poll RTP: {:?}", header);
 
             #[cfg(feature = "_internal_dont_use_log_stats")]
             {
-                let kind = if pad_size.is_some() {
-                    "padding"
-                } else {
-                    "media"
-                };
+                let kind = if is_padding { "padding" } else { "media" };
 
-                crate::log_stat!("PACKET_SENT", header.ssrc, buf.len(), kind);
+                crate::log_stat!("PACKET_SENT", header.ssrc, payload_size, kind);
             }
 
-            let payload_size = buf.len();
-            self.pacer.register_send(now, buf.len().into(), mid);
+            self.pacer.register_send(now, payload_size.into(), mid);
             let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
             self.twcc_tx_register
