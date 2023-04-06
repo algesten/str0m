@@ -873,6 +873,13 @@ impl Session {
             .unwrap_or(Bitrate::ZERO);
 
         self.pacer.set_padding_rate(padding_rate);
+
+        // We pad up to the pacing rate, therefore we need to increase pacing if the estimate, and
+        // thus the padding rate, exceeds the current bitrate adjusted with the pacing factor.
+        // Otherwise we can have a case where the current bitrate is 250Kbit/s resulting in a
+        // pacing rate of 275KBit/s which means we'll only ever pad about 25Kbit/s. If the estimate
+        // is actually 600Kbit/s we need to use that for the pacing rate to ensure we send as much as
+        // we think the link capacity can sustain, if not the estimate is a lie.
         let pacing_rate = (bwe.current_bitrate * PACING_FACTOR).max(padding_rate);
         self.pacer.set_pacing_rate(pacing_rate);
     }
