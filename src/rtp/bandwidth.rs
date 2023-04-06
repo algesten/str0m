@@ -49,8 +49,14 @@ impl Bitrate {
         Self(self.0.clamp(min.0, max.0))
     }
 
-    pub(crate) fn min(&self, other: Self) -> Self {
+    /// Return the minimum bitrate between `self` and `other`.
+    pub fn min(&self, other: Self) -> Self {
         Self(self.0.min(other.0))
+    }
+
+    /// Return the maximum bitrate between `self` and `other`.
+    pub fn max(&self, other: Self) -> Self {
+        Self(self.0.max(other.0))
     }
 }
 
