@@ -41,6 +41,9 @@ pub(crate) struct Session {
     /// The app m-line. Spliced into medias above.
     app: Option<(Mid, usize)>,
 
+    reordering_size_audio: usize,
+    reordering_size_video: usize,
+
     /// Extension mappings are _per BUNDLE_, but we can only have one a=group BUNDLE
     /// in WebRTC (one ice connection), so they are effectively per session.
     pub exts: ExtensionMap,
@@ -121,6 +124,8 @@ impl Session {
             id,
             medias: vec![],
             app: None,
+            reordering_size_audio: config.reordering_size_audio,
+            reordering_size_video: config.reordering_size_video,
             exts: config.exts,
             codec_config: config.codec_config.clone(),
             source_keys: HashMap::new(),
@@ -487,7 +492,12 @@ impl Session {
         }
 
         // Buffers are unique per media (since PT is unique per media).
-        let buf = media.get_buffer_rx(pt, rid, codec);
+        let hold_back = if codec.is_audio() {
+            self.reordering_size_audio
+        } else {
+            self.reordering_size_video
+        };
+        let buf = media.get_buffer_rx(pt, rid, codec, hold_back);
 
         let meta = RtpMeta::new(now, time, seq_no, header);
 

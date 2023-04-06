@@ -996,10 +996,11 @@ impl MediaInner {
         pt: Pt,
         rid: Option<Rid>,
         codec: Codec,
+        hold_back: usize,
     ) -> &mut DepacketizingBuffer {
         self.buffers_rx
             .entry((pt, rid))
-            .or_insert_with(|| DepacketizingBuffer::new(codec.into(), 30))
+            .or_insert_with(|| DepacketizingBuffer::new(codec.into(), hold_back))
     }
 
     pub fn poll_keyframe_request(&mut self) -> Option<(Option<Rid>, KeyframeRequestKind)> {
