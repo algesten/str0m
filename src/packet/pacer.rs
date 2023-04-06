@@ -11,7 +11,7 @@ const MAX_BITRATE: Bitrate = Bitrate::gbps(10);
 const MAX_DEBT_IN_TIME: Duration = Duration::from_millis(500);
 const MAX_PADDING_PACKET_SIZE: DataSize = DataSize::bytes(224);
 const PADDING_BURST_INTERVAL: Duration = Duration::from_millis(5);
-const MAX_CONSECUTIVE_PADDING_PACKETS: usize = 1 << 16;
+const MAX_CONSECUTIVE_PADDING_PACKETS: usize = u16::MAX as usize;
 
 pub enum PacerImpl {
     Null(NullPacer),
@@ -115,6 +115,15 @@ pub struct QueueSnapshot {
     pub last_emitted: Option<Instant>,
     /// Time the first unsent packet has spent in the queue.
     pub first_unsent: Option<Instant>,
+}
+
+impl QueueSnapshot {
+    /// Whether anything has ever been sent on this queue.
+    ///
+    /// Used to ensure we don't send padding before sending the first bits of media.
+    pub fn has_ever_sent(&self) -> bool {
+        self.last_emitted.is_some()
+    }
 }
 
 impl Default for QueueSnapshot {
