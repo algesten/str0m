@@ -11,7 +11,7 @@ const MAX_BITRATE: Bitrate = Bitrate::gbps(10);
 const MAX_DEBT_IN_TIME: Duration = Duration::from_millis(500);
 const MAX_PADDING_PACKET_SIZE: DataSize = DataSize::bytes(224);
 const PADDING_BURST_INTERVAL: Duration = Duration::from_millis(5);
-const MAX_CONSECUTIVE_PADDING_PACKETS: usize = 5_000;
+const MAX_CONSECUTIVE_PADDING_PACKETS: usize = 1 << 16;
 
 pub enum PacerImpl {
     Null(NullPacer),
