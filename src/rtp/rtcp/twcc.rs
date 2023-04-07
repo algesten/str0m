@@ -4,7 +4,7 @@ use std::fmt;
 use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
-use super::{extend_seq, FeedbackMessageType, RtcpHeader, RtcpPacket};
+use super::{extend_u16, FeedbackMessageType, RtcpHeader, RtcpPacket};
 use super::{RtcpType, SeqNo, Ssrc, TransportType};
 
 #[derive(Clone, PartialEq, Eq)]
@@ -31,7 +31,7 @@ impl Twcc {
     pub fn into_iter(self, time_zero: Instant, extend_from: SeqNo) -> TwccIter {
         let millis = self.reference_time as u64 * 64;
         let time_base = time_zero + Duration::from_millis(millis);
-        let base_seq = extend_seq(Some(*extend_from), self.base_seq);
+        let base_seq = extend_u16(Some(*extend_from), self.base_seq);
         TwccIter {
             base_seq,
             time_base,

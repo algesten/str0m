@@ -9,7 +9,7 @@ use crate::packet::{
     LeakyBucketPacer, NullPacer, Pacer, PacerImpl, PollOutcome, RtpMeta, SendSideBandwithEstimator,
 };
 use crate::rtp::SRTCP_OVERHEAD;
-use crate::rtp::{extend_seq, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
+use crate::rtp::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
 use crate::rtp::{Bitrate, ExtensionMap, MediaTime, Mid, Rtcp, RtcpFb};
 use crate::rtp::{SrtpContext, SrtpKey, Ssrc};
 use crate::stats::StatsSnapshot;
@@ -330,7 +330,7 @@ impl Session {
         trace!("Handle RTP: {:?}", header);
         if let Some(transport_cc) = header.ext_vals.transport_cc {
             let prev = self.twcc_rx_register.max_seq();
-            let extended = extend_seq(Some(*prev), transport_cc);
+            let extended = extend_u16(Some(*prev), transport_cc);
             self.twcc_rx_register.update_seq(extended.into(), now);
         }
 
