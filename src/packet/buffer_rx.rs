@@ -28,6 +28,16 @@ pub struct Depacketized {
     pub codec_extra: CodecExtra,
 }
 
+impl Depacketized {
+    pub fn network_time(&self) -> Instant {
+        self.meta[0].received
+    }
+
+    pub fn ext_vals(&self) -> ExtensionValues {
+        self.meta[0].header.ext_vals
+    }
+}
+
 #[derive(Debug)]
 struct Entry {
     meta: RtpMeta,

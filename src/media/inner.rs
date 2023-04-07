@@ -1018,11 +1018,11 @@ impl MediaInner {
                         rid: *rid,
                         params: codec,
                         time: dep.time,
-                        network_time: dep.meta[0].received,
+                        network_time: dep.network_time(),
                         contiguous: dep.contiguous,
-                        data: dep.data,
-                        ext_vals: dep.meta[0].header.ext_vals,
+                        ext_vals: dep.ext_vals(),
                         codec_extra: dep.codec_extra,
+                        data: dep.data,
                     })
                     .map_err(|e| RtcError::Packet(self.mid, *pt, e)),
                 );
