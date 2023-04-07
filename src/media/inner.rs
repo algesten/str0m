@@ -1018,6 +1018,7 @@ impl MediaInner {
                         params: codec,
                         time: dep.time,
                         network_time: dep.network_time(),
+                        seq_range: dep.seq_range(),
                         contiguous: dep.contiguous,
                         ext_vals: dep.ext_vals(),
                         codec_extra: dep.codec_extra,

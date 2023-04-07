@@ -1,6 +1,7 @@
+use std::ops::RangeInclusive;
 use std::time::Instant;
 
-use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
+use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, SeqNo};
 use crate::sdp::Simulcast as SdpSimulcast;
 
 use super::PayloadParams;
@@ -111,6 +112,9 @@ pub struct MediaData {
     ///
     /// In simple SFU setups this can be used as wallclock for [`Writer::write`][crate::media::Writer].
     pub network_time: Instant,
+
+    /// The (RTP) sequence numbers that made up this data.
+    pub seq_range: RangeInclusive<SeqNo>,
 
     /// Whether the data is contiguous from the one just previously emitted. If this is false,
     /// we got an interruption in RTP packets, and the data may or may not be usable in a decoder
