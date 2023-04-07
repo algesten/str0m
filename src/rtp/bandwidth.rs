@@ -1,6 +1,6 @@
 use std::fmt;
 use std::iter::Sum;
-use std::ops::{Add, AddAssign, Div, Mul};
+use std::ops::{Add, AddAssign, Div, Mul, Sub, SubAssign};
 use std::time::Duration;
 
 /// A data rate expressed as bits per second(bps).
@@ -91,6 +91,29 @@ impl Mul<f64> for Bitrate {
     }
 }
 
+impl Sub<Bitrate> for Bitrate {
+    type Output = Bitrate;
+
+    fn sub(self, rhs: Bitrate) -> Self::Output {
+        assert!(
+            self.0 >= rhs.0,
+            "Attempted to subtract Bitrates that would result in overflow. lhs={}, rhs={}",
+            self,
+            rhs
+        );
+
+        Self(self.0 - rhs.0)
+    }
+}
+
+impl Add<Bitrate> for Bitrate {
+    type Output = Bitrate;
+
+    fn add(self, rhs: Bitrate) -> Self::Output {
+        Self(self.0 + rhs.0)
+    }
+}
+
 impl fmt::Display for Bitrate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let rate = self.0;
@@ -175,6 +198,12 @@ impl Mul<u64> for DataSize {
 impl AddAssign<DataSize> for DataSize {
     fn add_assign(&mut self, rhs: DataSize) {
         self.0 += rhs.0;
+    }
+}
+
+impl SubAssign<DataSize> for DataSize {
+    fn sub_assign(&mut self, rhs: DataSize) {
+        self.0 = self.0.saturating_sub(rhs.0);
     }
 }
 
