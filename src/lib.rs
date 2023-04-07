@@ -1458,12 +1458,23 @@ impl RtcConfig {
     ///
     /// See [ICE RFC][1]
     ///
-    /// Defaults to `false`.
-    ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc8445#page-13
     pub fn set_ice_lite(mut self, enabled: bool) -> Self {
         self.ice_lite = enabled;
         self
+    }
+
+    /// Tells whether ice lite is enabled.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to false.
+    /// assert_eq!(config.ice_lite(), false);
+    /// ```
+    pub fn ice_lite(&self) -> bool {
+        self.ice_lite
     }
 
     /// Lower level access to precis configuration of codecs (payload types).
@@ -1537,6 +1548,7 @@ impl RtcConfig {
     /// ```
     /// # use str0m::media::rtp::{Extension, ExtensionMap};
     /// let exts = ExtensionMap::standard();
+    ///
     /// assert_eq!(exts.id_of(Extension::AudioLevel), Some(1));
     /// assert_eq!(exts.id_of(Extension::AbsoluteSendTime), Some(2));
     /// assert_eq!(exts.id_of(Extension::TransportSequenceNumber), Some(3));
@@ -1567,12 +1579,25 @@ impl RtcConfig {
     }
 
     /// Set the interval between statistics events
-    /// This includes Event::MediaEgressStats, Event::MediaIngressStats, Event::MediaEgressStats
     ///
-    /// Defaults to `Duration::from_secs(1)`.
+    /// This includes [`MediaEgressStats`], [`MediaIngressStats`], [`MediaEgressStats`]
     pub fn set_stats_interval(mut self, interval: Duration) -> Self {
         self.stats_interval = interval;
         self
+    }
+
+    /// The configured statistics interval.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// # use std::time::Duration;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to 1 second.
+    /// assert_eq!(config.stats_interval(), Duration::from_secs(1));
+    /// ```
+    pub fn stats_interval(&self) -> Duration {
+        self.stats_interval
     }
 
     /// Enables estimation of available bandwidth (BWE).
@@ -1586,6 +1611,19 @@ impl RtcConfig {
         self
     }
 
+    /// The initial bitrate as set by [`Self::enable_bwe()`].
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to None - BWE off.
+    /// assert_eq!(config.bwe_initial_bitrate(), None);
+    /// ```
+    pub fn bwe_initial_bitrate(&self) -> Option<Bitrate> {
+        self.bwe_initial_bitrate
+    }
+
     /// Sets the number of packets held back for reordering audio packets.
     ///
     /// Str0m tries to deliver the samples in order. This number determines how many
@@ -1594,12 +1632,23 @@ impl RtcConfig {
     ///
     /// Setting this to 0 enables a special mode where we will emit `MediaData` data out of order. This
     /// works on the assumption that we never split an audio sample over several RTP packets.
-    ///
-    /// Default: 15
     pub fn set_reordering_size_audio(mut self, size: usize) -> Self {
         self.reordering_size_audio = size;
 
         self
+    }
+
+    /// Returns the setting for audio reordering size.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to 15.
+    /// assert_eq!(config.reordering_size_audio(), 15);
+    /// ```
+    pub fn reordering_size_audio(&self) -> usize {
+        self.reordering_size_audio
     }
 
     /// Sets the number of packets held back for reordering video packets.
@@ -1617,6 +1666,19 @@ impl RtcConfig {
         self.reordering_size_video = size;
 
         self
+    }
+
+    /// Returns the setting for video reordering size.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to 30.
+    /// assert_eq!(config.reordering_size_video(), 30);
+    /// ```
+    pub fn reordering_size_video(&self) -> usize {
+        self.reordering_size_video
     }
 
     /// Create a [`Rtc`] from the configuration.
