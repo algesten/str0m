@@ -259,10 +259,16 @@ impl RtpHeader {
 }
 
 macro_rules! mk_extend {
-    ($id:ident, $t:ty, $bits:expr) => {
+    ($id:ident, $t:ty) => {
         /// "extend" a less than 64 bit sequence number into a 64 bit by
         /// using the knowledge of the previous such sequence number.
         pub fn $id(prev_ext_seq: Option<u64>, seq: $t) -> u64 {
+            use std::mem;
+            const MAX: u64 = <$t>::MAX as u64 + 1; // u16: 65_536;
+            const HALF: u64 = MAX / 2; // u16: 32_768
+            const BITS: usize = mem::size_of::<$t>() * 8;
+            const ROC_MASK: i64 = (u64::MAX >> BITS) as i64;
+
             // We define the index of the SRTP packet corresponding to a given
             // ROC and RTP sequence number to be the 48-bit quantity
             //       i = 2^16 * ROC + SEQ.
@@ -277,20 +283,17 @@ macro_rules! mk_extend {
             }
 
             let prev_index = prev_ext_seq.unwrap();
-            let roc = (prev_index >> $bits) as i64; // how many wrap-arounds.
-            let max = 2_u64.pow($bits); // u16: 65_536
-            let roc_mask = 2_i64.pow($bits * 2) - 1; // u16: 0xffff_ffff
-            let prev_seq = prev_index & (max - 1); // u16: 0xffff
-            let half = max / 2; // u16: 32_768
+            let roc = (prev_index >> BITS) as i64; // how many wrap-arounds.
+            let prev_seq = prev_index & (MAX - 1); // u16: 0xffff
 
-            let v = if prev_seq < half {
-                if seq > half + prev_seq {
-                    (roc - 1) & roc_mask
+            let v = if prev_seq < HALF {
+                if seq > HALF + prev_seq {
+                    (roc - 1) & ROC_MASK
                 } else {
                     roc
                 }
-            } else if prev_seq > seq + half {
-                (roc + 1) & roc_mask
+            } else if prev_seq > seq + HALF {
+                (roc + 1) & ROC_MASK
             } else {
                 roc
             };
@@ -299,12 +302,13 @@ macro_rules! mk_extend {
                 return 0;
             }
 
-            (v as u64) * max + seq
+            (v as u64) * MAX + seq
         }
     };
 }
 
-mk_extend!(extend_u16, u16, 16);
+mk_extend!(extend_u16, u16);
+mk_extend!(extend_u32, u32);
 
 impl Default for RtpHeader {
     fn default() -> Self {
@@ -328,7 +332,7 @@ mod test {
     use super::*;
 
     #[test]
-    fn extend_seq_wrap_around() {
+    fn extend_u16_wrap_around() {
         assert_eq!(extend_u16(None, 0), 0);
         assert_eq!(extend_u16(Some(0), 1), 1);
         assert_eq!(extend_u16(Some(65_535), 0), 65_536);
@@ -340,8 +344,37 @@ mod test {
     }
 
     #[test]
-    fn extend_33k_with_0_prev() {
-        assert_eq!(extend_u16(Some(0), 33_000), 281474976678120);
+    fn extend_u16_with_0_prev() {
+        // This tests going backwards from previous 0. This should wrap
+        // around "backwards" making a ridiculous number.
+        let seq = u16::MAX / 2 + 2;
+        let expected = u64::MAX - (u16::MAX - seq) as u64;
+        assert_eq!(extend_u16(Some(0), seq), expected);
+    }
+
+    #[test]
+    fn extend_u32_wrap_around() {
+        const U32MAX: u64 = u32::MAX as u64 + 1;
+        assert_eq!(extend_u32(None, 0), 0);
+        assert_eq!(extend_u32(Some(0), 1), 1);
+        assert_eq!(extend_u32(Some(U32MAX - 1), 0), U32MAX);
+        assert_eq!(extend_u32(Some(U32MAX - 32), 2), U32MAX + 2);
+        assert_eq!(extend_u32(Some(2), 1), 1);
+        assert_eq!(extend_u32(Some(U32MAX + 2), 1), U32MAX + 1);
+        assert_eq!(extend_u32(Some(3), 3), 3);
+        assert_eq!(
+            extend_u32(Some(U32MAX - 32), (U32MAX - 32) as u32),
+            U32MAX - 32
+        );
+    }
+
+    #[test]
+    fn extend_u32_with_0_prev() {
+        // This tests going backwards from previous 0. This should wrap
+        // around "backwards" making a ridiculous number.
+        let seq = u32::MAX / 2 + 2;
+        let expected = u64::MAX - (u32::MAX - seq) as u64;
+        assert_eq!(extend_u32(Some(0), seq), expected);
     }
 
     #[test]
