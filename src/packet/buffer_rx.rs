@@ -1,8 +1,9 @@
 use std::collections::VecDeque;
 use std::fmt;
+use std::ops::RangeInclusive;
 use std::time::Instant;
 
-use crate::rtp::{MediaTime, RtpHeader, SeqNo};
+use crate::rtp::{ExtensionValues, MediaTime, RtpHeader, SeqNo};
 
 use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError};
 
@@ -31,6 +32,12 @@ pub struct Depacketized {
 impl Depacketized {
     pub fn network_time(&self) -> Instant {
         self.meta[0].received
+    }
+
+    pub fn seq_range(&self) -> RangeInclusive<SeqNo> {
+        let first = self.meta[0].seq_no;
+        let last = self.meta.last().expect("at least one element").seq_no;
+        first..=last
     }
 
     pub fn ext_vals(&self) -> ExtensionValues {
