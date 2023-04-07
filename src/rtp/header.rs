@@ -258,44 +258,53 @@ impl RtpHeader {
     }
 }
 
-/// "extend" a 16 bit sequence number into a 64 bit by
-/// using the knowledge of the previous such sequence number.
-pub fn extend_u16(prev_ext_seq: Option<u64>, seq: u16) -> u64 {
-    // We define the index of the SRTP packet corresponding to a given
-    // ROC and RTP sequence number to be the 48-bit quantity
-    //       i = 2^16 * ROC + SEQ.
-    //
-    // https://tools.ietf.org/html/rfc3711#appendix-A
-    //
-    let seq = seq as u64;
+macro_rules! mk_extend {
+    ($id:ident, $t:ty, $bits:expr) => {
+        /// "extend" a less than 64 bit sequence number into a 64 bit by
+        /// using the knowledge of the previous such sequence number.
+        pub fn $id(prev_ext_seq: Option<u64>, seq: $t) -> u64 {
+            // We define the index of the SRTP packet corresponding to a given
+            // ROC and RTP sequence number to be the 48-bit quantity
+            //       i = 2^16 * ROC + SEQ.
+            //
+            // https://tools.ietf.org/html/rfc3711#appendix-A
+            //
+            let seq = seq as u64;
 
-    if prev_ext_seq.is_none() {
-        // No wrap-around so far.
-        return seq;
-    }
+            if prev_ext_seq.is_none() {
+                // No wrap-around so far.
+                return seq;
+            }
 
-    let prev_index = prev_ext_seq.unwrap();
-    let roc = (prev_index >> 16) as i64; // how many wrap-arounds.
-    let prev_seq = prev_index & 0xffff;
+            let prev_index = prev_ext_seq.unwrap();
+            let roc = (prev_index >> $bits) as i64; // how many wrap-arounds.
+            let max = 2_u64.pow($bits); // u16: 65_536
+            let roc_mask = 2_i64.pow($bits * 2) - 1; // u16: 0xffff_ffff
+            let prev_seq = prev_index & (max - 1); // u16: 0xffff
+            let half = max / 2; // u16: 32_768
 
-    let v = if prev_seq < 32_768 {
-        if seq > 32_768 + prev_seq {
-            (roc - 1) & 0xffff_ffff
-        } else {
-            roc
+            let v = if prev_seq < half {
+                if seq > half + prev_seq {
+                    (roc - 1) & roc_mask
+                } else {
+                    roc
+                }
+            } else if prev_seq > seq + half {
+                (roc + 1) & roc_mask
+            } else {
+                roc
+            };
+
+            if v < 0 {
+                return 0;
+            }
+
+            (v as u64) * max + seq
         }
-    } else if prev_seq > seq + 32_768 {
-        (roc + 1) & 0xffff_ffff
-    } else {
-        roc
     };
-
-    if v < 0 {
-        return 0;
-    }
-
-    (v as u64) * 65_536 + seq
 }
+
+mk_extend!(extend_u16, u16, 16);
 
 impl Default for RtpHeader {
     fn default() -> Self {
