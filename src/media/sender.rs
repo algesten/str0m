@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use crate::rtp::{extend_seq, Descriptions, InstantExt, MediaTime, Mid, ReceptionReport};
+use crate::rtp::{extend_u16, Descriptions, InstantExt, MediaTime, Mid, ReceptionReport};
 use crate::rtp::{ReportList, Rid, Sdes, SdesType, SenderInfo};
 use crate::rtp::{SenderReport, SeqNo, Ssrc};
 
@@ -150,7 +150,7 @@ impl SenderSource {
         let ext_seq = {
             let prev = self.losses.last().map(|s| s.0).unwrap_or(r.max_seq as u64);
             let next = (r.max_seq & 0xffff) as u16;
-            extend_seq(Some(prev), next)
+            extend_u16(Some(prev), next)
         };
 
         self.losses

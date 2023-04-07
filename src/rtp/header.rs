@@ -253,14 +253,14 @@ impl RtpHeader {
     /// The logic detects wrap-arounds of the 16-bit RTP sequence number.
     #[doc(hidden)]
     pub fn sequence_number(&self, previous: Option<SeqNo>) -> SeqNo {
-        let e_seq = extend_seq(previous.map(|v| *v), self.sequence_number);
+        let e_seq = extend_u16(previous.map(|v| *v), self.sequence_number);
         e_seq.into()
     }
 }
 
 /// "extend" a 16 bit sequence number into a 64 bit by
 /// using the knowledge of the previous such sequence number.
-pub fn extend_seq(prev_ext_seq: Option<u64>, seq: u16) -> u64 {
+pub fn extend_u16(prev_ext_seq: Option<u64>, seq: u16) -> u64 {
     // We define the index of the SRTP packet corresponding to a given
     // ROC and RTP sequence number to be the 48-bit quantity
     //       i = 2^16 * ROC + SEQ.
@@ -320,19 +320,19 @@ mod test {
 
     #[test]
     fn extend_seq_wrap_around() {
-        assert_eq!(extend_seq(None, 0), 0);
-        assert_eq!(extend_seq(Some(0), 1), 1);
-        assert_eq!(extend_seq(Some(65_535), 0), 65_536);
-        assert_eq!(extend_seq(Some(65_500), 2), 65_538);
-        assert_eq!(extend_seq(Some(2), 1), 1);
-        assert_eq!(extend_seq(Some(65_538), 1), 65_537);
-        assert_eq!(extend_seq(Some(3), 3), 3);
-        assert_eq!(extend_seq(Some(65_500), 65_500), 65_500);
+        assert_eq!(extend_u16(None, 0), 0);
+        assert_eq!(extend_u16(Some(0), 1), 1);
+        assert_eq!(extend_u16(Some(65_535), 0), 65_536);
+        assert_eq!(extend_u16(Some(65_500), 2), 65_538);
+        assert_eq!(extend_u16(Some(2), 1), 1);
+        assert_eq!(extend_u16(Some(65_538), 1), 65_537);
+        assert_eq!(extend_u16(Some(3), 3), 3);
+        assert_eq!(extend_u16(Some(65_500), 65_500), 65_500);
     }
 
     #[test]
     fn extend_33k_with_0_prev() {
-        assert_eq!(extend_seq(Some(0), 33_000), 281474976678120);
+        assert_eq!(extend_u16(Some(0), 33_000), 281474976678120);
     }
 
     #[test]

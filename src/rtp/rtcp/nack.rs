@@ -1,4 +1,4 @@
-use super::extend_seq;
+use super::extend_u16;
 use super::{FeedbackMessageType, ReportList, RtcpHeader, RtcpPacket, SeqNo};
 use super::{RtcpType, Ssrc, TransportType};
 
@@ -113,7 +113,7 @@ impl Iterator for NackEntryIterator {
                 }
             }
         };
-        let l = extend_seq(Some(*self.2), seq_16);
+        let l = extend_u16(Some(*self.2), seq_16);
         Some(l.into())
     }
 }
