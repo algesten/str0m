@@ -20,7 +20,7 @@ mod mtime;
 pub use mtime::{InstantExt, MediaTime};
 
 mod header;
-pub use header::{extend_u16, RtpHeader};
+pub use header::{extend_u16, extend_u32, RtpHeader};
 
 mod srtp;
 pub use srtp::{SrtpContext, SrtpKey};

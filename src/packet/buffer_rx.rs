@@ -72,6 +72,7 @@ pub struct DepacketizingBuffer {
     queue: VecDeque<Entry>,
     segments: Vec<(usize, usize)>,
     last_emitted: Option<SeqNo>,
+    max_time: Option<MediaTime>,
 }
 
 impl DepacketizingBuffer {
@@ -82,6 +83,7 @@ impl DepacketizingBuffer {
             queue: VecDeque::new(),
             segments: Vec::new(),
             last_emitted: None,
+            max_time: None,
         }
     }
 
@@ -97,6 +99,13 @@ impl DepacketizingBuffer {
                 return;
             }
         }
+
+        // Record that latest seen max time (used for extending time to u64).
+        self.max_time = Some(if let Some(m) = self.max_time {
+            m.max(meta.time)
+        } else {
+            meta.time
+        });
 
         match self
             .queue
@@ -259,6 +268,10 @@ impl DepacketizingBuffer {
         let start_entry = self.queue.get(start).expect("entry for start index");
 
         seq.is_next(start_entry.meta.seq_no)
+    }
+
+    pub fn max_time(&self) -> Option<MediaTime> {
+        self.max_time
     }
 }
 

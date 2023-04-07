@@ -8,8 +8,8 @@ use crate::media::{MediaAdded, MediaChanged, Source};
 use crate::packet::{
     LeakyBucketPacer, NullPacer, Pacer, PacerImpl, PollOutcome, RtpMeta, SendSideBandwithEstimator,
 };
-use crate::rtp::SRTCP_OVERHEAD;
 use crate::rtp::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
+use crate::rtp::{extend_u32, SRTCP_OVERHEAD};
 use crate::rtp::{Bitrate, ExtensionMap, MediaTime, Mid, Rtcp, RtcpFb};
 use crate::rtp::{SrtpContext, SrtpKey, Ssrc};
 use crate::stats::StatsSnapshot;
@@ -484,8 +484,6 @@ impl Session {
         let pt = params.pt();
         let codec = params.spec().codec;
 
-        let time = MediaTime::new(header.timestamp as i64, clock_rate as i64);
-
         if !media.direction().is_receiving() {
             // Not adding unless we are supposed to be receiving.
             return;
@@ -498,6 +496,10 @@ impl Session {
             self.reordering_size_video
         };
         let buf = media.get_buffer_rx(pt, rid, codec, hold_back);
+
+        let prev_time = buf.max_time().map(|t| t.numer() as u64);
+        let extended = extend_u32(prev_time, header.timestamp);
+        let time = MediaTime::new(extended as i64, clock_rate as i64);
 
         let meta = RtpMeta::new(now, time, seq_no, header);
 
