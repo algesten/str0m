@@ -333,10 +333,8 @@ impl MediaInner {
             if self.rtp_mode {
                 let rtp_header = t.rtp_mode_header.expect("rtp header in rtp mode");
                 buf.push_rtp_packet(now, t.data, t.meta, rtp_header);
-            } else {
-                if let Err(e) = buf.push_sample(now, &t.data, t.meta, MTU) {
-                    return Err(RtcError::Packet(self.mid, t.pt, e));
-                };
+            } else if let Err(e) = buf.push_sample(now, &t.data, t.meta, MTU) {
+                return Err(RtcError::Packet(self.mid, t.pt, e));
             }
 
             // Invalidate cached queue_state.
