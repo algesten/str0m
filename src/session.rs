@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::dtls::KeyingMaterial;
-use crate::format::CodecConfig;
+use crate::format::{Codec, CodecConfig};
 use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::media::{MediaAdded, MediaChanged, Source};
 use crate::packet::{
@@ -489,7 +489,11 @@ impl Session {
 
         // This is the "main" PT and it will differ to header.payload_type if this is a resend.
         let pt = params.pt();
-        let codec = params.spec().codec;
+        let codec = if self.rtp_mode {
+            Codec::Null
+        } else {
+            params.spec().codec
+        };
 
         if !media.direction().is_receiving() {
             // Not adding unless we are supposed to be receiving.
