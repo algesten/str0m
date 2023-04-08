@@ -12,7 +12,7 @@ impl Packetizer for NullPacketizer {
     }
 
     fn is_marker(&mut self, data: &[u8], previous: Option<&[u8]>, last: bool) -> bool {
-        true
+        unreachable!("rtp_mode doesn't use is_marker")
     }
 }
 
@@ -28,10 +28,12 @@ impl Depacketizer for NullDepacketizer {
     }
 
     fn is_partition_head(&self, _packet: &[u8]) -> bool {
+        // For rtp-mode since each packet is stand alone, it is both a partition head and tail.
         true
     }
 
     fn is_partition_tail(&self, marker: bool, _packet: &[u8]) -> bool {
+        // For rtp-mode since each packet is stand alone, it is both a partition head and tail.
         true
     }
 }
