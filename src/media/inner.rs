@@ -177,8 +177,9 @@ struct NextPacket<'a> {
 #[derive(Debug)]
 struct ToPacketize {
     pt: Pt,
-    meta: PacketizedMeta,
     data: Vec<u8>,
+    meta: PacketizedMeta,
+    rtp_mode_header: Option<RtpHeader>,
 }
 
 enum NextPacketBody<'a> {
@@ -261,6 +262,7 @@ impl MediaInner {
         data: &[u8],
         rid: Option<Rid>,
         ext_vals: ExtensionValues,
+        rtp_mode_header: Option<RtpHeader>,
     ) -> Result<(), RtcError> {
         if !self.dir.is_sending() {
             return Err(RtcError::NotSendingDirection(self.dir));
@@ -269,6 +271,16 @@ impl MediaInner {
         let Some(spec) = self.params_by_pt(pt).map(|p| p.spec()) else {
             return Err(RtcError::UnknownPt(pt));
         };
+
+        // Implicitly if we have an rtp mode header, the codec must be Null.
+        let codec = if rtp_mode_header.is_some() {
+            Codec::Null
+        } else {
+            spec.codec
+        };
+
+        // Never want to check this for the null codec.
+        let is_audio = spec.codec.is_audio();
 
         // The SSRC is figured out given the simulcast level.
         let tx = get_source_tx(&mut self.sources_tx, rid, false).ok_or(RtcError::NoSenderSource)?;
@@ -279,8 +291,8 @@ impl MediaInner {
         // We don't actually want this buffer here, but it must be created before we
         // get to the do_packetize() (as part of handle_timeout).
         let _ = self.buffers_tx.entry(pt).or_insert_with(|| {
-            let max_retain = if spec.codec.is_audio() { 4096 } else { 2048 };
-            PacketizingBuffer::new(spec.codec.into(), max_retain)
+            let max_retain = if is_audio { 4096 } else { 2048 };
+            PacketizingBuffer::new(codec.into(), max_retain)
         });
 
         trace!(
@@ -298,8 +310,9 @@ impl MediaInner {
 
         self.to_packetize.push_back(ToPacketize {
             pt,
-            meta,
             data: data.to_vec(),
+            meta,
+            rtp_mode_header,
         });
 
         Ok(())
@@ -317,13 +330,52 @@ impl MediaInner {
                 .get_mut(&t.pt)
                 .expect("write() to create buffer");
 
-            if let Err(e) = buf.push_sample(now, &t.data, t.meta, MTU) {
-                return Err(RtcError::Packet(self.mid, t.pt, e));
-            };
+            if self.rtp_mode {
+                let rtp_header = t.rtp_mode_header.expect("rtp header in rtp mode");
+                buf.push_rtp_packet(now, t.data, t.meta, rtp_header);
+            } else {
+                if let Err(e) = buf.push_sample(now, &t.data, t.meta, MTU) {
+                    return Err(RtcError::Packet(self.mid, t.pt, e));
+                };
+            }
 
             // Invalidate cached queue_state.
             self.queue_state = None;
         }
+
+        Ok(())
+    }
+
+    pub(crate) fn write_rtp(
+        &mut self,
+        pt: Pt,
+        wallclock: Instant,
+        packet: &[u8],
+        exts: &ExtensionMap,
+    ) -> Result<(), RtcError> {
+        let Some(spec) = self.params_by_pt(pt).map(|p| p.spec()) else {
+            return Err(RtcError::UnknownPt(pt));
+        };
+
+        let header = RtpHeader::parse(packet, exts)
+            .ok_or_else(|| RtcError::Other("Failed to parse RTP header".into()))?;
+
+        // Remove header from packet.
+        let packet = &packet[header.header_len..];
+
+        let rid = header.ext_vals.rid;
+        // This doesn't need to be lengthened
+        let rtp_time = MediaTime::new(header.timestamp as i64, spec.clock_rate as i64);
+
+        self.write(
+            pt,
+            wallclock,
+            rtp_time,
+            packet,
+            rid,
+            header.ext_vals,
+            Some(header),
+        )?;
 
         Ok(())
     }
@@ -532,7 +584,7 @@ impl MediaInner {
             self.bytes_retransmitted.push(now, pkt.data.len() as u64);
         }
 
-        let seq_no = source.next_seq_no(now);
+        let seq_no = source.next_seq_no(now, None);
 
         // The resend ssrc. This would correspond to the RTX PT for video.
         let ssrc_rtx = source.ssrc();
@@ -570,7 +622,10 @@ impl MediaInner {
         source.update_packet_counts(pkt.data.len() as u64, false);
         self.bytes_transmitted.push(now, pkt.data.len() as u64);
 
-        let seq_no = source.next_seq_no(now);
+        //  In rtp_mode, we just use the incoming sequence number.
+        let wanted = pkt.rtp_mode_header.as_ref().map(|h| h.sequence_number);
+
+        let seq_no = source.next_seq_no(now, wanted);
         pkt.seq_no = Some(seq_no);
 
         Some(NextPacket {
@@ -649,7 +704,9 @@ impl MediaInner {
 
             let padding = pad_size.max(MAX_PADDING_PACKET_SIZE);
 
-            let seq_no = self.get_or_create_source_tx(ssrc_rtx).next_seq_no(now);
+            let seq_no = self
+                .get_or_create_source_tx(ssrc_rtx)
+                .next_seq_no(now, None);
 
             Some(NextPacket {
                 pt: pt_rtx,

@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::rtp::{ExtensionValues, MediaTime, Rid, SeqNo, Ssrc};
+use crate::rtp::{ExtensionValues, MediaTime, Rid, RtpHeader, SeqNo, Ssrc};
 
 use super::MediaKind;
 use super::{CodecPacketizer, PacketError, Packetizer, QueueSnapshot};
@@ -11,7 +11,6 @@ pub struct Packetized {
     pub data: Vec<u8>,
     pub first: bool,
     pub marker: bool,
-
     pub meta: PacketizedMeta,
     pub queued_at: Instant,
 
@@ -19,6 +18,9 @@ pub struct Packetized {
     pub seq_no: Option<SeqNo>,
     /// Whether this packetized is counted towards the TotalQueue
     pub count_as_unsent: bool,
+
+    /// If we are in rtp_mode, this is the original incoming header.
+    pub rtp_mode_header: Option<RtpHeader>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -75,27 +77,61 @@ impl PacketizingBuffer {
             let previous_data = self.queue.back().map(|p| p.data.as_slice());
             let marker = self.pack.is_marker(data.as_slice(), previous_data, last);
 
-            // The queue_time for a new entry is ZERO since we expect packets to be
-            // enqueued straight away. If we get rid of the now: Instant in media
-            // writing to only rely on handle_timeout, this might not hold true.
             self.total.increase(now, Duration::ZERO, data.len());
 
             let rtp = Packetized {
                 first,
                 marker,
                 data,
-
                 meta,
                 queued_at: now,
 
                 seq_no: None,
                 count_as_unsent: true,
+
+                rtp_mode_header: None,
             };
 
             self.queue.push_back(rtp);
         }
 
-        // Scale back retained count to max_retain
+        self.size_down_to_retained(now);
+
+        Ok(())
+    }
+
+    pub fn push_rtp_packet(
+        &mut self,
+        now: Instant,
+        data: Vec<u8>,
+        meta: PacketizedMeta,
+        rtp_header: RtpHeader,
+    ) {
+        self.total.move_time_forward(now);
+
+        self.total.increase(now, Duration::ZERO, data.len());
+
+        let rtp = Packetized {
+            first: true,
+            marker: rtp_header.marker,
+            data,
+            meta,
+            queued_at: now,
+
+            // don't set seq_no yet since it's used to determine if packet has been sent or not.
+            seq_no: None,
+            count_as_unsent: true,
+
+            rtp_mode_header: Some(rtp_header),
+        };
+
+        self.queue.push_back(rtp);
+
+        self.size_down_to_retained(now);
+    }
+
+    /// Scale back retained count to max_retain
+    fn size_down_to_retained(&mut self, now: Instant) {
         while self.queue.len() > self.max_retain {
             let p = self.queue.pop_front();
             if let Some(p) = p {
@@ -106,8 +142,6 @@ impl PacketizingBuffer {
             }
             self.emit_next -= 1;
         }
-
-        Ok(())
     }
 
     pub fn poll_next(&mut self, now: Instant) -> Option<&mut Packetized> {

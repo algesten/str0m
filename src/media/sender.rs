@@ -114,8 +114,22 @@ impl SenderSource {
         Some(rtp_time.rebase(base))
     }
 
-    pub fn next_seq_no(&mut self, now: Instant) -> SeqNo {
+    pub fn next_seq_no(&mut self, now: Instant, wanted: Option<u16>) -> SeqNo {
+        let never_used = self.last_used == already_happened();
         self.last_used = now;
+
+        if let Some(wanted) = wanted {
+            // If the first ever wanted is > 32_768, we mustn't extend from 0
+            // since that would give us a negative (wrap-around) sequence number.
+            let previous = if never_used {
+                None
+            } else {
+                Some(*self.next_seq_no)
+            };
+            let extended = extend_u16(previous, wanted);
+            self.next_seq_no = extended.into();
+        }
+
         let s = self.next_seq_no;
         self.next_seq_no = (*s + 1).into();
         s
