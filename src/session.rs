@@ -497,14 +497,16 @@ impl Session {
         }
 
         // Buffers are unique per media (since PT is unique per media).
-        let hold_back = if codec.is_audio() {
+        // The hold_back should be configured from param.spec().codec to
+        // avoid the null codec.
+        let hold_back = if params.spec().codec.is_audio() {
             self.reordering_size_audio
         } else {
             self.reordering_size_video
         };
-        let buf = media.get_buffer_rx(pt, rid, codec, hold_back);
+        let buf_rx = media.get_buffer_rx(pt, rid, codec, hold_back);
 
-        let prev_time = buf.max_time().map(|t| t.numer() as u64);
+        let prev_time = buf_rx.max_time().map(|t| t.numer() as u64);
         let extended = extend_u32(prev_time, header.timestamp);
         let time = MediaTime::new(extended as i64, clock_rate as i64);
 
@@ -513,7 +515,19 @@ impl Session {
         // here we have incoming and depacketized data before it may be dropped at buffer.push()
         let bytes_rx = data.len();
 
-        buf.push(meta, data);
+        // In RTP mode we want to retain the header. After srtp_unprotect, we need to
+        // recombine the header + the decrypted payload.
+        let data = if self.rtp_mode {
+            let hlen = meta.header.header_len;
+            let mut out = vec![0; hlen + data.len()];
+            out[0..hlen].copy_from_slice(&buf[0..hlen]);
+            out[hlen..].copy_from_slice(&data);
+            out
+        } else {
+            data
+        };
+
+        buf_rx.push(meta, data);
 
         // TODO: is there a nicer way to make borrow-checker happy ?
         // this should go away with the refactoring of the entire handle_rtp() function

@@ -1685,7 +1685,7 @@ impl RtcConfig {
 
     /// Make the entire Rtc be in RTP mode.
     ///
-    /// This means all media, read from [`MediaData`] and written to [`Media::write()`] are
+    /// This means all media, read from [`MediaData`] and written to [`Media::writer()`] are
     /// RTP packetized. It bypasses all internal packetization/depacketization inside str0m.
     pub fn set_rtp_mode(mut self, enabled: bool) -> Self {
         self.rtp_mode = enabled;
