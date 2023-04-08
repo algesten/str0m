@@ -507,14 +507,12 @@ impl Session {
 
         // In RTP mode we want to retain the header. After srtp_unprotect, we need to
         // recombine the header + the decrypted payload.
-        let data = if self.rtp_mode {
-            let hlen = meta.header.header_len;
-            let mut out = vec![0; hlen + data.len()];
-            out[0..hlen].copy_from_slice(&buf[0..hlen]);
-            out[hlen..].copy_from_slice(&data);
-            out
-        } else {
-            data
+        if self.rtp_mode {
+            // Write header after the body. This shouldn't allocate since
+            // unprotect_rtp() call above should allocate enough space for the header.
+            data.extend_from_slice(&buf[..meta.header.header_len]);
+            // Rotate so header is before body.
+            data.rotate_right(meta.header.header_len);
         };
 
         buf_rx.push(meta, data);
