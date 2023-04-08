@@ -90,6 +90,9 @@ pub enum Codec {
     /// in `a=rtpmap` lines.
     #[doc(hidden)]
     Rtx,
+    /// For RTP mode. No codec.
+    #[doc(hidden)]
+    Null,
     #[doc(hidden)]
     Unknown,
 }
@@ -559,6 +562,7 @@ impl fmt::Display for Codec {
             Codec::Vp9 => write!(f, "VP9"),
             Codec::Av1 => write!(f, "AV1"),
             Codec::Rtx => write!(f, "rtx"),
+            Codec::Null => write!(f, "null"),
             Codec::Unknown => write!(f, "unknown"),
         }
     }
