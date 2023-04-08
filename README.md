@@ -193,7 +193,7 @@ let media = rtc.media(mid).unwrap();
 let pt = media.payload_params()[0].pt();
 
 // Create a media writer for the payload type.
-let writer = media.writer(pt, Instant::now());
+let writer = media.writer(pt);
 
 // Write the data
 let wallclock = todo!();  // Absolute time of the data
@@ -341,8 +341,27 @@ SFU one would often talk about "forwarding RTP packets", while with
 str0m we would "forward samples").
 
 Whether this is a good idea is still an open question. It certainly
-makes for cleaner abstractions. However there are also plans for an
-RTP level API.
+makes for cleaner abstractions.
+
+#### RTP mode
+
+str0m has a lower level API which let's the user write/receive RTP
+packets directly. Using this API requires a deeper knowledge of
+RTP and WebRTC and is not recommended for most use cases.
+
+To enable RTP mode
+
+```rust
+let rtc = Rtc::builder()
+    // Enable RTP mode for this Rtc instance.
+    .set_rtp_mode(true)
+    // Don't hold back audio/video packets to attempt
+    // to reorder them. Incoming packets are released
+    // in the order they are received.
+    .set_reordering_size_audio(0)
+    .set_reordering_size_video(0)
+    .build();
+```
 
 ### NIC enumeration and TURN (and STUN)
 
