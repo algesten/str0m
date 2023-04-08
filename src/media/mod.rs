@@ -23,6 +23,9 @@ pub(crate) use inner::{MediaInner, Source};
 /// Half internal structures regarding RTP level.
 pub mod rtp {
     pub use crate::rtp::{Extension, ExtensionMap, ExtensionValues};
+
+    // Exposed for integration tests, not for general usage.
+    pub use crate::rtp::RtpHeader;
 }
 
 /// Audio or video media.
