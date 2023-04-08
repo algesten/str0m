@@ -583,7 +583,7 @@ impl fmt::Debug for ExtensionValues {
             write!(f, " rid_repair: {t}")?;
         }
         if let Some(t) = self.abs_send_time {
-            write!(f, " abs_send_time: {}", t.as_seconds())?;
+            write!(f, " abs_send_time: {:?}", t)?;
         }
         if let Some(t) = self.voice_activity {
             write!(f, " voice_activity: {t}")?;

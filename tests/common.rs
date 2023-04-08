@@ -1,3 +1,4 @@
+#![allow(unused)]
 use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
 
@@ -15,10 +16,14 @@ pub struct TestRtc {
 
 impl TestRtc {
     pub fn new(span: Span) -> Self {
+        Self::new_with_rtc(span, Rtc::new())
+    }
+
+    pub fn new_with_rtc(span: Span, rtc: Rtc) -> Self {
         let now = Instant::now();
         TestRtc {
             span,
-            rtc: Rtc::new(),
+            rtc,
             start: now,
             last: now,
             events: vec![],

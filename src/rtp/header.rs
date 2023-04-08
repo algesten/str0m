@@ -323,6 +323,8 @@ impl Default for RtpHeader {
 
 #[cfg(test)]
 mod test {
+    use crate::rtp::{Extension, MediaTime};
+
     use super::*;
 
     #[test]
@@ -379,5 +381,155 @@ mod test {
         let mut expected = vec![0; 16];
         expected[15] = 16;
         assert_eq!(&buf[10..26], &expected);
+    }
+
+    // version: 2,
+    // has_padding: false,
+    // has_extension: true,
+    // marker: false,
+    // payload_type: 1.into(),
+    // sequence_number: 0,
+    // timestamp: 0,
+    // ssrc: 0.into(),
+    // ext_vals: ExtensionValues::default(),
+    // header_len: 16,
+
+    #[test]
+    fn test_write_rtp_headers() {
+        fn mk_header(seq: u16, ts: u32, level: i8, marker: bool, exts: &ExtensionMap) -> Vec<u8> {
+            let header = RtpHeader {
+                payload_type: 33.into(),
+                sequence_number: seq,
+                timestamp: ts,
+                ssrc: 44.into(),
+                marker,
+                ext_vals: ExtensionValues {
+                    audio_level: Some(level),
+                    voice_activity: Some(false),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let mut buf = vec![0; 2000];
+            let n = header.write_to(&mut buf[..], &exts);
+            buf.truncate(n);
+
+            buf
+        }
+
+        let mut exts = ExtensionMap::empty();
+        exts.set(3, Extension::AudioLevel);
+
+        let buf1 = mk_header(47_000, 10_000, -42, false, &exts);
+        let buf2 = mk_header(47_001, 12_000, -43, true, &exts);
+        let buf3 = mk_header(47_002, 14_000, -44, false, &exts);
+
+        let p1 = &[
+            144, 33, 183, 152, 0, 0, 39, 16, 0, 0, 0, 44, 190, 222, 0, 1, 48, 170, 0, 0,
+        ];
+        let p2 = &[
+            144, 161, 183, 153, 0, 0, 46, 224, 0, 0, 0, 44, 190, 222, 0, 1, 48, 171, 0, 0,
+        ];
+        let p3 = &[
+            144, 33, 183, 154, 0, 0, 54, 176, 0, 0, 0, 44, 190, 222, 0, 1, 48, 172, 0, 0,
+        ];
+
+        assert_eq!(&buf1, p1);
+        assert_eq!(&buf2, p2);
+        assert_eq!(&buf3, p3);
+    }
+
+    #[test]
+    fn test_parse_rtp_headers() {
+        let exts = ExtensionMap::standard();
+
+        let hb1 = [
+            176, 111, 183, 152, 0, 0, 39, 16, 46, 87, 21, 249, 190, 222, 0, 4, 16, 170, 34, 254,
+            32, 106, 49, 0, 0, 66, 120, 89, 106, 0, 0, 0, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 12,
+        ];
+
+        let hb2 = [
+            176, 111, 183, 153, 0, 0, 46, 224, 46, 87, 21, 249, 190, 222, 0, 4, 16, 171, 34, 254,
+            134, 208, 49, 0, 2, 66, 120, 89, 106, 0, 0, 0, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 12,
+        ];
+        let hb3 = [
+            176, 111, 183, 154, 0, 0, 54, 176, 46, 87, 21, 249, 190, 222, 0, 4, 16, 172, 34, 254,
+            32, 106, 49, 0, 1, 66, 120, 89, 106, 0, 0, 0, 9, 10, 11, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 12,
+        ];
+
+        let h1 = RtpHeader::parse(&hb1, &exts).unwrap();
+        assert_eq!(
+            h1,
+            RtpHeader {
+                version: 2,
+                has_padding: true,
+                has_extension: true,
+                marker: false,
+                payload_type: 111.into(),
+                sequence_number: 47000,
+                timestamp: 10000,
+                ssrc: 777459193.into(),
+                ext_vals: ExtensionValues {
+                    mid: Some("xYj".into()),
+                    abs_send_time: Some(MediaTime::new(16654442, 262144)),
+                    voice_activity: Some(true),
+                    audio_level: Some(-42),
+                    transport_cc: Some(0),
+                    ..Default::default()
+                },
+                header_len: 32
+            }
+        );
+
+        let h2 = RtpHeader::parse(&hb2, &exts).unwrap();
+        assert_eq!(
+            h2,
+            RtpHeader {
+                version: 2,
+                has_padding: true,
+                has_extension: true,
+                marker: false,
+                payload_type: 111.into(),
+                sequence_number: 47001,
+                timestamp: 12000,
+                ssrc: 777459193.into(),
+                ext_vals: ExtensionValues {
+                    mid: Some("xYj".into()),
+                    abs_send_time: Some(MediaTime::new(16680656, 262144)),
+                    voice_activity: Some(true),
+                    audio_level: Some(-43),
+                    transport_cc: Some(2),
+                    ..Default::default()
+                },
+                header_len: 32
+            }
+        );
+
+        let h3 = RtpHeader::parse(&hb3, &exts).unwrap();
+        assert_eq!(
+            h3,
+            RtpHeader {
+                version: 2,
+                has_padding: true,
+                has_extension: true,
+                marker: false,
+                payload_type: 111.into(),
+                sequence_number: 47002,
+                timestamp: 14000,
+                ssrc: 777459193.into(),
+                ext_vals: ExtensionValues {
+                    mid: Some("xYj".into()),
+                    abs_send_time: Some(MediaTime::new(16654442, 262144)),
+                    voice_activity: Some(true),
+                    audio_level: Some(-44),
+                    transport_cc: Some(1),
+                    ..Default::default()
+                },
+                header_len: 32
+            }
+        );
     }
 }
