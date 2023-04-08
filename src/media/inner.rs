@@ -237,7 +237,7 @@ impl MediaInner {
         self.dir
     }
 
-    fn codec_by_pt(&self, pt: Pt) -> Option<&PayloadParams> {
+    fn params_by_pt(&self, pt: Pt) -> Option<&PayloadParams> {
         self.params.iter().find(|c| c.pt() == pt)
     }
 
@@ -266,7 +266,7 @@ impl MediaInner {
             return Err(RtcError::NotSendingDirection(self.dir));
         }
 
-        let Some(spec) = self.codec_by_pt(pt).map(|p| p.spec()) else {
+        let Some(spec) = self.params_by_pt(pt).map(|p| p.spec()) else {
             return Err(RtcError::UnknownPt(pt));
         };
 
@@ -1006,7 +1006,7 @@ impl MediaInner {
         for p_new in pts {
             new_pts.insert(*p_new);
 
-            if self.codec_by_pt(*p_new).is_none() {
+            if self.params_by_pt(*p_new).is_none() {
                 debug!("Ignoring new pt ({}) in mid: {}", p_new, self.mid);
             }
         }
