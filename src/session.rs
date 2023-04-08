@@ -82,6 +82,9 @@ pub(crate) struct Session {
     poll_packet_buf: Vec<u8>,
 
     pub ice_lite: bool,
+
+    /// Whether we are running in RTP-mode.
+    rtp_mode: bool,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -144,6 +147,8 @@ impl Session {
             pacer,
             poll_packet_buf: vec![0; 2000],
             ice_lite: config.ice_lite,
+
+            rtp_mode: config.rtp_mode,
         }
     }
 
@@ -868,7 +873,8 @@ impl Session {
         self.medias.len() + if self.app.is_some() { 1 } else { 0 }
     }
 
-    pub fn add_media(&mut self, media: MediaInner) {
+    pub fn add_media(&mut self, mut media: MediaInner) {
+        media.rtp_mode = self.rtp_mode;
         self.medias.push(media);
     }
 
