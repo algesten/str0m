@@ -403,14 +403,6 @@ impl Session {
 
         let is_rtx = source.is_rtx();
 
-        // The first few packets, the source is in "probation". However for rtx,
-        // we let them straight through, since it would be weird to require probation
-        // time for resends (they are not contiguous) in the receiver register.
-        if !is_rtx && !source.is_valid() {
-            trace!("Source is not (yet) valid, probably probation");
-            return;
-        }
-
         let mut data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
             Some(v) => v,
             None => {
@@ -460,12 +452,6 @@ impl Session {
                 rid = repaired_source.rid();
             }
             let orig_seq_no = repaired_source.update(now, &header, clock_rate);
-            let source = media.get_or_create_source_rx(ssrc);
-
-            if !source.is_valid() {
-                trace!("Repaired source is not (yet) valid, probably probation");
-                return;
-            }
 
             let params = media.get_params(header.payload_type).unwrap();
             if let Some(pt) = params.resend() {

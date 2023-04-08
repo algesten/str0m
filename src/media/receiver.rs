@@ -73,13 +73,6 @@ impl ReceiverSource {
         seq_no
     }
 
-    pub fn is_valid(&self) -> bool {
-        self.register
-            .as_ref()
-            .map(|r| r.is_valid())
-            .unwrap_or(false)
-    }
-
     pub fn create_receiver_report(&mut self, now: Instant) -> ReceiverReport {
         let Some(mut report) = self.register.as_mut().map(|r| r.reception_report()) else {
             return ReceiverReport {

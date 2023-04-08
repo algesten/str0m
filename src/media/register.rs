@@ -217,10 +217,6 @@ impl ReceiverRegister {
         }
     }
 
-    pub fn is_valid(&self) -> bool {
-        self.probation == 0
-    }
-
     pub fn max_seq(&self) -> SeqNo {
         self.max_seq
     }
