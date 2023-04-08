@@ -309,6 +309,8 @@ impl<'a> Writer<'a> {
     /// The `exts` must contain the mappings for the RTP packet that is written.
     ///
     /// Panics if [`RtcConfig::set_rtp_mode()`][crate::RtcConfig::set_rtp_mode] is `false`.
+    ///
+    /// WARNING: This is a low level API and is not str0m's primary use case.
     pub fn write_rtp(
         mut self,
         wallclock: Instant,

@@ -351,8 +351,28 @@
 //! str0m we would "forward samples").
 //!
 //! Whether this is a good idea is still an open question. It certainly
-//! makes for cleaner abstractions. However there are also plans for an
-//! RTP level API.
+//! makes for cleaner abstractions.
+//!
+//! ### RTP mode
+//!
+//! str0m has a lower level API which let's the user write/receive RTP
+//! packets directly. Using this API requires a deeper knowledge of
+//! RTP and WebRTC and is not recommended for most use cases.
+//!
+//! To enable RTP mode
+//!
+//! ```
+//! # use str0m::Rtc;
+//! let rtc = Rtc::builder()
+//!     // Enable RTP mode for this Rtc instance.
+//!     .set_rtp_mode(true)
+//!     // Don't hold back audio/video packets to attempt
+//!     // to reorder them. Incoming packets are released
+//!     // in the order they are received.
+//!     .set_reordering_size_audio(0)
+//!     .set_reordering_size_video(0)
+//!     .build();
+//! ```
 //!
 //! ## NIC enumeration and TURN (and STUN)
 //!
@@ -1685,8 +1705,11 @@ impl RtcConfig {
 
     /// Make the entire Rtc be in RTP mode.
     ///
-    /// This means all media, read from [`MediaData`] and written to [`Media::writer()`] are
-    /// RTP packetized. It bypasses all internal packetization/depacketization inside str0m.
+    /// This means all media, read from [`MediaData`] and written to
+    /// [`Writer::write_rtp()`][crate::media::Writer::write_rtp()] are RTP packetized.
+    /// It bypasses all internal packetization/depacketization inside str0m.
+    ///
+    /// WARNING: This is a low level API and is not str0m's primary use case.
     pub fn set_rtp_mode(mut self, enabled: bool) -> Self {
         self.rtp_mode = enabled;
 
