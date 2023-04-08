@@ -121,7 +121,9 @@ impl SrtpContext {
         let iv = self.rtp.salt.rtp_iv(*header.ssrc, srtp_index);
 
         let input = &buf[header.header_len..hmac_start];
-        let mut output = vec![0_u8; input.len()];
+        // Allocate enough to also hold a header, since this is used in rtp-mode.
+        let mut output = Vec::with_capacity(buf.len());
+        output.resize(input.len(), 0);
 
         // TODO: This instantiates a Crypter for every packet. That's kinda wasteful
         // when it's perfectly possible to reuse the underlying OpenSSL structs for
