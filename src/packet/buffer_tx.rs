@@ -13,6 +13,7 @@ pub struct Packetized {
     pub marker: bool,
 
     pub meta: PacketizedMeta,
+    pub queued_at: Instant,
 
     /// Set when packet is first sent. This is so we can resend.
     pub seq_no: Option<SeqNo>,
@@ -26,8 +27,6 @@ pub struct PacketizedMeta {
     pub ssrc: Ssrc,
     pub rid: Option<Rid>,
     pub ext_vals: ExtensionValues,
-    #[doc(hidden)]
-    pub queued_at: Instant,
 }
 
 #[derive(Debug)]
@@ -58,13 +57,13 @@ impl PacketizingBuffer {
 
     pub fn push_sample(
         &mut self,
+        now: Instant,
         data: &[u8],
         meta: PacketizedMeta,
         mtu: usize,
     ) -> Result<(), PacketError> {
         let chunks = self.pack.packetize(mtu, data)?;
         let len = chunks.len();
-        let now = meta.queued_at;
         self.total.move_time_forward(now);
 
         assert!(len <= self.max_retain, "Must retain at least chunked count");
@@ -87,6 +86,7 @@ impl PacketizingBuffer {
                 data,
 
                 meta,
+                queued_at: now,
 
                 seq_no: None,
                 count_as_unsent: true,
@@ -100,7 +100,7 @@ impl PacketizingBuffer {
             let p = self.queue.pop_front();
             if let Some(p) = p {
                 if p.count_as_unsent {
-                    let queue_time = now - p.meta.queued_at;
+                    let queue_time = now - p.queued_at;
                     self.total.decrease(p.data.len(), queue_time);
                 }
             }
@@ -115,7 +115,7 @@ impl PacketizingBuffer {
         let next = self.queue.get_mut(self.emit_next)?;
         if next.count_as_unsent {
             next.count_as_unsent = false;
-            let queue_time = now - next.meta.queued_at;
+            let queue_time = now - next.queued_at;
             self.total.decrease(next.data.len(), queue_time);
         }
         self.emit_next += 1;
@@ -136,7 +136,7 @@ impl PacketizingBuffer {
 
         if !p.count_as_unsent {
             p.count_as_unsent = true;
-            let queue_time = now - p.meta.queued_at;
+            let queue_time = now - p.queued_at;
             self.total.increase(now, queue_time, p.data.len());
         }
     }
@@ -152,7 +152,7 @@ impl PacketizingBuffer {
 
         if p.count_as_unsent {
             p.count_as_unsent = false;
-            let queue_time = now - p.meta.queued_at;
+            let queue_time = now - p.queued_at;
             self.total.decrease(p.data.len(), queue_time);
         }
 
@@ -183,7 +183,7 @@ impl PacketizingBuffer {
             packet_count: self.total.unsent_count as u32,
             total_queue_time_origin: self.total.queue_time,
             last_emitted: self.last_emit,
-            first_unsent: self.queue.get(self.emit_next).map(|p| p.meta.queued_at),
+            first_unsent: self.queue.get(self.emit_next).map(|p| p.queued_at),
         }
     }
 

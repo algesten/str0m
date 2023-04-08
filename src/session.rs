@@ -199,9 +199,9 @@ impl Session {
         self.srtp_tx = Some(ctx_tx);
     }
 
-    pub fn handle_timeout(&mut self, now: Instant) {
+    pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
         for m in &mut self.medias {
-            m.handle_timeout(now);
+            m.handle_timeout(now)?;
         }
 
         let sender_ssrc = self.first_ssrc_local();
@@ -239,6 +239,8 @@ impl Session {
         if let Some(bwe) = self.bwe.as_mut() {
             bwe.handle_timeout(now);
         }
+
+        Ok(())
     }
 
     fn create_twcc_feedback(&mut self, sender_ssrc: Ssrc, now: Instant) -> Option<()> {

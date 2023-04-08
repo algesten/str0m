@@ -32,9 +32,6 @@ pub(crate) trait Source {
     fn set_repairs(&mut self, ssrc: Ssrc) -> bool;
 }
 
-// How often we remove unused senders/receivers.
-const CLEANUP_INTERVAL: Duration = Duration::from_secs(10);
-
 // Time between regular receiver reports.
 // https://www.rfc-editor.org/rfc/rfc8829#section-5.1.2
 // Should technically be 4 seconds according to spec, but libWebRTC
@@ -102,9 +99,6 @@ pub(crate) struct MediaInner {
     /// Created when we configure new media via Changes API.
     sources_tx: Vec<SenderSource>,
 
-    /// Last time we ran cleanup.
-    last_cleanup: Instant,
-
     /// Last time we produced regular feedback (SR/RR).
     last_regular_feedback: Instant,
 
@@ -155,6 +149,19 @@ pub(crate) struct MediaInner {
 
     /// Merged queue state, set to None if we need to recalculate it.
     queue_state: Option<QueueState>,
+
+    /// Enqueing to the PacketizingBuffer requires a "queued_at" field
+    /// which is "now". We don't want write() to drive time forward,
+    /// which means we are temporarily storing the packets here until
+    /// next handle_timeout.
+    ///
+    /// The expected behavior is:
+    /// 1. MediaWriter::write()
+    /// 2. to_packetize.push()
+    /// 3. poll_output -> timeout straight away
+    /// 4. handle_timeout(straight away)
+    /// 5. to_packetize.pop()
+    to_packetize: VecDeque<ToPacketize>,
 }
 
 struct NextPacket<'a> {
@@ -162,6 +169,13 @@ struct NextPacket<'a> {
     ssrc: Ssrc,
     seq_no: SeqNo,
     body: NextPacketBody<'a>,
+}
+
+#[derive(Debug)]
+struct ToPacketize {
+    pt: Pt,
+    meta: PacketizedMeta,
+    data: Vec<u8>,
 }
 
 enum NextPacketBody<'a> {
@@ -238,14 +252,13 @@ impl MediaInner {
     #[allow(clippy::too_many_arguments)]
     pub fn write(
         &mut self,
-        now: Instant,
         pt: Pt,
         wallclock: Instant,
         rtp_time: MediaTime,
         data: &[u8],
         rid: Option<Rid>,
         ext_vals: ExtensionValues,
-    ) -> Result<usize, RtcError> {
+    ) -> Result<(), RtcError> {
         if !self.dir.is_sending() {
             return Err(RtcError::NotSendingDirection(self.dir));
         }
@@ -260,7 +273,9 @@ impl MediaInner {
         let ssrc = tx.ssrc();
         tx.update_clocks(rtp_time, wallclock);
 
-        let buf = self.buffers_tx.entry(pt).or_insert_with(|| {
+        // We don't actually want this buffer here, but it must be created before we
+        // get to the do_packetize() (as part of handle_timeout).
+        let _ = self.buffers_tx.entry(pt).or_insert_with(|| {
             let max_retain = if spec.codec.is_audio() { 4096 } else { 2048 };
             PacketizingBuffer::new(spec.codec.into(), max_retain)
         });
@@ -270,26 +285,44 @@ impl MediaInner {
             rtp_time,
             data.len()
         );
-        let mut mtu: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
-        // align to SRTP block size to minimize padding needs
-        mtu = mtu - mtu % SRTP_BLOCK_SIZE;
 
         let meta = PacketizedMeta {
             rtp_time,
             ssrc,
             rid,
             ext_vals,
-            queued_at: now,
         };
 
-        // Invalidate cached queue_state.
-        self.queue_state = None;
+        self.to_packetize.push_back(ToPacketize {
+            pt,
+            meta,
+            data: data.to_vec(),
+        });
 
-        if let Err(e) = buf.push_sample(data, meta, mtu) {
-            return Err(RtcError::Packet(self.mid, pt, e));
-        };
+        Ok(())
+    }
 
-        Ok(buf.free())
+    /// Does the actual packetizing on handle_timeout()
+    fn do_packetize(&mut self, now: Instant) -> Result<(), RtcError> {
+        const RTP_SIZE: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
+        // align to SRTP block size to minimize padding needs
+        const MTU: usize = RTP_SIZE - RTP_SIZE % SRTP_BLOCK_SIZE;
+
+        while let Some(t) = self.to_packetize.pop_front() {
+            let buf = self
+                .buffers_tx
+                .get_mut(&t.pt)
+                .expect("write() to create buffer");
+
+            if let Err(e) = buf.push_sample(now, &t.data, t.meta, MTU) {
+                return Err(RtcError::Packet(self.mid, t.pt, e));
+            };
+
+            // Invalidate cached queue_state.
+            self.queue_state = None;
+        }
+
+        Ok(())
     }
 
     pub fn is_request_keyframe_possible(&self, kind: KeyframeRequestKind) -> bool {
@@ -719,17 +752,21 @@ impl MediaInner {
             .any(|s| s.has_nack())
     }
 
-    pub fn handle_timeout(&mut self, now: Instant) {
-        // TODO(martin): more cleanup
-        self.last_cleanup = now;
+    pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
+        self.do_packetize(now)
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        Some(self.cleanup_at())
+        self.packetize_at()
     }
 
-    fn cleanup_at(&self) -> Instant {
-        self.last_cleanup + CLEANUP_INTERVAL
+    fn packetize_at(&self) -> Option<Instant> {
+        if self.to_packetize.is_empty() {
+            None
+        } else {
+            // If we got things to packetize, do it straight away.
+            Some(already_happened())
+        }
     }
 
     pub fn source_tx_ssrcs(&self) -> impl Iterator<Item = Ssrc> + '_ {
@@ -1236,7 +1273,6 @@ impl Default for MediaInner {
             params: vec![],
             sources_rx: vec![],
             sources_tx: vec![],
-            last_cleanup: already_happened(),
             last_regular_feedback: already_happened(),
             buffers_rx: HashMap::new(),
             buffers_tx: HashMap::new(),
@@ -1251,6 +1287,7 @@ impl Default for MediaInner {
             bytes_transmitted: ValueHistory::new(0, Duration::from_secs(2)),
             bytes_retransmitted: ValueHistory::new(0, Duration::from_secs(2)),
             queue_state: None,
+            to_packetize: VecDeque::default(),
         }
     }
 }
