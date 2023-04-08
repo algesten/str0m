@@ -191,7 +191,6 @@
 //! ```no_run
 //! # use str0m::Rtc;
 //! # use str0m::media::Mid;
-//! # use std::time::Instant;
 //! # let rtc: Rtc = todo!();
 //! #
 //! // Obtain mid from Event::MediaAdded
@@ -204,7 +203,7 @@
 //! let pt = media.payload_params()[0].pt();
 //!
 //! // Create a media writer for the payload type.
-//! let writer = media.writer(pt, Instant::now());
+//! let writer = media.writer(pt);
 //!
 //! // Write the data
 //! let wallclock = todo!();  // Absolute time of the data
@@ -1266,16 +1265,16 @@ impl Rtc {
         }
 
         match input {
-            Input::Timeout(now) => self.do_handle_timeout(now),
+            Input::Timeout(now) => self.do_handle_timeout(now)?,
             Input::Receive(now, r) => {
                 self.do_handle_receive(now, r)?;
-                self.do_handle_timeout(now);
+                self.do_handle_timeout(now)?;
             }
         }
         Ok(())
     }
 
-    fn do_handle_timeout(&mut self, now: Instant) {
+    fn do_handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
         // We assume this first "now" is a time 0 start point for calculating ntp/unix time offsets.
         // This initializes the conversion of Instant -> NTP/Unix time.
         let _ = now.to_unix_duration();
@@ -1283,12 +1282,13 @@ impl Rtc {
         self.ice.handle_timeout(now);
         self.sctp.handle_timeout(now);
         self.chan.handle_timeout(now, &mut self.sctp);
-        self.session.handle_timeout(now);
+        self.session.handle_timeout(now)?;
         if self.stats.wants_timeout(now) {
             let mut snapshot = StatsSnapshot::new(now);
             self.visit_stats(now, &mut snapshot);
             self.stats.do_handle_timeout(&mut snapshot);
         }
+        Ok(())
     }
 
     fn do_handle_receive(&mut self, now: Instant, r: net::Receive) -> Result<(), RtcError> {

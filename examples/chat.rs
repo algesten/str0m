@@ -551,10 +551,9 @@ impl Client {
             return;
         };
 
-        if let Err(e) =
-            media
-                .writer(pt, Instant::now())
-                .write(data.network_time, data.time, &data.data)
+        if let Err(e) = media
+            .writer(pt)
+            .write(data.network_time, data.time, &data.data)
         {
             warn!("Client ({}) failed: {:?}", *self.id, e);
             self.rtc.disconnect();
