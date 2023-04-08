@@ -1432,6 +1432,8 @@ pub struct RtcConfig {
     bwe_initial_bitrate: Option<Bitrate>,
     reordering_size_audio: usize,
     reordering_size_video: usize,
+
+    rtp_mode: bool,
 }
 
 impl RtcConfig {
@@ -1681,6 +1683,29 @@ impl RtcConfig {
         self.reordering_size_video
     }
 
+    /// Make the entire Rtc be in RTP mode.
+    ///
+    /// This means all media, read from [`MediaData`] and written to [`Media::write()`] are
+    /// RTP packetized. It bypasses all internal packetization/depacketization inside str0m.
+    pub fn set_rtp_mode(mut self, enabled: bool) -> Self {
+        self.rtp_mode = enabled;
+
+        self
+    }
+
+    /// Checks if RTP mode is set.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to false.
+    /// assert_eq!(config.rtp_mode(), false);
+    /// ```
+    pub fn rtp_mode(&self) -> bool {
+        self.rtp_mode
+    }
+
     /// Create a [`Rtc`] from the configuration.
     pub fn build(self) -> Rtc {
         Rtc::new_from_config(self)
@@ -1699,6 +1724,8 @@ impl Default for RtcConfig {
             bwe_initial_bitrate: None,
             reordering_size_audio: 15,
             reordering_size_video: 30,
+
+            rtp_mode: false,
         }
     }
 }

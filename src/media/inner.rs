@@ -162,6 +162,9 @@ pub(crate) struct MediaInner {
     /// 4. handle_timeout(straight away)
     /// 5. to_packetize.pop()
     to_packetize: VecDeque<ToPacketize>,
+
+    /// Whether we are running in RTP-mode.
+    pub(crate) rtp_mode: bool,
 }
 
 struct NextPacket<'a> {
@@ -1288,6 +1291,7 @@ impl Default for MediaInner {
             bytes_retransmitted: ValueHistory::new(0, Duration::from_secs(2)),
             queue_state: None,
             to_packetize: VecDeque::default(),
+            rtp_mode: false,
         }
     }
 }
