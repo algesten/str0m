@@ -67,7 +67,7 @@ pub fn rtp_mode() -> Result<(), RtcError> {
         // 3
         &[
             //
-            144, 33, 183, 154, 0, 0, 54, 176, 0, 0, 0, 44, 190, 222, 0, 1, 48, 172, 0, 0,
+            144, 33, 183, 155, 0, 0, 54, 176, 0, 0, 0, 44, 190, 222, 0, 1, 48, 172, 0, 0,
             // payload
             0x9, 0xa, 0xb, 0xc,
         ],
@@ -121,7 +121,7 @@ pub fn rtp_mode() -> Result<(), RtcError> {
     let h2 = RtpHeader::parse(&media[2].data, &exts).unwrap();
 
     assert_eq!(h0.sequence_number, 47000);
-    assert_eq!(h1.sequence_number, 47002);
+    assert_eq!(h1.sequence_number, 47003);
     assert_eq!(h2.sequence_number, 47001);
 
     assert_eq!(h0.timestamp, 10000);
