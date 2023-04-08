@@ -56,7 +56,7 @@ pub fn rtp_mode() -> Result<(), RtcError> {
     let mut exts = ExtensionMap::empty();
     exts.set(3, Extension::AudioLevel);
 
-    let to_write = vec![
+    let to_write: Vec<&[u8]> = vec![
         // 1
         &[
             //
@@ -82,14 +82,19 @@ pub fn rtp_mode() -> Result<(), RtcError> {
 
     let mut to_write: VecDeque<_> = to_write.into();
 
-    loop {
-        if let Some(packet) = to_write.pop_front() {
-            let wallclock = l.start + l.duration();
+    let mut write_at = l.last + Duration::from_millis(300);
 
-            l.media(mid)
-                .unwrap()
-                .writer(pt)
-                .write_rtp(wallclock, packet, &exts)?;
+    loop {
+        if l.start + l.duration() > write_at {
+            write_at = l.last + Duration::from_millis(300);
+            if let Some(packet) = to_write.pop_front() {
+                let wallclock = l.start + l.duration();
+
+                l.media(mid)
+                    .unwrap()
+                    .writer(pt)
+                    .write_rtp(wallclock, packet, &exts)?;
+            }
         }
 
         progress(&mut l, &mut r)?;
