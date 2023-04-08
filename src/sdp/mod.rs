@@ -6,9 +6,9 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
 mod data;
-pub use data::{FormatParam, Sdp, Session, SessionAttribute, Setup};
-pub use data::{MediaAttribute, MediaLine, MediaType, Msid, Proto, SsrcInfo};
-pub use data::{Simulcast, SimulcastGroup, SimulcastGroups, SimulcastOption};
+pub(crate) use data::{FormatParam, Sdp, Session, SessionAttribute, Setup};
+pub(crate) use data::{MediaAttribute, MediaLine, MediaType, Msid, Proto};
+pub(crate) use data::{Simulcast, SimulcastGroups, SimulcastOption};
 
 mod parser;
 

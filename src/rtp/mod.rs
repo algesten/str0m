@@ -17,14 +17,16 @@ mod dir;
 pub use dir::Direction;
 
 mod mtime;
-pub use mtime::{InstantExt, MediaTime};
+pub(crate) use mtime::InstantExt;
+pub use mtime::MediaTime;
 
 mod header;
-pub use header::{extend_u16, extend_u32, RtpHeader};
+pub use header::RtpHeader;
+pub(crate) use header::{extend_u16, extend_u32};
 
 mod srtp;
-pub use srtp::{SrtpContext, SrtpKey};
-pub use srtp::{SRTCP_OVERHEAD, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
+pub(crate) use srtp::{SrtpContext, SrtpKey};
+pub(crate) use srtp::{SRTCP_OVERHEAD, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
 mod rtcp;
 pub use rtcp::*;

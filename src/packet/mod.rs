@@ -27,17 +27,17 @@ mod vp9;
 use vp9::{Vp9Depacketizer, Vp9Packetizer};
 
 mod buffer_rx;
-pub use buffer_rx::{Depacketized, DepacketizingBuffer, RtpMeta};
+pub(crate) use buffer_rx::{Depacketized, DepacketizingBuffer, RtpMeta};
 
 mod buffer_tx;
-pub use buffer_tx::{Packetized, PacketizedMeta, PacketizingBuffer};
+pub(crate) use buffer_tx::{Packetized, PacketizedMeta, PacketizingBuffer};
 
 mod bwe;
-pub use bwe::SendSideBandwithEstimator;
+pub(crate) use bwe::SendSideBandwithEstimator;
 
 mod pacer;
-pub use pacer::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl, PollOutcome};
-pub use pacer::{QueueSnapshot, QueueState};
+pub(crate) use pacer::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl, PollOutcome};
+pub(crate) use pacer::{QueueSnapshot, QueueState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Types of media.
@@ -61,7 +61,7 @@ impl MediaKind {
 }
 
 /// Packetizes some bytes for use as RTP packet.
-pub trait Packetizer: fmt::Debug {
+pub(crate) trait Packetizer: fmt::Debug {
     /// Chunk the data up into RTP packets.
     fn packetize(&mut self, mtu: usize, b: &[u8]) -> Result<Vec<Vec<u8>>, PacketError>;
 
@@ -83,7 +83,7 @@ pub enum CodecExtra {
 /// Depacketizes an RTP payload.
 ///
 /// Removes any RTP specific data from the payload.
-pub trait Depacketizer: fmt::Debug {
+pub(crate) trait Depacketizer: fmt::Debug {
     /// Unpack the RTP packet into a provided `Vec<u8>`.
     fn depacketize(
         &mut self,
@@ -162,7 +162,7 @@ impl BitRead for (&[u8], usize) {
 }
 
 #[derive(Debug)]
-pub enum CodecPacketizer {
+pub(crate) enum CodecPacketizer {
     G711(G711Packetizer),
     G722(G722Packetizer),
     H264(H264Packetizer),
@@ -174,7 +174,7 @@ pub enum CodecPacketizer {
 }
 
 #[derive(Debug)]
-pub enum CodecDepacketizer {
+pub(crate) enum CodecDepacketizer {
     H264(H264Depacketizer),
     H265(H265Depacketizer),
     Opus(OpusDepacketizer),

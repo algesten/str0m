@@ -2,21 +2,21 @@ use std::time::{Duration, Instant};
 
 use once_cell::sync::Lazy;
 
-pub mod value_history;
+pub(crate) mod value_history;
 
-pub fn not_happening() -> Instant {
+pub(crate) fn not_happening() -> Instant {
     const YEARS_100: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 100);
     static FUTURE: Lazy<Instant> = Lazy::new(|| Instant::now() + YEARS_100);
     *FUTURE
 }
 
-pub fn already_happened() -> Instant {
+pub(crate) fn already_happened() -> Instant {
     const HOURS_1: Duration = Duration::from_secs(60);
     static PAST: Lazy<Instant> = Lazy::new(|| Instant::now().checked_sub(HOURS_1).unwrap());
     *PAST
 }
 
-pub trait Soonest {
+pub(crate) trait Soonest {
     fn soonest(self, other: Self) -> Self;
 }
 
@@ -44,7 +44,7 @@ impl Soonest for (Option<Instant>, &'static str) {
 /// - `ntp_time` the offset since 1900-01-01.
 /// - `delay` the delay(`DLSR`) since last sender report expressed as fractions of a second in 32 bits.
 /// - `last_report` the middle 32 bits of an NTP timestamp for the most recent sender report(LSR) or Receiver Report(LRR).
-pub fn calculate_rtt_ms(ntp_time: Duration, delay: u32, last_report: u32) -> Option<f32> {
+pub(crate) fn calculate_rtt_ms(ntp_time: Duration, delay: u32, last_report: u32) -> Option<f32> {
     // [10 Nov 1995 11:33:25.125 UTC]       [10 Nov 1995 11:33:36.5 UTC]
     // n                 SR(n)              A=b710:8000 (46864.500 s)
     // ---------------------------------------------------------------->

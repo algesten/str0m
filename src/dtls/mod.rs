@@ -10,7 +10,9 @@ use crate::io::{DatagramRecv, DatagramSend, Receive, DATAGRAM_MTU_WARN};
 
 mod ossl;
 use ossl::{dtls_create_ctx, dtls_ssl_create, TlsStream};
-pub use ossl::{DtlsCert, KeyingMaterial};
+
+pub use ossl::DtlsCert;
+pub(crate) use ossl::KeyingMaterial;
 
 /// Errors that can arise in DTLS.
 #[derive(Debug, Error)]

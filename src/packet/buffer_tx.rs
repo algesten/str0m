@@ -43,7 +43,7 @@ pub struct PacketizingBuffer {
 }
 
 impl PacketizingBuffer {
-    pub fn new(pack: CodecPacketizer, max_retain: usize) -> Self {
+    pub(crate) fn new(pack: CodecPacketizer, max_retain: usize) -> Self {
         PacketizingBuffer {
             pack,
             queue: VecDeque::new(),

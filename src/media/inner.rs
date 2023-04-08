@@ -3,7 +3,6 @@ use std::time::{Duration, Instant};
 
 use crate::change::AddMedia;
 use crate::format::Codec;
-pub use crate::packet::RtpMeta;
 pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 
 use crate::io::{Id, DATAGRAM_MTU};

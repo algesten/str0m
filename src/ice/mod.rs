@@ -4,7 +4,8 @@
 use thiserror::Error;
 
 mod agent;
-pub use agent::{IceAgent, IceAgentEvent, IceAgentStats, IceConnectionState, IceCreds};
+pub(crate) use agent::{IceAgent, IceAgentEvent};
+pub use agent::{IceConnectionState, IceCreds};
 
 mod candidate;
 pub use candidate::{Candidate, CandidateKind};
@@ -21,6 +22,7 @@ pub enum IceError {
 
 #[cfg(test)]
 mod test {
+    use super::agent::IceAgentStats;
     use super::*;
 
     #[test]

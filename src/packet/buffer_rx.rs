@@ -76,7 +76,7 @@ pub struct DepacketizingBuffer {
 }
 
 impl DepacketizingBuffer {
-    pub fn new(depack: CodecDepacketizer, hold_back: usize) -> Self {
+    pub(crate) fn new(depack: CodecDepacketizer, hold_back: usize) -> Self {
         DepacketizingBuffer {
             hold_back,
             depack,

@@ -41,7 +41,7 @@ pub enum SctpError {
     DcepBadUtf8,
 }
 
-pub struct RtcSctp {
+pub(crate) struct RtcSctp {
     state: RtcSctpState,
     endpoint: Endpoint,
     fake_addr: SocketAddr,
@@ -54,7 +54,7 @@ pub struct RtcSctp {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RtcSctpState {
+enum RtcSctpState {
     Uninited,
     AwaitRemoteAssociation,
     AwaitAssociationEstablished,
@@ -71,7 +71,7 @@ impl RtcSctpState {
 }
 
 #[derive(Debug)]
-pub struct StreamEntry {
+struct StreamEntry {
     /// Config as provided when opening the channel. This is None if we discover
     /// the channel from the remote peer before getting a DcepOpen or local open_stream.
     config: Option<ChannelConfig>,
@@ -83,7 +83,7 @@ pub struct StreamEntry {
     do_close: bool,
 }
 
-pub enum SctpEvent {
+pub(crate) enum SctpEvent {
     Transmit {
         packets: VecDeque<Vec<u8>>,
     },
@@ -109,7 +109,7 @@ pub enum SctpEvent {
 /// remote inited, out-of-band AwaitConfig -> (open_stream)                             -> Open
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StreamEntryState {
+enum StreamEntryState {
     /// A new stream declared locally, not discovered from remote.
     AwaitOpen,
     /// A new stream, discovered from remote. It can either be in-band or out-of band

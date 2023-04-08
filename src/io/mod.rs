@@ -10,24 +10,24 @@ use std::ops::Deref;
 use thiserror::Error;
 
 mod stun;
-pub use stun::stun_resend_delay;
-pub use stun::{
+pub(crate) use stun::stun_resend_delay;
+pub(crate) use stun::{
     StunError, StunMessage, TransId, STUN_MAX_RETRANS, STUN_MAX_RTO_MILLIS, STUN_TIMEOUT,
 };
 
 mod sha1;
-pub use self::sha1::Sha1;
+pub(crate) use self::sha1::Sha1;
 
 mod id;
 // this is only exported from this crate to avoid needing
 // a "util" crate or similar.
-pub use id::Id;
+pub(crate) use id::Id;
 
 /// Targeted MTU
-pub const DATAGRAM_MTU: usize = 1150;
+pub(crate) const DATAGRAM_MTU: usize = 1150;
 
 /// Warn if any packet we are about to send is above this size.
-pub const DATAGRAM_MTU_WARN: usize = 1200;
+pub(crate) const DATAGRAM_MTU_WARN: usize = 1200;
 
 /// Errors from parsing network data.
 #[derive(Debug, Error)]
