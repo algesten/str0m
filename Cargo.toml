@@ -40,5 +40,21 @@ serde_json = "1.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }
 systemstat = "0.2.2"
 
+# tokio examples
+anyhow = {version = "*" }
+axum = { version = "*" }
+bytes = {version = "*" }
+hyper = { version = "*", features = ["full"] }
+tokio = { version = "*", features = ["full"] }
+tokio-util = { version = "*" }
+
 [target.'cfg(fuzzing)'.dev-dependencies]
 fuzzcheck = "0.12"
+
+[[example]]
+name = "tokio-reflect-server"
+path = "examples/tokio/reflect_server.rs"
+
+[[example]]
+name = "tokio-text-chat-client"
+path = "examples/tokio/text_chat_client.rs"
