@@ -40,10 +40,10 @@ impl Pacer for PacerImpl {
         }
     }
 
-    fn handle_timeout(&mut self, now: Instant, iter: impl Iterator<Item = QueueState>) {
+    fn handle_timeout(&mut self, now: Instant) {
         match self {
-            PacerImpl::Null(v) => v.handle_timeout(now, iter),
-            PacerImpl::LeakyBucket(v) => v.handle_timeout(now, iter),
+            PacerImpl::Null(v) => v.handle_timeout(now),
+            PacerImpl::LeakyBucket(v) => v.handle_timeout(now),
         }
     }
 
@@ -78,7 +78,7 @@ pub trait Pacer {
     fn poll_timeout(&self) -> Option<Instant>;
 
     /// Handle time moving forward, should be called periodically as indicated by [`Pacer::poll_timeout`].
-    fn handle_timeout(&mut self, now: Instant, iter: impl Iterator<Item = QueueState>);
+    fn handle_timeout(&mut self, now: Instant);
 
     /// Determines what action to take, if any.
     ///
@@ -185,10 +185,8 @@ impl Pacer for NullPacer {
         }
     }
 
-    fn handle_timeout(&mut self, _now: Instant, iter: impl Iterator<Item = QueueState>) {
+    fn handle_timeout(&mut self, _now: Instant) {
         self.need_immediate_timeout = false;
-        self.queue_states.clear();
-        self.queue_states.extend(iter);
     }
 
     fn poll_action(&mut self) -> PollOutcome {
@@ -285,10 +283,8 @@ impl Pacer for LeakyBucketPacer {
         }
     }
 
-    fn handle_timeout(&mut self, now: Instant, iter: impl Iterator<Item = QueueState>) {
+    fn handle_timeout(&mut self, now: Instant) {
         self.need_immediate_timeout = false;
-        self.queue_states.clear();
-        self.queue_states.extend(iter);
 
         // This is called periodically and whenever packet is queued.
         let elapsed = self.update_handle_time_and_get_elapsed(now);
@@ -691,7 +687,7 @@ mod test {
         let mut queue = Queue::default();
         // 2,000 bits per second, 10 bytes per pacing interval(40ms)
         let mut pacer = LeakyBucketPacer::new((10 * 200).into(), duration_ms(40));
-        pacer.handle_timeout(now + duration_ms(1), queue.queue_state(now));
+        pacer.handle_timeout(now + duration_ms(1));
         queue.update_average_queue_time(now + duration_ms(1));
 
         pacer.poll_action().expect_nothing(
@@ -752,7 +748,7 @@ mod test {
 
         // Periodic timeout
         queue.update_average_queue_time(now + duration_ms(41));
-        pacer.handle_timeout(now + duration_ms(41), queue.queue_state(now));
+        pacer.handle_timeout(now + duration_ms(41));
 
         assert_poll_success(
             &mut pacer,
@@ -812,7 +808,7 @@ mod test {
         // A lot of time passes, now the bitrate should be adjusted to force drain the queues to
         // avoid packets being queued for too long.
         queue.update_average_queue_time(now + duration_ms(2053));
-        pacer.handle_timeout(now + duration_ms(2053), queue.queue_state(now));
+        pacer.handle_timeout(now + duration_ms(2053));
 
         assert_poll_success(
             &mut pacer,
@@ -843,7 +839,7 @@ mod test {
         let mut queue = Queue::default();
         // 2,000 bits per second, 10 bytes per pacing interval(40ms)
         let mut pacer = LeakyBucketPacer::new((10 * 200).into(), duration_ms(40));
-        pacer.handle_timeout(now + duration_ms(1), queue.queue_state(now));
+        pacer.handle_timeout(now + duration_ms(1));
         queue.update_average_queue_time(now + duration_ms(1));
 
         enqueue_packet_noisy(
@@ -866,7 +862,7 @@ mod test {
         );
 
         // Time moves forward
-        pacer.handle_timeout(now + duration_ms(41), queue.queue_state(now));
+        pacer.handle_timeout(now + duration_ms(41));
         queue.update_average_queue_time(now + duration_ms(41));
 
         // Nothing happens for a while because there's nothing in the queues.
@@ -937,7 +933,7 @@ mod test {
         );
 
         // Time moves forward
-        pacer.handle_timeout(now + duration_ms(81), queue.queue_state(now));
+        pacer.handle_timeout(now + duration_ms(81));
         queue.update_average_queue_time(now + duration_ms(81));
 
         enqueue_packet_noisy(
@@ -963,7 +959,7 @@ mod test {
         // second, 15 bytes per pacing interval(40ms)
         pacer.set_pacing_rate((10 * 200).into());
         pacer.set_padding_rate((15 * 200).into());
-        pacer.handle_timeout(now + duration_ms(1), queue.queue_state(now));
+        pacer.handle_timeout(now + duration_ms(1));
         queue.update_average_queue_time(now + duration_ms(1));
 
         enqueue_packet_noisy(
@@ -986,7 +982,7 @@ mod test {
         );
 
         // Time moves forward
-        pacer.handle_timeout(now + duration_ms(41), queue.queue_state(now));
+        pacer.handle_timeout(now + duration_ms(41));
         queue.update_average_queue_time(now + duration_ms(41));
 
         // Nothing happens for a while because there's nothing in the queues.
@@ -1012,7 +1008,7 @@ mod test {
         );
 
         // Time moves forward, all debt is cleared out now
-        pacer.handle_timeout(now + duration_ms(155), queue.queue_state(now));
+        pacer.handle_timeout(now + duration_ms(155));
         queue.update_average_queue_time(now + duration_ms(155));
 
         let outcome = pacer.poll_action();
@@ -1108,7 +1104,7 @@ mod test {
 
         // Simulate an immediate call to handle_timeout
         queue.update_average_queue_time(now);
-        pacer.handle_timeout(now, queue.queue_state(now));
+        pacer.handle_timeout(now);
 
         timeout.unwrap()
     }
@@ -1135,7 +1131,7 @@ mod test {
         // Matches the queueing behavior when the pacer is used in real code.
         // Each packet being queued causes time to move forward in the pacer and the queue.
         queue.update_average_queue_time(now);
-        pacer.handle_timeout(now, queue.queue_state(now));
+        pacer.handle_timeout(now);
     }
 
     fn duration_ms(ms: u64) -> Duration {

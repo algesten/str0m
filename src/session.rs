@@ -236,11 +236,7 @@ impl Session {
             }
         }
 
-        let iter = self
-            .medias
-            .iter_mut()
-            .map(|m| m.buffers_tx_queue_state(now));
-        self.pacer.handle_timeout(now, iter);
+        self.pacer.handle_timeout(now);
         if let Some(bwe) = self.bwe.as_mut() {
             bwe.handle_timeout(now);
         }

@@ -6,8 +6,8 @@ use crate::format::Codec;
 pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 
 use crate::io::{Id, DATAGRAM_MTU};
-use crate::packet::{DepacketizingBuffer, MediaKind, Packetized, QueueSnapshot};
-use crate::packet::{PacketizedMeta, PacketizingBuffer, QueueState};
+use crate::packet::{DepacketizingBuffer, MediaKind, Packetized};
+use crate::packet::{PacketizedMeta, PacketizingBuffer};
 use crate::rtp::{ExtensionMap, Fir, FirEntry, NackEntry, Pli, Rtcp};
 use crate::rtp::{RtcpFb, RtpHeader, SdesType};
 use crate::rtp::{SeqNo, MAX_PADDING_PACKET_SIZE, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
@@ -147,22 +147,6 @@ pub(crate) struct MediaInner {
     /// History of bytes re-transmitted.
     bytes_retransmitted: ValueHistory<u64>,
 
-    /// Merged queue state, set to None if we need to recalculate it.
-    queue_state: Option<QueueState>,
-
-    /// Enqueing to the PacketizingBuffer requires a "queued_at" field
-    /// which is "now". We don't want write() to drive time forward,
-    /// which means we are temporarily storing the packets here until
-    /// next handle_timeout.
-    ///
-    /// The expected behavior is:
-    /// 1. MediaWriter::write()
-    /// 2. to_packetize.push()
-    /// 3. poll_output -> timeout straight away
-    /// 4. handle_timeout(straight away)
-    /// 5. to_packetize.pop()
-    to_packetize: VecDeque<ToPacketize>,
-
     /// Whether we are running in RTP-mode.
     pub(crate) rtp_mode: bool,
 }
@@ -172,14 +156,6 @@ struct NextPacket<'a> {
     ssrc: Ssrc,
     seq_no: SeqNo,
     body: NextPacketBody<'a>,
-}
-
-#[derive(Debug)]
-struct ToPacketize {
-    pt: Pt,
-    data: Vec<u8>,
-    meta: PacketizedMeta,
-    rtp_mode_header: Option<RtpHeader>,
 }
 
 enum NextPacketBody<'a> {
@@ -290,7 +266,7 @@ impl MediaInner {
 
         // We don't actually want this buffer here, but it must be created before we
         // get to the do_packetize() (as part of handle_timeout).
-        let _ = self.buffers_tx.entry(pt).or_insert_with(|| {
+        let buf = self.buffers_tx.entry(pt).or_insert_with(|| {
             let max_retain = if is_audio { 4096 } else { 2048 };
             PacketizingBuffer::new(codec.into(), max_retain)
         });
@@ -308,37 +284,17 @@ impl MediaInner {
             ext_vals,
         };
 
-        self.to_packetize.push_back(ToPacketize {
-            pt,
-            data: data.to_vec(),
-            meta,
-            rtp_mode_header,
-        });
+        if self.rtp_mode {
+            let rtp_header = rtp_mode_header.expect("rtp header in rtp mode");
+            buf.push_rtp_packet(data.to_vec(), meta, rtp_header);
+        } else {
+            const RTP_SIZE: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
+            // align to SRTP block size to minimize padding needs
+            const MTU: usize = RTP_SIZE - RTP_SIZE % SRTP_BLOCK_SIZE;
 
-        Ok(())
-    }
-
-    /// Does the actual packetizing on handle_timeout()
-    fn do_packetize(&mut self, now: Instant) -> Result<(), RtcError> {
-        const RTP_SIZE: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
-        // align to SRTP block size to minimize padding needs
-        const MTU: usize = RTP_SIZE - RTP_SIZE % SRTP_BLOCK_SIZE;
-
-        while let Some(t) = self.to_packetize.pop_front() {
-            let buf = self
-                .buffers_tx
-                .get_mut(&t.pt)
-                .expect("write() to create buffer");
-
-            if self.rtp_mode {
-                let rtp_header = t.rtp_mode_header.expect("rtp header in rtp mode");
-                buf.push_rtp_packet(now, t.data, t.meta, rtp_header);
-            } else if let Err(e) = buf.push_sample(now, &t.data, t.meta, MTU) {
-                return Err(RtcError::Packet(self.mid, t.pt, e));
+            if let Err(e) = buf.push_sample(&data, meta, MTU) {
+                return Err(RtcError::Packet(self.mid, pt, e));
             }
-
-            // Invalidate cached queue_state.
-            self.queue_state = None;
         }
 
         Ok(())
@@ -521,19 +477,7 @@ impl MediaInner {
 
         // If we hit the cap, stop doing resends by clearing those we have queued.
         if ratio > 0.15_f32 {
-            for resend in self.resends.drain(..) {
-                let Some(buffer) = self
-                    .buffers_tx
-                    .values_mut()
-                    .find(|p| p.has_ssrc(resend.ssrc)) else {
-                        continue;
-                    };
-                // Unmark the resend so they don't count as queued anymore.
-                let _ = buffer.get_and_unmark_as_accounted(now, resend.seq_no);
-            }
-            // Invalidate cached queue state.
-            self.queue_state = None;
-
+            self.resends.clear();
             return None;
         }
 
@@ -570,12 +514,7 @@ impl MediaInner {
         // get_and_mark_as_unaccounted() requires a mut reference to buffer, which we can't do in the
         // above loop (waiting for polonius). The solution is to look the buffer up again after the loop.
         let buffer = self.buffers_tx.get_mut(&resend.pt).unwrap();
-        let pkt = buffer
-            .get_and_unmark_as_accounted(now, resend.seq_no)
-            .unwrap();
-
-        // Force recaching since packetizer changed.
-        self.queue_state = None;
+        let pkt = buffer.get(resend.seq_no).unwrap();
 
         if !is_padding {
             source.update_packet_counts(pkt.data.len() as u64, true);
@@ -607,9 +546,6 @@ impl MediaInner {
     fn poll_packet_regular(&mut self, now: Instant) -> Option<NextPacket<'_>> {
         // exit via ? here is ok since that means there is nothing to send.
         let (pt, pkt) = next_send_buffer(&mut self.buffers_tx, now)?;
-
-        // Force recaching since packetizer changed.
-        self.queue_state = None;
 
         let source = self
             .sources_tx
@@ -810,21 +746,12 @@ impl MediaInner {
             .any(|s| s.has_nack())
     }
 
-    pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
-        self.do_packetize(now)
+    pub fn handle_timeout(&mut self, _now: Instant) -> Result<(), RtcError> {
+        Ok(())
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        self.packetize_at()
-    }
-
-    fn packetize_at(&self) -> Option<Instant> {
-        if self.to_packetize.is_empty() {
-            None
-        } else {
-            // If we got things to packetize, do it straight away.
-            Some(already_happened())
-        }
+        None
     }
 
     pub fn source_tx_ssrcs(&self) -> impl Iterator<Item = Ssrc> + '_ {
@@ -1140,15 +1067,8 @@ impl MediaInner {
         let seq_no = buffer.first_seq_no()?;
         let iter = entries.flat_map(|n| n.into_iter(seq_no));
 
-        // Invalidate cached queue_state.
-        self.queue_state = None;
-
         // Schedule all resends. They will be handled on next poll_packet
         for seq_no in iter {
-            // This keeps the TotalQueue updated in the buffer so the QueueState will
-            // account for resends.
-            buffer.mark_as_unaccounted(now, seq_no);
-
             let resend = Resend {
                 ssrc,
                 pt: *pt,
@@ -1201,36 +1121,6 @@ impl MediaInner {
         for s in &mut self.sources_tx {
             s.visit_stats(now, self.mid, snapshot);
         }
-    }
-
-    /// Return the queue state for outbound RTP traffic for this media.
-    ///
-    /// For the purposes of pacing each media is treated as its own packet queue. Internally this
-    /// is spread across many [`PacketizingBuffer`] which is where the actual packets are queued.
-    pub fn buffers_tx_queue_state(&mut self, now: Instant) -> QueueState {
-        // If it is cached, we don't need to recalculate it.
-        if let Some(queue_state) = self.queue_state {
-            return queue_state;
-        }
-
-        let init = QueueSnapshot::default();
-        let snapshot = self.buffers_tx.values_mut().fold(init, |mut snap, b| {
-            snap.merge(&b.queue_snapshot(now));
-
-            snap
-        });
-
-        let state = QueueState {
-            mid: self.mid,
-            is_audio: self.kind.is_audio(),
-            use_for_padding: self.kind.is_video() && self.has_tx_rtx() && snapshot.has_ever_sent(),
-            snapshot,
-        };
-
-        // Cache it.
-        self.queue_state = Some(state);
-
-        state
     }
 
     /// Test if any source_tx in this channel has rtx.
@@ -1344,8 +1234,6 @@ impl Default for MediaInner {
             enable_nack: false,
             bytes_transmitted: ValueHistory::new(0, Duration::from_secs(2)),
             bytes_retransmitted: ValueHistory::new(0, Duration::from_secs(2)),
-            queue_state: None,
-            to_packetize: VecDeque::default(),
             rtp_mode: false,
         }
     }
