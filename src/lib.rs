@@ -1449,7 +1449,7 @@ pub struct RtcConfig {
     exts: ExtensionMap,
     stats_interval: Duration,
     /// Whether to use Bandwidth Estimation to discover the egress bandwidth.
-    bwe_initial_bitrate: Option<Bitrate>,
+    bwe_target_rate: Option<Bitrate>,
     reordering_size_audio: usize,
     reordering_size_video: usize,
 
@@ -1624,26 +1624,24 @@ impl RtcConfig {
 
     /// Enables estimation of available bandwidth (BWE).
     ///
-    /// None disables the BWE. This is an estimation of the send bandwidth, not receive.
-    ///
-    /// This includes setting the initial estimate to start with.
-    pub fn enable_bwe(mut self, initial_estimate: Option<Bitrate>) -> Self {
-        self.bwe_initial_bitrate = initial_estimate;
+    /// None disables the BWE. This is the target bitrate we want to achieve.
+    pub fn enable_bwe(mut self, target_rate: Option<Bitrate>) -> Self {
+        self.bwe_target_rate = target_rate;
 
         self
     }
 
-    /// The initial bitrate as set by [`Self::enable_bwe()`].
+    /// The target bitrate as set by [`Self::enable_bwe()`].
     ///
     /// ```
     /// # use str0m::Rtc;
     /// let config = Rtc::builder();
     ///
     /// // Defaults to None - BWE off.
-    /// assert_eq!(config.bwe_initial_bitrate(), None);
+    /// assert_eq!(config.bwe_target_rate(), None);
     /// ```
-    pub fn bwe_initial_bitrate(&self) -> Option<Bitrate> {
-        self.bwe_initial_bitrate
+    pub fn bwe_target_rate(&self) -> Option<Bitrate> {
+        self.bwe_target_rate
     }
 
     /// Sets the number of packets held back for reordering audio packets.
@@ -1744,7 +1742,7 @@ impl Default for RtcConfig {
             codec_config: CodecConfig::new_with_defaults(),
             exts: ExtensionMap::standard(),
             stats_interval: Duration::from_secs(1),
-            bwe_initial_bitrate: None,
+            bwe_target_rate: None,
             reordering_size_audio: 15,
             reordering_size_video: 30,
 
@@ -1791,49 +1789,6 @@ impl fmt::Debug for Rtc {
 pub struct Bwe<'a>(&'a mut Rtc);
 
 impl<'a> Bwe<'a> {
-    /// Configure the current bitrate.
-    ///
-    /// Configure the bandwidth estimation system with the current bitrate.
-    /// **Note:** This only has an effect if BWE has been enabled via [`RtcConfig::enable_bwe`].
-    ///
-    /// * `current_bitrate` an estimate of the current bitrate being sent. When the media is
-    /// produced by encoders this value should be the sum of all the target bitrates for these
-    /// encoders, when the media originates from another WebRTC client it should be the sum of the
-    /// configure bitrates for all tracks being sent. This value should only account for video i.e.
-    /// audio bitrates should be ignored.
-    ///
-    /// ## Example
-    ///
-    /// Say you have a video track with three ingress simulcast layers: `low` with `maxBitrate` set to 250Kbits/,
-    /// `medium` with `maxBitrate` set to 750Kbits/, and `high` with `maxBitrate` 1.5Mbit/s.
-    /// Staring at the lower layer, call:
-    ///
-    /// ```
-    /// # use str0m::{Rtc, Bitrate};
-    /// let mut rtc = Rtc::new();
-    ///
-    /// rtc.bwe().set_current_bitrate(Bitrate::kbps(250));
-    /// ````
-    ///
-    /// When a new estimate is made available that indicates a switch to the medium layer is
-    /// possible, make the switch and then update the configuration:
-    ///
-    /// ```
-    /// # use str0m::{Rtc, Bitrate};
-    /// let mut rtc = Rtc::new();
-    ///
-    /// rtc.bwe().set_current_bitrate(Bitrate::kbps(750));
-    /// ````
-    ///
-    /// ## Accuracy
-    ///
-    /// When the original media is derived from another WebRTC implementation that support BWE it's
-    /// advisable to use the value from `RTCOutboundRtpStreamStats.targetBitrate` from `getStats`
-    /// rather than the `maxBitrate` values from `RTCRtpEncodingParameters`.
-    pub fn set_current_bitrate(&mut self, current_bitrate: Bitrate) {
-        self.0.session.set_bwe_current_bitrate(current_bitrate);
-    }
-
     /// Configure the desired bitrate.
     ///
     /// Configure the bandwidth estimation system with the desired bitrate.

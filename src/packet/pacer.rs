@@ -12,24 +12,50 @@ const MAX_DEBT_IN_TIME: Duration = Duration::from_millis(500);
 const MAX_PADDING_PACKET_SIZE: DataSize = DataSize::bytes(224);
 const PADDING_BURST_INTERVAL: Duration = Duration::from_millis(5);
 const MAX_CONSECUTIVE_PADDING_PACKETS: usize = u16::MAX as usize;
+const PACING: Duration = Duration::from_millis(40);
 
 pub enum PacerImpl {
     Null(NullPacer),
     LeakyBucket(LeakyBucketPacer),
 }
 
-impl Pacer for PacerImpl {
-    fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate) {
-        match self {
-            PacerImpl::Null(v) => v.set_pacing_rate(pacing_bitrate),
-            PacerImpl::LeakyBucket(v) => v.set_pacing_rate(pacing_bitrate),
-        }
-    }
+/// A packet Pacer.
+///
+/// The pacer is responsible for ensuring correct pacing of packets onto the network at a given
+/// bitrate.
+pub trait Pacer {
+    /// Set the target bitrate. This will achieved either by regular sends or padding.
+    /// We can temporarily exceed it if we must drain the queues.
+    fn set_target_rate(&mut self, rate: Bitrate);
 
-    fn set_padding_rate(&mut self, padding_bitrate: Bitrate) {
+    /// Poll for a timeout.
+    fn poll_timeout(&self) -> Option<Instant>;
+
+    /// Handle time moving forward, should be called periodically as indicated by [`Pacer::poll_timeout`].
+    fn handle_timeout(&mut self, now: Instant, iter: impl Iterator<Item = QueueState>);
+
+    /// Determines what action to take, if any.
+    ///
+    ///
+    /// ## Return values
+    ///
+    /// * [`PollOutcome::PollQueue`] indicates that the queue indicated by the contained
+    /// [`QueueState`] should be polled and the resulting packet sent.
+    /// * [`PollOutcome::Nothing`] indicates no action is required at this time.
+    fn poll_action(&mut self) -> PollOutcome;
+
+    /// Register a packet having been sent.
+    ///
+    /// **MUST** be called each time [`Pacer::poll_action`] produces [`PollOutcome::PollQueue`] or
+    /// [`PollOutcome::PollPadding`]` after the packet is sent.
+    fn register_send(&mut self, now: Instant, packet_size: DataSize, from: Mid);
+}
+
+impl Pacer for PacerImpl {
+    fn set_target_rate(&mut self, rate: Bitrate) {
         match self {
-            PacerImpl::Null(v) => v.set_padding_rate(padding_bitrate),
-            PacerImpl::LeakyBucket(v) => v.set_padding_rate(padding_bitrate),
+            PacerImpl::Null(v) => v.set_target_rate(rate),
+            PacerImpl::LeakyBucket(v) => v.set_target_rate(rate),
         }
     }
 
@@ -60,41 +86,6 @@ impl Pacer for PacerImpl {
             PacerImpl::LeakyBucket(v) => v.register_send(now, packet_size, from),
         }
     }
-}
-
-/// A packet Pacer.
-///
-/// The pacer is responsible for ensuring correct pacing of packets onto the network at a given
-/// bitrate.
-pub trait Pacer {
-    /// Set the pacing bitrate. The pacing rate can be exceeded if required to drain excessively
-    /// long packet queues.
-    fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate);
-
-    /// Set the padding bitrate to send when there's no media to send
-    fn set_padding_rate(&mut self, padding_bitrate: Bitrate);
-
-    /// Poll for a timeout.
-    fn poll_timeout(&self) -> Option<Instant>;
-
-    /// Handle time moving forward, should be called periodically as indicated by [`Pacer::poll_timeout`].
-    fn handle_timeout(&mut self, now: Instant, iter: impl Iterator<Item = QueueState>);
-
-    /// Determines what action to take, if any.
-    ///
-    ///
-    /// ## Return values
-    ///
-    /// * [`PollOutcome::PollQueue`] indicates that the queue indicated by the contained
-    /// [`QueueState`] should be polled and the resulting packet sent.
-    /// * [`PollOutcome::Nothing`] indicates no action is required at this time.
-    fn poll_action(&mut self) -> PollOutcome;
-
-    /// Register a packet having been sent.
-    ///
-    /// **MUST** be called each time [`Pacer::poll_action`] produces [`PollOutcome::PollQueue`] or
-    /// [`PollOutcome::PollPadding`]` after the packet is sent.
-    fn register_send(&mut self, now: Instant, packet_size: DataSize, from: Mid);
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -170,13 +161,10 @@ pub struct NullPacer {
 }
 
 impl Pacer for NullPacer {
-    fn set_pacing_rate(&mut self, _padding_bitrate: Bitrate) {
+    fn set_target_rate(&mut self, _rate: Bitrate) {
         // We don't care
     }
 
-    fn set_padding_rate(&mut self, _padding_bitrate: Bitrate) {
-        // We don't care
-    }
     fn poll_timeout(&self) -> Option<Instant> {
         if self.need_immediate_timeout {
             self.last_sends.values().min().copied()
@@ -216,14 +204,10 @@ impl Pacer for NullPacer {
 
 /// A leaky bucket pacer that can overshoot the target bitrate when required.
 pub struct LeakyBucketPacer {
-    /// Pacing bitrate.
-    pacing_bitrate: Bitrate,
-    /// Adjusted pacing bitrate for when we need to drain queues.
-    adjusted_bitrate: Bitrate,
-    /// The bitrate at which to send padding packets when the pacing rate isn't being achieved.
-    padding_bitrate: Bitrate,
-    /// The last padding bitrate we used that was not zero.
-    last_non_zero_padding_bitrate: Option<Bitrate>,
+    /// The bitrate we're trying to achieve.
+    target_rate: Bitrate,
+    /// Adjusted target_rate for when we need to drain queues.
+    adjusted_rate: Bitrate,
     /// The last time we refreshed media debt and potentially adjusted the bitrate.
     last_handle_time: Option<Instant>,
     /// The last time we indicated that a packet should be sent.
@@ -241,9 +225,6 @@ pub struct LeakyBucketPacer {
     /// Number padding packets sent since the last media. Used to limit the total size of padding bursts we send
     /// without interleaving some media.
     consecutive_padding_packets_sent: usize,
-    /// The current pacing i.e. how frequently we clear out debt and when we are exceeding the
-    /// target bitrate how long we wait to send.
-    pacing: Duration,
     /// The longest the average packet can spend in the queue before we force it to be drained.
     queue_limit: Duration,
     /// The queue states given by last handle_timeout.
@@ -255,19 +236,8 @@ pub struct LeakyBucketPacer {
 }
 
 impl Pacer for LeakyBucketPacer {
-    fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate) {
-        self.pacing_bitrate = pacing_bitrate;
-
-        // bitrate will be updated on next handle_timeout().
-    }
-
-    fn set_padding_rate(&mut self, padding_bitrate: Bitrate) {
-        if padding_bitrate != Bitrate::ZERO {
-            self.last_non_zero_padding_bitrate = Some(padding_bitrate);
-        }
-        self.padding_bitrate = padding_bitrate;
-
-        // bitrate will be updated on next handle_timeout().
+    fn set_target_rate(&mut self, rate: Bitrate) {
+        self.target_rate = rate;
     }
 
     fn poll_timeout(&self) -> Option<Instant> {
@@ -275,7 +245,7 @@ impl Pacer for LeakyBucketPacer {
             return self.last_send_time;
         }
 
-        let next_handle_time = self.last_handle_time.map(|lh| lh + self.pacing);
+        let next_handle_time = self.last_handle_time.map(|lh| lh + PACING);
 
         match (next_handle_time, self.next_send_time) {
             (Some(nh), Some(ns)) => Some(nh.min(ns)),
@@ -339,7 +309,7 @@ impl Pacer for LeakyBucketPacer {
 
                     *p = p.saturating_sub(packet_size);
 
-                    trace!("LeakyBucketPacer: Requested {packet_size} padding");
+                    trace!("Requested {packet_size} padding");
                     self.next_poll_outcome = Some(PollOutcome::PollPadding(
                         queue_id,
                         packet_size.as_bytes_usize(),
@@ -379,23 +349,19 @@ impl Pacer for LeakyBucketPacer {
         self.last_send_time = Some(now);
 
         self.media_debt += packet_size;
-        self.media_debt = self
-            .media_debt
-            .min(self.adjusted_bitrate * MAX_DEBT_IN_TIME);
+        self.media_debt = self.media_debt.min(self.adjusted_rate * MAX_DEBT_IN_TIME);
         crate::packet::bwe::macros::log_pacer_media_debt!(self.media_debt.as_bytes_usize());
         self.add_padding_debt(packet_size);
     }
 }
 
 impl LeakyBucketPacer {
-    pub fn new(initial_pacing_bitrate: Bitrate, pacing: Duration) -> Self {
+    pub fn new(target_rate: Bitrate) -> Self {
         const DEFAULT_QUEUE_LIMIT: Duration = Duration::from_secs(2);
 
         Self {
-            pacing_bitrate: initial_pacing_bitrate,
-            adjusted_bitrate: Bitrate::ZERO,
-            padding_bitrate: Bitrate::ZERO,
-            last_non_zero_padding_bitrate: None,
+            target_rate,
+            adjusted_rate: Bitrate::ZERO,
             last_handle_time: None,
             last_send_time: None,
             next_send_time: None,
@@ -403,7 +369,6 @@ impl LeakyBucketPacer {
             padding_debt: DataSize::ZERO,
             padding_to_add: DataSize::ZERO,
             consecutive_padding_packets_sent: 0,
-            pacing,
             queue_limit: DEFAULT_QUEUE_LIMIT,
             queue_states: vec![],
             need_immediate_timeout: false,
@@ -425,14 +390,8 @@ impl LeakyBucketPacer {
     }
 
     fn clear_debt(&mut self, elapsed: Duration) {
-        self.media_debt = self
-            .media_debt
-            .saturating_sub(self.adjusted_bitrate * elapsed);
-        self.padding_debt = self.padding_debt.saturating_sub(
-            self.last_non_zero_padding_bitrate
-                .unwrap_or(self.padding_bitrate)
-                * elapsed,
-        );
+        self.media_debt = self.media_debt.saturating_sub(self.adjusted_rate * elapsed);
+        self.padding_debt = self.padding_debt.saturating_sub(self.target_rate * elapsed);
         crate::packet::bwe::macros::log_pacer_media_debt!(self.media_debt.as_bytes_usize());
         crate::packet::bwe::macros::log_pacer_padding_debt!(self.padding_debt.as_bytes_usize());
     }
@@ -474,8 +433,8 @@ impl LeakyBucketPacer {
             self.consecutive_padding_packets_sent >= MAX_CONSECUTIVE_PADDING_PACKETS;
         match (
             non_empty_queue,
-            self.adjusted_bitrate,
-            self.padding_bitrate,
+            self.adjusted_rate,
+            self.target_rate,
             self.padding_to_add,
         ) {
             (None, _, _, padding_to_add)
@@ -491,12 +450,12 @@ impl LeakyBucketPacer {
                 (now, queue, true)
             }
             (Some(queue), bitrate, _, _)
-                if bitrate > Bitrate::ZERO && self.adjusted_bitrate > Bitrate::ZERO =>
+                if bitrate > Bitrate::ZERO && self.adjusted_rate > Bitrate::ZERO =>
             {
                 // If we have a non-empty queue send on it as soon as possible, possibly waiting
                 // for the next pacing interval.
-                let drain_debt_time = self.media_debt / self.adjusted_bitrate;
-                let next_send_offset = if drain_debt_time > self.pacing {
+                let drain_debt_time = self.media_debt / self.adjusted_rate;
+                let next_send_offset = if drain_debt_time > PACING {
                     // If we have incurred too much debt we need to wait to let it clear out before sending
                     // again.
                     drain_debt_time
@@ -515,13 +474,13 @@ impl LeakyBucketPacer {
             (None, _, padding_bitrate, padding_to_add)
                 if padding_bitrate > Bitrate::ZERO
                     && padding_to_add == DataSize::ZERO
-                    && self.adjusted_bitrate > Bitrate::ZERO
+                    && self.adjusted_rate > Bitrate::ZERO
                     && !too_many_padding_packets =>
             {
-                // If all queues are empty and we have a padding rate wait until we have drained
+                // If all queues are empty and we have a target rate wait until we have drained
                 // either the media debt to send media or the padding debt to send padding.
-                let mut drain_debt_time = (self.media_debt / self.adjusted_bitrate)
-                    .max(self.padding_debt / padding_bitrate);
+                let mut drain_debt_time =
+                    (self.media_debt / self.adjusted_rate).max(self.padding_debt / padding_bitrate);
                 let padding_queue = self
                     .queue_states
                     .iter()
@@ -544,9 +503,7 @@ impl LeakyBucketPacer {
                 // Early return, wait until next handle time or a new packet being added in the
                 // queue(s).
                 (
-                    self.last_handle_time
-                        .map(|h| h + self.pacing)
-                        .unwrap_or(now),
+                    self.last_handle_time.map(|h| h + PACING).unwrap_or(now),
                     None,
                     false,
                 )
@@ -555,7 +512,7 @@ impl LeakyBucketPacer {
     }
 
     fn maybe_update_adjusted_bitrate(&mut self, now: Instant) {
-        self.adjusted_bitrate = self.pacing_bitrate;
+        self.adjusted_rate = self.target_rate;
 
         let (queue_time, queued_packets, queue_size) =
             self.queue_states
@@ -571,14 +528,14 @@ impl LeakyBucketPacer {
         if queued_packets == 0 {
             let should_send_padding = self.padding_debt == DataSize::ZERO
                 && self.media_debt == DataSize::ZERO
-                && self.padding_bitrate > Bitrate::ZERO
+                && self.target_rate > Bitrate::ZERO
                 && self.last_send_time.is_some()
                 && self.padding_to_add == DataSize::ZERO
                 && self.consecutive_padding_packets_sent < MAX_CONSECUTIVE_PADDING_PACKETS;
 
             if should_send_padding {
                 // No queues and no debt, generate some padding.
-                let padding_to_add = self.padding_bitrate * PADDING_BURST_INTERVAL;
+                let padding_to_add = self.target_rate * PADDING_BURST_INTERVAL;
 
                 trace!("Set padding_to_add to {padding_to_add}");
 
@@ -594,21 +551,22 @@ impl LeakyBucketPacer {
             Duration::from_millis(1).max(self.queue_limit.saturating_sub(avg_queue_time));
         // Min data rate to drain what's currently in the queue.
         let min_rate = queue_size / target_queue_wait;
-        if min_rate > self.adjusted_bitrate {
+        if min_rate > self.adjusted_rate {
             // Min rate exceeds our pacing rate, increase the rate to force drain the queue.
-            self.adjusted_bitrate = min_rate.clamp(Bitrate::ZERO, MAX_BITRATE);
+            self.adjusted_rate = min_rate.clamp(Bitrate::ZERO, MAX_BITRATE);
             trace!(
-                "LeakyBucketPacer: Increased rate above pacing rate {} to {} in order to drain queue of size {}. Aim to drain each packet in the next {:?} on average",
-                self.pacing_bitrate, self.adjusted_bitrate, queue_size, target_queue_wait
+                "Adjusted rate above send rate {} to {} since queue size: {}. Target wait {:?}",
+                self.target_rate,
+                self.adjusted_rate,
+                queue_size,
+                target_queue_wait
             );
         }
     }
 
     fn add_padding_debt(&mut self, size: DataSize) {
         self.padding_debt += size;
-        self.padding_debt = self
-            .padding_debt
-            .min(self.padding_bitrate * MAX_DEBT_IN_TIME);
+        self.padding_debt = self.padding_debt.min(self.target_rate * MAX_DEBT_IN_TIME);
         crate::packet::bwe::macros::log_pacer_padding_debt!(self.padding_debt.as_bytes_usize());
     }
 }
@@ -690,7 +648,7 @@ mod test {
         let now = Instant::now();
         let mut queue = Queue::default();
         // 2,000 bits per second, 10 bytes per pacing interval(40ms)
-        let mut pacer = LeakyBucketPacer::new((10 * 200).into(), duration_ms(40));
+        let mut pacer = LeakyBucketPacer::new((10 * 200).into());
         pacer.handle_timeout(now + duration_ms(1), queue.queue_state(now));
         queue.update_average_queue_time(now + duration_ms(1));
 
@@ -842,7 +800,7 @@ mod test {
         let now = Instant::now();
         let mut queue = Queue::default();
         // 2,000 bits per second, 10 bytes per pacing interval(40ms)
-        let mut pacer = LeakyBucketPacer::new((10 * 200).into(), duration_ms(40));
+        let mut pacer = LeakyBucketPacer::new((10 * 200).into());
         pacer.handle_timeout(now + duration_ms(1), queue.queue_state(now));
         queue.update_average_queue_time(now + duration_ms(1));
 
@@ -958,11 +916,10 @@ mod test {
     fn test_padding_fill_in() {
         let now = Instant::now();
         let mut queue = Queue::default();
-        let mut pacer = LeakyBucketPacer::new((10 * 200).into(), duration_ms(40));
+        let mut pacer = LeakyBucketPacer::new((10 * 200).into());
         // 2,000 bits per second, 10 bytes per pacing interval(40ms) with padding at 3,000 bits per
         // second, 15 bytes per pacing interval(40ms)
-        pacer.set_pacing_rate((10 * 200).into());
-        pacer.set_padding_rate((15 * 200).into());
+        pacer.set_target_rate((15 * 200).into());
         pacer.handle_timeout(now + duration_ms(1), queue.queue_state(now));
         queue.update_average_queue_time(now + duration_ms(1));
 

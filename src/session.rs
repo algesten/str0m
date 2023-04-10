@@ -27,8 +27,10 @@ const NACK_MIN_INTERVAL: Duration = Duration::from_millis(100);
 // Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(100);
 
-const PACING_FACTOR: f64 = 1.1;
-const PADDING_FACTOR: f64 = 1.0;
+// The target bitrate must be slightly above an estimated bitrate
+// so that the pacer tries to "push upwards" when below the
+// desired bitrate.
+const PADDING_FACTOR: f64 = 1.1;
 
 pub(crate) struct Session {
     id: SessionId,
@@ -105,17 +107,13 @@ impl Session {
         while *id > MAX_ID {
             id = (*id >> 1).into();
         }
-        let (pacer, bwe) = if let Some(rate) = config.bwe_initial_bitrate {
-            let pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(
-                rate * PACING_FACTOR * 2.0,
-                Duration::from_millis(40),
-            ));
+        let (pacer, bwe) = if let Some(target_rate) = config.bwe_target_rate {
+            let pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(target_rate));
 
-            let send_side_bwe = SendSideBandwithEstimator::new(rate);
+            let send_side_bwe = SendSideBandwithEstimator::new(target_rate);
             let bwe = Bwe {
                 bwe: send_side_bwe,
                 desired_bitrate: Bitrate::ZERO,
-                current_bitrate: rate,
             };
 
             (pacer, Some(bwe))
@@ -857,13 +855,6 @@ impl Session {
         snapshot.bwe_tx = self.bwe.as_ref().and_then(|bwe| bwe.last_estimate());
     }
 
-    pub fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {
-        if let Some(bwe) = self.bwe.as_mut() {
-            bwe.current_bitrate = current_bitrate;
-            self.configure_pacer();
-        }
-    }
-
     pub fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
         if let Some(bwe) = self.bwe.as_mut() {
             bwe.desired_bitrate = desired_bitrate;
@@ -889,28 +880,22 @@ impl Session {
             return;
         };
 
-        let padding_rate = bwe
-            .last_estimate()
-            .map(|estimate| (estimate * PADDING_FACTOR).min(bwe.desired_bitrate))
-            .unwrap_or(Bitrate::ZERO);
+        let target_rate = if let Some(estimate) = bwe.last_estimate() {
+            // The estimate should be inflated with a factor to make the
+            // pacer strive upwards. If we reach desired bitrate we stop.
+            (estimate * PADDING_FACTOR).min(bwe.desired_bitrate)
+        } else {
+            // Until we have an estimate, go with desired.
+            bwe.desired_bitrate
+        };
 
-        self.pacer.set_padding_rate(padding_rate);
-
-        // We pad up to the pacing rate, therefore we need to increase pacing if the estimate, and
-        // thus the padding rate, exceeds the current bitrate adjusted with the pacing factor.
-        // Otherwise we can have a case where the current bitrate is 250Kbit/s resulting in a
-        // pacing rate of 275KBit/s which means we'll only ever pad about 25Kbit/s. If the estimate
-        // is actually 600Kbit/s we need to use that for the pacing rate to ensure we send as much as
-        // we think the link capacity can sustain, if not the estimate is a lie.
-        let pacing_rate = (bwe.current_bitrate * PACING_FACTOR).max(padding_rate);
-        self.pacer.set_pacing_rate(pacing_rate);
+        self.pacer.set_target_rate(target_rate);
     }
 }
 
 struct Bwe {
     bwe: SendSideBandwithEstimator,
     desired_bitrate: Bitrate,
-    current_bitrate: Bitrate,
 }
 
 impl Bwe {
