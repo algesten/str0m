@@ -45,7 +45,6 @@ impl ServerConnection {
 }
 
 async fn free(url: Url, client_id: ClientId) -> anyhow::Result<()> {
-    info!("drop3");
     let client = Client::new();
     let mut url = url.clone();
     url.set_path("free");
@@ -61,10 +60,9 @@ async fn free(url: Url, client_id: ClientId) -> anyhow::Result<()> {
 
 impl Drop for ServerConnection {
     fn drop(&mut self) {
-        info!("drop1");
         if let Some(client_id) = self.client_id {
-            info!("drop2");
             tokio::spawn(free(self.url.clone(), client_id));
+            // TODO(xnorpx): should we sleep here to give it time?
         }
     }
 }
