@@ -11,7 +11,6 @@ const MAX_BITRATE: Bitrate = Bitrate::gbps(10);
 const MAX_DEBT_IN_TIME: Duration = Duration::from_millis(500);
 const MAX_PADDING_PACKET_SIZE: DataSize = DataSize::bytes(224);
 const PADDING_BURST_INTERVAL: Duration = Duration::from_millis(5);
-const MAX_CONSECUTIVE_PADDING_PACKETS: usize = u16::MAX as usize;
 const PACING: Duration = Duration::from_millis(40);
 
 pub enum PacerImpl {
@@ -222,9 +221,6 @@ pub struct LeakyBucketPacer {
     /// When this is set to a non-zero value we return padding until we have added as much padding as specified by this
     /// value. The reason for this is that we want to send padding as bursts when we do send it.
     padding_to_add: DataSize,
-    /// Number padding packets sent since the last media. Used to limit the total size of padding bursts we send
-    /// without interleaving some media.
-    consecutive_padding_packets_sent: usize,
     /// The longest the average packet can spend in the queue before we force it to be drained.
     queue_limit: Duration,
     /// The queue states given by last handle_timeout.
@@ -333,11 +329,9 @@ impl Pacer for LeakyBucketPacer {
         match next {
             PollOutcome::PollQueue(_) => {
                 self.need_immediate_timeout = true;
-                self.consecutive_padding_packets_sent = 0;
             }
             PollOutcome::PollPadding(_, _) => {
                 self.need_immediate_timeout = true;
-                self.consecutive_padding_packets_sent += 1;
             }
             _ => {}
         }
@@ -368,7 +362,6 @@ impl LeakyBucketPacer {
             media_debt: DataSize::ZERO,
             padding_debt: DataSize::ZERO,
             padding_to_add: DataSize::ZERO,
-            consecutive_padding_packets_sent: 0,
             queue_limit: DEFAULT_QUEUE_LIMIT,
             queue_states: vec![],
             need_immediate_timeout: false,
@@ -429,17 +422,13 @@ impl LeakyBucketPacer {
             queues.min_by_key(|q| q.snapshot.last_emitted)
         };
 
-        let too_many_padding_packets =
-            self.consecutive_padding_packets_sent >= MAX_CONSECUTIVE_PADDING_PACKETS;
         match (
             non_empty_queue,
             self.adjusted_rate,
             self.target_rate,
             self.padding_to_add,
         ) {
-            (None, _, _, padding_to_add)
-                if padding_to_add > DataSize::ZERO && !too_many_padding_packets =>
-            {
+            (None, _, _, padding_to_add) if padding_to_add > DataSize::ZERO => {
                 // If we have padding to send, send it on the most recently used queue.
                 let queue = self
                     .queue_states
@@ -474,8 +463,7 @@ impl LeakyBucketPacer {
             (None, _, padding_bitrate, padding_to_add)
                 if padding_bitrate > Bitrate::ZERO
                     && padding_to_add == DataSize::ZERO
-                    && self.adjusted_rate > Bitrate::ZERO
-                    && !too_many_padding_packets =>
+                    && self.adjusted_rate > Bitrate::ZERO =>
             {
                 // If all queues are empty and we have a target rate wait until we have drained
                 // either the media debt to send media or the padding debt to send padding.
@@ -531,7 +519,7 @@ impl LeakyBucketPacer {
                 && self.target_rate > Bitrate::ZERO
                 && self.last_send_time.is_some()
                 && self.padding_to_add == DataSize::ZERO
-                && self.consecutive_padding_packets_sent < MAX_CONSECUTIVE_PADDING_PACKETS;
+                && self.adjusted_rate == self.target_rate;
 
             if should_send_padding {
                 // No queues and no debt, generate some padding.
@@ -552,14 +540,13 @@ impl LeakyBucketPacer {
         // Min data rate to drain what's currently in the queue.
         let min_rate = queue_size / target_queue_wait;
         if min_rate > self.adjusted_rate {
+            // No padding while we flush the queue
+            self.padding_to_add = DataSize::ZERO;
             // Min rate exceeds our pacing rate, increase the rate to force drain the queue.
             self.adjusted_rate = min_rate.clamp(Bitrate::ZERO, MAX_BITRATE);
-            trace!(
+            warn!(
                 "Adjusted rate above send rate {} to {} since queue size: {}. Target wait {:?}",
-                self.target_rate,
-                self.adjusted_rate,
-                queue_size,
-                target_queue_wait
+                self.target_rate, self.adjusted_rate, queue_size, target_queue_wait
             );
         }
     }

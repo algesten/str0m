@@ -40,9 +40,6 @@ pub struct SendSideBandwithEstimator {
     /// Last unpolled bitrate estimate. [`None`] before the first poll and after each poll that,
     /// updated when we get a new estimate.
     next_estimate: Option<Bitrate>,
-    /// Last estimate produced, unlike [`next_estimate`] this will always have a value after the
-    /// first estimate.
-    last_estimate: Option<Bitrate>,
     /// History of the max RTT derived for each TWCC report.
     max_rtt_history: VecDeque<Duration>,
 
@@ -61,7 +58,6 @@ impl SendSideBandwithEstimator {
             ),
             rate_control: RateControl::new(initial_bitrate, Bitrate::kbps(40), Bitrate::gbps(10)),
             next_estimate: None,
-            last_estimate: None,
             max_rtt_history: VecDeque::default(),
             last_update: already_happened(),
         }
@@ -133,11 +129,6 @@ impl SendSideBandwithEstimator {
         );
     }
 
-    /// Get the latest estimate.
-    pub(crate) fn last_estimate(&self) -> Option<Bitrate> {
-        self.last_estimate
-    }
-
     fn add_max_rtt(&mut self, max_rtt: Duration) {
         while self.max_rtt_history.len() > MAX_RTT_HISTORY_WINDOW {
             self.max_rtt_history.pop_front();
@@ -172,7 +163,6 @@ impl SendSideBandwithEstimator {
 
             crate::packet::bwe::macros::log_bitrate_estimate!(estimated_rate.as_f64());
             self.next_estimate = Some(estimated_rate);
-            self.last_estimate = Some(estimated_rate);
         }
 
         // Set this even if we didn't update, otherwise we get stuck in a poll -> handle loop

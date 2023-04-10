@@ -34,13 +34,21 @@ where
         self.drain(t);
     }
 
-    /// Returns the sum of the values more recent than given Instant
-    pub fn sum_since(&self, t: Instant) -> T {
+    fn timed_values_since(&self, t: Instant) -> impl Iterator<Item = T> + '_ {
         self.history
             .iter()
-            .filter(|(vt, _)| vt >= &t)
+            .rev()
+            .take_while(move |(vt, _)| *vt >= t)
             .map(|(_, v)| *v)
-            .sum()
+    }
+
+    /// Returns the sum of the values more recent than given Instant
+    pub fn sum_since(&self, t: Instant) -> T {
+        self.timed_values_since(t).sum()
+    }
+
+    pub fn count_since(&self, t: Instant) -> usize {
+        self.timed_values_since(t).count()
     }
 
     fn drain(&mut self, t: Instant) -> Option<()> {

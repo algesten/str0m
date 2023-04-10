@@ -13,6 +13,7 @@ use crate::rtp::{extend_u32, SRTCP_OVERHEAD};
 use crate::rtp::{Bitrate, ExtensionMap, MediaTime, Mid, Rtcp, RtcpFb};
 use crate::rtp::{SrtpContext, SrtpKey, Ssrc};
 use crate::stats::StatsSnapshot;
+use crate::util::value_history::ValueHistory;
 use crate::util::{already_happened, not_happening, Soonest};
 use crate::{net, KeyframeRequest, MediaData};
 use crate::{RtcConfig, RtcError};
@@ -30,7 +31,10 @@ const TWCC_INTERVAL: Duration = Duration::from_millis(100);
 // The target bitrate must be slightly above an estimated bitrate
 // so that the pacer tries to "push upwards" when below the
 // desired bitrate.
-const PADDING_FACTOR: f64 = 1.1;
+const PADDING_OVER: Bitrate = Bitrate::kbps(5);
+
+// Avoid changing the BWE unless the new value is outside some tolerance.
+const ESTIMATE_TOLERANCE: f64 = 0.2;
 
 pub(crate) struct Session {
     id: SessionId,
@@ -110,11 +114,7 @@ impl Session {
         let (pacer, bwe) = if let Some(target_rate) = config.bwe_target_rate {
             let pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(target_rate));
 
-            let send_side_bwe = SendSideBandwithEstimator::new(target_rate);
-            let bwe = Bwe {
-                bwe: send_side_bwe,
-                desired_bitrate: Bitrate::ZERO,
-            };
+            let bwe = Bwe::new(target_rate);
 
             (pacer, Some(bwe))
         } else {
@@ -240,7 +240,9 @@ impl Session {
             .map(|m| m.buffers_tx_queue_state(now));
         self.pacer.handle_timeout(now, iter);
         if let Some(bwe) = self.bwe.as_mut() {
-            bwe.handle_timeout(now);
+            if bwe.handle_timeout(now) {
+                self.configure_pacer();
+            }
         }
 
         Ok(())
@@ -539,9 +541,6 @@ impl Session {
                         bwe.update(records, now);
                     }
                 }
-                // Not in the above if due to lifetime issues, still okay because the method
-                // doesn't do anything when BWE isn't configured.
-                self.configure_pacer();
 
                 return Some(());
             }
@@ -852,13 +851,15 @@ impl Session {
         }
         snapshot.tx = snapshot.egress.values().map(|s| s.bytes).sum();
         snapshot.rx = snapshot.ingress.values().map(|s| s.bytes).sum();
-        snapshot.bwe_tx = self.bwe.as_ref().and_then(|bwe| bwe.last_estimate());
+        snapshot.bwe_tx = self.bwe.as_ref().map(|bwe| bwe.smoothed);
     }
 
     pub fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
         if let Some(bwe) = self.bwe.as_mut() {
-            bwe.desired_bitrate = desired_bitrate;
-            self.configure_pacer();
+            if desired_bitrate != bwe.desired_bitrate {
+                bwe.desired_bitrate = desired_bitrate;
+                self.configure_pacer();
+            }
         }
     }
 
@@ -880,10 +881,14 @@ impl Session {
             return;
         };
 
-        let target_rate = if let Some(estimate) = bwe.last_estimate() {
+        let last = bwe.smoothed;
+
+        let target_rate = if last != Bitrate::ZERO {
             // The estimate should be inflated with a factor to make the
             // pacer strive upwards. If we reach desired bitrate we stop.
-            (estimate * PADDING_FACTOR).min(bwe.desired_bitrate)
+            let t = (last + PADDING_OVER).min(bwe.desired_bitrate);
+
+            t
         } else {
             // Until we have an estimate, go with desired.
             bwe.desired_bitrate
@@ -896,11 +901,34 @@ impl Session {
 struct Bwe {
     bwe: SendSideBandwithEstimator,
     desired_bitrate: Bitrate,
+    estimate_history: ValueHistory<f64>,
+    estimate_updated: Instant,
+    smoothed: Bitrate,
+    emitted: Bitrate,
+    emit: bool,
 }
 
 impl Bwe {
-    fn handle_timeout(&mut self, now: Instant) {
+    fn new(initial_bitrate: Bitrate) -> Self {
+        let send_side_bwe = SendSideBandwithEstimator::new(initial_bitrate);
+
+        Bwe {
+            bwe: send_side_bwe,
+            desired_bitrate: Bitrate::ZERO,
+            estimate_history: ValueHistory::new(
+                Bitrate::kbps(500).as_f64(),
+                Duration::from_secs(5),
+            ),
+            estimate_updated: already_happened(),
+            smoothed: Bitrate::ZERO,
+            emitted: Bitrate::ZERO,
+            emit: false,
+        }
+    }
+
+    fn handle_timeout(&mut self, now: Instant) -> bool {
         self.bwe.handle_timeout(now);
+        self.update_estimate(now)
     }
 
     pub(crate) fn update<'t>(
@@ -911,15 +939,61 @@ impl Bwe {
         self.bwe.update(records, now);
     }
 
+    fn update_estimate(&mut self, now: Instant) -> bool {
+        let Some(next) = self.bwe.poll_estimate() else {
+            return false;
+        };
+        self.estimate_history.push(now, next.as_f64());
+
+        if now - self.estimate_updated < Duration::from_millis(250) {
+            return false;
+        }
+        self.estimate_updated = now;
+
+        const WEIGHTS: &[(Duration, f64)] = &[
+            (Duration::from_millis(500), 1.0),
+            (Duration::from_millis(1000), 2.0),
+            (Duration::from_millis(2000), 3.0),
+        ];
+
+        let nominator: f64 = WEIGHTS
+            .iter()
+            .map(|(d, w)| {
+                let total = self.estimate_history.sum_since(now - *d);
+                let count = self.estimate_history.count_since(now - *d) as f64;
+                let average = total / count;
+                average * w
+            })
+            .sum();
+        let denominator: f64 = WEIGHTS.iter().map(|(_, w)| w).sum();
+        let smoothed: Bitrate = (nominator / denominator).into();
+
+        self.smoothed = smoothed;
+
+        let arbitrarily_deflated = smoothed * 0.6;
+
+        let low = self.emitted * (1.0 - ESTIMATE_TOLERANCE);
+        let high = self.emitted * (1.0 + ESTIMATE_TOLERANCE);
+
+        if arbitrarily_deflated < low || arbitrarily_deflated > high {
+            info!("New bandwidth estimate: {}", smoothed);
+            self.emitted = arbitrarily_deflated;
+            self.emit = true;
+        }
+
+        true
+    }
+
     fn poll_estimate(&mut self) -> Option<Bitrate> {
-        self.bwe.poll_estimate()
+        if self.emit {
+            self.emit = false;
+            Some(self.smoothed)
+        } else {
+            None
+        }
     }
 
     fn poll_timeout(&self) -> Instant {
         self.bwe.poll_timeout()
-    }
-
-    fn last_estimate(&self) -> Option<Bitrate> {
-        self.bwe.last_estimate()
     }
 }

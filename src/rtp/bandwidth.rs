@@ -72,6 +72,14 @@ impl From<f64> for Bitrate {
     }
 }
 
+impl Add<Bitrate> for Bitrate {
+    type Output = Bitrate;
+
+    fn add(self, rhs: Bitrate) -> Self::Output {
+        Bitrate(self.0 + rhs.0)
+    }
+}
+
 impl Mul<Duration> for Bitrate {
     type Output = DataSize;
 
