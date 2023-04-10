@@ -40,7 +40,6 @@ pub(crate) use bwe::SendSideBandwithEstimator;
 
 mod pacer;
 pub(crate) use pacer::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl, PollOutcome};
-pub(crate) use pacer::{QueueSnapshot, QueueState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Types of media.

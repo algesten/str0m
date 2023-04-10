@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::rtp::{Bitrate, DataSize, Mid};
-use crate::util::not_happening;
+use crate::rtp::{Bitrate, DataSize, Mid, PacketizedId};
+use crate::util::{already_happened, not_happening};
 
 use super::MediaKind;
 
@@ -12,6 +12,25 @@ const MAX_DEBT_IN_TIME: Duration = Duration::from_millis(500);
 const MAX_PADDING_PACKET_SIZE: DataSize = DataSize::bytes(224);
 const PADDING_BURST_INTERVAL: Duration = Duration::from_millis(5);
 const MAX_CONSECUTIVE_PADDING_PACKETS: usize = u16::MAX as usize;
+
+pub struct ToSendMeta {
+    pub mid: Mid,
+    pub id: PacketizedId,
+    pub size: DataSize,
+    pub since: Instant,
+}
+
+impl Default for ToSendMeta {
+    fn default() -> Self {
+        Self {
+            //
+            id: 0.into(),
+            mid: "".into(),
+            size: 0_usize.into(),
+            since: already_happened(),
+        }
+    }
+}
 
 pub enum PacerImpl {
     Null(NullPacer),
@@ -97,48 +116,6 @@ pub trait Pacer {
     fn register_send(&mut self, now: Instant, packet_size: DataSize, from: Mid);
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct QueueSnapshot {
-    /// Time this snapshot was made
-    pub created_at: Instant,
-    /// The total byte size of the snapshot.
-    pub size: usize,
-    /// The total number of packets in the queue.
-    /// NB: This is not a [`usize`] because it will later be used to divide a [`Duration`], for which
-    /// [`usize`] isn't implement. If the queues end up with 2^32 packets something has gone very wrong
-    /// in any case.
-    pub packet_count: u32,
-    /// Accumulation of all queue time at the time point `created_at`. To use this
-    /// Look at `total_queue_time(now)` which allows getting the queue time at a later Instant.
-    pub total_queue_time_origin: Duration,
-    /// Last time something was emitted from this queue.
-    pub last_emitted: Option<Instant>,
-    /// Time the first unsent packet has spent in the queue.
-    pub first_unsent: Option<Instant>,
-}
-
-impl QueueSnapshot {
-    /// Whether anything has ever been sent on this queue.
-    ///
-    /// Used to ensure we don't send padding before sending the first bits of media.
-    pub fn has_ever_sent(&self) -> bool {
-        self.last_emitted.is_some()
-    }
-}
-
-impl Default for QueueSnapshot {
-    fn default() -> Self {
-        Self {
-            created_at: not_happening(),
-            size: Default::default(),
-            packet_count: Default::default(),
-            total_queue_time_origin: Default::default(),
-            last_emitted: Default::default(),
-            first_unsent: Default::default(),
-        }
-    }
-}
-
 /// The state of a single upstream queue.
 /// The pacer manages packets across several upstream queues.
 #[derive(Debug, Clone, Copy)]
@@ -146,7 +123,22 @@ pub struct QueueState {
     pub mid: Mid,
     pub is_audio: bool,
     pub use_for_padding: bool,
-    pub snapshot: QueueSnapshot,
+    /// The total byte size of the snapshot.
+    pub size: usize,
+    /// The total number of packets in the queue.
+    /// NB: This is not a [`usize`] because it will later be used to divide a [`Duration`], for which
+    /// [`usize`] isn't implement. If the queues end up with 2^32 packets something has gone very wrong
+    /// in any case.
+    pub packet_count: u32,
+    /// Last time something was emitted from this queue.
+    pub last_emitted: Option<Instant>,
+    /// Time the first unsent packet has spent in the queue.
+    pub first_unsent: Option<Instant>,
+}
+impl QueueState {
+    fn total_queue_time(&self, now: Instant) -> Duration {
+        todo!()
+    }
 }
 
 /// The outcome of a call to [`Pacer::poll_action`].
@@ -190,10 +182,7 @@ impl Pacer for NullPacer {
     }
 
     fn poll_action(&mut self) -> PollOutcome {
-        let non_empty_queues = self
-            .queue_states
-            .iter()
-            .filter(|q| q.snapshot.packet_count > 0);
+        let non_empty_queues = self.queue_states.iter().filter(|q| q.packet_count > 0);
         // Pick a queue using round robin, prioritize the least recently sent on queue.
         let to_send_on = non_empty_queues.min_by_key(|q| self.last_sends.get(&q.mid));
 
@@ -308,11 +297,7 @@ impl Pacer for LeakyBucketPacer {
         let (next_send_time, queue, send_padding) = self.next_action(now);
 
         if now < next_send_time {
-            let total_packet_count: u32 = self
-                .queue_states
-                .iter()
-                .map(|q| q.snapshot.packet_count)
-                .sum();
+            let total_packet_count: u32 = self.queue_states.iter().map(|q| q.packet_count).sum();
             if total_packet_count > 0 {
                 let diff = next_send_time.saturating_duration_since(now);
                 debug!(?now, ?diff, ?next_send_time, "Delaying send");
@@ -436,10 +421,7 @@ impl LeakyBucketPacer {
     fn next_action(&self, now: Instant) -> (Instant, Option<&QueueState>, bool) {
         // If we have never sent before, do so immediately on an arbitrary non-empty queue.
         if self.last_send_time.is_none() {
-            let mut queues = self
-                .queue_states
-                .iter()
-                .filter(|q| q.snapshot.packet_count > 0);
+            let mut queues = self.queue_states.iter().filter(|q| q.packet_count > 0);
 
             return (now, queues.next(), false);
         };
@@ -448,7 +430,7 @@ impl LeakyBucketPacer {
             .queue_states
             .iter()
             .filter(|qs| qs.is_audio)
-            .filter_map(|qs| (qs.snapshot.first_unsent.map(|t| (t, qs))))
+            .filter_map(|qs| (qs.first_unsent.map(|t| (t, qs))))
             .min_by_key(|(t, _)| *t);
 
         // Audio packets are not paced, immediately send.
@@ -460,10 +442,10 @@ impl LeakyBucketPacer {
             let queues = self
                 .queue_states
                 .iter()
-                .filter(|q| q.snapshot.packet_count > 0 && !q.is_audio);
+                .filter(|q| q.packet_count > 0 && !q.is_audio);
 
             // Send on the non-empty video queue that sent least recently.
-            queues.min_by_key(|q| q.snapshot.last_emitted)
+            queues.min_by_key(|q| q.last_emitted)
         };
 
         let too_many_padding_packets =
@@ -482,7 +464,7 @@ impl LeakyBucketPacer {
                     .queue_states
                     .iter()
                     .filter(|q| q.use_for_padding)
-                    .max_by_key(|q| q.snapshot.last_emitted);
+                    .max_by_key(|q| q.last_emitted);
 
                 (now, queue, true)
             }
@@ -522,7 +504,7 @@ impl LeakyBucketPacer {
                     .queue_states
                     .iter()
                     .filter(|q| q.use_for_padding)
-                    .max_by_key(|q| q.snapshot.last_emitted);
+                    .max_by_key(|q| q.last_emitted);
 
                 if drain_debt_time.is_zero() {
                     drain_debt_time = Duration::from_millis(1);
@@ -558,9 +540,9 @@ impl LeakyBucketPacer {
                 .iter()
                 .fold((Duration::ZERO, 0, DataSize::ZERO), |acc, q| {
                     (
-                        acc.0 + q.snapshot.total_queue_time(now),
-                        acc.1 + q.snapshot.packet_count,
-                        acc.2 + DataSize::from(q.snapshot.size),
+                        acc.0 + q.total_queue_time(now),
+                        acc.1 + q.packet_count,
+                        acc.2 + DataSize::from(q.size),
                     )
                 });
 
@@ -606,27 +588,6 @@ impl LeakyBucketPacer {
             .padding_debt
             .min(self.padding_bitrate * MAX_DEBT_IN_TIME);
         crate::packet::bwe::macros::log_pacer_padding_debt!(self.padding_debt.as_bytes_usize());
-    }
-}
-
-impl QueueSnapshot {
-    /// Merge other into self.
-    pub fn merge(&mut self, other: &Self) {
-        self.created_at = self.created_at.min(other.created_at);
-        self.size += other.size;
-        self.packet_count += other.packet_count;
-        self.total_queue_time_origin += other.total_queue_time_origin;
-        self.last_emitted = self.last_emitted.max(other.last_emitted);
-        self.first_unsent = match (self.first_unsent, other.first_unsent) {
-            (None, None) => None,
-            (None, Some(v2)) => Some(v2),
-            (Some(v1), None) => Some(v1),
-            (Some(v1), Some(v2)) => Some(v1.min(v2)),
-        };
-    }
-
-    fn total_queue_time(&self, now: Instant) -> Duration {
-        self.total_queue_time_origin + self.packet_count * (now - self.created_at)
     }
 }
 
@@ -1036,49 +997,6 @@ mod test {
         );
     }
 
-    #[test]
-    fn test_queue_state_merge() {
-        let now = Instant::now();
-
-        let mut state = QueueState {
-            mid: Mid::from("001"),
-            is_audio: false,
-            use_for_padding: true,
-            snapshot: QueueSnapshot {
-                created_at: now,
-                size: 10_usize,
-                packet_count: 1332,
-                total_queue_time_origin: duration_ms(1_000),
-                last_emitted: Some(now + duration_ms(500)),
-                first_unsent: None,
-            },
-        };
-
-        let other = QueueState {
-            mid: Mid::from("002"),
-            is_audio: false,
-            use_for_padding: false,
-            snapshot: QueueSnapshot {
-                created_at: now,
-                size: 30_usize,
-                packet_count: 5,
-                total_queue_time_origin: duration_ms(337),
-                last_emitted: None,
-                first_unsent: Some(now + duration_ms(19)),
-            },
-        };
-
-        state.snapshot.merge(&other.snapshot);
-
-        assert_eq!(state.mid, Mid::from("001"));
-        assert_eq!(state.snapshot.size, 40_usize);
-        assert_eq!(state.snapshot.packet_count, 1337);
-        assert_eq!(state.snapshot.total_queue_time_origin, duration_ms(1337));
-
-        assert_eq!(state.snapshot.last_emitted, Some(now + duration_ms(500)));
-        assert_eq!(state.snapshot.first_unsent, Some(now + duration_ms(19)));
-    }
-
     fn assert_poll_success<F>(
         pacer: &mut impl Pacer,
         queue: &mut Queue,
@@ -1301,14 +1219,10 @@ mod test {
                     mid: self.mid,
                     is_audio: self.is_audio,
                     use_for_padding: !self.is_audio && self.last_send_time.is_some(),
-                    snapshot: QueueSnapshot {
-                        created_at: now,
-                        size: self.queue.iter().map(QueuedPacket::size).sum(),
-                        packet_count: self.packet_count,
-                        total_queue_time_origin: self.total_time_spent_queued,
-                        last_emitted: self.last_send_time,
-                        first_unsent: self.queue.iter().next().map(|p| p.queued_at),
-                    },
+                    size: self.queue.iter().map(QueuedPacket::size).sum(),
+                    packet_count: self.packet_count,
+                    last_emitted: self.last_send_time,
+                    first_unsent: self.queue.iter().next().map(|p| p.queued_at),
                 }
             }
         }
