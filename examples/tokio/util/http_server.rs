@@ -4,9 +4,11 @@ use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::signal;
 use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
+use tracing::info;
 
 type ClientId = usize;
 type Chunk = Bytes;
+const BROADCAST_CHANNEL_CAPACITY: usize = 10000;
 
 pub struct AppState {
     /// holds senders or rather cancellation tokens
@@ -19,9 +21,8 @@ pub struct AppState {
     next_udp_port: usize,
 }
 
-#[tokio::main]
-async fn main() {
-    let (chunk_channel, _) = broadcast::channel(100);
+pub async fn run_http_server(addr: SocketAddr) {
+    let (chunk_channel, _) = broadcast::channel(BROADCAST_CHANNEL_CAPACITY);
 
     let app_state = Arc::new(Mutex::new(AppState {
         clients: HashMap::default(),
@@ -34,16 +35,16 @@ async fn main() {
         .route("/allocate", post(allocate))
         .route("/free", post(free))
         .with_state(app_state);
-    let addr = SocketAddr::from(([127, 0, 0, 1], 4000));
-    axum::Server::bind(&addr).serve(app.into_make_service());
-    signal::ctrl_c().await;
+
+    tokio::spawn(axum::Server::bind(&addr).serve(app.into_make_service()));
 }
 
 pub async fn allocate(State(state): State<Arc<Mutex<AppState>>>) -> impl IntoResponse {
+    info!("allocate");
     let mut app_state = state.lock().await;
-    app_state.next_client_id += 1;
 }
 
 pub async fn free(State(state): State<Arc<Mutex<AppState>>>) -> impl IntoResponse {
+    info!("free");
     let mut app_state = state.lock().await;
 }
