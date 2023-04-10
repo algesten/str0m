@@ -26,7 +26,7 @@ async fn main() -> anyhow::Result<()> {
     info!("cli: {:?}", cli);
 
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), cli.http_port);
-    run_http_server(addr).await;
+    run_http_server(addr, cli.udp_start_port).await;
 
     info!("Started reflect server");
 

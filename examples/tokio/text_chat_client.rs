@@ -37,6 +37,8 @@ async fn main() -> anyhow::Result<()> {
     let chat_channel_id = change.add_channel("chat".into());
     // TODO(xnorpx): unwrap
     let (offer, pending) = change.apply().unwrap();
+    println!("{:#?}", offer);
+    return Ok(());
     let sdp_answer = server_connection.allocate(offer).await?;
 
     rtc.add_local_candidate(candidate);

@@ -1,6 +1,6 @@
 use super::ClientId;
 use hyper::client::HttpConnector;
-use hyper::{Body, Client, Request};
+use reqwest::{Client, Error};
 use str0m::change::{SdpAnswer, SdpOffer};
 use tracing::info;
 use url::Url;
@@ -21,18 +21,21 @@ impl ServerConnection {
         let client = Client::new();
         let mut url = self.url.clone();
         url.set_path("allocate");
-        let request = Request::builder()
-            .method("POST")
-            .uri(url.to_string())
-            .body(Body::from(serde_json::to_vec(&offer)?))?;
 
-        // Send the request and await the response
-        let response = client.request(request).await?;
+        let response = client.post(url).json(&offer).send().await?;
+        // let client = Client::new();
+        // let request = Request::builder()
+        //     .method("POST")
+        //     .uri(url.to_string())
+        //     .body(Body::from(serde_json::to_vec(&offer)?))?;
 
-        self.client_id = Some(1);
+        // // Send the request and await the response
+        // let response = client.request(request).await?;
 
-        // Extract the response body
-        let body = hyper::body::to_bytes(response.into_body()).await?;
+        // self.client_id = Some(1);
+
+        // // Extract the response body
+        // let body = hyper::body::to_bytes(response.into_body()).await?;
         Ok("".into())
     }
 
@@ -45,15 +48,15 @@ impl ServerConnection {
 }
 
 async fn free(url: Url, client_id: ClientId) -> anyhow::Result<()> {
-    let client = Client::new();
-    let mut url = url.clone();
-    url.set_path("free");
-    let request = Request::builder()
-        .method("POST")
-        .uri(url.to_string())
-        .body(Body::empty())?;
+    // let client = Client::new();
+    // let mut url = url.clone();
+    // url.set_path("free");
+    // let request = Request::builder()
+    //     .method("POST")
+    //     .uri(url.to_string())
+    //     .body(Body::empty())?;
 
-    let _response = client.request(request).await?;
+    // let _response = client.request(request).await?;
 
     Ok(())
 }

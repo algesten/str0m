@@ -46,6 +46,7 @@ axum = { version = "*" }
 bytes = {version = "*" }
 clap = {version = "*", features = ["derive"]}
 hyper = { version = "*", features = ["full"] }
+reqwest = { version = "*", features = ["json"] }
 tokio = { version = "*", features = ["full"] }
 tokio-util = { version = "*" }
 url = {version = "*"}
