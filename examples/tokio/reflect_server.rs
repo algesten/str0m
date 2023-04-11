@@ -4,7 +4,7 @@ use clap::Parser;
 use systemstat::Ipv4Addr;
 use tokio::signal;
 use tracing::{info, level_filters::LevelFilter};
-use util::{http_server::run_http_server, init_log};
+use util::{http_server::run_http_server, init_log, select_host_address};
 
 mod util;
 
@@ -25,8 +25,9 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     info!("cli: {:?}", cli);
 
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), cli.http_port);
-    run_http_server(addr, cli.udp_start_port).await;
+    let ip = select_host_address()?;
+
+    run_http_server(ip, cli.http_port, cli.udp_start_port).await;
 
     info!("Started reflect server");
 
