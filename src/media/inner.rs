@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::change::AddMedia;
 use crate::format::Codec;
+use crate::packet::ToSendMeta;
 pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 
 use crate::io::{Id, DATAGRAM_MTU};
@@ -149,6 +150,11 @@ pub(crate) struct MediaInner {
 
     /// Whether we are running in RTP-mode.
     pub(crate) rtp_mode: bool,
+
+    /// ToSendMeta from writing to a packetizing buffer.
+    ///
+    /// These are moved into the pacer on Session::handle_timeout().
+    to_send_meta: VecDeque<ToSendMeta>,
 }
 
 struct NextPacket<'a> {
@@ -232,6 +238,7 @@ impl MediaInner {
     #[allow(clippy::too_many_arguments)]
     pub fn write(
         &mut self,
+        fucking_counter: &mut u64,
         pt: Pt,
         wallclock: Instant,
         rtp_time: MediaTime,
@@ -286,15 +293,20 @@ impl MediaInner {
 
         if self.rtp_mode {
             let rtp_header = rtp_mode_header.expect("rtp header in rtp mode");
-            buf.push_rtp_packet(data.to_vec(), meta, rtp_header);
+            let v = buf.push_rtp_packet(fucking_counter, data.to_vec(), meta, rtp_header);
+            self.to_send_meta.push_back(v);
         } else {
             const RTP_SIZE: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
             // align to SRTP block size to minimize padding needs
             const MTU: usize = RTP_SIZE - RTP_SIZE % SRTP_BLOCK_SIZE;
 
-            if let Err(e) = buf.push_sample(&data, meta, MTU) {
-                return Err(RtcError::Packet(self.mid, pt, e));
-            }
+            let v = match buf.push_sample(fucking_counter, &data, meta, MTU) {
+                Ok(v) => v,
+                Err(e) => {
+                    return Err(RtcError::Packet(self.mid, pt, e));
+                }
+            };
+            self.to_send_meta.extend(v);
         }
 
         Ok(())
@@ -302,6 +314,7 @@ impl MediaInner {
 
     pub(crate) fn write_rtp(
         &mut self,
+        fucking_counter: &mut u64,
         pt: Pt,
         wallclock: Instant,
         packet: &[u8],
@@ -322,6 +335,7 @@ impl MediaInner {
         let rtp_time = MediaTime::new(header.timestamp as i64, spec.clock_rate as i64);
 
         self.write(
+            fucking_counter,
             pt,
             wallclock,
             rtp_time,
@@ -746,12 +760,23 @@ impl MediaInner {
             .any(|s| s.has_nack())
     }
 
-    pub fn handle_timeout(&mut self, _now: Instant) -> Result<(), RtcError> {
-        Ok(())
+    pub fn poll_timeout(&mut self) -> Option<Instant> {
+        if self.to_send_meta.is_empty() {
+            None
+        } else {
+            Some(already_happened())
+        }
     }
 
-    pub fn poll_timeout(&mut self) -> Option<Instant> {
-        None
+    pub fn take_to_send_meta(&mut self, now: Instant) -> impl Iterator<Item = ToSendMeta> + '_ {
+        let mid = self.mid;
+        self.to_send_meta.drain(..).map(move |mut m| {
+            // Add on values from this level
+            m.mid = mid;
+            m.since = now;
+
+            m
+        })
     }
 
     pub fn source_tx_ssrcs(&self) -> impl Iterator<Item = Ssrc> + '_ {
@@ -1235,6 +1260,7 @@ impl Default for MediaInner {
             bytes_transmitted: ValueHistory::new(0, Duration::from_secs(2)),
             bytes_retransmitted: ValueHistory::new(0, Duration::from_secs(2)),
             rtp_mode: false,
+            to_send_meta: VecDeque::default(),
         }
     }
 }

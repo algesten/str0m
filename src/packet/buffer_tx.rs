@@ -2,12 +2,15 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
+use crate::rtp::PacketizedId;
 use crate::rtp::{ExtensionValues, MediaTime, Rid, RtpHeader, SeqNo, Ssrc};
 
 use super::MediaKind;
+use super::ToSendMeta;
 use super::{CodecPacketizer, PacketError, Packetizer};
 
 pub struct Packetized {
+    pub id: PacketizedId,
     pub data: Vec<u8>,
     pub first: bool,
     pub marker: bool,
@@ -52,16 +55,21 @@ impl PacketizingBuffer {
 
     pub fn push_sample(
         &mut self,
+        fucking_counter: &mut u64,
         data: &[u8],
         meta: PacketizedMeta,
         mtu: usize,
-    ) -> Result<(), PacketError> {
+    ) -> Result<impl Iterator<Item = ToSendMeta> + '_, PacketError> {
         let chunks = self.pack.packetize(mtu, data)?;
         let len = chunks.len();
+        let start_at = self.queue.len();
 
         assert!(len <= self.max_retain, "Must retain at least chunked count");
 
         for (idx, data) in chunks.into_iter().enumerate() {
+            let id = (*fucking_counter).into();
+            *fucking_counter += 1;
+
             let first = idx == 0;
             let last = idx == len - 1;
 
@@ -69,6 +77,7 @@ impl PacketizingBuffer {
             let marker = self.pack.is_marker(data.as_slice(), previous_data, last);
 
             let rtp = Packetized {
+                id,
                 first,
                 marker,
                 data,
@@ -82,11 +91,21 @@ impl PacketizingBuffer {
             self.queue.push_back(rtp);
         }
 
-        Ok(())
+        Ok(self.queue.iter().skip(start_at).map(|p| p.into()))
     }
 
-    pub fn push_rtp_packet(&mut self, data: Vec<u8>, meta: PacketizedMeta, rtp_header: RtpHeader) {
+    pub fn push_rtp_packet(
+        &mut self,
+        fucking_counter: &mut u64,
+        data: Vec<u8>,
+        meta: PacketizedMeta,
+        rtp_header: RtpHeader,
+    ) -> ToSendMeta {
+        let id = (*fucking_counter).into();
+        *fucking_counter += 1;
+
         let rtp = Packetized {
+            id,
             first: true,
             marker: rtp_header.marker,
             data,
@@ -98,7 +117,11 @@ impl PacketizingBuffer {
             rtp_mode_header: Some(rtp_header),
         };
 
+        let to_send = (&rtp).into();
+
         self.queue.push_back(rtp);
+
+        to_send
     }
 
     /// Scale back retained count to max_retain
@@ -160,6 +183,7 @@ impl PacketizingBuffer {
 impl fmt::Debug for Packetized {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Packetized")
+            .field("id", &self.id)
             .field("rtp_time", &self.meta.rtp_time)
             .field("len", &self.data.len())
             .field("first", &self.first)
@@ -167,5 +191,15 @@ impl fmt::Debug for Packetized {
             .field("ssrc", &self.meta.ssrc)
             .field("seq_no", &self.seq_no)
             .finish()
+    }
+}
+
+impl From<&Packetized> for ToSendMeta {
+    fn from(value: &Packetized) -> Self {
+        ToSendMeta {
+            id: value.id,
+            size: value.data.len().into(),
+            ..Default::default()
+        }
     }
 }

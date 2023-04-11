@@ -36,7 +36,7 @@ pub(crate) struct Session {
     // These fields are pub to allow session_sdp.rs modify them.
     // Notice the fields are maybe not in m-line index order since the app
     // might be spliced in somewhere.
-    medias: Vec<MediaInner>,
+    pub(crate) medias: Vec<MediaInner>,
 
     /// The app m-line. Spliced into medias above.
     app: Option<(Mid, usize)>,
@@ -74,6 +74,8 @@ pub(crate) struct Session {
     bwe: Option<Bwe>,
 
     enable_twcc_feedback: bool,
+
+    pub(crate) fucking_counter: u64,
 
     /// A pacer for sending RTP at specific rate.
     pacer: PacerImpl,
@@ -144,6 +146,7 @@ impl Session {
             twcc_tx_register: TwccSendRegister::new(1000),
             bwe,
             enable_twcc_feedback: false,
+            fucking_counter: 0,
             pacer,
             poll_packet_buf: vec![0; 2000],
             ice_lite: config.ice_lite,
@@ -206,7 +209,8 @@ impl Session {
 
     pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
         for m in &mut self.medias {
-            m.handle_timeout(now)?;
+            let iter = m.take_to_send_meta(now);
+            self.pacer.add_to_send_meta(iter);
         }
 
         let sender_ssrc = self.first_ssrc_local();

@@ -140,13 +140,19 @@ impl Media<'_> {
     ///
     /// [1]: https://datatracker.ietf.org/doc/html/rfc8852
     pub fn writer(&mut self, pt: Pt) -> Writer<'_> {
-        let media = Media {
-            rtc: self.rtc,
-            mid: self.mid,
-        };
+        let inner = self
+            .rtc
+            .session
+            .medias
+            .iter_mut()
+            .find(|m| m.mid() == self.mid)
+            .expect("media for mut");
+
+        let fucking_counter = &mut self.rtc.session.fucking_counter;
 
         Writer {
-            media,
+            inner,
+            fucking_counter,
             pt,
             rid: None,
             ext_vals: ExtensionValues::default(),
@@ -232,7 +238,8 @@ impl Media<'_> {
 ///     .write(data.network_time, data.time, &data.data).unwrap();
 /// ```
 pub struct Writer<'a> {
-    media: Media<'a>,
+    inner: &'a mut MediaInner,
+    fucking_counter: &'a mut u64,
     pt: Pt,
     rid: Option<Rid>,
     ext_vals: ExtensionValues,
@@ -278,18 +285,20 @@ impl<'a> Writer<'a> {
     ///
     /// Panics if [`RtcConfig::set_rtp_mode()`][crate::RtcConfig::set_rtp_mode] is `true`.
     pub fn write(
-        mut self,
+        self,
         wallclock: Instant,
         rtp_time: MediaTime,
         data: &[u8],
     ) -> Result<(), RtcError> {
-        if self.media.inner().rtp_mode {
+        if self.inner.rtp_mode {
             panic!("Can't use MediaWriter::write when in rtp_mode");
         }
 
-        let media = self.media.inner_mut();
+        let media = self.inner;
+        let fucking_counter = self.fucking_counter;
 
         media.write(
+            fucking_counter,
             self.pt,
             wallclock,
             rtp_time,
@@ -312,18 +321,19 @@ impl<'a> Writer<'a> {
     ///
     /// WARNING: This is a low level API and is not str0m's primary use case.
     pub fn write_rtp(
-        mut self,
+        self,
         wallclock: Instant,
         packet: &[u8],
         exts: &rtp::ExtensionMap,
     ) -> Result<(), RtcError> {
-        if !self.media.inner().rtp_mode {
+        if !self.inner.rtp_mode {
             panic!("Can't use MediaWriter::write_rtp when not in rtp_mode");
         }
 
-        let media = self.media.inner_mut();
+        let media = self.inner;
+        let fucking_counter = self.fucking_counter;
 
-        media.write_rtp(self.pt, wallclock, packet, exts)?;
+        media.write_rtp(fucking_counter, self.pt, wallclock, packet, exts)?;
 
         Ok(())
     }

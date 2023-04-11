@@ -13,6 +13,7 @@ const MAX_PADDING_PACKET_SIZE: DataSize = DataSize::bytes(224);
 const PADDING_BURST_INTERVAL: Duration = Duration::from_millis(5);
 const MAX_CONSECUTIVE_PADDING_PACKETS: usize = u16::MAX as usize;
 
+#[derive(Debug, Clone, Copy)]
 pub struct ToSendMeta {
     pub mid: Mid,
     pub id: PacketizedId,
@@ -52,6 +53,13 @@ impl Pacer for PacerImpl {
         }
     }
 
+    fn add_to_send_meta(&mut self, iter: impl Iterator<Item = ToSendMeta>) {
+        match self {
+            PacerImpl::Null(v) => v.add_to_send_meta(iter),
+            PacerImpl::LeakyBucket(v) => v.add_to_send_meta(iter),
+        }
+    }
+
     fn poll_timeout(&self) -> Option<Instant> {
         match self {
             PacerImpl::Null(v) => v.poll_timeout(),
@@ -73,10 +81,10 @@ impl Pacer for PacerImpl {
         }
     }
 
-    fn register_send(&mut self, now: Instant, packet_size: DataSize, from: Mid) {
+    fn register_send(&mut self, now: Instant, id: PacketizedId) {
         match self {
-            PacerImpl::Null(v) => v.register_send(now, packet_size, from),
-            PacerImpl::LeakyBucket(v) => v.register_send(now, packet_size, from),
+            PacerImpl::Null(v) => v.register_send(now, id),
+            PacerImpl::LeakyBucket(v) => v.register_send(now, id),
         }
     }
 }
@@ -99,6 +107,8 @@ pub trait Pacer {
     /// Handle time moving forward, should be called periodically as indicated by [`Pacer::poll_timeout`].
     fn handle_timeout(&mut self, now: Instant);
 
+    fn add_to_send_meta(&mut self, iter: impl Iterator<Item = ToSendMeta>);
+
     /// Determines what action to take, if any.
     ///
     ///
@@ -113,7 +123,7 @@ pub trait Pacer {
     ///
     /// **MUST** be called each time [`Pacer::poll_action`] produces [`PollOutcome::PollQueue`] or
     /// [`PollOutcome::PollPadding`]` after the packet is sent.
-    fn register_send(&mut self, now: Instant, packet_size: DataSize, from: Mid);
+    fn register_send(&mut self, now: Instant, id: PacketizedId);
 }
 
 /// The state of a single upstream queue.
@@ -181,6 +191,10 @@ impl Pacer for NullPacer {
         self.need_immediate_timeout = false;
     }
 
+    fn add_to_send_meta(&mut self, iter: impl Iterator<Item = ToSendMeta>) {
+        // Ignore it.
+    }
+
     fn poll_action(&mut self) -> PollOutcome {
         let non_empty_queues = self.queue_states.iter().filter(|q| q.packet_count > 0);
         // Pick a queue using round robin, prioritize the least recently sent on queue.
@@ -195,9 +209,10 @@ impl Pacer for NullPacer {
         result
     }
 
-    fn register_send(&mut self, now: Instant, _packet_size: DataSize, from: Mid) {
-        let e = self.last_sends.entry(from).or_insert(now);
-        *e = now;
+    fn register_send(&mut self, now: Instant, id: PacketizedId) {
+        todo!()
+        // let e = self.last_sends.entry(from).or_insert(now);
+        // *e = now;
     }
 }
 
@@ -270,6 +285,10 @@ impl Pacer for LeakyBucketPacer {
             (Some(nh), None) => Some(nh),
             (None, None) => None,
         }
+    }
+
+    fn add_to_send_meta(&mut self, iter: impl Iterator<Item = ToSendMeta>) {
+        todo!()
     }
 
     fn handle_timeout(&mut self, now: Instant) {
@@ -356,15 +375,16 @@ impl Pacer for LeakyBucketPacer {
         next
     }
 
-    fn register_send(&mut self, now: Instant, packet_size: DataSize, _from: Mid) {
-        self.last_send_time = Some(now);
+    fn register_send(&mut self, now: Instant, id: PacketizedId) {
+        todo!()
+        // self.last_send_time = Some(now);
 
-        self.media_debt += packet_size;
-        self.media_debt = self
-            .media_debt
-            .min(self.adjusted_bitrate * MAX_DEBT_IN_TIME);
-        crate::packet::bwe::macros::log_pacer_media_debt!(self.media_debt.as_bytes_usize());
-        self.add_padding_debt(packet_size);
+        // self.media_debt += packet_size;
+        // self.media_debt = self
+        //     .media_debt
+        //     .min(self.adjusted_bitrate * MAX_DEBT_IN_TIME);
+        // crate::packet::bwe::macros::log_pacer_media_debt!(self.media_debt.as_bytes_usize());
+        // self.add_padding_debt(packet_size);
     }
 }
 
@@ -1011,7 +1031,7 @@ mod test {
         let packet = queue.next_packet().unwrap();
         let packet_size = packet.size();
         do_asserts(packet);
-        pacer.register_send(now, DataSize::from(packet_size), qid);
+        pacer.register_send(now, x);
         queue.register_send(qid, now);
 
         let timeout = pacer.poll_timeout();
