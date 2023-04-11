@@ -1,10 +1,14 @@
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 
+use bytes::Bytes;
 use clap::Parser;
-use systemstat::Ipv4Addr;
-use tokio::signal;
+use str0m::Rtc;
+use tokio::{signal, sync::broadcast};
 use tracing::{info, level_filters::LevelFilter};
-use util::{http_server::run_http_server, init_log, select_host_address};
+use util::{
+    http_server::{run_http_server, ClientHandler},
+    init_log, select_host_address,
+};
 
 mod util;
 
@@ -27,11 +31,23 @@ async fn main() -> anyhow::Result<()> {
 
     let ip = select_host_address()?;
 
-    run_http_server(ip, cli.http_port, cli.udp_start_port).await;
+    run_http_server(
+        ip,
+        cli.http_port,
+        cli.udp_start_port,
+        Box::new(ReflectClientHandler {}),
+    )
+    .await;
 
     info!("Started reflect server");
 
     signal::ctrl_c().await?;
     info!("Ctrl-C received, shutting down");
     Ok(())
+}
+
+struct ReflectClientHandler {}
+
+impl ClientHandler for ReflectClientHandler {
+    fn run(&mut self, _rtc: Rtc, _addr: SocketAddr, _chunk_channel: broadcast::Sender<Bytes>) {}
 }
