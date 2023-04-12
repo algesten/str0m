@@ -279,7 +279,7 @@ impl Pacer for LeakyBucketPacer {
 
         match (next_handle_time, self.next_send_time) {
             (Some(nh), Some(ns)) => Some(nh.min(ns)),
-            (None, Some(ls)) => Some(ls),
+            (None, Some(ns)) => Some(ns),
             (Some(nh), None) => Some(nh),
             (None, None) => None,
         }
@@ -645,6 +645,8 @@ impl From<Option<&QueueState>> for PollOutcome {
 
 #[cfg(test)]
 mod test {
+    use std::ops::Range;
+    use std::thread;
     use std::time::{Duration, Instant};
 
     use crate::rtp::{DataSize, RtpHeader};
@@ -652,6 +654,8 @@ mod test {
     use super::*;
 
     use queue::{Queue, QueuedPacket};
+    use rand::distributions::Standard;
+    use rand::prelude::*;
 
     trait PollOutcomeExt {
         fn expect(&self, msg: &str) -> Mid;
@@ -1041,6 +1045,30 @@ mod test {
     }
 
     #[test]
+    fn test_realistic() {
+        let config = {
+            let mut config = RealisticTestConfig::default();
+            config.padding_rate = Bitrate::kbps(2500);
+            config.max_overshoot_factor = 0.05;
+            config.spike_probability = 3;
+
+            config
+        };
+        let (media_rate, padding_rate, total_rate) = run_realistic_test(config);
+        let expected_padding = config.padding_rate - config.media_rate;
+        // Expect result to be within 2 standard deviations.
+        let upper_bound =
+            config.media_rate + expected_padding * (1.0 + config.max_overshoot_factor * 2.0) as f64;
+        let lower_bound =
+            config.media_rate + expected_padding * (1.0 - config.max_overshoot_factor * 2.0) as f64;
+
+        assert!(
+            total_rate >= lower_bound && total_rate <= upper_bound,
+            "Expected reuslting total rate to be within expected bounds. total_rate={total_rate}, media_rate={media_rate}, padding_rate={padding_rate}, config={config:?}, lower_bound={lower_bound}, upper_bound={upper_bound}"
+        );
+    }
+
+    #[test]
     fn test_queue_state_merge() {
         let now = Instant::now();
 
@@ -1121,13 +1149,13 @@ mod test {
         kind: MediaKind,
         now: Instant,
     ) {
-        let (header, payload, kind) = make_packet(seq_no, size, kind);
+        let (header, payload_len, kind) = make_packet(seq_no, size, kind);
 
         println!("Adding {kind} packet of size {size}, sequence number: {seq_no}");
         let queued_packet = QueuedPacket {
             queued_at: now,
             header,
-            payload,
+            payload_len,
             kind,
         };
         queue.enqueue_packet(queued_packet);
@@ -1142,14 +1170,172 @@ mod test {
         Duration::from_millis(ms)
     }
 
-    fn make_packet(seq_no: u16, size: usize, kind: MediaKind) -> (RtpHeader, Vec<u8>, MediaKind) {
+    fn make_packet(seq_no: u16, size: usize, kind: MediaKind) -> (RtpHeader, usize, MediaKind) {
         let mut header = RtpHeader {
             sequence_number: seq_no,
             ..Default::default()
         };
-        let data = vec![0; size];
 
-        (header, data, kind)
+        (header, size, kind)
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct RealisticTestConfig {
+        media_rate: Bitrate,
+        padding_rate: Bitrate,
+        duration: Duration,
+        // Spike probability as a percentage
+        spike_probability: u8,
+        max_overshoot_factor: f32,
+        frame_pacing: Duration,
+    }
+
+    impl Default for RealisticTestConfig {
+        fn default() -> Self {
+            RealisticTestConfig {
+                media_rate: Bitrate::kbps(250),
+                padding_rate: Bitrate::kbps(800),
+                duration: Duration::from_secs(10),
+                spike_probability: 0,
+                max_overshoot_factor: 0.25,
+                frame_pacing: Duration::from_millis(33), // ~30 FPS
+            }
+        }
+    }
+
+    /// Run a realistic test of the pacer with simulated media.
+    ///
+    /// Returns the media rate, padding, rate, and total rate achieved by the test.
+    fn run_realistic_test(config: RealisticTestConfig) -> (Bitrate, Bitrate, Bitrate) {
+        let RealisticTestConfig {
+            media_rate,
+            padding_rate,
+            duration,
+            spike_probability,
+            max_overshoot_factor,
+            frame_pacing,
+        } = config;
+
+        let mut now = Instant::now();
+        let mut queue = Queue::default();
+        let mut pacer = LeakyBucketPacer::new(media_rate, duration_ms(40));
+        pacer.set_pacing_rate(padding_rate);
+        pacer.set_padding_rate(padding_rate);
+
+        let mut last_media_at = now - frame_pacing - Duration::from_millis(1);
+        let mut media_sent = DataSize::ZERO;
+        let mut padding_sent = DataSize::ZERO;
+        let mut elapsed = Duration::ZERO;
+        let mut rng = thread_rng();
+
+        let mut poll_until_timeout = |pacer: &mut LeakyBucketPacer,
+                                      queue: &mut Queue,
+                                      elapsed: Duration|
+         -> Option<Duration> {
+            loop {
+                pacer.handle_timeout(now + elapsed, queue.queue_state(now + elapsed));
+                let outcome = pacer.poll_action();
+
+                match outcome {
+                    PollOutcome::PollQueue(mid) => {
+                        let packet = queue.next_packet().expect("Should have a packet");
+                        queue.register_send(mid, now + elapsed);
+                        queue.update_average_queue_time(now + elapsed);
+                        pacer.register_send(
+                            now + elapsed,
+                            DataSize::bytes(packet.payload_len as u64),
+                            mid,
+                        );
+                        media_sent += packet.payload_len.into();
+                    }
+                    PollOutcome::PollPadding(mid, mut pad_size) => {
+                        while pad_size > 0 {
+                            let packet_size = rng.gen_range(200..1000);
+                            let rand: f32 = (StdRng::from_entropy().sample(Standard));
+                            let overshoot_factor: f32 = rand * max_overshoot_factor;
+                            let final_packet_size =
+                                ((packet_size as f32 * (1.0 + overshoot_factor).round()) as usize)
+                                    .min(1200);
+                            let final_packet_size = DataSize::bytes(final_packet_size as u64);
+                            padding_sent += final_packet_size;
+                            pacer.register_send(now + elapsed, final_packet_size, mid);
+
+                            pad_size = pad_size.saturating_sub(final_packet_size.as_bytes_usize());
+                        }
+                    }
+                    PollOutcome::Nothing => {
+                        return pacer
+                            .poll_timeout()
+                            .map(|i| i.duration_since(now + elapsed));
+                    }
+                }
+
+                if let Some(instant) = pacer.poll_timeout() {
+                    let sleep = instant.saturating_duration_since(now + elapsed);
+
+                    if sleep > Duration::ZERO {
+                        return Some(sleep);
+                    }
+                }
+                pacer.handle_timeout(now + elapsed, queue.queue_state(now + elapsed));
+            }
+        };
+
+        loop {
+            queue.update_average_queue_time(now + elapsed);
+
+            if elapsed > duration {
+                break;
+            }
+
+            let sleep_until_media =
+                frame_pacing.saturating_sub((now + elapsed).duration_since(last_media_at));
+            if sleep_until_media > Duration::ZERO {
+                elapsed += sleep_until_media;
+            }
+
+            let large_overshoot = (rand::random::<u8>() % 100) >= (100 - spike_probability);
+            let mut to_add = if large_overshoot {
+                (media_rate * 2.5) * frame_pacing
+            } else {
+                media_rate * frame_pacing
+            };
+
+            while to_add > DataSize::ZERO {
+                let packet_size = to_add.min(DataSize::bytes(1100));
+                let (header, size, kind) =
+                    make_packet(0, packet_size.as_bytes_usize(), MediaKind::Video);
+                queue.enqueue_packet(QueuedPacket {
+                    queued_at: now + elapsed,
+                    header,
+                    payload_len: size,
+                    kind,
+                });
+                queue.update_average_queue_time(now + elapsed);
+                pacer.handle_timeout(now + elapsed, queue.queue_state(now + elapsed));
+
+                to_add -= packet_size.into();
+            }
+            last_media_at = now + elapsed;
+
+            pacer.handle_timeout(now + elapsed, queue.queue_state(now + elapsed));
+
+            while (now + elapsed).duration_since(last_media_at) < frame_pacing {
+                let Some(sleep_duration) = poll_until_timeout(&mut pacer, &mut queue, elapsed) else {
+                    break;
+                };
+
+                elapsed += sleep_duration;
+                queue.update_average_queue_time(now + elapsed);
+                pacer.handle_timeout(now + elapsed, queue.queue_state(now + elapsed));
+            }
+        }
+
+        let observed_media_rate = media_sent / duration;
+        let observed_padding_rate = padding_sent / duration;
+        let total_rate = (media_sent + padding_sent) / duration;
+
+        (observed_media_rate, observed_padding_rate, total_rate)
     }
 
     /// A packet queue for use in tests of the pacer.
@@ -1172,7 +1358,7 @@ mod test {
         pub(super) struct QueuedPacket {
             pub(super) queued_at: Instant,
             pub(super) header: RtpHeader,
-            pub(super) payload: Vec<u8>,
+            pub(super) payload_len: usize,
             pub(super) kind: MediaKind,
         }
 
@@ -1236,7 +1422,7 @@ mod test {
 
         impl QueuedPacket {
             pub(super) fn size(&self) -> usize {
-                self.payload.len()
+                self.payload_len
             }
         }
 
