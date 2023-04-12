@@ -1186,6 +1186,7 @@ mod test {
         // Spike probability as a percentage
         spike_probability: u8,
         max_overshoot_factor: f32,
+        frame_pacing: Duration,
     }
 
     impl Default for RealisticTestConfig {
@@ -1196,6 +1197,7 @@ mod test {
                 duration: Duration::from_secs(10),
                 spike_probability: 0,
                 max_overshoot_factor: 0.25,
+                frame_pacing: Duration::from_millis(33), // ~30 FPS
             }
         }
     }
@@ -1210,6 +1212,7 @@ mod test {
             duration,
             spike_probability,
             max_overshoot_factor,
+            frame_pacing,
         } = config;
 
         let mut now = Instant::now();
@@ -1217,7 +1220,6 @@ mod test {
         let mut pacer = LeakyBucketPacer::new(media_rate, duration_ms(40));
         pacer.set_pacing_rate(padding_rate);
         pacer.set_padding_rate(padding_rate);
-        let frame_pacing = Duration::from_millis(33);
 
         let mut last_media_at = now - frame_pacing - Duration::from_millis(1);
         let mut media_sent = DataSize::ZERO;
@@ -1286,7 +1288,6 @@ mod test {
             let mut to_add = if large_overshoot {
                 (media_rate * 2.5) * frame_pacing
             } else {
-                // 30 FPS
                 media_rate * frame_pacing
             };
 
