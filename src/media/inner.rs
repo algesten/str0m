@@ -521,16 +521,8 @@ impl MediaInner {
 
         // If we hit the cap, stop doing resends by clearing those we have queued.
         if ratio > 0.15_f32 {
-            for resend in self.resends.drain(..) {
-                let Some(buffer) = self
-                    .buffers_tx
-                    .values_mut()
-                    .find(|p| p.has_ssrc(resend.ssrc)) else {
-                        continue;
-                    };
-                // Unmark the resend so they don't count as queued anymore.
-                let _ = buffer.get_and_unmark_as_accounted(now, resend.seq_no);
-            }
+            self.resends.clear();
+
             // Invalidate cached queue state.
             self.queue_state = None;
 
@@ -567,12 +559,8 @@ impl MediaInner {
             break (resend, source);
         };
 
-        // get_and_mark_as_unaccounted() requires a mut reference to buffer, which we can't do in the
-        // above loop (waiting for polonius). The solution is to look the buffer up again after the loop.
         let buffer = self.buffers_tx.get_mut(&resend.pt).unwrap();
-        let pkt = buffer
-            .get_and_unmark_as_accounted(now, resend.seq_no)
-            .unwrap();
+        let pkt = buffer.get(resend.seq_no).unwrap();
 
         // Force recaching since packetizer changed.
         self.queue_state = None;
@@ -679,6 +667,7 @@ impl MediaInner {
                         pt,
                         ssrc: packet.meta.ssrc,
                         seq_no,
+                        body_size: packet.data.len(),
                         queued_at: now,
                     });
 
@@ -1147,12 +1136,15 @@ impl MediaInner {
         for seq_no in iter {
             // This keeps the TotalQueue updated in the buffer so the QueueState will
             // account for resends.
-            buffer.mark_as_unaccounted(now, seq_no);
+            let Some(pkt) = buffer.get(seq_no) else {
+                continue;
+            };
 
             let resend = Resend {
                 ssrc,
                 pt: *pt,
                 seq_no,
+                body_size: pkt.data.len(),
                 queued_at: now,
             };
             self.resends.push_back(resend);
@@ -1214,11 +1206,23 @@ impl MediaInner {
         }
 
         let init = QueueSnapshot::default();
-        let snapshot = self.buffers_tx.values_mut().fold(init, |mut snap, b| {
+        let mut snapshot = self.buffers_tx.values_mut().fold(init, |mut snap, b| {
             snap.merge(&b.queue_snapshot(now));
 
             snap
         });
+
+        for resend in &self.resends {
+            let queued = now - resend.queued_at;
+            let snap = QueueSnapshot {
+                created_at: now,
+                size: resend.body_size,
+                packet_count: 1,
+                total_queue_time_origin: queued,
+                ..Default::default()
+            };
+            snapshot.merge(&snap);
+        }
 
         let state = QueueState {
             mid: self.mid,
@@ -1298,6 +1302,7 @@ struct Resend {
     pub ssrc: Ssrc,
     pub pt: Pt,
     pub seq_no: SeqNo,
+    pub body_size: usize,
     pub queued_at: Instant,
 }
 
