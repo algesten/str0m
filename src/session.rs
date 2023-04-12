@@ -726,7 +726,7 @@ impl Session {
 
         let twcc_seq = self.twcc;
 
-        if let Some((header, seq_no)) =
+        if let Some((header, seq_no, packet_id)) =
             media.poll_packet(now, &self.exts, &mut self.twcc, pad_size, buf)
         {
             trace!("Poll RTP: {:?}", header);
@@ -743,7 +743,7 @@ impl Session {
             }
 
             let payload_size = buf.len();
-            self.pacer.register_send(now, buf.len().into(), mid);
+            self.pacer.register_send(now, packet_id);
             let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
             self.twcc_tx_register

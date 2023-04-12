@@ -1031,7 +1031,7 @@ mod test {
         let packet = queue.next_packet().unwrap();
         let packet_size = packet.size();
         do_asserts(packet);
-        pacer.register_send(now, x);
+        pacer.register_send(now, id);
         queue.register_send(qid, now);
 
         let timeout = pacer.poll_timeout();

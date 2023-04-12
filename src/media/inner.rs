@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 use crate::change::AddMedia;
 use crate::format::Codec;
 use crate::packet::ToSendMeta;
+use crate::rtp::PacketizedId;
 pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 
 use crate::io::{Id, DATAGRAM_MTU};
@@ -396,7 +397,7 @@ impl MediaInner {
         twcc: &mut u64,
         pad_size: Option<usize>,
         buf: &mut Vec<u8>,
-    ) -> Option<(RtpHeader, SeqNo)> {
+    ) -> Option<(RtpHeader, SeqNo, Option<PacketizedId>)> {
         let mid = self.mid;
 
         let next = if let Some(next) = self.poll_packet_resend_to_cap(now) {
@@ -443,10 +444,14 @@ impl MediaInner {
             body_out = &mut body_out[original_seq_len..];
         }
 
+        let mut packet_id = None;
+
         let body_len = match next.body {
             NextPacketBody::Regular { pkt } | NextPacketBody::Resend { pkt, .. } => {
                 let body_len = pkt.data.len();
                 body_out[..body_len].copy_from_slice(&pkt.data);
+
+                packet_id = Some(pkt.id);
 
                 // pad for SRTP
                 let pad_len = RtpHeader::pad_packet(
@@ -479,7 +484,7 @@ impl MediaInner {
             crate::log_stat!("QUEUE_DELAY", header.ssrc, delay.as_millis());
         }
 
-        Some((header, next.seq_no))
+        Some((header, next.seq_no, packet_id))
     }
 
     fn poll_packet_resend_to_cap(&mut self, now: Instant) -> Option<NextPacket> {
