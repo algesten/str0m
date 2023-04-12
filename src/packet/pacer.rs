@@ -645,6 +645,7 @@ impl From<Option<&QueueState>> for PollOutcome {
 
 #[cfg(test)]
 mod test {
+    use std::ops::Range;
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -1057,13 +1058,13 @@ mod test {
         let expected_padding = config.padding_rate - config.media_rate;
         // Expect result to be within 2 standard deviations.
         let upper_bound =
-            media_rate + expected_padding * (1.0 + config.max_overshoot_factor * 2.0) as f64;
+            config.media_rate + expected_padding * (1.0 + config.max_overshoot_factor * 2.0) as f64;
         let lower_bound =
-            media_rate + expected_padding * (1.0 - config.max_overshoot_factor * 2.0) as f64;
+            config.media_rate + expected_padding * (1.0 - config.max_overshoot_factor * 2.0) as f64;
 
         assert!(
             total_rate >= lower_bound && total_rate <= upper_bound,
-            "Expected reuslting total rate to be within expected bounds. total_rate={total_rate}, media_rate={media_rate}, padding_rate={padding_rate}, config={config:?}"
+            "Expected reuslting total rate to be within expected bounds. total_rate={total_rate}, media_rate={media_rate}, padding_rate={padding_rate}, config={config:?}, lower_bound={lower_bound}, upper_bound={upper_bound}"
         );
     }
 
@@ -1225,6 +1226,7 @@ mod test {
         let mut media_sent = DataSize::ZERO;
         let mut padding_sent = DataSize::ZERO;
         let mut elapsed = Duration::ZERO;
+        let mut rng = thread_rng();
 
         let mut poll_until_timeout = |pacer: &mut LeakyBucketPacer,
                                       queue: &mut Queue,
@@ -1246,12 +1248,20 @@ mod test {
                         );
                         media_sent += packet.payload_len.into();
                     }
-                    PollOutcome::PollPadding(mid, pad_size) => {
-                        let rand: f32 = (StdRng::from_entropy().sample(Standard));
-                        let overshoot_factor: f32 = rand * max_overshoot_factor;
-                        padding_sent +=
-                            ((pad_size as f32 * (1.0 + overshoot_factor)).round() as usize).into();
-                        pacer.register_send(now + elapsed, DataSize::bytes(pad_size as u64), mid);
+                    PollOutcome::PollPadding(mid, mut pad_size) => {
+                        while pad_size > 0 {
+                            let packet_size = rng.gen_range(200..1000);
+                            let rand: f32 = (StdRng::from_entropy().sample(Standard));
+                            let overshoot_factor: f32 = rand * max_overshoot_factor;
+                            let final_packet_size =
+                                ((packet_size as f32 * (1.0 + overshoot_factor).round()) as usize)
+                                    .min(1200);
+                            let final_packet_size = DataSize::bytes(final_packet_size as u64);
+                            padding_sent += final_packet_size;
+                            pacer.register_send(now + elapsed, final_packet_size, mid);
+
+                            pad_size = pad_size.saturating_sub(final_packet_size.as_bytes_usize());
+                        }
                     }
                     PollOutcome::Nothing => {
                         return pacer
@@ -1292,7 +1302,7 @@ mod test {
             };
 
             while to_add > DataSize::ZERO {
-                let packet_size = to_add.max(DataSize::bytes(1100));
+                let packet_size = to_add.min(DataSize::bytes(1100));
                 let (header, size, kind) =
                     make_packet(0, packet_size.as_bytes_usize(), MediaKind::Video);
                 queue.enqueue_packet(QueuedPacket {
@@ -1301,6 +1311,7 @@ mod test {
                     payload_len: size,
                     kind,
                 });
+                queue.update_average_queue_time(now + elapsed);
                 pacer.handle_timeout(now + elapsed, queue.queue_state(now + elapsed));
 
                 to_add -= packet_size.into();
