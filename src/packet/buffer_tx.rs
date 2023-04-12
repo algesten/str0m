@@ -140,6 +140,12 @@ impl PacketizingBuffer {
                     self.total.decrease(p.data.len(), queue_time);
                 }
             }
+            if self.emit_next == 0 {
+                // This probably means the user is doing a lot of MediaWriter::write()
+                // without interspersing it with Rtc::poll_output() or maybe doing
+                // writes before the Connected event.
+                panic!("Resize down PacketizingBuffer when emit_next is at 0");
+            }
             self.emit_next -= 1;
         }
     }
