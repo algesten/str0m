@@ -161,38 +161,6 @@ impl PacketizingBuffer {
         self.queue.iter().find(|r| r.seq_no == Some(seq_no))
     }
 
-    // Used when we get a resend to account for resends in the TotalQueue.
-    pub fn mark_as_unaccounted(&mut self, now: Instant, seq_no: SeqNo) {
-        self.total.move_time_forward(now);
-        let Some(p) = self.queue.iter_mut().find(|r| r.seq_no == Some(seq_no)) else {
-            return;
-        };
-
-        if !p.count_as_unsent {
-            p.count_as_unsent = true;
-            let queue_time = now - p.queued_at;
-            self.total.increase(now, queue_time, p.data.len());
-        }
-    }
-
-    // Used when we handle a resend to update TotalQueue.
-    pub fn get_and_unmark_as_accounted(
-        &mut self,
-        now: Instant,
-        seq_no: SeqNo,
-    ) -> Option<&Packetized> {
-        self.total.move_time_forward(now);
-        let p = self.queue.iter_mut().find(|r| r.seq_no == Some(seq_no))?;
-
-        if p.count_as_unsent {
-            p.count_as_unsent = false;
-            let queue_time = now - p.queued_at;
-            self.total.decrease(p.data.len(), queue_time);
-        }
-
-        Some(p)
-    }
-
     pub fn has_ssrc(&self, ssrc: Ssrc) -> bool {
         self.queue
             .front()
