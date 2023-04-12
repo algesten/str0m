@@ -1301,6 +1301,7 @@ mod test {
                     payload_len: size,
                     kind,
                 });
+                pacer.handle_timeout(now + elapsed, queue.queue_state(now + elapsed));
 
                 to_add -= packet_size.into();
             }
