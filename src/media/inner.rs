@@ -528,7 +528,6 @@ impl MediaInner {
             crate::log_stat!("QUEUE_DELAY", header.ssrc, delay.as_millis());
         }
 
-        // Some((header, next.seq_no, is_padding, body_len))
         Some(PolledPacket {
             header,
             twcc_seq_no: next.seq_no,
@@ -681,7 +680,7 @@ impl MediaInner {
                         .buffers_tx
                         .values()
                         .find(|p| p.has_ssrc(padding.ssrc()))
-                        .unwrap_or_else(|| 
+                        .unwrap_or_else(||
                             panic!("Spurious padding requested for ssrc {} for which no buffer exists.", padding.ssrc())
                         );
 
@@ -1359,42 +1358,34 @@ impl MediaInner {
     }
 
     fn padding_snapshot(&self, now: Instant) -> QueueSnapshot {
-        let (padding_count, padding_size, padding_queue_time, first_unsent) = self
-            .padding
-            .iter()
-            .fold((0_u32, 0, Duration::ZERO, None), |acc, p| {
-                let is_first = acc.1 == 0;
-                match p {
-                    Padding::Blank {
-                        requested_at, size, ..
-                    } => (
-                        acc.0 + 1,
-                        acc.1 + size,
-                        acc.2 + now.duration_since(*requested_at),
-                        if is_first { Some(*requested_at) } else { acc.3 },
-                    ),
-                    Padding::Spurious(Resend {
-                        body_size,
-                        queued_at,
-                        ..
-                    }) => (
-                        acc.0 + 1,
-                        acc.1 + body_size,
-                        acc.2 + now.duration_since(*queued_at),
-                        if is_first { Some(*queued_at) } else { acc.3 },
-                    ),
-                }
-            });
-
-        QueueSnapshot {
+        let mut snapshot = QueueSnapshot {
             created_at: now,
-            size: padding_size,
-            packet_count: padding_count,
-            total_queue_time_origin: padding_queue_time,
-            last_emitted: None,
-            first_unsent,
-            priority: QueuePriority::Padding,
+            ..Default::default()
+        };
+        for padding in &self.padding {
+            let (size, queued_at) = match padding {
+                Padding::Blank {
+                    requested_at, size, ..
+                } => (*size, *requested_at),
+                Padding::Spurious(Resend {
+                    body_size,
+                    queued_at,
+                    ..
+                }) => (*body_size, *queued_at),
+            };
+
+            snapshot.merge(&QueueSnapshot {
+                created_at: now,
+                size,
+                packet_count: 1,
+                total_queue_time_origin: now - queued_at,
+                last_emitted: None,
+                first_unsent: Some(queued_at),
+                priority: QueuePriority::Padding,
+            });
         }
+
+        snapshot
     }
 }
 
