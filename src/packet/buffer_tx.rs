@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 use crate::rtp::{ExtensionValues, MediaTime, Rid, RtpHeader, SeqNo, Ssrc};
 
-use super::MediaKind;
 use super::{CodecPacketizer, PacketError, Packetizer, QueueSnapshot};
+use super::{MediaKind, QueuePriority};
 
 pub struct Packetized {
     pub data: Vec<u8>,
@@ -186,7 +186,11 @@ impl PacketizingBuffer {
             total_queue_time_origin: self.total.queue_time,
             last_emitted: self.last_emit,
             first_unsent: self.queue.get(self.emit_next).map(|p| p.queued_at),
-            priority: if self.total.unsent_count > 0 { 0 } else { 10 },
+            priority: if self.total.unsent_count > 0 {
+                QueuePriority::Media
+            } else {
+                QueuePriority::Empty
+            },
         }
     }
 

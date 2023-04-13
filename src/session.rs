@@ -724,7 +724,7 @@ impl Session {
             .expect("index is media");
 
         if let Some(pad_size) = pad_size {
-            media.queue_padding(now, pad_size);
+            media.generate_padding(now, pad_size);
             return None;
         }
 

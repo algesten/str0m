@@ -116,9 +116,28 @@ pub struct QueueSnapshot {
     pub last_emitted: Option<Instant>,
     /// Time the first unsent packet has spent in the queue.
     pub first_unsent: Option<Instant>,
-    /// The priority of the most important packet in the queue. Lower values are higher priority,
-    /// with 0 being the highest.
-    pub priority: usize,
+    /// The priority of the most important packet in the queue.
+    pub priority: QueuePriority,
+}
+
+/// Priority for a given queue.
+///
+/// When sorted, higher priority sorts first.
+///
+/// ```ignore
+/// # use crate::packet::QueuePriority;
+/// assert!(QueuePriority::Media < QueuePriority:Padding);
+/// assert!(QueuePriority::Padding < QueuePriority:Empty);
+/// ```
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum QueuePriority {
+    // Highest, priority for a queue that contains media.
+    Media = 0,
+    // Priority for a queue that only contains padding.
+    Padding = 1,
+    // Priority for an empty queue.
+    #[default]
+    Empty = 2,
 }
 
 impl QueueSnapshot {
@@ -139,7 +158,7 @@ impl Default for QueueSnapshot {
             total_queue_time_origin: Default::default(),
             last_emitted: Default::default(),
             first_unsent: Default::default(),
-            priority: 10,
+            priority: QueuePriority::default(),
         }
     }
 }
@@ -1032,7 +1051,7 @@ mod test {
                 total_queue_time_origin: duration_ms(1_000),
                 last_emitted: Some(now + duration_ms(500)),
                 first_unsent: None,
-                priority: 0,
+                priority: QueuePriority::Media,
             },
         };
 
@@ -1047,7 +1066,7 @@ mod test {
                 total_queue_time_origin: duration_ms(337),
                 last_emitted: None,
                 first_unsent: Some(now + duration_ms(19)),
-                priority: 1,
+                priority: QueuePriority::Padding,
             },
         };
 
@@ -1060,7 +1079,14 @@ mod test {
 
         assert_eq!(state.snapshot.last_emitted, Some(now + duration_ms(500)));
         assert_eq!(state.snapshot.first_unsent, Some(now + duration_ms(19)));
-        assert_eq!(state.snapshot.priority, 0);
+        assert_eq!(state.snapshot.priority, QueuePriority::Media);
+    }
+
+    #[test]
+    fn test_priority_ordering() {
+        assert!(QueuePriority::Media < QueuePriority::Padding);
+        assert!(QueuePriority::Media < QueuePriority::Empty);
+        assert!(QueuePriority::Padding < QueuePriority::Empty);
     }
 
     fn assert_poll_success<F>(
@@ -1398,9 +1424,9 @@ mod test {
         impl Default for Queue {
             fn default() -> Self {
                 Self {
-                    audio_queue: Inner::new(Mid::from("001"), true, 0),
-                    video_queue: Inner::new(Mid::from("002"), false, 1),
-                    padding_queue: Inner::new(Mid::from("003"), false, 5),
+                    audio_queue: Inner::new(Mid::from("001"), true, QueuePriority::Media),
+                    video_queue: Inner::new(Mid::from("002"), false, QueuePriority::Media),
+                    padding_queue: Inner::new(Mid::from("003"), false, QueuePriority::Padding),
                 }
             }
         }
@@ -1419,11 +1445,11 @@ mod test {
             total_time_spent_queued: Duration,
             last_update: Option<Instant>,
             is_audio: bool,
-            priority: usize,
+            priority: QueuePriority,
         }
 
         impl Inner {
-            fn new(mid: Mid, is_audio: bool, priority: usize) -> Self {
+            fn new(mid: Mid, is_audio: bool, priority: QueuePriority) -> Self {
                 Self {
                     mid,
                     last_send_time: None,

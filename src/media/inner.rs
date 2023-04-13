@@ -6,7 +6,7 @@ use crate::format::Codec;
 pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 
 use crate::io::{Id, DATAGRAM_MTU};
-use crate::packet::{DepacketizingBuffer, MediaKind, Packetized, QueueSnapshot};
+use crate::packet::{DepacketizingBuffer, MediaKind, Packetized, QueuePriority, QueueSnapshot};
 use crate::packet::{PacketizedMeta, PacketizingBuffer, QueueState};
 use crate::rtp::{ExtensionMap, Fir, FirEntry, NackEntry, Pli, Rtcp};
 use crate::rtp::{RtcpFb, RtpHeader, SdesType};
@@ -38,6 +38,10 @@ pub(crate) trait Source {
 // expects video to be every second, and audio every 5 seconds.
 const RR_INTERVAL_VIDEO: Duration = Duration::from_millis(1000);
 const RR_INTERVAL_AUDIO: Duration = Duration::from_millis(5000);
+
+/// The smallest size of padding for which we attempt to use a spurious resend. For padding
+/// requests smaller than this we use blank packets instead.
+const MIN_SPURIOUS_PADDING_SIZE: usize = 50;
 
 fn rr_interval(audio: bool) -> Duration {
     if audio {
@@ -120,7 +124,7 @@ pub(crate) struct MediaInner {
     resends: VecDeque<Resend>,
 
     /// Queue of packets to send for padding.
-    padding: VecDeque<PaddingOrResend>,
+    padding: VecDeque<Padding>,
 
     /// Whether the media line needs to be advertised in an event.
     pub(crate) need_open_event: bool,
@@ -171,14 +175,16 @@ pub(crate) struct MediaInner {
 }
 
 #[derive(Debug)]
-enum PaddingOrResend {
-    Padding {
+enum Padding {
+    /// An empty padding packet containing all zeros.
+    Blank {
         ssrc: Ssrc,
         pt: Pt,
         requested_at: Instant,
         size: usize,
     },
-    Resend(Resend),
+    /// A spurious resend of a previous media packet to act as padding.
+    Spurious(Resend),
 }
 
 struct NextPacket<'a> {
@@ -643,7 +649,7 @@ impl MediaInner {
             self.queue_state = None;
 
             match padding_or_resend {
-                PaddingOrResend::Padding { ssrc, pt, size, .. } => {
+                Padding::Blank { ssrc, pt, size, .. } => {
                     let source_tx = get_or_create_source_tx(
                         &mut self.sources_tx,
                         &mut self.equalize_sources,
@@ -659,7 +665,7 @@ impl MediaInner {
                         body: NextPacketBody::Padding { len: size as u8 },
                     });
                 }
-                PaddingOrResend::Resend(resend) => {
+                Padding::Spurious(resend) => {
                     // If there is no buffer for this padding, we return None. This is
                     // a weird situation though, since it means we queued padding for a buffer we don't
                     // have.
@@ -708,8 +714,8 @@ impl MediaInner {
         }
     }
 
-    /// Queue some padding to be sent later.
-    pub fn queue_padding(&mut self, now: Instant, mut pad_size: usize) {
+    /// Generate padding and queue it to be sent later.
+    pub fn generate_padding(&mut self, now: Instant, mut pad_size: usize) {
         // Only do padding packets if we are using RTX, or we will increase the seq_no
         // on the main SSRC for filler stuff.
         if !self.has_tx_rtx() {
@@ -727,7 +733,7 @@ impl MediaInner {
             // it's hard to construct.
 
             // This first scope tries to send a spurious (unasked for) resend of a packet already sent.
-            {
+            if pad_size > MIN_SPURIOUS_PADDING_SIZE {
                 let pt = self
                     .buffers_tx
                     .iter()
@@ -758,7 +764,7 @@ impl MediaInner {
                             packet.data.len()
                         );
 
-                        self.padding.push_back(PaddingOrResend::Resend(Resend {
+                        self.padding.push_back(Padding::Spurious(Resend {
                             pt,
                             body_size: packet.data.len(),
                             ssrc: packet.meta.ssrc,
@@ -796,7 +802,7 @@ impl MediaInner {
                 pad_size = pad_size.saturating_sub(padding);
 
                 trace!("Queued {padding} bytes worth of raw padding");
-                self.padding.push_back(PaddingOrResend::Padding {
+                self.padding.push_back(Padding::Blank {
                     ssrc: ssrc_rtx,
                     pt: pt_rtx,
                     requested_at: now,
@@ -1356,7 +1362,7 @@ impl MediaInner {
             .fold((0_u32, 0, Duration::ZERO, None), |acc, p| {
                 let is_first = acc.1 == 0;
                 match p {
-                    PaddingOrResend::Padding {
+                    Padding::Blank {
                         requested_at, size, ..
                     } => (
                         acc.0 + 1,
@@ -1364,7 +1370,7 @@ impl MediaInner {
                         acc.2 + now.duration_since(*requested_at),
                         if is_first { Some(*requested_at) } else { acc.3 },
                     ),
-                    PaddingOrResend::Resend(Resend {
+                    Padding::Spurious(Resend {
                         body_size,
                         queued_at,
                         ..
@@ -1384,7 +1390,7 @@ impl MediaInner {
             total_queue_time_origin: padding_queue_time,
             last_emitted: None,
             first_unsent,
-            priority: 5,
+            priority: QueuePriority::Padding,
         }
     }
 }
@@ -1443,11 +1449,11 @@ impl<'a> NextPacketBody<'a> {
     }
 }
 
-impl PaddingOrResend {
+impl Padding {
     fn ssrc(&self) -> Ssrc {
         match self {
-            PaddingOrResend::Padding { ssrc, .. } => *ssrc,
-            PaddingOrResend::Resend(resend) => resend.ssrc,
+            Padding::Blank { ssrc, .. } => *ssrc,
+            Padding::Spurious(resend) => resend.ssrc,
         }
     }
 }
