@@ -208,7 +208,7 @@ impl Depacketizer for H264Depacketizer {
         out: &mut Vec<u8>,
         _: &mut CodecExtra,
     ) -> Result<(), PacketError> {
-        if packet.len() <= 2 {
+        if packet.len() == 0 {
             return Err(PacketError::ErrShortPacket);
         }
 
@@ -433,12 +433,20 @@ mod test {
         let result = pkt.depacketize(data, &mut out, &mut extra);
         assert!(result.is_err(), "Unmarshal did not fail on nil payload");
 
-        let data = &[0x00, 0x00];
+        let data = &[0x09, 0x30];
         let mut out = Vec::new();
         let result = pkt.depacketize(data, &mut out, &mut extra);
         assert!(
-            result.is_err(),
-            "Unmarshal accepted a packet that is too small for a payload and header"
+            result.is_ok(),
+            "Unmarshal should accept minimal h.264 access unit delimiter"
+        );
+
+        let data = &[0x0A];
+        let mut out = Vec::new();
+        let result = pkt.depacketize(data, &mut out, &mut extra);
+        assert!(
+            result.is_ok(),
+            "Unmarshal should accept end of sequence NALU"
         );
 
         let data = &[0xFF, 0x00, 0x00];
