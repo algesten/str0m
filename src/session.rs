@@ -17,7 +17,7 @@ use crate::util::{already_happened, not_happening, Soonest};
 use crate::{net, KeyframeRequest, MediaData};
 use crate::{RtcConfig, RtcError};
 
-use super::MediaInner;
+use super::{MediaInner, PolledPacket};
 
 // Minimum time we delay between sending nacks. This should be
 // set high enough to not cause additional problems in very bad
@@ -722,29 +722,35 @@ impl Session {
             .iter_mut()
             .find(|m| m.mid() == mid)
             .expect("index is media");
+
+        if let Some(pad_size) = pad_size {
+            media.generate_padding(now, pad_size);
+            return None;
+        }
+
         let buf = &mut self.poll_packet_buf;
 
         let twcc_seq = self.twcc;
 
-        if let Some((header, seq_no)) =
-            media.poll_packet(now, &self.exts, &mut self.twcc, pad_size, buf)
-        {
-            trace!("Poll RTP: {:?}", header);
+        if let Some(polled_packet) = media.poll_packet(now, &self.exts, &mut self.twcc, buf) {
+            let PolledPacket {
+                header,
+                twcc_seq_no,
+                is_padding,
+                payload_size,
+            } = polled_packet;
+
+            trace!(payload_size, is_padding, "Poll RTP: {:?}", header);
 
             #[cfg(feature = "_internal_dont_use_log_stats")]
             {
-                let kind = if pad_size.is_some() {
-                    "padding"
-                } else {
-                    "media"
-                };
+                let kind = if is_padding { "padding" } else { "media" };
 
-                crate::log_stat!("PACKET_SENT", header.ssrc, buf.len(), kind);
+                crate::log_stat!("PACKET_SENT", header.ssrc, payload_size, kind);
             }
 
-            let payload_size = buf.len();
-            self.pacer.register_send(now, buf.len().into(), mid);
-            let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
+            self.pacer.register_send(now, payload_size.into(), mid);
+            let protected = srtp_tx.protect_rtp(buf, &header, *twcc_seq_no);
 
             self.twcc_tx_register
                 .register_seq(twcc_seq.into(), now, payload_size);

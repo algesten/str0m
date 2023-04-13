@@ -116,6 +116,28 @@ pub struct QueueSnapshot {
     pub last_emitted: Option<Instant>,
     /// Time the first unsent packet has spent in the queue.
     pub first_unsent: Option<Instant>,
+    /// The priority of the most important packet in the queue.
+    pub priority: QueuePriority,
+}
+
+/// Priority for a given queue.
+///
+/// When sorted, higher priority sorts first.
+///
+/// ```ignore
+/// # use crate::packet::QueuePriority;
+/// assert!(QueuePriority::Media < QueuePriority:Padding);
+/// assert!(QueuePriority::Padding < QueuePriority:Empty);
+/// ```
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum QueuePriority {
+    // Highest, priority for a queue that contains media.
+    Media = 0,
+    // Priority for a queue that only contains padding.
+    Padding = 1,
+    // Priority for an empty queue.
+    #[default]
+    Empty = 2,
 }
 
 impl QueueSnapshot {
@@ -136,6 +158,7 @@ impl Default for QueueSnapshot {
             total_queue_time_origin: Default::default(),
             last_emitted: Default::default(),
             first_unsent: Default::default(),
+            priority: QueuePriority::default(),
         }
     }
 }
@@ -235,13 +258,6 @@ pub struct LeakyBucketPacer {
     media_debt: DataSize,
     /// The current padding debt.
     padding_debt: DataSize,
-    /// The padding we are adding, if any.
-    /// When this is set to a non-zero value we return padding until we have added as much padding as specified by this
-    /// value. The reason for this is that we want to send padding as bursts when we do send it.
-    padding_to_add: DataSize,
-    /// Number padding packets sent since the last media. Used to limit the total size of padding bursts we send
-    /// without interleaving some media.
-    consecutive_padding_packets_sent: usize,
     /// The current pacing i.e. how frequently we clear out debt and when we are exceeding the
     /// target bitrate how long we wait to send.
     pacing: Duration,
@@ -296,21 +312,14 @@ impl Pacer for LeakyBucketPacer {
 
         self.clear_debt(elapsed);
         self.maybe_update_adjusted_bitrate(now);
+        let should_recalcualte =
+            matches!(self.next_poll_outcome, Some(PollOutcome::Nothing) | None);
 
-        // We skip recalculating the next poll outcome if we already have one, with the exception
-        // when the next action is padding. The reason we still recalculate if the outcome is
-        // padding is that something more important might still be required i.e. we might have
-        // queued media packets.
-        let recalculate = matches!(
-            self.next_poll_outcome,
-            Some(PollOutcome::PollPadding(_, _)) | None
-        );
-
-        if !recalculate {
+        if !should_recalcualte {
             return;
         }
         self.next_send_time = None;
-        let (next_send_time, queue, send_padding) = self.next_action(now);
+        let (next_send_time, queue, padding) = self.next_action(now);
 
         if now < next_send_time {
             let total_packet_count: u32 = self
@@ -320,7 +329,7 @@ impl Pacer for LeakyBucketPacer {
                 .sum();
             if total_packet_count > 0 {
                 let diff = next_send_time.saturating_duration_since(now);
-                debug!(?now, ?diff, ?next_send_time, "Delaying send");
+                trace!(?now, ?diff, ?next_send_time, "Delaying send");
             }
 
             if queue.is_some() {
@@ -331,28 +340,17 @@ impl Pacer for LeakyBucketPacer {
             return;
         }
 
-        if let Some(queue) = queue {
-            let queue_id = queue.mid;
-
-            match &mut self.padding_to_add {
-                p if *p > DataSize::ZERO && send_padding => {
-                    let packet_size = (*p).min(MAX_PADDING_PACKET_SIZE);
-
-                    *p = p.saturating_sub(packet_size);
-
-                    trace!("LeakyBucketPacer: Requested {packet_size} padding");
-                    self.next_poll_outcome = Some(PollOutcome::PollPadding(
-                        queue_id,
-                        packet_size.as_bytes_usize(),
-                    ));
-                }
-                _ if !send_padding => {
-                    self.next_poll_outcome = Some(PollOutcome::PollQueue(queue_id));
-                }
-                _ => self.next_poll_outcome = Some(PollOutcome::Nothing),
+        match (queue.map(|q| q.mid), padding) {
+            (Some(mid), None) => {
+                self.next_poll_outcome = Some(PollOutcome::PollQueue(mid));
+                self.next_send_time = Some(next_send_time);
             }
-
-            self.next_send_time = Some(next_send_time);
+            (Some(mid), Some(padding)) => {
+                self.next_poll_outcome =
+                    Some(PollOutcome::PollPadding(mid, padding.as_bytes_usize()));
+                self.next_send_time = Some(next_send_time);
+            }
+            _ => self.next_poll_outcome = Some(PollOutcome::Nothing),
         }
     }
 
@@ -361,16 +359,11 @@ impl Pacer for LeakyBucketPacer {
             return PollOutcome::Nothing;
         };
 
-        match next {
-            PollOutcome::PollQueue(_) => {
-                self.need_immediate_timeout = true;
-                self.consecutive_padding_packets_sent = 0;
-            }
-            PollOutcome::PollPadding(_, _) => {
-                self.need_immediate_timeout = true;
-                self.consecutive_padding_packets_sent += 1;
-            }
-            _ => {}
+        if matches!(
+            next,
+            PollOutcome::PollQueue(_) | PollOutcome::PollPadding(_, _)
+        ) {
+            self.need_immediate_timeout = true;
         }
 
         next
@@ -402,8 +395,6 @@ impl LeakyBucketPacer {
             next_send_time: None,
             media_debt: DataSize::ZERO,
             padding_debt: DataSize::ZERO,
-            padding_to_add: DataSize::ZERO,
-            consecutive_padding_packets_sent: 0,
             pacing,
             queue_limit: DEFAULT_QUEUE_LIMIT,
             queue_states: vec![],
@@ -429,16 +420,17 @@ impl LeakyBucketPacer {
         self.media_debt = self
             .media_debt
             .saturating_sub(self.adjusted_bitrate * elapsed);
-        self.padding_debt = self.padding_debt.saturating_sub(
-            self.last_non_zero_padding_bitrate
-                .unwrap_or(self.padding_bitrate)
-                * elapsed,
-        );
+        let padding_clear_rate = self
+            .last_non_zero_padding_bitrate
+            .unwrap_or(self.padding_bitrate);
+        self.padding_debt = self
+            .padding_debt
+            .saturating_sub(padding_clear_rate * elapsed);
         crate::packet::bwe::macros::log_pacer_media_debt!(self.media_debt.as_bytes_usize());
         crate::packet::bwe::macros::log_pacer_padding_debt!(self.padding_debt.as_bytes_usize());
     }
 
-    fn next_action(&self, now: Instant) -> (Instant, Option<&QueueState>, bool) {
+    fn next_action(&self, now: Instant) -> (Instant, Option<&QueueState>, Option<DataSize>) {
         // If we have never sent before, do so immediately on an arbitrary non-empty queue.
         if self.last_send_time.is_none() {
             let mut queues = self
@@ -446,7 +438,7 @@ impl LeakyBucketPacer {
                 .iter()
                 .filter(|q| q.snapshot.packet_count > 0);
 
-            return (now, queues.next(), false);
+            return (now, queues.next(), None);
         };
 
         let unpaced_audio = self
@@ -458,7 +450,7 @@ impl LeakyBucketPacer {
 
         // Audio packets are not paced, immediately send.
         if let Some((queued_at, qs)) = unpaced_audio {
-            return (queued_at, Some(qs), false);
+            return (queued_at, Some(qs), None);
         }
 
         let non_empty_queue = {
@@ -467,33 +459,13 @@ impl LeakyBucketPacer {
                 .iter()
                 .filter(|q| q.snapshot.packet_count > 0 && !q.is_audio);
 
-            // Send on the non-empty video queue that sent least recently.
-            queues.min_by_key(|q| q.snapshot.last_emitted)
+            // Send on the non-empty video queue with the lowest priority that, was least recently
+            // sent on.
+            queues.min_by_key(|q| (q.snapshot.priority, q.snapshot.last_emitted))
         };
 
-        let too_many_padding_packets =
-            self.consecutive_padding_packets_sent >= MAX_CONSECUTIVE_PADDING_PACKETS;
-        match (
-            non_empty_queue,
-            self.adjusted_bitrate,
-            self.padding_bitrate,
-            self.padding_to_add,
-        ) {
-            (None, _, _, padding_to_add)
-                if padding_to_add > DataSize::ZERO && !too_many_padding_packets =>
-            {
-                // If we have padding to send, send it on the most recently used queue.
-                let queue = self
-                    .queue_states
-                    .iter()
-                    .filter(|q| q.use_for_padding)
-                    .max_by_key(|q| q.snapshot.last_emitted);
-
-                (now, queue, true)
-            }
-            (Some(queue), bitrate, _, _)
-                if bitrate > Bitrate::ZERO && self.adjusted_bitrate > Bitrate::ZERO =>
-            {
+        match non_empty_queue {
+            Some(queue) if self.adjusted_bitrate > Bitrate::ZERO => {
                 // If we have a non-empty queue send on it as soon as possible, possibly waiting
                 // for the next pacing interval.
                 let drain_debt_time = self.media_debt / self.adjusted_bitrate;
@@ -510,46 +482,56 @@ impl LeakyBucketPacer {
                         .map(|h| h + next_send_offset)
                         .unwrap_or(now),
                     Some(queue),
-                    false,
+                    None,
                 )
             }
-            (None, _, padding_bitrate, padding_to_add)
-                if padding_bitrate > Bitrate::ZERO
-                    && padding_to_add == DataSize::ZERO
-                    && self.adjusted_bitrate > Bitrate::ZERO
-                    && !too_many_padding_packets =>
+            None if self.padding_debt == DataSize::ZERO
+                && self.media_debt == DataSize::ZERO
+                && self.padding_bitrate > Bitrate::ZERO
+                && self.last_send_time.is_some() =>
             {
-                // If all queues are empty and we have a padding rate wait until we have drained
-                // either the media debt to send media or the padding debt to send padding.
+                // If we can generate padding do so on the most recently used queue.
+                let queue = self
+                    .queue_states
+                    .iter()
+                    .filter(|q| q.use_for_padding)
+                    .max_by_key(|q| q.snapshot.last_emitted);
+
+                // No queues and no debt, generate some padding.
+                let padding_to_add = self.padding_bitrate * PADDING_BURST_INTERVAL;
+
+                (now, queue, Some(padding_to_add))
+            }
+            None if self.padding_bitrate > Bitrate::ZERO && self.last_send_time.is_some() => {
+                // If all queues are empty, we have sent something, and we have a padding rate wait until we have drained
+                // both the media debt and padding debt to send some padding.
                 let mut drain_debt_time = (self.media_debt / self.adjusted_bitrate)
-                    .max(self.padding_debt / padding_bitrate);
+                    .max(self.padding_debt / self.padding_bitrate);
                 let padding_queue = self
                     .queue_states
                     .iter()
                     .filter(|q| q.use_for_padding)
                     .max_by_key(|q| q.snapshot.last_emitted);
 
-                if drain_debt_time.is_zero() {
-                    drain_debt_time = Duration::from_millis(1);
-                }
-
                 (
                     self.last_handle_time
                         .map(|h| h + drain_debt_time)
                         .unwrap_or(now),
                     padding_queue,
-                    true,
+                    // we return None here because we'll eventually get a handle_timeout that
+                    // will clear out the debt and we can nominate a padding size
+                    None,
                 )
             }
             _ => {
-                // Early return, wait until next handle time or a new packet being added in the
-                // queue(s).
+                // No queues to send on, no padding to generate, wait until the next handle time or
+                // until a packet is queued.
                 (
                     self.last_handle_time
                         .map(|h| h + self.pacing)
                         .unwrap_or(now),
                     None,
-                    false,
+                    None,
                 )
             }
         }
@@ -568,23 +550,7 @@ impl LeakyBucketPacer {
                         acc.2 + DataSize::from(q.snapshot.size),
                     )
                 });
-
         if queued_packets == 0 {
-            let should_send_padding = self.padding_debt == DataSize::ZERO
-                && self.media_debt == DataSize::ZERO
-                && self.padding_bitrate > Bitrate::ZERO
-                && self.last_send_time.is_some()
-                && self.padding_to_add == DataSize::ZERO
-                && self.consecutive_padding_packets_sent < MAX_CONSECUTIVE_PADDING_PACKETS;
-
-            if should_send_padding {
-                // No queues and no debt, generate some padding.
-                let padding_to_add = self.padding_bitrate * PADDING_BURST_INTERVAL;
-
-                trace!("Set padding_to_add to {padding_to_add}");
-
-                self.padding_to_add = padding_to_add;
-            }
             return;
         }
 
@@ -628,6 +594,7 @@ impl QueueSnapshot {
             (Some(v1), None) => Some(v1),
             (Some(v1), Some(v2)) => Some(v1.min(v2)),
         };
+        self.priority = self.priority.min(other.priority);
     }
 
     fn total_queue_time(&self, now: Instant) -> Duration {
@@ -654,7 +621,7 @@ mod test {
 
     use super::*;
 
-    use queue::{Queue, QueuedPacket};
+    use queue::{PacketKind, Queue, QueuedPacket};
     use rand::distributions::Standard;
     use rand::prelude::*;
 
@@ -708,7 +675,7 @@ mod test {
             &mut queue,
             1,
             5,
-            MediaKind::Video,
+            PacketKind::Video,
             now + duration_ms(21),
         );
 
@@ -727,7 +694,7 @@ mod test {
             &mut queue,
             2,
             8,
-            MediaKind::Video,
+            PacketKind::Video,
             now + duration_ms(27),
         );
         enqueue_packet_noisy(
@@ -735,7 +702,7 @@ mod test {
             &mut queue,
             3,
             25,
-            MediaKind::Video,
+            PacketKind::Video,
             now + duration_ms(28),
         );
 
@@ -774,7 +741,7 @@ mod test {
             &mut queue,
             4,
             12,
-            MediaKind::Video,
+            PacketKind::Video,
             now + duration_ms(45),
         );
         enqueue_packet_noisy(
@@ -782,7 +749,7 @@ mod test {
             &mut queue,
             5,
             25,
-            MediaKind::Video,
+            PacketKind::Video,
             now + duration_ms(47),
         );
 
@@ -797,7 +764,7 @@ mod test {
             &mut queue,
             6,
             100,
-            MediaKind::Audio,
+            PacketKind::Audio,
             now + duration_ms(52),
         );
 
@@ -809,7 +776,7 @@ mod test {
             now + duration_ms(52),
             "Sixth packet(audio) should be released despite too much media debt because audio packets are not paced",
             |packet| {
-                assert_eq!(packet.kind, MediaKind::Audio);
+                assert_eq!(packet.kind, PacketKind::Audio);
                 assert_eq!(packet.header.sequence_number, 6);
             },
         );
@@ -856,7 +823,7 @@ mod test {
             &mut queue,
             1,
             22,
-            MediaKind::Video,
+            PacketKind::Video,
             now + duration_ms(21),
         );
 
@@ -881,7 +848,7 @@ mod test {
             &mut queue,
             2,
             8,
-            MediaKind::Video,
+            PacketKind::Video,
             // Debt will be just slightly above what can be drained in 40 ms
             // after 66ms
             now + duration_ms(66),
@@ -896,7 +863,7 @@ mod test {
             &mut queue,
             3,
             5,
-            MediaKind::Video,
+            PacketKind::Video,
             now + duration_ms(70),
         );
         // Drain packet 2
@@ -915,7 +882,7 @@ mod test {
             &mut queue,
             4,
             1200,
-            MediaKind::Video,
+            PacketKind::Video,
             now + duration_ms(71),
         );
 
@@ -950,7 +917,7 @@ mod test {
             &mut queue,
             5,
             40,
-            MediaKind::Video,
+            PacketKind::Video,
             now + duration_ms(81),
         );
 
@@ -976,7 +943,7 @@ mod test {
             &mut queue,
             1,
             22,
-            MediaKind::Video,
+            PacketKind::Video,
             now + duration_ms(21),
         );
 
@@ -1001,7 +968,7 @@ mod test {
             &mut queue,
             2,
             8,
-            MediaKind::Video,
+            PacketKind::Video,
             now + duration_ms(70),
         );
 
@@ -1029,7 +996,7 @@ mod test {
             &mut queue,
             3,
             15,
-            MediaKind::Video,
+            PacketKind::Video,
             now + duration_ms(165),
         );
 
@@ -1084,6 +1051,7 @@ mod test {
                 total_queue_time_origin: duration_ms(1_000),
                 last_emitted: Some(now + duration_ms(500)),
                 first_unsent: None,
+                priority: QueuePriority::Media,
             },
         };
 
@@ -1098,6 +1066,7 @@ mod test {
                 total_queue_time_origin: duration_ms(337),
                 last_emitted: None,
                 first_unsent: Some(now + duration_ms(19)),
+                priority: QueuePriority::Padding,
             },
         };
 
@@ -1110,6 +1079,14 @@ mod test {
 
         assert_eq!(state.snapshot.last_emitted, Some(now + duration_ms(500)));
         assert_eq!(state.snapshot.first_unsent, Some(now + duration_ms(19)));
+        assert_eq!(state.snapshot.priority, QueuePriority::Media);
+    }
+
+    #[test]
+    fn test_priority_ordering() {
+        assert!(QueuePriority::Media < QueuePriority::Padding);
+        assert!(QueuePriority::Media < QueuePriority::Empty);
+        assert!(QueuePriority::Padding < QueuePriority::Empty);
     }
 
     fn assert_poll_success<F>(
@@ -1147,7 +1124,7 @@ mod test {
         queue: &mut Queue,
         seq_no: u16,
         size: usize,
-        kind: MediaKind,
+        kind: PacketKind,
         now: Instant,
     ) {
         let (header, payload_len, kind) = make_packet(seq_no, size, kind);
@@ -1171,7 +1148,7 @@ mod test {
         Duration::from_millis(ms)
     }
 
-    fn make_packet(seq_no: u16, size: usize, kind: MediaKind) -> (RtpHeader, usize, MediaKind) {
+    fn make_packet(seq_no: u16, size: usize, kind: PacketKind) -> (RtpHeader, usize, PacketKind) {
         let mut header = RtpHeader {
             sequence_number: seq_no,
             ..Default::default()
@@ -1239,7 +1216,9 @@ mod test {
 
                 match outcome {
                     PollOutcome::PollQueue(mid) => {
-                        let packet = queue.next_packet().expect("Should have a packet");
+                        let packet = queue
+                            .next_packet()
+                            .unwrap_or_else(|| panic!("Should have a packet for mid {mid}"));
                         queue.register_send(mid, now + elapsed);
                         queue.update_average_queue_time(now + elapsed);
                         pacer.register_send(
@@ -1247,7 +1226,11 @@ mod test {
                             DataSize::bytes(packet.payload_len as u64),
                             mid,
                         );
-                        media_sent += packet.payload_len.into();
+                        if packet.kind == PacketKind::Padding {
+                            padding_sent += packet.payload_len.into();
+                        } else {
+                            media_sent += packet.payload_len.into();
+                        }
                     }
                     PollOutcome::PollPadding(mid, mut pad_size) => {
                         while pad_size > 0 {
@@ -1258,8 +1241,19 @@ mod test {
                                 ((packet_size as f32 * (1.0 + overshoot_factor).round()) as usize)
                                     .min(1200);
                             let final_packet_size = DataSize::bytes(final_packet_size as u64);
-                            padding_sent += final_packet_size;
-                            pacer.register_send(now + elapsed, final_packet_size, mid);
+                            let (header, payload_len, kind) = make_packet(
+                                0,
+                                final_packet_size.as_bytes_usize(),
+                                PacketKind::Padding,
+                            );
+                            queue.enqueue_packet(QueuedPacket {
+                                queued_at: now + elapsed,
+                                header,
+                                payload_len,
+                                kind,
+                            });
+                            queue.update_average_queue_time(now + elapsed);
+                            pacer.handle_timeout(now + elapsed, queue.queue_state(now + elapsed));
 
                             pad_size = pad_size.saturating_sub(final_packet_size.as_bytes_usize());
                         }
@@ -1305,7 +1299,7 @@ mod test {
             while to_add > DataSize::ZERO {
                 let packet_size = to_add.min(DataSize::bytes(1100));
                 let (header, size, kind) =
-                    make_packet(0, packet_size.as_bytes_usize(), MediaKind::Video);
+                    make_packet(0, packet_size.as_bytes_usize(), PacketKind::Video);
                 queue.enqueue_packet(QueuedPacket {
                     queued_at: now + elapsed,
                     header,
@@ -1354,13 +1348,22 @@ mod test {
             audio_queue: Inner,
             /// Queue for video packets
             video_queue: Inner,
+            /// Queue for padding packets
+            padding_queue: Inner,
         }
 
         pub(super) struct QueuedPacket {
             pub(super) queued_at: Instant,
             pub(super) header: RtpHeader,
             pub(super) payload_len: usize,
-            pub(super) kind: MediaKind,
+            pub(super) kind: PacketKind,
+        }
+
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub(super) enum PacketKind {
+            Audio,
+            Video,
+            Padding,
         }
 
         impl Queue {
@@ -1381,8 +1384,10 @@ mod test {
             pub(super) fn next_packet(&mut self) -> Option<QueuedPacket> {
                 if !self.audio_queue.is_empty() {
                     self.audio_queue.pop_packet()
-                } else {
+                } else if !self.video_queue.is_empty() {
                     self.video_queue.pop_packet()
+                } else {
+                    self.padding_queue.pop_packet()
                 }
             }
 
@@ -1390,6 +1395,7 @@ mod test {
                 vec![
                     self.audio_queue.queue_state(now),
                     self.video_queue.queue_state(now),
+                    self.padding_queue.queue_state(now),
                 ]
                 .into_iter()
             }
@@ -1399,15 +1405,18 @@ mod test {
                     self.video_queue.last_send_time = Some(now);
                 } else if self.audio_queue.mid == mid {
                     self.audio_queue.last_send_time = Some(now);
+                } else if self.padding_queue.mid == mid {
+                    self.padding_queue.last_send_time = Some(now);
                 } else {
                     panic!("Attempted to register send on unknown queue with id {mid:?}");
                 }
             }
 
-            fn queue_for_kind_mut(&mut self, kind: MediaKind) -> &mut Inner {
+            fn queue_for_kind_mut(&mut self, kind: PacketKind) -> &mut Inner {
                 match kind {
-                    MediaKind::Audio => &mut self.audio_queue,
-                    MediaKind::Video => &mut self.video_queue,
+                    PacketKind::Audio => &mut self.audio_queue,
+                    PacketKind::Video => &mut self.video_queue,
+                    PacketKind::Padding => &mut self.padding_queue,
                 }
             }
         }
@@ -1415,8 +1424,9 @@ mod test {
         impl Default for Queue {
             fn default() -> Self {
                 Self {
-                    audio_queue: Inner::new(Mid::from("001"), true),
-                    video_queue: Inner::new(Mid::from("002"), false),
+                    audio_queue: Inner::new(Mid::from("001"), true, QueuePriority::Media),
+                    video_queue: Inner::new(Mid::from("002"), false, QueuePriority::Media),
+                    padding_queue: Inner::new(Mid::from("003"), false, QueuePriority::Padding),
                 }
             }
         }
@@ -1435,10 +1445,11 @@ mod test {
             total_time_spent_queued: Duration,
             last_update: Option<Instant>,
             is_audio: bool,
+            priority: QueuePriority,
         }
 
         impl Inner {
-            fn new(mid: Mid, is_audio: bool) -> Self {
+            fn new(mid: Mid, is_audio: bool, priority: QueuePriority) -> Self {
                 Self {
                     mid,
                     last_send_time: None,
@@ -1447,6 +1458,7 @@ mod test {
                     total_time_spent_queued: Duration::ZERO,
                     last_update: None,
                     is_audio,
+                    priority,
                 }
             }
 
@@ -1499,7 +1511,18 @@ mod test {
                         total_queue_time_origin: self.total_time_spent_queued,
                         last_emitted: self.last_send_time,
                         first_unsent: self.queue.iter().next().map(|p| p.queued_at),
+                        priority: self.priority,
                     },
+                }
+            }
+        }
+
+        impl fmt::Display for PacketKind {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                match self {
+                    PacketKind::Audio => write!(f, "audio"),
+                    PacketKind::Video => write!(f, "video"),
+                    PacketKind::Padding => write!(f, "padding"),
                 }
             }
         }

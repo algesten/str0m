@@ -18,7 +18,7 @@ mod sender;
 mod register;
 
 mod inner;
-pub(crate) use inner::{MediaInner, Source};
+pub(crate) use inner::{MediaInner, PolledPacket, Source};
 
 /// Half internal structures regarding RTP level.
 pub mod rtp {

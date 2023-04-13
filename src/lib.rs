@@ -548,7 +548,7 @@ use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
 pub mod media;
 use media::{Direction, KeyframeRequest, Media};
 use media::{KeyframeRequestKind, MediaChanged, MediaData};
-use media::{MediaAdded, MediaInner, Mid, Pt, Rid};
+use media::{MediaAdded, MediaInner, Mid, PolledPacket, Pt, Rid};
 
 pub mod change;
 
