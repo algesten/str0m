@@ -106,10 +106,7 @@ impl Session {
             id = (*id >> 1).into();
         }
         let (pacer, bwe) = if let Some(rate) = config.bwe_initial_bitrate {
-            let pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(
-                rate * PACING_FACTOR * 2.0,
-                Duration::from_millis(40),
-            ));
+            let pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(rate * PACING_FACTOR * 2.0));
 
             let send_side_bwe = SendSideBandwithEstimator::new(rate);
             let bwe = Bwe {
