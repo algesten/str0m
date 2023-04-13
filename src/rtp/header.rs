@@ -240,6 +240,9 @@ impl RtpHeader {
     }
 
     pub fn is_rtx_null_packet(buf: &[u8]) -> bool {
+        if buf.len() < 10 {
+            return false;
+        }
         buf[0..10] == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     }
 
