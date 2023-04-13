@@ -10,7 +10,7 @@ use crate::packet::{DepacketizingBuffer, MediaKind, Packetized, QueuePriority, Q
 use crate::packet::{PacketizedMeta, PacketizingBuffer, QueueState};
 use crate::rtp::{ExtensionMap, Fir, FirEntry, NackEntry, Pli, Rtcp};
 use crate::rtp::{RtcpFb, RtpHeader, SdesType};
-use crate::rtp::{SeqNo, MAX_PADDING_PACKET_SIZE, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
+use crate::rtp::{SeqNo, MAX_BLANK_PADDING_PAYLOAD_SIZE, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 use crate::sdp::{MediaLine, Msid, Simulcast as SdpSimulcast};
 use crate::stats::StatsSnapshot;
 use crate::util::already_happened;
@@ -210,8 +210,8 @@ enum NextPacketBody<'a> {
         pkt: &'a Packetized,
         orig_seq_no: Option<SeqNo>,
     },
-    /// An empty padding packet to be generated.
-    Padding { len: u8 },
+    /// An blank padding packet to be generated.
+    Blank { len: u8 },
 }
 
 impl MediaInner {
@@ -445,7 +445,7 @@ impl MediaInner {
         exts: &ExtensionMap,
         twcc: &mut u64,
         buf: &mut Vec<u8>,
-    ) -> Option<(RtpHeader, SeqNo, bool, usize)> {
+    ) -> Option<PolledPacket> {
         let mid = self.mid;
 
         let (next, is_padding) = if let Some(next) = self.poll_packet_resend_to_cap(now) {
@@ -507,7 +507,7 @@ impl MediaInner {
 
                 body_len + original_seq_len + pad_len
             }
-            NextPacketBody::Padding { len } => {
+            NextPacketBody::Blank { len } => {
                 let len = RtpHeader::create_padding_packet(
                     &mut buf[..],
                     len,
@@ -528,7 +528,13 @@ impl MediaInner {
             crate::log_stat!("QUEUE_DELAY", header.ssrc, delay.as_millis());
         }
 
-        Some((header, next.seq_no, is_padding, body_len))
+        // Some((header, next.seq_no, is_padding, body_len))
+        Some(PolledPacket {
+            header,
+            twcc_seq_no: next.seq_no,
+            is_padding,
+            payload_size: body_len,
+        })
     }
 
     fn poll_packet_resend_to_cap(&mut self, now: Instant) -> Option<NextPacket> {
@@ -643,12 +649,12 @@ impl MediaInner {
 
     fn poll_packet_padding(&mut self, now: Instant) -> Option<NextPacket> {
         loop {
-            let padding_or_resend = self.padding.pop_front()?;
+            let padding = self.padding.pop_front()?;
 
             // Force recaching since padding changed.
             self.queue_state = None;
 
-            match padding_or_resend {
+            match padding {
                 Padding::Blank { ssrc, pt, size, .. } => {
                     let source_tx = get_or_create_source_tx(
                         &mut self.sources_tx,
@@ -657,12 +663,14 @@ impl MediaInner {
                     );
                     let seq_no = source_tx.next_seq_no(now, None);
 
-                    trace!("Generating padding packet of size {size} on {ssrc} with pt: {pt}");
+                    trace!(
+                        "Generating blank padding packet of size {size} on {ssrc} with pt: {pt}"
+                    );
                     return Some(NextPacket {
                         pt,
                         ssrc,
                         seq_no,
-                        body: NextPacketBody::Padding { len: size as u8 },
+                        body: NextPacketBody::Blank { len: size as u8 },
                     });
                 }
                 Padding::Spurious(resend) => {
@@ -672,7 +680,10 @@ impl MediaInner {
                     let buffer = self
                         .buffers_tx
                         .values()
-                        .find(|p| p.has_ssrc(padding_or_resend.ssrc()))?;
+                        .find(|p| p.has_ssrc(padding.ssrc()))
+                        .unwrap_or_else(|| 
+                            panic!("Spurious padding requested for ssrc {} for which no buffer exists.", padding.ssrc())
+                        );
 
                     let pkt = buffer.get(resend.seq_no);
 
@@ -785,7 +796,7 @@ impl MediaInner {
                     return;
                 };
                 let Some(pt_rtx) = pt_rtx(&self.params, pt) else {
-                    warn!("Found no PT to send raw padding on");
+                    warn!("Found no PT to send blank padding on");
                     return;
                 };
                 let ssrc_rtx = self
@@ -795,13 +806,13 @@ impl MediaInner {
                     .map(|s| s.ssrc())
                     .expect("at least one rtx source");
 
-                let padding = pad_size.clamp(SRTP_BLOCK_SIZE, MAX_PADDING_PACKET_SIZE);
+                let padding = pad_size.clamp(SRTP_BLOCK_SIZE, MAX_BLANK_PADDING_PAYLOAD_SIZE);
 
                 // Saturating sub because we can overflow and want to stop when that
                 // happens.
                 pad_size = pad_size.saturating_sub(padding);
 
-                trace!("Queued {padding} bytes worth of raw padding");
+                trace!("Queued {padding} bytes worth of blank padding");
                 self.padding.push_back(Padding::Blank {
                     ssrc: ssrc_rtx,
                     pt: pt_rtx,
@@ -828,15 +839,7 @@ impl MediaInner {
     }
 
     pub fn get_or_create_source_tx(&mut self, ssrc: Ssrc) -> &mut SenderSource {
-        let maybe_idx = self.sources_tx.iter().position(|r| r.ssrc() == ssrc);
-
-        if let Some(idx) = maybe_idx {
-            &mut self.sources_tx[idx]
-        } else {
-            self.equalize_sources = true;
-            self.sources_tx.push(SenderSource::new(ssrc));
-            self.sources_tx.last_mut().unwrap()
-        }
+        get_or_create_source_tx(&mut self.sources_tx, &mut self.equalize_sources, ssrc)
     }
 
     pub fn set_equalize_sources(&mut self) {
@@ -1395,6 +1398,13 @@ impl MediaInner {
     }
 }
 
+pub struct PolledPacket {
+    pub header: RtpHeader,
+    pub twcc_seq_no: SeqNo,
+    pub is_padding: bool,
+    pub payload_size: usize,
+}
+
 // returns the corresponding rtx pt counterpart, if any
 fn pt_rtx(params: &[PayloadParams], pt: Pt) -> Option<Pt> {
     params.iter().find(|p| p.pt() == pt)?.resend
@@ -1406,7 +1416,7 @@ impl<'a> NextPacketBody<'a> {
         match self {
             Regular { pkt } => pkt.meta.rtp_time.numer() as u32,
             Resend { pkt, .. } => pkt.meta.rtp_time.numer() as u32,
-            Padding { .. } => 0,
+            Blank { .. } => 0,
         }
     }
 
@@ -1415,7 +1425,7 @@ impl<'a> NextPacketBody<'a> {
         match self {
             Regular { pkt } => pkt.meta.ext_vals,
             Resend { pkt, .. } => pkt.meta.ext_vals,
-            Padding { .. } => ExtensionValues::default(),
+            Blank { .. } => ExtensionValues::default(),
         }
     }
 
@@ -1424,7 +1434,7 @@ impl<'a> NextPacketBody<'a> {
         match self {
             Regular { pkt } => pkt.marker,
             Resend { pkt, .. } => pkt.marker,
-            Padding { .. } => false,
+            Blank { .. } => false,
         }
     }
 
@@ -1433,7 +1443,7 @@ impl<'a> NextPacketBody<'a> {
         match self {
             Regular { .. } => None,
             Resend { orig_seq_no, .. } => *orig_seq_no,
-            Padding { .. } => None,
+            Blank { .. } => None,
         }
     }
 
@@ -1444,7 +1454,7 @@ impl<'a> NextPacketBody<'a> {
             Regular { pkt } => Some(pkt.queued_at),
             // TODO: Accurate queued_at for resends
             Resend { .. } => None,
-            Padding { .. } => None,
+            Blank { .. } => None,
         }
     }
 }
