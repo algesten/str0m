@@ -583,6 +583,8 @@ impl LeakyBucketPacer {
                 trace!("Set padding_to_add to {padding_to_add}");
 
                 self.padding_to_add = padding_to_add;
+            } else {
+                self.padding_to_add = DataSize::ZERO;
             }
             return;
         }
