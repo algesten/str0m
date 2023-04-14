@@ -676,13 +676,14 @@ impl MediaInner {
                     // If there is no buffer for this padding, we return None. This is
                     // a weird situation though, since it means we queued padding for a buffer we don't
                     // have.
-                    let buffer = self
+                    let Some(buffer) = self
                         .buffers_tx
                         .values()
-                        .find(|p| p.has_ssrc(padding.ssrc()))
-                        .unwrap_or_else(||
-                            panic!("Spurious padding requested for ssrc {} for which no buffer exists.", padding.ssrc())
-                        );
+                        .find(|p| p.has_ssrc(padding.ssrc())) else {
+                            // This can happen for example case buffers were
+                            // cleared (i.e. a change of media direction)
+                            continue;
+                        };
 
                     let pkt = buffer.get(resend.seq_no);
 
