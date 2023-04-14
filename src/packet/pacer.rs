@@ -306,8 +306,6 @@ impl Pacer for LeakyBucketPacer {
         self.maybe_update_adjusted_bitrate(now);
 
         if let Some(request) = self.maybe_create_padding_request() {
-            // We need refreshed queue state to generate a poll for the padding that is generated
-            // as a consequence of this.
             self.next_poll_queue = Some(request.mid);
             return Some(request);
         }
