@@ -6,7 +6,7 @@ use crate::format::{Codec, CodecConfig};
 use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::media::{MediaAdded, MediaChanged, Source};
 use crate::packet::{
-    LeakyBucketPacer, NullPacer, Pacer, PacerImpl, PollOutcome, RtpMeta, SendSideBandwithEstimator,
+    LeakyBucketPacer, NullPacer, Pacer, PacerImpl, RtpMeta, SendSideBandwithEstimator,
 };
 use crate::rtp::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
 use crate::rtp::{extend_u32, SRTCP_OVERHEAD};
@@ -237,7 +237,18 @@ impl Session {
             .medias
             .iter_mut()
             .map(|m| m.buffers_tx_queue_state(now));
-        self.pacer.handle_timeout(now, iter);
+        if let Some(padding_request) = self.pacer.handle_timeout(now, iter) {
+            let media = self
+                .media_by_mid_mut(padding_request.mid)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "No media found for mid {}, to service padding request",
+                        padding_request.mid
+                    )
+                });
+
+            media.generate_padding(now, padding_request.padding);
+        }
         if let Some(bwe) = self.bwe.as_mut() {
             bwe.handle_timeout(now);
         }
@@ -704,13 +715,7 @@ impl Session {
         let srtp_tx = self.srtp_tx.as_mut()?;
 
         // Figure out which, if any, queue to poll
-        let (mid, pad_size) = match self.pacer.poll_action() {
-            PollOutcome::PollQueue(mid) => (mid, None),
-            PollOutcome::PollPadding(mid, pad_size) => (mid, Some(pad_size)),
-            PollOutcome::Nothing => {
-                return None;
-            }
-        };
+        let mid = self.pacer.poll_queue()?;
 
         // NB: Cannot use media_index_mut here due to borrowing woes around self, need split
         // borrowing.
@@ -719,11 +724,6 @@ impl Session {
             .iter_mut()
             .find(|m| m.mid() == mid)
             .expect("index is media");
-
-        if let Some(pad_size) = pad_size {
-            media.generate_padding(now, pad_size);
-            return None;
-        }
 
         let buf = &mut self.poll_packet_buf;
 

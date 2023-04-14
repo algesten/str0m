@@ -41,17 +41,21 @@ impl Pacer for PacerImpl {
         }
     }
 
-    fn handle_timeout(&mut self, now: Instant, iter: impl Iterator<Item = QueueState>) {
+    fn handle_timeout(
+        &mut self,
+        now: Instant,
+        iter: impl Iterator<Item = QueueState>,
+    ) -> Option<PaddingRequest> {
         match self {
             PacerImpl::Null(v) => v.handle_timeout(now, iter),
             PacerImpl::LeakyBucket(v) => v.handle_timeout(now, iter),
         }
     }
 
-    fn poll_action(&mut self) -> PollOutcome {
+    fn poll_queue(&mut self) -> Option<Mid> {
         match self {
-            PacerImpl::Null(v) => v.poll_action(),
-            PacerImpl::LeakyBucket(v) => v.poll_action(),
+            PacerImpl::Null(v) => v.poll_queue(),
+            PacerImpl::LeakyBucket(v) => v.poll_queue(),
         }
     }
 
@@ -79,22 +83,18 @@ pub trait Pacer {
     fn poll_timeout(&self) -> Option<Instant>;
 
     /// Handle time moving forward, should be called periodically as indicated by [`Pacer::poll_timeout`].
-    fn handle_timeout(&mut self, now: Instant, iter: impl Iterator<Item = QueueState>);
+    fn handle_timeout(
+        &mut self,
+        now: Instant,
+        iter: impl Iterator<Item = QueueState>,
+    ) -> Option<PaddingRequest>;
 
-    /// Determines what action to take, if any.
-    ///
-    ///
-    /// ## Return values
-    ///
-    /// * [`PollOutcome::PollQueue`] indicates that the queue indicated by the contained
-    /// [`QueueState`] should be polled and the resulting packet sent.
-    /// * [`PollOutcome::Nothing`] indicates no action is required at this time.
-    fn poll_action(&mut self) -> PollOutcome;
+    /// Determines which mid to poll, if any.
+    fn poll_queue(&mut self) -> Option<Mid>;
 
     /// Register a packet having been sent.
     ///
-    /// **MUST** be called each time [`Pacer::poll_action`] produces [`PollOutcome::PollQueue`] or
-    /// [`PollOutcome::PollPadding`]` after the packet is sent.
+    /// **MUST** be called each time [`Pacer::poll_queue`] produces a mid.
     fn register_send(&mut self, now: Instant, packet_size: DataSize, from: Mid);
 }
 
@@ -173,16 +173,13 @@ pub struct QueueState {
     pub snapshot: QueueSnapshot,
 }
 
-/// The outcome of a call to [`Pacer::poll_action`].
+/// A request to generate a specific amount of padding.
 #[derive(Debug, Clone, Copy)]
-pub enum PollOutcome {
-    /// The caller **MUST** poll the next packet from the queue that produced the contained [`QueueState`]
-    /// and send it.
-    PollQueue(Mid),
-    /// The caller should produce padding of the given size.
-    PollPadding(Mid, usize),
-    /// The caller MUST do nothing for now.
-    Nothing,
+pub struct PaddingRequest {
+    /// The Mid that should generate and queue the padding.
+    pub mid: Mid,
+    /// The amount of padding in bytes to generate.
+    pub padding: usize,
 }
 
 /// A null pacer that doesn't pace.
@@ -209,13 +206,19 @@ impl Pacer for NullPacer {
         }
     }
 
-    fn handle_timeout(&mut self, _now: Instant, iter: impl Iterator<Item = QueueState>) {
+    fn handle_timeout(
+        &mut self,
+        _now: Instant,
+        iter: impl Iterator<Item = QueueState>,
+    ) -> Option<PaddingRequest> {
         self.need_immediate_timeout = false;
         self.queue_states.clear();
         self.queue_states.extend(iter);
+
+        None
     }
 
-    fn poll_action(&mut self) -> PollOutcome {
+    fn poll_queue(&mut self) -> Option<Mid> {
         let non_empty_queues = self
             .queue_states
             .iter()
@@ -223,9 +226,9 @@ impl Pacer for NullPacer {
         // Pick a queue using round robin, prioritize the least recently sent on queue.
         let to_send_on = non_empty_queues.min_by_key(|q| self.last_sends.get(&q.mid));
 
-        let result = to_send_on.into();
+        let result = to_send_on.map(|q| q.mid);
 
-        if matches!(result, PollOutcome::PollQueue(_)) {
+        if result.is_some() {
             self.need_immediate_timeout = true;
         }
 
@@ -251,7 +254,7 @@ pub struct LeakyBucketPacer {
     /// The last time we indicated that a packet should be sent.
     last_send_time: Option<Instant>,
     /// The next time we should send a queued packet.
-    next_send_time: Option<Instant>,
+    next_poll_time: Option<Instant>,
     /// The current media debt.
     media_debt: DataSize,
     /// The current padding debt.
@@ -260,10 +263,8 @@ pub struct LeakyBucketPacer {
     queue_limit: Duration,
     /// The queue states given by last handle_timeout.
     queue_states: Vec<QueueState>,
-    /// Indicates that we need an immediate timeout to calculate the next state for `poll_action`.
-    need_immediate_timeout: bool,
-    /// The next outcome for `poll_action`
-    next_poll_outcome: Option<PollOutcome>,
+    /// The next return value for `poll_queue``
+    next_poll_queue: Option<Mid>,
 }
 
 impl Pacer for LeakyBucketPacer {
@@ -280,85 +281,70 @@ impl Pacer for LeakyBucketPacer {
     }
 
     fn poll_timeout(&self) -> Option<Instant> {
-        if self.need_immediate_timeout {
-            return self.last_send_time;
-        }
-
         let next_handle_time = self.last_handle_time.map(|lh| lh + PACING);
 
-        match (next_handle_time, self.next_send_time) {
-            (Some(nh), Some(ns)) => Some(nh.min(ns)),
-            (None, Some(ns)) => Some(ns),
+        match (next_handle_time, self.next_poll_time) {
+            (Some(nh), Some(np)) => Some(nh.min(np)),
+            (None, Some(np)) => Some(np),
             (Some(nh), None) => Some(nh),
             (None, None) => None,
         }
     }
 
-    fn handle_timeout(&mut self, now: Instant, iter: impl Iterator<Item = QueueState>) {
-        self.need_immediate_timeout = false;
+    fn handle_timeout(
+        &mut self,
+        now: Instant,
+        iter: impl Iterator<Item = QueueState>,
+    ) -> Option<PaddingRequest> {
+        // This is called periodically and whenever packet is queued.
         self.queue_states.clear();
         self.queue_states.extend(iter);
 
-        // This is called periodically and whenever packet is queued.
         let elapsed = self.update_handle_time_and_get_elapsed(now);
 
         self.clear_debt(elapsed);
         self.maybe_update_adjusted_bitrate(now);
-        let should_recalcualte =
-            matches!(self.next_poll_outcome, Some(PollOutcome::Nothing) | None);
 
-        if !should_recalcualte {
-            return;
+        if let Some(request) = self.maybe_create_padding_request() {
+            self.next_poll_queue = Some(request.mid);
+            return Some(request);
         }
-        self.next_send_time = None;
-        let (next_send_time, queue, padding) = self.next_action(now);
 
-        if now < next_send_time {
+        if self.next_poll_queue.is_some() {
+            return None;
+        }
+        self.next_poll_time = None;
+
+        let (next_poll_time, queue) = self.next_poll(now)?;
+
+        if now < next_poll_time {
             let total_packet_count: u32 = self
                 .queue_states
                 .iter()
                 .map(|q| q.snapshot.packet_count)
                 .sum();
             if total_packet_count > 0 {
-                let diff = next_send_time.saturating_duration_since(now);
-                trace!(?now, ?diff, ?next_send_time, "Delaying send");
+                let diff = next_poll_time.saturating_duration_since(now);
+                trace!(?now, ?diff, ?next_poll_time, "Delaying send");
             }
 
-            if queue.is_some() {
-                // We had a queue to send on
-                self.next_send_time = Some(next_send_time);
-            }
-            self.next_poll_outcome = None;
-            return;
+            // We don't set this because between now and the next poll, queue state can change such
+            // that we should poll a different queue i.e. media could be queued.
+            self.next_poll_queue = None;
+            self.next_poll_time = Some(next_poll_time);
+        } else {
+            self.next_poll_queue = Some(queue.mid);
+            self.next_poll_time = Some(next_poll_time);
         }
 
-        match (queue.map(|q| q.mid), padding) {
-            (Some(mid), None) => {
-                self.next_poll_outcome = Some(PollOutcome::PollQueue(mid));
-                self.next_send_time = Some(next_send_time);
-            }
-            (Some(mid), Some(padding)) => {
-                self.next_poll_outcome =
-                    Some(PollOutcome::PollPadding(mid, padding.as_bytes_usize()));
-                self.next_send_time = Some(next_send_time);
-            }
-            _ => self.next_poll_outcome = Some(PollOutcome::Nothing),
-        }
+        None
     }
 
-    fn poll_action(&mut self) -> PollOutcome {
-        let Some(next) = self.next_poll_outcome.take() else {
-            return PollOutcome::Nothing;
-        };
+    fn poll_queue(&mut self) -> Option<Mid> {
+        let next = self.next_poll_queue.take()?;
+        self.request_immediate_timeout();
 
-        if matches!(
-            next,
-            PollOutcome::PollQueue(_) | PollOutcome::PollPadding(_, _)
-        ) {
-            self.need_immediate_timeout = true;
-        }
-
-        next
+        Some(next)
     }
 
     fn register_send(&mut self, now: Instant, packet_size: DataSize, _from: Mid) {
@@ -383,13 +369,12 @@ impl LeakyBucketPacer {
             padding_bitrate: Bitrate::ZERO,
             last_handle_time: None,
             last_send_time: None,
-            next_send_time: None,
+            next_poll_time: None,
             media_debt: DataSize::ZERO,
             padding_debt: DataSize::ZERO,
             queue_limit: DEFAULT_QUEUE_LIMIT,
             queue_states: vec![],
-            need_immediate_timeout: false,
-            next_poll_outcome: None,
+            next_poll_queue: None,
         }
     }
 
@@ -417,7 +402,7 @@ impl LeakyBucketPacer {
         crate::packet::bwe::macros::log_pacer_padding_debt!(self.padding_debt.as_bytes_usize());
     }
 
-    fn next_action(&self, now: Instant) -> (Instant, Option<&QueueState>, Option<DataSize>) {
+    fn next_poll(&self, now: Instant) -> Option<(Instant, &QueueState)> {
         // If we have never sent before, do so immediately on an arbitrary non-empty queue.
         if self.last_send_time.is_none() {
             let mut queues = self
@@ -425,7 +410,7 @@ impl LeakyBucketPacer {
                 .iter()
                 .filter(|q| q.snapshot.packet_count > 0);
 
-            return (now, queues.next(), None);
+            return queues.next().map(|q| (now, q));
         };
 
         let unpaced_audio = self
@@ -437,7 +422,7 @@ impl LeakyBucketPacer {
 
         // Audio packets are not paced, immediately send.
         if let Some((queued_at, qs)) = unpaced_audio {
-            return (queued_at, Some(qs), None);
+            return Some((queued_at, qs));
         }
 
         let non_empty_queue = {
@@ -451,8 +436,8 @@ impl LeakyBucketPacer {
             queues.min_by_key(|q| (q.snapshot.priority, q.snapshot.last_emitted))
         };
 
-        match non_empty_queue {
-            Some(queue) if self.adjusted_bitrate > Bitrate::ZERO => {
+        if let Some(queue) = non_empty_queue {
+            if self.adjusted_bitrate > Bitrate::ZERO {
                 // If we have a non-empty queue send on it as soon as possible, possibly waiting
                 // for the next pacing interval.
                 let drain_debt_time = self.media_debt / self.adjusted_bitrate;
@@ -464,62 +449,43 @@ impl LeakyBucketPacer {
                     Duration::ZERO
                 };
 
-                (
-                    self.last_handle_time
-                        .map(|h| h + next_send_offset)
-                        .unwrap_or(now),
-                    Some(queue),
-                    None,
-                )
-            }
-            None if self.padding_debt == DataSize::ZERO
-                && self.media_debt == DataSize::ZERO
-                && self.padding_bitrate > Bitrate::ZERO
-                && self.last_send_time.is_some() =>
-            {
-                // If we can generate padding do so on the most recently used queue.
-                let queue = self
-                    .queue_states
-                    .iter()
-                    .filter(|q| q.use_for_padding)
-                    .max_by_key(|q| q.snapshot.last_emitted);
+                let poll_at = self
+                    .last_handle_time
+                    .map(|h| h + next_send_offset)
+                    .unwrap_or(now);
 
-                // No queues and no debt, generate some padding.
-                let padding_to_add = self.padding_bitrate * PADDING_BURST_INTERVAL;
-
-                (now, queue, Some(padding_to_add))
+                return Some((poll_at, queue));
             }
-            None if self.padding_bitrate > Bitrate::ZERO && self.last_send_time.is_some() => {
+        }
+
+        if self.padding_bitrate > Bitrate::ZERO && self.last_send_time.is_some() {
+            let padding_queue = self
+                .queue_states
+                .iter()
+                .filter(|q| q.use_for_padding)
+                .max_by_key(|q| q.snapshot.last_emitted);
+            if let Some(queue) = padding_queue {
                 // If all queues are empty, we have sent something, and we have a padding rate wait until we have drained
                 // both the media debt and padding debt to send some padding.
                 let mut drain_debt_time = (self.media_debt / self.adjusted_bitrate)
                     .max(self.padding_debt / self.padding_bitrate);
-                let padding_queue = self
-                    .queue_states
-                    .iter()
-                    .filter(|q| q.use_for_padding)
-                    .max_by_key(|q| q.snapshot.last_emitted);
+                if drain_debt_time.is_zero() {
+                    // Give the main loop some time to doe something else e.g. queue media.
+                    drain_debt_time = Duration::from_micros(1);
+                }
 
-                (
-                    self.last_handle_time
-                        .map(|h| h + drain_debt_time)
-                        .unwrap_or(now),
-                    padding_queue,
-                    // we return None here because we'll eventually get a handle_timeout that
-                    // will clear out the debt and we can nominate a padding size
-                    None,
-                )
-            }
-            _ => {
-                // No queues to send on, no padding to generate, wait until the next handle time or
-                // until a packet is queued.
-                (
-                    self.last_handle_time.map(|h| h + PACING).unwrap_or(now),
-                    None,
-                    None,
-                )
+                let padding_at = self
+                    .last_handle_time
+                    .map(|h| h + drain_debt_time)
+                    .unwrap_or(now);
+
+                return Some((padding_at, queue));
             }
         }
+
+        // No queues to send on, no poll for now. `poll_timeout` will return a timeout based on
+        // PACING.
+        None
     }
 
     fn maybe_update_adjusted_bitrate(&mut self, now: Instant) {
@@ -563,6 +529,57 @@ impl LeakyBucketPacer {
             .min(self.padding_bitrate * MAX_DEBT_IN_TIME);
         crate::packet::bwe::macros::log_pacer_padding_debt!(self.padding_debt.as_bytes_usize());
     }
+
+    /// Optimistically attempt to create a padding request.
+    ///
+    /// Returns `Some(PaddingRequest)` if padding is enabled and the current queue state
+    /// allows padding, otherwise returns `None`.
+    fn maybe_create_padding_request(&self) -> Option<PaddingRequest> {
+        // We must have no debt.
+        if self.media_debt != DataSize::ZERO || self.padding_debt != DataSize::ZERO {
+            return None;
+        }
+
+        // Queues must be empty.
+        let all_queues_empty = self
+            .queue_states
+            .iter()
+            .all(|q| q.snapshot.packet_count == 0);
+        if !all_queues_empty {
+            return None;
+        }
+
+        // We must have sent some media.
+        self.last_send_time?;
+
+        // We must have a padding bitrate.
+        if self.padding_bitrate == Bitrate::ZERO {
+            return None;
+        }
+
+        // We must have a queue that supports padding.
+        let Some(queue) = self
+            .queue_states
+            .iter()
+            .filter(|q| q.use_for_padding)
+            .max_by_key(|q| q.snapshot.last_emitted) else {
+                debug!("Wanted to generate padding, but no queue supports it.");
+
+                return None;
+            };
+
+        // We can generate padding
+        let padding = (self.padding_bitrate * PADDING_BURST_INTERVAL).as_bytes_usize();
+
+        Some(PaddingRequest {
+            mid: queue.mid,
+            padding,
+        })
+    }
+
+    fn request_immediate_timeout(&mut self) {
+        self.next_poll_time = Some(already_happened());
+    }
 }
 
 impl QueueSnapshot {
@@ -587,15 +604,6 @@ impl QueueSnapshot {
     }
 }
 
-impl From<Option<&QueueState>> for PollOutcome {
-    fn from(value: Option<&QueueState>) -> Self {
-        match value {
-            None => Self::Nothing,
-            Some(q) => Self::PollQueue(q.mid),
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
     use std::ops::Range;
@@ -610,48 +618,16 @@ mod test {
     use rand::distributions::Standard;
     use rand::prelude::*;
 
-    trait PollOutcomeExt {
-        fn expect(&self, msg: &str) -> Mid;
-        fn expect_pading(&self, msg: &str) -> (Mid, usize);
-        fn expect_nothing(&self, msg: &str);
-    }
-
-    impl PollOutcomeExt for PollOutcome {
-        fn expect(&self, msg: &str) -> Mid {
-            match self {
-                PollOutcome::PollQueue(q) => *q,
-                PollOutcome::PollPadding(_, _) => panic!("PollOutcome::PollPadding: {}", msg),
-                PollOutcome::Nothing => panic!("PollOutcome::Nothing: {}", msg),
-            }
-        }
-
-        fn expect_pading(&self, msg: &str) -> (Mid, usize) {
-            match self {
-                PollOutcome::PollQueue(_) => panic!("PollOutcome::PollQueue: {}", msg),
-                PollOutcome::PollPadding(q, p) => (*q, *p),
-                PollOutcome::Nothing => panic!("PollOutcome::Nothing: {}", msg),
-            }
-        }
-
-        fn expect_nothing(&self, msg: &str) {
-            match self {
-                PollOutcome::PollQueue(_) => panic!("Expected nothing but got PollQeue: {}", msg),
-                PollOutcome::PollPadding(_, _) => panic!("PollOutcome::PollPadding: {}", msg),
-                PollOutcome::Nothing => {}
-            }
-        }
-    }
-
     #[test]
     fn test_typical_behavior() {
         let now = Instant::now();
         let mut queue = Queue::default();
         // 2,000 bits per second, 10 bytes per pacing interval(40ms)
         let mut pacer = LeakyBucketPacer::new((10 * 200).into());
-        pacer.handle_timeout(now + duration_ms(1), queue.queue_state(now));
-        queue.update_average_queue_time(now + duration_ms(1));
+        handle_timeout_noisy(&mut pacer, &mut queue, now + duration_ms(1));
 
-        pacer.poll_action().expect_nothing(
+        assert!(
+            pacer.poll_queue().is_none(),
             "We initially attempt to poll any non-empty queue if we have never sent",
         );
 
@@ -703,13 +679,13 @@ mod test {
 
         // We have incurred too much media debt so polling will now fail until the debt can be
         // reduced.
-        pacer
-            .poll_action()
-            .expect_nothing("Third packet should not be released because we have too much debt");
+        assert!(
+            pacer.poll_queue().is_none(),
+            "Third packet should not be released because we have too much debt"
+        );
 
         // Periodic timeout
-        queue.update_average_queue_time(now + duration_ms(41));
-        pacer.handle_timeout(now + duration_ms(41), queue.queue_state(now));
+        handle_timeout_noisy(&mut pacer, &mut queue, now + duration_ms(41));
 
         assert_poll_success(
             &mut pacer,
@@ -740,9 +716,10 @@ mod test {
 
         // We have incurred too much media debt so polling will now fail until the debt can be
         // reduced.
-        pacer
-            .poll_action()
-            .expect_nothing("Fourth packet should not be released because we have too much debt");
+        assert!(
+            pacer.poll_queue().is_none(),
+            "Fourth packet should not be released because we have too much debt"
+        );
 
         enqueue_packet_noisy(
             &mut pacer,
@@ -768,8 +745,7 @@ mod test {
 
         // A lot of time passes, now the bitrate should be adjusted to force drain the queues to
         // avoid packets being queued for too long.
-        queue.update_average_queue_time(now + duration_ms(2053));
-        pacer.handle_timeout(now + duration_ms(2053), queue.queue_state(now));
+        handle_timeout_noisy(&mut pacer, &mut queue, now + duration_ms(2053));
 
         assert_poll_success(
             &mut pacer,
@@ -800,8 +776,7 @@ mod test {
         let mut queue = Queue::default();
         // 2,000 bits per second, 10 bytes per pacing interval(40ms)
         let mut pacer = LeakyBucketPacer::new((10 * 200).into());
-        pacer.handle_timeout(now + duration_ms(1), queue.queue_state(now));
-        queue.update_average_queue_time(now + duration_ms(1));
+        handle_timeout_noisy(&mut pacer, &mut queue, now + duration_ms(1));
 
         enqueue_packet_noisy(
             &mut pacer,
@@ -823,8 +798,7 @@ mod test {
         );
 
         // Time moves forward
-        pacer.handle_timeout(now + duration_ms(41), queue.queue_state(now));
-        queue.update_average_queue_time(now + duration_ms(41));
+        handle_timeout_noisy(&mut pacer, &mut queue, now + duration_ms(41));
 
         // Nothing happens for a while because there's nothing in the queues.
 
@@ -839,9 +813,10 @@ mod test {
             now + duration_ms(66),
         );
 
-        pacer
-            .poll_action()
-            .expect_nothing("Second packet should not be released because there's too much debt");
+        assert!(
+            pacer.poll_queue().is_none(),
+            "Second packet should not be released because there's too much debt"
+        );
 
         enqueue_packet_noisy(
             &mut pacer,
@@ -894,8 +869,7 @@ mod test {
         );
 
         // Time moves forward
-        pacer.handle_timeout(now + duration_ms(81), queue.queue_state(now));
-        queue.update_average_queue_time(now + duration_ms(81));
+        handle_timeout_noisy(&mut pacer, &mut queue, now + duration_ms(81));
 
         enqueue_packet_noisy(
             &mut pacer,
@@ -906,9 +880,10 @@ mod test {
             now + duration_ms(81),
         );
 
-        pacer
-            .poll_action()
-            .expect_nothing("Fifth packet shoud not be relaesed because there's too much debt");
+        assert!(
+            pacer.poll_queue().is_none(),
+            "Fifth packet shoud not be relaesed because there's too much debt"
+        );
     }
 
     #[test]
@@ -920,8 +895,7 @@ mod test {
         // second, 15 bytes per pacing interval(40ms)
         pacer.set_pacing_rate((10 * 200).into());
         pacer.set_padding_rate((15 * 200).into());
-        pacer.handle_timeout(now + duration_ms(1), queue.queue_state(now));
-        queue.update_average_queue_time(now + duration_ms(1));
+        handle_timeout_noisy(&mut pacer, &mut queue, now + duration_ms(1));
 
         enqueue_packet_noisy(
             &mut pacer,
@@ -943,8 +917,7 @@ mod test {
         );
 
         // Time moves forward
-        pacer.handle_timeout(now + duration_ms(41), queue.queue_state(now));
-        queue.update_average_queue_time(now + duration_ms(41));
+        handle_timeout_noisy(&mut pacer, &mut queue, now + duration_ms(41));
 
         // Nothing happens for a while because there's nothing in the queues.
 
@@ -969,12 +942,19 @@ mod test {
         );
 
         // Time moves forward, all debt is cleared out now
-        pacer.handle_timeout(now + duration_ms(155), queue.queue_state(now));
-        queue.update_average_queue_time(now + duration_ms(155));
+        handle_timeout_noisy(&mut pacer, &mut queue, now + duration_ms(155));
 
-        let outcome = pacer.poll_action();
-        let (_, size) = outcome.expect_pading("When the media debt is cleared out, there's  nothing in the queue, and a padding rate is configured the pacer should generate padding");
-        assert_eq!(size, 2_usize);
+        // Drain padding packet
+        assert_poll_success(
+            &mut pacer,
+            &mut queue,
+            now + duration_ms(165),
+            "The queued padding packet should be drained",
+            |packet| {
+                assert_eq!(packet.size(), 2);
+                assert_eq!(packet.header.sequence_number, 0);
+            },
+        );
 
         enqueue_packet_noisy(
             &mut pacer,
@@ -1084,7 +1064,7 @@ mod test {
     where
         F: Fn(QueuedPacket),
     {
-        let qid = pacer.poll_action().expect(msg);
+        let qid = pacer.poll_queue().expect(msg);
         let packet = queue.next_packet().unwrap();
         let packet_size = packet.size();
         do_asserts(packet);
@@ -1092,14 +1072,13 @@ mod test {
         queue.register_send(qid, now);
 
         let timeout = pacer.poll_timeout();
-        assert_eq!(
-            timeout, Some(now),
-            "After a successful send the pacer should return the last send time as its timetout for force an immediate call to handle_timeout"
+        assert!(
+            timeout <= Some(now) && timeout.is_some(),
+            "After a successful send the pacer should return a time in the past from poll_timeout"
         );
 
         // Simulate an immediate call to handle_timeout
-        queue.update_average_queue_time(now);
-        pacer.handle_timeout(now, queue.queue_state(now));
+        handle_timeout_noisy(pacer, queue, now);
 
         timeout.unwrap()
     }
@@ -1125,8 +1104,20 @@ mod test {
 
         // Matches the queueing behavior when the pacer is used in real code.
         // Each packet being queued causes time to move forward in the pacer and the queue.
+        handle_timeout_noisy(pacer, queue, now);
+    }
+
+    fn handle_timeout_noisy(pacer: &mut impl Pacer, queue: &mut Queue, now: Instant) {
         queue.update_average_queue_time(now);
-        pacer.handle_timeout(now, queue.queue_state(now));
+        if let Some(padding_request) = pacer.handle_timeout(now, queue.queue_state(now)) {
+            queue.generate_padding(padding_request.padding, now);
+
+            let timeout = pacer.poll_timeout();
+            if timeout.map(|t| t <= now).unwrap_or(false) {
+                // Refresh queue state
+                pacer.handle_timeout(now, queue.queue_state(now));
+            }
+        }
     }
 
     fn duration_ms(ms: u64) -> Duration {
@@ -1179,98 +1170,74 @@ mod test {
             frame_pacing,
         } = config;
 
-        let mut now = Instant::now();
+        let mut base = Instant::now();
         let mut queue = Queue::default();
         let mut pacer = LeakyBucketPacer::new(media_rate);
         pacer.set_pacing_rate(padding_rate);
         pacer.set_padding_rate(padding_rate);
 
-        let mut last_media_at = now - frame_pacing - Duration::from_millis(1);
+        let mut last_media_at = base - frame_pacing - Duration::from_millis(1);
         let mut media_sent = DataSize::ZERO;
         let mut padding_sent = DataSize::ZERO;
         let mut elapsed = Duration::ZERO;
         let mut rng = thread_rng();
 
-        let mut poll_until_timeout = |pacer: &mut LeakyBucketPacer,
-                                      queue: &mut Queue,
-                                      elapsed: Duration|
-         -> Option<Duration> {
-            loop {
-                pacer.handle_timeout(now + elapsed, queue.queue_state(now + elapsed));
-                let outcome = pacer.poll_action();
-
-                match outcome {
-                    PollOutcome::PollQueue(mid) => {
-                        let packet = queue
-                            .next_packet()
-                            .unwrap_or_else(|| panic!("Should have a packet for mid {mid}"));
-                        queue.register_send(mid, now + elapsed);
-                        queue.update_average_queue_time(now + elapsed);
-                        pacer.register_send(
-                            now + elapsed,
-                            DataSize::bytes(packet.payload_len as u64),
-                            mid,
-                        );
-                        if packet.kind == PacketKind::Padding {
-                            padding_sent += packet.payload_len.into();
-                        } else {
-                            media_sent += packet.payload_len.into();
-                        }
-                    }
-                    PollOutcome::PollPadding(mid, mut pad_size) => {
-                        while pad_size > 0 {
-                            let packet_size = rng.gen_range(200..1000);
-                            let rand: f32 = (StdRng::from_entropy().sample(Standard));
-                            let overshoot_factor: f32 = rand * max_overshoot_factor;
-                            let final_packet_size =
-                                ((packet_size as f32 * (1.0 + overshoot_factor).round()) as usize)
-                                    .min(1200);
-                            let final_packet_size = DataSize::bytes(final_packet_size as u64);
-                            let (header, payload_len, kind) = make_packet(
-                                0,
-                                final_packet_size.as_bytes_usize(),
-                                PacketKind::Padding,
-                            );
-                            queue.enqueue_packet(QueuedPacket {
-                                queued_at: now + elapsed,
-                                header,
-                                payload_len,
-                                kind,
-                            });
-                            queue.update_average_queue_time(now + elapsed);
-                            pacer.handle_timeout(now + elapsed, queue.queue_state(now + elapsed));
-
-                            pad_size = pad_size.saturating_sub(final_packet_size.as_bytes_usize());
-                        }
-                    }
-                    PollOutcome::Nothing => {
-                        return pacer
-                            .poll_timeout()
-                            .map(|i| i.duration_since(now + elapsed));
-                    }
-                }
-
-                if let Some(instant) = pacer.poll_timeout() {
-                    let sleep = instant.saturating_duration_since(now + elapsed);
-
-                    if sleep > Duration::ZERO {
-                        return Some(sleep);
-                    }
-                }
-                pacer.handle_timeout(now + elapsed, queue.queue_state(now + elapsed));
-            }
+        let mut generate_padding = |queue: &mut Queue, now: Instant, request: PaddingRequest| {
+            let rand: f32 = (StdRng::from_entropy().sample(Standard));
+            let overshoot_factor: f32 = rand * max_overshoot_factor;
+            let final_size = ((request.padding as f32) * (1.0 + overshoot_factor).round()) as usize;
+            queue.generate_padding(final_size, now);
         };
 
         loop {
-            queue.update_average_queue_time(now + elapsed);
-
             if elapsed > duration {
                 break;
             }
 
+            let timeout = {
+                if let Some(mid) = pacer.poll_queue() {
+                    let packet = queue
+                        .next_packet()
+                        .unwrap_or_else(|| panic!("Should have a packet for mid {mid}"));
+                    queue.register_send(mid, base + elapsed);
+                    queue.update_average_queue_time(base + elapsed);
+                    pacer.register_send(
+                        base + elapsed,
+                        DataSize::bytes(packet.payload_len as u64),
+                        mid,
+                    );
+                    if packet.kind == PacketKind::Padding {
+                        padding_sent += packet.payload_len.into();
+                    } else {
+                        media_sent += packet.payload_len.into();
+                    }
+                    continue;
+                }
+
+                let t = pacer.poll_timeout();
+                let next_poll_in = t.map(|t| t - (base + elapsed));
+
+                t
+            };
+
+            let sleep_until_poll = timeout
+                .map(|t| t.duration_since(base + elapsed))
+                .unwrap_or(Duration::ZERO);
+
             let sleep_until_media =
-                frame_pacing.saturating_sub((now + elapsed).duration_since(last_media_at));
-            if sleep_until_media > Duration::ZERO {
+                frame_pacing.saturating_sub((base + elapsed).duration_since(last_media_at));
+
+            if sleep_until_poll < sleep_until_media {
+                elapsed += sleep_until_poll;
+
+                queue.update_average_queue_time(base + elapsed);
+                if let Some(padding_request) =
+                    pacer.handle_timeout(base + elapsed, queue.queue_state(base + elapsed))
+                {
+                    generate_padding(&mut queue, base + elapsed, padding_request);
+                }
+                continue;
+            } else {
                 elapsed += sleep_until_media;
             }
 
@@ -1286,29 +1253,14 @@ mod test {
                 let (header, size, kind) =
                     make_packet(0, packet_size.as_bytes_usize(), PacketKind::Video);
                 queue.enqueue_packet(QueuedPacket {
-                    queued_at: now + elapsed,
+                    queued_at: base + elapsed,
                     header,
                     payload_len: size,
                     kind,
                 });
-                queue.update_average_queue_time(now + elapsed);
-                pacer.handle_timeout(now + elapsed, queue.queue_state(now + elapsed));
-
                 to_add -= packet_size.into();
             }
-            last_media_at = now + elapsed;
-
-            pacer.handle_timeout(now + elapsed, queue.queue_state(now + elapsed));
-
-            while (now + elapsed).duration_since(last_media_at) < frame_pacing {
-                let Some(sleep_duration) = poll_until_timeout(&mut pacer, &mut queue, elapsed) else {
-                    break;
-                };
-
-                elapsed += sleep_duration;
-                queue.update_average_queue_time(now + elapsed);
-                pacer.handle_timeout(now + elapsed, queue.queue_state(now + elapsed));
-            }
+            last_media_at = base + elapsed;
         }
 
         let observed_media_rate = media_sent / duration;
@@ -1395,6 +1347,30 @@ mod test {
                 } else {
                     panic!("Attempted to register send on unknown queue with id {mid:?}");
                 }
+            }
+
+            pub(super) fn generate_padding(&mut self, mut pad_size: usize, now: Instant) {
+                let mut rng = thread_rng();
+
+                while pad_size > 0 {
+                    let final_packet_size = pad_size.min(1200);
+                    let final_packet_size = DataSize::bytes(final_packet_size as u64);
+                    let (header, payload_len, kind) =
+                        make_packet(0, final_packet_size.as_bytes_usize(), PacketKind::Padding);
+                    self.enqueue_packet(QueuedPacket {
+                        queued_at: now,
+                        header,
+                        payload_len,
+                        kind,
+                    });
+                    self.update_average_queue_time(now);
+
+                    pad_size = pad_size.saturating_sub(final_packet_size.as_bytes_usize());
+                }
+            }
+
+            pub(super) fn padding_mid(&self) -> Mid {
+                self.padding_queue.mid
             }
 
             fn queue_for_kind_mut(&mut self, kind: PacketKind) -> &mut Inner {
