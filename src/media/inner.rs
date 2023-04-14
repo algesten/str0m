@@ -1137,6 +1137,8 @@ impl MediaInner {
             self.mid, self.dir, new_dir
         );
 
+        // Clear cache
+        self.queue_state = None;
         self.need_changed_event = true;
 
         let was_receiving = self.dir.is_receiving();
