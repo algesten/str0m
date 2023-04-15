@@ -178,10 +178,6 @@ impl CandidatePair {
         self.remote_binding_request_time
     }
 
-    pub fn remote_binding_requests(&self) -> u64 {
-        self.remote_binding_requests
-    }
-
     pub fn is_nominated(&self) -> bool {
         !matches!(self.nomination_state, NominationState::None)
     }

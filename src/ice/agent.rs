@@ -1334,7 +1334,7 @@ impl IceAgent {
             // this strategy.
             self.candidate_pairs
                 .iter()
-                .filter(|p| p.state() == CheckState::Succeeded && p.remote_binding_requests() > 0)
+                .filter(|p| p.state() == CheckState::Succeeded)
                 .max_by_key(|p| p.prio())
                 .map(|p| p.id())
         } else {
