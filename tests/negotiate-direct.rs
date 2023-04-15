@@ -8,8 +8,7 @@ mod common;
 use common::{init_log, progress, TestRtc};
 
 #[test]
-#[ignore = "infinite loop, client server never negotiate"]
-pub fn negotiate_direct() -> Result<(), RtcError> {
+pub fn client_server_negotiate_direct_api() -> Result<(), RtcError> {
     init_log();
 
     let client_config = RtcConfig::new().set_stats_interval(Duration::from_secs(60));
@@ -36,14 +35,16 @@ pub fn negotiate_direct() -> Result<(), RtcError> {
     client
         .direct_api()
         .set_remote_fingerprint(server_fingerprint);
-    client.add_local_candidate(client_candidate);
+    client.add_local_candidate(client_candidate.clone());
     client.add_remote_candidate(server_candidate.clone());
     client.direct_api().start_dtls(true)?;
     client.direct_api().start_sctp(true);
 
     // setup server
     server.direct_api().set_ice_controlling(false);
-    server.direct_api().set_ice_lite(true);
+
+    // Issue: ice_lite does not work right now
+    //server.direct_api().set_ice_lite(true);
     server
         .direct_api()
         .set_remote_ice_credentials(client_ice_creds.clone());
@@ -60,6 +61,9 @@ pub fn negotiate_direct() -> Result<(), RtcError> {
             break;
         }
         progress(&mut client, &mut server)?;
+        if client.duration() > Duration::from_millis(500) {
+            assert!(false);
+        }
     }
 
     Ok(())
