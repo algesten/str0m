@@ -242,7 +242,8 @@ impl Candidate {
         hash.to_string()
     }
 
-    pub(crate) fn prio(&self) -> u32 {
+    /// Returns the priority for the specified ICE candidate.
+    pub fn prio(&self) -> u32 {
         self.do_prio(false)
     }
 
@@ -297,8 +298,14 @@ impl Candidate {
         self.component_id
     }
 
-    pub(crate) fn addr(&self) -> SocketAddr {
+    /// Returns the address for the specified ICE candidate.
+    pub fn addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// Returns a reference to the protocol for the specified ICE candidate.
+    pub fn proto(&self) -> &String {
+        &self.proto
     }
 
     pub(crate) fn base(&self) -> SocketAddr {

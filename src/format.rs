@@ -181,6 +181,26 @@ impl PayloadParams {
         self.spec
     }
 
+    /// Whether the payload use the TWCC feedback mechanic.
+    pub fn fb_transport_cc(&self) -> bool {
+        self.fb_transport_cc
+    }
+
+    /// Whether the payload uses NACK to request resends.
+    pub fn fb_nack(&self) -> bool {
+        self.fb_nack
+    }
+
+    /// Whether the payload uses the PLI (Picture Loss Indication) mechanic.
+    pub fn fb_pli(&self) -> bool {
+        self.fb_pli
+    }
+
+    /// Whether the payload uses the FIR (Full Intra Request) mechanic.
+    pub fn fb_fir(&self) -> bool {
+        self.fb_fir
+    }
+
     pub(crate) fn match_score(&self, o: &PayloadParams) -> Option<usize> {
         // we don't want to compare PT
         let c0 = self.spec;
@@ -228,6 +248,13 @@ impl CodecConfig {
         CodecConfig::default()
     }
 
+    /// Creates a new config from payload params
+    pub fn new_from_payload_params(payload_params: Vec<PayloadParams>) -> Self {
+        CodecConfig {
+            configs: payload_params,
+        }
+    }
+
     /// Creates a new config with all default configurations enabled.
     pub fn new_with_defaults() -> Self {
         let mut c = Self::new();
@@ -239,6 +266,11 @@ impl CodecConfig {
         c.enable_vp9(true);
 
         c
+    }
+
+    /// Returns a reference to the vector of payload configurations.
+    pub fn get_configs(&self) -> &Vec<PayloadParams> {
+        &self.configs
     }
 
     /// Clear all configured configs.
