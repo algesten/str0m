@@ -242,7 +242,11 @@ impl Candidate {
         hash.to_string()
     }
 
-    pub(crate) fn prio(&self) -> u32 {
+    /// Returns the priority value for the specified ICE candidate.
+    ///
+    /// The priority is a positive integer between 1 and 2^31 - 1 (inclusive), calculated
+    /// according to the ICE specification defined in RFC 8445, Section 5.1.2.
+    pub fn prio(&self) -> u32 {
         self.do_prio(false)
     }
 
@@ -297,8 +301,15 @@ impl Candidate {
         self.component_id
     }
 
-    pub(crate) fn addr(&self) -> SocketAddr {
+    /// Returns the address for the specified ICE candidate.
+    pub fn addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// Returns a reference to the String containing the transport protocol of
+    /// the ICE candidate. For example tcp/udp/..
+    pub fn proto(&self) -> &String {
+        &self.proto
     }
 
     pub(crate) fn base(&self) -> SocketAddr {

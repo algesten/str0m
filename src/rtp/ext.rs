@@ -287,7 +287,10 @@ impl ExtensionMap {
             .map(|p| p as u8 + 1)
     }
 
-    pub(crate) fn iter(&self, audio: bool) -> impl Iterator<Item = (u8, Extension)> + '_ {
+    /// Returns an iterator over the elements of the extension map
+    ///  
+    /// Filtering them based on the provided `audio` flag
+    pub fn iter(&self, audio: bool) -> impl Iterator<Item = (u8, Extension)> + '_ {
         self.0
             .iter()
             .enumerate()
