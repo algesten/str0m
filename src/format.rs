@@ -135,7 +135,7 @@ pub struct FormatParams {
 /// Session config for all codecs.
 #[derive(Debug, Clone, Default)]
 pub struct CodecConfig {
-    configs: Vec<PayloadParams>,
+    params: Vec<PayloadParams>,
 }
 
 impl PayloadParams {
@@ -179,6 +179,46 @@ impl PayloadParams {
     /// The codec with settings for this group of parameters.
     pub fn spec(&self) -> CodecSpec {
         self.spec
+    }
+
+    /// Sets whether the payload use the TWCC feedback mechanic.
+    pub fn set_fb_transport_cc(&mut self, fb_transport_cc: bool) {
+        self.fb_transport_cc = fb_transport_cc
+    }
+
+    /// Whether the payload use the TWCC feedback mechanic.
+    pub fn fb_transport_cc(&self) -> bool {
+        self.fb_transport_cc
+    }
+
+    /// Sets whether the payload uses NACK to request resends.
+    pub fn set_fb_nack(&mut self, fb_nack: bool) {
+        self.fb_nack = fb_nack
+    }
+
+    /// Whether the payload uses NACK to request resends.
+    pub fn fb_nack(&self) -> bool {
+        self.fb_nack
+    }
+
+    /// Set whether the payload uses the PLI (Picture Loss Indication) mechanic.
+    pub fn set_fb_pli(&mut self, fb_pli: bool) {
+        self.fb_pli = fb_pli
+    }
+
+    /// Whether the payload uses the PLI (Picture Loss Indication) mechanic.
+    pub fn fb_pli(&self) -> bool {
+        self.fb_pli
+    }
+
+    /// Set whether the payload uses the FIR (Full Intra Request) mechanic.
+    pub fn set_fb_fir(&mut self, fb_fir: bool) {
+        self.fb_fir = fb_fir
+    }
+
+    /// Whether the payload uses the FIR (Full Intra Request) mechanic.
+    pub fn fb_fir(&self) -> bool {
+        self.fb_fir
     }
 
     pub(crate) fn match_score(&self, o: &PayloadParams) -> Option<usize> {
@@ -272,6 +312,13 @@ impl CodecConfig {
         CodecConfig::default()
     }
 
+    /// Creates a new config from payload params
+    pub fn new_from_payload_params(payload_params: Vec<PayloadParams>) -> Self {
+        CodecConfig {
+            params: payload_params,
+        }
+    }
+
     /// Creates a new config with all default configurations enabled.
     pub fn new_with_defaults() -> Self {
         let mut c = Self::new();
@@ -285,13 +332,18 @@ impl CodecConfig {
         c
     }
 
+    /// Returns a reference to the vector of payload configurations.
+    pub fn params(&self) -> &Vec<PayloadParams> {
+        &self.params
+    }
+
     /// Clear all configured configs.
     pub fn clear(&mut self) {
-        self.configs.clear();
+        self.params.clear();
     }
 
     pub(crate) fn matches(&self, c: &PayloadParams) -> bool {
-        self.configs.iter().any(|x| x.match_score(c).is_some())
+        self.params.iter().any(|x| x.match_score(c).is_some())
     }
 
     /// Manually configure a payload type.
@@ -326,7 +378,7 @@ impl CodecConfig {
             pt_matched_to_remote: false,
         };
 
-        self.configs.push(p);
+        self.params.push(p);
     }
 
     /// Convenience for adding a h264 payload type.
@@ -354,7 +406,7 @@ impl CodecConfig {
 
     /// Add a default OPUS payload type.
     pub fn enable_opus(&mut self, enabled: bool) {
-        self.configs.retain(|c| c.spec.codec != Codec::Opus);
+        self.params.retain(|c| c.spec.codec != Codec::Opus);
         if !enabled {
             return;
         }
@@ -374,7 +426,7 @@ impl CodecConfig {
 
     /// Add a default VP8 payload type.
     pub fn enable_vp8(&mut self, enabled: bool) {
-        self.configs.retain(|c| c.spec.codec != Codec::Vp8);
+        self.params.retain(|c| c.spec.codec != Codec::Vp8);
         if !enabled {
             return;
         }
@@ -390,7 +442,7 @@ impl CodecConfig {
 
     /// Add a default H264 payload type.
     pub fn enable_h264(&mut self, enabled: bool) {
-        self.configs.retain(|c| c.spec.codec != Codec::H264);
+        self.params.retain(|c| c.spec.codec != Codec::H264);
         if !enabled {
             return;
         }
@@ -425,7 +477,7 @@ impl CodecConfig {
 
     /// Add a default VP9 payload type.
     pub fn enable_vp9(&mut self, enabled: bool) {
-        self.configs.retain(|c| c.spec.codec != Codec::Vp9);
+        self.params.retain(|c| c.spec.codec != Codec::Vp9);
         if !enabled {
             return;
         }
@@ -454,7 +506,7 @@ impl CodecConfig {
     }
 
     pub(crate) fn all_for_kind(&self, kind: MediaKind) -> impl Iterator<Item = &PayloadParams> {
-        self.configs.iter().filter(move |params| {
+        self.params.iter().filter(move |params| {
             if kind == MediaKind::Video {
                 params.spec.codec.is_video()
             } else {
@@ -468,7 +520,7 @@ impl CodecConfig {
         let mut replaceds = Vec::with_capacity(pts.len());
         let mut assigneds = HashMap::with_capacity(pts.len());
 
-        for (i, p) in self.configs.iter_mut().enumerate() {
+        for (i, p) in self.params.iter_mut().enumerate() {
             if let Some((assigned, replaced)) = p.update_pt(&pts[..]) {
                 replaceds.push(replaced);
                 assigneds.insert(assigned, i);
@@ -476,7 +528,7 @@ impl CodecConfig {
         }
 
         // Need to adjust potentially clashes introduced by assigning pts from the medias.
-        for (i, p) in self.configs.iter_mut().enumerate() {
+        for (i, p) in self.params.iter_mut().enumerate() {
             if let Some(index) = assigneds.get(&p.pt) {
                 if i != *index {
                     // This PT has been reassigned. This unwrap is ok
