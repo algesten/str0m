@@ -4,6 +4,7 @@ use bytes::Bytes;
 use clap::Parser;
 use str0m::Rtc;
 use tokio::{signal, sync::broadcast};
+use tokio_util::sync::CancellationToken;
 use tracing::{info, level_filters::LevelFilter};
 use util::{
     http_server::{run_http_server, ClientHandler},
@@ -49,5 +50,12 @@ async fn main() -> anyhow::Result<()> {
 struct ReflectClientHandler {}
 
 impl ClientHandler for ReflectClientHandler {
-    fn run(&mut self, _rtc: Rtc, _addr: SocketAddr, _chunk_channel: broadcast::Sender<Bytes>) {}
+    fn run(
+        &mut self,
+        _rtc: Rtc,
+        _addr: SocketAddr,
+        _chunk_channel: broadcast::Sender<Bytes>,
+        _cancel: CancellationToken,
+    ) {
+    }
 }

@@ -1,6 +1,6 @@
 use axum::extract;
 use axum::{
-    extract::{Json, State},
+    extract::{FromRequest, Json, State},
     response::IntoResponse,
     routing::post,
     Router,
@@ -21,7 +21,13 @@ type Chunk = Bytes;
 const BROADCAST_CHANNEL_CAPACITY: usize = 10000;
 
 pub trait ClientHandler: Send {
-    fn run(&mut self, rtc: Rtc, addr: SocketAddr, chunk_channel: broadcast::Sender<Bytes>);
+    fn run(
+        &mut self,
+        rtc: Rtc,
+        addr: SocketAddr,
+        chunk_channel: broadcast::Sender<Bytes>,
+        cancel: CancellationToken,
+    );
 }
 
 struct AppState {
@@ -70,6 +76,8 @@ async fn allocate(
     info!("allocate");
     debug!("{:#?}", offer);
 
+    let session_id = offer.session.id;
+
     let mut app_state = state.lock().await;
 
     let mut rtc = Rtc::builder()
@@ -90,13 +98,21 @@ async fn allocate(
         .accept_offer(offer)
         .expect("offer to be accepted");
 
+    let cancel = CancellationToken::new();
     // parse out session id
     // create cancellation token
     // send answer
     // spawn task with clienthandler
+    app_state.clients.insert(*session_id, cancel);
 }
 
-async fn free(State(state): State<Arc<Mutex<AppState>>>) -> impl IntoResponse {
+async fn free(
+    State(state): State<Arc<Mutex<AppState>>>,
+    session_id: FromRequest<SessionId>,
+) -> impl IntoResponse {
     info!("free");
     let mut app_state = state.lock().await;
+    if let Some(cancel) = app_state.clients.remove(&session_id) {
+        cancel.cancel();
+    }
 }
