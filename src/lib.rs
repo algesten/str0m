@@ -484,6 +484,7 @@
 //! [x-chat]:     https://github.com/algesten/str0m/blob/main/examples/chat.rs
 //! [intg]:       https://github.com/algesten/str0m/blob/main/tests/unidirectional.rs#L12
 
+#![forbid(unsafe_code)]
 #![allow(clippy::new_without_default)]
 #![allow(clippy::bool_to_int_with_if)]
 #![allow(clippy::assertions_on_constants)]
