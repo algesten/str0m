@@ -25,9 +25,9 @@ const DTLS_SRTP: &str = "SRTP_AES128_CM_SHA1_80";
 const DTLS_EC_CURVE: Nid = Nid::X9_62_PRIME256V1;
 const DTLS_KEY_LABEL: &str = "EXTRACTOR-dtls_srtp";
 
-extern "C" {
-    pub fn DTLSv1_2_method() -> *const openssl_sys::SSL_METHOD;
-}
+// extern "C" {
+//     pub fn DTLSv1_2_method() -> *const openssl_sys::SSL_METHOD;
+// }
 
 /// Certificate used for DTLS.
 #[derive(Debug, Clone)]
@@ -87,8 +87,11 @@ impl DtlsCert {
 }
 
 pub fn dtls_create_ctx(cert: &DtlsCert) -> Result<SslContext, DtlsError> {
-    let method = unsafe { SslMethod::from_ptr(DTLSv1_2_method()) };
-    let mut ctx = SslContextBuilder::new(method)?;
+    // TODO: Technically we want to disallow DTLS < 1.2, but that requires
+    // us to use this commented out unsafe. We depend on browsers disallowing
+    // it instead.
+    // let method = unsafe { SslMethod::from_ptr(DTLSv1_2_method()) };
+    let mut ctx = SslContextBuilder::new(SslMethod::dtls())?;
 
     ctx.set_cipher_list(DTLS_CIPHERS)?;
     ctx.set_tlsext_use_srtp(DTLS_SRTP)?;
