@@ -70,6 +70,7 @@ pub struct StunMessage<'a> {
     trans_id: TransId,
     attrs: Vec<Attribute<'a>>,
     integrity: &'a [u8],
+    integrity_len: u16,
 }
 
 impl<'a> StunMessage<'a> {
@@ -92,8 +93,6 @@ impl<'a> StunMessage<'a> {
         // |11 |10 |9 |8 |7 |1 |6 |5 |4 |0 |3 |2 |1 |0 |
         let class = Class::from_typ(typ);
         let method = Method::from_typ(typ);
-        let begin = &buf[0..4];
-        // let buf_ptr = buf as *mut [u8];
         let trans_id = TransId::from_slice(&buf[8..20]);
 
         let mut message_integrity_offset = 0;
@@ -107,14 +106,7 @@ impl<'a> StunMessage<'a> {
         }
 
         // length including message integrity attribute
-        let m_int_len = (message_integrity_offset + 4 + 20) as u16;
-
-        // this is safe because Attribute::parse() hasn't borrowed this part.
-        unsafe {
-            let ptr = begin as *const [u8] as *mut [u8];
-            (*ptr)[2] = (m_int_len >> 8) as u8;
-            (*ptr)[3] = m_int_len as u8;
-        }
+        let integrity_len = (message_integrity_offset + 4 + 20) as u16;
 
         // password as key is called "short-term credentials"
         // buffer from beginning including header (+20) to where message-integrity starts.
@@ -139,6 +131,7 @@ impl<'a> StunMessage<'a> {
             trans_id,
             attrs,
             integrity,
+            integrity_len,
         })
     }
 
@@ -180,6 +173,7 @@ impl<'a> StunMessage<'a> {
                 Attribute::Priority(prio),
             ],
             integrity: &[],
+            integrity_len: 0,
         };
 
         if use_candidate {
@@ -203,6 +197,7 @@ impl<'a> StunMessage<'a> {
                 Attribute::FingerprintMark,
             ],
             integrity: &[],
+            integrity_len: 0,
         }
     }
 
@@ -225,7 +220,11 @@ impl<'a> StunMessage<'a> {
     pub fn check_integrity(&self, password: &str) -> bool {
         if let Some(integ) = self.attrs.message_integrity() {
             let sha1: Sha1 = password.as_bytes().into();
-            let comp = sha1.hmac(&[self.integrity]);
+            let comp = sha1.hmac(&[
+                &self.integrity[..2],
+                &[(self.integrity_len >> 8) as u8, self.integrity_len as u8],
+                &self.integrity[4..],
+            ]);
             comp == integ
         } else {
             false
@@ -779,5 +778,28 @@ impl<'a> fmt::Debug for Attribute<'a> {
                 .finish(),
             Self::Unknown(arg0) => f.debug_tuple("Unknown").field(arg0).finish(),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn parse_stun_message() {
+        const PACKET: &[u8] = &[
+            0x00, 0x01, 0x00, 0x50, 0x21, 0x12, 0xa4, 0x42, 0x6a, 0x75, 0x63, 0x31, 0x35, 0x75,
+            0x78, 0x55, 0x6e, 0x67, 0x47, 0x63, 0x00, 0x06, 0x00, 0x09, 0x70, 0x39, 0x4b, 0x41,
+            0x3a, 0x53, 0x51, 0x41, 0x74, 0x00, 0x00, 0x00, 0xc0, 0x57, 0x00, 0x04, 0x00, 0x01,
+            0x00, 0x0a, 0x80, 0x2a, 0x00, 0x08, 0x6e, 0xee, 0xc6, 0xe9, 0x7d, 0x18, 0x39, 0x5c,
+            0x00, 0x25, 0x00, 0x00, 0x00, 0x24, 0x00, 0x04, 0x6e, 0x7f, 0x1e, 0xff, 0x00, 0x08,
+            0x00, 0x14, 0x5d, 0x04, 0x25, 0xa0, 0x20, 0x7a, 0xb1, 0xe0, 0x54, 0x10, 0x22, 0x99,
+            0xaa, 0xf9, 0x83, 0x9c, 0xa0, 0x76, 0xc6, 0xd5, 0x80, 0x28, 0x00, 0x04, 0x36, 0x0e,
+            0x21, 0x9f,
+        ];
+
+        let packet = PACKET.to_vec();
+        let message = StunMessage::parse(&packet).unwrap();
+        assert!(message.check_integrity("xJcE9AQAR7kczUDVOXRUCl"));
     }
 }
