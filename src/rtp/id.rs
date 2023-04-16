@@ -2,7 +2,7 @@
 
 use std::fmt;
 use std::ops::Deref;
-use std::str::from_utf8_unchecked;
+use std::str::from_utf8;
 
 use serde::{Deserialize, Serialize};
 
@@ -43,8 +43,7 @@ macro_rules! str_id {
             type Target = str;
 
             fn deref(&self) -> &Self::Target {
-                // SAFETY: We know the mid is ascii alphanumeric
-                unsafe { from_utf8_unchecked(&self.0) }.trim()
+                from_utf8(&self.0).expect("ascii id").trim()
             }
         }
 

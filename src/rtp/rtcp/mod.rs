@@ -249,6 +249,11 @@ impl Rtcp {
         let mut i = 0;
         let len = feedback.len();
 
+        // Need at least on feedback to pack into, and one to take from.
+        if len < 2 {
+            return;
+        }
+
         // SenderReport/ReceiveReport first for SRTCP.
         feedback.make_contiguous().sort_by_key(Self::order_no);
 
@@ -258,19 +263,15 @@ impl Rtcp {
                 break;
             }
 
-            // fb_a is the item we are merging items into.
-            // SAFETY: We're never going to have i and j referencing the same item in feedback.
-            let fb_a = unsafe {
-                let fb_a_ptr = &mut feedback[i] as *mut Rtcp;
-                &mut *fb_a_ptr
-            };
+            let (pack_into, pack_from) = feedback.make_contiguous().split_at_mut(i + 1);
+            let fb_a = pack_into.last_mut().unwrap();
 
             // if we manage to merge anything into fb_a.
             let mut any_change = false;
 
             // j goes from the item _after_ i and indexes fb_b.
             #[allow(clippy::needless_range_loop)]
-            for j in i + 1..len {
+            for fb_b in pack_from {
                 // if fb_a is full (or empty), we don't want to move any more elements into fb_a.
                 if fb_a.is_full() || fb_a.is_empty() {
                     break;
@@ -280,9 +281,6 @@ impl Rtcp {
                 if word_capacity < fb_a.length_words() {
                     break 'outer;
                 }
-
-                // the item we are going to merge from into fb_a.
-                let fb_b = &mut feedback[j];
 
                 // amount of capacity (in words) left to fill.
                 let capacity = word_capacity - fb_a.length_words();

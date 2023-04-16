@@ -1,5 +1,5 @@
 use std::fmt;
-use std::str::from_utf8_unchecked;
+use std::str::from_utf8;
 
 use rand::Rng;
 
@@ -33,8 +33,7 @@ impl<const L: usize> Default for Id<L> {
 
 impl<const L: usize> fmt::Display for Id<L> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // SAFETY: we know this is ascii chars.
-        let s = unsafe { from_utf8_unchecked(&self.0) };
+        let s = from_utf8(&self.0).expect("ascii characters");
         write!(f, "{s}")
     }
 }
