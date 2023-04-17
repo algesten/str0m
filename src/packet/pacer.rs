@@ -979,13 +979,11 @@ mod test {
 
     #[test]
     fn test_realistic() {
-        let config = {
-            let mut config = RealisticTestConfig::default();
-            config.padding_rate = Bitrate::kbps(2500);
-            config.max_overshoot_factor = 0.05;
-            config.spike_probability = 3;
-
-            config
+        let config = RealisticTestConfig {
+            padding_rate: Bitrate::kbps(2500),
+            max_overshoot_factor: 0.05,
+            spike_probability: 3,
+            ..Default::default()
         };
         let (media_rate, padding_rate, total_rate) = run_realistic_test(config);
         let expected_padding = config.padding_rate - config.media_rate;
@@ -1258,7 +1256,7 @@ mod test {
                     payload_len: size,
                     kind,
                 });
-                to_add -= packet_size.into();
+                to_add -= packet_size;
             }
             last_media_at = base + elapsed;
         }
