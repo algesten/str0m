@@ -414,7 +414,7 @@ mod test {
                 ..Default::default()
             };
             let mut buf = vec![0; 2000];
-            let n = header.write_to(&mut buf[..], &exts);
+            let n = header.write_to(&mut buf[..], exts);
             buf.truncate(n);
 
             buf

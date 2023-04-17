@@ -137,9 +137,9 @@ pub fn rtp_mode() -> Result<(), RtcError> {
     assert_eq!(h1.ext_vals.audio_level, Some(-44));
     assert_eq!(h2.ext_vals.audio_level, Some(-43));
 
-    assert_eq!(h0.marker, false);
-    assert_eq!(h1.marker, false);
-    assert_eq!(h2.marker, true);
+    assert!(!h0.marker);
+    assert!(!h1.marker);
+    assert!(h2.marker);
 
     Ok(())
 }
