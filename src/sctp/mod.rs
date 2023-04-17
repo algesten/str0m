@@ -492,7 +492,7 @@ impl RtcSctp {
 
                         let in_band = config.negotiated.is_none();
 
-                        let next_state = if in_band {
+                        if in_band {
                             let mut buf = vec![0; 1500];
                             let n = dcep.marshal_to(&mut buf);
                             buf.truncate(n);
@@ -502,16 +502,19 @@ impl RtcSctp {
                                 .expect("writing dcep open");
                             assert!(n == l);
 
-                            StreamEntryState::AwaitDcepAck
+                            entry.set_state(StreamEntryState::AwaitDcepAck);
+
+                            // Start over with polling, since we might have caused some network traffic by
+                            // writing the DcepOpen.
+                            return self.do_poll();
                         } else {
-                            StreamEntryState::Open
+                            entry.set_state(StreamEntryState::Open);
+
+                            return Some(SctpEvent::Open {
+                                id: entry.id,
+                                label: dcep.label,
+                            });
                         };
-
-                        entry.set_state(next_state);
-
-                        // Start over with polling, since we might have caused some network traffic by
-                        // writing the DcepOpen.
-                        return self.do_poll();
                     }
                     Err(e) => {
                         warn!("Opening stream {} failed: {:?}", entry.id, e);
