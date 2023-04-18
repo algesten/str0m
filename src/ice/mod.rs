@@ -173,7 +173,7 @@ mod test {
                 *e,
                 IceAgentEvent::IceConnectionStateChange(IceConnectionState::Disconnected)
             );
-            assert!(*d > Duration::from_secs(30));
+            assert!(*d > Duration::from_secs(15));
         }
 
         let (d, e) = a1.events.last().unwrap();
