@@ -47,6 +47,7 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
 
     let config = ChannelConfig {
         negotiated: Some(1),
+        label: "my-chan".into(),
         ..Default::default()
     };
     let cid = l.direct_api().create_data_channel(config.clone());
@@ -80,7 +81,7 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
     assert!(l
         .events
         .iter()
-        .any(|event| event == &Event::ChannelOpen(cid, "".into())));
+        .any(|event| event == &Event::ChannelOpen(cid, "my-chan".into())));
 
     Ok(())
 }
