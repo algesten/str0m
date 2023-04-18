@@ -488,11 +488,10 @@ impl RtcSctp {
                         }
 
                         let config = entry.config.as_ref().expect("config if AwaitOpen");
-                        let dcep: DcepOpen = config.into();
-
                         let in_band = config.negotiated.is_none();
 
                         if in_band {
+                            let dcep: DcepOpen = config.into();
                             let mut buf = vec![0; 1500];
                             let n = dcep.marshal_to(&mut buf);
                             buf.truncate(n);
@@ -508,11 +507,12 @@ impl RtcSctp {
                             // writing the DcepOpen.
                             return self.do_poll();
                         } else {
+                            let label = config.label.clone();
                             entry.set_state(StreamEntryState::Open);
 
                             return Some(SctpEvent::Open {
                                 id: entry.id,
-                                label: dcep.label,
+                                label,
                             });
                         };
                     }
