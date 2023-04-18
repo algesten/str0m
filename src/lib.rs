@@ -675,7 +675,7 @@ pub struct Rtc {
     dtls: Dtls,
     sctp: RtcSctp,
     chan: ChannelHandler,
-    stats: Stats,
+    stats: Option<Stats>,
     session: Session,
     remote_fingerprint: Option<Fingerprint>,
     remote_addrs: Vec<SocketAddr>,
@@ -819,7 +819,7 @@ impl Rtc {
             session,
             sctp: RtcSctp::new(),
             chan: ChannelHandler::default(),
-            stats: Stats::new(config.stats_interval),
+            stats: config.stats_interval.map(Stats::new),
             remote_fingerprint: None,
             remote_addrs: vec![],
             send_addr: None,
@@ -1153,7 +1153,7 @@ impl Rtc {
             });
         }
 
-        if let Some(e) = self.stats.poll_output() {
+        if let Some(e) = self.stats.as_mut().and_then(|s| s.poll_output()) {
             return Ok(match e {
                 StatsEvent::Peer(s) => Output::Event(Event::PeerStats(s)),
                 StatsEvent::MediaIngress(s) => Output::Event(Event::MediaIngressStats(s)),
@@ -1186,7 +1186,7 @@ impl Rtc {
             .soonest((self.session.poll_timeout(), "session"))
             .soonest((self.sctp.poll_timeout(), "sctp"))
             .soonest((self.chan.poll_timeout(&self.sctp), "chan"))
-            .soonest((self.stats.poll_timeout(), "stats"));
+            .soonest((self.stats.as_mut().and_then(|s| s.poll_timeout()), "stats"));
 
         // trace!("poll_output timeout reason: {}", time_and_reason.1);
 
@@ -1304,11 +1304,17 @@ impl Rtc {
         self.sctp.handle_timeout(now);
         self.chan.handle_timeout(now, &mut self.sctp);
         self.session.handle_timeout(now)?;
-        if self.stats.wants_timeout(now) {
-            let mut snapshot = StatsSnapshot::new(now);
-            self.visit_stats(now, &mut snapshot);
-            self.stats.do_handle_timeout(&mut snapshot);
+
+        if let Some(stats) = &mut self.stats {
+            if stats.wants_timeout(now) {
+                let mut snapshot = StatsSnapshot::new(now);
+                snapshot.peer_rx = self.peer_bytes_rx;
+                snapshot.peer_tx = self.peer_bytes_tx;
+                self.session.visit_stats(now, &mut snapshot);
+                stats.do_handle_timeout(&mut snapshot);
+            }
         }
+
         Ok(())
     }
 
@@ -1401,12 +1407,6 @@ impl Rtc {
         Bwe(self)
     }
 
-    fn visit_stats(&mut self, now: Instant, snapshot: &mut StatsSnapshot) {
-        snapshot.peer_rx = self.peer_bytes_rx;
-        snapshot.peer_tx = self.peer_bytes_tx;
-        self.session.visit_stats(now, snapshot);
-    }
-
     fn is_correct_change_id(&self, change_id: usize) -> bool {
         self.change_counter == change_id + 1
     }
@@ -1448,7 +1448,7 @@ pub struct RtcConfig {
     ice_lite: bool,
     codec_config: CodecConfig,
     exts: ExtensionMap,
-    stats_interval: Duration,
+    stats_interval: Option<Duration>,
     /// Whether to use Bandwidth Estimation to discover the egress bandwidth.
     bwe_initial_bitrate: Option<Bitrate>,
     reordering_size_audio: usize,
@@ -1601,25 +1601,29 @@ impl RtcConfig {
         self
     }
 
-    /// Set the interval between statistics events
+    /// Set the interval between statistics events.
+    ///
+    /// None turns off the stats events.
     ///
     /// This includes [`MediaEgressStats`], [`MediaIngressStats`], [`MediaEgressStats`]
-    pub fn set_stats_interval(mut self, interval: Duration) -> Self {
+    pub fn set_stats_interval(mut self, interval: Option<Duration>) -> Self {
         self.stats_interval = interval;
         self
     }
 
     /// The configured statistics interval.
     ///
+    /// None means statistics are disabled.
+    ///
     /// ```
     /// # use str0m::Rtc;
     /// # use std::time::Duration;
     /// let config = Rtc::builder();
     ///
-    /// // Defaults to 1 second.
-    /// assert_eq!(config.stats_interval(), Duration::from_secs(1));
+    /// // Defaults to None.
+    /// assert_eq!(config.stats_interval(), None);
     /// ```
-    pub fn stats_interval(&self) -> Duration {
+    pub fn stats_interval(&self) -> Option<Duration> {
         self.stats_interval
     }
 
@@ -1744,7 +1748,7 @@ impl Default for RtcConfig {
             ice_lite: false,
             codec_config: CodecConfig::new_with_defaults(),
             exts: ExtensionMap::standard(),
-            stats_interval: Duration::from_secs(1),
+            stats_interval: None,
             bwe_initial_bitrate: None,
             reordering_size_audio: 15,
             reordering_size_video: 30,
