@@ -28,7 +28,6 @@ const NACK_MIN_INTERVAL: Duration = Duration::from_millis(100);
 const TWCC_INTERVAL: Duration = Duration::from_millis(100);
 
 const PACING_FACTOR: f64 = 1.1;
-const PADDING_FACTOR: f64 = 1.0;
 
 /// Amount of deviation needed to emit a new BWE value. This is to reduce
 /// the total number BWE events to only fire when there is a substantial change.
@@ -895,7 +894,7 @@ impl Session {
 
         let padding_rate = bwe
             .last_estimate()
-            .map(|estimate| (estimate * PADDING_FACTOR).min(bwe.desired_bitrate))
+            .map(|estimate| estimate.min(bwe.desired_bitrate))
             .unwrap_or(Bitrate::ZERO);
 
         self.pacer.set_padding_rate(padding_rate);
