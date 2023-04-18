@@ -815,7 +815,11 @@ impl IceAgent {
         // prune failed candidates.
         let mut any_pruned = false;
         self.candidate_pairs.retain(|p| {
-            let keep = p.is_still_possible(now, self.ice_lite);
+            let keep = if self.ice_lite {
+                p.has_recent_remote_binding_request(now)
+            } else {
+                p.is_still_possible(now)
+            };
             if !keep {
                 debug!("Remove failed pair: {:?}", p);
                 any_pruned = true;
@@ -1399,7 +1403,7 @@ impl IceAgent {
         for p in &self.candidate_pairs {
             if p.is_nominated() {
                 any_nomination = true;
-            } else if p.is_still_possible(now, self.ice_lite) {
+            } else if p.is_still_possible(now) {
                 any_still_possible = true;
             }
         }
@@ -1417,6 +1421,10 @@ impl IceAgent {
             }
             Checking | Disconnected => {
                 if any_nomination {
+                    if self.ice_lite {
+                        self.set_connection_state(Completed, "got nomination in ice lite");
+                        return;
+                    }
                     if any_still_possible {
                         self.set_connection_state(Connected, "got nomination, still trying others");
                     } else {
@@ -1437,7 +1445,7 @@ impl IceAgent {
             }
             Completed => {
                 if any_nomination {
-                    if any_still_possible {
+                    if any_still_possible && !self.ice_lite {
                         self.set_connection_state(Connected, "got new possible");
                     }
                 } else {

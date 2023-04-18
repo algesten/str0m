@@ -178,6 +178,13 @@ impl CandidatePair {
         self.remote_binding_request_time
     }
 
+    pub fn has_recent_remote_binding_request(&self, now: Instant) -> bool {
+        let Some(t) = self.remote_binding_request_time else {
+            return false;
+        };
+        now - t < 2 * MIN_TIMEOUT
+    }
+
     pub fn is_nominated(&self) -> bool {
         !matches!(self.nomination_state, NominationState::None)
     }
@@ -335,14 +342,7 @@ impl CandidatePair {
     /// Tells if this candidate pair is still possible to use for connectivity.
     ///
     /// Returns `false` if the candidate has failed.
-    pub fn is_still_possible(&self, now: Instant, no_attempts: bool) -> bool {
-        if no_attempts {
-            // Only check if we get timeout of the entry (ice-lite).
-            if let Some(t) = self.remote_binding_request_time {
-                return now - t < MIN_TIMEOUT;
-            }
-        }
-
+    pub fn is_still_possible(&self, now: Instant) -> bool {
         let attempts = self.binding_attempts.len();
         let unanswered = self.unanswered().map(|b| b.0).unwrap_or(0);
 
