@@ -240,12 +240,7 @@ impl Session {
         if let Some(padding_request) = self.pacer.handle_timeout(now, iter) {
             let media = self
                 .media_by_mid_mut(padding_request.mid)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "No media found for mid {}, to service padding request",
-                        padding_request.mid
-                    )
-                });
+                .expect("media for service padding request");
 
             media.generate_padding(now, padding_request.padding);
         }
