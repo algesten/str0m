@@ -79,7 +79,11 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
     let mut data = request.data().expect("body to be available");
 
     let offer: SdpOffer = serde_json::from_reader(&mut data).expect("serialized offer");
-    let mut rtc = Rtc::builder().set_ice_lite(true).build();
+    let mut rtc = Rtc::builder()
+        // Uncomment this to see statistics
+        // .set_stats_interval(Some(Duration::from_secs(1)))
+        // .set_ice_lite(true)
+        .build();
 
     // Add the shared UDP socket as a host candidate
     let candidate = Candidate::host(addr).expect("a host candidate");
@@ -366,6 +370,8 @@ impl Client {
                     Propagated::Noop
                 }
                 Event::ChannelData(data) => self.handle_channel_data(data),
+
+                // NB: To see statistics, uncomment set_stats_interval() above.
                 Event::MediaIngressStats(data) => {
                     info!("{:?}", data);
                     Propagated::Noop
