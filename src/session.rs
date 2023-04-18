@@ -30,6 +30,10 @@ const TWCC_INTERVAL: Duration = Duration::from_millis(100);
 const PACING_FACTOR: f64 = 1.1;
 const PADDING_FACTOR: f64 = 1.0;
 
+/// Amount of deviation needed to emit a new BWE value. This is to reduce
+/// the total number BWE events to only fire when there is a substantial change.
+const ESTIMATE_TOLERANCE: f64 = 0.05;
+
 pub(crate) struct Session {
     id: SessionId,
 
@@ -113,6 +117,8 @@ impl Session {
                 bwe: send_side_bwe,
                 desired_bitrate: Bitrate::ZERO,
                 current_bitrate: rate,
+
+                last_emitted_estimate: Bitrate::ZERO,
             };
 
             (pacer, Some(bwe))
@@ -909,6 +915,8 @@ struct Bwe {
     bwe: SendSideBandwithEstimator,
     desired_bitrate: Bitrate,
     current_bitrate: Bitrate,
+
+    last_emitted_estimate: Bitrate,
 }
 
 impl Bwe {
@@ -925,7 +933,18 @@ impl Bwe {
     }
 
     fn poll_estimate(&mut self) -> Option<Bitrate> {
-        self.bwe.poll_estimate()
+        let estimate = self.bwe.poll_estimate()?;
+
+        let min = self.last_emitted_estimate * (1.0 - ESTIMATE_TOLERANCE);
+        let max = self.last_emitted_estimate * (1.0 + ESTIMATE_TOLERANCE);
+
+        if estimate < min || estimate > max {
+            self.last_emitted_estimate = estimate;
+            Some(estimate)
+        } else {
+            // Estimate is within tolerances.
+            None
+        }
     }
 
     fn poll_timeout(&self) -> Instant {
