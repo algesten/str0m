@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use crate::rtp::{Bitrate, DataSize, Mid};
 use crate::util::already_happened;
 use crate::util::not_happening;
+use crate::util::Soonest;
 
 use super::MediaKind;
 
@@ -209,11 +210,18 @@ impl Pacer for NullPacer {
     fn handle_timeout(
         &mut self,
         _now: Instant,
-        iter: impl Iterator<Item = QueueState>,
+        mut iter: impl Iterator<Item = QueueState>,
     ) -> Option<PaddingRequest> {
         self.need_immediate_timeout = false;
-        self.queue_states.clear();
-        self.queue_states.extend(iter);
+
+        let first_qs = iter.next();
+        let new_queue_state = first_qs.is_some();
+
+        if new_queue_state {
+            self.queue_states.clear();
+            self.queue_states.push(first_qs.unwrap());
+            self.queue_states.extend(iter);
+        }
 
         None
     }
@@ -250,7 +258,7 @@ pub struct LeakyBucketPacer {
     /// The bitrate at which to send padding packets when the pacing rate isn't being achieved.
     padding_bitrate: Bitrate,
     /// The last time we refreshed media debt and potentially adjusted the bitrate.
-    last_handle_time: Option<Instant>,
+    last_handle_time: Instant,
     /// The last time we indicated that a packet should be sent.
     last_send_time: Option<Instant>,
     /// The next time we should send a queued packet.
@@ -267,6 +275,17 @@ pub struct LeakyBucketPacer {
     next_poll_queue: Option<Mid>,
 }
 
+impl LeakyBucketPacer {
+    fn debt_clearing_at(&self) -> Instant {
+        self.last_handle_time + PACING
+    }
+
+    fn next_poll_at(&self) -> Option<Instant> {
+        // cached because it's a bit expensive to calculate
+        self.next_poll_time
+    }
+}
+
 impl Pacer for LeakyBucketPacer {
     fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate) {
         self.pacing_bitrate = pacing_bitrate;
@@ -281,31 +300,35 @@ impl Pacer for LeakyBucketPacer {
     }
 
     fn poll_timeout(&self) -> Option<Instant> {
-        let next_handle_time = self.last_handle_time.map(|lh| lh + PACING);
+        let (t, _what) = (Some(self.debt_clearing_at()), "debt_clearing")
+            .soonest((self.next_poll_at(), "pacer_poll"));
 
-        match (next_handle_time, self.next_poll_time) {
-            (Some(nh), Some(np)) => Some(nh.min(np)),
-            (None, Some(np)) => Some(np),
-            (Some(nh), None) => Some(nh),
-            (None, None) => None,
-        }
+        // trace!("Pacer timeout because: {}", _what);
+
+        t
     }
 
     fn handle_timeout(
         &mut self,
         now: Instant,
-        iter: impl Iterator<Item = QueueState>,
+        mut iter: impl Iterator<Item = QueueState>,
     ) -> Option<PaddingRequest> {
-        let Some(next_timeout) = self.poll_timeout() else {
-            return None;
-        };
-        if now < next_timeout {
-            return None;
+        let first_qs = iter.next();
+        let new_queue_state = first_qs.is_some();
+
+        if new_queue_state {
+            self.queue_states.clear();
+            self.queue_states.push(first_qs.unwrap());
+            self.queue_states.extend(iter);
         }
 
-        // This is called periodically and whenever packet is queued.
-        self.queue_states.clear();
-        self.queue_states.extend(iter);
+        // A new queue state means we must run the timeout.
+        if !new_queue_state
+            && now < self.debt_clearing_at()
+            && now < self.next_poll_at().unwrap_or(not_happening())
+        {
+            return None;
+        }
 
         let elapsed = self.update_handle_time_and_get_elapsed(now);
 
@@ -374,7 +397,7 @@ impl LeakyBucketPacer {
             pacing_bitrate: initial_pacing_bitrate,
             adjusted_bitrate: Bitrate::ZERO,
             padding_bitrate: Bitrate::ZERO,
-            last_handle_time: None,
+            last_handle_time: already_happened(),
             last_send_time: None,
             next_poll_time: None,
             media_debt: DataSize::ZERO,
@@ -387,14 +410,8 @@ impl LeakyBucketPacer {
 
     fn update_handle_time_and_get_elapsed(&mut self, now: Instant) -> Duration {
         // Due the calling code this also happens when a packet is queued in any upstream queue.
-        let Some(previous_handle_time) = self.last_handle_time else {
-            self.last_handle_time = Some(now);
-            return Duration::ZERO;
-        };
-
-        let elapsed = now - previous_handle_time;
-        self.last_handle_time = Some(now);
-
+        let elapsed = now - self.last_handle_time;
+        self.last_handle_time = now;
         elapsed
     }
 
@@ -456,10 +473,7 @@ impl LeakyBucketPacer {
                     Duration::ZERO
                 };
 
-                let poll_at = self
-                    .last_handle_time
-                    .map(|h| h + next_send_offset)
-                    .unwrap_or(now);
+                let poll_at = now + next_send_offset;
 
                 return Some((poll_at, queue));
             }
@@ -481,10 +495,7 @@ impl LeakyBucketPacer {
                     drain_debt_time = Duration::from_micros(1);
                 }
 
-                let padding_at = self
-                    .last_handle_time
-                    .map(|h| h + drain_debt_time)
-                    .unwrap_or(now);
+                let padding_at = now + drain_debt_time;
 
                 return Some((padding_at, queue));
             }
