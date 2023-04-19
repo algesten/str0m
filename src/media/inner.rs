@@ -154,8 +154,8 @@ pub(crate) struct MediaInner {
     /// History of bytes re-transmitted.
     bytes_retransmitted: ValueHistory<u64>,
 
-    /// Merged queue state, set to None if we need to recalculate it.
-    queue_state: Option<QueueState>,
+    /// True if we need to emit a new queue state to the pacer.
+    emit_queue_state: bool,
 
     /// Enqueing to the PacketizingBuffer requires a "queued_at" field
     /// which is "now". We don't want write() to drive time forward,
@@ -357,8 +357,7 @@ impl MediaInner {
                 return Err(RtcError::Packet(self.mid, t.pt, e));
             }
 
-            // Invalidate cached queue_state.
-            self.queue_state = None;
+            self.emit_queue_state = true;
         }
 
         Ok(())
@@ -547,8 +546,7 @@ impl MediaInner {
         if ratio > 0.15_f32 {
             self.resends.clear();
 
-            // Invalidate cached queue state.
-            self.queue_state = None;
+            self.emit_queue_state = true;
 
             return None;
         }
@@ -586,8 +584,8 @@ impl MediaInner {
         let buffer = self.buffers_tx.get_mut(&resend.pt).unwrap();
         let pkt = buffer.get(resend.seq_no).unwrap();
 
-        // Force recaching since packetizer changed.
-        self.queue_state = None;
+        // Force new state since packetizer changed.
+        self.emit_queue_state = true;
 
         if !is_padding {
             source.update_packet_counts(pkt.data.len() as u64, true);
@@ -620,8 +618,8 @@ impl MediaInner {
         // exit via ? here is ok since that means there is nothing to send.
         let (pt, pkt) = next_send_buffer(&mut self.buffers_tx, now)?;
 
-        // Force recaching since packetizer changed.
-        self.queue_state = None;
+        // Force new state since packetizer changed.
+        self.emit_queue_state = true;
 
         let source = self
             .sources_tx
@@ -650,8 +648,8 @@ impl MediaInner {
         loop {
             let padding = self.padding.pop_front()?;
 
-            // Force recaching since padding changed.
-            self.queue_state = None;
+            // Force new state since padding changed.
+            self.emit_queue_state = true;
 
             match padding {
                 Padding::Blank { ssrc, pt, size, .. } => {
@@ -732,12 +730,6 @@ impl MediaInner {
         if !self.has_tx_rtx() {
             return;
         }
-        assert!(
-            self.queue_state
-                .map(|q| q.snapshot.packet_count == 0)
-                .unwrap_or(true),
-            "Attempted to queue padding when there were other packets queued"
-        );
 
         while pad_size > 0 {
             // TODO: This function should be split into two halves, but because of the borrow checker
@@ -822,8 +814,7 @@ impl MediaInner {
             }
         }
 
-        // Clear queue state cache
-        self.queue_state = None;
+        self.emit_queue_state = true;
     }
 
     pub fn get_or_create_source_rx(&mut self, ssrc: Ssrc) -> &mut ReceiverSource {
@@ -1138,8 +1129,7 @@ impl MediaInner {
             self.mid, self.dir, new_dir
         );
 
-        // Clear cache
-        self.queue_state = None;
+        self.emit_queue_state = true;
         self.need_changed_event = true;
 
         let was_receiving = self.dir.is_receiving();
@@ -1245,8 +1235,7 @@ impl MediaInner {
         let seq_no = buffer.first_seq_no()?;
         let iter = entries.flat_map(|n| n.into_iter(seq_no));
 
-        // Invalidate cached queue_state.
-        self.queue_state = None;
+        self.emit_queue_state = true;
 
         // Schedule all resends. They will be handled on next poll_packet
         for seq_no in iter {
@@ -1315,10 +1304,10 @@ impl MediaInner {
     ///
     /// For the purposes of pacing each media is treated as its own packet queue. Internally this
     /// is spread across many [`PacketizingBuffer`] which is where the actual packets are queued.
-    pub fn buffers_tx_queue_state(&mut self, now: Instant) -> QueueState {
-        // If it is cached, we don't need to recalculate it.
-        if let Some(queue_state) = self.queue_state {
-            return queue_state;
+    pub fn buffers_tx_queue_state(&mut self, now: Instant) -> Option<QueueState> {
+        // If it is cached, we don't need to recalculate it. The pacer got the latest already.
+        if !self.emit_queue_state {
+            return None;
         }
 
         let init = QueueSnapshot::default();
@@ -1349,10 +1338,10 @@ impl MediaInner {
             snapshot,
         };
 
-        // Cache it.
-        self.queue_state = Some(state);
+        // No need to emit another
+        self.emit_queue_state = false;
 
-        state
+        Some(state)
     }
 
     /// Test if any source_tx in this channel has rtx.
@@ -1515,7 +1504,7 @@ impl Default for MediaInner {
             enable_nack: false,
             bytes_transmitted: ValueHistory::new(0, Duration::from_secs(2)),
             bytes_retransmitted: ValueHistory::new(0, Duration::from_secs(2)),
-            queue_state: None,
+            emit_queue_state: false,
             to_packetize: VecDeque::default(),
             rtp_mode: false,
         }

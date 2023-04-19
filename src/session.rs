@@ -242,7 +242,7 @@ impl Session {
         let iter = self
             .medias
             .iter_mut()
-            .map(|m| m.buffers_tx_queue_state(now));
+            .filter_map(|m| m.buffers_tx_queue_state(now));
         if let Some(padding_request) = self.pacer.handle_timeout(now, iter) {
             let media = self
                 .media_by_mid_mut(padding_request.mid)
