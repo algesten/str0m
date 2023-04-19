@@ -296,6 +296,13 @@ impl Pacer for LeakyBucketPacer {
         now: Instant,
         iter: impl Iterator<Item = QueueState>,
     ) -> Option<PaddingRequest> {
+        let Some(next_timeout) = self.poll_timeout() else {
+            return None;
+        };
+        if now < next_timeout {
+            return None;
+        }
+
         // This is called periodically and whenever packet is queued.
         self.queue_states.clear();
         self.queue_states.extend(iter);

@@ -116,6 +116,9 @@ impl SendSideBandwithEstimator {
     }
 
     pub(crate) fn handle_timeout(&mut self, now: Instant) {
+        if now < self.last_update + UPDATE_INTERVAL {
+            return;
+        }
         self.update_estimate(
             self.trendline_estimator.hypothesis(),
             self.acked_bitrate_estimator.current_estimate(),
