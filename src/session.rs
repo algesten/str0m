@@ -933,7 +933,7 @@ impl Bwe {
     }
 
     fn poll_estimate(&mut self) -> Option<Bitrate> {
-        let estimate = self.bwe.poll_estimate()?;
+        let estimate = self.bwe.last_estimate()?;
 
         let min = self.last_emitted_estimate * (1.0 - ESTIMATE_TOLERANCE);
         let max = self.last_emitted_estimate * (1.0 + ESTIMATE_TOLERANCE);

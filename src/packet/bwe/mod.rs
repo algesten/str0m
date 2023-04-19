@@ -37,9 +37,6 @@ pub struct SendSideBandwithEstimator {
     trendline_estimator: TrendlineEstimator,
     rate_control: RateControl,
     acked_bitrate_estimator: AckedBitrateEstimator,
-    /// Last unpolled bitrate estimate. [`None`] before the first poll and after each poll that,
-    /// updated when we get a new estimate.
-    next_estimate: Option<Bitrate>,
     /// Last estimate produced, unlike [`next_estimate`] this will always have a value after the
     /// first estimate.
     last_estimate: Option<Bitrate>,
@@ -60,7 +57,6 @@ impl SendSideBandwithEstimator {
                 BITRATE_WINDOW,
             ),
             rate_control: RateControl::new(initial_bitrate, Bitrate::kbps(40), Bitrate::gbps(10)),
-            next_estimate: None,
             last_estimate: None,
             max_rtt_history: VecDeque::default(),
             last_update: already_happened(),
@@ -115,11 +111,6 @@ impl SendSideBandwithEstimator {
         );
     }
 
-    /// Poll for an estimate.
-    pub(crate) fn poll_estimate(&mut self) -> Option<Bitrate> {
-        self.next_estimate.take()
-    }
-
     pub(crate) fn poll_timeout(&self) -> Instant {
         self.last_update + UPDATE_INTERVAL
     }
@@ -171,7 +162,6 @@ impl SendSideBandwithEstimator {
             let estimated_rate = self.rate_control.estimated_bitrate();
 
             crate::packet::bwe::macros::log_bitrate_estimate!(estimated_rate.as_f64());
-            self.next_estimate = Some(estimated_rate);
             self.last_estimate = Some(estimated_rate);
         }
 
