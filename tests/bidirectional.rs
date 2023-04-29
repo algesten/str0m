@@ -1,9 +1,9 @@
 use std::net::Ipv4Addr;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
-use str0m::{Candidate, Event, Input, RtcError};
+use str0m::{Candidate, Event, RtcError};
 use tracing::info_span;
 
 mod common;
@@ -15,10 +15,6 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
 
     let mut l = TestRtc::new(info_span!("L"));
     let mut r = TestRtc::new(info_span!("R"));
-
-    l.rtc
-        .handle_input(Input::Timeout(Instant::now() + Duration::from_secs(1)))
-        .unwrap();
 
     let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into())?;
     let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into())?;
