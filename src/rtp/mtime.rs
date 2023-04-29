@@ -214,7 +214,10 @@ impl InstantExt for Instant {
         // so we can make relative comparisons of Instant - Instant and translate that to
         // SystemTime - unix epoch. Hopefully the error is quite small.
         static TIME_START: OnceCell<(Instant, SystemTime)> = OnceCell::new();
-        let _ = TIME_START.set((*self, SystemTime::now()));
+
+        // go back a bit from now to allow for test times jumping around.
+        const BACK: Duration = Duration::from_secs(3600);
+        let _ = TIME_START.set((*self - BACK, SystemTime::now() - BACK));
 
         let tstart = TIME_START.get().unwrap();
 
