@@ -308,8 +308,8 @@ where
 {
     (
         media_line(),
-        typed_line('c', any_value()), // c=IN IP4 0.0.0.0
-        optional(bandwidth_line()),   // b=AS:2500
+        optional(typed_line('c', any_value())), // c=IN IP4 0.0.0.0
+        optional(bandwidth_line()),             // b=AS:2500
         many::<Vec<_>, _, _>(media_attribute_line()),
     )
         .and_then(|((typ, proto, pts), _, bw, attrs)| {
@@ -1174,6 +1174,29 @@ mod test {
         // - https://www.rfc-editor.org/rfc/rfc4145
 
         assert!(sdp.media_lines[0].setup().is_none()); // must not crash
+    }
+
+    #[test]
+    fn parse_no_media_c_line() {
+        let sdp = "v=0\r\n\
+        o=- 0 0 IN IP4 172.17.0.1\r\n\
+        s=-\r\n\
+        c=IN IP4 172.17.0.1\r\n\
+        t=0 0\r\n\
+        m=application 9999 UDP/DTLS/SCTP webrtc-datachannel\r\n\
+        a=mid:0\r\n\
+        a=ice-options:ice2\r\n\
+        a=ice-ufrag:libp2p+webrtc+v1/a75469cf670c4079f8c06af4a963c8a1:libp2p+webrtc+v1/a75469cf670c4079f8c06af4a963c8a1\r\n\
+        a=ice-pwd:libp2p+webrtc+v1/a75469cf670c4079f8c06af4a963c8a1:libp2p+webrtc+v1/a75469cf670c4079f8c06af4a963c8a1\r\n\
+        a=fingerprint:sha-256 FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF:FF\r\n\
+        a=setup:actpass\r\n\
+        a=sctp-port:5000\r\n\
+        a=max-message-size:16384\r\n\
+        ";
+
+        let parsed = sdp_parser().parse(sdp);
+        println!("{:?}", parsed);
+        parsed.expect("to parse ok");
     }
 }
 
