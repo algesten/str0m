@@ -14,7 +14,10 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
 
     let mut l = TestRtc::new(info_span!("L"));
 
-    let rtc_r = RtcConfig::new().set_ice_lite(true).build();
+    let rtc_r = RtcConfig::new()
+        .set_ice_lite(true)
+        .set_certificate_fingerprint_verification(false)
+        .build();
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
 
     let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into())?;
@@ -24,11 +27,11 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
     r.add_local_candidate(host2);
     r.add_remote_candidate(host1);
 
-    let finger_l = l.direct_api().local_dtls_fingerprint();
+    // let finger_l = l.direct_api().local_dtls_fingerprint();
     let finger_r = r.direct_api().local_dtls_fingerprint();
 
     l.direct_api().set_remote_fingerprint(finger_r);
-    r.direct_api().set_remote_fingerprint(finger_l);
+    // r.direct_api().set_remote_fingerprint(finger_l);
 
     let creds_l = l.direct_api().local_ice_credentials();
     let creds_r = r.direct_api().local_ice_credentials();

@@ -95,6 +95,9 @@ pub struct Dtls {
     /// The fingerprint of the certificate.
     fingerprint: Fingerprint,
 
+    /// Verify the fingerprint,
+    verify_fingerprint: bool,
+
     /// Context belongs together with Fingerprint.
     ///
     /// This just needs to be kept alive since it pins the entire openssl context
@@ -130,13 +133,14 @@ impl Dtls {
     ///
     /// `active` indicates whether this side should initiate the handshake or not.
     /// This in turn is governed by the `a=setup` SDP attribute.
-    pub fn new(cert: DtlsCert) -> Result<Self, DtlsError> {
+    pub fn new(cert: DtlsCert, verify_fingerprint: bool) -> Result<Self, DtlsError> {
         let fingerprint = cert.fingerprint();
         let context = dtls_create_ctx(&cert)?;
         let ssl = dtls_ssl_create(&context)?;
         Ok(Dtls {
             _cert: cert,
             fingerprint,
+            verify_fingerprint,
             _context: context,
             tls: TlsStream::new(ssl, IoBuffer::default()),
             events: VecDeque::new(),
@@ -243,8 +247,10 @@ impl Dtls {
                 .take_srtp_keying_material()
                 .expect("Exported keying material");
 
-            self.events
-                .push_back(DtlsEvent::RemoteFingerprint(fingerprint));
+            if self.verify_fingerprint {
+                self.events
+                    .push_back(DtlsEvent::RemoteFingerprint(fingerprint));
+            }
 
             self.events
                 .push_back(DtlsEvent::SrtpKeyingMaterial(keying_material));
