@@ -444,7 +444,7 @@ impl MediaInner {
         now: Instant,
         exts: &ExtensionMap,
         twcc: &mut u64,
-        buf: &mut Vec<u8>,
+        buf: &mut [u8],
     ) -> Option<PolledPacket> {
         let mid = self.mid;
 
@@ -478,7 +478,6 @@ impl MediaInner {
         header.ext_vals.transport_cc = Some(*twcc as u16);
         *twcc += 1;
 
-        buf.resize(2000, 0);
         let header_len = header.write_to(buf, exts);
         assert!(header_len % 4 == 0, "RTP header must be multiple of 4");
         header.header_len = header_len;
@@ -521,7 +520,7 @@ impl MediaInner {
                 len
             }
         };
-        buf.truncate(header_len + body_len);
+        let size = header_len + body_len;
 
         #[cfg(feature = "_internal_dont_uselog_stats")]
         if let Some(delay) = next.body.queued_at().map(|i| now.duration_since(i)) {
@@ -533,6 +532,7 @@ impl MediaInner {
             twcc_seq_no: next.seq_no,
             is_padding,
             payload_size: body_len,
+            size,
         })
     }
 
@@ -1396,7 +1396,10 @@ pub struct PolledPacket {
     pub header: RtpHeader,
     pub twcc_seq_no: SeqNo,
     pub is_padding: bool,
+    // Size of only the payload part of the packet.
     pub payload_size: usize,
+    // Size of the whole packet including headers, padding, and payload.
+    pub size: usize,
 }
 
 // returns the corresponding rtx pt counterpart, if any

@@ -735,6 +735,7 @@ impl Session {
                 twcc_seq_no,
                 is_padding,
                 payload_size,
+                size,
             } = polled_packet;
 
             trace!(payload_size, is_padding, "Poll RTP: {:?}", header);
@@ -747,7 +748,7 @@ impl Session {
             }
 
             self.pacer.register_send(now, payload_size.into(), mid);
-            let protected = srtp_tx.protect_rtp(buf, &header, *twcc_seq_no);
+            let protected = srtp_tx.protect_rtp(&buf[0..size], &header, *twcc_seq_no);
 
             self.twcc_tx_register
                 .register_seq(twcc_seq.into(), now, payload_size);
