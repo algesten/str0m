@@ -796,11 +796,10 @@ impl MediaInner {
             // NB: If we cannot generate padding here for some reason we'll get stuck forever.
             {
                 let Some(&pt) = self.buffers_tx.keys().next() else {
-                    return;
+                    panic!("No PT to send blank padding on");
                 };
                 let Some(pt_rtx) = pt_rtx(&self.params, pt) else {
-                    warn!("Found no PT to send blank padding on");
-                    return;
+                    panic!("No PT to send blank padding on");
                 };
                 let ssrc_rtx = self
                     .sources_tx
