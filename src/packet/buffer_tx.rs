@@ -164,7 +164,10 @@ impl PacketizingBuffer {
     }
 
     pub fn get(&self, seq_no: SeqNo) -> Option<&Packetized> {
-        self.queue.iter().find(|r| r.seq_no == Some(seq_no))
+        // rev because we almost always get packets that are recent (for resends
+        // and spurious padding). Worst case is still `O(n)` here but by
+        // searching backwards we improve actual performance.
+        self.queue.iter().rev().find(|r| r.seq_no == Some(seq_no))
     }
 
     pub fn has_ssrc(&self, ssrc: Ssrc) -> bool {
