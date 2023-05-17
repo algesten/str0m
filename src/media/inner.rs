@@ -730,7 +730,10 @@ impl MediaInner {
         // Only do padding packets if we are using RTX, or we will increase the seq_no
         // on the main SSRC for filler stuff.
         if !self.has_tx_rtx() {
-            return;
+            panic!("generate_padding() called on non-RTX media");
+        }
+        if !self.direction().is_sending() {
+            panic!("generate_padding() called on non-sending media");
         }
         assert!(
             self.queue_state
@@ -1345,7 +1348,10 @@ impl MediaInner {
         let state = QueueState {
             mid: self.mid,
             is_audio: self.kind.is_audio(),
-            use_for_padding: self.kind.is_video() && self.has_tx_rtx() && snapshot.has_ever_sent(),
+            use_for_padding: self.kind.is_video()
+                && self.has_tx_rtx()
+                && snapshot.has_ever_sent()
+                && self.direction().is_sending(),
             snapshot,
         };
 
