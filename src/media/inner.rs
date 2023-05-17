@@ -557,6 +557,12 @@ impl MediaInner {
     }
 
     fn poll_packet_resend(&mut self, now: Instant, is_padding: bool) -> Option<NextPacket<'_>> {
+        if !self.resends.is_empty() {
+            // Must clear cache because the loop will pop at least one resend which modifies the
+            // queue state
+            self.queue_state = None;
+        }
+
         let (resend, source) = loop {
             let resend = self.resends.pop_front()?;
 
@@ -585,9 +591,6 @@ impl MediaInner {
 
         let buffer = self.buffers_tx.get_mut(&resend.pt).unwrap();
         let pkt = buffer.get(resend.seq_no).unwrap();
-
-        // Force recaching since packetizer changed.
-        self.queue_state = None;
 
         if !is_padding {
             source.update_packet_counts(pkt.data.len() as u64, true);
