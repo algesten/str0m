@@ -266,6 +266,11 @@ impl Rtcp {
             let (pack_into, pack_from) = feedback.make_contiguous().split_at_mut(i + 1);
             let fb_a = pack_into.last_mut().unwrap();
 
+            // abort if fb_a won't fit in the spare capacity.
+            if word_capacity < fb_a.length_words() {
+                break 'outer;
+            }
+
             // if we manage to merge anything into fb_a.
             let mut any_change = false;
 
