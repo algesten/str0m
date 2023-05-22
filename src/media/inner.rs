@@ -523,9 +523,9 @@ impl MediaInner {
         };
         buf.truncate(header_len + body_len);
 
-        #[cfg(feature = "_internal_dont_uselog_stats")]
+        #[cfg(feature = "_internal_dont_use_log_stats")]
         if let Some(delay) = next.body.queued_at().map(|i| now.duration_since(i)) {
-            crate::log_stat!("QUEUE_DELAY", header.ssrc, delay.as_millis());
+            crate::log_stat!("QUEUE_DELAY", header.ssrc, delay.as_secs_f64() * 1000.0);
         }
 
         Some(PolledPacket {

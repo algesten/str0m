@@ -88,8 +88,8 @@ impl ArrivalGroup {
         let first_seq_no = self.first.map(|(s, _, _)| s)?;
         let last_seq_no = self.last_seq_no?;
 
-        let arrival_delta = self.arrival_delta(other)?.as_secs_f64() / 1000.0;
-        let departure_delta = self.departure_delta(other)?.as_secs_f64() / 1000.0;
+        let arrival_delta = self.arrival_delta(other)?.as_secs_f64() * 1000.0;
+        let departure_delta = self.departure_delta(other)?.as_secs_f64() * 1000.0;
 
         assert!(arrival_delta >= 0.0);
 
