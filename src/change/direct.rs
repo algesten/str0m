@@ -95,4 +95,20 @@ impl<'a> DirectApi<'a> {
     pub fn set_ice_lite(&mut self, ice_lite: bool) {
         self.rtc.ice.set_ice_lite(ice_lite);
     }
+
+    /// Get the str0m `ChannelId` by an `sctp_stream_id`.
+    ///
+    /// This is useful when using out of band negotiated sctp stream id in
+    /// [`Self::create_data_channel()`]
+    pub fn channel_id_by_sctp_stream_id(&self, id: u16) -> Option<ChannelId> {
+        self.rtc.chan.channel_id_by_stream_id(id)
+    }
+
+    /// Get the `sctp_stream_id` from a str0m `ChannelId`.
+    ///
+    /// This is useful when using out of band negotiated sctp stream id in
+    /// [`Self::create_data_channel()`]
+    pub fn sctp_stream_id_by_channel_id(&self, id: ChannelId) -> Option<u16> {
+        self.rtc.chan.stream_id_by_channel_id(id)
+    }
 }
