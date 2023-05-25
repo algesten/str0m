@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 
 use crate::rtp::{ExtensionValues, MediaTime, Rid, RtpHeader, SeqNo, Ssrc};
 
+use super::ring::Ident;
+use super::ring::RingBuf;
 use super::{CodecPacketizer, PacketError, Packetizer, QueueSnapshot};
 use super::{MediaKind, QueuePriority};
 
@@ -48,118 +50,6 @@ pub struct PacketizingBuffer {
 }
 
 const SIZE_BUCKET: usize = 25;
-
-#[derive(Debug)]
-struct RingBuf<T> {
-    buffer: Vec<Option<T>>,
-    len: usize,
-    // This is an u64 since it is ever growing and used as an identifier.
-    next: u64,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-struct Ident(u64);
-
-impl Ident {
-    pub fn increase(&self) -> Ident {
-        Ident(self.0 + 1)
-    }
-}
-
-impl<T> RingBuf<T> {
-    pub fn new(len: usize) -> Self {
-        // We don't want to require T: Clone.
-        let mut buffer = Vec::with_capacity(len);
-        for _ in 0..len {
-            buffer.push(None);
-        }
-
-        Self {
-            buffer,
-            len,
-            next: 0,
-        }
-    }
-
-    pub fn push(&mut self, t: T) -> (Ident, Option<T>) {
-        let idx = (self.next % self.len as u64) as usize;
-
-        let prev = self.buffer[idx].take();
-        self.buffer[idx] = Some(t);
-
-        let ident = Ident(self.next);
-        self.next += 1;
-
-        (ident, prev)
-    }
-
-    fn index_in_scope(&self, i: Ident) -> Option<usize> {
-        // [ a, b, c, d, e ]
-        //         ^
-        //         c
-        //   ^           ^
-        //   i           i
-        let l = self.len as u64;
-
-        let idx = i.0 % l;
-        let cur = (self.next - 1) % l;
-
-        let loop_i = i.0 / l;
-        let loop_c = (self.next - 1) / l;
-
-        if idx < cur {
-            // need to check that self.next hasn't looped.
-            if loop_i != loop_c {
-                return None;
-            }
-        } else {
-            // need to check that i is from previous loop.
-            if loop_c > 0 && loop_i != loop_c - 1 {
-                return None;
-            }
-        }
-
-        Some(idx as usize)
-    }
-
-    pub fn get(&self, i: Ident) -> Option<&T> {
-        let idx = self.index_in_scope(i)?;
-        self.buffer[idx].as_ref()
-    }
-
-    pub fn get_mut(&mut self, i: Ident) -> Option<&mut T> {
-        let idx = self.index_in_scope(i)?;
-        self.buffer[idx].as_mut()
-    }
-
-    pub fn first(&self) -> Option<&T> {
-        let loop_c = (self.next - 1) / self.len as u64;
-
-        let i = if loop_c == 0 {
-            0
-        } else {
-            (self.next % self.len as u64) as usize
-        };
-
-        self.buffer[i].as_ref()
-    }
-
-    pub fn last(&self) -> Option<&T> {
-        let l = self.len as u64;
-        let idx = (l + self.next - 1) % l;
-        self.buffer[idx as usize].as_ref()
-    }
-
-    pub fn len(&self) -> usize {
-        let loop_c = (self.next - 1) / self.len as u64;
-
-        if loop_c == 0 {
-            (self.next % self.len as u64) as usize
-        } else {
-            self.len
-        }
-    }
-}
 
 impl PacketizingBuffer {
     pub(crate) fn new(pack: CodecPacketizer, max_retain: usize) -> Self {
