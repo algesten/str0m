@@ -42,6 +42,8 @@ mod pacer;
 pub(crate) use pacer::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
 pub(crate) use pacer::{QueuePriority, QueueSnapshot, QueueState};
 
+mod ring;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Types of media.
 pub enum MediaKind {
