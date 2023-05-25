@@ -621,7 +621,7 @@ impl MediaInner {
 
     fn poll_packet_regular(&mut self, now: Instant) -> Option<NextPacket<'_>> {
         // exit via ? here is ok since that means there is nothing to send.
-        let (pt, pkt) = next_send_buffer(&mut self.buffers_tx, now)?;
+        let (pt, pkt) = next_send_buffer(&self.buffers_tx)?;
 
         // Force recaching since packetizer changed.
         self.queue_state = None;
@@ -637,9 +637,16 @@ impl MediaInner {
 
         //  In rtp_mode, we just use the incoming sequence number.
         let wanted = pkt.rtp_mode_header.as_ref().map(|h| h.sequence_number);
-
         let seq_no = source.next_seq_no(now, wanted);
-        pkt.seq_no = Some(seq_no);
+
+        let buf = self
+            .buffers_tx
+            .get_mut(&pt)
+            .expect("buffer for next packet");
+
+        buf.update_next_seq_no(seq_no);
+
+        let pkt = buf.take_next(now);
 
         Some(NextPacket {
             pt,
@@ -1479,12 +1486,9 @@ struct Resend {
     pub queued_at: Instant,
 }
 
-fn next_send_buffer(
-    buffers_tx: &mut HashMap<Pt, PacketizingBuffer>,
-    now: Instant,
-) -> Option<(Pt, &mut Packetized)> {
+fn next_send_buffer(buffers_tx: &HashMap<Pt, PacketizingBuffer>) -> Option<(Pt, &Packetized)> {
     for (pt, buf) in buffers_tx {
-        if let Some(pkt) = buf.poll_next(now) {
+        if let Some(pkt) = buf.maybe_next() {
             assert!(pkt.seq_no.is_none());
             return Some((*pt, pkt));
         }
