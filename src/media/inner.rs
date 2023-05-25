@@ -644,7 +644,7 @@ impl MediaInner {
             .get_mut(&pt)
             .expect("buffer for next packet");
 
-        buf.update_next_seq_no(seq_no);
+        buf.update_next(seq_no);
 
         let pkt = buf.take_next(now);
 

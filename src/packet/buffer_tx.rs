@@ -1,5 +1,6 @@
 use std::collections::HashMap;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
+
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -37,6 +38,7 @@ pub struct PacketizingBuffer {
     pack: CodecPacketizer,
     queue: RingBuf<Packetized>,
     by_seq: HashMap<SeqNo, Ident>,
+    by_size: BTreeMap<usize, Ident>,
 
     emit_next: Ident,
     last_emit: Option<Instant>,
@@ -44,6 +46,8 @@ pub struct PacketizingBuffer {
 
     total: TotalQueue,
 }
+
+const SIZE_BUCKET: usize = 25;
 
 #[derive(Debug)]
 struct RingBuf<T> {
@@ -163,6 +167,7 @@ impl PacketizingBuffer {
             pack,
             queue: RingBuf::new(max_retain),
             by_seq: HashMap::new(),
+            by_size: BTreeMap::new(),
 
             emit_next: Ident::default(),
             last_emit: None,
@@ -268,7 +273,7 @@ impl PacketizingBuffer {
         self.queue.get(self.emit_next)
     }
 
-    pub fn update_next_seq_no(&mut self, seq_no: SeqNo) {
+    pub fn update_next(&mut self, seq_no: SeqNo) {
         let id = self.emit_next;
 
         let next = self
@@ -277,6 +282,9 @@ impl PacketizingBuffer {
             .expect("update_next_seq_no to be called after maybe_next");
 
         self.by_seq.insert(seq_no, id);
+
+        let key = next.data.len() % SIZE_BUCKET;
+        self.by_size.insert(key, id);
 
         next.seq_no = Some(seq_no);
     }
@@ -342,7 +350,11 @@ impl PacketizingBuffer {
 
     /// Find a historic packet that is smaller than the given max_size.
     pub fn historic_packet_smaller_than(&self, max_size: usize) -> Option<&Packetized> {
-        todo!()
+        self.by_size
+            .range(..=max_size)
+            .rev()
+            .next()
+            .and_then(|(_, id)| self.queue.get(*id))
     }
 
     /// Should only be called after has_next() which ensures there is a packet to get the SSRC from.
