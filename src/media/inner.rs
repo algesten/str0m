@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::change::AddMedia;
@@ -172,7 +172,12 @@ pub(crate) struct MediaInner {
 
     /// Whether we are running in RTP-mode.
     pub(crate) rtp_mode: bool,
+
+    // a collection of packet candidates for spurious resends
+    spurious_candidates: HashMap<Pt, BTreeMap<usize, Packetized>>,
 }
+
+const SPURIOUS_BUCKET_SIZE: usize = 25; //  MTU / 25 ~= 48
 
 #[derive(Debug)]
 enum Padding {
@@ -611,6 +616,14 @@ impl MediaInner {
         // If the resent PT doesn't exist, the state is not correct as per above.
         let pt = pt_rtx(&self.params, resend.pt).expect("Resend PT");
 
+        // consider this packet for future spurious resends
+        let candidates = self
+            .spurious_candidates
+            .entry(pt)
+            .or_insert(BTreeMap::new());
+        let key = pkt.data.len() / SPURIOUS_BUCKET_SIZE;
+        candidates.entry(key).or_insert(pkt.clone());
+
         Some(NextPacket {
             pt,
             ssrc: ssrc_rtx,
@@ -746,58 +759,27 @@ impl MediaInner {
         );
 
         while pad_size > 0 {
-            // TODO: This function should be split into two halves, but because of the borrow checker
-            // it's hard to construct.
+            if let Some((pt, packet)) = self.spurious_resend_candidate(pad_size) {
+                let seq_no = packet
+                    .seq_no
+                    .expect("this packet to have been sent and therefore have a sequence number");
+                // this can overflow because we tolerate reusing a larger packet
+                pad_size = pad_size.saturating_sub(packet.data.len());
+                trace!(
+                    "Queued {} bytes worth of resend padding, seq_no = {seq_no}",
+                    packet.data.len()
+                );
 
-            // This first scope tries to send a spurious (unasked for) resend of a packet already sent.
-            if pad_size > MIN_SPURIOUS_PADDING_SIZE {
-                let pt = self
-                    .buffers_tx
-                    .iter()
-                    .map(|(pt, buffer)| (pt, buffer.history_size()))
-                    .filter(|(_, size)| *size > 0)
-                    // Use the last PT i.e. the one that has the most RTX history, this is a poor
-                    // approximation for most recent sends.
-                    .max_by_key(|(_, size)| *size)
-                    .map(|(pt, _)| *pt);
-
-                // If we find a pt above, we do a spurious (unasked for) resend of this packet.
-                if let Some(pt) = pt {
-                    let buffer = get_buffer_tx(&self.buffers_tx, pt)
-                        .expect("the buffer to exist as verified previously");
-
-                    // Find a historic packet that is smaller than this max size. The max size
-                    // is a headroom since we can accept slightly larger padding than asked for.
-                    let max_size = pad_size * 2;
-                    if let Some(packet) = buffer.historic_packet_smaller_than(max_size) {
-                        let seq_no = packet.seq_no.expect(
-                            "this packet to have been sent and therefore have a sequence number",
-                        );
-                        // Saturating sub because we can overflow and want to stop when that
-                        // happens.
-                        pad_size = pad_size.saturating_sub(packet.data.len());
-                        trace!(
-                            "Queued {} bytes worth of resend padding, seq_no = {seq_no}",
-                            packet.data.len()
-                        );
-
-                        self.padding.push_back(Padding::Spurious(Resend {
-                            pt,
-                            body_size: packet.data.len(),
-                            ssrc: packet.meta.ssrc,
-                            seq_no,
-                            queued_at: now,
-                        }));
-
-                        continue;
-                    }
-                }
-            }
-
-            // This second scope sends an empty padding packet. This is a fallback strategy if we fail
-            // to find a suitable rtx packet above.
-            // NB: If we cannot generate padding here for some reason we'll get stuck forever.
-            {
+                self.padding.push_back(Padding::Spurious(Resend {
+                    pt,
+                    body_size: packet.data.len(),
+                    ssrc: packet.meta.ssrc,
+                    seq_no,
+                    queued_at: now,
+                }));
+            } else {
+                // If no reusable packet was found, generate blank padding.
+                // NB: If we cannot generate padding here for some reason we'll get stuck forever.
                 let Some(&pt) = self.buffers_tx.keys().next() else {
                     panic!("No PT to send blank padding on");
                 };
@@ -829,6 +811,37 @@ impl MediaInner {
 
         // Clear queue state cache
         self.queue_state = None;
+    }
+
+    fn spurious_resend_candidate(&self, size: usize) -> Option<(Pt, &Packetized)> {
+        // Try to find a historic packet that is smaller than this max size. The max size
+        // is a headroom since we can accept slightly larger padding than asked for.
+        let max_size = size * 2;
+
+        if max_size < MIN_SPURIOUS_PADDING_SIZE {
+            return None;
+        }
+
+        let Some(pt) = self.buffers_tx
+            .iter()
+            .map(|(pt, buffer)| (pt, buffer.history_size()))
+            .filter(|(_, size)| *size > 0)
+            // Use the last PT i.e. the one that has the most RTX history, this is a poor
+            // approximation for most recent sends.
+            .max_by_key(|(_, size)| *size)
+            .map(|(pt, _)| *pt) else {
+                return None;
+            };
+
+        let Some(candidates) = self.spurious_candidates.get(&pt) else {
+            return None;
+        };
+
+        let Some((_, packet)) = candidates.range(0..=size).rev().next() else {
+            return None
+        };
+
+        Some((pt, packet))
     }
 
     pub fn get_or_create_source_rx(&mut self, ssrc: Ssrc) -> &mut ReceiverSource {
@@ -1526,6 +1539,7 @@ impl Default for MediaInner {
             queue_state: None,
             to_packetize: VecDeque::default(),
             rtp_mode: false,
+            spurious_candidates: HashMap::new(),
         }
     }
 }
@@ -1593,14 +1607,6 @@ fn get_source_tx(
     sources_tx
         .iter_mut()
         .find(|s| rid == s.rid() && is_rtx == s.repairs().is_some())
-}
-
-/// Separate in wait for polonius.
-fn get_buffer_tx(
-    buffers_tx: &HashMap<Pt, PacketizingBuffer>,
-    pt: Pt,
-) -> Option<&PacketizingBuffer> {
-    buffers_tx.get(&pt)
 }
 
 /// Separate in wait for polonius.

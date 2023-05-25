@@ -7,6 +7,7 @@ use crate::rtp::{ExtensionValues, MediaTime, Rid, RtpHeader, SeqNo, Ssrc};
 use super::{CodecPacketizer, PacketError, Packetizer, QueueSnapshot};
 use super::{MediaKind, QueuePriority};
 
+#[derive(Clone)]
 pub struct Packetized {
     pub data: Vec<u8>,
     pub first: bool,
