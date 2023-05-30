@@ -143,7 +143,7 @@ impl ReceiverSource {
             nack.ssrc = self.ssrc;
         }
 
-        info!("Send nacks: {:?}", nacks);
+        debug!("Send nacks: {:?}", nacks);
         Some(nacks)
     }
 
