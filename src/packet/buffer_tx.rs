@@ -173,7 +173,7 @@ impl PacketizingBuffer {
 
         self.by_seq.insert(seq_no, id);
 
-        let key = next.data.len() % SIZE_BUCKET;
+        let key = next.data.len() / SIZE_BUCKET;
         self.by_size.insert(key, id);
 
         next.seq_no = Some(seq_no);
@@ -240,8 +240,10 @@ impl PacketizingBuffer {
 
     /// Find a historic packet that is smaller than the given max_size.
     pub fn historic_packet_smaller_than(&self, max_size: usize) -> Option<&Packetized> {
+        let key = max_size / SIZE_BUCKET;
+
         self.by_size
-            .range(..=max_size)
+            .range(..=key)
             .rev()
             .next()
             .and_then(|(_, id)| self.queue.get(*id))
