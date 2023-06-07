@@ -30,8 +30,13 @@ pub struct Depacketized {
 }
 
 impl Depacketized {
-    pub fn network_time(&self) -> Instant {
-        self.meta[0].received
+    pub fn first_network_time(&self) -> Instant {
+        self.meta
+            .iter()
+            .map(|m| m.received)
+            .min()
+            .expect("a depacketized to consist of at least one packet")
+    }
     }
 
     pub fn seq_range(&self) -> RangeInclusive<SeqNo> {

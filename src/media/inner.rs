@@ -1229,7 +1229,7 @@ impl MediaInner {
                         rid: *rid,
                         params: codec,
                         time: dep.time,
-                        network_time: dep.network_time(),
+                        network_time: dep.first_network_time(),
                         seq_range: dep.seq_range(),
                         contiguous: dep.contiguous,
                         ext_vals: dep.ext_vals(),
