@@ -45,7 +45,9 @@ impl Depacketized {
     }
 
     pub fn ext_vals(&self) -> ExtensionValues {
-        self.meta[0].header.ext_vals
+        // We use the extensions from the last packet because certain extensions, such as video
+        // orientation, are only added on the last packet to save bytes.
+        self.meta[self.meta.len() - 1].header.ext_vals
     }
 }
 
