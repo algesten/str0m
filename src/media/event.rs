@@ -1,5 +1,5 @@
 use std::ops::RangeInclusive;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, SeqNo};
 use crate::sdp::Simulcast as SdpSimulcast;
@@ -112,6 +112,10 @@ pub struct MediaData {
     ///
     /// In simple SFU setups this can be used as wallclock for [`Writer::write`][crate::media::Writer].
     pub network_time: Instant,
+
+    /// The delay caused by building this [`MediaData`] from RTP packets i.e. the difference
+    /// between when the first and last RTP packet that makes up this data was received.
+    pub buffer_delay: Duration,
 
     /// The (RTP) sequence numbers that made up this data.
     pub seq_range: RangeInclusive<SeqNo>,

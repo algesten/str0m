@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::ops::RangeInclusive;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::rtp::{ExtensionValues, MediaTime, RtpHeader, SeqNo};
 
@@ -37,6 +37,16 @@ impl Depacketized {
             .min()
             .expect("a depacketized to consist of at least one packet")
     }
+
+    pub fn buffer_delay(&self) -> Duration {
+        let last_network_time = self
+            .meta
+            .iter()
+            .map(|m| m.received)
+            .max()
+            .expect("a depacketized to consist of at least one packet");
+
+        last_network_time.duration_since(self.first_network_time())
     }
 
     pub fn seq_range(&self) -> RangeInclusive<SeqNo> {
