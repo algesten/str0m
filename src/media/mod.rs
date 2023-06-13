@@ -287,6 +287,9 @@ impl<'a> Writer<'a> {
             panic!("Can't use MediaWriter::write when in rtp_mode");
         }
 
+        let send_buffer_audio = self.media.rtc.session.send_buffer_audio;
+        let send_buffer_video = self.media.rtc.session.send_buffer_video;
+
         let media = self.media.inner_mut();
 
         media.write(
@@ -297,6 +300,8 @@ impl<'a> Writer<'a> {
             self.rid,
             self.ext_vals,
             None,
+            send_buffer_audio,
+            send_buffer_video,
         )?;
 
         Ok(())
@@ -321,9 +326,19 @@ impl<'a> Writer<'a> {
             panic!("Can't use MediaWriter::write_rtp when not in rtp_mode");
         }
 
+        let send_buffer_audio = self.media.rtc.session.send_buffer_audio;
+        let send_buffer_video = self.media.rtc.session.send_buffer_video;
+
         let media = self.media.inner_mut();
 
-        media.write_rtp(self.pt, wallclock, packet, exts)?;
+        media.write_rtp(
+            self.pt,
+            wallclock,
+            packet,
+            exts,
+            send_buffer_audio,
+            send_buffer_video,
+        )?;
 
         Ok(())
     }

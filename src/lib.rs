@@ -1453,7 +1453,8 @@ pub struct RtcConfig {
     bwe_initial_bitrate: Option<Bitrate>,
     reordering_size_audio: usize,
     reordering_size_video: usize,
-
+    send_buffer_audio: usize,
+    send_buffer_video: usize,
     rtp_mode: bool,
 }
 
@@ -1708,6 +1709,65 @@ impl RtcConfig {
         self.reordering_size_video
     }
 
+    /// Sets the buffer size for outgoing audio packets.
+    ///
+    /// This must be larger than 0. The value configures an internal ring buffer used as a temporary
+    /// holding space between calling [`Writer::write`][crate::media::Writer::write()] and
+    /// [`Rtc::poll_output`].
+    ///
+    /// For audio one call to `write()` typically results in one RTP packet since the entire payload
+    /// fits in one. If you can guarantee that every `write()` is a single RTP packet, and is always
+    /// followed by a `poll_output()`, it might be possible to set this value to 1. But that would give
+    /// no margins for unexpected patterns.
+    pub fn set_send_buffer_audio(mut self, size: usize) -> Self {
+        assert!(size > 0);
+        self.send_buffer_audio = size;
+        self
+    }
+
+    /// Returns the setting for audio resend size.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to 50.
+    /// assert_eq!(config.send_buffer_audio(), 50);
+    /// ```
+    pub fn send_buffer_audio(&self) -> usize {
+        self.send_buffer_audio
+    }
+
+    /// Sets the buffer size for outgoing video packets and resends.
+    ///
+    /// This must be larger than 0. The value configures an internal ring buffer that is both
+    /// used as a temporary holding space between calling [`Writer::write`][crate::media::Writer::write()]
+    /// and [`Rtc::poll_output`] as well as for fulfilling resends.
+    ///
+    /// For video, this buffer is used for more than for audio. First, a call to `write()` often
+    /// results in multiple RTP packets since large frames don't fit in one payload. That means the buffer
+    /// must be at least as large to hold all those packets. Second, when the remote requests resends (NACK),
+    /// those are fulfilled from this buffer. Third, for Bandwidth Estimation (BWE), when probing for
+    /// available bandwidth, packets from this buffer are used to do "spurious resends", i.e. we do resends
+    /// for packets that were not asked for.
+    pub fn set_send_buffer_video(mut self, size: usize) -> Self {
+        self.send_buffer_video = size;
+        self
+    }
+
+    /// Returns the setting for video resend size.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to 200.
+    /// assert_eq!(config.send_buffer_video(), 200);
+    /// ```
+    pub fn send_buffer_video(&self) -> usize {
+        self.send_buffer_video
+    }
+
     /// Make the entire Rtc be in RTP mode.
     ///
     /// This means all media, read from [`MediaData`] and written to
@@ -1752,7 +1812,8 @@ impl Default for RtcConfig {
             bwe_initial_bitrate: None,
             reordering_size_audio: 15,
             reordering_size_video: 30,
-
+            send_buffer_audio: 50,
+            send_buffer_video: 200,
             rtp_mode: false,
         }
     }
