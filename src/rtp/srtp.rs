@@ -1,5 +1,8 @@
 use std::fmt;
 
+use openssl::cipher;
+use openssl::cipher_ctx::CipherCtx;
+use openssl::error::ErrorStack;
 use openssl::symm::{Cipher, Crypter, Mode};
 
 use crate::dtls::KeyingMaterial;
@@ -87,7 +90,10 @@ impl SrtpContext {
         );
 
         let mut output = vec![0_u8; buf.len() + SRTP_HMAC_LEN];
-        self.rtp.aes.crypt(true, &iv, input, &mut output[hlen..]);
+        self.rtp
+            .enc
+            .encrypt(&iv, input, &mut output[hlen..])
+            .expect("rtp encrypt");
 
         output[..hlen].copy_from_slice(&buf[..hlen]);
 
@@ -128,7 +134,10 @@ impl SrtpContext {
         // TODO: This instantiates a Crypter for every packet. That's kinda wasteful
         // when it's perfectly possible to reuse the underlying OpenSSL structs for
         // over and over using a reset.
-        self.rtp.aes.crypt(false, &iv, input, &mut output);
+        self.rtp
+            .dec
+            .decrypt(&iv, input, &mut output)
+            .expect("rtp decrypt");
 
         Some(output)
     }
@@ -154,7 +163,10 @@ impl SrtpContext {
         let input = &buf[8..];
         let encout = &mut output[8..(8 + input.len())];
 
-        self.rtcp.aes.crypt(true, &iv, input, encout);
+        self.rtcp
+            .enc
+            .encrypt(&iv, input, encout)
+            .expect("rtcp encrypt");
 
         // e is always encrypted, rest is 31 byte index.
         let e_and_si = 0x8000_0000 | srtcp_index;
@@ -225,7 +237,10 @@ impl SrtpContext {
         let mut output = vec![0_u8; input.len() + 8];
         output[0..8].copy_from_slice(&buf[0..8]);
 
-        self.rtcp.aes.crypt(false, &iv, input, &mut output[8..]);
+        self.rtcp
+            .dec
+            .decrypt(&iv, input, &mut output[8..])
+            .expect("rtcp decrypt");
 
         Some(output)
     }
@@ -304,9 +319,10 @@ impl SrtpKey {
 
 /// Encryption/decryption derived from the SrtpKey.
 struct Derived {
-    aes: AesKey,
     hmac: Sha1,
     salt: RtpSalt,
+    enc: Encrypter,
+    dec: Decrypter,
 }
 
 type AesKey = [u8; 16];
@@ -358,41 +374,62 @@ impl Derived {
         srtp_key.derive(LABEL_RTCP_SALT, &mut rtcp_salt[..]);
 
         let rtp = Derived {
-            aes: rtp_aes,
             hmac: rtp_hmac,
             salt: rtp_salt,
+            enc: Encrypter::new(rtp_aes),
+            dec: Decrypter::new(rtp_aes),
         };
 
         let rtcp = Derived {
-            aes: rtcp_aes,
             hmac: rtcp_hmac,
             salt: rtcp_salt,
+            enc: Encrypter::new(rtcp_aes),
+            dec: Decrypter::new(rtcp_aes),
         };
 
         (rtp, rtcp)
     }
 }
 
-trait RtpCrypter {
-    fn crypt(&self, encrypt: bool, iv: &RtpIv, input: &[u8], output: &mut [u8]);
+struct Encrypter {
+    ctx: CipherCtx,
 }
 
-impl RtpCrypter for AesKey {
-    fn crypt(&self, encrypt: bool, iv: &RtpIv, input: &[u8], output: &mut [u8]) {
-        let mode = if encrypt {
-            Mode::Encrypt
-        } else {
-            Mode::Decrypt
-        };
+impl Encrypter {
+    fn new(key: AesKey) -> Self {
+        let t = cipher::Cipher::aes_128_ctr();
+        let mut ctx = CipherCtx::new().expect("a reusable cipher context");
+        ctx.encrypt_init(Some(t), Some(&key[..]), None)
+            .expect("enc init");
+        Encrypter { ctx }
+    }
 
-        let t = Cipher::aes_128_ctr();
-        let mut cr = Crypter::new(t, mode, &self[..], Some(iv)).expect("Crypter");
+    fn encrypt(&mut self, iv: &RtpIv, input: &[u8], output: &mut [u8]) -> Result<(), ErrorStack> {
+        self.ctx.encrypt_init(None, None, Some(iv))?;
+        let count = self.ctx.cipher_update(input, Some(output))?;
+        self.ctx.cipher_final(&mut output[count..])?;
+        Ok(())
+    }
+}
 
-        // Panics for stream ciphers if `output.len() < input.len()`
-        // CTR is a stream cipher.
-        let count = cr.update(input, &mut *output).expect("enc_dec update");
+struct Decrypter {
+    ctx: CipherCtx,
+}
 
-        cr.finalize(&mut output[count..]).expect("enc_dec finalize");
+impl Decrypter {
+    fn new(key: AesKey) -> Self {
+        let t = cipher::Cipher::aes_128_ctr();
+        let mut ctx = CipherCtx::new().expect("a reusable cipher context");
+        ctx.decrypt_init(Some(t), Some(&key[..]), None)
+            .expect("enc init");
+        Decrypter { ctx }
+    }
+
+    fn decrypt(&mut self, iv: &RtpIv, input: &[u8], output: &mut [u8]) -> Result<(), ErrorStack> {
+        self.ctx.decrypt_init(None, None, Some(iv))?;
+        let count = self.ctx.cipher_update(input, Some(output))?;
+        self.ctx.cipher_final(&mut output[count..])?;
+        Ok(())
     }
 }
 
@@ -468,6 +505,18 @@ impl ToRtpIv for RtpSalt {
 impl fmt::Debug for Derived {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Derived")
+    }
+}
+
+impl fmt::Debug for Encrypter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Encrypter").finish()
+    }
+}
+
+impl fmt::Debug for Decrypter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Decrypter").finish()
     }
 }
 
