@@ -283,6 +283,8 @@ impl MediaInner {
         rid: Option<Rid>,
         ext_vals: ExtensionValues,
         rtp_mode_header: Option<RtpHeader>,
+        send_buffer_audio: usize,
+        send_buffer_video: usize,
     ) -> Result<(), RtcError> {
         if !self.dir.is_sending() {
             return Err(RtcError::NotSendingDirection(self.dir));
@@ -311,7 +313,11 @@ impl MediaInner {
         // We don't actually want this buffer here, but it must be created before we
         // get to the do_packetize() (as part of handle_timeout).
         let _ = self.buffers_tx.entry(pt).or_insert_with(|| {
-            let max_retain = if is_audio { 4096 } else { 2048 };
+            let max_retain = if is_audio {
+                send_buffer_audio
+            } else {
+                send_buffer_video
+            };
             PacketizingBuffer::new(codec.into(), max_retain)
         });
 
@@ -370,6 +376,8 @@ impl MediaInner {
         wallclock: Instant,
         packet: &[u8],
         exts: &ExtensionMap,
+        send_buffer_audio: usize,
+        send_buffer_video: usize,
     ) -> Result<(), RtcError> {
         let Some(spec) = self.params_by_pt(pt).map(|p| p.spec()) else {
             return Err(RtcError::UnknownPt(pt));
@@ -393,6 +401,8 @@ impl MediaInner {
             rid,
             header.ext_vals,
             Some(header),
+            send_buffer_audio,
+            send_buffer_video,
         )?;
 
         Ok(())

@@ -47,6 +47,8 @@ pub(crate) struct Session {
 
     reordering_size_audio: usize,
     reordering_size_video: usize,
+    pub(crate) send_buffer_audio: usize,
+    pub(crate) send_buffer_video: usize,
 
     /// Extension mappings are _per BUNDLE_, but we can only have one a=group BUNDLE
     /// in WebRTC (one ice connection), so they are effectively per session.
@@ -132,6 +134,8 @@ impl Session {
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
+            send_buffer_audio: config.send_buffer_audio,
+            send_buffer_video: config.send_buffer_video,
             exts: config.exts,
             codec_config: config.codec_config.clone(),
             source_keys: HashMap::new(),
