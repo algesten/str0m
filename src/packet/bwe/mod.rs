@@ -118,8 +118,7 @@ impl SendSideBandwithEstimator {
             now,
         );
         self.last_twcc_report = now;
-        // We have a valid trendline hypothesis, continue increasing/decreasing the hypothesis for
-        // now.
+        // We have a valid trendline hypothesis, change the bandwidth estimate periodically.
         self.poll_interval = UPDATE_INTERVAL;
     }
 
@@ -129,10 +128,13 @@ impl SendSideBandwithEstimator {
 
     pub(crate) fn handle_timeout(&mut self, now: Instant) {
         if !self.trendline_hypothesis_valid(now) {
-            // We haven't received a TWCC report in a while. The trendline_estimate hyptohesis can
+            // We haven't received a TWCC report in a while. The trendline hyptohesis can
             // no longer be considered valid. We need another TWCC report before we can update
             // estimates.
-            self.poll_interval = self.mean_max_rtt().unwrap_or(MAX_TWCC_GAP);
+            self.poll_interval = self
+                .mean_max_rtt()
+                .unwrap_or(MAX_TWCC_GAP)
+                .min(UPDATE_INTERVAL);
             return;
         }
 
@@ -190,12 +192,14 @@ impl SendSideBandwithEstimator {
         self.last_update = now;
     }
 
+    /// Whether the current trendline hypothesis is valid i.e. not too old.
     fn trendline_hypothesis_valid(&self, now: Instant) -> bool {
         now.duration_since(self.last_twcc_report)
             <= self
                 .mean_max_rtt()
                 .map(|rtt| rtt * 2)
                 .unwrap_or(MAX_TWCC_GAP)
+                .min(UPDATE_INTERVAL * 2)
     }
 }
 
