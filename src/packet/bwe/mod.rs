@@ -27,6 +27,8 @@ const MAX_RTT_HISTORY_WINDOW: usize = 32;
 const INITIAL_BITRATE_WINDOW: Duration = Duration::from_millis(500);
 const BITRATE_WINDOW: Duration = Duration::from_millis(150);
 const UPDATE_INTERVAL: Duration = Duration::from_millis(25);
+/// The maximum time we keep updating our estimate without receiving a TWCC report.
+const MAX_TWCC_GAP: Duration = Duration::from_millis(500);
 
 /// Main entry point for the Googcc inspired BWE implementation.
 ///
@@ -45,6 +47,10 @@ pub struct SendSideBandwithEstimator {
 
     /// The last time we updated the estimate.
     last_update: Instant,
+    /// The poll interval currently in use.
+    poll_interval: Duration,
+    /// The last time we ingested a TWCC report.
+    last_twcc_report: Instant,
 }
 
 impl SendSideBandwithEstimator {
@@ -60,6 +66,8 @@ impl SendSideBandwithEstimator {
             last_estimate: None,
             max_rtt_history: VecDeque::default(),
             last_update: already_happened(),
+            poll_interval: UPDATE_INTERVAL,
+            last_twcc_report: already_happened(),
         }
     }
 
@@ -109,13 +117,25 @@ impl SendSideBandwithEstimator {
             self.mean_max_rtt(),
             now,
         );
+        self.last_twcc_report = now;
+        // We have a valid trendline hypothesis, continue increasing/decreasing the hypothesis for
+        // now.
+        self.poll_interval = UPDATE_INTERVAL;
     }
 
     pub(crate) fn poll_timeout(&self) -> Instant {
-        self.last_update + UPDATE_INTERVAL
+        self.last_update + self.poll_interval
     }
 
     pub(crate) fn handle_timeout(&mut self, now: Instant) {
+        if !self.trendline_hypothesis_valid(now) {
+            // We haven't received a TWCC report in a while. The trendline_estimate hyptohesis can
+            // no longer be considered valid. We need another TWCC report before we can update
+            // estimates.
+            self.poll_interval = self.mean_max_rtt().unwrap_or(MAX_TWCC_GAP);
+            return;
+        }
+
         self.update_estimate(
             self.trendline_estimator.hypothesis(),
             self.acked_bitrate_estimator.current_estimate(),
@@ -168,6 +188,14 @@ impl SendSideBandwithEstimator {
         // Set this even if we didn't update, otherwise we get stuck in a poll -> handle loop
         // that starves the run loop.
         self.last_update = now;
+    }
+
+    fn trendline_hypothesis_valid(&self, now: Instant) -> bool {
+        now.duration_since(self.last_twcc_report)
+            <= self
+                .mean_max_rtt()
+                .map(|rtt| rtt * 2)
+                .unwrap_or(MAX_TWCC_GAP)
     }
 }
 
