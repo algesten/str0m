@@ -480,6 +480,7 @@ extern crate tracing;
 use change::{DirectApi, SdpApi};
 use std::fmt;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use streams::RtpPacket;
 use thiserror::Error;
@@ -557,6 +558,8 @@ pub mod error {
     pub use crate::sctp::{ProtoError, SctpError};
     pub use crate::sdp::SdpError;
 }
+
+pub mod debug;
 
 /// Errors for the whole Rtc engine.
 #[derive(Debug, Error)]
@@ -689,6 +692,7 @@ pub struct Rtc {
     peer_bytes_rx: u64,
     peer_bytes_tx: u64,
     change_counter: usize,
+    debug_id: u64,
 }
 
 struct SendAddr {
@@ -826,6 +830,7 @@ impl Rtc {
     }
 
     pub(crate) fn new_from_config(config: RtcConfig) -> Self {
+        static NEXT_DEBUG_ID: AtomicU64 = AtomicU64::new(0);
         let session = Session::new(&config);
 
         let mut ice = IceAgent::with_local_credentials(config.local_ice_credentials);
@@ -848,6 +853,7 @@ impl Rtc {
             peer_bytes_rx: 0,
             peer_bytes_tx: 0,
             change_counter: 0,
+            debug_id: NEXT_DEBUG_ID.fetch_add(1, Ordering::Relaxed),
         }
     }
 
@@ -1071,6 +1077,7 @@ impl Rtc {
     /// 2. New network input.
     ///
     /// See [`Rtc`] instance documentation for how this is expected to be used in a loop.
+    #[instrument(skip_all, target = "str0m::debug", level = "TRACE", fields(debug_id = self.debug_id))]
     pub fn poll_output(&mut self) -> Result<Output, RtcError> {
         let o = self.do_poll_output()?;
 
@@ -1340,6 +1347,7 @@ impl Rtc {
     ///     rtc.handle_input(input);
     /// }
     /// ```
+    #[instrument(skip_all, target = "str0m::debug", level = "TRACE", fields(debug_id = self.debug_id))]
     pub fn handle_input(&mut self, input: Input) -> Result<(), RtcError> {
         if !self.alive {
             return Ok(());

@@ -29,6 +29,7 @@ openssl-sys = "0.9.80"
 hmac = "0.12.1"
 crc = "3.0.0"
 serde = { version = "1.0.152", features = ["derive"] }
+tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }
 
 
 # asm feature breaks on windows, but it is much faster than openssl
@@ -38,7 +39,6 @@ sha-1 = { version = "0.10.1", features = ["asm"] }
 [dev-dependencies]
 rouille = { version = "3.5.0", features = ["ssl"] }
 serde_json = "1.0"
-tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }
 systemstat = "0.2.2"
 
 # This is to ensure MSRV 1.65

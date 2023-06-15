@@ -183,6 +183,7 @@ impl Dtls {
     }
 
     /// Poll for an event.
+    #[instrument(skip_all, target = "str0m::debug", level = "TRACE")]
     pub fn poll_event(&mut self) -> Option<DtlsEvent> {
         let x = self.events.pop_front();
         if x.is_some() {

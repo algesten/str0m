@@ -938,6 +938,7 @@ impl IceAgent {
         self.events.push_back(event);
     }
 
+    #[instrument(skip_all, target = "str0m::debug", level = "TRACE")]
     pub fn poll_event(&mut self) -> Option<IceAgentEvent> {
         let x = self.events.pop_front();
         if x.is_some() {
