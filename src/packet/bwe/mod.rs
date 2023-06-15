@@ -45,10 +45,8 @@ pub struct SendSideBandwithEstimator {
     /// History of the max RTT derived for each TWCC report.
     max_rtt_history: VecDeque<Duration>,
 
-    /// The last time we updated the estimate.
-    last_update: Instant,
-    /// The poll interval currently in use.
-    poll_interval: Duration,
+    /// The next time we should poll.
+    next_timeout: Instant,
     /// The last time we ingested a TWCC report.
     last_twcc_report: Instant,
 }
@@ -65,8 +63,7 @@ impl SendSideBandwithEstimator {
             rate_control: RateControl::new(initial_bitrate, Bitrate::kbps(40), Bitrate::gbps(10)),
             last_estimate: None,
             max_rtt_history: VecDeque::default(),
-            last_update: already_happened(),
-            poll_interval: UPDATE_INTERVAL,
+            next_timeout: already_happened(),
             last_twcc_report: already_happened(),
         }
     }
@@ -118,12 +115,10 @@ impl SendSideBandwithEstimator {
             now,
         );
         self.last_twcc_report = now;
-        // We have a valid trendline hypothesis, change the bandwidth estimate periodically.
-        self.poll_interval = UPDATE_INTERVAL;
     }
 
     pub(crate) fn poll_timeout(&self) -> Instant {
-        self.last_update + self.poll_interval
+        self.next_timeout
     }
 
     pub(crate) fn handle_timeout(&mut self, now: Instant) {
@@ -131,10 +126,14 @@ impl SendSideBandwithEstimator {
             // We haven't received a TWCC report in a while. The trendline hyptohesis can
             // no longer be considered valid. We need another TWCC report before we can update
             // estimates.
-            self.poll_interval = self
+            let next_timeout_in = self
                 .mean_max_rtt()
                 .unwrap_or(MAX_TWCC_GAP)
                 .min(UPDATE_INTERVAL);
+
+            // Set this even if we didn't update, otherwise we get stuck in a poll -> handle loop
+            // that starves the run loop.
+            self.next_timeout = now + next_timeout_in;
             return;
         }
 
@@ -189,7 +188,7 @@ impl SendSideBandwithEstimator {
 
         // Set this even if we didn't update, otherwise we get stuck in a poll -> handle loop
         // that starves the run loop.
-        self.last_update = now;
+        self.next_timeout = now + UPDATE_INTERVAL;
     }
 
     /// Whether the current trendline hypothesis is valid i.e. not too old.
