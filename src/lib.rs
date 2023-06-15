@@ -1761,8 +1761,8 @@ impl RtcConfig {
     /// # use str0m::Rtc;
     /// let config = Rtc::builder();
     ///
-    /// // Defaults to 200.
-    /// assert_eq!(config.send_buffer_video(), 200);
+    /// // Defaults to 1000.
+    /// assert_eq!(config.send_buffer_video(), 1000);
     /// ```
     pub fn send_buffer_video(&self) -> usize {
         self.send_buffer_video
@@ -1813,7 +1813,7 @@ impl Default for RtcConfig {
             reordering_size_audio: 15,
             reordering_size_video: 30,
             send_buffer_audio: 50,
-            send_buffer_video: 200,
+            send_buffer_video: 1000,
             rtp_mode: false,
         }
     }
