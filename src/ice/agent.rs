@@ -885,6 +885,7 @@ impl IceAgent {
     /// Poll for the next time to call [`IceAgent::handle_timeout`].
     ///
     /// Returns `None` until the first ever `handle_timeout` is called.
+    #[instrument(skip_all, target = "str0m::debug", level = "TRACE", ret)]
     pub fn poll_timeout(&mut self) -> Option<Instant> {
         // if we never called handle_timeout, there will be no current time.
         let last_now = self.last_now?;
@@ -938,7 +939,6 @@ impl IceAgent {
         self.events.push_back(event);
     }
 
-    #[instrument(skip_all, target = "str0m::debug", level = "TRACE")]
     pub fn poll_event(&mut self) -> Option<IceAgentEvent> {
         let x = self.events.pop_front();
         if x.is_some() {

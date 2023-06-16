@@ -605,7 +605,7 @@ impl Session {
         Some(protected.into())
     }
 
-    #[instrument(skip_all, target = "str0m::debug", level = "TRACE")]
+    #[instrument(skip_all, target = "str0m::debug", level = "TRACE", ret)]
     pub fn poll_timeout(&mut self) -> Option<Instant> {
         let regular_at = Some(self.regular_feedback_at());
         let nack_at = self.nack_at();
@@ -630,14 +630,14 @@ impl Session {
         self.medias.iter().any(|m| m.mid() == mid)
     }
 
-    #[instrument(skip_all, target = "str0m::debug", level = "TRACE")]
+    #[instrument(skip_all, target = "str0m::debug", level = "TRACE", ret)]
     fn regular_feedback_at(&self) -> Instant {
         self.streams
             .regular_feedback_at()
             .unwrap_or_else(not_happening)
     }
 
-    #[instrument(skip_all, target = "str0m::debug", level = "TRACE")]
+    #[instrument(skip_all, target = "str0m::debug", level = "TRACE", ret)]
     fn nack_at(&mut self) -> Option<Instant> {
         if self.streams.need_nack() {
             Some(self.last_nack + NACK_MIN_INTERVAL)
@@ -646,7 +646,7 @@ impl Session {
         }
     }
 
-    #[instrument(skip_all, target = "str0m::debug", level = "TRACE")]
+    #[instrument(skip_all, target = "str0m::debug", level = "TRACE", ret)]
     fn twcc_at(&self) -> Option<Instant> {
         let is_receiving = self.streams.is_receiving();
         if is_receiving && self.enable_twcc_feedback && self.twcc_rx_register.has_unreported() {
@@ -781,7 +781,7 @@ impl Bwe {
         }
     }
 
-    #[instrument(skip_all, target = "str0m::debug", level = "TRACE")]
+    #[instrument(skip_all, target = "str0m::debug", level = "TRACE", ret)]
     fn poll_timeout(&self) -> Instant {
         self.bwe.poll_timeout()
     }

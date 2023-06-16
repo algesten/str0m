@@ -210,6 +210,7 @@ impl ChannelHandler {
         }
     }
 
+    #[instrument(skip_all, target = "str0m::debug", level = "TRACE", ret)]
     pub fn poll_timeout(&self, sctp: &RtcSctp) -> Option<Instant> {
         if sctp.is_inited() && (self.need_allocation() || self.need_open()) {
             Some(already_happened())

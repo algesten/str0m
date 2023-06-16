@@ -34,7 +34,7 @@ impl Pacer for PacerImpl {
         }
     }
 
-    #[instrument(skip_all, target = "str0m::debug", level = "TRACE")]
+    #[instrument(skip_all, target = "str0m::debug", level = "TRACE", ret)]
     fn poll_timeout(&self) -> Option<Instant> {
         match self {
             PacerImpl::Null(v) => v.poll_timeout(),

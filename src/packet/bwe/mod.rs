@@ -117,6 +117,7 @@ impl SendSideBandwithEstimator {
         self.last_twcc_report = now;
     }
 
+    #[instrument(skip_all, target = "str0m::debug", level = "TRACE", ret)]
     pub(crate) fn poll_timeout(&self) -> Instant {
         self.next_timeout
     }

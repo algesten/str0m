@@ -468,7 +468,7 @@
 //! [x-chat]:     https://github.com/algesten/str0m/blob/main/examples/chat.rs
 //! [intg]:       https://github.com/algesten/str0m/blob/main/tests/unidirectional.rs#L12
 
-#![forbid(unsafe_code)]
+// #![forbid(unsafe_code)]
 #![allow(clippy::new_without_default)]
 #![allow(clippy::bool_to_int_with_if)]
 #![allow(clippy::assertions_on_constants)]
@@ -1347,7 +1347,6 @@ impl Rtc {
     ///     rtc.handle_input(input);
     /// }
     /// ```
-    #[instrument(skip_all, target = "str0m::debug", level = "TRACE", fields(debug_id = self.debug_id))]
     pub fn handle_input(&mut self, input: Input) -> Result<(), RtcError> {
         if !self.alive {
             return Ok(());

@@ -626,6 +626,7 @@ impl RtcSctp {
         None
     }
 
+    #[instrument(skip_all, target = "str0m::debug", level = "TRACE", ret)]
     pub fn poll_timeout(&mut self) -> Option<Instant> {
         self.assoc.as_mut().and_then(|a| a.poll_timeout())
     }
