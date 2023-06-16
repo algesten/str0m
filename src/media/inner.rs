@@ -1339,9 +1339,9 @@ impl MediaInner {
     /// is spread across many [`PacketizingBuffer`] which is where the actual packets are queued.
     pub fn buffers_tx_queue_state(&mut self, now: Instant) -> QueueState {
         // If it is cached, we don't need to recalculate it.
-        if let Some(queue_state) = self.queue_state {
-            return queue_state;
-        }
+        // if let Some(queue_state) = self.queue_state {
+        //     return queue_state;
+        // }
 
         let init = QueueSnapshot::default();
         let mut snapshot = self.buffers_tx.values_mut().fold(init, |mut snap, b| {
