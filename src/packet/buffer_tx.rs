@@ -73,12 +73,16 @@ impl PacketizingBuffer {
         data: &[u8],
         meta: PacketizedMeta,
         mtu: usize,
-    ) -> Result<(), PacketError> {
+    ) -> Result<bool, PacketError> {
         let chunks = self.pack.packetize(mtu, data)?;
         let len = chunks.len();
         self.total.move_time_forward(now);
 
         assert!(len <= self.max_retain, "Must retain at least chunked count");
+
+        if !self.fits(len) {
+            return Ok(false);
+        }
 
         for (idx, data) in chunks.into_iter().enumerate() {
             let first = idx == 0;
@@ -111,7 +115,17 @@ impl PacketizingBuffer {
             // TODO...
         }
 
-        Ok(())
+        Ok(true)
+    }
+
+    pub fn fits(&mut self, len: usize) -> bool {
+        let Some(first) = self.queue.first_ident() else { return true };
+        let roll_gap = self.queue.max_size() - self.queue.len();
+        let Some(roll_amount) = len.checked_sub(roll_gap) else { return true };
+        let next = *first + roll_amount as u64;
+
+        // otherwise we would evict the next packet, so we can't fit.
+        next <= *self.emit_next
     }
 
     pub fn push_rtp_packet(

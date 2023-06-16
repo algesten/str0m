@@ -357,14 +357,28 @@ impl MediaInner {
                 .expect("write() to create buffer");
 
             if self.rtp_mode {
-                let rtp_header = t.rtp_mode_header.expect("rtp header in rtp mode");
-                buf.push_rtp_packet(now, t.data, t.meta, rtp_header);
-            } else if let Err(e) = buf.push_sample(now, &t.data, t.meta, MTU) {
-                return Err(RtcError::Packet(self.mid, t.pt, e));
-            }
+                if buf.fits(1) {
+                    let rtp_header = t.rtp_mode_header.expect("rtp header in rtp mode");
+                    buf.push_rtp_packet(now, t.data, t.meta, rtp_header);
+                    self.queue_state = None;
+                } else {
+                    // put it back
+                    self.to_packetize.push_front(t);
+                }
+            } else {
+                let packetized = match buf.push_sample(now, &t.data, t.meta, MTU) {
+                    Ok(pushed) => pushed,
+                    Err(e) => return Err(RtcError::Packet(self.mid, t.pt, e)),
+                };
 
-            // Invalidate cached queue_state.
-            self.queue_state = None;
+                if packetized {
+                    // Invalidate cached queue_state.
+                    self.queue_state = None;
+                } else {
+                    // put it back
+                    self.to_packetize.push_front(t);
+                }
+            };
         }
 
         Ok(())

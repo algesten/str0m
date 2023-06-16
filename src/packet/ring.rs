@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 #[derive(Debug)]
 pub struct RingBuf<T> {
     buffer: Vec<Option<T>>,
@@ -12,6 +14,14 @@ pub struct Ident(u64);
 impl Ident {
     pub fn increase(&self) -> Ident {
         Ident(self.0 + 1)
+    }
+}
+
+impl Deref for Ident {
+    type Target = u64;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -97,6 +107,10 @@ impl<T> RingBuf<T> {
         } else {
             self.max as usize
         }
+    }
+
+    pub fn max_size(&self) -> usize {
+        self.max as usize
     }
 }
 
