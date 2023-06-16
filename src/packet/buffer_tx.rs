@@ -47,6 +47,9 @@ pub struct PacketizingBuffer {
     max_retain: usize,
 
     total: TotalQueue,
+
+    // Set when we first discover the SSRC
+    ssrc: Option<Ssrc>,
 }
 
 const SIZE_BUCKET: usize = 25;
@@ -64,6 +67,7 @@ impl PacketizingBuffer {
             max_retain,
 
             total: TotalQueue::default(),
+            ssrc: None,
         }
     }
 
@@ -73,12 +77,24 @@ impl PacketizingBuffer {
         data: &[u8],
         meta: PacketizedMeta,
         mtu: usize,
-    ) -> Result<(), PacketError> {
+    ) -> Result<bool, PacketError> {
         let chunks = self.pack.packetize(mtu, data)?;
         let len = chunks.len();
         self.total.move_time_forward(now);
 
-        assert!(len <= self.max_retain, "Must retain at least chunked count");
+        assert!(
+            len <= self.max_retain,
+            "Data larger than send buffer {} > {}",
+            data.len(),
+            self.max_retain
+        );
+
+        let mut chunk_start_ident = None;
+        let mut data_len = 0;
+
+        if self.ssrc.is_none() {
+            self.ssrc = Some(meta.ssrc);
+        }
 
         for (idx, data) in chunks.into_iter().enumerate() {
             let first = idx == 0;
@@ -88,6 +104,7 @@ impl PacketizingBuffer {
             let marker = self.pack.is_marker(data.as_slice(), previous_data, last);
 
             self.total.increase(now, Duration::ZERO, data.len());
+            data_len += data.len();
 
             let rtp = Packetized {
                 first,
@@ -104,14 +121,23 @@ impl PacketizingBuffer {
 
             let (ident, evicted) = self.queue.push(rtp);
 
+            if chunk_start_ident.is_none() {
+                chunk_start_ident = Some(ident);
+            }
+
             if let Some(evicted) = evicted {
                 self.handle_evicted(now, evicted);
             }
-
-            // TODO...
         }
 
-        Ok(())
+        let first = self.queue.first_ident();
+        let overflow = Some(self.emit_next) < first;
+
+        if overflow {
+            self.overflow_reset(now, len, data_len, chunk_start_ident.unwrap());
+        }
+
+        Ok(overflow)
     }
 
     pub fn push_rtp_packet(
@@ -120,10 +146,16 @@ impl PacketizingBuffer {
         data: Vec<u8>,
         meta: PacketizedMeta,
         rtp_header: RtpHeader,
-    ) {
+    ) -> bool {
         self.total.move_time_forward(now);
 
         self.total.increase(now, Duration::ZERO, data.len());
+
+        if self.ssrc.is_none() {
+            self.ssrc = Some(meta.ssrc);
+        }
+
+        let data_len = data.len();
 
         let rtp = Packetized {
             first: true,
@@ -145,7 +177,39 @@ impl PacketizingBuffer {
             self.handle_evicted(now, evicted);
         }
 
-        // TODO
+        let overflow = Some(self.emit_next) < self.queue.first_ident();
+
+        if overflow {
+            self.overflow_reset(now, 1, data_len, ident);
+        }
+
+        overflow
+    }
+
+    fn overflow_reset(
+        &mut self,
+        now: Instant,
+        unsent_count: usize,
+        unsent_size: usize,
+        start_at: Ident,
+    ) {
+        // The new write resets the total.
+        self.total = TotalQueue {
+            unsent_count,
+            unsent_size,
+            last: Some(now),
+            queue_time: Duration::ZERO,
+        };
+
+        // Remove all entries up until the new emit_next
+        while self.emit_next < start_at {
+            self.queue.remove(self.emit_next);
+            self.emit_next = self.emit_next.increase();
+        }
+
+        self.emit_next = start_at;
+
+        warn!("Send buffer overflow, increase send buffer size");
     }
 
     fn handle_evicted(&mut self, now: Instant, p: Packetized) {
@@ -204,13 +268,6 @@ impl PacketizingBuffer {
         self.queue.get(*id)
     }
 
-    pub fn has_ssrc(&self, ssrc: Ssrc) -> bool {
-        self.queue
-            .first()
-            .map(|p| p.meta.ssrc == ssrc)
-            .unwrap_or(false)
-    }
-
     pub fn first_seq_no(&self) -> Option<SeqNo> {
         self.queue.first().and_then(|p| p.seq_no)
     }
@@ -249,13 +306,8 @@ impl PacketizingBuffer {
             .and_then(|(_, id)| self.queue.get(*id))
     }
 
-    /// Should only be called after has_next() which ensures there is a packet to get the SSRC from.
     pub fn ssrc(&self) -> Ssrc {
-        self.queue
-            .first()
-            .expect("a packet for ssrc call")
-            .meta
-            .ssrc
+        self.ssrc.expect("Send buffer to have an SSRC")
     }
 }
 

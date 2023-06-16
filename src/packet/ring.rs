@@ -6,7 +6,7 @@ pub struct RingBuf<T> {
     next: u64,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd)]
 pub struct Ident(u64);
 
 impl Ident {
@@ -97,6 +97,11 @@ impl<T> RingBuf<T> {
         } else {
             self.max as usize
         }
+    }
+
+    pub fn remove(&mut self, i: Ident) -> Option<T> {
+        let idx = self.in_scope(i)?;
+        self.buffer[idx].take()
     }
 }
 
