@@ -961,6 +961,7 @@ impl MediaInner {
         if self.to_packetize.is_empty() {
             None
         } else {
+            assert!(self.to_packetize.len() < 2);
             // If we got things to packetize, do it straight away.
             Some(already_happened())
         }
