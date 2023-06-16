@@ -351,16 +351,28 @@ impl MediaInner {
         const MTU: usize = RTP_SIZE - RTP_SIZE % SRTP_BLOCK_SIZE;
 
         while let Some(t) = self.to_packetize.pop_front() {
+            let pt = t.pt;
+
             let buf = self
                 .buffers_tx
                 .get_mut(&t.pt)
                 .expect("write() to create buffer");
 
-            if self.rtp_mode {
+            let overflow = if self.rtp_mode {
                 let rtp_header = t.rtp_mode_header.expect("rtp header in rtp mode");
-                buf.push_rtp_packet(now, t.data, t.meta, rtp_header);
-            } else if let Err(e) = buf.push_sample(now, &t.data, t.meta, MTU) {
-                return Err(RtcError::Packet(self.mid, t.pt, e));
+                buf.push_rtp_packet(now, t.data, t.meta, rtp_header)
+            } else {
+                match buf.push_sample(now, &t.data, t.meta, MTU) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return Err(RtcError::Packet(self.mid, t.pt, e));
+                    }
+                }
+            };
+
+            if overflow {
+                self.resends.retain(|r| r.pt != pt);
+                self.padding.retain(|p| p.pt() != pt);
             }
 
             // Invalidate cached queue_state.
@@ -579,7 +591,7 @@ impl MediaInner {
             // If there is no buffer for this resend, we return None. This is
             // a weird situation though, since it means the other side sent a nack for
             // an SSRC that matched this Media, but didn't match a buffer_tx.
-            let buffer = self.buffers_tx.values().find(|p| p.has_ssrc(resend.ssrc))?;
+            let buffer = self.buffers_tx.values().find(|p| p.ssrc() == resend.ssrc)?;
 
             let pkt = buffer.get(resend.seq_no);
 
@@ -699,7 +711,7 @@ impl MediaInner {
                     let Some(buffer) = self
                         .buffers_tx
                         .values()
-                        .find(|p| p.has_ssrc(padding.ssrc())) else {
+                        .find(|p| p.ssrc() == padding.ssrc()) else {
                             // This can happen for example case buffers were
                             // cleared (i.e. a change of media direction)
                             continue;
@@ -1260,7 +1272,7 @@ impl MediaInner {
         now: Instant,
     ) -> Option<()> {
         // Figure out which packetizing buffer has been used to send the entries that been nack'ed.
-        let (pt, buffer) = self.buffers_tx.iter_mut().find(|(_, p)| p.has_ssrc(ssrc))?;
+        let (pt, buffer) = self.buffers_tx.iter_mut().find(|(_, p)| p.ssrc() == ssrc)?;
 
         // Turning NackEntry into SeqNo we need to know a SeqNo "close by" to lengthen the 16 bit
         // sequence number into the 64 bit we have in SeqNo.
@@ -1483,6 +1495,13 @@ impl Padding {
         match self {
             Padding::Blank { ssrc, .. } => *ssrc,
             Padding::Spurious(resend) => resend.ssrc,
+        }
+    }
+
+    fn pt(&self) -> Pt {
+        match self {
+            Padding::Blank { pt, .. } => *pt,
+            Padding::Spurious(s) => s.pt,
         }
     }
 }
