@@ -154,6 +154,14 @@ impl PacketizingBuffer {
             self.total.decrease(p.data.len(), queue_time);
         }
 
+        assert!(
+            self.queue.in_scope(self.emit_next).is_some(),
+            "NOT POSSIBLE {:?} {:?} {:?}",
+            self.emit_next,
+            self.queue.first_ident(),
+            self.queue.last_ident()
+        );
+
         if let Some(seq_no) = p.seq_no {
             self.by_seq.remove(&seq_no);
         }

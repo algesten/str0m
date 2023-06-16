@@ -42,7 +42,7 @@ impl<T> RingBuf<T> {
         (ident, prev)
     }
 
-    fn in_scope(&self, i: Ident) -> Option<usize> {
+    pub fn in_scope(&self, i: Ident) -> Option<usize> {
         let range = (self.first_ident()?.0)..=(self.last_ident()?.0);
         if range.contains(&i.0) {
             Some((i.0 % self.max) as usize)
