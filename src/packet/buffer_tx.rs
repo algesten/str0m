@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BinaryHeap, HashMap};
 
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -35,16 +35,28 @@ pub struct PacketizedMeta {
     pub ext_vals: ExtensionValues,
 }
 
+const SIZE_BUCKET: usize = 25;
 #[derive(Debug)]
 pub struct PacketizingBuffer {
     pack: CodecPacketizer,
-    queue: RingBuf<Packetized>,
-    by_seq: HashMap<SeqNo, Ident>,
-    by_size: BTreeMap<usize, Ident>,
 
-    emit_next: Ident,
+    /// The packets that are currently retained, either because they are queued or for RTX
+    /// purposes.
+    packets: HashMap<Ident, Packetized>,
+    /// The queue of unset packets to send.
+    queue: VecDeque<QueueItem>,
+    /// RTX mapping.
+    by_seq: BTreeMap<SeqNo, Ident>,
+    /// Packets of various sizes to quick fulfill spurious RTX for padding,
+    by_size: [Option<Ident>; 1200 / SIZE_BUCKET],
+
+    next_ident: Ident,
+
     last_emit: Option<Instant>,
-    max_retain: usize,
+    // The max size the queue is allowed to grow to.
+    max_queue_size: usize,
+    // The number of packets retained for RTX.
+    rtx_retain: usize,
 
     total: TotalQueue,
 
@@ -52,22 +64,28 @@ pub struct PacketizingBuffer {
     ssrc: Option<Ssrc>,
 }
 
-const SIZE_BUCKET: usize = 25;
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+struct QueueItem {
+    queued_at: Instant,
+    ident: Ident,
+}
 
 impl PacketizingBuffer {
-    pub(crate) fn new(pack: CodecPacketizer, max_retain: usize) -> Self {
+    pub(crate) fn new(pack: CodecPacketizer, max_queue_size: usize, rtx_retain: usize) -> Self {
         PacketizingBuffer {
             pack,
-            queue: RingBuf::new(max_retain),
-            by_seq: HashMap::new(),
-            by_size: BTreeMap::new(),
+            packets: HashMap::with_capacity(max_queue_size / 4),
+            queue: Default::default(),
+            by_seq: Default::default(),
+            by_size: [None; 1200 / SIZE_BUCKET],
 
-            emit_next: Ident::default(),
             last_emit: None,
-            max_retain,
+            max_queue_size,
+            rtx_retain,
 
             total: TotalQueue::default(),
             ssrc: None,
+            next_ident: Default::default(),
         }
     }
 
@@ -83,24 +101,25 @@ impl PacketizingBuffer {
         self.total.move_time_forward(now);
 
         assert!(
-            len <= self.max_retain,
+            len <= self.max_queue_size,
             "Data larger than send buffer {} > {}",
             data.len(),
-            self.max_retain
+            self.max_queue_size
         );
 
-        let mut chunk_start_ident = None;
         let mut data_len = 0;
 
         if self.ssrc.is_none() {
             self.ssrc = Some(meta.ssrc);
         }
 
+        let mut overflow = false;
         for (idx, data) in chunks.into_iter().enumerate() {
             let first = idx == 0;
             let last = idx == len - 1;
 
-            let previous_data = self.queue.last().map(|p| p.data.as_slice());
+            let previous_data =
+                peek_next(&mut self.queue, &mut self.packets).map(|p| p.data.as_slice());
             let marker = self.pack.is_marker(data.as_slice(), previous_data, last);
 
             self.total.increase(now, Duration::ZERO, data.len());
@@ -119,22 +138,16 @@ impl PacketizingBuffer {
                 rtp_mode_header: None,
             };
 
-            let (ident, evicted) = self.queue.push(rtp);
-
-            if chunk_start_ident.is_none() {
-                chunk_start_ident = Some(ident);
-            }
+            let (ident, evicted) = self.do_push(rtp, now);
+            overflow |= evicted.is_some();
 
             if let Some(evicted) = evicted {
                 self.handle_evicted(now, evicted);
             }
         }
 
-        let first = self.queue.first_ident();
-        let overflow = Some(self.emit_next) < first;
-
         if overflow {
-            self.overflow_reset(now, len, data_len, chunk_start_ident.unwrap());
+            warn!("Send buffer overflow, increase send buffer size");
         }
 
         Ok(overflow)
@@ -171,45 +184,14 @@ impl PacketizingBuffer {
             rtp_mode_header: Some(rtp_header),
         };
 
-        let (ident, evicted) = self.queue.push(rtp);
+        let (ident, evicted) = self.do_push(rtp, now);
+        let overflow = evicted.is_some();
 
         if let Some(evicted) = evicted {
             self.handle_evicted(now, evicted);
         }
 
-        let overflow = Some(self.emit_next) < self.queue.first_ident();
-
-        if overflow {
-            self.overflow_reset(now, 1, data_len, ident);
-        }
-
         overflow
-    }
-
-    fn overflow_reset(
-        &mut self,
-        now: Instant,
-        unsent_count: usize,
-        unsent_size: usize,
-        start_at: Ident,
-    ) {
-        // The new write resets the total.
-        self.total = TotalQueue {
-            unsent_count,
-            unsent_size,
-            last: Some(now),
-            queue_time: Duration::ZERO,
-        };
-
-        // Remove all entries up until the new emit_next
-        while self.emit_next < start_at {
-            self.queue.remove(self.emit_next);
-            self.emit_next = self.emit_next.increase();
-        }
-
-        self.emit_next = start_at;
-
-        warn!("Send buffer overflow, increase send buffer size");
     }
 
     fn handle_evicted(&mut self, now: Instant, p: Packetized) {
@@ -223,53 +205,28 @@ impl PacketizingBuffer {
         }
     }
 
-    pub fn maybe_next(&self) -> Option<&Packetized> {
-        self.queue.get(self.emit_next)
+    pub fn peek_next(&self) -> Option<&Packetized> {
+        peek_next(&self.queue, &self.packets)
     }
 
-    pub fn update_next(&mut self, seq_no: SeqNo) {
-        let id = self.emit_next;
-
-        let next = self
+    pub fn pop_next(&mut self, seq_no: SeqNo, now: Instant) -> &Packetized {
+        let next_item = self
             .queue
-            .get_mut(id)
-            .expect("update_next_seq_no to be called after maybe_next");
+            .pop_front()
+            .expect("take_next to be called after peek_next");
 
-        self.by_seq.insert(seq_no, id);
+        let packet = self.handle_pop(next_item, seq_no, now);
 
-        let key = next.data.len() / SIZE_BUCKET;
-        self.by_size.insert(key, id);
-
-        next.seq_no = Some(seq_no);
-    }
-
-    pub fn take_next(&mut self, now: Instant) -> &Packetized {
-        self.total.move_time_forward(now);
-
-        let next = self
-            .queue
-            .get_mut(self.emit_next)
-            .expect("take_next to be called after maybe_next");
-
-        if next.count_as_unsent {
-            next.count_as_unsent = false;
-            let queue_time = now - next.queued_at;
-            self.total.decrease(next.data.len(), queue_time);
-        }
-
-        self.emit_next = self.emit_next.increase();
-        self.last_emit = Some(now);
-
-        next
+        packet
     }
 
     pub fn get(&self, seq_no: SeqNo) -> Option<&Packetized> {
         let id = self.by_seq.get(&seq_no)?;
-        self.queue.get(*id)
+        self.packets.get(id)
     }
 
     pub fn first_seq_no(&self) -> Option<SeqNo> {
-        self.queue.first().and_then(|p| p.seq_no)
+        self.peek_next().and_then(|p| p.seq_no)
     }
 
     pub fn queue_snapshot(&mut self, now: Instant) -> QueueSnapshot {
@@ -281,7 +238,7 @@ impl PacketizingBuffer {
             packet_count: self.total.unsent_count as u32,
             total_queue_time_origin: self.total.queue_time,
             last_emitted: self.last_emit,
-            first_unsent: self.queue.get(self.emit_next).map(|p| p.queued_at),
+            first_unsent: self.peek_next().map(|p| p.queued_at),
             priority: if self.total.unsent_count > 0 {
                 QueuePriority::Media
             } else {
@@ -299,16 +256,84 @@ impl PacketizingBuffer {
     pub fn historic_packet_smaller_than(&self, max_size: usize) -> Option<&Packetized> {
         let key = max_size / SIZE_BUCKET;
 
-        self.by_size
-            .range(..=key)
+        (0..key)
             .rev()
-            .next()
-            .and_then(|(_, id)| self.queue.get(*id))
+            .find_map(|i| self.by_size[i].and_then(|id| self.packets.get(&id)))
     }
 
     pub fn ssrc(&self) -> Ssrc {
         self.ssrc.expect("Send buffer to have an SSRC")
     }
+
+    fn do_push(&mut self, rtp: Packetized, now: Instant) -> (Ident, Option<Packetized>) {
+        let evicted = self.maybe_evict();
+
+        let ident = self.next_ident();
+        self.packets.insert(ident, rtp);
+        self.queue.push_back(QueueItem {
+            queued_at: now,
+            ident,
+        });
+
+        (ident, evicted)
+    }
+
+    fn maybe_evict(&mut self) -> Option<Packetized> {
+        if self.queue.len() < self.max_queue_size {
+            return None;
+        }
+
+        let item = self.queue.pop_front().unwrap();
+        let packet = self.packets.remove(&item.ident);
+
+        if let Some(seq_no) = packet.as_ref().and_then(|p| p.seq_no) {
+            self.by_seq.remove(&seq_no);
+        }
+
+        packet
+    }
+
+    fn next_ident(&mut self) -> Ident {
+        let previous = self.next_ident;
+        self.next_ident = self.next_ident.increase();
+
+        previous
+    }
+
+    fn handle_pop(&mut self, next_item: QueueItem, seq_no: SeqNo, now: Instant) -> &Packetized {
+        self.total.move_time_forward(now);
+
+        let packet = self
+            .packets
+            .get_mut(&next_item.ident)
+            .expect("take_next to be called after peek_next");
+
+        if self.by_seq.len() >= self.rtx_retain {
+            // Get rid of the oldest RTX packet.
+            self.by_seq.pop_first();
+        }
+        self.by_seq.insert(seq_no, next_item.ident);
+
+        let key = packet.data.len() / SIZE_BUCKET;
+        self.by_size[key] = Some(next_item.ident);
+        packet.seq_no = Some(seq_no);
+
+        if packet.count_as_unsent {
+            packet.count_as_unsent = false;
+            let queue_time = now - packet.queued_at;
+            self.total.decrease(packet.data.len(), queue_time);
+        }
+        self.last_emit = Some(now);
+
+        packet
+    }
+}
+
+fn peek_next<'p>(
+    queue: &VecDeque<QueueItem>,
+    packets: &'p HashMap<Ident, Packetized>,
+) -> Option<&'p Packetized> {
+    queue.front().and_then(|q| packets.get(&q.ident))
 }
 
 // Total queue time in buffer. This lovely drawing explains how to add more time.

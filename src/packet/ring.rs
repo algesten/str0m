@@ -6,12 +6,19 @@ pub struct RingBuf<T> {
     next: u64,
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Ord, PartialOrd, Hash)]
 pub struct Ident(u64);
 
 impl Ident {
     pub fn increase(&self) -> Ident {
         Ident(self.0 + 1)
+    }
+}
+
+#[cfg(test)]
+impl From<u64> for Ident {
+    fn from(value: u64) -> Self {
+        Self(value)
     }
 }
 

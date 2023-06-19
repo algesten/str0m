@@ -318,7 +318,9 @@ impl MediaInner {
             } else {
                 send_buffer_video
             };
-            PacketizingBuffer::new(codec.into(), max_retain)
+            // TODO: Make max queue size configurable
+            let max_queue_size = 4_000;
+            PacketizingBuffer::new(codec.into(), max_queue_size, max_retain)
         });
 
         trace!(
@@ -666,9 +668,8 @@ impl MediaInner {
             .get_mut(&pt)
             .expect("buffer for next packet");
 
-        buf.update_next(seq_no);
-
-        let pkt = buf.take_next(now);
+        dbg!();
+        let pkt = buf.pop_next(seq_no, now);
 
         Some(NextPacket {
             pt,
@@ -1517,7 +1518,7 @@ struct Resend {
 
 fn next_send_buffer(buffers_tx: &HashMap<Pt, PacketizingBuffer>) -> Option<(Pt, &Packetized)> {
     for (pt, buf) in buffers_tx {
-        if let Some(pkt) = buf.maybe_next() {
+        if let Some(pkt) = buf.peek_next() {
             assert!(pkt.seq_no.is_none());
             return Some((*pt, pkt));
         }
