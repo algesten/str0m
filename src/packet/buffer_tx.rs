@@ -45,6 +45,7 @@ pub struct PacketizingBuffer {
     emit_next: Ident,
     last_emit: Option<Instant>,
     max_retain: usize,
+    max_retain_time: Duration,
 
     total: TotalQueue,
 
@@ -55,7 +56,7 @@ pub struct PacketizingBuffer {
 const SIZE_BUCKET: usize = 25;
 
 impl PacketizingBuffer {
-    pub(crate) fn new(pack: CodecPacketizer, max_retain: usize) -> Self {
+    pub(crate) fn new(pack: CodecPacketizer, max_retain: usize, max_retain_time: Duration) -> Self {
         PacketizingBuffer {
             pack,
             queue: RingBuf::new(max_retain),
@@ -65,6 +66,7 @@ impl PacketizingBuffer {
             emit_next: Ident::default(),
             last_emit: None,
             max_retain,
+            max_retain_time,
 
             total: TotalQueue::default(),
             ssrc: None,
@@ -128,6 +130,8 @@ impl PacketizingBuffer {
             if let Some(evicted) = evicted {
                 self.handle_evicted(now, evicted);
             }
+
+            self.free_over_max_duration(now);
         }
 
         let first = self.queue.first_ident();
@@ -176,6 +180,8 @@ impl PacketizingBuffer {
         if let Some(evicted) = evicted {
             self.handle_evicted(now, evicted);
         }
+
+        self.free_over_max_duration(now);
 
         let overflow = Some(self.emit_next) < self.queue.first_ident();
 
@@ -308,6 +314,34 @@ impl PacketizingBuffer {
 
     pub fn ssrc(&self) -> Ssrc {
         self.ssrc.expect("Send buffer to have an SSRC")
+    }
+
+    fn free_over_max_duration(&mut self, now: Instant) {
+        let Some(last) = self.queue.last() else { return };
+
+        let Some(last_ident) = self.queue.last_ident() else { return };
+        let Some(mut ident) = self.queue.first_ident() else { return };
+        let recent = last.meta.rtp_time.as_seconds();
+
+        loop {
+            if ident == last_ident {
+                break;
+            }
+
+            let Some(packet) = self.queue.get(ident) else { continue};
+            let packet_time = packet.meta.rtp_time.as_seconds();
+
+            if recent - packet_time < self.max_retain_time.as_secs_f64() {
+                // we assume they are in order
+                break;
+            }
+
+            if let Some(evicted) = self.queue.take(ident) {
+                self.handle_evicted(now, evicted)
+            }
+
+            ident = ident.increase()
+        }
     }
 }
 

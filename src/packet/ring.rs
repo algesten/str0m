@@ -4,6 +4,7 @@ pub struct RingBuf<T> {
     max: u64,
     // This is an u64 since it is ever growing and used as an identifier.
     next: u64,
+    first: u64,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd)]
@@ -12,6 +13,10 @@ pub struct Ident(u64);
 impl Ident {
     pub fn increase(&self) -> Ident {
         Ident(self.0 + 1)
+    }
+
+    pub fn as_u64(&self) -> u64 {
+        self.0
     }
 }
 
@@ -27,6 +32,7 @@ impl<T> RingBuf<T> {
             buffer,
             max: max as u64,
             next: 0,
+            first: 0,
         }
     }
 
@@ -59,6 +65,11 @@ impl<T> RingBuf<T> {
     pub fn get_mut(&mut self, i: Ident) -> Option<&mut T> {
         let idx = self.in_scope(i)?;
         self.buffer[idx].as_mut()
+    }
+
+    pub fn take(&mut self, i: Ident) -> Option<T> {
+        let idx = self.in_scope(i)?;
+        self.buffer[idx].take()
     }
 
     pub fn first_ident(&self) -> Option<Ident> {

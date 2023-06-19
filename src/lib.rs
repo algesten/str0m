@@ -1453,8 +1453,8 @@ pub struct RtcConfig {
     bwe_initial_bitrate: Option<Bitrate>,
     reordering_size_audio: usize,
     reordering_size_video: usize,
-    send_buffer_audio: usize,
-    send_buffer_video: usize,
+    send_buffer_audio: (usize, Duration),
+    send_buffer_video: (usize, Duration),
     rtp_mode: bool,
 }
 
@@ -1711,17 +1711,26 @@ impl RtcConfig {
 
     /// Sets the buffer size for outgoing audio packets.
     ///
-    /// This must be larger than 0. The value configures an internal ring buffer used as a temporary
-    /// holding space between calling [`Writer::write`][crate::media::Writer::write()] and
+    /// The size represents the number of packets held in the buffer and must be
+    /// larger than 0. The value configures an internal ring buffer used as a
+    /// temporary holding space between calling
+    /// [`Writer::write`][crate::media::Writer::write()] and
     /// [`Rtc::poll_output`].
     ///
     /// For audio one call to `write()` typically results in one RTP packet since the entire payload
     /// fits in one. If you can guarantee that every `write()` is a single RTP packet, and is always
     /// followed by a `poll_output()`, it might be possible to set this value to 1. But that would give
     /// no margins for unexpected patterns.
-    pub fn set_send_buffer_audio(mut self, size: usize) -> Self {
+    ///
+    /// The duration parameter controls the retention of packets in the buffer,
+    /// within the configured size.  This retention threshold is calculated with
+    /// respect to the RTP time of the last packed written using
+    /// [`Writer::write`][crate::media::Writer::write()]. If no duration is
+    /// provided, Duration::MAX will be used, and the only hard limit for the
+    /// buffer is represented by the size parameter.
+    pub fn set_send_buffer_audio(mut self, size: usize, duration: Option<Duration>) -> Self {
         assert!(size > 0);
-        self.send_buffer_audio = size;
+        self.send_buffer_audio = (size, duration.unwrap_or(Duration::MAX));
         self
     }
 
@@ -1731,18 +1740,27 @@ impl RtcConfig {
     /// # use str0m::Rtc;
     /// let config = Rtc::builder();
     ///
-    /// // Defaults to 50.
-    /// assert_eq!(config.send_buffer_audio(), 50);
+    /// // Defaults to (50, Duration::MAX).
+    /// use core::time::Duration;
+    /// assert_eq!(config.send_buffer_audio(), (50, Duration::MAX));
     /// ```
-    pub fn send_buffer_audio(&self) -> usize {
+    pub fn send_buffer_audio(&self) -> (usize, Duration) {
         self.send_buffer_audio
     }
 
     /// Sets the buffer size for outgoing video packets and resends.
     ///
-    /// This must be larger than 0. The value configures an internal ring buffer that is both
+    /// The size represents the number of packets held in the buffer and must be
+    /// larger than 0. The value configures an internal ring buffer that is both
     /// used as a temporary holding space between calling [`Writer::write`][crate::media::Writer::write()]
     /// and [`Rtc::poll_output`] as well as for fulfilling resends.
+    ///
+    /// The duration parameter controls the retention of packets in the buffer,
+    /// within the configured size.  This retention threshold is calculated with
+    /// respect to the RTP time of the last packed written using
+    /// [`Writer::write`][crate::media::Writer::write()]. If no duration is
+    /// provided, Duration::MAX will be used, and the only hard limit for the
+    /// buffer is represented by the size parameter.
     ///
     /// For video, this buffer is used for more than for audio. First, a call to `write()` often
     /// results in multiple RTP packets since large frames don't fit in one payload. That means the buffer
@@ -1750,8 +1768,9 @@ impl RtcConfig {
     /// those are fulfilled from this buffer. Third, for Bandwidth Estimation (BWE), when probing for
     /// available bandwidth, packets from this buffer are used to do "spurious resends", i.e. we do resends
     /// for packets that were not asked for.
-    pub fn set_send_buffer_video(mut self, size: usize) -> Self {
-        self.send_buffer_video = size;
+    pub fn set_send_buffer_video(mut self, size: usize, duration: Option<Duration>) -> Self {
+        assert!(size > 0);
+        self.send_buffer_video = (size, duration.unwrap_or(Duration::MAX));
         self
     }
 
@@ -1761,10 +1780,11 @@ impl RtcConfig {
     /// # use str0m::Rtc;
     /// let config = Rtc::builder();
     ///
-    /// // Defaults to 1000.
-    /// assert_eq!(config.send_buffer_video(), 1000);
+    /// // Defaults to (1000, Duration::MAX).
+    /// use core::time::Duration;
+    /// assert_eq!(config.send_buffer_video(), (1000, Duration::MAX));
     /// ```
-    pub fn send_buffer_video(&self) -> usize {
+    pub fn send_buffer_video(&self) -> (usize, Duration) {
         self.send_buffer_video
     }
 
@@ -1812,8 +1832,8 @@ impl Default for RtcConfig {
             bwe_initial_bitrate: None,
             reordering_size_audio: 15,
             reordering_size_video: 30,
-            send_buffer_audio: 50,
-            send_buffer_video: 1000,
+            send_buffer_audio: (50, Duration::MAX),
+            send_buffer_video: (1000, Duration::MAX),
             rtp_mode: false,
         }
     }
