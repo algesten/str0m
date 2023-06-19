@@ -302,8 +302,8 @@ impl PacketizingBuffer {
         self.by_size
             .range(..=key)
             .rev()
+            .flat_map(|(_, id)| self.queue.get(*id))
             .next()
-            .and_then(|(_, id)| self.queue.get(*id))
     }
 
     pub fn ssrc(&self) -> Ssrc {
