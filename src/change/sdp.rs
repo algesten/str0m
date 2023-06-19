@@ -1169,7 +1169,21 @@ impl Change {
 
 #[cfg(test)]
 mod test {
+    use crate::format::Codec;
+    use crate::sdp::RtpMap;
+
     use super::*;
+
+    fn resolve_pt(m_line: &MediaLine, needle: Pt) -> RtpMap {
+        m_line
+            .attrs
+            .iter()
+            .find_map(|attr| match attr {
+                MediaAttribute::RtpMap { pt, value } if *pt == needle => Some(value.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("Expected to find RtpMap for {needle}"))
+    }
 
     #[test]
     fn test_out_of_order_error() {
@@ -1191,5 +1205,49 @@ mod test {
         let r = rtc1.sdp_api().accept_answer(pending1, answer2);
 
         assert!(matches!(r, Err(RtcError::ChangesOutOfOrder)));
+    }
+
+    #[test]
+    fn test_rtp_payload_priority() {
+        let mut rtc1 = Rtc::builder()
+            .clear_codecs()
+            .enable_h264(true)
+            .enable_vp8(true)
+            .enable_vp9(true)
+            .build();
+        let mut rtc2 = Rtc::builder()
+            .clear_codecs()
+            .enable_vp8(true)
+            .enable_h264(true)
+            .build();
+
+        let mut change1 = rtc1.sdp_api();
+        change1.add_media(MediaKind::Video, Direction::SendOnly, None, None);
+        let (offer1, _) = change1.apply().unwrap();
+
+        let answer = rtc2.sdp_api().accept_offer(offer1).unwrap();
+        assert_eq!(
+            answer.media_lines.len(),
+            1,
+            "There should be one mline only"
+        );
+
+        let first_mline = &answer.media_lines[0];
+        let first_pt = resolve_pt(first_mline, first_mline.pts[0]);
+
+        assert_eq!(
+            first_pt.codec, Codec::H264,
+            "The first PT returned should be the highest priority PT from the offer that is supported."
+        );
+
+        let vp9_unsupported = first_mline
+            .pts
+            .iter()
+            .any(|pt| resolve_pt(first_mline, *pt).codec == Codec::Vp9);
+
+        assert!(
+            !vp9_unsupported,
+            "VP9 was not offered, so it should not be present in the answer"
+        );
     }
 }
