@@ -10,6 +10,9 @@ pub(crate) use data::{FormatParam, Sdp, Session, SessionAttribute, Setup};
 pub(crate) use data::{MediaAttribute, MediaLine, MediaType, Msid, Proto};
 pub(crate) use data::{Simulcast, SimulcastGroups, SimulcastOption};
 
+#[cfg(test)]
+pub(crate) use data::RtpMap;
+
 mod parser;
 
 /// Errors from parsing and serializing SDP.
