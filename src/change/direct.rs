@@ -85,6 +85,11 @@ impl<'a> DirectApi<'a> {
         self.rtc.ice.set_ice_lite(ice_lite);
     }
 
+    /// Enable twcc feedback.
+    pub fn enable_twcc_feedback(&mut self) {
+        self.rtc.session.enable_twcc_feedback()
+    }
+
     /// Get the str0m `ChannelId` by an `sctp_stream_id`.
     ///
     /// This is useful when using out of band negotiated sctp stream id in
