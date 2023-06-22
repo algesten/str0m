@@ -680,7 +680,10 @@ impl Session {
             .or_else(|| self.poll_packet(now));
 
         if let Some(x) = &x {
-            if x.len() > DATAGRAM_MTU_WARN {
+            // In RTP mode we trust the API user feeds the RTP packet sizes they
+            // need for the MTU they are targeting. This warning is only for when
+            // str0m does the RTP packetization.
+            if !self.rtp_mode && x.len() > DATAGRAM_MTU_WARN {
                 warn!("RTP above MTU {}: {}", DATAGRAM_MTU_WARN, x.len());
             }
         }
