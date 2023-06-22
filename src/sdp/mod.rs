@@ -85,6 +85,18 @@ impl From<Sdp> for SdpAnswer {
     }
 }
 
+impl fmt::Display for SdpOffer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", **self)
+    }
+}
+
+impl fmt::Display for SdpAnswer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", **self)
+    }
+}
+
 macro_rules! sdp_ser {
     ($Struct:tt, $Name:literal, $LCName:literal) => {
         impl Serialize for $Struct {
