@@ -1066,6 +1066,12 @@ impl Rtc {
             }
         }
 
+        // Prioritise ICE transmits because the ICE traffic is responsible for keeping the ICE
+        // connection alive by sending STUN binding requests and responses.
+        if let Some(v) = self.ice.poll_transmit() {
+            return Ok(Output::Transmit(v));
+        }
+
         let mut dtls_connected = false;
 
         while let Some(e) = self.dtls.poll_event() {
@@ -1159,10 +1165,6 @@ impl Rtc {
                 StatsEvent::MediaIngress(s) => Output::Event(Event::MediaIngressStats(s)),
                 StatsEvent::MediaEgress(s) => Output::Event(Event::MediaEgressStats(s)),
             });
-        }
-
-        if let Some(v) = self.ice.poll_transmit() {
-            return Ok(Output::Transmit(v));
         }
 
         if let Some(send) = &self.send_addr {
