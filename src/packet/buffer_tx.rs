@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
+use crate::media::RtpPacketToSend;
 use crate::rtp::{ExtensionValues, MediaTime, Rid, RtpHeader, SeqNo, Ssrc};
 
 use super::{CodecPacketizer, PacketError, Packetizer, QueueSnapshot};
@@ -19,8 +20,9 @@ pub struct Packetized {
     /// Whether this packetized is counted towards the TotalQueue
     pub count_as_unsent: bool,
 
-    /// If we are in rtp_mode, this is the original incoming header.
-    pub rtp_mode_header: Option<RtpHeader>,
+    /// If we are in rtp_mode, this is what to send.
+    // TODO: Consider using an enum of Packetized|RtpPacketToSend, or unifying in some other way.
+    pub rtp_mode_packet: Option<RtpPacketToSend>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -89,7 +91,7 @@ impl PacketizingBuffer {
                 seq_no: None,
                 count_as_unsent: true,
 
-                rtp_mode_header: None,
+                rtp_mode_packet: None,
             };
 
             self.queue.push_back(rtp);
@@ -100,34 +102,36 @@ impl PacketizingBuffer {
         Ok(())
     }
 
-    pub fn push_rtp_packet(
-        &mut self,
-        now: Instant,
-        data: Vec<u8>,
-        meta: PacketizedMeta,
-        rtp_header: RtpHeader,
-    ) {
+    // When in RTP mode, we can skip packetizing.
+    pub fn push_rtp_packet(&mut self, mut rtp_packet: RtpPacketToSend, now: Instant) {
         self.total.move_time_forward(now);
-
-        self.total.increase(now, Duration::ZERO, data.len());
+        self.total
+            .increase(now, Duration::ZERO, rtp_packet.payload.len());
 
         let rtp = Packetized {
             first: true,
-            marker: rtp_header.marker,
-            data,
-            meta,
+            marker: rtp_packet.marker,
+            data: std::mem::replace(&mut rtp_packet.payload, Vec::new()),
+            meta: PacketizedMeta {
+                // Only the numerator is used here when the packet is sent, so use any clock rate.
+                rtp_time: MediaTime::new(rtp_packet.timestamp as i64, 90000),
+                ssrc: rtp_packet.ssrc,
+                rid: rtp_packet.header_extensions.rid,
+                ext_vals: rtp_packet.header_extensions,
+            },
             queued_at: now,
 
             // don't set seq_no yet since it's used to determine if packet has been sent or not.
             seq_no: None,
             count_as_unsent: true,
 
-            rtp_mode_header: Some(rtp_header),
+            rtp_mode_packet: Some(rtp_packet),
         };
 
         self.queue.push_back(rtp);
-
-        self.size_down_to_retained(now);
+        if self.emit_next > 0 {
+            self.size_down_to_retained(now);
+        }
     }
 
     /// Scale back retained count to max_retain

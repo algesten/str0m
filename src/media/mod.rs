@@ -275,55 +275,15 @@ impl<'a> Writer<'a> {
     /// doing [`Media::writer()`].
     ///
     /// If you write media before `IceConnectionState` is `Connected` it will be dropped.
-    ///
-    /// Panics if [`RtcConfig::set_rtp_mode()`][crate::RtcConfig::set_rtp_mode] is `true`.
     pub fn write(
         mut self,
         wallclock: Instant,
         rtp_time: MediaTime,
         data: &[u8],
     ) -> Result<(), RtcError> {
-        if self.media.inner().rtp_mode {
-            panic!("Can't use MediaWriter::write when in rtp_mode");
-        }
-
         let media = self.media.inner_mut();
 
-        media.write(
-            self.pt,
-            wallclock,
-            rtp_time,
-            data,
-            self.rid,
-            self.ext_vals,
-            None,
-        )?;
-
-        Ok(())
-    }
-
-    /// Writes a "raw" RTP packet.
-    ///
-    /// For info on `wallclock` see [`Writer::write()`].
-    ///
-    /// The `exts` must contain the mappings for the RTP packet that is written.
-    ///
-    /// Panics if [`RtcConfig::set_rtp_mode()`][crate::RtcConfig::set_rtp_mode] is `false`.
-    ///
-    /// WARNING: This is a low level API and is not str0m's primary use case.
-    pub fn write_rtp(
-        mut self,
-        wallclock: Instant,
-        packet: &[u8],
-        exts: &rtp::ExtensionMap,
-    ) -> Result<(), RtcError> {
-        if !self.media.inner().rtp_mode {
-            panic!("Can't use MediaWriter::write_rtp when not in rtp_mode");
-        }
-
-        let media = self.media.inner_mut();
-
-        media.write_rtp(self.pt, wallclock, packet, exts)?;
+        media.write(self.pt, wallclock, rtp_time, data, self.rid, self.ext_vals)?;
 
         Ok(())
     }

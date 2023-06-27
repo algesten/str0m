@@ -361,17 +361,12 @@
 //!
 //! To enable RTP mode
 //!
-//! ```
+//! ```no_compile
 //! # use str0m::Rtc;
-//! let rtc = Rtc::builder()
-//!     // Enable RTP mode for this Rtc instance.
-//!     .set_rtp_mode(true)
-//!     // Don't hold back audio/video packets to attempt
-//!     // to reorder them. Incoming packets are released
-//!     // in the order they are received.
-//!     .set_reordering_size_audio(0)
-//!     .set_reordering_size_video(0)
-//!     .build();
+//! let rtc = Rtc::builder().build();
+//! rtc.direct_api().add_rtp_packet_sender(mid1, ...);
+//! rtc.direct_api().add_rtp_packet_receiver(mid2, ...);
+//! rtc.direct_api().send_rtp_packet(mid1, ...);
 //! ```
 //!
 //! ## NIC enumeration and TURN (and STUN)
@@ -548,7 +543,7 @@ use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
 
 pub mod media;
 use media::{Direction, KeyframeRequest, Media};
-use media::{KeyframeRequestKind, MediaChanged, MediaData};
+use media::{KeyframeRequestKind, MediaChanged, MediaData, RtpPacketReceived};
 use media::{MediaAdded, MediaInner, Mid, PolledPacket, Pt, Rid};
 
 pub mod change;
@@ -710,6 +705,9 @@ pub enum Event {
 
     /// Incoming media data sent by the remote peer.
     MediaData(MediaData),
+
+    /// Incoming RTP packet sent by the remote peer (only used in RTP mode).
+    RtpPacketReceived(RtpPacketReceived),
 
     /// Changes to the media may be emitted.
     ///
@@ -1145,6 +1143,7 @@ impl Rtc {
                 MediaEvent::Added(m) => Output::Event(Event::MediaAdded(m)),
                 MediaEvent::Changed(m) => Output::Event(Event::MediaChanged(m)),
                 MediaEvent::Data(m) => Output::Event(Event::MediaData(m)),
+                MediaEvent::RtpPacketReceived(p) => Output::Event(Event::RtpPacketReceived(p)),
                 MediaEvent::Error(e) => return Err(e),
                 MediaEvent::KeyframeRequest(r) => Output::Event(Event::KeyframeRequest(r)),
                 MediaEvent::EgressBitrateEstimate(b) => {
@@ -1453,8 +1452,6 @@ pub struct RtcConfig {
     bwe_initial_bitrate: Option<Bitrate>,
     reordering_size_audio: usize,
     reordering_size_video: usize,
-
-    rtp_mode: bool,
 }
 
 impl RtcConfig {
@@ -1708,32 +1705,6 @@ impl RtcConfig {
         self.reordering_size_video
     }
 
-    /// Make the entire Rtc be in RTP mode.
-    ///
-    /// This means all media, read from [`MediaData`] and written to
-    /// [`Writer::write_rtp()`][crate::media::Writer::write_rtp()] are RTP packetized.
-    /// It bypasses all internal packetization/depacketization inside str0m.
-    ///
-    /// WARNING: This is a low level API and is not str0m's primary use case.
-    pub fn set_rtp_mode(mut self, enabled: bool) -> Self {
-        self.rtp_mode = enabled;
-
-        self
-    }
-
-    /// Checks if RTP mode is set.
-    ///
-    /// ```
-    /// # use str0m::Rtc;
-    /// let config = Rtc::builder();
-    ///
-    /// // Defaults to false.
-    /// assert_eq!(config.rtp_mode(), false);
-    /// ```
-    pub fn rtp_mode(&self) -> bool {
-        self.rtp_mode
-    }
-
     /// Create a [`Rtc`] from the configuration.
     pub fn build(self) -> Rtc {
         Rtc::new_from_config(self)
@@ -1752,8 +1723,6 @@ impl Default for RtcConfig {
             bwe_initial_bitrate: None,
             reordering_size_audio: 15,
             reordering_size_video: 30,
-
-            rtp_mode: false,
         }
     }
 }

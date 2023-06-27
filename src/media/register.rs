@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use crate::rtp::{Nack, NackEntry, ReceptionReport, ReportList, SeqNo};
+use crate::rtp::{MediaTime, Nack, NackEntry, ReceptionReport, ReportList, SeqNo};
 
 const MAX_DROPOUT: u64 = 3000;
 const MAX_MISORDER: u64 = 100;
@@ -47,6 +47,9 @@ pub struct ReceiverRegister {
 
     /// Previously received time point.
     time_point_prior: Option<TimePoint>,
+
+    /// Max received time
+    max_time: Option<MediaTime>,
 }
 
 impl ReceiverRegister {
@@ -64,6 +67,7 @@ impl ReceiverRegister {
             jitter: 0.0,
             nack_check_from: base_seq,
             time_point_prior: None,
+            max_time: None,
         }
     }
 
@@ -221,6 +225,10 @@ impl ReceiverRegister {
         self.max_seq
     }
 
+    pub fn max_time(&self) -> Option<MediaTime> {
+        self.max_time
+    }
+
     pub fn update_time(&mut self, arrival: Instant, rtp_time: u32, clock_rate: u32) {
         let tp = TimePoint {
             arrival,
@@ -292,6 +300,13 @@ impl ReceiverRegister {
         }
 
         self.time_point_prior = Some(tp);
+
+        let media_time = MediaTime::new(rtp_time as i64, clock_rate as i64);
+        self.max_time = Some(if let Some(m) = self.max_time {
+            m.max(media_time)
+        } else {
+            media_time
+        });
     }
 
     pub fn has_nack_report(&mut self) -> bool {
@@ -304,7 +319,7 @@ impl ReceiverRegister {
         let start = *self.nack_check_from;
         // MISORDER_DELAY gives us a "grace period" of receiving packets out of
         // order without reporting it as a NACK straight away.
-        let stop = *self.max_seq - MISORDER_DELAY;
+        let stop = (*self.max_seq).saturating_sub(MISORDER_DELAY);
 
         if stop < start {
             return false;

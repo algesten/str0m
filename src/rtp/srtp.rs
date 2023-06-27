@@ -121,14 +121,22 @@ impl SrtpContext {
         let iv = self.rtp.salt.rtp_iv(*header.ssrc, srtp_index);
 
         let input = &buf[header.header_len..hmac_start];
-        // Allocate enough to also hold a header, since this is used in rtp-mode.
-        let mut output = Vec::with_capacity(buf.len());
-        output.resize(input.len(), 0);
+        let mut output = vec![0u8; input.len()];
 
         // TODO: This instantiates a Crypter for every packet. That's kinda wasteful
         // when it's perfectly possible to reuse the underlying OpenSSL structs for
         // over and over using a reset.
         self.rtp.aes.crypt(false, &iv, input, &mut output);
+
+        if header.has_padding {
+            // TODO: Write a test with an overlay large pad size indicate in the packet.
+            let pad_len = output[output.len()-1] as usize;
+            let Some(unpadded_len) = output.len().checked_sub(pad_len) else {
+                trace!("unpadding of unprotected payload failed");
+                return None;
+            };
+            output.truncate(unpadded_len);
+        }
 
         Some(output)
     }

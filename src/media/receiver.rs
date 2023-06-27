@@ -1,6 +1,8 @@
 use std::time::Instant;
 
-use crate::rtp::{DlrrItem, ExtendedReport, InstantExt, MediaTime, Mid, Nack, ReceiverReport};
+use crate::rtp::{
+    extend_u32, DlrrItem, ExtendedReport, InstantExt, MediaTime, Mid, Nack, ReceiverReport,
+};
 use crate::rtp::{ReportBlock, ReportList, Rid, Rrtr, RtpHeader, SenderInfo, SeqNo, Ssrc};
 
 use crate::{
@@ -55,22 +57,31 @@ impl ReceiverSource {
         }
     }
 
-    pub fn update(&mut self, now: Instant, header: &RtpHeader, clock_rate: u32) -> SeqNo {
+    pub fn update(
+        &mut self,
+        now: Instant,
+        header: &RtpHeader,
+        clock_rate: u32,
+    ) -> (SeqNo, MediaTime) {
         self.last_used = now;
 
         let previous = self.register.as_ref().map(|r| r.max_seq());
         let seq_no = header.sequence_number(previous);
 
-        if self.register.is_none() {
-            self.register = Some(ReceiverRegister::new(seq_no));
-        }
-
-        if let Some(register) = &mut self.register {
-            register.update_seq(seq_no);
-            register.update_time(now, header.timestamp, clock_rate);
-        }
-
-        seq_no
+        let register = self
+            .register
+            .get_or_insert_with(|| ReceiverRegister::new(seq_no));
+        register.update_seq(seq_no);
+        register.update_time(now, header.timestamp, clock_rate);
+        let max_time = register
+            .max_time()
+            .unwrap_or_else(|| MediaTime::new(0, clock_rate as i64))
+            .rebase(clock_rate as i64);
+        let time = MediaTime::new(
+            extend_u32(Some(max_time.numer() as u64), header.timestamp) as i64,
+            clock_rate as i64,
+        );
+        (seq_no, time)
     }
 
     pub fn create_receiver_report(&mut self, now: Instant) -> ReceiverReport {

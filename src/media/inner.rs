@@ -6,6 +6,7 @@ use crate::format::Codec;
 pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, Ssrc};
 
 use crate::io::{Id, DATAGRAM_MTU};
+use crate::media::{RtpPacketReceived, RtpPacketToSend};
 use crate::packet::{DepacketizingBuffer, MediaKind, Packetized, QueuePriority, QueueSnapshot};
 use crate::packet::{PacketizedMeta, PacketizingBuffer, QueueState};
 use crate::rtp::{ExtensionMap, Fir, FirEntry, NackEntry, Pli, Rtcp};
@@ -170,8 +171,26 @@ pub(crate) struct MediaInner {
     /// 5. to_packetize.pop()
     to_packetize: VecDeque<ToPacketize>,
 
-    /// Whether we are running in RTP-mode.
-    pub(crate) rtp_mode: bool,
+    /// Whether we are running in RTP-mode, and RTP-mode-specific state if we are.
+    pub rtp_mode: Option<RtpMode>,
+}
+
+// We only need one send buffer in "RTP mode", but it has to be in the map
+// to work with RTX and pacing, etc.  So put one in the map.
+const RTP_MODE_SEND_BUFFER_PAYLOAD_TYPE: Pt = Pt::from(1);
+
+#[derive(Debug)]
+pub struct RtpMode {
+    // Bypass depacketization by storing the "raw" RTP packet.
+    pub received: VecDeque<RtpPacketReceived>,
+}
+
+impl RtpMode {
+    fn new() -> Self {
+        Self {
+            received: VecDeque::new(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -199,7 +218,6 @@ struct ToPacketize {
     pt: Pt,
     data: Vec<u8>,
     meta: PacketizedMeta,
-    rtp_mode_header: Option<RtpHeader>,
 }
 
 enum NextPacketBody<'a> {
@@ -282,7 +300,6 @@ impl MediaInner {
         data: &[u8],
         rid: Option<Rid>,
         ext_vals: ExtensionValues,
-        rtp_mode_header: Option<RtpHeader>,
     ) -> Result<(), RtcError> {
         if !self.dir.is_sending() {
             return Err(RtcError::NotSendingDirection(self.dir));
@@ -292,13 +309,7 @@ impl MediaInner {
             return Err(RtcError::UnknownPt(pt));
         };
 
-        // Implicitly if we have an rtp mode header, the codec must be Null.
-        let codec = if rtp_mode_header.is_some() {
-            Codec::Null
-        } else {
-            spec.codec
-        };
-
+        let codec = spec.codec;
         // Never want to check this for the null codec.
         let is_audio = spec.codec.is_audio();
 
@@ -332,7 +343,6 @@ impl MediaInner {
             pt,
             data: data.to_vec(),
             meta,
-            rtp_mode_header,
         });
 
         Ok(())
@@ -350,10 +360,7 @@ impl MediaInner {
                 .get_mut(&t.pt)
                 .expect("write() to create buffer");
 
-            if self.rtp_mode {
-                let rtp_header = t.rtp_mode_header.expect("rtp header in rtp mode");
-                buf.push_rtp_packet(now, t.data, t.meta, rtp_header);
-            } else if let Err(e) = buf.push_sample(now, &t.data, t.meta, MTU) {
+            if let Err(e) = buf.push_sample(now, &t.data, t.meta, MTU) {
                 return Err(RtcError::Packet(self.mid, t.pt, e));
             }
 
@@ -364,37 +371,21 @@ impl MediaInner {
         Ok(())
     }
 
-    pub(crate) fn write_rtp(
+    pub(crate) fn write_rtp_packet(
         &mut self,
-        pt: Pt,
-        wallclock: Instant,
-        packet: &[u8],
-        exts: &ExtensionMap,
+        rtp_packet: RtpPacketToSend,
+        now: Instant,
     ) -> Result<(), RtcError> {
-        let Some(spec) = self.params_by_pt(pt).map(|p| p.spec()) else {
-            return Err(RtcError::UnknownPt(pt));
+        // Late code expects there to be one of these.
+        self.get_or_create_source_tx(rtp_packet.ssrc);
+
+        let Some(buffer_tx) = self.buffers_tx.get_mut(&RTP_MODE_SEND_BUFFER_PAYLOAD_TYPE) else {
+            return Err(RtcError::Other(format!("Media with mid {:?} is not in RTP mode.", self.mid)));
         };
 
-        let header = RtpHeader::parse(packet, exts)
-            .ok_or_else(|| RtcError::Other("Failed to parse RTP header".into()))?;
-
-        // Remove header from packet.
-        let packet = &packet[header.header_len..];
-
-        let rid = header.ext_vals.rid;
-        // This doesn't need to be lengthened
-        let rtp_time = MediaTime::new(header.timestamp as i64, spec.clock_rate as i64);
-
-        self.write(
-            pt,
-            wallclock,
-            rtp_time,
-            packet,
-            rid,
-            header.ext_vals,
-            Some(header),
-        )?;
-
+        buffer_tx.push_rtp_packet(rtp_packet, now);
+        // This is needed to make the Pacer poll the buffer.
+        self.queue_state = None;
         Ok(())
     }
 
@@ -530,7 +521,7 @@ impl MediaInner {
 
         Some(PolledPacket {
             header,
-            twcc_seq_no: next.seq_no,
+            seq_no: next.seq_no,
             is_padding,
             payload_size: body_len,
         })
@@ -581,7 +572,8 @@ impl MediaInner {
 
             // The send source, to get a contiguous seq_no for the resend.
             // Audio should not be resent, so this also gates whether we are doing resends at all.
-            let source = match get_source_tx(&mut self.sources_tx, pkt.meta.rid, true) {
+            let is_rtx = true;
+            let source = match get_source_tx(&mut self.sources_tx, pkt.meta.rid, is_rtx) {
                 Some(v) => v,
                 None => continue,
             };
@@ -620,8 +612,21 @@ impl MediaInner {
     }
 
     fn poll_packet_regular(&mut self, now: Instant) -> Option<NextPacket<'_>> {
-        // exit via ? here is ok since that means there is nothing to send.
-        let (pt, pkt) = next_send_buffer(&mut self.buffers_tx, now)?;
+        let (pt, pkt, seq_no) = if self.rtp_mode.is_some() {
+            let buffer_tx = self
+                .buffers_tx
+                .get_mut(&RTP_MODE_SEND_BUFFER_PAYLOAD_TYPE)?;
+            let pkt = buffer_tx.poll_next(now)?;
+            let rtp_mode_packet = pkt.rtp_mode_packet.take()?;
+            let pt = rtp_mode_packet.payload_type;
+            let seq_no = Some(rtp_mode_packet.sequence_number);
+            (pt, pkt, seq_no)
+        } else {
+            // exit via ? here is ok since that means there is nothing to send.
+            let (pt, pkt) = next_send_buffer(&mut self.buffers_tx, now)?;
+            let seq_no = None; // Filled in below.
+            (pt, pkt, seq_no)
+        };
 
         // Force recaching since packetizer changed.
         self.queue_state = None;
@@ -635,10 +640,7 @@ impl MediaInner {
         source.update_packet_counts(pkt.data.len() as u64, false);
         self.bytes_transmitted.push(now, pkt.data.len() as u64);
 
-        //  In rtp_mode, we just use the incoming sequence number.
-        let wanted = pkt.rtp_mode_header.as_ref().map(|h| h.sequence_number);
-
-        let seq_no = source.next_seq_no(now, wanted);
+        let seq_no = seq_no.unwrap_or_else(|| source.next_seq_no(now, None));
         pkt.seq_no = Some(seq_no);
 
         Some(NextPacket {
@@ -1212,6 +1214,9 @@ impl MediaInner {
     }
 
     pub fn poll_sample(&mut self) -> Option<Result<MediaData, RtcError>> {
+        if self.rtp_mode.is_some() {
+            return None;
+        }
         for ((pt, rid), buf) in &mut self.buffers_rx {
             if let Some(r) = buf.pop() {
                 let codec = *self.params.iter().find(|c| c.pt() == *pt)?;
@@ -1234,6 +1239,12 @@ impl MediaInner {
             }
         }
         None
+    }
+
+    pub fn poll_rtp_packet(&mut self) -> Option<RtpPacketReceived> {
+        self.rtp_mode
+            .as_mut()
+            .and_then(|rtp_mode| rtp_mode.received.pop_front())
     }
 
     pub fn handle_nack(
@@ -1402,7 +1413,7 @@ impl MediaInner {
 
 pub struct PolledPacket {
     pub header: RtpHeader,
-    pub twcc_seq_no: SeqNo,
+    pub seq_no: SeqNo,
     pub is_padding: bool,
     pub payload_size: usize,
 }
@@ -1525,31 +1536,12 @@ impl Default for MediaInner {
             bytes_retransmitted: ValueHistory::new(0, Duration::from_secs(2)),
             queue_state: None,
             to_packetize: VecDeque::default(),
-            rtp_mode: false,
+            rtp_mode: None,
         }
     }
 }
 
 impl MediaInner {
-    pub fn new_from_remote(
-        mid: Mid,
-        kind: MediaKind,
-        index: usize,
-        exts: ExtensionMap,
-        dir: Direction,
-        params: Vec<PayloadParams>,
-    ) -> Self {
-        MediaInner {
-            mid,
-            index,
-            kind,
-            exts,
-            dir,
-            params,
-            ..Default::default()
-        }
-    }
-
     pub fn from_remote_media_line(l: &MediaLine, index: usize, exts: ExtensionMap) -> Self {
         MediaInner {
             mid: l.mid(),
@@ -1601,12 +1593,77 @@ impl MediaInner {
             ..Default::default()
         }
     }
+
+    /// media_kind influences the Pacer behavior
+    /// payloads must be provided for RTX payload types to be known.
+    pub(crate) fn for_rtp_mode_sending(
+        mid: Mid,
+        media_kind: MediaKind,
+        payloads: Vec<PayloadParams>,
+        max_retain: usize,
+        primary_to_rtx_ssrc_mapping: Vec<(Ssrc, Ssrc)>,
+    ) -> MediaInner {
+        let enable_nack = true; // Doesn't matter for sending
+        let mut media =
+            MediaInner::for_rtp_mode(mid, Direction::SendOnly, media_kind, payloads, enable_nack);
+
+        // See comment on RTP_MODE_SEND_BUFFER_PAYLOAD_TYPE
+        media.buffers_tx.insert(
+            RTP_MODE_SEND_BUFFER_PAYLOAD_TYPE,
+            PacketizingBuffer::new(Codec::Null.into(), max_retain),
+        );
+
+        for (primary_ssrc, rtx_ssrc) in primary_to_rtx_ssrc_mapping {
+            let rtx_source = media.get_or_create_source_tx(rtx_ssrc);
+            let _ = rtx_source.set_repairs(primary_ssrc);
+        }
+
+        media
+    }
+
+    /// media_kind influences the Receiver Report interval
+    /// payloads must be provided so that clock rates of payload types are known, and for RTX payload types to be known.
+    pub(crate) fn for_rtp_mode_receiving(
+        mid: Mid,
+        media_kind: MediaKind,
+        payloads: Vec<PayloadParams>,
+        enable_nack: bool,
+    ) -> MediaInner {
+        MediaInner::for_rtp_mode(mid, Direction::RecvOnly, media_kind, payloads, enable_nack)
+    }
+
+    fn for_rtp_mode(
+        mid: Mid,
+        direction: Direction,
+        media_kind: MediaKind,
+        payloads: Vec<PayloadParams>,
+        enable_nack: bool,
+    ) -> MediaInner {
+        MediaInner {
+            mid,
+            dir: direction,
+            kind: media_kind,
+            params: payloads,
+            enable_nack,
+
+            need_open_event: false,
+            need_changed_event: false,
+            equalize_sources: false,
+
+            rtp_mode: Some(RtpMode::new()),
+
+            // index, app_tmp, msid, exts, and simulcast don't matter when not using SDP.
+            // A random CNAME is probably still fine for sending RTCP SDES messages.
+            ..Default::default()
+        }
+    }
 }
 
 /// Separate in wait for polonius.
 fn get_source_tx(
     sources_tx: &mut [SenderSource],
     rid: Option<Rid>,
+    // PETER: This is how we find the RTX SSRC
     is_rtx: bool,
 ) -> Option<&mut SenderSource> {
     sources_tx

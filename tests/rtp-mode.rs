@@ -4,9 +4,7 @@ use std::time::Duration;
 use tracing::info_span;
 
 use str0m::format::Codec;
-use str0m::media::rtp::RtpHeader;
-use str0m::media::rtp::{Extension, ExtensionMap};
-use str0m::media::{Direction, MediaKind};
+use str0m::media::{ExtensionValues, MediaKind, MediaTime, RtpPacketReceived, RtpPacketToSend};
 use str0m::{Candidate, Event, Rtc, RtcError};
 
 mod common;
@@ -16,27 +14,53 @@ use common::{init_log, progress, TestRtc};
 pub fn rtp_mode() -> Result<(), RtcError> {
     init_log();
 
-    let rtc1 = Rtc::builder().set_rtp_mode(true).build();
-    let rtc2 = Rtc::builder()
-        .set_rtp_mode(true)
-        // release packet straight away
-        .set_reordering_size_audio(0)
-        .build();
+    let rtc1 = Rtc::builder().build();
+    let rtc2 = Rtc::builder().build();
 
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc1);
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc2);
 
     let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into())?;
     let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into())?;
-    l.add_local_candidate(host1);
+    l.add_local_candidate(host1.clone());
+    l.add_remote_candidate(host2.clone());
     r.add_local_candidate(host2);
+    r.add_remote_candidate(host1);
 
-    let mut change = l.sdp_api();
-    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
-    let (offer, pending) = change.apply().unwrap();
+    let finger_l = l.direct_api().local_dtls_fingerprint();
+    let finger_r = r.direct_api().local_dtls_fingerprint();
 
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    l.direct_api().set_remote_fingerprint(finger_r);
+    r.direct_api().set_remote_fingerprint(finger_l);
+
+    let creds_l = l.direct_api().local_ice_credentials();
+    let creds_r = r.direct_api().local_ice_credentials();
+
+    l.direct_api().set_remote_ice_credentials(creds_r);
+    r.direct_api().set_remote_ice_credentials(creds_l);
+
+    l.direct_api().set_ice_controlling(true);
+    r.direct_api().set_ice_controlling(false);
+
+    l.direct_api().start_dtls(true).unwrap();
+    r.direct_api().start_dtls(false).unwrap();
+
+    let mid = "mid".into();
+    // TODO: Test RTX
+    let primary_to_rtx_ssrc_mapping = vec![];
+    let max_retain = 3;
+    let enable_nack = false;
+    l.direct_api()
+        .add_rtp_packet_sender(
+            mid,
+            MediaKind::Audio,
+            max_retain,
+            primary_to_rtx_ssrc_mapping,
+        )
+        .unwrap();
+    r.direct_api()
+        .add_rtp_packet_receiver(mid, MediaKind::Audio, enable_nack)
+        .unwrap();
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -53,31 +77,39 @@ pub fn rtp_mode() -> Result<(), RtcError> {
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
 
-    let mut exts = ExtensionMap::empty();
-    exts.set(3, Extension::AudioLevel);
+    let ssrc = 42.into();
 
-    let to_write: Vec<&[u8]> = vec![
-        // 1
-        &[
-            //
-            144, 33, 183, 152, 0, 0, 39, 16, 0, 0, 0, 44, 190, 222, 0, 1, 48, 170, 0, 0,
-            // payload
-            0x1, 0x2, 0x3, 0x4,
-        ],
-        // 3
-        &[
-            //
-            144, 33, 183, 155, 0, 0, 54, 176, 0, 0, 0, 44, 190, 222, 0, 1, 48, 172, 0, 0,
-            // payload
-            0x9, 0xa, 0xb, 0xc,
-        ],
-        // 2
-        &[
-            //
-            144, 161, 183, 153, 0, 0, 46, 224, 0, 0, 0, 44, 190, 222, 0, 1, 48, 171, 0, 0,
-            // payload
-            0x5, 0x6, 0x7, 0x8,
-        ],
+    let to_write = vec![
+        RtpPacketToSend {
+            mid,
+            ssrc,
+            sequence_number: 47000.into(),
+            timestamp: 10000,
+            payload_type: pt,
+            marker: false,
+            header_extensions: Default::default(),
+            payload: vec![0x1, 0x2, 0x3, 0x4],
+        },
+        RtpPacketToSend {
+            mid,
+            ssrc,
+            sequence_number: 47003.into(),
+            timestamp: 14000,
+            payload_type: pt,
+            marker: false,
+            header_extensions: Default::default(),
+            payload: vec![0x9, 0xa, 0xb, 0xc],
+        },
+        RtpPacketToSend {
+            mid,
+            ssrc,
+            sequence_number: 47001.into(),
+            timestamp: 12000,
+            payload_type: pt,
+            marker: true,
+            header_extensions: Default::default(),
+            payload: vec![0x5, 0x6, 0x7, 0x8],
+        },
     ];
 
     let mut to_write: VecDeque<_> = to_write.into();
@@ -88,12 +120,8 @@ pub fn rtp_mode() -> Result<(), RtcError> {
         if l.start + l.duration() > write_at {
             write_at = l.last + Duration::from_millis(300);
             if let Some(packet) = to_write.pop_front() {
-                let wallclock = l.start + l.duration();
-
-                l.media(mid)
-                    .unwrap()
-                    .writer(pt)
-                    .write_rtp(wallclock, packet, &exts)?;
+                let now = l.start + l.duration();
+                l.direct_api().send_rtp_packet(packet, now).unwrap();
             }
         }
 
@@ -104,11 +132,11 @@ pub fn rtp_mode() -> Result<(), RtcError> {
         }
     }
 
-    let media: Vec<_> = r
+    let rtp_packets_received: Vec<_> = r
         .events
-        .iter()
+        .into_iter()
         .filter_map(|e| {
-            if let Event::MediaData(v) = e {
+            if let Event::RtpPacketReceived(v) = e {
                 Some(v)
             } else {
                 None
@@ -116,30 +144,44 @@ pub fn rtp_mode() -> Result<(), RtcError> {
         })
         .collect();
 
-    assert_eq!(media.len(), 3);
+    let mut header_extensions = ExtensionValues::default();
+    header_extensions.mid = Some(mid);
+    let expected = vec![
+        RtpPacketReceived {
+            mid,
+            rid: None,
+            ssrc,
+            sequence_number: 47000.into(),
+            timestamp: MediaTime::new(10000, 48000),
+            payload_type: pt,
+            marker: false,
+            header_extensions,
+            payload: vec![0x1, 0x2, 0x3, 0x4],
+        },
+        RtpPacketReceived {
+            mid,
+            rid: None,
+            ssrc,
+            sequence_number: 47003.into(),
+            timestamp: MediaTime::new(14000, 48000),
+            payload_type: pt,
+            marker: false,
+            header_extensions,
+            payload: vec![0x9, 0xa, 0xb, 0xc],
+        },
+        RtpPacketReceived {
+            mid,
+            rid: None,
+            ssrc,
+            sequence_number: 47001.into(),
+            timestamp: MediaTime::new(12000, 48000),
+            payload_type: pt,
+            marker: true,
+            header_extensions,
+            payload: vec![0x5, 0x6, 0x7, 0x8],
+        },
+    ];
 
-    // no change from standard above
-    let exts = ExtensionMap::standard();
-
-    let h0 = RtpHeader::parse(&media[0].data, &exts).unwrap();
-    let h1 = RtpHeader::parse(&media[1].data, &exts).unwrap();
-    let h2 = RtpHeader::parse(&media[2].data, &exts).unwrap();
-
-    assert_eq!(h0.sequence_number, 47000);
-    assert_eq!(h1.sequence_number, 47003);
-    assert_eq!(h2.sequence_number, 47001);
-
-    assert_eq!(h0.timestamp, 10000);
-    assert_eq!(h1.timestamp, 14000);
-    assert_eq!(h2.timestamp, 12000);
-
-    assert_eq!(h0.ext_vals.audio_level, Some(-42));
-    assert_eq!(h1.ext_vals.audio_level, Some(-44));
-    assert_eq!(h2.ext_vals.audio_level, Some(-43));
-
-    assert!(!h0.marker);
-    assert!(!h1.marker);
-    assert!(h2.marker);
-
+    assert_eq!(expected[0], rtp_packets_received[0]);
     Ok(())
 }

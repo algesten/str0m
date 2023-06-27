@@ -84,6 +84,10 @@ macro_rules! num_id {
             pub fn new() -> Self {
                 $id(random())
             }
+
+            pub const fn from(v: $t) -> Self {
+                $id(v)
+            }
         }
 
         impl Deref for $id {

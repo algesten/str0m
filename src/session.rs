@@ -2,9 +2,9 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::dtls::KeyingMaterial;
-use crate::format::{Codec, CodecConfig};
+use crate::format::CodecConfig;
 use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
-use crate::media::{MediaAdded, MediaChanged, Source};
+use crate::media::{MediaAdded, MediaChanged, MediaKind, RtpPacketToSend, Source};
 use crate::packet::{
     LeakyBucketPacer, NullPacer, Pacer, PacerImpl, RtpMeta, SendSideBandwithEstimator,
 };
@@ -14,7 +14,7 @@ use crate::rtp::{Bitrate, ExtensionMap, MediaTime, Mid, Rtcp, RtcpFb};
 use crate::rtp::{SrtpContext, SrtpKey, Ssrc};
 use crate::stats::StatsSnapshot;
 use crate::util::{already_happened, not_happening, Soonest};
-use crate::{net, KeyframeRequest, MediaData};
+use crate::{net, KeyframeRequest, MediaData, RtpPacketReceived};
 use crate::{RtcConfig, RtcError};
 
 use super::{MediaInner, PolledPacket};
@@ -86,14 +86,12 @@ pub(crate) struct Session {
     poll_packet_buf: Vec<u8>,
 
     pub ice_lite: bool,
-
-    /// Whether we are running in RTP-mode.
-    rtp_mode: bool,
 }
 
 #[allow(clippy::large_enum_variant)]
 pub enum MediaEvent {
     Data(MediaData),
+    RtpPacketReceived(RtpPacketReceived),
     Changed(MediaChanged),
     Error(RtcError),
     Added(MediaAdded),
@@ -150,8 +148,6 @@ impl Session {
             pacer,
             poll_packet_buf: vec![0; 2000],
             ice_lite: config.ice_lite,
-
-            rtp_mode: config.rtp_mode,
         }
     }
 
@@ -408,7 +404,9 @@ impl Session {
         };
 
         let mut rid = source.rid();
-        let seq_no = source.update(now, &header, clock_rate);
+        // TODO: We should only update state after we verify the packet
+        // in case it's a malicious packet.
+        let (seq_no, time) = source.update(now, &header, clock_rate);
 
         let is_rtx = source.is_rtx();
 
@@ -460,7 +458,7 @@ impl Session {
             if rid.is_none() && repaired_source.rid().is_some() {
                 rid = repaired_source.rid();
             }
-            let orig_seq_no = repaired_source.update(now, &header, clock_rate);
+            let (orig_seq_no, _time) = repaired_source.update(now, &header, clock_rate);
 
             let params = media.get_params(header.payload_type).unwrap();
             if let Some(pt) = params.resend() {
@@ -477,54 +475,59 @@ impl Session {
             seq_no
         };
 
-        // Parameters using the PT in the header. This will return the same CodecParams
-        // instance regardless of whether this being a resend PT or not.
-        // unwrap: is ok because we checked above.
-        let params = media.get_params(header.payload_type).unwrap();
-
-        // This is the "main" PT and it will differ to header.payload_type if this is a resend.
-        let pt = params.pt();
-        let codec = if self.rtp_mode {
-            Codec::Null
-        } else {
-            params.spec().codec
-        };
-
         if !media.direction().is_receiving() {
             // Not adding unless we are supposed to be receiving.
             return;
         }
 
-        // Buffers are unique per media (since PT is unique per media).
-        // The hold_back should be configured from param.spec().codec to
-        // avoid the null codec.
-        let hold_back = if params.spec().codec.is_audio() {
-            self.reordering_size_audio
-        } else {
-            self.reordering_size_video
-        };
-        let buf_rx = media.get_buffer_rx(pt, rid, codec, hold_back);
-
-        let prev_time = buf_rx.max_time().map(|t| t.numer() as u64);
-        let extended = extend_u32(prev_time, header.timestamp);
-        let time = MediaTime::new(extended as i64, clock_rate as i64);
-
-        let meta = RtpMeta::new(now, time, seq_no, header);
-
         // here we have incoming and depacketized data before it may be dropped at buffer.push()
         let bytes_rx = data.len();
 
-        // In RTP mode we want to retain the header. After srtp_unprotect, we need to
-        // recombine the header + the decrypted payload.
-        if self.rtp_mode {
-            // Write header after the body. This shouldn't allocate since
-            // unprotect_rtp() call above should allocate enough space for the header.
-            data.extend_from_slice(&buf[..meta.header.header_len]);
-            // Rotate so header is before body.
-            data.rotate_right(meta.header.header_len);
-        };
+        if let Some(rtp_mode) = media.rtp_mode.as_mut() {
+            // Don't expose these values to the user of the API.
+            header.ext_vals.abs_send_time = None;
+            header.ext_vals.transport_cc = None;
+            rtp_mode.received.push_back(RtpPacketReceived {
+                mid,
+                rid,
+                ssrc: header.ssrc,
+                sequence_number: seq_no,
+                payload_type: header.payload_type,
+                timestamp: time,
+                marker: header.marker,
+                header_extensions: header.ext_vals,
+                payload: data,
+            })
+        } else {
+            // !self.packet_mode (sample mode)
 
-        buf_rx.push(meta, data);
+            // Parameters using the PT in the header. This will return the same CodecParams
+            // instance regardless of whether this being a resend PT or not.
+            // unwrap: is ok because we checked above.
+            let params = media.get_params(header.payload_type).unwrap();
+
+            // This is the "main" PT and it will differ to header.payload_type if this is a resend.
+            let pt = params.pt();
+            let codec = params.spec().codec;
+
+            // Buffers are unique per media (since PT is unique per media).
+            // The hold_back should be configured from param.spec().codec to
+            // avoid the null codec.
+            let hold_back = if params.spec().codec.is_audio() {
+                self.reordering_size_audio
+            } else {
+                self.reordering_size_video
+            };
+            let buf_rx = media.get_buffer_rx(pt, rid, codec, hold_back);
+
+            let prev_time = buf_rx.max_time().map(|t| t.numer() as u64);
+            let extended = extend_u32(prev_time, header.timestamp);
+            let time = MediaTime::new(extended as i64, clock_rate as i64);
+
+            let meta = RtpMeta::new(now, time, seq_no, header);
+
+            buf_rx.push(meta, data);
+        }
 
         // TODO: is there a nicer way to make borrow-checker happy ?
         // this should go away with the refactoring of the entire handle_rtp() function
@@ -655,6 +658,9 @@ impl Session {
                     Err(e) => return Some(MediaEvent::Error(e)),
                 }
             }
+            if let Some(rtp_packet) = media.poll_rtp_packet() {
+                return Some(MediaEvent::RtpPacketReceived(rtp_packet));
+            }
         }
 
         None
@@ -733,7 +739,7 @@ impl Session {
         if let Some(polled_packet) = media.poll_packet(now, &self.exts, &mut self.twcc, buf) {
             let PolledPacket {
                 header,
-                twcc_seq_no,
+                seq_no,
                 is_padding,
                 payload_size,
             } = polled_packet;
@@ -748,7 +754,7 @@ impl Session {
             }
 
             self.pacer.register_send(now, payload_size.into(), mid);
-            let protected = srtp_tx.protect_rtp(buf, &header, *twcc_seq_no);
+            let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
             self.twcc_tx_register
                 .register_seq(twcc_seq.into(), now, payload_size);
@@ -879,9 +885,14 @@ impl Session {
         self.medias.len() + if self.app.is_some() { 1 } else { 0 }
     }
 
-    pub fn add_media(&mut self, mut media: MediaInner) {
-        media.rtp_mode = self.rtp_mode;
+    pub fn add_media(&mut self, media: MediaInner) {
         self.medias.push(media);
+    }
+
+    pub fn remove_media(&mut self, mid: Mid) {
+        if let Some(index) = self.medias.iter().position(|media| media.mid() == mid) {
+            self.medias.swap_remove(index);
+        }
     }
 
     pub fn medias(&self) -> &[MediaInner] {
@@ -908,6 +919,79 @@ impl Session {
         // we think the link capacity can sustain, if not the estimate is a lie.
         let pacing_rate = (bwe.current_bitrate * PACING_FACTOR).max(padding_rate);
         self.pacer.set_pacing_rate(pacing_rate);
+    }
+
+    /// See DirectApi::add_rtp_packet_sender.
+    pub(crate) fn add_rtp_packet_sender(
+        &mut self,
+        mid: Mid,
+        media_kind: MediaKind,
+        max_retain: usize,
+        primary_to_rtx_ssrc_mapping: Vec<(Ssrc, Ssrc)>,
+    ) -> Result<(), RtcError> {
+        if self.has_mid(mid) {
+            return Err(RtcError::Other(format!("MID already in use: {mid:?}")));
+        }
+        let payloads = self.codec_config.get_configs().to_vec();
+        self.add_media(MediaInner::for_rtp_mode_sending(
+            mid,
+            media_kind,
+            payloads,
+            max_retain,
+            primary_to_rtx_ssrc_mapping,
+        ));
+        Ok(())
+    }
+
+    /// See DirectApi::send_rtp_packet.
+    pub fn send_rtp_packet(
+        &mut self,
+        rtp_packet: RtpPacketToSend,
+        now: Instant,
+    ) -> Result<(), RtcError> {
+        let mid = rtp_packet.mid;
+        let Some(media) = self.media_by_mid_mut(mid) else {
+            return Err(RtcError::Other(format!("Unknown MID: {mid:?}")));
+        };
+        media.write_rtp_packet(rtp_packet, now)
+    }
+
+    /// See DirectApi::remove_rtp_packet_sender.
+    pub fn remove_rtp_packet_sender(&mut self, mid: Mid) -> Result<(), RtcError> {
+        if !self.has_mid(mid) {
+            return Err(RtcError::Other(format!("Unknown MID: {mid:?}")));
+        }
+        self.remove_media(mid);
+        Ok(())
+    }
+
+    /// See DirectApi::add_rtp_packet_receiver.
+    pub fn add_rtp_packet_receiver(
+        &mut self,
+        mid: Mid,
+        media_kind: MediaKind,
+        enable_nack: bool,
+    ) -> Result<(), RtcError> {
+        if self.has_mid(mid) {
+            return Err(RtcError::Other(format!("MID already in use: {mid:?}")));
+        }
+        let payloads = self.codec_config.get_configs().to_vec();
+        self.add_media(MediaInner::for_rtp_mode_receiving(
+            mid,
+            media_kind,
+            payloads,
+            enable_nack,
+        ));
+        Ok(())
+    }
+
+    /// See DirectApi::remove_rtp_packet_receiver.
+    pub fn remove_rtp_packet_receiver(&mut self, mid: Mid) -> Result<(), RtcError> {
+        if !self.has_mid(mid) {
+            return Err(RtcError::Other(format!("Unknown MID: {mid:?}")));
+        }
+        self.remove_media(mid);
+        Ok(())
     }
 }
 

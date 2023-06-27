@@ -1,7 +1,7 @@
 use std::ops::RangeInclusive;
 use std::time::Instant;
 
-use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, SeqNo};
+use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, SeqNo, Ssrc};
 use crate::sdp::Simulcast as SdpSimulcast;
 
 use super::PayloadParams;
@@ -137,6 +137,86 @@ pub struct MediaData {
 
     /// Additional codec specific information
     pub codec_extra: CodecExtra,
+}
+
+/// When using "RTP mode", represents an RTP packet that has been received.
+/// It will sit in buffers until poll_output() is called.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RtpPacketReceived {
+    /// Roughly identifies a "Media Source" in RFC7656 taxonomy.
+    /// In practice, it's what you think of as a "stream" of audio or video.
+    /// Determined by either the MID header extension or SSRC.
+    pub mid: Mid,
+
+    /// Identifies an "Encoded Stream" in RFC7656 taxonomy.
+    /// In practice, it's what you think of as a simulcast layer.
+    /// Determined by either the RID header extensions or SSRC.
+    /// Only used with simulcast video.
+    pub rid: Option<Rid>,
+
+    /// Identifies the "RTP stream" in RFC7656 taxonomy.
+    /// In practice, it's either the primary or RTX part of a simulcast layer
+    /// (or of a "stream" if not using simulcast)
+    /// Determined by the RTP header.
+    /// If the packet received is an RTX packet, this is the original SSRC.
+    pub ssrc: Ssrc,
+
+    /// The RTP sequence number, determined by expanding the the sequence number in the RTP header.
+    /// (keeping track of the rollover count or ROC)
+    /// If the packet received is an RTX packet, this is the original sequence number.
+    pub sequence_number: SeqNo,
+
+    /// The RTP media time of this packet, expanded from timestamp in RTP header,
+    /// and with the clock rate of the payload type.
+    /// Determined by expanding the timestamp in the RTP header.
+    pub timestamp: MediaTime,
+
+    /// The RTP payload type, determined by the RTP header.
+    /// If the packet received is an RTX packet, this is the original payload type.
+    pub payload_type: Pt,
+
+    /// The RTP marker bit.  Means different things for different payload types.
+    pub marker: bool,
+
+    /// The RTP header extensions
+    pub header_extensions: ExtensionValues,
+
+    /// The RTP payload.  Often contains a codec-specific header.
+    pub payload: Vec<u8>,
+}
+
+/// When using "RTP mode", represents an RTP packet to send.
+/// It will sit in buffers until the pacer wants to send it.
+#[derive(Debug)]
+pub struct RtpPacketToSend {
+    /// Roughly identifies a "Media Source" in RFC7656 taxonomy.
+    /// In practice, it's what you think of as a "stream" of audio or video.
+    pub mid: Mid,
+
+    /// Identifies the "RTP stream" in RFC7656 taxonomy.
+    pub ssrc: Ssrc,
+
+    /// The RTP sequence number, which must be untruncated because it will
+    /// be used as part of the nonce for SRTP.
+    /// You must not reuse an (ssrc, seq_no) pair.
+    pub sequence_number: SeqNo,
+
+    /// The RTP timestamp.  A truncated value is OK.  The receiver will expand it.
+    pub timestamp: u32,
+
+    /// The RTP payload type.  Must be in the range 0..=127.
+    pub payload_type: Pt,
+
+    /// The RTP marker bit.
+    pub marker: bool,
+
+    /// The RTP header extensions.  Should not contain header extensions associated with
+    /// congestion control, such as transport-cc and abs-send-time, which will be filled
+    /// in automatically before sending.
+    pub header_extensions: ExtensionValues,
+
+    /// The RTP payload.  Often contains a codec-specific header.
+    pub payload: Vec<u8>,
 }
 
 /// Details for an incoming a keyframe request (PLI or FIR).
