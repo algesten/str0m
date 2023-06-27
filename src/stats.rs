@@ -21,6 +21,7 @@ pub(crate) struct StatsSnapshot {
     pub peer_rx: u64,
     pub tx: u64,
     pub rx: u64,
+    pub egress_loss_ratio: Option<f32>,
     pub ingress: HashMap<(Mid, Option<Rid>), MediaIngressStats>,
     pub egress: HashMap<(Mid, Option<Rid>), MediaEgressStats>,
     pub bwe_tx: Option<Bitrate>,
@@ -34,6 +35,7 @@ impl StatsSnapshot {
             peer_tx: 0,
             tx: 0,
             rx: 0,
+            egress_loss_ratio: None,
             ingress: HashMap::new(),
             egress: HashMap::new(),
             bwe_tx: None,
@@ -68,6 +70,8 @@ pub struct PeerStats {
     pub timestamp: Instant,
     /// The last egress bandwidth estimate from the BWE subsystem, if enabled.
     pub bwe_tx: Option<Bitrate>,
+    /// The egress loss over the last second.
+    pub egress_loss_fraction: Option<f32>,
 }
 
 /// An event carrying stats for every (mid, rid) in egress direction
@@ -184,6 +188,7 @@ impl Stats {
             bytes_tx: snapshot.tx,
             timestamp: snapshot.timestamp,
             bwe_tx: snapshot.bwe_tx,
+            egress_loss_fraction: snapshot.egress_loss_ratio,
         };
 
         self.events.push_back(StatsEvent::Peer(event));
