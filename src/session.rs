@@ -869,6 +869,7 @@ impl Session {
         snapshot.bwe_tx = self.bwe.as_ref().and_then(|bwe| bwe.last_estimate());
 
         snapshot.egress_loss_ratio = self.twcc_tx_register.loss(Duration::from_secs(1), now);
+        snapshot.ingress_loss_fraction = self.twcc_rx_register.loss();
     }
 
     pub fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {
