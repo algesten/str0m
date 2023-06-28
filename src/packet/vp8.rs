@@ -1,3 +1,5 @@
+use crate::rtp::{extend_u16, extend_u8};
+
 use super::{BitRead, CodecExtra, Depacketizer, MediaKind, PacketError, Packetizer};
 
 pub const VP8_HEADER_SIZE: usize = 1;
@@ -14,10 +16,8 @@ pub struct Vp8CodecExtra {
     /// Index of the vp8 temporal layer.
     /// Only 2 layers are possible in WebRTC
     pub layer_index: u8,
-    /// picture id if present
-    // TODO: use an *extended* format so the consumer of this api does not have to handle wrapping
-    // which would otherwise depend on whether this is represented as 8 or 16 bits
-    pub picture_id: Option<u16>,
+    /// extended picture id, if present
+    pub picture_id: Option<u64>,
 }
 
 /// Packetizes VP8 RTP packets.
@@ -146,6 +146,9 @@ pub struct Vp8Depacketizer {
     /// Optional extension
     /// 8 or 16 bits, picture ID
     pub picture_id: u16,
+    // extended picture id
+    pub extended_pid: u64,
+
     /// 8 bits temporal level zero index
     pub tl0_pic_idx: u8,
     /// 2 bits temporal layer index
@@ -210,9 +213,11 @@ impl Depacketizer for Vp8Depacketizer {
             if b & 0x80 > 0 {
                 // M == 1, PID is 16bit
                 self.picture_id = (((b & 0x7f) as u16) << 8) | (reader.get_u8() as u16);
+                self.extended_pid = extend_u16(Some(self.extended_pid), self.picture_id);
                 payload_index += 1;
             } else {
                 self.picture_id = b as u16;
+                self.extended_pid = extend_u8(Some(self.extended_pid), b);
             }
         }
 
@@ -252,7 +257,7 @@ impl Depacketizer for Vp8Depacketizer {
             sync: self.y == 1,
             layer_index: self.tid,
             picture_id: if self.i == 1 {
-                Some(self.picture_id)
+                Some(self.extended_pid)
             } else {
                 None
             },
