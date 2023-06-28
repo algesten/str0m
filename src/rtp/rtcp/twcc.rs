@@ -225,6 +225,9 @@ pub struct TwccRecvRegister {
 
     /// Counter that increases by one for each report generated.
     generated_reports: u64,
+
+    /// Data to calculate received loss.
+    receive_window: ReceiveWindow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,6 +245,7 @@ impl TwccRecvRegister {
             interims: VecDeque::new(),
             time_start: None,
             generated_reports: 0,
+            receive_window: ReceiveWindow::default(),
         }
     }
 
@@ -254,6 +258,8 @@ impl TwccRecvRegister {
     }
 
     pub fn update_seq(&mut self, seq: SeqNo, time: Instant) {
+        self.receive_window.record_seq(seq);
+
         match self.queue.binary_search_by_key(&seq, |r| r.seq) {
             Ok(_) => {
                 // Exact same SeqNo found. This is an error where the sender potentially
@@ -447,6 +453,29 @@ impl TwccRecvRegister {
     pub fn has_unreported(&self) -> bool {
         self.queue.len() > self.report_from
     }
+
+    /// Calculate the fraction of lost packets since the last call.
+    ///
+    /// To get periodic stats call this method at fixed intervals.
+    pub fn loss(&mut self) -> Option<f32> {
+        // Based on the algorithm described in
+        // [RFC 3550 Appendix A](https://www.rfc-editor.org/rfc/rfc3550#appendix-A.3), but instead
+        // of applying it to an individual RTP stream it's applied to the whole session using TWCC
+        // sequence numbers rather than RTP sequence numbers.
+        let max_seq = self.receive_window.max_seq?;
+        let base_seq = self.receive_window.base_seq?;
+        let expected = *max_seq - *base_seq + 1_u64;
+
+        let expected_interval = expected - self.receive_window.expected_prior;
+        self.receive_window.expected_prior = expected;
+
+        let received_interval = self.receive_window.received - self.receive_window.received_prior;
+        self.receive_window.received_prior = self.receive_window.received;
+
+        let lost_interval = expected_interval.saturating_sub(received_interval);
+
+        (expected_interval != 0).then_some(lost_interval as f32 / expected_interval as f32)
+    }
 }
 
 /// Interims are deltas between `Receiption` which is an intermediary format before
@@ -508,6 +537,35 @@ fn build_interims(
 enum ChunkInterim {
     Missing(u16), // max 2^13 (one run length)
     Received(usize, PacketStatus, i16),
+}
+
+#[derive(Debug, Default)]
+struct ReceiveWindow {
+    /// The base seq num, set on the first receive.
+    base_seq: Option<SeqNo>,
+
+    /// The large seq num received.
+    max_seq: Option<SeqNo>,
+
+    /// The previous number of packets expected, used to calculate a delta for loss.
+    expected_prior: u64,
+
+    /// The total number of packets received
+    received: u64,
+
+    /// The previous number of packets received, used to calculate a delta for loss.
+    received_prior: u64,
+}
+
+impl ReceiveWindow {
+    fn record_seq(&mut self, seq: SeqNo) {
+        if self.base_seq.is_none() {
+            self.base_seq = Some(seq);
+        }
+
+        self.received += 1;
+        self.max_seq = self.max_seq.max(Some(seq));
+    }
 }
 
 impl ChunkInterim {
@@ -1846,7 +1904,7 @@ mod test {
     }
 
     #[test]
-    fn test_twcc_register_loss() {
+    fn test_twcc_send_register_loss() {
         let mut reg = TwccSendRegister::new(25);
         let mut now = Instant::now();
         for i in 0..9 {
@@ -1894,5 +1952,33 @@ mod test {
             pct, 25,
             "The loss percentage should be 25 as 2 out of 8 packets are lost"
         );
+    }
+
+    #[test]
+    fn test_twcc_recv_register_loss() {
+        let mut reg = TwccRecvRegister::new(25);
+        let mut now = Instant::now();
+
+        for i in 0..10 {
+            if i == 3 || i == 7 {
+                // simulate loss
+                continue;
+            }
+            reg.update_seq(i.into(), now);
+            now = now + Duration::from_millis(50);
+        }
+
+        assert_eq!(reg.loss(), Some(2.0 / 10.0));
+
+        for i in 10..20 {
+            if i == 11 || i == 13 || i == 15 || i == 17 {
+                // simulate loss
+                continue;
+            }
+            reg.update_seq(i.into(), now);
+            now = now + Duration::from_millis(50);
+        }
+
+        assert_eq!(reg.loss(), Some(4.0 / 10.0));
     }
 }
