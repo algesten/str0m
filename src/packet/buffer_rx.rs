@@ -79,6 +79,7 @@ pub struct DepacketizingBuffer {
     segments: Vec<(usize, usize)>,
     last_emitted: Option<(SeqNo, CodecExtra)>,
     max_time: Option<MediaTime>,
+    depack_cache: Option<(SeqNo, Depacketized)>,
 }
 
 impl DepacketizingBuffer {
@@ -90,6 +91,7 @@ impl DepacketizingBuffer {
             segments: Vec::new(),
             last_emitted: None,
             max_time: None,
+            depack_cache: None,
         }
     }
 
@@ -148,39 +150,38 @@ impl DepacketizingBuffer {
 
         let (start, stop) = *self.segments.first()?;
 
-        // depack ahead  to check the gap, even if we may not emit right away
+        let seq = {
+            let last = self.queue.get(stop).expect("entry for stop index");
+            last.meta.seq_no
+        };
 
-        // TODO: here we endup depacketizing the next packet multiple times if
-        // we are not emitting this could be optimized. Caching the result could
-        // be one way, but we have to be careful because the .fist()?  can
-        // change on subsequent calls as prev packets are recomposed
-        let (data, codec_extra, time, meta) = match self.depack_segment(start, stop) {
+        // depack ahead to check contiguity, even if we may not emit right away
+        let dep = match self.depacketize(start, stop, seq) {
             Ok(d) => d,
             Err(e) => {
                 // this segment cannot be decoded correctly
                 // remove from the queue and return the error
-                let last = self.queue.get(stop).expect("entry for stop index");
-                self.last_emitted = Some((last.meta.seq_no, CodecExtra::None));
+                self.last_emitted = Some((seq, CodecExtra::None));
                 self.queue.drain(0..=stop);
                 return Some(Err(e));
             }
         };
 
-        let contiguous = 'gap: {
+        let contiguous = 'contig: {
             if self.is_following_last(start) {
-                break 'gap true;
+                break 'contig true;
             }
 
-            let Some((seq, last_codec_extra)) = self.last_emitted else {
-                break 'gap true;
+            let Some((last_seq, last_codec_extra)) = self.last_emitted else {
+                break 'contig true;
             };
 
             const VP8_DEPACK_OPTIMIZATION: bool = true;
 
-            match (last_codec_extra, codec_extra) {
+            match (last_codec_extra, dep.codec_extra) {
                 (CodecExtra::Vp8(prev), CodecExtra::Vp8(next)) => {
                     if !VP8_DEPACK_OPTIMIZATION {
-                        break 'gap false;
+                        break 'contig false;
                     }
 
                     // In the case of VP8 chrome doesn't answer nacks for frames that are on
@@ -188,10 +189,10 @@ impl DepacketizingBuffer {
                     // missing frame on layer 1 that its contiguous to two frames on layer 0
 
                     let Some(prev_pid) = prev.picture_id else {
-                        break 'gap false;
+                        break 'contig false;
                     };
                     let Some(next_pid) = next.picture_id else {
-                        break 'gap false;
+                        break 'contig false;
                     };
 
                     let allowed = prev.layer_index == 0
@@ -202,7 +203,7 @@ impl DepacketizingBuffer {
                         let last = self.queue.get(stop).expect("entry for stop index");
                         trace!(
                             "gap allowed Seq: {} - {}, PIDs: {} - {}",
-                            seq,
+                            last_seq,
                             last.meta.seq_no,
                             prev_pid,
                             next_pid
@@ -221,31 +222,34 @@ impl DepacketizingBuffer {
         // However as fallback, we "hold back" samples to let RTX mechanics fill in potential
         // gaps in the RTP sequences before letting go.
         if !contiguous && !is_more_than_hold_back {
+            // if we are not sending it, cache the depacked
+            self.depack_cache = Some((seq, dep));
             return None;
         }
 
         let last = self.queue.get(stop).expect("entry for stop index");
-        self.last_emitted = Some((last.meta.seq_no, codec_extra));
+        self.last_emitted = Some((last.meta.seq_no, dep.codec_extra));
 
         // We're not going to emit samples in the incorrect order, there's no point in keeping
         // stuff before the emitted range.
         self.queue.drain(0..=stop);
 
-        let dep = Depacketized {
-            time,
-            contiguous,
-            meta,
-            data,
-            codec_extra,
-        };
         Some(Ok(dep))
     }
 
-    fn depack_segment(
+    fn depacketize(
         &mut self,
         start: usize,
         stop: usize,
-    ) -> Result<(Vec<u8>, CodecExtra, MediaTime, Vec<RtpMeta>), PacketError> {
+        seq: SeqNo,
+    ) -> Result<Depacketized, PacketError> {
+        if let Some(cached) = self.depack_cache.take() {
+            if cached.0 == seq {
+                trace!("depack cache hit for segment start {}", start);
+                return Ok(cached.1);
+            }
+        }
+
         let mut data = Vec::new();
         let mut codec_extra = CodecExtra::None;
 
@@ -263,7 +267,13 @@ impl DepacketizingBuffer {
             meta.push(entry.meta.clone());
         }
 
-        Ok((data, codec_extra, time, meta))
+        Ok(Depacketized {
+            time,
+            contiguous: true, // the caller taking ownership will modify this accordingly
+            meta,
+            data,
+            codec_extra,
+        })
     }
 
     fn update_segments(&mut self) -> Option<(usize, usize)> {
