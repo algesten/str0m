@@ -22,6 +22,7 @@ pub(crate) struct StatsSnapshot {
     pub tx: u64,
     pub rx: u64,
     pub egress_loss_ratio: Option<f32>,
+    pub ingress_loss_fraction: Option<f32>,
     pub ingress: HashMap<(Mid, Option<Rid>), MediaIngressStats>,
     pub egress: HashMap<(Mid, Option<Rid>), MediaEgressStats>,
     pub bwe_tx: Option<Bitrate>,
@@ -36,6 +37,7 @@ impl StatsSnapshot {
             tx: 0,
             rx: 0,
             egress_loss_ratio: None,
+            ingress_loss_fraction: None,
             ingress: HashMap::new(),
             egress: HashMap::new(),
             bwe_tx: None,
@@ -72,6 +74,8 @@ pub struct PeerStats {
     pub bwe_tx: Option<Bitrate>,
     /// The egress loss over the last second.
     pub egress_loss_fraction: Option<f32>,
+    /// The ingress losss since the last stats event.
+    pub ingress_loss_fraction: Option<f32>,
 }
 
 /// An event carrying stats for every (mid, rid) in egress direction
@@ -189,6 +193,7 @@ impl Stats {
             timestamp: snapshot.timestamp,
             bwe_tx: snapshot.bwe_tx,
             egress_loss_fraction: snapshot.egress_loss_ratio,
+            ingress_loss_fraction: snapshot.ingress_loss_fraction,
         };
 
         self.events.push_back(StatsEvent::Peer(event));
