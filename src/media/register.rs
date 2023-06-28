@@ -167,6 +167,13 @@ impl ReceiverRegister {
     fn reset_receceived(&mut self, start: SeqNo, end: SeqNo) {
         for seq in *start..*end {
             let index = self.packet_index(seq);
+
+            let status = self.packet_status[index];
+
+            if status.nack_count > 0 && !status.received {
+                debug!("Seq no was nacked but not resent {}", seq);
+            }
+
             // Reset state
             self.packet_status[index] = PacketStatus::default();
         }
