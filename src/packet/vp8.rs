@@ -14,6 +14,10 @@ pub struct Vp8CodecExtra {
     /// Index of the vp8 temporal layer.
     /// Only 2 layers are possible in WebRTC
     pub layer_index: u8,
+    /// picture id if present
+    // TODO: use an *extended* format so the consumer of this api does not have to handle wrapping
+    // which would otherwise depend on whether this is represented as 8 or 16 bits
+    pub picture_id: Option<u16>,
 }
 
 /// Packetizes VP8 RTP packets.
@@ -247,6 +251,11 @@ impl Depacketizer for Vp8Depacketizer {
             discardable: self.n == 1,
             sync: self.y == 1,
             layer_index: self.tid,
+            picture_id: if self.i == 1 {
+                Some(self.picture_id)
+            } else {
+                None
+            },
         });
         Ok(())
     }

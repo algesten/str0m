@@ -77,7 +77,7 @@ pub struct DepacketizingBuffer {
     depack: CodecDepacketizer,
     queue: VecDeque<Entry>,
     segments: Vec<(usize, usize)>,
-    last_emitted: Option<SeqNo>,
+    last_emitted: Option<(SeqNo, CodecExtra)>,
     max_time: Option<MediaTime>,
 }
 
@@ -99,7 +99,7 @@ impl DepacketizingBuffer {
         //
         // As a special case, per popular demand, if hold_back is 0, we do emit
         // out of order packets.
-        if let Some(last) = self.last_emitted {
+        if let Some((last, _)) = self.last_emitted {
             if meta.seq_no <= last && self.hold_back > 0 {
                 trace!("Drop before emitted: {} <= {}", meta.seq_no, last);
                 return;
@@ -146,9 +146,75 @@ impl DepacketizingBuffer {
         //     self.segments
         // );
 
-        let (start, stop) = self.segments.first()?;
+        let (start, stop) = *self.segments.first()?;
 
-        let contiguous = self.is_following_last(*start);
+        // depack ahead  to check the gap, even if we may not emit right away
+
+        // TODO: here we endup depacketizing the next packet multiple times if
+        // we are not emitting this could be optimized. Caching the result could
+        // be one way, but we have to be careful because the .fist()?  can
+        // change on subsequent calls as prev packets are recomposed
+        let (data, codec_extra, time, meta) = match self.depack_segment(start, stop) {
+            Ok(d) => d,
+            Err(e) => {
+                // this segment cannot be decoded correctly
+                // remove from the queue and return the error
+                let last = self.queue.get(stop).expect("entry for stop index");
+                self.last_emitted = Some((last.meta.seq_no, CodecExtra::None));
+                self.queue.drain(0..=stop);
+                return Some(Err(e));
+            }
+        };
+
+        let contiguous = 'gap: {
+            if self.is_following_last(start) {
+                break 'gap true;
+            }
+
+            let Some((seq, last_codec_extra)) = self.last_emitted else {
+                break 'gap true;
+            };
+
+            const VP8_DEPACK_OPTIMIZATION: bool = true;
+
+            match (last_codec_extra, codec_extra) {
+                (CodecExtra::Vp8(prev), CodecExtra::Vp8(next)) => {
+                    if !VP8_DEPACK_OPTIMIZATION {
+                        break 'gap false;
+                    }
+
+                    // In the case of VP8 chrome doesn't answer nacks for frames that are on
+                    // temporal layer1 Since VP8 frames are interleaved, we can tolerate a
+                    // missing frame on layer 1 that its contiguous to two frames on layer 0
+
+                    let Some(prev_pid) = prev.picture_id else {
+                        break 'gap false;
+                    };
+                    let Some(next_pid) = next.picture_id else {
+                        break 'gap false;
+                    };
+
+                    let allowed = prev.layer_index == 0
+                        && next.layer_index == 0
+                        && (prev_pid + 2 == next_pid);
+
+                    if allowed {
+                        let last = self.queue.get(stop).expect("entry for stop index");
+                        trace!(
+                            "gap allowed Seq: {} - {}, PIDs: {} - {}",
+                            seq,
+                            last.meta.seq_no,
+                            prev_pid,
+                            next_pid
+                        );
+                    }
+
+                    allowed
+                }
+                _ => false,
+            }
+        };
+
         let is_more_than_hold_back = self.segments.len() >= self.hold_back;
 
         // We prefer to just release samples because they are following the last emitted.
@@ -158,28 +224,12 @@ impl DepacketizingBuffer {
             return None;
         }
 
-        let mut data = Vec::new();
-        let mut codec_extra = CodecExtra::None;
-
-        let time = self.queue.get(*start).expect("first index exist").meta.time;
-        let mut meta = Vec::with_capacity(stop - start + 1);
-
-        for entry in self.queue.range_mut(*start..=*stop) {
-            if let Err(e) = self
-                .depack
-                .depacketize(&entry.data, &mut data, &mut codec_extra)
-            {
-                return Some(Err(e));
-            }
-            meta.push(entry.meta.clone());
-        }
-
-        let last = self.queue.get(*stop).expect("entry for stop index");
-        self.last_emitted = Some(last.meta.seq_no);
+        let last = self.queue.get(stop).expect("entry for stop index");
+        self.last_emitted = Some((last.meta.seq_no, codec_extra));
 
         // We're not going to emit samples in the incorrect order, there's no point in keeping
         // stuff before the emitted range.
-        self.queue.drain(0..=*stop);
+        self.queue.drain(0..=stop);
 
         let dep = Depacketized {
             time,
@@ -189,6 +239,31 @@ impl DepacketizingBuffer {
             codec_extra,
         };
         Some(Ok(dep))
+    }
+
+    fn depack_segment(
+        &mut self,
+        start: usize,
+        stop: usize,
+    ) -> Result<(Vec<u8>, CodecExtra, MediaTime, Vec<RtpMeta>), PacketError> {
+        let mut data = Vec::new();
+        let mut codec_extra = CodecExtra::None;
+
+        let time = self.queue.get(start).expect("first index exist").meta.time;
+        let mut meta = Vec::with_capacity(stop - start + 1);
+
+        for entry in self.queue.range_mut(start..=stop) {
+            if let Err(e) = self
+                .depack
+                .depacketize(&entry.data, &mut data, &mut codec_extra)
+            {
+                println!("depacketize error: {} {}", start, stop);
+                return Err(e);
+            }
+            meta.push(entry.meta.clone());
+        }
+
+        Ok((data, codec_extra, time, meta))
     }
 
     fn update_segments(&mut self) -> Option<(usize, usize)> {
@@ -248,7 +323,7 @@ impl DepacketizingBuffer {
     }
 
     fn is_following_last(&self, start: usize) -> bool {
-        let Some(last) = self.last_emitted else {
+        let Some((last, _)) = self.last_emitted else {
             // First time we emit something.
             return true;
         };
