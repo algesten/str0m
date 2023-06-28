@@ -5,7 +5,7 @@ use crate::rtp::{Nack, NackEntry, ReceptionReport, ReportList, SeqNo};
 const MAX_DROPOUT: u64 = 3000;
 const MAX_MISORDER: u64 = 100;
 const MIN_SEQUENTIAL: u64 = 2;
-const MISORDER_DELAY: u64 = 4;
+const MISORDER_DELAY: u64 = 1;
 
 #[derive(Debug)]
 pub struct ReceiverRegister {

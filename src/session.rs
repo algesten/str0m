@@ -22,7 +22,7 @@ use super::{MediaInner, PolledPacket};
 /// Minimum time we delay between sending nacks. This should be
 /// set high enough to not cause additional problems in very bad
 /// network conditions.
-const NACK_MIN_INTERVAL: Duration = Duration::from_millis(100);
+const NACK_MIN_INTERVAL: Duration = Duration::from_millis(33);
 
 /// Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(100);
