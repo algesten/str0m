@@ -202,7 +202,7 @@ impl DepacketizingBuffer {
                     if allowed {
                         let last = self.queue.get(stop).expect("entry for stop index");
                         trace!(
-                            "gap allowed Seq: {} - {}, PIDs: {} - {}",
+                            "Depack gap allowed for Seq: {} - {}, PIDs: {} - {}",
                             last_seq,
                             last.meta.seq_no,
                             prev_pid,
