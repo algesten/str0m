@@ -21,7 +21,7 @@ pub(crate) struct StatsSnapshot {
     pub peer_rx: u64,
     pub tx: u64,
     pub rx: u64,
-    pub egress_loss_ratio: Option<f32>,
+    pub egress_loss_fraction: Option<f32>,
     pub ingress_loss_fraction: Option<f32>,
     pub ingress: HashMap<(Mid, Option<Rid>), MediaIngressStats>,
     pub egress: HashMap<(Mid, Option<Rid>), MediaEgressStats>,
@@ -36,7 +36,7 @@ impl StatsSnapshot {
             peer_tx: 0,
             tx: 0,
             rx: 0,
-            egress_loss_ratio: None,
+            egress_loss_fraction: None,
             ingress_loss_fraction: None,
             ingress: HashMap::new(),
             egress: HashMap::new(),
@@ -192,7 +192,7 @@ impl Stats {
             bytes_tx: snapshot.tx,
             timestamp: snapshot.timestamp,
             bwe_tx: snapshot.bwe_tx,
-            egress_loss_fraction: snapshot.egress_loss_ratio,
+            egress_loss_fraction: snapshot.egress_loss_fraction,
             ingress_loss_fraction: snapshot.ingress_loss_fraction,
         };
 
