@@ -756,7 +756,7 @@ mod test {
             reg.update_seq((*i).into());
         }
         assert!(reg.nack_reports().is_empty());
-        assert_eq!(reg.nack_check_from, 125.into());
+        assert_eq!(reg.nack_check_from, (129 - MISORDER_DELAY).into());
     }
 
     #[test]
@@ -768,7 +768,7 @@ mod test {
             reg.update_seq((*i).into());
         }
         assert!(reg.nack_reports().is_empty());
-        assert_eq!(reg.nack_check_from, 101.into());
+        assert_eq!(reg.nack_check_from, (105 - MISORDER_DELAY).into());
 
         for i in &[
             106, 108, 109, 110, 111, 112, 113, 114, 115, //
@@ -785,7 +785,7 @@ mod test {
             nacks.is_empty(),
             "Expected no NACKs to be generated after repairing the stream, got {nacks:?}"
         );
-        assert_eq!(reg.nack_check_from, 111.into());
+        assert_eq!(reg.nack_check_from, (115 - MISORDER_DELAY).into());
     }
 
     #[test]
@@ -797,7 +797,7 @@ mod test {
             reg.update_seq((*i).into());
         }
         assert!(reg.nack_reports().is_empty());
-        assert_eq!(reg.nack_check_from, 101.into());
+        assert_eq!(reg.nack_check_from, (105 - MISORDER_DELAY).into());
 
         for i in &[
             106, 108, 109, 110, 111, 112, 113, 114, 115, //
@@ -809,12 +809,12 @@ mod test {
 
         reg.update_seq(107.into()); // Got 107 via RTX
 
-        assert_eq!(reg.nack_check_from, 111.into());
+        assert_eq!(reg.nack_check_from, (115 - MISORDER_DELAY).into());
 
         for i in 116..3106 {
             reg.update_seq(i.into());
         }
-        assert_eq!(reg.nack_check_from, 3101.into());
+        assert_eq!(reg.nack_check_from, (3105 - MISORDER_DELAY).into());
 
         for i in &[
             106, 108, 109, 110, 111, 112, 113, 114, 115, //
@@ -848,13 +848,13 @@ mod test {
     }
 
     #[test]
-    fn nack_check_forward_at_boundary() {
+    fn nack_check_forward_at_boukdary() {
         let mut reg = ReceiverRegister::new(2996.into());
         for i in 2996..=3003 {
             reg.update_seq((i).into());
         }
         assert!(reg.nack_reports().is_empty());
-        assert_eq!(reg.nack_check_from, 2999.into());
+        assert_eq!(reg.nack_check_from, (3003 - MISORDER_DELAY).into());
 
         for i in 3004..=3008 {
             reg.update_seq((i).into());
@@ -862,7 +862,7 @@ mod test {
 
         let nacks = reg.nack_reports();
         assert!(nacks.is_empty(), "Expected empty NACKs got {nacks:?}");
-        assert_eq!(reg.nack_check_from, 3004.into());
+        assert_eq!(reg.nack_check_from, (3008 - MISORDER_DELAY).into());
     }
 
     #[test]
@@ -872,7 +872,7 @@ mod test {
             reg.update_seq((i).into());
         }
         assert!(reg.nack_reports().is_empty());
-        assert_eq!(reg.nack_check_from, 65530.into());
+        assert_eq!(reg.nack_check_from, (65534 - MISORDER_DELAY).into());
 
         for i in 65536..=65566 {
             reg.update_seq((i).into());
@@ -888,7 +888,7 @@ mod test {
         reg.update_seq(65535.into());
 
         assert!(reg.nack_reports().is_empty());
-        assert_eq!(reg.nack_check_from, 65662.into());
+        assert_eq!(reg.nack_check_from, (65666 - MISORDER_DELAY).into());
     }
 
     #[test]
