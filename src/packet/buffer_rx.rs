@@ -3,7 +3,10 @@ use std::fmt;
 use std::ops::RangeInclusive;
 use std::time::Instant;
 
-use crate::rtp::{ExtensionValues, MediaTime, RtpHeader, SeqNo};
+use crate::{
+    change::DirectApi,
+    rtp::{ExtensionValues, MediaTime, RtpHeader, SeqNo},
+};
 
 use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError};
 
@@ -167,54 +170,7 @@ impl DepacketizingBuffer {
             }
         };
 
-        let contiguous = 'contig: {
-            if self.is_following_last(start) {
-                break 'contig true;
-            }
-
-            let Some((last_seq, last_codec_extra)) = self.last_emitted else {
-                break 'contig true;
-            };
-
-            const VP8_DEPACK_OPTIMIZATION: bool = true;
-
-            match (last_codec_extra, dep.codec_extra) {
-                (CodecExtra::Vp8(prev), CodecExtra::Vp8(next)) => {
-                    if !VP8_DEPACK_OPTIMIZATION {
-                        break 'contig false;
-                    }
-
-                    // In the case of VP8 chrome doesn't answer nacks for frames that are on
-                    // temporal layer1 Since VP8 frames are interleaved, we can tolerate a
-                    // missing frame on layer 1 that its contiguous to two frames on layer 0
-
-                    let Some(prev_pid) = prev.picture_id else {
-                        break 'contig false;
-                    };
-                    let Some(next_pid) = next.picture_id else {
-                        break 'contig false;
-                    };
-
-                    let allowed = prev.layer_index == 0
-                        && next.layer_index == 0
-                        && (prev_pid + 2 == next_pid);
-
-                    if allowed {
-                        let last = self.queue.get(stop).expect("entry for stop index");
-                        trace!(
-                            "Depack gap allowed for Seq: {} - {}, PIDs: {} - {}",
-                            last_seq,
-                            last.meta.seq_no,
-                            prev_pid,
-                            next_pid
-                        );
-                    }
-
-                    allowed
-                }
-                _ => false,
-            }
-        };
+        let contiguous = self.contiguous(start, stop, &dep);
 
         let is_more_than_hold_back = self.segments.len() >= self.hold_back;
 
@@ -235,6 +191,48 @@ impl DepacketizingBuffer {
         self.queue.drain(0..=stop);
 
         Some(Ok(dep))
+    }
+
+    fn contiguous(&self, start: usize, stop: usize, dep: &Depacketized) -> bool {
+        if self.is_following_last(start) {
+            return true;
+        }
+
+        let Some((last_seq, last_codec_extra)) = self.last_emitted else {
+            return true;
+        };
+
+        match (last_codec_extra, dep.codec_extra) {
+            (CodecExtra::Vp8(prev), CodecExtra::Vp8(next)) => {
+                // In the case of VP8 chrome doesn't answer nacks for frames that are on
+                // temporal layer1 Since VP8 frames are interleaved, we can tolerate a
+                // missing frame on layer 1 that its contiguous to two frames on layer 0
+
+                let Some(prev_pid) = prev.picture_id else {
+                        return false;
+                    };
+                let Some(next_pid) = next.picture_id else {
+                        return false;
+                    };
+
+                let allowed =
+                    prev.layer_index == 0 && next.layer_index == 0 && (prev_pid + 2 == next_pid);
+
+                if allowed {
+                    let last = self.queue.get(stop).expect("entry for stop index");
+                    trace!(
+                        "Depack gap allowed for Seq: {} - {}, PIDs: {} - {}",
+                        last_seq,
+                        last.meta.seq_no,
+                        prev_pid,
+                        next_pid
+                    );
+                }
+
+                allowed
+            }
+            _ => false,
+        }
     }
 
     fn depacketize(
