@@ -1168,7 +1168,10 @@ impl TwccSendRegister {
             .queue
             .iter()
             .rev()
-            .skip_while(|s| s.recv_report.is_none())
+            // If there's ingress loss but no egress loss, there's a chance the TWCC reports
+            // themselves are lost. In this case considering packets that haven't been reported as
+            // lost will incorrectly conclude that there is in fact egress loss.
+            .filter(|s| s.recv_report.is_some())
             .take_while(|s| s.local_send_time >= lower_bound);
 
         let (total, lost) = packets.fold((0, 0), |(total, lost), s| {
