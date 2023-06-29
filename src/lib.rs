@@ -766,6 +766,8 @@ pub enum Input<'a> {
 }
 
 /// Output produced by [`Rtc::poll_output()`]
+
+#[allow(clippy::large_enum_variant)]
 pub enum Output {
     /// When the [`Rtc`] instance expects an [`Input::Timeout`].
     Timeout(Instant),
