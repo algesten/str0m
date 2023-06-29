@@ -516,7 +516,8 @@ use ice::IceAgent;
 use ice::IceAgentEvent;
 use ice::IceCreds;
 use io::DatagramRecv;
-use rtp::{Extension, ExtensionMap, InstantExt, Ssrc};
+use rtp::{Extension, ExtensionMap, InstantExt, RtpHeader, Ssrc};
+use rtp_api::RtpApi;
 use sctp::{RtcSctp, SctpEvent};
 
 use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent};
@@ -562,6 +563,8 @@ use session::{MediaEvent, Session};
 use crate::stats::StatsSnapshot;
 
 pub mod stats;
+
+mod rtp_api;
 
 /// Errors for the whole Rtc engine.
 #[derive(Debug, Error)]
@@ -754,6 +757,19 @@ pub enum Event {
 
     /// A new estimate from the bandwidth estimation subsystem.
     EgressBitrateEstimate(Bitrate),
+
+    /// Incoming RTP data when in RTP mode.
+    RtpModeData(RtpModeData),
+}
+
+/// Event for incoming RTP packets when in RTP mode.
+#[derive(Debug)]
+pub struct RtpModeData {
+    /// The parsed header.
+    pub header: RtpHeader,
+
+    /// The actual RTP packet including the header.
+    pub data: Vec<u8>,
 }
 
 /// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.
@@ -957,6 +973,17 @@ impl Rtc {
     /// This is a low level API. For "normal" use via SDP, see [`Rtc::sdp_api()`].
     pub fn direct_api(&mut self) -> DirectApi {
         DirectApi::new(self)
+    }
+
+    /// API for accessing RTP writers directly without going via Media.
+    ///
+    /// Only available in rtp_mode and when ICE/DTLS is connected.
+    pub fn rtp_api(&mut self) -> Option<RtpApi> {
+        if self.session.rtp_mode && self.is_connected() {
+            Some(RtpApi(self))
+        } else {
+            None
+        }
     }
 
     fn init_dtls(&mut self, active: bool) -> Result<(), RtcError> {

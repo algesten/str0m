@@ -90,7 +90,7 @@ pub(crate) struct Session {
     pub ice_lite: bool,
 
     /// Whether we are running in RTP-mode.
-    rtp_mode: bool,
+    pub rtp_mode: bool,
 }
 
 #[allow(clippy::large_enum_variant)]
