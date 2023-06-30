@@ -409,12 +409,11 @@ impl RtxCache {
 
     fn get_cached_packet_smaller_than(&self, max_size: usize) -> Option<(SeqNo, &Packetized)> {
         let quantized_size = max_size / RTX_CACHE_SIZE_QUANTIZER;
-        let seq_no = self
+        let seq_no = *self
             .seq_no_by_quantized_size
             .range(..quantized_size)
             .next_back()?
-            .1
-            .clone();
+            .1;
         Some((seq_no, self.get_cached_packet_by_seq_no(seq_no)?))
     }
 
@@ -443,7 +442,7 @@ impl RtxCache {
         if self.packet_by_seq_no.len() > self.max_packet_count {
             let first_seq_no = self.packet_by_seq_no.keys().next()?;
             // Too old because of max_packet_count.
-            return Some(first_seq_no.clone());
+            return Some(*first_seq_no);
         }
         // If the max_packet_age is so old that checked_sub returns None, we shouldn't remove based on max_packet_age.
         let min_queued_at = now.checked_sub(self.max_packet_age)?;
@@ -451,7 +450,7 @@ impl RtxCache {
         let (first_seq_no, first_packet) = self.packet_by_seq_no.iter().next()?;
         if first_packet.queued_at <= min_queued_at {
             // Too old because of max_packet_age
-            return Some(first_seq_no.clone());
+            return Some(*first_seq_no);
         }
         None
     }
