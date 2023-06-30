@@ -225,6 +225,9 @@ pub struct TwccRecvRegister {
 
     /// Counter that increases by one for each report generated.
     generated_reports: u64,
+
+    /// Data to calculate received loss.
+    receive_window: ReceiveWindow,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -242,6 +245,7 @@ impl TwccRecvRegister {
             interims: VecDeque::new(),
             time_start: None,
             generated_reports: 0,
+            receive_window: ReceiveWindow::default(),
         }
     }
 
@@ -254,6 +258,8 @@ impl TwccRecvRegister {
     }
 
     pub fn update_seq(&mut self, seq: SeqNo, time: Instant) {
+        self.receive_window.record_seq(seq);
+
         match self.queue.binary_search_by_key(&seq, |r| r.seq) {
             Ok(_) => {
                 // Exact same SeqNo found. This is an error where the sender potentially
@@ -447,6 +453,29 @@ impl TwccRecvRegister {
     pub fn has_unreported(&self) -> bool {
         self.queue.len() > self.report_from
     }
+
+    /// Calculate the fraction of lost packets since the last call.
+    ///
+    /// To get periodic stats call this method at fixed intervals.
+    pub fn loss(&mut self) -> Option<f32> {
+        // Based on the algorithm described in
+        // [RFC 3550 Appendix A](https://www.rfc-editor.org/rfc/rfc3550#appendix-A.3), but instead
+        // of applying it to an individual RTP stream it's applied to the whole session using TWCC
+        // sequence numbers rather than RTP sequence numbers.
+        let max_seq = self.receive_window.max_seq?;
+        let base_seq = self.receive_window.base_seq?;
+        let expected = *max_seq - *base_seq + 1_u64;
+
+        let expected_interval = expected - self.receive_window.expected_prior;
+        self.receive_window.expected_prior = expected;
+
+        let received_interval = self.receive_window.received - self.receive_window.received_prior;
+        self.receive_window.received_prior = self.receive_window.received;
+
+        let lost_interval = expected_interval.saturating_sub(received_interval);
+
+        (expected_interval != 0).then_some(lost_interval as f32 / expected_interval as f32)
+    }
 }
 
 /// Interims are deltas between `Receiption` which is an intermediary format before
@@ -508,6 +537,35 @@ fn build_interims(
 enum ChunkInterim {
     Missing(u16), // max 2^13 (one run length)
     Received(usize, PacketStatus, i16),
+}
+
+#[derive(Debug, Default)]
+struct ReceiveWindow {
+    /// The base seq num, set on the first receive.
+    base_seq: Option<SeqNo>,
+
+    /// The large seq num received.
+    max_seq: Option<SeqNo>,
+
+    /// The previous number of packets expected, used to calculate a delta for loss.
+    expected_prior: u64,
+
+    /// The total number of packets received
+    received: u64,
+
+    /// The previous number of packets received, used to calculate a delta for loss.
+    received_prior: u64,
+}
+
+impl ReceiveWindow {
+    fn record_seq(&mut self, seq: SeqNo) {
+        if self.base_seq.is_none() {
+            self.base_seq = Some(seq);
+        }
+
+        self.received += 1;
+        self.max_seq = self.max_seq.max(Some(seq));
+    }
 }
 
 impl ChunkInterim {
@@ -1095,6 +1153,42 @@ impl TwccSendRegister {
         let index = self.queue.binary_search_by_key(&seq, |r| r.seq).ok()?;
 
         Some(&self.queue[index])
+    }
+
+    /// Calculate the egress loss for given time window.
+    ///
+    /// **Note:** The register only keeps a limited number of records and using `duration` values
+    /// larger than ~1-2 seconds is liable to be inaccurate since some packets sent might have already
+    /// been evicted from the register.
+    pub fn loss(&self, duration: Duration, now: Instant) -> Option<f32> {
+        // Consider only packets in the span specified by the caller
+        let lower_bound = now - duration;
+
+        let packets = self
+            .queue
+            .iter()
+            .rev()
+            // If there's ingress loss but no egress loss, there's a chance the TWCC reports
+            // themselves are lost. In this case considering packets that haven't been reported as
+            // lost will incorrectly conclude that there is in fact egress loss.
+            .filter(|s| s.recv_report.is_some())
+            .take_while(|s| s.local_send_time >= lower_bound);
+
+        let (total, lost) = packets.fold((0, 0), |(total, lost), s| {
+            let was_lost = s
+                .recv_report
+                .as_ref()
+                .map(|rr| rr.remote_recv_time.is_none())
+                .unwrap_or(true);
+
+            (total + 1, lost + u64::from(was_lost))
+        });
+
+        if total == 0 {
+            return None;
+        }
+
+        Some((lost as f32) / (total as f32))
     }
 
     /// Get all send records in a range.
@@ -1810,5 +1904,84 @@ mod test {
             iter.map(|r| *r.seq).collect::<Vec<_>>(),
             vec![0, 1, 2, 3, 4, 5, 6, 7]
         );
+    }
+
+    #[test]
+    fn test_twcc_send_register_loss() {
+        let mut reg = TwccSendRegister::new(25);
+        let mut now = Instant::now();
+        for i in 0..9 {
+            reg.register_seq(i.into(), now, 0);
+            now = now + Duration::from_millis(15);
+        }
+
+        now = now + Duration::from_millis(5);
+        reg.apply_report(
+            Twcc {
+                sender_ssrc: Ssrc::new(),
+                ssrc: Ssrc::new(),
+                base_seq: 0,
+                status_count: 9,
+                reference_time: 35,
+                feedback_count: 0,
+                chunks: [
+                    PacketChunk::VectorDouble(0b11_01_01_01_00_01_00_01, 7),
+                    PacketChunk::Run(PacketStatus::ReceivedSmallDelta, 2),
+                ]
+                .into(),
+                delta: [
+                    Delta::Small(10),
+                    Delta::Small(10),
+                    Delta::Small(10),
+                    Delta::Small(10),
+                    Delta::Small(10),
+                    Delta::Small(10),
+                    Delta::Small(10),
+                ]
+                .into(),
+            },
+            now,
+        )
+        .expect("apply_report to return Some(_)");
+
+        now = now + Duration::from_millis(20);
+        let loss = reg
+            .loss(Duration::from_millis(150), now)
+            .expect("Should be able to calcualte loss");
+
+        let pct = (loss * 100.0).floor() as u32;
+
+        assert_eq!(
+            pct, 25,
+            "The loss percentage should be 25 as 2 out of 8 packets are lost"
+        );
+    }
+
+    #[test]
+    fn test_twcc_recv_register_loss() {
+        let mut reg = TwccRecvRegister::new(25);
+        let mut now = Instant::now();
+
+        for i in 0..10 {
+            if i == 3 || i == 7 {
+                // simulate loss
+                continue;
+            }
+            reg.update_seq(i.into(), now);
+            now = now + Duration::from_millis(50);
+        }
+
+        assert_eq!(reg.loss(), Some(2.0 / 10.0));
+
+        for i in 10..20 {
+            if i == 11 || i == 13 || i == 15 || i == 17 {
+                // simulate loss
+                continue;
+            }
+            reg.update_seq(i.into(), now);
+            now = now + Duration::from_millis(50);
+        }
+
+        assert_eq!(reg.loss(), Some(4.0 / 10.0));
     }
 }
