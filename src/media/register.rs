@@ -318,7 +318,7 @@ impl ReceiverRegister {
         let start = *self.nack_check_from;
         // MISORDER_DELAY gives us a "grace period" of receiving packets out of
         // order without reporting it as a NACK straight away.
-        let stop = *self.max_seq - MISORDER_DELAY;
+        let stop = (*self.max_seq).saturating_sub(MISORDER_DELAY);
 
         if stop < start {
             return false;
@@ -341,7 +341,7 @@ impl ReceiverRegister {
         let start = *self.nack_check_from;
         // MISORDER_DELAY gives us a "grace period" of receiving packets out of
         // order without reporting it as a NACK straight away.
-        let stop = *self.max_seq - MISORDER_DELAY;
+        let stop = (*self.max_seq).saturating_sub(MISORDER_DELAY);
         let u16max = u16::MAX as u64 + 1_u64;
 
         if stop < start {
