@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::change::AddMedia;
@@ -118,6 +118,9 @@ pub(crate) struct MediaInner {
     /// individual RTP data payload ready to send.
     buffers_tx: HashMap<Pt, PacketizingBuffer>,
 
+    /// Cached packets used to respond to NACKs.
+    rtx_cache_by_ssrc: HashMap<Ssrc, RtxCache>,
+
     /// Queued resends.
     ///
     /// These have been scheduled via nacks.
@@ -187,11 +190,11 @@ enum Padding {
     Spurious(Resend),
 }
 
-struct NextPacket<'a> {
+struct NextPacket {
     pt: Pt,
     ssrc: Ssrc,
     seq_no: SeqNo,
-    body: NextPacketBody<'a>,
+    body: NextPacketBody,
 }
 
 #[derive(Debug)]
@@ -202,12 +205,12 @@ struct ToPacketize {
     rtp_mode_header: Option<RtpHeader>,
 }
 
-enum NextPacketBody<'a> {
+enum NextPacketBody {
     /// A regular packetized packet
-    Regular { pkt: &'a Packetized },
+    Regular { pkt: Packetized },
     /// A resend of a previously sent packet
     Resend {
-        pkt: &'a Packetized,
+        pkt: Packetized,
         orig_seq_no: Option<SeqNo>,
     },
     /// An blank padding packet to be generated.
@@ -313,12 +316,22 @@ impl MediaInner {
         // We don't actually want this buffer here, but it must be created before we
         // get to the do_packetize() (as part of handle_timeout).
         let _ = self.buffers_tx.entry(pt).or_insert_with(|| {
-            let max_retain = if is_audio {
+            let max_packet_count = if is_audio {
                 send_buffer_audio
             } else {
                 send_buffer_video
             };
-            PacketizingBuffer::new(codec.into(), max_retain)
+            PacketizingBuffer::new(codec.into(), max_packet_count)
+        });
+        let _ = self.rtx_cache_by_ssrc.entry(ssrc).or_insert_with(|| {
+            let max_packet_count = if is_audio {
+                send_buffer_audio
+            } else {
+                send_buffer_video
+            };
+            // TODO: Make this configurable
+            let max_packet_duration = Duration::from_secs(3);
+            RtxCache::new(max_packet_count, max_packet_duration)
         });
 
         trace!(
@@ -328,6 +341,7 @@ impl MediaInner {
         );
 
         let meta = PacketizedMeta {
+            pt,
             rtp_time,
             ssrc,
             rid,
@@ -514,6 +528,7 @@ impl MediaInner {
             body_out = &mut body_out[original_seq_len..];
         }
 
+        let cache_for_rtx = matches!(&next.body, NextPacketBody::Regular { .. });
         let body_len = match next.body {
             NextPacketBody::Regular { pkt } | NextPacketBody::Resend { pkt, .. } => {
                 let body_len = pkt.data.len();
@@ -526,6 +541,12 @@ impl MediaInner {
                     body_len + original_seq_len,
                     SRTP_BLOCK_SIZE,
                 );
+
+                if cache_for_rtx {
+                    if let Some(rtx_cache) = self.rtx_cache_by_ssrc.get_mut(&pkt.meta.ssrc) {
+                        rtx_cache.cache_sent_packet(next.seq_no, pkt, now);
+                    }
+                }
 
                 body_len + original_seq_len + pad_len
             }
@@ -552,7 +573,7 @@ impl MediaInner {
 
         Some(PolledPacket {
             header,
-            twcc_seq_no: next.seq_no,
+            seq_no: next.seq_no,
             is_padding,
             payload_size: body_len,
         })
@@ -578,22 +599,24 @@ impl MediaInner {
         self.poll_packet_resend(now, false)
     }
 
-    fn poll_packet_resend(&mut self, now: Instant, is_padding: bool) -> Option<NextPacket<'_>> {
+    fn poll_packet_resend(&mut self, now: Instant, is_padding: bool) -> Option<NextPacket> {
         if !self.resends.is_empty() {
             // Must clear cache because the loop will pop at least one resend which modifies the
             // queue state
             self.queue_state = None;
         }
 
-        let (resend, source) = loop {
+        let (resend, source, pkt) = loop {
             let resend = self.resends.pop_front()?;
 
-            // If there is no buffer for this resend, we return None. This is
+            // If there is no RTX cache for this resend, we return None. This is
             // a weird situation though, since it means the other side sent a nack for
-            // an SSRC that matched this Media, but didn't match a buffer_tx.
-            let buffer = self.buffers_tx.values().find(|p| p.ssrc() == resend.ssrc)?;
+            // an SSRC that matched this Media, but didn't match n RTX cache
+            let rtx_cache = self.rtx_cache_by_ssrc.get(&resend.ssrc)?;
 
-            let pkt = buffer.get(resend.seq_no);
+            let pkt = rtx_cache
+                .get_cached_packet_by_seq_no(resend.seq_no)
+                .cloned();
 
             // The seq_no could simply be too old to exist in the buffer, in which
             // case we will not do a resend.
@@ -608,11 +631,8 @@ impl MediaInner {
                 None => continue,
             };
 
-            break (resend, source);
+            break (resend, source, pkt);
         };
-
-        let buffer = self.buffers_tx.get_mut(&resend.pt).unwrap();
-        let pkt = buffer.get(resend.seq_no).unwrap();
 
         if !is_padding {
             source.update_packet_counts(pkt.data.len() as u64, true);
@@ -641,9 +661,9 @@ impl MediaInner {
         })
     }
 
-    fn poll_packet_regular(&mut self, now: Instant) -> Option<NextPacket<'_>> {
+    fn poll_packet_regular(&mut self, now: Instant) -> Option<NextPacket> {
         // exit via ? here is ok since that means there is nothing to send.
-        let (pt, pkt) = next_send_buffer(&self.buffers_tx)?;
+        let (pt, pkt) = pop_next_send_buffer(&mut self.buffers_tx, now)?;
 
         // Force recaching since packetizer changed.
         self.queue_state = None;
@@ -660,15 +680,6 @@ impl MediaInner {
         //  In rtp_mode, we just use the incoming sequence number.
         let wanted = pkt.rtp_mode_header.as_ref().map(|h| h.sequence_number);
         let seq_no = source.next_seq_no(now, wanted);
-
-        let buf = self
-            .buffers_tx
-            .get_mut(&pt)
-            .expect("buffer for next packet");
-
-        buf.update_next(seq_no);
-
-        let pkt = buf.take_next(now);
 
         Some(NextPacket {
             pt,
@@ -706,18 +717,15 @@ impl MediaInner {
                 }
                 Padding::Spurious(resend) => {
                     // If there is no buffer for this padding, we return None. This is
-                    // a weird situation though, since it means we queued padding for a buffer we don't
+                    // a weird situation though, since it means we queued padding for an RTX cache we don't
                     // have.
-                    let Some(buffer) = self
-                        .buffers_tx
-                        .values()
-                        .find(|p| p.ssrc() == padding.ssrc()) else {
-                            // This can happen for example case buffers were
-                            // cleared (i.e. a change of media direction)
+                    let Some(rtx_cache) = self.rtx_cache_by_ssrc.get(&padding.ssrc()) else {
                             continue;
                         };
 
-                    let pkt = buffer.get(resend.seq_no);
+                    let pkt = rtx_cache
+                        .get_cached_packet_by_seq_no(resend.seq_no)
+                        .cloned();
 
                     // The seq_no could simply be too old to exist in the buffer, in which
                     // case we will not do a resend.
@@ -780,28 +788,21 @@ impl MediaInner {
 
             // This first scope tries to send a spurious (unasked for) resend of a packet already sent.
             if pad_size > MIN_SPURIOUS_PADDING_SIZE {
-                let pt = self
-                    .buffers_tx
-                    .iter()
-                    .map(|(pt, buffer)| (pt, buffer.history_size()))
-                    .filter(|(_, size)| *size > 0)
-                    // Use the last PT i.e. the one that has the most RTX history, this is a poor
-                    // approximation for most recent sends.
-                    .max_by_key(|(_, size)| *size)
-                    .map(|(pt, _)| *pt);
+                let rtx_cache = self
+                    .rtx_cache_by_ssrc
+                    .values()
+                    .filter_map(|rtx_cache| Some((rtx_cache.last_sent_time()?, rtx_cache)))
+                    .max_by_key(|(last_sent, _rtx_cache)| last_sent.clone())
+                    .map(|(_last_sent, rtx_cache)| rtx_cache);
 
                 // If we find a pt above, we do a spurious (unasked for) resend of this packet.
-                if let Some(pt) = pt {
-                    let buffer = get_buffer_tx(&self.buffers_tx, pt)
-                        .expect("the buffer to exist as verified previously");
-
+                if let Some(rtx_cache) = rtx_cache {
                     // Find a historic packet that is smaller than this max size. The max size
                     // is a headroom since we can accept slightly larger padding than asked for.
                     let max_size = pad_size * 2;
-                    if let Some(packet) = buffer.historic_packet_smaller_than(max_size) {
-                        let seq_no = packet.seq_no.expect(
-                            "this packet to have been sent and therefore have a sequence number",
-                        );
+                    if let Some((seq_no, packet)) =
+                        rtx_cache.get_cached_packet_smaller_than(max_size)
+                    {
                         // Saturating sub because we can overflow and want to stop when that
                         // happens.
                         pad_size = pad_size.saturating_sub(packet.data.len());
@@ -811,8 +812,8 @@ impl MediaInner {
                         );
 
                         self.padding.push_back(Padding::Spurious(Resend {
-                            pt,
                             body_size: packet.data.len(),
+                            pt: packet.meta.pt,
                             ssrc: packet.meta.ssrc,
                             seq_no,
                             queued_at: now,
@@ -1158,6 +1159,12 @@ impl MediaInner {
         Some(())
     }
 
+    pub fn handle_ack(&mut self, ssrc: Ssrc, seq_no: SeqNo) {
+        if let Some(rtx_cache) = self.rtx_cache_by_ssrc.get_mut(&ssrc) {
+            rtx_cache.evict_acked_packet_by_seq_no(seq_no);
+        }
+    }
+
     pub fn enable_nack(&mut self) {
         debug!("Enable NACK feedback ({:?})", self.mid);
         self.enable_nack = true;
@@ -1271,29 +1278,24 @@ impl MediaInner {
         entries: impl Iterator<Item = NackEntry>,
         now: Instant,
     ) -> Option<()> {
-        // Figure out which packetizing buffer has been used to send the entries that been nack'ed.
-        let (pt, buffer) = self.buffers_tx.iter_mut().find(|(_, p)| p.ssrc() == ssrc)?;
+        let rtx_cache = self.rtx_cache_by_ssrc.get(&ssrc)?;
 
-        // Turning NackEntry into SeqNo we need to know a SeqNo "close by" to lengthen the 16 bit
-        // sequence number into the 64 bit we have in SeqNo.
-        let seq_no = buffer.first_seq_no()?;
-        let iter = entries.flat_map(|n| n.into_iter(seq_no));
+        let oldest_cached_seq_no = rtx_cache.oldest_cached_seq_no().unwrap_or(0.into());
+        let nacked_seq_nos = entries.flat_map(|entry| entry.into_iter(oldest_cached_seq_no));
 
         // Invalidate cached queue_state.
         self.queue_state = None;
 
         // Schedule all resends. They will be handled on next poll_packet
-        for seq_no in iter {
-            // This keeps the TotalQueue updated in the buffer so the QueueState will
-            // account for resends.
-            let Some(pkt) = buffer.get(seq_no) else {
+        for nacked_seq_no in nacked_seq_nos {
+            let Some(pkt) = rtx_cache.get_cached_packet_by_seq_no(nacked_seq_no) else {
                 continue;
             };
 
             let resend = Resend {
                 ssrc,
-                pt: *pt,
-                seq_no,
+                pt: pkt.meta.pt,
+                seq_no: nacked_seq_no,
                 body_size: pkt.data.len(),
                 queued_at: now,
             };
@@ -1305,6 +1307,7 @@ impl MediaInner {
 
     pub fn clear_send_buffers(&mut self) {
         self.buffers_tx.clear();
+        self.rtx_cache_by_ssrc.clear();
     }
 
     pub fn clear_receive_buffers(&mut self) {
@@ -1431,7 +1434,7 @@ impl MediaInner {
 
 pub struct PolledPacket {
     pub header: RtpHeader,
-    pub twcc_seq_no: SeqNo,
+    pub seq_no: SeqNo,
     pub is_padding: bool,
     pub payload_size: usize,
 }
@@ -1441,7 +1444,7 @@ fn pt_rtx(params: &[PayloadParams], pt: Pt) -> Option<Pt> {
     params.iter().find(|p| p.pt() == pt)?.resend
 }
 
-impl<'a> NextPacketBody<'a> {
+impl NextPacketBody {
     fn timestamp(&self) -> u32 {
         use NextPacketBody::*;
         match self {
@@ -1515,10 +1518,12 @@ struct Resend {
     pub queued_at: Instant,
 }
 
-fn next_send_buffer(buffers_tx: &HashMap<Pt, PacketizingBuffer>) -> Option<(Pt, &Packetized)> {
+fn pop_next_send_buffer(
+    buffers_tx: &mut HashMap<Pt, PacketizingBuffer>,
+    now: Instant,
+) -> Option<(Pt, Packetized)> {
     for (pt, buf) in buffers_tx {
-        if let Some(pkt) = buf.maybe_next() {
-            assert!(pkt.seq_no.is_none());
+        if let Some(pkt) = buf.pop_next(now) {
             return Some((*pt, pkt));
         }
     }
@@ -1545,6 +1550,7 @@ impl Default for MediaInner {
             last_regular_feedback: already_happened(),
             buffers_rx: HashMap::new(),
             buffers_tx: HashMap::new(),
+            rtx_cache_by_ssrc: HashMap::new(),
             resends: VecDeque::new(),
             padding: VecDeque::new(),
             need_open_event: true,
@@ -1629,14 +1635,6 @@ fn get_source_tx(
 }
 
 /// Separate in wait for polonius.
-fn get_buffer_tx(
-    buffers_tx: &HashMap<Pt, PacketizingBuffer>,
-    pt: Pt,
-) -> Option<&PacketizingBuffer> {
-    buffers_tx.get(&pt)
-}
-
-/// Separate in wait for polonius.
 fn get_or_create_source_tx<'a>(
     sources_tx: &'a mut Vec<SenderSource>,
     equalize_sources: &'a mut bool,
@@ -1650,5 +1648,139 @@ fn get_or_create_source_tx<'a>(
         *equalize_sources = true;
         sources_tx.push(SenderSource::new(ssrc));
         sources_tx.last_mut().unwrap()
+    }
+}
+
+#[derive(Debug)]
+pub struct RtxCache {
+    max_packet_count: usize,
+    max_packet_age: Duration,
+    packet_by_seq_no: BTreeMap<SeqNo, Packetized>,
+    seq_no_by_quantized_size: BTreeMap<usize, SeqNo>,
+    last_sent_time: Option<Instant>,
+}
+
+const RTX_CACHE_SIZE_QUANTIZER: usize = 25;
+
+impl RtxCache {
+    fn new(max_packet_count: usize, max_packet_age: Duration) -> Self {
+        Self {
+            max_packet_count,
+            max_packet_age,
+            packet_by_seq_no: BTreeMap::new(),
+            seq_no_by_quantized_size: BTreeMap::new(),
+            last_sent_time: None,
+        }
+    }
+
+    fn cache_sent_packet(&mut self, seq_no: SeqNo, packet: Packetized, now: Instant) {
+        self.packet_by_seq_no.insert(seq_no, packet);
+        self.last_sent_time = Some(now);
+        self.remove_old_packets(now);
+    }
+
+    fn evict_acked_packet_by_seq_no(&mut self, acked_seq_no: SeqNo) {
+        self.packet_by_seq_no.remove(&acked_seq_no);
+    }
+
+    fn oldest_cached_seq_no(&self) -> Option<SeqNo> {
+        self.packet_by_seq_no.keys().next().copied()
+    }
+
+    fn last_sent_time(&self) -> Option<Instant> {
+        self.last_sent_time
+    }
+
+    fn get_cached_packet_by_seq_no(&self, seq_no: SeqNo) -> Option<&Packetized> {
+        self.packet_by_seq_no.get(&seq_no)
+    }
+
+    fn get_cached_packet_smaller_than(&self, max_size: usize) -> Option<(SeqNo, &Packetized)> {
+        let quantized_size = max_size / RTX_CACHE_SIZE_QUANTIZER;
+        let seq_no = self
+            .seq_no_by_quantized_size
+            .range(..=quantized_size)
+            .next_back()?
+            .1
+            .clone();
+        Some((seq_no, self.get_cached_packet_by_seq_no(seq_no)?))
+    }
+
+    fn remove_old_packets(&mut self, now: Instant) {
+        // TODO: test which is faster.
+        const BATCH_MODE: bool = false;
+        if BATCH_MODE {
+            if let Some(first_seq_no_thats_not_too_old) =
+                self.find_first_seq_no_thats_not_too_old(now)
+            {
+                if let Some(first_seq_no_thats_not_too_old) = first_seq_no_thats_not_too_old {
+                    self.packet_by_seq_no = self
+                        .packet_by_seq_no
+                        .split_off(&first_seq_no_thats_not_too_old);
+                } else {
+                    // They are all too old
+                    self.packet_by_seq_no.clear();
+                }
+            }
+        } else {
+            while let Some(first_seq_no_thats_too_old) = self.find_first_seq_no_thats_too_old(now) {
+                self.packet_by_seq_no.remove(&first_seq_no_thats_too_old);
+            }
+        }
+    }
+
+    fn find_first_seq_no_thats_too_old(&self, now: Instant) -> Option<SeqNo> {
+        if self.packet_by_seq_no.len() > self.max_packet_count {
+            let first_seq_no = self.packet_by_seq_no.keys().next()?;
+            // Too old because of max_packet_count.
+            return Some(first_seq_no.clone());
+        }
+        // If the max_packet_age is so old that checked_sub returns None, we shouldn't remove based on max_packet_age.
+        let min_queued_at = now.checked_sub(self.max_packet_age)?;
+
+        let (first_seq_no, first_packet) = self.packet_by_seq_no.iter().next()?;
+        if first_packet.queued_at < min_queued_at {
+            // Too old because of max_packet_age
+            return Some(first_seq_no.clone());
+        }
+        None
+    }
+
+    // None == nothing is too old
+    // Some(None) == everything is too old
+    // Some(Some(seq_no)) == everything before this is too old
+    fn find_first_seq_no_thats_not_too_old(&self, now: Instant) -> Option<Option<SeqNo>> {
+        let too_many_packets_count = self
+            .packet_by_seq_no
+            .len()
+            .saturating_sub(self.max_packet_count);
+        if too_many_packets_count > 0 {
+            return Some(
+                self.packet_by_seq_no
+                    .keys()
+                    .nth(too_many_packets_count)
+                    .cloned(),
+            );
+        }
+
+        // If the max_packet_age is so old that checked_sub returns None, we shouldn't remove based on max_packet_age.
+        let min_queued_at = now.checked_sub(self.max_packet_age)?;
+
+        // There is no packet, so I guess we'll clear it.  But that's a no-op anyway.
+        let Some(first_packet) = self.packet_by_seq_no.values().next() else {
+            return Some(None)
+        };
+
+        if first_packet.queued_at < min_queued_at {
+            return Some(
+                self.packet_by_seq_no
+                    .iter()
+                    .find(|(_, packet)| packet.queued_at >= min_queued_at)
+                    .map(|(seq_no, _packet)| seq_no)
+                    .cloned(),
+            );
+        }
+
+        None
     }
 }

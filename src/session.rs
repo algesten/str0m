@@ -547,10 +547,20 @@ impl Session {
             if let RtcpFb::Twcc(twcc) = fb {
                 debug!("Handle TWCC: {:?}", twcc);
                 let range = self.twcc_tx_register.apply_report(twcc, now);
-
+                if let Some(range) = &range {
+                    if let Some(records) = self.twcc_tx_register.send_records(range.clone()) {
+                        for record in records {
+                            // TODO: Make the rtx_cache lookup faster.
+                            if let Some(media) =
+                                self.medias.iter_mut().find(|m| m.has_ssrc_tx(record.ssrc))
+                            {
+                                media.handle_ack(record.ssrc, record.rtp_seq_no);
+                            }
+                        }
+                    }
+                }
                 if let Some(bwe) = &mut self.bwe {
                     let records = range.and_then(|range| self.twcc_tx_register.send_records(range));
-
                     if let Some(records) = records {
                         bwe.update(records, now);
                     }
@@ -741,7 +751,7 @@ impl Session {
         if let Some(polled_packet) = media.poll_packet(now, &self.exts, &mut self.twcc, buf) {
             let PolledPacket {
                 header,
-                twcc_seq_no,
+                seq_no: rtp_seq_no,
                 is_padding,
                 payload_size,
             } = polled_packet;
@@ -756,10 +766,15 @@ impl Session {
             }
 
             self.pacer.register_send(now, payload_size.into(), mid);
-            let protected = srtp_tx.protect_rtp(buf, &header, *twcc_seq_no);
+            let protected = srtp_tx.protect_rtp(buf, &header, *rtp_seq_no);
 
-            self.twcc_tx_register
-                .register_seq(twcc_seq.into(), now, payload_size);
+            self.twcc_tx_register.register_seq(
+                twcc_seq.into(),
+                now,
+                payload_size,
+                header.ssrc,
+                rtp_seq_no,
+            );
 
             return Some(protected.into());
         }

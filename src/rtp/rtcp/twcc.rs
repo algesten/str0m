@@ -1012,6 +1012,10 @@ pub struct TwccSendRecord {
     size: u16,
 
     recv_report: Option<TwccRecvReport>,
+
+    // For doing RTX cache eviction
+    pub ssrc: Ssrc,
+    pub rtp_seq_no: SeqNo,
 }
 
 impl TwccSendRecord {
@@ -1060,7 +1064,15 @@ impl TwccSendRegister {
         }
     }
 
-    pub fn register_seq(&mut self, seq: SeqNo, now: Instant, size: usize) {
+    pub fn register_seq(
+        &mut self,
+        seq: SeqNo,
+        now: Instant,
+        size: usize,
+        // For RTX cache eviction
+        ssrc: Ssrc,
+        rtp_seq_no: SeqNo,
+    ) {
         self.last_registered = seq;
         self.queue.push_back(TwccSendRecord {
             seq,
@@ -1070,6 +1082,9 @@ impl TwccSendRegister {
             size: size as u16,
             // The recv report, derived from TWCC feedback later.
             recv_report: None,
+            // For RTX cache eviction
+            ssrc,
+            rtp_seq_no,
         });
         while self.queue.len() > self.keep {
             self.queue.pop_front();
@@ -1709,7 +1724,7 @@ mod test {
         let mut now = Instant::now();
 
         for i in 0..50 {
-            reg.register_seq(i.into(), now, 0);
+            reg.register_seq(i.into(), now, 0, 0.into(), 0.into());
             now = now + Duration::from_micros(15);
         }
 
@@ -1862,7 +1877,7 @@ mod test {
         let mut reg = TwccSendRegister::new(25);
         let mut now = Instant::now();
         for i in 0..25 {
-            reg.register_seq(i.into(), now, 0);
+            reg.register_seq(i.into(), now, 0, 0.into(), 0.into());
             now = now + Duration::from_micros(15);
         }
 
@@ -1908,7 +1923,7 @@ mod test {
         let mut reg = TwccSendRegister::new(25);
         let mut now = Instant::now();
         for i in 0..9 {
-            reg.register_seq(i.into(), now, 0);
+            reg.register_seq(i.into(), now, 0, 0.into(), 0.into());
             now = now + Duration::from_millis(15);
         }
 
