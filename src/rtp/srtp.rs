@@ -253,7 +253,7 @@ impl SrtpContext {
 
 fn truncate_off_srtp_padding(has_padding: bool, payload: &mut Vec<u8>) -> Result<(), ()> {
     if has_padding {
-        let pad_len = payload[payload.len()-1] as usize;
+        let pad_len = payload[payload.len() - 1] as usize;
         let Some(unpadded_len) = payload.len().checked_sub(pad_len) else {
             return Err(())
         };
@@ -261,7 +261,6 @@ fn truncate_off_srtp_padding(has_padding: bool, payload: &mut Vec<u8>) -> Result
     }
     Ok(())
 }
-
 
 /// SrtpKeys created from DTLS SrtpKeyMaterial.
 #[derive(Debug)]
