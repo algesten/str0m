@@ -905,4 +905,14 @@ mod test {
         assert_eq!(reg.received, 2);
         assert_eq!(reg.packets_lost(), 1);
     }
+
+    #[test]
+    fn low_seq_no_dont_panic() {
+        let mut reg = ReceiverRegister::new(1.into());
+        reg.update_seq(2.into());
+        reg.update_seq(3.into());
+        // Don't panic.
+        let _ = reg.has_nack_report();
+        let _ = reg.create_nack_reports();
+    }
 }
