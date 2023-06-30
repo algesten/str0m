@@ -516,7 +516,7 @@ use ice::IceAgent;
 use ice::IceAgentEvent;
 use ice::IceCreds;
 use io::DatagramRecv;
-use rtp::{Extension, ExtensionMap, InstantExt, RtpHeader, Ssrc};
+use rtp::{Extension, ExtensionMap, InstantExt, RtpHeader, SeqNo, Ssrc};
 use rtp_api::RtpApi;
 use sctp::{RtcSctp, SctpEvent};
 
@@ -759,12 +759,22 @@ pub enum Event {
     EgressBitrateEstimate(Bitrate),
 
     /// Incoming RTP data when in RTP mode.
-    RtpModeData(RtpModeData),
+    RtpData(RtpData),
 }
 
 /// Event for incoming RTP packets when in RTP mode.
 #[derive(Debug)]
-pub struct RtpModeData {
+pub struct RtpData {
+    /// Extended sequence number.
+    pub seq_no: SeqNo,
+
+    /// Whether the SSRC of this packet is the first ever seen. This packet will be the only
+    /// emitted for this SSRC unless we call [`allow_stream_rx`] to "unlock" the SSRC. This
+    /// happens automatically in the case where SDP have declared the SSRC in advance, or
+    /// if the SDP have declared mid/rid that matches the header extensions of the incoming
+    /// packet.
+    pub initial: bool,
+
     /// The parsed header.
     pub header: RtpHeader,
 
