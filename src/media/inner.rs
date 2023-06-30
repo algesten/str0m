@@ -190,11 +190,11 @@ enum Padding {
     Spurious(Resend),
 }
 
-struct NextPacket {
+struct NextPacket<'a> {
     pt: Pt,
     ssrc: Ssrc,
     seq_no: SeqNo,
-    body: NextPacketBody,
+    body: NextPacketBody<'a>,
 }
 
 #[derive(Debug)]
@@ -205,12 +205,12 @@ struct ToPacketize {
     rtp_mode_header: Option<RtpHeader>,
 }
 
-enum NextPacketBody {
+enum NextPacketBody<'a> {
     /// A regular packetized packet
     Regular { pkt: Packetized },
     /// A resend of a previously sent packet
     Resend {
-        pkt: Packetized,
+        pkt: &'a Packetized,
         orig_seq_no: Option<SeqNo>,
     },
     /// An blank padding packet to be generated.
@@ -528,9 +528,9 @@ impl MediaInner {
             body_out = &mut body_out[original_seq_len..];
         }
 
-        let cache_for_rtx = matches!(&next.body, NextPacketBody::Regular { .. });
+        let seq_no = next.seq_no;
         let body_len = match next.body {
-            NextPacketBody::Regular { pkt } | NextPacketBody::Resend { pkt, .. } => {
+            NextPacketBody::Regular { pkt } => {
                 let body_len = pkt.data.len();
                 body_out[..body_len].copy_from_slice(&pkt.data);
 
@@ -542,11 +542,24 @@ impl MediaInner {
                     SRTP_BLOCK_SIZE,
                 );
 
-                if cache_for_rtx {
-                    if let Some(rtx_cache) = self.rtx_cache_by_ssrc.get_mut(&pkt.meta.ssrc) {
-                        rtx_cache.cache_sent_packet(next.seq_no, pkt, now);
-                    }
+                if let Some(rtx_cache) = self.rtx_cache_by_ssrc.get_mut(&pkt.meta.ssrc) {
+                    rtx_cache.cache_sent_packet(seq_no, pkt, now);
                 }
+
+                body_len + original_seq_len + pad_len
+            }
+            NextPacketBody::Resend { pkt, .. } => {
+                // TODO: Deduplicate this code with the above case
+                let body_len = pkt.data.len();
+                body_out[..body_len].copy_from_slice(&pkt.data);
+
+                // pad for SRTP
+                let pad_len = RtpHeader::pad_packet(
+                    &mut buf[..],
+                    header_len,
+                    body_len + original_seq_len,
+                    SRTP_BLOCK_SIZE,
+                );
 
                 body_len + original_seq_len + pad_len
             }
@@ -573,7 +586,7 @@ impl MediaInner {
 
         Some(PolledPacket {
             header,
-            seq_no: next.seq_no,
+            seq_no,
             is_padding,
             payload_size: body_len,
         })
@@ -615,8 +628,7 @@ impl MediaInner {
             let rtx_cache = self.rtx_cache_by_ssrc.get(&resend.ssrc)?;
 
             let pkt = rtx_cache
-                .get_cached_packet_by_seq_no(resend.seq_no)
-                .cloned();
+                .get_cached_packet_by_seq_no(resend.seq_no);
 
             // The seq_no could simply be too old to exist in the buffer, in which
             // case we will not do a resend.
@@ -724,8 +736,7 @@ impl MediaInner {
                         };
 
                     let pkt = rtx_cache
-                        .get_cached_packet_by_seq_no(resend.seq_no)
-                        .cloned();
+                        .get_cached_packet_by_seq_no(resend.seq_no);
 
                     // The seq_no could simply be too old to exist in the buffer, in which
                     // case we will not do a resend.
@@ -1444,7 +1455,7 @@ fn pt_rtx(params: &[PayloadParams], pt: Pt) -> Option<Pt> {
     params.iter().find(|p| p.pt() == pt)?.resend
 }
 
-impl NextPacketBody {
+impl<'a> NextPacketBody<'a> {
     fn timestamp(&self) -> u32 {
         use NextPacketBody::*;
         match self {
