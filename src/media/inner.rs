@@ -552,7 +552,7 @@ impl MediaInner {
 
         Some(PolledPacket {
             header,
-            twcc_seq_no: next.seq_no,
+            seq_no: next.seq_no,
             is_padding,
             payload_size: body_len,
         })
@@ -1431,7 +1431,7 @@ impl MediaInner {
 
 pub struct PolledPacket {
     pub header: RtpHeader,
-    pub twcc_seq_no: SeqNo,
+    pub seq_no: SeqNo,
     pub is_padding: bool,
     pub payload_size: usize,
 }

@@ -741,7 +741,7 @@ impl Session {
         if let Some(polled_packet) = media.poll_packet(now, &self.exts, &mut self.twcc, buf) {
             let PolledPacket {
                 header,
-                twcc_seq_no,
+                seq_no,
                 is_padding,
                 payload_size,
             } = polled_packet;
@@ -756,7 +756,7 @@ impl Session {
             }
 
             self.pacer.register_send(now, payload_size.into(), mid);
-            let protected = srtp_tx.protect_rtp(buf, &header, *twcc_seq_no);
+            let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
             self.twcc_tx_register
                 .register_seq(twcc_seq.into(), now, payload_size);
