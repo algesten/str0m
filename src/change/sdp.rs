@@ -60,7 +60,7 @@ impl<'a> SdpApi<'a> {
     /// // send json_answer to remote peer.
     /// let json_answer = serde_json::to_vec(&answer).unwrap();
     /// ```
-    pub fn accept_offer(mut self, offer: SdpOffer) -> Result<SdpAnswer, RtcError> {
+    pub fn accept_offer(self, offer: SdpOffer) -> Result<SdpAnswer, RtcError> {
         // Invalidate any outstanding PendingOffer.
         self.rtc.next_change_id();
 
@@ -124,7 +124,7 @@ impl<'a> SdpApi<'a> {
     /// rtc.sdp_api().accept_answer(pending, answer).unwrap();
     /// ```
     pub fn accept_answer(
-        mut self,
+        self,
         mut pending: SdpPendingOffer,
         answer: SdpAnswer,
     ) -> Result<(), RtcError> {

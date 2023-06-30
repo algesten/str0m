@@ -304,6 +304,7 @@ macro_rules! mk_extend {
     };
 }
 
+mk_extend!(extend_u8, u8);
 mk_extend!(extend_u16, u16);
 mk_extend!(extend_u32, u32);
 

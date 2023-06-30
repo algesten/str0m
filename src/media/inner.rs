@@ -321,7 +321,12 @@ impl MediaInner {
             let rtx_max_packet_count = max_retain;
             // TODO: Make max duration configurable.
             let rtx_max_duration = Duration::from_secs(3);
-            PacketizingBuffer::new(codec.into(), max_retain, rtx_max_packet_count, rtx_max_duration)
+            PacketizingBuffer::new(
+                codec.into(),
+                max_retain,
+                rtx_max_packet_count,
+                rtx_max_duration,
+            )
         });
 
         trace!(
@@ -551,7 +556,7 @@ impl MediaInner {
         if matches!(next.body, NextPacketBody::Regular { .. }) {
             if let Some(buffer_tx) = self.buffers_tx.get_mut(&pt) {
                 if let Some(pkt) = buffer_tx.take_next(now) {
-                    buffer_tx.cache_sent(seq_no, pkt, now);    
+                    buffer_tx.cache_sent(seq_no, pkt, now);
                 }
             }
         }
@@ -564,7 +569,7 @@ impl MediaInner {
 
         Some(PolledPacket {
             header,
-            twcc_seq_no: seq_no,
+            seq_no,
             is_padding,
             payload_size: body_len,
         })
@@ -672,7 +677,6 @@ impl MediaInner {
         //  In rtp_mode, we just use the incoming sequence number.
         let wanted = pkt.rtp_mode_header.as_ref().map(|h| h.sequence_number);
         let seq_no = source.next_seq_no(now, wanted);
-
 
         Some(NextPacket {
             pt,
@@ -1432,7 +1436,7 @@ impl MediaInner {
 
 pub struct PolledPacket {
     pub header: RtpHeader,
-    pub twcc_seq_no: SeqNo,
+    pub seq_no: SeqNo,
     pub is_padding: bool,
     pub payload_size: usize,
 }

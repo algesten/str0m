@@ -22,7 +22,7 @@ use super::{MediaInner, PolledPacket};
 /// Minimum time we delay between sending nacks. This should be
 /// set high enough to not cause additional problems in very bad
 /// network conditions.
-const NACK_MIN_INTERVAL: Duration = Duration::from_millis(100);
+const NACK_MIN_INTERVAL: Duration = Duration::from_millis(33);
 
 /// Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(100);
@@ -741,7 +741,7 @@ impl Session {
         if let Some(polled_packet) = media.poll_packet(now, &self.exts, &mut self.twcc, buf) {
             let PolledPacket {
                 header,
-                twcc_seq_no,
+                seq_no,
                 is_padding,
                 payload_size,
             } = polled_packet;
@@ -756,7 +756,7 @@ impl Session {
             }
 
             self.pacer.register_send(now, payload_size.into(), mid);
-            let protected = srtp_tx.protect_rtp(buf, &header, *twcc_seq_no);
+            let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
             self.twcc_tx_register
                 .register_seq(twcc_seq.into(), now, payload_size);
@@ -867,6 +867,9 @@ impl Session {
         snapshot.tx = snapshot.egress.values().map(|s| s.bytes).sum();
         snapshot.rx = snapshot.ingress.values().map(|s| s.bytes).sum();
         snapshot.bwe_tx = self.bwe.as_ref().and_then(|bwe| bwe.last_estimate());
+
+        snapshot.egress_loss_fraction = self.twcc_tx_register.loss(Duration::from_secs(1), now);
+        snapshot.ingress_loss_fraction = self.twcc_rx_register.loss();
     }
 
     pub fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {

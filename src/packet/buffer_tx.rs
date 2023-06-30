@@ -50,7 +50,12 @@ pub struct PacketizingBuffer {
 const SIZE_BUCKET: usize = 25;
 
 impl PacketizingBuffer {
-    pub(crate) fn new(pack: CodecPacketizer, max_retain: usize, max_rtx_packet_count: usize, max_rtx_duration: Duration) -> Self {
+    pub(crate) fn new(
+        pack: CodecPacketizer,
+        max_retain: usize,
+        max_rtx_packet_count: usize,
+        max_rtx_duration: Duration,
+    ) -> Self {
         // TODO: Make configurable
         let rtx_evict_in_batches = false;
         PacketizingBuffer {
@@ -213,9 +218,7 @@ impl PacketizingBuffer {
     pub fn take_next(&mut self, now: Instant) -> Option<Packetized> {
         self.total.move_time_forward(now);
 
-        let mut next = self
-            .queue
-            .remove(self.emit_next)?;
+        let mut next = self.queue.remove(self.emit_next)?;
 
         let queue_time = now - next.queued_at;
         self.total.decrease(next.data.len(), queue_time);
@@ -229,7 +232,7 @@ impl PacketizingBuffer {
     pub fn cache_sent(&mut self, seq_no: SeqNo, pkt: Packetized, now: Instant) {
         self.rtx_cache.cache_sent_packet(seq_no, pkt, now);
     }
-    
+
     pub fn get(&self, seq_no: SeqNo) -> Option<&Packetized> {
         self.rtx_cache.get_cached_packet_by_seq_no(seq_no)
     }
@@ -499,7 +502,8 @@ mod test {
     #[test]
     fn rtx_cache() {
         let epoch = Instant::now();
-        let after = |millis_since_epoch: u32| epoch + Duration::from_millis(millis_since_epoch as u64);
+        let after =
+            |millis_since_epoch: u32| epoch + Duration::from_millis(millis_since_epoch as u64);
         let packet = |millis_since_epoch: u32| Packetized {
             first: true,
             marker: false,
@@ -514,7 +518,6 @@ mod test {
             rtp_mode_header: None,
         };
 
-
         let evict_in_batches = false;
         let max_packet_count = 0;
         let max_duration = Duration::from_secs(3);
@@ -528,29 +531,53 @@ mod test {
         let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
         rtx_cache.cache_sent_packet(1.into(), packet(10), after(10));
         assert_eq!(Some(1.into()), rtx_cache.first_cached_seq_no());
-        assert_eq!(Some(&packet(10)), rtx_cache.get_cached_packet_by_seq_no(1.into()));
-        assert_eq!(Some((1.into(), &packet(10))), rtx_cache.get_cached_packet_smaller_than(1000));
-        assert_eq!(Some((1.into(), &packet(10))), rtx_cache.get_cached_packet_smaller_than(25));
+        assert_eq!(
+            Some(&packet(10)),
+            rtx_cache.get_cached_packet_by_seq_no(1.into())
+        );
+        assert_eq!(
+            Some((1.into(), &packet(10))),
+            rtx_cache.get_cached_packet_smaller_than(1000)
+        );
+        assert_eq!(
+            Some((1.into(), &packet(10))),
+            rtx_cache.get_cached_packet_smaller_than(25)
+        );
         assert_eq!(None, rtx_cache.get_cached_packet_smaller_than(24));
         rtx_cache.cache_sent_packet(2.into(), packet(20), after(20));
         assert_eq!(Some(2.into()), rtx_cache.first_cached_seq_no());
         assert_eq!(None, rtx_cache.get_cached_packet_by_seq_no(1.into()));
-        assert_eq!(Some(&packet(20)), rtx_cache.get_cached_packet_by_seq_no(2.into()));
-        assert_eq!(Some((2.into(), &packet(20))), rtx_cache.get_cached_packet_smaller_than(1000));
-        assert_eq!(Some((2.into(), &packet(20))), rtx_cache.get_cached_packet_smaller_than(25));
+        assert_eq!(
+            Some(&packet(20)),
+            rtx_cache.get_cached_packet_by_seq_no(2.into())
+        );
+        assert_eq!(
+            Some((2.into(), &packet(20))),
+            rtx_cache.get_cached_packet_smaller_than(1000)
+        );
+        assert_eq!(
+            Some((2.into(), &packet(20))),
+            rtx_cache.get_cached_packet_smaller_than(25)
+        );
         assert_eq!(None, rtx_cache.get_cached_packet_smaller_than(24));
 
         let max_packet_count = 100;
         let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
         for i in 1..=200u32 {
-            let seq_no = (201-i as u64).into();
-            let pkt = packet((201-i) * 10);
+            let seq_no = (201 - i as u64).into();
+            let pkt = packet((201 - i) * 10);
             let now = after(i * 10);
             rtx_cache.cache_sent_packet(seq_no, pkt, now);
         }
         assert_eq!(Some(101.into()), rtx_cache.first_cached_seq_no());
-        assert_eq!(Some(&packet(2000)), rtx_cache.get_cached_packet_by_seq_no(200.into()));
-        assert_eq!(Some(&packet(1010)), rtx_cache.get_cached_packet_by_seq_no(101.into()));
+        assert_eq!(
+            Some(&packet(2000)),
+            rtx_cache.get_cached_packet_by_seq_no(200.into())
+        );
+        assert_eq!(
+            Some(&packet(1010)),
+            rtx_cache.get_cached_packet_by_seq_no(101.into())
+        );
         // TODO: Make it possible to get packets by max_size even when they are sent out of order.
         // assert_eq!(Some((200.into(), &packet(2000))), rtx_cache.get_cached_packet_smaller_than(1000));
 
@@ -566,14 +593,20 @@ mod test {
         let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
         let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
         for i in 1..=200u32 {
-            let seq_no = (201-i as u64).into();
-            let pkt = packet((201-i) * 10);
+            let seq_no = (201 - i as u64).into();
+            let pkt = packet((201 - i) * 10);
             let now = after(i * 10);
             rtx_cache.cache_sent_packet(seq_no, pkt, now);
         }
         assert_eq!(Some(101.into()), rtx_cache.first_cached_seq_no());
-        assert_eq!(Some(&packet(2000)), rtx_cache.get_cached_packet_by_seq_no(200.into()));
-        assert_eq!(Some(&packet(1010)), rtx_cache.get_cached_packet_by_seq_no(101.into()));
+        assert_eq!(
+            Some(&packet(2000)),
+            rtx_cache.get_cached_packet_by_seq_no(200.into())
+        );
+        assert_eq!(
+            Some(&packet(1010)),
+            rtx_cache.get_cached_packet_by_seq_no(101.into())
+        );
 
         let evict_in_batches = true;
         let max_packet_count = 0;
@@ -588,29 +621,53 @@ mod test {
         let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
         rtx_cache.cache_sent_packet(1.into(), packet(10), after(10));
         assert_eq!(Some(1.into()), rtx_cache.first_cached_seq_no());
-        assert_eq!(Some(&packet(10)), rtx_cache.get_cached_packet_by_seq_no(1.into()));
-        assert_eq!(Some((1.into(), &packet(10))), rtx_cache.get_cached_packet_smaller_than(1000));
-        assert_eq!(Some((1.into(), &packet(10))), rtx_cache.get_cached_packet_smaller_than(25));
+        assert_eq!(
+            Some(&packet(10)),
+            rtx_cache.get_cached_packet_by_seq_no(1.into())
+        );
+        assert_eq!(
+            Some((1.into(), &packet(10))),
+            rtx_cache.get_cached_packet_smaller_than(1000)
+        );
+        assert_eq!(
+            Some((1.into(), &packet(10))),
+            rtx_cache.get_cached_packet_smaller_than(25)
+        );
         assert_eq!(None, rtx_cache.get_cached_packet_smaller_than(24));
         rtx_cache.cache_sent_packet(2.into(), packet(20), after(20));
         assert_eq!(Some(2.into()), rtx_cache.first_cached_seq_no());
         assert_eq!(None, rtx_cache.get_cached_packet_by_seq_no(1.into()));
-        assert_eq!(Some(&packet(20)), rtx_cache.get_cached_packet_by_seq_no(2.into()));
-        assert_eq!(Some((2.into(), &packet(20))), rtx_cache.get_cached_packet_smaller_than(1000));
-        assert_eq!(Some((2.into(), &packet(20))), rtx_cache.get_cached_packet_smaller_than(25));
+        assert_eq!(
+            Some(&packet(20)),
+            rtx_cache.get_cached_packet_by_seq_no(2.into())
+        );
+        assert_eq!(
+            Some((2.into(), &packet(20))),
+            rtx_cache.get_cached_packet_smaller_than(1000)
+        );
+        assert_eq!(
+            Some((2.into(), &packet(20))),
+            rtx_cache.get_cached_packet_smaller_than(25)
+        );
         assert_eq!(None, rtx_cache.get_cached_packet_smaller_than(24));
 
         let max_packet_count = 100;
         let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
         for i in 1..=200u32 {
-            let seq_no = (201-i as u64).into();
-            let pkt = packet((201-i) * 10);
+            let seq_no = (201 - i as u64).into();
+            let pkt = packet((201 - i) * 10);
             let now = after(i * 10);
             rtx_cache.cache_sent_packet(seq_no, pkt, now);
         }
         assert_eq!(Some(101.into()), rtx_cache.first_cached_seq_no());
-        assert_eq!(Some(&packet(2000)), rtx_cache.get_cached_packet_by_seq_no(200.into()));
-        assert_eq!(Some(&packet(1010)), rtx_cache.get_cached_packet_by_seq_no(101.into()));
+        assert_eq!(
+            Some(&packet(2000)),
+            rtx_cache.get_cached_packet_by_seq_no(200.into())
+        );
+        assert_eq!(
+            Some(&packet(1010)),
+            rtx_cache.get_cached_packet_by_seq_no(101.into())
+        );
         // TODO: Make it possible to get packets by max_size even when they are sent out of order.
         // assert_eq!(Some((200.into(), &packet(2000))), rtx_cache.get_cached_packet_smaller_than(1000));
 
@@ -626,13 +683,19 @@ mod test {
         let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
         let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
         for i in 1..=200u32 {
-            let seq_no = (201-i as u64).into();
-            let pkt = packet((201-i) * 10);
+            let seq_no = (201 - i as u64).into();
+            let pkt = packet((201 - i) * 10);
             let now = after(i * 10);
             rtx_cache.cache_sent_packet(seq_no, pkt, now);
         }
         assert_eq!(Some(101.into()), rtx_cache.first_cached_seq_no());
-        assert_eq!(Some(&packet(2000)), rtx_cache.get_cached_packet_by_seq_no(200.into()));
-        assert_eq!(Some(&packet(1010)), rtx_cache.get_cached_packet_by_seq_no(101.into()));
+        assert_eq!(
+            Some(&packet(2000)),
+            rtx_cache.get_cached_packet_by_seq_no(200.into())
+        );
+        assert_eq!(
+            Some(&packet(1010)),
+            rtx_cache.get_cached_packet_by_seq_no(101.into())
+        );
     }
 }
