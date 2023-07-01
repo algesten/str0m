@@ -21,7 +21,7 @@ impl<'a> RtpApi<'a> {
     /// SSRC.
     ///
     /// Can be called multiple times if the `rtx` is discovered later via RTP header extensions.
-    pub fn allow_stream_rx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>) {
+    pub fn expect_stream_rx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>) {
         todo!()
     }
 

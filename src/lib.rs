@@ -768,12 +768,17 @@ pub struct RtpData {
     /// Extended sequence number.
     pub seq_no: SeqNo,
 
-    /// Whether the SSRC of this packet is the first ever seen. This packet will be the only
-    /// emitted for this SSRC unless we call [`allow_stream_rx`] to "unlock" the SSRC. This
-    /// happens automatically in the case where SDP have declared the SSRC in advance, or
-    /// if the SDP have declared mid/rid that matches the header extensions of the incoming
-    /// packet.
-    pub initial: bool,
+    /// Whether the SSRC of this packet was expected. If a packet is not expected, this will
+    /// be the only `RtpData` event that will be emitted for the SSRC, unless we declare it as
+    /// expected. There are two ways to make incoming RTP data expected:
+    ///
+    /// 1. On media level, we can declare an expected `Mid`, `Option<Rid>` pair. If the incoming
+    ///    RTP header extensions matches such a pair, the SSRC will be "unlocked" automatically
+    ///    and no further action is needed.
+    /// 2. On the lower level we can manually call [`expect_stream_rx`] to keep receiving more
+    ///    packets for the SSRC. This allows for dynamic discovery of incoming encoded streams also in
+    ///    cases where mid/rid isn't used.
+    pub expected: bool,
 
     /// The parsed header.
     pub header: RtpHeader,
