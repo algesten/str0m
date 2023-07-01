@@ -6,6 +6,9 @@ use crate::rtp::Ssrc;
 use crate::{Rtc, RtcError};
 
 /// Wrapper for the RTP API.
+///
+/// "Streams" strictly mean "encoded stream", which is one primary SSRC + an optional RTX SSRC. For
+/// simulcast scenario, there are multiple streams that make up the entire incoming media.
 pub struct RtpApi<'a>(pub(crate) &'a mut Rtc);
 
 impl<'a> RtpApi<'a> {
