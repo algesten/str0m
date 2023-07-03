@@ -252,7 +252,7 @@ impl SrtpContext {
 }
 
 fn truncate_off_srtp_padding(has_padding: bool, payload: &mut Vec<u8>) -> Result<(), ()> {
-    if has_padding {
+    if has_padding && !payload.is_empty() {
         let pad_len = payload[payload.len() - 1] as usize;
         let Some(unpadded_len) = payload.len().checked_sub(pad_len) else {
             return Err(())
@@ -672,8 +672,10 @@ mod test {
         assert_eq!(Err(()), truncate(true, vec![1, 2, 3, 4, 255]));
         assert_eq!(Ok(vec![0]), truncate(true, vec![0]));
         assert_eq!(Ok(vec![]), truncate(true, vec![1]));
+        assert_eq!(Ok(vec![]), truncate(true, vec![]));
         assert_eq!(Ok(vec![]), truncate(false, vec![]));
         assert_eq!(Ok(vec![1]), truncate(false, vec![1]));
         assert_eq!(Ok(vec![1, 2, 3, 4]), truncate(false, vec![1, 2, 3, 4]));
+        assert_eq!(Ok(vec![]), truncate(false, vec![]));
     }
 }
