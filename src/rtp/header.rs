@@ -228,6 +228,10 @@ impl RtpHeader {
 
     /// For RTX the original sequence number is inserted before the RTP payload.
     pub fn read_original_sequence_number(buf: &[u8], seq_no: &mut u16) -> usize {
+        if buf.len() < 2 {
+            // This is not an RTX packet, probably a padding packet
+            return 0;
+        }
         *seq_no = u16::from_be_bytes([buf[0], buf[1]]);
         2
     }
