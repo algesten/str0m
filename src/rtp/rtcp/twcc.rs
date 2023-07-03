@@ -1230,7 +1230,7 @@ impl<'a> Iterator for TwccSendRecordsIter<'a> {
 
         let item = &self.queue[self.index];
         assert!(self.current == item.seq);
-        self.current = self.current.next();
+        self.current.inc();
         self.index += 1;
 
         Some(item)

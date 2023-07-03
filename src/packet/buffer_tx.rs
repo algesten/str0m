@@ -11,6 +11,7 @@ use super::ring::RingBuf;
 use super::{CodecPacketizer, PacketError, Packetizer, QueueSnapshot};
 use super::{MediaKind, QueuePriority};
 
+#[derive(PartialEq, Eq)]
 pub struct Packetized {
     pub data: Vec<u8>,
     pub first: bool,
@@ -27,7 +28,7 @@ pub struct Packetized {
     pub rtp_mode_header: Option<RtpHeader>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PacketizedMeta {
     pub rtp_time: MediaTime,
     pub ssrc: Ssrc,

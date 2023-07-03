@@ -4,20 +4,21 @@ use std::time::{Duration, Instant};
 use crate::dtls::KeyingMaterial;
 use crate::format::{Codec, CodecConfig};
 use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
-use crate::media::{MediaAdded, MediaChanged, Source};
-use crate::packet::{
-    LeakyBucketPacer, NullPacer, Pacer, PacerImpl, RtpMeta, SendSideBandwithEstimator,
-};
+use crate::media::KeyframeRequest;
+use crate::media::Media;
+use crate::media::{MediaAdded, MediaChanged};
+use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
+use crate::packet::{RtpMeta, SendSideBandwithEstimator};
+use crate::rtp::SeqNo;
 use crate::rtp::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
 use crate::rtp::{extend_u32, SRTCP_OVERHEAD};
 use crate::rtp::{Bitrate, ExtensionMap, MediaTime, Mid, Rtcp, RtcpFb};
 use crate::rtp::{SrtpContext, SrtpKey, Ssrc};
 use crate::stats::StatsSnapshot;
+use crate::streams::Streams;
 use crate::util::{already_happened, not_happening, Soonest};
-use crate::{net, KeyframeRequest, MediaData};
+use crate::{net, MediaData};
 use crate::{RtcConfig, RtcError};
-
-use super::{MediaInner, PolledPacket};
 
 /// Minimum time we delay between sending nacks. This should be
 /// set high enough to not cause additional problems in very bad
@@ -40,7 +41,10 @@ pub(crate) struct Session {
     // These fields are pub to allow session_sdp.rs modify them.
     // Notice the fields are maybe not in m-line index order since the app
     // might be spliced in somewhere.
-    medias: Vec<MediaInner>,
+    medias: Vec<Media>,
+
+    // The actual RTP encoded streams.
+    streams: Streams,
 
     /// The app m-line. Spliced into medias above.
     app: Option<(Mid, usize)>,
@@ -131,6 +135,7 @@ impl Session {
         Session {
             id,
             medias: vec![],
+            streams: Streams::default(),
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
@@ -181,14 +186,6 @@ impl Session {
         &self.app
     }
 
-    pub fn media_by_mid(&self, mid: Mid) -> Option<&MediaInner> {
-        self.medias.iter().find(|m| m.mid() == mid)
-    }
-
-    pub fn media_by_mid_mut(&mut self, mid: Mid) -> Option<&mut MediaInner> {
-        self.medias.iter_mut().find(|m| m.mid() == mid)
-    }
-
     pub fn exts(&self) -> &ExtensionMap {
         &self.exts
     }
@@ -212,9 +209,38 @@ impl Session {
     }
 
     pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
-        for m in &mut self.medias {
-            m.handle_timeout(now)?;
-        }
+        // for m in &mut self.medias {
+        //     m.maybe_create_keyframe_request(sender_ssrc, &mut self.feedback);
+        // }
+        // if now >= self.regular_feedback_at() {
+        //     for m in &mut self.medias {
+        //         m.maybe_create_regular_feedback(now, sender_ssrc, &mut self.feedback);
+        //     }
+        // }
+        // if let Some(nack_at) = self.nack_at() {
+        //     if now >= nack_at {
+        //         self.last_nack = now;
+        //         for m in &mut self.medias {
+        //             m.create_nack(sender_ssrc, &mut self.feedback);
+        //         }
+        //     }
+        // }
+        // let iter = self
+        //     .medias
+        //     .iter_mut()
+        //     .map(|m| m.buffers_tx_queue_state(now));
+
+        // if let Some(padding_request) = self.pacer.handle_timeout(now, iter) {
+        //     let media = self
+        //         .media_by_mid_mut(padding_request.mid)
+        //         .expect("media for service padding request");
+
+        //     media.generate_padding(now, padding_request.padding);
+        // }
+
+        // for m in &mut self.medias {
+        //     m.handle_timeout(now)?;
+        // }
 
         let sender_ssrc = self.first_ssrc_local();
 
@@ -224,37 +250,6 @@ impl Session {
             }
         }
 
-        for m in &mut self.medias {
-            m.maybe_create_keyframe_request(sender_ssrc, &mut self.feedback);
-        }
-
-        if now >= self.regular_feedback_at() {
-            for m in &mut self.medias {
-                m.maybe_create_regular_feedback(now, sender_ssrc, &mut self.feedback);
-            }
-        }
-
-        if let Some(nack_at) = self.nack_at() {
-            if now >= nack_at {
-                self.last_nack = now;
-                for m in &mut self.medias {
-                    m.create_nack(sender_ssrc, &mut self.feedback);
-                }
-            }
-        }
-
-        let iter = self
-            .medias
-            .iter_mut()
-            .map(|m| m.buffers_tx_queue_state(now));
-
-        if let Some(padding_request) = self.pacer.handle_timeout(now, iter) {
-            let media = self
-                .media_by_mid_mut(padding_request.mid)
-                .expect("media for service padding request");
-
-            media.generate_padding(now, padding_request.padding);
-        }
         if let Some(bwe) = self.bwe.as_mut() {
             bwe.handle_timeout(now);
         }
@@ -286,7 +281,6 @@ impl Session {
             Rtp(buf) => {
                 if let Some(header) = RtpHeader::parse(buf, &self.exts) {
                     self.handle_rtp(now, header, buf);
-                    self.equalize_sources();
                 } else {
                     trace!("Failed to parse RTP header");
                 }
@@ -349,192 +343,192 @@ impl Session {
         // }
 
         trace!("Handle RTP: {:?}", header);
-        if let Some(transport_cc) = header.ext_vals.transport_cc {
-            let prev = self.twcc_rx_register.max_seq();
-            let extended = extend_u16(Some(*prev), transport_cc);
-            self.twcc_rx_register.update_seq(extended.into(), now);
-        }
+        // if let Some(transport_cc) = header.ext_vals.transport_cc {
+        //     let prev = self.twcc_rx_register.max_seq();
+        //     let extended = extend_u16(Some(*prev), transport_cc);
+        //     self.twcc_rx_register.update_seq(extended.into(), now);
+        // }
 
-        // Look up mid/ssrc for this header.
-        let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(&header) else {
-            trace!("Unable to map RTP header to media: {:?}", header);
-            return;
-        };
+        // // Look up mid/ssrc for this header.
+        // let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(&header) else {
+        //     trace!("Unable to map RTP header to media: {:?}", header);
+        //     return;
+        // };
 
-        // mid_and_ssrc_for_header guarantees media for this mid exists.
-        let media = self
-            .medias
-            .iter_mut()
-            .find(|m| m.mid() == mid)
-            .expect("media for mid");
+        // // mid_and_ssrc_for_header guarantees media for this mid exists.
+        // let media = self
+        //     .medias
+        //     .iter_mut()
+        //     .find(|m| m.mid() == mid)
+        //     .expect("media for mid");
 
-        let srtp = match self.srtp_rx.as_mut() {
-            Some(v) => v,
-            None => {
-                trace!("Rejecting SRTP while missing SrtpContext");
-                return;
-            }
-        };
-        let clock_rate = match media.get_params(header.payload_type) {
-            Some(v) => v.spec().clock_rate,
-            None => {
-                trace!("No codec params for {:?}", header.payload_type);
-                return;
-            }
-        };
+        // let srtp = match self.srtp_rx.as_mut() {
+        //     Some(v) => v,
+        //     None => {
+        //         trace!("Rejecting SRTP while missing SrtpContext");
+        //         return;
+        //     }
+        // };
+        // let clock_rate = match media.get_params(header.payload_type) {
+        //     Some(v) => v.spec().clock_rate,
+        //     None => {
+        //         trace!("No codec params for {:?}", header.payload_type);
+        //         return;
+        //     }
+        // };
 
-        // Figure out which SSRC the repairs header points out. This is here because of borrow
-        // checker ordering.
-        let ssrc_repairs = header
-            .ext_vals
-            .rid_repair
-            .and_then(|repairs| media.ssrc_rx_for_rid(repairs));
+        // // Figure out which SSRC the repairs header points out. This is here because of borrow
+        // // checker ordering.
+        // let ssrc_repairs = header
+        //     .ext_vals
+        //     .rid_repair
+        //     .and_then(|repairs| media.ssrc_rx_for_rid(repairs));
 
-        let source = media.get_or_create_source_rx(ssrc);
+        // let source = media.get_or_create_source_rx(ssrc);
 
-        let mut media_need_check_source = false;
-        if let Some(rid) = header.ext_vals.rid {
-            if source.set_rid(rid) {
-                media_need_check_source = true;
-            }
-        }
-        if let Some(repairs) = ssrc_repairs {
-            if source.set_repairs(repairs) {
-                media_need_check_source = true;
-            }
-        }
+        // let mut media_need_check_source = false;
+        // if let Some(rid) = header.ext_vals.rid {
+        //     if source.set_rid(rid) {
+        //         media_need_check_source = true;
+        //     }
+        // }
+        // if let Some(repairs) = ssrc_repairs {
+        //     if source.set_repairs(repairs) {
+        //         media_need_check_source = true;
+        //     }
+        // }
 
-        // Gymnastics to appease the borrow checker.
-        let source = if media_need_check_source {
-            media.set_equalize_sources();
-            media.get_or_create_source_rx(ssrc)
-        } else {
-            source
-        };
+        // // Gymnastics to appease the borrow checker.
+        // let source = if media_need_check_source {
+        //     media.set_equalize_sources();
+        //     media.get_or_create_source_rx(ssrc)
+        // } else {
+        //     source
+        // };
 
-        let mut rid = source.rid();
-        let seq_no = source.update(now, &header, clock_rate);
+        // let mut rid = source.rid();
+        // let seq_no = source.update(now, &header, clock_rate);
 
-        let is_rtx = source.is_rtx();
+        // let is_rtx = source.is_rtx();
 
-        let mut data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
-            Some(v) => v,
-            None => {
-                trace!("Failed to unprotect SRTP");
-                return;
-            }
-        };
+        // let mut data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
+        //     Some(v) => v,
+        //     None => {
+        //         trace!("Failed to unprotect SRTP");
+        //         return;
+        //     }
+        // };
 
-        // For RTX we copy the header and modify the sequencer number to be that of the repaired stream.
-        let mut header = header.clone();
+        // // For RTX we copy the header and modify the sequencer number to be that of the repaired stream.
+        // let mut header = header.clone();
 
-        // This seq_no is the lengthened original seq_no for RTX stream, and just straight up
-        // lengthened seq_no for non-rtx.
-        let seq_no = if is_rtx {
-            let mut orig_seq_16 = 0;
+        // // This seq_no is the lengthened original seq_no for RTX stream, and just straight up
+        // // lengthened seq_no for non-rtx.
+        // let seq_no = if is_rtx {
+        //     let mut orig_seq_16 = 0;
 
-            // Not sure why we receive these initial packets with just nulls for the RTX.
-            if RtpHeader::is_rtx_null_packet(&data) {
-                trace!("Drop RTX null packet");
-                return;
-            }
+        //     // Not sure why we receive these initial packets with just nulls for the RTX.
+        //     if RtpHeader::is_rtx_null_packet(&data) {
+        //         trace!("Drop RTX null packet");
+        //         return;
+        //     }
 
-            let n = RtpHeader::read_original_sequence_number(&data, &mut orig_seq_16);
-            data.drain(0..n);
-            trace!(
-                "Repaired seq no {} -> {}",
-                header.sequence_number,
-                orig_seq_16
-            );
-            header.sequence_number = orig_seq_16;
-            if let Some(repairs_rid) = header.ext_vals.rid_repair {
-                rid = Some(repairs_rid);
-            }
+        //     let n = RtpHeader::read_original_sequence_number(&data, &mut orig_seq_16);
+        //     data.drain(0..n);
+        //     trace!(
+        //         "Repaired seq no {} -> {}",
+        //         header.sequence_number,
+        //         orig_seq_16
+        //     );
+        //     header.sequence_number = orig_seq_16;
+        //     if let Some(repairs_rid) = header.ext_vals.rid_repair {
+        //         rid = Some(repairs_rid);
+        //     }
 
-            let repaired_ssrc = match source.repairs() {
-                Some(v) => v,
-                None => {
-                    trace!("Can't find repaired SSRC for: {}", header.ssrc);
-                    return;
-                }
-            };
-            trace!("Repaired {:?} -> {:?}", header.ssrc, repaired_ssrc);
-            header.ssrc = repaired_ssrc;
+        //     let repaired_ssrc = match source.repairs() {
+        //         Some(v) => v,
+        //         None => {
+        //             trace!("Can't find repaired SSRC for: {}", header.ssrc);
+        //             return;
+        //         }
+        //     };
+        //     trace!("Repaired {:?} -> {:?}", header.ssrc, repaired_ssrc);
+        //     header.ssrc = repaired_ssrc;
 
-            let repaired_source = media.get_or_create_source_rx(repaired_ssrc);
-            if rid.is_none() && repaired_source.rid().is_some() {
-                rid = repaired_source.rid();
-            }
-            let orig_seq_no = repaired_source.update(now, &header, clock_rate);
+        //     let repaired_source = media.get_or_create_source_rx(repaired_ssrc);
+        //     if rid.is_none() && repaired_source.rid().is_some() {
+        //         rid = repaired_source.rid();
+        //     }
+        //     let orig_seq_no = repaired_source.update(now, &header, clock_rate);
 
-            let params = media.get_params(header.payload_type).unwrap();
-            if let Some(pt) = params.resend() {
-                header.payload_type = pt;
-            }
+        //     let params = media.get_params(header.payload_type).unwrap();
+        //     if let Some(pt) = params.resend() {
+        //         header.payload_type = pt;
+        //     }
 
-            orig_seq_no
-        } else {
-            if self.first_ssrc_remote.is_none() {
-                info!("First remote SSRC: {}", ssrc);
-                self.first_ssrc_remote = Some(ssrc);
-            }
+        //     orig_seq_no
+        // } else {
+        //     if self.first_ssrc_remote.is_none() {
+        //         info!("First remote SSRC: {}", ssrc);
+        //         self.first_ssrc_remote = Some(ssrc);
+        //     }
 
-            seq_no
-        };
+        //     seq_no
+        // };
 
-        // Parameters using the PT in the header. This will return the same CodecParams
-        // instance regardless of whether this being a resend PT or not.
-        // unwrap: is ok because we checked above.
-        let params = media.get_params(header.payload_type).unwrap();
+        // // Parameters using the PT in the header. This will return the same CodecParams
+        // // instance regardless of whether this being a resend PT or not.
+        // // unwrap: is ok because we checked above.
+        // let params = media.get_params(header.payload_type).unwrap();
 
-        // This is the "main" PT and it will differ to header.payload_type if this is a resend.
-        let pt = params.pt();
-        let codec = if self.rtp_mode {
-            Codec::Null
-        } else {
-            params.spec().codec
-        };
+        // // This is the "main" PT and it will differ to header.payload_type if this is a resend.
+        // let pt = params.pt();
+        // let codec = if self.rtp_mode {
+        //     Codec::Null
+        // } else {
+        //     params.spec().codec
+        // };
 
-        if !media.direction().is_receiving() {
-            // Not adding unless we are supposed to be receiving.
-            return;
-        }
+        // if !media.direction().is_receiving() {
+        //     // Not adding unless we are supposed to be receiving.
+        //     return;
+        // }
 
-        // Buffers are unique per media (since PT is unique per media).
-        // The hold_back should be configured from param.spec().codec to
-        // avoid the null codec.
-        let hold_back = if params.spec().codec.is_audio() {
-            self.reordering_size_audio
-        } else {
-            self.reordering_size_video
-        };
-        let buf_rx = media.get_buffer_rx(pt, rid, codec, hold_back);
+        // // Buffers are unique per media (since PT is unique per media).
+        // // The hold_back should be configured from param.spec().codec to
+        // // avoid the null codec.
+        // let hold_back = if params.spec().codec.is_audio() {
+        //     self.reordering_size_audio
+        // } else {
+        //     self.reordering_size_video
+        // };
+        // let buf_rx = media.get_buffer_rx(pt, rid, codec, hold_back);
 
-        let prev_time = buf_rx.max_time().map(|t| t.numer() as u64);
-        let extended = extend_u32(prev_time, header.timestamp);
-        let time = MediaTime::new(extended as i64, clock_rate as i64);
+        // let prev_time = buf_rx.max_time().map(|t| t.numer() as u64);
+        // let extended = extend_u32(prev_time, header.timestamp);
+        // let time = MediaTime::new(extended as i64, clock_rate as i64);
 
-        let meta = RtpMeta::new(now, time, seq_no, header);
+        // let meta = RtpMeta::new(now, time, seq_no, header);
 
-        // here we have incoming and depacketized data before it may be dropped at buffer.push()
-        let bytes_rx = data.len();
+        // // here we have incoming and depacketized data before it may be dropped at buffer.push()
+        // let bytes_rx = data.len();
 
-        // In RTP mode we want to retain the header. After srtp_unprotect, we need to
-        // recombine the header + the decrypted payload.
-        if self.rtp_mode {
-            // Write header after the body. This shouldn't allocate since
-            // unprotect_rtp() call above should allocate enough space for the header.
-            data.extend_from_slice(&buf[..meta.header.header_len]);
-            // Rotate so header is before body.
-            data.rotate_right(meta.header.header_len);
-        };
+        // // In RTP mode we want to retain the header. After srtp_unprotect, we need to
+        // // recombine the header + the decrypted payload.
+        // if self.rtp_mode {
+        //     // Write header after the body. This shouldn't allocate since
+        //     // unprotect_rtp() call above should allocate enough space for the header.
+        //     data.extend_from_slice(&buf[..meta.header.header_len]);
+        //     // Rotate so header is before body.
+        //     data.rotate_right(meta.header.header_len);
+        // };
 
-        buf_rx.push(meta, data);
+        // buf_rx.push(meta, data);
 
-        // TODO: is there a nicer way to make borrow-checker happy ?
-        // this should go away with the refactoring of the entire handle_rtp() function
-        let source = media.get_or_create_source_rx(ssrc);
-        source.update_packet_counts(bytes_rx as u64);
+        // // TODO: is there a nicer way to make borrow-checker happy ?
+        // // this should go away with the refactoring of the entire handle_rtp() function
+        // let source = media.get_or_create_source_rx(ssrc);
+        // source.update_packet_counts(bytes_rx as u64);
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
@@ -580,41 +574,41 @@ impl Session {
         Some(())
     }
 
-    /// Whenever there are changes to ReceiverSource/SenderSource, we need to ensure the
-    /// receivers are matched to senders. This ensure the setup is correct.
-    pub fn equalize_sources(&mut self) {
-        let required_ssrcs: usize = self
-            .medias
-            .iter()
-            .map(|m| m.equalize_requires_ssrcs())
-            .sum();
+    // /// Whenever there are changes to ReceiverSource/SenderSource, we need to ensure the
+    // /// receivers are matched to senders. This ensure the setup is correct.
+    // pub fn equalize_sources(&mut self) {
+    //     let required_ssrcs: usize = self
+    //         .medias
+    //         .iter()
+    //         .map(|m| m.equalize_requires_ssrcs())
+    //         .sum();
 
-        // This will contain enough new SSRC to equalize the receiver/senders.
-        let mut new_ssrcs = Vec::with_capacity(required_ssrcs);
+    //     // This will contain enough new SSRC to equalize the receiver/senders.
+    //     let mut new_ssrcs = Vec::with_capacity(required_ssrcs);
 
-        loop {
-            if new_ssrcs.len() == required_ssrcs {
-                break;
-            }
-            let ssrc = self.new_ssrc();
+    //     loop {
+    //         if new_ssrcs.len() == required_ssrcs {
+    //             break;
+    //         }
+    //         let ssrc = self.new_ssrc();
 
-            // There's an outside chance we randomize the same number twice.
-            if !new_ssrcs.contains(&ssrc) {
-                self.set_first_ssrc_local(ssrc);
-                new_ssrcs.push(ssrc);
-            }
-        }
+    //         // There's an outside chance we randomize the same number twice.
+    //         if !new_ssrcs.contains(&ssrc) {
+    //             self.set_first_ssrc_local(ssrc);
+    //             new_ssrcs.push(ssrc);
+    //         }
+    //     }
 
-        let mut new_ssrcs = new_ssrcs.into_iter();
+    //     let mut new_ssrcs = new_ssrcs.into_iter();
 
-        for m in &mut self.medias {
-            if !m.equalize_sources() {
-                continue;
-            }
+    //     for m in &mut self.medias {
+    //         if !m.equalize_sources() {
+    //             continue;
+    //         }
 
-            m.do_equalize_sources(&mut new_ssrcs);
-        }
-    }
+    //         m.do_equalize_sources(&mut new_ssrcs);
+    //     }
+    // }
 
     pub fn poll_event(&mut self) -> Option<MediaEvent> {
         if let Some(bitrate_estimate) = self.bwe.as_mut().and_then(|bwe| bwe.poll_estimate()) {
@@ -723,64 +717,58 @@ impl Session {
     fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
         let srtp_tx = self.srtp_tx.as_mut()?;
 
-        // Figure out which, if any, queue to poll
-        let mid = self.pacer.poll_queue()?;
+        // // Figure out which, if any, queue to poll
+        // let mid = self.pacer.poll_queue()?;
 
-        // NB: Cannot use media_index_mut here due to borrowing woes around self, need split
-        // borrowing.
-        let media = self
-            .medias
-            .iter_mut()
-            .find(|m| m.mid() == mid)
-            .expect("index is media");
+        // // NB: Cannot use media_index_mut here due to borrowing woes around self, need split
+        // // borrowing.
+        // let media = self
+        //     .medias
+        //     .iter_mut()
+        //     .find(|m| m.mid() == mid)
+        //     .expect("index is media");
 
         let buf = &mut self.poll_packet_buf;
-
         let twcc_seq = self.twcc;
 
-        if let Some(polled_packet) = media.poll_packet(now, &self.exts, &mut self.twcc, buf) {
-            let PolledPacket {
-                header,
-                seq_no,
-                is_padding,
-                payload_size,
-            } = polled_packet;
+        let receipt = self
+            .streams
+            .poll_packet(now, &self.exts, &mut self.twcc, buf)?;
 
-            trace!(payload_size, is_padding, "Poll RTP: {:?}", header);
+        let PacketReceipt {
+            header,
+            seq_no,
+            is_padding,
+            payload_size,
+        } = receipt;
 
-            #[cfg(feature = "_internal_dont_use_log_stats")]
-            {
-                let kind = if is_padding { "padding" } else { "media" };
+        trace!(payload_size, is_padding, "Poll RTP: {:?}", header);
 
-                crate::log_stat!("PACKET_SENT", header.ssrc, payload_size, kind);
-            }
+        #[cfg(feature = "_internal_dont_use_log_stats")]
+        {
+            let kind = if is_padding { "padding" } else { "media" };
 
-            self.pacer.register_send(now, payload_size.into(), mid);
-            let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
-
-            self.twcc_tx_register
-                .register_seq(twcc_seq.into(), now, payload_size);
-
-            return Some(protected.into());
+            crate::log_stat!("PACKET_SENT", header.ssrc, payload_size, kind);
         }
 
-        None
+        // self.pacer.register_send(now, payload_size.into(), mid);
+
+        let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
+
+        self.twcc_tx_register
+            .register_seq(twcc_seq.into(), now, payload_size);
+
+        Some(protected.into())
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        let media = self
-            .medias
-            .iter_mut()
-            .filter_map(|m| m.poll_timeout())
-            .min();
         let regular_at = Some(self.regular_feedback_at());
         let nack_at = self.nack_at();
         let twcc_at = self.twcc_at();
         let pacing_at = self.pacer.poll_timeout();
         let bwe_at = self.bwe.as_ref().map(|bwe| bwe.poll_timeout());
 
-        let timeout = (media, "media")
-            .soonest((regular_at, "regular"))
+        let timeout = (regular_at, "regular")
             .soonest((nack_at, "nack"))
             .soonest((twcc_at, "twcc"))
             .soonest((pacing_at, "pacing"))
@@ -803,17 +791,13 @@ impl Session {
     }
 
     fn regular_feedback_at(&self) -> Instant {
-        self.medias
-            .iter()
-            .map(|m| m.regular_feedback_at())
-            .min()
+        self.streams
+            .regular_feedback_at()
             .unwrap_or_else(not_happening)
     }
 
     fn nack_at(&mut self) -> Option<Instant> {
-        let need_nack = self.medias.iter_mut().any(|s| s.has_nack());
-
-        if need_nack {
+        if self.streams.need_nack() {
             Some(self.last_nack + NACK_MIN_INTERVAL)
         } else {
             None
@@ -821,7 +805,7 @@ impl Session {
     }
 
     fn twcc_at(&self) -> Option<Instant> {
-        let is_receiving = self.medias.iter().any(|m| m.direction().is_receiving());
+        let is_receiving = self.streams.is_receiving();
         if is_receiving && self.enable_twcc_feedback && self.twcc_rx_register.has_unreported() {
             Some(self.last_twcc + TWCC_INTERVAL)
         } else {
@@ -861,9 +845,10 @@ impl Session {
     }
 
     pub fn visit_stats(&mut self, now: Instant, snapshot: &mut StatsSnapshot) {
-        for media in &mut self.medias {
-            media.visit_stats(now, snapshot)
+        for media in &self.medias {
+            media.visit_stats(now, &self.streams, snapshot);
         }
+
         snapshot.tx = snapshot.egress.values().map(|s| s.bytes).sum();
         snapshot.rx = snapshot.ingress.values().map(|s| s.bytes).sum();
         snapshot.bwe_tx = self.bwe.as_ref().and_then(|bwe| bwe.last_estimate());
@@ -890,12 +875,11 @@ impl Session {
         self.medias.len() + if self.app.is_some() { 1 } else { 0 }
     }
 
-    pub fn add_media(&mut self, mut media: MediaInner) {
-        media.rtp_mode = self.rtp_mode;
+    pub fn add_media(&mut self, mut media: Media) {
         self.medias.push(media);
     }
 
-    pub fn medias(&self) -> &[MediaInner] {
+    pub fn medias(&self) -> &[Media] {
         &self.medias
     }
 
@@ -965,4 +949,11 @@ impl Bwe {
     fn last_estimate(&self) -> Option<Bitrate> {
         self.bwe.last_estimate()
     }
+}
+
+pub struct PacketReceipt {
+    pub header: RtpHeader,
+    pub seq_no: SeqNo,
+    pub is_padding: bool,
+    pub payload_size: usize,
 }

@@ -14,6 +14,18 @@ pub(crate) struct ValueHistory<T> {
     max_time: Duration,
 }
 
+const DEFAULT_VALUE_HISTORY_DURATION: Duration = Duration::from_secs(2);
+
+impl<T: Default> Default for ValueHistory<T> {
+    fn default() -> Self {
+        Self {
+            value: Default::default(),
+            history: Default::default(),
+            max_time: DEFAULT_VALUE_HISTORY_DURATION,
+        }
+    }
+}
+
 impl<T> ValueHistory<T>
 where
     T: Copy + AddAssign + Sum,

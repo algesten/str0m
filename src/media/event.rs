@@ -1,13 +1,13 @@
+use std::fmt;
 use std::ops::RangeInclusive;
 use std::time::Instant;
 
+use crate::packet::MediaKind;
 use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, SeqNo};
 use crate::sdp::Simulcast as SdpSimulcast;
 
 use super::PayloadParams;
 use crate::format::CodecExtra;
-
-pub use crate::packet::MediaKind;
 
 impl From<SdpSimulcast> for Simulcast {
     fn from(s: SdpSimulcast) -> Self {
@@ -166,4 +166,16 @@ pub enum KeyframeRequestKind {
     /// Full Intra Request (FIR) is a more severe keyframe request that should only
     /// be used when it's impossible for an end peer to show a video stream.
     Fir,
+}
+
+impl fmt::Debug for MediaData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MediaData")
+            .field("mid", &self.mid)
+            .field("pt", &self.pt)
+            .field("rid", &self.rid)
+            .field("time", &self.time)
+            .field("len", &self.data.len())
+            .finish()
+    }
 }

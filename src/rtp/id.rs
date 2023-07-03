@@ -123,7 +123,9 @@ impl SeqNo {
         *other - **self == 1
     }
 
-    pub fn next(&self) -> Self {
-        Self(self.0 + 1)
+    pub fn inc(&mut self) -> SeqNo {
+        let n = SeqNo(self.0);
+        self.0 += 1;
+        n
     }
 }

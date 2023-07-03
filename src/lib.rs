@@ -461,7 +461,7 @@
 //! 3. In a browser, visit `https://str0m.test:3000/`. This will complain
 //! about the TLS certificate, you need to accept the "risk". How to do
 //! this depends on browser. In Chrome you can expand "Advanced" and
-//! chose "Proceed to str0m.test (unsafe)". For Safari, you can
+//! chose "Proceed to str0m.test (unsafe)". For Safari,mod media you can
 //! similarly chose to "Visit website" despite the warning.
 //!
 //! 4. Click "Cam" and/or "Mic" followed by "Rtc". And hopefully you will
@@ -493,40 +493,61 @@
 #[macro_use]
 extern crate tracing;
 
-mod dtls;
-mod ice;
-mod io;
-mod packet;
-mod rtp;
-mod sctp;
-mod sdp;
-
-pub mod format;
-
 use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
+use thiserror::Error;
 
-use change::Fingerprint;
-use change::{DirectApi, SdpApi};
+mod dtls;
 use dtls::DtlsCert;
+use dtls::Fingerprint;
 use dtls::{Dtls, DtlsEvent};
-use format::CodecConfig;
+
+mod ice;
+pub use ice::Candidate;
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use ice::IceCreds;
+
+mod io;
 use io::DatagramRecv;
+
+mod packet;
+
+mod rtp;
+pub use rtp::Bitrate;
 use rtp::{Extension, ExtensionMap, InstantExt, RtpHeader, SeqNo, Ssrc};
-use rtp_api::RtpApi;
+
+mod sctp;
 use sctp::{RtcSctp, SctpEvent};
 
-use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent};
-use thiserror::Error;
+mod sdp;
+
+pub mod format;
+use format::CodecConfig;
 
 pub use ice::IceConnectionState;
 
-pub use ice::Candidate;
-pub use rtp::Bitrate;
+pub mod channel;
+use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
+
+mod media;
+use media::{Direction, Mid, Pt, Rid};
+use media::{KeyframeRequest, KeyframeRequestKind};
+use media::{MediaAdded, MediaChanged, MediaData};
+
+// pub mod change;
+
+mod util;
+use util::{already_happened, not_happening, Soonest};
+
+mod session;
+use session::{MediaEvent, Session};
+
+pub mod stats;
+use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent, StatsSnapshot};
+
+mod streams;
 
 /// Network related types to get socket data in/out of [`Rtc`].
 pub mod net {
@@ -543,28 +564,6 @@ pub mod error {
     pub use crate::sctp::{ProtoError, SctpError};
     pub use crate::sdp::SdpError;
 }
-
-pub mod channel;
-use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
-
-pub mod media;
-use media::{Direction, KeyframeRequest, Media};
-use media::{KeyframeRequestKind, MediaChanged, MediaData};
-use media::{MediaAdded, MediaInner, Mid, PolledPacket, Pt, Rid};
-
-pub mod change;
-
-mod util;
-pub(crate) use util::*;
-
-mod session;
-use session::{MediaEvent, Session};
-
-use crate::stats::StatsSnapshot;
-
-pub mod stats;
-
-mod rtp_api;
 
 /// Errors for the whole Rtc engine.
 #[derive(Debug, Error)]
@@ -602,12 +601,17 @@ pub enum RtcError {
     #[error("No sender source")]
     NoSenderSource,
 
+    /// Using [`Streams::write_rtp`] for a stream with RTX without providing a rtx_pt.
+    #[error("When outgoing stream has RTX, write_rtp must be called with rtp_pt set")]
+    ResendRequiresRtxPt,
+
     /// Direction does not allow sending of Media data.
     #[error("Direction does not allow sending: {0}")]
     NotSendingDirection(Direction),
 
     /// If MediaWriter.request_keyframe fails because we can't find an SSRC to use.
     #[error("No receiver source (rid: {0:?})")]
+    // TODO: remove rid here.
     NoReceiverSource(Option<Rid>),
 
     /// The keyframe request failed because the kind of request is not enabled
@@ -637,10 +641,6 @@ pub enum RtcError {
     /// 4. The we used the [`SdpPendingOffer`][change::SdpPendingOffer] created in step 1.
     #[error("Changes made out of order")]
     ChangesOutOfOrder,
-
-    /// Some other error.
-    #[error("{0}")]
-    Other(String),
 }
 
 /// Instance that does WebRTC. Main struct of the entire library.
@@ -698,13 +698,18 @@ struct SendAddr {
 #[derive(Debug)]
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
+#[rustfmt::skip]
 pub enum Event {
+    // =================== ICE related events ===================
+
     /// Emitted when we got ICE connection and established DTLS.
     Connected,
 
     /// ICE connection state changes tells us whether the [`Rtc`] instance is
     /// connected to the peer or not.
     IceConnectionStateChange(IceConnectionState),
+
+    // =================== Media related events ==================
 
     /// Upon adding new media to the session. The lines are emitted.
     ///
@@ -719,10 +724,7 @@ pub enum Event {
     ///. Currently only covers a change of direction.
     MediaChanged(MediaChanged),
 
-    /// Incoming keyframe request for media that we are sending to the remote peer.
-    ///
-    /// The request is either PLI (Picture Loss Indication) or FIR (Full Intra Request).
-    KeyframeRequest(KeyframeRequest),
+    // =================== Data channel related events ===================
 
     /// A data channel has opened.
     ///
@@ -744,6 +746,8 @@ pub enum Event {
     /// A data channel has been closed.
     ChannelClose(ChannelId),
 
+    // =================== Statistics and BWE related events ===================
+
     /// Statistics event for the Rtc instance
     ///
     /// Includes both media traffic (rtp payload) as well as all traffic
@@ -757,6 +761,13 @@ pub enum Event {
 
     /// A new estimate from the bandwidth estimation subsystem.
     EgressBitrateEstimate(Bitrate),
+
+    // =================== RTP related events ===================
+
+    /// Incoming keyframe request for media that we are sending to the remote peer.
+    ///
+    /// The request is either PLI (Picture Loss Indication) or FIR (Full Intra Request).
+    KeyframeRequest(KeyframeRequest),
 
     /// Incoming RTP data when in RTP mode.
     RtpData(RtpData),
@@ -903,53 +914,53 @@ impl Rtc {
         }
     }
 
-    /// Add a local ICE candidate. Local candidates are socket addresses the `Rtc` instance
-    /// use for communicating with the peer.
-    ///
-    /// This library has no built-in discovery of local network addresses on the host
-    /// or NATed addresses via a STUN server or TURN server. The user of the library
-    /// is expected to add new local candidates as they are discovered.
-    ///
-    /// In WebRTC lingo, the `Rtc` instance is permanently in a mode of [Trickle Ice][1]. It's
-    /// however advisable to add at least one local candidate before starting the instance.
-    ///
-    /// ```
-    /// # use str0m::{Rtc, Candidate};
-    /// let mut rtc = Rtc::new();
-    ///
-    /// let a = "127.0.0.1:5000".parse().unwrap();
-    /// let c = Candidate::host(a).unwrap();
-    ///
-    /// rtc.add_local_candidate(c);
-    /// ```
-    ///
-    /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
-    pub fn add_local_candidate(&mut self, c: Candidate) {
-        self.ice.add_local_candidate(c);
-    }
+    // /// Add a local ICE candidate. Local candidates are socket addresses the `Rtc` instance
+    // /// use for communicating with the peer.
+    // ///
+    // /// This library has no built-in discovery of local network addresses on the host
+    // /// or NATed addresses via a STUN server or TURN server. The user of the library
+    // /// is expected to add new local candidates as they are discovered.
+    // ///
+    // /// In WebRTC lingo, the `Rtc` instance is permanently in a mode of [Trickle Ice][1]. It's
+    // /// however advisable to add at least one local candidate before starting the instance.
+    // ///
+    // /// ```
+    // /// # use str0m::{Rtc, Candidate};
+    // /// let mut rtc = Rtc::new();
+    // ///
+    // /// let a = "127.0.0.1:5000".parse().unwrap();
+    // /// let c = Candidate::host(a).unwrap();
+    // ///
+    // /// rtc.add_local_candidate(c);
+    // /// ```
+    // ///
+    // /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
+    // pub fn add_local_candidate(&mut self, c: Candidate) {
+    //     self.ice.add_local_candidate(c);
+    // }
 
-    /// Add a remote ICE candidate. Remote candidates are addresses of the peer.
-    ///
-    /// For [`SdpApi`]: Remote candidates are typically added via
-    /// receiving a remote [`SdpOffer`][change::SdpOffer] or [`SdpAnswer`][change::SdpAnswer].
-    ///
-    /// However for the case of [Trickle Ice][1], this is the way to add remote candidates
-    /// that are "trickled" from the other side.
-    ///
-    /// ```
-    /// # use str0m::{Rtc, Candidate};
-    /// let mut rtc = Rtc::new();
-    ///
-    /// let a = "1.2.3.4:5000".parse().unwrap();
-    /// let c = Candidate::host(a).unwrap();
-    ///
-    /// rtc.add_remote_candidate(c);
-    /// ```
-    ///
-    /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
-    pub fn add_remote_candidate(&mut self, c: Candidate) {
-        self.ice.add_remote_candidate(c);
-    }
+    // /// Add a remote ICE candidate. Remote candidates are addresses of the peer.
+    // ///
+    // /// For [`SdpApi`]: Remote candidates are typically added via
+    // /// receiving a remote [`SdpOffer`][change::SdpOffer] or [`SdpAnswer`][change::SdpAnswer].
+    // ///
+    // /// However for the case of [Trickle Ice][1], this is the way to add remote candidates
+    // /// that are "trickled" from the other side.
+    // ///
+    // /// ```
+    // /// # use str0m::{Rtc, Candidate};
+    // /// let mut rtc = Rtc::new();
+    // ///
+    // /// let a = "1.2.3.4:5000".parse().unwrap();
+    // /// let c = Candidate::host(a).unwrap();
+    // ///
+    // /// rtc.add_remote_candidate(c);
+    // /// ```
+    // ///
+    // /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
+    // pub fn add_remote_candidate(&mut self, c: Candidate) {
+    //     self.ice.add_remote_candidate(c);
+    // }
 
     /// Checks if we are connected.
     ///
@@ -957,48 +968,6 @@ impl Rtc {
     ///
     pub fn is_connected(&self) -> bool {
         self.ice.state().is_connected() && self.dtls.is_connected()
-    }
-
-    /// Make changes to the Rtc session via SDP.
-    ///
-    /// ```no_run
-    /// # use str0m::Rtc;
-    /// # use str0m::media::{MediaKind, Direction};
-    /// # use str0m::change::SdpAnswer;
-    /// let mut rtc = Rtc::new();
-    ///
-    /// let mut changes = rtc.sdp_api();
-    /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
-    /// let mid_video = changes.add_media(MediaKind::Video, Direction::SendOnly, None, None);
-    ///
-    /// let (offer, pending) = changes.apply().unwrap();
-    /// let json = serde_json::to_vec(&offer).unwrap();
-    ///
-    /// // Send json OFFER to remote peer. Receive an answer back.
-    /// let answer: SdpAnswer = todo!();
-    ///
-    /// rtc.sdp_api().accept_answer(pending, answer).unwrap();
-    /// ```
-    pub fn sdp_api(&mut self) -> SdpApi {
-        SdpApi::new(self)
-    }
-
-    /// Makes direct changes to the Rtc session.
-    ///
-    /// This is a low level API. For "normal" use via SDP, see [`Rtc::sdp_api()`].
-    pub fn direct_api(&mut self) -> DirectApi {
-        DirectApi::new(self)
-    }
-
-    /// API for accessing RTP writers directly without going via Media.
-    ///
-    /// Only available in rtp_mode and when ICE/DTLS is connected.
-    pub fn rtp_api(&mut self) -> Option<RtpApi> {
-        if self.session.rtp_mode && self.is_connected() {
-            Some(RtpApi(self))
-        } else {
-            None
-        }
     }
 
     fn init_dtls(&mut self, active: bool) -> Result<(), RtcError> {
@@ -1384,72 +1353,41 @@ impl Rtc {
         Ok(())
     }
 
-    /// Get a [`Media`] instance for inspecting and manipulating media. Media has a 1-1
-    /// relationship with "m-line" from the SDP. The `Media` instance is used for media
-    /// regardless of current direction.
-    ///
-    /// Apart from inspecting information about the media, there are two fundamental
-    /// operations. One is [`Media::writer()`] for writing outgoing media data, the other
-    /// is [`Media::request_keyframe()`][crate::media::Media] to request a PLI/FIR keyframe for incoming media data.
-    ///
-    /// All media rows are announced via the [`Event::MediaAdded`] event. This function
-    /// will return `None` for any [`Mid`] until that event has fired. This
-    /// is also the case for the `mid` that comes from [`SdpApi::add_media()`].
-    ///
-    /// Incoming media data is via the [`Event::MediaData`] event.
-    ///
-    /// ```no_run
-    /// # use str0m::{Rtc, media::Mid};
-    /// let mut rtc = Rtc::new();
-    ///
-    /// let mid: Mid = todo!(); // obtain Mid from Event::MediaAdded
-    /// let media = rtc.media(mid).unwrap();
-    /// // TODO write media or request keyframe.
-    /// ```
-    pub fn media(&mut self, mid: Mid) -> Option<Media<'_>> {
-        if !self.alive {
-            return None;
-        }
-        // Check the media exists. After this we don't check again going via Rtc::media_by_mid
-        self.session.media_by_mid(mid)?;
-        Some(Media::new(self, mid))
-    }
+    // /// Obtain handle for writing to a data channel.
+    // ///
+    // /// This is first available when a [`ChannelId`] is advertised via [`Event::ChannelOpen`].
+    // /// The function returns `None` also for IDs from [`SdpApi::add_channel()`].
+    // ///
+    // /// Incoming channel data is via the [`Event::ChannelData`] event.
+    // ///
+    // /// ```no_run
+    // /// # use str0m::{Rtc, channel::ChannelId};
+    // /// let mut rtc = Rtc::new();
+    // ///
+    // /// let cid: ChannelId = todo!(); // obtain Mid from Event::ChannelOpen
+    // /// let channel = rtc.channel(cid).unwrap();
+    // /// // TODO write data channel data.
+    // /// ```
+    // pub fn channel(&mut self, id: ChannelId) -> Option<Channel<'_>> {
+    //     if !self.alive {
+    //         return None;
+    //     }
 
-    /// Obtain handle for writing to a data channel.
-    ///
-    /// This is first available when a [`ChannelId`] is advertised via [`Event::ChannelOpen`].
-    /// The function returns `None` also for IDs from [`SdpApi::add_channel()`].
-    ///
-    /// Incoming channel data is via the [`Event::ChannelData`] event.
-    ///
-    /// ```no_run
-    /// # use str0m::{Rtc, channel::ChannelId};
-    /// let mut rtc = Rtc::new();
-    ///
-    /// let cid: ChannelId = todo!(); // obtain Mid from Event::ChannelOpen
-    /// let channel = rtc.channel(cid).unwrap();
-    /// // TODO write data channel data.
-    /// ```
-    pub fn channel(&mut self, id: ChannelId) -> Option<Channel<'_>> {
-        if !self.alive {
-            return None;
-        }
+    //     let sctp_stream_id = self.chan.stream_id_by_channel_id(id)?;
 
-        let sctp_stream_id = self.chan.stream_id_by_channel_id(id)?;
+    //     if !self.sctp.is_open(sctp_stream_id) {
+    //         return None;
+    //     }
 
-        if !self.sctp.is_open(sctp_stream_id) {
-            return None;
-        }
+    //     Some(Channel::new(sctp_stream_id, self))
+    // }
 
-        Some(Channel::new(sctp_stream_id, self))
-    }
-
-    /// Configure the Bandwidth Estimate (BWE) subsystem.
-    ///
-    /// Only relevant if BWE was enabled in the [`RtcConfig::enable_bwe()`]
-    pub fn bwe(&mut self) -> Bwe {
-        Bwe(self)
-    }
+    // /// Configure the Bandwidth Estimate (BWE) subsystem.
+    // ///
+    // /// Only relevant if BWE was enabled in the [`RtcConfig::enable_bwe()`]
+    // pub fn bwe(&mut self) -> Bwe {
+    //     Bwe(self)
+    // }
 
     fn is_correct_change_id(&self, change_id: usize) -> bool {
         self.change_counter == change_id + 1
@@ -1459,18 +1397,6 @@ impl Rtc {
         let n = self.change_counter;
         self.change_counter += 1;
         n
-    }
-
-    fn media_inner(&self, mid: Mid) -> &MediaInner {
-        self.session
-            .media_by_mid(mid)
-            .expect("mid to match a media")
-    }
-
-    fn media_inner_mut(&mut self, mid: Mid) -> &mut MediaInner {
-        self.session
-            .media_by_mid_mut(mid)
-            .expect("mid to match a media")
     }
 }
 
@@ -1878,18 +1804,6 @@ impl PartialEq for Event {
 }
 
 impl Eq for Event {}
-
-impl fmt::Debug for MediaData {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MediaData")
-            .field("mid", &self.mid)
-            .field("pt", &self.pt)
-            .field("rid", &self.rid)
-            .field("time", &self.time)
-            .field("len", &self.data.len())
-            .finish()
-    }
-}
 
 impl fmt::Debug for Rtc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

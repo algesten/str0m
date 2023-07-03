@@ -226,6 +226,28 @@ impl RtpHeader {
         Some(ret)
     }
 
+    pub fn payload_of(&self, data: &[u8]) -> &[u8] {
+        if data.is_empty() {
+            return &[];
+        }
+
+        let from = self.header_len;
+
+        let padding = if self.has_padding {
+            *data.last().expect("a last octet for padding")
+        } else {
+            0
+        } as usize;
+
+        let to = data.len().saturating_sub(padding);
+
+        if from >= data.len() || to >= data.len() {
+            return &[];
+        }
+
+        &data[from..to]
+    }
+
     /// For RTX the original sequence number is inserted before the RTP payload.
     pub fn read_original_sequence_number(buf: &[u8], seq_no: &mut u16) -> usize {
         *seq_no = u16::from_be_bytes([buf[0], buf[1]]);

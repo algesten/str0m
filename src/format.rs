@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::media::MediaKind;
+use crate::packet::MediaKind;
 use crate::rtp::Pt;
 use crate::sdp::FormatParam;
 use crate::sdp::MediaLine;
