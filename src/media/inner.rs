@@ -1010,9 +1010,6 @@ impl MediaInner {
             return None;
         }
 
-        // Since we're making new sender/receiver reports, clear out previous.
-        feedback.retain(|r| !matches!(r, Rtcp::SenderReport(_) | Rtcp::ReceiverReport(_)));
-
         if self.dir.is_sending() {
             for s in &mut self.sources_tx {
                 let sr = s.create_sender_report(now);
