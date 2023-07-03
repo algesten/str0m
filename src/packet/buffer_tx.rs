@@ -211,10 +211,6 @@ impl PacketizingBuffer {
         self.total.decrease(p.data.len(), queue_time);
     }
 
-    pub fn maybe_next(&self) -> Option<&Packetized> {
-        self.queue.get(self.emit_next)
-    }
-
     pub fn take_next(&mut self, now: Instant) -> Option<Packetized> {
         self.total.move_time_forward(now);
 

@@ -204,7 +204,7 @@ struct ToPacketize {
 
 enum NextPacketBody<'a> {
     /// A regular packetized packet
-    Regular { pkt: &'a Packetized },
+    Regular { pkt: Packetized },
     /// A resend of a previously sent packet
     Resend {
         pkt: &'a Packetized,
@@ -522,8 +522,28 @@ impl MediaInner {
             body_out = &mut body_out[original_seq_len..];
         }
 
+        let pt = next.pt;
+        let seq_no = next.seq_no;
         let body_len = match next.body {
-            NextPacketBody::Regular { pkt } | NextPacketBody::Resend { pkt, .. } => {
+            NextPacketBody::Regular { pkt } => {
+                let body_len = pkt.data.len();
+                body_out[..body_len].copy_from_slice(&pkt.data);
+
+                // pad for SRTP
+                let pad_len = RtpHeader::pad_packet(
+                    &mut buf[..],
+                    header_len,
+                    body_len + original_seq_len,
+                    SRTP_BLOCK_SIZE,
+                );
+
+                if let Some(buffer_tx) = self.buffers_tx.get_mut(&pt) {
+                    buffer_tx.cache_sent(seq_no, pkt, now);
+                }
+
+                body_len + original_seq_len + pad_len
+            }
+            NextPacketBody::Resend { pkt, .. } => {
                 let body_len = pkt.data.len();
                 body_out[..body_len].copy_from_slice(&pkt.data);
 
@@ -551,15 +571,6 @@ impl MediaInner {
                 len
             }
         };
-        let pt = next.pt;
-        let seq_no = next.seq_no;
-        if matches!(next.body, NextPacketBody::Regular { .. }) {
-            if let Some(buffer_tx) = self.buffers_tx.get_mut(&pt) {
-                if let Some(pkt) = buffer_tx.take_next(now) {
-                    buffer_tx.cache_sent(seq_no, pkt, now);
-                }
-            }
-        }
         buf.truncate(header_len + body_len);
 
         #[cfg(feature = "_internal_dont_use_log_stats")]
@@ -660,7 +671,7 @@ impl MediaInner {
 
     fn poll_packet_regular(&mut self, now: Instant) -> Option<NextPacket<'_>> {
         // exit via ? here is ok since that means there is nothing to send.
-        let (pt, pkt) = next_send_buffer(&self.buffers_tx)?;
+        let (pt, pkt) = take_next_send_buffer(&mut self.buffers_tx, now)?;
 
         // Force recaching since packetizer changed.
         self.queue_state = None;
@@ -1520,9 +1531,12 @@ struct Resend {
     pub queued_at: Instant,
 }
 
-fn next_send_buffer(buffers_tx: &HashMap<Pt, PacketizingBuffer>) -> Option<(Pt, &Packetized)> {
-    for (pt, buf) in buffers_tx {
-        if let Some(pkt) = buf.maybe_next() {
+fn take_next_send_buffer(
+    buffers_tx: &mut HashMap<Pt, PacketizingBuffer>,
+    now: Instant,
+) -> Option<(Pt, Packetized)> {
+    for (pt, buf) in buffers_tx.iter_mut() {
+        if let Some(pkt) = buf.take_next(now) {
             return Some((*pt, pkt));
         }
     }
