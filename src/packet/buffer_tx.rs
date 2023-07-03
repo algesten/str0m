@@ -358,7 +358,6 @@ impl TotalQueue {
     fn move_time_forward(&mut self, now: Instant) {
         if let Some(last) = self.last {
             assert!(self.unsent_count > 0);
-            assert!(self.unsent_size > 0);
             let from_last = now - last;
             self.queue_time += from_last * (self.unsent_count as u32);
             self.last = Some(now);
@@ -398,5 +397,21 @@ impl fmt::Debug for Packetized {
             .field("ssrc", &self.meta.ssrc)
             .field("seq_no", &self.seq_no)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn total_queue() {
+        let mut total_queue = TotalQueue::default();
+        let now = Instant::now();
+        total_queue.increase(now, Duration::ZERO, 0);
+        total_queue.increase(now, Duration::ZERO, 1);
+        total_queue.decrease(1, Duration::ZERO);
+        // Doesn't panic
+        total_queue.move_time_forward(now + Duration::from_millis(1));
     }
 }
