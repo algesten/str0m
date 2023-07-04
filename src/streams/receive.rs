@@ -12,7 +12,7 @@ use super::rr_interval;
 ///
 /// A stream is a primary SSRC + optional RTX SSRC.
 #[derive(Debug)]
-pub(crate) struct StreamRx {
+pub struct StreamRx {
     /// Unique idenfier of the remote stream.
     ///
     /// If the remote changes the SSRC, we will create a new stream, not change this id.
@@ -42,8 +42,21 @@ pub(crate) struct StreamRx {
     stats: StreamRxStats,
 }
 
+/// Holder of stats.
+#[derive(Debug, Default)]
+pub struct StreamRxStats {
+    fir_seq_no: u8,
+    bytes: u64,
+    packets: u64,
+    firs: u64,
+    plis: u64,
+    nacks: u64,
+    rtt: Option<f32>,
+    loss: Option<f32>,
+}
+
 impl StreamRx {
-    pub fn new(ssrc: Ssrc) -> Self {
+    pub(crate) fn new(ssrc: Ssrc) -> Self {
         debug!("Create StreamRx for SSRC: {}", ssrc);
 
         StreamRx {
@@ -58,36 +71,27 @@ impl StreamRx {
         }
     }
 
-    pub fn set_rtx_ssrc(&mut self, rtx: Ssrc) {
+    /// Request a keyframe for an incoming encoded stream.
+    ///
+    /// * SSRC the identifier of the remote encoded stream to request a keyframe for.
+    /// * kind PLI or FIR.
+    pub fn request_keyframe(&mut self, kind: KeyframeRequestKind) {
+        self.pending_request_keyframe = Some(kind);
+    }
+
+    pub fn stats(&self) -> &StreamRxStats {
+        &self.stats
+    }
+
+    pub(crate) fn set_rtx_ssrc(&mut self, rtx: Ssrc) {
         if self.rtx != Some(rtx) {
             debug!("SSRC {} associated with RTX: {}", self.ssrc, rtx);
             self.rtx = Some(rtx);
         }
     }
 
-    pub(crate) fn request_keyframe(&mut self, kind: KeyframeRequestKind) {
-        self.pending_request_keyframe = Some(kind);
-    }
-
     pub(crate) fn receiver_report_at(&self) -> Instant {
         let is_audio = self.rtx.is_none(); // this is maybe not correct, but it's all we got.
         self.last_receiver_report + rr_interval(is_audio)
     }
-
-    pub(crate) fn stats(&self) -> &StreamRxStats {
-        &self.stats
-    }
-}
-
-/// Holder of stats.
-#[derive(Debug, Default)]
-pub(crate) struct StreamRxStats {
-    fir_seq_no: u8,
-    bytes: u64,
-    packets: u64,
-    firs: u64,
-    plis: u64,
-    nacks: u64,
-    rtt: Option<f32>,
-    loss: Option<f32>,
 }

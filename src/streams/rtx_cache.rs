@@ -33,7 +33,7 @@ impl RtxCache {
 
     pub fn cache_sent_packet(&mut self, packet: StreamPacket, now: Instant) {
         let seq_no = packet.seq_no;
-        let quantized_size = packet.data.len() / RTX_CACHE_SIZE_QUANTIZER;
+        let quantized_size = packet.payload.len() / RTX_CACHE_SIZE_QUANTIZER;
         self.packet_by_seq_no.insert(seq_no, packet);
         self.seq_no_by_quantized_size.insert(quantized_size, seq_no);
         self.last_sent_time = Some(now);
@@ -157,10 +157,9 @@ mod test {
                 ..Default::default()
             },
             seq_no,
-            data: millis_since_epoch.to_be_bytes().to_vec(),
+            payload: millis_since_epoch.to_be_bytes().to_vec(),
             timestamp: after(millis_since_epoch),
             nackable: true,
-            rtx_pt: None,
         };
 
         let evict_in_batches = false;

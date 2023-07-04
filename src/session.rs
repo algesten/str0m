@@ -556,6 +556,10 @@ impl Session {
                 return Some(());
             }
 
+            if fb.is_for_rx() {
+            } else {
+            }
+
             let media = self.medias.iter_mut().find(|m| {
                 if fb.is_for_rx() {
                     m.has_ssrc_rx(fb.ssrc())

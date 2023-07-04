@@ -129,15 +129,17 @@ impl Media {
         snapshot: &mut StatsSnapshot,
     ) {
         for s in &self.streams_rx {
-            let Some(stats) = streams.stats_rx(s.ssrc) else {
+            let Some(stream) = streams.stream_rx(&s.ssrc) else {
                 continue;
             };
+            let stats = stream.stats();
             // TODO here
         }
         for s in &mut self.streams_tx {
-            let Some(stats) = streams.stats_tx(s.ssrc) else {
+            let Some(stream) = streams.stream_tx(&s.ssrc) else {
                 continue;
             };
+            let stats = stream.stats();
             // TODO here
         }
     }
