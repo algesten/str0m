@@ -735,9 +735,7 @@ impl Session {
         let buf = &mut self.poll_packet_buf;
         let twcc_seq = self.twcc;
 
-        let receipt = self
-            .streams
-            .poll_packet(now, &self.exts, &mut self.twcc, buf)?;
+        let receipt = self.poll_packet_single(now, buf)?;
 
         let PacketReceipt {
             header,
@@ -763,6 +761,19 @@ impl Session {
             .register_seq(twcc_seq.into(), now, payload_size);
 
         Some(protected.into())
+    }
+
+    fn poll_packet_single(&mut self, now: Instant, buf: &mut Vec<u8>) -> Option<PacketReceipt> {
+        for m in &self.medias {
+            for s in m.streams_tx() {
+                let stream = self.streams.stream_tx(&s.ssrc).expect("StreamTx for Media");
+                let r = stream.poll_packet(now, &self.exts, &mut self.twcc, m.mid(), s.rid, buf);
+                if let Some(r) = r {
+                    return Some(r);
+                }
+            }
+        }
+        None
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {

@@ -184,7 +184,7 @@ impl StreamTx {
         exts: &ExtensionMap,
         twcc: &mut u64,
         mid: Mid,
-        rid: Rid,
+        rid: Option<Rid>,
         buf: &mut Vec<u8>,
     ) -> Option<PacketReceipt> {
         let (next, is_padding) = if let Some(next) = self.poll_packet_resend(now, false) {
@@ -211,12 +211,12 @@ impl StreamTx {
 
         match next.kind {
             NextPacketKind::Regular => {
-                header.ext_vals.rid = Some(rid);
+                header.ext_vals.rid = rid;
                 header.ext_vals.rid_repair = None;
             }
             NextPacketKind::Resend(_) | NextPacketKind::Blank(_) => {
                 header.ext_vals.rid = None;
-                header.ext_vals.rid_repair = Some(rid);
+                header.ext_vals.rid_repair = rid;
             }
         }
 

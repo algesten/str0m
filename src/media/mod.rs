@@ -16,9 +16,9 @@ mod event;
 pub use event::*;
 
 #[derive(Debug, Clone, Copy)]
-struct StreamId {
-    ssrc: Ssrc,
-    rid: Option<Rid>,
+pub(crate) struct StreamId {
+    pub ssrc: Ssrc,
+    pub rid: Option<Rid>,
 }
 
 pub struct Media {
@@ -81,6 +81,9 @@ pub struct Media {
     /// Declared outgoing streams for this mid.
     streams_tx: Vec<StreamId>,
 
+    pub(crate) need_open_event: bool,
+    pub(crate) need_changed_event: bool,
+
     /// Buffer of incoming RTP packets. This is a reordering/jitter buffer which also
     /// depacketize from RTP to samples, in RTP-mode this is not used.
     buffer: DepacketizingBuffer,
@@ -114,12 +117,20 @@ impl Media {
             .map(|s| s.ssrc)
     }
 
-    pub(crate) fn streams_rx(&self) -> impl Iterator<Item = Ssrc> + '_ {
-        self.streams_rx.iter().map(|s| s.ssrc)
+    pub(crate) fn streams_rx(&self) -> &[StreamId] {
+        &self.streams_rx
     }
 
-    pub(crate) fn streams_tx(&self) -> impl Iterator<Item = Ssrc> + '_ {
-        self.streams_tx.iter().map(|s| s.ssrc)
+    pub(crate) fn streams_tx(&self) -> &[StreamId] {
+        &self.streams_tx
+    }
+
+    pub(crate) fn direction(&self) -> Direction {
+        self.dir
+    }
+
+    pub(crate) fn simulcast(&self) -> Option<SdpSimulcast> {
+        self.simulcast
     }
 
     pub(crate) fn visit_stats(
@@ -142,5 +153,9 @@ impl Media {
             let stats = stream.stats();
             // TODO here
         }
+    }
+
+    pub(crate) fn poll_sample(&self) -> Option<Result<MediaData, crate::RtcError>> {
+        todo!()
     }
 }
