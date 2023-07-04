@@ -2,16 +2,17 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::media::KeyframeRequestKind;
-use crate::rtp::Ssrc;
-use crate::rtp::{ExtensionMap, RtpHeader};
+use crate::media::{KeyframeRequest, KeyframeRequestKind};
+use crate::rtp::{extend_u16, InstantExt};
+use crate::rtp::{ExtensionMap, ReceptionReport, RtpHeader};
 use crate::rtp::{ExtensionValues, MediaTime};
 use crate::rtp::{Mid, NackEntry};
 use crate::rtp::{Pt, Rid};
+use crate::rtp::{RtcpFb, Ssrc};
 use crate::rtp::{SeqNo, SRTP_BLOCK_SIZE};
 use crate::session::PacketReceipt;
-use crate::util::already_happened;
 use crate::util::value_history::ValueHistory;
+use crate::util::{already_happened, calculate_rtt_ms};
 use crate::RtcError;
 
 use super::rtx_cache::RtxCache;
@@ -159,30 +160,6 @@ impl StreamTx {
         self.send_queue.push_back(packet);
 
         Ok(())
-    }
-
-    pub(crate) fn handle_nack(
-        &mut self,
-        ssrc: Ssrc,
-        entries: impl Iterator<Item = NackEntry>,
-        now: Instant,
-    ) -> Option<()> {
-        // Turning NackEntry into SeqNo we need to know a SeqNo "close by" to lengthen the 16 bit
-        // sequence number into the 64 bit we have in SeqNo.
-        let seq_no = self.rtx_cache.first_cached_seq_no()?;
-        let iter = entries.flat_map(|n| n.into_iter(seq_no));
-
-        // Schedule all resends. They will be handled on next poll_packet
-        for seq_no in iter {
-            let resend = Resend {
-                ssrc,
-                seq_no,
-                queued_at: now,
-            };
-            self.resends.push_back(resend);
-        }
-
-        Some(())
     }
 
     pub(crate) fn poll_packet(
@@ -460,6 +437,50 @@ impl StreamTx {
     pub(crate) fn poll_keyframe_request(&mut self) -> Option<KeyframeRequestKind> {
         self.pending_request_keyframe.take()
     }
+
+    pub(crate) fn handle_rtcp(&mut self, now: Instant, fb: RtcpFb) {
+        use RtcpFb::*;
+        match fb {
+            ReceptionReport(r) => self.stats.update_with_rr(now, r),
+            Nack(_, list) => {
+                self.stats.increase_nacks();
+                let entries = list.into_iter();
+                self.handle_nack(entries, now);
+            }
+            Pli(_) => {
+                self.stats.increase_plis();
+                self.pending_request_keyframe = Some(KeyframeRequestKind::Pli);
+            }
+            Fir(_) => {
+                self.stats.increase_firs();
+                self.pending_request_keyframe = Some(KeyframeRequestKind::Fir);
+            }
+            Twcc(_) => unreachable!("TWCC should be handled on session level"),
+            _ => {}
+        }
+    }
+
+    pub fn handle_nack(
+        &mut self,
+        entries: impl Iterator<Item = NackEntry>,
+        now: Instant,
+    ) -> Option<()> {
+        // Turning NackEntry into SeqNo we need to know a SeqNo "close by" to lengthen the 16 bit
+        // sequence number into the 64 bit we have in SeqNo.
+        let seq_no = self.rtx_cache.first_cached_seq_no()?;
+        let iter = entries.flat_map(|n| n.into_iter(seq_no));
+
+        // Schedule all resends. They will be handled on next poll_packet
+        for seq_no in iter {
+            let resend = Resend {
+                seq_no,
+                queued_at: now,
+            };
+            self.resends.push_back(resend);
+        }
+
+        Some(())
+    }
 }
 
 impl StreamTxStats {
@@ -470,6 +491,33 @@ impl StreamTxStats {
             self.bytes_resent += bytes;
             self.packets_resent += 1;
         }
+    }
+
+    fn increase_nacks(&mut self) {
+        self.nacks += 1;
+    }
+
+    fn increase_plis(&mut self) {
+        self.plis += 1;
+    }
+
+    fn increase_firs(&mut self) {
+        self.firs += 1;
+    }
+
+    fn update_with_rr(&mut self, now: Instant, r: ReceptionReport) {
+        let ntp_time = now.to_ntp_duration();
+        let rtt = calculate_rtt_ms(ntp_time, r.last_sr_delay, r.last_sr_time);
+        self.rtt = rtt;
+
+        let ext_seq = {
+            let prev = self.losses.last().map(|s| s.0).unwrap_or(r.max_seq as u64);
+            let next = (r.max_seq & 0xffff) as u16;
+            extend_u16(Some(prev), next)
+        };
+
+        self.losses
+            .push((ext_seq, r.fraction_lost as f32 / u8::MAX as f32));
     }
 }
 
@@ -490,7 +538,6 @@ enum NextPacketKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Resend {
-    ssrc: Ssrc,
     seq_no: SeqNo,
     queued_at: Instant,
 }

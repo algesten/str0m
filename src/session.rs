@@ -557,9 +557,15 @@ impl Session {
             }
 
             if fb.is_for_rx() {
-                let stream = self.streams.stream_rx(&fb.ssrc());
+                let Some(stream) = self.streams.stream_rx(&fb.ssrc()) else {
+                    continue;
+                };
+                stream.handle_rtcp(now, fb);
             } else {
-                let stream = self.streams.stream_tx(&fb.ssrc());
+                let Some(stream) = self.streams.stream_tx(&fb.ssrc()) else {
+                    continue;
+                };
+                stream.handle_rtcp(now, fb);
             }
 
             // let media = self.medias.iter_mut().find(|m| {

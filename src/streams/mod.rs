@@ -98,13 +98,7 @@ impl Streams {
     ///
     /// Can be called multiple times without changing any internal state. However
     /// the RTX value is only picked up the first ever time we see a new SSRC.
-    pub fn declare_stream_tx_rtx(
-        &mut self,
-        ssrc: Ssrc,
-        pt: Pt,
-        rtx: Option<Ssrc>,
-        rtx_pt: Option<Pt>,
-    ) {
+    pub fn declare_stream_tx(&mut self, ssrc: Ssrc, pt: Pt, rtx: Option<Ssrc>, rtx_pt: Option<Pt>) {
         assert_eq!(rtx.is_some(), rtx_pt.is_some(), "rtx requires rtx_pt");
 
         let stream = self
