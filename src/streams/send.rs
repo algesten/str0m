@@ -136,6 +136,8 @@ impl StreamTx {
         payload: impl Into<Vec<u8>>,
     ) -> Result<(), RtcError> {
         //
+        self.rtp_and_wallclock = Some((timestamp, wallclock));
+
         let header = RtpHeader {
             sequence_number: *seq_no as u16,
             marker,

@@ -129,14 +129,14 @@ impl Media {
         self.dir
     }
 
-    pub(crate) fn simulcast(&self) -> Option<SdpSimulcast> {
-        self.simulcast
+    pub(crate) fn simulcast(&self) -> Option<&SdpSimulcast> {
+        self.simulcast.as_ref()
     }
 
     pub(crate) fn visit_stats(
         &self,
         now: Instant,
-        streams: &Streams,
+        streams: &mut Streams,
         snapshot: &mut StatsSnapshot,
     ) {
         for s in &self.streams_rx {
@@ -146,7 +146,7 @@ impl Media {
             let stats = stream.stats();
             // TODO here
         }
-        for s in &mut self.streams_tx {
+        for s in &self.streams_tx {
             let Some(stream) = streams.stream_tx(&s.ssrc) else {
                 continue;
             };

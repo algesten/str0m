@@ -557,14 +557,14 @@ impl Session {
             }
 
             if fb.is_for_rx() {
+                let stream = self.streams.stream_rx(&fb.ssrc());
             } else {
+                let stream = self.streams.stream_tx(&fb.ssrc());
             }
 
             // let media = self.medias.iter_mut().find(|m| {
             //     if fb.is_for_rx() {
-            //         let stream = self.streams.stream_rx(&fb.ssrc());
             //     } else {
-            //         let stream = self.streams.stream_tx(&fb.ssrc());
             //     }
             // });
             // if let Some(media) = media {
@@ -861,7 +861,7 @@ impl Session {
 
     pub fn visit_stats(&mut self, now: Instant, snapshot: &mut StatsSnapshot) {
         for media in &self.medias {
-            media.visit_stats(now, &self.streams, snapshot);
+            media.visit_stats(now, &mut self.streams, snapshot);
         }
 
         snapshot.tx = snapshot.egress.values().map(|s| s.bytes).sum();

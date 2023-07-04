@@ -226,7 +226,7 @@ impl RtpHeader {
         Some(ret)
     }
 
-    pub fn payload_of(&self, data: &[u8]) -> &[u8] {
+    pub fn payload_of<'a>(&self, data: &'a [u8]) -> &'a [u8] {
         if data.is_empty() {
             return &[];
         }
