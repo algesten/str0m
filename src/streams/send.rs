@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::media::KeyframeRequestKind;
 use crate::rtp::Ssrc;
 use crate::rtp::{ExtensionMap, RtpHeader};
 use crate::rtp::{ExtensionValues, MediaTime};
@@ -56,6 +57,9 @@ pub struct StreamTx {
     /// Last time we produced a SR.
     last_sender_report: Instant,
 
+    /// If we have a pending incoming keyframe request.
+    pending_request_keyframe: Option<KeyframeRequestKind>,
+
     /// Statistics of outgoing data.
     stats: StreamTxStats,
 }
@@ -97,6 +101,7 @@ impl StreamTx {
             resends: VecDeque::new(),
             rtx_cache: RtxCache::new(1024, Duration::from_secs(3), false),
             last_sender_report: already_happened(),
+            pending_request_keyframe: None,
             stats: StreamTxStats::default(),
         }
     }
@@ -225,6 +230,10 @@ impl StreamTx {
         assert!(header_len % 4 == 0, "RTP header must be multiple of 4");
         header.header_len = header_len;
 
+        // Need the header for the receipt.
+        // TODO: Can we remove this?
+        let header = header.clone();
+
         let mut body_out = &mut buf[header_len..];
 
         // For resends, the original seq_no is inserted before the payload.
@@ -275,7 +284,7 @@ impl StreamTx {
         }
 
         Some(PacketReceipt {
-            header: header.clone(),
+            header,
             seq_no: next.seq_no,
             is_padding,
             payload_size: body_len,
@@ -288,7 +297,7 @@ impl StreamTx {
             return None;
         }
 
-        let pkt = loop {
+        let seq_no = loop {
             let resend = self.resends.pop_front()?;
 
             let pkt = self.rtx_cache.get_cached_packet_by_seq_no(resend.seq_no);
@@ -303,8 +312,11 @@ impl StreamTx {
                 trace!("SSRC {} resend {} not nackable", self.ssrc, pkt.seq_no);
             }
 
-            break pkt;
+            break pkt.seq_no;
         };
+
+        // Borrow checker gymnastics.
+        let pkt = self.rtx_cache.get_cached_packet_by_seq_no(seq_no).unwrap();
 
         if !is_padding {
             let len = pkt.payload.len() as u64;
@@ -442,6 +454,10 @@ impl StreamTx {
         self.rtx = rtx;
         self.rtx_pt = rtx_pt;
     }
+
+    pub(crate) fn poll_keyframe_request(&mut self) -> Option<KeyframeRequestKind> {
+        self.pending_request_keyframe.take()
+    }
 }
 
 impl StreamTxStats {
@@ -460,7 +476,7 @@ struct NextPacket<'a> {
     pt: Pt,
     ssrc: Ssrc,
     seq_no: SeqNo,
-    pkt: &'a StreamPacket,
+    pkt: &'a mut StreamPacket,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

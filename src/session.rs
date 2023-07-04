@@ -560,19 +560,19 @@ impl Session {
             } else {
             }
 
-            let media = self.medias.iter_mut().find(|m| {
-                if fb.is_for_rx() {
-                    m.has_ssrc_rx(fb.ssrc())
-                } else {
-                    m.has_ssrc_tx(fb.ssrc())
-                }
-            });
-            if let Some(media) = media {
-                media.handle_rtcp_fb(now, fb);
-            } else {
-                // This is not necessarily a fault when starting a new track.
-                trace!("No media for feedback: {:?}", fb);
-            }
+            // let media = self.medias.iter_mut().find(|m| {
+            //     if fb.is_for_rx() {
+            //         let stream = self.streams.stream_rx(&fb.ssrc());
+            //     } else {
+            //         let stream = self.streams.stream_tx(&fb.ssrc());
+            //     }
+            // });
+            // if let Some(media) = media {
+            //     media.handle_rtcp_fb(now, fb);
+            // } else {
+            //     // This is not necessarily a fault when starting a new track.
+            //     trace!("No media for feedback: {:?}", fb);
+            // }
         }
 
         Some(())
@@ -644,12 +644,18 @@ impl Session {
                 }));
             }
 
-            if let Some((rid, kind)) = media.poll_keyframe_request() {
-                return Some(MediaEvent::KeyframeRequest(KeyframeRequest {
-                    mid: media.mid(),
-                    rid,
-                    kind,
-                }));
+            for s in media.streams_tx() {
+                let Some(stream) = self.streams.stream_tx(&s.ssrc) else {
+                    continue;
+                };
+
+                if let Some(kind) = stream.poll_keyframe_request() {
+                    return Some(MediaEvent::KeyframeRequest(KeyframeRequest {
+                        mid: media.mid(),
+                        rid: s.rid,
+                        kind,
+                    }));
+                };
             }
 
             if let Some(r) = media.poll_sample() {
@@ -735,7 +741,14 @@ impl Session {
         let buf = &mut self.poll_packet_buf;
         let twcc_seq = self.twcc;
 
-        let receipt = self.poll_packet_single(now, buf)?;
+        let receipt = poll_packet_single(
+            &self.medias,
+            &mut self.streams,
+            now,
+            &self.exts,
+            &mut self.twcc,
+            buf,
+        )?;
 
         let PacketReceipt {
             header,
@@ -761,19 +774,6 @@ impl Session {
             .register_seq(twcc_seq.into(), now, payload_size);
 
         Some(protected.into())
-    }
-
-    fn poll_packet_single(&mut self, now: Instant, buf: &mut Vec<u8>) -> Option<PacketReceipt> {
-        for m in &self.medias {
-            for s in m.streams_tx() {
-                let stream = self.streams.stream_tx(&s.ssrc).expect("StreamTx for Media");
-                let r = stream.poll_packet(now, &self.exts, &mut self.twcc, m.mid(), s.rid, buf);
-                if let Some(r) = r {
-                    return Some(r);
-                }
-            }
-        }
-        None
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
@@ -890,7 +890,7 @@ impl Session {
         self.medias.len() + if self.app.is_some() { 1 } else { 0 }
     }
 
-    pub fn add_media(&mut self, mut media: Media) {
+    pub fn add_media(&mut self, media: Media) {
         self.medias.push(media);
     }
 
@@ -971,4 +971,24 @@ pub struct PacketReceipt {
     pub seq_no: SeqNo,
     pub is_padding: bool,
     pub payload_size: usize,
+}
+
+fn poll_packet_single(
+    medias: &[Media],
+    streams: &mut Streams,
+    now: Instant,
+    exts: &ExtensionMap,
+    twcc: &mut u64,
+    buf: &mut Vec<u8>,
+) -> Option<PacketReceipt> {
+    for m in medias {
+        for s in m.streams_tx() {
+            let stream = streams.stream_tx(&s.ssrc).expect("StreamTx for Media");
+            let r = stream.poll_packet(now, exts, twcc, m.mid(), s.rid, buf);
+            if let Some(r) = r {
+                return Some(r);
+            }
+        }
+    }
+    None
 }
