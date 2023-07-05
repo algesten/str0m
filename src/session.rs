@@ -59,9 +59,8 @@ pub(crate) struct Session {
     pub exts: ExtensionMap,
     pub codec_config: CodecConfig,
 
-    /// Internally all ReceiverSource and SenderSource are identified by mid/ssrc.
-    /// This map helps denormalize to that form. Sender and Receiver are mixed in
-    /// this map since Ssrc should never clash.
+    /// Each incoming SSRC is mapped to a Mid/Ssrc. The Ssrc in the value is for the case
+    /// where the incoming SSRC is for an RTX and we want the "main".
     source_keys: HashMap<Ssrc, (Mid, Ssrc)>,
 
     /// This is the first ever discovered remote media. We use that for
@@ -306,30 +305,34 @@ impl Session {
             return Some(*r);
         }
 
-        // The receiver/source might already exist in some Media.
-        let maybe_mid = self
-            .medias
-            .iter()
-            .find(|m| m.has_ssrc_rx(ssrc))
-            .map(|m| m.mid());
+        // The receiver/source SSRC might already exist in some Media.
+        // This would happen when the SSRC is communicated as a=ssrc lines in the SDP.
+        // In this case the encoded stream should have been declared already.
+        let maybe_media = self.medias.iter().find(|m| m.has_ssrc_rx(ssrc));
+        if let Some(media) = maybe_media {
+            let mid = media.mid();
+            let ssrc_rx = media.main_ssrc_for(ssrc).unwrap(); // this must exist by now
 
-        if let Some(mid) = maybe_mid {
             // SSRC is mapped to a Sender/Receiver in this media. Make an entry for it.
-            self.source_keys.insert(ssrc, (mid, ssrc));
+            self.source_keys.insert(ssrc, (mid, ssrc_rx));
 
-            return Some((mid, ssrc));
+            return Some((mid, ssrc_rx));
         }
 
-        // The RTP header extension for mid might give us a clue.
+        // Find receiver/source via mid/rid. This is used when the SSRC is not declare
+        // in the SDP as a=ssrc lines.
         if let Some(mid) = header.ext_vals.mid {
-            // Ensure media for this mid exists.
-            let m_exists = self.medias.iter().any(|m| m.mid() == mid);
+            // The media the mid points out.
+            let media = self.medias.iter_mut().find(|m| m.mid() == mid)?;
 
-            if m_exists {
-                // Insert an entry so we can look up on SSRC alone later.
-                self.source_keys.insert(ssrc, (mid, ssrc));
-                return Some((mid, ssrc));
-            }
+            let rid = header.ext_vals.rid.or(header.ext_vals.rid_repair)?;
+            let is_repair = header.ext_vals.rid_repair.is_some();
+
+            let ssrc_rx = media.map_ssrc(ssrc, rid, is_repair, &mut self.streams)?;
+
+            // Insert an entry so we can look up on SSRC alone later.
+            self.source_keys.insert(ssrc, (mid, ssrc_rx));
+            return Some((mid, ssrc_rx));
         }
 
         // No way to map this RtpHeader.
@@ -349,18 +352,10 @@ impl Session {
             self.twcc_rx_register.update_seq(extended.into(), now);
         }
 
-        // // Look up mid/ssrc for this header.
         let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(&header) else {
-            trace!("Unable to map RTP header to media: {:?}", header);
+            trace!("No mid/SSRC for header: {:?}", header);
             return;
         };
-
-        // mid_and_ssrc_for_header guarantees media for this mid exists.
-        let media = self
-            .medias
-            .iter_mut()
-            .find(|m| m.mid() == mid)
-            .expect("media for mid");
 
         let srtp = match self.srtp_rx.as_mut() {
             Some(v) => v,
@@ -368,6 +363,39 @@ impl Session {
                 trace!("Rejecting SRTP while missing SrtpContext");
                 return;
             }
+        };
+
+        // Both of these unwraps are fine because mid_and_ssrc_for_header guarantees it.
+        let media = self.medias.iter().find(|m| m.mid() == mid).unwrap();
+        let stream = self.streams.stream_rx(&ssrc).unwrap();
+
+        let is_repair = media.is_repair_ssrc(ssrc);
+
+        let clock_rate = match media.get_params(header.payload_type) {
+            Some(v) => v.spec().clock_rate,
+            None => {
+                trace!("No codec params for {:?}", header.payload_type);
+                return;
+            }
+        };
+
+        let seq_no = stream.update(now, &header, clock_rate);
+
+        let data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
+            Some(v) => v,
+            None => {
+                trace!("Failed to unprotect SRTP");
+                return;
+            }
+        };
+
+        let Some(pt) = media.main_payload_type_for(header.payload_type) else {
+            trace!("RTP packet PT is not declared in media");
+            return;
+        };
+
+        let Some(packet) = stream.handle_rtp(now, header, data, seq_no, pt, is_repair) else {
+            return;
         };
 
         // let clock_rate = match media.get_params(header.payload_type) {

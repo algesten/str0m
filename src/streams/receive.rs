@@ -1,12 +1,12 @@
 use std::time::Instant;
 
 use crate::media::KeyframeRequestKind;
-use crate::rtp::{DlrrItem, InstantExt, RtcpFb, SenderInfo};
+use crate::rtp::{extend_u16, DlrrItem, InstantExt, Pt, RtcpFb, RtpHeader, SenderInfo, SeqNo};
 use crate::rtp::{SdesType, Ssrc};
 use crate::util::{already_happened, calculate_rtt_ms};
 
 use super::register::ReceiverRegister;
-use super::rr_interval;
+use super::{rr_interval, StreamPacket};
 
 /// Incoming encoded stream.
 ///
@@ -144,5 +144,90 @@ impl StreamRx {
         let ntp_time = now.to_ntp_duration();
         let rtt = calculate_rtt_ms(ntp_time, dlrr.last_rr_delay, dlrr.last_rr_time);
         self.stats.rtt = rtt;
+    }
+
+    pub(crate) fn update(
+        &mut self,
+        now: Instant,
+        header: &crate::rtp::RtpHeader,
+        clock_rate: u32,
+    ) -> SeqNo {
+        self.last_used = now;
+
+        let previous = self.register.as_ref().map(|r| r.max_seq());
+        let seq_no = header.sequence_number(previous);
+
+        if self.register.is_none() {
+            self.register = Some(ReceiverRegister::new(seq_no));
+        }
+
+        if let Some(register) = &mut self.register {
+            register.update_seq(seq_no);
+            register.update_time(now, header.timestamp, clock_rate);
+        }
+
+        seq_no
+    }
+
+    pub(crate) fn handle_rtp(
+        &self,
+        now: Instant,
+        mut header: RtpHeader,
+        mut data: Vec<u8>,
+        mut seq_no: SeqNo,
+        pt: Pt,
+        is_repair: bool,
+    ) -> Option<StreamPacket> {
+        // RTX packets must be rewritten to be a normal packet.
+        if is_repair {
+            let keep_packet = self.un_rtx(&mut header, &mut data, &mut seq_no, pt);
+
+            if !keep_packet {
+                return None;
+            }
+        }
+
+        let packet = StreamPacket {
+            seq_no,
+            header,
+            payload: data,
+            nackable: false,
+            timestamp: now,
+        };
+
+        Some(packet)
+    }
+
+    fn un_rtx(
+        &self,
+        header: &mut RtpHeader,
+        data: &mut Vec<u8>,
+        seq_no: &mut SeqNo,
+        pt: Pt,
+    ) -> bool {
+        // Initial packets with just nulls for the RTX.
+        if RtpHeader::is_rtx_null_packet(&data) {
+            trace!("Drop RTX null packet");
+            return false;
+        }
+
+        let mut orig_seq_no_16 = 0;
+
+        let n = RtpHeader::read_original_sequence_number(&data, &mut orig_seq_no_16);
+        data.drain(0..n);
+
+        trace!(
+            "Repaired seq no {} -> {}",
+            header.sequence_number,
+            orig_seq_no_16
+        );
+
+        header.sequence_number = orig_seq_no_16;
+        *seq_no = extend_u16(Some(**seq_no), orig_seq_no_16).into();
+
+        header.ssrc = self.ssrc;
+        header.payload_type = pt;
+
+        true
     }
 }

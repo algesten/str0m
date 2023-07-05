@@ -18,7 +18,13 @@ pub use event::*;
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct StreamId {
     pub ssrc: Ssrc,
+    pub ssrc_rtx: Option<Ssrc>,
     pub rid: Option<Rid>,
+}
+impl StreamId {
+    fn has_ssrc(&self, ssrc: Ssrc) -> bool {
+        self.ssrc == ssrc || self.ssrc_rtx == Some(ssrc)
+    }
 }
 
 pub struct Media {
@@ -103,18 +109,73 @@ impl Media {
     }
 
     pub(crate) fn has_ssrc_rx(&self, ssrc: Ssrc) -> bool {
-        self.streams_rx.iter().any(|s| s.ssrc == ssrc)
+        self.streams_rx.iter().any(|s| s.has_ssrc(ssrc))
     }
 
     pub(crate) fn has_ssrc_tx(&self, ssrc: Ssrc) -> bool {
         self.streams_tx.iter().any(|s| s.ssrc == ssrc)
     }
 
-    pub(crate) fn ssrc_rx_for_rid(&self, rid: Rid) -> Option<Ssrc> {
-        self.streams_rx
-            .iter()
+    pub(crate) fn main_ssrc_for(&self, ssrc: Ssrc) -> Option<Ssrc> {
+        let s = self.streams_rx.iter().find(|s| s.has_ssrc(ssrc))?;
+        Some(s.ssrc)
+    }
+
+    pub(crate) fn map_ssrc(
+        &mut self,
+        ssrc: Ssrc,
+        rid: Rid,
+        is_repair: bool,
+        streams: &mut Streams,
+    ) -> Option<Ssrc> {
+        if !self.expected_rid_rx.contains(&rid) {
+            return None;
+        }
+
+        let has_rid = self.streams_rx.iter().any(|s| s.rid == Some(rid));
+
+        if !has_rid {
+            // We are expecting the rid, map a new entry for it.
+            if is_repair {
+                // We cannot map the RTX SSRC first. The main one creates the entry, then
+                // we can accept the repair.
+                return None;
+            }
+
+            // Create mapping in streams.
+            streams.expect_stream_rx(ssrc, None);
+
+            // Remember mapping here in Media.
+            self.streams_rx.push(StreamId {
+                ssrc,
+                ssrc_rtx: None,
+                rid: Some(rid),
+            });
+        }
+
+        // At this point we definitely should have an entry for the rid.
+        let s = self
+            .streams_rx
+            .iter_mut()
             .find(|s| s.rid == Some(rid))
-            .map(|s| s.ssrc)
+            .unwrap();
+
+        if is_repair {
+            // This is the main entry, now we can accept the RTX.
+            assert!(s.ssrc != ssrc);
+            s.ssrc_rtx = Some(ssrc);
+            streams.expect_stream_rx(s.ssrc, s.ssrc_rtx);
+        }
+
+        // Always return "main" SSRC (never RTX).
+        Some(s.ssrc)
+    }
+
+    pub(crate) fn is_repair_ssrc(&self, ssrc: Ssrc) -> bool {
+        let Some(s) = self.streams_rx.iter().find(|s| s.has_ssrc(ssrc)) else {
+            return false;
+        };
+        s.ssrc_rtx == Some(ssrc)
     }
 
     pub(crate) fn streams_rx(&self) -> &[StreamId] {
@@ -157,5 +218,13 @@ impl Media {
 
     pub(crate) fn poll_sample(&self) -> Option<Result<MediaData, crate::RtcError>> {
         todo!()
+    }
+
+    pub(crate) fn main_payload_type_for(&self, pt: Pt) -> Option<Pt> {
+        let p = self
+            .params
+            .iter()
+            .find(|p| p.pt == pt || p.resend == Some(pt))?;
+        Some(p.pt)
     }
 }
