@@ -39,12 +39,11 @@ impl Depacketizer for OpusDepacketizer {
         out: &mut Vec<u8>,
         _: &mut CodecExtra,
     ) -> Result<(), PacketError> {
-        if packet.is_empty() {
-            Err(PacketError::ErrShortPacket)
-        } else {
+        if !packet.is_empty() {
             out.extend_from_slice(packet);
-            Ok(())
         }
+
+        Ok(())
     }
 
     fn is_partition_head(&self, _payload: &[u8]) -> bool {
@@ -69,7 +68,10 @@ mod test {
         let empty_bytes = &[];
         let mut out = Vec::new();
         let result = pck.depacketize(empty_bytes, &mut out, &mut extra);
-        assert!(result.is_err(), "Result should be err in case of error");
+        assert!(
+            !result.is_err(),
+            "Result should not be err in case of empty packet"
+        );
 
         // Normal packet
         let raw_bytes: &[u8] = &[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x90];
