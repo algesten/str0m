@@ -67,7 +67,7 @@ pub struct StreamTx {
 
 /// Holder of stats.
 #[derive(Debug, Default)]
-pub struct StreamTxStats {
+pub(crate) struct StreamTxStats {
     bytes: u64,
     bytes_resent: u64,
     packets: u64,
@@ -107,7 +107,7 @@ impl StreamTx {
         }
     }
 
-    pub fn stats(&self) -> &StreamTxStats {
+    pub(crate) fn stats(&self) -> &StreamTxStats {
         &self.stats
     }
 

@@ -496,6 +496,7 @@ extern crate tracing;
 use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
+use streams::Streams;
 use thiserror::Error;
 
 mod dtls;
@@ -968,6 +969,13 @@ impl Rtc {
     ///
     pub fn is_connected(&self) -> bool {
         self.ice.state().is_connected() && self.dtls.is_connected()
+    }
+
+    /// Access the encoded RTP streams API.
+    ///
+    /// This is a low level API that is not typical usage of this library.
+    pub fn streams(&mut self) -> &mut Streams {
+        &mut self.session.streams
     }
 
     fn init_dtls(&mut self, active: bool) -> Result<(), RtcError> {

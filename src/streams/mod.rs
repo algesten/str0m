@@ -7,8 +7,8 @@ use crate::rtp::RtpHeader;
 use crate::rtp::SeqNo;
 use crate::rtp::Ssrc;
 
-pub use self::receive::{StreamRx, StreamRxStats};
-pub use self::send::{StreamTx, StreamTxStats};
+pub use self::receive::StreamRx;
+pub use self::send::StreamTx;
 
 mod receive;
 mod register;

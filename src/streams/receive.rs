@@ -44,7 +44,7 @@ pub struct StreamRx {
 
 /// Holder of stats.
 #[derive(Debug, Default)]
-pub struct StreamRxStats {
+pub(crate) struct StreamRxStats {
     fir_seq_no: u8,
     bytes: u64,
     packets: u64,
@@ -79,7 +79,7 @@ impl StreamRx {
         self.pending_request_keyframe = Some(kind);
     }
 
-    pub fn stats(&self) -> &StreamRxStats {
+    pub(crate) fn stats(&self) -> &StreamRxStats {
         &self.stats
     }
 

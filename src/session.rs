@@ -44,7 +44,7 @@ pub(crate) struct Session {
     medias: Vec<Media>,
 
     // The actual RTP encoded streams.
-    streams: Streams,
+    pub(crate) streams: Streams,
 
     /// The app m-line. Spliced into medias above.
     app: Option<(Mid, usize)>,
@@ -343,32 +343,33 @@ impl Session {
         // }
 
         trace!("Handle RTP: {:?}", header);
-        // if let Some(transport_cc) = header.ext_vals.transport_cc {
-        //     let prev = self.twcc_rx_register.max_seq();
-        //     let extended = extend_u16(Some(*prev), transport_cc);
-        //     self.twcc_rx_register.update_seq(extended.into(), now);
-        // }
+        if let Some(transport_cc) = header.ext_vals.transport_cc {
+            let prev = self.twcc_rx_register.max_seq();
+            let extended = extend_u16(Some(*prev), transport_cc);
+            self.twcc_rx_register.update_seq(extended.into(), now);
+        }
 
         // // Look up mid/ssrc for this header.
-        // let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(&header) else {
-        //     trace!("Unable to map RTP header to media: {:?}", header);
-        //     return;
-        // };
+        let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(&header) else {
+            trace!("Unable to map RTP header to media: {:?}", header);
+            return;
+        };
 
-        // // mid_and_ssrc_for_header guarantees media for this mid exists.
-        // let media = self
-        //     .medias
-        //     .iter_mut()
-        //     .find(|m| m.mid() == mid)
-        //     .expect("media for mid");
+        // mid_and_ssrc_for_header guarantees media for this mid exists.
+        let media = self
+            .medias
+            .iter_mut()
+            .find(|m| m.mid() == mid)
+            .expect("media for mid");
 
-        // let srtp = match self.srtp_rx.as_mut() {
-        //     Some(v) => v,
-        //     None => {
-        //         trace!("Rejecting SRTP while missing SrtpContext");
-        //         return;
-        //     }
-        // };
+        let srtp = match self.srtp_rx.as_mut() {
+            Some(v) => v,
+            None => {
+                trace!("Rejecting SRTP while missing SrtpContext");
+                return;
+            }
+        };
+
         // let clock_rate = match media.get_params(header.payload_type) {
         //     Some(v) => v.spec().clock_rate,
         //     None => {
@@ -567,18 +568,6 @@ impl Session {
                 };
                 stream.handle_rtcp(now, fb);
             }
-
-            // let media = self.medias.iter_mut().find(|m| {
-            //     if fb.is_for_rx() {
-            //     } else {
-            //     }
-            // });
-            // if let Some(media) = media {
-            //     media.handle_rtcp_fb(now, fb);
-            // } else {
-            //     // This is not necessarily a fault when starting a new track.
-            //     trace!("No media for feedback: {:?}", fb);
-            // }
         }
 
         Some(())
