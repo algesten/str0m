@@ -494,6 +494,17 @@ mod test {
     use super::*;
 
     #[test]
+    fn total_queue() {
+        let mut total_queue = TotalQueue::default();
+        let now = Instant::now();
+        total_queue.increase(now, Duration::ZERO, 0);
+        total_queue.increase(now, Duration::ZERO, 1);
+        total_queue.decrease(1, Duration::ZERO);
+        // Doesn't panic
+        total_queue.move_time_forward(now + Duration::from_millis(1));
+    }
+
+    #[test]
     fn rtx_cache() {
         let epoch = Instant::now();
         let after =
