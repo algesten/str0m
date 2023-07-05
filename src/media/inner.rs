@@ -202,6 +202,7 @@ struct ToPacketize {
     rtp_mode_header: Option<RtpHeader>,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum NextPacketBody<'a> {
     /// A regular packetized packet
     Regular { pkt: Packetized },
