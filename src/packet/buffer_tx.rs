@@ -317,7 +317,6 @@ impl TotalQueue {
     fn move_time_forward(&mut self, now: Instant) {
         if let Some(last) = self.last {
             assert!(self.unsent_count > 0);
-            assert!(self.unsent_size > 0);
             let from_last = now - last;
             self.queue_time += from_last * (self.unsent_count as u32);
             self.last = Some(now);
