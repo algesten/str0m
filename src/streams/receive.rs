@@ -1,9 +1,10 @@
+use std::collections::VecDeque;
 use std::time::Instant;
 
 use crate::media::KeyframeRequestKind;
 use crate::rtp::{
-    extend_u16, extend_u32, DlrrItem, InstantExt, MediaTime, Pt, RtcpFb, RtpHeader, SenderInfo,
-    SeqNo,
+    extend_u16, extend_u32, DlrrItem, ExtendedReport, Fir, FirEntry, InstantExt, MediaTime, Pli,
+    Pt, ReceiverReport, ReportBlock, ReportList, Rrtr, Rtcp, RtcpFb, RtpHeader, SenderInfo, SeqNo,
 };
 use crate::rtp::{SdesType, Ssrc};
 use crate::util::{already_happened, calculate_rtt_ms};
@@ -41,6 +42,9 @@ pub struct StreamRx {
     /// If we have a pending keyframe request to send.
     pending_request_keyframe: Option<KeyframeRequestKind>,
 
+    /// Sequence number of the next FIR.
+    fir_seq_no: u8,
+
     /// Last time we produced regular feedback RR.
     last_receiver_report: Instant,
 
@@ -51,7 +55,6 @@ pub struct StreamRx {
 /// Holder of stats.
 #[derive(Debug, Default)]
 pub(crate) struct StreamRxStats {
-    fir_seq_no: u8,
     bytes: u64,
     packets: u64,
     firs: u64,
@@ -73,6 +76,7 @@ impl StreamRx {
             register: None,
             last_time: None,
             pending_request_keyframe: None,
+            fir_seq_no: 0,
             last_receiver_report: already_happened(),
             stats: StreamRxStats::default(),
         }
@@ -243,5 +247,150 @@ impl StreamRx {
         header.payload_type = pt;
 
         true
+    }
+
+    pub(crate) fn maybe_create_keyframe_request(
+        &mut self,
+        sender_ssrc: Ssrc,
+        feedback: &mut VecDeque<Rtcp>,
+    ) {
+        let Some(kind) = self.pending_request_keyframe.take() else {
+            return;
+        };
+
+        let ssrc = self.ssrc;
+
+        match kind {
+            KeyframeRequestKind::Pli => feedback.push_back(Rtcp::Pli(Pli { sender_ssrc, ssrc })),
+            KeyframeRequestKind::Fir => feedback.push_back(Rtcp::Fir(Fir {
+                sender_ssrc,
+                reports: FirEntry {
+                    ssrc,
+                    seq_no: self.next_fir_seq_no(),
+                }
+                .into(),
+            })),
+        }
+    }
+
+    fn next_fir_seq_no(&mut self) -> u8 {
+        let x = self.fir_seq_no;
+        self.fir_seq_no += 1;
+        x
+    }
+
+    pub(crate) fn maybe_create_rr(
+        &mut self,
+        now: Instant,
+        sender_ssrc: Ssrc,
+        feedback: &mut VecDeque<Rtcp>,
+    ) {
+        let mut rr = self.create_receiver_report(now);
+        rr.sender_ssrc = sender_ssrc;
+
+        if !rr.reports.is_empty() {
+            let l = rr.reports[rr.reports.len() - 1].fraction_lost;
+            self.stats.update_loss(l);
+        }
+
+        debug!("Created feedback RR: {:?}", rr);
+        feedback.push_back(Rtcp::ReceiverReport(rr));
+
+        let er = self.create_extended_receiver_report(now);
+        debug!("Created feedback extended receiver report: {:?}", er);
+        feedback.push_back(Rtcp::ExtendedReport(er));
+    }
+
+    fn create_receiver_report(&mut self, now: Instant) -> ReceiverReport {
+        let Some(mut report) = self.register.as_mut().map(|r| r.reception_report()) else {
+            return ReceiverReport {
+                sender_ssrc: 0.into(), // set one level up
+                reports: ReportList::new(),
+            };
+        };
+        report.ssrc = self.ssrc;
+
+        // The middle 32 bits out of 64 in the NTP timestamp (as explained in
+        // Section 4) received as part of the most recent RTCP sender report
+        // (SR) packet from source SSRC_n.  If no SR has been received yet,
+        // the field is set to zero.
+        report.last_sr_time = {
+            let t = self
+                .sender_info
+                .map(|(_, s)| s.ntp_time)
+                .unwrap_or(MediaTime::ZERO);
+
+            let t64 = t.as_ntp_64();
+            (t64 >> 16) as u32
+        };
+
+        // The delay, expressed in units of 1/65_536 seconds, between
+        // receiving the last SR packet from source SSRC_n and sending this
+        // reception report block.  If no SR packet has been received yet
+        // from SSRC_n, the DLSR field is set to zero.
+        report.last_sr_delay = if let Some((t, _)) = self.sender_info {
+            let delay = now - t;
+            ((delay.as_micros() * 65_536) / 1_000_000) as u32
+        } else {
+            0
+        };
+
+        ReceiverReport {
+            sender_ssrc: 0.into(), // set one level up
+            reports: report.into(),
+        }
+    }
+
+    fn create_extended_receiver_report(&self, now: Instant) -> ExtendedReport {
+        // we only want to report our time to measure RTT,
+        // the source will answer with Dlrr feedback, allowing us to calculate RTT
+        let block = ReportBlock::Rrtr(Rrtr {
+            ntp_time: MediaTime::new_ntp_time(now),
+        });
+        ExtendedReport {
+            ssrc: self.ssrc,
+            blocks: vec![block],
+        }
+    }
+
+    pub fn has_nack(&mut self) -> bool {
+        self.register
+            .as_mut()
+            .map(|r| r.has_nack_report())
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn create_nack(
+        &mut self,
+        sender_ssrc: Ssrc,
+        feedback: &mut VecDeque<Rtcp>,
+    ) -> Option<()> {
+        if self.rtx.is_none() {
+            return None;
+        }
+
+        let mut nacks = self.register.as_mut().map(|r| r.nack_reports())?;
+
+        for nack in &mut nacks {
+            nack.sender_ssrc = sender_ssrc;
+            nack.ssrc = self.ssrc;
+
+            debug!("Created feedback NACK: {:?}", nack);
+            self.stats.nacks += 1;
+        }
+
+        debug!("Send nacks: {:?}", nacks);
+
+        for nack in nacks {
+            feedback.push_back(Rtcp::Nack(nack));
+        }
+
+        Some(())
+    }
+}
+
+impl StreamRxStats {
+    fn update_loss(&mut self, fraction_lost: u8) {
+        self.loss = Some(fraction_lost as f32 / u8::MAX as f32)
     }
 }

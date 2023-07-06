@@ -98,6 +98,10 @@ impl Media {
         self.kind
     }
 
+    pub fn cname(&self) -> &str {
+        &self.cname
+    }
+
     pub(crate) fn get_params(&self, pt: Pt) -> Option<&PayloadParams> {
         self.params.iter().find(|p| p.pt == pt)
     }
@@ -225,7 +229,6 @@ impl Media {
     pub(crate) fn depacketize(
         &mut self,
         packet: &StreamPacket,
-        clock_rate: u32,
         reordering_size_audio: usize,
         reordering_size_video: usize,
     ) {

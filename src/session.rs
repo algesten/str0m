@@ -212,22 +212,45 @@ impl Session {
     }
 
     pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
-        // for m in &mut self.medias {
-        //     m.maybe_create_keyframe_request(sender_ssrc, &mut self.feedback);
-        // }
-        // if now >= self.regular_feedback_at() {
-        //     for m in &mut self.medias {
-        //         m.maybe_create_regular_feedback(now, sender_ssrc, &mut self.feedback);
-        //     }
-        // }
-        // if let Some(nack_at) = self.nack_at() {
-        //     if now >= nack_at {
-        //         self.last_nack = now;
-        //         for m in &mut self.medias {
-        //             m.create_nack(sender_ssrc, &mut self.feedback);
-        //         }
-        //     }
-        // }
+        let sender_ssrc = self.first_ssrc_local();
+
+        // NOTE: All .unwrap below are ok because if media contains a stream id.
+        // The corresponding stream for sure exists.
+
+        for m in &mut self.medias {
+            for s in m.streams_rx() {
+                let stream = self.streams.stream_rx(&s.ssrc).unwrap();
+                stream.maybe_create_keyframe_request(sender_ssrc, &mut self.feedback);
+            }
+        }
+
+        if now >= self.regular_feedback_at() {
+            for m in &mut self.medias {
+                let cname = m.cname();
+
+                for s in m.streams_rx() {
+                    let stream = self.streams.stream_rx(&s.ssrc).unwrap();
+                    stream.maybe_create_rr(now, sender_ssrc, &mut self.feedback);
+                }
+                for s in m.streams_tx() {
+                    let stream = self.streams.stream_tx(&s.ssrc).unwrap();
+                    stream.maybe_create_sr(now, cname, &mut self.feedback);
+                }
+            }
+        }
+
+        if let Some(nack_at) = self.nack_at() {
+            if now >= nack_at {
+                self.last_nack = now;
+                for m in &mut self.medias {
+                    for s in m.streams_rx() {
+                        let stream = self.streams.stream_rx(&s.ssrc).unwrap();
+                        stream.create_nack(sender_ssrc, &mut self.feedback);
+                    }
+                }
+            }
+        }
+
         // let iter = self
         //     .medias
         //     .iter_mut()
@@ -244,8 +267,6 @@ impl Session {
         // for m in &mut self.medias {
         //     m.handle_timeout(now)?;
         // }
-
-        let sender_ssrc = self.first_ssrc_local();
 
         if let Some(twcc_at) = self.twcc_at() {
             if now >= twcc_at {
@@ -405,7 +426,6 @@ impl Session {
         if !self.rtp_mode {
             media.depacketize(
                 &packet,
-                clock_rate,
                 self.reordering_size_audio,
                 self.reordering_size_video,
             );

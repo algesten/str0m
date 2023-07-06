@@ -2,13 +2,11 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::media::{KeyframeRequest, KeyframeRequestKind};
-use crate::rtp::{extend_u16, InstantExt};
+use crate::media::KeyframeRequestKind;
+use crate::rtp::{extend_u16, Descriptions, InstantExt, ReportList, Rtcp, Sdes};
 use crate::rtp::{ExtensionMap, ReceptionReport, RtpHeader};
-use crate::rtp::{ExtensionValues, MediaTime};
-use crate::rtp::{Mid, NackEntry};
-use crate::rtp::{Pt, Rid};
-use crate::rtp::{RtcpFb, Ssrc};
+use crate::rtp::{ExtensionValues, MediaTime, Mid, NackEntry};
+use crate::rtp::{Pt, Rid, RtcpFb, SdesType, SenderInfo, SenderReport, Ssrc};
 use crate::rtp::{SeqNo, SRTP_BLOCK_SIZE};
 use crate::session::PacketReceipt;
 use crate::util::value_history::ValueHistory;
@@ -263,9 +261,12 @@ impl StreamTx {
             crate::log_stat!("QUEUE_DELAY", header.ssrc, delay.as_secs_f64() * 1000.0);
         }
 
+        let seq_no = next.seq_no;
+        self.last_used = now;
+
         Some(PacketReceipt {
             header,
-            seq_no: next.seq_no,
+            seq_no,
             is_padding,
             payload_size: body_len,
         })
@@ -426,10 +427,6 @@ impl StreamTx {
         self.last_sender_report + rr_interval(is_audio)
     }
 
-    pub(crate) fn need_nack(&self) -> bool {
-        !self.resends.is_empty()
-    }
-
     pub(crate) fn set_rtx(&mut self, rtx: Option<Ssrc>, rtx_pt: Option<Pt>) {
         self.rtx = rtx;
         self.rtx_pt = rtx_pt;
@@ -481,6 +478,79 @@ impl StreamTx {
         }
 
         Some(())
+    }
+
+    pub(crate) fn maybe_create_sr(
+        &mut self,
+        now: Instant,
+        cname: &str,
+        feedback: &mut VecDeque<Rtcp>,
+    ) -> Option<()> {
+        if now < self.sender_report_at() {
+            return None;
+        }
+
+        let sr = self.create_sender_report(now);
+        let ds = self.create_sdes(cname);
+
+        debug!("Created feedback SR: {:?}", sr);
+        feedback.push_back(Rtcp::SenderReport(sr));
+        feedback.push_back(Rtcp::SourceDescription(ds));
+
+        // Update timestamp to move time when next is created.
+        self.last_sender_report = now;
+
+        Some(())
+    }
+
+    fn create_sender_report(&self, now: Instant) -> SenderReport {
+        SenderReport {
+            sender_info: self.sender_info(now),
+            reports: ReportList::new(),
+        }
+    }
+
+    fn create_sdes(&self, cname: &str) -> Descriptions {
+        let mut s = Sdes {
+            ssrc: self.ssrc,
+            values: ReportList::new(),
+        };
+        s.values.push((SdesType::CNAME, cname.to_string()));
+
+        let mut d = Descriptions {
+            reports: ReportList::new(),
+        };
+        d.reports.push(s);
+
+        d
+    }
+    fn sender_info(&self, now: Instant) -> SenderInfo {
+        let rtp_time = self.current_rtp_time(now).map(|t| t.numer()).unwrap_or(0);
+
+        SenderInfo {
+            ssrc: self.ssrc,
+            ntp_time: MediaTime::new_ntp_time(now),
+            rtp_time: rtp_time as u32,
+            sender_packet_count: self.stats.packets as u32,
+            sender_octet_count: self.stats.bytes as u32,
+        }
+    }
+
+    fn current_rtp_time(&self, now: Instant) -> Option<MediaTime> {
+        // This is the RTP time and the wallclock from the last written media.
+        // We use that as an offset to current time (now), to calculate the
+        // current RTP time.
+        let (t, w) = self.rtp_and_wallclock?;
+
+        // We assume the media was written some time in the past.
+        let offset = now - w;
+
+        let base = t.denom();
+
+        // This might be in the wrong base.
+        let rtp_time = t + offset.into();
+
+        Some(rtp_time.rebase(base))
     }
 }
 

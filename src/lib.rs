@@ -517,7 +517,7 @@ mod packet;
 
 mod rtp;
 pub use rtp::Bitrate;
-use rtp::{Extension, ExtensionMap, InstantExt, RtpHeader, SeqNo, Ssrc};
+use rtp::{Extension, ExtensionMap, InstantExt, Ssrc};
 
 mod sctp;
 use sctp::{RtcSctp, SctpEvent};
@@ -530,7 +530,7 @@ use format::CodecConfig;
 pub use ice::IceConnectionState;
 
 pub mod channel;
-use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
+use channel::{ChannelData, ChannelHandler, ChannelId};
 
 mod media;
 use media::{Direction, Mid, Pt, Rid};

@@ -125,8 +125,8 @@ impl Streams {
         r.chain(s).min()
     }
 
-    pub(crate) fn need_nack(&self) -> bool {
-        self.streams_tx.values().any(|s| s.need_nack())
+    pub(crate) fn need_nack(&mut self) -> bool {
+        self.streams_rx.values_mut().any(|s| s.has_nack())
     }
 
     pub(crate) fn is_receiving(&self) -> bool {
