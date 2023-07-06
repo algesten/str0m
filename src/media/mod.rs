@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::time::Instant;
 
-use crate::packet::{DepacketizingBuffer, MediaKind};
+use crate::packet::{DepacketizingBuffer, MediaKind, RtpMeta};
 use crate::rtp::ExtensionMap;
 use crate::rtp::Ssrc;
 pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
@@ -9,8 +10,7 @@ use crate::format::PayloadParams;
 use crate::sdp::Msid;
 use crate::sdp::Simulcast as SdpSimulcast;
 use crate::stats::StatsSnapshot;
-use crate::streams::Streams;
-use crate::util::value_history::ValueHistory;
+use crate::streams::{StreamPacket, Streams};
 
 mod event;
 pub use event::*;
@@ -68,12 +68,6 @@ pub struct Media {
     /// Tells whether nack is enabled for this media.
     enable_nack: bool,
 
-    /// History of bytes transmitted on this media.
-    bytes_transmitted: ValueHistory<u64>,
-
-    /// History of bytes re-transmitted.
-    bytes_retransmitted: ValueHistory<u64>,
-
     // Rid that we are expecting to see on incoming RTP packets that map to this mid.
     // Once discovered, we make an entry in `stream_rx`.
     expected_rid_rx: Vec<Rid>,
@@ -90,9 +84,9 @@ pub struct Media {
     pub(crate) need_open_event: bool,
     pub(crate) need_changed_event: bool,
 
-    /// Buffer of incoming RTP packets. This is a reordering/jitter buffer which also
-    /// depacketize from RTP to samples, in RTP-mode this is not used.
-    buffer: DepacketizingBuffer,
+    /// Buffers of incoming RTP packets. These do reordering/jitter buffer and also
+    /// depacketize from RTP to samples.
+    buffers: HashMap<(Pt, Option<Rid>), DepacketizingBuffer>,
 }
 
 impl Media {
@@ -226,5 +220,57 @@ impl Media {
             .iter()
             .find(|p| p.pt == pt || p.resend == Some(pt))?;
         Some(p.pt)
+    }
+
+    pub(crate) fn depacketize(
+        &mut self,
+        packet: &StreamPacket,
+        clock_rate: u32,
+        reordering_size_audio: usize,
+        reordering_size_video: usize,
+    ) {
+        if !self.dir.is_receiving() {
+            return;
+        }
+
+        let ssrc = packet.header.ssrc;
+        let pt = packet.header.payload_type;
+        // This unwrap is ok, because we should not call depacketize without making a
+        // StreamPacket using the information in streams_rx.
+        let s = self.streams_rx.iter().find(|s| s.ssrc == ssrc).unwrap();
+        let rid = s.rid;
+        let key = (pt, rid);
+
+        let exists = self.buffers.contains_key(&key);
+
+        if !exists {
+            // This unwrap is ok because we needed the clock_rate before calling depacketize.
+            let params = self.get_params(pt).unwrap();
+
+            let codec = params.spec.codec;
+
+            // How many packets to hold back in the jitter buffer.
+            let hold_back = if codec.is_audio() {
+                reordering_size_audio
+            } else {
+                reordering_size_video
+            };
+
+            let buffer = DepacketizingBuffer::new(codec.into(), hold_back);
+
+            self.buffers.insert((pt, rid), buffer);
+        }
+
+        // The entry will be there by now.
+        let buffer = self.buffers.get_mut(&key).unwrap();
+
+        let meta = RtpMeta {
+            received: packet.timestamp,
+            time: packet.time,
+            seq_no: packet.seq_no,
+            header: packet.header.clone(),
+        };
+
+        buffer.push(meta, packet.payload.clone());
     }
 }

@@ -1,7 +1,10 @@
 use std::time::Instant;
 
 use crate::media::KeyframeRequestKind;
-use crate::rtp::{extend_u16, DlrrItem, InstantExt, Pt, RtcpFb, RtpHeader, SenderInfo, SeqNo};
+use crate::rtp::{
+    extend_u16, extend_u32, DlrrItem, InstantExt, MediaTime, Pt, RtcpFb, RtpHeader, SenderInfo,
+    SeqNo,
+};
 use crate::rtp::{SdesType, Ssrc};
 use crate::util::{already_happened, calculate_rtt_ms};
 
@@ -31,6 +34,9 @@ pub struct StreamRx {
     ///
     /// Set on first ever packet.
     register: Option<ReceiverRegister>,
+
+    /// Last observed media time in an RTP packet.
+    last_time: Option<MediaTime>,
 
     /// If we have a pending keyframe request to send.
     pending_request_keyframe: Option<KeyframeRequestKind>,
@@ -65,6 +71,7 @@ impl StreamRx {
             last_used: already_happened(),
             sender_info: None,
             register: None,
+            last_time: None,
             pending_request_keyframe: None,
             last_receiver_report: already_happened(),
             stats: StreamRxStats::default(),
@@ -149,13 +156,17 @@ impl StreamRx {
     pub(crate) fn update(
         &mut self,
         now: Instant,
-        header: &crate::rtp::RtpHeader,
+        header: &RtpHeader,
         clock_rate: u32,
-    ) -> SeqNo {
+    ) -> (SeqNo, MediaTime) {
         self.last_used = now;
 
-        let previous = self.register.as_ref().map(|r| r.max_seq());
-        let seq_no = header.sequence_number(previous);
+        let previous_seq = self.register.as_ref().map(|r| r.max_seq());
+        let seq_no = header.sequence_number(previous_seq);
+
+        let previous_time = self.last_time.map(|t| t.numer() as u64);
+        let time_u32 = extend_u32(previous_time, header.timestamp);
+        let time = MediaTime::new(time_u32 as i64, clock_rate as i64);
 
         if self.register.is_none() {
             self.register = Some(ReceiverRegister::new(seq_no));
@@ -164,9 +175,10 @@ impl StreamRx {
         if let Some(register) = &mut self.register {
             register.update_seq(seq_no);
             register.update_time(now, header.timestamp, clock_rate);
+            self.last_time = Some(time);
         }
 
-        seq_no
+        (seq_no, time)
     }
 
     pub(crate) fn handle_rtp(
@@ -175,6 +187,7 @@ impl StreamRx {
         mut header: RtpHeader,
         mut data: Vec<u8>,
         mut seq_no: SeqNo,
+        time: MediaTime,
         pt: Pt,
         is_repair: bool,
     ) -> Option<StreamPacket> {
@@ -189,6 +202,7 @@ impl StreamRx {
 
         let packet = StreamPacket {
             seq_no,
+            time,
             header,
             payload: data,
             nackable: false,

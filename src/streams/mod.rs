@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::rtp::Pt;
 use crate::rtp::RtpHeader;
 use crate::rtp::SeqNo;
 use crate::rtp::Ssrc;
+use crate::rtp::{MediaTime, Pt};
 
 pub use self::receive::StreamRx;
 pub use self::send::StreamTx;
@@ -34,6 +34,9 @@ fn rr_interval(audio: bool) -> Duration {
 pub struct StreamPacket {
     /// Extended sequence number to avoid having to deal with ROC.
     pub seq_no: SeqNo,
+
+    /// Extended RTP time in the clock frequency of the codec. To avoid dealing with ROC.
+    pub time: MediaTime,
 
     /// Parsed RTP header.
     pub header: RtpHeader,

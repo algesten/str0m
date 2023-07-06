@@ -496,7 +496,7 @@ extern crate tracing;
 use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
-use streams::Streams;
+use streams::{StreamPacket, Streams};
 use thiserror::Error;
 
 mod dtls;
@@ -770,33 +770,8 @@ pub enum Event {
     /// The request is either PLI (Picture Loss Indication) or FIR (Full Intra Request).
     KeyframeRequest(KeyframeRequest),
 
-    /// Incoming RTP data when in RTP mode.
-    RtpData(RtpData),
-}
-
-/// Event for incoming RTP packets when in RTP mode.
-#[derive(Debug)]
-pub struct RtpData {
-    /// Extended sequence number.
-    pub seq_no: SeqNo,
-
-    /// Whether the SSRC of this packet was expected. If a packet is not expected, this will
-    /// be the only `RtpData` event that will be emitted for the SSRC, unless we declare it as
-    /// expected. There are two ways to make incoming RTP data expected:
-    ///
-    /// 1. On media level, we can declare an expected `Mid`, `Option<Rid>` pair. If the incoming
-    ///    RTP header extensions matches such a pair, the SSRC will be "unlocked" automatically
-    ///    and no further action is needed.
-    /// 2. On the lower level we can manually call [`expect_stream_rx`] to keep receiving more
-    ///    packets for the SSRC. This allows for dynamic discovery of incoming encoded streams also in
-    ///    cases where mid/rid isn't used.
-    pub expected: bool,
-
-    /// The parsed header.
-    pub header: RtpHeader,
-
-    /// The actual RTP packet including the header.
-    pub data: Vec<u8>,
+    /// Incoming RTP data.
+    StreamPacket(StreamPacket),
 }
 
 /// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.
@@ -1171,6 +1146,7 @@ impl Rtc {
                 MediaEvent::EgressBitrateEstimate(b) => {
                     Output::Event(Event::EgressBitrateEstimate(b))
                 }
+                MediaEvent::StreamPacket(p) => Output::Event(Event::StreamPacket(p)),
             });
         }
 

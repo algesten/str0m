@@ -2,20 +2,20 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::dtls::KeyingMaterial;
-use crate::format::{Codec, CodecConfig};
+use crate::format::CodecConfig;
 use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::media::KeyframeRequest;
 use crate::media::Media;
 use crate::media::{MediaAdded, MediaChanged};
+use crate::packet::SendSideBandwithEstimator;
 use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
-use crate::packet::{RtpMeta, SendSideBandwithEstimator};
 use crate::rtp::SeqNo;
+use crate::rtp::SRTCP_OVERHEAD;
 use crate::rtp::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
-use crate::rtp::{extend_u32, SRTCP_OVERHEAD};
-use crate::rtp::{Bitrate, ExtensionMap, MediaTime, Mid, Rtcp, RtcpFb};
+use crate::rtp::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
 use crate::rtp::{SrtpContext, SrtpKey, Ssrc};
 use crate::stats::StatsSnapshot;
-use crate::streams::Streams;
+use crate::streams::{StreamPacket, Streams};
 use crate::util::{already_happened, not_happening, Soonest};
 use crate::{net, MediaData};
 use crate::{RtcConfig, RtcError};
@@ -90,6 +90,9 @@ pub(crate) struct Session {
     // temporary buffer when getting the next (unencrypted) RTP packet from Media line.
     poll_packet_buf: Vec<u8>,
 
+    // Next packet for StreamPacket event.
+    pending_packet: Option<StreamPacket>,
+
     pub ice_lite: bool,
 
     /// Whether we are running in RTP-mode.
@@ -104,6 +107,7 @@ pub enum MediaEvent {
     Added(MediaAdded),
     KeyframeRequest(KeyframeRequest),
     EgressBitrateEstimate(Bitrate),
+    StreamPacket(StreamPacket),
 }
 
 impl Session {
@@ -157,8 +161,8 @@ impl Session {
             enable_twcc_feedback: false,
             pacer,
             poll_packet_buf: vec![0; 2000],
+            pending_packet: None,
             ice_lite: config.ice_lite,
-
             rtp_mode: config.rtp_mode,
         }
     }
@@ -366,7 +370,7 @@ impl Session {
         };
 
         // Both of these unwraps are fine because mid_and_ssrc_for_header guarantees it.
-        let media = self.medias.iter().find(|m| m.mid() == mid).unwrap();
+        let media = self.medias.iter_mut().find(|m| m.mid() == mid).unwrap();
         let stream = self.streams.stream_rx(&ssrc).unwrap();
 
         let is_repair = media.is_repair_ssrc(ssrc);
@@ -379,7 +383,7 @@ impl Session {
             }
         };
 
-        let seq_no = stream.update(now, &header, clock_rate);
+        let (seq_no, time) = stream.update(now, &header, clock_rate);
 
         let data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
             Some(v) => v,
@@ -394,170 +398,20 @@ impl Session {
             return;
         };
 
-        let Some(packet) = stream.handle_rtp(now, header, data, seq_no, pt, is_repair) else {
+        let Some(packet) = stream.handle_rtp(now, header, data, seq_no, time, pt, is_repair) else {
             return;
         };
 
-        // let clock_rate = match media.get_params(header.payload_type) {
-        //     Some(v) => v.spec().clock_rate,
-        //     None => {
-        //         trace!("No codec params for {:?}", header.payload_type);
-        //         return;
-        //     }
-        // };
+        if !self.rtp_mode {
+            media.depacketize(
+                &packet,
+                clock_rate,
+                self.reordering_size_audio,
+                self.reordering_size_video,
+            );
+        }
 
-        // // Figure out which SSRC the repairs header points out. This is here because of borrow
-        // // checker ordering.
-        // let ssrc_repairs = header
-        //     .ext_vals
-        //     .rid_repair
-        //     .and_then(|repairs| media.ssrc_rx_for_rid(repairs));
-
-        // let source = media.get_or_create_source_rx(ssrc);
-
-        // let mut media_need_check_source = false;
-        // if let Some(rid) = header.ext_vals.rid {
-        //     if source.set_rid(rid) {
-        //         media_need_check_source = true;
-        //     }
-        // }
-        // if let Some(repairs) = ssrc_repairs {
-        //     if source.set_repairs(repairs) {
-        //         media_need_check_source = true;
-        //     }
-        // }
-
-        // // Gymnastics to appease the borrow checker.
-        // let source = if media_need_check_source {
-        //     media.set_equalize_sources();
-        //     media.get_or_create_source_rx(ssrc)
-        // } else {
-        //     source
-        // };
-
-        // let mut rid = source.rid();
-        // let seq_no = source.update(now, &header, clock_rate);
-
-        // let is_rtx = source.is_rtx();
-
-        // let mut data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
-        //     Some(v) => v,
-        //     None => {
-        //         trace!("Failed to unprotect SRTP");
-        //         return;
-        //     }
-        // };
-
-        // // For RTX we copy the header and modify the sequencer number to be that of the repaired stream.
-        // let mut header = header.clone();
-
-        // // This seq_no is the lengthened original seq_no for RTX stream, and just straight up
-        // // lengthened seq_no for non-rtx.
-        // let seq_no = if is_rtx {
-        //     let mut orig_seq_16 = 0;
-
-        //     // Not sure why we receive these initial packets with just nulls for the RTX.
-        //     if RtpHeader::is_rtx_null_packet(&data) {
-        //         trace!("Drop RTX null packet");
-        //         return;
-        //     }
-
-        //     let n = RtpHeader::read_original_sequence_number(&data, &mut orig_seq_16);
-        //     data.drain(0..n);
-        //     trace!(
-        //         "Repaired seq no {} -> {}",
-        //         header.sequence_number,
-        //         orig_seq_16
-        //     );
-        //     header.sequence_number = orig_seq_16;
-        //     if let Some(repairs_rid) = header.ext_vals.rid_repair {
-        //         rid = Some(repairs_rid);
-        //     }
-
-        //     let repaired_ssrc = match source.repairs() {
-        //         Some(v) => v,
-        //         None => {
-        //             trace!("Can't find repaired SSRC for: {}", header.ssrc);
-        //             return;
-        //         }
-        //     };
-        //     trace!("Repaired {:?} -> {:?}", header.ssrc, repaired_ssrc);
-        //     header.ssrc = repaired_ssrc;
-
-        //     let repaired_source = media.get_or_create_source_rx(repaired_ssrc);
-        //     if rid.is_none() && repaired_source.rid().is_some() {
-        //         rid = repaired_source.rid();
-        //     }
-        //     let orig_seq_no = repaired_source.update(now, &header, clock_rate);
-
-        //     let params = media.get_params(header.payload_type).unwrap();
-        //     if let Some(pt) = params.resend() {
-        //         header.payload_type = pt;
-        //     }
-
-        //     orig_seq_no
-        // } else {
-        //     if self.first_ssrc_remote.is_none() {
-        //         info!("First remote SSRC: {}", ssrc);
-        //         self.first_ssrc_remote = Some(ssrc);
-        //     }
-
-        //     seq_no
-        // };
-
-        // // Parameters using the PT in the header. This will return the same CodecParams
-        // // instance regardless of whether this being a resend PT or not.
-        // // unwrap: is ok because we checked above.
-        // let params = media.get_params(header.payload_type).unwrap();
-
-        // // This is the "main" PT and it will differ to header.payload_type if this is a resend.
-        // let pt = params.pt();
-        // let codec = if self.rtp_mode {
-        //     Codec::Null
-        // } else {
-        //     params.spec().codec
-        // };
-
-        // if !media.direction().is_receiving() {
-        //     // Not adding unless we are supposed to be receiving.
-        //     return;
-        // }
-
-        // // Buffers are unique per media (since PT is unique per media).
-        // // The hold_back should be configured from param.spec().codec to
-        // // avoid the null codec.
-        // let hold_back = if params.spec().codec.is_audio() {
-        //     self.reordering_size_audio
-        // } else {
-        //     self.reordering_size_video
-        // };
-        // let buf_rx = media.get_buffer_rx(pt, rid, codec, hold_back);
-
-        // let prev_time = buf_rx.max_time().map(|t| t.numer() as u64);
-        // let extended = extend_u32(prev_time, header.timestamp);
-        // let time = MediaTime::new(extended as i64, clock_rate as i64);
-
-        // let meta = RtpMeta::new(now, time, seq_no, header);
-
-        // // here we have incoming and depacketized data before it may be dropped at buffer.push()
-        // let bytes_rx = data.len();
-
-        // // In RTP mode we want to retain the header. After srtp_unprotect, we need to
-        // // recombine the header + the decrypted payload.
-        // if self.rtp_mode {
-        //     // Write header after the body. This shouldn't allocate since
-        //     // unprotect_rtp() call above should allocate enough space for the header.
-        //     data.extend_from_slice(&buf[..meta.header.header_len]);
-        //     // Rotate so header is before body.
-        //     data.rotate_right(meta.header.header_len);
-        // };
-
-        // buf_rx.push(meta, data);
-
-        // // TODO: is there a nicer way to make borrow-checker happy ?
-        // // this should go away with the refactoring of the entire handle_rtp() function
-        // let source = media.get_or_create_source_rx(ssrc);
-        // source.update_packet_counts(bytes_rx as u64);
+        self.pending_packet = Some(packet);
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
@@ -645,6 +499,10 @@ impl Session {
         // If we're not ready to flow media, don't send any events.
         if !self.ready_for_srtp() {
             return None;
+        }
+
+        if let Some(packet) = self.pending_packet.take() {
+            return Some(MediaEvent::StreamPacket(packet));
         }
 
         for media in &mut self.medias {

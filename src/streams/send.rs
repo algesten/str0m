@@ -130,20 +130,20 @@ impl StreamTx {
         &mut self,
         seq_no: SeqNo,
         marker: bool,
-        timestamp: MediaTime,
+        time: MediaTime,
         wallclock: Instant,
         ext_vals: ExtensionValues,
         nackable: bool,
         payload: impl Into<Vec<u8>>,
     ) -> Result<(), RtcError> {
         //
-        self.rtp_and_wallclock = Some((timestamp, wallclock));
+        self.rtp_and_wallclock = Some((time, wallclock));
 
         let header = RtpHeader {
             sequence_number: *seq_no as u16,
             marker,
             payload_type: self.pt,
-            timestamp: timestamp.numer() as u32,
+            timestamp: time.numer() as u32,
             ssrc: self.ssrc,
             ext_vals,
             ..Default::default()
@@ -151,6 +151,7 @@ impl StreamTx {
 
         let packet = StreamPacket {
             seq_no,
+            time,
             header,
             payload: payload.into(),
             nackable,
