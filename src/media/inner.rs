@@ -202,9 +202,10 @@ struct ToPacketize {
     rtp_mode_header: Option<RtpHeader>,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum NextPacketBody<'a> {
     /// A regular packetized packet
-    Regular { pkt: &'a Packetized },
+    Regular { pkt: Packetized },
     /// A resend of a previously sent packet
     Resend {
         pkt: &'a Packetized,
@@ -318,7 +319,15 @@ impl MediaInner {
             } else {
                 send_buffer_video
             };
-            PacketizingBuffer::new(codec.into(), max_retain)
+            let rtx_max_packet_count = max_retain;
+            // TODO: Make max duration configurable.
+            let rtx_max_duration = Duration::from_secs(3);
+            PacketizingBuffer::new(
+                codec.into(),
+                max_retain,
+                rtx_max_packet_count,
+                rtx_max_duration,
+            )
         });
 
         trace!(
@@ -514,8 +523,28 @@ impl MediaInner {
             body_out = &mut body_out[original_seq_len..];
         }
 
+        let pt = next.pt;
+        let seq_no = next.seq_no;
         let body_len = match next.body {
-            NextPacketBody::Regular { pkt } | NextPacketBody::Resend { pkt, .. } => {
+            NextPacketBody::Regular { pkt } => {
+                let body_len = pkt.data.len();
+                body_out[..body_len].copy_from_slice(&pkt.data);
+
+                // pad for SRTP
+                let pad_len = RtpHeader::pad_packet(
+                    &mut buf[..],
+                    header_len,
+                    body_len + original_seq_len,
+                    SRTP_BLOCK_SIZE,
+                );
+
+                if let Some(buffer_tx) = self.buffers_tx.get_mut(&pt) {
+                    buffer_tx.cache_sent(seq_no, pkt, now);
+                }
+
+                body_len + original_seq_len + pad_len
+            }
+            NextPacketBody::Resend { pkt, .. } => {
                 let body_len = pkt.data.len();
                 body_out[..body_len].copy_from_slice(&pkt.data);
 
@@ -552,7 +581,7 @@ impl MediaInner {
 
         Some(PolledPacket {
             header,
-            seq_no: next.seq_no,
+            seq_no,
             is_padding,
             payload_size: body_len,
         })
@@ -643,7 +672,7 @@ impl MediaInner {
 
     fn poll_packet_regular(&mut self, now: Instant) -> Option<NextPacket<'_>> {
         // exit via ? here is ok since that means there is nothing to send.
-        let (pt, pkt) = next_send_buffer(&self.buffers_tx)?;
+        let (pt, pkt) = take_next_send_buffer(&mut self.buffers_tx, now)?;
 
         // Force recaching since packetizer changed.
         self.queue_state = None;
@@ -660,15 +689,6 @@ impl MediaInner {
         //  In rtp_mode, we just use the incoming sequence number.
         let wanted = pkt.rtp_mode_header.as_ref().map(|h| h.sequence_number);
         let seq_no = source.next_seq_no(now, wanted);
-
-        let buf = self
-            .buffers_tx
-            .get_mut(&pt)
-            .expect("buffer for next packet");
-
-        buf.update_next(seq_no);
-
-        let pkt = buf.take_next(now);
 
         Some(NextPacket {
             pt,
@@ -798,10 +818,7 @@ impl MediaInner {
                     // Find a historic packet that is smaller than this max size. The max size
                     // is a headroom since we can accept slightly larger padding than asked for.
                     let max_size = pad_size * 2;
-                    if let Some(packet) = buffer.historic_packet_smaller_than(max_size) {
-                        let seq_no = packet.seq_no.expect(
-                            "this packet to have been sent and therefore have a sequence number",
-                        );
+                    if let Some((seq_no, packet)) = buffer.historic_packet_smaller_than(max_size) {
                         // Saturating sub because we can overflow and want to stop when that
                         // happens.
                         pad_size = pad_size.saturating_sub(packet.data.len());
@@ -1273,7 +1290,7 @@ impl MediaInner {
 
         // Turning NackEntry into SeqNo we need to know a SeqNo "close by" to lengthen the 16 bit
         // sequence number into the 64 bit we have in SeqNo.
-        let seq_no = buffer.first_seq_no()?;
+        let seq_no = buffer.first_seq_no_in_rtx_cache()?;
         let iter = entries.flat_map(|n| n.into_iter(seq_no));
 
         // Invalidate cached queue_state.
@@ -1512,10 +1529,12 @@ struct Resend {
     pub queued_at: Instant,
 }
 
-fn next_send_buffer(buffers_tx: &HashMap<Pt, PacketizingBuffer>) -> Option<(Pt, &Packetized)> {
-    for (pt, buf) in buffers_tx {
-        if let Some(pkt) = buf.maybe_next() {
-            assert!(pkt.seq_no.is_none());
+fn take_next_send_buffer(
+    buffers_tx: &mut HashMap<Pt, PacketizingBuffer>,
+    now: Instant,
+) -> Option<(Pt, Packetized)> {
+    for (pt, buf) in buffers_tx.iter_mut() {
+        if let Some(pkt) = buf.take_next(now) {
             return Some((*pt, pkt));
         }
     }
