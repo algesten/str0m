@@ -1,8 +1,6 @@
 use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
 use crate::ice::IceCreds;
-use crate::rtp::Direction;
-use crate::rtp::Mid;
 use crate::sctp::ChannelConfig;
 use crate::Rtc;
 use crate::RtcError;
@@ -59,19 +57,6 @@ impl<'a> DirectApi<'a> {
     /// Sets the remote DTLS fingerprint.
     pub fn set_remote_fingerprint(&mut self, dtls_fingerprint: Fingerprint) {
         self.rtc.remote_fingerprint = Some(dtls_fingerprint);
-    }
-
-    /// Set direction on some media.
-    pub fn set_direction(&mut self, mid: Mid, dir: Direction) -> Result<(), RtcError> {
-        let media = self
-            .rtc
-            .session
-            .media_by_mid_mut(mid)
-            .ok_or_else(|| RtcError::Other(format!("No media for mid: {}", mid)))?;
-
-        media.set_direction(dir);
-
-        Ok(())
     }
 
     /// Start the DTLS subsystem.

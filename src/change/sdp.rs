@@ -9,8 +9,8 @@ use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::ice::{Candidate, IceCreds};
 use crate::io::Id;
-use crate::media::MediaInner;
-use crate::media::{MediaKind, Source};
+use crate::media::Media;
+use crate::packet::MediaKind;
 use crate::rtp::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
@@ -21,6 +21,7 @@ use crate::Rtc;
 use crate::RtcError;
 
 pub use crate::sdp::{SdpAnswer, SdpOffer};
+use crate::streams::Streams;
 
 /// Changes to the Rtc via SDP Offer/Answer dance.
 pub struct SdpApi<'a> {
@@ -604,7 +605,7 @@ fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
 
     add_new_lines(session, &new_lines, true).map_err(RtcError::RemoteSdp)?;
 
-    session.equalize_sources();
+    // session.equalize_sources();
 
     Ok(())
 }
@@ -630,7 +631,7 @@ fn apply_answer(
     // Add all pending changes (since we pre-allocated SSRC communicated in the Offer).
     add_pending_changes(session, pending);
 
-    session.equalize_sources();
+    // session.equalize_sources();
 
     Ok(())
 }
@@ -650,7 +651,9 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
         }
 
         let media = session
-            .media_by_mid_mut(add_media.mid)
+            .medias
+            .iter_mut()
+            .find(|m| m.mid() == add_media.mid)
             .expect("Media to be added for pending mid");
 
         // the cname/msid has already been communicated in the offer, we need to kep
@@ -658,14 +661,9 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
         media.set_cname(add_media.cname);
         media.set_msid(add_media.msid);
 
-        for (ssrc, repairs) in add_media.ssrcs {
-            let tx = media.get_or_create_source_tx(ssrc);
-            if let Some(repairs) = repairs {
-                if tx.set_repairs(repairs) {
-                    media.set_equalize_sources();
-                }
-            }
-        }
+        media.map_send_tx(&mut session.streams, add_media.ssrcs.iter().cloned());
+        // if tx.set_repairs(repairs) {
+        //     media.set_equalize_sources();
     }
 }
 
@@ -691,12 +689,12 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
                 }
             }
             MediaType::Audio | MediaType::Video => {
-                if let Some(media) = session.media_by_mid_mut(m.mid()) {
+                if let Some(media) = session.medias.iter_mut().find(|l| l.mid() == m.mid()) {
                     if idx != media.index() {
                         return index_err(m.mid());
                     }
 
-                    update_media(media, m, &config, &session_exts);
+                    update_media(media, m, &config, &session_exts, &mut session.streams);
                     continue;
                 }
             }
@@ -732,9 +730,15 @@ fn add_new_lines(
             // Update the PTs to match that of the remote.
             session.codec_config.update_pts(m);
 
-            let mut media = MediaInner::from_remote_media_line(m, idx, exts);
+            let mut media = Media::from_remote_media_line(m, idx, exts);
             media.need_open_event = need_open_event;
-            update_media(&mut media, m, &session.codec_config, &session.exts);
+            update_media(
+                &mut media,
+                m,
+                &session.codec_config,
+                &session.exts,
+                &mut session.streams,
+            );
 
             session.add_media(media);
         } else if m.typ.is_channel() {
@@ -798,17 +802,12 @@ fn as_media_lines(session: &Session) -> Vec<&dyn AsSdpMediaLine> {
 }
 
 fn update_media(
-    media: &mut MediaInner,
+    media: &mut Media,
     m: &MediaLine,
     config: &CodecConfig,
     session_exts: &ExtensionMap,
+    streams: &mut Streams,
 ) {
-    // Nack enabled for any payload
-    let nack_enabled = m.rtp_params().iter().any(|p| p.fb_nack);
-    if nack_enabled {
-        media.enable_nack();
-    }
-
     // Direction changes
     //
     // All changes come from the other side, either via an incoming OFFER
@@ -827,26 +826,20 @@ fn update_media(
     media.retain_pts(&params);
 
     // Narrowing of Rtp header extension mappings.
-    let mut exts = ExtensionMap::empty();
+    let mut ext_map = ExtensionMap::empty();
     for (id, ext) in m.extmaps() {
-        exts.set(id, ext);
+        ext_map.set(id, ext);
     }
-    exts.keep_same(session_exts);
-    media.set_exts(exts);
+    ext_map.keep_same(session_exts);
+    media.set_ext_map(ext_map);
 
     // SSRC changes
     // This will always be for ReceiverSource since any incoming a=ssrc line will be
     // about the remote side's SSRC.
     let infos = m.ssrc_info();
-    for info in infos {
-        let rx = media.get_or_create_source_rx(info.ssrc);
-
-        if let Some(repairs) = info.repair {
-            if rx.set_repairs(repairs) {
-                media.set_equalize_sources();
-            }
-        }
-    }
+    media.map_send_tx(streams, infos.iter().map(|i| (i.ssrc, i.repair)));
+    // if repairs:
+    // media.set_equalize_sources();
 
     // Simulcast configuration
     if let Some(s) = m.simulcast() {
@@ -891,15 +884,15 @@ impl AsSdpMediaLine for (Mid, usize) {
     }
 }
 
-impl AsSdpMediaLine for MediaInner {
+impl AsSdpMediaLine for Media {
     fn mid(&self) -> Mid {
-        MediaInner::mid(self)
+        Media::mid(self)
     }
     fn msid(&self) -> Option<&Msid> {
-        Some(MediaInner::msid(self))
+        Some(Media::msid(self))
     }
     fn index(&self) -> usize {
-        MediaInner::index(self)
+        Media::index(self)
     }
     fn as_media_line(&self, mut attrs: Vec<MediaAttribute>) -> MediaLine {
         if self.app_tmp {
@@ -1124,7 +1117,7 @@ impl Changes {
         index_start: usize,
         config: &'b CodecConfig,
         exts: &'b ExtensionMap,
-    ) -> impl Iterator<Item = MediaInner> + '_ {
+    ) -> impl Iterator<Item = Media> + '_ {
         self.0
             .iter()
             .enumerate()
@@ -1150,7 +1143,7 @@ impl Change {
         index: usize,
         config: &CodecConfig,
         exts: &ExtensionMap,
-    ) -> Option<MediaInner> {
+    ) -> Option<Media> {
         use Change::*;
         match self {
             AddMedia(v) => {
@@ -1159,9 +1152,9 @@ impl Change {
                 add.params = config.all_for_kind(v.kind).copied().collect();
                 add.index = index;
 
-                Some(MediaInner::from_add_media(add, *exts))
+                Some(Media::from_add_media(add, *exts))
             }
-            AddApp(mid) => Some(MediaInner::from_app_tmp(*mid, index)),
+            AddApp(mid) => Some(Media::from_app_tmp(*mid, index)),
             _ => None,
         }
     }

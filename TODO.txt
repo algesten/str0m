@@ -3,3 +3,10 @@
 * poll_resend_to_cap
 * stats handling in media
 
+
+Media API:
+* direction change
+
+
+set_equalize_sources
+equalize sources

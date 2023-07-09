@@ -1,14 +1,16 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
+use crate::change::AddMedia;
+use crate::io::Id;
 use crate::packet::{DepacketizingBuffer, MediaKind, RtpMeta};
 use crate::rtp::ExtensionMap;
 use crate::rtp::Ssrc;
 pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
 
 use crate::format::PayloadParams;
-use crate::sdp::Msid;
 use crate::sdp::Simulcast as SdpSimulcast;
+use crate::sdp::{MediaLine, Msid};
 use crate::stats::StatsSnapshot;
 use crate::streams::{StreamPacket, Streams};
 
@@ -50,7 +52,7 @@ pub struct Media {
     kind: MediaKind,
 
     /// The extensions for this media.
-    exts: ExtensionMap,
+    ext_map: ExtensionMap,
 
     /// Current media direction.
     ///
@@ -65,9 +67,6 @@ pub struct Media {
     /// Simulcast configuration, if set.
     simulcast: Option<SdpSimulcast>,
 
-    /// Tells whether nack is enabled for this media.
-    enable_nack: bool,
-
     // Rid that we are expecting to see on incoming RTP packets that map to this mid.
     // Once discovered, we make an entry in `stream_rx`.
     expected_rid_rx: Vec<Rid>,
@@ -81,12 +80,17 @@ pub struct Media {
     /// Declared outgoing streams for this mid.
     streams_tx: Vec<StreamId>,
 
-    pub(crate) need_open_event: bool,
-    pub(crate) need_changed_event: bool,
-
     /// Buffers of incoming RTP packets. These do reordering/jitter buffer and also
     /// depacketize from RTP to samples.
     buffers: HashMap<(Pt, Option<Rid>), DepacketizingBuffer>,
+
+    pub(crate) need_open_event: bool,
+    pub(crate) need_changed_event: bool,
+
+    /// When converting media lines to SDP, it's easier to represent the app m-line
+    /// as a Media. This field is true when we do that. No Session::medias will have
+    /// this set to true – they only exist temporarily.
+    pub(crate) app_tmp: bool,
 }
 
 impl Media {
@@ -94,12 +98,24 @@ impl Media {
         self.mid
     }
 
+    pub(crate) fn index(&self) -> usize {
+        self.index
+    }
+
     pub fn kind(&self) -> MediaKind {
         self.kind
     }
 
+    pub fn msid(&self) -> &Msid {
+        &self.msid
+    }
+
     pub fn cname(&self) -> &str {
         &self.cname
+    }
+
+    pub fn payload_params(&self) -> &[PayloadParams] {
+        &self.params
     }
 
     pub(crate) fn get_params(&self, pt: Pt) -> Option<&PayloadParams> {
@@ -275,5 +291,164 @@ impl Media {
         };
 
         buffer.push(meta, packet.payload.clone());
+    }
+
+    pub(crate) fn set_cname(&mut self, cname: String) {
+        self.cname = cname;
+    }
+
+    pub(crate) fn set_msid(&mut self, msid: Msid) {
+        self.msid = msid;
+    }
+
+    pub(crate) fn set_direction(&mut self, new_dir: Direction) {
+        self.dir = new_dir;
+    }
+
+    pub fn retain_pts(&mut self, pts: &[Pt]) {
+        let mut new_pts = HashSet::new();
+
+        for p_new in pts {
+            new_pts.insert(*p_new);
+
+            if self.params_by_pt(*p_new).is_none() {
+                debug!("Ignoring new pt ({}) in mid: {}", p_new, self.mid);
+            }
+        }
+
+        self.params.retain(|p| {
+            let keep = new_pts.contains(&p.pt());
+
+            if !keep {
+                debug!("Mid ({}) remove pt: {}", self.mid, p.pt());
+            }
+
+            keep
+        });
+    }
+
+    fn params_by_pt(&self, pt: Pt) -> Option<&PayloadParams> {
+        self.params.iter().find(|p| p.pt == pt)
+    }
+
+    pub(crate) fn set_ext_map(&mut self, ext_map: ExtensionMap) {
+        if self.ext_map != ext_map {
+            info!("Set {:?} extension map: {:?}", self.mid, ext_map);
+            self.ext_map = ext_map;
+        }
+    }
+
+    pub(crate) fn set_simulcast(&mut self, s: SdpSimulcast) {
+        info!("Set simulcast: {:?}", s);
+        self.simulcast = Some(s);
+    }
+
+    pub(crate) fn exts(&self) -> &ExtensionMap {
+        &self.ext_map
+    }
+}
+
+impl Default for Media {
+    fn default() -> Self {
+        Self {
+            mid: Mid::new(),
+            index: 0,
+            app_tmp: false,
+            cname: Id::<20>::random().to_string(),
+            msid: Msid {
+                stream_id: Id::<30>::random().to_string(),
+                track_id: Id::<30>::random().to_string(),
+            },
+            kind: MediaKind::Video,
+            ext_map: ExtensionMap::empty(),
+            dir: Direction::SendRecv,
+            params: vec![],
+            simulcast: None,
+            expected_rid_rx: vec![],
+            streams_rx: vec![],
+            streams_tx: vec![],
+            buffers: HashMap::new(),
+            need_open_event: true,
+            need_changed_event: false,
+        }
+    }
+}
+
+impl Media {
+    pub(crate) fn source_tx_ssrcs(&self) -> impl Iterator<Item = Ssrc> + '_ {
+        self.streams_tx().iter().map(|s| s.ssrc)
+    }
+
+    pub(crate) fn from_remote_media_line(
+        l: &MediaLine,
+        index: usize,
+        ext_map: ExtensionMap,
+    ) -> Self {
+        Media {
+            mid: l.mid(),
+            index,
+            // These two are not reflected back, and thus added by add_pending_changes().
+            // cname,
+            // msid,
+            kind: l.typ.clone().into(),
+            ext_map,
+            dir: l.direction().invert(), // remote direction is reverse.
+            params: l.rtp_params(),
+            ..Default::default()
+        }
+    }
+
+    // Going from AddMedia to Media for pending in a Change and are sent
+    // in the offer to the other side.
+    pub(crate) fn from_add_media(a: AddMedia, ext_map: ExtensionMap) -> Self {
+        let mut media = Media {
+            mid: a.mid,
+            index: a.index,
+            cname: a.cname,
+            msid: a.msid,
+            kind: a.kind,
+            ext_map,
+            dir: a.dir,
+            params: a.params,
+            // equalize_sources: true,
+            ..Default::default()
+        };
+
+        // from_add_media is only used when creating temporary Media to be
+        // included in the SDP. We don't want to make an _actual_ change in the
+        // Session::streams at this point, but we do want the SSRC be included
+        // in the SDP.
+        //
+        // So whilst we typically must uphold that a Media::stream_tx/rx is
+        // mapped to a real stream, this is an exception to that rule.
+        for (ssrc, repairs) in a.ssrcs {
+            media.streams_tx.push(StreamId {
+                ssrc,
+                ssrc_rtx: repairs,
+                // TODO: support sending simulcast.
+                rid: None,
+            });
+        }
+
+        media
+    }
+
+    pub(crate) fn from_app_tmp(mid: Mid, index: usize) -> Media {
+        Media {
+            mid,
+            index,
+            app_tmp: true,
+            ..Default::default()
+        }
+    }
+
+    pub(crate) fn map_send_tx(
+        &mut self,
+        streams: &mut Streams,
+        iter: impl Iterator<Item = (Ssrc, Option<Ssrc>)>,
+    ) {
+        for (ssrc, repairs) in iter {
+            //
+        }
     }
 }

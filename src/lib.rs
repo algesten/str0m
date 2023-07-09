@@ -493,6 +493,7 @@
 #[macro_use]
 extern crate tracing;
 
+use change::SdpApi;
 use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -537,7 +538,7 @@ use media::{Direction, Mid, Pt, Rid};
 use media::{KeyframeRequest, KeyframeRequestKind};
 use media::{MediaAdded, MediaChanged, MediaData};
 
-// pub mod change;
+pub mod change;
 
 mod util;
 use util::{already_happened, not_happening, Soonest};
@@ -944,6 +945,30 @@ impl Rtc {
     ///
     pub fn is_connected(&self) -> bool {
         self.ice.state().is_connected() && self.dtls.is_connected()
+    }
+
+    /// Make changes to the Rtc session via SDP.
+    ///
+    /// ```no_run
+    /// # use str0m::Rtc;
+    /// # use str0m::media::{MediaKind, Direction};
+    /// # use str0m::change::SdpAnswer;
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let mut changes = rtc.sdp_api();
+    /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
+    /// let mid_video = changes.add_media(MediaKind::Video, Direction::SendOnly, None, None);
+    ///
+    /// let (offer, pending) = changes.apply().unwrap();
+    /// let json = serde_json::to_vec(&offer).unwrap();
+    ///
+    /// // Send json OFFER to remote peer. Receive an answer back.
+    /// let answer: SdpAnswer = todo!();
+    ///
+    /// rtc.sdp_api().accept_answer(pending, answer).unwrap();
+    /// ```
+    pub fn sdp_api(&mut self) -> SdpApi {
+        SdpApi::new(self)
     }
 
     /// Access the encoded RTP streams API.

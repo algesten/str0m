@@ -41,7 +41,7 @@ pub(crate) struct Session {
     // These fields are pub to allow session_sdp.rs modify them.
     // Notice the fields are maybe not in m-line index order since the app
     // might be spliced in somewhere.
-    medias: Vec<Media>,
+    pub(crate) medias: Vec<Media>,
 
     // The actual RTP encoded streams.
     pub(crate) streams: Streams,
@@ -819,6 +819,10 @@ impl Session {
         // we think the link capacity can sustain, if not the estimate is a lie.
         let pacing_rate = (bwe.current_bitrate * PACING_FACTOR).max(padding_rate);
         self.pacer.set_pacing_rate(pacing_rate);
+    }
+
+    pub(crate) fn media_by_mid_mut(&mut self, mid: Mid) -> Option<&mut Media> {
+        self.medias.iter_mut().find(|m| m.mid() == mid)
     }
 }
 
