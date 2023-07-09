@@ -206,6 +206,7 @@ impl StreamRx {
 
         let packet = StreamPacket {
             seq_no,
+            pt: header.payload_type,
             time,
             header,
             payload: data,

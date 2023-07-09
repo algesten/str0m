@@ -3,10 +3,10 @@
 * poll_resend_to_cap
 * stats handling in media
 
-
 Media API:
 * direction change
-
+* request keyframe without using RTP API
+* Write media without using RTP API
 
 set_equalize_sources
 equalize sources

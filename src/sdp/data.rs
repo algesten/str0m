@@ -13,7 +13,7 @@ use crate::format::CodecSpec;
 use crate::format::FormatParams;
 use crate::format::PayloadParams;
 use crate::ice::{Candidate, IceCreds};
-use crate::rtp::{Direction, Extension, Mid, Pt, SessionId, Ssrc};
+use crate::rtp::{Direction, Extension, Mid, Pt, Rid, SessionId, Ssrc};
 
 use super::parser::sdp_parser;
 use super::SdpError;
@@ -503,6 +503,16 @@ impl MediaLine {
             }
         }
 
+        ret
+    }
+
+    pub fn rids(&self) -> Vec<Rid> {
+        let mut ret = vec![];
+        for a in &self.attrs {
+            if let MediaAttribute::Rid { id, .. } = a {
+                ret.push(id.0.as_str().into())
+            }
+        }
         ret
     }
 

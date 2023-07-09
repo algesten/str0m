@@ -35,7 +35,13 @@ pub struct StreamPacket {
     /// Extended sequence number to avoid having to deal with ROC.
     pub seq_no: SeqNo,
 
+    /// Payload type for this packet.
+    pt: Pt,
+
     /// Extended RTP time in the clock frequency of the codec. To avoid dealing with ROC.
+    ///
+    /// For a newly scheduled outgoing packet, the clock_rate is not correctly set until
+    /// we do the poll_output().
     pub time: MediaTime,
 
     /// Parsed RTP header.
@@ -101,15 +107,10 @@ impl Streams {
     ///
     /// Can be called multiple times without changing any internal state. However
     /// the RTX value is only picked up the first ever time we see a new SSRC.
-    pub fn declare_stream_tx(&mut self, ssrc: Ssrc, pt: Pt, rtx: Option<Ssrc>, rtx_pt: Option<Pt>) {
-        assert_eq!(rtx.is_some(), rtx_pt.is_some(), "rtx requires rtx_pt");
-
-        let stream = self
-            .streams_tx
+    pub fn declare_stream_tx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>) {
+        self.streams_tx
             .entry(ssrc)
-            .or_insert_with(|| StreamTx::new(ssrc, pt, rtx, rtx_pt));
-
-        stream.set_rtx(rtx, rtx_pt);
+            .or_insert_with(|| StreamTx::new(ssrc, rtx));
     }
 
     /// Obtain a send stream.

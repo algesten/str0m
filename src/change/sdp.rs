@@ -661,7 +661,7 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
         media.set_cname(add_media.cname);
         media.set_msid(add_media.msid);
 
-        media.map_send_tx(&mut session.streams, add_media.ssrcs.iter().cloned());
+        media.map_stream_tx(&mut session.streams, add_media.ssrcs.iter().cloned());
         // if tx.set_repairs(repairs) {
         //     media.set_equalize_sources();
     }
@@ -692,6 +692,10 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
                 if let Some(media) = session.medias.iter_mut().find(|l| l.mid() == m.mid()) {
                     if idx != media.index() {
                         return index_err(m.mid());
+                    }
+
+                    for rid in m.rids() {
+                        media.expect_rid_rx(rid);
                     }
 
                     update_media(media, m, &config, &session_exts, &mut session.streams);
@@ -826,18 +830,18 @@ fn update_media(
     media.retain_pts(&params);
 
     // Narrowing of Rtp header extension mappings.
-    let mut ext_map = ExtensionMap::empty();
+    let mut exts = ExtensionMap::empty();
     for (id, ext) in m.extmaps() {
-        ext_map.set(id, ext);
+        exts.set(id, ext);
     }
-    ext_map.keep_same(session_exts);
-    media.set_ext_map(ext_map);
+    exts.keep_same(session_exts);
+    media.set_exts(exts);
 
     // SSRC changes
     // This will always be for ReceiverSource since any incoming a=ssrc line will be
     // about the remote side's SSRC.
     let infos = m.ssrc_info();
-    media.map_send_tx(streams, infos.iter().map(|i| (i.ssrc, i.repair)));
+    media.map_stream_rx(streams, infos.iter().map(|i| (i.ssrc, i.repair)));
     // if repairs:
     // media.set_equalize_sources();
 

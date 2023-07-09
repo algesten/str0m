@@ -157,6 +157,7 @@ mod test {
                 ..Default::default()
             },
             seq_no,
+            pt: 1.into(),
             time: MediaTime::new(0, 90_000),
             payload: millis_since_epoch.to_be_bytes().to_vec(),
             timestamp: after(millis_since_epoch),

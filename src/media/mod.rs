@@ -52,7 +52,7 @@ pub struct Media {
     kind: MediaKind,
 
     /// The extensions for this media.
-    ext_map: ExtensionMap,
+    exts: ExtensionMap,
 
     /// Current media direction.
     ///
@@ -75,9 +75,15 @@ pub struct Media {
     ///
     /// This is deduped on Rid, if the remote side changes SSRC, we only have one entry
     /// per rid in this list.
+    ///
+    /// When these are set, the corresponding Streams::stream_rx should also
+    /// exist. This is an internal contract we can't uphold by types, but is relied on.
     streams_rx: Vec<StreamId>,
 
     /// Declared outgoing streams for this mid.
+    ///
+    /// When these are set, the corresponding Streams::stream_tx should also
+    /// exist. This is an internal contract we can't uphold by types, but is relied on.
     streams_tx: Vec<StreamId>,
 
     /// Buffers of incoming RTP packets. These do reordering/jitter buffer and also
@@ -331,10 +337,16 @@ impl Media {
         self.params.iter().find(|p| p.pt == pt)
     }
 
-    pub(crate) fn set_ext_map(&mut self, ext_map: ExtensionMap) {
-        if self.ext_map != ext_map {
-            info!("Set {:?} extension map: {:?}", self.mid, ext_map);
-            self.ext_map = ext_map;
+    pub fn expect_rid_rx(&mut self, rid: Rid) {
+        if !self.expected_rid_rx.contains(&rid) {
+            self.expected_rid_rx.push(rid);
+        }
+    }
+
+    pub(crate) fn set_exts(&mut self, exts: ExtensionMap) {
+        if self.exts != exts {
+            info!("Set {:?} extension map: {:?}", self.mid, exts);
+            self.exts = exts;
         }
     }
 
@@ -344,7 +356,7 @@ impl Media {
     }
 
     pub(crate) fn exts(&self) -> &ExtensionMap {
-        &self.ext_map
+        &self.exts
     }
 }
 
@@ -360,7 +372,7 @@ impl Default for Media {
                 track_id: Id::<30>::random().to_string(),
             },
             kind: MediaKind::Video,
-            ext_map: ExtensionMap::empty(),
+            exts: ExtensionMap::empty(),
             dir: Direction::SendRecv,
             params: vec![],
             simulcast: None,
@@ -379,11 +391,7 @@ impl Media {
         self.streams_tx().iter().map(|s| s.ssrc)
     }
 
-    pub(crate) fn from_remote_media_line(
-        l: &MediaLine,
-        index: usize,
-        ext_map: ExtensionMap,
-    ) -> Self {
+    pub(crate) fn from_remote_media_line(l: &MediaLine, index: usize, exts: ExtensionMap) -> Self {
         Media {
             mid: l.mid(),
             index,
@@ -391,7 +399,7 @@ impl Media {
             // cname,
             // msid,
             kind: l.typ.clone().into(),
-            ext_map,
+            exts,
             dir: l.direction().invert(), // remote direction is reverse.
             params: l.rtp_params(),
             ..Default::default()
@@ -400,14 +408,14 @@ impl Media {
 
     // Going from AddMedia to Media for pending in a Change and are sent
     // in the offer to the other side.
-    pub(crate) fn from_add_media(a: AddMedia, ext_map: ExtensionMap) -> Self {
+    pub(crate) fn from_add_media(a: AddMedia, exts: ExtensionMap) -> Self {
         let mut media = Media {
             mid: a.mid,
             index: a.index,
             cname: a.cname,
             msid: a.msid,
             kind: a.kind,
-            ext_map,
+            exts,
             dir: a.dir,
             params: a.params,
             // equalize_sources: true,
@@ -442,13 +450,45 @@ impl Media {
         }
     }
 
-    pub(crate) fn map_send_tx(
+    pub(crate) fn map_stream_rx(
         &mut self,
         streams: &mut Streams,
         iter: impl Iterator<Item = (Ssrc, Option<Ssrc>)>,
     ) {
-        for (ssrc, repairs) in iter {
-            //
+        map_ids(&mut self.streams_rx, iter);
+        for StreamId { ssrc, ssrc_rtx, .. } in &self.streams_rx {
+            streams.expect_stream_rx(*ssrc, *ssrc_rtx);
         }
+    }
+
+    pub(crate) fn map_stream_tx(
+        &mut self,
+        streams: &mut Streams,
+        iter: impl Iterator<Item = (Ssrc, Option<Ssrc>)>,
+    ) {
+        map_ids(&mut self.streams_tx, iter);
+        for StreamId { ssrc, ssrc_rtx, .. } in &self.streams_rx {
+            streams.declare_stream_tx(*ssrc, *ssrc_rtx);
+        }
+    }
+}
+
+fn map_ids(stream_ids: &mut Vec<StreamId>, iter: impl Iterator<Item = (Ssrc, Option<Ssrc>)>) {
+    for (ssrc, ssrc_rtx) in iter {
+        let idx = stream_ids.iter().position(|s| s.ssrc == ssrc);
+
+        let entry = if let Some(idx) = idx {
+            &mut stream_ids[idx]
+        } else {
+            stream_ids.push(StreamId {
+                ssrc,
+                ssrc_rtx,
+                rid: None,
+            });
+            stream_ids.last_mut().unwrap()
+        };
+
+        // in case this changed
+        entry.ssrc_rtx = ssrc_rtx;
     }
 }

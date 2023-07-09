@@ -889,7 +889,8 @@ fn poll_packet_single(
     for m in medias {
         for s in m.streams_tx() {
             let stream = streams.stream_tx(&s.ssrc).expect("StreamTx for Media");
-            let r = stream.poll_packet(now, exts, twcc, m.mid(), s.rid, buf);
+            let params = m.payload_params();
+            let r = stream.poll_packet(now, exts, twcc, m.mid(), s.rid, params, buf);
             if let Some(r) = r {
                 return Some(r);
             }

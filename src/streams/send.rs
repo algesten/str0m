@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::format::PayloadParams;
 use crate::media::KeyframeRequestKind;
 use crate::rtp::{extend_u16, Descriptions, InstantExt, ReportList, Rtcp, Sdes};
 use crate::rtp::{ExtensionMap, ReceptionReport, RtpHeader};
@@ -22,13 +23,11 @@ pub struct StreamTx {
     /// Unique identifier of the remote encoded stream.
     ssrc: Ssrc,
 
-    /// Payload type we are currently sending for.
-    pt: Pt,
-
     /// Identifier of a resend (RTX) stream. If we are doing resends.
     rtx: Option<Ssrc>,
 
-    /// Payload type for resends.
+    /// Payload type for resends. This is set locally to "remember" which
+    /// RTX PT is used for the current sending PT.
     rtx_pt: Option<Pt>,
 
     /// If we are using RTX, this is the seq no counter.
@@ -80,7 +79,7 @@ pub(crate) struct StreamTxStats {
 }
 
 impl StreamTx {
-    pub(crate) fn new(ssrc: Ssrc, pt: Pt, rtx: Option<Ssrc>, rtx_pt: Option<Pt>) -> Self {
+    pub(crate) fn new(ssrc: Ssrc, rtx: Option<Ssrc>) -> Self {
         // https://www.rfc-editor.org/rfc/rfc3550#page-13
         // The initial value of the sequence number SHOULD be random (unpredictable)
         // to make known-plaintext attacks on encryption more difficult
@@ -90,9 +89,8 @@ impl StreamTx {
 
         StreamTx {
             ssrc,
-            pt,
             rtx,
-            rtx_pt,
+            rtx_pt: None,
             seq_no_rtx: next_seq_no_rtx,
             last_used: already_happened(),
             rtp_and_wallclock: None,
@@ -113,35 +111,45 @@ impl StreamTx {
     ///
     /// The `payload` argument is expected to be only the RTP payload, not the RTP packet header.
     ///
-    /// * `payload` RTP packet payload, without header.
+    /// * `pt` Payload type. Declared in the Media this encoded stream belongs to.
     /// * `seq_no` Sequence number to use for this packet.
+    /// * `time` Time in whatever the clock rate is for the media in question (normally 90_000 for video
+    ///          and 48_000 for audio).
     /// * `wallclock` Real world time that corresponds to the media time in the RTP packet. For an SFU,
     ///               this can be hard to know, since RTP packets typically only contain the media
     ///               time (RTP time). In the simplest SFU setup, the wallclock could simply be the
     ///               arrival time of the incoming RTP data. For better synchronization the SFU
     ///               probably needs to weigh in clock drifts and data provided via the statistics, receiver
     ///               reports etc.
+    /// * `marker` Whether to "mark" this packet. This is usually done for the last packet belonging to
+    ///            a series of RTP packets consituting the same frame in a video stream.
+    /// * `ext_vals` The RTP header extension values to set. The values must be mapped in the session,
+    ///              or they will not be set on the RTP packet.
     /// * `nackable` Whether we should respond this packet for incoming NACK from the remote peer. For
     ///              audio this is always false. For temporal encoded video, some packets are discardable
     ///              and this flag should be set accordingly.
+    /// * `payload` RTP packet payload, without header.
     pub fn write_rtp(
         &mut self,
+        pt: Pt,
         seq_no: SeqNo,
-        marker: bool,
-        time: MediaTime,
+        time: u32,
         wallclock: Instant,
+        marker: bool,
         ext_vals: ExtensionValues,
         nackable: bool,
         payload: impl Into<Vec<u8>>,
     ) -> Result<(), RtcError> {
         //
-        self.rtp_and_wallclock = Some((time, wallclock));
+        // This 1 in clock frequency will be fixed in poll_output.
+        let media_time = MediaTime::new(time as i64, 1);
+        self.rtp_and_wallclock = Some((media_time, wallclock));
 
         let header = RtpHeader {
             sequence_number: *seq_no as u16,
             marker,
-            payload_type: self.pt,
-            timestamp: time.numer() as u32,
+            payload_type: pt,
+            timestamp: time,
             ssrc: self.ssrc,
             ext_vals,
             ..Default::default()
@@ -149,7 +157,8 @@ impl StreamTx {
 
         let packet = StreamPacket {
             seq_no,
-            time,
+            pt,
+            time: media_time,
             header,
             payload: payload.into(),
             nackable,
@@ -168,6 +177,7 @@ impl StreamTx {
         twcc: &mut u64,
         mid: Mid,
         rid: Option<Rid>,
+        params: &[PayloadParams],
         buf: &mut Vec<u8>,
     ) -> Option<PacketReceipt> {
         let (next, is_padding) = if let Some(next) = self.poll_packet_resend(now, false) {
@@ -192,12 +202,30 @@ impl StreamTx {
         header.ext_vals.transport_cc = Some(*twcc as u16);
         *twcc += 1;
 
+        // The pt in next.pkt is the "main" pt.
+        let Some(param) = params.iter().find(|p| p.pt() == next.pkt.pt) else {
+            // PT does not exist in the connected media.
+            warn!("Media is missing PT ({}) used in RTP packet", next.pkt.pt);
+            return None;
+        };
+
+        // Now we know the parameters, update the denominator of the MediaTime.
+        next.pkt.time = MediaTime::new(next.pkt.time.numer(), param.spec().clock_rate as i64);
+
         match next.kind {
             NextPacketKind::Regular => {
+                let pt = param.pt();
+                header.payload_type = pt;
+                next.pkt.pt = pt;
+
                 header.ext_vals.rid = rid;
                 header.ext_vals.rid_repair = None;
             }
             NextPacketKind::Resend(_) | NextPacketKind::Blank(_) => {
+                let pt_rtx = param.resend().expect("pt_rtx resend/blank");
+                header.payload_type = pt_rtx;
+                next.pkt.pt = pt_rtx;
+
                 header.ext_vals.rid = None;
                 header.ext_vals.rid_repair = rid;
             }
@@ -307,15 +335,10 @@ impl StreamTx {
 
         let seq_no = self.seq_no_rtx.inc();
 
-        let pt = self.rtx_pt.unwrap(); // checked above.
-        let ssrc = self.rtx.unwrap(); // checked above.
-
         let orig_seq_no = pkt.seq_no;
 
         Some(NextPacket {
             kind: NextPacketKind::Resend(orig_seq_no),
-            pt,
-            ssrc,
             seq_no,
             pkt,
         })
@@ -336,9 +359,7 @@ impl StreamTx {
 
         Some(NextPacket {
             kind: NextPacketKind::Regular,
-            pt: self.pt,
             seq_no,
-            ssrc: self.ssrc,
             pkt,
         })
     }
@@ -425,11 +446,6 @@ impl StreamTx {
     pub(crate) fn sender_report_at(&self) -> Instant {
         let is_audio = self.rtx.is_none(); // this is maybe not correct, but it's all we got.
         self.last_sender_report + rr_interval(is_audio)
-    }
-
-    pub(crate) fn set_rtx(&mut self, rtx: Option<Ssrc>, rtx_pt: Option<Pt>) {
-        self.rtx = rtx;
-        self.rtx_pt = rtx_pt;
     }
 
     pub(crate) fn poll_keyframe_request(&mut self) -> Option<KeyframeRequestKind> {
@@ -594,8 +610,6 @@ impl StreamTxStats {
 
 struct NextPacket<'a> {
     kind: NextPacketKind,
-    pt: Pt,
-    ssrc: Ssrc,
     seq_no: SeqNo,
     pkt: &'a mut StreamPacket,
 }
