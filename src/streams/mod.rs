@@ -107,10 +107,10 @@ impl Streams {
     ///
     /// Can be called multiple times without changing any internal state. However
     /// the RTX value is only picked up the first ever time we see a new SSRC.
-    pub fn declare_stream_tx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>) {
+    pub fn declare_stream_tx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>) -> &mut StreamTx {
         self.streams_tx
             .entry(ssrc)
-            .or_insert_with(|| StreamTx::new(ssrc, rtx));
+            .or_insert_with(|| StreamTx::new(ssrc, rtx))
     }
 
     /// Obtain a send stream.

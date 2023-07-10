@@ -3,10 +3,11 @@ use std::time::Instant;
 
 use crate::change::AddMedia;
 use crate::io::Id;
-use crate::packet::{DepacketizingBuffer, MediaKind, RtpMeta};
+use crate::packet::{DepacketizingBuffer, MediaKind, PacketizingBuffer, RtpMeta};
 use crate::rtp::ExtensionMap;
 use crate::rtp::Ssrc;
 pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
+use crate::RtcError;
 
 use crate::format::PayloadParams;
 use crate::sdp::Simulcast as SdpSimulcast;
@@ -16,6 +17,9 @@ use crate::streams::{StreamPacket, Streams};
 
 mod event;
 pub use event::*;
+
+mod writer;
+pub use writer::Writer;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct StreamId {
@@ -88,7 +92,10 @@ pub struct Media {
 
     /// Buffers of incoming RTP packets. These do reordering/jitter buffer and also
     /// depacketize from RTP to samples.
-    buffers: HashMap<(Pt, Option<Rid>), DepacketizingBuffer>,
+    depacketizers: HashMap<(Pt, Option<Rid>), DepacketizingBuffer>,
+
+    ///
+    packetizers: HashMap<(Pt, Option<Rid>), PacketizingBuffer>,
 
     pub(crate) need_open_event: bool,
     pub(crate) need_changed_event: bool,
@@ -236,7 +243,7 @@ impl Media {
         }
     }
 
-    pub(crate) fn poll_sample(&self) -> Option<Result<MediaData, crate::RtcError>> {
+    pub(crate) fn poll_sample(&self) -> Option<Result<MediaData, RtcError>> {
         todo!()
     }
 
@@ -266,7 +273,7 @@ impl Media {
         let rid = s.rid;
         let key = (pt, rid);
 
-        let exists = self.buffers.contains_key(&key);
+        let exists = self.depacketizers.contains_key(&key);
 
         if !exists {
             // This unwrap is ok because we needed the clock_rate before calling depacketize.
@@ -283,11 +290,11 @@ impl Media {
 
             let buffer = DepacketizingBuffer::new(codec.into(), hold_back);
 
-            self.buffers.insert((pt, rid), buffer);
+            self.depacketizers.insert((pt, rid), buffer);
         }
 
         // The entry will be there by now.
-        let buffer = self.buffers.get_mut(&key).unwrap();
+        let buffer = self.depacketizers.get_mut(&key).unwrap();
 
         let meta = RtpMeta {
             received: packet.timestamp,
@@ -379,7 +386,7 @@ impl Default for Media {
             expected_rid_rx: vec![],
             streams_rx: vec![],
             streams_tx: vec![],
-            buffers: HashMap::new(),
+            depacketizers: HashMap::new(),
             need_open_event: true,
             need_changed_event: false,
         }
