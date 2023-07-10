@@ -66,9 +66,10 @@ impl<'a> Writer<'a> {
 
         let stream = self.session.streams.declare_stream_tx(*ssrc, *ssrc_rtx);
 
-        stream.write_rtp(
-            pt, seq_no, rtp_time, wallclock, marker, ext_vals, nackable, payload,
-        );
+        // TODO: continue here.
+        // stream.write_rtp(
+        //     pt, seq_no, rtp_time, wallclock, marker, ext_vals, nackable, payload,
+        // );
 
         Ok(())
     }

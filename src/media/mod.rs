@@ -386,6 +386,7 @@ impl Default for Media {
             expected_rid_rx: vec![],
             streams_rx: vec![],
             streams_tx: vec![],
+            packetizers: HashMap::new(),
             depacketizers: HashMap::new(),
             need_open_event: true,
             need_changed_event: false,
