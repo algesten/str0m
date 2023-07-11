@@ -531,10 +531,10 @@ use format::CodecConfig;
 pub use ice::IceConnectionState;
 
 pub mod channel;
-use channel::{ChannelData, ChannelHandler, ChannelId};
+use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
 
 mod media;
-use media::{Direction, Mid, Pt, Rid};
+use media::{Direction, Mid, Pt, Rid, Writer};
 use media::{KeyframeRequest, KeyframeRequestKind};
 use media::{MediaAdded, MediaChanged, MediaData};
 
@@ -976,6 +976,11 @@ impl Rtc {
         SdpApi::new(self)
     }
 
+    /// Get a writer used to push samples.
+    pub fn writer(&mut self, mid: Mid) -> Writer {
+        Writer::new(&mut self.session, mid)
+    }
+
     /// Access the encoded RTP streams API.
     ///
     /// This is a low level API that is not typical usage of this library.
@@ -1367,34 +1372,34 @@ impl Rtc {
         Ok(())
     }
 
-    // /// Obtain handle for writing to a data channel.
-    // ///
-    // /// This is first available when a [`ChannelId`] is advertised via [`Event::ChannelOpen`].
-    // /// The function returns `None` also for IDs from [`SdpApi::add_channel()`].
-    // ///
-    // /// Incoming channel data is via the [`Event::ChannelData`] event.
-    // ///
-    // /// ```no_run
-    // /// # use str0m::{Rtc, channel::ChannelId};
-    // /// let mut rtc = Rtc::new();
-    // ///
-    // /// let cid: ChannelId = todo!(); // obtain Mid from Event::ChannelOpen
-    // /// let channel = rtc.channel(cid).unwrap();
-    // /// // TODO write data channel data.
-    // /// ```
-    // pub fn channel(&mut self, id: ChannelId) -> Option<Channel<'_>> {
-    //     if !self.alive {
-    //         return None;
-    //     }
+    /// Obtain handle for writing to a data channel.
+    ///
+    /// This is first available when a [`ChannelId`] is advertised via [`Event::ChannelOpen`].
+    /// The function returns `None` also for IDs from [`SdpApi::add_channel()`].
+    ///
+    /// Incoming channel data is via the [`Event::ChannelData`] event.
+    ///
+    /// ```no_run
+    /// # use str0m::{Rtc, channel::ChannelId};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let cid: ChannelId = todo!(); // obtain Mid from Event::ChannelOpen
+    /// let channel = rtc.channel(cid).unwrap();
+    /// // TODO write data channel data.
+    /// ```
+    pub fn channel(&mut self, id: ChannelId) -> Option<Channel<'_>> {
+        if !self.alive {
+            return None;
+        }
 
-    //     let sctp_stream_id = self.chan.stream_id_by_channel_id(id)?;
+        let sctp_stream_id = self.chan.stream_id_by_channel_id(id)?;
 
-    //     if !self.sctp.is_open(sctp_stream_id) {
-    //         return None;
-    //     }
+        if !self.sctp.is_open(sctp_stream_id) {
+            return None;
+        }
 
-    //     Some(Channel::new(sctp_stream_id, self))
-    // }
+        Some(Channel::new(sctp_stream_id, self))
+    }
 
     // /// Configure the Bandwidth Estimate (BWE) subsystem.
     // ///
