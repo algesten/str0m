@@ -643,6 +643,11 @@ pub enum RtcError {
     /// 4. The we used the [`SdpPendingOffer`][change::SdpPendingOffer] created in step 1.
     #[error("Changes made out of order")]
     ChangesOutOfOrder,
+
+    /// The [`Writer`] was used twice without doing `Rtc::poll_output` in between. This
+    /// is an incorrect usage pattern of the str0m API.
+    #[error("Consecutive calls to write() without poll_output() in between")]
+    WriteWithoutPoll,
 }
 
 /// Instance that does WebRTC. Main struct of the entire library.

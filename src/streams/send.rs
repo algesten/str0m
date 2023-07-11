@@ -30,6 +30,9 @@ pub struct StreamTx {
     /// RTX PT is used for the current sending PT.
     rtx_pt: Option<Pt>,
 
+    /// If we are doing seq_no ourselves (when writing sample mode).
+    seq_no: SeqNo,
+
     /// If we are using RTX, this is the seq no counter.
     seq_no_rtx: SeqNo,
 
@@ -83,7 +86,8 @@ impl StreamTx {
         // https://www.rfc-editor.org/rfc/rfc3550#page-13
         // The initial value of the sequence number SHOULD be random (unpredictable)
         // to make known-plaintext attacks on encryption more difficult
-        let next_seq_no_rtx = (rand::random::<u16>() as u64).into();
+        let seq_no = (rand::random::<u16>() as u64).into();
+        let seq_no_rtx = (rand::random::<u16>() as u64).into();
 
         debug!("Create StreamTx for SSRC: {}", ssrc);
 
@@ -91,7 +95,8 @@ impl StreamTx {
             ssrc,
             rtx,
             rtx_pt: None,
-            seq_no_rtx: next_seq_no_rtx,
+            seq_no,
+            seq_no_rtx,
             last_used: already_happened(),
             rtp_and_wallclock: None,
             send_queue: VecDeque::new(),
@@ -567,6 +572,18 @@ impl StreamTx {
         let rtp_time = t + offset.into();
 
         Some(rtp_time.rebase(base))
+    }
+
+    pub(crate) fn next_seq_no(&mut self) -> SeqNo {
+        self.seq_no.inc()
+    }
+
+    pub(crate) fn last_packet(&self) -> Option<&[u8]> {
+        if self.send_queue.is_empty() {
+            self.rtx_cache.last_packet()
+        } else {
+            self.send_queue.back().map(|q| q.payload.as_ref())
+        }
     }
 }
 

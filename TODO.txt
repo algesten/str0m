@@ -10,3 +10,8 @@ Media API:
 
 set_equalize_sources
 equalize sources
+
+------
+
+* Consolidate StreamPacket, RtcMeta
+* Make PacketizingBuffer write straight to StreamTx. No intermediary buffer.

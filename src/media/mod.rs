@@ -2,11 +2,11 @@ use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::change::AddMedia;
-use crate::io::Id;
+use crate::io::{Id, DATAGRAM_MTU};
 use crate::packet::{DepacketizingBuffer, MediaKind, PacketizingBuffer, RtpMeta};
-use crate::rtp::ExtensionMap;
-use crate::rtp::Ssrc;
 pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
+use crate::rtp::{ExtensionMap, SRTP_OVERHEAD};
+use crate::rtp::{Ssrc, SRTP_BLOCK_SIZE};
 use crate::RtcError;
 
 use crate::format::PayloadParams;
@@ -94,8 +94,11 @@ pub struct Media {
     /// depacketize from RTP to samples.
     depacketizers: HashMap<(Pt, Option<Rid>), DepacketizingBuffer>,
 
-    ///
+    /// Packetizers for outoing RTP packets.
     packetizers: HashMap<(Pt, Option<Rid>), PacketizingBuffer>,
+
+    /// Next sample to packetize.
+    to_packetize: Option<ToPacketize>,
 
     pub(crate) need_open_event: bool,
     pub(crate) need_changed_event: bool,
@@ -104,6 +107,16 @@ pub struct Media {
     /// as a Media. This field is true when we do that. No Session::medias will have
     /// this set to true – they only exist temporarily.
     pub(crate) app_tmp: bool,
+}
+
+pub(crate) struct ToPacketize {
+    pub pt: Pt,
+    pub rid: Option<Rid>,
+    pub wallclock: Instant,
+    pub rtp_time: MediaTime,
+    pub data: Vec<u8>,
+    pub ext_vals: ExtensionValues,
+    pub max_retain: usize, // TODO: remove this.
 }
 
 impl Media {
@@ -365,6 +378,80 @@ impl Media {
     pub(crate) fn exts(&self) -> &ExtensionMap {
         &self.exts
     }
+
+    fn has_pt(&self, pt: Pt) -> bool {
+        self.params.iter().any(|p| p.pt == pt)
+    }
+
+    fn packetizer_for(
+        &mut self,
+        pt: Pt,
+        rid: Option<Rid>,
+        max_retain: usize,
+    ) -> &mut PacketizingBuffer {
+        self.packetizers.entry((pt, rid)).or_insert_with(|| {
+            // Unwrap is OK, the pt should be checked already when calling this function.
+            let params = self.params.iter().find(|p| p.pt == pt).unwrap();
+            PacketizingBuffer::new(params.spec.codec.into(), max_retain)
+        })
+    }
+
+    fn set_to_packetize(&mut self, to_packetize: ToPacketize) -> Result<(), RtcError> {
+        if self.to_packetize.is_some() {
+            return Err(RtcError::WriteWithoutPoll);
+        }
+
+        self.to_packetize = Some(to_packetize);
+
+        Ok(())
+    }
+
+    pub(crate) fn do_packetize(
+        &mut self,
+        now: Instant,
+        streams: &mut Streams,
+    ) -> Result<(), RtcError> {
+        let Some(to_packetize) = self.to_packetize.take() else {
+            return Ok(());
+        };
+
+        let is_audio = self.kind.is_audio();
+
+        let s = if let Some(rid) = to_packetize.rid {
+            self.streams_tx.iter().find(|s| s.rid == Some(rid))
+        } else {
+            self.streams_tx.first()
+        };
+
+        let Some(s) = s else {
+            return Err(RtcError::NoSenderSource);
+        };
+
+        let StreamId { ssrc, ssrc_rtx, .. } = *s;
+
+        let ToPacketize {
+            pt,
+            rid,
+            max_retain,
+            ..
+        } = &to_packetize;
+
+        let pt = *pt;
+
+        let packetizer = self.packetizer_for(pt, *rid, *max_retain);
+
+        const RTP_SIZE: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
+        // align to SRTP block size to minimize padding needs
+        const MTU: usize = RTP_SIZE - RTP_SIZE % SRTP_BLOCK_SIZE;
+
+        let stream = streams.declare_stream_tx(ssrc, ssrc_rtx);
+
+        packetizer
+            .push_sample(now, to_packetize, ssrc, MTU, is_audio, stream)
+            .map_err(|e| RtcError::Packet(self.mid, pt, e))?;
+
+        Ok(())
+    }
 }
 
 impl Default for Media {
@@ -388,6 +475,7 @@ impl Default for Media {
             streams_tx: vec![],
             packetizers: HashMap::new(),
             depacketizers: HashMap::new(),
+            to_packetize: None,
             need_open_event: true,
             need_changed_event: false,
         }

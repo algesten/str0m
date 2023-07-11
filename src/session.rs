@@ -212,6 +212,9 @@ impl Session {
     }
 
     pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
+        // Packetize and waiting samples
+        self.do_packetize(now)?;
+
         let sender_ssrc = self.first_ssrc_local();
 
         // NOTE: All .unwrap below are ok because if media contains a stream id.
@@ -823,6 +826,14 @@ impl Session {
 
     pub(crate) fn media_by_mid_mut(&mut self, mid: Mid) -> Option<&mut Media> {
         self.medias.iter_mut().find(|m| m.mid() == mid)
+    }
+
+    fn do_packetize(&mut self, now: Instant) -> Result<(), RtcError> {
+        for m in &mut self.medias {
+            m.do_packetize(now, &mut self.streams)?;
+        }
+
+        Ok(())
     }
 }
 
