@@ -1,10 +1,11 @@
+//! Media (audio/video) related content.
+
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::change::AddMedia;
 use crate::io::{Id, DATAGRAM_MTU};
-use crate::packet::{DepacketizingBuffer, MediaKind, PacketizingBuffer, RtpMeta};
-pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
+use crate::packet::{DepacketizingBuffer, PacketizingBuffer, RtpMeta};
 use crate::rtp::{ExtensionMap, SRTP_OVERHEAD};
 use crate::rtp::{Ssrc, SRTP_BLOCK_SIZE};
 use crate::RtcError;
@@ -21,6 +22,9 @@ pub use event::*;
 mod writer;
 pub use writer::Writer;
 
+pub use crate::packet::MediaKind;
+pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct StreamId {
     pub ssrc: Ssrc,
@@ -33,6 +37,7 @@ impl StreamId {
     }
 }
 
+/// Information about some configured media.
 pub struct Media {
     /// Three letter identifier of this media.
     mid: Mid,
@@ -120,6 +125,7 @@ pub(crate) struct ToPacketize {
 }
 
 impl Media {
+    /// Identifier of the media.
     pub fn mid(&self) -> Mid {
         self.mid
     }
@@ -128,20 +134,38 @@ impl Media {
         self.index
     }
 
+    /// Whether this media is audio or video.
     pub fn kind(&self) -> MediaKind {
         self.kind
     }
 
-    pub fn msid(&self) -> &Msid {
+    pub(crate) fn msid(&self) -> &Msid {
         &self.msid
     }
 
-    pub fn cname(&self) -> &str {
+    pub(crate) fn cname(&self) -> &str {
         &self.cname
     }
 
+    /// The negotiated payload parameters for this media.
     pub fn payload_params(&self) -> &[PayloadParams] {
         &self.params
+    }
+
+    /// Current direction. This can be changed using
+    /// [`SdpApi::set_direction()`][crate::SdpApi::set_direction()] followed by an SDP negotiation.
+    ///
+    /// To test whether it's possible to send media with the current direction, use
+    ///
+    /// ```no_run
+    /// # use str0m::media::Media;
+    /// let media: Media = todo!(); // Get hold of media row.
+    /// if media.direction().is_sending() {
+    ///     // media.write(...);
+    /// }
+    /// ```
+    pub fn direction(&self) -> Direction {
+        self.dir
     }
 
     pub(crate) fn get_params(&self, pt: Pt) -> Option<&PayloadParams> {
@@ -224,10 +248,6 @@ impl Media {
 
     pub(crate) fn streams_tx(&self) -> &[StreamId] {
         &self.streams_tx
-    }
-
-    pub(crate) fn direction(&self) -> Direction {
-        self.dir
     }
 
     pub(crate) fn simulcast(&self) -> Option<&SdpSimulcast> {
@@ -331,7 +351,7 @@ impl Media {
         self.dir = new_dir;
     }
 
-    pub fn retain_pts(&mut self, pts: &[Pt]) {
+    pub(crate) fn retain_pts(&mut self, pts: &[Pt]) {
         let mut new_pts = HashSet::new();
 
         for p_new in pts {
@@ -357,7 +377,7 @@ impl Media {
         self.params.iter().find(|p| p.pt == pt)
     }
 
-    pub fn expect_rid_rx(&mut self, rid: Rid) {
+    pub(crate) fn expect_rid_rx(&mut self, rid: Rid) {
         if !self.expected_rid_rx.contains(&rid) {
             self.expected_rid_rx.push(rid);
         }

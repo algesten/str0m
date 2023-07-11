@@ -533,7 +533,7 @@ pub use ice::IceConnectionState;
 pub mod channel;
 use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
 
-mod media;
+pub mod media;
 use media::{Direction, Mid, Pt, Rid, Writer};
 use media::{KeyframeRequest, KeyframeRequestKind};
 use media::{MediaAdded, MediaChanged, MediaData};
@@ -896,53 +896,53 @@ impl Rtc {
         }
     }
 
-    // /// Add a local ICE candidate. Local candidates are socket addresses the `Rtc` instance
-    // /// use for communicating with the peer.
-    // ///
-    // /// This library has no built-in discovery of local network addresses on the host
-    // /// or NATed addresses via a STUN server or TURN server. The user of the library
-    // /// is expected to add new local candidates as they are discovered.
-    // ///
-    // /// In WebRTC lingo, the `Rtc` instance is permanently in a mode of [Trickle Ice][1]. It's
-    // /// however advisable to add at least one local candidate before starting the instance.
-    // ///
-    // /// ```
-    // /// # use str0m::{Rtc, Candidate};
-    // /// let mut rtc = Rtc::new();
-    // ///
-    // /// let a = "127.0.0.1:5000".parse().unwrap();
-    // /// let c = Candidate::host(a).unwrap();
-    // ///
-    // /// rtc.add_local_candidate(c);
-    // /// ```
-    // ///
-    // /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
-    // pub fn add_local_candidate(&mut self, c: Candidate) {
-    //     self.ice.add_local_candidate(c);
-    // }
+    /// Add a local ICE candidate. Local candidates are socket addresses the `Rtc` instance
+    /// use for communicating with the peer.
+    ///
+    /// This library has no built-in discovery of local network addresses on the host
+    /// or NATed addresses via a STUN server or TURN server. The user of the library
+    /// is expected to add new local candidates as they are discovered.
+    ///
+    /// In WebRTC lingo, the `Rtc` instance is permanently in a mode of [Trickle Ice][1]. It's
+    /// however advisable to add at least one local candidate before starting the instance.
+    ///
+    /// ```
+    /// # use str0m::{Rtc, Candidate};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let a = "127.0.0.1:5000".parse().unwrap();
+    /// let c = Candidate::host(a).unwrap();
+    ///
+    /// rtc.add_local_candidate(c);
+    /// ```
+    ///
+    /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
+    pub fn add_local_candidate(&mut self, c: Candidate) {
+        self.ice.add_local_candidate(c);
+    }
 
-    // /// Add a remote ICE candidate. Remote candidates are addresses of the peer.
-    // ///
-    // /// For [`SdpApi`]: Remote candidates are typically added via
-    // /// receiving a remote [`SdpOffer`][change::SdpOffer] or [`SdpAnswer`][change::SdpAnswer].
-    // ///
-    // /// However for the case of [Trickle Ice][1], this is the way to add remote candidates
-    // /// that are "trickled" from the other side.
-    // ///
-    // /// ```
-    // /// # use str0m::{Rtc, Candidate};
-    // /// let mut rtc = Rtc::new();
-    // ///
-    // /// let a = "1.2.3.4:5000".parse().unwrap();
-    // /// let c = Candidate::host(a).unwrap();
-    // ///
-    // /// rtc.add_remote_candidate(c);
-    // /// ```
-    // ///
-    // /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
-    // pub fn add_remote_candidate(&mut self, c: Candidate) {
-    //     self.ice.add_remote_candidate(c);
-    // }
+    /// Add a remote ICE candidate. Remote candidates are addresses of the peer.
+    ///
+    /// For [`SdpApi`]: Remote candidates are typically added via
+    /// receiving a remote [`SdpOffer`][change::SdpOffer] or [`SdpAnswer`][change::SdpAnswer].
+    ///
+    /// However for the case of [Trickle Ice][1], this is the way to add remote candidates
+    /// that are "trickled" from the other side.
+    ///
+    /// ```
+    /// # use str0m::{Rtc, Candidate};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let a = "1.2.3.4:5000".parse().unwrap();
+    /// let c = Candidate::host(a).unwrap();
+    ///
+    /// rtc.add_remote_candidate(c);
+    /// ```
+    ///
+    /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
+    pub fn add_remote_candidate(&mut self, c: Candidate) {
+        self.ice.add_remote_candidate(c);
+    }
 
     /// Checks if we are connected.
     ///
@@ -976,9 +976,36 @@ impl Rtc {
         SdpApi::new(self)
     }
 
-    /// Get a writer used to push samples.
-    pub fn writer(&mut self, mid: Mid) -> Writer {
-        Writer::new(&mut self.session, mid)
+    /// Send outgoing media data (samples).
+    ///
+    /// This function does not send data that is already RTP packetized.
+    ///
+    /// This operation fails if the current [`Media::direction()`] does not allow sending, the
+    /// PT doesn't match a negotiated codec, or the RID (`None` or a value) does not match
+    /// anything negotiated.
+    ///
+    /// ```no_run
+    /// # use str0m::Rtc;
+    /// # use str0m::media::{MediaData, Mid};
+    /// # use str0m::format::PayloadParams;
+    /// let mut rtc = Rtc::new();
+    ///
+    /// // add candidates, do SDP negotiation
+    /// let mid: Mid = todo!(); // obtain mid from Event::MediaAdded.
+    ///
+    /// let media = rtc.media(mid).unwrap();
+    ///
+    /// // Get incoming media data from another peer
+    /// let data: MediaData = todo!();
+    ///
+    /// // Match incoming PT to an outgoing PT.
+    /// let pt = media.match_params(data.params).unwrap();
+    ///
+    /// media.writer(pt).write(data.network_time, data.time, &data.data).unwrap();
+    /// ```
+    pub fn writer(&mut self, mid: Mid) -> Option<Writer> {
+        self.session.media_by_mid_mut(mid)?;
+        Some(Writer::new(&mut self.session, mid))
     }
 
     /// Access the encoded RTP streams API.
@@ -1401,12 +1428,12 @@ impl Rtc {
         Some(Channel::new(sctp_stream_id, self))
     }
 
-    // /// Configure the Bandwidth Estimate (BWE) subsystem.
-    // ///
-    // /// Only relevant if BWE was enabled in the [`RtcConfig::enable_bwe()`]
-    // pub fn bwe(&mut self) -> Bwe {
-    //     Bwe(self)
-    // }
+    /// Configure the Bandwidth Estimate (BWE) subsystem.
+    ///
+    /// Only relevant if BWE was enabled in the [`RtcConfig::enable_bwe()`]
+    pub fn bwe(&mut self) -> Bwe {
+        Bwe(self)
+    }
 
     fn is_correct_change_id(&self, change_id: usize) -> bool {
         self.change_counter == change_id + 1
