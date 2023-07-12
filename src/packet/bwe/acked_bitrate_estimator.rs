@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::rtp::DataSize;
+use crate::rtp_::DataSize;
 use crate::Bitrate;
 
 // Ported from libWebRTC's src/modules/congestion_controller/goog_cc/bitrate_estimator.cc at

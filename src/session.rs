@@ -9,11 +9,11 @@ use crate::media::Media;
 use crate::media::{MediaAdded, MediaChanged};
 use crate::packet::SendSideBandwithEstimator;
 use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
-use crate::rtp::SeqNo;
-use crate::rtp::SRTCP_OVERHEAD;
-use crate::rtp::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
-use crate::rtp::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
-use crate::rtp::{SrtpContext, SrtpKey, Ssrc};
+use crate::rtp_::SeqNo;
+use crate::rtp_::SRTCP_OVERHEAD;
+use crate::rtp_::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
+use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
+use crate::rtp_::{SrtpContext, SrtpKey, Ssrc};
 use crate::stats::StatsSnapshot;
 use crate::streams::{StreamPacket, Streams};
 use crate::util::{already_happened, not_happening, Soonest};
@@ -824,6 +824,10 @@ impl Session {
         self.pacer.set_pacing_rate(pacing_rate);
     }
 
+    pub(crate) fn media_by_mid(&self, mid: Mid) -> Option<&Media> {
+        self.medias.iter().find(|m| m.mid() == mid)
+    }
+
     pub(crate) fn media_by_mid_mut(&mut self, mid: Mid) -> Option<&mut Media> {
         self.medias.iter_mut().find(|m| m.mid() == mid)
     }
@@ -852,7 +856,7 @@ impl Bwe {
 
     pub(crate) fn update<'t>(
         &mut self,
-        records: impl Iterator<Item = &'t crate::rtp::TwccSendRecord>,
+        records: impl Iterator<Item = &'t crate::rtp_::TwccSendRecord>,
         now: Instant,
     ) {
         self.bwe.update(records, now);

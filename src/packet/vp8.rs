@@ -1,4 +1,4 @@
-use crate::rtp::{extend_u16, extend_u8};
+use crate::rtp_::{extend_u16, extend_u8};
 
 use super::{BitRead, CodecExtra, Depacketizer, MediaKind, PacketError, Packetizer};
 

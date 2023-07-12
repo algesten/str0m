@@ -4,9 +4,9 @@ use std::time::Duration;
 use tracing::info_span;
 
 use str0m::format::Codec;
-use str0m::media::rtp::RtpHeader;
-use str0m::media::rtp::{Extension, ExtensionMap};
 use str0m::media::{Direction, MediaKind};
+use str0m::rtp::{ExtensionMap, ExtensionValues};
+use str0m::rtp::{RtpHeader, SeqNo};
 use str0m::{Candidate, Event, Rtc, RtcError};
 
 mod common;
@@ -49,40 +49,29 @@ pub fn rtp_mode() -> Result<(), RtcError> {
     l.last = max;
     r.last = max;
 
-    let params = l.media(mid).unwrap().payload_params()[0];
+    let media = l.media(mid).unwrap();
+    let params = media.payload_params()[0];
+    let ssrc = media.ssrc_tx(None).unwrap();
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
 
-    let mut exts = ExtensionMap::empty();
-    exts.set(3, Extension::AudioLevel);
+    let mut exts = ExtensionValues::default();
+    exts.audio_level = Some(10);
 
     let to_write: Vec<&[u8]> = vec![
         // 1
-        &[
-            //
-            144, 33, 183, 152, 0, 0, 39, 16, 0, 0, 0, 44, 190, 222, 0, 1, 48, 170, 0, 0,
-            // payload
-            0x1, 0x2, 0x3, 0x4,
-        ],
+        &[0x1, 0x2, 0x3, 0x4],
         // 3
-        &[
-            //
-            144, 33, 183, 155, 0, 0, 54, 176, 0, 0, 0, 44, 190, 222, 0, 1, 48, 172, 0, 0,
-            // payload
-            0x9, 0xa, 0xb, 0xc,
-        ],
+        &[0x9, 0xa, 0xb, 0xc],
         // 2
-        &[
-            //
-            144, 161, 183, 153, 0, 0, 46, 224, 0, 0, 0, 44, 190, 222, 0, 1, 48, 171, 0, 0,
-            // payload
-            0x5, 0x6, 0x7, 0x8,
-        ],
+        &[0x5, 0x6, 0x7, 0x8],
     ];
 
     let mut to_write: VecDeque<_> = to_write.into();
 
     let mut write_at = l.last + Duration::from_millis(300);
+
+    let mut seq_no: SeqNo = 0.into();
 
     loop {
         if l.start + l.duration() > write_at {
@@ -90,10 +79,24 @@ pub fn rtp_mode() -> Result<(), RtcError> {
             if let Some(packet) = to_write.pop_front() {
                 let wallclock = l.start + l.duration();
 
-                l.media(mid)
-                    .unwrap()
-                    .writer(pt)
-                    .write_rtp(wallclock, packet, &exts)?;
+                let mut direct = l.direct_api();
+                let stream = direct.stream_tx(&ssrc).unwrap();
+
+                let seq_no = seq_no.inc();
+                let time = (*seq_no * 1000) as u32;
+
+                stream
+                    .write_rtp(
+                        pt,
+                        seq_no,
+                        time,
+                        wallclock,
+                        false,
+                        exts,
+                        false,
+                        packet.to_vec(),
+                    )
+                    .expect("clean write");
             }
         }
 

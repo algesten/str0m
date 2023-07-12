@@ -2,12 +2,12 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::rtp::SeqNo;
+use crate::rtp_::SeqNo;
 
 use super::StreamPacket;
 
 #[derive(Debug)]
-pub struct RtxCache {
+pub(crate) struct RtxCache {
     max_packet_count: usize,
     max_packet_age: Duration,
     evict_in_batches: bool,
@@ -147,7 +147,7 @@ impl RtxCache {
 
 #[cfg(test)]
 mod test {
-    use crate::rtp::{MediaTime, RtpHeader};
+    use crate::rtp_::{MediaTime, RtpHeader};
 
     use super::*;
 

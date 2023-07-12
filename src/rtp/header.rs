@@ -349,7 +349,7 @@ impl Default for RtpHeader {
 
 #[cfg(test)]
 mod test {
-    use crate::rtp::{Extension, MediaTime};
+    use crate::rtp_::{Extension, MediaTime};
 
     use super::*;
 

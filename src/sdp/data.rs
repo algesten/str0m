@@ -13,7 +13,7 @@ use crate::format::CodecSpec;
 use crate::format::FormatParams;
 use crate::format::PayloadParams;
 use crate::ice::{Candidate, IceCreds};
-use crate::rtp::{Direction, Extension, Mid, Pt, Rid, SessionId, Ssrc};
+use crate::rtp_::{Direction, Extension, Mid, Pt, Rid, SessionId, Ssrc};
 
 use super::parser::sdp_parser;
 use super::SdpError;
@@ -1485,7 +1485,7 @@ impl<'a> std::fmt::Display for FingerprintFmt<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::rtp::Extension;
+    use crate::rtp_::Extension;
 
     use super::*;
 

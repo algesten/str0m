@@ -2,11 +2,11 @@ use std::collections::VecDeque;
 use std::time::Instant;
 
 use crate::media::KeyframeRequestKind;
-use crate::rtp::{
+use crate::rtp_::{
     extend_u16, extend_u32, DlrrItem, ExtendedReport, Fir, FirEntry, InstantExt, MediaTime, Pli,
     Pt, ReceiverReport, ReportBlock, ReportList, Rrtr, Rtcp, RtcpFb, RtpHeader, SenderInfo, SeqNo,
 };
-use crate::rtp::{SdesType, Ssrc};
+use crate::rtp_::{SdesType, Ssrc};
 use crate::util::{already_happened, calculate_rtt_ms};
 
 use super::register::ReceiverRegister;

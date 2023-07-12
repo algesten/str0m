@@ -493,11 +493,11 @@
 #[macro_use]
 extern crate tracing;
 
-use change::SdpApi;
+use change::{DirectApi, SdpApi};
 use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
-use streams::{StreamPacket, Streams};
+use streams::StreamPacket;
 use thiserror::Error;
 
 mod dtls;
@@ -516,9 +516,15 @@ use io::DatagramRecv;
 
 mod packet;
 
-mod rtp;
-pub use rtp::Bitrate;
-use rtp::{Extension, ExtensionMap, InstantExt, Ssrc};
+#[path = "rtp/mod.rs"]
+mod rtp_;
+pub use rtp_::Bitrate;
+use rtp_::{Extension, ExtensionMap, InstantExt, Ssrc};
+
+/// Low level RTP helpers.
+pub mod rtp {
+    pub use crate::rtp_::{Extension, ExtensionMap, ExtensionValues, RtpHeader, SeqNo};
+}
 
 mod sctp;
 use sctp::{RtcSctp, SctpEvent};
@@ -534,7 +540,7 @@ pub mod channel;
 use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
 
 pub mod media;
-use media::{Direction, Mid, Pt, Rid, Writer};
+use media::{Direction, Media, Mid, Pt, Rid, Writer};
 use media::{KeyframeRequest, KeyframeRequestKind};
 use media::{MediaAdded, MediaChanged, MediaData};
 
@@ -562,7 +568,7 @@ pub mod error {
     pub use crate::ice::IceError;
     pub use crate::io::NetError;
     pub use crate::packet::PacketError;
-    pub use crate::rtp::RtpError;
+    pub use crate::rtp_::RtpError;
     pub use crate::sctp::{ProtoError, SctpError};
     pub use crate::sdp::SdpError;
 }
@@ -976,6 +982,13 @@ impl Rtc {
         SdpApi::new(self)
     }
 
+    /// Makes direct changes to the Rtc session.
+    ///
+    /// This is a low level API. For "normal" use via SDP, see [`Rtc::sdp_api()`].
+    pub fn direct_api(&mut self) -> DirectApi {
+        DirectApi::new(self)
+    }
+
     /// Send outgoing media data (samples).
     ///
     /// This function does not send data that is already RTP packetized.
@@ -1008,11 +1021,11 @@ impl Rtc {
         Some(Writer::new(&mut self.session, mid))
     }
 
-    /// Access the encoded RTP streams API.
+    /// Currently configured media.
     ///
-    /// This is a low level API that is not typical usage of this library.
-    pub fn streams(&mut self) -> &mut Streams {
-        &mut self.session.streams
+    /// Read only access. Changes are made via [`sdp_api()`] or [`direct_api()`].
+    pub fn media(&self, mid: Mid) -> Option<&Media> {
+        self.session.media_by_mid(mid)
     }
 
     fn init_dtls(&mut self, active: bool) -> Result<(), RtcError> {

@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::rtp::RtpHeader;
-use crate::rtp::SeqNo;
-use crate::rtp::Ssrc;
-use crate::rtp::{MediaTime, Pt};
+use crate::rtp_::RtpHeader;
+use crate::rtp_::SeqNo;
+use crate::rtp_::Ssrc;
+use crate::rtp_::{MediaTime, Pt};
 
 pub use self::receive::StreamRx;
 pub use self::send::StreamTx;
@@ -66,7 +66,7 @@ pub struct StreamPacket {
 /// Each encoded stream is uniquely identified by an SSRC. The concept of mid/rid sits on the Media
 /// level together with the ability to translate a mid/rid to an encoded stream.
 #[derive(Debug, Default)]
-pub struct Streams {
+pub(crate) struct Streams {
     /// All incoming encoded streams.
     streams_rx: HashMap<Ssrc, StreamRx>,
 
@@ -75,13 +75,6 @@ pub struct Streams {
 }
 
 impl Streams {
-    /// Allow incoming traffic from remote peer for the given SSRC.
-    ///
-    /// The first time we ever discover a new SSRC, we emit the [`Event::RtpData`] with the bool flag
-    /// `initial: true`. No more packets will be handled unless we call `allow_stream_rx` for the incoming
-    /// SSRC.
-    ///
-    /// Can be called multiple times if the `rtx` is discovered later via RTP header extensions.
     pub fn expect_stream_rx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>) {
         let stream = self
             .streams_rx
@@ -93,29 +86,16 @@ impl Streams {
         }
     }
 
-    /// Obtain a receive stream.
-    ///
-    /// The stream must first be declared usig [`expect_stream_rx`].
     pub fn stream_rx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamRx> {
         self.streams_rx.get_mut(ssrc)
     }
 
-    /// Declare the intention to send data using the given SSRC.
-    ///
-    /// * The resend RTX is optional but necessary to do resends. str0m does not do
-    ///   resends without RTX.
-    ///
-    /// Can be called multiple times without changing any internal state. However
-    /// the RTX value is only picked up the first ever time we see a new SSRC.
     pub fn declare_stream_tx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>) -> &mut StreamTx {
         self.streams_tx
             .entry(ssrc)
             .or_insert_with(|| StreamTx::new(ssrc, rtx))
     }
 
-    /// Obtain a send stream.
-    ///
-    /// The stream must first be declared usig [`declare_stream_tx`].
     pub fn stream_tx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamTx> {
         self.streams_tx.get_mut(ssrc)
     }

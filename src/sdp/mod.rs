@@ -232,7 +232,7 @@ sdp_ser!(SdpAnswer, "Answer", "answer");
 
 #[cfg(test)]
 mod test {
-    use crate::rtp::SessionId;
+    use crate::rtp_::SessionId;
 
     use super::*;
 

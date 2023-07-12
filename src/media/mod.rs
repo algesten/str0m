@@ -6,8 +6,8 @@ use std::time::Instant;
 use crate::change::AddMedia;
 use crate::io::{Id, DATAGRAM_MTU};
 use crate::packet::{DepacketizingBuffer, PacketizingBuffer, RtpMeta};
-use crate::rtp::{ExtensionMap, SRTP_OVERHEAD};
-use crate::rtp::{Ssrc, SRTP_BLOCK_SIZE};
+use crate::rtp_::{ExtensionMap, SRTP_OVERHEAD};
+use crate::rtp_::{Ssrc, SRTP_BLOCK_SIZE};
 use crate::RtcError;
 
 use crate::format::PayloadParams;
@@ -23,7 +23,7 @@ mod writer;
 pub use writer::Writer;
 
 pub use crate::packet::MediaKind;
-pub use crate::rtp::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
+pub use crate::rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct StreamId {
@@ -150,6 +150,20 @@ impl Media {
     /// The negotiated payload parameters for this media.
     pub fn payload_params(&self) -> &[PayloadParams] {
         &self.params
+    }
+
+    /// Match the given parameters to the configured parameters for this [`Media`].
+    ///
+    /// In a server scenario, a certain codec configuration might not have the same
+    /// payload type (PT) for two different peers. We will have incoming data with one
+    /// PT and need to match that against the PT of the outgoing [`Media`].
+    ///
+    /// This call performs matching and if a match is found, returns the _local_ PT
+    /// that can be used for sending media.
+    pub fn match_params(&self, params: PayloadParams) -> Option<Pt> {
+        let c = self.params.iter().max_by_key(|p| p.match_score(&params))?;
+        c.match_score(&params)?; // avoid None, which isn't a match.
+        Some(c.pt())
     }
 
     /// Current direction. This can be changed using
@@ -471,6 +485,72 @@ impl Media {
             .map_err(|e| RtcError::Packet(self.mid, pt, e))?;
 
         Ok(())
+    }
+
+    pub(crate) fn is_request_keyframe_possible(&self, kind: KeyframeRequestKind) -> bool {
+        // TODO: It's possible to have different set of feedback enabled for different
+        // payload types. I.e. we could have FIR enabled for H264, but not for VP8.
+        // We might want to make this check more fine grained by testing which PT is
+        // in "active use" right now.
+        self.params.iter().any(|r| match kind {
+            KeyframeRequestKind::Pli => r.fb_pli,
+            KeyframeRequestKind::Fir => r.fb_fir,
+        })
+    }
+
+    pub(crate) fn request_keyframe(
+        &mut self,
+        rid: Option<Rid>,
+        kind: KeyframeRequestKind,
+        streams: &mut Streams,
+    ) -> Result<(), RtcError> {
+        if !self.is_request_keyframe_possible(kind) {
+            return Err(RtcError::FeedbackNotEnabled(kind));
+        }
+
+        let s = if let Some(rid) = rid {
+            self.streams_rx.iter().find(|s| s.rid == Some(rid))
+        } else {
+            self.streams_rx.first()
+        };
+
+        let Some(s) = s else {
+            return Ok(());
+        };
+
+        if rid.is_some() {
+            info!("Request keyframe ({:?}, {:?}) SSRC: {}", kind, rid, s.ssrc);
+        } else {
+            info!("Request keyframe ({:?}) SSRC: {}", kind, s.ssrc);
+        }
+
+        let Some(stream) = streams.stream_rx(&s.ssrc) else {
+            return Ok(());
+        };
+
+        stream.request_keyframe(kind);
+
+        Ok(())
+    }
+
+    /// Obtains the SSRC used for sending data with `rid`.
+    ///
+    /// This is a low level API.
+    pub fn ssrc_tx(&self, rid: Option<Rid>) -> Option<Ssrc> {
+        self.streams_tx
+            .iter()
+            .find(|s| s.rid == rid)
+            .map(|s| s.ssrc)
+    }
+
+    /// Obtains the SSRC used for receiving data with `rid`.
+    ///
+    /// This is a low level API.
+    pub fn ssrc_rx(&self, rid: Option<Rid>) -> Option<Ssrc> {
+        self.streams_rx
+            .iter()
+            .find(|s| s.rid == rid)
+            .map(|s| s.ssrc)
     }
 }
 

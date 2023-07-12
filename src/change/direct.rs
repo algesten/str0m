@@ -1,7 +1,9 @@
 use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
 use crate::ice::IceCreds;
+use crate::rtp_::Ssrc;
 use crate::sctp::ChannelConfig;
+use crate::streams::{StreamRx, StreamTx};
 use crate::Rtc;
 use crate::RtcError;
 
@@ -95,5 +97,41 @@ impl<'a> DirectApi<'a> {
     /// [`Self::create_data_channel()`]
     pub fn sctp_stream_id_by_channel_id(&self, id: ChannelId) -> Option<u16> {
         self.rtc.chan.stream_id_by_channel_id(id)
+    }
+
+    /// Allow incoming traffic from remote peer for the given SSRC.
+    ///
+    /// The first time we ever discover a new SSRC, we emit the [`Event::RtpData`] with the bool flag
+    /// `initial: true`. No more packets will be handled unless we call `allow_stream_rx` for the incoming
+    /// SSRC.
+    ///
+    /// Can be called multiple times if the `rtx` is discovered later via RTP header extensions.
+    pub fn expect_stream_rx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>) {
+        self.rtc.session.streams.expect_stream_rx(ssrc, rtx)
+    }
+
+    /// Obtain a receive stream.
+    ///
+    /// The stream must first be declared usig [`expect_stream_rx`].
+    pub fn stream_rx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamRx> {
+        self.rtc.session.streams.stream_rx(ssrc)
+    }
+
+    /// Declare the intention to send data using the given SSRC.
+    ///
+    /// * The resend RTX is optional but necessary to do resends. str0m does not do
+    ///   resends without RTX.
+    ///
+    /// Can be called multiple times without changing any internal state. However
+    /// the RTX value is only picked up the first ever time we see a new SSRC.
+    pub fn declare_stream_tx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>) -> &mut StreamTx {
+        self.rtc.session.streams.declare_stream_tx(ssrc, rtx)
+    }
+
+    /// Obtain a send stream.
+    ///
+    /// The stream must first be declared usig [`declare_stream_tx`].
+    pub fn stream_tx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamTx> {
+        self.rtc.session.streams.stream_tx(ssrc)
     }
 }

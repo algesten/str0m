@@ -2,7 +2,7 @@
 use std::time::Instant;
 
 use crate::media::KeyframeRequestKind;
-use crate::rtp::Ssrc;
+use crate::rtp_::Ssrc;
 use crate::{Rtc, RtcError};
 
 /// Wrapper for the RTP API.
