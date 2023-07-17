@@ -26,6 +26,12 @@ pub struct StreamTx {
     /// Identifier of a resend (RTX) stream. If we are doing resends.
     rtx: Option<Ssrc>,
 
+    /// The Media mid this stream belongs to.
+    mid: Mid,
+
+    /// The rid that might be used for this stream.
+    rid: Option<Rid>,
+
     /// Payload type for resends. This is set locally to "remember" which
     /// RTX PT is used for the current sending PT.
     rtx_pt: Option<Pt>,
@@ -82,7 +88,7 @@ pub(crate) struct StreamTxStats {
 }
 
 impl StreamTx {
-    pub(crate) fn new(ssrc: Ssrc, rtx: Option<Ssrc>) -> Self {
+    pub(crate) fn new(ssrc: Ssrc, rtx: Option<Ssrc>, mid: Mid, rid: Option<Rid>) -> Self {
         // https://www.rfc-editor.org/rfc/rfc3550#page-13
         // The initial value of the sequence number SHOULD be random (unpredictable)
         // to make known-plaintext attacks on encryption more difficult
@@ -94,6 +100,8 @@ impl StreamTx {
         StreamTx {
             ssrc,
             rtx,
+            mid,
+            rid,
             rtx_pt: None,
             seq_no,
             seq_no_rtx,
@@ -108,8 +116,20 @@ impl StreamTx {
         }
     }
 
-    pub(crate) fn stats(&self) -> &StreamTxStats {
-        &self.stats
+    pub fn ssrc(&self) -> Ssrc {
+        self.ssrc
+    }
+
+    pub fn rtx(&self) -> Option<Ssrc> {
+        self.rtx
+    }
+
+    pub fn mid(&self) -> Mid {
+        self.mid
+    }
+
+    pub fn rid(&self) -> Option<Rid> {
+        self.rid
     }
 
     /// Write RTP packet to a send stream.
@@ -180,11 +200,12 @@ impl StreamTx {
         now: Instant,
         exts: &ExtensionMap,
         twcc: &mut u64,
-        mid: Mid,
-        rid: Option<Rid>,
         params: &[PayloadParams],
         buf: &mut Vec<u8>,
     ) -> Option<PacketReceipt> {
+        let mid = self.mid;
+        let rid = self.rid;
+
         let (next, is_padding) = if let Some(next) = self.poll_packet_resend(now, false) {
             (next, false)
         } else if let Some(next) = self.poll_packet_regular(now) {

@@ -217,27 +217,24 @@ impl Session {
 
         let sender_ssrc = self.first_ssrc_local();
 
-        // NOTE: All .unwrap below are ok because if media contains a stream id.
-        // The corresponding stream for sure exists.
-
-        for m in &mut self.medias {
-            for s in m.streams_rx() {
-                let stream = self.streams.stream_rx(&s.ssrc).unwrap();
-                stream.maybe_create_keyframe_request(sender_ssrc, &mut self.feedback);
-            }
-        }
+        self.streams
+            .handle_timeout(now, sender_ssrc, &mut self.feedback);
 
         if now >= self.regular_feedback_at() {
             for m in &mut self.medias {
                 let cname = m.cname();
 
-                for s in m.streams_rx() {
-                    let stream = self.streams.stream_rx(&s.ssrc).unwrap();
+                // TODO: This and the one below should be done in some more efficient way.
+                for stream in self.streams.streams_rx() {
+                    if stream.mid() != m.mid() {
+                        continue;
+                    }
                     stream.maybe_create_rr(now, sender_ssrc, &mut self.feedback);
                 }
-                for s in m.streams_tx() {
-                    let stream = self.streams.stream_tx(&s.ssrc).unwrap();
-                    stream.maybe_create_sr(now, cname, &mut self.feedback);
+                for stream in self.streams.streams_tx() {
+                    if stream.mid() != m.mid() {
+                        stream.maybe_create_sr(now, cname, &mut self.feedback);
+                    }
                 }
             }
         }
@@ -245,11 +242,8 @@ impl Session {
         if let Some(nack_at) = self.nack_at() {
             if now >= nack_at {
                 self.last_nack = now;
-                for m in &mut self.medias {
-                    for s in m.streams_rx() {
-                        let stream = self.streams.stream_rx(&s.ssrc).unwrap();
-                        stream.create_nack(sender_ssrc, &mut self.feedback);
-                    }
+                for stream in self.streams.streams_rx() {
+                    stream.create_nack(sender_ssrc, &mut self.feedback);
                 }
             }
         }
@@ -333,13 +327,13 @@ impl Session {
             return Some(*r);
         }
 
-        // The receiver/source SSRC might already exist in some Media.
+        // The receiver/source SSRC might already exist.
         // This would happen when the SSRC is communicated as a=ssrc lines in the SDP.
         // In this case the encoded stream should have been declared already.
-        let maybe_media = self.medias.iter().find(|m| m.has_ssrc_rx(ssrc));
-        if let Some(media) = maybe_media {
-            let mid = media.mid();
-            let ssrc_rx = media.main_ssrc_for(ssrc).unwrap(); // this must exist by now
+        let maybe_stream = self.streams.stream_rx(&ssrc);
+        if let Some(stream) = maybe_stream {
+            let mid = stream.mid();
+            let ssrc_rx = stream.ssrc();
 
             // SSRC is mapped to a Sender/Receiver in this media. Make an entry for it.
             self.source_keys.insert(ssrc, (mid, ssrc_rx));
@@ -356,10 +350,26 @@ impl Session {
             let rid = header.ext_vals.rid.or(header.ext_vals.rid_repair)?;
             let is_repair = header.ext_vals.rid_repair.is_some();
 
-            let ssrc_rx = media.map_ssrc(ssrc, rid, is_repair, &mut self.streams)?;
+            // Check if the mid/rid combo is not expected
+            media.expects_rid_rx(rid).then_some(())?;
+
+            let ssrc_rx = if is_repair {
+                self.streams.main_ssrc_rx_for(ssrc)?
+            } else {
+                ssrc
+            };
+
+            // Declare entries in streams for receiving these streams.
+            if is_repair {
+                self.streams
+                    .expect_stream_rx(ssrc_rx, Some(ssrc), mid, Some(rid))
+            } else {
+                self.streams.expect_stream_rx(ssrc_rx, None, mid, Some(rid))
+            }
 
             // Insert an entry so we can look up on SSRC alone later.
             self.source_keys.insert(ssrc, (mid, ssrc_rx));
+
             return Some((mid, ssrc_rx));
         }
 
@@ -380,6 +390,7 @@ impl Session {
             self.twcc_rx_register.update_seq(extended.into(), now);
         }
 
+        // The ssrc is the _main_ ssrc (no the rtx, that might be in the header).
         let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(&header) else {
             trace!("No mid/SSRC for header: {:?}", header);
             return;
@@ -397,7 +408,8 @@ impl Session {
         let media = self.medias.iter_mut().find(|m| m.mid() == mid).unwrap();
         let stream = self.streams.stream_rx(&ssrc).unwrap();
 
-        let is_repair = media.is_repair_ssrc(ssrc);
+        // If the header ssrc differs from the main, it's a repair stream.
+        let is_repair = header.ssrc != ssrc;
 
         let clock_rate = match media.get_params(header.payload_type) {
             Some(v) => v.spec().clock_rate,
@@ -428,6 +440,7 @@ impl Session {
 
         if !self.rtp_mode {
             media.depacketize(
+                stream.rid(),
                 &packet,
                 self.reordering_size_audio,
                 self.reordering_size_video,
@@ -548,18 +561,8 @@ impl Session {
                 }));
             }
 
-            for s in media.streams_tx() {
-                let Some(stream) = self.streams.stream_tx(&s.ssrc) else {
-                    continue;
-                };
-
-                if let Some(kind) = stream.poll_keyframe_request() {
-                    return Some(MediaEvent::KeyframeRequest(KeyframeRequest {
-                        mid: media.mid(),
-                        rid: s.rid,
-                        kind,
-                    }));
-                };
+            if let Some(req) = self.streams.poll_keyframe_request() {
+                return Some(MediaEvent::KeyframeRequest(req));
             }
 
             if let Some(r) = media.poll_sample() {
@@ -704,9 +707,7 @@ impl Session {
 
     /// Test if the ssrc is known in the session at all, as sender or receiver.
     pub fn has_ssrc(&self, ssrc: Ssrc) -> bool {
-        self.medias
-            .iter()
-            .any(|m| m.has_ssrc_rx(ssrc) || m.has_ssrc_tx(ssrc))
+        self.streams.has_stream_rx(ssrc) || self.streams.has_stream_tx(ssrc)
     }
 
     fn regular_feedback_at(&self) -> Instant {
@@ -764,9 +765,10 @@ impl Session {
     }
 
     pub fn visit_stats(&mut self, now: Instant, snapshot: &mut StatsSnapshot) {
-        for media in &self.medias {
-            media.visit_stats(now, &mut self.streams, snapshot);
-        }
+        // TODO: Help me davide. You're my only hope.
+        // for media in &self.medias {
+        // media.visit_stats(now, &mut self.streams, snapshot);
+        // }
 
         snapshot.tx = snapshot.egress.values().map(|s| s.bytes).sum();
         snapshot.rx = snapshot.ingress.values().map(|s| s.bytes).sum();
@@ -901,14 +903,15 @@ fn poll_packet_single(
     twcc: &mut u64,
     buf: &mut Vec<u8>,
 ) -> Option<PacketReceipt> {
-    for m in medias {
-        for s in m.streams_tx() {
-            let stream = streams.stream_tx(&s.ssrc).expect("StreamTx for Media");
-            let params = m.payload_params();
-            let r = stream.poll_packet(now, exts, twcc, m.mid(), s.rid, params, buf);
-            if let Some(r) = r {
-                return Some(r);
-            }
+    for stream in streams.streams_tx() {
+        let m = medias
+            .iter()
+            .find(|m| m.mid() == stream.mid())
+            .expect("media for stream");
+        let params = m.payload_params();
+        let r = stream.poll_packet(now, exts, twcc, params, buf);
+        if let Some(r) = r {
+            return Some(r);
         }
     }
     None

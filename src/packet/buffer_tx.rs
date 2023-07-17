@@ -73,7 +73,6 @@ impl PacketizingBuffer {
         &mut self,
         now: Instant,
         to_packetize: ToPacketize,
-        ssrc: Ssrc,
         mtu: usize,
         is_audio: bool,
         stream: &mut StreamTx,
@@ -90,6 +89,8 @@ impl PacketizingBuffer {
 
         let chunks = self.pack.packetize(mtu, &data)?;
         let len = chunks.len();
+
+        let ssrc = stream.ssrc();
 
         assert!(
             len <= self.max_retain,

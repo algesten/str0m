@@ -51,7 +51,7 @@ pub fn rtp_mode() -> Result<(), RtcError> {
 
     let media = l.media(mid).unwrap();
     let params = media.payload_params()[0];
-    let ssrc = media.ssrc_tx(None).unwrap();
+    let ssrc = l.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
 

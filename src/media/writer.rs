@@ -159,11 +159,19 @@ impl<'a> Writer<'a> {
         rid: Option<Rid>,
         kind: KeyframeRequestKind,
     ) -> Result<(), RtcError> {
-        media_by_mid_mut(&mut self.session.medias, self.mid).request_keyframe(
-            rid,
-            kind,
-            &mut self.session.streams,
-        )
+        if !self.is_request_keyframe_possible(kind) {
+            return Err(RtcError::NotReceivingDirection);
+        }
+
+        let stream = self
+            .session
+            .streams
+            .rx_by_mid_rid(self.mid, rid)
+            .ok_or_else(|| RtcError::NoReceiverSource(rid))?;
+
+        stream.request_keyframe(kind);
+
+        Ok(())
     }
 }
 

@@ -617,6 +617,10 @@ pub enum RtcError {
     #[error("Direction does not allow sending: {0}")]
     NotSendingDirection(Direction),
 
+    /// Direction does not allow receiving media data.
+    #[error("Direction does not allow receiving")]
+    NotReceivingDirection,
+
     /// If MediaWriter.request_keyframe fails because we can't find an SSRC to use.
     #[error("No receiver source (rid: {0:?})")]
     // TODO: remove rid here.

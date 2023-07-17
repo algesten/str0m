@@ -6,14 +6,13 @@ use std::time::Instant;
 use crate::change::AddMedia;
 use crate::io::{Id, DATAGRAM_MTU};
 use crate::packet::{DepacketizingBuffer, PacketizingBuffer, RtpMeta};
+use crate::rtp_::SRTP_BLOCK_SIZE;
 use crate::rtp_::{ExtensionMap, SRTP_OVERHEAD};
-use crate::rtp_::{Ssrc, SRTP_BLOCK_SIZE};
 use crate::RtcError;
 
 use crate::format::PayloadParams;
 use crate::sdp::Simulcast as SdpSimulcast;
 use crate::sdp::{MediaLine, Msid};
-use crate::stats::StatsSnapshot;
 use crate::streams::{StreamPacket, Streams};
 
 mod event;
@@ -24,18 +23,6 @@ pub use writer::Writer;
 
 pub use crate::packet::MediaKind;
 pub use crate::rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct StreamId {
-    pub ssrc: Ssrc,
-    pub ssrc_rtx: Option<Ssrc>,
-    pub rid: Option<Rid>,
-}
-impl StreamId {
-    fn has_ssrc(&self, ssrc: Ssrc) -> bool {
-        self.ssrc == ssrc || self.ssrc_rtx == Some(ssrc)
-    }
-}
 
 /// Information about some configured media.
 pub struct Media {
@@ -79,21 +66,6 @@ pub struct Media {
     // Rid that we are expecting to see on incoming RTP packets that map to this mid.
     // Once discovered, we make an entry in `stream_rx`.
     expected_rid_rx: Vec<Rid>,
-
-    /// Discovered incoming streams for this mid.
-    ///
-    /// This is deduped on Rid, if the remote side changes SSRC, we only have one entry
-    /// per rid in this list.
-    ///
-    /// When these are set, the corresponding Streams::stream_rx should also
-    /// exist. This is an internal contract we can't uphold by types, but is relied on.
-    streams_rx: Vec<StreamId>,
-
-    /// Declared outgoing streams for this mid.
-    ///
-    /// When these are set, the corresponding Streams::stream_tx should also
-    /// exist. This is an internal contract we can't uphold by types, but is relied on.
-    streams_tx: Vec<StreamId>,
 
     /// Buffers of incoming RTP packets. These do reordering/jitter buffer and also
     /// depacketize from RTP to samples.
@@ -186,108 +158,8 @@ impl Media {
         self.params.iter().find(|p| p.pt == pt)
     }
 
-    pub(crate) fn has_ssrc_rx(&self, ssrc: Ssrc) -> bool {
-        self.streams_rx.iter().any(|s| s.has_ssrc(ssrc))
-    }
-
-    pub(crate) fn has_ssrc_tx(&self, ssrc: Ssrc) -> bool {
-        self.streams_tx.iter().any(|s| s.ssrc == ssrc)
-    }
-
-    pub(crate) fn main_ssrc_for(&self, ssrc: Ssrc) -> Option<Ssrc> {
-        let s = self.streams_rx.iter().find(|s| s.has_ssrc(ssrc))?;
-        Some(s.ssrc)
-    }
-
-    pub(crate) fn map_ssrc(
-        &mut self,
-        ssrc: Ssrc,
-        rid: Rid,
-        is_repair: bool,
-        streams: &mut Streams,
-    ) -> Option<Ssrc> {
-        if !self.expected_rid_rx.contains(&rid) {
-            return None;
-        }
-
-        let has_rid = self.streams_rx.iter().any(|s| s.rid == Some(rid));
-
-        if !has_rid {
-            // We are expecting the rid, map a new entry for it.
-            if is_repair {
-                // We cannot map the RTX SSRC first. The main one creates the entry, then
-                // we can accept the repair.
-                return None;
-            }
-
-            // Create mapping in streams.
-            streams.expect_stream_rx(ssrc, None);
-
-            // Remember mapping here in Media.
-            self.streams_rx.push(StreamId {
-                ssrc,
-                ssrc_rtx: None,
-                rid: Some(rid),
-            });
-        }
-
-        // At this point we definitely should have an entry for the rid.
-        let s = self
-            .streams_rx
-            .iter_mut()
-            .find(|s| s.rid == Some(rid))
-            .unwrap();
-
-        if is_repair {
-            // This is the main entry, now we can accept the RTX.
-            assert!(s.ssrc != ssrc);
-            s.ssrc_rtx = Some(ssrc);
-            streams.expect_stream_rx(s.ssrc, s.ssrc_rtx);
-        }
-
-        // Always return "main" SSRC (never RTX).
-        Some(s.ssrc)
-    }
-
-    pub(crate) fn is_repair_ssrc(&self, ssrc: Ssrc) -> bool {
-        let Some(s) = self.streams_rx.iter().find(|s| s.has_ssrc(ssrc)) else {
-            return false;
-        };
-        s.ssrc_rtx == Some(ssrc)
-    }
-
-    pub(crate) fn streams_rx(&self) -> &[StreamId] {
-        &self.streams_rx
-    }
-
-    pub(crate) fn streams_tx(&self) -> &[StreamId] {
-        &self.streams_tx
-    }
-
     pub(crate) fn simulcast(&self) -> Option<&SdpSimulcast> {
         self.simulcast.as_ref()
-    }
-
-    pub(crate) fn visit_stats(
-        &self,
-        now: Instant,
-        streams: &mut Streams,
-        snapshot: &mut StatsSnapshot,
-    ) {
-        for s in &self.streams_rx {
-            let Some(stream) = streams.stream_rx(&s.ssrc) else {
-                continue;
-            };
-            let stats = stream.stats();
-            // TODO here
-        }
-        for s in &self.streams_tx {
-            let Some(stream) = streams.stream_tx(&s.ssrc) else {
-                continue;
-            };
-            let stats = stream.stats();
-            // TODO here
-        }
     }
 
     pub(crate) fn poll_sample(&self) -> Option<Result<MediaData, RtcError>> {
@@ -304,6 +176,7 @@ impl Media {
 
     pub(crate) fn depacketize(
         &mut self,
+        rid: Option<Rid>,
         packet: &StreamPacket,
         reordering_size_audio: usize,
         reordering_size_video: usize,
@@ -312,12 +185,8 @@ impl Media {
             return;
         }
 
-        let ssrc = packet.header.ssrc;
         let pt = packet.header.payload_type;
-        // This unwrap is ok, because we should not call depacketize without making a
-        // StreamPacket using the information in streams_rx.
-        let s = self.streams_rx.iter().find(|s| s.ssrc == ssrc).unwrap();
-        let rid = s.rid;
+
         let key = (pt, rid);
 
         let exists = self.depacketizers.contains_key(&key);
@@ -397,6 +266,10 @@ impl Media {
         }
     }
 
+    pub(crate) fn expects_rid_rx(&self, rid: Rid) -> bool {
+        self.expected_rid_rx.contains(&rid)
+    }
+
     pub(crate) fn set_exts(&mut self, exts: ExtensionMap) {
         if self.exts != exts {
             info!("Set {:?} extension map: {:?}", self.mid, exts);
@@ -449,26 +322,20 @@ impl Media {
             return Ok(());
         };
 
-        let is_audio = self.kind.is_audio();
-
-        let s = if let Some(rid) = to_packetize.rid {
-            self.streams_tx.iter().find(|s| s.rid == Some(rid))
-        } else {
-            self.streams_tx.first()
-        };
-
-        let Some(s) = s else {
-            return Err(RtcError::NoSenderSource);
-        };
-
-        let StreamId { ssrc, ssrc_rtx, .. } = *s;
-
         let ToPacketize {
             pt,
             rid,
             max_retain,
             ..
         } = &to_packetize;
+
+        let is_audio = self.kind.is_audio();
+
+        let stream = streams.tx_by_mid_rid(self.mid, *rid);
+
+        let Some(stream) = stream else {
+            return Err(RtcError::NoSenderSource);
+        };
 
         let pt = *pt;
 
@@ -478,10 +345,8 @@ impl Media {
         // align to SRTP block size to minimize padding needs
         const MTU: usize = RTP_SIZE - RTP_SIZE % SRTP_BLOCK_SIZE;
 
-        let stream = streams.declare_stream_tx(ssrc, ssrc_rtx);
-
         packetizer
-            .push_sample(now, to_packetize, ssrc, MTU, is_audio, stream)
+            .push_sample(now, to_packetize, MTU, is_audio, stream)
             .map_err(|e| RtcError::Packet(self.mid, pt, e))?;
 
         Ok(())
@@ -496,61 +361,6 @@ impl Media {
             KeyframeRequestKind::Pli => r.fb_pli,
             KeyframeRequestKind::Fir => r.fb_fir,
         })
-    }
-
-    pub(crate) fn request_keyframe(
-        &mut self,
-        rid: Option<Rid>,
-        kind: KeyframeRequestKind,
-        streams: &mut Streams,
-    ) -> Result<(), RtcError> {
-        if !self.is_request_keyframe_possible(kind) {
-            return Err(RtcError::FeedbackNotEnabled(kind));
-        }
-
-        let s = if let Some(rid) = rid {
-            self.streams_rx.iter().find(|s| s.rid == Some(rid))
-        } else {
-            self.streams_rx.first()
-        };
-
-        let Some(s) = s else {
-            return Ok(());
-        };
-
-        if rid.is_some() {
-            info!("Request keyframe ({:?}, {:?}) SSRC: {}", kind, rid, s.ssrc);
-        } else {
-            info!("Request keyframe ({:?}) SSRC: {}", kind, s.ssrc);
-        }
-
-        let Some(stream) = streams.stream_rx(&s.ssrc) else {
-            return Ok(());
-        };
-
-        stream.request_keyframe(kind);
-
-        Ok(())
-    }
-
-    /// Obtains the SSRC used for sending data with `rid`.
-    ///
-    /// This is a low level API.
-    pub fn ssrc_tx(&self, rid: Option<Rid>) -> Option<Ssrc> {
-        self.streams_tx
-            .iter()
-            .find(|s| s.rid == rid)
-            .map(|s| s.ssrc)
-    }
-
-    /// Obtains the SSRC used for receiving data with `rid`.
-    ///
-    /// This is a low level API.
-    pub fn ssrc_rx(&self, rid: Option<Rid>) -> Option<Ssrc> {
-        self.streams_rx
-            .iter()
-            .find(|s| s.rid == rid)
-            .map(|s| s.ssrc)
     }
 }
 
@@ -571,8 +381,6 @@ impl Default for Media {
             params: vec![],
             simulcast: None,
             expected_rid_rx: vec![],
-            streams_rx: vec![],
-            streams_tx: vec![],
             packetizers: HashMap::new(),
             depacketizers: HashMap::new(),
             to_packetize: None,
@@ -583,10 +391,6 @@ impl Default for Media {
 }
 
 impl Media {
-    pub(crate) fn source_tx_ssrcs(&self) -> impl Iterator<Item = Ssrc> + '_ {
-        self.streams_tx().iter().map(|s| s.ssrc)
-    }
-
     pub(crate) fn from_remote_media_line(l: &MediaLine, index: usize, exts: ExtensionMap) -> Self {
         Media {
             mid: l.mid(),
@@ -604,8 +408,11 @@ impl Media {
 
     // Going from AddMedia to Media for pending in a Change and are sent
     // in the offer to the other side.
+    //
+    // from_add_media is only used when creating temporary Media to be
+    // included in the SDP. We don't want to make an _actual_ changes with this.
     pub(crate) fn from_add_media(a: AddMedia, exts: ExtensionMap) -> Self {
-        let mut media = Media {
+        Media {
             mid: a.mid,
             index: a.index,
             cname: a.cname,
@@ -616,25 +423,7 @@ impl Media {
             params: a.params,
             // equalize_sources: true,
             ..Default::default()
-        };
-
-        // from_add_media is only used when creating temporary Media to be
-        // included in the SDP. We don't want to make an _actual_ change in the
-        // Session::streams at this point, but we do want the SSRC be included
-        // in the SDP.
-        //
-        // So whilst we typically must uphold that a Media::stream_tx/rx is
-        // mapped to a real stream, this is an exception to that rule.
-        for (ssrc, repairs) in a.ssrcs {
-            media.streams_tx.push(StreamId {
-                ssrc,
-                ssrc_rtx: repairs,
-                // TODO: support sending simulcast.
-                rid: None,
-            });
         }
-
-        media
     }
 
     pub(crate) fn from_app_tmp(mid: Mid, index: usize) -> Media {
@@ -644,47 +433,5 @@ impl Media {
             app_tmp: true,
             ..Default::default()
         }
-    }
-
-    pub(crate) fn map_stream_rx(
-        &mut self,
-        streams: &mut Streams,
-        iter: impl Iterator<Item = (Ssrc, Option<Ssrc>)>,
-    ) {
-        map_ids(&mut self.streams_rx, iter);
-        for StreamId { ssrc, ssrc_rtx, .. } in &self.streams_rx {
-            streams.expect_stream_rx(*ssrc, *ssrc_rtx);
-        }
-    }
-
-    pub(crate) fn map_stream_tx(
-        &mut self,
-        streams: &mut Streams,
-        iter: impl Iterator<Item = (Ssrc, Option<Ssrc>)>,
-    ) {
-        map_ids(&mut self.streams_tx, iter);
-        for StreamId { ssrc, ssrc_rtx, .. } in &self.streams_rx {
-            streams.declare_stream_tx(*ssrc, *ssrc_rtx);
-        }
-    }
-}
-
-fn map_ids(stream_ids: &mut Vec<StreamId>, iter: impl Iterator<Item = (Ssrc, Option<Ssrc>)>) {
-    for (ssrc, ssrc_rtx) in iter {
-        let idx = stream_ids.iter().position(|s| s.ssrc == ssrc);
-
-        let entry = if let Some(idx) = idx {
-            &mut stream_ids[idx]
-        } else {
-            stream_ids.push(StreamId {
-                ssrc,
-                ssrc_rtx,
-                rid: None,
-            });
-            stream_ids.last_mut().unwrap()
-        };
-
-        // in case this changed
-        entry.ssrc_rtx = ssrc_rtx;
     }
 }

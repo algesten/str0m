@@ -1,11 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::rtp_::RtpHeader;
-use crate::rtp_::SeqNo;
+use crate::media::KeyframeRequest;
 use crate::rtp_::Ssrc;
 use crate::rtp_::{MediaTime, Pt};
+use crate::rtp_::{Mid, Rid, SeqNo};
+use crate::rtp_::{Rtcp, RtpHeader};
 
 pub use self::receive::StreamRx;
 pub use self::send::StreamTx;
@@ -75,25 +76,31 @@ pub(crate) struct Streams {
 }
 
 impl Streams {
-    pub fn expect_stream_rx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>) {
+    pub fn expect_stream_rx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>, mid: Mid, rid: Option<Rid>) {
         let stream = self
             .streams_rx
             .entry(ssrc)
-            .or_insert_with(|| StreamRx::new(ssrc));
+            .or_insert_with(|| StreamRx::new(ssrc, mid, rid));
 
         if let Some(rtx) = rtx {
             stream.set_rtx_ssrc(rtx);
         }
     }
 
-    pub fn stream_rx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamRx> {
-        self.streams_rx.get_mut(ssrc)
-    }
-
-    pub fn declare_stream_tx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>) -> &mut StreamTx {
+    pub fn declare_stream_tx(
+        &mut self,
+        ssrc: Ssrc,
+        rtx: Option<Ssrc>,
+        mid: Mid,
+        rid: Option<Rid>,
+    ) -> &mut StreamTx {
         self.streams_tx
             .entry(ssrc)
-            .or_insert_with(|| StreamTx::new(ssrc, rtx))
+            .or_insert_with(|| StreamTx::new(ssrc, rtx, mid, rid))
+    }
+
+    pub fn stream_rx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamRx> {
+        self.streams_rx.get_mut(ssrc)
     }
 
     pub fn stream_tx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamTx> {
@@ -112,5 +119,72 @@ impl Streams {
 
     pub(crate) fn is_receiving(&self) -> bool {
         !self.streams_rx.is_empty()
+    }
+
+    pub(crate) fn handle_timeout(
+        &mut self,
+        now: Instant,
+        sender_ssrc: Ssrc,
+        feedback: &mut VecDeque<Rtcp>,
+    ) {
+        for stream in self.streams_rx.values_mut() {
+            stream.maybe_create_keyframe_request(sender_ssrc, feedback);
+        }
+
+        todo!()
+    }
+
+    pub(crate) fn main_ssrc_rx_for(&self, ssrc_rtx: Ssrc) -> Option<Ssrc> {
+        self.streams_rx
+            .values()
+            .find(|s| s.rtx() == Some(ssrc_rtx))
+            .map(|s| s.ssrc())
+    }
+
+    pub(crate) fn tx_by_mid_rid(&mut self, mid: Mid, rid: Option<Rid>) -> Option<&mut StreamTx> {
+        self.streams_tx
+            .values_mut()
+            .find(|s| s.mid() == mid && (rid.is_none() || s.rid() == rid))
+    }
+
+    pub(crate) fn rx_by_mid_rid(&mut self, mid: Mid, rid: Option<Rid>) -> Option<&mut StreamRx> {
+        self.streams_rx
+            .values_mut()
+            .find(|s| s.mid() == mid && (rid.is_none() || s.rid() == rid))
+    }
+
+    pub(crate) fn poll_keyframe_request(&mut self) -> Option<KeyframeRequest> {
+        self.streams_tx.values_mut().find_map(|s| {
+            let kind = s.poll_keyframe_request()?;
+            Some(KeyframeRequest {
+                mid: s.mid(),
+                rid: s.rid(),
+                kind,
+            })
+        })
+    }
+
+    pub(crate) fn has_stream_rx(&self, ssrc: Ssrc) -> bool {
+        self.streams_rx.contains_key(&ssrc)
+    }
+
+    pub(crate) fn has_stream_tx(&self, ssrc: Ssrc) -> bool {
+        self.streams_tx.contains_key(&ssrc)
+    }
+
+    pub(crate) fn streams_rx(&mut self) -> impl Iterator<Item = &mut StreamRx> {
+        self.streams_rx.values_mut()
+    }
+
+    pub(crate) fn streams_tx(&mut self) -> impl Iterator<Item = &mut StreamTx> {
+        self.streams_tx.values_mut()
+    }
+
+    pub(crate) fn ssrcs_tx(&self, mid: Mid) -> Vec<Ssrc> {
+        self.streams_tx
+            .values()
+            .filter(|s| s.mid() == mid)
+            .map(|s| s.ssrc())
+            .collect()
     }
 }

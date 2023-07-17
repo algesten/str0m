@@ -1,7 +1,7 @@
 use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
 use crate::ice::IceCreds;
-use crate::rtp_::Ssrc;
+use crate::rtp_::{Mid, Rid, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::streams::{StreamRx, StreamTx};
 use crate::Rtc;
@@ -106,8 +106,11 @@ impl<'a> DirectApi<'a> {
     /// SSRC.
     ///
     /// Can be called multiple times if the `rtx` is discovered later via RTP header extensions.
-    pub fn expect_stream_rx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>) {
-        self.rtc.session.streams.expect_stream_rx(ssrc, rtx)
+    pub fn expect_stream_rx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>, mid: Mid, rid: Option<Rid>) {
+        self.rtc
+            .session
+            .streams
+            .expect_stream_rx(ssrc, rtx, mid, rid)
     }
 
     /// Obtain a receive stream.
@@ -124,8 +127,17 @@ impl<'a> DirectApi<'a> {
     ///
     /// Can be called multiple times without changing any internal state. However
     /// the RTX value is only picked up the first ever time we see a new SSRC.
-    pub fn declare_stream_tx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>) -> &mut StreamTx {
-        self.rtc.session.streams.declare_stream_tx(ssrc, rtx)
+    pub fn declare_stream_tx(
+        &mut self,
+        ssrc: Ssrc,
+        rtx: Option<Ssrc>,
+        mid: Mid,
+        rid: Option<Rid>,
+    ) -> &mut StreamTx {
+        self.rtc
+            .session
+            .streams
+            .declare_stream_tx(ssrc, rtx, mid, rid)
     }
 
     /// Obtain a send stream.
@@ -133,5 +145,10 @@ impl<'a> DirectApi<'a> {
     /// The stream must first be declared usig [`declare_stream_tx`].
     pub fn stream_tx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamTx> {
         self.rtc.session.streams.stream_tx(ssrc)
+    }
+
+    /// Obtain a send stream by looking it up via mid/rid.
+    pub fn stream_tx_by_mid(&mut self, mid: Mid, rid: Option<Rid>) -> Option<&mut StreamTx> {
+        self.rtc.session.streams.tx_by_mid_rid(mid, rid)
     }
 }

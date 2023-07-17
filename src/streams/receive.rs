@@ -3,8 +3,9 @@ use std::time::Instant;
 
 use crate::media::KeyframeRequestKind;
 use crate::rtp_::{
-    extend_u16, extend_u32, DlrrItem, ExtendedReport, Fir, FirEntry, InstantExt, MediaTime, Pli,
-    Pt, ReceiverReport, ReportBlock, ReportList, Rrtr, Rtcp, RtcpFb, RtpHeader, SenderInfo, SeqNo,
+    extend_u16, extend_u32, DlrrItem, ExtendedReport, Fir, FirEntry, InstantExt, MediaTime, Mid,
+    Pli, Pt, ReceiverReport, ReportBlock, ReportList, Rid, Rrtr, Rtcp, RtcpFb, RtpHeader,
+    SenderInfo, SeqNo,
 };
 use crate::rtp_::{SdesType, Ssrc};
 use crate::util::{already_happened, calculate_rtt_ms};
@@ -24,6 +25,12 @@ pub struct StreamRx {
 
     /// Identifier of a resend (RTX) stream. This can be set later, once we discover it.
     rtx: Option<Ssrc>,
+
+    /// The Media mid this stream belongs to.
+    mid: Mid,
+
+    /// The rid that might be used for this stream.
+    rid: Option<Rid>,
 
     /// Timestamp when we got some indication of remote using this stream.
     last_used: Instant,
@@ -65,12 +72,14 @@ pub(crate) struct StreamRxStats {
 }
 
 impl StreamRx {
-    pub(crate) fn new(ssrc: Ssrc) -> Self {
+    pub(crate) fn new(ssrc: Ssrc, mid: Mid, rid: Option<Rid>) -> Self {
         debug!("Create StreamRx for SSRC: {}", ssrc);
 
         StreamRx {
             ssrc,
             rtx: None,
+            mid,
+            rid,
             last_used: already_happened(),
             sender_info: None,
             register: None,
@@ -82,23 +91,35 @@ impl StreamRx {
         }
     }
 
+    pub(crate) fn set_rtx_ssrc(&mut self, rtx: Ssrc) {
+        if self.rtx != Some(rtx) {
+            debug!("SSRC {} associated with RTX: {}", self.ssrc, rtx);
+            self.rtx = Some(rtx);
+        }
+    }
+
+    pub fn ssrc(&self) -> Ssrc {
+        self.ssrc
+    }
+
+    pub fn rtx(&self) -> Option<Ssrc> {
+        self.rtx
+    }
+
+    pub fn mid(&self) -> Mid {
+        self.mid
+    }
+
+    pub fn rid(&self) -> Option<Rid> {
+        self.rid
+    }
+
     /// Request a keyframe for an incoming encoded stream.
     ///
     /// * SSRC the identifier of the remote encoded stream to request a keyframe for.
     /// * kind PLI or FIR.
     pub fn request_keyframe(&mut self, kind: KeyframeRequestKind) {
         self.pending_request_keyframe = Some(kind);
-    }
-
-    pub(crate) fn stats(&self) -> &StreamRxStats {
-        &self.stats
-    }
-
-    pub(crate) fn set_rtx_ssrc(&mut self, rtx: Ssrc) {
-        if self.rtx != Some(rtx) {
-            debug!("SSRC {} associated with RTX: {}", self.ssrc, rtx);
-            self.rtx = Some(rtx);
-        }
     }
 
     pub(crate) fn receiver_report_at(&self) -> Instant {
