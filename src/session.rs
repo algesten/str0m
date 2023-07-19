@@ -488,6 +488,8 @@ impl Session {
         // here we have incoming and depacketized data before it may be dropped at buffer.push()
         let bytes_rx = data.len();
 
+        // This is the "main" PT and it will differ to header.payload_type if this is a resend.
+        let pt = media.get_params(header.payload_type).unwrap().pt();
         if let Some(rtp_mode) = media.rtp_mode.as_mut() {
             // Don't expose these values to the user of the API.
             header.ext_vals.abs_send_time = None;
@@ -497,22 +499,19 @@ impl Session {
                 rid,
                 ssrc: header.ssrc,
                 sequence_number: seq_no,
-                payload_type: header.payload_type,
+                // This is the "main" PT and it will differ to header.payload_type if this is a resend.
+                payload_type: pt,
                 timestamp: time,
                 marker: header.marker,
                 header_extensions: header.ext_vals,
                 payload: data,
             })
         } else {
-            // !self.packet_mode (sample mode)
-
             // Parameters using the PT in the header. This will return the same CodecParams
             // instance regardless of whether this being a resend PT or not.
             // unwrap: is ok because we checked above.
             let params = media.get_params(header.payload_type).unwrap();
 
-            // This is the "main" PT and it will differ to header.payload_type if this is a resend.
-            let pt = params.pt();
             let codec = params.spec().codec;
 
             // Buffers are unique per media (since PT is unique per media).
