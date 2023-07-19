@@ -108,7 +108,7 @@ pub struct MediaData {
     /// For audio the timebase is 48kHz for video it is 90kHz.
     pub time: MediaTime,
 
-    /// The time of the [`Input::Receive`][crate::Input::Receive] that caused this MediaData.
+    /// The time of the [`Input::Receive`][crate::Input::Receive] of the first packet that caused this MediaData.
     ///
     /// In simple SFU setups this can be used as wallclock for [`Writer::write`][crate::media::Writer].
     pub network_time: Instant,
@@ -187,7 +187,7 @@ pub struct RtpPacketReceived {
 
 /// When using "RTP mode", represents an RTP packet to send.
 /// It will sit in buffers until the pacer wants to send it.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct RtpPacketToSend {
     /// Roughly identifies a "Media Source" in RFC7656 taxonomy.
     /// In practice, it's what you think of as a "stream" of audio or video.

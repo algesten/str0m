@@ -1091,7 +1091,6 @@ mod test {
     ) {
         let (header, payload_len, kind) = make_packet(seq_no, size, kind);
 
-        println!("Adding {kind} packet of size {size}, sequence number: {seq_no}");
         let queued_packet = QueuedPacket {
             queued_at: now,
             header,

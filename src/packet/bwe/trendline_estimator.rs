@@ -119,7 +119,15 @@ impl TrendlineEstimator {
             smoothed_delay_ms: self.smoothed_delay,
         };
 
-        self.history.push_back(timing);
+        let pos = self
+            .history
+            .iter()
+            .rev()
+            .position(|p| p.remote_recv_time_ms <= timing.remote_recv_time_ms)
+            .unwrap_or(0);
+
+        // we expect pos to be 0 more often than not
+        self.history.insert(self.history.len() - pos, timing);
     }
 
     fn update_trendline(&mut self, variation: InterGroupDelayDelta, now: Instant) -> Option<()> {

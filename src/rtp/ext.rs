@@ -458,28 +458,46 @@ impl Extension {
             // 3
             AbsoluteSendTime => {
                 // fixed point 6.18
+                if buf.len() < 3 {
+                    return None;
+                }
                 let time_24 = u32::from_be_bytes([0, buf[0], buf[1], buf[2]]);
                 v.abs_send_time = Some(MediaTime::new(time_24 as i64, FIXED_POINT_6_18));
             }
             // 1
             AudioLevel => {
+                if buf.is_empty() {
+                    return None;
+                }
                 v.audio_level = Some(-(0x7f & buf[0] as i8));
                 v.voice_activity = Some(buf[0] & 0x80 > 0);
             }
             // 3
             TransmissionTimeOffset => {
+                if buf.len() < 4 {
+                    return None;
+                }
                 v.tx_time_offs = Some(u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]));
             }
             // 1
             VideoOrientation => {
+                if buf.is_empty() {
+                    return None;
+                }
                 v.video_orientation = Some(super::ext::VideoOrientation::from(buf[0] & 3));
             }
             // 2
             TransportSequenceNumber => {
+                if buf.len() < 2 {
+                    return None;
+                }
                 v.transport_cc = Some(u16::from_be_bytes([buf[0], buf[1]]));
             }
             // 3
             PlayoutDelay => {
+                if buf.len() < 3 {
+                    return None;
+                }
                 let min = (buf[0] as u32) << 4 | (buf[1] as u32) >> 4;
                 let max = ((buf[1] & 0xf) as u32) << 8 | buf[2] as u32;
                 v.play_delay_min = Some(MediaTime::new(min as i64, 100));
@@ -487,10 +505,16 @@ impl Extension {
             }
             // 1
             VideoContentType => {
+                if buf.is_empty() {
+                    return None;
+                }
                 v.video_content_type = Some(buf[0]);
             }
             // 13
             VideoTiming => {
+                if buf.len() < 9 {
+                    return None;
+                }
                 v.video_timing = Some(self::VideoTiming {
                     flags: buf[0],
                     encode_start: u16::from_be_bytes([buf[1], buf[2]]),
@@ -514,6 +538,9 @@ impl Extension {
                 v.mid = Some(s.into());
             }
             FrameMarking => {
+                if buf.len() < 4 {
+                    return None;
+                }
                 v.frame_mark = Some(u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]));
             }
             ColorSpace => {

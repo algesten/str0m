@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::dtls::KeyingMaterial;
 use crate::format::CodecConfig;
-use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
+use crate::io::{DatagramSend, DATAGRAM_MTU};
 use crate::media::{MediaAdded, MediaChanged, MediaKind, RtpPacketToSend, Source};
 use crate::packet::{
     LeakyBucketPacer, NullPacer, Pacer, PacerImpl, RtpMeta, SendSideBandwithEstimator,
@@ -22,7 +22,7 @@ use super::{MediaInner, PolledPacket};
 /// Minimum time we delay between sending nacks. This should be
 /// set high enough to not cause additional problems in very bad
 /// network conditions.
-const NACK_MIN_INTERVAL: Duration = Duration::from_millis(100);
+const NACK_MIN_INTERVAL: Duration = Duration::from_millis(33);
 
 /// Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(100);
@@ -47,6 +47,8 @@ pub(crate) struct Session {
 
     reordering_size_audio: usize,
     reordering_size_video: usize,
+    pub(crate) send_buffer_audio: usize,
+    pub(crate) send_buffer_video: usize,
 
     /// Extension mappings are _per BUNDLE_, but we can only have one a=group BUNDLE
     /// in WebRTC (one ice connection), so they are effectively per session.
@@ -130,6 +132,8 @@ impl Session {
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
+            send_buffer_audio: config.send_buffer_audio,
+            send_buffer_video: config.send_buffer_video,
             exts: config.exts,
             codec_config: config.codec_config.clone(),
             source_keys: HashMap::new(),
@@ -239,6 +243,7 @@ impl Session {
             .medias
             .iter_mut()
             .map(|m| m.buffers_tx_queue_state(now));
+
         if let Some(padding_request) = self.pacer.handle_timeout(now, iter) {
             let media = self
                 .media_by_mid_mut(padding_request.mid)
@@ -676,17 +681,8 @@ impl Session {
             return None;
         }
 
-        let x = None
-            .or_else(|| self.poll_feedback())
-            .or_else(|| self.poll_packet(now));
-
-        if let Some(x) = &x {
-            if x.len() > DATAGRAM_MTU_WARN {
-                warn!("RTP above MTU {}: {}", DATAGRAM_MTU_WARN, x.len());
-            }
-        }
-
-        x
+        None.or_else(|| self.poll_feedback())
+            .or_else(|| self.poll_packet(now))
     }
 
     fn poll_feedback(&mut self) -> Option<net::DatagramSend> {
@@ -865,6 +861,9 @@ impl Session {
         snapshot.tx = snapshot.egress.values().map(|s| s.bytes).sum();
         snapshot.rx = snapshot.ingress.values().map(|s| s.bytes).sum();
         snapshot.bwe_tx = self.bwe.as_ref().and_then(|bwe| bwe.last_estimate());
+
+        snapshot.egress_loss_fraction = self.twcc_tx_register.loss(Duration::from_secs(1), now);
+        snapshot.ingress_loss_fraction = self.twcc_rx_register.loss();
     }
 
     pub fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {

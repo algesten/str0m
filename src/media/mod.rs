@@ -281,10 +281,20 @@ impl<'a> Writer<'a> {
         rtp_time: MediaTime,
         data: &[u8],
     ) -> Result<(), RtcError> {
+        let send_buffer_audio = self.media.rtc.session.send_buffer_audio;
+        let send_buffer_video = self.media.rtc.session.send_buffer_video;
+
         let media = self.media.inner_mut();
 
-        media.write(self.pt, wallclock, rtp_time, data, self.rid, self.ext_vals)?;
-
-        Ok(())
+        media.write(
+            self.pt,
+            wallclock,
+            rtp_time,
+            data,
+            self.rid,
+            self.ext_vals,
+            send_buffer_audio,
+            send_buffer_video,
+        )
     }
 }

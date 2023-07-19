@@ -10,6 +10,9 @@ pub(crate) use data::{FormatParam, Sdp, Session, SessionAttribute, Setup};
 pub(crate) use data::{MediaAttribute, MediaLine, MediaType, Msid, Proto};
 pub(crate) use data::{Simulcast, SimulcastGroups, SimulcastOption};
 
+#[cfg(test)]
+pub(crate) use data::RtpMap;
+
 mod parser;
 
 /// Errors from parsing and serializing SDP.
@@ -82,6 +85,18 @@ impl From<Sdp> for SdpOffer {
 impl From<Sdp> for SdpAnswer {
     fn from(v: Sdp) -> Self {
         SdpAnswer(v)
+    }
+}
+
+impl fmt::Display for SdpOffer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", **self)
+    }
+}
+
+impl fmt::Display for SdpAnswer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", **self)
     }
 }
 

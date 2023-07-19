@@ -35,7 +35,9 @@ impl ArrivalGroup {
             ));
         }
 
-        self.last_remote_recv_time = Some(packet.remote_recv_time);
+        self.last_remote_recv_time = self
+            .last_remote_recv_time
+            .max(Some(packet.remote_recv_time));
         self.last_local_send_time = self.last_local_send_time.max(Some(packet.local_send_time));
         self.size += 1;
         self.last_seq_no = self.last_seq_no.max(Some(packet.seq_no));

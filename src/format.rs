@@ -207,19 +207,63 @@ impl PayloadParams {
         let c1 = o.spec;
 
         if c0 == c1 {
+            // Exact match
             return Some(100);
-        } else {
-            // TODO: fuzzy matching.
         }
 
-        // No match
+        // Attempt fuzzy matching, since we don't have an exact match
+        if c0.codec != c1.codec || (c0.codec == Codec::Unknown && c1.codec == Codec::Unknown) {
+            // Codecs must match
+            return None;
+        }
+
+        if c0.clock_rate != c1.clock_rate {
+            // Clock rates must match
+            return None;
+        }
+
+        if c0.channels != c1.channels {
+            // Channels must match
+            return None;
+        }
+
+        if c0.codec.is_audio() && c0.codec == Codec::Opus {
+            return Some(Self::match_opus_score(c0, c1));
+        }
+
+        // TODO: Fuzzy matching for any other audio codecs
+        // TODO: Fuzzy matching for video
+
         None
     }
 
+    fn match_opus_score(c0: CodecSpec, c1: CodecSpec) -> usize {
+        let mut score: usize = 100;
+
+        // If neither value is specified both sides should assume the default value, 3.
+        let either_p_time_specified =
+            c0.format.min_p_time.is_some() || c1.format.min_p_time.is_some();
+        if either_p_time_specified && c0.format.min_p_time != c1.format.min_p_time {
+            score = score.saturating_sub(1);
+        }
+
+        // If neither value is specified both sides should assume FEC is not used as this is
+        // the default.
+        let either_fec_specified =
+            c0.format.use_inband_fec.is_some() || c1.format.use_inband_fec.is_some();
+
+        if either_fec_specified && c0.format.use_inband_fec != c1.format.use_inband_fec {
+            score = score.saturating_sub(2);
+        }
+
+        score
+    }
+
     fn update_pt(&mut self, media_pts: &[PayloadParams]) -> Option<(Pt, Pt)> {
-        let first = media_pts
+        let (first, _) = media_pts
             .iter()
-            .find(|p| self.match_score(p) == Some(100))?;
+            .filter_map(|p| self.match_score(p).map(|s| (p, s)))
+            .max_by_key(|(_, s)| *s)?;
 
         let remote_pt = first.pt;
 
@@ -279,7 +323,7 @@ impl CodecConfig {
     }
 
     pub(crate) fn matches(&self, c: &PayloadParams) -> bool {
-        self.configs.iter().any(|x| x.spec == c.spec)
+        self.configs.iter().any(|x| x.match_score(c).is_some())
     }
 
     /// Manually configure a payload type.

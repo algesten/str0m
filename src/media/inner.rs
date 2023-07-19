@@ -220,9 +220,10 @@ struct ToPacketize {
     meta: PacketizedMeta,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum NextPacketBody<'a> {
     /// A regular packetized packet
-    Regular { pkt: &'a Packetized },
+    Regular { pkt: Packetized },
     /// A resend of a previously sent packet
     Resend {
         pkt: &'a Packetized,
@@ -300,6 +301,8 @@ impl MediaInner {
         data: &[u8],
         rid: Option<Rid>,
         ext_vals: ExtensionValues,
+        send_buffer_audio: usize,
+        send_buffer_video: usize,
     ) -> Result<(), RtcError> {
         if !self.dir.is_sending() {
             return Err(RtcError::NotSendingDirection(self.dir));
@@ -322,8 +325,20 @@ impl MediaInner {
         // We don't actually want this buffer here, but it must be created before we
         // get to the do_packetize() (as part of handle_timeout).
         let _ = self.buffers_tx.entry(pt).or_insert_with(|| {
-            let max_retain = if is_audio { 4096 } else { 2048 };
-            PacketizingBuffer::new(codec.into(), max_retain)
+            let max_retain = if is_audio {
+                send_buffer_audio
+            } else {
+                send_buffer_video
+            };
+            let rtx_max_packet_count = max_retain;
+            // TODO: Make max duration configurable.
+            let rtx_max_duration = Duration::from_secs(3);
+            PacketizingBuffer::new(
+                codec.into(),
+                max_retain,
+                rtx_max_packet_count,
+                rtx_max_duration,
+            )
         });
 
         trace!(
@@ -355,13 +370,23 @@ impl MediaInner {
         const MTU: usize = RTP_SIZE - RTP_SIZE % SRTP_BLOCK_SIZE;
 
         while let Some(t) = self.to_packetize.pop_front() {
+            let pt = t.pt;
+
             let buf = self
                 .buffers_tx
                 .get_mut(&t.pt)
                 .expect("write() to create buffer");
 
-            if let Err(e) = buf.push_sample(now, &t.data, t.meta, MTU) {
-                return Err(RtcError::Packet(self.mid, t.pt, e));
+            match buf.push_sample(now, &t.data, t.meta, MTU) {
+                Err(e) => {
+                    return Err(RtcError::Packet(self.mid, t.pt, e));
+                }
+                Ok(overflow) => {
+                    if overflow {
+                        self.resends.retain(|r| r.pt != pt);
+                        self.padding.retain(|p| p.pt() != pt);
+                    }
+                }
             }
 
             // Invalidate cached queue_state.
@@ -483,8 +508,28 @@ impl MediaInner {
             body_out = &mut body_out[original_seq_len..];
         }
 
+        let pt = next.pt;
+        let seq_no = next.seq_no;
         let body_len = match next.body {
-            NextPacketBody::Regular { pkt } | NextPacketBody::Resend { pkt, .. } => {
+            NextPacketBody::Regular { pkt } => {
+                let body_len = pkt.data.len();
+                body_out[..body_len].copy_from_slice(&pkt.data);
+
+                // pad for SRTP
+                let pad_len = RtpHeader::pad_packet(
+                    &mut buf[..],
+                    header_len,
+                    body_len + original_seq_len,
+                    SRTP_BLOCK_SIZE,
+                );
+
+                if let Some(buffer_tx) = self.buffers_tx.get_mut(&pt) {
+                    buffer_tx.cache_sent(seq_no, pkt, now);
+                }
+
+                body_len + original_seq_len + pad_len
+            }
+            NextPacketBody::Resend { pkt, .. } => {
                 let body_len = pkt.data.len();
                 body_out[..body_len].copy_from_slice(&pkt.data);
 
@@ -521,7 +566,7 @@ impl MediaInner {
 
         Some(PolledPacket {
             header,
-            seq_no: next.seq_no,
+            seq_no,
             is_padding,
             payload_size: body_len,
         })
@@ -560,7 +605,7 @@ impl MediaInner {
             // If there is no buffer for this resend, we return None. This is
             // a weird situation though, since it means the other side sent a nack for
             // an SSRC that matched this Media, but didn't match a buffer_tx.
-            let buffer = self.buffers_tx.values().find(|p| p.has_ssrc(resend.ssrc))?;
+            let buffer = self.buffers_tx.values().find(|p| p.ssrc() == resend.ssrc)?;
 
             let pkt = buffer.get(resend.seq_no);
 
@@ -616,14 +661,14 @@ impl MediaInner {
             let buffer_tx = self
                 .buffers_tx
                 .get_mut(&RTP_MODE_SEND_BUFFER_PAYLOAD_TYPE)?;
-            let pkt = buffer_tx.poll_next(now)?;
+            let mut pkt = buffer_tx.take_next(now)?;
             let rtp_mode_packet = pkt.rtp_mode_packet.take()?;
             let pt = rtp_mode_packet.payload_type;
             let seq_no = Some(rtp_mode_packet.sequence_number);
             (pt, pkt, seq_no)
         } else {
             // exit via ? here is ok since that means there is nothing to send.
-            let (pt, pkt) = next_send_buffer(&mut self.buffers_tx, now)?;
+            let (pt, pkt) = take_next_send_buffer(&mut self.buffers_tx, now)?;
             let seq_no = None; // Filled in below.
             (pt, pkt, seq_no)
         };
@@ -641,7 +686,6 @@ impl MediaInner {
         self.bytes_transmitted.push(now, pkt.data.len() as u64);
 
         let seq_no = seq_no.unwrap_or_else(|| source.next_seq_no(now, None));
-        pkt.seq_no = Some(seq_no);
 
         Some(NextPacket {
             pt,
@@ -684,7 +728,7 @@ impl MediaInner {
                     let Some(buffer) = self
                         .buffers_tx
                         .values()
-                        .find(|p| p.has_ssrc(padding.ssrc())) else {
+                        .find(|p| p.ssrc() == padding.ssrc()) else {
                             // This can happen for example case buffers were
                             // cleared (i.e. a change of media direction)
                             continue;
@@ -771,10 +815,7 @@ impl MediaInner {
                     // Find a historic packet that is smaller than this max size. The max size
                     // is a headroom since we can accept slightly larger padding than asked for.
                     let max_size = pad_size * 2;
-                    if let Some(packet) = buffer.historic_packet_smaller_than(max_size) {
-                        let seq_no = packet.seq_no.expect(
-                            "this packet to have been sent and therefore have a sequence number",
-                        );
+                    if let Some((seq_no, packet)) = buffer.historic_packet_smaller_than(max_size) {
                         // Saturating sub because we can overflow and want to stop when that
                         // happens.
                         pad_size = pad_size.saturating_sub(packet.data.len());
@@ -982,9 +1023,6 @@ impl MediaInner {
         if now < self.regular_feedback_at() {
             return None;
         }
-
-        // Since we're making new sender/receiver reports, clear out previous.
-        feedback.retain(|r| !matches!(r, Rtcp::SenderReport(_) | Rtcp::ReceiverReport(_)));
 
         if self.dir.is_sending() {
             for s in &mut self.sources_tx {
@@ -1227,7 +1265,7 @@ impl MediaInner {
                         rid: *rid,
                         params: codec,
                         time: dep.time,
-                        network_time: dep.network_time(),
+                        network_time: dep.first_network_time(),
                         seq_range: dep.seq_range(),
                         contiguous: dep.contiguous,
                         ext_vals: dep.ext_vals(),
@@ -1254,11 +1292,11 @@ impl MediaInner {
         now: Instant,
     ) -> Option<()> {
         // Figure out which packetizing buffer has been used to send the entries that been nack'ed.
-        let (pt, buffer) = self.buffers_tx.iter_mut().find(|(_, p)| p.has_ssrc(ssrc))?;
+        let (pt, buffer) = self.buffers_tx.iter_mut().find(|(_, p)| p.ssrc() == ssrc)?;
 
         // Turning NackEntry into SeqNo we need to know a SeqNo "close by" to lengthen the 16 bit
         // sequence number into the 64 bit we have in SeqNo.
-        let seq_no = buffer.first_seq_no()?;
+        let seq_no = buffer.first_seq_no_in_rtx_cache()?;
         let iter = entries.flat_map(|n| n.into_iter(seq_no));
 
         // Invalidate cached queue_state.
@@ -1479,6 +1517,13 @@ impl Padding {
             Padding::Spurious(resend) => resend.ssrc,
         }
     }
+
+    fn pt(&self) -> Pt {
+        match self {
+            Padding::Blank { pt, .. } => *pt,
+            Padding::Spurious(s) => s.pt,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1490,13 +1535,12 @@ struct Resend {
     pub queued_at: Instant,
 }
 
-fn next_send_buffer(
+fn take_next_send_buffer(
     buffers_tx: &mut HashMap<Pt, PacketizingBuffer>,
     now: Instant,
-) -> Option<(Pt, &mut Packetized)> {
-    for (pt, buf) in buffers_tx {
-        if let Some(pkt) = buf.poll_next(now) {
-            assert!(pkt.seq_no.is_none());
+) -> Option<(Pt, Packetized)> {
+    for (pt, buf) in buffers_tx.iter_mut() {
+        if let Some(pkt) = buf.take_next(now) {
             return Some((*pt, pkt));
         }
     }
@@ -1610,7 +1654,12 @@ impl MediaInner {
         // See comment on RTP_MODE_SEND_BUFFER_PAYLOAD_TYPE
         media.buffers_tx.insert(
             RTP_MODE_SEND_BUFFER_PAYLOAD_TYPE,
-            PacketizingBuffer::new(Codec::Null.into(), max_retain),
+            PacketizingBuffer::new(
+                Codec::Null.into(),
+                max_retain,
+                max_retain,
+                Duration::from_secs(3),
+            ),
         );
 
         for (primary_ssrc, rtx_ssrc) in primary_to_rtx_ssrc_mapping {

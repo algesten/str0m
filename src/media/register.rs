@@ -5,7 +5,7 @@ use crate::rtp::{MediaTime, Nack, NackEntry, ReceptionReport, ReportList, SeqNo}
 const MAX_DROPOUT: u64 = 3000;
 const MAX_MISORDER: u64 = 100;
 const MIN_SEQUENTIAL: u64 = 2;
-const MISORDER_DELAY: u64 = 4;
+const MISORDER_DELAY: u64 = 1;
 
 #[derive(Debug)]
 pub struct ReceiverRegister {
@@ -99,6 +99,13 @@ impl ReceiverRegister {
         let was_set = self.packet_status[pos].received;
         self.packet_status[pos].received = true;
 
+        if self.packet_status[pos].received && self.packet_status[pos].nack_count > 0 {
+            debug!(
+                "Received packet {} after {} NACKs",
+                seq, self.packet_status[pos].nack_count
+            );
+        }
+
         if did_wrap {
             // The indices wrapped around the end of `packet_status`, we clear any entries between
             // the current sequence number and nack_check_from.
@@ -164,6 +171,13 @@ impl ReceiverRegister {
     fn reset_receceived(&mut self, start: SeqNo, end: SeqNo) {
         for seq in *start..*end {
             let index = self.packet_index(seq);
+
+            let status = self.packet_status[index];
+
+            if status.nack_count > 0 && !status.received {
+                debug!("Seq no was nacked but not resent {}", seq);
+            }
+
             // Reset state
             self.packet_status[index] = PacketStatus::default();
         }
@@ -342,7 +356,7 @@ impl ReceiverRegister {
         let start = *self.nack_check_from;
         // MISORDER_DELAY gives us a "grace period" of receiving packets out of
         // order without reporting it as a NACK straight away.
-        let stop = *self.max_seq - MISORDER_DELAY;
+        let stop = (*self.max_seq).saturating_sub(MISORDER_DELAY);
         let u16max = u16::MAX as u64 + 1_u64;
 
         if stop < start {
@@ -757,7 +771,7 @@ mod test {
             reg.update_seq((*i).into());
         }
         assert!(reg.nack_reports().is_empty());
-        assert_eq!(reg.nack_check_from, 125.into());
+        assert_eq!(reg.nack_check_from, (129 - MISORDER_DELAY).into());
     }
 
     #[test]
@@ -769,7 +783,7 @@ mod test {
             reg.update_seq((*i).into());
         }
         assert!(reg.nack_reports().is_empty());
-        assert_eq!(reg.nack_check_from, 101.into());
+        assert_eq!(reg.nack_check_from, (105 - MISORDER_DELAY).into());
 
         for i in &[
             106, 108, 109, 110, 111, 112, 113, 114, 115, //
@@ -786,7 +800,7 @@ mod test {
             nacks.is_empty(),
             "Expected no NACKs to be generated after repairing the stream, got {nacks:?}"
         );
-        assert_eq!(reg.nack_check_from, 111.into());
+        assert_eq!(reg.nack_check_from, (115 - MISORDER_DELAY).into());
     }
 
     #[test]
@@ -798,7 +812,7 @@ mod test {
             reg.update_seq((*i).into());
         }
         assert!(reg.nack_reports().is_empty());
-        assert_eq!(reg.nack_check_from, 101.into());
+        assert_eq!(reg.nack_check_from, (105 - MISORDER_DELAY).into());
 
         for i in &[
             106, 108, 109, 110, 111, 112, 113, 114, 115, //
@@ -810,12 +824,12 @@ mod test {
 
         reg.update_seq(107.into()); // Got 107 via RTX
 
-        assert_eq!(reg.nack_check_from, 111.into());
+        assert_eq!(reg.nack_check_from, (115 - MISORDER_DELAY).into());
 
         for i in 116..3106 {
             reg.update_seq(i.into());
         }
-        assert_eq!(reg.nack_check_from, 3101.into());
+        assert_eq!(reg.nack_check_from, (3105 - MISORDER_DELAY).into());
 
         for i in &[
             106, 108, 109, 110, 111, 112, 113, 114, 115, //
@@ -849,13 +863,13 @@ mod test {
     }
 
     #[test]
-    fn nack_check_forward_at_boundary() {
+    fn nack_check_forward_at_boukdary() {
         let mut reg = ReceiverRegister::new(2996.into());
         for i in 2996..=3003 {
             reg.update_seq((i).into());
         }
         assert!(reg.nack_reports().is_empty());
-        assert_eq!(reg.nack_check_from, 2999.into());
+        assert_eq!(reg.nack_check_from, (3003 - MISORDER_DELAY).into());
 
         for i in 3004..=3008 {
             reg.update_seq((i).into());
@@ -863,7 +877,7 @@ mod test {
 
         let nacks = reg.nack_reports();
         assert!(nacks.is_empty(), "Expected empty NACKs got {nacks:?}");
-        assert_eq!(reg.nack_check_from, 3004.into());
+        assert_eq!(reg.nack_check_from, (3008 - MISORDER_DELAY).into());
     }
 
     #[test]
@@ -873,7 +887,7 @@ mod test {
             reg.update_seq((i).into());
         }
         assert!(reg.nack_reports().is_empty());
-        assert_eq!(reg.nack_check_from, 65530.into());
+        assert_eq!(reg.nack_check_from, (65534 - MISORDER_DELAY).into());
 
         for i in 65536..=65566 {
             reg.update_seq((i).into());
@@ -889,7 +903,7 @@ mod test {
         reg.update_seq(65535.into());
 
         assert!(reg.nack_reports().is_empty());
-        assert_eq!(reg.nack_check_from, 65662.into());
+        assert_eq!(reg.nack_check_from, (65666 - MISORDER_DELAY).into());
     }
 
     #[test]
@@ -919,5 +933,15 @@ mod test {
         assert_eq!(reg.expected(), 3);
         assert_eq!(reg.received, 2);
         assert_eq!(reg.packets_lost(), 1);
+    }
+
+    #[test]
+    fn low_seq_no_dont_panic() {
+        let mut reg = ReceiverRegister::new(1.into());
+        reg.update_seq(2.into());
+        reg.update_seq(3.into());
+        // Don't panic.
+        let _ = reg.has_nack_report();
+        let _ = reg.create_nack_reports();
     }
 }

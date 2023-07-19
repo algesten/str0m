@@ -98,13 +98,7 @@ impl RateControl {
     }
 
     fn increase(&mut self, observed_bitrate: Bitrate, now: Instant) {
-        let last_estimate_update = match self.last_estimate_update {
-            Some(n) => n,
-            None => {
-                self.last_estimate_update = Some(now);
-                now
-            }
-        };
+        let last_estimate_update = *self.last_estimate_update.get_or_insert(now);
 
         if self
             .averaged_observed_bitrate
