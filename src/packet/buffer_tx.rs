@@ -146,15 +146,15 @@ impl PacketizingBuffer {
             .increase(now, Duration::ZERO, rtp_packet.payload.len());
 
         if self.ssrc.is_none() {
-            self.ssrc = Some(meta.ssrc);
+            self.ssrc = Some(rtp_packet.ssrc);
         }
 
-        let data_len = data.len();
+        let data_len = rtp_packet.payload.len();
 
         let rtp = Packetized {
             first: true,
             marker: rtp_packet.marker,
-            data: std::mem::replace(&mut rtp_packet.payload, Vec::new()),
+            data: std::mem::take(&mut rtp_packet.payload),
             meta: PacketizedMeta {
                 // Only the numerator is used here when the packet is sent, so use any clock rate.
                 rtp_time: MediaTime::new(rtp_packet.timestamp as i64, 90000),

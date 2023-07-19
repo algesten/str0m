@@ -508,7 +508,7 @@ impl MediaInner {
             body_out = &mut body_out[original_seq_len..];
         }
 
-        let pt = next.pt;
+        let mut pt = next.pt;
         let seq_no = next.seq_no;
         let body_len = match next.body {
             NextPacketBody::Regular { pkt } => {
@@ -523,6 +523,9 @@ impl MediaInner {
                     SRTP_BLOCK_SIZE,
                 );
 
+                if pkt.rtp_mode_packet.is_some() {
+                    pt = RTP_MODE_SEND_BUFFER_PAYLOAD_TYPE;
+                }
                 if let Some(buffer_tx) = self.buffers_tx.get_mut(&pt) {
                     buffer_tx.cache_sent(seq_no, pkt, now);
                 }
@@ -645,8 +648,14 @@ impl MediaInner {
         assert_eq!(pkt.meta.ssrc, resend.ssrc);
         assert_eq!(source.repairs(), Some(resend.ssrc));
 
+        let original_pt = if let Some(rtp_mode_packet) = pkt.rtp_mode_packet.as_ref() {
+            rtp_mode_packet.payload_type
+        } else {
+            resend.pt
+        };
+
         // If the resent PT doesn't exist, the state is not correct as per above.
-        let pt = pt_rtx(&self.params, resend.pt).expect("Resend PT");
+        let pt = pt_rtx(&self.params, original_pt).expect("Resend PT");
 
         Some(NextPacket {
             pt,
@@ -661,8 +670,8 @@ impl MediaInner {
             let buffer_tx = self
                 .buffers_tx
                 .get_mut(&RTP_MODE_SEND_BUFFER_PAYLOAD_TYPE)?;
-            let mut pkt = buffer_tx.take_next(now)?;
-            let rtp_mode_packet = pkt.rtp_mode_packet.take()?;
+            let pkt = buffer_tx.take_next(now)?;
+            let rtp_mode_packet = pkt.rtp_mode_packet.as_ref()?;
             let pt = rtp_mode_packet.payload_type;
             let seq_no = Some(rtp_mode_packet.sequence_number);
             (pt, pkt, seq_no)
