@@ -75,6 +75,12 @@ impl<'a> DirectApi<'a> {
         Ok(())
     }
 
+    /// Enables transport-wide congestion control (TWCC) on the receive end
+    /// so the remote end can do BWE using TWCC.
+    pub fn enable_twcc_feedback(&mut self) {
+        self.rtc.session.enable_twcc_feedback();
+    }
+
     /// Start the DTLS subsystem.
     pub fn start_dtls(&mut self, active: bool) -> Result<(), RtcError> {
         self.rtc.init_dtls(active)
