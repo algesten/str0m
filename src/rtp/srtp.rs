@@ -142,16 +142,6 @@ impl SrtpContext {
             return None;
         }
 
-        if header.has_padding {
-            // TODO: Write a test with an overlay large pad size indicate in the packet.
-            let pad_len = output[output.len()-1] as usize;
-            let Some(unpadded_len) = output.len().checked_sub(pad_len) else {
-                trace!("unpadding of unprotected payload failed");
-                return None;
-            };
-            output.truncate(unpadded_len);
-        }
-
         Some(output)
     }
 
