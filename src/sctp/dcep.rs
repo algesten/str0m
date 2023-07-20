@@ -106,7 +106,7 @@ impl TryFrom<&[u8]> for DcepAck {
             return Err(Error::DcepOpenTooSmall);
         }
 
-        if buf[0] != 0x01 {
+        if buf[0] != 0x02 {
             return Err(Error::DcepIncorrectMessageType);
         }
 
@@ -116,7 +116,7 @@ impl TryFrom<&[u8]> for DcepAck {
 
 impl DcepAck {
     pub fn marshal_to(&self, buf: &mut [u8]) -> usize {
-        buf[0] = 0x01;
+        buf[0] = 0x02;
         1
     }
 }
