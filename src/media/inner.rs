@@ -1417,7 +1417,6 @@ impl MediaInner {
             is_audio: self.kind.is_audio(),
             use_for_padding: self.kind.is_video()
                 && self.has_tx_rtx()
-                && snapshot.has_ever_sent()
                 && self.direction().is_sending(),
             snapshot,
         };

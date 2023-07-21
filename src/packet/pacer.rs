@@ -405,12 +405,15 @@ impl LeakyBucketPacer {
     fn next_poll(&self, now: Instant) -> Option<(Instant, &QueueState)> {
         // If we have never sent before, do so immediately on an arbitrary non-empty queue.
         if self.last_send_time.is_none() {
-            let mut queues = self
+            let non_empty_queue = self
                 .queue_states
                 .iter()
-                .filter(|q| q.snapshot.packet_count > 0);
-
-            return queues.next().map(|q| (now, q));
+                .find(|q| q.snapshot.packet_count > 0);
+            if let Some(non_empty_queue) = non_empty_queue {
+                return Some((now, non_empty_queue));
+            }
+            let empty_queue_for_padding = self.queue_states.iter().find(|q| q.use_for_padding)?;
+            return Some((now, empty_queue_for_padding));
         };
 
         let unpaced_audio = self
@@ -548,9 +551,6 @@ impl LeakyBucketPacer {
         if !all_queues_empty {
             return None;
         }
-
-        // We must have sent some media.
-        self.last_send_time?;
 
         // We must have a padding bitrate.
         if self.padding_bitrate == Bitrate::ZERO {
