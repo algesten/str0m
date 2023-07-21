@@ -904,11 +904,7 @@ impl Session {
             return;
         };
 
-        let padding_rate = bwe
-            .last_estimate()
-            .map(|estimate| estimate.min(bwe.desired_bitrate))
-            .unwrap_or(Bitrate::ZERO);
-
+        let padding_rate = bwe.desired_bitrate.min(bwe.current_bitrate);
         self.pacer.set_padding_rate(padding_rate);
 
         // We pad up to the pacing rate, therefore we need to increase pacing if the estimate, and
