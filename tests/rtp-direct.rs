@@ -5,7 +5,6 @@ use tracing::info_span;
 
 use str0m::format::{Codec, CodecSpec, FormatParams, PayloadParams};
 use str0m::media::Direction;
-use str0m::rtp::SeqNo;
 use str0m::rtp::{ExtensionMap, ExtensionValues};
 use str0m::{Candidate, Event, Rtc, RtcError};
 
