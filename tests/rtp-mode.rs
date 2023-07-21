@@ -56,6 +56,7 @@ pub fn rtp_mode() -> Result<(), RtcError> {
             MediaKind::Audio,
             max_retain,
             primary_to_rtx_ssrc_mapping,
+            None,
         )
         .unwrap();
     r.direct_api()

@@ -522,7 +522,7 @@ mod test {
             },
             data: millis_since_epoch.to_be_bytes().to_vec(),
             queued_at: after(millis_since_epoch),
-            rtp_mode_header: None,
+            rtp_mode_packet: None,
         };
 
         let evict_in_batches = false;
