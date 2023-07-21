@@ -412,8 +412,12 @@ impl LeakyBucketPacer {
             if let Some(non_empty_queue) = non_empty_queue {
                 return Some((now, non_empty_queue));
             }
-            let empty_queue_for_padding = self.queue_states.iter().find(|q| q.use_for_padding)?;
-            return Some((now, empty_queue_for_padding));
+            if self.padding_bitrate > Bitrate::ZERO {
+                let empty_queue_for_padding =
+                    self.queue_states.iter().find(|q| q.use_for_padding)?;
+                return Some((now, empty_queue_for_padding));
+            }
+            return None;
         };
 
         let unpaced_audio = self
