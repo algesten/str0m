@@ -181,13 +181,15 @@ const RTP_MODE_SEND_BUFFER_PAYLOAD_TYPE: Pt = Pt::from(1);
 
 #[derive(Debug)]
 pub struct RtpMode {
+    pub empty_padding_payload_type: Option<Pt>,
     // Bypass depacketization by storing the "raw" RTP packet.
     pub received: VecDeque<RtpPacketReceived>,
 }
 
 impl RtpMode {
-    fn new() -> Self {
+    fn new(empty_padding_payload_type: Option<Pt>) -> Self {
         Self {
+            empty_padding_payload_type,
             received: VecDeque::new(),
         }
     }
@@ -853,7 +855,12 @@ impl MediaInner {
                 let Some(&pt) = self.buffers_tx.keys().next() else {
                     panic!("No PT to send blank padding on");
                 };
-                let Some(pt_rtx) = pt_rtx(&self.params, pt) else {
+                let empty_padding_pt = if let Some(rtp_mode) = self.rtp_mode.as_ref() {
+                    rtp_mode.empty_padding_payload_type
+                } else {
+                    pt_rtx(&self.params, pt)
+                };
+                let Some(pt_rtx) = empty_padding_pt else {
                     panic!("No PT to send blank padding on");
                 };
                 let ssrc_rtx = self
@@ -1653,12 +1660,19 @@ impl MediaInner {
         mid: Mid,
         media_kind: MediaKind,
         payloads: Vec<PayloadParams>,
+        empty_padding_payload_type: Option<Pt>,
         max_retain: usize,
         primary_to_rtx_ssrc_mapping: Vec<(Ssrc, Ssrc)>,
     ) -> MediaInner {
         let enable_nack = true; // Doesn't matter for sending
-        let mut media =
-            MediaInner::for_rtp_mode(mid, Direction::SendOnly, media_kind, payloads, enable_nack);
+        let mut media = MediaInner::for_rtp_mode(
+            mid,
+            Direction::SendOnly,
+            media_kind,
+            payloads,
+            empty_padding_payload_type,
+            enable_nack,
+        );
 
         // See comment on RTP_MODE_SEND_BUFFER_PAYLOAD_TYPE
         media.buffers_tx.insert(
@@ -1687,7 +1701,16 @@ impl MediaInner {
         payloads: Vec<PayloadParams>,
         enable_nack: bool,
     ) -> MediaInner {
-        MediaInner::for_rtp_mode(mid, Direction::RecvOnly, media_kind, payloads, enable_nack)
+        // Not needed when receiving
+        let empty_padding_payload_type = None;
+        MediaInner::for_rtp_mode(
+            mid,
+            Direction::RecvOnly,
+            media_kind,
+            payloads,
+            empty_padding_payload_type,
+            enable_nack,
+        )
     }
 
     fn for_rtp_mode(
@@ -1695,6 +1718,7 @@ impl MediaInner {
         direction: Direction,
         media_kind: MediaKind,
         payloads: Vec<PayloadParams>,
+        empty_padding_payload_type: Option<Pt>,
         enable_nack: bool,
     ) -> MediaInner {
         MediaInner {
@@ -1708,7 +1732,7 @@ impl MediaInner {
             need_changed_event: false,
             equalize_sources: false,
 
-            rtp_mode: Some(RtpMode::new()),
+            rtp_mode: Some(RtpMode::new(empty_padding_payload_type)),
 
             // index, app_tmp, msid, exts, and simulcast don't matter when not using SDP.
             // A random CNAME is probably still fine for sending RTCP SDES messages.

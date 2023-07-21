@@ -11,7 +11,7 @@ use crate::packet::{
 use crate::rtp::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
 use crate::rtp::{extend_u32, SRTCP_OVERHEAD};
 use crate::rtp::{Bitrate, ExtensionMap, MediaTime, Mid, Rtcp, RtcpFb};
-use crate::rtp::{SrtpContext, SrtpKey, Ssrc};
+use crate::rtp::{Pt, SrtpContext, SrtpKey, Ssrc};
 use crate::stats::StatsSnapshot;
 use crate::util::{already_happened, not_happening, Soonest};
 use crate::{net, KeyframeRequest, MediaData, RtpPacketReceived};
@@ -926,6 +926,7 @@ impl Session {
         media_kind: MediaKind,
         max_retain: usize,
         primary_to_rtx_ssrc_mapping: Vec<(Ssrc, Ssrc)>,
+        empty_padding_payload_type: Option<Pt>,
     ) -> Result<(), RtcError> {
         if self.has_mid(mid) {
             return Err(RtcError::Other(format!("MID already in use: {mid:?}")));
@@ -935,6 +936,7 @@ impl Session {
             mid,
             media_kind,
             payloads,
+            empty_padding_payload_type,
             max_retain,
             primary_to_rtx_ssrc_mapping,
         ));

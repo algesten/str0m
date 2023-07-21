@@ -4,7 +4,7 @@ use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
 use crate::ice::IceCreds;
 use crate::media::{MediaKind, RtpPacketToSend};
-use crate::rtp::{Direction, Mid, Ssrc};
+use crate::rtp::{Direction, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::{Rtc, RtcError};
 
@@ -136,12 +136,14 @@ impl<'a> DirectApi<'a> {
         media_kind: MediaKind,
         max_retain: usize,
         primary_to_rtx_ssrc_mapping: Vec<(Ssrc, Ssrc)>,
+        empty_padding_payload_type: Option<Pt>,
     ) -> Result<(), RtcError> {
         self.rtc.session.add_rtp_packet_sender(
             mid,
             media_kind,
             max_retain,
             primary_to_rtx_ssrc_mapping,
+            empty_padding_payload_type,
         )
     }
 
