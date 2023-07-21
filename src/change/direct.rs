@@ -1,7 +1,9 @@
 use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
+use crate::format::PayloadParams;
 use crate::ice::IceCreds;
-use crate::rtp_::{Mid, Rid, Ssrc};
+use crate::media::Media;
+use crate::rtp_::{Direction, ExtensionMap, Mid, Rid, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::streams::{StreamRx, StreamTx};
 use crate::Rtc;
@@ -97,6 +99,30 @@ impl<'a> DirectApi<'a> {
     /// [`Self::create_data_channel()`]
     pub fn sctp_stream_id_by_channel_id(&self, id: ChannelId) -> Option<u16> {
         self.rtc.chan.stream_id_by_channel_id(id)
+    }
+
+    /// Create a new `Media`.
+    ///
+    /// All streams belong to a media identified by a `mid`. This creates the media without
+    /// doing any SDP dance.
+    pub fn declare_media(
+        &mut self,
+        mid: Mid,
+        dir: Direction,
+        exts: ExtensionMap,
+        params: &[PayloadParams],
+    ) {
+        let max_index = self.rtc.session.medias.iter().map(|m| m.index()).max();
+
+        let next_index = if let Some(max_index) = max_index {
+            max_index + 1
+        } else {
+            0
+        };
+
+        let m = Media::from_direct_api(mid, next_index, dir, exts, params);
+
+        self.rtc.session.medias.push(m);
     }
 
     /// Allow incoming traffic from remote peer for the given SSRC.

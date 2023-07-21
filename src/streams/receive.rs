@@ -307,6 +307,10 @@ impl StreamRx {
         sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,
     ) {
+        if now < self.receiver_report_at() {
+            return;
+        }
+
         let mut rr = self.create_receiver_report(now);
         rr.sender_ssrc = sender_ssrc;
 
@@ -382,7 +386,7 @@ impl StreamRx {
             .unwrap_or(false)
     }
 
-    pub(crate) fn create_nack(
+    pub(crate) fn maybe_create_nack(
         &mut self,
         sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,

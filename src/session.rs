@@ -217,35 +217,13 @@ impl Session {
 
         let sender_ssrc = self.first_ssrc_local();
 
+        let do_nack = Some(now) >= self.nack_at();
+
         self.streams
-            .handle_timeout(now, sender_ssrc, &mut self.feedback);
+            .handle_timeout(now, sender_ssrc, do_nack, &mut self.feedback);
 
-        if now >= self.regular_feedback_at() {
-            for m in &mut self.medias {
-                let cname = m.cname();
-
-                // TODO: This and the one below should be done in some more efficient way.
-                for stream in self.streams.streams_rx() {
-                    if stream.mid() != m.mid() {
-                        continue;
-                    }
-                    stream.maybe_create_rr(now, sender_ssrc, &mut self.feedback);
-                }
-                for stream in self.streams.streams_tx() {
-                    if stream.mid() != m.mid() {
-                        stream.maybe_create_sr(now, cname, &mut self.feedback);
-                    }
-                }
-            }
-        }
-
-        if let Some(nack_at) = self.nack_at() {
-            if now >= nack_at {
-                self.last_nack = now;
-                for stream in self.streams.streams_rx() {
-                    stream.create_nack(sender_ssrc, &mut self.feedback);
-                }
-            }
+        if do_nack {
+            self.last_nack = now;
         }
 
         // let iter = self

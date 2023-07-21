@@ -4,10 +4,10 @@ use std::time::Instant;
 
 use crate::format::PayloadParams;
 use crate::media::KeyframeRequestKind;
-use crate::rtp_::{extend_u16, Descriptions, InstantExt, ReportList, Rtcp, Sdes};
+use crate::rtp_::{extend_u16, InstantExt, ReportList, Rtcp};
 use crate::rtp_::{ExtensionMap, ReceptionReport, RtpHeader};
 use crate::rtp_::{ExtensionValues, MediaTime, Mid, NackEntry};
-use crate::rtp_::{Pt, Rid, RtcpFb, SdesType, SenderInfo, SenderReport, Ssrc};
+use crate::rtp_::{Pt, Rid, RtcpFb, SenderInfo, SenderReport, Ssrc};
 use crate::rtp_::{SeqNo, SRTP_BLOCK_SIZE};
 use crate::session::PacketReceipt;
 use crate::util::value_history::ValueHistory;
@@ -525,7 +525,7 @@ impl StreamTx {
     pub(crate) fn maybe_create_sr(
         &mut self,
         now: Instant,
-        cname: &str,
+        // cname: &str,
         feedback: &mut VecDeque<Rtcp>,
     ) -> Option<()> {
         if now < self.sender_report_at() {
@@ -533,11 +533,11 @@ impl StreamTx {
         }
 
         let sr = self.create_sender_report(now);
-        let ds = self.create_sdes(cname);
+        // let ds = self.create_sdes(cname);
 
         debug!("Created feedback SR: {:?}", sr);
         feedback.push_back(Rtcp::SenderReport(sr));
-        feedback.push_back(Rtcp::SourceDescription(ds));
+        // feedback.push_back(Rtcp::SourceDescription(ds));
 
         // Update timestamp to move time when next is created.
         self.last_sender_report = now;
@@ -552,20 +552,21 @@ impl StreamTx {
         }
     }
 
-    fn create_sdes(&self, cname: &str) -> Descriptions {
-        let mut s = Sdes {
-            ssrc: self.ssrc,
-            values: ReportList::new(),
-        };
-        s.values.push((SdesType::CNAME, cname.to_string()));
+    // fn create_sdes(&self, cname: &str) -> Descriptions {
+    //     let mut s = Sdes {
+    //         ssrc: self.ssrc,
+    //         values: ReportList::new(),
+    //     };
+    //     s.values.push((SdesType::CNAME, cname.to_string()));
 
-        let mut d = Descriptions {
-            reports: ReportList::new(),
-        };
-        d.reports.push(s);
+    //     let mut d = Descriptions {
+    //         reports: ReportList::new(),
+    //     };
+    //     d.reports.push(s);
 
-        d
-    }
+    //     d
+    // }
+
     fn sender_info(&self, now: Instant) -> SenderInfo {
         let rtp_time = self.current_rtp_time(now).map(|t| t.numer()).unwrap_or(0);
 

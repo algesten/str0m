@@ -434,4 +434,26 @@ impl Media {
             ..Default::default()
         }
     }
+
+    pub(crate) fn from_direct_api(
+        mid: Mid,
+        index: usize,
+        dir: Direction,
+        exts: ExtensionMap,
+        params: &[PayloadParams],
+    ) -> Media {
+        Media {
+            mid,
+            index,
+            kind: if params[0].spec().codec.is_video() {
+                MediaKind::Video
+            } else {
+                MediaKind::Audio
+            },
+            exts,
+            dir,
+            params: params.to_vec(),
+            ..Default::default()
+        }
+    }
 }

@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::media::KeyframeRequest;
+use crate::media::{KeyframeRequest, Media};
 use crate::rtp_::Ssrc;
 use crate::rtp_::{MediaTime, Pt};
 use crate::rtp_::{Mid, Rid, SeqNo};
@@ -125,13 +125,20 @@ impl Streams {
         &mut self,
         now: Instant,
         sender_ssrc: Ssrc,
+        do_nack: bool,
         feedback: &mut VecDeque<Rtcp>,
     ) {
         for stream in self.streams_rx.values_mut() {
             stream.maybe_create_keyframe_request(sender_ssrc, feedback);
+            stream.maybe_create_rr(now, sender_ssrc, feedback);
+            if do_nack {
+                stream.maybe_create_nack(sender_ssrc, feedback);
+            }
         }
 
-        todo!()
+        for stream in self.streams_tx.values_mut() {
+            stream.maybe_create_sr(now, feedback);
+        }
     }
 
     pub(crate) fn main_ssrc_rx_for(&self, ssrc_rtx: Ssrc) -> Option<Ssrc> {
