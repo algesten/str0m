@@ -835,6 +835,12 @@ impl MediaInner {
                             packet.data.len()
                         );
 
+                        let pt = if let Some(rtp_mode_packet) = packet.rtp_mode_packet.as_ref() {
+                            rtp_mode_packet.payload_type
+                        } else {
+                            pt
+                        };
+
                         self.padding.push_back(Padding::Spurious(Resend {
                             pt,
                             body_size: packet.data.len(),
