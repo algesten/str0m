@@ -523,7 +523,7 @@ use rtp_::{Extension, ExtensionMap, InstantExt, Ssrc};
 
 /// Low level RTP helpers.
 pub mod rtp {
-    pub use crate::rtp_::{Extension, ExtensionMap, ExtensionValues, RtpHeader, SeqNo};
+    pub use crate::rtp_::{Extension, ExtensionMap, ExtensionValues, RtpHeader, SeqNo, Ssrc};
 }
 
 mod sctp;

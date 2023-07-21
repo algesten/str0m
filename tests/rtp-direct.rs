@@ -5,7 +5,7 @@ use tracing::info_span;
 
 use str0m::format::{Codec, CodecSpec, FormatParams, PayloadParams};
 use str0m::media::Direction;
-use str0m::rtp::{ExtensionMap, ExtensionValues};
+use str0m::rtp::{ExtensionMap, ExtensionValues, Ssrc};
 use str0m::{Candidate, Event, Rtc, RtcError};
 
 mod common;
@@ -72,15 +72,19 @@ pub fn rtp_direct() -> Result<(), RtcError> {
 
     let extmap = ExtensionMap::standard();
 
+    // In this example we are not using RID to identify the stream, we are simply
+    // using SSRC 1 as knowledge shared between sending and receiving side.
+    let ssrc: Ssrc = 1.into();
+
     l.direct_api()
         .declare_media(mid, Direction::SendOnly, extmap, params);
 
-    l.direct_api().declare_stream_tx(1.into(), None, mid, None);
+    l.direct_api().declare_stream_tx(ssrc, None, mid, None);
 
     r.direct_api()
         .declare_media(mid, Direction::RecvOnly, extmap, params);
 
-    r.direct_api().expect_stream_rx(1.into(), None, mid, None);
+    r.direct_api().expect_stream_rx(ssrc, None, mid, None);
 
     loop {
         if l.is_connected() || r.is_connected() {
