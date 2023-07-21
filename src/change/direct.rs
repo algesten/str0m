@@ -120,7 +120,22 @@ impl<'a> DirectApi<'a> {
             0
         };
 
-        let m = Media::from_direct_api(mid, next_index, dir, exts, params);
+        if params.is_empty() {
+            panic!("declare_media requires at least one payload parameter");
+        }
+
+        let is_audio = params[0].spec().codec.is_audio();
+
+        if params.iter().any(|p| p.spec().codec.is_audio() != is_audio) {
+            panic!("declare_media detected mix of audio/video parameters");
+        }
+
+        // Update session with the extension (these should be per BUNDLE, and we only have one).
+        for (id, ext) in exts.iter(is_audio) {
+            self.rtc.session.exts.apply(id, ext);
+        }
+
+        let m = Media::from_direct_api(mid, next_index, dir, exts, params, is_audio);
 
         self.rtc.session.medias.push(m);
     }

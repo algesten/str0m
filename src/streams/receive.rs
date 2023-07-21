@@ -325,6 +325,8 @@ impl StreamRx {
         let er = self.create_extended_receiver_report(now);
         debug!("Created feedback extended receiver report: {:?}", er);
         feedback.push_back(Rtcp::ExtendedReport(er));
+
+        self.last_receiver_report = now;
     }
 
     fn create_receiver_report(&mut self, now: Instant) -> ReceiverReport {

@@ -258,6 +258,7 @@ impl StreamTx {
         }
 
         buf.resize(2000, 0);
+
         let header_len = header.write_to(buf, exts);
         assert!(header_len % 4 == 0, "RTP header must be multiple of 4");
         header.header_len = header_len;
@@ -372,7 +373,9 @@ impl StreamTx {
 
     fn poll_packet_regular(&mut self, now: Instant) -> Option<NextPacket<'_>> {
         // exit via ? here is ok since that means there is nothing to send.
-        let pkt = self.send_queue.pop_front()?;
+        let mut pkt = self.send_queue.pop_front()?;
+
+        pkt.timestamp = now;
 
         let len = pkt.payload.len() as u64;
         self.stats.update_packet_counts(len, false);

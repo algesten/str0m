@@ -162,8 +162,29 @@ impl Media {
         self.simulcast.as_ref()
     }
 
-    pub(crate) fn poll_sample(&self) -> Option<Result<MediaData, RtcError>> {
-        todo!()
+    pub(crate) fn poll_sample(&mut self) -> Option<Result<MediaData, RtcError>> {
+        for ((pt, rid), buf) in &mut self.depacketizers {
+            if let Some(r) = buf.pop() {
+                let codec = *self.params.iter().find(|c| c.pt() == *pt)?;
+                return Some(
+                    r.map(|dep| MediaData {
+                        mid: self.mid,
+                        pt: *pt,
+                        rid: *rid,
+                        params: codec,
+                        time: dep.time,
+                        network_time: dep.first_network_time(),
+                        seq_range: dep.seq_range(),
+                        contiguous: dep.contiguous,
+                        ext_vals: dep.ext_vals(),
+                        codec_extra: dep.codec_extra,
+                        data: dep.data,
+                    })
+                    .map_err(|e| RtcError::Packet(self.mid, *pt, e)),
+                );
+            }
+        }
+        None
     }
 
     pub(crate) fn main_payload_type_for(&self, pt: Pt) -> Option<Pt> {
@@ -441,11 +462,12 @@ impl Media {
         dir: Direction,
         exts: ExtensionMap,
         params: &[PayloadParams],
+        is_audio: bool,
     ) -> Media {
         Media {
             mid,
             index,
-            kind: if params[0].spec().codec.is_video() {
+            kind: if is_audio {
                 MediaKind::Video
             } else {
                 MediaKind::Audio

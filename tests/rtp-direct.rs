@@ -3,17 +3,17 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 use tracing::info_span;
 
-use str0m::format::Codec;
-use str0m::media::{Direction, MediaKind};
+use str0m::format::{Codec, CodecSpec, FormatParams, PayloadParams};
+use str0m::media::Direction;
+use str0m::rtp::SeqNo;
 use str0m::rtp::{ExtensionMap, ExtensionValues};
-use str0m::rtp::{RtpHeader, SeqNo};
 use str0m::{Candidate, Event, Rtc, RtcError};
 
 mod common;
 use common::{init_log, progress, TestRtc};
 
 #[test]
-pub fn rtp_mode() -> Result<(), RtcError> {
+pub fn rtp_direct() -> Result<(), RtcError> {
     init_log();
 
     let rtc1 = Rtc::builder().set_rtp_mode(true).build();
@@ -28,15 +28,60 @@ pub fn rtp_mode() -> Result<(), RtcError> {
 
     let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into())?;
     let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into())?;
-    l.add_local_candidate(host1);
+    l.add_local_candidate(host1.clone());
+    l.add_remote_candidate(host2.clone());
     r.add_local_candidate(host2);
+    r.add_remote_candidate(host1);
 
-    let mut change = l.sdp_api();
-    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
-    let (offer, pending) = change.apply().unwrap();
+    let finger_l = l.direct_api().local_dtls_fingerprint();
+    let finger_r = r.direct_api().local_dtls_fingerprint();
 
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    l.direct_api().set_remote_fingerprint(finger_r);
+    r.direct_api().set_remote_fingerprint(finger_l);
+
+    let creds_l = l.direct_api().local_ice_credentials();
+    let creds_r = r.direct_api().local_ice_credentials();
+
+    l.direct_api().set_remote_ice_credentials(creds_r);
+    r.direct_api().set_remote_ice_credentials(creds_l);
+
+    l.direct_api().set_ice_controlling(true);
+    r.direct_api().set_ice_controlling(false);
+
+    l.direct_api().start_dtls(true).unwrap();
+    r.direct_api().start_dtls(false).unwrap();
+
+    l.direct_api().start_sctp(true);
+    r.direct_api().start_sctp(false);
+
+    let mid = "aud".into();
+
+    let params = &[PayloadParams::new(
+        100.into(),
+        None,
+        CodecSpec {
+            codec: Codec::Opus,
+            channels: Some(2),
+            clock_rate: 48_000,
+            format: FormatParams {
+                min_p_time: Some(10),
+                use_inband_fec: Some(true),
+                ..Default::default()
+            },
+        },
+    )];
+
+    let extmap = ExtensionMap::standard();
+
+    l.direct_api()
+        .declare_media(mid, Direction::SendOnly, extmap, params);
+
+    l.direct_api().declare_stream_tx(1.into(), None, mid, None);
+
+    r.direct_api()
+        .declare_media(mid, Direction::RecvOnly, extmap, params);
+
+    r.direct_api().expect_stream_rx(1.into(), None, mid, None);
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -56,7 +101,6 @@ pub fn rtp_mode() -> Result<(), RtcError> {
     let pt = params.pt();
 
     let mut exts = ExtensionValues::default();
-    exts.audio_level = Some(10);
 
     let to_write: Vec<&[u8]> = vec![
         // 1
@@ -71,7 +115,7 @@ pub fn rtp_mode() -> Result<(), RtcError> {
 
     let mut write_at = l.last + Duration::from_millis(300);
 
-    let mut seq_no: SeqNo = 0.into();
+    let mut counts: Vec<u64> = vec![0, 3, 1];
 
     loop {
         if l.start + l.duration() > write_at {
@@ -82,8 +126,12 @@ pub fn rtp_mode() -> Result<(), RtcError> {
                 let mut direct = l.direct_api();
                 let stream = direct.stream_tx(&ssrc).unwrap();
 
-                let seq_no = seq_no.inc();
-                let time = (*seq_no * 1000) as u32;
+                let count = counts.remove(0);
+                let time = (count * 1000 + 47_000_000) as u32;
+                let seq_no = (47_000 + count).into();
+
+                exts.audio_level = Some(-42 - count as i8);
+                exts.voice_activity = Some(false);
 
                 stream
                     .write_rtp(
@@ -111,7 +159,7 @@ pub fn rtp_mode() -> Result<(), RtcError> {
         .events
         .iter()
         .filter_map(|e| {
-            if let Event::MediaData(v) = e {
+            if let Event::StreamPacket(v) = e {
                 Some(v)
             } else {
                 None
@@ -121,28 +169,25 @@ pub fn rtp_mode() -> Result<(), RtcError> {
 
     assert_eq!(media.len(), 3);
 
-    // no change from standard above
-    let exts = ExtensionMap::standard();
-
-    let h0 = RtpHeader::parse(&media[0].data, &exts).unwrap();
-    let h1 = RtpHeader::parse(&media[1].data, &exts).unwrap();
-    let h2 = RtpHeader::parse(&media[2].data, &exts).unwrap();
+    let h0 = media[0].header.clone();
+    let h1 = media[1].header.clone();
+    let h2 = media[2].header.clone();
 
     assert_eq!(h0.sequence_number, 47000);
     assert_eq!(h1.sequence_number, 47003);
     assert_eq!(h2.sequence_number, 47001);
 
-    assert_eq!(h0.timestamp, 10000);
-    assert_eq!(h1.timestamp, 14000);
-    assert_eq!(h2.timestamp, 12000);
+    assert_eq!(h0.timestamp, 47000_000);
+    assert_eq!(h1.timestamp, 47003_000);
+    assert_eq!(h2.timestamp, 47001_000);
 
     assert_eq!(h0.ext_vals.audio_level, Some(-42));
-    assert_eq!(h1.ext_vals.audio_level, Some(-44));
+    assert_eq!(h1.ext_vals.audio_level, Some(-45));
     assert_eq!(h2.ext_vals.audio_level, Some(-43));
 
     assert!(!h0.marker);
     assert!(!h1.marker);
-    assert!(h2.marker);
+    assert!(!h2.marker);
 
     Ok(())
 }
