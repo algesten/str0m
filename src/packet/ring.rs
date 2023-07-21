@@ -90,7 +90,7 @@ impl<T> RingBuf<T> {
     }
 
     pub fn len(&self) -> usize {
-        let loop_c = (self.next - 1) / self.max;
+        let loop_c = (self.next.saturating_sub(1)) / self.max;
 
         if loop_c == 0 {
             (self.next % self.max) as usize
@@ -113,7 +113,9 @@ mod test {
     fn before_full() {
         let mut rb = RingBuf::<u8>::new(5);
 
+        assert_eq!(0, rb.len());
         let (id0, _) = rb.push(0);
+        assert_eq!(1, rb.len());
         let (id1, _) = rb.push(1);
         let (id2, _) = rb.push(2);
 
