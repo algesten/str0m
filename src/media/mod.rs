@@ -281,7 +281,12 @@ impl Media {
         self.params.iter().find(|p| p.pt == pt)
     }
 
-    pub(crate) fn expect_rid_rx(&mut self, rid: Rid) {
+    /// Add rid as one we are expecting to receive for this mid.
+    ///
+    /// This is used for situations where we don't know the SSRC upfront, such as not having
+    /// a=ssrc lines in an SDP. Adding a rid means we are dynamically discovering the SSRC from
+    /// a mid/rid combination in the RTP header extensions.
+    pub fn expect_rid_rx(&mut self, rid: Rid) {
         if !self.expected_rid_rx.contains(&rid) {
             self.expected_rid_rx.push(rid);
         }
