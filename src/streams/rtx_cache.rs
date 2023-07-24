@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use crate::rtp_::SeqNo;
 
-use super::StreamPacket;
+use super::RtpPacket;
 
 #[derive(Debug)]
 pub(crate) struct RtxCache {
@@ -12,7 +12,7 @@ pub(crate) struct RtxCache {
     max_packet_age: Duration,
     evict_in_batches: bool,
 
-    packet_by_seq_no: BTreeMap<SeqNo, StreamPacket>,
+    packet_by_seq_no: BTreeMap<SeqNo, RtpPacket>,
     seq_no_by_quantized_size: BTreeMap<usize, SeqNo>,
     last_sent_time: Option<Instant>,
 }
@@ -31,7 +31,7 @@ impl RtxCache {
         }
     }
 
-    pub fn cache_sent_packet(&mut self, packet: StreamPacket, now: Instant) {
+    pub fn cache_sent_packet(&mut self, packet: RtpPacket, now: Instant) {
         let seq_no = packet.seq_no;
         let quantized_size = packet.payload.len() / RTX_CACHE_SIZE_QUANTIZER;
         self.packet_by_seq_no.insert(seq_no, packet);
@@ -48,11 +48,11 @@ impl RtxCache {
         self.last_sent_time
     }
 
-    pub fn get_cached_packet_by_seq_no(&mut self, seq_no: SeqNo) -> Option<&mut StreamPacket> {
+    pub fn get_cached_packet_by_seq_no(&mut self, seq_no: SeqNo) -> Option<&mut RtpPacket> {
         self.packet_by_seq_no.get_mut(&seq_no)
     }
 
-    fn get_cached_packet_smaller_than(&mut self, max_size: usize) -> Option<&mut StreamPacket> {
+    fn get_cached_packet_smaller_than(&mut self, max_size: usize) -> Option<&mut RtpPacket> {
         let quantized_size = max_size / RTX_CACHE_SIZE_QUANTIZER;
         let seq_no = *self
             .seq_no_by_quantized_size
@@ -156,7 +156,7 @@ mod test {
         let epoch = Instant::now();
         let after =
             |millis_since_epoch: u32| epoch + Duration::from_millis(millis_since_epoch as u64);
-        let packet = |seq_no: SeqNo, millis_since_epoch: u32| StreamPacket {
+        let packet = |seq_no: SeqNo, millis_since_epoch: u32| RtpPacket {
             header: RtpHeader {
                 marker: false,
                 ssrc: 1.into(),

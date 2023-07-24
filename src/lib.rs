@@ -497,7 +497,7 @@ use change::{DirectApi, SdpApi};
 use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
-use streams::StreamPacket;
+use streams::RtpPacket;
 use thiserror::Error;
 
 mod dtls;
@@ -787,7 +787,7 @@ pub enum Event {
     KeyframeRequest(KeyframeRequest),
 
     /// Incoming RTP data.
-    StreamPacket(StreamPacket),
+    RtpPacket(RtpPacket),
 }
 
 /// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.
@@ -1225,7 +1225,7 @@ impl Rtc {
                 MediaEvent::EgressBitrateEstimate(b) => {
                     Output::Event(Event::EgressBitrateEstimate(b))
                 }
-                MediaEvent::StreamPacket(p) => Output::Event(Event::StreamPacket(p)),
+                MediaEvent::RtpPacket(p) => Output::Event(Event::RtpPacket(p)),
             });
         }
 

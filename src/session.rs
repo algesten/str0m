@@ -15,7 +15,7 @@ use crate::rtp_::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRe
 use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
 use crate::rtp_::{SrtpContext, SrtpKey, Ssrc};
 use crate::stats::StatsSnapshot;
-use crate::streams::{StreamPacket, Streams};
+use crate::streams::{RtpPacket, Streams};
 use crate::util::{already_happened, not_happening, Soonest};
 use crate::{net, MediaData};
 use crate::{RtcConfig, RtcError};
@@ -90,8 +90,8 @@ pub(crate) struct Session {
     // temporary buffer when getting the next (unencrypted) RTP packet from Media line.
     poll_packet_buf: Vec<u8>,
 
-    // Next packet for StreamPacket event.
-    pending_packet: Option<StreamPacket>,
+    // Next packet for RtpPacket event.
+    pending_packet: Option<RtpPacket>,
 
     pub ice_lite: bool,
 
@@ -107,7 +107,7 @@ pub enum MediaEvent {
     Added(MediaAdded),
     KeyframeRequest(KeyframeRequest),
     EgressBitrateEstimate(Bitrate),
-    StreamPacket(StreamPacket),
+    RtpPacket(RtpPacket),
 }
 
 impl Session {
@@ -516,7 +516,7 @@ impl Session {
         }
 
         if let Some(packet) = self.pending_packet.take() {
-            return Some(MediaEvent::StreamPacket(packet));
+            return Some(MediaEvent::RtpPacket(packet));
         }
 
         for media in &mut self.medias {

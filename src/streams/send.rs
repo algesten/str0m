@@ -15,7 +15,7 @@ use crate::util::{already_happened, calculate_rtt_ms};
 use crate::RtcError;
 
 use super::rtx_cache::RtxCache;
-use super::{rr_interval, StreamPacket};
+use super::{rr_interval, RtpPacket};
 
 /// Outgoing encoded stream.
 #[derive(Debug)]
@@ -52,7 +52,7 @@ pub struct StreamTx {
     ///
     /// The packets here do not have correct sequence numbers, header extension values etc.
     /// They must be updated when we are about to send.
-    send_queue: VecDeque<StreamPacket>,
+    send_queue: VecDeque<RtpPacket>,
 
     /// Scheduled resends due to NACK or spurious padding.
     resends: VecDeque<Resend>,
@@ -190,7 +190,7 @@ impl StreamTx {
             ..Default::default()
         };
 
-        let packet = StreamPacket {
+        let packet = RtpPacket {
             seq_no,
             pt,
             time: media_time,
@@ -663,7 +663,7 @@ impl StreamTxStats {
 struct NextPacket<'a> {
     kind: NextPacketKind,
     seq_no: SeqNo,
-    pkt: &'a mut StreamPacket,
+    pkt: &'a mut RtpPacket,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::media::{KeyframeRequest, Media};
+use crate::media::KeyframeRequest;
 use crate::rtp_::Ssrc;
 use crate::rtp_::{MediaTime, Pt};
 use crate::rtp_::{Mid, Rid, SeqNo};
@@ -32,7 +32,7 @@ fn rr_interval(audio: bool) -> Duration {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct StreamPacket {
+pub struct RtpPacket {
     /// Extended sequence number to avoid having to deal with ROC.
     pub seq_no: SeqNo,
 

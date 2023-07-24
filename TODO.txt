@@ -13,7 +13,7 @@ equalize sources
 
 ------
 
-* Consolidate StreamPacket, RtcMeta
+* Consolidate RtpPacket, RtcMeta
 * Rename PacketizingBuffer -> Packetizer
 
 * Do we need SDES (move cname to stream?)?

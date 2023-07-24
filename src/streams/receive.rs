@@ -11,7 +11,7 @@ use crate::rtp_::{SdesType, Ssrc};
 use crate::util::{already_happened, calculate_rtt_ms};
 
 use super::register::ReceiverRegister;
-use super::{rr_interval, StreamPacket};
+use super::{rr_interval, RtpPacket};
 
 /// Incoming encoded stream.
 ///
@@ -230,7 +230,7 @@ impl StreamRx {
         time: MediaTime,
         pt: Pt,
         is_repair: bool,
-    ) -> Option<StreamPacket> {
+    ) -> Option<RtpPacket> {
         // RTX packets must be rewritten to be a normal packet.
         if is_repair {
             let keep_packet = self.un_rtx(&mut header, &mut data, &mut seq_no, pt);
@@ -240,7 +240,7 @@ impl StreamRx {
             }
         }
 
-        let packet = StreamPacket {
+        let packet = RtpPacket {
             seq_no,
             pt: header.payload_type,
             time,

@@ -13,7 +13,7 @@ use crate::RtcError;
 use crate::format::PayloadParams;
 use crate::sdp::Simulcast as SdpSimulcast;
 use crate::sdp::{MediaLine, Msid};
-use crate::streams::{StreamPacket, Streams};
+use crate::streams::{RtpPacket, Streams};
 
 mod event;
 pub use event::*;
@@ -198,7 +198,7 @@ impl Media {
     pub(crate) fn depacketize(
         &mut self,
         rid: Option<Rid>,
-        packet: &StreamPacket,
+        packet: &RtpPacket,
         reordering_size_audio: usize,
         reordering_size_video: usize,
     ) {
