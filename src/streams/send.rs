@@ -716,8 +716,8 @@ impl StreamTxStats {
             MediaEgressStats {
                 mid,
                 rid,
-                bytes: self.bytes + self.bytes_resent,
-                packets: self.packets + self.packets_resent,
+                bytes: self.bytes,
+                packets: self.packets,
                 firs: self.firs,
                 plis: self.plis,
                 nacks: self.nacks,
