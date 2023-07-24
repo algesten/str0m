@@ -132,6 +132,16 @@ impl StreamTx {
         self.rid
     }
 
+    /// Configure the RTX (resend) cache.
+    ///
+    /// This determines how old incoming NACKs we can reply to.
+    ///
+    /// The default is 1024 packets over 3 seconds.
+    pub fn set_rtx_cache(&mut self, max_packets: usize, max_age: Duration) {
+        // Dump old cache to avoid having to deal with resizing logic inside the cache impl.
+        self.rtx_cache = RtxCache::new(max_packets, max_age, false);
+    }
+
     /// Write RTP packet to a send stream.
     ///
     /// The `payload` argument is expected to be only the RTP payload, not the RTP packet header.
