@@ -668,10 +668,13 @@ impl Session {
     }
 
     pub fn visit_stats(&mut self, now: Instant, snapshot: &mut StatsSnapshot) {
-        // TODO: Help me davide. You're my only hope.
-        // for media in &self.medias {
-        // media.visit_stats(now, &mut self.streams, snapshot);
-        // }
+        for stream in self.streams.streams_tx() {
+            stream.visit_stats(snapshot, now);
+        }
+
+        for stream in self.streams.streams_rx() {
+            stream.visit_stats(snapshot, now);
+        }
 
         snapshot.tx = snapshot.egress.values().map(|s| s.bytes).sum();
         snapshot.rx = snapshot.ingress.values().map(|s| s.bytes).sum();

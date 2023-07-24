@@ -2,12 +2,14 @@ use std::collections::VecDeque;
 use std::time::Instant;
 
 use crate::media::KeyframeRequestKind;
+use crate::packet::QueueSnapshot;
 use crate::rtp_::{
     extend_u16, extend_u32, DlrrItem, ExtendedReport, Fir, FirEntry, InstantExt, MediaTime, Mid,
     Pli, Pt, ReceiverReport, ReportBlock, ReportList, Rid, Rrtr, Rtcp, RtcpFb, RtpHeader,
     SenderInfo, SeqNo,
 };
 use crate::rtp_::{SdesType, Ssrc};
+use crate::stats::{MediaIngressStats, StatsSnapshot};
 use crate::util::{already_happened, calculate_rtt_ms};
 
 use super::register::ReceiverRegister;
@@ -222,7 +224,7 @@ impl StreamRx {
     }
 
     pub(crate) fn handle_rtp(
-        &self,
+        &mut self,
         now: Instant,
         mut header: RtpHeader,
         mut data: Vec<u8>,
@@ -251,6 +253,9 @@ impl StreamRx {
             nackable: false,
             timestamp: now,
         };
+
+        self.stats.bytes += packet.payload.len() as u64;
+        self.stats.packets += 1;
 
         Some(packet)
     }
@@ -300,15 +305,21 @@ impl StreamRx {
         let ssrc = self.ssrc;
 
         match kind {
-            KeyframeRequestKind::Pli => feedback.push_back(Rtcp::Pli(Pli { sender_ssrc, ssrc })),
-            KeyframeRequestKind::Fir => feedback.push_back(Rtcp::Fir(Fir {
-                sender_ssrc,
-                reports: FirEntry {
-                    ssrc,
-                    seq_no: self.next_fir_seq_no(),
-                }
-                .into(),
-            })),
+            KeyframeRequestKind::Pli => {
+                self.stats.plis += 1;
+                feedback.push_back(Rtcp::Pli(Pli { sender_ssrc, ssrc }))
+            }
+            KeyframeRequestKind::Fir => {
+                self.stats.firs += 1;
+                feedback.push_back(Rtcp::Fir(Fir {
+                    sender_ssrc,
+                    reports: FirEntry {
+                        ssrc,
+                        seq_no: self.next_fir_seq_no(),
+                    }
+                    .into(),
+                }))
+            }
         }
     }
 
@@ -431,14 +442,49 @@ impl StreamRx {
 
         for nack in nacks {
             feedback.push_back(Rtcp::Nack(nack));
+            self.stats.nacks += 1;
         }
 
         Some(())
+    }
+
+    pub(crate) fn visit_stats(&mut self, snapshot: &mut StatsSnapshot, now: Instant) {
+        self.stats.fill(snapshot, self.mid, self.rid, now);
     }
 }
 
 impl StreamRxStats {
     fn update_loss(&mut self, fraction_lost: u8) {
         self.loss = Some(fraction_lost as f32 / u8::MAX as f32)
+    }
+
+    pub(crate) fn fill(
+        &mut self,
+        snapshot: &mut StatsSnapshot,
+        mid: Mid,
+        rid: Option<Rid>,
+        now: Instant,
+    ) {
+        if self.bytes == 0 {
+            return;
+        }
+
+        let key = (mid, rid);
+
+        snapshot.ingress.insert(
+            key,
+            MediaIngressStats {
+                mid,
+                rid,
+                bytes: self.bytes,
+                packets: self.packets,
+                firs: self.firs,
+                plis: self.plis,
+                nacks: self.nacks,
+                rtt: self.rtt,
+                loss: self.loss,
+                timestamp: now,
+            },
+        );
     }
 }

@@ -10,6 +10,8 @@ use crate::rtp_::{ExtensionValues, MediaTime, Mid, NackEntry};
 use crate::rtp_::{Pt, Rid, RtcpFb, SenderInfo, SenderReport, Ssrc};
 use crate::rtp_::{SeqNo, SRTP_BLOCK_SIZE};
 use crate::session::PacketReceipt;
+use crate::stats::MediaEgressStats;
+use crate::stats::StatsSnapshot;
 use crate::util::value_history::ValueHistory;
 use crate::util::{already_happened, calculate_rtt_ms};
 use crate::RtcError;
@@ -620,6 +622,10 @@ impl StreamTx {
             self.send_queue.back().map(|q| q.payload.as_ref())
         }
     }
+
+    pub(crate) fn visit_stats(&mut self, snapshot: &mut StatsSnapshot, now: Instant) {
+        self.stats.fill(snapshot, self.mid, self.rid, now);
+    }
 }
 
 impl StreamTxStats {
@@ -657,6 +663,57 @@ impl StreamTxStats {
 
         self.losses
             .push((ext_seq, r.fraction_lost as f32 / u8::MAX as f32));
+    }
+
+    pub(crate) fn fill(
+        &mut self,
+        snapshot: &mut StatsSnapshot,
+        mid: Mid,
+        rid: Option<Rid>,
+        now: Instant,
+    ) {
+        if self.bytes == 0 {
+            return;
+        }
+
+        let key = (mid, rid);
+
+        let loss = {
+            let mut value = 0_f32;
+            let mut total_weight = 0_u64;
+
+            // just in case we received RRs out of order
+            self.losses.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+            // average known RR losses weighted by their number of packets
+            for it in self.losses.windows(2) {
+                let [prev, next] = it else { continue };
+                let weight = next.0.saturating_sub(prev.0);
+                value += next.1 * weight as f32;
+                total_weight += weight;
+            }
+
+            let result = value / total_weight as f32;
+            result.is_finite().then_some(result)
+        };
+
+        self.losses.drain(..self.losses.len().saturating_sub(1));
+
+        snapshot.egress.insert(
+            key,
+            MediaEgressStats {
+                mid,
+                rid,
+                bytes: self.bytes + self.bytes_resent,
+                packets: self.packets + self.packets_resent,
+                firs: self.firs,
+                plis: self.plis,
+                nacks: self.nacks,
+                rtt: self.rtt,
+                loss,
+                timestamp: now,
+            },
+        );
     }
 }
 
