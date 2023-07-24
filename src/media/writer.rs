@@ -28,7 +28,7 @@ impl<'a> Writer<'a> {
     /// Get the configured payload parameters for the `mid` this writer is for.
     ///
     /// For the [`write()`] call, the `pt` must be set correctly.
-    pub fn params(&self) -> &[PayloadParams] {
+    pub fn payload_params(&self) -> &[PayloadParams] {
         media_by_mid(&self.session.medias, self.mid).payload_params()
     }
 
@@ -150,9 +150,9 @@ impl<'a> Writer<'a> {
     /// // add candidates, do SDP negotiation
     /// let mid: Mid = todo!(); // obtain mid from Event::MediaAdded.
     ///
-    /// let media = rtc.media(mid).unwrap();
+    /// let writer = rtc.writer(mid).unwrap();
     ///
-    /// media.request_keyframe(None, KeyframeRequestKind::Pli).unwrap();
+    /// writer.request_keyframe(None, KeyframeRequestKind::Pli).unwrap();
     /// ```
     pub fn request_keyframe(
         &mut self,

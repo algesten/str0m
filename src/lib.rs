@@ -196,20 +196,17 @@
 //! // Obtain mid from Event::MediaAdded
 //! let mid: Mid = todo!();
 //!
-//! // Get the `Media` for this `mid`
-//! let media = rtc.media(mid).unwrap();
+//! // Create a media writer for the mid.
+//! let writer = rtc.writer(mid).unwrap();
 //!
 //! // Get the payload type (pt) for the wanted codec.
-//! let pt = media.payload_params()[0].pt();
-//!
-//! // Create a media writer for the payload type.
-//! let writer = media.writer(pt);
+//! let pt = writer.payload_params()[0].pt();
 //!
 //! // Write the data
 //! let wallclock = todo!();  // Absolute time of the data
 //! let media_time = todo!(); // Media time, in RTP time
 //! let data = todo!();       // Actual data
-//! writer.write(wallclock, media_time, data).unwrap();
+//! writer.write(pt, wallclock, media_time, data).unwrap();
 //! ```
 //!
 //! ## Media time, wallclock and local time
@@ -1010,15 +1007,16 @@ impl Rtc {
     /// // add candidates, do SDP negotiation
     /// let mid: Mid = todo!(); // obtain mid from Event::MediaAdded.
     ///
-    /// let media = rtc.media(mid).unwrap();
+    /// // Writer for this mid.
+    /// let writer = rtc.writer(mid).unwrap();
     ///
     /// // Get incoming media data from another peer
     /// let data: MediaData = todo!();
     ///
     /// // Match incoming PT to an outgoing PT.
-    /// let pt = media.match_params(data.params).unwrap();
+    /// let pt = writer.match_params(data.params).unwrap();
     ///
-    /// media.writer(pt).write(data.network_time, data.time, &data.data).unwrap();
+    /// writer.write(pt, data.network_time, data.time, &data.data).unwrap();
     /// ```
     pub fn writer(&mut self, mid: Mid) -> Option<Writer> {
         self.session.media_by_mid_mut(mid)?;
@@ -1598,7 +1596,7 @@ impl RtcConfig {
     /// The default extension map is
     ///
     /// ```
-    /// # use str0m::media::rtp::{Extension, ExtensionMap};
+    /// # use str0m::rtp::{Extension, ExtensionMap};
     /// let exts = ExtensionMap::standard();
     ///
     /// assert_eq!(exts.id_of(Extension::AudioLevel), Some(1));
