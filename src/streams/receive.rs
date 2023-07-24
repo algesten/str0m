@@ -32,6 +32,12 @@ pub struct StreamRx {
     /// The rid that might be used for this stream.
     rid: Option<Rid>,
 
+    /// Whether we explicitly want to supress NACK sending. This is normally done by not
+    /// setting an RTX, however this can be toggled off manually despite RTX being there.
+    ///
+    /// Defaults to false.
+    suppress_nack: bool,
+
     /// Timestamp when we got some indication of remote using this stream.
     last_used: Instant,
 
@@ -80,6 +86,7 @@ impl StreamRx {
             rtx: None,
             mid,
             rid,
+            suppress_nack: false,
             last_used: already_happened(),
             sender_info: None,
             register: None,
@@ -120,6 +127,14 @@ impl StreamRx {
     /// * kind PLI or FIR.
     pub fn request_keyframe(&mut self, kind: KeyframeRequestKind) {
         self.pending_request_keyframe = Some(kind);
+    }
+
+    /// Suppress NACK sending.
+    ///
+    /// Normally NACK is disabled by not having an RTX SSRC set. In some situations it might be
+    /// desirable to manuall suppress NACK sending regardless of RTX setting.
+    pub fn suppress_nack(&mut self, suppress: bool) {
+        self.suppress_nack = suppress;
     }
 
     pub(crate) fn receiver_report_at(&self) -> Instant {
@@ -382,6 +397,9 @@ impl StreamRx {
     }
 
     pub fn has_nack(&mut self) -> bool {
+        if self.rtx.is_none() || self.suppress_nack {
+            return false;
+        }
         self.register
             .as_mut()
             .map(|r| r.has_nack_report())
@@ -393,7 +411,7 @@ impl StreamRx {
         sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,
     ) -> Option<()> {
-        if self.rtx.is_none() {
+        if self.rtx.is_none() || self.suppress_nack {
             return None;
         }
 
