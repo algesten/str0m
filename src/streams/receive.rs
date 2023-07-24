@@ -275,14 +275,14 @@ impl StreamRx {
         pt: Pt,
     ) -> bool {
         // Initial packets with just nulls for the RTX.
-        if RtpHeader::is_rtx_null_packet(&data) {
+        if RtpHeader::is_rtx_null_packet(data) {
             trace!("Drop RTX null packet");
             return false;
         }
 
         let mut orig_seq_no_16 = 0;
 
-        let n = RtpHeader::read_original_sequence_number(&data, &mut orig_seq_no_16);
+        let n = RtpHeader::read_original_sequence_number(data, &mut orig_seq_no_16);
         data.drain(0..n);
 
         trace!(

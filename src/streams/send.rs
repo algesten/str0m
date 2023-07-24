@@ -209,7 +209,7 @@ impl StreamTx {
             pt,
             time: media_time,
             header,
-            payload: payload.into(),
+            payload,
             nackable,
             timestamp: already_happened(), // Updated on first ever poll_output.
         };
