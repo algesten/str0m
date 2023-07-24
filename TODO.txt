@@ -1,11 +1,12 @@
 
 * pacer queue state
 * poll_resend_to_cap
-* stats handling in media
 
-------
+* Catch up with main branch changes.
 
 * Consolidate RtpPacket, RtcMeta
 * Rename PacketizingBuffer -> Packetizer
 
 * Do we need SDES (move cname to stream?)?
+
+* Read through all documentation
