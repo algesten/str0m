@@ -154,6 +154,13 @@ impl<'a> DirectApi<'a> {
             .expect_stream_rx(ssrc, rtx, mid, rid)
     }
 
+    /// Remove the receive stream for the given SSRC.
+    ///
+    /// Returns true if stream existed and was removed.
+    pub fn remove_stream_rx(&mut self, ssrc: Ssrc) -> bool {
+        self.rtc.session.streams.remove_stream_rx(ssrc)
+    }
+
     /// Obtain a receive stream.
     ///
     /// The stream must first be declared usig [`expect_stream_rx`].
@@ -179,6 +186,13 @@ impl<'a> DirectApi<'a> {
             .session
             .streams
             .declare_stream_tx(ssrc, rtx, mid, rid)
+    }
+
+    /// Remove the transmit stream for the given SSRC.
+    ///
+    /// Returns true if stream existed and was removed.
+    pub fn remove_stream_tx(&mut self, ssrc: Ssrc) -> bool {
+        self.rtc.session.streams.remove_stream_tx(ssrc)
     }
 
     /// Obtain a send stream.

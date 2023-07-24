@@ -87,6 +87,10 @@ impl Streams {
         }
     }
 
+    pub fn remove_stream_rx(&mut self, ssrc: Ssrc) -> bool {
+        self.streams_rx.remove(&ssrc).is_some()
+    }
+
     pub fn declare_stream_tx(
         &mut self,
         ssrc: Ssrc,
@@ -97,6 +101,10 @@ impl Streams {
         self.streams_tx
             .entry(ssrc)
             .or_insert_with(|| StreamTx::new(ssrc, rtx, mid, rid))
+    }
+
+    pub fn remove_stream_tx(&mut self, ssrc: Ssrc) -> bool {
+        self.streams_tx.remove(&ssrc).is_some()
     }
 
     pub fn stream_rx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamRx> {
