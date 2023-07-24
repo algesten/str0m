@@ -76,14 +76,26 @@ pub struct StreamTx {
 /// Holder of stats.
 #[derive(Debug, Default)]
 pub(crate) struct StreamTxStats {
+    /// count of bytes sent, including retransmissions
+    /// <https://www.w3.org/TR/webrtc-stats/#dom-rtcsentrtpstreamstats-bytessent>
     bytes: u64,
+    /// count of retransmitted bytes alone
     bytes_resent: u64,
+    /// count of packets sent, including retransmissions
+    /// <https://www.w3.org/TR/webrtc-stats/#summary>
     packets: u64,
+    /// count of retransmitted packets alone
     packets_resent: u64,
+    /// count of FIR requests received
     firs: u64,
+    /// count of PLI requests received
     plis: u64,
+    /// count of NACKs received
     nacks: u64,
+    /// round trip time (ms)
+    /// Can be null in case of missing or bad reports
     rtt: Option<f32>,
+    /// losses collecter from RR (known packets, lost ratio)
     losses: Vec<(u64, f32)>,
     bytes_transmitted: ValueHistory<u64>,
     bytes_retransmitted: ValueHistory<u64>,

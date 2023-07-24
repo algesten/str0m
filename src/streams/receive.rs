@@ -70,12 +70,19 @@ pub struct StreamRx {
 /// Holder of stats.
 #[derive(Debug, Default)]
 pub(crate) struct StreamRxStats {
+    /// count of bytes received, including retransmissions
     bytes: u64,
+    /// count of packets received, including retransmissions
     packets: u64,
+    /// count of FIR requests sent
     firs: u64,
+    /// count of PLI requests sent
     plis: u64,
+    /// count of NACKs sent
     nacks: u64,
+    /// round trip time (ms) from the last DLRR, if any
     rtt: Option<f32>,
+    /// fraction of packets lost from the last RR, if any
     loss: Option<f32>,
 }
 
