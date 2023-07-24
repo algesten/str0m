@@ -162,7 +162,7 @@ pub fn rtp_direct() -> Result<(), RtcError> {
         .events
         .iter()
         .filter_map(|e| {
-            if let Event::StreamPacket(v) = e {
+            if let Event::RtpPacket(v) = e {
                 Some(v)
             } else {
                 None

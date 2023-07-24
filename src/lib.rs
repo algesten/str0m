@@ -519,7 +519,7 @@ mod packet;
 #[path = "rtp/mod.rs"]
 mod rtp_;
 pub use rtp_::Bitrate;
-use rtp_::{Extension, ExtensionMap, InstantExt, Ssrc};
+use rtp_::{Extension, ExtensionMap, InstantExt};
 
 /// Low level RTP helpers.
 pub mod rtp {
@@ -1065,11 +1065,6 @@ impl Rtc {
                 break mid;
             }
         }
-    }
-
-    /// Creates an Ssrc that is not in the session already.
-    pub(crate) fn new_ssrc(&self) -> Ssrc {
-        self.session.new_ssrc()
     }
 
     /// Poll the `Rtc` instance for output. Output can be three things, something to _Transmit_

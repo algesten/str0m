@@ -1,4 +1,5 @@
 use std::collections::{HashMap, VecDeque};
+use std::fmt;
 use std::time::Duration;
 use std::time::Instant;
 
@@ -31,7 +32,7 @@ fn rr_interval(audio: bool) -> Duration {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub struct RtpPacket {
     /// Extended sequence number to avoid having to deal with ROC.
     pub seq_no: SeqNo,
@@ -195,11 +196,85 @@ impl Streams {
         self.streams_tx.values_mut()
     }
 
-    pub(crate) fn ssrcs_tx(&self, mid: Mid) -> Vec<Ssrc> {
+    pub(crate) fn ssrcs_tx(&self, mid: Mid) -> Vec<(Ssrc, Option<Ssrc>)> {
         self.streams_tx
             .values()
             .filter(|s| s.mid() == mid)
-            .map(|s| s.ssrc())
+            .map(|s| (s.ssrc(), s.rtx()))
             .collect()
+    }
+
+    pub(crate) fn new_ssrc(&self) -> Ssrc {
+        loop {
+            let ssrc: Ssrc = (rand::random::<u32>()).into();
+
+            let has_ssrc = self.has_stream_rx(ssrc) || self.has_stream_tx(ssrc);
+
+            if has_ssrc {
+                continue;
+            }
+
+            // Need to check RTX as well.
+            let has_rtx_rx = self.streams_rx.values().any(|s| s.rtx() == Some(ssrc));
+            if has_rtx_rx {
+                continue;
+            }
+
+            let has_rtx_tx = self.streams_tx.values().any(|s| s.rtx() == Some(ssrc));
+            if has_rtx_tx {
+                continue;
+            }
+
+            // Not used
+            break ssrc;
+        }
+    }
+
+    // Helper for SDP to match incoming streams with outgoing.
+    //
+    // This is so we can put as many a=ssrc lines in our answer as there is in an offer.
+    pub(crate) fn equalize_streams(&mut self) {
+        for rx in self.streams_rx.values() {
+            let matched = self
+                .streams_tx
+                .values()
+                .any(|tx| tx.mid() == rx.mid() && tx.rid() == rx.rid());
+
+            if matched {
+                continue;
+            }
+
+            let ssrc = self.new_ssrc();
+
+            let rtx = if rx.rtx().is_some() {
+                loop {
+                    let proposed = self.new_ssrc();
+                    // Avoid clashing with just allocated main SSRC.
+                    if proposed != ssrc {
+                        break Some(proposed);
+                    }
+                }
+            } else {
+                None
+            };
+
+            self.streams_tx
+                .entry(ssrc)
+                .or_insert_with(|| StreamTx::new(ssrc, rtx, rx.mid(), rx.rid()));
+        }
+    }
+}
+
+impl fmt::Debug for RtpPacket {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RtpPacket")
+            .field("seq_no", &self.seq_no)
+            .field("pt", &self.pt)
+            .field("time", &self.time)
+            .field("header", &self.header)
+            .field("payload", &self.payload.len())
+            .field("nackable", &self.nackable)
+            .field("timestamp", &self.timestamp)
+            .finish()
     }
 }

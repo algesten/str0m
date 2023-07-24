@@ -447,7 +447,6 @@ impl Media {
             exts,
             dir: a.dir,
             params: a.params,
-            // equalize_sources: true,
             ..Default::default()
         }
     }

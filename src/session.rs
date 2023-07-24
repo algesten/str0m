@@ -469,42 +469,6 @@ impl Session {
         Some(())
     }
 
-    // /// Whenever there are changes to ReceiverSource/SenderSource, we need to ensure the
-    // /// receivers are matched to senders. This ensure the setup is correct.
-    // pub fn equalize_sources(&mut self) {
-    //     let required_ssrcs: usize = self
-    //         .medias
-    //         .iter()
-    //         .map(|m| m.equalize_requires_ssrcs())
-    //         .sum();
-
-    //     // This will contain enough new SSRC to equalize the receiver/senders.
-    //     let mut new_ssrcs = Vec::with_capacity(required_ssrcs);
-
-    //     loop {
-    //         if new_ssrcs.len() == required_ssrcs {
-    //             break;
-    //         }
-    //         let ssrc = self.new_ssrc();
-
-    //         // There's an outside chance we randomize the same number twice.
-    //         if !new_ssrcs.contains(&ssrc) {
-    //             self.set_first_ssrc_local(ssrc);
-    //             new_ssrcs.push(ssrc);
-    //         }
-    //     }
-
-    //     let mut new_ssrcs = new_ssrcs.into_iter();
-
-    //     for m in &mut self.medias {
-    //         if !m.equalize_sources() {
-    //             continue;
-    //         }
-
-    //         m.do_equalize_sources(&mut new_ssrcs);
-    //     }
-    // }
-
     pub fn poll_event(&mut self) -> Option<MediaEvent> {
         if let Some(bitrate_estimate) = self.bwe.as_mut().and_then(|bwe| bwe.poll_estimate()) {
             return Some(MediaEvent::EgressBitrateEstimate(bitrate_estimate));
@@ -683,11 +647,6 @@ impl Session {
         self.medias.iter().any(|m| m.mid() == mid)
     }
 
-    /// Test if the ssrc is known in the session at all, as sender or receiver.
-    pub fn has_ssrc(&self, ssrc: Ssrc) -> bool {
-        self.streams.has_stream_rx(ssrc) || self.streams.has_stream_tx(ssrc)
-    }
-
     fn regular_feedback_at(&self) -> Instant {
         self.streams
             .regular_feedback_at()
@@ -708,15 +667,6 @@ impl Session {
             Some(self.last_twcc + TWCC_INTERVAL)
         } else {
             None
-        }
-    }
-
-    pub fn new_ssrc(&self) -> Ssrc {
-        loop {
-            let ssrc: Ssrc = (rand::random::<u32>()).into();
-            if !self.has_ssrc(ssrc) {
-                break ssrc;
-            }
         }
     }
 
