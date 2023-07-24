@@ -63,14 +63,6 @@ pub(crate) struct Session {
     /// where the incoming SSRC is for an RTX and we want the "main".
     source_keys: HashMap<Ssrc, (Mid, Ssrc)>,
 
-    /// This is the first ever discovered remote media. We use that for
-    /// special cases like the media SSRC in TWCC feedback.
-    first_ssrc_remote: Option<Ssrc>,
-
-    /// This is the first ever discovered local media. We use this for many
-    /// feedback cases where we need a "sender SSRC".
-    first_ssrc_local: Option<Ssrc>,
-
     srtp_rx: Option<SrtpContext>,
     srtp_tx: Option<SrtpContext>,
     last_nack: Instant,
@@ -147,8 +139,6 @@ impl Session {
             exts: config.exts,
             codec_config: config.codec_config.clone(),
             source_keys: HashMap::new(),
-            first_ssrc_remote: None,
-            first_ssrc_local: None,
             srtp_rx: None,
             srtp_tx: None,
             last_nack: already_happened(),
@@ -215,7 +205,7 @@ impl Session {
         // Packetize and waiting samples
         self.do_packetize(now)?;
 
-        let sender_ssrc = self.first_ssrc_local();
+        let sender_ssrc = self.streams.first_ssrc_local();
 
         let do_nack = Some(now) >= self.nack_at();
 
@@ -263,7 +253,7 @@ impl Session {
         // These SSRC are on medial level, but twcc is on session level,
         // we fill in the first discovered media SSRC in each direction.
         twcc.sender_ssrc = sender_ssrc;
-        twcc.ssrc = self.first_ssrc_remote();
+        twcc.ssrc = self.streams.first_ssrc_remote();
 
         debug!("Created feedback TWCC: {:?}", twcc);
         self.feedback.push_front(Rtcp::Twcc(twcc));
@@ -667,21 +657,6 @@ impl Session {
             Some(self.last_twcc + TWCC_INTERVAL)
         } else {
             None
-        }
-    }
-
-    fn first_ssrc_remote(&self) -> Ssrc {
-        self.first_ssrc_remote.unwrap_or_else(|| 0.into())
-    }
-
-    fn first_ssrc_local(&self) -> Ssrc {
-        self.first_ssrc_local.unwrap_or_else(|| 0.into())
-    }
-
-    pub fn set_first_ssrc_local(&mut self, ssrc: Ssrc) {
-        if self.first_ssrc_local.is_none() {
-            info!("First local SSRC: {}", ssrc);
-            self.first_ssrc_local = Some(ssrc);
         }
     }
 

@@ -263,6 +263,14 @@ impl Streams {
                 .or_insert_with(|| StreamTx::new(ssrc, rtx, rx.mid(), rx.rid()));
         }
     }
+
+    pub(crate) fn first_ssrc_remote(&self) -> Ssrc {
+        *self.streams_rx.keys().next().unwrap_or(&0.into())
+    }
+
+    pub(crate) fn first_ssrc_local(&self) -> Ssrc {
+        *self.streams_tx.keys().next().unwrap_or(&0.into())
+    }
 }
 
 impl fmt::Debug for RtpPacket {

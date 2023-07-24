@@ -652,12 +652,6 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
             _ => continue,
         };
 
-        for (ssrc, repairs) in &add_media.ssrcs {
-            if repairs.is_none() {
-                session.set_first_ssrc_local(*ssrc);
-            }
-        }
-
         let media = session
             .medias
             .iter_mut()
