@@ -231,6 +231,8 @@ impl StreamRx {
         pt: Pt,
         is_repair: bool,
     ) -> Option<RtpPacket> {
+        trace!("Handle RTP: {:?}", header);
+
         // RTX packets must be rewritten to be a normal packet.
         if is_repair {
             let keep_packet = self.un_rtx(&mut header, &mut data, &mut seq_no, pt);
