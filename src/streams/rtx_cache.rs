@@ -14,7 +14,6 @@ pub(crate) struct RtxCache {
 
     packet_by_seq_no: BTreeMap<SeqNo, RtpPacket>,
     seq_no_by_quantized_size: BTreeMap<usize, SeqNo>,
-    last_sent_time: Option<Instant>,
 }
 
 const RTX_CACHE_SIZE_QUANTIZER: usize = 25;
@@ -27,7 +26,6 @@ impl RtxCache {
             evict_in_batches,
             packet_by_seq_no: BTreeMap::new(),
             seq_no_by_quantized_size: BTreeMap::new(),
-            last_sent_time: None,
         }
     }
 
@@ -36,7 +34,6 @@ impl RtxCache {
         let quantized_size = packet.payload.len() / RTX_CACHE_SIZE_QUANTIZER;
         self.packet_by_seq_no.insert(seq_no, packet);
         self.seq_no_by_quantized_size.insert(quantized_size, seq_no);
-        self.last_sent_time = Some(now);
         self.remove_old_packets(now);
     }
 
@@ -44,15 +41,11 @@ impl RtxCache {
         self.packet_by_seq_no.keys().next().copied()
     }
 
-    fn last_sent_time(&self) -> Option<Instant> {
-        self.last_sent_time
-    }
-
     pub fn get_cached_packet_by_seq_no(&mut self, seq_no: SeqNo) -> Option<&mut RtpPacket> {
         self.packet_by_seq_no.get_mut(&seq_no)
     }
 
-    fn get_cached_packet_smaller_than(&mut self, max_size: usize) -> Option<&mut RtpPacket> {
+    pub fn get_cached_packet_smaller_than(&mut self, max_size: usize) -> Option<&mut RtpPacket> {
         let quantized_size = max_size / RTX_CACHE_SIZE_QUANTIZER;
         let seq_no = *self
             .seq_no_by_quantized_size

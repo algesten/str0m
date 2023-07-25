@@ -4,7 +4,8 @@ use std::time::Instant;
 
 use crate::format::PayloadParams;
 use crate::media::KeyframeRequestKind;
-use crate::rtp_::{extend_u16, InstantExt, ReportList, Rtcp};
+use crate::packet::QueueState;
+use crate::rtp_::{extend_u16, InstantExt, ReportList, Rtcp, MAX_BLANK_PADDING_PAYLOAD_SIZE};
 use crate::rtp_::{ExtensionMap, ReceptionReport, RtpHeader};
 use crate::rtp_::{ExtensionValues, MediaTime, Mid, NackEntry};
 use crate::rtp_::{Pt, Rid, RtcpFb, SenderInfo, SenderReport, Ssrc};
@@ -13,11 +14,16 @@ use crate::session::PacketReceipt;
 use crate::stats::MediaEgressStats;
 use crate::stats::StatsSnapshot;
 use crate::util::value_history::ValueHistory;
-use crate::util::{already_happened, calculate_rtt_ms};
+use crate::util::{already_happened, calculate_rtt_ms, not_happening};
 use crate::RtcError;
 
 use super::rtx_cache::RtxCache;
+use super::send_queue::SendQueue;
 use super::{rr_interval, RtpPacket};
+
+/// The smallest size of padding for which we attempt to use a spurious resend. For padding
+/// requests smaller than this we use blank packets instead.
+const MIN_SPURIOUS_PADDING_SIZE: usize = 50;
 
 /// Outgoing encoded stream.
 #[derive(Debug)]
@@ -54,10 +60,19 @@ pub struct StreamTx {
     ///
     /// The packets here do not have correct sequence numbers, header extension values etc.
     /// They must be updated when we are about to send.
-    send_queue: VecDeque<RtpPacket>,
+    send_queue: SendQueue,
+
+    /// Whether this sender is for audio. This is only known once we sent the first packet.
+    is_audio: Option<bool>,
 
     /// Scheduled resends due to NACK or spurious padding.
     resends: VecDeque<Resend>,
+
+    /// Requests for padding.
+    padding: VecDeque<usize>,
+
+    /// Dummy packet for resends. Used between poll_packet and poll_packet_padding
+    blank_packet: RtpPacket,
 
     /// Cache of sent packets to be able to answer to NACKs as well as
     /// sending spurious resends as padding.
@@ -121,8 +136,11 @@ impl StreamTx {
             seq_no_rtx,
             last_used: already_happened(),
             rtp_and_wallclock: None,
-            send_queue: VecDeque::new(),
+            send_queue: SendQueue::new(),
+            is_audio: None,
             resends: VecDeque::new(),
+            padding: VecDeque::new(),
+            blank_packet: RtpPacket::blank(),
             rtx_cache: RtxCache::new(1024, Duration::from_secs(3), false),
             last_sender_report: already_happened(),
             pending_request_keyframe: None,
@@ -211,10 +229,17 @@ impl StreamTx {
             header,
             payload,
             nackable,
-            timestamp: already_happened(), // Updated on first ever poll_output.
+            // The overall idea for str0m is to only drive time forward from handle_input. If we
+            // used a "now" argument to write_rtp(), we effectively get a second point that also need
+            // to move time forward _for all of Rtc_ – that's too complicated.
+            //
+            // Instead we set a future timestamp here. When time moves forward in the "regular way",
+            // in handle_timeout() we delegate to self.send_queue.handle_timeout() to mark the enqueued
+            // timestamp of all packets that are about to be sent.
+            timestamp: not_happening(),
         };
 
-        self.send_queue.push_back(packet);
+        self.send_queue.push(packet);
 
         Ok(())
     }
@@ -234,8 +259,8 @@ impl StreamTx {
             (next, false)
         } else if let Some(next) = self.poll_packet_regular(now) {
             (next, false)
-        // } else if let Some(next) = self.poll_packet_padding(now) {
-        //     (next, true)
+        } else if let Some(next) = self.poll_packet_padding(now) {
+            (next, true)
         } else {
             return None;
         };
@@ -258,6 +283,8 @@ impl StreamTx {
             warn!("Media is missing PT ({}) used in RTP packet", next.pkt.pt);
             return None;
         };
+
+        let is_audio = param.spec().codec.is_audio();
 
         // Now we know the parameters, update the denominator of the MediaTime.
         next.pkt.time = MediaTime::new(next.pkt.time.numer(), param.spec().clock_rate as i64);
@@ -343,6 +370,11 @@ impl StreamTx {
         let seq_no = next.seq_no;
         self.last_used = now;
 
+        // Set on first send
+        if self.is_audio.is_none() {
+            self.is_audio = Some(is_audio);
+        }
+
         Some(PacketReceipt {
             header,
             seq_no,
@@ -397,7 +429,7 @@ impl StreamTx {
 
     fn poll_packet_regular(&mut self, now: Instant) -> Option<NextPacket<'_>> {
         // exit via ? here is ok since that means there is nothing to send.
-        let mut pkt = self.send_queue.pop_front()?;
+        let mut pkt = self.send_queue.pop(now)?;
 
         pkt.timestamp = now;
 
@@ -417,84 +449,51 @@ impl StreamTx {
         })
     }
 
-    // fn poll_packet_padding(&mut self, now: Instant) -> Option<NextPacket> {
-    //     loop {
-    //         let padding = self.padding.pop_front()?;
+    fn poll_packet_padding(&mut self, _now: Instant) -> Option<NextPacket> {
+        let padding = self.padding.pop_front()?;
 
-    //         // Force recaching since padding changed.
-    //         self.queue_state = None;
+        let next = if padding > MIN_SPURIOUS_PADDING_SIZE {
+            // Find a historic packet that is smaller than this max size. The max size
+            // is a headroom since we can accept slightly larger padding than asked for.
+            let max_size = padding * 2;
 
-    //         match padding {
-    //             Padding::Blank { ssrc, pt, size, .. } => {
-    //                 let source_tx = get_or_create_source_tx(
-    //                     &mut self.sources_tx,
-    //                     &mut self.equalize_sources,
-    //                     ssrc,
-    //                 );
-    //                 let seq_no = source_tx.next_seq_no(now, None);
+            let pkt = self.rtx_cache.get_cached_packet_smaller_than(max_size)?;
 
-    //                 trace!(
-    //                     "Generating blank padding packet of size {size} on {ssrc} with pt: {pt}"
-    //                 );
-    //                 return Some(NextPacket {
-    //                     pt,
-    //                     ssrc,
-    //                     seq_no,
-    //                     body: NextPacketBody::Blank { len: size as u8 },
-    //                 });
-    //             }
-    //             Padding::Spurious(resend) => {
-    //                 // If there is no buffer for this padding, we return None. This is
-    //                 // a weird situation though, since it means we queued padding for a buffer we don't
-    //                 // have.
-    //                 let Some(buffer) = self
-    //                     .buffers_tx
-    //                     .values()
-    //                     .find(|p| p.ssrc() == padding.ssrc()) else {
-    //                         // This can happen for example case buffers were
-    //                         // cleared (i.e. a change of media direction)
-    //                         continue;
-    //                     };
+            let orig_seq_no = pkt.seq_no;
+            let seq_no = self.seq_no_rtx.inc();
 
-    //                 let pkt = buffer.get(resend.seq_no);
+            NextPacket {
+                kind: NextPacketKind::Resend(orig_seq_no),
+                seq_no,
+                pkt,
+            }
+        } else {
+            let seq_no = self.seq_no_rtx.inc();
 
-    //                 // The seq_no could simply be too old to exist in the buffer, in which
-    //                 // case we will not do a resend.
-    //                 let Some(pkt) = pkt else {
-    //                     continue;
-    //                 };
+            let pkt = &mut self.blank_packet;
+            pkt.seq_no = self.seq_no_rtx.inc();
 
-    //                 // The send source, to get a contiguous seq_no for the resend.
-    //                 // Audio should not be resent, so this also gates whether we are doing resends at all.
-    //                 let source = match get_source_tx(&mut self.sources_tx, pkt.meta.rid, true) {
-    //                     Some(v) => v,
-    //                     None => continue,
-    //                 };
+            let len = padding.clamp(SRTP_BLOCK_SIZE, MAX_BLANK_PADDING_PAYLOAD_SIZE);
+            assert!(len <= 255); // should fit in a byte
+            pkt.payload.resize(len, 0);
 
-    //                 let seq_no = source.next_seq_no(now, None);
+            NextPacket {
+                kind: NextPacketKind::Blank(len as u8),
+                seq_no,
+                pkt,
+            }
+        };
 
-    //                 // The resend ssrc. This would correspond to the RTX PT for video.
-    //                 let ssrc_rtx = source.ssrc();
+        let actual_len = next.pkt.payload.len();
+        let left = padding.saturating_sub(actual_len);
 
-    //                 let orig_seq_no = Some(resend.seq_no);
+        // Requeue any padding left to do.
+        if left > 0 {
+            self.padding.push_front(left);
+        }
 
-    //                 // Check that our internal state of organizing SSRC for senders is correct.
-    //                 assert_eq!(pkt.meta.ssrc, resend.ssrc);
-    //                 assert_eq!(source.repairs(), Some(resend.ssrc));
-
-    //                 // If the resent PT doesn't exist, the state is not correct as per above.
-    //                 let pt = pt_rtx(&self.params, resend.pt).expect("Resend PT");
-
-    //                 return Some(NextPacket {
-    //                     pt,
-    //                     ssrc: ssrc_rtx,
-    //                     seq_no,
-    //                     body: NextPacketBody::Resend { pkt, orig_seq_no },
-    //                 });
-    //             }
-    //         };
-    //     }
-    // }
+        Some(next)
+    }
 
     pub(crate) fn sender_report_at(&self) -> Instant {
         let is_audio = self.rtx.is_none(); // this is maybe not correct, but it's all we got.
@@ -631,12 +630,39 @@ impl StreamTx {
         if self.send_queue.is_empty() {
             self.rtx_cache.last_packet()
         } else {
-            self.send_queue.back().map(|q| q.payload.as_ref())
+            self.send_queue.last().map(|q| q.payload.as_ref())
         }
     }
 
     pub(crate) fn visit_stats(&mut self, snapshot: &mut StatsSnapshot, now: Instant) {
         self.stats.fill(snapshot, self.mid, self.rid, now);
+    }
+
+    pub(crate) fn send_queue_state(&mut self, now: Instant) -> QueueState {
+        // We only know if something is audio on the first ever sent packet.
+        // Defaulting `true` means the queue will be "unpaced" until such time we know.
+        let is_audio = self.is_audio.unwrap_or(true);
+
+        // There are two parts to whether we are using this for padding:
+        // 1. It must be video (i.e. is_audio is Some(false))
+        // 2. We must have sent a packet. We get this indirectly from is_audio being set on
+        //    first ever poll_packet().
+        let use_for_padding = self.is_audio.map(|i| !i).unwrap_or(false);
+
+        QueueState {
+            mid: self.mid,
+            is_audio,
+            use_for_padding,
+            snapshot: self.send_queue.snapshot(now),
+        }
+    }
+
+    pub(crate) fn generate_padding(&mut self, _now: Instant, padding: usize) {
+        self.padding.push_back(padding);
+    }
+
+    pub(crate) fn handle_timeout(&mut self, now: Instant) {
+        self.send_queue.handle_timeout(now);
     }
 }
 

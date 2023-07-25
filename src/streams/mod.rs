@@ -8,6 +8,7 @@ use crate::rtp_::Ssrc;
 use crate::rtp_::{MediaTime, Pt};
 use crate::rtp_::{Mid, Rid, SeqNo};
 use crate::rtp_::{Rtcp, RtpHeader};
+use crate::util::already_happened;
 
 pub use self::receive::StreamRx;
 pub use self::send::StreamTx;
@@ -16,6 +17,7 @@ mod receive;
 mod register;
 mod rtx_cache;
 mod send;
+mod send_queue;
 
 // Time between regular receiver reports.
 // https://www.rfc-editor.org/rfc/rfc8829#section-5.1.2
@@ -61,6 +63,20 @@ pub struct RtpPacket {
     /// the packet was first handed over to str0m and enqueued in the outgoing send buffers.
     /// For incoming packets it's the time we received the network packet.
     pub timestamp: Instant,
+}
+
+impl RtpPacket {
+    fn blank() -> RtpPacket {
+        RtpPacket {
+            seq_no: 0.into(),
+            pt: 0.into(),
+            time: MediaTime::new(0, 90_000),
+            header: RtpHeader::default(),
+            payload: vec![0; 2000],
+            nackable: false,
+            timestamp: already_happened(),
+        }
+    }
 }
 
 /// Holder of incoming/outgoing encoded streams.
@@ -146,6 +162,7 @@ impl Streams {
         }
 
         for stream in self.streams_tx.values_mut() {
+            stream.handle_timeout(now);
             stream.maybe_create_sr(now, feedback);
         }
     }
@@ -270,6 +287,16 @@ impl Streams {
 
     pub(crate) fn first_ssrc_local(&self) -> Ssrc {
         *self.streams_tx.keys().next().unwrap_or(&0.into())
+    }
+
+    pub(crate) fn stream_tx_by_mid_rid(
+        &mut self,
+        mid: Mid,
+        rid: Option<Rid>,
+    ) -> Option<&mut StreamTx> {
+        self.streams_tx
+            .values_mut()
+            .find(|s| s.mid() == mid && (rid.is_none() || s.rid() == rid))
     }
 }
 

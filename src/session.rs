@@ -216,22 +216,15 @@ impl Session {
             self.last_nack = now;
         }
 
-        // let iter = self
-        //     .medias
-        //     .iter_mut()
-        //     .map(|m| m.buffers_tx_queue_state(now));
+        let iter = self.streams.streams_tx().map(|m| m.send_queue_state(now));
+        if let Some(padding_request) = self.pacer.handle_timeout(now, iter) {
+            let stream = self
+                .streams
+                .stream_tx_by_mid_rid(padding_request.mid, None)
+                .expect("pacer to us an existing stream");
 
-        // if let Some(padding_request) = self.pacer.handle_timeout(now, iter) {
-        //     let media = self
-        //         .media_by_mid_mut(padding_request.mid)
-        //         .expect("media for service padding request");
-
-        //     media.generate_padding(now, padding_request.padding);
-        // }
-
-        // for m in &mut self.medias {
-        //     m.handle_timeout(now)?;
-        // }
+            stream.generate_padding(now, padding_request.padding);
+        }
 
         if let Some(twcc_at) = self.twcc_at() {
             if now >= twcc_at {
