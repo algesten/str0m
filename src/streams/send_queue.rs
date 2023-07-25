@@ -38,15 +38,15 @@ impl SendQueue {
     }
 
     pub fn pop(&mut self, now: Instant) -> Option<RtpPacket> {
-        if let Some(x) = self.queue.pop_front() {
+        if let Some(packet) = self.queue.pop_front() {
             // If the popped packet has a timestamp in the future, we have not counted it
             // towards the queue total (see handle_timeout).
-            if now >= x.timestamp {
-                let queue_time = now - x.timestamp;
-                self.total.decrease(x.payload.len(), queue_time);
+            if now >= packet.timestamp {
+                let queue_time = now - packet.timestamp;
+                self.total.decrease(packet.payload.len(), queue_time);
             }
             self.last_emitted = Some(now);
-            Some(x)
+            Some(packet)
         } else {
             None
         }

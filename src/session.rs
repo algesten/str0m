@@ -559,28 +559,22 @@ impl Session {
     fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
         let srtp_tx = self.srtp_tx.as_mut()?;
 
-        // // Figure out which, if any, queue to poll
-        // let mid = self.pacer.poll_queue()?;
-
-        // // NB: Cannot use media_index_mut here due to borrowing woes around self, need split
-        // // borrowing.
-        // let media = self
-        //     .medias
-        //     .iter_mut()
-        //     .find(|m| m.mid() == mid)
-        //     .expect("index is media");
+        // Figure out which, if any, queue to poll
+        let mid = self.pacer.poll_queue()?;
+        let media = self
+            .medias
+            .iter()
+            .find(|m| m.mid() == mid)
+            .expect("index is media");
 
         let buf = &mut self.poll_packet_buf;
         let twcc_seq = self.twcc;
 
-        let receipt = poll_packet_single(
-            &self.medias,
-            &mut self.streams,
-            now,
-            &self.exts,
-            &mut self.twcc,
-            buf,
-        )?;
+        // TODO: allow for sending simulcast
+        let stream = self.streams.stream_tx_by_mid_rid(media.mid(), None)?;
+
+        let params = media.payload_params();
+        let receipt = stream.poll_packet(now, &self.exts, &mut self.twcc, params, buf)?;
 
         let PacketReceipt {
             header,
@@ -792,26 +786,4 @@ pub struct PacketReceipt {
     pub seq_no: SeqNo,
     pub is_padding: bool,
     pub payload_size: usize,
-}
-
-fn poll_packet_single(
-    medias: &[Media],
-    streams: &mut Streams,
-    now: Instant,
-    exts: &ExtensionMap,
-    twcc: &mut u64,
-    buf: &mut Vec<u8>,
-) -> Option<PacketReceipt> {
-    for stream in streams.streams_tx() {
-        let m = medias
-            .iter()
-            .find(|m| m.mid() == stream.mid())
-            .expect("media for stream");
-        let params = m.payload_params();
-        let r = stream.poll_packet(now, exts, twcc, params, buf);
-        if let Some(r) = r {
-            return Some(r);
-        }
-    }
-    None
 }
