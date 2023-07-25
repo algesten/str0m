@@ -5,7 +5,7 @@ use crate::ice::IceCreds;
 use crate::media::Media;
 use crate::rtp_::{Direction, ExtensionMap, Mid, Rid, Ssrc};
 use crate::sctp::ChannelConfig;
-use crate::streams::{StreamRx, StreamTx};
+use crate::streams::{StreamRx, StreamTx, DEFAULT_RTX_CACHE_DURATION};
 use crate::Rtc;
 use crate::RtcError;
 
@@ -182,10 +182,27 @@ impl<'a> DirectApi<'a> {
         mid: Mid,
         rid: Option<Rid>,
     ) -> &mut StreamTx {
-        self.rtc
+        let Some(media) = self.rtc.session.media_by_mid(mid) else {
+            panic!("No media declared for mid: {}", mid);
+        };
+
+        let is_audio = media.kind().is_audio();
+
+        let stream = self
+            .rtc
             .session
             .streams
-            .declare_stream_tx(ssrc, rtx, mid, rid)
+            .declare_stream_tx(ssrc, rtx, mid, rid);
+
+        let size = if is_audio {
+            self.rtc.session.send_buffer_audio
+        } else {
+            self.rtc.session.send_buffer_video
+        };
+
+        stream.set_rtx_cache(size, DEFAULT_RTX_CACHE_DURATION);
+
+        stream
     }
 
     /// Remove the transmit stream for the given SSRC.

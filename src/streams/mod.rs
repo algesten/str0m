@@ -19,6 +19,8 @@ mod rtx_cache;
 mod send;
 mod send_queue;
 
+pub(crate) use send::DEFAULT_RTX_CACHE_DURATION;
+
 // Time between regular receiver reports.
 // https://www.rfc-editor.org/rfc/rfc8829#section-5.1.2
 // Should technically be 4 seconds according to spec, but libWebRTC
@@ -250,7 +252,9 @@ impl Streams {
     // Helper for SDP to match incoming streams with outgoing.
     //
     // This is so we can put as many a=ssrc lines in our answer as there is in an offer.
-    pub(crate) fn equalize_streams(&mut self) {
+    pub(crate) fn equalize_streams(&mut self) -> Vec<Ssrc> {
+        let mut ret = vec![];
+
         for rx in self.streams_rx.values() {
             let matched = self
                 .streams_tx
@@ -275,10 +279,14 @@ impl Streams {
                 None
             };
 
+            ret.push(ssrc);
+
             self.streams_tx
                 .entry(ssrc)
                 .or_insert_with(|| StreamTx::new(ssrc, rtx, rx.mid(), rx.rid()));
         }
+
+        ret
     }
 
     pub(crate) fn first_ssrc_remote(&self) -> Ssrc {

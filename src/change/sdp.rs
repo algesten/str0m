@@ -21,7 +21,7 @@ use crate::Rtc;
 use crate::RtcError;
 
 pub use crate::sdp::{SdpAnswer, SdpOffer};
-use crate::streams::Streams;
+use crate::streams::{Streams, DEFAULT_RTX_CACHE_DURATION};
 
 /// Changes to the Rtc via SDP Offer/Answer dance.
 pub struct SdpApi<'a> {
@@ -613,7 +613,7 @@ fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
 
     add_new_lines(session, &new_lines, true).map_err(RtcError::RemoteSdp)?;
 
-    session.streams.equalize_streams();
+    equalize_streams(session);
 
     Ok(())
 }
@@ -639,9 +639,35 @@ fn apply_answer(
     // Add all pending changes (since we pre-allocated SSRC communicated in the Offer).
     add_pending_changes(session, pending);
 
-    session.streams.equalize_streams();
+    equalize_streams(session);
 
     Ok(())
+}
+
+fn equalize_streams(session: &mut Session) {
+    // This makes sure we have as many send streams as there are receive streams.
+    let new = session.streams.equalize_streams();
+
+    // Configure the buffer sizes of newly created send streams.
+    for ssrc in new {
+        // unwrap because stream was just created in above call.
+        let stream = session.streams.stream_tx(&ssrc).unwrap();
+
+        // unwrap because we must have the corresponding Media
+        let media = session
+            .medias
+            .iter()
+            .find(|m| m.mid() == stream.mid())
+            .unwrap();
+
+        let size = if media.kind().is_audio() {
+            session.send_buffer_audio
+        } else {
+            session.send_buffer_video
+        };
+
+        stream.set_rtx_cache(size, DEFAULT_RTX_CACHE_DURATION);
+    }
 }
 
 fn add_pending_changes(session: &mut Session, pending: Changes) {
@@ -665,9 +691,17 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
 
         for (ssrc, rtx) in add_media.ssrcs {
             // TODO: When we allow sending RID, we need to add that here.
-            session
+            let stream = session
                 .streams
                 .declare_stream_tx(ssrc, rtx, add_media.mid, None);
+
+            let size = if media.kind().is_audio() {
+                session.send_buffer_audio
+            } else {
+                session.send_buffer_video
+            };
+
+            stream.set_rtx_cache(size, DEFAULT_RTX_CACHE_DURATION);
         }
     }
 }

@@ -25,6 +25,8 @@ use super::{rr_interval, RtpPacket};
 /// requests smaller than this we use blank packets instead.
 const MIN_SPURIOUS_PADDING_SIZE: usize = 50;
 
+pub const DEFAULT_RTX_CACHE_DURATION: Duration = Duration::from_secs(3);
+
 /// Outgoing encoded stream.
 #[derive(Debug)]
 pub struct StreamTx {
@@ -141,7 +143,7 @@ impl StreamTx {
             resends: VecDeque::new(),
             padding: VecDeque::new(),
             blank_packet: RtpPacket::blank(),
-            rtx_cache: RtxCache::new(1024, Duration::from_secs(3), false),
+            rtx_cache: RtxCache::new(1024, DEFAULT_RTX_CACHE_DURATION, false),
             last_sender_report: already_happened(),
             pending_request_keyframe: None,
             stats: StreamTxStats::default(),
