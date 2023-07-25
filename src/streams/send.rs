@@ -384,6 +384,22 @@ impl StreamTx {
     }
 
     fn poll_packet_resend(&mut self, now: Instant, is_padding: bool) -> Option<NextPacket<'_>> {
+        let from = now.checked_sub(Duration::from_secs(1)).unwrap_or(now);
+        let bytes_transmitted = self.stats.bytes_transmitted.sum_since(from);
+        let bytes_retransmitted = self.stats.bytes_retransmitted.sum_since(from);
+        let ratio = bytes_retransmitted as f32 / (bytes_retransmitted + bytes_transmitted) as f32;
+        let ratio = if ratio.is_finite() { ratio } else { 0_f32 };
+
+        // If we hit the cap, stop doing resends by clearing those we have queued.
+        if ratio > 0.15_f32 {
+            self.resends.clear();
+            return None;
+        }
+
+        self.do_poll_packet_resend(now, is_padding)
+    }
+
+    fn do_poll_packet_resend(&mut self, now: Instant, is_padding: bool) -> Option<NextPacket<'_>> {
         if self.rtx.is_none() || self.rtx_pt.is_none() {
             // We're not doing resends for non-RTX.
             return None;
