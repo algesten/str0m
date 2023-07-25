@@ -128,7 +128,7 @@ pub struct MediaData {
     /// Bigger samples don't fit in one UDP packet, thus WebRTC RTP is chopping up codec
     /// transmission units into smaller parts.
     ///
-    /// This data is a full depacketized Sample.
+    /// This data is a full depayloaded Sample.
     pub data: Vec<u8>,
 
     /// RTP header extensions for this media data. This is taken from the

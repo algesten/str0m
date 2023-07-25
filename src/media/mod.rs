@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crate::change::AddMedia;
 use crate::io::{Id, DATAGRAM_MTU};
-use crate::packet::{DepacketizingBuffer, PacketizingBuffer, RtpMeta};
+use crate::packet::{DepacketizingBuffer, Payloader, RtpMeta};
 use crate::rtp_::SRTP_BLOCK_SIZE;
 use crate::rtp_::{ExtensionMap, SRTP_OVERHEAD};
 use crate::RtcError;
@@ -68,14 +68,14 @@ pub struct Media {
     expected_rid_rx: Vec<Rid>,
 
     /// Buffers of incoming RTP packets. These do reordering/jitter buffer and also
-    /// depacketize from RTP to samples.
-    depacketizers: HashMap<(Pt, Option<Rid>), DepacketizingBuffer>,
+    /// depayload from RTP to samples.
+    depayloaders: HashMap<(Pt, Option<Rid>), DepacketizingBuffer>,
 
-    /// Packetizers for outoing RTP packets.
-    packetizers: HashMap<(Pt, Option<Rid>), PacketizingBuffer>,
+    /// Payloaders for outoing RTP packets.
+    payloaders: HashMap<(Pt, Option<Rid>), Payloader>,
 
-    /// Next sample to packetize.
-    to_packetize: Option<ToPacketize>,
+    /// Next sample to payload.
+    to_payload: Option<ToPayload>,
 
     pub(crate) need_open_event: bool,
     pub(crate) need_changed_event: bool,
@@ -86,14 +86,13 @@ pub struct Media {
     pub(crate) app_tmp: bool,
 }
 
-pub(crate) struct ToPacketize {
+pub(crate) struct ToPayload {
     pub pt: Pt,
     pub rid: Option<Rid>,
     pub wallclock: Instant,
     pub rtp_time: MediaTime,
     pub data: Vec<u8>,
     pub ext_vals: ExtensionValues,
-    pub max_retain: usize, // TODO: remove this.
 }
 
 impl Media {
@@ -163,7 +162,7 @@ impl Media {
     }
 
     pub(crate) fn poll_sample(&mut self) -> Option<Result<MediaData, RtcError>> {
-        for ((pt, rid), buf) in &mut self.depacketizers {
+        for ((pt, rid), buf) in &mut self.depayloaders {
             if let Some(r) = buf.pop() {
                 let codec = *self.params.iter().find(|c| c.pt() == *pt)?;
                 return Some(
@@ -195,7 +194,7 @@ impl Media {
         Some(p.pt)
     }
 
-    pub(crate) fn depacketize(
+    pub(crate) fn depayload(
         &mut self,
         rid: Option<Rid>,
         packet: RtpPacket,
@@ -210,10 +209,10 @@ impl Media {
 
         let key = (pt, rid);
 
-        let exists = self.depacketizers.contains_key(&key);
+        let exists = self.depayloaders.contains_key(&key);
 
         if !exists {
-            // This unwrap is ok because we needed the clock_rate before calling depacketize.
+            // This unwrap is ok because we needed the clock_rate before unpayloading.
             let params = self.get_params(pt).unwrap();
 
             let codec = params.spec.codec;
@@ -227,11 +226,11 @@ impl Media {
 
             let buffer = DepacketizingBuffer::new(codec.into(), hold_back);
 
-            self.depacketizers.insert((pt, rid), buffer);
+            self.depayloaders.insert((pt, rid), buffer);
         }
 
         // The entry will be there by now.
-        let buffer = self.depacketizers.get_mut(&key).unwrap();
+        let buffer = self.depayloaders.get_mut(&key).unwrap();
 
         let meta = RtpMeta {
             received: packet.timestamp,
@@ -316,44 +315,34 @@ impl Media {
         self.params.iter().any(|p| p.pt == pt)
     }
 
-    fn packetizer_for(
-        &mut self,
-        pt: Pt,
-        rid: Option<Rid>,
-        max_retain: usize,
-    ) -> &mut PacketizingBuffer {
-        self.packetizers.entry((pt, rid)).or_insert_with(|| {
+    fn payloader_for(&mut self, pt: Pt, rid: Option<Rid>) -> &mut Payloader {
+        self.payloaders.entry((pt, rid)).or_insert_with(|| {
             // Unwrap is OK, the pt should be checked already when calling this function.
             let params = self.params.iter().find(|p| p.pt == pt).unwrap();
-            PacketizingBuffer::new(params.spec.codec.into(), max_retain)
+            Payloader::new(params.spec.codec.into())
         })
     }
 
-    fn set_to_packetize(&mut self, to_packetize: ToPacketize) -> Result<(), RtcError> {
-        if self.to_packetize.is_some() {
+    fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {
+        if self.to_payload.is_some() {
             return Err(RtcError::WriteWithoutPoll);
         }
 
-        self.to_packetize = Some(to_packetize);
+        self.to_payload = Some(to_payload);
 
         Ok(())
     }
 
-    pub(crate) fn do_packetize(
+    pub(crate) fn do_payload(
         &mut self,
         now: Instant,
         streams: &mut Streams,
     ) -> Result<(), RtcError> {
-        let Some(to_packetize) = self.to_packetize.take() else {
+        let Some(to_payload) = self.to_payload.take() else {
             return Ok(());
         };
 
-        let ToPacketize {
-            pt,
-            rid,
-            max_retain,
-            ..
-        } = &to_packetize;
+        let ToPayload { pt, rid, .. } = &to_payload;
 
         let is_audio = self.kind.is_audio();
 
@@ -365,14 +354,14 @@ impl Media {
 
         let pt = *pt;
 
-        let packetizer = self.packetizer_for(pt, *rid, *max_retain);
+        let payloader = self.payloader_for(pt, *rid);
 
         const RTP_SIZE: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
         // align to SRTP block size to minimize padding needs
         const MTU: usize = RTP_SIZE - RTP_SIZE % SRTP_BLOCK_SIZE;
 
-        packetizer
-            .push_sample(now, to_packetize, MTU, is_audio, stream)
+        payloader
+            .push_sample(now, to_payload, MTU, is_audio, stream)
             .map_err(|e| RtcError::Packet(self.mid, pt, e))?;
 
         Ok(())
@@ -407,9 +396,9 @@ impl Default for Media {
             params: vec![],
             simulcast: None,
             expected_rid_rx: vec![],
-            packetizers: HashMap::new(),
-            depacketizers: HashMap::new(),
-            to_packetize: None,
+            payloaders: HashMap::new(),
+            depayloaders: HashMap::new(),
+            to_payload: None,
             need_open_event: true,
             need_changed_event: false,
         }

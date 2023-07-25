@@ -5,7 +5,7 @@ use crate::rtp_::VideoOrientation;
 use crate::session::Session;
 use crate::RtcError;
 
-use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, ToPacketize};
+use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, ToPayload};
 
 ///
 pub struct Writer<'a> {
@@ -92,23 +92,16 @@ impl<'a> Writer<'a> {
             return Err(RtcError::UnknownPt(pt));
         }
 
-        let max_retain = if media.kind().is_audio() {
-            self.session.send_buffer_audio
-        } else {
-            self.session.send_buffer_video
-        };
-
-        let to_packetize = ToPacketize {
+        let to_payload = ToPayload {
             pt,
             rid: self.rid,
             wallclock,
             rtp_time,
             data: data.into(),
             ext_vals: self.ext_vals,
-            max_retain,
         };
 
-        media.set_to_packetize(to_packetize)?;
+        media.set_to_payload(to_payload)?;
 
         Ok(())
     }

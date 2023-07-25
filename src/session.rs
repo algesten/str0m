@@ -202,8 +202,8 @@ impl Session {
     }
 
     pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
-        // Packetize and waiting samples
-        self.do_packetize(now)?;
+        // Payload any waiting samples
+        self.do_payload(now)?;
 
         let sender_ssrc = self.streams.first_ssrc_local();
 
@@ -403,8 +403,8 @@ impl Session {
             // In RTP mode, we store the packet temporarily here for the next poll_output().
             self.pending_packet = Some(packet);
         } else {
-            // In non-RTP mode, we let the Media use a depacketizer.
-            media.depacketize(
+            // In non-RTP mode, we let the Media use a Depayloader.
+            media.depayload(
                 stream.rid(),
                 packet,
                 self.reordering_size_audio,
@@ -729,9 +729,9 @@ impl Session {
         self.medias.iter_mut().find(|m| m.mid() == mid)
     }
 
-    fn do_packetize(&mut self, now: Instant) -> Result<(), RtcError> {
+    fn do_payload(&mut self, now: Instant) -> Result<(), RtcError> {
         for m in &mut self.medias {
-            m.do_packetize(now, &mut self.streams)?;
+            m.do_payload(now, &mut self.streams)?;
         }
 
         Ok(())

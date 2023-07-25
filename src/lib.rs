@@ -337,7 +337,7 @@
 //!
 //! Samples are not suitable to use directly in UDP (RTP) packets - for
 //! one they are too big. Samples are therefore further chunked up by
-//! codec specific packetizers into RTP packets.
+//! codec specific payloaders into RTP packets.
 //!
 //! Str0m's API currently operate on the "sample level". From an
 //! architectural point of view, all things RTP are considered an internal

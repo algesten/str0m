@@ -32,8 +32,8 @@ use null::{NullDepacketizer, NullPacketizer};
 mod buffer_rx;
 pub(crate) use buffer_rx::{Depacketized, DepacketizingBuffer, RtpMeta};
 
-mod buffer_tx;
-pub(crate) use buffer_tx::{Packetized, PacketizedMeta, PacketizingBuffer};
+mod payload;
+pub(crate) use payload::Payloader;
 
 mod bwe;
 pub(crate) use bwe::SendSideBandwithEstimator;
