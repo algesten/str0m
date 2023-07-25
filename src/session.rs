@@ -399,16 +399,18 @@ impl Session {
             return;
         };
 
-        if !self.rtp_mode {
+        if self.rtp_mode {
+            // In RTP mode, we store the packet temporarily here for the next poll_output().
+            self.pending_packet = Some(packet);
+        } else {
+            // In non-RTP mode, we let the Media use a depacketizer.
             media.depacketize(
                 stream.rid(),
-                &packet,
+                packet,
                 self.reordering_size_audio,
                 self.reordering_size_video,
             );
         }
-
-        self.pending_packet = Some(packet);
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {

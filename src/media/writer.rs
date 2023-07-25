@@ -86,10 +86,6 @@ impl<'a> Writer<'a> {
         rtp_time: MediaTime,
         data: &[u8],
     ) -> Result<(), RtcError> {
-        if self.session.rtp_mode {
-            panic!("Can't use MediaWriter::write when in rtp_mode");
-        }
-
         let media = media_by_mid_mut(&mut self.session.medias, self.mid);
 
         if !media.has_pt(pt) {

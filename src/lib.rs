@@ -1019,6 +1019,9 @@ impl Rtc {
     /// writer.write(pt, data.network_time, data.time, &data.data).unwrap();
     /// ```
     pub fn writer(&mut self, mid: Mid) -> Option<Writer> {
+        if self.session.rtp_mode {
+            panic!("In rtp_mode use direct_api().stream_tx().write_rtp()");
+        }
         self.session.media_by_mid_mut(mid)?;
         Some(Writer::new(&mut self.session, mid))
     }

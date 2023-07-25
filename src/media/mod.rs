@@ -198,7 +198,7 @@ impl Media {
     pub(crate) fn depacketize(
         &mut self,
         rid: Option<Rid>,
-        packet: &RtpPacket,
+        packet: RtpPacket,
         reordering_size_audio: usize,
         reordering_size_video: usize,
     ) {
@@ -240,7 +240,7 @@ impl Media {
             header: packet.header.clone(),
         };
 
-        buffer.push(meta, packet.payload.clone());
+        buffer.push(meta, packet.payload);
     }
 
     pub(crate) fn set_cname(&mut self, cname: String) {
