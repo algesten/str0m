@@ -43,7 +43,7 @@ impl SendQueue {
             // towards the queue total (see handle_timeout).
             if now >= packet.timestamp {
                 let queue_time = now - packet.timestamp;
-                self.total.decrease(packet.payload.len(), queue_time);
+                self.total.decrease(now, packet.payload.len(), queue_time);
             }
             self.last_emitted = Some(now);
             Some(packet)
@@ -138,15 +138,19 @@ impl TotalQueue {
         }
     }
 
-    fn increase(&mut self, timestamp: Instant, size: usize) {
+    fn increase(&mut self, now: Instant, size: usize) {
+        self.move_time_forward(now);
         self.unsent_count += 1;
         self.unsent_size += size;
-        self.last = Some(timestamp);
+        self.last = Some(now);
     }
 
-    fn decrease(&mut self, size: usize, queue_time: Duration) {
+    fn decrease(&mut self, now: Instant, size: usize, queue_time: Duration) {
+        self.move_time_forward(now);
+
         self.unsent_count -= 1;
         self.unsent_size -= size;
+
         self.queue_time -= queue_time;
 
         if self.unsent_count == 0 {
