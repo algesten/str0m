@@ -30,7 +30,7 @@ mod null;
 use null::{NullDepacketizer, NullPacketizer};
 
 mod buffer_rx;
-pub(crate) use buffer_rx::{Depacketized, DepacketizingBuffer, RtpMeta};
+pub(crate) use buffer_rx::{Depacketized, Depayloader, JitterBuffer, RtpMeta};
 
 mod payload;
 pub(crate) use payload::Payloader;

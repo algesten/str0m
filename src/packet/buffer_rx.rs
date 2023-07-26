@@ -51,14 +51,6 @@ impl Depacketized {
     }
 }
 
-#[derive(Debug)]
-struct Entry {
-    meta: RtpMeta,
-    data: Vec<u8>,
-    head: bool,
-    tail: bool,
-}
-
 impl RtpMeta {
     #[doc(hidden)]
     pub fn new(received: Instant, time: MediaTime, seq_no: SeqNo, header: RtpHeader) -> Self {
@@ -72,42 +64,34 @@ impl RtpMeta {
 }
 
 #[derive(Debug)]
-pub struct DepacketizingBuffer {
-    hold_back: usize,
-    depack: CodecDepacketizer,
-    queue: VecDeque<Entry>,
-    segments: Vec<(usize, usize)>,
-    last_emitted: Option<(SeqNo, CodecExtra)>,
+pub struct BufEntry {
+    meta: RtpMeta,
+    data: Vec<u8>,
+}
+#[derive(Debug)]
+pub struct JitterBuffer {
+    // TODO: figure out what hold_back means for the jitter buffer
+    // - is it the max number of rtp packets held in here ?
+    // - how does it play nicely with the hold_back in the depayloader ?
+    // - also: jitterbuffer is created within StreamRx, which is in turn created
+    // in a number of places (with `expect_stream_rx`) and in those places we
+    // may not have clear knowledge of the desired hold_back value
+    // hold_back: usize,
+    queue: VecDeque<BufEntry>,
     max_time: Option<MediaTime>,
-    depack_cache: Option<(SeqNo, Depacketized)>,
 }
 
-impl DepacketizingBuffer {
-    pub(crate) fn new(depack: CodecDepacketizer, hold_back: usize) -> Self {
-        DepacketizingBuffer {
-            hold_back,
-            depack,
+impl JitterBuffer {
+    pub fn new(// hold_back: usize
+    ) -> Self {
+        JitterBuffer {
+            // hold_back,
             queue: VecDeque::new(),
-            segments: Vec::new(),
-            last_emitted: None,
             max_time: None,
-            depack_cache: None,
         }
     }
 
     pub fn push(&mut self, meta: RtpMeta, data: Vec<u8>) {
-        // We're not emitting samples in the wrong order. If we receive
-        // packets that are before the last emitted, we drop.
-        //
-        // As a special case, per popular demand, if hold_back is 0, we do emit
-        // out of order packets.
-        if let Some((last, _)) = self.last_emitted {
-            if meta.seq_no <= last && self.hold_back > 0 {
-                trace!("Drop before emitted: {} <= {}", meta.seq_no, last);
-                return;
-            }
-        }
-
         // Record that latest seen max time (used for extending time to u64).
         self.max_time = Some(if let Some(m) = self.max_time {
             m.max(meta.time)
@@ -124,23 +108,55 @@ impl DepacketizingBuffer {
                 trace!("Drop exactly same packet: {}", meta.seq_no);
             }
             Err(i) => {
-                let head = self.depack.is_partition_head(&data);
-                let tail = self.depack.is_partition_tail(meta.header.marker, &data);
-
                 // i is insertion point to maintain order
-                let entry = Entry {
-                    meta,
-                    data,
-                    head,
-                    tail,
-                };
+                let entry = BufEntry { meta, data };
                 self.queue.insert(i, entry);
             }
         }
     }
 
-    pub fn pop(&mut self) -> Option<Result<Depacketized, PacketError>> {
-        self.update_segments();
+    pub fn view(&mut self) -> &[BufEntry] {
+        self.queue.make_contiguous();
+        self.queue.as_slices().0
+    }
+
+    pub fn remove(&mut self, n: usize) {
+        self.queue.drain(0..=n);
+    }
+}
+
+pub struct Depayloader {
+    // number of samples
+    hold_back: usize,
+    // depacketizer
+    depack: CodecDepacketizer,
+    // segments detected in the last buf slice
+    segments: Vec<(usize, usize)>,
+    // the sequence number and codec specific information of the last sample depacketized
+    last_emitted: Option<(SeqNo, CodecExtra)>,
+    // last emitted sample
+    depack_cache: Option<(SeqNo, Depacketized)>,
+}
+
+impl Depayloader {
+    pub(crate) fn new(depack: CodecDepacketizer, hold_back: usize) -> Self {
+        Depayloader {
+            depack,
+            hold_back,
+            segments: Vec::new(),
+            last_emitted: None,
+            depack_cache: None,
+        }
+    }
+
+    /// Attempts to pop a Depacketized out of the given buffer slice.  Returns
+    /// the number of entries consumed so thay can be removed from the buffer as
+    /// well as the Result<Depacketized, PacketError>.
+    pub fn depayload(
+        &mut self,
+        buf: &[BufEntry],
+    ) -> Option<(usize, Result<Depacketized, PacketError>)> {
+        self.update_segments(buf);
 
         // println!(
         //     "{:?} {:?}",
@@ -151,23 +167,22 @@ impl DepacketizingBuffer {
         let (start, stop) = *self.segments.first()?;
 
         let seq = {
-            let last = self.queue.get(stop).expect("entry for stop index");
+            let last = buf.get(stop).expect("entry for stop index");
             last.meta.seq_no
         };
 
         // depack ahead to check contiguity, even if we may not emit right away
-        let dep = match self.depacketize(start, stop, seq) {
+        let dep = match self.depack(start, stop, seq, buf) {
             Ok(d) => d,
             Err(e) => {
                 // this segment cannot be decoded correctly
                 // remove from the queue and return the error
                 self.last_emitted = Some((seq, CodecExtra::None));
-                self.queue.drain(0..=stop);
-                return Some(Err(e));
+                return Some((stop, Err(e)));
             }
         };
 
-        let contiguous = self.contiguous(start, stop, &dep);
+        let contiguous = self.contiguous(start, stop, &dep, buf);
 
         let is_more_than_hold_back = self.segments.len() >= self.hold_back;
 
@@ -180,18 +195,107 @@ impl DepacketizingBuffer {
             return None;
         }
 
-        let last = self.queue.get(stop).expect("entry for stop index");
+        let last = buf.get(stop).expect("entry for stop index");
         self.last_emitted = Some((last.meta.seq_no, dep.codec_extra));
 
-        // We're not going to emit samples in the incorrect order, there's no point in keeping
-        // stuff before the emitted range.
-        self.queue.drain(0..=stop);
-
-        Some(Ok(dep))
+        Some((stop, Ok(dep)))
     }
 
-    fn contiguous(&self, start: usize, stop: usize, dep: &Depacketized) -> bool {
-        if self.is_following_last(start) {
+    fn update_segments(&mut self, buf: &[BufEntry]) -> Option<(usize, usize)> {
+        self.segments.clear();
+
+        #[derive(Clone, Copy)]
+        struct Start {
+            index: i64,
+            time: MediaTime,
+            offset: i64,
+        }
+
+        let mut start: Option<Start> = None;
+
+        for (index, entry) in buf.iter().enumerate() {
+            let index = index as i64;
+            let iseq = *entry.meta.seq_no as i64;
+            let expected_seq = start.map(|s| s.offset + index);
+
+            let is_expected_seq = expected_seq == Some(iseq);
+            let is_same_timestamp = start.map(|s| s.time) == Some(entry.meta.time);
+            let is_defacto_tail = is_expected_seq && !is_same_timestamp;
+
+            if start.is_some() && is_defacto_tail {
+                // We found a segment that ended because the timestamp changed without
+                // a gap in the sequence number. The marker bit in the RTP packet is
+                // just indicative, this is the robust fallback.
+                let segment = (start.unwrap().index as usize, index as usize - 1);
+                self.segments.push(segment);
+                start = None;
+            }
+
+            if start.is_some() && (!is_expected_seq || !is_same_timestamp) {
+                // Not contiguous. Start looking again.
+                start = None;
+            }
+
+            // Each segment can have multiple is_partition_head() == true, record the first.
+            let head = self.depack.is_partition_head(&entry.data);
+            let tail = self
+                .depack
+                .is_partition_tail(entry.meta.header.marker, &entry.data);
+            if start.is_none() && head {
+                start = Some(Start {
+                    index,
+                    time: entry.meta.time,
+                    offset: iseq - index,
+                });
+            }
+
+            if start.is_some() && tail {
+                // We found a contiguous sequence of packets ending with something from
+                // the packet (like the RTP marker bit) indicating it's the tail.
+                let segment = (start.unwrap().index as usize, index as usize);
+                self.segments.push(segment);
+                start = None;
+            }
+        }
+
+        None
+    }
+
+    fn is_following_last(&self, start: usize, buf: &[BufEntry]) -> bool {
+        let Some((last, _)) = self.last_emitted else {
+            // First time we emit something.
+            return true;
+        };
+
+        // track sequence numbers are sequential
+        let mut seq = last;
+
+        // Expect all entries before start to be padding.
+        for entry in buf[0..start].iter() {
+            if !seq.is_next(entry.meta.seq_no) {
+                // Not a sequence
+                return false;
+            }
+            // for next loop round.
+            seq = entry.meta.seq_no;
+
+            let head = self.depack.is_partition_head(&entry.data);
+            let tail = self
+                .depack
+                .is_partition_tail(entry.meta.header.marker, &entry.data);
+            let is_padding = entry.data.is_empty() && !head && !tail;
+            if !is_padding {
+                return false;
+            }
+        }
+
+        let start_entry = buf.get(start).expect("entry for start index");
+
+        seq.is_next(start_entry.meta.seq_no)
+    }
+
+    fn contiguous(&self, start: usize, stop: usize, dep: &Depacketized, buf: &[BufEntry]) -> bool {
+        if self.is_following_last(start, buf) {
             return true;
         }
 
@@ -216,7 +320,7 @@ impl DepacketizingBuffer {
                     prev.layer_index == 0 && next.layer_index == 0 && (prev_pid + 2 == next_pid);
 
                 if allowed {
-                    let last = self.queue.get(stop).expect("entry for stop index");
+                    let last = buf.get(stop).expect("entry for stop index");
                     trace!(
                         "Depack gap allowed for Seq: {} - {}, PIDs: {} - {}",
                         last_seq,
@@ -232,11 +336,12 @@ impl DepacketizingBuffer {
         }
     }
 
-    fn depacketize(
+    fn depack(
         &mut self,
         start: usize,
         stop: usize,
         seq: SeqNo,
+        buf: &[BufEntry],
     ) -> Result<Depacketized, PacketError> {
         if let Some(cached) = self.depack_cache.take() {
             if cached.0 == seq {
@@ -248,10 +353,10 @@ impl DepacketizingBuffer {
         let mut data = Vec::new();
         let mut codec_extra = CodecExtra::None;
 
-        let time = self.queue.get(start).expect("first index exist").meta.time;
+        let time = buf.get(start).expect("first index exist").meta.time;
         let mut meta = Vec::with_capacity(stop - start + 1);
 
-        for entry in self.queue.range_mut(start..=stop) {
+        for entry in buf[start..=stop].iter() {
             if let Err(e) = self
                 .depack
                 .depacketize(&entry.data, &mut data, &mut codec_extra)
@@ -269,95 +374,6 @@ impl DepacketizingBuffer {
             data,
             codec_extra,
         })
-    }
-
-    fn update_segments(&mut self) -> Option<(usize, usize)> {
-        self.segments.clear();
-
-        #[derive(Clone, Copy)]
-        struct Start {
-            index: i64,
-            time: MediaTime,
-            offset: i64,
-        }
-
-        let mut start: Option<Start> = None;
-
-        for (index, entry) in self.queue.iter().enumerate() {
-            let index = index as i64;
-            let iseq = *entry.meta.seq_no as i64;
-            let expected_seq = start.map(|s| s.offset + index);
-
-            let is_expected_seq = expected_seq == Some(iseq);
-            let is_same_timestamp = start.map(|s| s.time) == Some(entry.meta.time);
-            let is_defacto_tail = is_expected_seq && !is_same_timestamp;
-
-            if start.is_some() && is_defacto_tail {
-                // We found a segment that ended because the timestamp changed without
-                // a gap in the sequence number. The marker bit in the RTP packet is
-                // just indicative, this is the robust fallback.
-                let segment = (start.unwrap().index as usize, index as usize - 1);
-                self.segments.push(segment);
-                start = None;
-            }
-
-            if start.is_some() && (!is_expected_seq || !is_same_timestamp) {
-                // Not contiguous. Start looking again.
-                start = None;
-            }
-
-            // Each segment can have multiple is_partition_head() == true, record the first.
-            if start.is_none() && entry.head {
-                start = Some(Start {
-                    index,
-                    time: entry.meta.time,
-                    offset: iseq - index,
-                });
-            }
-
-            if start.is_some() && entry.tail {
-                // We found a contiguous sequence of packets ending with something from
-                // the packet (like the RTP marker bit) indicating it's the tail.
-                let segment = (start.unwrap().index as usize, index as usize);
-                self.segments.push(segment);
-                start = None;
-            }
-        }
-
-        None
-    }
-
-    fn is_following_last(&self, start: usize) -> bool {
-        let Some((last, _)) = self.last_emitted else {
-            // First time we emit something.
-            return true;
-        };
-
-        // track sequence numbers are sequential
-        let mut seq = last;
-
-        // Expect all entries before start to be padding.
-        for entry in self.queue.range(0..start) {
-            if !seq.is_next(entry.meta.seq_no) {
-                // Not a sequence
-                return false;
-            }
-            // for next loop round.
-            seq = entry.meta.seq_no;
-
-            let is_padding = entry.data.is_empty() && !entry.head && !entry.tail;
-            if !is_padding {
-                return false;
-            }
-        }
-
-        let start_entry = self.queue.get(start).expect("entry for start index");
-
-        seq.is_next(start_entry.meta.seq_no)
-    }
-
-    pub fn max_time(&self) -> Option<MediaTime> {
-        self.max_time
     }
 }
 
@@ -386,205 +402,6 @@ impl fmt::Debug for Depacketized {
 mod test {
     use super::*;
     use crate::rtp_::MediaTime;
-
-    #[test]
-    fn end_on_marker() {
-        test(&[
-            //
-            (1, 1, &[1], &[]),
-            (2, 1, &[9], &[(1, &[1, 9])]),
-        ])
-    }
-
-    #[test]
-    fn end_on_defacto() {
-        test(&[
-            (1, 1, &[1], &[]),
-            (2, 1, &[2], &[]),
-            (3, 2, &[3], &[(1, &[1, 2])]),
-        ])
-    }
-
-    #[test]
-    fn skip_padding() {
-        test(&[
-            (1, 1, &[1], &[]),
-            (2, 1, &[9], &[(1, &[1, 9])]),
-            (3, 1, &[], &[]), // padding!
-            (4, 2, &[1], &[]),
-            (5, 2, &[9], &[(2, &[1, 9])]),
-        ])
-    }
-
-    #[test]
-    fn gap_after_emit() {
-        test(&[
-            (1, 1, &[1], &[]),
-            (2, 1, &[9], &[(1, &[1, 9])]),
-            // gap
-            (4, 2, &[1], &[]),
-            (5, 2, &[9], &[]),
-        ])
-    }
-
-    #[test]
-    fn gap_after_padding() {
-        test(&[
-            (1, 1, &[1], &[]),
-            (2, 1, &[9], &[(1, &[1, 9])]),
-            (3, 1, &[], &[]), // padding!
-            // gap
-            (5, 2, &[1], &[]),
-            (6, 2, &[9], &[]),
-        ])
-    }
-
-    #[test]
-    fn single_packets() {
-        test(&[
-            (1, 1, &[1, 9], &[(1, &[1, 9])]),
-            (2, 2, &[1, 9], &[(2, &[1, 9])]),
-            (3, 3, &[1, 9], &[(3, &[1, 9])]),
-            (4, 4, &[1, 9], &[(4, &[1, 9])]),
-        ])
-    }
-
-    #[test]
-    fn packets_out_of_order() {
-        test(&[
-            (1, 1, &[1], &[]),
-            (2, 1, &[9], &[(1, &[1, 9])]),
-            (4, 2, &[9], &[]),
-            (3, 2, &[1], &[(2, &[1, 9])]),
-        ])
-    }
-
-    #[test]
-    fn packets_after_hold_out() {
-        test(&[
-            (1, 1, &[1, 9], &[(1, &[1, 9])]),
-            (3, 3, &[1, 9], &[]),
-            (4, 4, &[1, 9], &[]),
-            (5, 5, &[1, 9], &[(3, &[1, 9]), (4, &[1, 9]), (5, &[1, 9])]),
-        ])
-    }
-
-    #[test]
-    fn packets_with_hold_0() {
-        test0(&[
-            (1, 1, &[1, 9], &[(1, &[1, 9])]),
-            (3, 3, &[1, 9], &[(3, &[1, 9])]),
-            (4, 4, &[1, 9], &[(4, &[1, 9])]),
-            (5, 5, &[1, 9], &[(5, &[1, 9])]),
-        ])
-    }
-
-    #[test]
-    fn out_of_order_packets_with_hold_0() {
-        test0(&[
-            (3, 1, &[1, 9], &[(1, &[1, 9])]),
-            (1, 3, &[1, 9], &[(3, &[1, 9])]),
-            (5, 4, &[1, 9], &[(4, &[1, 9])]),
-            (2, 5, &[1, 9], &[(5, &[1, 9])]),
-        ])
-    }
-
-    fn test(
-        v: &[(
-            u64,   // seq
-            i64,   // time
-            &[u8], // data
-            &[(
-                i64,   // time
-                &[u8], // depacketized data
-            )],
-        )],
-    ) {
-        test_n(3, v)
-    }
-
-    fn test0(
-        v: &[(
-            u64,   // seq
-            i64,   // time
-            &[u8], // data
-            &[(
-                i64,   // time
-                &[u8], // depacketized data
-            )],
-        )],
-    ) {
-        test_n(0, v)
-    }
-
-    fn test_n(
-        hold_back: usize,
-        v: &[(
-            u64,   // seq
-            i64,   // time
-            &[u8], // data
-            &[(
-                i64,   // time
-                &[u8], // depacketized data
-            )],
-        )],
-    ) {
-        let depack = CodecDepacketizer::Boxed(Box::new(TestDepack));
-        let mut buf = DepacketizingBuffer::new(depack, hold_back);
-
-        let mut step = 1;
-
-        for (seq, time, data, checks) in v {
-            let meta = RtpMeta {
-                received: Instant::now(),
-                seq_no: (*seq).into(),
-                time: MediaTime::new(*time, 90_000),
-                header: RtpHeader {
-                    sequence_number: *seq as u16,
-                    timestamp: *time as u32,
-                    ..Default::default()
-                },
-            };
-
-            buf.push(meta, data.to_vec());
-
-            let mut depacks = vec![];
-            while let Some(res) = buf.pop() {
-                let d = res.unwrap();
-                depacks.push(d);
-            }
-
-            assert_eq!(
-                depacks.len(),
-                checks.len(),
-                "Step {}: check count not matching {} != {}",
-                step,
-                depacks.len(),
-                checks.len()
-            );
-
-            let iter = depacks.into_iter().zip(checks.iter());
-
-            for (depack, (dtime, ddata)) in iter {
-                assert_eq!(
-                    depack.time.numer(),
-                    *dtime,
-                    "Step {}: Time not matching {} != {}",
-                    step,
-                    depack.time.numer(),
-                    *dtime
-                );
-
-                assert_eq!(
-                    depack.data, *ddata,
-                    "Step {}: Data not correct {:?} != {:?}",
-                    step, depack.data, *ddata
-                );
-            }
-
-            step += 1;
-        }
-    }
 
     #[derive(Debug)]
     struct TestDepack;

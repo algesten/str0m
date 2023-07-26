@@ -396,18 +396,12 @@ impl Session {
             return;
         };
 
-        let Some(packet) = stream.handle_rtp(now, header, data, seq_no, time, pt, is_repair) else {
-            return;
-        };
+        stream.handle_rtp(now, header, data, seq_no, time, pt, is_repair);
 
-        if self.rtp_mode {
-            // In RTP mode, we store the packet temporarily here for the next poll_output().
-            self.pending_packet = Some(packet);
-        } else {
-            // In non-RTP mode, we let the Media use a Depayloader.
-            media.depayload(
+        if !self.rtp_mode {
+            media.ensure_depayloader(
                 stream.rid(),
-                packet,
+                pt,
                 self.reordering_size_audio,
                 self.reordering_size_video,
             );
@@ -493,7 +487,7 @@ impl Session {
                 return Some(MediaEvent::KeyframeRequest(req));
             }
 
-            if let Some(r) = media.poll_sample() {
+            if let Some(r) = media.poll_sample(&mut self.streams) {
                 match r {
                     Ok(v) => return Some(MediaEvent::Data(v)),
                     Err(e) => return Some(MediaEvent::Error(e)),

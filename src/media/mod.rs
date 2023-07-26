@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crate::change::AddMedia;
 use crate::io::{Id, DATAGRAM_MTU};
-use crate::packet::{DepacketizingBuffer, Payloader, RtpMeta};
+use crate::packet::{Depayloader, Payloader};
 use crate::rtp_::SRTP_BLOCK_SIZE;
 use crate::rtp_::{ExtensionMap, SRTP_OVERHEAD};
 use crate::RtcError;
@@ -70,7 +70,7 @@ pub struct Media {
 
     /// Buffers of incoming RTP packets. These do reordering/jitter buffer and also
     /// depayload from RTP to samples.
-    depayloaders: HashMap<(Pt, Option<Rid>), DepacketizingBuffer>,
+    depayloaders: HashMap<(Pt, Option<Rid>), Depayloader>,
 
     /// Payloaders for outoing RTP packets.
     payloaders: HashMap<(Pt, Option<Rid>), Payloader>,
@@ -81,7 +81,6 @@ pub struct Media {
     pub(crate) need_open_event: bool,
     pub(crate) need_changed_event: bool,
 
-    /// When converting media lines to SDP, it's easier to represent the app m-line
     /// as a Media. This field is true when we do that. No Session::medias will have
     /// this set to true – they only exist temporarily.
     pub(crate) app_tmp: bool,
@@ -162,43 +161,11 @@ impl Media {
         self.simulcast.as_ref()
     }
 
-    pub(crate) fn poll_sample(&mut self) -> Option<Result<MediaData, RtcError>> {
-        for ((pt, rid), buf) in &mut self.depayloaders {
-            if let Some(r) = buf.pop() {
-                let codec = *self.params.iter().find(|c| c.pt() == *pt)?;
-                return Some(
-                    r.map(|dep| MediaData {
-                        mid: self.mid,
-                        pt: *pt,
-                        rid: *rid,
-                        params: codec,
-                        time: dep.time,
-                        network_time: dep.first_network_time(),
-                        seq_range: dep.seq_range(),
-                        contiguous: dep.contiguous,
-                        ext_vals: dep.ext_vals(),
-                        codec_extra: dep.codec_extra,
-                        data: dep.data,
-                    })
-                    .map_err(|e| RtcError::Packet(self.mid, *pt, e)),
-                );
-            }
-        }
-        None
-    }
-
-    pub(crate) fn main_payload_type_for(&self, pt: Pt) -> Option<Pt> {
-        let p = self
-            .params
-            .iter()
-            .find(|p| p.pt == pt || p.resend == Some(pt))?;
-        Some(p.pt)
-    }
-
-    pub(crate) fn depayload(
+    /// prepare this media to depayload buffered rtp packets
+    pub(crate) fn ensure_depayloader(
         &mut self,
         rid: Option<Rid>,
-        packet: RtpPacket,
+        pt: Pt,
         reordering_size_audio: usize,
         reordering_size_video: usize,
     ) {
@@ -206,9 +173,9 @@ impl Media {
             return;
         }
 
-        let pt = packet.header.payload_type;
-
         let key = (pt, rid);
+
+        // create depayloader
 
         let exists = self.depayloaders.contains_key(&key);
 
@@ -225,22 +192,54 @@ impl Media {
                 reordering_size_video
             };
 
-            let buffer = DepacketizingBuffer::new(codec.into(), hold_back);
+            let depay = Depayloader::new(codec.into(), hold_back);
 
-            self.depayloaders.insert((pt, rid), buffer);
+            self.depayloaders.insert((pt, rid), depay);
+        }
+    }
+
+    pub(crate) fn poll_sample(
+        &mut self,
+        streams: &mut Streams,
+    ) -> Option<Result<MediaData, RtcError>> {
+        for ((pt, rid), depayloader) in &mut self.depayloaders {
+            let stream = streams
+                .rx_by_mid_rid(self.mid, *rid)
+                .expect("stream for mid: {mid}, rid: {rid}");
+            let buf = stream.buffer_mut();
+
+            if let Some((n, result)) = depayloader.depayload(buf.view()) {
+                buf.remove(n);
+                let codec = *self.params.iter().find(|c| c.pt() == *pt)?;
+                return Some(
+                    result
+                        .map(|dep| MediaData {
+                            mid: self.mid,
+                            pt: *pt,
+                            rid: *rid,
+                            params: codec,
+                            time: dep.time,
+                            network_time: dep.first_network_time(),
+                            seq_range: dep.seq_range(),
+                            contiguous: dep.contiguous,
+                            ext_vals: dep.ext_vals(),
+                            codec_extra: dep.codec_extra,
+                            data: dep.data,
+                        })
+                        .map_err(|e| RtcError::Packet(self.mid, *pt, e)),
+                );
+            }
         }
 
-        // The entry will be there by now.
-        let buffer = self.depayloaders.get_mut(&key).unwrap();
+        None
+    }
 
-        let meta = RtpMeta {
-            received: packet.timestamp,
-            time: packet.time,
-            seq_no: packet.seq_no,
-            header: packet.header.clone(),
-        };
-
-        buffer.push(meta, packet.payload);
+    pub(crate) fn main_payload_type_for(&self, pt: Pt) -> Option<Pt> {
+        let p = self
+            .params
+            .iter()
+            .find(|p| p.pt == pt || p.resend == Some(pt))?;
+        Some(p.pt)
     }
 
     pub(crate) fn set_cname(&mut self, cname: String) {

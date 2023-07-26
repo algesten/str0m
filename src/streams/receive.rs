@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::time::Instant;
 
 use crate::media::KeyframeRequestKind;
+use crate::packet::{JitterBuffer, RtpMeta};
 use crate::rtp_::{
     extend_u16, extend_u32, DlrrItem, ExtendedReport, Fir, FirEntry, InstantExt, MediaTime, Mid,
     Pli, Pt, ReceiverReport, ReportBlock, ReportList, Rid, Rrtr, Rtcp, RtcpFb, RtpHeader,
@@ -62,6 +63,9 @@ pub struct StreamRx {
     /// Last time we produced regular feedback RR.
     last_receiver_report: Instant,
 
+    /// Jitter buffer holding incoming RTP packets
+    buffer: JitterBuffer,
+
     /// Statistics of incoming data.
     stats: StreamRxStats,
 }
@@ -102,6 +106,7 @@ impl StreamRx {
             pending_request_keyframe: None,
             fir_seq_no: 0,
             last_receiver_report: already_happened(),
+            buffer: JitterBuffer::new(),
             stats: StreamRxStats::default(),
         }
     }
@@ -238,7 +243,7 @@ impl StreamRx {
         time: MediaTime,
         pt: Pt,
         is_repair: bool,
-    ) -> Option<RtpPacket> {
+    ) {
         trace!("Handle RTP: {:?}", header);
 
         // RTX packets must be rewritten to be a normal packet.
@@ -246,7 +251,7 @@ impl StreamRx {
             let keep_packet = self.un_rtx(&mut header, &mut data, &mut seq_no, pt);
 
             if !keep_packet {
-                return None;
+                return;
             }
         }
 
@@ -263,7 +268,18 @@ impl StreamRx {
         self.stats.bytes += packet.payload.len() as u64;
         self.stats.packets += 1;
 
-        Some(packet)
+        let meta = RtpMeta {
+            received: packet.timestamp,
+            time: packet.time,
+            seq_no: packet.seq_no,
+            header: packet.header.clone(),
+        };
+
+        self.buffer.push(meta, packet.payload);
+    }
+
+    pub(crate) fn buffer_mut(&mut self) -> &mut JitterBuffer {
+        &mut self.buffer
     }
 
     fn un_rtx(
