@@ -275,7 +275,7 @@ impl StreamRx {
             header: packet.header.clone(),
         };
 
-        self.buffer.push(meta, packet.payload);
+        self.buffer.push(meta, packet);
     }
 
     pub(crate) fn buffer_mut(&mut self) -> &mut JitterBuffer {

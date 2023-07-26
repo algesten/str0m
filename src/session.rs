@@ -82,9 +82,6 @@ pub(crate) struct Session {
     // temporary buffer when getting the next (unencrypted) RTP packet from Media line.
     poll_packet_buf: Vec<u8>,
 
-    // Next packet for RtpPacket event.
-    pending_packet: Option<RtpPacket>,
-
     pub ice_lite: bool,
 
     /// Whether we are running in RTP-mode.
@@ -151,7 +148,6 @@ impl Session {
             enable_twcc_feedback: false,
             pacer,
             poll_packet_buf: vec![0; 2000],
-            pending_packet: None,
             ice_lite: config.ice_lite,
             rtp_mode: config.rtp_mode,
         }
@@ -459,8 +455,12 @@ impl Session {
             return None;
         }
 
-        if let Some(packet) = self.pending_packet.take() {
-            return Some(MediaEvent::RtpPacket(packet));
+        if self.rtp_mode {
+            for stream in self.streams.streams_rx().into_iter() {
+                if let Some(entry) = stream.buffer_mut().take_first() {
+                    return Some(MediaEvent::RtpPacket(entry.packet));
+                }
+            }
         }
 
         for media in &mut self.medias {

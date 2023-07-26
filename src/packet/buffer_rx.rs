@@ -3,7 +3,10 @@ use std::fmt;
 use std::ops::RangeInclusive;
 use std::time::Instant;
 
-use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SeqNo};
+use crate::{
+    rtp_::{ExtensionValues, MediaTime, RtpHeader, SeqNo},
+    streams::RtpPacket,
+};
 
 use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError};
 
@@ -65,9 +68,10 @@ impl RtpMeta {
 
 #[derive(Debug)]
 pub struct BufEntry {
-    meta: RtpMeta,
-    data: Vec<u8>,
+    pub meta: RtpMeta,
+    pub packet: RtpPacket,
 }
+
 #[derive(Debug)]
 pub struct JitterBuffer {
     // TODO: figure out what hold_back means for the jitter buffer
@@ -91,7 +95,7 @@ impl JitterBuffer {
         }
     }
 
-    pub fn push(&mut self, meta: RtpMeta, data: Vec<u8>) {
+    pub fn push(&mut self, meta: RtpMeta, packet: RtpPacket) {
         // Record that latest seen max time (used for extending time to u64).
         self.max_time = Some(if let Some(m) = self.max_time {
             m.max(meta.time)
@@ -109,7 +113,7 @@ impl JitterBuffer {
             }
             Err(i) => {
                 // i is insertion point to maintain order
-                let entry = BufEntry { meta, data };
+                let entry = BufEntry { meta, packet };
                 self.queue.insert(i, entry);
             }
         }
@@ -122,6 +126,10 @@ impl JitterBuffer {
 
     pub fn remove(&mut self, n: usize) {
         self.queue.drain(0..=n);
+    }
+
+    pub fn take_first(&mut self) -> Option<BufEntry> {
+        self.queue.pop_front()
     }
 }
 
@@ -237,10 +245,10 @@ impl Depayloader {
             }
 
             // Each segment can have multiple is_partition_head() == true, record the first.
-            let head = self.depack.is_partition_head(&entry.data);
+            let head = self.depack.is_partition_head(&entry.packet.payload);
             let tail = self
                 .depack
-                .is_partition_tail(entry.meta.header.marker, &entry.data);
+                .is_partition_tail(entry.meta.header.marker, &entry.packet.payload);
             if start.is_none() && head {
                 start = Some(Start {
                     index,
@@ -279,11 +287,11 @@ impl Depayloader {
             // for next loop round.
             seq = entry.meta.seq_no;
 
-            let head = self.depack.is_partition_head(&entry.data);
+            let head = self.depack.is_partition_head(&entry.packet.payload);
             let tail = self
                 .depack
-                .is_partition_tail(entry.meta.header.marker, &entry.data);
-            let is_padding = entry.data.is_empty() && !head && !tail;
+                .is_partition_tail(entry.meta.header.marker, &entry.packet.payload);
+            let is_padding = entry.packet.payload.is_empty() && !head && !tail;
             if !is_padding {
                 return false;
             }
@@ -357,9 +365,9 @@ impl Depayloader {
         let mut meta = Vec::with_capacity(stop - start + 1);
 
         for entry in buf[start..=stop].iter() {
-            if let Err(e) = self
-                .depack
-                .depacketize(&entry.data, &mut data, &mut codec_extra)
+            if let Err(e) =
+                self.depack
+                    .depacketize(&entry.packet.payload, &mut data, &mut codec_extra)
             {
                 println!("depacketize error: {} {}", start, stop);
                 return Err(e);
