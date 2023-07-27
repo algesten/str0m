@@ -14,6 +14,7 @@ use crate::format::PayloadParams;
 use crate::sdp::Simulcast as SdpSimulcast;
 use crate::sdp::{MediaLine, Msid};
 use crate::streams::{RtpPacket, Streams};
+use crate::util::already_happened;
 
 mod event;
 pub use event::*;
@@ -331,6 +332,14 @@ impl Media {
         self.to_payload = Some(to_payload);
 
         Ok(())
+    }
+
+    pub(crate) fn poll_timeout(&self) -> Option<Instant> {
+        if self.to_payload.is_some() {
+            Some(already_happened())
+        } else {
+            None
+        }
     }
 
     pub(crate) fn do_payload(

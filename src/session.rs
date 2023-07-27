@@ -610,12 +610,14 @@ impl Session {
         let nack_at = self.nack_at();
         let twcc_at = self.twcc_at();
         let pacing_at = self.pacer.poll_timeout();
+        let packetize_at = self.medias.iter().flat_map(|m| m.poll_timeout()).next();
         let bwe_at = self.bwe.as_ref().map(|bwe| bwe.poll_timeout());
 
         let timeout = (regular_at, "regular")
             .soonest((nack_at, "nack"))
             .soonest((twcc_at, "twcc"))
             .soonest((pacing_at, "pacing"))
+            .soonest((packetize_at, "media"))
             .soonest((bwe_at, "bwe"));
 
         // trace!("poll_timeout soonest is: {}", timeout.1);
