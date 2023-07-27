@@ -733,11 +733,8 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
                         return index_err(m.mid());
                     }
 
-                    for rid in m.rids() {
-                        media.expect_rid_rx(rid);
-                    }
-
                     update_media(media, m, &config, &session_exts, &mut session.streams);
+
                     continue;
                 }
             }
@@ -858,6 +855,10 @@ fn update_media(
     // how we have it locally.
     let new_dir = m.direction().invert();
     media.set_direction(new_dir);
+
+    for rid in m.rids().iter() {
+        media.expect_rid_rx(*rid);
+    }
 
     // Narrowing of PT
     let params: Vec<Pt> = m
