@@ -881,9 +881,16 @@ fn update_media(
     // about the remote side's SSRC.
     let infos = m.ssrc_info();
 
-    for i in infos {
+    let main = infos.iter().filter(|i| i.repair.is_none());
+
+    for i in main {
         // TODO: If the remote is communicating _BOTH_ rid and a=ssrc this will fail.
-        streams.expect_stream_rx(i.ssrc, i.repair, media.mid(), None);
+        info!("Adding SSRC: {:?}", i);
+        let repair_ssrc = infos
+            .iter()
+            .find(|r| r.repair == Some(i.ssrc))
+            .map(|r| r.ssrc);
+        streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), None);
     }
     // media.set_equalize_sources();
 
