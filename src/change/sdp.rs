@@ -335,8 +335,9 @@ impl<'a> SdpApi<'a> {
     /// ```
     pub fn add_channel(&mut self, label: String) -> ChannelId {
         let has_media = self.rtc.session.app().is_some();
+        let changes_contains_add_app = self.changes.contains_add_app();
 
-        if !has_media {
+        if !has_media && !changes_contains_add_app {
             let mid = self.rtc.new_mid();
             self.changes.0.push(Change::AddApp(mid));
         }
@@ -1124,6 +1125,15 @@ impl fmt::Debug for SdpPendingOffer {
 }
 
 impl Changes {
+    pub fn contains_add_app(&self) -> bool {
+        for i in 0..self.0.len() {
+            if matches!(&self.0[i], Change::AddApp(_)) {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn take_new_channels(&mut self) -> Vec<(ChannelId, ChannelConfig)> {
         let mut v = vec![];
 
