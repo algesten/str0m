@@ -678,7 +678,7 @@ impl MediaLine {
                     }
 
                     let info = by_ssrc(&mut v, ssrcs[1]);
-                    info.repair = Some(ssrcs[0]);
+                    info.repairs = Some(ssrcs[0]);
                 }
                 _ => {}
             }
@@ -691,7 +691,8 @@ impl MediaLine {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SsrcInfo {
     pub ssrc: Ssrc,
-    pub repair: Option<Ssrc>,
+    /// the other ssrc this ssrc is repairing
+    pub repairs: Option<Ssrc>,
     pub cname: Option<String>,
     pub stream_id: Option<String>,
     pub track_id: Option<String>,
@@ -701,7 +702,7 @@ impl Default for SsrcInfo {
     fn default() -> Self {
         Self {
             ssrc: 0.into(),
-            repair: None,
+            repairs: None,
             cname: None,
             stream_id: None,
             track_id: None,
