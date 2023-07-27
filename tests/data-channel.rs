@@ -21,6 +21,7 @@ pub fn data_channel() -> Result<(), RtcError> {
 
     let mut change = l.sdp_api();
     let cid = change.add_channel("My little channel".into());
+    change.add_channel("My little channel 2".into());
     let (offer, pending) = change.apply().unwrap();
 
     let answer = r.rtc.sdp_api().accept_offer(offer)?;
