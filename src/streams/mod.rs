@@ -169,13 +169,6 @@ impl Streams {
         }
     }
 
-    pub(crate) fn main_ssrc_rx_for(&self, ssrc_rtx: Ssrc) -> Option<Ssrc> {
-        self.streams_rx
-            .values()
-            .find(|s| s.rtx() == Some(ssrc_rtx))
-            .map(|s| s.ssrc())
-    }
-
     pub(crate) fn tx_by_mid_rid(&mut self, mid: Mid, rid: Option<Rid>) -> Option<&mut StreamTx> {
         self.streams_tx
             .values_mut()
@@ -303,6 +296,16 @@ impl Streams {
         rid: Option<Rid>,
     ) -> Option<&mut StreamTx> {
         self.streams_tx
+            .values_mut()
+            .find(|s| s.mid() == mid && (rid.is_none() || s.rid() == rid))
+    }
+
+    pub(crate) fn stream_rx_by_mid_rid(
+        &mut self,
+        mid: Mid,
+        rid: Option<Rid>,
+    ) -> Option<&mut StreamRx> {
+        self.streams_rx
             .values_mut()
             .find(|s| s.mid() == mid && (rid.is_none() || s.rid() == rid))
     }

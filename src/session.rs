@@ -315,7 +315,8 @@ impl Session {
             media.expects_rid_rx(rid).then_some(())?;
 
             let ssrc_rx = if is_repair {
-                self.streams.main_ssrc_rx_for(ssrc)?
+                // find the ssrc we are repairing
+                self.streams.stream_rx_by_mid_rid(mid, Some(rid))?.ssrc()
             } else {
                 ssrc
             };
