@@ -14,18 +14,22 @@ pub(crate) struct ValueHistory<T> {
     max_time: Duration,
 }
 
+const DEFAULT_VALUE_HISTORY_DURATION: Duration = Duration::from_secs(2);
+
+impl<T: Default> Default for ValueHistory<T> {
+    fn default() -> Self {
+        Self {
+            value: Default::default(),
+            history: Default::default(),
+            max_time: DEFAULT_VALUE_HISTORY_DURATION,
+        }
+    }
+}
+
 impl<T> ValueHistory<T>
 where
     T: Copy + AddAssign + Sum,
 {
-    pub fn new(initial: T, max_time: Duration) -> ValueHistory<T> {
-        ValueHistory {
-            value: initial,
-            history: VecDeque::new(),
-            max_time,
-        }
-    }
-
     /// Adds a timed value
     /// Note: time should always monotonically increase in subsequent calls to add()
     pub fn push(&mut self, t: Instant, v: T) {
@@ -63,7 +67,11 @@ mod test {
     fn test() {
         let now = Instant::now();
 
-        let mut h = ValueHistory::new(11, Duration::from_secs(1));
+        let mut h = ValueHistory {
+            value: 11,
+            max_time: Duration::from_secs(1),
+            ..Default::default()
+        };
 
         h.push(now - Duration::from_millis(1500), 22);
         h.push(now - Duration::from_millis(500), 22);

@@ -13,7 +13,7 @@ use crate::format::CodecSpec;
 use crate::format::FormatParams;
 use crate::format::PayloadParams;
 use crate::ice::{Candidate, IceCreds};
-use crate::rtp::{Direction, Extension, Mid, Pt, SessionId, Ssrc};
+use crate::rtp_::{Direction, Extension, Mid, Pt, Rid, SessionId, Ssrc};
 
 use super::parser::sdp_parser;
 use super::SdpError;
@@ -506,6 +506,16 @@ impl MediaLine {
         ret
     }
 
+    pub fn rids(&self) -> Vec<Rid> {
+        let mut ret = vec![];
+        for a in &self.attrs {
+            if let MediaAttribute::Rid { id, .. } = a {
+                ret.push(id.0.as_str().into())
+            }
+        }
+        ret
+    }
+
     pub fn simulcast(&self) -> Option<Simulcast> {
         let mut found = None;
 
@@ -668,7 +678,7 @@ impl MediaLine {
                     }
 
                     let info = by_ssrc(&mut v, ssrcs[1]);
-                    info.repair = Some(ssrcs[0]);
+                    info.repairs = Some(ssrcs[0]);
                 }
                 _ => {}
             }
@@ -681,7 +691,8 @@ impl MediaLine {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SsrcInfo {
     pub ssrc: Ssrc,
-    pub repair: Option<Ssrc>,
+    /// the other ssrc this ssrc is repairing
+    pub repairs: Option<Ssrc>,
     pub cname: Option<String>,
     pub stream_id: Option<String>,
     pub track_id: Option<String>,
@@ -691,7 +702,7 @@ impl Default for SsrcInfo {
     fn default() -> Self {
         Self {
             ssrc: 0.into(),
-            repair: None,
+            repairs: None,
             cname: None,
             stream_id: None,
             track_id: None,
@@ -1475,7 +1486,7 @@ impl<'a> std::fmt::Display for FingerprintFmt<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::rtp::Extension;
+    use crate::rtp_::Extension;
 
     use super::*;
 

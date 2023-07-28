@@ -9,9 +9,9 @@ use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::ice::{Candidate, IceCreds};
 use crate::io::Id;
-use crate::media::MediaInner;
-use crate::media::{MediaKind, Source};
-use crate::rtp::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
+use crate::media::Media;
+use crate::packet::MediaKind;
+use crate::rtp_::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
 use crate::sdp::{Proto, SessionAttribute, Setup};
@@ -21,6 +21,7 @@ use crate::Rtc;
 use crate::RtcError;
 
 pub use crate::sdp::{SdpAnswer, SdpOffer};
+use crate::streams::{Streams, DEFAULT_RTX_CACHE_DURATION};
 
 /// Changes to the Rtc via SDP Offer/Answer dance.
 pub struct SdpApi<'a> {
@@ -256,7 +257,7 @@ impl<'a> SdpApi<'a> {
             let mut prev = 0.into();
             for i in 0..ssrc_count {
                 // Allocate SSRC that are not in use in the session already.
-                let new_ssrc = self.rtc.new_ssrc();
+                let new_ssrc = self.rtc.session.streams.new_ssrc();
                 let is_rtx = has_rtx && i % 2 == 1;
                 let repairs = if is_rtx { Some(prev) } else { None };
                 v.push((new_ssrc, repairs));
@@ -550,7 +551,15 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
 
                 let attrs = params.media_attributes(include_candidates);
 
-                m.as_media_line(attrs)
+                // Already made send stream SSRCs
+                let mut ssrcs = session.streams.ssrcs_tx(m.mid());
+
+                // Merged with pending stream SSRCs
+                if let Some(pending) = params.pending {
+                    ssrcs.extend(pending.ssrcs_for_mid(m.mid()))
+                }
+
+                m.as_media_line(attrs, &ssrcs)
             })
             .collect::<Vec<_>>();
 
@@ -605,7 +614,7 @@ fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
 
     add_new_lines(session, &new_lines, true).map_err(RtcError::RemoteSdp)?;
 
-    session.equalize_sources();
+    equalize_streams(session);
 
     Ok(())
 }
@@ -631,9 +640,35 @@ fn apply_answer(
     // Add all pending changes (since we pre-allocated SSRC communicated in the Offer).
     add_pending_changes(session, pending);
 
-    session.equalize_sources();
+    equalize_streams(session);
 
     Ok(())
+}
+
+fn equalize_streams(session: &mut Session) {
+    // This makes sure we have as many send streams as there are receive streams.
+    let new = session.streams.equalize_streams();
+
+    // Configure the buffer sizes of newly created send streams.
+    for ssrc in new {
+        // unwrap because stream was just created in above call.
+        let stream = session.streams.stream_tx(&ssrc).unwrap();
+
+        // unwrap because we must have the corresponding Media
+        let media = session
+            .medias
+            .iter()
+            .find(|m| m.mid() == stream.mid())
+            .unwrap();
+
+        let size = if media.kind().is_audio() {
+            session.send_buffer_audio
+        } else {
+            session.send_buffer_video
+        };
+
+        stream.set_rtx_cache(size, DEFAULT_RTX_CACHE_DURATION);
+    }
 }
 
 fn add_pending_changes(session: &mut Session, pending: Changes) {
@@ -644,14 +679,10 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
             _ => continue,
         };
 
-        for (ssrc, repairs) in &add_media.ssrcs {
-            if repairs.is_none() {
-                session.set_first_ssrc_local(*ssrc);
-            }
-        }
-
         let media = session
-            .media_by_mid_mut(add_media.mid)
+            .medias
+            .iter_mut()
+            .find(|m| m.mid() == add_media.mid)
             .expect("Media to be added for pending mid");
 
         // the cname/msid has already been communicated in the offer, we need to kep
@@ -659,13 +690,19 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
         media.set_cname(add_media.cname);
         media.set_msid(add_media.msid);
 
-        for (ssrc, repairs) in add_media.ssrcs {
-            let tx = media.get_or_create_source_tx(ssrc);
-            if let Some(repairs) = repairs {
-                if tx.set_repairs(repairs) {
-                    media.set_equalize_sources();
-                }
-            }
+        for (ssrc, rtx) in add_media.ssrcs {
+            // TODO: When we allow sending RID, we need to add that here.
+            let stream = session
+                .streams
+                .declare_stream_tx(ssrc, rtx, add_media.mid, None);
+
+            let size = if media.kind().is_audio() {
+                session.send_buffer_audio
+            } else {
+                session.send_buffer_video
+            };
+
+            stream.set_rtx_cache(size, DEFAULT_RTX_CACHE_DURATION);
         }
     }
 }
@@ -692,12 +729,13 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
                 }
             }
             MediaType::Audio | MediaType::Video => {
-                if let Some(media) = session.media_by_mid_mut(m.mid()) {
+                if let Some(media) = session.medias.iter_mut().find(|l| l.mid() == m.mid()) {
                     if idx != media.index() {
                         return index_err(m.mid());
                     }
 
-                    update_media(media, m, &config, &session_exts);
+                    update_media(media, m, &config, &session_exts, &mut session.streams);
+
                     continue;
                 }
             }
@@ -733,9 +771,15 @@ fn add_new_lines(
             // Update the PTs to match that of the remote.
             session.codec_config.update_pts(m);
 
-            let mut media = MediaInner::from_remote_media_line(m, idx, exts);
+            let mut media = Media::from_remote_media_line(m, idx, exts);
             media.need_open_event = need_open_event;
-            update_media(&mut media, m, &session.codec_config, &session.exts);
+            update_media(
+                &mut media,
+                m,
+                &session.codec_config,
+                &session.exts,
+                &mut session.streams,
+            );
 
             session.add_media(media);
         } else if m.typ.is_channel() {
@@ -799,17 +843,12 @@ fn as_media_lines(session: &Session) -> Vec<&dyn AsSdpMediaLine> {
 }
 
 fn update_media(
-    media: &mut MediaInner,
+    media: &mut Media,
     m: &MediaLine,
     config: &CodecConfig,
     session_exts: &ExtensionMap,
+    streams: &mut Streams,
 ) {
-    // Nack enabled for any payload
-    let nack_enabled = m.rtp_params().iter().any(|p| p.fb_nack);
-    if nack_enabled {
-        media.enable_nack();
-    }
-
     // Direction changes
     //
     // All changes come from the other side, either via an incoming OFFER
@@ -817,6 +856,10 @@ fn update_media(
     // how we have it locally.
     let new_dir = m.direction().invert();
     media.set_direction(new_dir);
+
+    for rid in m.rids().iter() {
+        media.expect_rid_rx(*rid);
+    }
 
     // Narrowing of PT
     let params: Vec<Pt> = m
@@ -839,15 +882,19 @@ fn update_media(
     // This will always be for ReceiverSource since any incoming a=ssrc line will be
     // about the remote side's SSRC.
     let infos = m.ssrc_info();
-    for info in infos {
-        let rx = media.get_or_create_source_rx(info.ssrc);
 
-        if let Some(repairs) = info.repair {
-            if rx.set_repairs(repairs) {
-                media.set_equalize_sources();
-            }
-        }
+    let main = infos.iter().filter(|i| i.repairs.is_none());
+
+    for i in main {
+        // TODO: If the remote is communicating _BOTH_ rid and a=ssrc this will fail.
+        info!("Adding SSRC: {:?}", i);
+        let repair_ssrc = infos
+            .iter()
+            .find(|r| r.repairs == Some(i.ssrc))
+            .map(|r| r.ssrc);
+        streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), None);
     }
+    // media.set_equalize_sources();
 
     // Simulcast configuration
     if let Some(s) = m.simulcast() {
@@ -864,7 +911,11 @@ trait AsSdpMediaLine {
     fn mid(&self) -> Mid;
     fn msid(&self) -> Option<&Msid>;
     fn index(&self) -> usize;
-    fn as_media_line(&self, attrs: Vec<MediaAttribute>) -> MediaLine;
+    fn as_media_line(
+        &self,
+        attrs: Vec<MediaAttribute>,
+        ssrcs_tx: &[(Ssrc, Option<Ssrc>)],
+    ) -> MediaLine;
 }
 
 impl AsSdpMediaLine for (Mid, usize) {
@@ -877,7 +928,11 @@ impl AsSdpMediaLine for (Mid, usize) {
     fn index(&self) -> usize {
         self.1
     }
-    fn as_media_line(&self, mut attrs: Vec<MediaAttribute>) -> MediaLine {
+    fn as_media_line(
+        &self,
+        mut attrs: Vec<MediaAttribute>,
+        _ssrcs_tx: &[(Ssrc, Option<Ssrc>)],
+    ) -> MediaLine {
         attrs.push(MediaAttribute::Mid(self.0));
         attrs.push(MediaAttribute::SctpPort(5000));
         attrs.push(MediaAttribute::MaxMessageSize(262144));
@@ -892,20 +947,24 @@ impl AsSdpMediaLine for (Mid, usize) {
     }
 }
 
-impl AsSdpMediaLine for MediaInner {
+impl AsSdpMediaLine for Media {
     fn mid(&self) -> Mid {
-        MediaInner::mid(self)
+        Media::mid(self)
     }
     fn msid(&self) -> Option<&Msid> {
-        Some(MediaInner::msid(self))
+        Some(Media::msid(self))
     }
     fn index(&self) -> usize {
-        MediaInner::index(self)
+        Media::index(self)
     }
-    fn as_media_line(&self, mut attrs: Vec<MediaAttribute>) -> MediaLine {
+    fn as_media_line(
+        &self,
+        mut attrs: Vec<MediaAttribute>,
+        ssrcs_tx: &[(Ssrc, Option<Ssrc>)],
+    ) -> MediaLine {
         if self.app_tmp {
             let app = (self.mid(), self.index());
-            return app.as_media_line(attrs);
+            return app.as_media_line(attrs, ssrcs_tx);
         }
 
         attrs.push(MediaAttribute::Mid(self.mid()));
@@ -956,27 +1015,42 @@ impl AsSdpMediaLine for MediaInner {
 
         // Outgoing SSRCs
         let msid = format!("{} {}", self.msid().stream_id, self.msid().track_id);
-        for ssrc in self.source_tx_ssrcs() {
+        for (ssrc, ssrc_rtx) in ssrcs_tx {
             attrs.push(MediaAttribute::Ssrc {
-                ssrc,
+                ssrc: *ssrc,
                 attr: "cname".to_string(),
                 value: self.cname().to_string(),
             });
             attrs.push(MediaAttribute::Ssrc {
-                ssrc,
+                ssrc: *ssrc,
                 attr: "msid".to_string(),
                 value: msid.clone(),
             });
+            if let Some(ssrc_rtx) = ssrc_rtx {
+                attrs.push(MediaAttribute::Ssrc {
+                    ssrc: *ssrc_rtx,
+                    attr: "cname".to_string(),
+                    value: self.cname().to_string(),
+                });
+                attrs.push(MediaAttribute::Ssrc {
+                    ssrc: *ssrc_rtx,
+                    attr: "msid".to_string(),
+                    value: msid.clone(),
+                });
+            }
         }
 
-        let count = self.source_tx_ssrcs().count();
+        let count = ssrcs_tx.len();
         #[allow(clippy::comparison_chain)]
-        if count == 2 {
-            attrs.push(MediaAttribute::SsrcGroup {
-                semantics: "FID".to_string(),
-                ssrcs: self.source_tx_ssrcs().collect(),
-            });
-        } else if count > 2 {
+        if count == 1 {
+            let (ssrc, ssrc_rtx) = &ssrcs_tx[0];
+            if let Some(ssrc_rtx) = ssrc_rtx {
+                attrs.push(MediaAttribute::SsrcGroup {
+                    semantics: "FID".to_string(),
+                    ssrcs: vec![*ssrc, *ssrc_rtx],
+                });
+            }
+        } else {
             // TODO: handle simulcast
         }
 
@@ -1134,7 +1208,7 @@ impl Changes {
         index_start: usize,
         config: &'b CodecConfig,
         exts: &'b ExtensionMap,
-    ) -> impl Iterator<Item = MediaInner> + '_ {
+    ) -> impl Iterator<Item = Media> + '_ {
         self.0
             .iter()
             .enumerate()
@@ -1152,6 +1226,26 @@ impl Changes {
             }
         }
     }
+
+    fn ssrcs_for_mid(&self, mid: Mid) -> &[(Ssrc, Option<Ssrc>)] {
+        let maybe_add_media = self
+            .0
+            .iter()
+            .filter_map(|c| {
+                if let Change::AddMedia(m) = c {
+                    Some(m)
+                } else {
+                    None
+                }
+            })
+            .find(|m| m.mid == mid);
+
+        let Some(m) = maybe_add_media else {
+            return &[];
+        };
+
+        &m.ssrcs
+    }
 }
 
 impl Change {
@@ -1160,7 +1254,7 @@ impl Change {
         index: usize,
         config: &CodecConfig,
         exts: &ExtensionMap,
-    ) -> Option<MediaInner> {
+    ) -> Option<Media> {
         use Change::*;
         match self {
             AddMedia(v) => {
@@ -1169,9 +1263,9 @@ impl Change {
                 add.params = config.all_for_kind(v.kind).copied().collect();
                 add.index = index;
 
-                Some(MediaInner::from_add_media(add, *exts))
+                Some(Media::from_add_media(add, *exts))
             }
-            AddApp(mid) => Some(MediaInner::from_app_tmp(*mid, index)),
+            AddApp(mid) => Some(Media::from_app_tmp(*mid, index)),
             _ => None,
         }
     }

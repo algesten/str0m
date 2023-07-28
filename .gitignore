@@ -6,3 +6,4 @@ Cargo.lock
 tracing*
 *.svg
 xamples
+.vscode

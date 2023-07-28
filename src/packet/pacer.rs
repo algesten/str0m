@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::rtp::{Bitrate, DataSize, Mid};
+use crate::rtp_::{Bitrate, DataSize, Mid};
 use crate::util::already_happened;
 use crate::util::not_happening;
 
@@ -610,7 +610,7 @@ mod test {
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use crate::rtp::{DataSize, RtpHeader};
+    use crate::rtp_::{DataSize, RtpHeader};
 
     use super::*;
 
@@ -1272,7 +1272,7 @@ mod test {
         use std::collections::VecDeque;
         use std::time::{Duration, Instant};
 
-        use crate::rtp::{DataSize, RtpHeader};
+        use crate::rtp_::{DataSize, RtpHeader};
 
         use super::*;
 

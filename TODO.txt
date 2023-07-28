@@ -1,0 +1,8 @@
+
+* Consolidate RtpPacket, RtcMeta
+
+* Catch up with main branch changes.
+
+* Do we need SDES (move cname to stream?)?
+
+* Read through all documentation

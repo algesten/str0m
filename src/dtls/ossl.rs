@@ -15,9 +15,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
 
 use crate::io::DATAGRAM_MTU;
-use crate::Fingerprint;
 
 use super::DtlsError;
+use super::Fingerprint;
 
 const RSA_F4: u32 = 0x10001;
 const DTLS_CIPHERS: &str = "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";

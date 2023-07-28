@@ -533,10 +533,6 @@ impl Client {
                 return;
             };
 
-        let Some(mut media) = self.rtc.media(mid) else {
-            return;
-        };
-
         if data.rid.is_some() && data.rid != Some("h".into()) {
             // This is where we plug in a selection strategy for simulcast. For
             // now either let rid=None through (which would be no simulcast layers)
@@ -549,15 +545,16 @@ impl Client {
             self.chosen_rid = data.rid;
         }
 
-        // Match outgoing pt to incoming codec.
-        let Some(pt) = media.match_params(data.params) else {
+        let Some(writer) = self.rtc.writer(mid) else {
             return;
         };
 
-        if let Err(e) = media
-            .writer(pt)
-            .write(data.network_time, data.time, &data.data)
-        {
+        // Match outgoing pt to incoming codec.
+        let Some(pt) = writer.match_params(data.params) else {
+            return;
+        };
+
+        if let Err(e) = writer.write(pt, data.network_time, data.time, &data.data) {
             warn!("Client ({}) failed: {:?}", *self.id, e);
             self.rtc.disconnect();
         }
@@ -571,11 +568,11 @@ impl Client {
             return;
         }
 
-        let Some(mut media) = self.rtc.media(mid_in) else {
+        let Some(mut writer) = self.rtc.writer(mid_in) else {
             return;
         };
 
-        if let Err(e) = media.request_keyframe(req.rid, req.kind) {
+        if let Err(e) = writer.request_keyframe(req.rid, req.kind) {
             // This can fail if the rid doesn't match any media.
             info!("request_keyframe failed: {:?}", e);
         }

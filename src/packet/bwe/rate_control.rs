@@ -1,7 +1,7 @@
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::rtp::Bitrate;
+use crate::rtp_::Bitrate;
 
 use super::BandwithUsage;
 

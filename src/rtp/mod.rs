@@ -47,6 +47,10 @@ pub enum RtpError {
     /// Other IO errors.
     #[error("{0}")]
     Io(#[from] io::Error),
+
+    /// Failed to parse RTP header.
+    #[error("Failed to parse RTP header")]
+    ParseHeader,
 }
 
 #[cfg(all(fuzzing, test))]

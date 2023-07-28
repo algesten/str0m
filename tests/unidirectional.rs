@@ -48,10 +48,7 @@ pub fn unidirectional() -> Result<(), RtcError> {
     loop {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
-        l.media(mid)
-            .unwrap()
-            .writer(pt)
-            .write(wallclock, time, &data_a)?;
+        l.writer(mid).unwrap().write(pt, wallclock, time, &data_a)?;
 
         progress(&mut l, &mut r)?;
 

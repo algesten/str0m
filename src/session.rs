@@ -2,22 +2,23 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::dtls::KeyingMaterial;
-use crate::format::{Codec, CodecConfig};
+use crate::format::CodecConfig;
 use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
-use crate::media::{MediaAdded, MediaChanged, Source};
-use crate::packet::{
-    LeakyBucketPacer, NullPacer, Pacer, PacerImpl, RtpMeta, SendSideBandwithEstimator,
-};
-use crate::rtp::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
-use crate::rtp::{extend_u32, SRTCP_OVERHEAD};
-use crate::rtp::{Bitrate, ExtensionMap, MediaTime, Mid, Rtcp, RtcpFb};
-use crate::rtp::{SrtpContext, SrtpKey, Ssrc};
+use crate::media::KeyframeRequest;
+use crate::media::Media;
+use crate::media::{MediaAdded, MediaChanged};
+use crate::packet::SendSideBandwithEstimator;
+use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
+use crate::rtp_::SeqNo;
+use crate::rtp_::SRTCP_OVERHEAD;
+use crate::rtp_::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
+use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
+use crate::rtp_::{SrtpContext, SrtpKey, Ssrc};
 use crate::stats::StatsSnapshot;
+use crate::streams::{RtpPacket, Streams};
 use crate::util::{already_happened, not_happening, Soonest};
-use crate::{net, KeyframeRequest, MediaData};
+use crate::{net, MediaData};
 use crate::{RtcConfig, RtcError};
-
-use super::{MediaInner, PolledPacket};
 
 /// Minimum time we delay between sending nacks. This should be
 /// set high enough to not cause additional problems in very bad
@@ -40,7 +41,10 @@ pub(crate) struct Session {
     // These fields are pub to allow session_sdp.rs modify them.
     // Notice the fields are maybe not in m-line index order since the app
     // might be spliced in somewhere.
-    medias: Vec<MediaInner>,
+    pub(crate) medias: Vec<Media>,
+
+    // The actual RTP encoded streams.
+    pub(crate) streams: Streams,
 
     /// The app m-line. Spliced into medias above.
     app: Option<(Mid, usize)>,
@@ -55,18 +59,9 @@ pub(crate) struct Session {
     pub exts: ExtensionMap,
     pub codec_config: CodecConfig,
 
-    /// Internally all ReceiverSource and SenderSource are identified by mid/ssrc.
-    /// This map helps denormalize to that form. Sender and Receiver are mixed in
-    /// this map since Ssrc should never clash.
+    /// Each incoming SSRC is mapped to a Mid/Ssrc. The Ssrc in the value is for the case
+    /// where the incoming SSRC is for an RTX and we want the "main".
     source_keys: HashMap<Ssrc, (Mid, Ssrc)>,
-
-    /// This is the first ever discovered remote media. We use that for
-    /// special cases like the media SSRC in TWCC feedback.
-    first_ssrc_remote: Option<Ssrc>,
-
-    /// This is the first ever discovered local media. We use this for many
-    /// feedback cases where we need a "sender SSRC".
-    first_ssrc_local: Option<Ssrc>,
 
     srtp_rx: Option<SrtpContext>,
     srtp_tx: Option<SrtpContext>,
@@ -87,10 +82,13 @@ pub(crate) struct Session {
     // temporary buffer when getting the next (unencrypted) RTP packet from Media line.
     poll_packet_buf: Vec<u8>,
 
+    // Next packet for RtpPacket event.
+    pending_packet: Option<RtpPacket>,
+
     pub ice_lite: bool,
 
     /// Whether we are running in RTP-mode.
-    rtp_mode: bool,
+    pub rtp_mode: bool,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -101,6 +99,7 @@ pub enum MediaEvent {
     Added(MediaAdded),
     KeyframeRequest(KeyframeRequest),
     EgressBitrateEstimate(Bitrate),
+    RtpPacket(RtpPacket),
 }
 
 impl Session {
@@ -131,6 +130,7 @@ impl Session {
         Session {
             id,
             medias: vec![],
+            streams: Streams::default(),
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
@@ -139,8 +139,6 @@ impl Session {
             exts: config.exts,
             codec_config: config.codec_config.clone(),
             source_keys: HashMap::new(),
-            first_ssrc_remote: None,
-            first_ssrc_local: None,
             srtp_rx: None,
             srtp_tx: None,
             last_nack: already_happened(),
@@ -153,8 +151,8 @@ impl Session {
             enable_twcc_feedback: false,
             pacer,
             poll_packet_buf: vec![0; 2000],
+            pending_packet: None,
             ice_lite: config.ice_lite,
-
             rtp_mode: config.rtp_mode,
         }
     }
@@ -181,14 +179,6 @@ impl Session {
         &self.app
     }
 
-    pub fn media_by_mid(&self, mid: Mid) -> Option<&MediaInner> {
-        self.medias.iter().find(|m| m.mid() == mid)
-    }
-
-    pub fn media_by_mid_mut(&mut self, mid: Mid) -> Option<&mut MediaInner> {
-        self.medias.iter_mut().find(|m| m.mid() == mid)
-    }
-
     pub fn exts(&self) -> &ExtensionMap {
         &self.exts
     }
@@ -212,11 +202,29 @@ impl Session {
     }
 
     pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
-        for m in &mut self.medias {
-            m.handle_timeout(now)?;
+        // Payload any waiting samples
+        self.do_payload(now)?;
+
+        let sender_ssrc = self.streams.first_ssrc_local();
+
+        let do_nack = Some(now) >= self.nack_at();
+
+        self.streams
+            .handle_timeout(now, sender_ssrc, do_nack, &mut self.feedback);
+
+        if do_nack {
+            self.last_nack = now;
         }
 
-        let sender_ssrc = self.first_ssrc_local();
+        let iter = self.streams.streams_tx().map(|m| m.send_queue_state(now));
+        if let Some(padding_request) = self.pacer.handle_timeout(now, iter) {
+            let stream = self
+                .streams
+                .stream_tx_by_mid_rid(padding_request.mid, None)
+                .expect("pacer to us an existing stream");
+
+            stream.generate_padding(now, padding_request.padding);
+        }
 
         if let Some(twcc_at) = self.twcc_at() {
             if now >= twcc_at {
@@ -224,37 +232,6 @@ impl Session {
             }
         }
 
-        for m in &mut self.medias {
-            m.maybe_create_keyframe_request(sender_ssrc, &mut self.feedback);
-        }
-
-        if now >= self.regular_feedback_at() {
-            for m in &mut self.medias {
-                m.maybe_create_regular_feedback(now, sender_ssrc, &mut self.feedback);
-            }
-        }
-
-        if let Some(nack_at) = self.nack_at() {
-            if now >= nack_at {
-                self.last_nack = now;
-                for m in &mut self.medias {
-                    m.create_nack(sender_ssrc, &mut self.feedback);
-                }
-            }
-        }
-
-        let iter = self
-            .medias
-            .iter_mut()
-            .map(|m| m.buffers_tx_queue_state(now));
-
-        if let Some(padding_request) = self.pacer.handle_timeout(now, iter) {
-            let media = self
-                .media_by_mid_mut(padding_request.mid)
-                .expect("media for service padding request");
-
-            media.generate_padding(now, padding_request.padding);
-        }
         if let Some(bwe) = self.bwe.as_mut() {
             bwe.handle_timeout(now);
         }
@@ -269,7 +246,7 @@ impl Session {
         // These SSRC are on medial level, but twcc is on session level,
         // we fill in the first discovered media SSRC in each direction.
         twcc.sender_ssrc = sender_ssrc;
-        twcc.ssrc = self.first_ssrc_remote();
+        twcc.ssrc = self.streams.first_ssrc_remote();
 
         debug!("Created feedback TWCC: {:?}", twcc);
         self.feedback.push_front(Rtcp::Twcc(twcc));
@@ -286,7 +263,6 @@ impl Session {
             Rtp(buf) => {
                 if let Some(header) = RtpHeader::parse(buf, &self.exts) {
                     self.handle_rtp(now, header, buf);
-                    self.equalize_sources();
                 } else {
                     trace!("Failed to parse RTP header");
                 }
@@ -312,30 +288,51 @@ impl Session {
             return Some(*r);
         }
 
-        // The receiver/source might already exist in some Media.
-        let maybe_mid = self
-            .medias
-            .iter()
-            .find(|m| m.has_ssrc_rx(ssrc))
-            .map(|m| m.mid());
+        // The receiver/source SSRC might already exist.
+        // This would happen when the SSRC is communicated as a=ssrc lines in the SDP.
+        // In this case the encoded stream should have been declared already.
+        let maybe_stream = self.streams.stream_rx(&ssrc);
+        if let Some(stream) = maybe_stream {
+            let mid = stream.mid();
+            let ssrc_rx = stream.ssrc();
 
-        if let Some(mid) = maybe_mid {
             // SSRC is mapped to a Sender/Receiver in this media. Make an entry for it.
-            self.source_keys.insert(ssrc, (mid, ssrc));
+            self.source_keys.insert(ssrc, (mid, ssrc_rx));
 
-            return Some((mid, ssrc));
+            return Some((mid, ssrc_rx));
         }
 
-        // The RTP header extension for mid might give us a clue.
+        // Find receiver/source via mid/rid. This is used when the SSRC is not declare
+        // in the SDP as a=ssrc lines.
         if let Some(mid) = header.ext_vals.mid {
-            // Ensure media for this mid exists.
-            let m_exists = self.medias.iter().any(|m| m.mid() == mid);
+            // The media the mid points out.
+            let media = self.medias.iter_mut().find(|m| m.mid() == mid)?;
 
-            if m_exists {
-                // Insert an entry so we can look up on SSRC alone later.
-                self.source_keys.insert(ssrc, (mid, ssrc));
-                return Some((mid, ssrc));
+            let rid = header.ext_vals.rid.or(header.ext_vals.rid_repair)?;
+            let is_repair = header.ext_vals.rid_repair.is_some();
+
+            // Check if the mid/rid combo is not expected
+            media.expects_rid_rx(rid).then_some(())?;
+
+            let ssrc_rx = if is_repair {
+                // find the ssrc we are repairing
+                self.streams.stream_rx_by_mid_rid(mid, Some(rid))?.ssrc()
+            } else {
+                ssrc
+            };
+
+            // Declare entries in streams for receiving these streams.
+            if is_repair {
+                self.streams
+                    .expect_stream_rx(ssrc_rx, Some(ssrc), mid, Some(rid))
+            } else {
+                self.streams.expect_stream_rx(ssrc_rx, None, mid, Some(rid))
             }
+
+            // Insert an entry so we can look up on SSRC alone later.
+            self.source_keys.insert(ssrc, (mid, ssrc_rx));
+
+            return Some((mid, ssrc_rx));
         }
 
         // No way to map this RtpHeader.
@@ -355,18 +352,11 @@ impl Session {
             self.twcc_rx_register.update_seq(extended.into(), now);
         }
 
-        // Look up mid/ssrc for this header.
+        // The ssrc is the _main_ ssrc (no the rtx, that might be in the header).
         let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(&header) else {
-            trace!("Unable to map RTP header to media: {:?}", header);
+            trace!("No mid/SSRC for header: {:?}", header);
             return;
         };
-
-        // mid_and_ssrc_for_header guarantees media for this mid exists.
-        let media = self
-            .medias
-            .iter_mut()
-            .find(|m| m.mid() == mid)
-            .expect("media for mid");
 
         let srtp = match self.srtp_rx.as_mut() {
             Some(v) => v,
@@ -375,6 +365,14 @@ impl Session {
                 return;
             }
         };
+
+        // Both of these unwraps are fine because mid_and_ssrc_for_header guarantees it.
+        let media = self.medias.iter_mut().find(|m| m.mid() == mid).unwrap();
+        let stream = self.streams.stream_rx(&ssrc).unwrap();
+
+        // If the header ssrc differs from the main, it's a repair stream.
+        let is_repair = header.ssrc != ssrc;
+
         let clock_rate = match media.get_params(header.payload_type) {
             Some(v) => v.spec().clock_rate,
             None => {
@@ -383,41 +381,9 @@ impl Session {
             }
         };
 
-        // Figure out which SSRC the repairs header points out. This is here because of borrow
-        // checker ordering.
-        let ssrc_repairs = header
-            .ext_vals
-            .rid_repair
-            .and_then(|repairs| media.ssrc_rx_for_rid(repairs));
+        let (seq_no, time) = stream.update(now, &header, clock_rate);
 
-        let source = media.get_or_create_source_rx(ssrc);
-
-        let mut media_need_check_source = false;
-        if let Some(rid) = header.ext_vals.rid {
-            if source.set_rid(rid) {
-                media_need_check_source = true;
-            }
-        }
-        if let Some(repairs) = ssrc_repairs {
-            if source.set_repairs(repairs) {
-                media_need_check_source = true;
-            }
-        }
-
-        // Gymnastics to appease the borrow checker.
-        let source = if media_need_check_source {
-            media.set_equalize_sources();
-            media.get_or_create_source_rx(ssrc)
-        } else {
-            source
-        };
-
-        let mut rid = source.rid();
-        let seq_no = source.update(now, &header, clock_rate);
-
-        let is_rtx = source.is_rtx();
-
-        let mut data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
+        let data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
             Some(v) => v,
             None => {
                 trace!("Failed to unprotect SRTP");
@@ -425,116 +391,27 @@ impl Session {
             }
         };
 
-        // For RTX we copy the header and modify the sequencer number to be that of the repaired stream.
-        let mut header = header.clone();
-
-        // This seq_no is the lengthened original seq_no for RTX stream, and just straight up
-        // lengthened seq_no for non-rtx.
-        let seq_no = if is_rtx {
-            let mut orig_seq_16 = 0;
-
-            // Not sure why we receive these initial packets with just nulls for the RTX.
-            if RtpHeader::is_rtx_null_packet(&data) {
-                trace!("Drop RTX null packet");
-                return;
-            }
-
-            let n = RtpHeader::read_original_sequence_number(&data, &mut orig_seq_16);
-            data.drain(0..n);
-            trace!(
-                "Repaired seq no {} -> {}",
-                header.sequence_number,
-                orig_seq_16
-            );
-            header.sequence_number = orig_seq_16;
-            if let Some(repairs_rid) = header.ext_vals.rid_repair {
-                rid = Some(repairs_rid);
-            }
-
-            let repaired_ssrc = match source.repairs() {
-                Some(v) => v,
-                None => {
-                    trace!("Can't find repaired SSRC for: {}", header.ssrc);
-                    return;
-                }
-            };
-            trace!("Repaired {:?} -> {:?}", header.ssrc, repaired_ssrc);
-            header.ssrc = repaired_ssrc;
-
-            let repaired_source = media.get_or_create_source_rx(repaired_ssrc);
-            if rid.is_none() && repaired_source.rid().is_some() {
-                rid = repaired_source.rid();
-            }
-            let orig_seq_no = repaired_source.update(now, &header, clock_rate);
-
-            let params = media.get_params(header.payload_type).unwrap();
-            if let Some(pt) = params.resend() {
-                header.payload_type = pt;
-            }
-
-            orig_seq_no
-        } else {
-            if self.first_ssrc_remote.is_none() {
-                info!("First remote SSRC: {}", ssrc);
-                self.first_ssrc_remote = Some(ssrc);
-            }
-
-            seq_no
-        };
-
-        // Parameters using the PT in the header. This will return the same CodecParams
-        // instance regardless of whether this being a resend PT or not.
-        // unwrap: is ok because we checked above.
-        let params = media.get_params(header.payload_type).unwrap();
-
-        // This is the "main" PT and it will differ to header.payload_type if this is a resend.
-        let pt = params.pt();
-        let codec = if self.rtp_mode {
-            Codec::Null
-        } else {
-            params.spec().codec
-        };
-
-        if !media.direction().is_receiving() {
-            // Not adding unless we are supposed to be receiving.
+        let Some(pt) = media.main_payload_type_for(header.payload_type) else {
+            trace!("RTP packet PT is not declared in media");
             return;
-        }
-
-        // Buffers are unique per media (since PT is unique per media).
-        // The hold_back should be configured from param.spec().codec to
-        // avoid the null codec.
-        let hold_back = if params.spec().codec.is_audio() {
-            self.reordering_size_audio
-        } else {
-            self.reordering_size_video
         };
-        let buf_rx = media.get_buffer_rx(pt, rid, codec, hold_back);
 
-        let prev_time = buf_rx.max_time().map(|t| t.numer() as u64);
-        let extended = extend_u32(prev_time, header.timestamp);
-        let time = MediaTime::new(extended as i64, clock_rate as i64);
+        let Some(packet) = stream.handle_rtp(now, header, data, seq_no, time, pt, is_repair) else {
+            return;
+        };
 
-        let meta = RtpMeta::new(now, time, seq_no, header);
-
-        // here we have incoming and depacketized data before it may be dropped at buffer.push()
-        let bytes_rx = data.len();
-
-        // In RTP mode we want to retain the header. After srtp_unprotect, we need to
-        // recombine the header + the decrypted payload.
         if self.rtp_mode {
-            // Write header after the body. This shouldn't allocate since
-            // unprotect_rtp() call above should allocate enough space for the header.
-            data.extend_from_slice(&buf[..meta.header.header_len]);
-            // Rotate so header is before body.
-            data.rotate_right(meta.header.header_len);
-        };
-
-        buf_rx.push(meta, data);
-
-        // TODO: is there a nicer way to make borrow-checker happy ?
-        // this should go away with the refactoring of the entire handle_rtp() function
-        let source = media.get_or_create_source_rx(ssrc);
-        source.update_packet_counts(bytes_rx as u64);
+            // In RTP mode, we store the packet temporarily here for the next poll_output().
+            self.pending_packet = Some(packet);
+        } else {
+            // In non-RTP mode, we let the Media use a Depayloader.
+            media.depayload(
+                stream.rid(),
+                packet,
+                self.reordering_size_audio,
+                self.reordering_size_video,
+            );
+        }
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
@@ -562,58 +439,20 @@ impl Session {
                 return Some(());
             }
 
-            let media = self.medias.iter_mut().find(|m| {
-                if fb.is_for_rx() {
-                    m.has_ssrc_rx(fb.ssrc())
-                } else {
-                    m.has_ssrc_tx(fb.ssrc())
-                }
-            });
-            if let Some(media) = media {
-                media.handle_rtcp_fb(now, fb);
+            if fb.is_for_rx() {
+                let Some(stream) = self.streams.stream_rx(&fb.ssrc()) else {
+                    continue;
+                };
+                stream.handle_rtcp(now, fb);
             } else {
-                // This is not necessarily a fault when starting a new track.
-                trace!("No media for feedback: {:?}", fb);
+                let Some(stream) = self.streams.stream_tx(&fb.ssrc()) else {
+                    continue;
+                };
+                stream.handle_rtcp(now, fb);
             }
         }
 
         Some(())
-    }
-
-    /// Whenever there are changes to ReceiverSource/SenderSource, we need to ensure the
-    /// receivers are matched to senders. This ensure the setup is correct.
-    pub fn equalize_sources(&mut self) {
-        let required_ssrcs: usize = self
-            .medias
-            .iter()
-            .map(|m| m.equalize_requires_ssrcs())
-            .sum();
-
-        // This will contain enough new SSRC to equalize the receiver/senders.
-        let mut new_ssrcs = Vec::with_capacity(required_ssrcs);
-
-        loop {
-            if new_ssrcs.len() == required_ssrcs {
-                break;
-            }
-            let ssrc = self.new_ssrc();
-
-            // There's an outside chance we randomize the same number twice.
-            if !new_ssrcs.contains(&ssrc) {
-                self.set_first_ssrc_local(ssrc);
-                new_ssrcs.push(ssrc);
-            }
-        }
-
-        let mut new_ssrcs = new_ssrcs.into_iter();
-
-        for m in &mut self.medias {
-            if !m.equalize_sources() {
-                continue;
-            }
-
-            m.do_equalize_sources(&mut new_ssrcs);
-        }
     }
 
     pub fn poll_event(&mut self) -> Option<MediaEvent> {
@@ -624,6 +463,10 @@ impl Session {
         // If we're not ready to flow media, don't send any events.
         if !self.ready_for_srtp() {
             return None;
+        }
+
+        if let Some(packet) = self.pending_packet.take() {
+            return Some(MediaEvent::RtpPacket(packet));
         }
 
         for media in &mut self.medias {
@@ -646,12 +489,8 @@ impl Session {
                 }));
             }
 
-            if let Some((rid, kind)) = media.poll_keyframe_request() {
-                return Some(MediaEvent::KeyframeRequest(KeyframeRequest {
-                    mid: media.mid(),
-                    rid,
-                    kind,
-                }));
+            if let Some(req) = self.streams.poll_keyframe_request() {
+                return Some(MediaEvent::KeyframeRequest(req));
             }
 
             if let Some(r) = media.poll_sample() {
@@ -725,65 +564,60 @@ impl Session {
 
         // Figure out which, if any, queue to poll
         let mid = self.pacer.poll_queue()?;
-
-        // NB: Cannot use media_index_mut here due to borrowing woes around self, need split
-        // borrowing.
         let media = self
             .medias
-            .iter_mut()
+            .iter()
             .find(|m| m.mid() == mid)
             .expect("index is media");
 
         let buf = &mut self.poll_packet_buf;
-
         let twcc_seq = self.twcc;
 
-        if let Some(polled_packet) = media.poll_packet(now, &self.exts, &mut self.twcc, buf) {
-            let PolledPacket {
-                header,
-                seq_no,
-                is_padding,
-                payload_size,
-            } = polled_packet;
+        // TODO: allow for sending simulcast
+        let stream = self.streams.stream_tx_by_mid_rid(media.mid(), None)?;
 
-            trace!(payload_size, is_padding, "Poll RTP: {:?}", header);
+        let params = media.payload_params();
+        let receipt = stream.poll_packet(now, &self.exts, &mut self.twcc, params, buf)?;
 
-            #[cfg(feature = "_internal_dont_use_log_stats")]
-            {
-                let kind = if is_padding { "padding" } else { "media" };
+        let PacketReceipt {
+            header,
+            seq_no,
+            is_padding,
+            payload_size,
+        } = receipt;
 
-                crate::log_stat!("PACKET_SENT", header.ssrc, payload_size, kind);
-            }
+        trace!(payload_size, is_padding, "Poll RTP: {:?}", header);
 
-            self.pacer.register_send(now, payload_size.into(), mid);
-            let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
+        #[cfg(feature = "_internal_dont_use_log_stats")]
+        {
+            let kind = if is_padding { "padding" } else { "media" };
 
-            self.twcc_tx_register
-                .register_seq(twcc_seq.into(), now, payload_size);
-
-            return Some(protected.into());
+            crate::log_stat!("PACKET_SENT", header.ssrc, payload_size, kind);
         }
 
-        None
+        // self.pacer.register_send(now, payload_size.into(), mid);
+
+        let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
+
+        self.twcc_tx_register
+            .register_seq(twcc_seq.into(), now, payload_size);
+
+        Some(protected.into())
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        let media = self
-            .medias
-            .iter_mut()
-            .filter_map(|m| m.poll_timeout())
-            .min();
         let regular_at = Some(self.regular_feedback_at());
         let nack_at = self.nack_at();
         let twcc_at = self.twcc_at();
         let pacing_at = self.pacer.poll_timeout();
+        let packetize_at = self.medias.iter().flat_map(|m| m.poll_timeout()).next();
         let bwe_at = self.bwe.as_ref().map(|bwe| bwe.poll_timeout());
 
-        let timeout = (media, "media")
-            .soonest((regular_at, "regular"))
+        let timeout = (regular_at, "regular")
             .soonest((nack_at, "nack"))
             .soonest((twcc_at, "twcc"))
             .soonest((pacing_at, "pacing"))
+            .soonest((packetize_at, "media"))
             .soonest((bwe_at, "bwe"));
 
         // trace!("poll_timeout soonest is: {}", timeout.1);
@@ -795,25 +629,14 @@ impl Session {
         self.medias.iter().any(|m| m.mid() == mid)
     }
 
-    /// Test if the ssrc is known in the session at all, as sender or receiver.
-    pub fn has_ssrc(&self, ssrc: Ssrc) -> bool {
-        self.medias
-            .iter()
-            .any(|m| m.has_ssrc_rx(ssrc) || m.has_ssrc_tx(ssrc))
-    }
-
     fn regular_feedback_at(&self) -> Instant {
-        self.medias
-            .iter()
-            .map(|m| m.regular_feedback_at())
-            .min()
+        self.streams
+            .regular_feedback_at()
             .unwrap_or_else(not_happening)
     }
 
     fn nack_at(&mut self) -> Option<Instant> {
-        let need_nack = self.medias.iter_mut().any(|s| s.has_nack());
-
-        if need_nack {
+        if self.streams.need_nack() {
             Some(self.last_nack + NACK_MIN_INTERVAL)
         } else {
             None
@@ -821,35 +644,11 @@ impl Session {
     }
 
     fn twcc_at(&self) -> Option<Instant> {
-        let is_receiving = self.medias.iter().any(|m| m.direction().is_receiving());
+        let is_receiving = self.streams.is_receiving();
         if is_receiving && self.enable_twcc_feedback && self.twcc_rx_register.has_unreported() {
             Some(self.last_twcc + TWCC_INTERVAL)
         } else {
             None
-        }
-    }
-
-    pub fn new_ssrc(&self) -> Ssrc {
-        loop {
-            let ssrc: Ssrc = (rand::random::<u32>()).into();
-            if !self.has_ssrc(ssrc) {
-                break ssrc;
-            }
-        }
-    }
-
-    fn first_ssrc_remote(&self) -> Ssrc {
-        self.first_ssrc_remote.unwrap_or_else(|| 0.into())
-    }
-
-    fn first_ssrc_local(&self) -> Ssrc {
-        self.first_ssrc_local.unwrap_or_else(|| 0.into())
-    }
-
-    pub fn set_first_ssrc_local(&mut self, ssrc: Ssrc) {
-        if self.first_ssrc_local.is_none() {
-            info!("First local SSRC: {}", ssrc);
-            self.first_ssrc_local = Some(ssrc);
         }
     }
 
@@ -861,9 +660,14 @@ impl Session {
     }
 
     pub fn visit_stats(&mut self, now: Instant, snapshot: &mut StatsSnapshot) {
-        for media in &mut self.medias {
-            media.visit_stats(now, snapshot)
+        for stream in self.streams.streams_tx() {
+            stream.visit_stats(snapshot, now);
         }
+
+        for stream in self.streams.streams_rx() {
+            stream.visit_stats(snapshot, now);
+        }
+
         snapshot.tx = snapshot.egress.values().map(|s| s.bytes).sum();
         snapshot.rx = snapshot.ingress.values().map(|s| s.bytes).sum();
         snapshot.bwe_tx = self.bwe.as_ref().and_then(|bwe| bwe.last_estimate());
@@ -890,12 +694,11 @@ impl Session {
         self.medias.len() + if self.app.is_some() { 1 } else { 0 }
     }
 
-    pub fn add_media(&mut self, mut media: MediaInner) {
-        media.rtp_mode = self.rtp_mode;
+    pub fn add_media(&mut self, media: Media) {
         self.medias.push(media);
     }
 
-    pub fn medias(&self) -> &[MediaInner] {
+    pub fn medias(&self) -> &[Media] {
         &self.medias
     }
 
@@ -920,6 +723,22 @@ impl Session {
         let pacing_rate = (bwe.current_bitrate * PACING_FACTOR).max(padding_rate);
         self.pacer.set_pacing_rate(pacing_rate);
     }
+
+    pub(crate) fn media_by_mid(&self, mid: Mid) -> Option<&Media> {
+        self.medias.iter().find(|m| m.mid() == mid)
+    }
+
+    pub(crate) fn media_by_mid_mut(&mut self, mid: Mid) -> Option<&mut Media> {
+        self.medias.iter_mut().find(|m| m.mid() == mid)
+    }
+
+    fn do_payload(&mut self, now: Instant) -> Result<(), RtcError> {
+        for m in &mut self.medias {
+            m.do_payload(now, &mut self.streams)?;
+        }
+
+        Ok(())
+    }
 }
 
 struct Bwe {
@@ -937,7 +756,7 @@ impl Bwe {
 
     pub(crate) fn update<'t>(
         &mut self,
-        records: impl Iterator<Item = &'t crate::rtp::TwccSendRecord>,
+        records: impl Iterator<Item = &'t crate::rtp_::TwccSendRecord>,
         now: Instant,
     ) {
         self.bwe.update(records, now);
@@ -965,4 +784,11 @@ impl Bwe {
     fn last_estimate(&self) -> Option<Bitrate> {
         self.bwe.last_estimate()
     }
+}
+
+pub struct PacketReceipt {
+    pub header: RtpHeader,
+    pub seq_no: SeqNo,
+    pub is_padding: bool,
+    pub payload_size: usize,
 }

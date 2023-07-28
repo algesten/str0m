@@ -196,20 +196,17 @@
 //! // Obtain mid from Event::MediaAdded
 //! let mid: Mid = todo!();
 //!
-//! // Get the `Media` for this `mid`
-//! let media = rtc.media(mid).unwrap();
+//! // Create a media writer for the mid.
+//! let writer = rtc.writer(mid).unwrap();
 //!
 //! // Get the payload type (pt) for the wanted codec.
-//! let pt = media.payload_params()[0].pt();
-//!
-//! // Create a media writer for the payload type.
-//! let writer = media.writer(pt);
+//! let pt = writer.payload_params()[0].pt();
 //!
 //! // Write the data
 //! let wallclock = todo!();  // Absolute time of the data
 //! let media_time = todo!(); // Media time, in RTP time
 //! let data = todo!();       // Actual data
-//! writer.write(wallclock, media_time, data).unwrap();
+//! writer.write(pt, wallclock, media_time, data).unwrap();
 //! ```
 //!
 //! ## Media time, wallclock and local time
@@ -340,7 +337,7 @@
 //!
 //! Samples are not suitable to use directly in UDP (RTP) packets - for
 //! one they are too big. Samples are therefore further chunked up by
-//! codec specific packetizers into RTP packets.
+//! codec specific payloaders into RTP packets.
 //!
 //! Str0m's API currently operate on the "sample level". From an
 //! architectural point of view, all things RTP are considered an internal
@@ -461,7 +458,7 @@
 //! 3. In a browser, visit `https://str0m.test:3000/`. This will complain
 //! about the TLS certificate, you need to accept the "risk". How to do
 //! this depends on browser. In Chrome you can expand "Advanced" and
-//! chose "Proceed to str0m.test (unsafe)". For Safari, you can
+//! chose "Proceed to str0m.test (unsafe)". For Safari,mod media you can
 //! similarly chose to "Visit website" despite the warning.
 //!
 //! 4. Click "Cam" and/or "Mic" followed by "Rtc". And hopefully you will
@@ -493,39 +490,69 @@
 #[macro_use]
 extern crate tracing;
 
-mod dtls;
-mod ice;
-mod io;
-mod packet;
-mod rtp;
-mod sctp;
-mod sdp;
-
-pub mod format;
-
+use change::{DirectApi, SdpApi};
 use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
+use streams::RtpPacket;
+use thiserror::Error;
 
-use change::Fingerprint;
-use change::{DirectApi, SdpApi};
+mod dtls;
 use dtls::DtlsCert;
+use dtls::Fingerprint;
 use dtls::{Dtls, DtlsEvent};
-use format::CodecConfig;
+
+mod ice;
+pub use ice::Candidate;
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use ice::IceCreds;
+
+mod io;
 use io::DatagramRecv;
-use rtp::{Extension, ExtensionMap, InstantExt, Ssrc};
+
+mod packet;
+
+#[path = "rtp/mod.rs"]
+mod rtp_;
+pub use rtp_::Bitrate;
+use rtp_::{Extension, ExtensionMap, InstantExt};
+
+/// Low level RTP helpers.
+pub mod rtp {
+    pub use crate::rtp_::{Extension, ExtensionMap, ExtensionValues, RtpHeader, SeqNo, Ssrc};
+}
+
+mod sctp;
 use sctp::{RtcSctp, SctpEvent};
 
-use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent};
-use thiserror::Error;
+mod sdp;
+
+pub mod format;
+use format::CodecConfig;
 
 pub use ice::IceConnectionState;
 
-pub use ice::Candidate;
-pub use rtp::Bitrate;
+pub mod channel;
+use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
+
+pub mod media;
+use media::{Direction, Media, Mid, Pt, Rid, Writer};
+use media::{KeyframeRequest, KeyframeRequestKind};
+use media::{MediaAdded, MediaChanged, MediaData};
+
+pub mod change;
+
+mod util;
+use util::{already_happened, not_happening, Soonest};
+
+mod session;
+use session::{MediaEvent, Session};
+
+pub mod stats;
+use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent, StatsSnapshot};
+
+mod streams;
 
 /// Network related types to get socket data in/out of [`Rtc`].
 pub mod net {
@@ -538,30 +565,10 @@ pub mod error {
     pub use crate::ice::IceError;
     pub use crate::io::NetError;
     pub use crate::packet::PacketError;
-    pub use crate::rtp::RtpError;
+    pub use crate::rtp_::RtpError;
     pub use crate::sctp::{ProtoError, SctpError};
     pub use crate::sdp::SdpError;
 }
-
-pub mod channel;
-use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
-
-pub mod media;
-use media::{Direction, KeyframeRequest, Media};
-use media::{KeyframeRequestKind, MediaChanged, MediaData};
-use media::{MediaAdded, MediaInner, Mid, PolledPacket, Pt, Rid};
-
-pub mod change;
-
-mod util;
-pub(crate) use util::*;
-
-mod session;
-use session::{MediaEvent, Session};
-
-use crate::stats::StatsSnapshot;
-
-pub mod stats;
 
 /// Errors for the whole Rtc engine.
 #[derive(Debug, Error)]
@@ -599,12 +606,21 @@ pub enum RtcError {
     #[error("No sender source")]
     NoSenderSource,
 
+    /// Using [`Streams::write_rtp`] for a stream with RTX without providing a rtx_pt.
+    #[error("When outgoing stream has RTX, write_rtp must be called with rtp_pt set")]
+    ResendRequiresRtxPt,
+
     /// Direction does not allow sending of Media data.
     #[error("Direction does not allow sending: {0}")]
     NotSendingDirection(Direction),
 
+    /// Direction does not allow receiving media data.
+    #[error("Direction does not allow receiving")]
+    NotReceivingDirection,
+
     /// If MediaWriter.request_keyframe fails because we can't find an SSRC to use.
     #[error("No receiver source (rid: {0:?})")]
+    // TODO: remove rid here.
     NoReceiverSource(Option<Rid>),
 
     /// The keyframe request failed because the kind of request is not enabled
@@ -635,9 +651,10 @@ pub enum RtcError {
     #[error("Changes made out of order")]
     ChangesOutOfOrder,
 
-    /// Some other error.
-    #[error("{0}")]
-    Other(String),
+    /// The [`Writer`] was used twice without doing `Rtc::poll_output` in between. This
+    /// is an incorrect usage pattern of the str0m API.
+    #[error("Consecutive calls to write() without poll_output() in between")]
+    WriteWithoutPoll,
 }
 
 /// Instance that does WebRTC. Main struct of the entire library.
@@ -695,13 +712,18 @@ struct SendAddr {
 #[derive(Debug)]
 #[non_exhaustive]
 #[allow(clippy::large_enum_variant)]
+#[rustfmt::skip]
 pub enum Event {
+    // =================== ICE related events ===================
+
     /// Emitted when we got ICE connection and established DTLS.
     Connected,
 
     /// ICE connection state changes tells us whether the [`Rtc`] instance is
     /// connected to the peer or not.
     IceConnectionStateChange(IceConnectionState),
+
+    // =================== Media related events ==================
 
     /// Upon adding new media to the session. The lines are emitted.
     ///
@@ -716,10 +738,7 @@ pub enum Event {
     ///. Currently only covers a change of direction.
     MediaChanged(MediaChanged),
 
-    /// Incoming keyframe request for media that we are sending to the remote peer.
-    ///
-    /// The request is either PLI (Picture Loss Indication) or FIR (Full Intra Request).
-    KeyframeRequest(KeyframeRequest),
+    // =================== Data channel related events ===================
 
     /// A data channel has opened.
     ///
@@ -741,6 +760,8 @@ pub enum Event {
     /// A data channel has been closed.
     ChannelClose(ChannelId),
 
+    // =================== Statistics and BWE related events ===================
+
     /// Statistics event for the Rtc instance
     ///
     /// Includes both media traffic (rtp payload) as well as all traffic
@@ -754,6 +775,16 @@ pub enum Event {
 
     /// A new estimate from the bandwidth estimation subsystem.
     EgressBitrateEstimate(Bitrate),
+
+    // =================== RTP related events ===================
+
+    /// Incoming keyframe request for media that we are sending to the remote peer.
+    ///
+    /// The request is either PLI (Picture Loss Indication) or FIR (Full Intra Request).
+    KeyframeRequest(KeyframeRequest),
+
+    /// Incoming RTP data.
+    RtpPacket(RtpPacket),
 }
 
 /// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.
@@ -959,6 +990,49 @@ impl Rtc {
         DirectApi::new(self)
     }
 
+    /// Send outgoing media data (samples).
+    ///
+    /// This function does not send data that is already RTP packetized.
+    ///
+    /// This operation fails if the current [`Media::direction()`] does not allow sending, the
+    /// PT doesn't match a negotiated codec, or the RID (`None` or a value) does not match
+    /// anything negotiated.
+    ///
+    /// ```no_run
+    /// # use str0m::Rtc;
+    /// # use str0m::media::{MediaData, Mid};
+    /// # use str0m::format::PayloadParams;
+    /// let mut rtc = Rtc::new();
+    ///
+    /// // add candidates, do SDP negotiation
+    /// let mid: Mid = todo!(); // obtain mid from Event::MediaAdded.
+    ///
+    /// // Writer for this mid.
+    /// let writer = rtc.writer(mid).unwrap();
+    ///
+    /// // Get incoming media data from another peer
+    /// let data: MediaData = todo!();
+    ///
+    /// // Match incoming PT to an outgoing PT.
+    /// let pt = writer.match_params(data.params).unwrap();
+    ///
+    /// writer.write(pt, data.network_time, data.time, &data.data).unwrap();
+    /// ```
+    pub fn writer(&mut self, mid: Mid) -> Option<Writer> {
+        if self.session.rtp_mode {
+            panic!("In rtp_mode use direct_api().stream_tx().write_rtp()");
+        }
+        self.session.media_by_mid_mut(mid)?;
+        Some(Writer::new(&mut self.session, mid))
+    }
+
+    /// Currently configured media.
+    ///
+    /// Read only access. Changes are made via [`sdp_api()`] or [`direct_api()`].
+    pub fn media(&self, mid: Mid) -> Option<&Media> {
+        self.session.media_by_mid(mid)
+    }
+
     fn init_dtls(&mut self, active: bool) -> Result<(), RtcError> {
         if self.dtls.is_inited() {
             return Ok(());
@@ -992,11 +1066,6 @@ impl Rtc {
                 break mid;
             }
         }
-    }
-
-    /// Creates an Ssrc that is not in the session already.
-    pub(crate) fn new_ssrc(&self) -> Ssrc {
-        self.session.new_ssrc()
     }
 
     /// Poll the `Rtc` instance for output. Output can be three things, something to _Transmit_
@@ -1152,6 +1221,7 @@ impl Rtc {
                 MediaEvent::EgressBitrateEstimate(b) => {
                     Output::Event(Event::EgressBitrateEstimate(b))
                 }
+                MediaEvent::RtpPacket(p) => Output::Event(Event::RtpPacket(p)),
             });
         }
 
@@ -1342,37 +1412,6 @@ impl Rtc {
         Ok(())
     }
 
-    /// Get a [`Media`] instance for inspecting and manipulating media. Media has a 1-1
-    /// relationship with "m-line" from the SDP. The `Media` instance is used for media
-    /// regardless of current direction.
-    ///
-    /// Apart from inspecting information about the media, there are two fundamental
-    /// operations. One is [`Media::writer()`] for writing outgoing media data, the other
-    /// is [`Media::request_keyframe()`][crate::media::Media] to request a PLI/FIR keyframe for incoming media data.
-    ///
-    /// All media rows are announced via the [`Event::MediaAdded`] event. This function
-    /// will return `None` for any [`Mid`] until that event has fired. This
-    /// is also the case for the `mid` that comes from [`SdpApi::add_media()`].
-    ///
-    /// Incoming media data is via the [`Event::MediaData`] event.
-    ///
-    /// ```no_run
-    /// # use str0m::{Rtc, media::Mid};
-    /// let mut rtc = Rtc::new();
-    ///
-    /// let mid: Mid = todo!(); // obtain Mid from Event::MediaAdded
-    /// let media = rtc.media(mid).unwrap();
-    /// // TODO write media or request keyframe.
-    /// ```
-    pub fn media(&mut self, mid: Mid) -> Option<Media<'_>> {
-        if !self.alive {
-            return None;
-        }
-        // Check the media exists. After this we don't check again going via Rtc::media_by_mid
-        self.session.media_by_mid(mid)?;
-        Some(Media::new(self, mid))
-    }
-
     /// Obtain handle for writing to a data channel.
     ///
     /// This is first available when a [`ChannelId`] is advertised via [`Event::ChannelOpen`].
@@ -1417,18 +1456,6 @@ impl Rtc {
         let n = self.change_counter;
         self.change_counter += 1;
         n
-    }
-
-    fn media_inner(&self, mid: Mid) -> &MediaInner {
-        self.session
-            .media_by_mid(mid)
-            .expect("mid to match a media")
-    }
-
-    fn media_inner_mut(&mut self, mid: Mid) -> &mut MediaInner {
-        self.session
-            .media_by_mid_mut(mid)
-            .expect("mid to match a media")
     }
 }
 
@@ -1572,7 +1599,7 @@ impl RtcConfig {
     /// The default extension map is
     ///
     /// ```
-    /// # use str0m::media::rtp::{Extension, ExtensionMap};
+    /// # use str0m::rtp::{Extension, ExtensionMap};
     /// let exts = ExtensionMap::standard();
     ///
     /// assert_eq!(exts.id_of(Extension::AudioLevel), Some(1));
@@ -1836,18 +1863,6 @@ impl PartialEq for Event {
 }
 
 impl Eq for Event {}
-
-impl fmt::Debug for MediaData {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MediaData")
-            .field("mid", &self.mid)
-            .field("pt", &self.pt)
-            .field("rid", &self.rid)
-            .field("time", &self.time)
-            .field("len", &self.data.len())
-            .finish()
-    }
-}
 
 impl fmt::Debug for Rtc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
