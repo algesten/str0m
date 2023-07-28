@@ -160,3 +160,19 @@ impl TotalQueue {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn total_queue() {
+        let mut total_queue = TotalQueue::default();
+        let now = Instant::now();
+        total_queue.increase(now, 0);
+        total_queue.increase(now, 1);
+        total_queue.decrease(now, 1, Duration::ZERO);
+        // Doesn't panic
+        total_queue.move_time_forward(now + Duration::from_millis(1));
+    }
+}
