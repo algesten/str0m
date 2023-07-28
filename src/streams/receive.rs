@@ -453,7 +453,9 @@ impl StreamRx {
             self.stats.nacks += 1;
         }
 
-        debug!("Send nacks: {:?}", nacks);
+        if !nacks.is_empty() {
+            debug!("Send nacks: {:?}", nacks);
+        }
 
         for nack in nacks {
             feedback.push_back(Rtcp::Nack(nack));

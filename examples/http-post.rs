@@ -38,7 +38,10 @@ pub fn main() {
     let private_key = include_bytes!("key.pem").to_vec();
     let server = Server::new_ssl("0.0.0.0:3000", web_request, certificate, private_key)
         .expect("starting the web server");
-    info!("Listening on {:?}", server.server_addr().port());
+    info!(
+        "Connect a browser to https://10.0.0.103:{}",
+        server.server_addr().port()
+    );
     server.run();
 }
 

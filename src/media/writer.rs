@@ -7,7 +7,9 @@ use crate::RtcError;
 
 use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, ToPayload};
 
+/// Writer of sample level data.
 ///
+/// Obtained via [`Rtc::writer`][crate::Rtc::writer].
 pub struct Writer<'a> {
     session: &'a mut Session,
     mid: Mid,
