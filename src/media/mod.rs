@@ -155,6 +155,7 @@ impl Media {
     }
 
     pub(crate) fn get_params(&self, pt: Pt) -> Option<&PayloadParams> {
+        let pt = self.main_payload_type_for(pt).unwrap_or(pt);
         self.params.iter().find(|p| p.pt == pt)
     }
 
