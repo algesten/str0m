@@ -150,18 +150,26 @@ impl StreamTx {
         }
     }
 
+    /// The (primary) SSRC of this encoded stream.
     pub fn ssrc(&self) -> Ssrc {
         self.ssrc
     }
 
+    /// The resend (RTX) SSRC of this encoded stream.
     pub fn rtx(&self) -> Option<Ssrc> {
         self.rtx
     }
 
+    /// Mid for this stream.
+    ///
+    /// In SDP this corresponds to m-line and "Media".
     pub fn mid(&self) -> Mid {
         self.mid
     }
 
+    /// Rid for this stream.
+    ///
+    /// This is used to separate streams with the same [`Mid`] when using simulcast.
     pub fn rid(&self) -> Option<Rid> {
         self.rid
     }
@@ -545,7 +553,7 @@ impl StreamTx {
         }
     }
 
-    pub fn handle_nack(
+    pub(crate) fn handle_nack(
         &mut self,
         entries: impl Iterator<Item = NackEntry>,
         now: Instant,

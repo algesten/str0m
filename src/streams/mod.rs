@@ -36,6 +36,9 @@ fn rr_interval(audio: bool) -> Duration {
     }
 }
 
+/// Packet of RTP data.
+///
+/// As emitted by [`Event::RtpPacket`][crate::Event::RtpPacket] when using rtp mode.
 #[derive(PartialEq, Eq)]
 pub struct RtpPacket {
     /// Extended sequence number to avoid having to deal with ROC.

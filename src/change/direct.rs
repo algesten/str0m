@@ -142,10 +142,6 @@ impl<'a> DirectApi<'a> {
 
     /// Allow incoming traffic from remote peer for the given SSRC.
     ///
-    /// The first time we ever discover a new SSRC, we emit the [`Event::RtpData`] with the bool flag
-    /// `initial: true`. No more packets will be handled unless we call `allow_stream_rx` for the incoming
-    /// SSRC.
-    ///
     /// Can be called multiple times if the `rtx` is discovered later via RTP header extensions.
     pub fn expect_stream_rx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>, mid: Mid, rid: Option<Rid>) {
         self.rtc
@@ -163,7 +159,7 @@ impl<'a> DirectApi<'a> {
 
     /// Obtain a receive stream.
     ///
-    /// The stream must first be declared usig [`expect_stream_rx`].
+    /// The stream must first be declared usig [`DirectApi::expect_stream_rx`].
     pub fn stream_rx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamRx> {
         self.rtc.session.streams.stream_rx(ssrc)
     }
@@ -214,7 +210,7 @@ impl<'a> DirectApi<'a> {
 
     /// Obtain a send stream.
     ///
-    /// The stream must first be declared usig [`declare_stream_tx`].
+    /// The stream must first be declared usig [`DirectApi::declare_stream_tx`].
     pub fn stream_tx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamTx> {
         self.rtc.session.streams.stream_tx(ssrc)
     }

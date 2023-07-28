@@ -27,7 +27,7 @@ impl<'a> Writer<'a> {
 
     /// Get the configured payload parameters for the `mid` this writer is for.
     ///
-    /// For the [`write()`] call, the `pt` must be set correctly.
+    /// For the [`Writer::write()`] call, the `pt` must be set correctly.
     pub fn payload_params(&self) -> &[PayloadParams] {
         media_by_mid(&self.session.medias, self.mid).payload_params()
     }
@@ -126,7 +126,7 @@ impl<'a> Writer<'a> {
     /// For SDP: This can fail if the kind of request (PLI or FIR), as specified by the
     /// [`KeyframeRequestKind`], is not negotiated in the SDP answer/offer for this m-line.
     ///
-    /// To ensure the call will not fail, use [`Media::is_request_keyframe_possible()`] to
+    /// To ensure the call will not fail, use [`Writer::is_request_keyframe_possible()`] to
     /// check whether the feedback mechanism is enabled.
     ///
     /// # Example

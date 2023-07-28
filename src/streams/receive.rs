@@ -113,18 +113,26 @@ impl StreamRx {
         }
     }
 
+    /// The (primary) SSRC of this encoded stream.
     pub fn ssrc(&self) -> Ssrc {
         self.ssrc
     }
 
+    /// The resend (RTX) SSRC of this encoded stream.
     pub fn rtx(&self) -> Option<Ssrc> {
         self.rtx
     }
 
+    /// Mid for this stream.
+    ///
+    /// In SDP this corresponds to m-line and "Media".
     pub fn mid(&self) -> Mid {
         self.mid
     }
 
+    /// Rid for this stream.
+    ///
+    /// This is used to separate streams with the same [`Mid`] when using simulcast.
     pub fn rid(&self) -> Option<Rid> {
         self.rid
     }
@@ -416,7 +424,7 @@ impl StreamRx {
         }
     }
 
-    pub fn has_nack(&mut self) -> bool {
+    pub(crate) fn has_nack(&mut self) -> bool {
         if self.rtx.is_none() || self.suppress_nack {
             return false;
         }

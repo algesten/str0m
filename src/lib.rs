@@ -518,9 +518,10 @@ mod rtp_;
 pub use rtp_::Bitrate;
 use rtp_::{Extension, ExtensionMap, InstantExt};
 
-/// Low level RTP helpers.
+/// Low level RTP access.
 pub mod rtp {
     pub use crate::rtp_::{Extension, ExtensionMap, ExtensionValues, RtpHeader, SeqNo, Ssrc};
+    pub use crate::streams::{RtpPacket, StreamRx, StreamTx};
 }
 
 mod sctp;
@@ -606,7 +607,7 @@ pub enum RtcError {
     #[error("No sender source")]
     NoSenderSource,
 
-    /// Using [`Streams::write_rtp`] for a stream with RTX without providing a rtx_pt.
+    /// Using `write_rtp` for a stream with RTX without providing a rtx_pt.
     #[error("When outgoing stream has RTX, write_rtp must be called with rtp_pt set")]
     ResendRequiresRtxPt,
 
@@ -1028,7 +1029,7 @@ impl Rtc {
 
     /// Currently configured media.
     ///
-    /// Read only access. Changes are made via [`sdp_api()`] or [`direct_api()`].
+    /// Read only access. Changes are made via [`Rtc::sdp_api()`] or [`Rtc::direct_api()`].
     pub fn media(&self, mid: Mid) -> Option<&Media> {
         self.session.media_by_mid(mid)
     }
@@ -1799,8 +1800,8 @@ impl RtcConfig {
 
     /// Make the entire Rtc be in RTP mode.
     ///
-    /// This means all media, read from [`MediaData`] and written to
-    /// [`Writer::write_rtp()`][crate::media::Writer::write_rtp()] are RTP packetized.
+    /// This means all media, read from [`RtpPacket`][crate::rtp::RtpPacket] and written to
+    /// [`StreamTx::write_rtp`][crate::rtp::StreamTx::write_rtp] are RTP packetized.
     /// It bypasses all internal packetization/depacketization inside str0m.
     ///
     /// WARNING: This is a low level API and is not str0m's primary use case.
