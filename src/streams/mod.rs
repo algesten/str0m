@@ -133,6 +133,12 @@ impl Streams {
         self.streams_rx.get_mut(ssrc)
     }
 
+    pub fn stream_rx_by_ssrc_or_rtx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamRx> {
+        self.streams_rx
+            .values_mut()
+            .find(|s| s.ssrc() == *ssrc || s.rtx() == Some(*ssrc))
+    }
+
     pub fn stream_tx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamTx> {
         self.streams_tx.get_mut(ssrc)
     }

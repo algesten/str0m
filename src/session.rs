@@ -291,7 +291,7 @@ impl Session {
         // The receiver/source SSRC might already exist.
         // This would happen when the SSRC is communicated as a=ssrc lines in the SDP.
         // In this case the encoded stream should have been declared already.
-        let maybe_stream = self.streams.stream_rx(&ssrc);
+        let maybe_stream = self.streams.stream_rx_by_ssrc_or_rtx(&ssrc);
         if let Some(stream) = maybe_stream {
             let mid = stream.mid();
             let ssrc_rx = stream.ssrc();
