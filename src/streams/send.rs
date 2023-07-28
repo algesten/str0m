@@ -198,6 +198,7 @@ impl StreamTx {
     ///              audio this is always false. For temporal encoded video, some packets are discardable
     ///              and this flag should be set accordingly.
     /// * `payload` RTP packet payload, without header.
+    #[allow(clippy::too_many_arguments)]
     pub fn write_rtp(
         &mut self,
         pt: Pt,

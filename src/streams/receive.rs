@@ -229,6 +229,7 @@ impl StreamRx {
         (seq_no, time)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_rtp(
         &mut self,
         now: Instant,
