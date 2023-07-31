@@ -70,8 +70,8 @@ pub struct StreamTx {
     /// Scheduled resends due to NACK or spurious padding.
     resends: VecDeque<Resend>,
 
-    /// Requests for padding.
-    padding: VecDeque<usize>,
+    /// Requested padding, that has not been turned into packets yet.
+    padding: usize,
 
     /// Dummy packet for resends. Used between poll_packet and poll_packet_padding
     blank_packet: RtpPacket,
@@ -141,7 +141,7 @@ impl StreamTx {
             send_queue: SendQueue::new(),
             is_audio: None,
             resends: VecDeque::new(),
-            padding: VecDeque::new(),
+            padding: 0,
             blank_packet: RtpPacket::blank(),
             rtx_cache: RtxCache::new(1024, DEFAULT_RTX_CACHE_DURATION, false),
             last_sender_report: already_happened(),
@@ -477,12 +477,10 @@ impl StreamTx {
     }
 
     fn poll_packet_padding(&mut self, _now: Instant) -> Option<NextPacket> {
-        let padding = self.padding.pop_front()?;
-
-        let next = if padding > MIN_SPURIOUS_PADDING_SIZE {
+        let next = if self.padding > MIN_SPURIOUS_PADDING_SIZE {
             // Find a historic packet that is smaller than this max size. The max size
             // is a headroom since we can accept slightly larger padding than asked for.
-            let max_size = padding * 2;
+            let max_size = (self.padding).min(1200) * 2;
 
             let pkt = self.rtx_cache.get_cached_packet_smaller_than(max_size)?;
 
@@ -500,7 +498,9 @@ impl StreamTx {
             let pkt = &mut self.blank_packet;
             pkt.seq_no = self.seq_no_rtx.inc();
 
-            let len = padding.clamp(SRTP_BLOCK_SIZE, MAX_BLANK_PADDING_PAYLOAD_SIZE);
+            let len = self
+                .padding
+                .clamp(SRTP_BLOCK_SIZE, MAX_BLANK_PADDING_PAYLOAD_SIZE);
             assert!(len <= 255); // should fit in a byte
             pkt.payload.resize(len, 0);
 
@@ -512,12 +512,7 @@ impl StreamTx {
         };
 
         let actual_len = next.pkt.payload.len();
-        let left = padding.saturating_sub(actual_len);
-
-        // Requeue any padding left to do.
-        if left > 0 {
-            self.padding.push_front(left);
-        }
+        self.padding = self.padding.saturating_sub(actual_len);
 
         Some(next)
     }
@@ -685,7 +680,7 @@ impl StreamTx {
     }
 
     pub(crate) fn generate_padding(&mut self, _now: Instant, padding: usize) {
-        self.padding.push_back(padding);
+        self.padding += padding;
     }
 
     pub(crate) fn handle_timeout(&mut self, now: Instant) {
