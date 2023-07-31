@@ -134,8 +134,7 @@ impl RtxCache {
     pub(crate) fn last_packet(&self) -> Option<&[u8]> {
         self.packet_by_seq_no
             .values()
-            .rev()
-            .next()
+            .next_back()
             .map(|e| e.payload.as_ref())
     }
 }
