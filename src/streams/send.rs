@@ -278,17 +278,10 @@ impl StreamTx {
 
         // Need the header for the receipt and modifications
         // TODO: Can we remove this?
-        let mut header = next.pkt.header.clone();
+        let header_ref = &mut next.pkt.header;
 
-        // We can fill out as many values we want here, only the negotiated ones will
-        // be used when writing the RTP packet.
-        //
-        // These need to match `Extension::is_supported()` so we are sending what we are
-        // declaring we support.
-        header.ext_vals.abs_send_time = Some(MediaTime::new_ntp_time(now));
-        header.ext_vals.mid = Some(mid);
-        header.ext_vals.transport_cc = Some(*twcc as u16);
-        *twcc += 1;
+        // This is true also for RTX.
+        header_ref.ext_vals.mid = Some(mid);
 
         // The pt in next.pkt is the "main" pt.
         let Some(param) = params.iter().find(|p| p.pt() == next.pkt.pt) else {
@@ -299,26 +292,41 @@ impl StreamTx {
 
         let is_audio = param.spec().codec.is_audio();
 
-        // Now we know the parameters, update the denominator of the MediaTime.
-        next.pkt.time = MediaTime::new(next.pkt.time.numer(), param.spec().clock_rate as i64);
-
-        match next.kind {
+        let mut header = match next.kind {
             NextPacketKind::Regular => {
+                // Now we know the parameters, update the denominator of the MediaTime.
+                next.pkt.time =
+                    MediaTime::new(next.pkt.time.numer(), param.spec().clock_rate as i64);
+
                 let pt = param.pt();
-                header.payload_type = pt;
+                // Modify the original (and also cached) value.
+                header_ref.payload_type = pt;
                 next.pkt.pt = pt;
 
-                header.ext_vals.rid = rid;
-                header.ext_vals.rid_repair = None;
+                header_ref.ext_vals.rid = rid;
+                header_ref.ext_vals.rid_repair = None;
+
+                header_ref.clone()
             }
             NextPacketKind::Resend(_) | NextPacketKind::Blank(_) => {
                 let pt_rtx = param.resend().expect("pt_rtx resend/blank");
+                // Clone header to not change the original (cached) header.
+                let mut header = header_ref.clone();
+
                 header.payload_type = pt_rtx;
 
                 header.ext_vals.rid = None;
                 header.ext_vals.rid_repair = rid;
+
+                header
             }
-        }
+        };
+
+        // These need to match `Extension::is_supported()` so we are sending what we are
+        // declaring we support.
+        header.ext_vals.abs_send_time = Some(MediaTime::new_ntp_time(now));
+        header.ext_vals.transport_cc = Some(*twcc as u16);
+        *twcc += 1;
 
         buf.resize(2000, 0);
 
