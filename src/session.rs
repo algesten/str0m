@@ -595,7 +595,7 @@ impl Session {
             crate::log_stat!("PACKET_SENT", header.ssrc, payload_size, kind);
         }
 
-        // self.pacer.register_send(now, payload_size.into(), mid);
+        self.pacer.register_send(now, payload_size.into(), mid);
 
         let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
