@@ -477,6 +477,10 @@ impl StreamTx {
     }
 
     fn poll_packet_padding(&mut self, _now: Instant) -> Option<NextPacket> {
+        if self.padding == 0 {
+            return None;
+        }
+
         let next = if self.padding > MIN_SPURIOUS_PADDING_SIZE {
             // Find a historic packet that is smaller than this max size. The max size
             // is a headroom since we can accept slightly larger padding than asked for.
