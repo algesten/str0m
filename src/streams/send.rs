@@ -276,7 +276,9 @@ impl StreamTx {
             return None;
         };
 
-        let header = &mut next.pkt.header;
+        // Need the header for the receipt and modifications
+        // TODO: Can we remove this?
+        let mut header = next.pkt.header.clone();
 
         // We can fill out as many values we want here, only the negotiated ones will
         // be used when writing the RTP packet.
@@ -312,7 +314,6 @@ impl StreamTx {
             NextPacketKind::Resend(_) | NextPacketKind::Blank(_) => {
                 let pt_rtx = param.resend().expect("pt_rtx resend/blank");
                 header.payload_type = pt_rtx;
-                next.pkt.pt = pt_rtx;
 
                 header.ext_vals.rid = None;
                 header.ext_vals.rid_repair = rid;
@@ -324,10 +325,6 @@ impl StreamTx {
         let header_len = header.write_to(buf, exts);
         assert!(header_len % 4 == 0, "RTP header must be multiple of 4");
         header.header_len = header_len;
-
-        // Need the header for the receipt.
-        // TODO: Can we remove this?
-        let header = header.clone();
 
         let mut body_out = &mut buf[header_len..];
 
