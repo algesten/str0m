@@ -155,8 +155,13 @@ impl Media {
     }
 
     pub(crate) fn get_params(&self, pt: Pt) -> Option<&PayloadParams> {
-        let pt = self.main_payload_type_for(pt).unwrap_or(pt);
-        self.params.iter().find(|p| p.pt == pt)
+        if let Some(params) = self.params.iter().find(|p| p.pt == pt) {
+            return Some(params);
+        }
+
+        // RTX fallback
+        self.main_payload_type_for(pt)
+            .and_then(|pt| self.params.iter().find(|p| p.pt == pt))
     }
 
     pub(crate) fn simulcast(&self) -> Option<&SdpSimulcast> {
@@ -193,6 +198,7 @@ impl Media {
             .params
             .iter()
             .find(|p| p.pt == pt || p.resend == Some(pt))?;
+
         Some(p.pt)
     }
 
