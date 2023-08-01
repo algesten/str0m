@@ -410,6 +410,12 @@ impl Session {
             }
         };
 
+        if header.has_padding && !RtpHeader::unpad_payload(&mut data) {
+            // Unpadding failed. Broken data?
+            trace!("unpadding of unprotected payload failed");
+            return;
+        }
+
         let Some(pt) = media.main_payload_type_for(header.payload_type) else {
             trace!("RTP packet PT is not declared in media");
             return;

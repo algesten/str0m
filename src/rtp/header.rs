@@ -121,6 +121,18 @@ impl RtpHeader {
         rounded_len
     }
 
+    pub fn unpad_payload(buf: &mut Vec<u8>) -> bool {
+        if buf.is_empty() {
+            return true;
+        }
+        let pad_len = buf[buf.len() - 1] as usize;
+        let Some(unpadded_len) = buf.len().checked_sub(pad_len) else {
+            return false
+        };
+        buf.truncate(unpadded_len);
+        true
+    }
+
     pub fn parse(buf: &[u8], exts: &ExtensionMap) -> Option<RtpHeader> {
         let orig_len = buf.len();
         if buf.len() < 12 {
@@ -561,5 +573,28 @@ mod test {
                 header_len: 32
             }
         );
+    }
+
+    #[test]
+    fn truncate_off_srtp_padding() {
+        let truncate = |mut payload| -> Result<Vec<u8>, ()> {
+            if RtpHeader::unpad_payload(&mut payload) {
+                Ok(payload)
+            } else {
+                Err(())
+            }
+        };
+
+        assert_eq!(Ok(vec![1, 2, 3, 4, 0]), truncate(vec![1, 2, 3, 4, 0]));
+        assert_eq!(Ok(vec![1, 2, 3, 4]), truncate(vec![1, 2, 3, 4, 1]));
+        assert_eq!(Ok(vec![1, 2, 3]), truncate(vec![1, 2, 3, 4, 2]));
+        assert_eq!(Ok(vec![1, 2]), truncate(vec![1, 2, 3, 4, 3]));
+        assert_eq!(Ok(vec![1]), truncate(vec![1, 2, 3, 4, 4]));
+        assert_eq!(Ok(vec![]), truncate(vec![1, 2, 3, 4, 5]));
+        assert_eq!(Err(()), truncate(vec![1, 2, 3, 4, 6]));
+        assert_eq!(Err(()), truncate(vec![1, 2, 3, 4, 255]));
+        assert_eq!(Ok(vec![0]), truncate(vec![0]));
+        assert_eq!(Ok(vec![]), truncate(vec![1]));
+        assert_eq!(Ok(vec![]), truncate(vec![]));
     }
 }
