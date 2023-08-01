@@ -12,7 +12,7 @@ mod common;
 use common::{init_log, progress, TestRtc};
 
 #[test]
-pub fn rtp_direct() -> Result<(), RtcError> {
+pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
     init_log();
 
     let rtc1 = Rtc::builder().set_rtp_mode(true).build();
