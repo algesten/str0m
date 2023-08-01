@@ -439,7 +439,7 @@ impl StreamRx {
         sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,
     ) -> Option<()> {
-        if self.rtx.is_none() || self.suppress_nack {
+        if self.suppress_nack {
             return None;
         }
 
