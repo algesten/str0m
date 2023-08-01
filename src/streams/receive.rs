@@ -3,9 +3,8 @@ use std::time::Instant;
 
 use crate::media::KeyframeRequestKind;
 use crate::rtp_::{
-    extend_u16, extend_u32, DlrrItem, ExtendedReport, Fir, FirEntry, InstantExt, MediaTime, Mid,
-    Pli, Pt, ReceiverReport, ReportBlock, ReportList, Rid, Rrtr, Rtcp, RtcpFb, RtpHeader,
-    SenderInfo, SeqNo,
+    extend_u32, DlrrItem, ExtendedReport, Fir, FirEntry, InstantExt, MediaTime, Mid, Pli, Pt,
+    ReceiverReport, ReportBlock, ReportList, Rid, Rrtr, Rtcp, RtcpFb, RtpHeader, SenderInfo, SeqNo,
 };
 use crate::rtp_::{SdesType, Ssrc};
 use crate::stats::{MediaIngressStats, StatsSnapshot};
@@ -49,6 +48,11 @@ pub struct StreamRx {
     ///
     /// Set on first ever packet.
     register: Option<ReceiverRegister>,
+
+    /// Register of received packets for RTX.
+    ///
+    /// Set on first ever RTXpacket.
+    register_rtx: Option<ReceiverRegister>,
 
     /// Last observed media time in an RTP packet.
     last_time: Option<MediaTime>,
@@ -98,6 +102,7 @@ impl StreamRx {
             last_used: already_happened(),
             sender_info: None,
             register: None,
+            register_rtx: None,
             last_time: None,
             pending_request_keyframe: None,
             fir_seq_no: 0,
@@ -214,23 +219,35 @@ impl StreamRx {
         now: Instant,
         header: &RtpHeader,
         clock_rate: u32,
+        is_repair: bool,
     ) -> (SeqNo, MediaTime) {
         self.last_used = now;
 
-        let previous_seq = self.register.as_ref().map(|r| r.max_seq());
+        // Select reference to register to use depending on RTX or not. The RTX has a separate
+        // sequence number series to the main register.
+        let register = if is_repair {
+            &mut self.register_rtx
+        } else {
+            &mut self.register
+        };
+
+        let previous_seq = register.as_ref().map(|r| r.max_seq());
         let seq_no = header.sequence_number(previous_seq);
 
         let previous_time = self.last_time.map(|t| t.numer() as u64);
         let time_u32 = extend_u32(previous_time, header.timestamp);
         let time = MediaTime::new(time_u32 as i64, clock_rate as i64);
 
-        if self.register.is_none() {
-            self.register = Some(ReceiverRegister::new(seq_no));
+        if register.is_none() {
+            *register = Some(ReceiverRegister::new(seq_no));
         }
 
-        if let Some(register) = &mut self.register {
-            register.update_seq(seq_no);
-            register.update_time(now, header.timestamp, clock_rate);
+        let register = register.as_mut().unwrap();
+
+        register.update_seq(seq_no);
+        register.update_time(now, header.timestamp, clock_rate);
+
+        if !is_repair {
             self.last_time = Some(time);
         }
 
@@ -241,23 +258,12 @@ impl StreamRx {
     pub(crate) fn handle_rtp(
         &mut self,
         now: Instant,
-        mut header: RtpHeader,
-        mut data: Vec<u8>,
-        mut seq_no: SeqNo,
+        header: RtpHeader,
+        data: Vec<u8>,
+        seq_no: SeqNo,
         time: MediaTime,
-        pt: Pt,
-        is_repair: bool,
     ) -> Option<RtpPacket> {
         trace!("Handle RTP: {:?}", header);
-
-        // RTX packets must be rewritten to be a normal packet.
-        if is_repair {
-            let keep_packet = self.un_rtx(&mut header, &mut data, &mut seq_no, pt);
-
-            if !keep_packet {
-                return None;
-            }
-        }
 
         let packet = RtpPacket {
             seq_no,
@@ -275,13 +281,7 @@ impl StreamRx {
         Some(packet)
     }
 
-    fn un_rtx(
-        &self,
-        header: &mut RtpHeader,
-        data: &mut Vec<u8>,
-        seq_no: &mut SeqNo,
-        pt: Pt,
-    ) -> bool {
+    pub(crate) fn un_rtx(&self, header: &mut RtpHeader, data: &mut Vec<u8>, pt: Pt) -> bool {
         // Initial packets with just nulls for the RTX.
         if RtpHeader::is_rtx_null_packet(data) {
             trace!("Drop RTX null packet");
@@ -300,7 +300,6 @@ impl StreamRx {
         );
 
         header.sequence_number = orig_seq_no_16;
-        *seq_no = extend_u16(Some(**seq_no), orig_seq_no_16).into();
 
         header.ssrc = self.ssrc;
         header.payload_type = pt;
