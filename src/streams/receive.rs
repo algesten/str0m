@@ -220,7 +220,7 @@ impl StreamRx {
         header: &RtpHeader,
         clock_rate: u32,
         is_repair: bool,
-    ) -> (SeqNo, MediaTime) {
+    ) -> RegisterUpdateReceipt {
         self.last_used = now;
 
         // Select reference to register to use depending on RTX or not. The RTX has a separate
@@ -240,14 +240,18 @@ impl StreamRx {
         let time_u32 = extend_u32(previous_time, header.timestamp);
         let time = MediaTime::new(time_u32 as i64, clock_rate as i64);
 
-        register.update_seq(seq_no);
+        let is_new_packet = register.update_seq(seq_no);
         register.update_time(now, header.timestamp, clock_rate);
 
         if !is_repair {
             self.last_time = Some(time);
         }
 
-        (seq_no, time)
+        RegisterUpdateReceipt {
+            seq_no,
+            time,
+            is_new_packet,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -499,4 +503,11 @@ impl StreamRxStats {
             },
         );
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RegisterUpdateReceipt {
+    pub seq_no: SeqNo,
+    pub time: MediaTime,
+    pub is_new_packet: bool,
 }
