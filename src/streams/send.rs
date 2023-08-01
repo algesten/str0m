@@ -266,6 +266,7 @@ impl StreamTx {
     ) -> Option<PacketReceipt> {
         let mid = self.mid;
         let rid = self.rid;
+        let ssrc_rtx = self.rtx;
 
         let (next, is_padding) = if let Some(next) = self.poll_packet_resend(now, false) {
             (next, false)
@@ -315,6 +316,8 @@ impl StreamTx {
                 let mut header = header_ref.clone();
 
                 header.payload_type = pt_rtx;
+                header.ssrc = ssrc_rtx.expect("Should have RTX SSRC for resends");
+                header.sequence_number = *next.seq_no as u16;
 
                 header.ext_vals.rid = None;
                 header.ext_vals.rid_repair = rid;
