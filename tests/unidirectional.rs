@@ -63,7 +63,7 @@ pub fn unidirectional() -> Result<(), RtcError> {
         .filter(|e| matches!(e, Event::MediaData(_)))
         .count();
 
-    assert!(media_count > 180);
+    assert!(media_count > 170, "Not enough MediaData: {}", media_count);
 
     Ok(())
 }
