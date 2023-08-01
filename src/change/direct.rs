@@ -90,6 +90,11 @@ impl<'a> DirectApi<'a> {
         self.rtc.session.enable_twcc_feedback()
     }
 
+    /// Generate a ssrc that is not already used in session
+    pub fn new_ssrc(&self) -> Ssrc {
+        self.rtc.session.streams.new_ssrc()
+    }
+
     /// Get the str0m `ChannelId` by an `sctp_stream_id`.
     ///
     /// This is useful when using out of band negotiated sctp stream id in
