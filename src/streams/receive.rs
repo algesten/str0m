@@ -225,24 +225,20 @@ impl StreamRx {
 
         // Select reference to register to use depending on RTX or not. The RTX has a separate
         // sequence number series to the main register.
-        let register = if is_repair {
+        let register_ref = if is_repair {
             &mut self.register_rtx
         } else {
             &mut self.register
         };
 
-        let previous_seq = register.as_ref().map(|r| r.max_seq());
-        let seq_no = header.sequence_number(previous_seq);
+        let register =
+            register_ref.get_or_insert_with(|| ReceiverRegister::new(header.sequence_number(None)));
+
+        let seq_no = header.sequence_number(Some(register.max_seq()));
 
         let previous_time = self.last_time.map(|t| t.numer() as u64);
         let time_u32 = extend_u32(previous_time, header.timestamp);
         let time = MediaTime::new(time_u32 as i64, clock_rate as i64);
-
-        if register.is_none() {
-            *register = Some(ReceiverRegister::new(seq_no));
-        }
-
-        let register = register.as_mut().unwrap();
 
         register.update_seq(seq_no);
         register.update_time(now, header.timestamp, clock_rate);
