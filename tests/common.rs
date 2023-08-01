@@ -1,9 +1,12 @@
 #![allow(unused)]
+use std::net::Ipv4Addr;
 use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
 
 use str0m::net::Receive;
+use str0m::Candidate;
 use str0m::{Event, Input, Output, Rtc, RtcError};
+use tracing::info_span;
 use tracing::Span;
 
 pub struct TestRtc {
@@ -95,4 +98,53 @@ pub fn init_log() {
         .with(fmt::layer())
         .with(EnvFilter::from_default_env())
         .init();
+}
+
+pub fn connect_l_r() -> (TestRtc, TestRtc) {
+    let rtc1 = Rtc::builder().set_rtp_mode(true).build();
+    let rtc2 = Rtc::builder()
+        .set_rtp_mode(true)
+        // release packet straight away
+        .set_reordering_size_audio(0)
+        .build();
+
+    let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc1);
+    let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc2);
+
+    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into()).unwrap();
+    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into()).unwrap();
+    l.add_local_candidate(host1.clone());
+    l.add_remote_candidate(host2.clone());
+    r.add_local_candidate(host2);
+    r.add_remote_candidate(host1);
+
+    let finger_l = l.direct_api().local_dtls_fingerprint();
+    let finger_r = r.direct_api().local_dtls_fingerprint();
+
+    l.direct_api().set_remote_fingerprint(finger_r);
+    r.direct_api().set_remote_fingerprint(finger_l);
+
+    let creds_l = l.direct_api().local_ice_credentials();
+    let creds_r = r.direct_api().local_ice_credentials();
+
+    l.direct_api().set_remote_ice_credentials(creds_r);
+    r.direct_api().set_remote_ice_credentials(creds_l);
+
+    l.direct_api().set_ice_controlling(true);
+    r.direct_api().set_ice_controlling(false);
+
+    l.direct_api().start_dtls(true).unwrap();
+    r.direct_api().start_dtls(false).unwrap();
+
+    l.direct_api().start_sctp(true);
+    r.direct_api().start_sctp(false);
+
+    loop {
+        if l.is_connected() || r.is_connected() {
+            break;
+        }
+        progress(&mut l, &mut r).expect("clean progress");
+    }
+
+    (l, r)
 }
