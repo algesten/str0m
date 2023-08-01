@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use crate::format::PayloadParams;
 use crate::media::KeyframeRequestKind;
+use crate::packet::QueuePriority;
 use crate::packet::QueueState;
 use crate::rtp_::{extend_u16, InstantExt, ReportList, Rtcp, MAX_BLANK_PADDING_PAYLOAD_SIZE};
 use crate::rtp_::{ExtensionMap, ReceptionReport, RtpHeader};
@@ -679,6 +680,28 @@ impl StreamTx {
         // 2. We must have sent a packet. We get this indirectly from is_audio being set on
         //    first ever poll_packet().
         let use_for_padding = self.is_audio.map(|i| !i).unwrap_or(false);
+
+        let mut snapshot = self.send_queue.snapshot(now);
+
+        // Fake some stats for padding.
+        if self.padding > 0 {
+            // TODO: Be more scientific about this factor.
+            const AVERAGE_PADDING_PACKET_SIZE: usize = 200;
+
+            snapshot.priority = if snapshot.packet_count == 0 {
+                QueuePriority::Padding
+            } else {
+                QueuePriority::Media
+            };
+
+            let fake_packets = self.padding / AVERAGE_PADDING_PACKET_SIZE;
+
+            snapshot.size += self.padding;
+            snapshot.packet_count += fake_packets as u32;
+
+            // TODO: Should this be faked in relation to size of padding?
+            snapshot.total_queue_time_origin += Duration::from_millis(200);
+        }
 
         QueueState {
             mid: self.mid,
