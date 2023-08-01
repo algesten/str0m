@@ -82,12 +82,9 @@ impl ReceiverRegister {
     }
 
     /// Set a bit indicating we've received a packet.
-    fn record_received(&mut self, seq: SeqNo, forward_delta: u64) {
-        // Do not set if it's lower than our nack_check_from, since we already sent a NACK for that.
-        if *seq < *self.nack_check_from {
-            return;
-        }
-
+    ///
+    /// Returns true if the packet received wasn't received before.
+    fn record_received(&mut self, seq: SeqNo, forward_delta: u64) -> bool {
         let did_wrap = (*seq / self.packet_status.len() as u64)
             != (seq.saturating_sub(forward_delta) / self.packet_status.len() as u64);
 
@@ -162,6 +159,8 @@ impl ReceiverRegister {
         if !was_set {
             self.received += 1;
         }
+
+        !was_set
     }
 
     fn reset_receceived(&mut self, start: SeqNo, end: SeqNo) {
@@ -179,7 +178,10 @@ impl ReceiverRegister {
         }
     }
 
-    pub fn update_seq(&mut self, seq: SeqNo) {
+    /// Update a received sequence number.
+    ///
+    /// Returns true if we have not seen this sequence number before.
+    pub fn update_seq(&mut self, seq: SeqNo) -> bool {
         if self.probation > 0 {
             // Source is not valid until MIN_SEQUENTIAL packets with
             // sequential sequence numbers have been received.
@@ -193,6 +195,9 @@ impl ReceiverRegister {
                 self.probation = MIN_SEQUENTIAL - 1;
                 self.max_seq = seq;
             }
+
+            // During probation, consider all packets as "recorded".
+            true
         } else if *self.max_seq < *seq {
             // Incoming seq is larger than we've seen before. This
             // is the normal case, where we receive packets sequentially.
@@ -202,20 +207,26 @@ impl ReceiverRegister {
                 // in order, with permissible gap
                 self.max_seq = seq;
                 self.bad_seq = None;
-                self.record_received(seq, udelta);
+                self.record_received(seq, udelta)
             } else {
                 // the sequence number made a very large jump
-                self.maybe_seq_jump(seq)
+                self.maybe_seq_jump(seq);
+
+                // Optimistically assume the remote side seq jumped.
+                true
             }
         } else {
             // duplicate or out of order packet
             let udelta = *self.max_seq - *seq;
 
             if udelta < MAX_MISORDER {
-                self.record_received(seq, 0);
+                self.record_received(seq, 0)
             } else {
                 // the sequence number is too far in the past
                 self.maybe_seq_jump(seq);
+
+                // Optimistically assume the remote side seq jumped.
+                true
             }
         }
     }
@@ -521,23 +532,30 @@ mod test {
     #[test]
     fn in_order() {
         let mut reg = ReceiverRegister::new(14.into());
-        reg.update_seq(14.into());
+        let new = reg.update_seq(14.into());
+        assert!(new);
         assert_eq!(reg.probation, 1);
-        reg.update_seq(15.into());
+        let new = reg.update_seq(15.into());
+        assert!(new);
         assert_eq!(reg.probation, 0);
-        reg.update_seq(16.into());
-        reg.update_seq(17.into());
+        let new = reg.update_seq(16.into());
+        assert!(new);
+        let new = reg.update_seq(17.into());
+        assert!(new);
         assert_eq!(reg.max_seq, 17.into());
     }
 
     #[test]
     fn jump_during_probation() {
         let mut reg = ReceiverRegister::new(14.into());
-        reg.update_seq(14.into());
+        let new = reg.update_seq(14.into());
+        assert!(new);
         assert_eq!(reg.probation, 1);
-        reg.update_seq(16.into());
+        let new = reg.update_seq(16.into());
+        assert!(new);
         assert_eq!(reg.probation, 1);
-        reg.update_seq(17.into());
+        let new = reg.update_seq(17.into());
+        assert!(new);
     }
 
     #[test]
@@ -575,10 +593,12 @@ mod test {
         reg.update_seq(141.into());
         assert_eq!(reg.max_seq, 141.into());
 
-        reg.update_seq(120.into());
+        let new = reg.update_seq(120.into());
+        assert!(new);
         assert_eq!(reg.max_seq, 141.into()); // no jump
         assert!(reg.bad_seq.is_none());
-        reg.update_seq(121.into());
+        let new = reg.update_seq(121.into());
+        assert!(new);
         assert_eq!(reg.max_seq, 141.into()); // no jump
     }
 
@@ -589,12 +609,29 @@ mod test {
         reg.update_seq(141.into());
         assert_eq!(reg.max_seq, 141.into());
 
-        reg.update_seq(20.into());
+        let new = reg.update_seq(20.into());
+        assert!(new);
         assert_eq!(reg.max_seq, 141.into()); // no jump yet
         assert!(reg.bad_seq.is_some());
-        reg.update_seq(21.into());
+        let new = reg.update_seq(21.into());
+        assert!(new);
         assert_eq!(reg.max_seq, 21.into()); // reset
         assert!(reg.bad_seq.is_none());
+    }
+
+    #[test]
+    fn repeated_packet() {
+        let mut reg = ReceiverRegister::new(140.into());
+        reg.update_seq(140.into());
+        reg.update_seq(141.into());
+        assert_eq!(reg.max_seq, 141.into());
+
+        let new = reg.update_seq(142.into());
+        assert!(new);
+
+        // Same packet, new should be false.
+        let new = reg.update_seq(142.into());
+        assert!(!new);
     }
 
     #[test]

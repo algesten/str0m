@@ -400,9 +400,9 @@ impl Session {
 
         // is_repair controls whether update is updating the main register or the RTX register.
         // Either way we get a seq_no_outer which is used to decrypt the SRTP.
-        let (seq_no_outer, time_outer) = stream.update(now, &header, clock_rate, is_repair);
+        let receipt_outer = stream.update(now, &header, clock_rate, is_repair);
 
-        let mut data = match srtp.unprotect_rtp(buf, &header, *seq_no_outer) {
+        let mut data = match srtp.unprotect_rtp(buf, &header, *receipt_outer.seq_no) {
             Some(v) => v,
             None => {
                 trace!("Failed to unprotect SRTP");
@@ -418,7 +418,7 @@ impl Session {
         // RTX packets must be rewritten to be a normal packet. This only changes the
         // the seq_no, however MediaTime might be different when interpreted against the
         // the "main" register.
-        let (seq_no, time) = if is_repair {
+        let receipt = if is_repair {
             let keep_packet = stream.un_rtx(&mut header, &mut data, pt);
 
             // Drop RTX packets that are just empty padding.
@@ -432,16 +432,19 @@ impl Session {
         } else {
             // This is not RTX, the outer seq and time is what we use. The first
             // stream.update will have updated the main register.
-            (seq_no_outer, time_outer)
+            receipt_outer
         };
 
-        let Some(packet) = stream.handle_rtp(now, header, data, seq_no, time) else {
+        let Some(packet) = stream.handle_rtp(now, header, data, receipt.seq_no, receipt.time) else {
             return;
         };
 
         if self.rtp_mode {
             // In RTP mode, we store the packet temporarily here for the next poll_output().
-            self.pending_packet = Some(packet);
+            // However only if this is a packet not seen before. This filters out spurious resends for padding.
+            if receipt.is_new_packet {
+                self.pending_packet = Some(packet);
+            }
         } else {
             // In non-RTP mode, we let the Media use a Depayloader.
             media.depayload(
