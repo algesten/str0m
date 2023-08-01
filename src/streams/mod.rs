@@ -77,7 +77,7 @@ impl RtpPacket {
             pt: 0.into(),
             time: MediaTime::new(0, 90_000),
             header: RtpHeader::default(),
-            payload: vec![0; 2000],
+            payload: vec![], // This payload is never used. See RtpHeader::create_padding_packet
             nackable: false,
             timestamp: already_happened(),
         }

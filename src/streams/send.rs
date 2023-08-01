@@ -367,8 +367,8 @@ impl StreamTx {
             NextPacketKind::Blank(len) => {
                 let len = RtpHeader::create_padding_packet(
                     &mut buf[..],
-                    len,
                     header_len,
+                    len,
                     SRTP_BLOCK_SIZE,
                 );
 
@@ -515,7 +515,6 @@ impl StreamTx {
                 .padding
                 .clamp(SRTP_BLOCK_SIZE, MAX_BLANK_PADDING_PAYLOAD_SIZE);
             assert!(len <= 255); // should fit in a byte
-            pkt.payload.resize(len, 0);
 
             NextPacket {
                 kind: NextPacketKind::Blank(len as u8),
