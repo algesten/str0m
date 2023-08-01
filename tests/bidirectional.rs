@@ -72,7 +72,11 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
         .filter(|e| matches!(e, Event::MediaData(_)))
         .count();
 
-    assert!(media_count_r > 180);
+    assert!(
+        media_count_r > 180,
+        "Not enough MediaData at R: {}",
+        media_count_r
+    );
 
     let media_count_l = l
         .events
@@ -80,7 +84,11 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
         .filter(|e| matches!(e, Event::MediaData(_)))
         .count();
 
-    assert!(media_count_l > 180);
+    assert!(
+        media_count_l > 180,
+        "Not enough MediaData at L: {}",
+        media_count_l
+    );
 
     Ok(())
 }
