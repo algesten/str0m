@@ -111,7 +111,7 @@ impl<'a> DirectApi<'a> {
         dir: Direction,
         exts: ExtensionMap,
         params: &[PayloadParams],
-    ) {
+    ) -> &mut Media {
         let max_index = self.rtc.session.medias.iter().map(|m| m.index()).max();
 
         let next_index = if let Some(max_index) = max_index {
@@ -138,6 +138,7 @@ impl<'a> DirectApi<'a> {
         let m = Media::from_direct_api(mid, next_index, dir, exts, params, is_audio);
 
         self.rtc.session.medias.push(m);
+        self.rtc.session.medias.last_mut().unwrap()
     }
 
     /// Allow incoming traffic from remote peer for the given SSRC.
