@@ -66,36 +66,40 @@ impl RtpHeader {
         16 + ext_len
     }
 
+    fn do_pad(buf: &mut [u8], from: usize, pad: usize) {
+        assert!(pad <= 255);
+
+        // set the padding bit
+        buf[0] |= 0b00_1_0_0000;
+
+        for i in 0..pad {
+            buf[from + i] = 0;
+        }
+
+        buf[from + pad - 1] = pad as u8;
+    }
+
     pub fn pad_packet(
         buf: &mut [u8],
         header_len: usize,
         body_len: usize,
         block_size: usize,
     ) -> usize {
-        let pad = block_size - body_len % block_size;
-        if pad == block_size {
+        let pad_len = block_size - body_len % block_size;
+        if pad_len == block_size {
             return 0;
         }
 
-        let len = header_len + body_len;
+        Self::do_pad(buf, header_len + body_len, pad_len);
 
-        #[allow(clippy::needless_range_loop)]
-        for i in len..(len + pad) {
-            buf[i] = 0;
-        }
-        buf[len + pad - 1] = pad as u8;
-
-        // set the padding bit
-        buf[0] |= 0b00_1_0_0000;
-
-        pad
+        pad_len
     }
 
     /// Write a packet consisting entirely of padding and write.
     pub fn create_padding_packet(
         buf: &mut [u8],
-        pad_len: u8,
         header_len: usize,
+        pad_len: u8,
         block_size: usize,
     ) -> usize {
         if pad_len == 0 {
@@ -110,13 +114,9 @@ impl RtpHeader {
         }
         .min(MAX_BLANK_PADDING_PAYLOAD_SIZE);
 
-        for i in 0..rounded_len.saturating_sub(1) {
-            buf[header_len + i] = 0;
-        }
-        buf[header_len + rounded_len.saturating_sub(1)] = rounded_len as u8;
+        println!("{}", rounded_len);
 
-        // set the padding bit
-        buf[0] |= 0b00_1_0_0000;
+        Self::do_pad(buf, header_len, rounded_len);
 
         rounded_len
     }
@@ -406,7 +406,7 @@ mod test {
     #[test]
     fn test_generate_one_length_padding_packet() {
         let mut buf = vec![6; 255];
-        RtpHeader::create_padding_packet(&mut buf, 1, 10, 16);
+        RtpHeader::create_padding_packet(&mut buf, 10, 1, 16);
 
         let mut expected = vec![0; 16];
         expected[15] = 16;
