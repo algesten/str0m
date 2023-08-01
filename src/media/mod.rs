@@ -296,6 +296,10 @@ impl Media {
         self.expected_rid_rx.contains(&rid)
     }
 
+    pub(crate) fn expects_any_rid(&self) -> bool {
+        !self.expected_rid_rx.is_empty()
+    }
+
     pub(crate) fn set_exts(&mut self, exts: ExtensionMap) {
         if self.exts != exts {
             info!("Set {:?} extension map: {:?}", self.mid, exts);

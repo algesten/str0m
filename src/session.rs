@@ -308,7 +308,24 @@ impl Session {
             // The media the mid points out.
             let media = self.medias.iter_mut().find(|m| m.mid() == mid)?;
 
-            let rid = header.ext_vals.rid.or(header.ext_vals.rid_repair)?;
+            let rid = header.ext_vals.rid.or(header.ext_vals.rid_repair);
+
+            // It's possible to send a MID header only. No RID.
+            // Without RID header this SSRC just map straight up to the media without RTX.
+            let Some(rid) = rid else {
+                if media.expects_any_rid() {
+                    trace!("Media expects RID and RTP packet has only MID");
+                    return None;
+                }
+
+                let ssrc_rx = header.ssrc;
+                self.streams.expect_stream_rx(ssrc_rx, None, mid, None);
+
+                // Insert an entry so we can look up on SSRC alone later.
+                self.source_keys.insert(ssrc, (mid, ssrc_rx));
+                return Some((mid, ssrc_rx));
+            };
+
             let is_repair = header.ext_vals.rid_repair.is_some();
 
             // Check if the mid/rid combo is not expected
@@ -354,7 +371,7 @@ impl Session {
 
         // The ssrc is the _main_ ssrc (no the rtx, that might be in the header).
         let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(&header) else {
-            trace!("No mid/SSRC for header: {:?}", header);
+            debug!("No mid/SSRC for header: {:?}", header);
             return;
         };
 
