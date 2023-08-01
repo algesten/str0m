@@ -686,7 +686,7 @@ impl StreamTx {
         // Fake some stats for padding.
         if self.padding > 0 {
             // TODO: Be more scientific about this factor.
-            const AVERAGE_PADDING_PACKET_SIZE: usize = 200;
+            const AVERAGE_PADDING_PACKET_SIZE: usize = 800;
 
             snapshot.priority = if snapshot.packet_count == 0 {
                 QueuePriority::Padding
