@@ -425,12 +425,14 @@ impl Session {
         // the seq_no, however MediaTime might be different when interpreted against the
         // the "main" register.
         let receipt = if is_repair {
-            let keep_packet = stream.un_rtx(&mut header, &mut data, pt);
-
-            // Drop RTX packets that are just empty padding.
-            if !keep_packet {
+            // Drop RTX packets that are just empty padding. The payload here
+            // is empty because we would have done RtpHeader::unpad_payload above.
+            if data.is_empty() {
                 return;
             }
+
+            // Rewrite the header, and removes the resent seq_no from the body.
+            stream.un_rtx(&mut header, &mut data, pt);
 
             // Now update the "main" register with the repaired packet info.
             // This gives us the extended sequence number of the main stream.

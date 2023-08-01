@@ -281,13 +281,7 @@ impl StreamRx {
         Some(packet)
     }
 
-    pub(crate) fn un_rtx(&self, header: &mut RtpHeader, data: &mut Vec<u8>, pt: Pt) -> bool {
-        // Initial packets with just nulls for the RTX.
-        if RtpHeader::is_rtx_null_packet(data) {
-            trace!("Drop RTX null packet");
-            return false;
-        }
-
+    pub(crate) fn un_rtx(&self, header: &mut RtpHeader, data: &mut Vec<u8>, pt: Pt) {
         let mut orig_seq_no_16 = 0;
 
         let n = RtpHeader::read_original_sequence_number(data, &mut orig_seq_no_16);
@@ -303,8 +297,6 @@ impl StreamRx {
 
         header.ssrc = self.ssrc;
         header.payload_type = pt;
-
-        true
     }
 
     pub(crate) fn maybe_create_keyframe_request(
