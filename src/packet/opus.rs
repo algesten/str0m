@@ -61,7 +61,7 @@ mod test {
 
     #[test]
     fn test_opus_unmarshal() -> Result<(), PacketError> {
-        let mut pck = OpusDepacketizer::default();
+        let mut pck = OpusDepacketizer;
         let mut extra = CodecExtra::None;
 
         // Empty packet
@@ -69,7 +69,7 @@ mod test {
         let mut out = Vec::new();
         let result = pck.depacketize(empty_bytes, &mut out, &mut extra);
         assert!(
-            !result.is_err(),
+            result.is_ok(),
             "Result should not be err in case of empty packet"
         );
 
@@ -84,7 +84,7 @@ mod test {
 
     #[test]
     fn test_opus_payload() -> Result<(), PacketError> {
-        let mut pck = OpusPacketizer::default();
+        let mut pck = OpusPacketizer;
         let empty = &[];
         let payload = &[0x90, 0x90, 0x90];
 
@@ -105,7 +105,7 @@ mod test {
 
     #[test]
     fn test_opus_is_partition_head() -> Result<(), PacketError> {
-        let opus = OpusDepacketizer::default();
+        let opus = OpusDepacketizer;
         //"NormalPacket"
         assert!(
             opus.is_partition_head(&[0x00, 0x00]),

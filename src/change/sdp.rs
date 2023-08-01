@@ -1261,7 +1261,7 @@ mod test {
             .attrs
             .iter()
             .find_map(|attr| match attr {
-                MediaAttribute::RtpMap { pt, value } if *pt == needle => Some(value.clone()),
+                MediaAttribute::RtpMap { pt, value } if *pt == needle => Some(*value),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("Expected to find RtpMap for {needle}"))
