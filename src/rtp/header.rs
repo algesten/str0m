@@ -277,13 +277,6 @@ impl RtpHeader {
         2
     }
 
-    pub fn is_rtx_null_packet(buf: &[u8]) -> bool {
-        if buf.len() < 10 {
-            return false;
-        }
-        buf[0..10] == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-    }
-
     /// Sequencer number of this RTP header given the previous number.
     ///
     /// The logic detects wrap-arounds of the 16-bit RTP sequence number.
