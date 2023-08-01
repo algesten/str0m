@@ -356,7 +356,7 @@ impl Session {
         None
     }
 
-    fn handle_rtp(&mut self, now: Instant, header: RtpHeader, buf: &[u8]) {
+    fn handle_rtp(&mut self, now: Instant, mut header: RtpHeader, buf: &[u8]) {
         // const INGRESS_PACKET_LOSS_PERCENT: u16 = 5;
         // if header.sequence_number % (100 / INGRESS_PACKET_LOSS_PERCENT) == 0 {
         //     return;
@@ -398,9 +398,11 @@ impl Session {
             }
         };
 
-        let (seq_no, time) = stream.update(now, &header, clock_rate);
+        // is_repair controls whether update is updating the main register or the RTX register.
+        // Either way we get a seq_no_outer which is used to decrypt the SRTP.
+        let (seq_no_outer, time_outer) = stream.update(now, &header, clock_rate, is_repair);
 
-        let data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
+        let mut data = match srtp.unprotect_rtp(buf, &header, *seq_no_outer) {
             Some(v) => v,
             None => {
                 trace!("Failed to unprotect SRTP");
@@ -413,7 +415,27 @@ impl Session {
             return;
         };
 
-        let Some(packet) = stream.handle_rtp(now, header, data, seq_no, time, pt, is_repair) else {
+        // RTX packets must be rewritten to be a normal packet. This only changes the
+        // the seq_no, however MediaTime might be different when interpreted against the
+        // the "main" register.
+        let (seq_no, time) = if is_repair {
+            let keep_packet = stream.un_rtx(&mut header, &mut data, pt);
+
+            // Drop RTX packets that are just empty padding.
+            if !keep_packet {
+                return;
+            }
+
+            // Now update the "main" register with the repaired packet info.
+            // This gives us the extended sequence number of the main stream.
+            stream.update(now, &header, clock_rate, false)
+        } else {
+            // This is not RTX, the outer seq and time is what we use. The first
+            // stream.update will have updated the main register.
+            (seq_no_outer, time_outer)
+        };
+
+        let Some(packet) = stream.handle_rtp(now, header, data, seq_no, time) else {
             return;
         };
 
