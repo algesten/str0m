@@ -242,30 +242,8 @@ impl<'a> SdpApi<'a> {
             Id::<20>::random().to_string()
         };
 
-        let ssrcs = {
-            // For video we do RTX channels.
-            let has_rtx = kind == MediaKind::Video;
-
-            let ssrc_base = if has_rtx { 2 } else { 1 };
-
-            // TODO: allow configuring simulcast
-            let simulcast_count = 1;
-
-            let ssrc_count = ssrc_base * simulcast_count;
-            let mut v = Vec::with_capacity(ssrc_count);
-
-            let mut prev = 0.into();
-            for i in 0..ssrc_count {
-                // Allocate SSRC that are not in use in the session already.
-                let new_ssrc = self.rtc.session.streams.new_ssrc();
-                let is_rtx = has_rtx && i % 2 == 1;
-                let repairs = if is_rtx { Some(prev) } else { None };
-                v.push((new_ssrc, repairs));
-                prev = new_ssrc;
-            }
-
-            v
-        };
+        let rtx = kind.is_video().then(|| self.rtc.session.streams.new_ssrc());
+        let ssrcs = vec![(self.rtc.session.streams.new_ssrc(), rtx)];
 
         // TODO: let user configure stream/track name.
         let msid = Msid {
