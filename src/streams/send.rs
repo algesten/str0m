@@ -699,8 +699,10 @@ impl StreamTx {
             snapshot.size += self.padding;
             snapshot.packet_count += fake_packets as u32;
 
-            // TODO: Should this be faked in relation to size of padding?
-            snapshot.total_queue_time_origin += Duration::from_millis(200);
+            const FAKE_PADDING_DURATION_MILLIS: usize = 5;
+            let fake_millis = fake_packets * FAKE_PADDING_DURATION_MILLIS;
+            let fake_duration = Duration::from_millis(fake_millis as u64);
+            snapshot.total_queue_time_origin += fake_duration;
         }
 
         QueueState {
