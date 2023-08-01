@@ -88,13 +88,27 @@ impl RtpPacket {
 ///
 /// Each encoded stream is uniquely identified by an SSRC. The concept of mid/rid sits on the Media
 /// level together with the ability to translate a mid/rid to an encoded stream.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Streams {
     /// All incoming encoded streams.
     streams_rx: HashMap<Ssrc, StreamRx>,
 
     /// All outgoing encoded streams.
     streams_tx: HashMap<Ssrc, StreamTx>,
+
+    /// Local SSRC used before we got any StreamTx. This is used for RTCP if we don't
+    /// have any reasonable value to use.
+    default_ssrc_tx: Ssrc,
+}
+
+impl Default for Streams {
+    fn default() -> Self {
+        Self {
+            streams_rx: Default::default(),
+            streams_tx: Default::default(),
+            default_ssrc_tx: 0.into(), // this will be changed
+        }
+    }
 }
 
 impl Streams {
@@ -295,8 +309,18 @@ impl Streams {
         *self.streams_rx.keys().next().unwrap_or(&0.into())
     }
 
-    pub(crate) fn first_ssrc_local(&self) -> Ssrc {
-        *self.streams_tx.keys().next().unwrap_or(&0.into())
+    pub(crate) fn first_ssrc_local(&mut self) -> Ssrc {
+        if let Some(ssrc) = self.streams_tx.keys().next() {
+            // If there is some local Tx SSRC, use that.
+            *ssrc
+        } else {
+            // Fallback in case we don't have any Tx SSRC.
+            if *self.default_ssrc_tx == 0 {
+                // Do not use 0, allocate one that is not in session already.
+                self.default_ssrc_tx = self.new_ssrc();
+            }
+            self.default_ssrc_tx
+        }
     }
 
     pub(crate) fn stream_tx_by_mid_rid(
