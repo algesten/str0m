@@ -180,9 +180,9 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
     assert_eq!(h1.sequence_number, 47003);
     assert_eq!(h2.sequence_number, 47001);
 
-    assert_eq!(h0.timestamp, 47000_000);
-    assert_eq!(h1.timestamp, 47003_000);
-    assert_eq!(h2.timestamp, 47001_000);
+    assert_eq!(h0.timestamp, 47_000_000);
+    assert_eq!(h1.timestamp, 47_003_000);
+    assert_eq!(h2.timestamp, 47_001_000);
 
     assert_eq!(h0.ext_vals.audio_level, Some(-42));
     assert_eq!(h1.ext_vals.audio_level, Some(-45));
