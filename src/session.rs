@@ -309,27 +309,47 @@ impl Session {
             return Some((mid, ssrc_main));
         }
 
-        // Find receiver/source via mid/rid. This is used when the SSRC is not declare
+        // Find receiver/source via mid/rid. This is used when the SSRC is not declared
         // in the SDP as a=ssrc lines.
         if let Some(mid) = header.ext_vals.mid {
-            // The media the mid points out.
+            // The media the mid points out. Bail if the mid points to something
+            // we don't know about.
             let media = self.medias.iter_mut().find(|m| m.mid() == mid)?;
 
             let rid = header.ext_vals.rid.or(header.ext_vals.rid_repair);
 
             // It's possible to send a MID header only. No RID.
-            // Without RID header this SSRC just map straight up to the media without RTX.
+            // Without RID header we use PT to decide whether the SSRC is for main/RTX.
             let Some(rid) = rid else {
                 if media.expects_any_rid() {
                     trace!("Media expects RID and RTP packet has only MID");
                     return None;
                 }
 
-                let ssrc_main = header.ssrc;
-                self.streams.expect_stream_rx(ssrc_main, None, mid, None);
+                // Figure out which payload the PT maps to. Either main or RTX.
+                let payload = media
+                    .payload_params()
+                    .iter()
+                    .find(|p| p.pt() == header.payload_type || p.resend() == Some(header.payload_type))?;
+                let is_main = payload.pt() == header.payload_type;
+
+                let (ssrc_main, rtx) = if is_main {
+                    // SSRC is main, we don't know the RTX.
+                    (ssrc, None)
+                } else {
+                    // This can bail if the main SSRC has not been discovered yet.
+                    let stream = self.streams.stream_rx_by_mid_rid(mid, None)?;
+                    // The main is the SSRC in the stream already. The incoming is RTX.
+                    let ssrc_main = stream.ssrc();
+                    (ssrc_main, Some(ssrc))
+                };
+
+                // If stream already exists, this might only "fill in" the RTX.
+                self.streams.expect_stream_rx(ssrc, rtx, mid, None);
 
                 // Insert an entry so we can look up on SSRC alone later.
-                self.associate_ssrc_mid(ssrc, mid, ssrc_main, "MID header, no RID");
+                let reason = format!("MID header, no RID and PT: {}", header.payload_type);
+                self.associate_ssrc_mid(ssrc, mid, ssrc_main, &reason);
                 return Some((mid, ssrc_main));
             };
 
@@ -355,7 +375,7 @@ impl Session {
             }
 
             // Insert an entry so we can look up on SSRC alone later.
-            let reason = format!("MID and RID ({}) header", rid);
+            let reason = format!("MID header and RID: {}", rid);
             self.associate_ssrc_mid(ssrc, mid, ssrc_main, &reason);
 
             return Some((mid, ssrc_main));
