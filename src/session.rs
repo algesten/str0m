@@ -221,7 +221,7 @@ impl Session {
             let stream = self
                 .streams
                 .stream_tx_by_mid_rid(padding_request.mid, None)
-                .expect("pacer to us an existing stream");
+                .expect("pacer to use an existing stream");
 
             stream.generate_padding(now, padding_request.padding);
         }
