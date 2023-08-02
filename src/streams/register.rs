@@ -25,6 +25,12 @@ pub struct ReceiverRegister {
     bad_seq: Option<SeqNo>,
 
     /// Sequential packets remaining until source is valid.
+    ///
+    /// This is not really useful in the presence of SRTP, since that cryptographically checks
+    /// the packets are from the origin, and not misaddressed.
+    ///
+    /// The value stay here, because that's the original algorithm in the RFC, but it has very
+    /// limited use.
     probation: u64,
 
     /// Counter of received packets.
