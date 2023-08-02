@@ -66,8 +66,10 @@ pub struct StreamTx {
     /// They must be updated when we are about to send.
     send_queue: SendQueue,
 
-    /// Whether this sender is for audio. This is only known once we sent the first packet.
-    is_audio: Option<bool>,
+    /// Whether this sender is to be unpaced in BWE situations.
+    ///
+    /// Audio defaults to not being paced.
+    unpaced: Option<bool>,
 
     /// Scheduled resends due to NACK or spurious padding.
     resends: VecDeque<Resend>,
@@ -141,7 +143,7 @@ impl StreamTx {
             last_used: already_happened(),
             rtp_and_wallclock: None,
             send_queue: SendQueue::new(),
-            is_audio: None,
+            unpaced: None,
             resends: VecDeque::new(),
             padding: 0,
             blank_packet: RtpPacket::blank(),
@@ -397,9 +399,10 @@ impl StreamTx {
         let seq_no = next.seq_no;
         self.last_used = now;
 
-        // Set on first send
-        if self.is_audio.is_none() {
-            self.is_audio = Some(is_audio);
+        // Set on first send, if not set already by configuration.
+        if self.unpaced.is_none() {
+            // Default audio to be unpaced.
+            self.unpaced = Some(is_audio);
         }
 
         // This is set here due to borrow checker.
@@ -695,9 +698,10 @@ impl StreamTx {
     }
 
     pub(crate) fn queue_state(&mut self, now: Instant) -> QueueState {
-        // We only know if something is audio on the first ever sent packet.
-        // Defaulting `true` means the queue will be "unpaced" until such time we know.
-        let is_audio = self.is_audio.unwrap_or(true);
+        // The unpaced flag is set to a default value on first ever write. The
+        // default is to not pace audio. We unwrap default to "true" here to not
+        // apply any pacing until we know what kind of content we are sending.
+        let unpaced = self.unpaced.unwrap_or(true);
 
         // It's only possible to use this sender for padding if RTX is enabled.
         let use_for_padding = self.rtx_enabled();
@@ -714,7 +718,7 @@ impl StreamTx {
 
         QueueState {
             mid: self.mid,
-            is_audio,
+            unpaced,
             use_for_padding,
             snapshot,
         }

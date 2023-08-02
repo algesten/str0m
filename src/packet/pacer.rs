@@ -179,7 +179,7 @@ impl Default for QueueSnapshot {
 #[derive(Debug, Clone, Copy)]
 pub struct QueueState {
     pub mid: Mid,
-    pub is_audio: bool,
+    pub unpaced: bool,
     pub use_for_padding: bool,
     pub snapshot: QueueSnapshot,
 }
@@ -424,15 +424,15 @@ impl LeakyBucketPacer {
             return queues.next().map(|q| (now, Some(q)));
         };
 
-        let unpaced_audio = self
+        let unpaced = self
             .queue_states
             .iter()
-            .filter(|qs| qs.is_audio)
+            .filter(|qs| qs.unpaced)
             .filter_map(|qs| (qs.snapshot.first_unsent.map(|t| (t, qs))))
             .min_by_key(|(t, _)| *t);
 
-        // Audio packets are not paced, immediately send.
-        if let Some((queued_at, qs)) = unpaced_audio {
+        // Unpaced packets (such as audio by default) are sent immediately.
+        if let Some((queued_at, qs)) = unpaced {
             return Some((queued_at, Some(qs)));
         }
 
@@ -440,7 +440,7 @@ impl LeakyBucketPacer {
             let queues = self
                 .queue_states
                 .iter()
-                .filter(|q| q.snapshot.packet_count > 0 && !q.is_audio);
+                .filter(|q| q.snapshot.packet_count > 0 && !q.unpaced);
 
             // Send on the non-empty video queue with the lowest priority that, was least recently
             // sent on.
@@ -740,13 +740,12 @@ mod test {
             now + duration_ms(52),
         );
 
-        // Audio packets are unpaced and we should be able to send it out even if we have too much
-        // media debt.
+        // Unpaced packets should be able to send even if we have too much media debt.
         assert_poll_success(
             &mut pacer,
             &mut queue,
             now + duration_ms(52),
-            "Sixth packet(audio) should be released despite too much media debt because audio packets are not paced",
+            "Sixth packet (audio) should be released despite too much media debt because audio packets are not paced",
             |packet| {
                 assert_eq!(packet.kind, PacketKind::Audio);
                 assert_eq!(packet.header.sequence_number, 6);
@@ -1015,7 +1014,7 @@ mod test {
 
         let mut state = QueueState {
             mid: Mid::from("001"),
-            is_audio: false,
+            unpaced: false,
             use_for_padding: true,
             snapshot: QueueSnapshot {
                 created_at: now,
@@ -1030,7 +1029,7 @@ mod test {
 
         let other = QueueState {
             mid: Mid::from("002"),
-            is_audio: false,
+            unpaced: false,
             use_for_padding: false,
             snapshot: QueueSnapshot {
                 created_at: now,
@@ -1470,7 +1469,7 @@ mod test {
             fn queue_state(&self, now: Instant) -> QueueState {
                 QueueState {
                     mid: self.mid,
-                    is_audio: self.is_audio,
+                    unpaced: self.is_audio,
                     use_for_padding: !self.is_audio && self.last_send_time.is_some(),
                     snapshot: QueueSnapshot {
                         created_at: now,
