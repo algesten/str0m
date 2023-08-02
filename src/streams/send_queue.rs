@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::packet::{QueuePriority, QueueSnapshot};
+use crate::util::not_happening;
 
 use super::RtpPacket;
 
@@ -27,7 +28,7 @@ impl SendQueue {
 
     pub fn handle_timeout(&mut self, now: Instant) {
         for pkt in self.queue.iter_mut().rev() {
-            if pkt.timestamp < now {
+            if pkt.timestamp != not_happening() {
                 // all enqueued packets are timestamped.
                 break;
             } else {
@@ -41,7 +42,7 @@ impl SendQueue {
         if let Some(packet) = self.queue.pop_front() {
             // If the popped packet has a timestamp in the future, we have not counted it
             // towards the queue total (see handle_timeout).
-            if now >= packet.timestamp {
+            if not_happening() != packet.timestamp {
                 let queue_time = now - packet.timestamp;
                 self.total.decrease(now, packet.payload.len(), queue_time);
             }
