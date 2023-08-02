@@ -147,6 +147,17 @@ impl QueueSnapshot {
     pub fn has_ever_sent(&self) -> bool {
         self.last_emitted.is_some()
     }
+
+    /// Update the priority if the snapshot is non-empty.
+    ///
+    /// Sets the priority to the provided priority if the queue is non-empty, otherwise empty.
+    pub(crate) fn update_priority(&mut self, priority: QueuePriority) {
+        if self.packet_count > 0 {
+            self.priority = priority;
+        } else {
+            self.priority = QueuePriority::Empty;
+        }
+    }
 }
 
 impl Default for QueueSnapshot {

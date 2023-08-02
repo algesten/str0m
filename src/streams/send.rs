@@ -5,6 +5,7 @@ use std::time::Instant;
 use crate::format::PayloadParams;
 use crate::media::KeyframeRequestKind;
 use crate::packet::QueuePriority;
+use crate::packet::QueueSnapshot;
 use crate::packet::QueueState;
 use crate::rtp_::{extend_u16, InstantExt, ReportList, Rtcp, MAX_BLANK_PADDING_PAYLOAD_SIZE};
 use crate::rtp_::{ExtensionMap, ReceptionReport, RtpHeader};
@@ -583,9 +584,15 @@ impl StreamTx {
 
         // Schedule all resends. They will be handled on next poll_packet
         for seq_no in iter {
+            let Some(packet) = self.rtx_cache.get_cached_packet_by_seq_no(seq_no) else {
+                // Packet was not available in RTX cache, it has probably expired.
+                continue;
+            };
+
             let resend = Resend {
                 seq_no,
                 queued_at: now,
+                payload_size: packet.payload.len(),
             };
             self.resends.push_back(resend);
         }
@@ -695,6 +702,26 @@ impl StreamTx {
         let use_for_padding = self.is_audio.map(|i| !i).unwrap_or(false);
 
         let mut snapshot = self.send_queue.snapshot(now);
+
+        // Outstanding resends
+        let mut resend_snapshot =
+            self.resends
+                .iter()
+                .fold(QueueSnapshot::default(), |mut snapshot, r| {
+                    snapshot.total_queue_time_origin += now.duration_since(r.queued_at);
+                    snapshot.size += r.payload_size;
+                    snapshot.packet_count += 1;
+                    snapshot.first_unsent = snapshot
+                        .first_unsent
+                        .map(|i| i.min(r.queued_at))
+                        .or(Some(r.queued_at));
+
+                    snapshot
+                });
+        resend_snapshot.created_at = now;
+        resend_snapshot.update_priority(QueuePriority::Media);
+
+        snapshot.merge(&resend_snapshot);
 
         // Fake some stats for padding.
         if self.padding > 0 {
@@ -841,4 +868,5 @@ enum NextPacketKind {
 struct Resend {
     seq_no: SeqNo,
     queued_at: Instant,
+    payload_size: usize,
 }
