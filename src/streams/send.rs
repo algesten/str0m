@@ -712,7 +712,7 @@ impl StreamTx {
             mid: self.mid,
             is_audio,
             use_for_padding,
-            snapshot: self.send_queue.snapshot(now),
+            snapshot,
         }
     }
 
