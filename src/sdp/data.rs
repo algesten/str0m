@@ -14,6 +14,7 @@ use crate::format::FormatParams;
 use crate::format::PayloadParams;
 use crate::ice::{Candidate, IceCreds};
 use crate::rtp_::{Direction, Extension, Mid, Pt, Rid, SessionId, Ssrc};
+use crate::VERSION;
 
 use super::parser::sdp_parser;
 use super::SdpError;
@@ -1227,7 +1228,7 @@ impl fmt::Display for Sdp {
 impl fmt::Display for Session {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "v=0\r\n")?;
-        write!(f, "o=- {} 2 IN IP4 0.0.0.0\r\n", self.id)?;
+        write!(f, "o=str0m-{} {} 2 IN IP4 0.0.0.0\r\n", VERSION, self.id)?;
         write!(f, "s=-\r\n")?;
         if let Some(bw) = &self.bw {
             write!(f, "b={}:{}\r\n", bw.typ, bw.val)?;
@@ -1487,6 +1488,7 @@ impl<'a> std::fmt::Display for FingerprintFmt<'a> {
 #[cfg(test)]
 mod test {
     use crate::rtp_::Extension;
+    use crate::VERSION;
 
     use super::*;
 
@@ -1589,8 +1591,8 @@ mod test {
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "label".into(), value: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() }],
             }],
         };
-        assert_eq!(&format!("{sdp}"), "v=0\r\n\
-            o=- 5058682828002148772 2 IN IP4 0.0.0.0\r\n\
+        assert_eq!(&format!("{sdp}"), &format!("v=0\r\n\
+            o=str0m-{VERSION} 5058682828002148772 2 IN IP4 0.0.0.0\r\n\
             s=-\r\n\
             t=0 0\r\n\
             a=group:BUNDLE 0\r\n\
@@ -1620,6 +1622,6 @@ mod test {
             a=ssrc:3948621874 msid:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             a=ssrc:3948621874 mslabel:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK\r\n\
             a=ssrc:3948621874 label:f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
-            ");
+            "));
     }
 }
