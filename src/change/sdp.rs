@@ -11,6 +11,7 @@ use crate::ice::{Candidate, IceCreds};
 use crate::io::Id;
 use crate::media::Media;
 use crate::packet::MediaKind;
+use crate::rtp_::Rid;
 use crate::rtp_::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
@@ -592,7 +593,7 @@ fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
 
     add_new_lines(session, &new_lines, true).map_err(RtcError::RemoteSdp)?;
 
-    equalize_streams(session);
+    ensure_stream_tx(session);
 
     Ok(())
 }
@@ -618,34 +619,64 @@ fn apply_answer(
     // Add all pending changes (since we pre-allocated SSRC communicated in the Offer).
     add_pending_changes(session, pending);
 
-    equalize_streams(session);
+    ensure_stream_tx(session);
 
     Ok(())
 }
 
-fn equalize_streams(session: &mut Session) {
-    // This makes sure we have as many send streams as there are receive streams.
-    let new = session.streams.equalize_streams();
+fn ensure_stream_tx(session: &mut Session) {
+    for media in &session.medias {
+        // Only make send streams when we have to.
+        if !media.direction().is_sending() {
+            continue;
+        }
 
-    // Configure the buffer sizes of newly created send streams.
-    for ssrc in new {
-        // unwrap because stream was just created in above call.
-        let stream = session.streams.stream_tx(&ssrc).unwrap();
+        let mut rids: Vec<Option<Rid>> = vec![];
 
-        // unwrap because we must have the corresponding Media
-        let media = session
-            .medias
-            .iter()
-            .find(|m| m.mid() == stream.mid())
-            .unwrap();
-
-        let size = if media.kind().is_audio() {
-            session.send_buffer_audio
+        if let Some(sim) = media.simulcast() {
+            for group in &*sim.send {
+                for opt in &**group {
+                    match opt {
+                        SimulcastOption::Rid(rid) => {
+                            let rid: Rid = rid.0.as_str().into();
+                            rids.push(Some(rid));
+                        }
+                        SimulcastOption::Ssrc(_) => {
+                            warn!("No support for munged simulcast");
+                        }
+                    }
+                }
+            }
         } else {
-            session.send_buffer_video
-        };
+            rids.push(None);
+        }
 
-        stream.set_rtx_cache(size, DEFAULT_RTX_CACHE_DURATION);
+        // If any payload param has RTX, we need to prepare for RTX. This is because we always
+        // communicate a=ssrc lines, which need to be complete with main and RTX SSRC.
+        let has_rtx = media.payload_params().iter().any(|p| p.resend().is_some());
+
+        for rid in rids {
+            let (ssrc, rtx) = if has_rtx {
+                let (ssrc, rtx) = session.streams.new_ssrc_pair();
+                (ssrc, Some(rtx))
+            } else {
+                let ssrc = session.streams.new_ssrc();
+                (ssrc, None)
+            };
+
+            let stream = session
+                .streams
+                .declare_stream_tx(ssrc, rtx, media.mid(), rid);
+
+            // Configure cache size
+            let size = if media.kind().is_audio() {
+                session.send_buffer_audio
+            } else {
+                session.send_buffer_video
+            };
+
+            stream.set_rtx_cache(size, DEFAULT_RTX_CACHE_DURATION);
+        }
     }
 }
 
@@ -872,7 +903,6 @@ fn update_media(
             .map(|r| r.ssrc);
         streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), None);
     }
-    // media.set_equalize_sources();
 
     // Simulcast configuration
     if let Some(s) = m.simulcast() {

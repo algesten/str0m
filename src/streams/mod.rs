@@ -265,44 +265,18 @@ impl Streams {
         }
     }
 
-    // Helper for SDP to match incoming streams with outgoing.
-    //
-    // This is so we can put as many a=ssrc lines in our answer as there is in an offer.
-    pub(crate) fn equalize_streams(&mut self) -> Vec<Ssrc> {
-        let mut ret = vec![];
+    pub fn new_ssrc_pair(&mut self) -> (Ssrc, Ssrc) {
+        let ssrc = self.new_ssrc();
 
-        for rx in self.streams_rx.values() {
-            let matched = self
-                .streams_tx
-                .values()
-                .any(|tx| tx.mid() == rx.mid() && tx.rid() == rx.rid());
-
-            if matched {
-                continue;
+        let rtx = loop {
+            let proposed = self.new_ssrc();
+            // Avoid clashing with just allocated main SSRC.
+            if proposed != ssrc {
+                break proposed;
             }
+        };
 
-            let ssrc = self.new_ssrc();
-
-            let rtx = if rx.rtx().is_some() {
-                loop {
-                    let proposed = self.new_ssrc();
-                    // Avoid clashing with just allocated main SSRC.
-                    if proposed != ssrc {
-                        break Some(proposed);
-                    }
-                }
-            } else {
-                None
-            };
-
-            ret.push(ssrc);
-
-            self.streams_tx
-                .entry(ssrc)
-                .or_insert_with(|| StreamTx::new(ssrc, rtx, rx.mid(), rx.rid()));
-        }
-
-        ret
+        (ssrc, rtx)
     }
 
     pub(crate) fn first_ssrc_remote(&self) -> Ssrc {

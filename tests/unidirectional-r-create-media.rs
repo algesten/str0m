@@ -1,6 +1,7 @@
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
+use str0m::change::SdpOffer;
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
 use str0m::{Candidate, Event, RtcError};
@@ -10,7 +11,7 @@ mod common;
 use common::{init_log, progress, TestRtc};
 
 #[test]
-pub fn unidirectional() -> Result<(), RtcError> {
+pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
     init_log();
 
     let mut l = TestRtc::new(info_span!("L"));
@@ -21,13 +22,20 @@ pub fn unidirectional() -> Result<(), RtcError> {
     l.add_local_candidate(host1);
     r.add_local_candidate(host2);
 
-    // The change is on the L (sending side) with Direction::SendRecv.
-    let mut change = l.sdp_api();
-    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
+    // The change is on the R (not sending side) with Direction::RecvOnly.
+    let mut change = r.sdp_api();
+    let mid = change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None);
     let (offer, pending) = change.apply().unwrap();
 
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    // str0m always produces a=ssrc lines, also for RecvOnly (since direction can change).
+    // We munge the a=ssrc lines away.
+    let mut offer = offer.to_string();
+    let start = offer.find("a=ssrc").unwrap();
+    offer.replace_range(start..offer.len(), "");
+
+    let offer = SdpOffer::from_sdp_string(&offer).unwrap();
+    let answer = l.rtc.sdp_api().accept_offer(offer)?;
+    r.rtc.sdp_api().accept_answer(pending, answer)?;
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -52,6 +60,7 @@ pub fn unidirectional() -> Result<(), RtcError> {
         l.writer(mid).unwrap().write(pt, wallclock, time, &data_a)?;
 
         progress(&mut l, &mut r)?;
+        progress(&mut l, &mut r)?;
 
         if l.duration() > Duration::from_secs(10) {
             break;
@@ -64,7 +73,7 @@ pub fn unidirectional() -> Result<(), RtcError> {
         .filter(|e| matches!(e, Event::MediaData(_)))
         .count();
 
-    assert!(media_count > 170, "Not enough MediaData: {}", media_count);
+    assert!(media_count > 80, "Not enough MediaData: {}", media_count);
 
     Ok(())
 }
