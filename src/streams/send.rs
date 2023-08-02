@@ -188,6 +188,16 @@ impl StreamTx {
         self.rtx_cache = RtxCache::new(max_packets, max_age, false);
     }
 
+    /// Set whether this stream is unpaced or not.
+    ///
+    /// This is only relevant when BWE (Bandwidth Estimation) is enabled. By default, audio is unpaced
+    /// thus not held to a steady send rate by the Pacer.
+    ///
+    /// This overrides the default behavior.
+    pub fn set_unpaced(&mut self, unpaced: bool) {
+        self.unpaced = Some(unpaced);
+    }
+
     /// Write RTP packet to a send stream.
     ///
     /// The `payload` argument is expected to be only the RTP payload, not the RTP packet header.
