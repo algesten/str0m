@@ -690,7 +690,7 @@ impl StreamTx {
         self.stats.fill(snapshot, self.mid, self.rid, now);
     }
 
-    pub(crate) fn send_queue_state(&mut self, now: Instant) -> QueueState {
+    pub(crate) fn queue_state(&mut self, now: Instant) -> QueueState {
         // We only know if something is audio on the first ever sent packet.
         // Defaulting `true` means the queue will be "unpaced" until such time we know.
         let is_audio = self.is_audio.unwrap_or(true);
@@ -703,46 +703,12 @@ impl StreamTx {
 
         let mut snapshot = self.send_queue.snapshot(now);
 
-        // Outstanding resends
-        let mut resend_snapshot =
-            self.resends
-                .iter()
-                .fold(QueueSnapshot::default(), |mut snapshot, r| {
-                    snapshot.total_queue_time_origin += now.duration_since(r.queued_at);
-                    snapshot.size += r.payload_size;
-                    snapshot.packet_count += 1;
-                    snapshot.first_unsent = snapshot
-                        .first_unsent
-                        .map(|i| i.min(r.queued_at))
-                        .or(Some(r.queued_at));
+        if let Some(snapshot_resend) = self.queue_state_resend(now) {
+            snapshot.merge(&snapshot_resend);
+        }
 
-                    snapshot
-                });
-        resend_snapshot.created_at = now;
-        resend_snapshot.update_priority(QueuePriority::Media);
-
-        snapshot.merge(&resend_snapshot);
-
-        // Fake some stats for padding.
-        if self.padding > 0 {
-            // TODO: Be more scientific about this factor.
-            const AVERAGE_PADDING_PACKET_SIZE: usize = 800;
-
-            snapshot.priority = if snapshot.packet_count == 0 {
-                QueuePriority::Padding
-            } else {
-                QueuePriority::Media
-            };
-
-            let fake_packets = self.padding / AVERAGE_PADDING_PACKET_SIZE;
-
-            snapshot.size += self.padding;
-            snapshot.packet_count += fake_packets as u32;
-
-            const FAKE_PADDING_DURATION_MILLIS: usize = 5;
-            let fake_millis = fake_packets * FAKE_PADDING_DURATION_MILLIS;
-            let fake_duration = Duration::from_millis(fake_millis as u64);
-            snapshot.total_queue_time_origin += fake_duration;
+        if let Some(snapshot_padding) = self.queue_state_padding(now) {
+            snapshot.merge(&snapshot_padding);
         }
 
         QueueState {
@@ -751,6 +717,55 @@ impl StreamTx {
             use_for_padding,
             snapshot,
         }
+    }
+
+    fn queue_state_resend(&self, now: Instant) -> Option<QueueSnapshot> {
+        if self.resends.is_empty() {
+            return None;
+        }
+
+        // Outstanding resends
+        let mut snapshot = self
+            .resends
+            .iter()
+            .fold(QueueSnapshot::default(), |mut snapshot, r| {
+                snapshot.total_queue_time_origin += now.duration_since(r.queued_at);
+                snapshot.size += r.payload_size;
+                snapshot.packet_count += 1;
+                snapshot.first_unsent = snapshot
+                    .first_unsent
+                    .map(|i| i.min(r.queued_at))
+                    .or(Some(r.queued_at));
+
+                snapshot
+            });
+        snapshot.created_at = now;
+        snapshot.update_priority(QueuePriority::Media);
+
+        Some(snapshot)
+    }
+
+    fn queue_state_padding(&self, now: Instant) -> Option<QueueSnapshot> {
+        if self.padding == 0 {
+            return None;
+        }
+
+        // TODO: Be more scientific about these factors.
+        const AVERAGE_PADDING_PACKET_SIZE: usize = 800;
+        const FAKE_PADDING_DURATION_MILLIS: usize = 5;
+
+        let fake_packets = self.padding / AVERAGE_PADDING_PACKET_SIZE;
+        let fake_millis = fake_packets * FAKE_PADDING_DURATION_MILLIS;
+        let fake_duration = Duration::from_millis(fake_millis as u64);
+
+        Some(QueueSnapshot {
+            created_at: now,
+            size: self.padding,
+            packet_count: fake_packets as u32,
+            total_queue_time_origin: fake_duration,
+            priority: QueuePriority::Padding,
+            ..Default::default()
+        })
     }
 
     pub(crate) fn generate_padding(&mut self, _now: Instant, padding: usize) {
