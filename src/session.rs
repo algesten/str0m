@@ -216,7 +216,7 @@ impl Session {
             self.last_nack = now;
         }
 
-        let iter = self.streams.streams_tx().map(|m| m.send_queue_state(now));
+        let iter = self.streams.streams_tx().map(|m| m.queue_state(now));
         if let Some(padding_request) = self.pacer.handle_timeout(now, iter) {
             let stream = self
                 .streams
