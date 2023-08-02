@@ -558,6 +558,8 @@ pub mod error {
     pub use crate::sdp::SdpError;
 }
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Errors for the whole Rtc engine.
 #[derive(Debug, Error)]
 #[non_exhaustive]

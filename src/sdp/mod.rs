@@ -233,6 +233,7 @@ sdp_ser!(SdpAnswer, "Answer", "answer");
 #[cfg(test)]
 mod test {
     use crate::rtp_::SessionId;
+    use crate::VERSION;
 
     use super::*;
 
@@ -252,7 +253,7 @@ mod test {
         let offer = SdpOffer(sdp());
         let json = serde_json::to_string(&offer).unwrap();
 
-        assert_eq!(json, "{\"type\":\"offer\",\"sdp\":\"v=0\\r\\no=- 123 2 IN IP4 0.0.0.0\\r\\ns=-\\r\\nt=0 0\\r\\n\"}");
+        assert_eq!(json, format!("{{\"type\":\"offer\",\"sdp\":\"v=0\\r\\no=str0m-{VERSION} 123 2 IN IP4 0.0.0.0\\r\\ns=-\\r\\nt=0 0\\r\\n\"}}"));
 
         let offer2: SdpOffer = serde_json::from_str(&json).unwrap();
 
@@ -264,7 +265,7 @@ mod test {
         let answer = SdpAnswer(sdp());
         let json = serde_json::to_string(&answer).unwrap();
 
-        assert_eq!(json, "{\"type\":\"answer\",\"sdp\":\"v=0\\r\\no=- 123 2 IN IP4 0.0.0.0\\r\\ns=-\\r\\nt=0 0\\r\\n\"}");
+        assert_eq!(json, format!("{{\"type\":\"answer\",\"sdp\":\"v=0\\r\\no=str0m-{VERSION} 123 2 IN IP4 0.0.0.0\\r\\ns=-\\r\\nt=0 0\\r\\n\"}}"));
 
         let answer2: SdpAnswer = serde_json::from_str(&json).unwrap();
 
