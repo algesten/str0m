@@ -333,7 +333,7 @@ impl Pacer for LeakyBucketPacer {
             self.next_poll_queue = None;
             self.next_poll_time = Some(next_poll_time);
         } else {
-            self.next_poll_queue = Some(queue.mid);
+            self.next_poll_queue = queue.map(|q| q.mid);
             self.next_poll_time = Some(next_poll_time);
         }
 
@@ -402,7 +402,7 @@ impl LeakyBucketPacer {
         crate::packet::bwe::macros::log_pacer_padding_debt!(self.padding_debt.as_bytes_usize());
     }
 
-    fn next_poll(&self, now: Instant) -> Option<(Instant, &QueueState)> {
+    fn next_poll(&self, now: Instant) -> Option<(Instant, Option<&QueueState>)> {
         // If we have never sent before, do so immediately on an arbitrary non-empty queue.
         if self.last_send_time.is_none() {
             let mut queues = self
@@ -410,7 +410,7 @@ impl LeakyBucketPacer {
                 .iter()
                 .filter(|q| q.snapshot.packet_count > 0);
 
-            return queues.next().map(|q| (now, q));
+            return queues.next().map(|q| (now, Some(q)));
         };
 
         let unpaced_audio = self
@@ -422,7 +422,7 @@ impl LeakyBucketPacer {
 
         // Audio packets are not paced, immediately send.
         if let Some((queued_at, qs)) = unpaced_audio {
-            return Some((queued_at, qs));
+            return Some((queued_at, Some(qs)));
         }
 
         let non_empty_queue = {
@@ -454,17 +454,14 @@ impl LeakyBucketPacer {
                     .map(|h| h + next_send_offset)
                     .unwrap_or(now);
 
-                return Some((poll_at, queue));
+                return Some((poll_at, Some(queue)));
             }
         }
 
         if self.padding_bitrate > Bitrate::ZERO && self.last_send_time.is_some() {
-            let padding_queue = self
-                .queue_states
-                .iter()
-                .filter(|q| q.use_for_padding)
-                .max_by_key(|q| q.snapshot.last_emitted);
-            if let Some(queue) = padding_queue {
+            let padding_possible = self.queue_states.iter().any(|q| q.use_for_padding);
+
+            if padding_possible {
                 // If all queues are empty, we have sent something, and we have a padding rate wait until we have drained
                 // both the media debt and padding debt to send some padding.
                 let mut drain_debt_time = (self.media_debt / self.adjusted_bitrate)
@@ -479,7 +476,9 @@ impl LeakyBucketPacer {
                     .map(|h| h + drain_debt_time)
                     .unwrap_or(now);
 
-                return Some((padding_at, queue));
+                // We explicitly don't return a queue to poll here. We need another call to
+                // handle_timeout to request the padding before we can poll the selected queue.
+                return Some((padding_at, None));
             }
         }
 
