@@ -47,12 +47,15 @@ impl RtxCache {
 
     pub fn get_cached_packet_smaller_than(&mut self, max_size: usize) -> Option<&mut RtpPacket> {
         let quantized_size = max_size / RTX_CACHE_SIZE_QUANTIZER;
-        let seq_no = *self
+
+        let seq_no = self
             .seq_no_by_quantized_size
             .range(..quantized_size)
-            .next_back()?
-            .1;
-        self.get_cached_packet_by_seq_no(seq_no)
+            .rev()
+            .find_map(|(_, seq_no)| self.packet_by_seq_no.contains_key(seq_no).then_some(seq_no))
+            .copied();
+
+        seq_no.and_then(|seq_no| self.get_cached_packet_by_seq_no(seq_no))
     }
 
     fn remove_old_packets(&mut self, now: Instant) {
