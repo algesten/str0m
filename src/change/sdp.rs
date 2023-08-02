@@ -656,6 +656,16 @@ fn ensure_stream_tx(session: &mut Session) {
         let has_rtx = media.payload_params().iter().any(|p| p.resend().is_some());
 
         for rid in rids {
+            // If we already have the stream, we don't make any new one.
+            let has_stream = session
+                .streams
+                .stream_tx_by_mid_rid(media.mid(), rid)
+                .is_some();
+
+            if has_stream {
+                continue;
+            }
+
             let (ssrc, rtx) = if has_rtx {
                 let (ssrc, rtx) = session.streams.new_ssrc_pair();
                 (ssrc, Some(rtx))
