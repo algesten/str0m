@@ -431,8 +431,12 @@ impl StreamTx {
         self.do_poll_packet_resend(now, is_padding)
     }
 
+    fn rtx_enabled(&self) -> bool {
+        self.rtx.is_some() && self.rtx_pt.is_some()
+    }
+
     fn do_poll_packet_resend(&mut self, now: Instant, is_padding: bool) -> Option<NextPacket<'_>> {
-        if self.rtx.is_none() || self.rtx_pt.is_none() {
+        if !self.rtx_enabled() {
             // We're not doing resends for non-RTX.
             return None;
         }
@@ -695,11 +699,8 @@ impl StreamTx {
         // Defaulting `true` means the queue will be "unpaced" until such time we know.
         let is_audio = self.is_audio.unwrap_or(true);
 
-        // There are two parts to whether we are using this for padding:
-        // 1. It must be video (i.e. is_audio is Some(false))
-        // 2. We must have sent a packet. We get this indirectly from is_audio being set on
-        //    first ever poll_packet().
-        let use_for_padding = self.is_audio.map(|i| !i).unwrap_or(false);
+        // It's only possible to use this sender for padding if RTX is enabled.
+        let use_for_padding = self.rtx_enabled();
 
         let mut snapshot = self.send_queue.snapshot(now);
 
