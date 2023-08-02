@@ -48,6 +48,10 @@ pub struct StreamTx {
     /// RTX PT is used for the current sending PT.
     rtx_pt: Option<Pt>,
 
+    /// The last non-RTX payload type that was sent. Remembered here so it can be used for blank
+    /// padding packets.
+    last_pt: Option<Pt>,
+
     /// If we are doing seq_no ourselves (when writing sample mode).
     seq_no: SeqNo,
 
@@ -138,6 +142,7 @@ impl StreamTx {
             mid,
             rid,
             rtx_pt: None,
+            last_pt: None,
             seq_no,
             seq_no_rtx,
             last_used: already_happened(),
@@ -307,6 +312,7 @@ impl StreamTx {
 
         let is_audio = param.spec().codec.is_audio();
         let mut set_rtx_pt = None;
+        let mut set_pt = None;
 
         let mut header = match next.kind {
             NextPacketKind::Regular => {
@@ -316,9 +322,11 @@ impl StreamTx {
 
                 let pt = param.pt();
 
-                // Remember which RTX corresponds to this main PT. We want `self.rtx_pt =` here,
-                // but the borrow checker won't let us.
+                // Remember which RTX corresponds to this main PT and the main PT. We want to set
+                // these directly on `self` here, but can't because we already have a mutable
+                // borrow.
                 set_rtx_pt = param.resend();
+                set_pt = Some(param.pt());
 
                 // Modify the original (and also cached) value.
                 header_ref.payload_type = pt;
@@ -418,6 +426,9 @@ impl StreamTx {
         // This is set here due to borrow checker.
         if set_rtx_pt.is_some() {
             self.rtx_pt = set_rtx_pt;
+        }
+        if set_pt.is_some() {
+            self.last_pt = set_pt;
         }
 
         Some(PacketReceipt {
@@ -519,43 +530,51 @@ impl StreamTx {
             return None;
         }
 
-        let next = if self.padding > MIN_SPURIOUS_PADDING_SIZE {
-            // Find a historic packet that is smaller than this max size. The max size
-            // is a headroom since we can accept slightly larger padding than asked for.
-            let max_size = (self.padding).min(1200) * 2;
+        #[allow(clippy::unnecessary_operation)]
+        'outer: {
+            if self.padding > MIN_SPURIOUS_PADDING_SIZE {
+                // Find a historic packet that is smaller than this max size. The max size
+                // is a headroom since we can accept slightly larger padding than asked for.
+                let max_size = (self.padding).min(1200) * 2;
 
-            let pkt = self.rtx_cache.get_cached_packet_smaller_than(max_size)?;
+                let Some(pkt) = self.rtx_cache.get_cached_packet_smaller_than(max_size) else {
+                    // Couldn't find spurious packet, try a blank packet instead.
+                    break 'outer;
+                };
 
-            let orig_seq_no = pkt.seq_no;
-            let seq_no = self.seq_no_rtx.inc();
+                let orig_seq_no = pkt.seq_no;
+                let seq_no = self.seq_no_rtx.inc();
 
-            NextPacket {
-                kind: NextPacketKind::Resend(orig_seq_no),
-                seq_no,
-                pkt,
-            }
-        } else {
-            let seq_no = self.seq_no_rtx.inc();
+                self.padding = self.padding.saturating_sub(pkt.payload.len());
 
-            let pkt = &mut self.blank_packet;
-            pkt.seq_no = self.seq_no_rtx.inc();
-
-            let len = self
-                .padding
-                .clamp(SRTP_BLOCK_SIZE, MAX_BLANK_PADDING_PAYLOAD_SIZE);
-            assert!(len <= 255); // should fit in a byte
-
-            NextPacket {
-                kind: NextPacketKind::Blank(len as u8),
-                seq_no,
-                pkt,
+                return Some(NextPacket {
+                    kind: NextPacketKind::Resend(orig_seq_no),
+                    seq_no,
+                    pkt,
+                });
             }
         };
 
-        let actual_len = next.pkt.payload.len();
-        self.padding = self.padding.saturating_sub(actual_len);
+        let seq_no = self.seq_no_rtx.inc();
 
-        Some(next)
+        let pkt = &mut self.blank_packet;
+        pkt.seq_no = self.seq_no_rtx.inc();
+        pkt.pt = self
+            .last_pt
+            .expect("Must have sent at least one packet before blank padding");
+
+        let len = self
+            .padding
+            .clamp(SRTP_BLOCK_SIZE, MAX_BLANK_PADDING_PAYLOAD_SIZE);
+        assert!(len <= 255); // should fit in a byte
+
+        self.padding = self.padding.saturating_sub(len);
+
+        Some(NextPacket {
+            kind: NextPacketKind::Blank(len as u8),
+            seq_no,
+            pkt,
+        })
     }
 
     pub(crate) fn sender_report_at(&self) -> Instant {
@@ -714,7 +733,7 @@ impl StreamTx {
         let unpaced = self.unpaced.unwrap_or(true);
 
         // It's only possible to use this sender for padding if RTX is enabled.
-        let use_for_padding = self.rtx_enabled();
+        let use_for_padding = self.rtx_enabled() && self.last_pt.is_some();
 
         let mut snapshot = self.send_queue.snapshot(now);
 
@@ -784,6 +803,9 @@ impl StreamTx {
     }
 
     pub(crate) fn generate_padding(&mut self, _now: Instant, padding: usize) {
+        if !self.rtx_enabled() {
+            return;
+        }
         self.padding += padding;
     }
 
