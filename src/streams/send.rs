@@ -293,6 +293,7 @@ impl StreamTx {
         };
 
         let is_audio = param.spec().codec.is_audio();
+        let mut set_rtx_pt = None;
 
         let mut header = match next.kind {
             NextPacketKind::Regular => {
@@ -301,6 +302,11 @@ impl StreamTx {
                     MediaTime::new(next.pkt.time.numer(), param.spec().clock_rate as i64);
 
                 let pt = param.pt();
+
+                // Remember which RTX corresponds to this main PT. We want `self.rtx_pt =` here,
+                // but the borrow checker won't let us.
+                set_rtx_pt = param.resend();
+
                 // Modify the original (and also cached) value.
                 header_ref.payload_type = pt;
                 next.pkt.pt = pt;
@@ -393,6 +399,11 @@ impl StreamTx {
         // Set on first send
         if self.is_audio.is_none() {
             self.is_audio = Some(is_audio);
+        }
+
+        // This is set here due to borrow checker.
+        if set_rtx_pt.is_some() {
+            self.rtx_pt = set_rtx_pt;
         }
 
         Some(PacketReceipt {
