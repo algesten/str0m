@@ -44,13 +44,9 @@ pub struct StreamTx {
     /// The rid that might be used for this stream.
     rid: Option<Rid>,
 
-    /// Payload type for resends. This is set locally to "remember" which
-    /// RTX PT is used for the current sending PT.
-    rtx_pt: Option<Pt>,
-
-    /// The last non-RTX payload type that was sent. Remembered here so it can be used for blank
+    /// The last main payload type that was sent. Remembered here so it can be used for blank
     /// padding packets.
-    last_pt: Option<Pt>,
+    pt: Option<Pt>,
 
     /// If we are doing seq_no ourselves (when writing sample mode).
     seq_no: SeqNo,
@@ -141,8 +137,7 @@ impl StreamTx {
             rtx,
             mid,
             rid,
-            rtx_pt: None,
-            last_pt: None,
+            pt: None,
             seq_no,
             seq_no_rtx,
             last_used: already_happened(),
@@ -274,6 +269,10 @@ impl StreamTx {
         Ok(())
     }
 
+    fn rtx_enabled(&self) -> bool {
+        self.rtx.is_some()
+    }
+
     pub(crate) fn poll_packet(
         &mut self,
         now: Instant,
@@ -286,7 +285,7 @@ impl StreamTx {
         let rid = self.rid;
         let ssrc_rtx = self.rtx;
 
-        let (next, is_padding) = if let Some(next) = self.poll_packet_resend(now, false) {
+        let (next, is_padding) = if let Some(next) = self.poll_packet_resend(now) {
             (next, false)
         } else if let Some(next) = self.poll_packet_regular(now) {
             (next, false)
@@ -303,6 +302,9 @@ impl StreamTx {
         // This is true also for RTX.
         header_ref.ext_vals.mid = Some(mid);
 
+        // Sanity check.
+        assert_eq!(header_ref.payload_type, next.pkt.pt);
+
         // The pt in next.pkt is the "main" pt.
         let Some(param) = params.iter().find(|p| p.pt() == next.pkt.pt) else {
             // PT does not exist in the connected media.
@@ -311,27 +313,21 @@ impl StreamTx {
         };
 
         let is_audio = param.spec().codec.is_audio();
-        let mut set_rtx_pt = None;
         let mut set_pt = None;
 
         let mut header = match next.kind {
             NextPacketKind::Regular => {
-                // Now we know the parameters, update the denominator of the MediaTime.
-                next.pkt.time =
-                    MediaTime::new(next.pkt.time.numer(), param.spec().clock_rate as i64);
-
-                let pt = param.pt();
-
-                // Remember which RTX corresponds to this main PT and the main PT. We want to set
-                // these directly on `self` here, but can't because we already have a mutable
-                // borrow.
-                set_rtx_pt = param.resend();
+                // Remember PT We want to set these directly on `self` here, but can't
+                // because we already have a mutable borrow.
                 set_pt = Some(param.pt());
 
-                // Modify the original (and also cached) value.
-                header_ref.payload_type = pt;
-                next.pkt.pt = pt;
+                let clock_rate = param.spec().clock_rate as i64;
 
+                // Modify the cached packet time. This is so write_rtp can use u32 media time without
+                // worrying about lengthening or the clock rate.
+                next.pkt.time = MediaTime::new(next.pkt.time.numer(), clock_rate);
+
+                // Modify the original (and also cached) header value.
                 header_ref.ext_vals.rid = rid;
                 header_ref.ext_vals.rid_repair = None;
 
@@ -339,9 +335,11 @@ impl StreamTx {
             }
             NextPacketKind::Resend(_) | NextPacketKind::Blank(_) => {
                 let pt_rtx = param.resend().expect("pt_rtx resend/blank");
+
                 // Clone header to not change the original (cached) header.
                 let mut header = header_ref.clone();
 
+                // Update clone of header (to not change the cached value).
                 header.payload_type = pt_rtx;
                 header.ssrc = ssrc_rtx.expect("Should have RTX SSRC for resends");
                 header.sequence_number = *next.seq_no as u16;
@@ -424,11 +422,8 @@ impl StreamTx {
         }
 
         // This is set here due to borrow checker.
-        if set_rtx_pt.is_some() {
-            self.rtx_pt = set_rtx_pt;
-        }
         if set_pt.is_some() {
-            self.last_pt = set_pt;
+            self.pt = set_pt;
         }
 
         Some(PacketReceipt {
@@ -439,7 +434,7 @@ impl StreamTx {
         })
     }
 
-    fn poll_packet_resend(&mut self, now: Instant, is_padding: bool) -> Option<NextPacket<'_>> {
+    fn poll_packet_resend(&mut self, now: Instant) -> Option<NextPacket<'_>> {
         let from = now.checked_sub(Duration::from_secs(1)).unwrap_or(now);
         let bytes_transmitted = self.stats.bytes_transmitted.sum_since(from);
         let bytes_retransmitted = self.stats.bytes_retransmitted.sum_since(from);
@@ -452,14 +447,10 @@ impl StreamTx {
             return None;
         }
 
-        self.do_poll_packet_resend(now, is_padding)
+        self.do_poll_packet_resend(now)
     }
 
-    fn rtx_enabled(&self) -> bool {
-        self.rtx.is_some() && self.rtx_pt.is_some()
-    }
-
-    fn do_poll_packet_resend(&mut self, now: Instant, is_padding: bool) -> Option<NextPacket<'_>> {
+    fn do_poll_packet_resend(&mut self, now: Instant) -> Option<NextPacket<'_>> {
         if !self.rtx_enabled() {
             // We're not doing resends for non-RTX.
             return None;
@@ -486,11 +477,9 @@ impl StreamTx {
         // Borrow checker gymnastics.
         let pkt = self.rtx_cache.get_cached_packet_by_seq_no(seq_no).unwrap();
 
-        if !is_padding {
-            let len = pkt.payload.len() as u64;
-            self.stats.update_packet_counts(len, true);
-            self.stats.bytes_retransmitted.push(now, len);
-        }
+        let len = pkt.payload.len() as u64;
+        self.stats.update_packet_counts(len, true);
+        self.stats.bytes_retransmitted.push(now, len);
 
         let seq_no = self.seq_no_rtx.inc();
 
@@ -560,7 +549,7 @@ impl StreamTx {
         let pkt = &mut self.blank_packet;
         pkt.seq_no = self.seq_no_rtx.inc();
         pkt.pt = self
-            .last_pt
+            .pt
             .expect("Must have sent at least one packet before blank padding");
 
         let len = self
@@ -732,8 +721,9 @@ impl StreamTx {
         // apply any pacing until we know what kind of content we are sending.
         let unpaced = self.unpaced.unwrap_or(true);
 
-        // It's only possible to use this sender for padding if RTX is enabled.
-        let use_for_padding = self.rtx_enabled() && self.last_pt.is_some();
+        // It's only possible to use this sender for padding if RTX is enabled and
+        // we know the previous main PT.
+        let use_for_padding = self.rtx_enabled() && self.pt.is_some();
 
         let mut snapshot = self.send_queue.snapshot(now);
 
@@ -802,7 +792,7 @@ impl StreamTx {
         })
     }
 
-    pub(crate) fn generate_padding(&mut self, _now: Instant, padding: usize) {
+    pub(crate) fn generate_padding(&mut self, padding: usize) {
         if !self.rtx_enabled() {
             return;
         }

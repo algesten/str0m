@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use crate::rtp_::{Bitrate, DataSize, Mid};
 use crate::util::already_happened;
 use crate::util::not_happening;
+use crate::util::Soonest;
 
 use super::MediaKind;
 
@@ -294,12 +295,10 @@ impl Pacer for LeakyBucketPacer {
     fn poll_timeout(&self) -> Option<Instant> {
         let next_handle_time = self.last_handle_time.map(|lh| lh + PACING);
 
-        match (next_handle_time, self.next_poll_time) {
-            (Some(nh), Some(np)) => Some(nh.min(np)),
-            (None, Some(np)) => Some(np),
-            (Some(nh), None) => Some(nh),
-            (None, None) => None,
-        }
+        let (when, _what) =
+            (next_handle_time, "pacer_handle").soonest((self.next_poll_time, "pacer_poll"));
+
+        when
     }
 
     fn handle_timeout(

@@ -216,15 +216,7 @@ impl Session {
             self.last_nack = now;
         }
 
-        let iter = self.streams.streams_tx().map(|m| m.queue_state(now));
-        if let Some(padding_request) = self.pacer.handle_timeout(now, iter) {
-            let stream = self
-                .streams
-                .stream_tx_by_mid_rid(padding_request.mid, None)
-                .expect("pacer to use an existing stream");
-
-            stream.generate_padding(now, padding_request.padding);
-        }
+        self.update_queue_state(now);
 
         if let Some(twcc_at) = self.twcc_at() {
             if now >= twcc_at {
@@ -237,6 +229,21 @@ impl Session {
         }
 
         Ok(())
+    }
+
+    fn update_queue_state(&mut self, now: Instant) {
+        let iter = self.streams.streams_tx().map(|m| m.queue_state(now));
+
+        let Some(padding_request) = self.pacer.handle_timeout(now, iter) else {
+            return;
+        };
+
+        let stream = self
+            .streams
+            .stream_tx_by_mid_rid(padding_request.mid, None)
+            .expect("pacer to use an existing stream");
+
+        stream.generate_padding(padding_request.padding);
     }
 
     fn create_twcc_feedback(&mut self, sender_ssrc: Ssrc, now: Instant) -> Option<()> {
