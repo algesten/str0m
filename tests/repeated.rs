@@ -65,34 +65,32 @@ pub fn repeated() -> Result<(), RtcError> {
     let mut counts: Vec<u64> = vec![0, 1, 2, 3, 2, 3, 3];
 
     loop {
-        if l.start + l.duration() > write_at {
-            if !counts.is_empty() {
-                write_at = l.last + Duration::from_millis(300);
-                let wallclock = l.start + l.duration();
+        if l.start + l.duration() > write_at && !counts.is_empty() {
+            write_at = l.last + Duration::from_millis(300);
+            let wallclock = l.start + l.duration();
 
-                let mut direct = l.direct_api();
-                let stream = direct.stream_tx(&ssrc).unwrap();
+            let mut direct = l.direct_api();
+            let stream = direct.stream_tx(&ssrc).unwrap();
 
-                let count = counts.remove(0);
-                let time = (count * 1000 + 47_000_000) as u32;
-                let seq_no = (47_000 + count).into();
+            let count = counts.remove(0);
+            let time = (count * 1000 + 47_000_000) as u32;
+            let seq_no = (47_000 + count).into();
 
-                exts.audio_level = Some(-42 - count as i8);
-                exts.voice_activity = Some(false);
+            exts.audio_level = Some(-42 - count as i8);
+            exts.voice_activity = Some(false);
 
-                stream
-                    .write_rtp(
-                        pt,
-                        seq_no,
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        false,
-                        vec![0x01, 0x02, 0x03, 0x04],
-                    )
-                    .expect("clean write");
-            }
+            stream
+                .write_rtp(
+                    pt,
+                    seq_no,
+                    time,
+                    wallclock,
+                    false,
+                    exts,
+                    false,
+                    vec![0x01, 0x02, 0x03, 0x04],
+                )
+                .expect("clean write");
         }
 
         progress(&mut l, &mut r)?;
@@ -122,8 +120,8 @@ pub fn repeated() -> Result<(), RtcError> {
     assert_eq!(h0.sequence_number, 47000);
     assert_eq!(h1.sequence_number, 47001);
 
-    assert_eq!(h0.timestamp, 47000_000);
-    assert_eq!(h1.timestamp, 47001_000);
+    assert_eq!(h0.timestamp, 47_000_000);
+    assert_eq!(h1.timestamp, 47_001_000);
 
     assert_eq!(h0.ext_vals.audio_level, Some(-42));
     assert_eq!(h1.ext_vals.audio_level, Some(-43));
