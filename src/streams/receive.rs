@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::media::KeyframeRequestKind;
 use crate::rtp_::{
@@ -11,6 +11,7 @@ use crate::stats::{MediaIngressStats, StatsSnapshot};
 use crate::util::{already_happened, calculate_rtt_ms};
 
 use super::register::ReceiverRegister;
+use super::StreamPaused;
 use super::{rr_interval, RtpPacket};
 
 /// Incoming encoded stream.
@@ -68,6 +69,23 @@ pub struct StreamRx {
 
     /// Statistics of incoming data.
     stats: StreamRxStats,
+
+    /// When we need to evaluate the paused state.
+    ///
+    /// now + pause_threshold
+    check_paused_at: Option<Instant>,
+
+    /// Whether we consider this StreamRx paused.
+    ///
+    /// A stream is considered paused if it has received no packets for some (configurable) duration.
+    /// This defaults to 1.5s.
+    paused: bool,
+
+    /// Whether we need to emit a paused event for the current paused state.
+    need_paused_event: bool,
+
+    /// The configured threshold before considering the lack of packets as going into paused.
+    pause_threshold: Duration,
 }
 
 /// Holder of stats.
@@ -108,6 +126,10 @@ impl StreamRx {
             fir_seq_no: 0,
             last_receiver_report: already_happened(),
             stats: StreamRxStats::default(),
+            check_paused_at: None,
+            paused: true,
+            need_paused_event: false,
+            pause_threshold: Duration::from_millis(1500),
         }
     }
 
@@ -140,6 +162,13 @@ impl StreamRx {
     /// This is used to separate streams with the same [`Mid`] when using simulcast.
     pub fn rid(&self) -> Option<Rid> {
         self.rid
+    }
+
+    /// Set threshold duration for emitting the paused event.
+    ///
+    /// This event is emitted when no packet have received for this duration.
+    pub fn set_pause_threshold(&mut self, t: Duration) {
+        self.pause_threshold = t;
     }
 
     /// Request a keyframe for an incoming encoded stream.
@@ -190,15 +219,8 @@ impl StreamRx {
                 self.set_dlrr_item(now, v);
             }
             Goodbye(_v) => {
-                // For some reason, Chrome sends a Goodbye on every SDP negotiation for all active
-                // m-lines. Seems strange, but lets not reset any state.
-                // self.sources_rx.retain(|s| {
-                //     let remove = s.ssrc() == v || s.repairs() == Some(v);
-                //     if remove {
-                //         trace!("Remove ReceiverSource on Goodbye: {:?}", s.ssrc());
-                //     }
-                //     !remove
-                // });
+                // We get Goodbye at weird times, like SDP renegotiation, which makes
+                // pausing on the BYE not a good idea.
             }
             _ => {}
         }
@@ -214,6 +236,29 @@ impl StreamRx {
         self.stats.rtt = rtt;
     }
 
+    pub(crate) fn paused_at(&self) -> Option<Instant> {
+        self.check_paused_at
+    }
+
+    pub(crate) fn handle_timeout(&mut self, now: Instant) {
+        // No scheduled paused check?
+        if self.check_paused_at.is_none() {
+            return;
+        }
+
+        // Not reached scheduled paused check?
+        if Some(now) < self.check_paused_at {
+            return;
+        }
+
+        // Every update() schedules a paused check in the future. If we have reached that
+        // future we have implicitly also paused.
+        self.check_paused_at = None;
+
+        self.paused = true;
+        self.need_paused_event = true;
+    }
+
     pub(crate) fn update(
         &mut self,
         now: Instant,
@@ -222,6 +267,12 @@ impl StreamRx {
         is_repair: bool,
     ) -> RegisterUpdateReceipt {
         self.last_used = now;
+
+        if self.paused {
+            self.paused = false;
+            self.need_paused_event = true;
+        }
+        self.check_paused_at = Some(now + self.pause_threshold);
 
         // Select reference to register to use depending on RTX or not. The RTX has a separate
         // sequence number series to the main register.
@@ -236,12 +287,12 @@ impl StreamRx {
 
         let seq_no = header.sequence_number(Some(register.max_seq()));
 
+        let is_new_packet = register.update_seq(seq_no);
+        register.update_time(now, header.timestamp, clock_rate);
+
         let previous_time = self.last_time.map(|t| t.numer() as u64);
         let time_u32 = extend_u32(previous_time, header.timestamp);
         let time = MediaTime::new(time_u32 as i64, clock_rate as i64);
-
-        let is_new_packet = register.update_seq(seq_no);
-        register.update_time(now, header.timestamp, clock_rate);
 
         if !is_repair {
             self.last_time = Some(time);
@@ -457,6 +508,29 @@ impl StreamRx {
 
     pub(crate) fn visit_stats(&mut self, snapshot: &mut StatsSnapshot, now: Instant) {
         self.stats.fill(snapshot, self.mid, self.rid, now);
+    }
+
+    pub(crate) fn poll_paused(&mut self) -> Option<StreamPaused> {
+        if !self.need_paused_event {
+            return None;
+        }
+
+        self.need_paused_event = false;
+
+        info!(
+            "{} StreamRx with mid: {} rid: {:?} and SSRC: {}",
+            if self.paused { "Paused" } else { "Unpaused" },
+            self.mid,
+            self.rid,
+            self.ssrc
+        );
+
+        Some(StreamPaused {
+            ssrc: self.ssrc,
+            mid: self.mid,
+            rid: self.rid,
+            paused: self.paused,
+        })
     }
 }
 

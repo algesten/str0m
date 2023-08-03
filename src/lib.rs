@@ -482,6 +482,7 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use streams::RtpPacket;
+use streams::StreamPaused;
 use thiserror::Error;
 
 mod dtls;
@@ -508,7 +509,7 @@ use rtp_::{Extension, ExtensionMap, InstantExt};
 /// Low level RTP access.
 pub mod rtp {
     pub use crate::rtp_::{Extension, ExtensionMap, ExtensionValues, RtpHeader, SeqNo, Ssrc};
-    pub use crate::streams::{RtpPacket, StreamRx, StreamTx};
+    pub use crate::streams::{RtpPacket, StreamPaused, StreamRx, StreamTx};
 }
 
 mod sctp;
@@ -772,6 +773,11 @@ pub enum Event {
     ///
     /// The request is either PLI (Picture Loss Indication) or FIR (Full Intra Request).
     KeyframeRequest(KeyframeRequest),
+
+    /// Whether an incoming encoded stream is paused.
+    ///
+    /// This means the stream has not received any data for some time (default 1.5 seconds).
+    StreamPaused(StreamPaused),
 
     /// Incoming RTP data.
     RtpPacket(RtpPacket),
@@ -1212,6 +1218,7 @@ impl Rtc {
                     Output::Event(Event::EgressBitrateEstimate(b))
                 }
                 MediaEvent::RtpPacket(p) => Output::Event(Event::RtpPacket(p)),
+                MediaEvent::StreamPaused(p) => Output::Event(Event::StreamPaused(p)),
             });
         }
 

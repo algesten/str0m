@@ -9,6 +9,7 @@ use crate::media::Media;
 use crate::media::{MediaAdded, MediaChanged};
 use crate::packet::SendSideBandwithEstimator;
 use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
+use crate::rtp::StreamPaused;
 use crate::rtp_::SeqNo;
 use crate::rtp_::SRTCP_OVERHEAD;
 use crate::rtp_::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
@@ -100,6 +101,7 @@ pub enum MediaEvent {
     KeyframeRequest(KeyframeRequest),
     EgressBitrateEstimate(Bitrate),
     RtpPacket(RtpPacket),
+    StreamPaused(StreamPaused),
 }
 
 impl Session {
@@ -466,18 +468,24 @@ impl Session {
         // the seq_no, however MediaTime might be different when interpreted against the
         // the "main" register.
         let receipt = if is_repair {
-            // Drop RTX packets that are just empty padding. The payload here
-            // is empty because we would have done RtpHeader::unpad_payload above.
+            // Blank padding packets will have empty data.
+            if !data.is_empty() {
+                // Rewrite the header, and removes the resent seq_no from the body.
+                stream.un_rtx(&mut header, &mut data, pt);
+            }
+
+            // Now update the "main" register with the repaired packet info.
+            // This gives us the extended sequence number of the main stream.
+            //
+            // We need to do this also for blank padding to schedule the "paused event".
+            let receipt = stream.update(now, &header, clock_rate, false);
+
+            // Drop blank padding
             if data.is_empty() {
                 return;
             }
 
-            // Rewrite the header, and removes the resent seq_no from the body.
-            stream.un_rtx(&mut header, &mut data, pt);
-
-            // Now update the "main" register with the repaired packet info.
-            // This gives us the extended sequence number of the main stream.
-            stream.update(now, &header, clock_rate, false)
+            receipt
         } else {
             // This is not RTX, the outer seq and time is what we use. The first
             // stream.update will have updated the main register.
@@ -556,8 +564,18 @@ impl Session {
             return None;
         }
 
+        // This must be before pending_packet.take() since we need to emit the unpaused event
+        // before the first packet causing the unpause.
+        if let Some(paused) = self.streams.poll_stream_paused() {
+            return Some(MediaEvent::StreamPaused(paused));
+        }
+
         if let Some(packet) = self.pending_packet.take() {
             return Some(MediaEvent::RtpPacket(packet));
+        }
+
+        if let Some(req) = self.streams.poll_keyframe_request() {
+            return Some(MediaEvent::KeyframeRequest(req));
         }
 
         for media in &mut self.medias {
@@ -578,10 +596,6 @@ impl Session {
                     mid: media.mid(),
                     direction: media.direction(),
                 }));
-            }
-
-            if let Some(req) = self.streams.poll_keyframe_request() {
-                return Some(MediaEvent::KeyframeRequest(req));
             }
 
             if let Some(r) = media.poll_sample() {
@@ -707,13 +721,15 @@ impl Session {
         let pacing_at = self.pacer.poll_timeout();
         let packetize_at = self.medias.iter().flat_map(|m| m.poll_timeout()).next();
         let bwe_at = self.bwe.as_ref().map(|bwe| bwe.poll_timeout());
+        let paused_at = Some(self.paused_at());
 
         let timeout = (regular_at, "regular")
             .soonest((nack_at, "nack"))
             .soonest((twcc_at, "twcc"))
             .soonest((pacing_at, "pacing"))
             .soonest((packetize_at, "media"))
-            .soonest((bwe_at, "bwe"));
+            .soonest((bwe_at, "bwe"))
+            .soonest((paused_at, "paused"));
 
         // trace!("poll_timeout soonest is: {}", timeout.1);
 
@@ -728,6 +744,10 @@ impl Session {
         self.streams
             .regular_feedback_at()
             .unwrap_or_else(not_happening)
+    }
+
+    fn paused_at(&self) -> Instant {
+        self.streams.paused_at().unwrap_or_else(not_happening)
     }
 
     fn nack_at(&mut self) -> Option<Instant> {

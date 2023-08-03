@@ -71,6 +71,24 @@ pub struct RtpPacket {
     pub(crate) nackable: bool,
 }
 
+/// Event when an encoded stream is considered paused/unpaused.
+///
+/// This means the stream has not received any data for some time (default 1.5 seconds).
+#[derive(Debug)]
+pub struct StreamPaused {
+    /// The main SSRC of the encoded stream that paused.
+    pub ssrc: Ssrc,
+
+    /// The mid the encoded stream belongs to.
+    pub mid: Mid,
+
+    /// The rid, if the encoded stream has a rid.
+    pub rid: Option<Rid>,
+
+    /// Whether the stream is paused or not.
+    pub paused: bool,
+}
+
 pub const BLANK_PACKET_DEFAULT_PT: Pt = Pt::new_with_value(0);
 
 impl RtpPacket {
@@ -172,6 +190,10 @@ impl Streams {
         self.streams_rx.values_mut().any(|s| s.has_nack())
     }
 
+    pub(crate) fn paused_at(&self) -> Option<Instant> {
+        self.streams_rx.values().find_map(|s| s.paused_at())
+    }
+
     pub(crate) fn is_receiving(&self) -> bool {
         !self.streams_rx.is_empty()
     }
@@ -189,6 +211,7 @@ impl Streams {
             if do_nack {
                 stream.maybe_create_nack(sender_ssrc, feedback);
             }
+            stream.handle_timeout(now);
         }
 
         for stream in self.streams_tx.values_mut() {
@@ -218,6 +241,10 @@ impl Streams {
                 kind,
             })
         })
+    }
+
+    pub(crate) fn poll_stream_paused(&mut self) -> Option<StreamPaused> {
+        self.streams_rx.values_mut().find_map(|s| s.poll_paused())
     }
 
     pub(crate) fn has_stream_rx(&self, ssrc: Ssrc) -> bool {
