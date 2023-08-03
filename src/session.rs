@@ -301,12 +301,12 @@ impl Session {
         let maybe_stream = self.streams.stream_rx_by_ssrc_or_rtx(&ssrc);
         if let Some(stream) = maybe_stream {
             let mid = stream.mid();
-            let ssrc_rx = stream.ssrc();
+            let ssrc_main = stream.ssrc();
 
             // SSRC is mapped to a Sender/Receiver in this media. Make an entry for it.
-            self.source_keys.insert(ssrc, (mid, ssrc_rx));
+            self.associate_ssrc_mid(ssrc, mid, ssrc_main, "Known SSRC");
 
-            return Some((mid, ssrc_rx));
+            return Some((mid, ssrc_main));
         }
 
         // Find receiver/source via mid/rid. This is used when the SSRC is not declare
@@ -325,12 +325,12 @@ impl Session {
                     return None;
                 }
 
-                let ssrc_rx = header.ssrc;
-                self.streams.expect_stream_rx(ssrc_rx, None, mid, None);
+                let ssrc_main = header.ssrc;
+                self.streams.expect_stream_rx(ssrc_main, None, mid, None);
 
                 // Insert an entry so we can look up on SSRC alone later.
-                self.source_keys.insert(ssrc, (mid, ssrc_rx));
-                return Some((mid, ssrc_rx));
+                self.associate_ssrc_mid(ssrc, mid, ssrc_main, "MID header, no RID");
+                return Some((mid, ssrc_main));
             };
 
             let is_repair = header.ext_vals.rid_repair.is_some();
@@ -338,7 +338,7 @@ impl Session {
             // Check if the mid/rid combo is not expected
             media.expects_rid_rx(rid).then_some(())?;
 
-            let ssrc_rx = if is_repair {
+            let ssrc_main = if is_repair {
                 // find the ssrc we are repairing
                 self.streams.stream_rx_by_mid_rid(mid, Some(rid))?.ssrc()
             } else {
@@ -348,19 +348,33 @@ impl Session {
             // Declare entries in streams for receiving these streams.
             if is_repair {
                 self.streams
-                    .expect_stream_rx(ssrc_rx, Some(ssrc), mid, Some(rid))
+                    .expect_stream_rx(ssrc_main, Some(ssrc), mid, Some(rid))
             } else {
-                self.streams.expect_stream_rx(ssrc_rx, None, mid, Some(rid))
+                self.streams
+                    .expect_stream_rx(ssrc_main, None, mid, Some(rid))
             }
 
             // Insert an entry so we can look up on SSRC alone later.
-            self.source_keys.insert(ssrc, (mid, ssrc_rx));
+            let reason = format!("MID and RID ({}) header", rid);
+            self.associate_ssrc_mid(ssrc, mid, ssrc_main, &reason);
 
-            return Some((mid, ssrc_rx));
+            return Some((mid, ssrc_main));
         }
 
         // No way to map this RtpHeader.
         None
+    }
+
+    fn associate_ssrc_mid(&mut self, ssrc: Ssrc, mid: Mid, ssrc_main: Ssrc, reason: &str) {
+        let is_rtx = ssrc != ssrc_main;
+        info!(
+            "Associate {}SSRC-mid: {} - {} ({})",
+            if is_rtx { "(RTX) " } else { "" },
+            ssrc,
+            mid,
+            reason
+        );
+        self.source_keys.insert(ssrc, (mid, ssrc_main));
     }
 
     fn handle_rtp(&mut self, now: Instant, mut header: RtpHeader, buf: &[u8]) {
