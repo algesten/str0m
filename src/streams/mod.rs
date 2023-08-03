@@ -4,8 +4,8 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::media::KeyframeRequest;
+use crate::rtp_::MediaTime;
 use crate::rtp_::Ssrc;
-use crate::rtp_::{MediaTime, Pt};
 use crate::rtp_::{Mid, Rid, SeqNo};
 use crate::rtp_::{Rtcp, RtpHeader};
 use crate::util::already_happened;
@@ -44,9 +44,6 @@ pub struct RtpPacket {
     /// Extended sequence number to avoid having to deal with ROC.
     pub seq_no: SeqNo,
 
-    /// Payload type for this packet.
-    pt: Pt,
-
     /// Extended RTP time in the clock frequency of the codec. To avoid dealing with ROC.
     ///
     /// For a newly scheduled outgoing packet, the clock_rate is not correctly set until
@@ -74,7 +71,6 @@ impl RtpPacket {
     fn blank() -> RtpPacket {
         RtpPacket {
             seq_no: 0.into(),
-            pt: 0.into(),
             time: MediaTime::new(0, 90_000),
             header: RtpHeader::default(),
             payload: vec![], // This payload is never used. See RtpHeader::create_padding_packet
@@ -322,7 +318,6 @@ impl fmt::Debug for RtpPacket {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RtpPacket")
             .field("seq_no", &self.seq_no)
-            .field("pt", &self.pt)
             .field("time", &self.time)
             .field("header", &self.header)
             .field("payload", &self.payload.len())

@@ -267,7 +267,6 @@ impl StreamRx {
 
         let packet = RtpPacket {
             seq_no,
-            pt: header.payload_type,
             time,
             header,
             payload: data,
