@@ -59,15 +59,18 @@ pub struct RtpPacket {
     /// RTP payload. This contains no header.
     pub payload: Vec<u8>,
 
-    /// Whether this packet can be nacked. This is always false for audio,
-    /// but might also be false for discardable frames when using temporal encoding
-    /// as in a VP8 simulcast situation.
-    pub nackable: bool,
-
+    /// str0m server timestamp.
+    ///
     /// This timestamp has nothing to do with RTP itself. For outgoing packets, this is when
     /// the packet was first handed over to str0m and enqueued in the outgoing send buffers.
     /// For incoming packets it's the time we received the network packet.
     pub timestamp: Instant,
+
+    /// Whether this packet can be nacked.
+    ///
+    /// This is often false for audio, but might also be false for discardable frames when
+    /// using temporal encoding as in a VP8 simulcast situation.
+    pub(crate) nackable: bool,
 }
 
 impl RtpPacket {
