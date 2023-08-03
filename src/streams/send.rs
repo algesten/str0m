@@ -48,6 +48,9 @@ pub struct StreamTx {
     /// padding packets.
     pt: Option<Pt>,
 
+    /// The last main payload clock rate that was sent.
+    clock_rate: Option<i64>,
+
     /// If we are doing seq_no ourselves (when writing sample mode).
     seq_no: SeqNo,
 
@@ -58,7 +61,7 @@ pub struct StreamTx {
     last_used: Instant,
 
     /// Last written media + wallclock time.
-    rtp_and_wallclock: Option<(MediaTime, Instant)>,
+    rtp_and_wallclock: Option<(u32, Instant)>,
 
     /// Queue of packets to send.
     ///
@@ -138,6 +141,7 @@ impl StreamTx {
             mid,
             rid,
             pt: None,
+            clock_rate: None,
             seq_no,
             seq_no_rtx,
             last_used: already_happened(),
@@ -235,7 +239,7 @@ impl StreamTx {
         //
         // This 1 in clock frequency will be fixed in poll_output.
         let media_time = MediaTime::new(time as i64, 1);
-        self.rtp_and_wallclock = Some((media_time, wallclock));
+        self.rtp_and_wallclock = Some((time, wallclock));
 
         let header = RtpHeader {
             sequence_number: *seq_no as u16,
@@ -314,6 +318,7 @@ impl StreamTx {
 
         let is_audio = param.spec().codec.is_audio();
         let mut set_pt = None;
+        let mut set_cr = None;
 
         let mut header = match next.kind {
             NextPacketKind::Regular => {
@@ -322,10 +327,12 @@ impl StreamTx {
                 set_pt = Some(param.pt());
 
                 let clock_rate = param.spec().clock_rate as i64;
+                set_cr = Some(clock_rate);
 
                 // Modify the cached packet time. This is so write_rtp can use u32 media time without
                 // worrying about lengthening or the clock rate.
-                next.pkt.time = MediaTime::new(next.pkt.time.numer(), clock_rate);
+                let time = MediaTime::new(next.pkt.time.numer(), clock_rate);
+                next.pkt.time = time;
 
                 // Modify the original (and also cached) header value.
                 header_ref.ext_vals.rid = rid;
@@ -422,8 +429,11 @@ impl StreamTx {
         }
 
         // This is set here due to borrow checker.
-        if set_pt.is_some() {
+        if set_pt.is_some() && self.pt != set_pt {
             self.pt = set_pt;
+        }
+        if set_cr.is_some() && self.clock_rate != set_cr {
+            self.clock_rate = set_cr;
         }
 
         Some(PacketReceipt {
@@ -686,17 +696,22 @@ impl StreamTx {
         // This is the RTP time and the wallclock from the last written media.
         // We use that as an offset to current time (now), to calculate the
         // current RTP time.
-        let (t, w) = self.rtp_and_wallclock?;
+        let (t_u32, w) = self.rtp_and_wallclock?;
 
-        // We assume the media was written some time in the past.
+        let clock_rate = self.clock_rate?;
+        let t = MediaTime::new(t_u32 as i64, clock_rate);
+
+        // Wallclock needs to be in the past.
+        if w > now {
+            warn!("write_rtp wallclock is in the future");
+            return None;
+        }
         let offset = now - w;
-
-        let base = t.denom();
 
         // This might be in the wrong base.
         let rtp_time = t + offset.into();
 
-        Some(rtp_time.rebase(base))
+        Some(rtp_time.rebase(clock_rate))
     }
 
     pub(crate) fn next_seq_no(&mut self) -> SeqNo {
