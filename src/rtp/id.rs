@@ -129,3 +129,9 @@ impl SeqNo {
         n
     }
 }
+
+impl Pt {
+    pub const fn new_with_value(v: u8) -> Pt {
+        Pt(v)
+    }
+}

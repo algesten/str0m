@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use crate::media::KeyframeRequest;
 use crate::rtp_::MediaTime;
+use crate::rtp_::Pt;
 use crate::rtp_::Ssrc;
 use crate::rtp_::{Mid, Rid, SeqNo};
 use crate::rtp_::{Rtcp, RtpHeader};
@@ -70,12 +71,17 @@ pub struct RtpPacket {
     pub(crate) nackable: bool,
 }
 
+pub const BLANK_PACKET_DEFAULT_PT: Pt = Pt::new_with_value(0);
+
 impl RtpPacket {
     fn blank() -> RtpPacket {
         RtpPacket {
             seq_no: 0.into(),
             time: MediaTime::new(0, 90_000),
-            header: RtpHeader::default(),
+            header: RtpHeader {
+                payload_type: BLANK_PACKET_DEFAULT_PT,
+                ..Default::default()
+            },
             payload: vec![], // This payload is never used. See RtpHeader::create_padding_packet
             nackable: false,
             timestamp: already_happened(),
