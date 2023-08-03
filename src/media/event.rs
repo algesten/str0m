@@ -58,7 +58,7 @@ pub struct MediaAdded {
 /// Does not fire for application media (data channel).
 #[derive(Debug, PartialEq, Eq)]
 pub struct MediaChanged {
-    /// Identifier of the new media.
+    /// Identifier of the media.
     pub mid: Mid,
 
     /// Current direction.
