@@ -253,7 +253,6 @@ impl StreamTx {
 
         let packet = RtpPacket {
             seq_no,
-            pt,
             time: media_time,
             header,
             payload,
@@ -306,13 +305,12 @@ impl StreamTx {
         // This is true also for RTX.
         header_ref.ext_vals.mid = Some(mid);
 
-        // Sanity check.
-        assert_eq!(header_ref.payload_type, next.pkt.pt);
+        let pt_main = header_ref.payload_type;
 
         // The pt in next.pkt is the "main" pt.
-        let Some(param) = params.iter().find(|p| p.pt() == next.pkt.pt) else {
+        let Some(param) = params.iter().find(|p| p.pt() == pt_main) else {
             // PT does not exist in the connected media.
-            warn!("Media is missing PT ({}) used in RTP packet", next.pkt.pt);
+            warn!("Media is missing PT ({}) used in RTP packet", pt_main);
             return None;
         };
 
@@ -558,7 +556,7 @@ impl StreamTx {
 
         let pkt = &mut self.blank_packet;
         pkt.seq_no = self.seq_no_rtx.inc();
-        pkt.pt = self
+        pkt.header.payload_type = self
             .pt
             .expect("Must have sent at least one packet before blank padding");
 

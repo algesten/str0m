@@ -156,11 +156,11 @@ mod test {
         let packet = |seq_no: SeqNo, millis_since_epoch: u32| RtpPacket {
             header: RtpHeader {
                 marker: false,
+                payload_type: 1.into(),
                 ssrc: 1.into(),
                 ..Default::default()
             },
             seq_no,
-            pt: 1.into(),
             time: MediaTime::new(0, 90_000),
             payload: millis_since_epoch.to_be_bytes().to_vec(),
             timestamp: after(millis_since_epoch),
