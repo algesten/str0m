@@ -44,10 +44,6 @@ pub struct StreamTx {
     /// The rid that might be used for this stream.
     rid: Option<Rid>,
 
-    /// The last main payload type that was sent. Remembered here so it can be used for blank
-    /// padding packets.
-    pt: Option<Pt>,
-
     /// The last main payload clock rate that was sent.
     clock_rate: Option<i64>,
 
@@ -140,7 +136,6 @@ impl StreamTx {
             rtx,
             mid,
             rid,
-            pt: None,
             clock_rate: None,
             seq_no,
             seq_no_rtx,
@@ -427,8 +422,8 @@ impl StreamTx {
         }
 
         // This is set here due to borrow checker.
-        if set_pt.is_some() && self.pt != set_pt {
-            self.pt = set_pt;
+        if let Some(pt) = set_pt {
+            self.blank_packet.header.payload_type = pt;
         }
         if set_cr.is_some() && self.clock_rate != set_cr {
             self.clock_rate = set_cr;
@@ -556,9 +551,6 @@ impl StreamTx {
 
         let pkt = &mut self.blank_packet;
         pkt.seq_no = self.seq_no_rtx.inc();
-        pkt.header.payload_type = self
-            .pt
-            .expect("Must have sent at least one packet before blank padding");
 
         let len = self
             .padding
@@ -736,7 +728,7 @@ impl StreamTx {
 
         // It's only possible to use this sender for padding if RTX is enabled and
         // we know the previous main PT.
-        let use_for_padding = self.rtx_enabled() && self.pt.is_some();
+        let use_for_padding = self.rtx_enabled() && *self.blank_packet.header.payload_type != 0;
 
         let mut snapshot = self.send_queue.snapshot(now);
 
