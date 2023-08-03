@@ -175,6 +175,11 @@ impl<'a> DirectApi<'a> {
         self.rtc.session.streams.stream_rx(ssrc)
     }
 
+    /// Obtain a recv stream by looking it up via mid/rid.
+    pub fn stream_rx_by_mid(&mut self, mid: Mid, rid: Option<Rid>) -> Option<&mut StreamRx> {
+        self.rtc.session.streams.rx_by_mid_rid(mid, rid)
+    }
+
     /// Declare the intention to send data using the given SSRC.
     ///
     /// * The resend RTX is optional but necessary to do resends. str0m does not do
