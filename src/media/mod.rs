@@ -27,7 +27,7 @@ pub use crate::rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
 
 /// Information about some configured media.
 pub struct Media {
-    /// Three letter identifier of this media.
+    /// Identifier of this media.
     mid: Mid,
 
     /// The index of this media line in the Session::media Vec.
