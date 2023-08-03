@@ -797,6 +797,12 @@ impl Session {
         &self.medias
     }
 
+    pub fn remove_media(&mut self, mid: Mid) {
+        self.medias.retain(|media| media.mid() != mid);
+        self.streams.remove_streams_by_mid(mid);
+        self.source_keys.retain(|_, v| v.0 != mid);
+    }
+
     fn configure_pacer(&mut self) {
         let Some(bwe) = self.bwe.as_ref() else {
             return;

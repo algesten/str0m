@@ -151,6 +151,13 @@ impl<'a> DirectApi<'a> {
         self.rtc.session.medias.last_mut().unwrap()
     }
 
+    /// Remove `Media`.
+    ///
+    /// Removes media and all streams belong to a media identified by a `mid`.
+    pub fn remove_media(&mut self, mid: Mid) {
+        self.rtc.session.remove_media(mid);
+    }
+
     /// Allow incoming traffic from remote peer for the given SSRC.
     ///
     /// Can be called multiple times if the `rtx` is discovered later via RTP header extensions.

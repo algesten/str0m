@@ -147,5 +147,17 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
     assert!(!h1.marker);
     assert!(!h2.marker);
 
+    assert!(l.media(mid).is_some());
+    assert!(l.direct_api().stream_tx_by_mid(mid, None).is_some());
+    l.direct_api().remove_media(mid);
+    assert!(l.media(mid).is_none());
+    assert!(l.direct_api().stream_tx_by_mid(mid, None).is_none());
+
+    assert!(r.media(mid).is_some());
+    assert!(r.direct_api().stream_rx_by_mid(mid, None).is_some());
+    r.direct_api().remove_media(mid);
+    assert!(r.media(mid).is_none());
+    assert!(r.direct_api().stream_rx_by_mid(mid, None).is_none());
+
     Ok(())
 }
