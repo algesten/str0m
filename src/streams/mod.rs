@@ -321,6 +321,11 @@ impl Streams {
             .values_mut()
             .find(|s| s.mid() == mid && (rid.is_none() || s.rid() == rid))
     }
+
+    pub(crate) fn remove_streams_by_mid(&mut self, mid: Mid) {
+        self.streams_tx.retain(|_, s| s.mid() != mid);
+        self.streams_rx.retain(|_, s| s.mid() != mid);
+    }
 }
 
 impl fmt::Debug for RtpPacket {
