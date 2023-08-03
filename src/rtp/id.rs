@@ -108,7 +108,7 @@ macro_rules! num_id {
     };
 }
 
-str_id!(Mid, "Mid", 3);
+str_id!(Mid, "Mid", 16);
 str_id!(Rid, "Rid", 8);
 num_id!(Ssrc, u32);
 num_id!(Pt, u8);
