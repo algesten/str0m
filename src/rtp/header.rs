@@ -114,8 +114,6 @@ impl RtpHeader {
         }
         .min(MAX_BLANK_PADDING_PAYLOAD_SIZE);
 
-        println!("{}", rounded_len);
-
         Self::do_pad(buf, header_len, rounded_len);
 
         rounded_len
