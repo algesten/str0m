@@ -1454,6 +1454,14 @@ impl Rtc {
         self.change_counter += 1;
         n
     }
+
+    /// The current [`send_addr`].
+    pub fn current_send_addr(&self) -> Option<(SocketAddr, SocketAddr)> {
+        if let Some(send_addr) = &self.send_addr {
+            return Some((send_addr.source, send_addr.destination));
+        }
+        None
+    }
 }
 
 /// Customized config for creating an [`Rtc`] instance.
