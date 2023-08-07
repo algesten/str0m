@@ -3,6 +3,8 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::format::PayloadParams;
+use crate::io::DATAGRAM_MTU_WARN;
+use crate::io::MAX_RTP_OVERHEAD;
 use crate::media::KeyframeRequestKind;
 use crate::packet::QueuePriority;
 use crate::packet::QueueSnapshot;
@@ -528,7 +530,7 @@ impl StreamTx {
             if self.padding > MIN_SPURIOUS_PADDING_SIZE {
                 // Find a historic packet that is smaller than this max size. The max size
                 // is a headroom since we can accept slightly larger padding than asked for.
-                let max_size = (self.padding).min(1200) * 2;
+                let max_size = (self.padding * 2).min(DATAGRAM_MTU_WARN - MAX_RTP_OVERHEAD);
 
                 let Some(pkt) = self.rtx_cache.get_cached_packet_smaller_than(max_size) else {
                     // Couldn't find spurious packet, try a blank packet instead.
