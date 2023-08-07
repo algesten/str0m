@@ -259,6 +259,7 @@ impl Media {
     }
 
     pub(crate) fn set_direction(&mut self, new_dir: Direction) {
+        self.need_changed_event = self.dir != new_dir;
         self.dir = new_dir;
     }
 
