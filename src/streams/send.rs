@@ -411,8 +411,18 @@ impl StreamTx {
         buf.truncate(header_len + body_len);
 
         #[cfg(feature = "_internal_dont_use_log_stats")]
-        if let Some(delay) = next.body.queued_at().map(|i| now.duration_since(i)) {
-            crate::log_stat!("QUEUE_DELAY", header.ssrc, delay.as_secs_f64() * 1000.0);
+        {
+            let queued_at = match next.kind {
+                NextPacketKind::Regular => Some(pkt.timestamp),
+                _ => {
+                    // TODO: We don't have queued at stats for Resends or blank padding.
+                    None
+                }
+            };
+
+            if let Some(delay) = queued_at.map(|i| now.duration_since(i)) {
+                crate::log_stat!("QUEUE_DELAY", header.ssrc, delay.as_secs_f64() * 1000.0);
+            }
         }
 
         let seq_no = next.seq_no;
