@@ -38,6 +38,10 @@ impl SendQueue {
         }
     }
 
+    pub fn peek(&mut self) -> Option<&mut RtpPacket> {
+        self.queue.front_mut()
+    }
+
     pub fn pop(&mut self, now: Instant) -> Option<RtpPacket> {
         if let Some(packet) = self.queue.pop_front() {
             // If the popped packet has a timestamp in the future, we have not counted it
