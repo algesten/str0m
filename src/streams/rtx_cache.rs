@@ -8,10 +8,12 @@ use super::RtpPacket;
 
 #[derive(Debug)]
 pub(crate) struct RtxCache {
+    // Config
     max_packet_count: usize,
     max_packet_age: Duration,
     evict_in_batches: bool,
 
+    // Data, new additions here probably need to be cleared in [`clear`].
     packet_by_seq_no: BTreeMap<SeqNo, RtpPacket>,
     seq_no_by_quantized_size: BTreeMap<usize, SeqNo>,
 }
@@ -139,6 +141,11 @@ impl RtxCache {
             .values()
             .next_back()
             .map(|e| e.payload.as_ref())
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.packet_by_seq_no.clear();
+        self.seq_no_by_quantized_size.clear();
     }
 }
 

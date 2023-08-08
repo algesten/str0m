@@ -821,6 +821,13 @@ impl StreamTx {
     pub(crate) fn handle_timeout(&mut self, now: Instant) {
         self.send_queue.handle_timeout(now);
     }
+
+    pub(crate) fn reset_buffers(&mut self) {
+        self.send_queue.clear();
+        self.rtx_cache.clear();
+        self.resends.clear();
+        self.padding = 0;
+    }
 }
 
 impl StreamTxStats {

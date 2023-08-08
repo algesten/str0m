@@ -479,6 +479,11 @@ impl ReceiverRegister {
     fn packet_index(&self, seq: u64) -> usize {
         (seq % self.packet_status.len() as u64) as usize
     }
+
+    pub(crate) fn clear(&mut self) {
+        self.packet_status.clear();
+        self.nack_check_from = self.max_seq;
+    }
 }
 
 /// Helper to keep a time point for jitter calculation.

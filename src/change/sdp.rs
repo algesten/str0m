@@ -281,15 +281,11 @@ impl<'a> SdpApi<'a> {
     /// If the direction is set for media that doesn't exist, or if the direction is
     /// the same that's already set [`SdpApi::apply()`] not require a negotiation.
     pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
-        let Some(media) = self.rtc.session.media_by_mid_mut(mid) else {
-            return;
-        };
+        let changed = self.rtc.session.set_direction(mid, dir);
 
-        if media.direction() == dir {
-            return;
+        if changed {
+            self.changes.0.push(Change::Direction(mid, dir));
         }
-
-        self.changes.0.push(Change::Direction(mid, dir));
     }
 
     /// Add a new data channel and get the `id` that will be used.

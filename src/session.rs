@@ -10,6 +10,7 @@ use crate::media::{MediaAdded, MediaChanged};
 use crate::packet::SendSideBandwithEstimator;
 use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
 use crate::rtp::StreamPaused;
+use crate::rtp_::Direction;
 use crate::rtp_::SeqNo;
 use crate::rtp_::SRTCP_OVERHEAD;
 use crate::rtp_::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
@@ -859,6 +860,28 @@ impl Session {
         }
 
         Ok(())
+    }
+
+    pub(crate) fn set_direction(&mut self, mid: Mid, direction: Direction) -> bool {
+        let Some(media) = self.media_by_mid_mut(mid) else {
+            return false;
+        };
+        let old_dir = media.direction();
+        if old_dir == direction {
+            return false;
+        }
+
+        media.set_direction(direction);
+
+        if old_dir.is_sending() && !direction.is_sending() {
+            self.streams.reset_buffers_tx(mid);
+        }
+
+        if old_dir.is_receiving() && !direction.is_receiving() {
+            self.streams.reset_buffers_rx(mid);
+        }
+
+        true
     }
 }
 
