@@ -296,6 +296,8 @@ impl StreamTx {
             return None;
         };
 
+        let pop_send_queue = next.kind == NextPacketKind::Regular;
+
         // Need the header for the receipt and modifications
         // TODO: Can we remove this?
         let header_ref = &mut next.pkt.header;
@@ -309,6 +311,12 @@ impl StreamTx {
         let Some(param) = params.iter().find(|p| p.pt() == pt_main) else {
             // PT does not exist in the connected media.
             warn!("Media is missing PT ({}) used in RTP packet", pt_main);
+
+            // Get rid of this packet we can't send.
+            if pop_send_queue {
+                self.send_queue.pop(now);
+            }
+
             return None;
         };
 
@@ -428,6 +436,15 @@ impl StreamTx {
         let seq_no = next.seq_no;
         self.last_used = now;
 
+        if pop_send_queue {
+            // poll_packet_regular leaves the packet in the head of the send_queue
+            let pkt = self
+                .send_queue
+                .pop(now)
+                .expect("head of send_queue to be there");
+            self.rtx_cache.cache_sent_packet(pkt, now);
+        }
+
         // Set on first send, if not set already by configuration.
         if self.unpaced.is_none() {
             // Default audio to be unpaced.
@@ -510,7 +527,9 @@ impl StreamTx {
 
     fn poll_packet_regular(&mut self, now: Instant) -> Option<NextPacket<'_>> {
         // exit via ? here is ok since that means there is nothing to send.
-        let mut pkt = self.send_queue.pop(now)?;
+        // The packet remains in the head of the send queue until we
+        // finish poll_packet, at which point we move it to the cache.
+        let pkt = self.send_queue.peek()?;
 
         pkt.timestamp = now;
 
@@ -519,9 +538,6 @@ impl StreamTx {
         self.stats.bytes_transmitted.push(now, len);
 
         let seq_no = pkt.seq_no;
-
-        self.rtx_cache.cache_sent_packet(pkt, now);
-        let pkt = self.rtx_cache.get_cached_packet_by_seq_no(seq_no).unwrap(); // we just cached it
 
         Some(NextPacket {
             kind: NextPacketKind::Regular,
