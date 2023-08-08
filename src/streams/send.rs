@@ -23,6 +23,7 @@ use crate::RtcError;
 
 use super::rtx_cache::RtxCache;
 use super::send_queue::SendQueue;
+use super::store::PacketStore;
 use super::BLANK_PACKET_DEFAULT_PT;
 use super::{rr_interval, RtpPacket};
 
@@ -84,7 +85,9 @@ pub struct StreamTx {
 
     /// Cache of sent packets to be able to answer to NACKs as well as
     /// sending spurious resends as padding.
-    rtx_cache: RtxCache,
+    ///
+    /// When caching is turned off, this has a `KeepLastPacket` stand-in.
+    packet_store: PacketStore,
 
     /// Last time we produced a SR.
     last_sender_report: Instant,
@@ -134,6 +137,8 @@ impl StreamTx {
 
         debug!("Create StreamTx for SSRC: {}", ssrc);
 
+        let cache = RtxCache::new(1024, DEFAULT_RTX_CACHE_DURATION, false);
+
         StreamTx {
             ssrc,
             rtx,
@@ -149,7 +154,7 @@ impl StreamTx {
             resends: VecDeque::new(),
             padding: 0,
             blank_packet: RtpPacket::blank(),
-            rtx_cache: RtxCache::new(1024, DEFAULT_RTX_CACHE_DURATION, false),
+            packet_store: PacketStore::Cached(cache),
             last_sender_report: already_happened(),
             pending_request_keyframe: None,
             stats: StreamTxStats::default(),
@@ -186,8 +191,7 @@ impl StreamTx {
     ///
     /// The default is 1024 packets over 3 seconds.
     pub fn set_rtx_cache(&mut self, max_packets: usize, max_age: Duration) {
-        // Dump old cache to avoid having to deal with resizing logic inside the cache impl.
-        self.rtx_cache = RtxCache::new(max_packets, max_age, false);
+        self.packet_store.set_rtx_cache(max_packets, max_age);
     }
 
     /// Set whether this stream is unpaced or not.
@@ -475,7 +479,7 @@ impl StreamTx {
         let seq_no = loop {
             let resend = self.resends.pop_front()?;
 
-            let pkt = self.rtx_cache.get_cached_packet_by_seq_no(resend.seq_no);
+            let pkt = self.packet_store.by_seq_no(resend.seq_no);
 
             // The seq_no could simply be too old to exist in the buffer, in which
             // case we will not do a resend.
@@ -491,7 +495,7 @@ impl StreamTx {
         };
 
         // Borrow checker gymnastics.
-        let pkt = self.rtx_cache.get_cached_packet_by_seq_no(seq_no).unwrap();
+        let pkt = self.packet_store.by_seq_no(seq_no).unwrap();
 
         let len = pkt.payload.len() as u64;
         self.stats.update_packet_counts(len, true);
@@ -520,8 +524,8 @@ impl StreamTx {
 
         let seq_no = pkt.seq_no;
 
-        self.rtx_cache.cache_sent_packet(pkt, now);
-        let pkt = self.rtx_cache.get_cached_packet_by_seq_no(seq_no).unwrap(); // we just cached it
+        self.packet_store.push(pkt, now);
+        let pkt = self.packet_store.last_packet().unwrap(); // we just cached it
 
         Some(NextPacket {
             kind: NextPacketKind::Regular,
@@ -542,7 +546,7 @@ impl StreamTx {
                 // is a headroom since we can accept slightly larger padding than asked for.
                 let max_size = (self.padding * 2).min(DATAGRAM_MTU_WARN - MAX_RTP_OVERHEAD);
 
-                let Some(pkt) = self.rtx_cache.get_cached_packet_smaller_than(max_size) else {
+                let Some(pkt) = self.packet_store.smaller_than(max_size) else {
                     // Couldn't find spurious packet, try a blank packet instead.
                     break 'outer;
                 };
@@ -617,12 +621,12 @@ impl StreamTx {
     ) -> Option<()> {
         // Turning NackEntry into SeqNo we need to know a SeqNo "close by" to lengthen the 16 bit
         // sequence number into the 64 bit we have in SeqNo.
-        let seq_no = self.rtx_cache.first_cached_seq_no()?;
+        let seq_no = self.packet_store.first_cached_seq_no()?;
         let iter = entries.flat_map(|n| n.into_iter(seq_no));
 
         // Schedule all resends. They will be handled on next poll_packet
         for seq_no in iter {
-            let Some(packet) = self.rtx_cache.get_cached_packet_by_seq_no(seq_no) else {
+            let Some(packet) = self.packet_store.by_seq_no(seq_no) else {
                 // Packet was not available in RTX cache, it has probably expired.
                 continue;
             };
@@ -721,9 +725,9 @@ impl StreamTx {
         self.seq_no.inc()
     }
 
-    pub(crate) fn last_packet(&self) -> Option<&[u8]> {
+    pub(crate) fn last_packet(&mut self) -> Option<&[u8]> {
         if self.send_queue.is_empty() {
-            self.rtx_cache.last_packet()
+            self.packet_store.last_packet().map(|p| &p.payload[..])
         } else {
             self.send_queue.last().map(|q| q.payload.as_ref())
         }
@@ -824,7 +828,7 @@ impl StreamTx {
 
     pub(crate) fn reset_buffers(&mut self) {
         self.send_queue.clear();
-        self.rtx_cache.clear();
+        self.packet_store.clear();
         self.resends.clear();
         self.padding = 0;
     }

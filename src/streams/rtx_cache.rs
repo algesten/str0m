@@ -16,6 +16,7 @@ pub(crate) struct RtxCache {
     // Data, new additions here probably need to be cleared in [`clear`].
     packet_by_seq_no: BTreeMap<SeqNo, RtpPacket>,
     seq_no_by_quantized_size: BTreeMap<usize, SeqNo>,
+    last_seq_no: Option<SeqNo>,
 }
 
 const RTX_CACHE_SIZE_QUANTIZER: usize = 25;
@@ -28,11 +29,13 @@ impl RtxCache {
             evict_in_batches,
             packet_by_seq_no: BTreeMap::new(),
             seq_no_by_quantized_size: BTreeMap::new(),
+            last_seq_no: None,
         }
     }
 
     pub fn cache_sent_packet(&mut self, packet: RtpPacket, now: Instant) {
         let seq_no = packet.seq_no;
+        self.last_seq_no = Some(seq_no);
         let quantized_size = packet.payload.len() / RTX_CACHE_SIZE_QUANTIZER;
         self.packet_by_seq_no.insert(seq_no, packet);
         self.seq_no_by_quantized_size.insert(quantized_size, seq_no);
@@ -136,11 +139,9 @@ impl RtxCache {
         None
     }
 
-    pub(crate) fn last_packet(&self) -> Option<&[u8]> {
-        self.packet_by_seq_no
-            .values()
-            .next_back()
-            .map(|e| e.payload.as_ref())
+    pub(crate) fn last_packet(&mut self) -> Option<&mut RtpPacket> {
+        let seq_no = self.last_seq_no?;
+        self.get_cached_packet_by_seq_no(seq_no)
     }
 
     pub(crate) fn clear(&mut self) {

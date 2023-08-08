@@ -19,6 +19,7 @@ mod register;
 mod rtx_cache;
 mod send;
 mod send_queue;
+mod store;
 
 pub(crate) use send::DEFAULT_RTX_CACHE_DURATION;
 
