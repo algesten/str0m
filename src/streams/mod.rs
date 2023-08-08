@@ -353,6 +353,28 @@ impl Streams {
         self.streams_tx.retain(|_, s| s.mid() != mid);
         self.streams_rx.retain(|_, s| s.mid() != mid);
     }
+
+    /// An iterator over all the tx streams for a given mid.
+    pub(crate) fn streams_tx_by_mid(&mut self, mid: Mid) -> impl Iterator<Item = &mut StreamTx> {
+        self.streams_tx.values_mut().filter(move |s| s.mid() == mid)
+    }
+
+    /// An iterator over all the rx streams for a given mid.
+    pub(crate) fn streams_rx_by_mid(&mut self, mid: Mid) -> impl Iterator<Item = &mut StreamRx> {
+        self.streams_rx.values_mut().filter(move |s| s.mid() == mid)
+    }
+
+    pub(crate) fn reset_buffers_tx(&mut self, mid: Mid) {
+        for s in self.streams_tx_by_mid(mid) {
+            s.reset_buffers();
+        }
+    }
+
+    pub(crate) fn reset_buffers_rx(&mut self, mid: Mid) {
+        for s in self.streams_rx_by_mid(mid) {
+            s.reset_buffers();
+        }
+    }
 }
 
 impl fmt::Debug for RtpPacket {

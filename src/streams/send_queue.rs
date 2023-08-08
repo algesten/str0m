@@ -78,6 +78,12 @@ impl SendQueue {
             },
         }
     }
+
+    pub(crate) fn clear(&mut self) {
+        self.queue.clear();
+        self.total.clear();
+        self.last_emitted = None;
+    }
 }
 
 // Total queue time in buffer. This lovely drawing explains how to add more time.
@@ -159,6 +165,10 @@ impl TotalQueue {
             self.queue_time = Duration::ZERO;
             self.last = None;
         }
+    }
+
+    fn clear(&mut self) {
+        *self = Self::default();
     }
 }
 

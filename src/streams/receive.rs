@@ -532,6 +532,17 @@ impl StreamRx {
             paused: self.paused,
         })
     }
+
+    pub(crate) fn reset_buffers(&mut self) {
+        if let Some(r) = &mut self.register {
+            r.clear();
+        }
+
+        if let Some(r) = &mut self.register_rtx {
+            r.clear();
+        }
+        self.pending_request_keyframe = None;
+    }
 }
 
 impl StreamRxStats {
