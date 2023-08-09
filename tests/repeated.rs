@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use str0m::format::{Codec, CodecSpec, FormatParams, PayloadParams};
 use str0m::media::Direction;
-use str0m::rtp::{ExtensionMap, ExtensionValues, Ssrc};
+use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, RtcError};
 
 mod common;
@@ -31,19 +31,17 @@ pub fn repeated() -> Result<(), RtcError> {
         },
     )];
 
-    let extmap = ExtensionMap::standard();
-
     // In this example we are not using RID to identify the stream, we are simply
     // using SSRC 1 as knowledge shared between sending and receiving side.
     let ssrc: Ssrc = 1.into();
 
     l.direct_api()
-        .declare_media(mid, Direction::SendOnly, extmap, params);
+        .declare_media(mid, Direction::SendOnly, params);
 
     l.direct_api().declare_stream_tx(ssrc, None, mid, None);
 
     r.direct_api()
-        .declare_media(mid, Direction::RecvOnly, extmap, params);
+        .declare_media(mid, Direction::RecvOnly, params);
 
     r.direct_api().expect_stream_rx(ssrc, None, mid, None);
 
