@@ -150,6 +150,40 @@ pub struct MediaIngressStats {
     // pub remote: RemoteEgressStats,
 }
 
+impl MediaIngressStats {
+    /// Merge `other` into `self`, mutating `self`.
+    ///
+    /// **Panics** if called with stats that don't have the same `(mid, rid)` pair.
+    pub(crate) fn merge_by_mid_rid(&mut self, other: &Self) {
+        assert!(
+            self.mid == other.mid,
+            "Cannot merge MediaIngressStats for different mids"
+        );
+        assert!(
+            self.rid == other.rid,
+            "Cannot merge MediaIngressStats for different rids"
+        );
+        let (rtt, loss) = if self.timestamp > other.timestamp {
+            (self.rtt, self.loss)
+        } else {
+            (other.rtt, other.loss)
+        };
+
+        *self = Self {
+            mid: self.mid,
+            rid: self.rid,
+            bytes: self.bytes + other.bytes,
+            packets: self.packets + other.packets,
+            firs: self.firs + other.firs,
+            plis: self.plis + other.plis,
+            nacks: self.nacks + other.nacks,
+            rtt,
+            loss,
+            timestamp: self.timestamp.max(other.timestamp),
+        };
+    }
+}
+
 /// Stats as reported by the remote side (via RTCP SenderReports).
 #[derive(Debug, Clone)]
 pub struct RemoteEgressStats {
