@@ -3,7 +3,7 @@ use crate::dtls::Fingerprint;
 use crate::format::PayloadParams;
 use crate::ice::IceCreds;
 use crate::media::Media;
-use crate::rtp_::{Direction, ExtensionMap, Mid, Rid, Ssrc};
+use crate::rtp_::{Direction, Mid, Rid, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::streams::{StreamRx, StreamTx, DEFAULT_RTX_CACHE_DURATION};
 use crate::Rtc;
@@ -119,7 +119,6 @@ impl<'a> DirectApi<'a> {
         &mut self,
         mid: Mid,
         dir: Direction,
-        exts: ExtensionMap,
         params: &[PayloadParams],
     ) -> &mut Media {
         let max_index = self.rtc.session.medias.iter().map(|m| m.index()).max();
@@ -140,12 +139,7 @@ impl<'a> DirectApi<'a> {
             panic!("declare_media detected mix of audio/video parameters");
         }
 
-        // Update session with the extension (these should be per BUNDLE, and we only have one).
-        for (id, ext) in exts.iter(is_audio) {
-            self.rtc.session.exts.apply(id, ext);
-        }
-
-        let m = Media::from_direct_api(mid, next_index, dir, exts, params, is_audio);
+        let m = Media::from_direct_api(mid, next_index, dir, params, is_audio);
 
         self.rtc.session.medias.push(m);
         self.rtc.session.medias.last_mut().unwrap()
