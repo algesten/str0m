@@ -562,22 +562,28 @@ impl StreamRxStats {
         }
 
         let key = (mid, rid);
+        let stats = MediaIngressStats {
+            mid,
+            rid,
+            bytes: self.bytes,
+            packets: self.packets,
+            firs: self.firs,
+            plis: self.plis,
+            nacks: self.nacks,
+            rtt: self.rtt,
+            loss: self.loss,
+            timestamp: now,
+        };
 
-        snapshot.ingress.insert(
-            key,
-            MediaIngressStats {
-                mid,
-                rid,
-                bytes: self.bytes,
-                packets: self.packets,
-                firs: self.firs,
-                plis: self.plis,
-                nacks: self.nacks,
-                rtt: self.rtt,
-                loss: self.loss,
-                timestamp: now,
-            },
-        );
+        // Several SSRCs can back a given (mid, rid) tuple. For example, Firefox creates new SSRCs
+        // when a Transceiver transitions from send -> inactive -> send. In order to continue
+        // correctly reporting stats for this (mid, rid) pair we need to merge the stats across all
+        // the SSRCs that have been used.
+        snapshot
+            .ingress
+            .entry(key)
+            .and_modify(|s| s.merge(&stats))
+            .or_insert(stats);
     }
 }
 
