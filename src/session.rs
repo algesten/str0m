@@ -485,24 +485,19 @@ impl Session {
         // the seq_no, however MediaTime might be different when interpreted against the
         // the "main" register.
         let receipt = if is_repair {
-            // Blank padding packets will have empty data.
-            if !data.is_empty() {
-                // Rewrite the header, and removes the resent seq_no from the body.
-                stream.un_rtx(&mut header, &mut data, pt);
-            }
-
-            // Now update the "main" register with the repaired packet info.
-            // This gives us the extended sequence number of the main stream.
-            //
-            // We need to do this also for blank padding to schedule the "paused event".
-            let receipt = stream.update(now, &header, clock_rate, false);
-
-            // Drop blank padding
+            // Drop RTX packets that are just empty padding. The payload here
+            // is empty because we would have done RtpHeader::unpad_payload above.
+            // For unpausing, it's enough with the stream.uodate() already done above.
             if data.is_empty() {
                 return;
             }
 
-            receipt
+            // Rewrite the header, and removes the resent seq_no from the body.
+            stream.un_rtx(&mut header, &mut data, pt);
+
+            // Now update the "main" register with the repaired packet info.
+            // This gives us the extended sequence number of the main stream.
+            stream.update(now, &header, clock_rate, false)
         } else {
             // This is not RTX, the outer seq and time is what we use. The first
             // stream.update will have updated the main register.
