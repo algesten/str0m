@@ -356,10 +356,10 @@ impl CodecConfig {
         channels: Option<u8>,
         format: FormatParams,
     ) {
-        let (fb_transport_cc, fb_fir, fb_nack, fb_pli, resend) = if codec.is_video() {
-            (true, true, true, true, resend)
+        let (fb_transport_cc, fb_fir, fb_nack, fb_pli) = if codec.is_video() {
+            (true, true, true, true)
         } else {
-            (true, false, false, false, None)
+            (true, false, false, false)
         };
 
         let p = PayloadParams {
