@@ -7,7 +7,7 @@ use crate::change::AddMedia;
 use crate::io::{Id, DATAGRAM_MTU};
 use crate::packet::{DepacketizingBuffer, Payloader, RtpMeta};
 use crate::rtp_::SRTP_BLOCK_SIZE;
-use crate::rtp_::{ExtensionMap, SRTP_OVERHEAD};
+use crate::rtp_::SRTP_OVERHEAD;
 use crate::RtcError;
 
 use crate::format::PayloadParams;
@@ -47,9 +47,6 @@ pub struct Media {
 
     /// Audio or video.
     kind: MediaKind,
-
-    /// The extensions for this media.
-    exts: ExtensionMap,
 
     /// Current media direction.
     ///
@@ -308,20 +305,9 @@ impl Media {
         !self.expected_rid_rx.is_empty()
     }
 
-    pub(crate) fn set_exts(&mut self, exts: ExtensionMap) {
-        if self.exts != exts {
-            info!("Set {:?} extension map: {:?}", self.mid, exts);
-            self.exts = exts;
-        }
-    }
-
     pub(crate) fn set_simulcast(&mut self, s: SdpSimulcast) {
         info!("Set simulcast: {:?}", s);
         self.simulcast = Some(s);
-    }
-
-    pub(crate) fn exts(&self) -> &ExtensionMap {
-        &self.exts
     }
 
     fn has_pt(&self, pt: Pt) -> bool {
@@ -412,7 +398,6 @@ impl Default for Media {
                 track_id: Id::<30>::random().to_string(),
             },
             kind: MediaKind::Video,
-            exts: ExtensionMap::empty(),
             dir: Direction::SendRecv,
             params: vec![],
             simulcast: None,
@@ -427,7 +412,7 @@ impl Default for Media {
 }
 
 impl Media {
-    pub(crate) fn from_remote_media_line(l: &MediaLine, index: usize, exts: ExtensionMap) -> Self {
+    pub(crate) fn from_remote_media_line(l: &MediaLine, index: usize) -> Self {
         Media {
             mid: l.mid(),
             index,
@@ -435,7 +420,6 @@ impl Media {
             // cname,
             // msid,
             kind: l.typ.clone().into(),
-            exts,
             dir: l.direction().invert(), // remote direction is reverse.
             params: l.rtp_params(),
             ..Default::default()
@@ -447,14 +431,13 @@ impl Media {
     //
     // from_add_media is only used when creating temporary Media to be
     // included in the SDP. We don't want to make an _actual_ changes with this.
-    pub(crate) fn from_add_media(a: AddMedia, exts: ExtensionMap) -> Self {
+    pub(crate) fn from_add_media(a: AddMedia) -> Self {
         Media {
             mid: a.mid,
             index: a.index,
             cname: a.cname,
             msid: a.msid,
             kind: a.kind,
-            exts,
             dir: a.dir,
             params: a.params,
             ..Default::default()
@@ -474,7 +457,6 @@ impl Media {
         mid: Mid,
         index: usize,
         dir: Direction,
-        exts: ExtensionMap,
         params: &[PayloadParams],
         is_audio: bool,
     ) -> Media {
@@ -486,7 +468,6 @@ impl Media {
             } else {
                 MediaKind::Audio
             },
-            exts,
             dir,
             params: params.to_vec(),
             ..Default::default()

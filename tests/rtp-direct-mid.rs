@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use str0m::format::{Codec, CodecSpec, FormatParams, PayloadParams};
 use str0m::media::Direction;
-use str0m::rtp::{ExtensionMap, ExtensionValues, Ssrc};
+use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, RtcError};
 
 mod common;
@@ -32,18 +32,16 @@ pub fn rtp_direct_mid() -> Result<(), RtcError> {
         },
     )];
 
-    let extmap = ExtensionMap::standard();
-
     // In this example we are using MID only (no RID) to identify the incoming media.
     let ssrc_tx: Ssrc = 42.into();
 
     l.direct_api()
-        .declare_media(mid, Direction::SendOnly, extmap, params);
+        .declare_media(mid, Direction::SendOnly, params);
 
     l.direct_api().declare_stream_tx(ssrc_tx, None, mid, None);
 
     r.direct_api()
-        .declare_media(mid, Direction::RecvOnly, extmap, params);
+        .declare_media(mid, Direction::RecvOnly, params);
 
     let max = l.last.max(r.last);
     l.last = max;

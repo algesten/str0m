@@ -508,9 +508,8 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
 
         // If there are additions in the pending changes, prepend them now.
         if let Some(pending) = params.pending {
-            let exts = session.exts();
             new_lines = pending
-                .as_new_medias(new_index_start, session.codec_config(), exts)
+                .as_new_medias(new_index_start, session.codec_config())
                 .collect();
         }
 
@@ -534,7 +533,7 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
                     ssrcs.extend(pending.ssrcs_for_mid(m.mid()))
                 }
 
-                m.as_media_line(attrs, &ssrcs)
+                m.as_media_line(attrs, &ssrcs, &session.exts)
             })
             .collect::<Vec<_>>();
 
@@ -730,7 +729,6 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
     let mut new_lines = Vec::with_capacity(sdp.media_lines.len());
 
     let config = session.codec_config().clone();
-    let session_exts = *session.exts();
 
     for (idx, m) in sdp.media_lines.iter().enumerate() {
         // First, match existing m-lines.
@@ -749,7 +747,7 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
                         return index_err(m.mid());
                     }
 
-                    update_media(media, m, &config, &session_exts, &mut session.streams);
+                    update_media(media, m, &config, &mut session.streams);
 
                     continue;
                 }
@@ -786,15 +784,9 @@ fn add_new_lines(
             // Update the PTs to match that of the remote.
             session.codec_config.update_pts(m);
 
-            let mut media = Media::from_remote_media_line(m, idx, exts);
+            let mut media = Media::from_remote_media_line(m, idx);
             media.need_open_event = need_open_event;
-            update_media(
-                &mut media,
-                m,
-                &session.codec_config,
-                &session.exts,
-                &mut session.streams,
-            );
+            update_media(&mut media, m, &session.codec_config, &mut session.streams);
 
             session.add_media(media);
         } else if m.typ.is_channel() {
@@ -857,13 +849,7 @@ fn as_media_lines(session: &Session) -> Vec<&dyn AsSdpMediaLine> {
     v
 }
 
-fn update_media(
-    media: &mut Media,
-    m: &MediaLine,
-    config: &CodecConfig,
-    session_exts: &ExtensionMap,
-    streams: &mut Streams,
-) {
+fn update_media(media: &mut Media, m: &MediaLine, config: &CodecConfig, streams: &mut Streams) {
     // Direction changes
     //
     // All changes come from the other side, either via an incoming OFFER
@@ -884,14 +870,6 @@ fn update_media(
         .map(|p| p.pt())
         .collect();
     media.retain_pts(&params);
-
-    // Narrowing of Rtp header extension mappings.
-    let mut exts = ExtensionMap::empty();
-    for (id, ext) in m.extmaps() {
-        exts.set(id, ext);
-    }
-    exts.keep_same(session_exts);
-    media.set_exts(exts);
 
     // SSRC changes
     // This will always be for ReceiverSource since any incoming a=ssrc line will be
@@ -929,6 +907,7 @@ trait AsSdpMediaLine {
         &self,
         attrs: Vec<MediaAttribute>,
         ssrcs_tx: &[(Ssrc, Option<Ssrc>)],
+        exts: &ExtensionMap,
     ) -> MediaLine;
 }
 
@@ -946,6 +925,7 @@ impl AsSdpMediaLine for (Mid, usize) {
         &self,
         mut attrs: Vec<MediaAttribute>,
         _ssrcs_tx: &[(Ssrc, Option<Ssrc>)],
+        _exts: &ExtensionMap,
     ) -> MediaLine {
         attrs.push(MediaAttribute::Mid(self.0));
         attrs.push(MediaAttribute::SctpPort(5000));
@@ -975,16 +955,17 @@ impl AsSdpMediaLine for Media {
         &self,
         mut attrs: Vec<MediaAttribute>,
         ssrcs_tx: &[(Ssrc, Option<Ssrc>)],
+        exts: &ExtensionMap,
     ) -> MediaLine {
         if self.app_tmp {
             let app = (self.mid(), self.index());
-            return app.as_media_line(attrs, ssrcs_tx);
+            return app.as_media_line(attrs, ssrcs_tx, exts);
         }
 
         attrs.push(MediaAttribute::Mid(self.mid()));
 
         let audio = self.kind() == MediaKind::Audio;
-        for (id, ext) in self.exts().iter(audio) {
+        for (id, ext) in exts.iter(audio) {
             attrs.push(MediaAttribute::ExtMap { id, ext });
         }
 
@@ -1221,12 +1202,11 @@ impl Changes {
         &'a self,
         index_start: usize,
         config: &'b CodecConfig,
-        exts: &'b ExtensionMap,
     ) -> impl Iterator<Item = Media> + '_ {
         self.0
             .iter()
             .enumerate()
-            .filter_map(move |(idx, c)| c.as_new_media(index_start + idx, config, exts))
+            .filter_map(move |(idx, c)| c.as_new_media(index_start + idx, config))
     }
 
     pub(crate) fn apply_to(&self, lines: &mut [MediaLine]) {
@@ -1263,12 +1243,7 @@ impl Changes {
 }
 
 impl Change {
-    fn as_new_media(
-        &self,
-        index: usize,
-        config: &CodecConfig,
-        exts: &ExtensionMap,
-    ) -> Option<Media> {
+    fn as_new_media(&self, index: usize, config: &CodecConfig) -> Option<Media> {
         use Change::*;
         match self {
             AddMedia(v) => {
@@ -1277,7 +1252,7 @@ impl Change {
                 add.params = config.all_for_kind(v.kind).copied().collect();
                 add.index = index;
 
-                Some(Media::from_add_media(add, *exts))
+                Some(Media::from_add_media(add))
             }
             AddApp(mid) => Some(Media::from_app_tmp(*mid, index)),
             _ => None,
