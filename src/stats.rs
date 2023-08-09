@@ -154,14 +154,7 @@ impl MediaIngressStats {
     /// Merge `other` into `self`, mutating `self`.
     ///
     /// **Panics** if called with stats that don't have the same `(mid, rid)` pair.
-    pub(crate) fn merge(&mut self, other: &Self) {
-        *self = self.merged(other);
-    }
-
-    /// Merge `self` and `other` returning a new `Self` of the result.
-    ///
-    /// **Panics** if called with stats that don't have the same `(mid, rid)` pair.
-    fn merged(&self, other: &Self) -> Self {
+    pub(crate) fn merge_by_mid_rid(&mut self, other: &Self) {
         assert!(
             self.mid == other.mid,
             "Cannot merge MediaIngressStats for different mids"
@@ -176,7 +169,7 @@ impl MediaIngressStats {
             (other.rtt, other.loss)
         };
 
-        Self {
+        *self = Self {
             mid: self.mid,
             rid: self.rid,
             bytes: self.bytes + other.bytes,
@@ -187,7 +180,7 @@ impl MediaIngressStats {
             rtt,
             loss,
             timestamp: self.timestamp.max(other.timestamp),
-        }
+        };
     }
 }
 

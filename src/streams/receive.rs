@@ -582,7 +582,7 @@ impl StreamRxStats {
         snapshot
             .ingress
             .entry(key)
-            .and_modify(|s| s.merge(&stats))
+            .and_modify(|s| s.merge_by_mid_rid(&stats))
             .or_insert(stats);
     }
 }
