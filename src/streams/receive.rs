@@ -465,8 +465,12 @@ impl StreamRx {
         }
     }
 
+    fn nack_enabled(&self) -> bool {
+        self.rtx.is_some() && !self.suppress_nack
+    }
+
     pub(crate) fn has_nack(&mut self) -> bool {
-        if self.rtx.is_none() || self.suppress_nack {
+        if !self.nack_enabled() {
             return false;
         }
         self.register
@@ -480,7 +484,7 @@ impl StreamRx {
         sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,
     ) -> Option<()> {
-        if self.suppress_nack {
+        if !self.nack_enabled() {
             return None;
         }
 
