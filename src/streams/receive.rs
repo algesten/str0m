@@ -133,13 +133,6 @@ impl StreamRx {
         }
     }
 
-    pub(crate) fn set_rtx_ssrc(&mut self, rtx: Ssrc) {
-        if self.rtx != Some(rtx) {
-            debug!("SSRC {} associated with RTX: {}", self.ssrc, rtx);
-            self.rtx = Some(rtx);
-        }
-    }
-
     /// The (primary) SSRC of this encoded stream.
     pub fn ssrc(&self) -> Ssrc {
         self.ssrc
@@ -220,7 +213,8 @@ impl StreamRx {
             }
             Goodbye(_v) => {
                 // We get Goodbye at weird times, like SDP renegotiation, which makes
-                // pausing on the BYE not a good idea.
+                // pausing on the BYE not a good idea. Chrome also reuses the SSRC it
+                // just sent BYE on. Very not helpful.
             }
             _ => {}
         }
@@ -546,6 +540,38 @@ impl StreamRx {
             r.clear();
         }
         self.pending_request_keyframe = None;
+    }
+
+    pub(crate) fn maybe_reset_ssrc(&mut self, ssrc: Ssrc) {
+        if self.ssrc == ssrc {
+            return;
+        }
+
+        info!(
+            "Change main SSRC: {} -> {} mid: {} rid: {:?}",
+            self.ssrc, ssrc, self.mid, self.rid
+        );
+
+        self.ssrc = ssrc;
+        self.register = None;
+    }
+
+    pub(crate) fn maybe_reset_rtx(&mut self, rtx: Ssrc) {
+        if let Some(current) = self.rtx {
+            if current == rtx {
+                return;
+            }
+
+            info!(
+                "Change RTX SSRC {} -> {} for main SSRC: {} mid: {} rid: {:?}",
+                current, rtx, self.ssrc, self.mid, self.rid
+            );
+        } else {
+            debug!("SSRC {} associated with RTX: {}", self.ssrc, rtx);
+        }
+
+        self.rtx = Some(rtx);
+        self.register_rtx = None;
     }
 }
 

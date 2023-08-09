@@ -336,12 +336,21 @@ impl Session {
                     .find(|p| p.pt() == header.payload_type || p.resend() == Some(header.payload_type))?;
                 let is_main = payload.pt() == header.payload_type;
 
+                let stream_mid_rid = self.streams.stream_rx_by_mid_rid(mid, None);
+
                 let (ssrc_main, rtx) = if is_main {
+                    if let Some(stream) = stream_mid_rid {
+                        if stream.ssrc() != ssrc {
+                            // We got a change in main SSRC for this stream.
+                            stream.maybe_reset_ssrc(ssrc);
+                        }
+                    }
+
                     // SSRC is main, we don't know the RTX.
                     (ssrc, None)
                 } else {
                     // This can bail if the main SSRC has not been discovered yet.
-                    let stream = self.streams.stream_rx_by_mid_rid(mid, None)?;
+                    let stream = stream_mid_rid?;
                     // The main is the SSRC in the stream already. The incoming is RTX.
                     let ssrc_main = stream.ssrc();
                     (ssrc_main, Some(ssrc))
@@ -361,10 +370,17 @@ impl Session {
             // Check if the mid/rid combo is not expected
             media.expects_rid_rx(rid).then_some(())?;
 
+            let stream_mid_rid = self.streams.stream_rx_by_mid_rid(mid, Some(rid));
+
             let ssrc_main = if is_repair {
-                // find the ssrc we are repairing
-                self.streams.stream_rx_by_mid_rid(mid, Some(rid))?.ssrc()
+                stream_mid_rid?.ssrc()
             } else {
+                if let Some(stream) = stream_mid_rid {
+                    if stream.ssrc() != ssrc {
+                        // We got a change in main SSRC for this stream.
+                        stream.maybe_reset_ssrc(ssrc);
+                    }
+                }
                 ssrc
             };
 

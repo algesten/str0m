@@ -142,7 +142,7 @@ impl Streams {
             .or_insert_with(|| StreamRx::new(ssrc, mid, rid));
 
         if let Some(rtx) = rtx {
-            stream.set_rtx_ssrc(rtx);
+            stream.maybe_reset_rtx(rtx);
         }
     }
 
