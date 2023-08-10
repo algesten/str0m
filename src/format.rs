@@ -665,3 +665,11 @@ impl fmt::Display for Codec {
         }
     }
 }
+
+impl std::ops::Deref for CodecConfig {
+    type Target = [PayloadParams];
+
+    fn deref(&self) -> &Self::Target {
+        &self.params
+    }
+}
