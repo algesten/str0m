@@ -1456,6 +1456,14 @@ impl Rtc {
         self.change_counter += 1;
         n
     }
+
+    /// Reference to the current codec config.
+    ///
+    /// The configurations can be set with [`RtcConfig`] before setting up the session, and they
+    /// might be further updated by SDP negotiation.
+    pub fn codec_config(&self) -> &CodecConfig {
+        &self.session.codec_config
+    }
 }
 
 /// Customized config for creating an [`Rtc`] instance.

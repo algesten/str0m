@@ -1,6 +1,6 @@
 //! Media (audio/video) related content.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::change::AddMedia;
@@ -53,10 +53,9 @@ pub struct Media {
     /// Can be altered via negotiation.
     dir: Direction,
 
-    /// Negotiated codec parameters.
-    ///
-    /// The PT information from SDP.
-    params: Vec<PayloadParams>,
+    /// This dictates both the desired priority order of payload types
+    /// as well as which PT been negotiated between the remote peer and this.
+    pts: Vec<Pt>,
 
     /// Simulcast configuration, if set.
     simulcast: Option<SdpSimulcast>,
@@ -116,25 +115,6 @@ impl Media {
         &self.cname
     }
 
-    /// The negotiated payload parameters for this media.
-    pub fn payload_params(&self) -> &[PayloadParams] {
-        &self.params
-    }
-
-    /// Match the given parameters to the configured parameters for this [`Media`].
-    ///
-    /// In a server scenario, a certain codec configuration might not have the same
-    /// payload type (PT) for two different peers. We will have incoming data with one
-    /// PT and need to match that against the PT of the outgoing [`Media`].
-    ///
-    /// This call performs matching and if a match is found, returns the _local_ PT
-    /// that can be used for sending media.
-    pub fn match_params(&self, params: PayloadParams) -> Option<Pt> {
-        let c = self.params.iter().max_by_key(|p| p.match_score(&params))?;
-        c.match_score(&params)?; // avoid None, which isn't a match.
-        Some(c.pt())
-    }
-
     /// Current direction. This can be changed using
     /// [`SdpApi::set_direction()`][crate::SdpApi::set_direction()] followed by an SDP negotiation.
     ///
@@ -151,24 +131,17 @@ impl Media {
         self.dir
     }
 
-    pub(crate) fn get_params(&self, pt: Pt) -> Option<&PayloadParams> {
-        if let Some(params) = self.params.iter().find(|p| p.pt == pt) {
-            return Some(params);
-        }
-
-        // RTX fallback
-        self.main_payload_type_for(pt)
-            .and_then(|pt| self.params.iter().find(|p| p.pt == pt))
-    }
-
     pub(crate) fn simulcast(&self) -> Option<&SdpSimulcast> {
         self.simulcast.as_ref()
     }
 
-    pub(crate) fn poll_sample(&mut self) -> Option<Result<MediaData, RtcError>> {
+    pub(crate) fn poll_sample(
+        &mut self,
+        params: &[PayloadParams],
+    ) -> Option<Result<MediaData, RtcError>> {
         for ((pt, rid), buf) in &mut self.depayloaders {
             if let Some(r) = buf.pop() {
-                let codec = *self.params.iter().find(|c| c.pt() == *pt)?;
+                let codec = *params.iter().find(|c| c.pt() == *pt)?;
                 return Some(
                     r.map(|dep| MediaData {
                         mid: self.mid,
@@ -190,21 +163,13 @@ impl Media {
         None
     }
 
-    pub(crate) fn main_payload_type_for(&self, pt: Pt) -> Option<Pt> {
-        let p = self
-            .params
-            .iter()
-            .find(|p| p.pt == pt || p.resend == Some(pt))?;
-
-        Some(p.pt)
-    }
-
     pub(crate) fn depayload(
         &mut self,
         rid: Option<Rid>,
         packet: RtpPacket,
         reordering_size_audio: usize,
         reordering_size_video: usize,
+        params: &[PayloadParams],
     ) {
         if !self.dir.is_receiving() {
             return;
@@ -218,7 +183,7 @@ impl Media {
 
         if !exists {
             // This unwrap is ok because we needed the clock_rate before unpayloading.
-            let params = self.get_params(pt).unwrap();
+            let params = params.iter().find(|p| p.pt == pt).unwrap();
 
             let codec = params.spec.codec;
 
@@ -260,32 +225,6 @@ impl Media {
         self.dir = new_dir;
     }
 
-    pub(crate) fn retain_pts(&mut self, pts: &[Pt]) {
-        let mut new_pts = HashSet::new();
-
-        for p_new in pts {
-            new_pts.insert(*p_new);
-
-            if self.params_by_pt(*p_new).is_none() {
-                debug!("Ignoring new pt ({}) in mid: {}", p_new, self.mid);
-            }
-        }
-
-        self.params.retain(|p| {
-            let keep = new_pts.contains(&p.pt());
-
-            if !keep {
-                debug!("Mid ({}) remove pt: {}", self.mid, p.pt());
-            }
-
-            keep
-        });
-    }
-
-    fn params_by_pt(&self, pt: Pt) -> Option<&PayloadParams> {
-        self.params.iter().find(|p| p.pt == pt)
-    }
-
     /// Add rid as one we are expecting to receive for this mid.
     ///
     /// This is used for situations where we don't know the SSRC upfront, such as not having
@@ -310,14 +249,15 @@ impl Media {
         self.simulcast = Some(s);
     }
 
-    fn has_pt(&self, pt: Pt) -> bool {
-        self.params.iter().any(|p| p.pt == pt)
-    }
-
-    fn payloader_for(&mut self, pt: Pt, rid: Option<Rid>) -> &mut Payloader {
+    fn payloader_for(
+        &mut self,
+        pt: Pt,
+        rid: Option<Rid>,
+        params: &[PayloadParams],
+    ) -> &mut Payloader {
         self.payloaders.entry((pt, rid)).or_insert_with(|| {
             // Unwrap is OK, the pt should be checked already when calling this function.
-            let params = self.params.iter().find(|p| p.pt == pt).unwrap();
+            let params = params.iter().find(|p| p.pt == pt).unwrap();
             Payloader::new(params.spec.codec.into())
         })
     }
@@ -344,6 +284,7 @@ impl Media {
         &mut self,
         now: Instant,
         streams: &mut Streams,
+        params: &[PayloadParams],
     ) -> Result<(), RtcError> {
         let Some(to_payload) = self.to_payload.take() else {
             return Ok(());
@@ -361,7 +302,7 @@ impl Media {
 
         let pt = *pt;
 
-        let payloader = self.payloader_for(pt, *rid);
+        let payloader = self.payloader_for(pt, *rid, params);
 
         const RTP_SIZE: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
         // align to SRTP block size to minimize padding needs
@@ -374,15 +315,27 @@ impl Media {
         Ok(())
     }
 
-    pub(crate) fn is_request_keyframe_possible(&self, kind: KeyframeRequestKind) -> bool {
-        // TODO: It's possible to have different set of feedback enabled for different
-        // payload types. I.e. we could have FIR enabled for H264, but not for VP8.
-        // We might want to make this check more fine grained by testing which PT is
-        // in "active use" right now.
-        self.params.iter().any(|r| match kind {
-            KeyframeRequestKind::Pli => r.fb_pli,
-            KeyframeRequestKind::Fir => r.fb_fir,
-        })
+    pub(crate) fn set_pts(&mut self, pts: Vec<Pt>) {
+        // Have we already set PTs?
+        if !self.pts.is_empty() {
+            return;
+        }
+
+        // TODO: We should verify the remote peer doesn't suddenly change the PT
+        // order or removes/adds PTs that weren't there from the start.
+        info!("Mid ({}) PT order is: {:?}", self.mid, pts);
+        self.pts = pts;
+    }
+
+    /// The PT (payload types) configured for this Media.
+    ///
+    /// These are negotiated with the remote peer and in the prefered order.
+    ///
+    /// I.e. these can be fewer than the `PayloadParams` configured for the `Rtc` instance,
+    /// and in a different order. The order is set by whoever first makes an OFFER with a new
+    /// m-line. The ANSWER is not allowed to reorder, only remove unsupported codecs.
+    pub fn pts(&self) -> &[Pt] {
+        &self.pts
     }
 }
 
@@ -398,8 +351,8 @@ impl Default for Media {
                 track_id: Id::<30>::random().to_string(),
             },
             kind: MediaKind::Video,
+            pts: vec![],
             dir: Direction::SendRecv,
-            params: vec![],
             simulcast: None,
             expected_rid_rx: vec![],
             payloaders: HashMap::new(),
@@ -421,7 +374,6 @@ impl Media {
             // msid,
             kind: l.typ.clone().into(),
             dir: l.direction().invert(), // remote direction is reverse.
-            params: l.rtp_params(),
             ..Default::default()
         }
     }
@@ -439,7 +391,7 @@ impl Media {
             msid: a.msid,
             kind: a.kind,
             dir: a.dir,
-            params: a.params,
+            pts: a.pts,
             ..Default::default()
         }
     }
@@ -453,13 +405,7 @@ impl Media {
         }
     }
 
-    pub(crate) fn from_direct_api(
-        mid: Mid,
-        index: usize,
-        dir: Direction,
-        params: &[PayloadParams],
-        is_audio: bool,
-    ) -> Media {
+    pub(crate) fn from_direct_api(mid: Mid, index: usize, dir: Direction, is_audio: bool) -> Media {
         Media {
             mid,
             index,
@@ -469,7 +415,6 @@ impl Media {
                 MediaKind::Audio
             },
             dir,
-            params: params.to_vec(),
             ..Default::default()
         }
     }

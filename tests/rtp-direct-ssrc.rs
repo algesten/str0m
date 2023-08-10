@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use str0m::format::{Codec, CodecSpec, FormatParams, PayloadParams};
+use str0m::format::Codec;
 use str0m::media::Direction;
 use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, RtcError};
@@ -17,32 +17,15 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
 
     let mid = "aud".into();
 
-    let params = &[PayloadParams::new(
-        100.into(),
-        None,
-        CodecSpec {
-            codec: Codec::Opus,
-            channels: Some(2),
-            clock_rate: 48_000,
-            format: FormatParams {
-                min_p_time: Some(10),
-                use_inband_fec: Some(true),
-                ..Default::default()
-            },
-        },
-    )];
-
     // In this example we are not using RID to identify the stream, we are simply
     // using SSRC 1 as knowledge shared between sending and receiving side.
     let ssrc: Ssrc = 1.into();
 
-    l.direct_api()
-        .declare_media(mid, Direction::SendOnly, params);
+    l.direct_api().declare_media(mid, Direction::SendOnly, true);
 
     l.direct_api().declare_stream_tx(ssrc, None, mid, None);
 
-    r.direct_api()
-        .declare_media(mid, Direction::RecvOnly, params);
+    r.direct_api().declare_media(mid, Direction::RecvOnly, true);
 
     r.direct_api().expect_stream_rx(ssrc, None, mid, None);
 
@@ -50,8 +33,7 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
     l.last = max;
     r.last = max;
 
-    let media = l.media(mid).unwrap();
-    let params = media.payload_params()[0];
+    let params = l.params_opus();
     let ssrc = l.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();

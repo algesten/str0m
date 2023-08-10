@@ -1,6 +1,5 @@
 use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
-use crate::format::PayloadParams;
 use crate::ice::IceCreds;
 use crate::media::Media;
 use crate::rtp_::{Direction, Mid, Rid, Ssrc};
@@ -115,12 +114,7 @@ impl<'a> DirectApi<'a> {
     ///
     /// All streams belong to a media identified by a `mid`. This creates the media without
     /// doing any SDP dance.
-    pub fn declare_media(
-        &mut self,
-        mid: Mid,
-        dir: Direction,
-        params: &[PayloadParams],
-    ) -> &mut Media {
+    pub fn declare_media(&mut self, mid: Mid, dir: Direction, is_audio: bool) -> &mut Media {
         let max_index = self.rtc.session.medias.iter().map(|m| m.index()).max();
 
         let next_index = if let Some(max_index) = max_index {
@@ -129,17 +123,7 @@ impl<'a> DirectApi<'a> {
             0
         };
 
-        if params.is_empty() {
-            panic!("declare_media requires at least one payload parameter");
-        }
-
-        let is_audio = params[0].spec().codec.is_audio();
-
-        if params.iter().any(|p| p.spec().codec.is_audio() != is_audio) {
-            panic!("declare_media detected mix of audio/video parameters");
-        }
-
-        let m = Media::from_direct_api(mid, next_index, dir, params, is_audio);
+        let m = Media::from_direct_api(mid, next_index, dir, is_audio);
 
         self.rtc.session.medias.push(m);
         self.rtc.session.medias.last_mut().unwrap()

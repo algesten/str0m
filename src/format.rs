@@ -1,13 +1,12 @@
 //! Media formats and parameters
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fmt;
+use std::ops::RangeInclusive;
 
 use crate::packet::MediaKind;
 use crate::rtp_::Pt;
 use crate::sdp::FormatParam;
-use crate::sdp::MediaLine;
 
 // These really don't belong anywhere, but I guess they're kind of related
 // to codecs etc.
@@ -58,8 +57,7 @@ pub struct PayloadParams {
 
     /// Internal field whether the payload is matched to the remote. This is used in SDP
     /// negotiation.
-    #[serde(skip_serializing)]
-    pub(crate) pt_matched_to_remote: bool,
+    pub(crate) pt_confirmed_by_remote: bool,
 }
 
 /// Codec specification
@@ -163,7 +161,7 @@ impl PayloadParams {
             fb_nack: is_video,
             fb_pli: is_video,
 
-            pt_matched_to_remote: false,
+            pt_confirmed_by_remote: false,
         }
     }
 
@@ -281,29 +279,40 @@ impl PayloadParams {
         score
     }
 
-    fn update_pt(&mut self, media_pts: &[PayloadParams]) -> Option<(Pt, Pt)> {
-        let (first, _) = media_pts
+    fn update_pt(&mut self, remote_pts: &[PayloadParams], claimed: &mut [bool; 128]) {
+        let Some((first, _)) = remote_pts
             .iter()
             .filter_map(|p| self.match_score(p).map(|s| (p, s)))
-            .max_by_key(|(_, s)| *s)?;
+            .max_by_key(|(_, s)| *s) else {
+                return;
+            };
 
         let remote_pt = first.pt;
+        let remote_rtx = first.resend;
 
-        if self.pt_matched_to_remote {
-            // just verify it's still the same.
+        if self.pt_confirmed_by_remote {
+            // Just verify it's still the same. We should validate this in apply_offer/answer instead
+            // of ever seeing this error message.
             if self.pt != remote_pt {
                 warn!("Remote PT changed {} => {}", self.pt, remote_pt);
             }
 
-            None
+            if self.resend != remote_rtx {
+                warn!(
+                    "Remote PT RTX changed {:?} => {:?}",
+                    self.resend, remote_rtx
+                );
+            }
         } else {
-            let replaced = self.pt;
-
             // Lock down the PT
             self.pt = remote_pt;
-            self.pt_matched_to_remote = true;
+            self.resend = remote_rtx;
+            self.pt_confirmed_by_remote = true;
 
-            Some((remote_pt, replaced))
+            claimed.assert_claim_once(remote_pt);
+            if let Some(rtx) = remote_rtx {
+                claimed.assert_claim_once(rtx);
+            }
         }
     }
 }
@@ -377,7 +386,7 @@ impl CodecConfig {
             fb_fir,
             fb_nack,
             fb_pli,
-            pt_matched_to_remote: false,
+            pt_confirmed_by_remote: false,
         };
 
         self.params.push(p);
@@ -507,6 +516,25 @@ impl CodecConfig {
         );
     }
 
+    /// Match the given parameters to the configured parameters for this [`Media`].
+    ///
+    /// In a server scenario, a certain codec configuration might not have the same
+    /// payload type (PT) for two different peers. We will have incoming data with one
+    /// PT and need to match that against the PT of the outgoing [`Media`].
+    ///
+    /// This call performs matching and if a match is found, returns the _local_ PT
+    /// that can be used for sending media.
+    pub fn match_params(&self, params: PayloadParams) -> Option<&PayloadParams> {
+        let c = self.params.iter().max_by_key(|p| p.match_score(&params))?;
+        c.match_score(&params)?; // avoid None, which isn't a match.
+        Some(c)
+    }
+
+    /// Find a payload parameter using a finder function.
+    pub fn find(&self, mut f: impl FnMut(&PayloadParams) -> bool) -> Option<&PayloadParams> {
+        self.params.iter().find(move |p| f(*p))
+    }
+
     pub(crate) fn all_for_kind(&self, kind: MediaKind) -> impl Iterator<Item = &PayloadParams> {
         self.params.iter().filter(move |params| {
             if kind == MediaKind::Video {
@@ -517,30 +545,110 @@ impl CodecConfig {
         })
     }
 
-    pub(crate) fn update_pts(&mut self, m: &MediaLine) {
-        let pts = m.rtp_params();
-        let mut replaceds = Vec::with_capacity(pts.len());
-        let mut assigneds = HashMap::with_capacity(pts.len());
+    pub(crate) fn update_pts(&mut self, remote_pts: &[PayloadParams]) {
+        // 0-128 of "claimed" PTs. I.e. PTs that we already allocated to something.
+        let mut claimed: [bool; 128] = [false; 128];
 
-        for (i, p) in self.params.iter_mut().enumerate() {
-            if let Some((assigned, replaced)) = p.update_pt(&pts[..]) {
-                replaceds.push(replaced);
-                assigneds.insert(assigned, i);
+        // Make a pass with all that are definitely confirmed by the remote, since these can't change.
+        for p in self.params.iter() {
+            if !p.pt_confirmed_by_remote {
+                continue;
+            }
+
+            claimed.assert_claim_once(p.pt);
+
+            if let Some(rtx) = p.resend {
+                claimed.assert_claim_once(rtx);
             }
         }
 
-        // Need to adjust potentially clashes introduced by assigning pts from the medias.
-        for (i, p) in self.params.iter_mut().enumerate() {
-            if let Some(index) = assigneds.get(&p.pt) {
-                if i != *index {
-                    // This PT has been reassigned. This unwrap is ok
-                    // because we can't have replaced something without
-                    // also get the old PT out.
-                    let r = replaceds.pop().unwrap();
-                    p.pt = r;
+        // Now lock potential new parameters to remote.
+        for p in self.params.iter_mut() {
+            p.update_pt(&remote_pts[..], &mut claimed);
+        }
+
+        const PREFERED_RANGES: &[RangeInclusive<usize>] = &[
+            // Payload identifiers 96–127 are used for payloads defined dynamically during a session.
+            96..=127,
+            // "unassigned" ranged. note that RTCP packet type 207 (XR, Extended Reports) would be
+            // indistinguishable from RTP payload types 79 with the marker bit set
+            80..=95,
+            77..=78,
+            // reserved because RTCP packet types 200–204 would otherwise be indistinguishable from RTP payload types 72–76
+            // 72..77,
+            // lol range.
+            35..=71,
+        ];
+
+        // Make a pass to reassign unconfirmed payloads that have PT which are now claimed.
+        for p in self.params.iter_mut() {
+            if p.pt_confirmed_by_remote {
+                continue;
+            }
+
+            if claimed.is_claimed(p.pt) {
+                let Some(pt) = claimed.find_unclaimed(&PREFERED_RANGES) else {
+                    // TODO: handle this gracefully.
+                    panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
+                };
+
+                info!("Reassigned PT {} => {}", p.pt, pt);
+                p.pt = pt;
+
+                claimed.assert_claim_once(pt);
+            }
+
+            let Some(rtx) = p.resend else {
+                continue;
+            };
+
+            if claimed.is_claimed(rtx) {
+                let Some(rtx) = claimed.find_unclaimed(&PREFERED_RANGES) else {
+                    // TODO: handle this gracefully.
+                    panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
+                };
+
+                info!("Reassigned RTX PT {:?} => {:?}", p.resend, rtx);
+                p.resend = Some(rtx);
+
+                claimed.assert_claim_once(rtx);
+            }
+        }
+    }
+
+    pub(crate) fn has_pt(&self, pt: Pt) -> bool {
+        self.params.iter().any(|p| p.pt() == pt)
+    }
+}
+
+trait Claimed {
+    fn assert_claim_once(&mut self, pt: Pt);
+    fn is_claimed(&self, pt: Pt) -> bool;
+    fn find_unclaimed(&self, ranges: &[RangeInclusive<usize>]) -> Option<Pt>;
+}
+
+impl Claimed for [bool; 128] {
+    fn assert_claim_once(&mut self, pt: Pt) {
+        let idx = *pt as usize;
+        assert!(!self[idx], "Pt locked multiple times: {}", pt);
+        self[idx] = true;
+    }
+    fn is_claimed(&self, pt: Pt) -> bool {
+        let idx = *pt as usize;
+        self[idx]
+    }
+    fn find_unclaimed(&self, ranges: &[RangeInclusive<usize>]) -> Option<Pt> {
+        for range in ranges {
+            for i in range.clone() {
+                if !self[i] {
+                    let pt: Pt = (i as u8).into();
+                    return Some(pt);
                 }
             }
         }
+
+        // Failed to find unclaimed PT.
+        None
     }
 }
 
@@ -671,5 +779,11 @@ impl std::ops::Deref for CodecConfig {
 
     fn deref(&self) -> &Self::Target {
         &self.params
+    }
+}
+
+impl std::ops::DerefMut for CodecConfig {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.params
     }
 }

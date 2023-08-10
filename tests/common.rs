@@ -3,6 +3,8 @@ use std::net::Ipv4Addr;
 use std::ops::{Deref, DerefMut};
 use std::time::{Duration, Instant};
 
+use str0m::format::Codec;
+use str0m::format::PayloadParams;
 use str0m::net::Receive;
 use str0m::Candidate;
 use str0m::{Event, Input, Output, Rtc, RtcError};
@@ -35,6 +37,22 @@ impl TestRtc {
 
     pub fn duration(&self) -> Duration {
         self.last - self.start
+    }
+
+    pub fn params_opus(&self) -> PayloadParams {
+        self.rtc
+            .codec_config()
+            .find(|p| p.spec().codec == Codec::Opus)
+            .cloned()
+            .unwrap()
+    }
+
+    pub fn params_vp8(&self) -> PayloadParams {
+        self.rtc
+            .codec_config()
+            .find(|p| p.spec().codec == Codec::Vp8)
+            .cloned()
+            .unwrap()
     }
 }
 
