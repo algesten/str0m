@@ -43,18 +43,18 @@ pub(crate) struct Session {
     // These fields are pub to allow session_sdp.rs modify them.
     // Notice the fields are maybe not in m-line index order since the app
     // might be spliced in somewhere.
-    pub(crate) medias: Vec<Media>,
+    pub medias: Vec<Media>,
 
     // The actual RTP encoded streams.
-    pub(crate) streams: Streams,
+    pub streams: Streams,
 
     /// The app m-line. Spliced into medias above.
     app: Option<(Mid, usize)>,
 
     reordering_size_audio: usize,
     reordering_size_video: usize,
-    pub(crate) send_buffer_audio: usize,
-    pub(crate) send_buffer_video: usize,
+    pub send_buffer_audio: usize,
+    pub send_buffer_video: usize,
 
     /// Extension mappings are _per BUNDLE_, but we can only have one a=group BUNDLE
     /// in WebRTC (one ice connection), so they are effectively per session.
@@ -857,11 +857,11 @@ impl Session {
         self.pacer.set_pacing_rate(pacing_rate);
     }
 
-    pub(crate) fn media_by_mid(&self, mid: Mid) -> Option<&Media> {
+    pub fn media_by_mid(&self, mid: Mid) -> Option<&Media> {
         self.medias.iter().find(|m| m.mid() == mid)
     }
 
-    pub(crate) fn media_by_mid_mut(&mut self, mid: Mid) -> Option<&mut Media> {
+    pub fn media_by_mid_mut(&mut self, mid: Mid) -> Option<&mut Media> {
         self.medias.iter_mut().find(|m| m.mid() == mid)
     }
 
@@ -873,7 +873,7 @@ impl Session {
         Ok(())
     }
 
-    pub(crate) fn set_direction(&mut self, mid: Mid, direction: Direction) -> bool {
+    pub fn set_direction(&mut self, mid: Mid, direction: Direction) -> bool {
         let Some(media) = self.media_by_mid_mut(mid) else {
             return false;
         };
@@ -909,7 +909,7 @@ impl Bwe {
         self.bwe.handle_timeout(now);
     }
 
-    pub(crate) fn update<'t>(
+    pub fn update<'t>(
         &mut self,
         records: impl Iterator<Item = &'t crate::rtp_::TwccSendRecord>,
         now: Instant,
