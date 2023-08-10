@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use str0m::format::{Codec, CodecSpec, FormatParams, PayloadParams};
+use str0m::format::Codec;
 use str0m::media::Direction;
 use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, RtcError};
@@ -18,24 +18,10 @@ pub fn rtx_cache_0() -> Result<(), RtcError> {
     let mid = "aud".into();
     let rid = "hi".into();
 
-    let params = &[PayloadParams::new(
-        100.into(),
-        Some(101.into()),
-        CodecSpec {
-            codec: Codec::Vp8,
-            channels: None,
-            clock_rate: 90_000,
-            format: FormatParams {
-                ..Default::default()
-            },
-        },
-    )];
-
     // In this example we are using MID and RID to identify the incoming media.
     let ssrc_tx: Ssrc = 42.into();
 
-    l.direct_api()
-        .declare_media(mid, Direction::SendOnly, params);
+    l.direct_api().declare_media(mid, Direction::SendOnly, true);
 
     l.direct_api()
         .declare_stream_tx(ssrc_tx, None, mid, Some(rid))
@@ -44,15 +30,14 @@ pub fn rtx_cache_0() -> Result<(), RtcError> {
         .set_rtx_cache(0, Duration::ZERO);
 
     r.direct_api()
-        .declare_media(mid, Direction::RecvOnly, params)
+        .declare_media(mid, Direction::RecvOnly, true)
         .expect_rid_rx(rid);
 
     let max = l.last.max(r.last);
     l.last = max;
     r.last = max;
 
-    let media = l.media(mid).unwrap();
-    let params = media.payload_params()[0];
+    let params = l.params_vp8();
     let ssrc = l.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
     assert_eq!(params.spec().codec, Codec::Vp8);
     let pt = params.pt();

@@ -48,7 +48,7 @@ pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
     l.last = max;
     r.last = max;
 
-    let params = l.media(mid).unwrap().payload_params()[0];
+    let params = l.params_opus();
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
 
