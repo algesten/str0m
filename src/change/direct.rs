@@ -6,6 +6,7 @@ use crate::media::Media;
 use crate::rtp_::{Direction, ExtensionMap, Mid, Rid, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::streams::{StreamRx, StreamTx, DEFAULT_RTX_CACHE_DURATION};
+use crate::util::vector::VecExtended;
 use crate::Rtc;
 use crate::RtcError;
 
@@ -147,8 +148,7 @@ impl<'a> DirectApi<'a> {
 
         let m = Media::from_direct_api(mid, next_index, dir, exts, params, is_audio);
 
-        self.rtc.session.medias.push(m);
-        self.rtc.session.medias.last_mut().unwrap()
+        self.rtc.session.medias.push_get_last_mut(m)
     }
 
     /// Remove `Media`.

@@ -416,7 +416,7 @@ impl Session {
         self.source_keys.insert(ssrc, (mid, ssrc_main));
     }
 
-    fn handle_rtp(&mut self, now: Instant, mut header: RtpHeader, buf: &[u8]) {
+    fn handle_rtp(&mut self, now: Instant, mut header: RtpHeader, buf: &[u8]) -> Option<()> {
         // const INGRESS_PACKET_LOSS_PERCENT: u16 = 5;
         // if header.sequence_number % (100 / INGRESS_PACKET_LOSS_PERCENT) == 0 {
         //     return;
@@ -432,20 +432,23 @@ impl Session {
         // The ssrc is the _main_ ssrc (no the rtx, that might be in the header).
         let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(&header) else {
             debug!("No mid/SSRC for header: {:?}", header);
-            return;
+            return None;
         };
 
         let srtp = match self.srtp_rx.as_mut() {
             Some(v) => v,
             None => {
                 trace!("Rejecting SRTP while missing SrtpContext");
-                return;
+                return None;
             }
         };
 
         // Both of these unwraps are fine because mid_and_ssrc_for_header guarantees it.
-        let media = self.medias.iter_mut().find(|m| m.mid() == mid).unwrap();
-        let stream = self.streams.stream_rx(&ssrc).unwrap();
+        let media = self
+            .medias
+            .iter_mut()
+            .find(|m: &&mut Media| m.mid() == mid)?;
+        let stream = self.streams.stream_rx(&ssrc)?;
 
         // If the header ssrc differs from the main, it's a repair stream.
         let is_repair = header.ssrc != ssrc;
@@ -454,7 +457,7 @@ impl Session {
             Some(v) => v.spec().clock_rate,
             None => {
                 trace!("No codec params for {:?}", header.payload_type);
-                return;
+                return None;
             }
         };
 
@@ -466,19 +469,19 @@ impl Session {
             Some(v) => v,
             None => {
                 trace!("Failed to unprotect SRTP");
-                return;
+                return None;
             }
         };
 
         if header.has_padding && !RtpHeader::unpad_payload(&mut data) {
             // Unpadding failed. Broken data?
             trace!("unpadding of unprotected payload failed");
-            return;
+            return None;
         }
 
         let Some(pt) = media.main_payload_type_for(header.payload_type) else {
             trace!("RTP packet PT is not declared in media");
-            return;
+            return None;
         };
 
         // RTX packets must be rewritten to be a normal packet. This only changes the
@@ -489,7 +492,7 @@ impl Session {
             // is empty because we would have done RtpHeader::unpad_payload above.
             // For unpausing, it's enough with the stream.uodate() already done above.
             if data.is_empty() {
-                return;
+                return None;
             }
 
             // Rewrite the header, and removes the resent seq_no from the body.
@@ -505,7 +508,7 @@ impl Session {
         };
 
         let Some(packet) = stream.handle_rtp(now, header, data, receipt.seq_no, receipt.time) else {
-            return;
+            return None;
         };
 
         if self.rtp_mode {
@@ -523,6 +526,8 @@ impl Session {
                 self.reordering_size_video,
             );
         }
+
+        Some(())
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {

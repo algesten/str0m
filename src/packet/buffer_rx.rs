@@ -292,13 +292,15 @@ impl DepacketizingBuffer {
             let is_same_timestamp = start.map(|s| s.time) == Some(entry.meta.time);
             let is_defacto_tail = is_expected_seq && !is_same_timestamp;
 
-            if start.is_some() && is_defacto_tail {
-                // We found a segment that ended because the timestamp changed without
-                // a gap in the sequence number. The marker bit in the RTP packet is
-                // just indicative, this is the robust fallback.
-                let segment = (start.unwrap().index as usize, index as usize - 1);
-                self.segments.push(segment);
-                start = None;
+            if let Some(start_v) = &start {
+                if is_defacto_tail {
+                    // We found a segment that ended because the timestamp changed without
+                    // a gap in the sequence number. The marker bit in the RTP packet is
+                    // just indicative, this is the robust fallback.
+                    let segment = (start_v.index as usize, index as usize - 1);
+                    self.segments.push(segment);
+                    start = None;
+                }
             }
 
             if start.is_some() && (!is_expected_seq || !is_same_timestamp) {
@@ -315,12 +317,14 @@ impl DepacketizingBuffer {
                 });
             }
 
-            if start.is_some() && entry.tail {
-                // We found a contiguous sequence of packets ending with something from
-                // the packet (like the RTP marker bit) indicating it's the tail.
-                let segment = (start.unwrap().index as usize, index as usize);
-                self.segments.push(segment);
-                start = None;
+            if let Some(start_v) = &start {
+                if entry.tail {
+                    // We found a contiguous sequence of packets ending with something from
+                    // the packet (like the RTP marker bit) indicating it's the tail.
+                    let segment = (start_v.index as usize, index as usize);
+                    self.segments.push(segment);
+                    start = None;
+                }
             }
         }
 

@@ -1,5 +1,6 @@
 //! Media (audio/video) related content.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
@@ -221,7 +222,9 @@ impl Media {
 
         if !exists {
             // This unwrap is ok because we needed the clock_rate before unpayloading.
-            let params = self.get_params(pt).unwrap();
+            let Some(params) = self.get_params(pt) else {
+                return;
+            };
 
             let codec = params.spec.codec;
 
@@ -238,7 +241,9 @@ impl Media {
         }
 
         // The entry will be there by now.
-        let buffer = self.depayloaders.get_mut(&key).unwrap();
+        let Some(buffer) = self.depayloaders.get_mut(&key) else {
+            return;
+        };
 
         let meta = RtpMeta {
             received: packet.timestamp,
@@ -328,12 +333,14 @@ impl Media {
         self.params.iter().any(|p| p.pt == pt)
     }
 
-    fn payloader_for(&mut self, pt: Pt, rid: Option<Rid>) -> &mut Payloader {
-        self.payloaders.entry((pt, rid)).or_insert_with(|| {
-            // Unwrap is OK, the pt should be checked already when calling this function.
-            let params = self.params.iter().find(|p| p.pt == pt).unwrap();
-            Payloader::new(params.spec.codec.into())
-        })
+    fn payloader_for(&mut self, pt: Pt, rid: Option<Rid>) -> Option<&mut Payloader> {
+        match self.payloaders.entry((pt, rid)) {
+            Entry::Occupied(p) => Some(p.into_mut()),
+            Entry::Vacant(v) => {
+                let params = self.params.iter().find(|p| p.pt == pt)?;
+                Some(v.insert(Payloader::new(params.spec.codec.into())))
+            }
+        }
     }
 
     fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {
@@ -375,7 +382,9 @@ impl Media {
 
         let pt = *pt;
 
-        let payloader = self.payloader_for(pt, *rid);
+        let Some(payloader) = self.payloader_for(pt, *rid) else{
+            return Err(RtcError::UnknownPt(pt));
+        };
 
         const RTP_SIZE: usize = DATAGRAM_MTU - SRTP_OVERHEAD;
         // align to SRTP block size to minimize padding needs

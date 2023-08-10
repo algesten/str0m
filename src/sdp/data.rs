@@ -14,6 +14,7 @@ use crate::format::FormatParams;
 use crate::format::PayloadParams;
 use crate::ice::{Candidate, IceCreds};
 use crate::rtp_::{Direction, Extension, Mid, Pt, Rid, SessionId, Ssrc};
+use crate::util::vector::VecExtended;
 use crate::VERSION;
 
 use super::parser::sdp_parser;
@@ -621,11 +622,10 @@ impl MediaLine {
             if let Some(pos) = v.iter().position(|i| i.ssrc == ssrc) {
                 &mut v[pos]
             } else {
-                v.push(SsrcInfo {
+                v.push_get_last_mut(SsrcInfo {
                     ssrc,
                     ..Default::default()
-                });
-                v.last_mut().unwrap()
+                })
             }
         }
 

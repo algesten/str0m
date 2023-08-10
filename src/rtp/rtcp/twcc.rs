@@ -1081,11 +1081,14 @@ impl TwccSendRegister {
     /// Returns a range of the sequence numbers for the applied packets if the report was
     /// successfully applied.
     pub fn apply_report(&mut self, twcc: Twcc, now: Instant) -> Option<RangeInclusive<SeqNo>> {
-        if self.time_zero.is_none() {
-            self.time_zero = Some(now);
-        }
+        let time_zero = match self.time_zero {
+            Some(v) => v,
+            None => {
+                self.time_zero = Some(now);
+                now
+            }
+        };
 
-        let time_zero = self.time_zero.unwrap();
         let head_seq = self.queue.front().map(|r| r.seq)?;
 
         let mut iter = twcc

@@ -72,7 +72,9 @@ impl<T: private::WordSized> ReportList<T> {
             }
 
             // first borrow item from other, to check the item size will fit.
-            let item = other.0[i].as_ref().unwrap();
+            let Some(item) = other.0[i].as_ref() else {
+                break;
+            };
             let item_size = item.word_size();
 
             // can we fit one more item?

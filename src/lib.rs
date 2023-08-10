@@ -1187,8 +1187,7 @@ impl Rtc {
                     }
                 }
                 SctpEvent::Open { id, label } => {
-                    self.chan.ensure_channel_id_for(id);
-                    let id = self.chan.channel_id_by_stream_id(id).unwrap();
+                    let id = self.chan.ensure_channel_id_for(id);
                     return Ok(Output::Event(Event::ChannelOpen(id, label)));
                 }
                 SctpEvent::Close { id } => {

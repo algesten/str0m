@@ -31,7 +31,10 @@ impl<'a> Writer<'a> {
     ///
     /// For the [`Writer::write()`] call, the `pt` must be set correctly.
     pub fn payload_params(&self) -> &[PayloadParams] {
-        media_by_mid(&self.session.medias, self.mid).payload_params()
+        match media_by_mid(&self.session.medias, self.mid) {
+            Some(media) => media.payload_params(),
+            None => &[],
+        }
     }
 
     /// Match the given parameters to the configured parameters for this [`Media`].
@@ -43,7 +46,7 @@ impl<'a> Writer<'a> {
     /// This call performs matching and if a match is found, returns the _local_ PT
     /// that can be used for sending media.
     pub fn match_params(&self, params: PayloadParams) -> Option<Pt> {
-        media_by_mid(&self.session.medias, self.mid).match_params(params)
+        media_by_mid(&self.session.medias, self.mid)?.match_params(params)
     }
 
     /// Add on an Rtp Stream Id. This is typically used to separate simulcast layers.
@@ -88,7 +91,9 @@ impl<'a> Writer<'a> {
         rtp_time: MediaTime,
         data: &[u8],
     ) -> Result<(), RtcError> {
-        let media = media_by_mid_mut(&mut self.session.medias, self.mid);
+        let Some(media) = media_by_mid_mut(&mut self.session.medias, self.mid) else {
+            return Err(RtcError::NoSenderSource);
+        };
 
         if !media.has_pt(pt) {
             return Err(RtcError::UnknownPt(pt));
@@ -120,7 +125,10 @@ impl<'a> Writer<'a> {
     /// a=rtcp-fb:96 nack pli
     /// ```
     pub fn is_request_keyframe_possible(&self, kind: KeyframeRequestKind) -> bool {
-        media_by_mid(&self.session.medias, self.mid).is_request_keyframe_possible(kind)
+        match media_by_mid(&self.session.medias, self.mid) {
+            Some(m) => m.is_request_keyframe_possible(kind),
+            None => false,
+        }
     }
 
     /// Request a keyframe from a remote peer sending media data.
@@ -166,10 +174,10 @@ impl<'a> Writer<'a> {
     }
 }
 
-fn media_by_mid(medias: &[Media], mid: Mid) -> &Media {
-    medias.iter().find(|m| m.mid() == mid).unwrap()
+fn media_by_mid(medias: &[Media], mid: Mid) -> Option<&Media> {
+    medias.iter().find(|m| m.mid() == mid)
 }
 
-fn media_by_mid_mut(medias: &mut [Media], mid: Mid) -> &mut Media {
-    medias.iter_mut().find(|m| m.mid() == mid).unwrap()
+fn media_by_mid_mut(medias: &mut [Media], mid: Mid) -> Option<&mut Media> {
+    medias.iter_mut().find(|m| m.mid() == mid)
 }

@@ -531,11 +531,17 @@ impl CodecConfig {
         for (i, p) in self.params.iter_mut().enumerate() {
             if let Some(index) = assigneds.get(&p.pt) {
                 if i != *index {
-                    // This PT has been reassigned. This unwrap is ok
+                    // This PT has been reassigned. This check
                     // because we can't have replaced something without
                     // also get the old PT out.
-                    let r = replaceds.pop().unwrap();
-                    p.pt = r;
+                    if let Some(r) = replaceds.pop() {
+                        p.pt = r;
+                    } else {
+                        debug_assert!(
+                            false,
+                            "This PT has been reassigned, but we have no replacement PT"
+                        );
+                    }
                 }
             }
         }

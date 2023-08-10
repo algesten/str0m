@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use once_cell::sync::Lazy;
 
 pub(crate) mod value_history;
+pub(crate) mod vector;
 
 pub(crate) fn not_happening() -> Instant {
     const YEARS_100: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 100);

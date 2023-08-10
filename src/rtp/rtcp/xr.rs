@@ -170,7 +170,7 @@ impl<'a> TryFrom<&'a [u8]> for ExtendedReport {
             return Err("Less than 4 bytes for ExtendedReport");
         }
 
-        let ssrc = u32::from_be_bytes(buf[..4].try_into().unwrap()).into();
+        let ssrc = u32::from_be_bytes(buf[..4].try_into().map_err(|_| "")?).into();
 
         let mut blocks: Vec<ReportBlock> = Vec::new();
         let mut buf = &buf[4..];
@@ -213,7 +213,7 @@ impl<'a> TryFrom<&'a [u8]> for Rrtr {
     type Error = &'static str;
 
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
-        let ntp_time = u64::from_be_bytes(buf[4..4 + 8].try_into().unwrap());
+        let ntp_time = u64::from_be_bytes(buf[4..4 + 8].try_into().map_err(|_| "")?);
         let ntp_time = MediaTime::from_ntp_64(ntp_time);
 
         Ok(Rrtr { ntp_time })
@@ -225,7 +225,7 @@ impl<'a> TryFrom<&'a [u8]> for Dlrr {
 
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
         let words_per_block = 3;
-        let blocks = u16::from_be_bytes(buf[2..4].try_into().unwrap()) / words_per_block;
+        let blocks = u16::from_be_bytes(buf[2..4].try_into().map_err(|_| "")?) / words_per_block;
 
         let mut items: Vec<DlrrItem> = Vec::with_capacity(blocks as usize);
 
@@ -233,9 +233,9 @@ impl<'a> TryFrom<&'a [u8]> for Dlrr {
         let mut buf = &buf[4..];
 
         for _ in 0..blocks {
-            let ssrc = u32::from_be_bytes(buf[0..4].try_into().unwrap()).into();
-            let last_rr_time = u32::from_be_bytes(buf[4..8].try_into().unwrap());
-            let last_rr_delay = u32::from_be_bytes(buf[8..12].try_into().unwrap());
+            let ssrc = u32::from_be_bytes(buf[0..4].try_into().map_err(|_| "")?).into();
+            let last_rr_time = u32::from_be_bytes(buf[4..8].try_into().map_err(|_| "")?);
+            let last_rr_delay = u32::from_be_bytes(buf[8..12].try_into().map_err(|_| "")?);
             items.push(DlrrItem {
                 ssrc,
                 last_rr_time,

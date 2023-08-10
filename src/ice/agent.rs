@@ -703,7 +703,9 @@ impl IceAgent {
         // the ICE agent sending the request, separated by a colon (":").
         if message.is_binding_request() {
             // The existence of USERNAME is checked in the STUN parser.
-            let (local, remote) = message.split_username().unwrap();
+            let Some((local, remote)) = message.split_username() else {
+                return false;
+            };
 
             let local_creds = self.local_credentials();
             if local != local_creds.ufrag {
@@ -795,7 +797,7 @@ impl IceAgent {
             while let Some(peek) = queue.front() {
                 if now - peek.now >= STUN_TIMEOUT {
                     let r = queue.pop_front();
-                    trace!("Drop too old enqueued STUN request: {:?}", r.unwrap());
+                    trace!("Drop too old enqueued STUN request: {:?}", r);
                 } else {
                     break;
                 }
@@ -966,7 +968,9 @@ impl IceAgent {
         let trans_id = message.trans_id();
 
         // The existence of USERNAME is checked by the STUN parser.
-        let (_, remote_ufrag) = message.split_username().unwrap();
+        let Some((_, remote_ufrag)) = message.split_username() else {
+            return;
+        };
 
         // Because we might have to delay stun requests until we receive the remote
         // credentials, we extract all relevant bits of information so it can be owned.
@@ -1102,7 +1106,7 @@ impl IceAgent {
             .iter_mut()
             .find(|p| p.local_idx() == local_idx && p.remote_idx() == remote_idx);
 
-        if let Some(pair) = maybe_pair {
+        let pair = if let Some(pair) = maybe_pair {
             // When the pair is already on the checklist:
             trace!("Found existing pair for STUN request: {:?}", pair);
 
@@ -1111,6 +1115,7 @@ impl IceAgent {
             // checks if a nomination comes through. It doesn't seem to make much
             // sense in this implementation, where a nomination jumps the queue.
             // https://datatracker.ietf.org/doc/html/rfc8445#section-7.3.1.4
+            pair
         } else {
             // If the pair is not already on the checklist:
             let local = &self.local_candidates[local_idx];
@@ -1126,14 +1131,16 @@ impl IceAgent {
 
             self.candidate_pairs.push(pair);
             self.candidate_pairs.sort();
-        }
-
-        let pair = self
-            .candidate_pairs
-            .iter_mut()
-            .find(|p| p.local_idx() == local_idx && p.remote_idx() == remote_idx)
-            // unwrap is fine since we have inserted a pair if it was missing.
-            .unwrap();
+            let Some(pair) = self
+                .candidate_pairs
+                .iter_mut()
+                .find(|p| p.local_idx() == local_idx && p.remote_idx() == remote_idx)
+                // Since we have inserted a pair if it was missing, this is just for sure and avoid unwrap.
+                else {
+                    return;
+                };
+            pair
+        };
 
         let local = pair.local_candidate(&self.local_candidates);
         let local_addr = local.base();
@@ -1363,12 +1370,14 @@ impl IceAgent {
                 trace!("Nominating best candidate");
             }
 
-            let pair = self
+            let Some(pair) = self
                 .candidate_pairs
                 .iter_mut()
                 .find(|p| p.id() == best)
-                // above logic means this can't fail
-                .unwrap();
+                // above logic means this can't fail but just for surety
+                else {
+                    return;
+                };
 
             if !pair.is_nominated() && (self.controlling || self.ice_lite) {
                 // ice lite progresses pair to success straight away.

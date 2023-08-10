@@ -218,13 +218,16 @@ impl ChannelHandler {
         }
     }
 
-    pub fn ensure_channel_id_for(&mut self, sctp_stream_id: u16) {
-        let exists = self
+    pub fn ensure_channel_id_for(&mut self, sctp_stream_id: u16) -> ChannelId {
+        let channel_id = self
             .allocations
             .iter()
-            .any(|a| a.sctp_stream_id == Some(sctp_stream_id));
+            .find(|a| a.sctp_stream_id == Some(sctp_stream_id))
+            .map(|a| a.id);
 
-        if !exists {
+        if let Some(channel_id) = channel_id {
+            channel_id
+        } else {
             let id = ChannelId(self.allocations.len());
             let alloc = ChannelAllocation {
                 id,
@@ -232,6 +235,7 @@ impl ChannelHandler {
                 config: None,
             };
             self.allocations.push(alloc);
+            id
         }
     }
 }

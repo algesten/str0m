@@ -19,6 +19,8 @@ use dcep::DcepOpen;
 
 use dcep::DcepAck;
 
+use crate::util::vector::VecExtended;
+
 /// Errors from the SCTP subsystem.
 #[derive(Debug, Error, Eq, Clone, PartialEq)]
 pub enum SctpError {
@@ -201,7 +203,9 @@ impl RtcSctp {
         config.max_payload_size(1120);
         let server_config = ServerConfig::default();
         let endpoint = Endpoint::new(Arc::new(config), Some(Arc::new(server_config)));
-        let fake_addr = "1.1.1.1:5000".parse().unwrap();
+        let fake_addr = "1.1.1.1:5000"
+            .parse()
+            .expect("This address should parse success");
 
         RtcSctp {
             state: RtcSctpState::Uninited,
@@ -670,20 +674,18 @@ fn stream_entry<'a>(
     initial_state: StreamEntryState,
     reason: &'static str,
 ) -> &'a mut StreamEntry {
-    let idx = entries.iter().position(|v| v.id == id);
-    if let Some(idx) = idx {
-        entries.get_mut(idx).unwrap()
-    } else {
-        info!("New stream {} ({:?}): {}", id, initial_state, reason);
-        let e = StreamEntry {
-            config: None,
-            state: initial_state,
-            id,
-            do_close: false,
-        };
-        entries.push(e);
-        entries.last_mut().unwrap()
-    }
+    entries.found_or_insert(
+        |v| v.id == id,
+        || {
+            info!("New stream {} ({:?}): {}", id, initial_state, reason);
+            StreamEntry {
+                config: None,
+                state: initial_state,
+                id,
+                do_close: false,
+            }
+        },
+    )
 }
 
 fn stream_read_data(

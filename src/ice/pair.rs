@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::io::{stun_resend_delay, STUN_MAX_RETRANS};
 use crate::io::{Id, TransId, STUN_MAX_RTO_MILLIS};
+use crate::util::vector::VecDequeExtended;
 use crate::Candidate;
 
 const MIN_TIMEOUT: Duration = Duration::from_millis(STUN_MAX_RTO_MILLIS);
@@ -219,10 +220,8 @@ impl CandidatePair {
             nominated: self.is_nominated(),
         };
 
-        self.binding_attempts.push_back(attempt);
-
         // Never keep more than STUN_MAX_RETRANS attempts.
-        while self.binding_attempts.len() > STUN_MAX_RETRANS {
+        while self.binding_attempts.len() > STUN_MAX_RETRANS - 1 {
             self.binding_attempts.pop_front();
         }
 
@@ -235,7 +234,7 @@ impl CandidatePair {
             self.state = CheckState::InProgress;
         }
 
-        let last = self.binding_attempts.back().unwrap();
+        let last = self.binding_attempts.push_last_get_mut(attempt);
 
         last.trans_id
     }
@@ -351,9 +350,12 @@ impl CandidatePair {
         } else {
             // check to see if we are still waiting for the last attempt
             // this unwrap is fine because unanswered count > 0
-            let last = self.last_attempt_time().unwrap();
-            let cutoff = last + stun_resend_delay(STUN_MAX_RETRANS);
-            now < cutoff
+            if let Some(last) = self.last_attempt_time() {
+                let cutoff = last + stun_resend_delay(STUN_MAX_RETRANS);
+                now < cutoff
+            } else {
+                false
+            }
         }
     }
 }

@@ -508,7 +508,7 @@ impl StreamTx {
         };
 
         // Borrow checker gymnastics.
-        let pkt = self.rtx_cache.get_cached_packet_by_seq_no(seq_no).unwrap();
+        let pkt = self.rtx_cache.get_cached_packet_by_seq_no(seq_no)?;
 
         let len = pkt.payload.len() as u64;
         self.stats.update_packet_counts(len, true);
@@ -901,7 +901,7 @@ impl StreamTxStats {
             let mut total_weight = 0_u64;
 
             // just in case we received RRs out of order
-            self.losses.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            self.losses.sort_by(|a, b| a.0.cmp(&b.0));
 
             // average known RR losses weighted by their number of packets
             for it in self.losses.windows(2) {

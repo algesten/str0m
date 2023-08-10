@@ -147,7 +147,9 @@ impl Rtcp {
             }
 
             // We definitely can fit the next RTCP item.
-            let fb = feedback.pop_front().unwrap();
+            let Some(fb) = feedback.pop_front() else {
+                break;
+            };
             let written = fb.write_to(&mut buf[offset..]);
 
             assert_eq!(
@@ -264,7 +266,9 @@ impl Rtcp {
             }
 
             let (pack_into, pack_from) = feedback.make_contiguous().split_at_mut(i + 1);
-            let fb_a = pack_into.last_mut().unwrap();
+            let Some(fb_a) = pack_into.last_mut() else {
+                break;
+            };
 
             // abort if fb_a won't fit in the spare capacity.
             if word_capacity < fb_a.length_words() {

@@ -196,9 +196,7 @@ impl TrendlineEstimator {
                         // sample.
                         time_overusing: variation.send_delta / 2,
                     };
-                    self.overuse = Some(new_overuse);
-
-                    self.overuse.as_mut().unwrap()
+                    self.overuse.insert(new_overuse)
                 }
             };
 
