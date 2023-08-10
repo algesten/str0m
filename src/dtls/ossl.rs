@@ -43,7 +43,7 @@ impl DtlsCert {
     }
 
     fn self_signed() -> Result<Self, DtlsError> {
-        let f4 = BigNum::from_u32(RSA_F4).unwrap();
+        let f4 = BigNum::from_u32(RSA_F4).expect("RSA_F4 constant as BigNum");
         let key = Rsa::generate_with_e(2048, &f4)?;
         let pkey = PKey::from_rsa(key)?;
 
@@ -348,6 +348,6 @@ where
 pub fn unix_time() -> i64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
+        .expect("a unix epoch for current time")
         .as_secs() as i64
 }

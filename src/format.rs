@@ -534,7 +534,13 @@ impl CodecConfig {
                     // This PT has been reassigned. This unwrap is ok
                     // because we can't have replaced something without
                     // also get the old PT out.
-                    let r = replaceds.pop().unwrap();
+                    let maybe_pt = replaceds.pop();
+                    let r = assume!(
+                        maybe_pt,
+                        "assigneds must have replaceds: {:?} {:?}",
+                        replaceds,
+                        assigneds
+                    );
                     p.pt = r;
                 }
             }

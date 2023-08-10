@@ -444,8 +444,10 @@ impl Session {
         };
 
         // Both of these unwraps are fine because mid_and_ssrc_for_header guarantees it.
-        let media = self.medias.iter_mut().find(|m| m.mid() == mid).unwrap();
-        let stream = self.streams.stream_rx(&ssrc).unwrap();
+        let maybe_media = self.medias.iter_mut().find(|m| m.mid() == mid);
+        let maybe_stream = self.streams.stream_rx(&ssrc);
+        let media = assume!(maybe_media, "mid_and_ssrc ensures Mid: {:?}", header);
+        let stream = assume!(maybe_stream, "mid_and_ssrc ensures StreamRx: {:?}", header);
 
         // If the header ssrc differs from the main, it's a repair stream.
         let is_repair = header.ssrc != ssrc;

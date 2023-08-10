@@ -477,6 +477,9 @@
 #[macro_use]
 extern crate tracing;
 
+#[macro_use]
+mod macros;
+
 use change::{DirectApi, SdpApi};
 use std::fmt;
 use std::net::SocketAddr;
