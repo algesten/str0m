@@ -13,6 +13,12 @@ use crate::sdp::MediaLine;
 // to codecs etc.
 pub use crate::packet::{CodecExtra, Vp8CodecExtra};
 
+/// Session config for all codecs.
+#[derive(Debug, Clone, Default)]
+pub struct CodecConfig {
+    params: Vec<PayloadParams>,
+}
+
 /// Group of parameters for a payload type (PT).
 ///
 /// In the SDP a payload type has a number of associated parameters. See example below:
@@ -132,12 +138,6 @@ pub struct FormatParams {
 
     /// VP9 profile id.
     pub profile_id: Option<u32>,
-}
-
-/// Session config for all codecs.
-#[derive(Debug, Clone, Default)]
-pub struct CodecConfig {
-    params: Vec<PayloadParams>,
 }
 
 impl PayloadParams {
@@ -334,8 +334,8 @@ impl CodecConfig {
         c
     }
 
-    /// Returns a reference to the vector of payload configurations.
-    pub fn params(&self) -> &Vec<PayloadParams> {
+    /// Returns a reference to the payload parameters.
+    pub fn params(&self) -> &[PayloadParams] {
         &self.params
     }
 
