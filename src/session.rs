@@ -3,14 +3,17 @@ use std::time::{Duration, Instant};
 
 use crate::dtls::KeyingMaterial;
 use crate::format::CodecConfig;
+use crate::format::PayloadParams;
 use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::media::KeyframeRequest;
+use crate::media::KeyframeRequestKind;
 use crate::media::Media;
 use crate::media::{MediaAdded, MediaChanged};
 use crate::packet::SendSideBandwithEstimator;
 use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
 use crate::rtp::StreamPaused;
 use crate::rtp_::Direction;
+use crate::rtp_::Pt;
 use crate::rtp_::SeqNo;
 use crate::rtp_::SRTCP_OVERHEAD;
 use crate::rtp_::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
@@ -330,8 +333,7 @@ impl Session {
                 }
 
                 // Figure out which payload the PT maps to. Either main or RTX.
-                let payload = media
-                    .payload_params()
+                let payload = self.codec_config
                     .iter()
                     .find(|p| p.pt() == header.payload_type || p.resend() == Some(header.payload_type))?;
                 let is_main = payload.pt() == header.payload_type;
@@ -450,7 +452,7 @@ impl Session {
         // If the header ssrc differs from the main, it's a repair stream.
         let is_repair = header.ssrc != ssrc;
 
-        let clock_rate = match media.get_params(header.payload_type) {
+        let clock_rate = match get_params(&self.codec_config, header.payload_type) {
             Some(v) => v.spec().clock_rate,
             None => {
                 trace!("No codec params for {:?}", header.payload_type);
@@ -476,7 +478,7 @@ impl Session {
             return;
         }
 
-        let Some(pt) = media.main_payload_type_for(header.payload_type) else {
+        let Some(pt) = main_payload_type_for(&self.codec_config, header.payload_type) else {
             trace!("RTP packet PT is not declared in media");
             return;
         };
@@ -521,6 +523,7 @@ impl Session {
                 packet,
                 self.reordering_size_audio,
                 self.reordering_size_video,
+                &self.codec_config,
             );
         }
     }
@@ -610,7 +613,7 @@ impl Session {
                 }));
             }
 
-            if let Some(r) = media.poll_sample() {
+            if let Some(r) = media.poll_sample(&self.codec_config) {
                 match r {
                     Ok(v) => return Some(MediaEvent::Data(v)),
                     Err(e) => return Some(MediaEvent::Error(e)),
@@ -693,7 +696,7 @@ impl Session {
         // TODO: allow for sending simulcast
         let stream = self.streams.stream_tx_by_mid_rid(media.mid(), None)?;
 
-        let params = media.payload_params();
+        let params = &self.codec_config;
         let receipt = stream.poll_packet(now, &self.exts, &mut self.twcc, params, buf)?;
 
         let PacketReceipt {
@@ -869,7 +872,7 @@ impl Session {
 
     fn do_payload(&mut self, now: Instant) -> Result<(), RtcError> {
         for m in &mut self.medias {
-            m.do_payload(now, &mut self.streams)?;
+            m.do_payload(now, &mut self.streams, &self.codec_config)?;
         }
 
         Ok(())
@@ -895,6 +898,17 @@ impl Session {
         }
 
         true
+    }
+
+    pub fn is_request_keyframe_possible(&self, kind: KeyframeRequestKind) -> bool {
+        // TODO: It's possible to have different set of feedback enabled for different
+        // payload types. I.e. we could have FIR enabled for H264, but not for VP8.
+        // We might want to make this check more fine grained by testing which PT is
+        // in "active use" right now.
+        self.codec_config.iter().any(|r| match kind {
+            KeyframeRequestKind::Pli => r.fb_pli,
+            KeyframeRequestKind::Fir => r.fb_fir,
+        })
     }
 }
 
@@ -948,4 +962,14 @@ pub struct PacketReceipt {
     pub seq_no: SeqNo,
     pub is_padding: bool,
     pub payload_size: usize,
+}
+
+fn get_params(c: &CodecConfig, pt: Pt) -> Option<&PayloadParams> {
+    c.iter().find(|p| p.pt() == pt)
+}
+
+fn main_payload_type_for(c: &CodecConfig, pt: Pt) -> Option<Pt> {
+    let p = c.iter().find(|p| p.pt == pt || p.resend == Some(pt))?;
+
+    Some(p.pt)
 }
