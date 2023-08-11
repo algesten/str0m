@@ -38,8 +38,17 @@ impl SendQueue {
         }
     }
 
+    pub fn need_timeout(&self) -> bool {
+        self.queue.iter().any(|p| p.timestamp == not_happening())
+    }
+
     pub fn peek(&mut self) -> Option<&mut RtpPacket> {
-        self.queue.front_mut()
+        let peeked = self.queue.front_mut()?;
+        if peeked.timestamp == not_happening() {
+            None
+        } else {
+            Some(peeked)
+        }
     }
 
     pub fn pop(&mut self, now: Instant) -> Option<RtpPacket> {
