@@ -22,7 +22,11 @@ impl SendQueue {
         }
     }
 
-    pub fn push(&mut self, packet: RtpPacket) {
+    pub fn push(&mut self, mut packet: RtpPacket) {
+        // Every incoming packet must be timestamped withe a handle_timeout.
+        // This sentinel value indicates it is needed.
+        packet.timestamp = not_happening();
+
         self.queue.push_back(packet);
     }
 
@@ -52,18 +56,21 @@ impl SendQueue {
     }
 
     pub fn pop(&mut self, now: Instant) -> Option<RtpPacket> {
-        if let Some(packet) = self.queue.pop_front() {
-            // If the popped packet has a timestamp in the future, we have not counted it
-            // towards the queue total (see handle_timeout).
-            if not_happening() != packet.timestamp {
-                let queue_time = now - packet.timestamp;
-                self.total.decrease(now, packet.payload.len(), queue_time);
-            }
-            self.last_emitted = Some(now);
-            Some(packet)
-        } else {
-            None
-        }
+        // Don't release packets without a timestamp.
+        self.peek()?;
+
+        // Unwrap is OK, because peek() above must have returned a value
+        // for us to be here.
+        let packet = self.queue.pop_front().unwrap();
+
+        // Must be timestamped
+        assert!(packet.timestamp != not_happening());
+
+        let queue_time = now - packet.timestamp;
+        self.total.decrease(now, packet.payload.len(), queue_time);
+        self.last_emitted = Some(now);
+
+        Some(packet)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -83,7 +90,11 @@ impl SendQueue {
             packet_count: self.total.unsent_count as u32,
             total_queue_time_origin: self.total.queue_time,
             last_emitted: self.last_emitted,
-            first_unsent: self.queue.front().map(|p| p.timestamp),
+            first_unsent: self
+                .queue
+                .iter()
+                .find(|p| p.timestamp != not_happening())
+                .map(|p| p.timestamp),
             priority: if self.total.unsent_count > 0 {
                 QueuePriority::Media
             } else {
@@ -187,7 +198,79 @@ impl TotalQueue {
 
 #[cfg(test)]
 mod test {
+    use crate::rtp_::MediaTime;
+    use crate::rtp_::RtpHeader;
+
     use super::*;
+
+    #[test]
+    fn peek_pop_no_timestamp() {
+        let mut queue = SendQueue::new();
+
+        queue.push(RtpPacket {
+            seq_no: 0.into(),
+            time: MediaTime::new(10, 90_000),
+            header: RtpHeader::default(),
+            payload: vec![],
+            timestamp: Instant::now(),
+            nackable: true,
+        });
+
+        assert!(queue.peek().is_none());
+        assert!(queue.pop(Instant::now()).is_none());
+        assert!(queue.need_timeout());
+
+        let snapshot_at = Instant::now() + Duration::from_secs(3);
+        assert_eq!(
+            queue.snapshot(snapshot_at),
+            QueueSnapshot {
+                created_at: snapshot_at,
+                packet_count: 0,
+                size: 0,
+                total_queue_time_origin: Duration::ZERO,
+                first_unsent: None,
+                priority: QueuePriority::Empty,
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn peek_pop_after_timestamp() {
+        let mut queue = SendQueue::new();
+
+        let start = Instant::now();
+
+        queue.push(RtpPacket {
+            seq_no: 0.into(),
+            time: MediaTime::new(10, 90_000),
+            header: RtpHeader::default(),
+            payload: vec![42, 42],
+            timestamp: start,
+            nackable: true,
+        });
+
+        queue.handle_timeout(start);
+
+        assert!(queue.peek().is_some());
+        assert!(!queue.need_timeout());
+
+        let snapshot_at = start + Duration::from_secs(3);
+        assert_eq!(
+            queue.snapshot(snapshot_at),
+            QueueSnapshot {
+                created_at: snapshot_at,
+                packet_count: 1,
+                size: 2,
+                total_queue_time_origin: Duration::from_secs(3),
+                first_unsent: Some(start),
+                priority: QueuePriority::Media,
+                ..Default::default()
+            }
+        );
+
+        assert!(queue.pop(Instant::now()).is_some());
+    }
 
     #[test]
     fn total_queue() {
