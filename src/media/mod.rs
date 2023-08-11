@@ -53,9 +53,10 @@ pub struct Media {
     /// Can be altered via negotiation.
     dir: Direction,
 
-    /// This dictates both the desired priority order of payload types
-    /// as well as which PT been negotiated between the remote peer and this.
-    pts: Vec<Pt>,
+    /// PTs for remote peer that we can send on.
+    ///
+    /// These must have corresponding entries in Session::config_tx.
+    remote_pts: Vec<Pt>,
 
     /// Simulcast configuration, if set.
     simulcast: Option<SdpSimulcast>,
@@ -315,27 +316,26 @@ impl Media {
         Ok(())
     }
 
-    pub(crate) fn set_pts(&mut self, pts: Vec<Pt>) {
+    pub(crate) fn set_remote_pts(&mut self, remote_pts: Vec<Pt>) {
         // Have we already set PTs?
-        if !self.pts.is_empty() {
+        if !self.remote_pts.is_empty() {
             return;
         }
 
         // TODO: We should verify the remote peer doesn't suddenly change the PT
         // order or removes/adds PTs that weren't there from the start.
-        info!("Mid ({}) PT order is: {:?}", self.mid, pts);
-        self.pts = pts;
+        info!("Mid ({}) remote PT are: {:?}", self.mid, remote_pts);
+        self.remote_pts = remote_pts;
     }
 
-    /// The PT (payload types) configured for this Media.
+    /// The remote PT (payload types) configured for this Media.
     ///
     /// These are negotiated with the remote peer and in the prefered order.
     ///
     /// I.e. these can be fewer than the `PayloadParams` configured for the `Rtc` instance,
-    /// and in a different order. The order is set by whoever first makes an OFFER with a new
-    /// m-line. The ANSWER is not allowed to reorder, only remove unsupported codecs.
-    pub fn pts(&self) -> &[Pt] {
-        &self.pts
+    /// and in a different order.
+    pub fn remote_pts(&self) -> &[Pt] {
+        &self.remote_pts
     }
 }
 
@@ -351,7 +351,7 @@ impl Default for Media {
                 track_id: Id::<30>::random().to_string(),
             },
             kind: MediaKind::Video,
-            pts: vec![],
+            remote_pts: vec![],
             dir: Direction::SendRecv,
             simulcast: None,
             expected_rid_rx: vec![],
@@ -391,7 +391,7 @@ impl Media {
             msid: a.msid,
             kind: a.kind,
             dir: a.dir,
-            pts: a.pts,
+            remote_pts: a.pts,
             ..Default::default()
         }
     }

@@ -1457,12 +1457,20 @@ impl Rtc {
         n
     }
 
-    /// Reference to the current codec config.
+    /// The codec configs for sending data..
     ///
     /// The configurations can be set with [`RtcConfig`] before setting up the session, and they
     /// might be further updated by SDP negotiation.
-    pub fn codec_config(&self) -> &CodecConfig {
-        &self.session.codec_config
+    pub fn codec_config_tx(&self) -> &CodecConfig {
+        &self.session.codec_tx
+    }
+
+    /// The codec configs for receiving data.
+    ///
+    /// The configurations can be set with [`RtcConfig`] before setting up the session, and they
+    /// might be further updated by SDP negotiation.
+    pub fn codec_config_rx(&self) -> &CodecConfig {
+        &self.session.codec_rx
     }
 }
 

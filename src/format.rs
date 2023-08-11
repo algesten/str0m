@@ -54,9 +54,12 @@ pub struct PayloadParams {
     /// Whether the payload uses the FIR (Full Intra Request) mechanic.
     pub(crate) fb_fir: bool,
 
-    /// Internal field whether the payload is matched to the remote. This is used in SDP
-    /// negotiation.
-    pub(crate) pt_confirmed_by_remote: bool,
+    /// Whether the payload is locked by negotiation or can still be debated.
+    ///
+    /// If we make an OFFER or ANSWER and the direction is sendrecv/recvonly, the parameters are locked
+    /// can't be further changed. If we make an OFFER for a sendonly, the parameters are only proposed
+    /// and don't lock.
+    pub(crate) locked: bool,
 }
 
 /// Codec specification
@@ -160,7 +163,7 @@ impl PayloadParams {
             fb_nack: is_video,
             fb_pli: is_video,
 
-            pt_confirmed_by_remote: false,
+            locked: false,
         }
     }
 
@@ -278,7 +281,7 @@ impl PayloadParams {
         score
     }
 
-    fn update_pt(&mut self, remote_pts: &[PayloadParams], claimed: &mut [bool; 128]) {
+    fn update_param(&mut self, remote_pts: &[PayloadParams], claimed: &mut [bool; 128]) {
         let Some((first, _)) = remote_pts
             .iter()
             .filter_map(|p| self.match_score(p).map(|s| (p, s)))
@@ -289,7 +292,7 @@ impl PayloadParams {
         let remote_pt = first.pt;
         let remote_rtx = first.resend;
 
-        if self.pt_confirmed_by_remote {
+        if self.locked {
             // Just verify it's still the same. We should validate this in apply_offer/answer instead
             // of ever seeing this error message.
             if self.pt != remote_pt {
@@ -306,7 +309,7 @@ impl PayloadParams {
             // Lock down the PT
             self.pt = remote_pt;
             self.resend = remote_rtx;
-            self.pt_confirmed_by_remote = true;
+            self.locked = true;
 
             claimed.assert_claim_once(remote_pt);
             if let Some(rtx) = remote_rtx {
@@ -385,7 +388,7 @@ impl CodecConfig {
             fb_fir,
             fb_nack,
             fb_pli,
-            pt_confirmed_by_remote: false,
+            locked: false,
         };
 
         self.params.push(p);
@@ -544,13 +547,13 @@ impl CodecConfig {
         })
     }
 
-    pub(crate) fn update_pts(&mut self, remote_pts: &[PayloadParams]) {
+    pub(crate) fn update_params(&mut self, remote_params: &[PayloadParams], what: &'static str) {
         // 0-128 of "claimed" PTs. I.e. PTs that we already allocated to something.
         let mut claimed: [bool; 128] = [false; 128];
 
         // Make a pass with all that are definitely confirmed by the remote, since these can't change.
         for p in self.params.iter() {
-            if !p.pt_confirmed_by_remote {
+            if !p.locked {
                 continue;
             }
 
@@ -563,7 +566,7 @@ impl CodecConfig {
 
         // Now lock potential new parameters to remote.
         for p in self.params.iter_mut() {
-            p.update_pt(&remote_pts[..], &mut claimed);
+            p.update_param(&remote_params[..], &mut claimed);
         }
 
         const PREFERED_RANGES: &[RangeInclusive<usize>] = &[
@@ -581,7 +584,7 @@ impl CodecConfig {
 
         // Make a pass to reassign unconfirmed payloads that have PT which are now claimed.
         for p in self.params.iter_mut() {
-            if p.pt_confirmed_by_remote {
+            if p.locked {
                 continue;
             }
 
@@ -591,7 +594,7 @@ impl CodecConfig {
                     panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
                 };
 
-                info!("Reassigned PT {} => {}", p.pt, pt);
+                info!("Reassigned {} PT {} => {}", what, p.pt, pt);
                 p.pt = pt;
 
                 claimed.assert_claim_once(pt);
@@ -607,7 +610,7 @@ impl CodecConfig {
                     panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
                 };
 
-                info!("Reassigned RTX PT {:?} => {:?}", p.resend, rtx);
+                info!("Reassigned {} RTX PT {:?} => {:?}", what, p.resend, rtx);
                 p.resend = Some(rtx);
 
                 claimed.assert_claim_once(rtx);

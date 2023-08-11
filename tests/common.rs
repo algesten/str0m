@@ -1,6 +1,7 @@
 #![allow(unused)]
 use std::net::Ipv4Addr;
 use std::ops::{Deref, DerefMut};
+use std::sync::Once;
 use std::time::{Duration, Instant};
 
 use str0m::format::Codec;
@@ -41,7 +42,7 @@ impl TestRtc {
 
     pub fn params_opus(&self) -> PayloadParams {
         self.rtc
-            .codec_config()
+            .codec_config_tx()
             .find(|p| p.spec().codec == Codec::Opus)
             .cloned()
             .unwrap()
@@ -49,7 +50,7 @@ impl TestRtc {
 
     pub fn params_vp8(&self) -> PayloadParams {
         self.rtc
-            .codec_config()
+            .codec_config_tx()
             .find(|p| p.spec().codec == Codec::Vp8)
             .cloned()
             .unwrap()
@@ -112,10 +113,14 @@ pub fn init_log() {
         env::set_var("RUST_LOG", "debug");
     }
 
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
-        .init();
+    static START: Once = Once::new();
+
+    START.call_once(|| {
+        tracing_subscriber::registry()
+            .with(fmt::layer())
+            .with(EnvFilter::from_default_env())
+            .init();
+    });
 }
 
 pub fn connect_l_r() -> (TestRtc, TestRtc) {

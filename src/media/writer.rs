@@ -31,7 +31,7 @@ impl<'a> Writer<'a> {
     ///
     /// For the [`Writer::write()`] call, the `pt` must be set correctly.
     pub fn payload_params(&self) -> &[PayloadParams] {
-        &self.session.codec_config
+        &self.session.codec_tx
     }
 
     /// Match the given parameters to the configured parameters for this [`Media`].
@@ -43,10 +43,7 @@ impl<'a> Writer<'a> {
     /// This call performs matching and if a match is found, returns the _local_ PT
     /// that can be used for sending media.
     pub fn match_params(&self, params: PayloadParams) -> Option<Pt> {
-        self.session
-            .codec_config
-            .match_params(params)
-            .map(|p| p.pt())
+        self.session.codec_tx.match_params(params).map(|p| p.pt())
     }
 
     /// Add on an Rtp Stream Id. This is typically used to separate simulcast layers.
@@ -93,7 +90,7 @@ impl<'a> Writer<'a> {
     ) -> Result<(), RtcError> {
         let media = media_by_mid_mut(&mut self.session.medias, self.mid);
 
-        if !self.session.codec_config.has_pt(pt) {
+        if !self.session.codec_tx.has_pt(pt) {
             return Err(RtcError::UnknownPt(pt));
         }
 

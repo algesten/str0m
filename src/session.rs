@@ -62,7 +62,11 @@ pub(crate) struct Session {
     /// Extension mappings are _per BUNDLE_, but we can only have one a=group BUNDLE
     /// in WebRTC (one ice connection), so they are effectively per session.
     pub exts: ExtensionMap,
-    pub codec_config: CodecConfig,
+
+    // Configuration of how we are prepared to receive media.
+    pub codec_rx: CodecConfig,
+    // Configuration of how the remote is prepared to receive media.
+    pub codec_tx: CodecConfig,
 
     /// Each incoming SSRC is mapped to a Mid/Ssrc. The Ssrc in the value is for the case
     /// where the incoming SSRC is for an RTX and we want the "main".
@@ -143,7 +147,12 @@ impl Session {
             send_buffer_audio: config.send_buffer_audio,
             send_buffer_video: config.send_buffer_video,
             exts: config.exts,
-            codec_config: config.codec_config.clone(),
+
+            // Both sending and receiving starts from the configured codecs.
+            // These can then be changed in the SDP OFFER/ANSWER dance.
+            codec_rx: config.codec_config.clone(),
+            codec_tx: config.codec_config.clone(),
+
             source_keys: HashMap::new(),
             srtp_rx: None,
             srtp_tx: None,
@@ -187,10 +196,6 @@ impl Session {
 
     pub fn exts(&self) -> &ExtensionMap {
         &self.exts
-    }
-
-    pub fn codec_config(&self) -> &CodecConfig {
-        &self.codec_config
     }
 
     pub fn set_keying_material(&mut self, mat: KeyingMaterial, active: bool) {
@@ -333,7 +338,7 @@ impl Session {
                 }
 
                 // Figure out which payload the PT maps to. Either main or RTX.
-                let payload = self.codec_config
+                let payload = self.codec_rx
                     .iter()
                     .find(|p| p.pt() == header.payload_type || p.resend() == Some(header.payload_type))?;
                 let is_main = payload.pt() == header.payload_type;
@@ -452,7 +457,7 @@ impl Session {
         // If the header ssrc differs from the main, it's a repair stream.
         let is_repair = header.ssrc != ssrc;
 
-        let clock_rate = match get_params(&self.codec_config, header.payload_type) {
+        let clock_rate = match get_params(&self.codec_rx, header.payload_type) {
             Some(v) => v.spec().clock_rate,
             None => {
                 trace!("No codec params for {:?}", header.payload_type);
@@ -478,7 +483,7 @@ impl Session {
             return;
         }
 
-        let Some(pt) = main_payload_type_for(&self.codec_config, header.payload_type) else {
+        let Some(pt) = main_payload_type_for(&self.codec_rx, header.payload_type) else {
             trace!("RTP packet PT is not declared in media");
             return;
         };
@@ -523,7 +528,7 @@ impl Session {
                 packet,
                 self.reordering_size_audio,
                 self.reordering_size_video,
-                &self.codec_config,
+                &self.codec_rx,
             );
         }
     }
@@ -613,7 +618,7 @@ impl Session {
                 }));
             }
 
-            if let Some(r) = media.poll_sample(&self.codec_config) {
+            if let Some(r) = media.poll_sample(&self.codec_tx) {
                 match r {
                     Ok(v) => return Some(MediaEvent::Data(v)),
                     Err(e) => return Some(MediaEvent::Error(e)),
@@ -696,7 +701,7 @@ impl Session {
         // TODO: allow for sending simulcast
         let stream = self.streams.stream_tx_by_mid_rid(media.mid(), None)?;
 
-        let params = &self.codec_config;
+        let params = &self.codec_tx;
         let receipt = stream.poll_packet(now, &self.exts, &mut self.twcc, params, buf)?;
 
         let PacketReceipt {
@@ -870,7 +875,7 @@ impl Session {
 
     fn do_payload(&mut self, now: Instant) -> Result<(), RtcError> {
         for m in &mut self.medias {
-            m.do_payload(now, &mut self.streams, &self.codec_config)?;
+            m.do_payload(now, &mut self.streams, &self.codec_tx)?;
         }
 
         Ok(())
@@ -903,10 +908,26 @@ impl Session {
         // payload types. I.e. we could have FIR enabled for H264, but not for VP8.
         // We might want to make this check more fine grained by testing which PT is
         // in "active use" right now.
-        self.codec_config.iter().any(|r| match kind {
+        self.codec_rx.iter().any(|r| match kind {
             KeyframeRequestKind::Pli => r.fb_pli,
             KeyframeRequestKind::Fir => r.fb_fir,
         })
+    }
+
+    pub(crate) fn update_codecs(&mut self, remote_params: &[PayloadParams], remote_dir: Direction) {
+        // Here's the wild thing.
+        //
+        // If the remote is saying sendonly, the parameters are only indiciative of what it want to
+        // send. If it is a sendrecv or recvonly, the parameters are explicitly
+        // "these are what I expect to receive".
+        //
+        // https://datatracker.ietf.org/doc/html/rfc3264#section-6.1
+
+        if remote_dir.is_receiving() {
+            self.codec_tx.update_params(remote_params, "send");
+        } else {
+            self.codec_rx.update_params(remote_params, "receive");
+        }
     }
 }
 
