@@ -99,7 +99,7 @@ pub trait Pacer {
     fn register_send(&mut self, now: Instant, packet_size: DataSize, from: Mid);
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct QueueSnapshot {
     /// Time this snapshot was made
     pub created_at: Instant,
