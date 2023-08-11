@@ -318,7 +318,7 @@ impl PayloadParams {
 
 impl CodecConfig {
     /// Creates a new empty config.
-    pub fn new() -> Self {
+    pub fn empty() -> Self {
         CodecConfig::default()
     }
 
@@ -331,7 +331,7 @@ impl CodecConfig {
 
     /// Creates a new config with all default configurations enabled.
     pub fn new_with_defaults() -> Self {
-        let mut c = Self::new();
+        let mut c = Self::empty();
         c.enable_opus(true);
 
         c.enable_vp8(true);
