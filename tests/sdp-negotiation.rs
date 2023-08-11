@@ -24,6 +24,29 @@ pub fn change_pt_sendrecv() {
     // For sendrecv, both sides state their mandatory receive parameters. I.e.
     // L -> R must be 102
     // R -> L must be 100
+    // Motivation:
+    //     [RFC3264 Section 6.1](https://datatracker.ietf.org/doc/html/rfc3264#section-6.1)
+    //
+    //     For streams marked as sendrecv in the answer,
+    //     the "m=" line MUST contain at least one codec the answerer is willing
+    //     to both send and receive, from amongst those listed in the offer.
+    //
+    //     Once the answerer has sent the answer, [...]
+    //     It MUST be prepared to send and receive media for any sendrecv streams in the
+    //     answer, and it MAY send media immediately.  The answerer MUST be
+    //     prepared to receive media for recvonly or sendrecv streams **using any
+    //     media formats listed for those streams in the answer**, and it MAY send
+    //     media immediately.
+    //
+    // The answerer can expect the pts from its answer to be respected for packets it receives on this m-line.
+    //
+    //     The answerer MUST send using a media format in the offer
+    //     that is also listed in the answer, and SHOULD send using the most
+    //     preferred media format in the offer that is also listed in the
+    //     answer.  In the case of RTP, **it MUST use the payload type numbers
+    //     from the offer, even if they differ from those in the answer.**
+    //
+    // The offerer can expect the pt from its offer to be respected for packets it receives on this m-line.
 
     assert_directions(100, 102, l, r);
 }
@@ -43,6 +66,23 @@ pub fn change_pt_sendonly() {
     // For sendonly only the ANSWER from R is mandatory. The OFFER contains suggestions.
     // L -> R must be 102
     // R -> L can be anything, but str0m tries to match the remote, so also 102
+    //
+    // Motivation:
+    //     [RFC3264 Section 6.1](https://datatracker.ietf.org/doc/html/rfc3264#section-6.1)
+    //
+    //     In the case of RTP, if a particular codec was referenced with a
+    //     specific payload type number in the offer, that same payload type
+    //     number **SHOULD** be used for that codec in the answer.
+    //
+    // The answer is allowed to say it wants to receive on a different Pt from that in the offer, in this case 102.
+    //
+    //     Once the answerer has sent the answer, it MUST be prepared to receive
+    //     media for any recvonly streams described by that answer. [...]
+    //     The answerer MUST be prepared to receive media for recvonly or
+    //     sendrecv streams using **any media formats listed for those streams in the answer**[...]
+    //
+    // The pt listed in the answer should be what the sender uses, even if it proposed a different
+    // pt in its offer.
 
     assert_directions(102, 102, l, r);
 }
@@ -62,6 +102,27 @@ pub fn change_pt_recvonly() {
     // For recvonly the OFFER from L is mandatory while the ANSWER from R contains suggestions.
     // L -> R can be anything, but str0m tries to match the remote, so also 100
     // R -> L must be 100
+    //
+    // Motivation:
+    //     [RFC3264 Section 6.1](https://datatracker.ietf.org/doc/html/rfc3264#section-6.1)
+    //
+    //     In the case of RTP, if a particular codec was referenced with a
+    //     specific payload type number in the offer, that same payload type
+    //     number **SHOULD** be used for that codec in the answer.
+    //
+    // The answer is allowed to say it wants to receive on a different Pt from that in the offer, in this case 102.
+    // However, as this stream is sendonly for the answerer, this suggestion of the pt it wants to
+    // receive with is not relevant and ignored. If a subsequent negotiation changes the direction
+    // of this m-line to sendrecv or recvonly(from the perspective of the answerer) then it is
+    // allowed to dictate the pt it wants.
+    //
+    //     The answerer MUST send using a media format in the offer
+    //     that is also listed in the answer, and SHOULD send using the most
+    //     preferred media format in the offer that is also listed in the
+    //     answer.  **In the case of RTP, it MUST use the payload type numbers
+    //     from the offer, even if they differ from those in the answer.**
+    //
+    // The answerer MUST respect the pt from the offer when sending.
 
     assert_directions(100, 100, l, r);
 }
