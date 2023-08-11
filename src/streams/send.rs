@@ -834,6 +834,10 @@ impl StreamTx {
         self.padding += padding;
     }
 
+    pub(crate) fn need_timeout(&self) -> bool {
+        self.send_queue.need_timeout()
+    }
+
     pub(crate) fn handle_timeout(&mut self, now: Instant) {
         self.send_queue.handle_timeout(now);
     }

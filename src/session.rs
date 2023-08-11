@@ -734,6 +734,7 @@ impl Session {
         let packetize_at = self.medias.iter().flat_map(|m| m.poll_timeout()).next();
         let bwe_at = self.bwe.as_ref().map(|bwe| bwe.poll_timeout());
         let paused_at = Some(self.paused_at());
+        let timestamp_writes_at = self.streams.timestamp_writes_at();
 
         let timeout = (regular_at, "regular")
             .soonest((nack_at, "nack"))
@@ -741,7 +742,8 @@ impl Session {
             .soonest((pacing_at, "pacing"))
             .soonest((packetize_at, "media"))
             .soonest((bwe_at, "bwe"))
-            .soonest((paused_at, "paused"));
+            .soonest((paused_at, "paused"))
+            .soonest((timestamp_writes_at, "timestamp writes"));
 
         // trace!("poll_timeout soonest is: {}", timeout.1);
 

@@ -194,6 +194,14 @@ impl Streams {
         self.streams_rx.values().find_map(|s| s.paused_at())
     }
 
+    pub(crate) fn timestamp_writes_at(&self) -> Option<Instant> {
+        if self.streams_tx.values().any(|s| s.need_timeout()) {
+            Some(already_happened())
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn is_receiving(&self) -> bool {
         !self.streams_rx.is_empty()
     }
