@@ -11,13 +11,17 @@ use rand::random;
 use crate::io::Id;
 
 macro_rules! str_id {
-    ($id:ident, $name:literal, $num:tt) => {
+    ($id:ident, $name:literal, $num:tt, $new_len:tt) => {
         #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
         pub struct $id([u8; $num]);
 
         impl $id {
             pub fn new() -> $id {
-                $id(Id::random().into_array())
+                let mut arr = Id::<$num>::random().into_array();
+                for i in $new_len..$num {
+                    arr[i] = b' ';
+                }
+                $id(arr)
             }
 
             pub const fn from_array(a: [u8; $num]) -> $id {
@@ -110,8 +114,8 @@ macro_rules! num_id {
     };
 }
 
-str_id!(Mid, "Mid", 16);
-str_id!(Rid, "Rid", 8);
+str_id!(Mid, "Mid", 16, 3);
+str_id!(Rid, "Rid", 8, 3);
 num_id!(Ssrc, u32);
 num_id!(Pt, u8);
 num_id!(SessionId, u64);
