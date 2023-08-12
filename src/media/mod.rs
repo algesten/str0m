@@ -27,6 +27,8 @@ pub use crate::rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
 
 /// Information about some configured media.
 pub struct Media {
+    // ========================================= RTP level =========================================
+    //
     /// Identifier of this media.
     ///
     /// RTP level.
@@ -37,6 +39,14 @@ pub struct Media {
     /// RTP level.
     cname: String,
 
+    /// Rid that we are expecting to see on incoming RTP packets that map to this mid.
+    /// Once discovered, we make an entry in `stream_rx`.
+    ///
+    /// RTP level.
+    expected_rid_rx: Vec<Rid>,
+
+    // ========================================= SDP level =========================================
+    //
     /// The index of this media line in the Session::media Vec.
     ///
     /// SDP property.
@@ -55,6 +65,8 @@ pub struct Media {
     /// Current media direction.
     ///
     /// Can be altered via negotiation.
+    ///
+    /// SDP property.
     dir: Direction,
 
     /// Remote PTs negotiated for this media.
@@ -63,15 +75,17 @@ pub struct Media {
     /// as well as which PT the remote side wants (in case they are narrowed.
     ///
     /// These must have corresponding entries in Session::codec_config.
+    ///
+    /// SDP property.
     remote_pts: Vec<Pt>,
 
     /// Simulcast configuration, if set.
+    ///
+    /// SDP property.
     simulcast: Option<SdpSimulcast>,
 
-    // Rid that we are expecting to see on incoming RTP packets that map to this mid.
-    // Once discovered, we make an entry in `stream_rx`.
-    expected_rid_rx: Vec<Rid>,
-
+    // ========================================= Payloaders, etc =========================================
+    //
     /// Buffers of incoming RTP packets. These do reordering/jitter buffer and also
     /// depayload from RTP to samples.
     depayloaders: HashMap<(Pt, Option<Rid>), DepacketizingBuffer>,
@@ -102,6 +116,8 @@ pub(crate) struct ToPayload {
 
 impl Media {
     /// Identifier of the media.
+    ///
+    /// RTP level.
     pub fn mid(&self) -> Mid {
         self.mid
     }
@@ -116,17 +132,40 @@ impl Media {
         &self.cname
     }
 
+    /// Add rid as one we are expecting to receive for this mid.
+    ///
+    /// This is used for situations where we don't know the SSRC upfront, such as not having
+    /// a=ssrc lines in an SDP. Adding a rid means we are dynamically discovering the SSRC from
+    /// a mid/rid combination in the RTP header extensions.
+    ///
+    /// RTP level.
+    pub fn expect_rid_rx(&mut self, rid: Rid) {
+        if !self.expected_rid_rx.contains(&rid) {
+            self.expected_rid_rx.push(rid);
+        }
+    }
+
+    pub(crate) fn expects_rid_rx(&self, rid: Rid) -> bool {
+        self.expected_rid_rx.contains(&rid)
+    }
+
+    pub(crate) fn expects_any_rid(&self) -> bool {
+        !self.expected_rid_rx.is_empty()
+    }
+
     pub(crate) fn index(&self) -> usize {
         self.index
     }
 
-    /// Whether this media is audio or video.
-    pub fn kind(&self) -> MediaKind {
-        self.kind
-    }
-
     pub(crate) fn msid(&self) -> &Msid {
         &self.msid
+    }
+
+    /// Whether this media is audio or video.
+    ///
+    /// SDP level property.
+    pub fn kind(&self) -> MediaKind {
+        self.kind
     }
 
     /// Current direction. This can be changed using
@@ -141,6 +180,8 @@ impl Media {
     ///     // media.write(...);
     /// }
     /// ```
+    ///
+    /// SDP level property.
     pub fn direction(&self) -> Direction {
         self.dir
     }
@@ -237,25 +278,6 @@ impl Media {
     pub(crate) fn set_direction(&mut self, new_dir: Direction) {
         self.need_changed_event = self.dir != new_dir;
         self.dir = new_dir;
-    }
-
-    /// Add rid as one we are expecting to receive for this mid.
-    ///
-    /// This is used for situations where we don't know the SSRC upfront, such as not having
-    /// a=ssrc lines in an SDP. Adding a rid means we are dynamically discovering the SSRC from
-    /// a mid/rid combination in the RTP header extensions.
-    pub fn expect_rid_rx(&mut self, rid: Rid) {
-        if !self.expected_rid_rx.contains(&rid) {
-            self.expected_rid_rx.push(rid);
-        }
-    }
-
-    pub(crate) fn expects_rid_rx(&self, rid: Rid) -> bool {
-        self.expected_rid_rx.contains(&rid)
-    }
-
-    pub(crate) fn expects_any_rid(&self) -> bool {
-        !self.expected_rid_rx.is_empty()
     }
 
     pub(crate) fn set_simulcast(&mut self, s: SdpSimulcast) {
