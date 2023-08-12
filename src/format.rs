@@ -31,7 +31,7 @@ pub struct CodecConfig {
 /// a=rtcp-fb:96 nack pli
 /// a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PayloadParams {
     /// The payload type that groups these parameters.
     pub(crate) pt: Pt,
@@ -55,10 +55,28 @@ pub struct PayloadParams {
     /// Whether the payload uses the FIR (Full Intra Request) mechanic.
     pub(crate) fb_fir: bool,
 
-    /// Internal field whether the payload is matched to the remote. This is used in SDP
-    /// negotiation.
-    pub(crate) pt_confirmed_by_remote: bool,
+    /// Whether the payload is locked by negotiation or can still be debated.
+    ///
+    /// If we make an OFFER or ANSWER and the direction is sendrecv/recvonly, the parameters are locked
+    /// can't be further changed. If we make an OFFER for a sendonly, the parameters are only proposed
+    /// and don't lock.
+    pub(crate) locked: bool,
 }
+
+// we don't want to compare "locked"
+impl PartialEq for PayloadParams {
+    fn eq(&self, other: &Self) -> bool {
+        self.pt == other.pt
+            && self.resend == other.resend
+            && self.spec == other.spec
+            && self.fb_transport_cc == other.fb_transport_cc
+            && self.fb_nack == other.fb_nack
+            && self.fb_pli == other.fb_pli
+            && self.fb_fir == other.fb_fir
+    }
+}
+
+impl Eq for PayloadParams {}
 
 /// Codec specification
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,7 +179,7 @@ impl PayloadParams {
             fb_nack: is_video,
             fb_pli: is_video,
 
-            pt_confirmed_by_remote: false,
+            locked: false,
         }
     }
 
@@ -279,7 +297,7 @@ impl PayloadParams {
         score
     }
 
-    fn update_pt(&mut self, remote_pts: &[PayloadParams], claimed: &mut [bool; 128]) {
+    fn update_param(&mut self, remote_pts: &[PayloadParams], claimed: &mut [bool; 128]) {
         let Some((first, _)) = remote_pts
             .iter()
             .filter_map(|p| self.match_score(p).map(|s| (p, s)))
@@ -290,7 +308,7 @@ impl PayloadParams {
         let remote_pt = first.pt;
         let remote_rtx = first.resend;
 
-        if self.pt_confirmed_by_remote {
+        if self.locked {
             // Just verify it's still the same. We should validate this in apply_offer/answer instead
             // of ever seeing this error message.
             if self.pt != remote_pt {
@@ -307,13 +325,19 @@ impl PayloadParams {
             // Lock down the PT
             self.pt = remote_pt;
             self.resend = remote_rtx;
-            self.pt_confirmed_by_remote = true;
+            self.locked = true;
 
             claimed.assert_claim_once(remote_pt);
             if let Some(rtx) = remote_rtx {
                 claimed.assert_claim_once(rtx);
             }
         }
+    }
+
+    /// Exposed for integration tests.
+    #[doc(hidden)]
+    pub fn is_locked(&self) -> bool {
+        self.locked
     }
 }
 
@@ -386,7 +410,7 @@ impl CodecConfig {
             fb_fir,
             fb_nack,
             fb_pli,
-            pt_confirmed_by_remote: false,
+            locked: false,
         };
 
         self.params.push(p);
@@ -532,7 +556,7 @@ impl CodecConfig {
 
     /// Find a payload parameter using a finder function.
     pub fn find(&self, mut f: impl FnMut(&PayloadParams) -> bool) -> Option<&PayloadParams> {
-        self.params.iter().find(move |p| f(*p))
+        self.params.iter().find(move |p| f(p))
     }
 
     pub(crate) fn all_for_kind(&self, kind: MediaKind) -> impl Iterator<Item = &PayloadParams> {
@@ -545,13 +569,13 @@ impl CodecConfig {
         })
     }
 
-    pub(crate) fn update_pts(&mut self, remote_pts: &[PayloadParams]) {
+    pub(crate) fn update_params(&mut self, remote_params: &[PayloadParams]) {
         // 0-128 of "claimed" PTs. I.e. PTs that we already allocated to something.
         let mut claimed: [bool; 128] = [false; 128];
 
         // Make a pass with all that are definitely confirmed by the remote, since these can't change.
         for p in self.params.iter() {
-            if !p.pt_confirmed_by_remote {
+            if !p.locked {
                 continue;
             }
 
@@ -564,7 +588,7 @@ impl CodecConfig {
 
         // Now lock potential new parameters to remote.
         for p in self.params.iter_mut() {
-            p.update_pt(&remote_pts[..], &mut claimed);
+            p.update_param(remote_params, &mut claimed);
         }
 
         const PREFERED_RANGES: &[RangeInclusive<usize>] = &[
@@ -582,12 +606,12 @@ impl CodecConfig {
 
         // Make a pass to reassign unconfirmed payloads that have PT which are now claimed.
         for p in self.params.iter_mut() {
-            if p.pt_confirmed_by_remote {
+            if p.locked {
                 continue;
             }
 
             if claimed.is_claimed(p.pt) {
-                let Some(pt) = claimed.find_unclaimed(&PREFERED_RANGES) else {
+                let Some(pt) = claimed.find_unclaimed(PREFERED_RANGES) else {
                     // TODO: handle this gracefully.
                     panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
                 };
@@ -603,7 +627,7 @@ impl CodecConfig {
             };
 
             if claimed.is_claimed(rtx) {
-                let Some(rtx) = claimed.find_unclaimed(&PREFERED_RANGES) else {
+                let Some(rtx) = claimed.find_unclaimed(PREFERED_RANGES) else {
                     // TODO: handle this gracefully.
                     panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
                 };

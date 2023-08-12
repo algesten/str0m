@@ -1457,12 +1457,18 @@ impl Rtc {
         n
     }
 
-    /// Reference to the current codec config.
+    /// The codec configs for sending/receiving data..
     ///
     /// The configurations can be set with [`RtcConfig`] before setting up the session, and they
     /// might be further updated by SDP negotiation.
     pub fn codec_config(&self) -> &CodecConfig {
         &self.session.codec_config
+    }
+
+    /// All media mids (not application). For integration tests.
+    #[doc(hidden)]
+    pub fn media_mids(&self) -> Vec<Mid> {
+        self.session.medias.iter().map(Media::mid).collect()
     }
 }
 

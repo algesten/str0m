@@ -62,6 +62,8 @@ pub(crate) struct Session {
     /// Extension mappings are _per BUNDLE_, but we can only have one a=group BUNDLE
     /// in WebRTC (one ice connection), so they are effectively per session.
     pub exts: ExtensionMap,
+
+    // Configuration of how we are sending/receiving media.
     pub codec_config: CodecConfig,
 
     /// Each incoming SSRC is mapped to a Mid/Ssrc. The Ssrc in the value is for the case
@@ -143,7 +145,11 @@ impl Session {
             send_buffer_audio: config.send_buffer_audio,
             send_buffer_video: config.send_buffer_video,
             exts: config.exts,
+
+            // Both sending and receiving starts from the configured codecs.
+            // These can then be changed in the SDP OFFER/ANSWER dance.
             codec_config: config.codec_config.clone(),
+
             source_keys: HashMap::new(),
             srtp_rx: None,
             srtp_tx: None,
@@ -187,10 +193,6 @@ impl Session {
 
     pub fn exts(&self) -> &ExtensionMap {
         &self.exts
-    }
-
-    pub fn codec_config(&self) -> &CodecConfig {
-        &self.codec_config
     }
 
     pub fn set_keying_material(&mut self, mat: KeyingMaterial, active: bool) {
