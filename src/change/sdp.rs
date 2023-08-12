@@ -884,7 +884,7 @@ fn update_media(media: &mut Media, m: &MediaLine, config: &mut CodecConfig, stre
     media.set_direction(new_dir);
 
     for rid in m.rids().iter() {
-        media.expect_rid_rx(*rid);
+        media.expect_rid(*rid);
     }
 
     // Narrowing/ordering of of PT
