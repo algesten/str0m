@@ -106,6 +106,36 @@ pub fn answer_narrow() {
     );
 }
 
+#[test]
+pub fn answer_no_match() {
+    init_log();
+
+    // L has one codec, and that is not matched by R. This should disable the m-line.
+    let (l, r) = negotiate(
+        //
+        &[vp8(100)],
+        &[h264(96)],
+        MediaKind::Video,
+        Direction::SendRecv,
+    );
+
+    let mid = l.media_mids()[0];
+
+    // Test left side. Nothing has changed. The codec is not locked.
+    assert_eq!(&[vp8(100)], &**l.codec_config());
+    assert!(!l.codec_config()[0].is_locked());
+    // No remote PTs.
+    assert_eq!(l.media(mid).unwrap().remote_pts(), &[]);
+
+    // Test right side. Nothing has changed. The codec is not locked.
+    assert_eq!(&[h264(96)], &**r.codec_config());
+    assert!(!r.codec_config()[0].is_locked());
+    // No remote PTs.
+    assert_eq!(r.media(mid).unwrap().remote_pts(), &[]);
+
+    // TODO: here we should check for the m-line being made inactive by setting the port to 0.
+}
+
 fn negotiate(
     params_l: &[PayloadParams],
     params_r: &[PayloadParams],
