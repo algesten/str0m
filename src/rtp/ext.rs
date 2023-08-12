@@ -688,6 +688,47 @@ impl fmt::Display for Extension {
     }
 }
 
+impl fmt::Debug for ExtensionMap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Extensions(")?;
+        let joined = self
+            .0
+            .iter()
+            .enumerate()
+            .filter_map(|(i, v)| v.map(|v| (i + 1, v)))
+            .map(|(i, v)| format!("{i}={v}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        write!(f, "{joined}")?;
+        write!(f, ")")?;
+        Ok(())
+    }
+}
+
+/// How the video is rotated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoOrientation {
+    /// Not rotated.
+    Deg0 = 0,
+    /// 90 degress clockwise.
+    Deg90 = 3,
+    /// Upside down.
+    Deg180 = 2,
+    /// 90 degrees counter clockwise.
+    Deg270 = 1,
+}
+
+impl From<u8> for VideoOrientation {
+    fn from(value: u8) -> Self {
+        match value {
+            1 => Self::Deg270,
+            2 => Self::Deg180,
+            3 => Self::Deg90,
+            _ => Self::Deg0,
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -728,46 +769,5 @@ mod test {
 
         assert_eq!(ev.play_delay_min, ev2.play_delay_min);
         assert_eq!(ev.play_delay_max, ev2.play_delay_max);
-    }
-}
-
-impl fmt::Debug for ExtensionMap {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Extensions(")?;
-        let joined = self
-            .0
-            .iter()
-            .enumerate()
-            .filter_map(|(i, v)| v.map(|v| (i + 1, v)))
-            .map(|(i, v)| format!("{i}={v}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        write!(f, "{joined}")?;
-        write!(f, ")")?;
-        Ok(())
-    }
-}
-
-/// How the video is rotated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VideoOrientation {
-    /// Not rotated.
-    Deg0 = 0,
-    /// 90 degress clockwise.
-    Deg90 = 3,
-    /// Upside down.
-    Deg180 = 2,
-    /// 90 degrees counter clockwise.
-    Deg270 = 1,
-}
-
-impl From<u8> for VideoOrientation {
-    fn from(value: u8) -> Self {
-        match value {
-            1 => Self::Deg270,
-            2 => Self::Deg180,
-            3 => Self::Deg90,
-            _ => Self::Deg0,
-        }
     }
 }
