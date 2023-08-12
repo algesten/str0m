@@ -218,7 +218,7 @@ impl Session {
         let do_nack = Some(now) >= self.nack_at();
 
         self.streams
-            .handle_timeout(now, sender_ssrc, do_nack, &mut self.feedback);
+            .handle_timeout(now, sender_ssrc, do_nack, &self.medias, &mut self.feedback);
 
         if do_nack {
             self.last_nack = now;

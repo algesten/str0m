@@ -28,21 +28,25 @@ pub use crate::rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
 /// Information about some configured media.
 pub struct Media {
     /// Identifier of this media.
+    ///
+    /// RTP level.
     mid: Mid,
 
-    /// The index of this media line in the Session::media Vec.
-    index: usize,
-
-    /// Unique CNAME for use in Sdes RTCP packets.
+    /// Canonical name.
     ///
-    /// This is for _outgoing_ SDP. Incoming CNAME can be
-    /// found in the `ssrc_info_rx`.
+    /// RTP level.
     cname: String,
+
+    /// The index of this media line in the Session::media Vec.
+    ///
+    /// SDP property.
+    index: usize,
 
     /// "Stream and track" identifiers.
     ///
-    /// This is for _outgoing_ SDP. Incoming Msid details
-    /// can be found in the `ssrc_info_rx`.
+    /// This is for _outgoing_ SDP.
+    ///
+    /// SDP property.
     msid: Msid,
 
     /// Audio or video.
@@ -102,6 +106,16 @@ impl Media {
         self.mid
     }
 
+    /// Canonical name.
+    ///
+    /// Persistent transport-level identifier for an RTP source.
+    ///
+    /// RTP level property. The value is sent in RTCP reports for `StreamTx`. Incoming
+    /// cnames can be found in [`StreamRx::cname`][crate::rtp::StreamRx::cname].
+    pub fn cname(&self) -> &str {
+        &self.cname
+    }
+
     pub(crate) fn index(&self) -> usize {
         self.index
     }
@@ -113,10 +127,6 @@ impl Media {
 
     pub(crate) fn msid(&self) -> &Msid {
         &self.msid
-    }
-
-    pub(crate) fn cname(&self) -> &str {
-        &self.cname
     }
 
     /// Current direction. This can be changed using

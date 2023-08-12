@@ -33,6 +33,9 @@ pub struct StreamRx {
     /// The rid that might be used for this stream.
     rid: Option<Rid>,
 
+    /// Incoming CNAME in Sdes reports.
+    cname: Option<String>,
+
     /// Whether we explicitly want to supress NACK sending. This is normally done by not
     /// setting an RTX, however this can be toggled off manually despite RTX being there.
     ///
@@ -116,6 +119,7 @@ impl StreamRx {
             rtx: None,
             mid,
             rid,
+            cname: None,
             suppress_nack: false,
             last_used: already_happened(),
             sender_info: None,
@@ -155,6 +159,13 @@ impl StreamRx {
     /// This is used to separate streams with the same [`Mid`] when using simulcast.
     pub fn rid(&self) -> Option<Rid> {
         self.rid
+    }
+
+    /// CNAME as sent by remote peer in a Sdes.
+    ///
+    /// The value is None until we receive a first report with the value set.
+    pub fn cname(&self) -> Option<&str> {
+        self.cname.as_deref()
     }
 
     /// Set threshold duration for emitting the paused event.
@@ -203,7 +214,8 @@ impl StreamRx {
                         }
 
                         // Here we _could_ check CNAME here matches something. But
-                        // CNAMEs are a bit unfashionable with the WebRTC spec people.
+                        // CNAMEs are a bit unfashionable.
+                        self.cname = Some(st);
                         return;
                     }
                 }

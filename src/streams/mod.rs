@@ -3,7 +3,7 @@ use std::fmt;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::media::KeyframeRequest;
+use crate::media::{KeyframeRequest, Media};
 use crate::rtp_::MediaTime;
 use crate::rtp_::Pt;
 use crate::rtp_::Ssrc;
@@ -211,6 +211,7 @@ impl Streams {
         now: Instant,
         sender_ssrc: Ssrc,
         do_nack: bool,
+        medias: &[Media],
         feedback: &mut VecDeque<Rtcp>,
     ) {
         for stream in self.streams_rx.values_mut() {
@@ -224,7 +225,16 @@ impl Streams {
 
         for stream in self.streams_tx.values_mut() {
             stream.handle_timeout(now);
-            stream.maybe_create_sr(now, feedback);
+
+            // This unwrap is OK because a StreamTx can't exist without the
+            // corresponding Media (Mid).
+            let cname = medias
+                .iter()
+                .find(|m| m.mid() == stream.mid())
+                .unwrap()
+                .cname();
+
+            stream.maybe_create_sr(now, cname, feedback);
         }
     }
 
