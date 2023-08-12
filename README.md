@@ -10,20 +10,39 @@ happening from the calls of the public API.
 
 ## Join us
 
-We are discussing str0m things on Zulip. Join us using this [invitation link][zulip].
+We are discussing str0m things on Zulip. Join us using this [invitation link][zulip]. Or browse the
+discussions anonymously at [str0m.zulipchat.com][zulip-anon]
 
 <image width="300px" src="https://user-images.githubusercontent.com/227204/209446544-f8a8d673-cb1b-4144-a0f2-42307b8d8869.gif" alt="silly clip showing video playing" ></image>
 
 ## Usage
 
-The [`http-post`][x-post] example roughly illustrates how to receive
-media data from a browser client. The example is single threaded and
-a good starting point to understand the API.
-
 The [`chat`][x-chat] example shows how to connect multiple browsers
 together and act as an SFU (Signal Forwarding Unit). The example
 multiplexes all traffic over one server UDP socket and uses two threads
 (one for the web server, and one for the SFU loop).
+
+### TLS
+
+For the browser to do WebRTC, all traffic must be under TLS. The
+project ships with a self-signed certificate that is used for the
+examples. The certificate is for hostname `str0m.test` since TLD .test
+should never resolve to a real DNS name.
+
+```
+cargo run --example chat
+```
+
+The log should prompt you to connect a browser to https://10.0.0.103:3000 – this will
+most likely cause a security warning that you must get the browser to accept.
+
+The [`http-post`][x-post] example roughly illustrates how to receive
+media data from a browser client. The example is single threaded and
+is a bit simpler than the chat. It is a good starting point to understand the API.
+
+```
+cargo run --example http-post
+```
 
 ### Passive
 
@@ -86,7 +105,8 @@ rtc.sdp_api().accept_answer(pending, answer).unwrap();
 
 ### Run loop
 
-Driving the state of the `Rtc` forward is a run loop that looks like this.
+Driving the state of the `Rtc` forward is a run loop that, regardless of sync or async,
+looks like this.
 
 ```rust
 #
@@ -120,7 +140,7 @@ loop {
                 return;
             }
 
-            // TODO: handle more cases of v here.
+            // TODO: handle more cases of v here, such as incoming media data.
 
             continue;
         }
@@ -141,10 +161,14 @@ loop {
     // Scale up buffer to receive an entire UDP packet.
     buf.resize(2000, 0);
 
-    // Try to receive
+    // Try to receive. Because we have a timeout on the socket,
+    // we will either receive a packet, or timeout.
+    // This is where having an async loop shines. We can await multiple things to
+    // happen such as outgoing media data, the timeout and incoming network traffic.
+    // When using async there is no need to set timeout on the socket.
     let input = match socket.recv_from(&mut buf) {
         Ok((n, source)) => {
-            // UDP data received before timeout.
+            // UDP data received.
             buf.truncate(n);
             Input::Receive(
                 Instant::now(),
@@ -169,15 +193,15 @@ loop {
         },
     };
 
-    // Input is either a Timeout or Receive of data. Both drive forward.
+    // Input is either a Timeout or Receive of data. Both drive the state forward.
     rtc.handle_input(input).unwrap();
 }
 ```
 
 ### Sending media data
 
-When creating the media, we can decide which codecs to support, which
-is then negotiated with the remote side. Each codec corresponds to a
+When creating the media, we can decide which codecs to support, and they
+are negotiated with the remote side. Each codec corresponds to a
 "payload type" (PT). To send media data we need to figure out which PT
 to use when sending.
 
@@ -186,20 +210,17 @@ to use when sending.
 // Obtain mid from Event::MediaAdded
 let mid: Mid = todo!();
 
-// Get the `Media` for this `mid`
-let media = rtc.media(mid).unwrap();
+// Create a media writer for the mid.
+let writer = rtc.writer(mid).unwrap();
 
 // Get the payload type (pt) for the wanted codec.
-let pt = media.payload_params()[0].pt();
-
-// Create a media writer for the payload type.
-let writer = media.writer(pt);
+let pt = writer.payload_params()[0].pt();
 
 // Write the data
 let wallclock = todo!();  // Absolute time of the data
 let media_time = todo!(); // Media time, in RTP time
 let data = todo!();       // Actual data
-writer.write(wallclock, media_time, data).unwrap();
+writer.write(pt, wallclock, media_time, data).unwrap();
 ```
 
 ### Media time, wallclock and local time
@@ -239,7 +260,7 @@ wallclock is the NTP time the sound is sampled.
 
 We can't know the exact wallclock for media from a remote peer since
 not every device is synchronized with NTP. Every sender does
-periodically produce a Sender Report (SR) that contain the peer's
+periodically produce a Sender Report (SR) that contains the peer's
 idea of its wallclock, however this number can be very wrong compared to
 "real" NTP time.
 
@@ -294,27 +315,6 @@ Input to the `Rtc` instance is:
 The correct use can be described like below (or seen in the examples).
 The TODO lines is where the user would fill in their code.
 
-### Overview
-
-```
-                      +-------+
-                      |  Rtc  |-------+----------+-------+
-                      +-------+       |          |       |
-                          |           |          |       |
-                          |           |          |       |
-           - - - -    - - - - -    - - - -    - - - - - - - -
-          |  RTP  |--| Session |  |  ICE  |  | SCTP  | DTLS  |
-           - - - -    - - - - -    - - - -    - - - - - - - -
-                          |                          |
-                          |
-                 +--------+--------+                 |
-                 |                 |
-                 |                 |                 |
-             +-------+        +---------+
-             | Media |        | Channel |- - - - - - +
-             +-------+        +---------+
-```
-
 Sans I/O is a pattern where we turn both network input/output as well
 as time passing into external input to the API. This means str0m has
 no internal threads, just an enormous state machine that is driven
@@ -330,24 +330,25 @@ a chunk of audio, or _one single frame for video_.
 
 Samples are not suitable to use directly in UDP (RTP) packets - for
 one they are too big. Samples are therefore further chunked up by
-codec specific packetizers into RTP packets.
+codec specific payloaders into RTP packets.
 
-Str0m's API currently operate on the "sample level". From an
-architectural point of view, all things RTP are considered an internal
-detail that are largely abstracted away from the user. This is
-different from many other RTP libraries where the RTP packets
-themselves are the the API surface towards the user (when building an
-SFU one would often talk about "forwarding RTP packets", while with
-str0m we would "forward samples").
+Str0m also provides an RTP level API. This would be similar to many other
+RTP libraries where the RTP packets themselves are the the API surface
+towards the user (when building an SFU one would often talk about "forwarding
+RTP packets", while with str0m we can also "forward samples").
 
-Whether this is a good idea is still an open question. It certainly
-makes for cleaner abstractions.
+Str0m defaults to the "sample level" which treats the RTP as an internal detail. The user
+will mainly interact with:
+
+1. [`Event::MediaData`] to receive full "samples" (audio frames or video frames).
+2. [`Writer::write`][crate::media::Writer::write] to write full samples.
+3. [`Writer::request_keyframe`][crate::media::Writer::request_keyframe] to request keyframes.
 
 #### RTP mode
 
 str0m has a lower level API which let's the user write/receive RTP
 packets directly. Using this API requires a deeper knowledge of
-RTP and WebRTC and is not recommended for most use cases.
+RTP and WebRTC.
 
 To enable RTP mode
 
@@ -362,6 +363,12 @@ let rtc = Rtc::builder()
     .set_reordering_size_video(0)
     .build();
 ```
+
+RTP mode gives us some new API points.
+
+1. [`Event::RtpPacket`] emitted for every incoming RTP packet.
+2. [`StreamTx::write_rtp`][crate::rtp::StreamTx::write_rtp] to write outgoing RTP packets.
+3. [`StreamRx::request_keyframe`][crate::rtp::StreamRx::request_keyframe] to request keyframes from remote.
 
 ### NIC enumeration and TURN (and STUN)
 
@@ -432,30 +439,6 @@ references. I.e. `pc.getTranscievers()` returns objects that can be
 retained and owned by the caller. This pattern is fine for garbage
 collected or reference counted languages, but not great with Rust.
 
-## Running the example
-
-For the browser to do WebRTC, all traffic must be under TLS. The
-project ships with a self-signed certificate that is used for the
-examples. The certificate is for hostname `str0m.test` since TLD .test
-should never resolve to a real DNS name.
-
-1. Edit `/etc/hosts` so `str0m.test` to loopback.
-
-```
-127.0.0.1    localhost str0m.test
-```
-
-2. Start the example server `cargo run --example http-post`
-
-3. In a browser, visit `https://str0m.test:3000/`. This will complain
-about the TLS certificate, you need to accept the "risk". How to do
-this depends on browser. In Chrome you can expand "Advanced" and
-chose "Proceed to str0m.test (unsafe)". For Safari, you can
-similarly chose to "Visit website" despite the warning.
-
-4. Click "Cam" and/or "Mic" followed by "Rtc". And hopefully you will
-see something like this in the log:
-
 ```
 Dec 18 11:33:06.850  INFO str0m: MediaData(MediaData { mid: Mid(0), pt: Pt(104), time: MediaTime(3099135646, 90000), len: 1464 })
 Dec 18 11:33:06.867  INFO str0m: MediaData(MediaData { mid: Mid(0), pt: Pt(104), time: MediaTime(3099138706, 90000), len: 1093 })
@@ -467,6 +450,7 @@ Dec 18 11:33:06.907  INFO str0m: MediaData(MediaData { mid: Mid(0), pt: Pt(104),
 [pion]:       https://github.com/pion/webrtc
 [webrtc-rs]:  https://github.com/webrtc-rs/webrtc
 [zulip]:      https://str0m.zulipchat.com/join/hsiuva2zx47ujrwgmucjez5o/
+[zulip-anon]: https://str0m.zulipchat.com
 [ice]:        https://www.rfc-editor.org/rfc/rfc8445
 [lookback]:   https://www.lookback.com
 [x-post]:     https://github.com/algesten/str0m/blob/main/examples/http-post.rs
