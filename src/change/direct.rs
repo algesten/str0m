@@ -1,8 +1,8 @@
 use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
 use crate::ice::IceCreds;
-use crate::media::Media;
-use crate::rtp_::{Direction, Mid, Rid, Ssrc};
+use crate::media::{Media, MediaKind};
+use crate::rtp_::{Mid, Rid, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::streams::{StreamRx, StreamTx, DEFAULT_RTX_CACHE_DURATION};
 use crate::Rtc;
@@ -114,7 +114,7 @@ impl<'a> DirectApi<'a> {
     ///
     /// All streams belong to a media identified by a `mid`. This creates the media without
     /// doing any SDP dance.
-    pub fn declare_media(&mut self, mid: Mid, dir: Direction, is_audio: bool) -> &mut Media {
+    pub fn declare_media(&mut self, mid: Mid, kind: MediaKind) -> &mut Media {
         let max_index = self.rtc.session.medias.iter().map(|m| m.index()).max();
 
         let next_index = if let Some(max_index) = max_index {
@@ -123,7 +123,7 @@ impl<'a> DirectApi<'a> {
             0
         };
 
-        let m = Media::from_direct_api(mid, next_index, dir, is_audio);
+        let m = Media::from_direct_api(mid, next_index, kind);
 
         self.rtc.session.medias.push(m);
         self.rtc.session.medias.last_mut().unwrap()

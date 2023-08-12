@@ -408,16 +408,12 @@ impl Media {
         }
     }
 
-    pub(crate) fn from_direct_api(mid: Mid, index: usize, dir: Direction, is_audio: bool) -> Media {
+    pub(crate) fn from_direct_api(mid: Mid, index: usize, kind: MediaKind) -> Media {
         Media {
             mid,
             index,
-            kind: if is_audio {
-                MediaKind::Video
-            } else {
-                MediaKind::Audio
-            },
-            dir,
+            kind,
+            dir: Direction::SendRecv,
             ..Default::default()
         }
     }

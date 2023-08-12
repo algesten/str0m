@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use str0m::format::Codec;
-use str0m::media::Direction;
+use str0m::media::MediaKind;
 use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, RtcError};
 
@@ -21,11 +21,11 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
     // using SSRC 1 as knowledge shared between sending and receiving side.
     let ssrc: Ssrc = 1.into();
 
-    l.direct_api().declare_media(mid, Direction::SendOnly, true);
+    l.direct_api().declare_media(mid, MediaKind::Audio);
 
     l.direct_api().declare_stream_tx(ssrc, None, mid, None);
 
-    r.direct_api().declare_media(mid, Direction::RecvOnly, true);
+    r.direct_api().declare_media(mid, MediaKind::Audio);
 
     r.direct_api().expect_stream_rx(ssrc, None, mid, None);
 
