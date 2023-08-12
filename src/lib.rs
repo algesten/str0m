@@ -1456,6 +1456,11 @@ impl Rtc {
         self.change_counter += 1;
         n
     }
+
+    /// Yeah.
+    pub fn mids(&self) -> Vec<Mid> {
+        self.session.medias.iter().map(|m| m.mid()).collect()
+    }
 }
 
 /// Customized config for creating an [`Rtc`] instance.

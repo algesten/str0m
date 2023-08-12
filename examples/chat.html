@@ -13,8 +13,8 @@
 
 <body>
     <button id="rtc" onClick="startRtc()">Connect</button>
-    <button id="cam" onClick="startCam()" disabled>Cam</button>
-    <button id="mic" onClick="startMic()" disabled>Mic</button>
+    <button style="display: none" id="cam" onClick="startCam()" disabled>Cam</button>
+    <button style="display: none" id="mic" onClick="startMic()" disabled>Mic</button>
     ICE: <span id="ice_status">new</span>
     <div id="chan_status">Waiting for data channel.</div>
     <div id="media"></div>

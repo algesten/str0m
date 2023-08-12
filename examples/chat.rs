@@ -6,6 +6,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
+use std::sync::Mutex;
 use std::sync::{Arc, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -14,6 +15,8 @@ use rouille::Server;
 use rouille::{Request, Response};
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::channel::{ChannelData, ChannelId};
+use str0m::format::Codec;
+use str0m::format::FormatParams;
 use str0m::media::MediaKind;
 use str0m::media::{Direction, KeyframeRequest, MediaData, Mid, Rid};
 use str0m::Event;
@@ -79,11 +82,25 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
     let mut data = request.data().expect("body to be available");
 
     let offer: SdpOffer = serde_json::from_reader(&mut data).expect("serialized offer");
-    let mut rtc = Rtc::builder()
-        // Uncomment this to see statistics
-        // .set_stats_interval(Some(Duration::from_secs(1)))
-        // .set_ice_lite(true)
-        .build();
+
+    // XXX Configure some crazy PT that are definitely not the defaults in the browsers.
+    let mut b = Rtc::builder().clear_codecs();
+    let config = b.codec_config();
+
+    config.add_config(
+        // XXX No one uses 55
+        55.into(),
+        None,
+        Codec::Opus,
+        48_000,
+        Some(2),
+        FormatParams {
+            min_p_time: Some(20),
+            ..Default::default()
+        },
+    );
+
+    let mut rtc = b.build();
 
     // Add the shared UDP socket as a host candidate
     let candidate = Candidate::host(addr).expect("a host candidate");
@@ -297,13 +314,38 @@ impl Client {
     fn new(rtc: Rtc) -> Client {
         static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
         let next_id = ID_COUNTER.fetch_add(1, Ordering::SeqCst);
+
+        // XXX some hack input that will never send any data.
+        static TRACK_IN: Mutex<Option<Arc<TrackIn>>> = Mutex::new(None);
+
+        let track_in = {
+            let mut lock = TRACK_IN.lock().unwrap();
+            if let Some(t) = &*lock {
+                t.clone()
+            } else {
+                let t = Arc::new(TrackIn {
+                    kind: MediaKind::Audio,
+                    origin: ClientId(1),
+                    mid: "hack".into(),
+                });
+                *lock = Some(t.clone());
+                t
+            }
+        };
+
+        // XXX Hack in a track that will be OFFERed straight away.
+        let tracks_out = vec![TrackOut {
+            state: TrackOutState::ToOpen,
+            track_in: Arc::downgrade(&track_in),
+        }];
+
         Client {
             id: ClientId(next_id),
             rtc,
             pending: None,
             cid: None,
             tracks_in: vec![],
-            tracks_out: vec![],
+            tracks_out,
             chosen_rid: None,
         }
     }
@@ -433,7 +475,7 @@ impl Client {
                 if let Some(track_in) = track.track_in.upgrade() {
                     let stream_id = track_in.origin.to_string();
                     let mid =
-                        change.add_media(track_in.kind, Direction::SendOnly, Some(stream_id), None);
+                        change.add_media(track_in.kind, Direction::SendRecv, Some(stream_id), None);
                     track.state = TrackOutState::Negotiating(mid);
                 }
             }
@@ -505,6 +547,15 @@ impl Client {
                 .sdp_api()
                 .accept_answer(pending, answer)
                 .expect("answer to be accepted");
+
+            let mids = self.rtc.mids();
+            let media = self.rtc.media(mids[0]).unwrap();
+            let params = &media.payload_params()[0];
+            if params.pt() == 55.into() {
+                warn!("SUCCESS! The browser bent to our will and responded with PT 55");
+            } else {
+                error!("FAILURE! The browser answered with: {:?}", params.pt());
+            }
 
             for track in &mut self.tracks_out {
                 if let TrackOutState::Negotiating(m) = track.state {
