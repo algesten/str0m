@@ -106,7 +106,7 @@
 //!
 //! ## Run loop
 //!
-//! Driving the state of the `Rtc` forward is a run loop that, regardless of sync or async use,
+//! Driving the state of the `Rtc` forward is a run loop that, regardless of sync or async,
 //! looks like this.
 //!
 //! ```no_run
