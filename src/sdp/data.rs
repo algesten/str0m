@@ -222,6 +222,7 @@ fn is_dir(a: &MediaAttribute) -> bool {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MediaLine {
     pub typ: MediaType,
+    pub disabled: bool,
     pub proto: Proto,
     pub pts: Vec<Pt>, // payload types 96 97 125 107 from the m= line
     pub bw: Option<Bandwidth>,
@@ -1548,6 +1549,7 @@ mod test {
             },
             media_lines: vec![MediaLine {
                 typ: MediaType::Audio,
+                disabled: false,
                 proto: Proto::Srtp,
                 pts: vec![
                     111.into(),
