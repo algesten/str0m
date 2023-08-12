@@ -1470,6 +1470,12 @@ impl Rtc {
     pub fn media_mids(&self) -> Vec<Mid> {
         self.session.medias.iter().map(Media::mid).collect()
     }
+
+    /// All current RTP header extensions. For integration tests.
+    #[doc(hidden)]
+    pub fn exts(&self) -> ExtensionMap {
+        self.session.exts
+    }
 }
 
 /// Customized config for creating an [`Rtc`] instance.

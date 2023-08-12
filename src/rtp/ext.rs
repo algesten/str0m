@@ -1,6 +1,8 @@
 use std::fmt;
 use std::str::from_utf8;
 
+use crate::media::MediaKind;
+
 use super::mtime::MediaTime;
 use super::{Mid, Rid};
 
@@ -231,40 +233,6 @@ impl ExtensionMap {
         self.0[idx] = Some(ext);
     }
 
-    pub(crate) fn keep_same(&mut self, other: &ExtensionMap) {
-        for i in 0..14 {
-            if self.0[i] != other.0[i] {
-                self.0[i] = None;
-            }
-        }
-    }
-
-    pub(crate) fn apply(&mut self, id: u8, ext: Extension) {
-        if id < 1 || id > 14 {
-            return;
-        }
-
-        // Mapping goes from 0 to 13.
-        let new_index = id as usize - 1;
-
-        let Some(old_index) = self
-            .0
-            .iter()
-            .enumerate()
-            .find(|(_, m)| **m == Some(ext))
-            .map(|(i, _)| i) else {
-                return;
-            };
-
-        if new_index == old_index {
-            return;
-        }
-
-        // swap them
-        self.0[old_index] = self.0[new_index].take();
-        self.0[new_index] = Some(ext);
-    }
-
     /// Look up the extension for the id.
     ///
     /// The id must be 1-14 inclusive (1-indexed).
@@ -288,7 +256,7 @@ impl ExtensionMap {
     }
 
     /// Returns an iterator over the elements of the extension map
-    ///  
+    ///
     /// Filtering them based on the provided `audio` flag
     pub fn iter(&self, audio: bool) -> impl Iterator<Item = (u8, Extension)> + '_ {
         self.0
@@ -355,6 +323,55 @@ impl ExtensionMap {
         }
 
         orig_len - b.len()
+    }
+
+    pub(crate) fn narrow(&mut self, remote_exts: &[(u8, Extension)], kind: MediaKind) {
+        // Match remote numbers, this does not remove any configured extension.
+        for (id, ext) in remote_exts {
+            self.swap(*id, *ext);
+        }
+
+        let to_remove: Vec<_> = self
+            // Only consider matching video or audio extensions
+            .iter(kind.is_audio())
+            .filter(|(_, ext)| {
+                let in_remote = remote_exts.iter().any(|r| r.1 == *ext);
+                // Remove ones _not_ in remote.
+                !in_remote
+            })
+            .map(|(id, _)| id)
+            .collect();
+
+        for id in to_remove {
+            let idx = id - 1;
+            self.0[idx as usize] = None;
+        }
+    }
+
+    fn swap(&mut self, id: u8, ext: Extension) {
+        if id < 1 || id > 14 {
+            return;
+        }
+
+        // Mapping goes from 0 to 13.
+        let new_index = id as usize - 1;
+
+        let Some(old_index) = self
+            .0
+            .iter()
+            .enumerate()
+            .find(|(_, m)| **m == Some(ext))
+            .map(|(i, _)| i) else {
+                return;
+            };
+
+        if new_index == old_index {
+            return;
+        }
+
+        // swap them
+        self.0[old_index] = self.0[new_index].take();
+        self.0[new_index] = Some(ext);
     }
 }
 
@@ -769,5 +786,68 @@ mod test {
 
         assert_eq!(ev.play_delay_min, ev2.play_delay_min);
         assert_eq!(ev.play_delay_max, ev2.play_delay_max);
+    }
+
+    #[test]
+    fn narrow_exts_audio() {
+        use Extension::*;
+
+        let mut e1 = ExtensionMap::standard();
+        let mut e2 = ExtensionMap::empty();
+        e2.set(14, TransportSequenceNumber);
+
+        let correct = vec![(14, TransportSequenceNumber)];
+
+        e1.narrow(&e2.iter(true).collect::<Vec<_>>(), MediaKind::Audio);
+
+        assert_eq!(e1.iter(true).collect::<Vec<_>>(), correct);
+        assert_eq!(e2.iter(true).collect::<Vec<_>>(), correct);
+    }
+
+    #[test]
+    fn narrow_exts_video() {
+        use Extension::*;
+
+        let mut e1 = ExtensionMap::empty();
+        e1.set(3, TransportSequenceNumber);
+        e1.set(4, VideoOrientation);
+        e1.set(5, VideoContentType);
+        let mut e2 = ExtensionMap::empty();
+        e2.set(14, TransportSequenceNumber);
+        e2.set(12, VideoOrientation);
+
+        e1.narrow(&e2.iter(false).collect::<Vec<_>>(), MediaKind::Video);
+
+        assert_eq!(
+            e1.iter(false).collect::<Vec<_>>(),
+            vec![(12, VideoOrientation), (14, TransportSequenceNumber)]
+        );
+        assert_eq!(
+            e2.iter(false).collect::<Vec<_>>(),
+            vec![(12, VideoOrientation), (14, TransportSequenceNumber)]
+        );
+    }
+
+    #[test]
+    fn narrow_exts_swaparoo() {
+        use Extension::*;
+
+        let mut e1 = ExtensionMap::empty();
+        e1.set(12, TransportSequenceNumber);
+        e1.set(14, VideoOrientation);
+        let mut e2 = ExtensionMap::empty();
+        e2.set(14, TransportSequenceNumber);
+        e2.set(12, VideoOrientation);
+
+        e1.narrow(&e2.iter(false).collect::<Vec<_>>(), MediaKind::Video);
+
+        assert_eq!(
+            e1.iter(false).collect::<Vec<_>>(),
+            vec![(12, VideoOrientation), (14, TransportSequenceNumber)]
+        );
+        assert_eq!(
+            e2.iter(false).collect::<Vec<_>>(),
+            vec![(12, VideoOrientation), (14, TransportSequenceNumber)]
+        );
     }
 }

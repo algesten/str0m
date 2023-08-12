@@ -6,6 +6,7 @@ use str0m::format::FormatParams;
 use str0m::format::PayloadParams;
 use str0m::media::Direction;
 use str0m::media::MediaKind;
+use str0m::rtp::{Extension, ExtensionMap};
 use str0m::Rtc;
 use tracing::info_span;
 
@@ -128,6 +129,37 @@ pub fn answer_no_match() {
     // TODO: here we should check for the m-line being made inactive by setting the port to 0.
 }
 
+#[test]
+fn narrow_exts() {
+    init_log();
+
+    use Extension::*;
+
+    let exts_l = ExtensionMap::standard();
+    let mut exts_r = ExtensionMap::empty();
+
+    // Not same number as the default.
+    exts_r.set(14, TransportSequenceNumber);
+    exts_r.set(12, AudioLevel);
+
+    let (l, r) = with_exts(exts_l, exts_r);
+
+    let v_l: Vec<_> = l.exts().iter(false).collect();
+    let v_r: Vec<_> = r.exts().iter(false).collect();
+    let a_l: Vec<_> = l.exts().iter(true).collect();
+    let a_r: Vec<_> = r.exts().iter(true).collect();
+
+    // L only keeps 3 (the default) for TransportSequenceNumber.
+    // R only keeps 3, and changes it from 15.
+    assert_eq!(v_l, vec![(3, TransportSequenceNumber)]);
+    assert_eq!(v_r, vec![(3, TransportSequenceNumber)]);
+
+    // L audio exts are left untouched (the defaults).
+    // R audio exts are left untouched.
+    assert_eq!(a_l, vec![(1, AudioLevel), (3, TransportSequenceNumber)]);
+    assert_eq!(a_r, vec![(3, TransportSequenceNumber), (12, AudioLevel)]);
+}
+
 fn with_params(params_l: &[PayloadParams], params_r: &[PayloadParams]) -> (Rtc, Rtc) {
     let mut l = build_params(params_l);
     let mut r = build_params(params_r);
@@ -138,6 +170,15 @@ fn with_params(params_l: &[PayloadParams], params_r: &[PayloadParams]) -> (Rtc, 
         .unwrap_or(MediaKind::Audio);
 
     negotiate(&mut l, &mut r, kind);
+
+    (l, r)
+}
+
+fn with_exts(exts_l: ExtensionMap, exts_r: ExtensionMap) -> (Rtc, Rtc) {
+    let mut l = build_exts(exts_l);
+    let mut r = build_exts(exts_r);
+
+    negotiate(&mut l, &mut r, MediaKind::Video);
 
     (l, r)
 }
@@ -180,6 +221,13 @@ fn build_params(params: &[PayloadParams]) -> Rtc {
             p.spec().format,
         );
     }
+    b.build()
+}
+
+fn build_exts(exts: ExtensionMap) -> Rtc {
+    let mut b = Rtc::builder().clear_codecs();
+    let e = b.extension_map();
+    *e = exts;
     b.build()
 }
 
