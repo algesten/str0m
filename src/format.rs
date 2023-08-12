@@ -764,6 +764,15 @@ impl Codec {
         use Codec::*;
         matches!(self, H264 | Vp8 | Vp9 | Av1)
     }
+
+    /// Audio/Video.
+    pub fn kind(&self) -> MediaKind {
+        if self.is_audio() {
+            MediaKind::Audio
+        } else {
+            MediaKind::Video
+        }
+    }
 }
 
 impl<'a> From<&'a str> for Codec {
