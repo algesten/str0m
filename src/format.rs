@@ -540,11 +540,11 @@ impl CodecConfig {
         );
     }
 
-    /// Match the given parameters to the configured parameters for this [`Media`].
+    /// Match the given parameters to the configured parameters.
     ///
     /// In a server scenario, a certain codec configuration might not have the same
     /// payload type (PT) for two different peers. We will have incoming data with one
-    /// PT and need to match that against the PT of the outgoing [`Media`].
+    /// PT and need to match that against the PT of the outgoing.
     ///
     /// This call performs matching and if a match is found, returns the _local_ PT
     /// that can be used for sending media.
