@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use str0m::format::Codec;
-use str0m::media::Direction;
+use str0m::media::MediaKind;
 use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, RtcError};
 
@@ -21,13 +21,13 @@ pub fn rtp_direct_mid_rid() -> Result<(), RtcError> {
     // In this example we are using MID and RID to identify the incoming media.
     let ssrc_tx: Ssrc = 42.into();
 
-    l.direct_api().declare_media(mid, Direction::SendOnly, true);
+    l.direct_api().declare_media(mid, MediaKind::Audio);
 
     l.direct_api()
         .declare_stream_tx(ssrc_tx, None, mid, Some(rid));
 
     r.direct_api()
-        .declare_media(mid, Direction::RecvOnly, true)
+        .declare_media(mid, MediaKind::Audio)
         .expect_rid_rx(rid);
 
     let max = l.last.max(r.last);
