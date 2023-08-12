@@ -191,10 +191,6 @@ impl Session {
         &self.app
     }
 
-    pub fn exts(&self) -> &ExtensionMap {
-        &self.exts
-    }
-
     pub fn set_keying_material(&mut self, mat: KeyingMaterial, active: bool) {
         // Whether we're active or passive determines if we use the left or right
         // hand side of the key material to derive input/output.

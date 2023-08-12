@@ -602,10 +602,6 @@ fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
 
     let new_lines = sync_medias(session, &offer).map_err(RtcError::RemoteSdp)?;
 
-    for m in &new_lines {
-        session.codec_config.update_params(&m.rtp_params());
-    }
-
     add_new_lines(session, &new_lines, true).map_err(RtcError::RemoteSdp)?;
 
     ensure_stream_tx(session);
@@ -623,10 +619,6 @@ fn apply_answer(
     update_session(session, &answer);
 
     let new_lines = sync_medias(session, &answer).map_err(RtcError::RemoteSdp)?;
-
-    for m in &new_lines {
-        session.codec_config.update_params(&m.rtp_params());
-    }
 
     // The new_lines from the answer must correspond to what we sent in the offer.
     if let Some(err) = pending.ensure_correct_answer(&new_lines) {
@@ -800,11 +792,14 @@ fn add_new_lines(
         let idx = session.line_count();
 
         if m.typ.is_media() {
-            let mut exts = *session.exts();
-            exts.keep_same(&session.exts);
-
             let mut media = Media::from_remote_media_line(m, idx);
             media.need_open_event = need_open_event;
+
+            // Match/narrow remote params.
+            session.codec_config.update_params(&m.rtp_params());
+
+            // Narrow the agreed on extmaps.
+            session.exts.narrow(&m.extmaps(), media.kind());
 
             update_media(
                 &mut media,
@@ -831,12 +826,6 @@ fn add_new_lines(
 /// Extensions from offer or answer.
 fn update_session(session: &mut Session, sdp: &Sdp) {
     let old = session.exts;
-
-    let extmaps = sdp.media_lines.iter().flat_map(|m| m.extmaps());
-
-    for (id, ext) in extmaps {
-        session.exts.apply(id, ext);
-    }
 
     if old != session.exts {
         info!("Updated session extensions: {:?}", session.exts);
