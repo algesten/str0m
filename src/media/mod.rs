@@ -43,7 +43,7 @@ pub struct Media {
     /// Once discovered, we make an entry in `stream_rx`.
     ///
     /// RTP level.
-    expected_rid_rx: Vec<Rid>,
+    rids: Rids,
 
     // ========================================= SDP level =========================================
     //
@@ -105,6 +105,18 @@ pub struct Media {
     pub(crate) app_tmp: bool,
 }
 
+/// Config value for [`Media::rids()`]
+pub enum Rids {
+    /// Any Rid is allowed.
+    ///
+    /// This is the default value for direct API.
+    Any,
+    /// These specific [`Rid`] are allowed.
+    ///
+    /// This is the default value for Simulcast configured via SDP.
+    Specific(Vec<Rid>),
+}
+
 pub(crate) struct ToPayload {
     pub pt: Pt,
     pub rid: Option<Rid>,
@@ -139,18 +151,37 @@ impl Media {
     /// a mid/rid combination in the RTP header extensions.
     ///
     /// RTP level.
-    pub fn expect_rid_rx(&mut self, rid: Rid) {
-        if !self.expected_rid_rx.contains(&rid) {
-            self.expected_rid_rx.push(rid);
+    pub fn expect_rid(&mut self, rid: Rid) {
+        if matches!(self.rids, Rids::Any) {
+            self.rids = Rids::Specific(vec![]);
+        }
+        let Rids::Specific(v) = &mut self.rids else {
+            panic!("Expected Rids::Specific");
+        };
+        if !v.contains(&rid) {
+            v.push(rid);
         }
     }
 
-    pub(crate) fn expects_rid_rx(&self, rid: Rid) -> bool {
-        self.expected_rid_rx.contains(&rid)
+    /// Rids we are expecting to see on incoming RTP packets that map to this mid.
+    ///
+    /// By default this is set to [`Rids::Any`], which changes to [`Rids::Specific`] via SDP negotiation
+    /// that configures Simulcast where specific rids are expected.
+    ///
+    /// RTP level.
+    pub fn rids(&self) -> &Rids {
+        &self.rids
     }
 
-    pub(crate) fn expects_any_rid(&self) -> bool {
-        !self.expected_rid_rx.is_empty()
+    pub(crate) fn expects_rid(&self, rid: Rid) -> bool {
+        match &self.rids {
+            Rids::Any => true,
+            Rids::Specific(v) => v.contains(&rid),
+        }
+    }
+
+    pub(crate) fn expects_specific_rids(&self) -> bool {
+        matches!(self.rids, Rids::Specific(_))
     }
 
     pub(crate) fn index(&self) -> usize {
@@ -389,7 +420,7 @@ impl Default for Media {
             remote_pts: vec![],
             dir: Direction::SendRecv,
             simulcast: None,
-            expected_rid_rx: vec![],
+            rids: Rids::Any,
             payloaders: HashMap::new(),
             depayloaders: HashMap::new(),
             to_payload: None,
