@@ -14,12 +14,10 @@ pub fn change_default_pt() {
     init_log();
 
     // First proposed PT is 100, R side adjusts its default from 102 -> 100
-    let (l, r) = negotiate(
+    let (l, r) = with_params(
         //
         &[opus(100)],
         &[opus(102)],
-        MediaKind::Audio,
-        Direction::SendRecv,
     );
 
     // Test left side.
@@ -36,12 +34,10 @@ pub fn answer_change_order() {
     init_log();
 
     // First proposed PT are 100/102, but R side has a different order.
-    let (l, r) = negotiate(
+    let (l, r) = with_params(
         //
         &[vp8(100), h264(102)],
         &[h264(96), vp8(98)],
-        MediaKind::Video,
-        Direction::SendRecv,
     );
 
     let mid = l.media_mids()[0];
@@ -70,12 +66,10 @@ pub fn answer_narrow() {
     init_log();
 
     // First proposed PT are 100/102, the R side removes unsupported ones.
-    let (l, r) = negotiate(
+    let (l, r) = with_params(
         //
         &[vp8(100), h264(102)],
         &[h264(96)],
-        MediaKind::Video,
-        Direction::SendRecv,
     );
 
     let mid = l.media_mids()[0];
@@ -111,12 +105,10 @@ pub fn answer_no_match() {
     init_log();
 
     // L has one codec, and that is not matched by R. This should disable the m-line.
-    let (l, r) = negotiate(
+    let (l, r) = with_params(
         //
         &[vp8(100)],
         &[h264(96)],
-        MediaKind::Video,
-        Direction::SendRecv,
     );
 
     let mid = l.media_mids()[0];
@@ -136,14 +128,22 @@ pub fn answer_no_match() {
     // TODO: here we should check for the m-line being made inactive by setting the port to 0.
 }
 
-fn negotiate(
-    params_l: &[PayloadParams],
-    params_r: &[PayloadParams],
-    kind: MediaKind,
-    dir: Direction,
-) -> (Rtc, Rtc) {
-    let mut l = with_config(params_l);
-    let mut r = with_config(params_r);
+fn with_params(params_l: &[PayloadParams], params_r: &[PayloadParams]) -> (Rtc, Rtc) {
+    let mut l = build_params(params_l);
+    let mut r = build_params(params_r);
+
+    let kind = params_l
+        .first()
+        .map(|p| p.spec().codec.kind())
+        .unwrap_or(MediaKind::Audio);
+
+    negotiate(&mut l, &mut r, kind);
+
+    (l, r)
+}
+
+fn negotiate(l: &mut Rtc, r: &mut Rtc, kind: MediaKind) {
+    let dir = Direction::SendRecv;
 
     let (offer, pending) = {
         let span = info_span!("L");
@@ -165,11 +165,9 @@ fn negotiate(
         let _e = span.enter();
         l.sdp_api().accept_answer(pending, answer).unwrap();
     }
-
-    (l, r)
 }
 
-fn with_config(params: &[PayloadParams]) -> Rtc {
+fn build_params(params: &[PayloadParams]) -> Rtc {
     let mut b = Rtc::builder().clear_codecs();
     let config = b.codec_config();
     for p in params {
