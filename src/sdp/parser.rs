@@ -312,9 +312,10 @@ where
         optional(bandwidth_line()),             // b=AS:2500
         many::<Vec<_>, _, _>(media_attribute_line()),
     )
-        .and_then(|((typ, proto, pts), _, bw, attrs)| {
+        .and_then(|((typ, port, proto, pts), _, bw, attrs)| {
             let m = MediaLine {
                 typ,
+                disabled: port == "0",
                 proto,
                 pts,
                 bw,
@@ -340,7 +341,7 @@ where
 //
 // newer chrome:
 // m=application 9 UDP/DTLS/SCTP webrtc-datachannel
-fn media_line<Input>() -> impl Parser<Input, Output = (MediaType, Proto, Vec<Pt>)>
+fn media_line<Input>() -> impl Parser<Input, Output = (MediaType, String, Proto, Vec<Pt>)>
 where
     Input: Stream<Token = char>,
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
@@ -382,7 +383,7 @@ where
             )),
         ),
     )
-    .map(|(typ, _, _, _, proto, _, pts)| (typ, proto, pts))
+    .map(|(typ, _, port, _, proto, _, pts)| (typ, port, proto, pts))
 }
 
 /// a=foo:bar lines belonging before the first m= line
@@ -930,7 +931,10 @@ mod test {
         let m = media_line().parse("m=audio 9 UDP/TLS/RTP/SAVPF 10\r\n");
         assert_eq!(
             m,
-            Ok(((MediaType::Audio, Proto::Srtp, vec![10.into()],), ""))
+            Ok((
+                (MediaType::Audio, "9".into(), Proto::Srtp, vec![10.into()],),
+                ""
+            ))
         );
     }
 

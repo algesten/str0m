@@ -964,6 +964,7 @@ impl AsSdpMediaLine for (Mid, usize) {
 
         MediaLine {
             typ: sdp::MediaType::Application,
+            disabled: false,
             proto: Proto::Sctp,
             pts: vec![],
             bw: None,
@@ -1091,6 +1092,7 @@ impl AsSdpMediaLine for Media {
 
         MediaLine {
             typ: self.kind().into(),
+            disabled: false,
             proto: Proto::Srtp,
             pts,
             bw: None,
