@@ -74,6 +74,9 @@ impl<'a> Writer<'a> {
 
     /// Write media.
     ///
+    /// This operation fails if the PT doesn't match a negotiated codec, or the RID (`None` or a value)
+    /// does not match anything negotiated.
+    ///
     /// Regarding `wallclock` and `rtp_time`, the wallclock is the real world time that corresponds to
     /// the `MediaTime`. For an SFU, this can be hard to know, since RTP packets typically only
     /// contain the media time (RTP time). In the simplest SFU setup, the wallclock could simply
@@ -95,6 +98,12 @@ impl<'a> Writer<'a> {
 
         if !self.session.codec_config.has_pt(pt) {
             return Err(RtcError::UnknownPt(pt));
+        }
+
+        if let Some(rid) = self.rid {
+            if !media.expects_rid_rx(rid) && !media.expects_any_rid() {
+                return Err(RtcError::UnknownRid(rid));
+            }
         }
 
         let to_payload = ToPayload {

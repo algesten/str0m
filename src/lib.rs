@@ -610,6 +610,10 @@ pub enum RtcError {
     #[error("PT is unknown {0}")]
     UnknownPt(Pt),
 
+    /// The Rid attempted to write is not known.
+    #[error("RID is unknown {0}")]
+    UnknownRid(Rid),
+
     /// If MediaWriter.write fails because we can't find an SSRC to use.
     #[error("No sender source")]
     NoSenderSource,
