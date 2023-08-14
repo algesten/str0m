@@ -142,6 +142,7 @@ fn narrow_exts() {
     exts_r.set(14, TransportSequenceNumber);
     exts_r.set(12, AudioLevel);
 
+    // This negotiates a video track.
     let (l, r) = with_exts(exts_l, exts_r);
 
     let v_l: Vec<_> = l.exts().iter(false).collect();
@@ -154,9 +155,19 @@ fn narrow_exts() {
     assert_eq!(v_l, vec![(3, TransportSequenceNumber)]);
     assert_eq!(v_r, vec![(3, TransportSequenceNumber)]);
 
-    // L audio exts are left untouched (the defaults).
+    // L audio exts are left untouched (the defaults), also ones shared with video.
     // R audio exts are left untouched.
-    assert_eq!(a_l, vec![(1, AudioLevel), (3, TransportSequenceNumber)]);
+    assert_eq!(
+        a_l,
+        vec![
+            (1, AudioLevel),
+            (2, AbsoluteSendTime),
+            (3, TransportSequenceNumber),
+            (4, RtpMid),
+            (10, RtpStreamId),
+            (11, RepairedRtpStreamId)
+        ]
+    );
     assert_eq!(a_r, vec![(3, TransportSequenceNumber), (12, AudioLevel)]);
 }
 
