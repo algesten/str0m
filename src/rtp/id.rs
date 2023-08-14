@@ -77,7 +77,9 @@ macro_rules! str_id {
 
 macro_rules! num_id {
     ($id:ident, $t:ty) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[derive(
+            Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+        )]
         pub struct $id($t);
 
         impl $id {

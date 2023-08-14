@@ -1,5 +1,6 @@
 //! Media formats and parameters
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -25,7 +26,7 @@ pub use crate::packet::{CodecExtra, Vp8CodecExtra};
 /// a=rtcp-fb:96 nack pli
 /// a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PayloadParams {
     /// The payload type that groups these parameters.
     pub(crate) pt: Pt,
@@ -51,11 +52,12 @@ pub struct PayloadParams {
 
     /// Internal field whether the payload is matched to the remote. This is used in SDP
     /// negotiation.
+    #[serde(skip_serializing)]
     pub(crate) pt_matched_to_remote: bool,
 }
 
 /// Codec specification
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodecSpec {
     /// The codec identifier.
     pub codec: Codec,
@@ -72,7 +74,7 @@ pub struct CodecSpec {
 }
 
 /// Known codecs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 #[allow(missing_docs)]
 pub enum Codec {
@@ -98,7 +100,7 @@ pub enum Codec {
 }
 
 /// Codec specific format parameters.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct FormatParams {
     /// Opus specific parameter.
     ///
