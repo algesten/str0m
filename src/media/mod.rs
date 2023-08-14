@@ -43,7 +43,7 @@ pub struct Media {
     /// Once discovered, we make an entry in `stream_rx`.
     ///
     /// RTP level.
-    rids: Rids,
+    rids_rx: Rids,
 
     // ========================================= SDP level =========================================
     //
@@ -106,7 +106,7 @@ pub struct Media {
 }
 
 #[derive(Debug)]
-/// Config value for [`Media::rids()`]
+/// Config value for [`Media::rids_rx()`]
 pub enum Rids {
     /// Any Rid is allowed.
     ///
@@ -116,6 +116,19 @@ pub enum Rids {
     ///
     /// This is the default value for Simulcast configured via SDP.
     Specific(Vec<Rid>),
+}
+
+impl Rids {
+    pub(crate) fn expects(&self, rid: Rid) -> bool {
+        match self {
+            Rids::Any => true,
+            Rids::Specific(v) => v.contains(&rid),
+        }
+    }
+
+    pub(crate) fn is_specific(&self) -> bool {
+        matches!(self, Rids::Specific(_))
+    }
 }
 
 pub(crate) struct ToPayload {
@@ -153,14 +166,12 @@ impl Media {
     ///
     /// RTP level.
     pub fn expect_rid(&mut self, rid: Rid) {
-        if matches!(self.rids, Rids::Any) {
-            self.rids = Rids::Specific(vec![]);
-        }
-        let Rids::Specific(v) = &mut self.rids else {
-            panic!("Expected Rids::Specific");
-        };
-        if !v.contains(&rid) {
-            v.push(rid);
+        match &mut self.rids_rx {
+            rids @ Rids::Any => {
+                *rids = Rids::Specific(vec![rid]);
+            }
+            Rids::Specific(v) if !v.contains(&rid) => v.push(rid),
+            _ => {}
         }
     }
 
@@ -170,19 +181,8 @@ impl Media {
     /// that configures Simulcast where specific rids are expected.
     ///
     /// RTP level.
-    pub fn rids(&self) -> &Rids {
-        &self.rids
-    }
-
-    pub(crate) fn expects_rid(&self, rid: Rid) -> bool {
-        match &self.rids {
-            Rids::Any => true,
-            Rids::Specific(v) => v.contains(&rid),
-        }
-    }
-
-    pub(crate) fn expects_specific_rids(&self) -> bool {
-        matches!(self.rids, Rids::Specific(_))
+    pub fn rids_rx(&self) -> &Rids {
+        &self.rids_rx
     }
 
     pub(crate) fn index(&self) -> usize {
@@ -269,7 +269,8 @@ impl Media {
         let exists = self.depayloaders.contains_key(&key);
 
         if !exists {
-            // This unwrap is ok because we needed the clock_rate before unpayloading.
+            // This unwrap is ok, because the handle_input doesn't accept the RtpPacket for
+            // depayloading unless we have matched the PT to one in the session.
             let params = params.iter().find(|p| p.pt == pt).unwrap();
 
             let codec = params.spec.codec;
@@ -421,7 +422,7 @@ impl Default for Media {
             remote_pts: vec![],
             dir: Direction::SendRecv,
             simulcast: None,
-            rids: Rids::Any,
+            rids_rx: Rids::Any,
             payloaders: HashMap::new(),
             depayloaders: HashMap::new(),
             to_payload: None,

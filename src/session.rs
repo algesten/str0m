@@ -325,8 +325,8 @@ impl Session {
             // It's possible to send a MID header only. No RID.
             // Without RID header we use PT to decide whether the SSRC is for main/RTX.
             let Some(rid) = rid else {
-                if media.expects_specific_rids() {
-                    trace!("Media expects RID and RTP packet has only MID: {:?}", media.rids());
+                if media.rids_rx().is_specific() {
+                    trace!("Media expects RID and RTP packet has only MID: {:?}", media.rids_rx());
                     return None;
                 }
 
@@ -368,7 +368,7 @@ impl Session {
             let is_repair = header.ext_vals.rid_repair.is_some();
 
             // Check if the mid/rid combo is not expected
-            if !media.expects_rid(rid) {
+            if !media.rids_rx().expects(rid) {
                 trace!("Mid does not expect rid: {} {}", mid, rid);
             }
 

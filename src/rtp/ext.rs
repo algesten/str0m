@@ -189,11 +189,13 @@ impl Extension {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ExtensionMap([Option<MapEntry>; 14]); // index 0 is extmap:1.
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MapEntry {
     ext: Extension,
     enabled_audio: bool,
     enabled_video: bool,
+    locked_audio: bool,
+    locked_video: bool,
 }
 
 impl ExtensionMap {
@@ -240,6 +242,8 @@ impl ExtensionMap {
             ext,
             enabled_audio: ext.is_audio(),
             enabled_video: ext.is_video(),
+            locked_audio: false,
+            locked_video: false,
         };
 
         self.0[idx] = Some(m);
@@ -346,7 +350,7 @@ impl ExtensionMap {
     pub(crate) fn narrow(&mut self, remote_exts: &[(u8, Extension)], is_audio: bool) {
         // Match remote numbers, this does not remove any configured extension.
         for (id, ext) in remote_exts {
-            self.swap(*id, *ext);
+            self.swap(*id, *ext, is_audio);
         }
 
         let to_remove: Vec<_> = self
@@ -380,7 +384,7 @@ impl ExtensionMap {
         }
     }
 
-    fn swap(&mut self, id: u8, ext: Extension) {
+    fn swap(&mut self, id: u8, ext: Extension, is_audio: bool) {
         if id < 1 || id > 14 {
             return;
         }
@@ -397,14 +401,32 @@ impl ExtensionMap {
                 return;
             };
 
-        if new_index == old_index {
+        // Unwrap OK because index is checking just above.
+        let old = self.0[old_index].as_mut().unwrap();
+
+        let is_change = new_index != old_index;
+
+        // If either audio or video is locked, we got a previous extmap negotiation.
+        if is_change && (old.locked_audio || old.locked_video) {
+            warn!(
+                "Extmap locked by previous negotiation. Ignore change: {} -> {}",
+                old_index, new_index
+            );
             return;
         }
 
-        // swap them
-        let old = self.0[old_index].take();
-        self.0[old_index] = self.0[new_index].take();
-        self.0[new_index] = old;
+        // Locking must be done regardless of whether there was an actual change.
+        if is_audio {
+            old.locked_audio = true;
+        } else {
+            old.locked_video = true;
+        }
+
+        if !is_change {
+            return;
+        }
+
+        self.0.swap(old_index, new_index);
     }
 }
 
@@ -831,12 +853,13 @@ mod test {
 
         println!("{:?}", e1.iter(false).collect::<Vec<_>>());
 
-        let correct = vec![(14, TransportSequenceNumber)];
-
         e1.narrow(&e2.iter(true).collect::<Vec<_>>(), true);
 
-        assert_eq!(e1.iter(true).collect::<Vec<_>>(), correct);
-        assert_eq!(e2.iter(true).collect::<Vec<_>>(), correct);
+        // e1 should have adjusted to e2.
+        assert_eq!(
+            e1.iter(true).collect::<Vec<_>>(),
+            vec![(14, TransportSequenceNumber)]
+        );
 
         // Ensure narrowing hasn't affected the video extensions
         assert_eq!(
@@ -866,12 +889,9 @@ mod test {
 
         e1.narrow(&e2.iter(false).collect::<Vec<_>>(), false);
 
+        // e1 should have adjusted to e2.
         assert_eq!(
             e1.iter(false).collect::<Vec<_>>(),
-            vec![(12, VideoOrientation), (14, TransportSequenceNumber)]
-        );
-        assert_eq!(
-            e2.iter(false).collect::<Vec<_>>(),
             vec![(12, VideoOrientation), (14, TransportSequenceNumber)]
         );
     }
@@ -889,12 +909,46 @@ mod test {
 
         e1.narrow(&e2.iter(false).collect::<Vec<_>>(), false);
 
+        // just make sure the logic isn't wrong for 12-14 -> 14-12
         assert_eq!(
             e1.iter(false).collect::<Vec<_>>(),
             vec![(12, VideoOrientation), (14, TransportSequenceNumber)]
         );
+    }
+
+    #[test]
+    fn narrow_exts_illegal() {
+        use Extension::*;
+
+        let mut e1 = ExtensionMap::empty();
+        e1.set(12, TransportSequenceNumber);
+        e1.set(14, VideoOrientation);
+
+        let mut e2 = ExtensionMap::empty();
+        e2.set(14, TransportSequenceNumber);
+        e2.set(12, VideoOrientation);
+
+        let mut e3 = ExtensionMap::empty();
+        // Illegal change of already negotiated/locked number
+        e3.set(1, TransportSequenceNumber);
+        e3.set(12, AudioLevel); // change of type for existing.
+
+        // First apply e2
+        e1.narrow(&e2.iter(false).collect::<Vec<_>>(), false);
+
+        println!("{:#?}", e1.0);
         assert_eq!(
-            e2.iter(false).collect::<Vec<_>>(),
+            e1.iter(false).collect::<Vec<_>>(),
+            vec![(12, VideoOrientation), (14, TransportSequenceNumber)]
+        );
+
+        // Now attempt e3
+        e1.narrow(&e3.iter(true).collect::<Vec<_>>(), true);
+
+        println!("{:#?}", e1.0);
+        // At this point we should have not allowed the change, but remain as it was in first apply.
+        assert_eq!(
+            e1.iter(false).collect::<Vec<_>>(),
             vec![(12, VideoOrientation), (14, TransportSequenceNumber)]
         );
     }

@@ -79,6 +79,11 @@ impl Sdp {
     }
 
     fn do_assert_consistency(&self) -> Option<String> {
+        // TODO: SDP assertions we need to make:
+        // 1. Ensure that every m-line has the same PT configuration for a codec. I.e. if FIR is enabled
+        //    for PT 96 in one m-line it must be in all m-lines.
+        // 2. Compare with previous m-lines that remote isn't narrowing/expanding PT and/or extmaps.
+
         let group = self
             .session
             .attrs

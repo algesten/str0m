@@ -64,7 +64,7 @@ impl<'a> SdpApi<'a> {
     /// let json_answer = serde_json::to_vec(&answer).unwrap();
     /// ```
     pub fn accept_offer(self, offer: SdpOffer) -> Result<SdpAnswer, RtcError> {
-        info!("Accept offer");
+        debug!("Accept offer");
 
         // Invalidate any outstanding PendingOffer.
         self.rtc.next_change_id();
@@ -104,7 +104,7 @@ impl<'a> SdpApi<'a> {
         let params = AsSdpParams::new(self.rtc, None);
         let sdp = as_sdp(&self.rtc.session, params);
 
-        info!("Create answer");
+        debug!("Create answer");
         Ok(sdp.into())
     }
 
@@ -134,7 +134,7 @@ impl<'a> SdpApi<'a> {
         mut pending: SdpPendingOffer,
         answer: SdpAnswer,
     ) -> Result<(), RtcError> {
-        info!("Accept answer");
+        debug!("Accept answer");
 
         // Ensure we don't use the wrong changes below. We must use that of pending.
         drop(self.changes);
@@ -370,10 +370,10 @@ impl<'a> SdpApi<'a> {
                 change_id,
                 changes: self.changes,
             };
-            info!("Create offer");
+            debug!("Create offer");
             Some((offer, pending))
         } else {
-            info!("Apply direct changes");
+            debug!("Apply direct changes");
             apply_direct_changes(self.rtc, self.changes);
             None
         }
@@ -832,7 +832,7 @@ fn update_session(session: &mut Session, sdp: &Sdp) {
     let old = session.exts;
 
     if old != session.exts {
-        info!("Updated session extensions: {:?}", session.exts);
+        debug!("Updated session extensions: {:?}", session.exts);
     }
 
     // Does any m-line contain a a=rtcp-fb:xx transport-cc?
@@ -898,7 +898,7 @@ fn update_media(media: &mut Media, m: &MediaLine, config: &mut CodecConfig, stre
 
     for i in main {
         // TODO: If the remote is communicating _BOTH_ rid and a=ssrc this will fail.
-        info!("Adding SSRC: {:?}", i);
+        info!("Adding pre-communicated SSRC: {:?}", i);
         let repair_ssrc = infos
             .iter()
             .find(|r| r.repairs == Some(i.ssrc))
