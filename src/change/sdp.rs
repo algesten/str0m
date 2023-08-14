@@ -356,6 +356,10 @@ impl<'a> SdpApi<'a> {
     /// assert!(changes.apply().is_none());
     /// ```
     pub fn apply(self) -> Option<(SdpOffer, SdpPendingOffer)> {
+        if self.changes.is_empty() {
+            return None;
+        }
+
         let change_id = self.rtc.next_change_id();
 
         let requires_negotiation = self.changes.0.iter().any(requires_negotiation);
