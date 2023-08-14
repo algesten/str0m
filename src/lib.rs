@@ -1038,12 +1038,7 @@ impl Rtc {
             panic!("In rtp_mode use direct_api().stream_tx().write_rtp()");
         }
 
-        let media = self.session.media_by_mid_mut(mid)?;
-
-        if !media.direction().is_sending() {
-            debug!("No Writer for non-sending Media: {}", mid);
-            return None;
-        }
+        self.session.media_by_mid_mut(mid)?;
 
         Some(Writer::new(&mut self.session, mid))
     }
