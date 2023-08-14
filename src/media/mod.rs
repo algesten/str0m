@@ -105,6 +105,7 @@ pub struct Media {
     pub(crate) app_tmp: bool,
 }
 
+#[derive(Debug)]
 /// Config value for [`Media::rids()`]
 pub enum Rids {
     /// Any Rid is allowed.
