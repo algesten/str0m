@@ -101,7 +101,7 @@ impl<'a> Writer<'a> {
         }
 
         if let Some(rid) = self.rid {
-            if !media.expects_rid_rx(rid) && !media.expects_any_rid() {
+            if !media.rids_rx().expects(rid) && media.rids_rx().is_specific() {
                 return Err(RtcError::UnknownRid(rid));
             }
         }
