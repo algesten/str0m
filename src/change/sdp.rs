@@ -803,7 +803,7 @@ fn add_new_lines(
             session.codec_config.update_params(&m.rtp_params());
 
             // Narrow the agreed on extmaps.
-            session.exts.narrow(&m.extmaps(), media.kind());
+            session.exts.narrow(&m.extmaps(), media.kind().is_audio());
 
             update_media(
                 &mut media,

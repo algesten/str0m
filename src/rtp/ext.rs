@@ -1,8 +1,6 @@
 use std::fmt;
 use std::str::from_utf8;
 
-use crate::media::MediaKind;
-
 use super::mtime::MediaTime;
 use super::{Mid, Rid};
 
@@ -189,7 +187,14 @@ impl Extension {
 
 /// Mapping between RTP extension id to what extension that is.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct ExtensionMap([Option<Extension>; 14]);
+pub struct ExtensionMap([Option<MapEntry>; 14]); // index 0 is extmap:1.
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct MapEntry {
+    ext: Extension,
+    enabled_audio: bool,
+    enabled_video: bool,
+}
 
 impl ExtensionMap {
     /// Create an empty map.
@@ -230,7 +235,14 @@ impl ExtensionMap {
             return;
         }
         let idx = id as usize - 1;
-        self.0[idx] = Some(ext);
+
+        let m = MapEntry {
+            ext,
+            enabled_audio: ext.is_audio(),
+            enabled_video: ext.is_video(),
+        };
+
+        self.0[idx] = Some(m);
     }
 
     /// Look up the extension for the id.
@@ -238,7 +250,7 @@ impl ExtensionMap {
     /// The id must be 1-14 inclusive (1-indexed).
     pub fn lookup(&self, id: u8) -> Option<Extension> {
         if id >= 1 && id <= 14 {
-            self.0[id as usize - 1]
+            self.0[id as usize - 1].map(|m| m.ext)
         } else {
             debug!("Lookup RTP extension out of range 1-14: {}", id);
             None
@@ -251,7 +263,7 @@ impl ExtensionMap {
     pub fn id_of(&self, e: Extension) -> Option<u8> {
         self.0
             .iter()
-            .position(|x| *x == Some(e))
+            .position(|x| x.map(|e| e.ext) == Some(e))
             .map(|p| p as u8 + 1)
     }
 
@@ -263,8 +275,14 @@ impl ExtensionMap {
             .iter()
             .enumerate()
             .filter_map(|(i, e)| e.as_ref().map(|e| (i, e)))
-            .filter(move |(_, e)| if audio { e.is_audio() } else { e.is_video() })
-            .map(|(i, e)| ((i + 1) as u8, *e))
+            .filter(move |(_, e)| {
+                if audio {
+                    e.enabled_audio
+                } else {
+                    e.enabled_video
+                }
+            })
+            .map(|(i, e)| ((i + 1) as u8, e.ext))
     }
 
     // https://tools.ietf.org/html/rfc5285
@@ -313,7 +331,7 @@ impl ExtensionMap {
 
         for (idx, x) in self.0.iter().enumerate() {
             if let Some(v) = x {
-                if let Some(n) = v.write_to(&mut b[1..], ev) {
+                if let Some(n) = v.ext.write_to(&mut b[1..], ev) {
                     assert!(n <= 16);
                     assert!(n > 0);
                     b[0] = (idx as u8 + 1) << 4 | (n as u8 - 1);
@@ -325,7 +343,7 @@ impl ExtensionMap {
         orig_len - b.len()
     }
 
-    pub(crate) fn narrow(&mut self, remote_exts: &[(u8, Extension)], kind: MediaKind) {
+    pub(crate) fn narrow(&mut self, remote_exts: &[(u8, Extension)], is_audio: bool) {
         // Match remote numbers, this does not remove any configured extension.
         for (id, ext) in remote_exts {
             self.swap(*id, *ext);
@@ -333,7 +351,7 @@ impl ExtensionMap {
 
         let to_remove: Vec<_> = self
             // Only consider matching video or audio extensions
-            .iter(kind.is_audio())
+            .iter(is_audio)
             .filter(|(_, ext)| {
                 let in_remote = remote_exts.iter().any(|r| r.1 == *ext);
                 // Remove ones _not_ in remote.
@@ -343,8 +361,22 @@ impl ExtensionMap {
             .collect();
 
         for id in to_remove {
-            let idx = id - 1;
-            self.0[idx as usize] = None;
+            let idx = id as usize - 1;
+
+            // Unwrap is ok because to_remove only has existing ids
+            let m = self.0[idx].as_mut().unwrap();
+
+            // Turn off this extension for either audio or video.
+            if is_audio {
+                m.enabled_audio = false;
+            } else {
+                m.enabled_video = false;
+            }
+
+            // If completely turned off, remove from map.
+            if !m.enabled_audio && !m.enabled_video {
+                self.0[idx] = None;
+            }
         }
     }
 
@@ -360,7 +392,7 @@ impl ExtensionMap {
             .0
             .iter()
             .enumerate()
-            .find(|(_, m)| **m == Some(ext))
+            .find(|(_, m)| m.map(|m| m.ext) == Some(ext))
             .map(|(i, _)| i) else {
                 return;
             };
@@ -370,8 +402,9 @@ impl ExtensionMap {
         }
 
         // swap them
+        let old = self.0[old_index].take();
         self.0[old_index] = self.0[new_index].take();
-        self.0[new_index] = Some(ext);
+        self.0[new_index] = old;
     }
 }
 
@@ -713,7 +746,7 @@ impl fmt::Debug for ExtensionMap {
             .iter()
             .enumerate()
             .filter_map(|(i, v)| v.map(|v| (i + 1, v)))
-            .map(|(i, v)| format!("{i}={v}"))
+            .map(|(i, v)| format!("{}={}", i, v.ext))
             .collect::<Vec<_>>()
             .join(", ");
         write!(f, "{joined}")?;
@@ -753,7 +786,7 @@ mod test {
     #[test]
     fn abs_send_time() {
         let mut exts = ExtensionMap::empty();
-        exts.0[3] = Some(Extension::AbsoluteSendTime);
+        exts.set(4, Extension::AbsoluteSendTime);
         let ev = ExtensionValues {
             abs_send_time: Some(MediaTime::new(1, FIXED_POINT_6_18)),
             ..Default::default()
@@ -771,7 +804,7 @@ mod test {
     #[test]
     fn playout_delay() {
         let mut exts = ExtensionMap::empty();
-        exts.0[1] = Some(Extension::PlayoutDelay);
+        exts.set(2, Extension::PlayoutDelay);
         let ev = ExtensionValues {
             play_delay_min: Some(MediaTime::new(100, 100)),
             play_delay_max: Some(MediaTime::new(200, 100)),
@@ -796,12 +829,27 @@ mod test {
         let mut e2 = ExtensionMap::empty();
         e2.set(14, TransportSequenceNumber);
 
+        println!("{:?}", e1.iter(false).collect::<Vec<_>>());
+
         let correct = vec![(14, TransportSequenceNumber)];
 
-        e1.narrow(&e2.iter(true).collect::<Vec<_>>(), MediaKind::Audio);
+        e1.narrow(&e2.iter(true).collect::<Vec<_>>(), true);
 
         assert_eq!(e1.iter(true).collect::<Vec<_>>(), correct);
         assert_eq!(e2.iter(true).collect::<Vec<_>>(), correct);
+
+        // Ensure narrowing hasn't affected the video extensions
+        assert_eq!(
+            e1.iter(false).collect::<Vec<_>>(),
+            vec![
+                (2, AbsoluteSendTime),
+                (4, RtpMid),
+                (10, RtpStreamId),
+                (11, RepairedRtpStreamId),
+                (13, VideoOrientation),
+                (14, TransportSequenceNumber),
+            ]
+        );
     }
 
     #[test]
@@ -816,7 +864,7 @@ mod test {
         e2.set(14, TransportSequenceNumber);
         e2.set(12, VideoOrientation);
 
-        e1.narrow(&e2.iter(false).collect::<Vec<_>>(), MediaKind::Video);
+        e1.narrow(&e2.iter(false).collect::<Vec<_>>(), false);
 
         assert_eq!(
             e1.iter(false).collect::<Vec<_>>(),
@@ -839,7 +887,7 @@ mod test {
         e2.set(14, TransportSequenceNumber);
         e2.set(12, VideoOrientation);
 
-        e1.narrow(&e2.iter(false).collect::<Vec<_>>(), MediaKind::Video);
+        e1.narrow(&e2.iter(false).collect::<Vec<_>>(), false);
 
         assert_eq!(
             e1.iter(false).collect::<Vec<_>>(),
