@@ -1011,9 +1011,7 @@ impl Rtc {
     ///
     /// This function does not send data that is already RTP packetized.
     ///
-    /// This operation fails if the current [`Media::direction()`] does not allow sending, the
-    /// PT doesn't match a negotiated codec, or the RID (`None` or a value) does not match
-    /// anything negotiated.
+    /// Returns `None` if the direction isn't sending (`sendrecv` or `sendonly`).
     ///
     /// ```no_run
     /// # use str0m::Rtc;
@@ -1039,7 +1037,14 @@ impl Rtc {
         if self.session.rtp_mode {
             panic!("In rtp_mode use direct_api().stream_tx().write_rtp()");
         }
-        self.session.media_by_mid_mut(mid)?;
+
+        let media = self.session.media_by_mid_mut(mid)?;
+
+        if !media.direction().is_sending() {
+            debug!("No Writer for non-sending Media: {}", mid);
+            return None;
+        }
+
         Some(Writer::new(&mut self.session, mid))
     }
 
