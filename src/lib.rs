@@ -377,7 +377,8 @@
 //!
 //! RTP mode gives us some new API points.
 //!
-//! 1. [`Event::RtpPacket`] emitted for every incoming RTP packet.
+//! 1. [`Event::RtpPacket`] emitted for every incoming RTP packet. Empty packets for bandwidth
+//!    estimation are silently discarded.
 //! 2. [`StreamTx::write_rtp`][crate::rtp::StreamTx::write_rtp] to write outgoing RTP packets.
 //! 3. [`StreamRx::request_keyframe`][crate::rtp::StreamRx::request_keyframe] to request keyframes from remote.
 //!
@@ -450,11 +451,24 @@
 //! retained and owned by the caller. This pattern is fine for garbage
 //! collected or reference counted languages, but not great with Rust.
 //!
-//! ```text
-//! Dec 18 11:33:06.850  INFO str0m: MediaData(MediaData { mid: Mid(0), pt: Pt(104), time: MediaTime(3099135646, 90000), len: 1464 })
-//! Dec 18 11:33:06.867  INFO str0m: MediaData(MediaData { mid: Mid(0), pt: Pt(104), time: MediaTime(3099138706, 90000), len: 1093 })
-//! Dec 18 11:33:06.907  INFO str0m: MediaData(MediaData { mid: Mid(0), pt: Pt(104), time: MediaTime(3099141676, 90000), len: 1202 })
-//!```
+//! ## Panics, Errors and unwraps
+//!
+//! Rust adheres to [fail-last][ff]. That means rather than brushing state
+//! bugs under the carpet, it panics. We make a distinction between errors and
+//! bugs.
+//!
+//! * Errors are as a result of incorrect or impossible to understand user input.
+//! * Bugs are broken internal invariants (assumptions).
+//!
+//! If you scan the str0m code you find a few `unwrap()` (or `expect()`). These
+//! will (should) always be accompanied by a code comment that explains why the
+//! unwrap is okay. This is an internal invariant, a state assumption that
+//! str0m is responsible for maintaining.
+//!
+//!
+//!
+//! *panic means bug*
+//!
 //!
 //! [sansio]:     https://sans-io.readthedocs.io
 //! [quinn]:      https://github.com/quinn-rs/quinn
@@ -467,6 +481,7 @@
 //! [x-post]:     https://github.com/algesten/str0m/blob/main/examples/http-post.rs
 //! [x-chat]:     https://github.com/algesten/str0m/blob/main/examples/chat.rs
 //! [intg]:       https://github.com/algesten/str0m/blob/main/tests/unidirectional.rs#L12
+//! [ff]:         https://en.wikipedia.org/wiki/Fail-fast
 
 #![forbid(unsafe_code)]
 #![allow(clippy::new_without_default)]
