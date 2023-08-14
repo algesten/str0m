@@ -572,8 +572,6 @@ impl LeakyBucketPacer {
             .iter()
             .filter(|q| q.use_for_padding)
             .max_by_key(|q| q.snapshot.last_emitted) else {
-                debug!("Wanted to generate padding, but no queue supports it.");
-
                 return None;
             };
 
