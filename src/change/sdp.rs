@@ -896,14 +896,21 @@ fn update_media(media: &mut Media, m: &MediaLine, config: &mut CodecConfig, stre
 
     let main = infos.iter().filter(|i| i.repairs.is_none());
 
-    for i in main {
-        // TODO: If the remote is communicating _BOTH_ rid and a=ssrc this will fail.
-        info!("Adding pre-communicated SSRC: {:?}", i);
-        let repair_ssrc = infos
-            .iter()
-            .find(|r| r.repairs == Some(i.ssrc))
-            .map(|r| r.ssrc);
-        streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), None);
+    if m.simulcast().is_none() {
+        // Only use pre-communicated SSRC if we are running without simulcast.
+        // We found a bug in FF where the order of the simulcast lines does not
+        // correspond to the order of the simulcast declarations. In this case
+        // it's better to fall back on mid/rid dynamic mapping.
+
+        for i in main {
+            // TODO: If the remote is communicating _BOTH_ rid and a=ssrc this will fail.
+            info!("Adding pre-communicated SSRC: {:?}", i);
+            let repair_ssrc = infos
+                .iter()
+                .find(|r| r.repairs == Some(i.ssrc))
+                .map(|r| r.ssrc);
+            streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), None);
+        }
     }
 
     // Simulcast configuration
