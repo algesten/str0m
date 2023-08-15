@@ -268,6 +268,7 @@ impl<'a> SdpApi<'a> {
 
             // Added later
             pts: vec![],
+            exts: ExtensionMap::empty(),
             index: 0,
         };
 
@@ -430,6 +431,7 @@ pub(crate) struct AddMedia {
     // The default PT order is set by the Session (BUNDLE).
     // TODO: We can make this configurable here too.
     pub pts: Vec<Pt>,
+    pub exts: ExtensionMap,
     pub index: usize,
 }
 
@@ -523,7 +525,7 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
         // If there are additions in the pending changes, prepend them now.
         if let Some(pending) = params.pending {
             new_lines = pending
-                .as_new_medias(new_index_start, &session.codec_config)
+                .as_new_medias(new_index_start, &session.codec_config, &session.exts)
                 .collect();
         }
 
@@ -799,13 +801,13 @@ fn add_new_lines(
             let mut media = Media::from_remote_media_line(m, idx);
             media.need_open_event = need_open_event;
 
-            // Match/narrow remote params.
+            // Match/remap remote params.
             session
                 .codec_config
                 .update_params(&m.rtp_params(), m.direction());
 
-            // Narrow the agreed on extmaps.
-            session.exts.narrow(&m.extmaps(), media.kind().is_audio());
+            // Remap the extension to that of the answer.
+            session.exts.remap(&m.extmaps());
 
             update_media(
                 &mut media,
@@ -889,6 +891,12 @@ fn update_media(media: &mut Media, m: &MediaLine, config: &mut CodecConfig, stre
         .filter_map(|p| config.sdp_match_remote(p, m.direction()))
         .collect();
     media.set_remote_pts(pts);
+
+    let mut exts = ExtensionMap::empty();
+    for (id, ext) in m.extmaps().into_iter() {
+        exts.set(id, ext);
+    }
+    media.set_remote_extmap(exts);
 
     // SSRC changes
     // This will always be for ReceiverSource since any incoming a=ssrc line will be
@@ -1002,7 +1010,7 @@ impl AsSdpMediaLine for Media {
         attrs.push(MediaAttribute::Mid(self.mid()));
 
         let audio = self.kind() == MediaKind::Audio;
-        for (id, ext) in exts.iter(audio) {
+        for (id, ext) in self.remote_extmap().iter(audio) {
             attrs.push(MediaAttribute::ExtMap { id, ext });
         }
 
@@ -1245,11 +1253,12 @@ impl Changes {
         &'a self,
         index_start: usize,
         config: &'b CodecConfig,
+        exts: &'b ExtensionMap,
     ) -> impl Iterator<Item = Media> + '_ {
         self.0
             .iter()
             .enumerate()
-            .filter_map(move |(idx, c)| c.as_new_media(index_start + idx, config))
+            .filter_map(move |(idx, c)| c.as_new_media(index_start + idx, config, exts))
     }
 
     pub(crate) fn apply_to(&self, lines: &mut [MediaLine]) {
@@ -1286,13 +1295,19 @@ impl Changes {
 }
 
 impl Change {
-    fn as_new_media(&self, index: usize, config: &CodecConfig) -> Option<Media> {
+    fn as_new_media(
+        &self,
+        index: usize,
+        config: &CodecConfig,
+        exts: &ExtensionMap,
+    ) -> Option<Media> {
         use Change::*;
         match self {
             AddMedia(v) => {
                 // TODO can we avoid all this cloning?
                 let mut add = v.clone();
                 add.pts = config.all_for_kind(v.kind).map(|p| p.pt()).collect();
+                add.exts = exts.cloned_with_type(v.kind.is_audio());
                 add.index = index;
 
                 Some(Media::from_add_media(add))

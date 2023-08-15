@@ -192,10 +192,7 @@ pub struct ExtensionMap([Option<MapEntry>; 14]); // index 0 is extmap:1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MapEntry {
     ext: Extension,
-    enabled_audio: bool,
-    enabled_video: bool,
-    locked_audio: bool,
-    locked_video: bool,
+    locked: bool,
 }
 
 impl ExtensionMap {
@@ -238,13 +235,7 @@ impl ExtensionMap {
         }
         let idx = id as usize - 1;
 
-        let m = MapEntry {
-            ext,
-            enabled_audio: ext.is_audio(),
-            enabled_video: ext.is_video(),
-            locked_audio: false,
-            locked_video: false,
-        };
+        let m = MapEntry { ext, locked: false };
 
         self.0[idx] = Some(m);
     }
@@ -281,12 +272,20 @@ impl ExtensionMap {
             .filter_map(|(i, e)| e.as_ref().map(|e| (i, e)))
             .filter(move |(_, e)| {
                 if audio {
-                    e.enabled_audio
+                    e.ext.is_audio()
                 } else {
-                    e.enabled_video
+                    e.ext.is_video()
                 }
             })
             .map(|(i, e)| ((i + 1) as u8, e.ext))
+    }
+
+    pub(crate) fn cloned_with_type(&self, audio: bool) -> Self {
+        let mut x = ExtensionMap::empty();
+        for (id, ext) in self.iter(audio) {
+            x.set(id, ext);
+        }
+        x
     }
 
     // https://tools.ietf.org/html/rfc5285
@@ -347,44 +346,14 @@ impl ExtensionMap {
         orig_len - b.len()
     }
 
-    pub(crate) fn narrow(&mut self, remote_exts: &[(u8, Extension)], is_audio: bool) {
-        // Match remote numbers, this does not remove any configured extension.
+    pub(crate) fn remap(&mut self, remote_exts: &[(u8, Extension)]) {
+        // Match remote numbers and lock down those we see for the first time.
         for (id, ext) in remote_exts {
-            self.swap(*id, *ext, is_audio);
-        }
-
-        let to_remove: Vec<_> = self
-            // Only consider matching video or audio extensions
-            .iter(is_audio)
-            .filter(|(_, ext)| {
-                let in_remote = remote_exts.iter().any(|r| r.1 == *ext);
-                // Remove ones _not_ in remote.
-                !in_remote
-            })
-            .map(|(id, _)| id)
-            .collect();
-
-        for id in to_remove {
-            let idx = id as usize - 1;
-
-            // Unwrap is ok because to_remove only has existing ids
-            let m = self.0[idx].as_mut().unwrap();
-
-            // Turn off this extension for either audio or video.
-            if is_audio {
-                m.enabled_audio = false;
-            } else {
-                m.enabled_video = false;
-            }
-
-            // If completely turned off, remove from map.
-            if !m.enabled_audio && !m.enabled_video {
-                self.0[idx] = None;
-            }
+            self.swap(*id, *ext);
         }
     }
 
-    fn swap(&mut self, id: u8, ext: Extension, is_audio: bool) {
+    fn swap(&mut self, id: u8, ext: Extension) {
         if id < 1 || id > 14 {
             return;
         }
@@ -407,7 +376,7 @@ impl ExtensionMap {
         let is_change = new_index != old_index;
 
         // If either audio or video is locked, we got a previous extmap negotiation.
-        if is_change && (old.locked_audio || old.locked_video) {
+        if is_change && old.locked {
             warn!(
                 "Extmap locked by previous negotiation. Ignore change: {} -> {}",
                 old_index, new_index
@@ -416,11 +385,7 @@ impl ExtensionMap {
         }
 
         // Locking must be done regardless of whether there was an actual change.
-        if is_audio {
-            old.locked_audio = true;
-        } else {
-            old.locked_video = true;
-        }
+        old.locked = true;
 
         if !is_change {
             return;
@@ -844,7 +809,7 @@ mod test {
     }
 
     #[test]
-    fn narrow_exts_audio() {
+    fn remap_exts_audio() {
         use Extension::*;
 
         let mut e1 = ExtensionMap::standard();
@@ -853,15 +818,22 @@ mod test {
 
         println!("{:?}", e1.iter(false).collect::<Vec<_>>());
 
-        e1.narrow(&e2.iter(true).collect::<Vec<_>>(), true);
+        e1.remap(&e2.iter(true).collect::<Vec<_>>());
 
-        // e1 should have adjusted to e2.
+        // e1 should have adjusted the TransportSequenceNumber for audio
         assert_eq!(
             e1.iter(true).collect::<Vec<_>>(),
-            vec![(14, TransportSequenceNumber)]
+            vec![
+                (1, AudioLevel),
+                (2, AbsoluteSendTime),
+                (4, RtpMid),
+                (10, RtpStreamId),
+                (11, RepairedRtpStreamId),
+                (14, TransportSequenceNumber)
+            ]
         );
 
-        // Ensure narrowing hasn't affected the video extensions
+        // e1 should have adjusted the TransportSequenceNumber for vudeo
         assert_eq!(
             e1.iter(false).collect::<Vec<_>>(),
             vec![
@@ -876,7 +848,7 @@ mod test {
     }
 
     #[test]
-    fn narrow_exts_video() {
+    fn remap_exts_video() {
         use Extension::*;
 
         let mut e1 = ExtensionMap::empty();
@@ -887,17 +859,21 @@ mod test {
         e2.set(14, TransportSequenceNumber);
         e2.set(12, VideoOrientation);
 
-        e1.narrow(&e2.iter(false).collect::<Vec<_>>(), false);
+        e1.remap(&e2.iter(false).collect::<Vec<_>>());
 
         // e1 should have adjusted to e2.
         assert_eq!(
             e1.iter(false).collect::<Vec<_>>(),
-            vec![(12, VideoOrientation), (14, TransportSequenceNumber)]
+            vec![
+                (5, VideoContentType),
+                (12, VideoOrientation),
+                (14, TransportSequenceNumber)
+            ]
         );
     }
 
     #[test]
-    fn narrow_exts_swaparoo() {
+    fn remap_exts_swaparoo() {
         use Extension::*;
 
         let mut e1 = ExtensionMap::empty();
@@ -907,7 +883,7 @@ mod test {
         e2.set(14, TransportSequenceNumber);
         e2.set(12, VideoOrientation);
 
-        e1.narrow(&e2.iter(false).collect::<Vec<_>>(), false);
+        e1.remap(&e2.iter(false).collect::<Vec<_>>());
 
         // just make sure the logic isn't wrong for 12-14 -> 14-12
         assert_eq!(
@@ -917,7 +893,7 @@ mod test {
     }
 
     #[test]
-    fn narrow_exts_illegal() {
+    fn remap_exts_illegal() {
         use Extension::*;
 
         let mut e1 = ExtensionMap::empty();
@@ -934,7 +910,7 @@ mod test {
         e3.set(12, AudioLevel); // change of type for existing.
 
         // First apply e2
-        e1.narrow(&e2.iter(false).collect::<Vec<_>>(), false);
+        e1.remap(&e2.iter(false).collect::<Vec<_>>());
 
         println!("{:#?}", e1.0);
         assert_eq!(
@@ -943,7 +919,7 @@ mod test {
         );
 
         // Now attempt e3
-        e1.narrow(&e3.iter(true).collect::<Vec<_>>(), true);
+        e1.remap(&e3.iter(true).collect::<Vec<_>>());
 
         println!("{:#?}", e1.0);
         // At this point we should have not allowed the change, but remain as it was in first apply.

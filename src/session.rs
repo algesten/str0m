@@ -712,7 +712,8 @@ impl Session {
         let stream = self.streams.stream_tx_by_mid_rid(media.mid(), None)?;
 
         let params = &self.codec_config;
-        let receipt = stream.poll_packet(now, &self.exts, &mut self.twcc, params, buf)?;
+        let exts = media.remote_extmap();
+        let receipt = stream.poll_packet(now, exts, &mut self.twcc, params, buf)?;
 
         let PacketReceipt {
             header,
