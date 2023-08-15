@@ -9,6 +9,7 @@ use crate::media::KeyframeRequest;
 use crate::media::KeyframeRequestKind;
 use crate::media::Media;
 use crate::media::{MediaAdded, MediaChanged};
+use crate::packet::QueueState;
 use crate::packet::SendSideBandwithEstimator;
 use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
 use crate::rtp::StreamPaused;
@@ -96,6 +97,9 @@ pub(crate) struct Session {
 
     /// Whether we are running in RTP-mode.
     pub rtp_mode: bool,
+
+    /// Slows down the queue state updates.
+    queue_state_packer: QueueStateThrottle,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -166,6 +170,7 @@ impl Session {
             pending_packet: None,
             ice_lite: config.ice_lite,
             rtp_mode: config.rtp_mode,
+            queue_state_packer: QueueStateThrottle::new(),
         }
     }
 
@@ -238,7 +243,10 @@ impl Session {
     fn update_queue_state(&mut self, now: Instant) {
         let iter = self.streams.streams_tx().map(|m| m.queue_state(now));
 
-        let Some(padding_request) = self.pacer.handle_timeout(now, iter) else {
+        // This only uses the above iterator at fixed intervals and caches the result in-between.
+        let iter_paced = self.queue_state_packer.throttled(now, iter);
+
+        let Some(padding_request) = self.pacer.handle_timeout(now, iter_paced) else {
             return;
         };
 
@@ -717,6 +725,9 @@ impl Session {
 
         self.pacer.register_send(now, payload_size.into(), mid);
 
+        // After sending we need a fresh queue state.
+        self.queue_state_packer.need_state_now();
+
         let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
         self.twcc_tx_register
@@ -972,4 +983,37 @@ fn main_payload_type_for(c: &CodecConfig, pt: Pt) -> Option<Pt> {
     let p = c.iter().find(|p| p.pt == pt || p.resend == Some(pt))?;
 
     Some(p.pt)
+}
+
+const QUEUE_STATE_THROTTLE: Duration = Duration::from_millis(50);
+
+#[derive(Debug)]
+struct QueueStateThrottle {
+    states: Vec<QueueState>,
+    last_refresh: Instant,
+}
+
+impl QueueStateThrottle {
+    pub fn new() -> Self {
+        Self {
+            states: vec![],
+            last_refresh: already_happened(),
+        }
+    }
+
+    pub fn throttled(
+        &mut self,
+        now: Instant,
+        iter: impl Iterator<Item = QueueState>,
+    ) -> impl Iterator<Item = QueueState> + '_ {
+        if now >= self.last_refresh + QUEUE_STATE_THROTTLE {
+            self.states.clear();
+            self.states.extend(iter);
+        }
+        self.states.iter().cloned()
+    }
+
+    pub fn need_state_now(&mut self) {
+        self.last_refresh = already_happened();
+    }
 }
