@@ -798,9 +798,17 @@ fn add_new_lines(
         if m.typ.is_media() {
             let mut media = Media::from_remote_media_line(m, idx);
             media.need_open_event = need_open_event;
+            // If this was for a sendonly m-line in the offer the Pts are merely a suggestion, we SHOULD attempt
+            // to match these.
+            // The check here is inverted because `Media::direction` is the direction from str0m's
+            // perspective
+            let params_suggestive =
+                media.direction().is_receiving() && !media.direction().is_sending();
 
             // Match/narrow remote params.
-            session.codec_config.update_params(&m.rtp_params());
+            session
+                .codec_config
+                .update_params(&m.rtp_params(), params_suggestive);
 
             // Narrow the agreed on extmaps.
             session.exts.narrow(&m.extmaps(), media.kind().is_audio());
@@ -879,12 +887,13 @@ fn update_media(media: &mut Media, m: &MediaLine, config: &mut CodecConfig, stre
     for rid in m.rids().iter() {
         media.expect_rid(*rid);
     }
+    dbg!(m, &config);
 
     // Narrowing/ordering of of PT
     let pts: Vec<Pt> = m
         .rtp_params()
         .into_iter()
-        .filter(|p| config.matches(p))
+        .filter_map(|p| config.match_params(p))
         .map(|p| p.pt())
         .collect();
     media.set_remote_pts(pts);

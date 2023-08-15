@@ -297,7 +297,12 @@ impl PayloadParams {
         score
     }
 
-    fn update_param(&mut self, remote_pts: &[PayloadParams], claimed: &mut [bool; 128]) {
+    fn update_param(
+        &mut self,
+        remote_pts: &[PayloadParams],
+        claimed: &mut [bool; 128],
+        params_suggestive: bool,
+    ) {
         let Some((first, _)) = remote_pts
             .iter()
             .filter_map(|p| self.match_score(p).map(|s| (p, s)))
@@ -311,11 +316,14 @@ impl PayloadParams {
         if self.locked {
             // Just verify it's still the same. We should validate this in apply_offer/answer instead
             // of ever seeing this error message.
-            if self.pt != remote_pt {
+            // If the params are suggestive e.g. they are from an offer for a sendonly media we
+            // should attempt to respect the offer, but if we have already locked a different pt we
+            // use these. The offerer MUST respect what the answer specifies.
+            if self.pt != remote_pt && !params_suggestive {
                 warn!("Remote PT changed {} => {}", self.pt, remote_pt);
             }
 
-            if self.resend != remote_rtx {
+            if self.resend != remote_rtx && !params_suggestive {
                 warn!(
                     "Remote PT RTX changed {:?} => {:?}",
                     self.resend, remote_rtx
@@ -569,7 +577,11 @@ impl CodecConfig {
         })
     }
 
-    pub(crate) fn update_params(&mut self, remote_params: &[PayloadParams]) {
+    pub(crate) fn update_params(
+        &mut self,
+        remote_params: &[PayloadParams],
+        params_suggestive: bool,
+    ) {
         // 0-128 of "claimed" PTs. I.e. PTs that we already allocated to something.
         let mut claimed: [bool; 128] = [false; 128];
 
@@ -588,7 +600,7 @@ impl CodecConfig {
 
         // Now lock potential new parameters to remote.
         for p in self.params.iter_mut() {
-            p.update_param(remote_params, &mut claimed);
+            p.update_param(remote_params, &mut claimed, params_suggestive);
         }
 
         const PREFERED_RANGES: &[RangeInclusive<usize>] = &[
