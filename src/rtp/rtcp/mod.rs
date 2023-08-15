@@ -75,9 +75,7 @@ pub enum Rtcp {
 }
 
 impl Rtcp {
-    pub fn read_packet(buf: &[u8]) -> VecDeque<Rtcp> {
-        let mut feedback = VecDeque::new();
-
+    pub fn read_packet(buf: &[u8], feedback: &mut VecDeque<Rtcp>) {
         let mut buf = buf;
         loop {
             if buf.is_empty() {
@@ -117,8 +115,6 @@ impl Rtcp {
 
             buf = &buf[full_length..];
         }
-
-        feedback
     }
 
     pub fn write_packet(feedback: &mut VecDeque<Rtcp>, buf: &mut [u8]) -> usize {
@@ -552,7 +548,8 @@ mod test {
         let n = Rtcp::write_packet(&mut feedback, &mut buf);
         buf.truncate(n);
 
-        let parsed = Rtcp::read_packet(&buf);
+        let mut parsed = VecDeque::new();
+        Rtcp::read_packet(&buf, &mut parsed);
 
         let mut compare = VecDeque::new();
         compare.push_back(sr(1, now));
@@ -656,8 +653,11 @@ mod test {
             ],
         ];
 
+        let mut parsed = VecDeque::new();
+
         for t in TESTS {
-            let _ = Rtcp::read_packet(t);
+            parsed.clear();
+            Rtcp::read_packet(t, &mut parsed);
         }
     }
 }
