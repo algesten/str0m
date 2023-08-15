@@ -74,7 +74,6 @@ pub(crate) struct Session {
     srtp_tx: Option<SrtpContext>,
     last_nack: Instant,
     last_twcc: Instant,
-    feedback: VecDeque<Rtcp>,
     twcc: u64,
     twcc_rx_register: TwccRecvRegister,
     twcc_tx_register: TwccSendRegister,
@@ -96,6 +95,9 @@ pub(crate) struct Session {
 
     /// Whether we are running in RTP-mode.
     pub rtp_mode: bool,
+
+    feedback_tx: VecDeque<Rtcp>,
+    feedback_rx: VecDeque<Rtcp>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -155,7 +157,6 @@ impl Session {
             srtp_tx: None,
             last_nack: already_happened(),
             last_twcc: already_happened(),
-            feedback: VecDeque::new(),
             twcc: 0,
             twcc_rx_register: TwccRecvRegister::new(100),
             twcc_tx_register: TwccSendRegister::new(1000),
@@ -166,6 +167,8 @@ impl Session {
             pending_packet: None,
             ice_lite: config.ice_lite,
             rtp_mode: config.rtp_mode,
+            feedback_tx: VecDeque::new(),
+            feedback_rx: VecDeque::new(),
         }
     }
 
@@ -213,8 +216,13 @@ impl Session {
 
         let do_nack = Some(now) >= self.nack_at();
 
-        self.streams
-            .handle_timeout(now, sender_ssrc, do_nack, &self.medias, &mut self.feedback);
+        self.streams.handle_timeout(
+            now,
+            sender_ssrc,
+            do_nack,
+            &self.medias,
+            &mut self.feedback_tx,
+        );
 
         if do_nack {
             self.last_nack = now;
@@ -260,7 +268,7 @@ impl Session {
         twcc.ssrc = self.streams.first_ssrc_remote();
 
         debug!("Created feedback TWCC: {:?}", twcc);
-        self.feedback.push_front(Rtcp::Twcc(twcc));
+        self.feedback_tx.push_front(Rtcp::Twcc(twcc));
         Some(())
     }
 
@@ -532,9 +540,10 @@ impl Session {
         let srtp = self.srtp_rx.as_mut()?;
         let unprotected = srtp.unprotect_rtcp(buf)?;
 
-        let feedback = Rtcp::read_packet(&unprotected);
+        Rtcp::read_packet(&unprotected, &mut self.feedback_rx);
+        let mut need_configure_pacer = false;
 
-        for fb in RtcpFb::from_rtcp(feedback) {
+        for fb in RtcpFb::from_rtcp(self.feedback_rx.drain(..)) {
             if let RtcpFb::Twcc(twcc) = fb {
                 debug!("Handle TWCC: {:?}", twcc);
                 let range = self.twcc_tx_register.apply_report(twcc, now);
@@ -546,11 +555,12 @@ impl Session {
                         bwe.update(records, now);
                     }
                 }
-                // Not in the above if due to lifetime issues, still okay because the method
-                // doesn't do anything when BWE isn't configured.
-                self.configure_pacer();
+                need_configure_pacer = true;
 
-                return Some(());
+                // The funky thing about TWCC reports is that they are never stapled
+                // together with other RTCP packet. If they were though, we want to
+                // handle more packets.
+                continue;
             }
 
             if fb.is_for_rx() {
@@ -564,6 +574,12 @@ impl Session {
                 };
                 stream.handle_rtcp(now, fb);
             }
+        }
+
+        // Not in the above if due to lifetime issues, still okay because the method
+        // doesn't do anything when BWE isn't configured.
+        if need_configure_pacer {
+            self.configure_pacer();
         }
 
         Some(())
@@ -651,7 +667,7 @@ impl Session {
     }
 
     fn poll_feedback(&mut self) -> Option<net::DatagramSend> {
-        if self.feedback.is_empty() {
+        if self.feedback_tx.is_empty() {
             return None;
         }
 
@@ -660,7 +676,7 @@ impl Session {
 
         let mut data = vec![0_u8; ENCRYPTABLE_MTU];
 
-        let len = Rtcp::write_packet(&mut self.feedback, &mut data);
+        let len = Rtcp::write_packet(&mut self.feedback_tx, &mut data);
 
         if len == 0 {
             return None;
