@@ -1,5 +1,6 @@
 mod common;
 use common::init_log;
+use str0m::change::SdpOffer;
 use str0m::format::Codec;
 use str0m::format::CodecSpec;
 use str0m::format::FormatParams;
@@ -127,6 +128,72 @@ pub fn answer_no_match() {
     assert_eq!(r.media(mid).unwrap().remote_pts(), &[]);
 
     // TODO: here we should check for the m-line being made inactive by setting the port to 0.
+}
+
+#[test]
+pub fn answer_different_pt_to_offer() {
+    init_log();
+
+    // This test case checks a scenario happening with Firefox.
+    // 1. SDP -> FF: OFFER to sendonly VP8 PT 96.
+    // 2. FF -> SDP: ANSWER to recvonly VP8 PT 96. (confirming the desired according to spec).
+    // 3. FF -> SDP: OFFER to sendonly VP8 PT 120. This is legal, since PT 120 is just a suggestion.
+    // 4. SDP -> FF: ANSWER <assert> we need to force PT 96 (and not remap to 120).
+
+    // L has one codec, and that is not matched by R. This should disable the m-line.
+    let (mut l, mut r) = with_params(
+        //
+        &[vp8(96)],
+        &[vp8(120)],
+    );
+
+    // Both sides are 96.
+    assert_eq!(&[vp8(96)], &**l.codec_config());
+    assert_eq!(&[vp8(96)], &**r.codec_config());
+
+    let mut change = r.sdp_api();
+    change.add_media(MediaKind::Video, Direction::SendOnly, None, None);
+    let (offer, _pending) = change.apply().unwrap();
+
+    let sdp = offer.to_sdp_string();
+
+    let mut split = sdp.split("m=video 9 UDP/TLS/RTP/SAVPF 96");
+    let prelude = split.next().unwrap();
+    let mline_1 = split.next().unwrap();
+    let mline_2 = split.next().unwrap();
+
+    // m=video 9 UDP/TLS/RTP/SAVPF 96
+
+    // a=rtpmap:96 VP8/90000
+    // a=rtcp-fb:96 transport-cc
+    // a=rtcp-fb:96 ccm fir
+    // a=rtcp-fb:96 nack
+    // a=rtcp-fb:96 nack pli
+
+    let mline_2 = mline_2.replace("a=rtpmap:96", "a=rtpmap:120");
+    let mline_2 = mline_2.replace("a=rtcp-fb:96", "a=rtcp-fb:120");
+
+    let munged = format!(
+        "{}m=video 9 UDP/TLS/RTP/SAVPF 96{}m=video 9 UDP/TLS/RTP/SAVPF 120{}",
+        prelude, mline_1, mline_2
+    );
+
+    let offer = SdpOffer::from_sdp_string(&munged).unwrap();
+
+    let answer = l.sdp_api().accept_offer(offer).unwrap();
+
+    // L remains 96.
+    assert_eq!(&[vp8(96)], &**l.codec_config());
+
+    let sdp = answer.to_sdp_string();
+
+    println!("{}", sdp);
+
+    // All 3 m-lines should be with 96, ignoring the 120.
+    let mut split = sdp.split("m=video 9 UDP/TLS/RTP/SAVPF 96");
+    split.next().expect("SDP answer prelude"); // prelude
+    split.next().expect("First m-line"); // m-line 1
+    split.next().expect("Second m-line"); // m-line 2
 }
 
 #[test]
