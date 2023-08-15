@@ -455,7 +455,7 @@ impl Session {
             Some(p) => p,
             None => {
                 trace!(
-                    "No codec params could be found(wether main or RTX) for {:?}",
+                    "No payload params could be found (main or RTX) for {:?}",
                     header.payload_type
                 );
                 return;
