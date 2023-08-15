@@ -270,6 +270,10 @@ impl PayloadParams {
             return Some(Self::match_opus_score(c0, c1));
         }
 
+        if c0.codec == Codec::H264 {
+            return Self::match_h264_score(c0, c1);
+        }
+
         // TODO: Fuzzy matching for any other audio codecs
         // TODO: Fuzzy matching for video
 
@@ -296,6 +300,33 @@ impl PayloadParams {
         }
 
         score
+    }
+
+    fn match_h264_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
+        // Default packetization mode is 0. https://www.rfc-editor.org/rfc/rfc6184#section-6.2
+        let c0_packetization_mode = c0.format.packetization_mode.unwrap_or(0);
+        let c1_packetization_mode = c1.format.packetization_mode.unwrap_or(0);
+
+        if c0_packetization_mode != c1_packetization_mode {
+            return None;
+        }
+
+        let c0_profile_level = c0
+            .format
+            .profile_level_id
+            .map(|l| l.try_into().ok())
+            .unwrap_or(Some(H264ProfileLevel::FALLBACK))?;
+        let c1_profile_level = c1
+            .format
+            .profile_level_id
+            .map(|l| l.try_into().ok())
+            .unwrap_or(Some(H264ProfileLevel::FALLBACK))?;
+
+        if c0_profile_level != c1_profile_level {
+            return None;
+        }
+
+        Some(100)
     }
 
     fn update_param(
@@ -824,6 +855,332 @@ impl<'a> From<&'a str> for Codec {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+struct H264ProfileLevel {
+    profile: H264Profile,
+    level_idc: H264LevelIdc,
+}
+
+impl H264ProfileLevel {
+    // TODO: The default should really be Baseline and Level1
+    // according to the spec: https://tools.ietf.org/html/rfc6184#section-8.1. However, libWebRTC
+    // specifies Level3_1 to not break backwards compatibility and we copy them.
+    // When libWebRTC updates we are probably safe to do the same.
+    //
+    // See: https://webrtc.googlesource.com/src/+/refs/heads/main/api/video_codecs/h264_profile_level_id.cc#182
+    const FALLBACK: Self = Self {
+        profile: H264Profile::Baseline,
+        level_idc: H264LevelIdc::Level3_1,
+    };
+
+    /// Different combinations of profile-iop and profile-idc match to the same profile.
+    /// See table 5 in https://www.rfc-editor.org/rfc/rfc6184#section-8.1
+    ///
+    /// The first value in each tuple is the profile that is matched if the profile-idc and the
+    /// IOPPattern matches a given fmtp line.
+    const PROFILES: &[(H264Profile, H264ProfileIdc, IOPPattern)] = &[
+        // Constrained Baseline
+        (
+            H264Profile::ConstrainedBaseline,
+            H264ProfileIdc::X42,
+            IOPPattern::new(*b"x1xx0000"),
+        ),
+        (
+            H264Profile::ConstrainedBaseline,
+            H264ProfileIdc::X4D,
+            IOPPattern::new(*b"1xxx0000"),
+        ),
+        (
+            H264Profile::ConstrainedBaseline,
+            H264ProfileIdc::X58,
+            IOPPattern::new(*b"11xx0000"),
+        ),
+        // Baseline
+        (
+            H264Profile::Baseline,
+            H264ProfileIdc::X42,
+            IOPPattern::new(*b"x0xx0000"),
+        ),
+        (
+            H264Profile::Baseline,
+            H264ProfileIdc::X58,
+            IOPPattern::new(*b"10xx0000"),
+        ),
+        // Main
+        (
+            H264Profile::Main,
+            H264ProfileIdc::X4D,
+            IOPPattern::new(*b"0x0x0000"),
+        ),
+        // Extended
+        (
+            H264Profile::Extended,
+            H264ProfileIdc::X58,
+            IOPPattern::new(*b"00xx0000"),
+        ),
+        // High(No constraints)
+        (
+            H264Profile::High,
+            H264ProfileIdc::X64,
+            IOPPattern::new(*b"00000000"),
+        ),
+        (
+            H264Profile::High10,
+            H264ProfileIdc::X6E,
+            IOPPattern::new(*b"00000000"),
+        ),
+        (
+            H264Profile::High422,
+            H264ProfileIdc::X7A,
+            IOPPattern::new(*b"00000000"),
+        ),
+        (
+            H264Profile::High444Predictive,
+            H264ProfileIdc::XF4,
+            IOPPattern::new(*b"00000000"),
+        ),
+        // Intra profiles
+        (
+            H264Profile::High10Intra,
+            H264ProfileIdc::X6E,
+            IOPPattern::new(*b"00010000"),
+        ),
+        (
+            H264Profile::High422Intra,
+            H264ProfileIdc::X7A,
+            IOPPattern::new(*b"00010000"),
+        ),
+        (
+            H264Profile::High444Intra,
+            H264ProfileIdc::XF4,
+            IOPPattern::new(*b"00010000"),
+        ),
+        (
+            H264Profile::CAVLC444Intra,
+            H264ProfileIdc::X2C,
+            IOPPattern::new(*b"00010000"),
+        ),
+    ];
+
+    /// Construct a new H264ProfileLevel.
+    ///
+    /// Returns `Some(Self)` only if the provided parameters identify a valid profile.
+    fn new(profile_idc: H264ProfileIdc, profile_iop: u8, level_idc: H264LevelIdc) -> Option<Self> {
+        Self::PROFILES
+            .iter()
+            .find_map(|&(profile, expected_pidc, iop_pattern)| {
+                // Profile IDC must match
+                if expected_pidc != profile_idc {
+                    return None;
+                }
+                // The profile-iop must match the pattern for the profile
+                if !iop_pattern.matches(profile_iop) {
+                    return None;
+                }
+
+                Some(Self { profile, level_idc })
+            })
+    }
+}
+
+impl TryFrom<u32> for H264ProfileLevel {
+    type Error = ();
+
+    fn try_from(value: u32) -> Result<Self, ()> {
+        const CONSTRAINT_SET3_FLAG: u8 = 0x10;
+
+        let bytes = value.to_be_bytes();
+
+        let profile_idc = bytes[1].try_into()?;
+        let profile_iop = bytes[2];
+        let mut profile_level = bytes[3].try_into()?;
+
+        // When profile_idc is equal to 66, 77, or 88 (the Baseline, Main, or
+        // Extended profile), level_idc is equal to 11, and bit 4
+        // (constraint_set3_flag) of the profile-iop byte is equal to 1,
+        // the default level is Level 1b.
+        if [
+            H264ProfileIdc::X42,
+            H264ProfileIdc::X4D,
+            H264ProfileIdc::X58,
+        ]
+        .contains(&profile_idc)
+            && profile_level == H264LevelIdc::Level1
+        {
+            profile_level = if (profile_iop & CONSTRAINT_SET3_FLAG) != 0 {
+                H264LevelIdc::Level1B
+            } else {
+                H264LevelIdc::Level1
+            };
+        }
+
+        Self::new(profile_idc, profile_iop, profile_level).ok_or(())
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum H264Profile {
+    Baseline,
+    ConstrainedBaseline,
+    Main,
+    Extended,
+    High,
+    High10,
+    High422,
+    High444Predictive,
+    High10Intra,
+    High422Intra,
+    High444Intra,
+    CAVLC444Intra,
+}
+
+/// The various h264 profile_idc, not all of these have a name,
+/// but they are a constrained portion of `u8`, hence an
+/// enum to prevent using unspecified values.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[repr(u8)]
+enum H264ProfileIdc {
+    X2C = 44_u8,
+    X42 = 66_u8, // B
+    X4D = 77_u8, // M
+    X58 = 88_u8, // E
+    X64 = 100_u8,
+    X6E = 110_u8,
+    X7A = 122_u8,
+    XF4 = 244_u8,
+}
+
+impl TryFrom<u8> for H264ProfileIdc {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            x if (Self::X2C as u8) == x => Ok(Self::X2C),
+            x if (Self::X42 as u8) == x => Ok(Self::X42),
+            x if (Self::X4D as u8) == x => Ok(Self::X4D),
+            x if (Self::X58 as u8) == x => Ok(Self::X58),
+            x if (Self::X64 as u8) == x => Ok(Self::X64),
+            x if (Self::X6E as u8) == x => Ok(Self::X6E),
+            x if (Self::X7A as u8) == x => Ok(Self::X7A),
+            x if (Self::XF4 as u8) == x => Ok(Self::XF4),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
+struct IOPPattern {
+    mask: u8,
+    masked_value: u8,
+}
+
+impl IOPPattern {
+    fn matches(&self, profile_iop: u8) -> bool {
+        ((profile_iop ^ self.masked_value) & self.mask) == 0x0
+    }
+
+    const fn new(pattern: [u8; 8]) -> Self {
+        const fn bit_to_mask_bit(pattern: [u8; 8], i: usize) -> u8 {
+            let bit = pattern[7 - i];
+            match bit {
+                b'1' | b'0' => 0x1 << i,
+                b'x' => 0x0 << i,
+                _ => panic!("Invalid bit pattern in IOPPattern only ASCII 1, 0, and x are allowed"),
+            }
+        }
+
+        const fn to_mask(pattern: [u8; 8]) -> u8 {
+            bit_to_mask_bit(pattern, 7)
+                | bit_to_mask_bit(pattern, 6)
+                | bit_to_mask_bit(pattern, 5)
+                | bit_to_mask_bit(pattern, 4)
+                | bit_to_mask_bit(pattern, 3)
+                | bit_to_mask_bit(pattern, 2)
+                | bit_to_mask_bit(pattern, 1)
+                | bit_to_mask_bit(pattern, 0)
+        }
+
+        const fn bit_to_mask_value_bit(pattern: [u8; 8], i: usize) -> u8 {
+            let bit = pattern[7 - i];
+            match bit {
+                b'1' => 0x1 << i,
+                b'x' | b'0' => 0x0 << i,
+                _ => panic!("Invalid bit pattern in IOPPattern only ASCII 1, 0, and x are allowed"),
+            }
+        }
+
+        const fn to_mask_value(pattern: [u8; 8]) -> u8 {
+            bit_to_mask_value_bit(pattern, 7)
+                | bit_to_mask_value_bit(pattern, 6)
+                | bit_to_mask_value_bit(pattern, 5)
+                | bit_to_mask_value_bit(pattern, 4)
+                | bit_to_mask_value_bit(pattern, 3)
+                | bit_to_mask_value_bit(pattern, 2)
+                | bit_to_mask_value_bit(pattern, 1)
+                | bit_to_mask_value_bit(pattern, 0)
+        }
+        let mask = to_mask(pattern);
+        let masked_value = to_mask_value(pattern);
+
+        Self { mask, masked_value }
+    }
+}
+
+// Per libWebRTC
+//     All values are equal to ten times the level number, except level 1b which is
+//     special.
+// Can't find the source for this.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum H264LevelIdc {
+    Level1B = 0_u8,
+    Level1 = 10_u8,
+    Level1_1 = 11_u8,
+    Level1_2 = 12_u8,
+    Level1_3 = 13_u8,
+    Level2 = 20_u8,
+    Level2_1 = 21_u8,
+    Level2_2 = 22_u8,
+    Level3 = 30_u8,
+    Level3_1 = 31_u8,
+    Level3_2 = 32_u8,
+    Level4 = 40_u8,
+    Level4_1 = 41_u8,
+    Level4_2 = 42_u8,
+    Level5 = 50_u8,
+    Level5_1 = 51_u8,
+    Level5_2 = 52_u8,
+}
+
+impl TryFrom<u8> for H264LevelIdc {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        use H264LevelIdc::*;
+
+        match value {
+            x if (Level1B as u8) == x => Ok(Level1B),
+            x if (Level1 as u8) == x => Ok(Level1),
+            x if (Level1_1 as u8) == x => Ok(Level1_1),
+            x if (Level1_2 as u8) == x => Ok(Level1_2),
+            x if (Level1_3 as u8) == x => Ok(Level1_3),
+            x if (Level2 as u8) == x => Ok(Level2),
+            x if (Level2_1 as u8) == x => Ok(Level2_1),
+            x if (Level2_2 as u8) == x => Ok(Level2_2),
+            x if (Level3 as u8) == x => Ok(Level3),
+            x if (Level3_1 as u8) == x => Ok(Level3_1),
+            x if (Level3_2 as u8) == x => Ok(Level3_2),
+            x if (Level4 as u8) == x => Ok(Level4),
+            x if (Level4_1 as u8) == x => Ok(Level4_1),
+            x if (Level4_2 as u8) == x => Ok(Level4_2),
+            x if (Level5 as u8) == x => Ok(Level5),
+            x if (Level5_1 as u8) == x => Ok(Level5_1),
+            x if (Level5_2 as u8) == x => Ok(Level5_2),
+            _ => Err(()),
+        }
+    }
+}
+
 impl fmt::Display for Codec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -851,5 +1208,111 @@ impl std::ops::Deref for CodecConfig {
 impl std::ops::DerefMut for CodecConfig {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.params
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{Codec, CodecSpec, FormatParams, H264LevelIdc, IOPPattern, PayloadParams};
+
+    #[test]
+    fn test_iop_pattern_matching() {
+        let all_any = IOPPattern::new(*b"xxxxxxxx");
+        for x in 0..255 {
+            assert!(all_any.matches(x));
+        }
+
+        let stripes = IOPPattern::new(*b"10101010");
+        assert!(stripes.matches(0b1010_1010));
+        assert!(!stripes.matches(0b1011_1010));
+
+        let inverse_stripes = IOPPattern::new(*b"01010101");
+        assert!(inverse_stripes.matches(0b0101_0101));
+        assert!(!inverse_stripes.matches(0b0111_0001));
+
+        let high_bits = IOPPattern::new(*b"1101xxxx");
+        assert!(high_bits.matches(0b1101_0101));
+        assert!(!high_bits.matches(0b1001_0101));
+
+        let mid_bits = IOPPattern::new(*b"xx0110xx");
+        assert!(mid_bits.matches(0b0101_1001));
+        assert!(!mid_bits.matches(0b1000_1001));
+
+        let only_ones = IOPPattern::new(*b"11111111");
+        assert!(only_ones.matches(0b1111_1111));
+        assert!(!only_ones.matches(0b1110_1111));
+
+        let only_zeros = IOPPattern::new(*b"00000000");
+        assert!(only_zeros.matches(0b0000_0000));
+        assert!(!only_zeros.matches(0b0000_0010));
+
+        let mixed_pattern = IOPPattern::new(*b"1x0x1x01");
+        assert!(mixed_pattern.matches(0b11011001));
+        assert!(!mixed_pattern.matches(0b11011011));
+
+        let complex_pattern = IOPPattern::new(*b"1xx01x0x");
+        assert!(complex_pattern.matches(0b10001001));
+        assert!(!complex_pattern.matches(0b10101010));
+    }
+
+    fn h264_codec_spec(
+        level_asymmetry_allowed: Option<bool>,
+        packetization_mode: Option<u8>,
+        profile_level_id: Option<u32>,
+    ) -> CodecSpec {
+        CodecSpec {
+            codec: Codec::H264,
+            clock_rate: 90000,
+            channels: None,
+            format: FormatParams {
+                min_p_time: None,
+                use_inband_fec: None,
+                level_asymmetry_allowed,
+                packetization_mode,
+                profile_level_id,
+                profile_id: None, // VP8
+            },
+        }
+    }
+
+    #[test]
+    fn test_h264_profile_matching() {
+        struct Case {
+            c0: CodecSpec,
+            c1: CodecSpec,
+            must_match: bool,
+            msg: &'static str,
+        }
+
+        let cases = [Case {
+            c0: h264_codec_spec(None, None, Some(0x42E01F)),
+            c1: h264_codec_spec(None, None, Some(0x4DA01F)),
+            must_match: true,
+            msg:
+                "0x42A01F and 0x4DF01F should match, they are both constrained baseline subprofile",
+        }, Case {
+            c0: h264_codec_spec(None, None, Some(0x42E01F)),
+            c1: h264_codec_spec(None, Some(1), Some(0x4DA01F)),
+            must_match: false,
+            msg:
+                "0x42A01F and 0x4DF01F with differing packetization modes should not match",
+        },  Case {
+            c0: h264_codec_spec(None, Some(0), Some(0x422000)),
+            c1: h264_codec_spec(None, None, Some(0x42B00A)),
+            must_match: true,
+            msg:
+                "0x424000 and 0x42B00A should match because they are both the baseline subprofile and the level idc of 0x42F01F will be adjusted to Level1B because the constraint set 3 flag is set"
+        }];
+
+        for Case {
+            c0,
+            c1,
+            must_match,
+            msg,
+        } in cases.into_iter()
+        {
+            let matched = PayloadParams::match_h264_score(c0, c1).is_some();
+            assert_eq!(matched, must_match, "{msg}\nc0: {c0:#?}\nc1: {c1:#?}");
+        }
     }
 }
