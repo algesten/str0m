@@ -5,6 +5,7 @@ use std::fmt;
 use std::ops::RangeInclusive;
 
 use crate::packet::MediaKind;
+use crate::rtp_::Direction;
 use crate::rtp_::Pt;
 use crate::sdp::FormatParam;
 
@@ -297,7 +298,12 @@ impl PayloadParams {
         score
     }
 
-    fn update_param(&mut self, remote_pts: &[PayloadParams], claimed: &mut [bool; 128]) {
+    fn update_param(
+        &mut self,
+        remote_pts: &[PayloadParams],
+        claimed: &mut [bool; 128],
+        warn_on_locked: bool,
+    ) {
         let Some((first, _)) = remote_pts
             .iter()
             .filter_map(|p| self.match_score(p).map(|s| (p, s)))
@@ -309,15 +315,20 @@ impl PayloadParams {
         let remote_rtx = first.resend;
 
         if self.locked {
+            // This can happen if the incoming PTs are suggestions (send-direction) rather than demanded
+            // (receive-direction). We only want to warn if we get receive direction changes.
+            if !warn_on_locked {
+                return;
+            }
             // Just verify it's still the same. We should validate this in apply_offer/answer instead
             // of ever seeing this error message.
             if self.pt != remote_pt {
-                warn!("Remote PT changed {} => {}", self.pt, remote_pt);
+                warn!("Ignore remote PT change {} => {}", self.pt, remote_pt);
             }
 
             if self.resend != remote_rtx {
                 warn!(
-                    "Remote PT RTX changed {:?} => {:?}",
+                    "Ignore remote PT RTX change {:?} => {:?}",
                     self.resend, remote_rtx
                 );
             }
@@ -375,10 +386,6 @@ impl CodecConfig {
     /// Clear all configured configs.
     pub fn clear(&mut self) {
         self.params.clear();
-    }
-
-    pub(crate) fn matches(&self, c: &PayloadParams) -> bool {
-        self.params.iter().any(|x| x.match_score(c).is_some())
     }
 
     /// Manually configure a payload type.
@@ -554,6 +561,25 @@ impl CodecConfig {
         Some(c)
     }
 
+    /// When we get remote payload parameters, we need to match differently depending on direction.
+    pub(crate) fn sdp_match_remote(
+        &self,
+        remote_params: PayloadParams,
+        remote_dir: Direction,
+    ) -> Option<Pt> {
+        // If we have no matching parameters locally, we can't accept the remote in any way.
+        let our_params = self.match_params(remote_params)?;
+
+        if remote_dir.is_receiving() {
+            // The remote is talking about its own receive requirements. The PTs are not suggestions.
+            Some(remote_params.pt())
+        } else {
+            // We can override the remote with our local config. We would have adjusted to
+            // the remote earlier if we can.
+            Some(our_params.pt())
+        }
+    }
+
     /// Find a payload parameter using a finder function.
     pub fn find(&self, mut f: impl FnMut(&PayloadParams) -> bool) -> Option<&PayloadParams> {
         self.params.iter().find(move |p| f(p))
@@ -569,7 +595,7 @@ impl CodecConfig {
         })
     }
 
-    pub(crate) fn update_params(&mut self, remote_params: &[PayloadParams]) {
+    pub(crate) fn update_params(&mut self, remote_params: &[PayloadParams], remote_dir: Direction) {
         // 0-128 of "claimed" PTs. I.e. PTs that we already allocated to something.
         let mut claimed: [bool; 128] = [false; 128];
 
@@ -587,8 +613,15 @@ impl CodecConfig {
         }
 
         // Now lock potential new parameters to remote.
+        //
+        // If the remote is doing `SendOnly`, the PTs are suggestions, and we are allowed to
+        // ANSWER with our own allocations as overrides. If SendRecv or RecvOnly, the remote
+        // is talking about its own receiving capapbilities and we are not allowed to change it
+        // in the ANSWER.
+        let warn_on_locked = remote_dir.is_receiving();
+
         for p in self.params.iter_mut() {
-            p.update_param(remote_params, &mut claimed);
+            p.update_param(remote_params, &mut claimed, warn_on_locked);
         }
 
         const PREFERED_RANGES: &[RangeInclusive<usize>] = &[

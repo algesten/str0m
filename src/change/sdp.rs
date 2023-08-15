@@ -800,7 +800,9 @@ fn add_new_lines(
             media.need_open_event = need_open_event;
 
             // Match/narrow remote params.
-            session.codec_config.update_params(&m.rtp_params());
+            session
+                .codec_config
+                .update_params(&m.rtp_params(), m.direction());
 
             // Narrow the agreed on extmaps.
             session.exts.narrow(&m.extmaps(), media.kind().is_audio());
@@ -884,8 +886,7 @@ fn update_media(media: &mut Media, m: &MediaLine, config: &mut CodecConfig, stre
     let pts: Vec<Pt> = m
         .rtp_params()
         .into_iter()
-        .filter(|p| config.matches(p))
-        .map(|p| p.pt())
+        .filter_map(|p| config.sdp_match_remote(p, m.direction()))
         .collect();
     media.set_remote_pts(pts);
 
