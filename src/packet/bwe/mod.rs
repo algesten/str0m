@@ -44,6 +44,8 @@ pub struct SendSideBandwithEstimator {
     last_estimate: Option<Bitrate>,
     /// History of the max RTT derived for each TWCC report.
     max_rtt_history: VecDeque<Duration>,
+    /// Calculated mean of max_rtt_history.
+    mean_max_rtt: Option<Duration>,
 
     /// The next time we should poll.
     next_timeout: Instant,
@@ -63,6 +65,7 @@ impl SendSideBandwithEstimator {
             rate_control: RateControl::new(initial_bitrate, Bitrate::kbps(40), Bitrate::gbps(10)),
             last_estimate: None,
             max_rtt_history: VecDeque::default(),
+            mean_max_rtt: None,
             next_timeout: already_happened(),
             last_twcc_report: already_happened(),
         }
@@ -111,7 +114,7 @@ impl SendSideBandwithEstimator {
         self.update_estimate(
             new_hypothesis,
             self.acked_bitrate_estimator.current_estimate(),
-            self.mean_max_rtt(),
+            self.mean_max_rtt,
             now,
         );
         self.last_twcc_report = now;
@@ -127,7 +130,7 @@ impl SendSideBandwithEstimator {
             // no longer be considered valid. We need another TWCC report before we can update
             // estimates.
             let next_timeout_in = self
-                .mean_max_rtt()
+                .mean_max_rtt
                 .unwrap_or(MAX_TWCC_GAP)
                 .min(UPDATE_INTERVAL);
 
@@ -140,7 +143,7 @@ impl SendSideBandwithEstimator {
         self.update_estimate(
             self.trendline_estimator.hypothesis(),
             self.acked_bitrate_estimator.current_estimate(),
-            self.mean_max_rtt(),
+            self.mean_max_rtt,
             now,
         );
     }
@@ -155,19 +158,13 @@ impl SendSideBandwithEstimator {
             self.max_rtt_history.pop_front();
         }
         self.max_rtt_history.push_back(max_rtt);
-    }
-
-    fn mean_max_rtt(&self) -> Option<Duration> {
-        if self.max_rtt_history.is_empty() {
-            return None;
-        }
 
         let sum = self
             .max_rtt_history
             .iter()
             .fold(Duration::ZERO, |acc, rtt| acc + *rtt);
 
-        Some(sum / self.max_rtt_history.len() as u32)
+        self.mean_max_rtt = Some(sum / self.max_rtt_history.len() as u32);
     }
 
     fn update_estimate(
@@ -195,7 +192,7 @@ impl SendSideBandwithEstimator {
     fn trendline_hypothesis_valid(&self, now: Instant) -> bool {
         now.duration_since(self.last_twcc_report)
             <= self
-                .mean_max_rtt()
+                .mean_max_rtt
                 .map(|rtt| rtt * 2)
                 .unwrap_or(MAX_TWCC_GAP)
                 .min(UPDATE_INTERVAL * 2)
