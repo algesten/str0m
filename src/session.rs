@@ -459,14 +459,18 @@ impl Session {
 
         // If the header ssrc differs from the main, it's a repair stream.
         let is_repair = header.ssrc != ssrc;
-
-        let clock_rate = match get_params(&self.codec_config, header.payload_type) {
-            Some(v) => v.spec().clock_rate,
+        let params = match main_payload_params(&self.codec_config, header.payload_type) {
+            Some(p) => p,
             None => {
-                trace!("No codec params for {:?}", header.payload_type);
+                trace!(
+                    "No payload params could be found (main or RTX) for {:?}",
+                    header.payload_type
+                );
                 return;
             }
         };
+        let clock_rate = params.spec().clock_rate;
+        let pt = params.pt();
 
         // is_repair controls whether update is updating the main register or the RTX register.
         // Either way we get a seq_no_outer which is used to decrypt the SRTP.
@@ -485,11 +489,6 @@ impl Session {
             trace!("unpadding of unprotected payload failed");
             return;
         }
-
-        let Some(pt) = main_payload_type_for(&self.codec_config, header.payload_type) else {
-            trace!("RTP packet PT is not declared in media");
-            return;
-        };
 
         // RTX packets must be rewritten to be a normal packet. This only changes the
         // the seq_no, however MediaTime might be different when interpreted against the
@@ -980,12 +979,9 @@ pub struct PacketReceipt {
     pub payload_size: usize,
 }
 
-fn get_params(c: &CodecConfig, pt: Pt) -> Option<&PayloadParams> {
-    c.iter().find(|p| p.pt() == pt)
-}
-
-fn main_payload_type_for(c: &CodecConfig, pt: Pt) -> Option<Pt> {
-    let p = c.iter().find(|p| p.pt == pt || p.resend == Some(pt))?;
-
-    Some(p.pt)
+/// Find the PayloadParams for the given Pt, either when the Pt is the main Pt for the Codec or
+/// when it's the RTX Pt.
+fn main_payload_params(c: &CodecConfig, pt: Pt) -> Option<&PayloadParams> {
+    c.iter()
+        .find_map(|p| (p.pt == pt || p.resend == Some(pt)).then_some(p))
 }
