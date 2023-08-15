@@ -197,7 +197,7 @@ pub fn answer_different_pt_to_offer() {
 }
 
 #[test]
-fn narrow_exts() {
+fn answer_remaps() {
     init_log();
 
     use Extension::*;
@@ -217,9 +217,19 @@ fn narrow_exts() {
     let a_l: Vec<_> = l.exts().iter(true).collect();
     let a_r: Vec<_> = r.exts().iter(true).collect();
 
-    // L only keeps 3 (the default) for TransportSequenceNumber.
-    // R only keeps 3, and changes it from 15.
-    assert_eq!(v_l, vec![(3, TransportSequenceNumber)]);
+    // L locks 3 and changes it from 14
+    // R keeps 3 and changes it from 14.
+    assert_eq!(
+        v_l,
+        vec![
+            (2, AbsoluteSendTime),
+            (3, TransportSequenceNumber),
+            (4, RtpMid),
+            (10, RtpStreamId),
+            (11, RepairedRtpStreamId),
+            (13, VideoOrientation)
+        ]
+    );
     assert_eq!(v_r, vec![(3, TransportSequenceNumber)]);
 
     // L audio exts are left untouched (the defaults), also ones shared with video.

@@ -6,6 +6,7 @@ use std::time::Instant;
 use crate::change::AddMedia;
 use crate::io::{Id, DATAGRAM_MTU};
 use crate::packet::{DepacketizingBuffer, Payloader, RtpMeta};
+use crate::rtp_::ExtensionMap;
 use crate::rtp_::SRTP_BLOCK_SIZE;
 use crate::rtp_::SRTP_OVERHEAD;
 use crate::RtcError;
@@ -72,12 +73,19 @@ pub struct Media {
     /// Remote PTs negotiated for this media.
     ///
     /// This tells us both the desired priority order of payload types
-    /// as well as which PT the remote side wants (in case they are narrowed.
+    /// as well as which PT the remote side wants (in case they are narrowed).
     ///
     /// These must have corresponding entries in Session::codec_config.
     ///
     /// SDP property.
     remote_pts: Vec<Pt>,
+
+    /// Remote extmaps negotiated for this media.
+    ///
+    /// The corresponding entries must exist in Session::codec_config.
+    ///
+    /// These are 1-indexed to be exactly like in the SDP.
+    remote_exts: ExtensionMap,
 
     /// Simulcast configuration, if set.
     ///
@@ -396,6 +404,10 @@ impl Media {
         self.remote_pts = pts;
     }
 
+    pub(crate) fn set_remote_extmap(&mut self, exts: ExtensionMap) {
+        self.remote_exts = exts;
+    }
+
     /// The remote PT (payload types) configured for this Media.
     ///
     /// These are negotiated with the remote peer and is the order the remote prefer them.
@@ -404,6 +416,10 @@ impl Media {
     /// and in a different order.
     pub fn remote_pts(&self) -> &[Pt] {
         &self.remote_pts
+    }
+
+    pub(crate) fn remote_extmap(&self) -> &ExtensionMap {
+        &self.remote_exts
     }
 }
 
@@ -420,6 +436,7 @@ impl Default for Media {
             },
             kind: MediaKind::Video,
             remote_pts: vec![],
+            remote_exts: ExtensionMap::empty(),
             dir: Direction::SendRecv,
             simulcast: None,
             rids_rx: Rids::Any,
@@ -460,6 +477,7 @@ impl Media {
             kind: a.kind,
             dir: a.dir,
             remote_pts: a.pts,
+            remote_exts: a.exts,
             ..Default::default()
         }
     }
@@ -473,12 +491,18 @@ impl Media {
         }
     }
 
-    pub(crate) fn from_direct_api(mid: Mid, index: usize, kind: MediaKind) -> Media {
+    pub(crate) fn from_direct_api(
+        mid: Mid,
+        index: usize,
+        kind: MediaKind,
+        exts: ExtensionMap,
+    ) -> Media {
         Media {
             mid,
             index,
             kind,
             dir: Direction::SendRecv,
+            remote_exts: exts,
             ..Default::default()
         }
     }
