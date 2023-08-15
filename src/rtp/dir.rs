@@ -36,6 +36,22 @@ impl Direction {
     pub fn is_receiving(&self) -> bool {
         matches!(self, Direction::RecvOnly | Direction::SendRecv)
     }
+
+    /// When negotiating SDP, in certain cases, we need to treat `Inactive`
+    /// as if it is receiving.
+    pub(crate) fn sdp_is_receiving(&self) -> bool {
+        // The spec says:
+        //
+        // > For streams marked as inactive in the answer, the list of media
+        // > formats is constructed based on the offer. If the offer was sendonly,
+        // > the list is constructed as if the answer were recvonly.
+        //
+        // https://datatracker.ietf.org/doc/html/rfc3264#section-6.1
+        matches!(
+            self,
+            Direction::RecvOnly | Direction::SendRecv | Direction::Inactive
+        )
+    }
 }
 
 impl From<&str> for Direction {
