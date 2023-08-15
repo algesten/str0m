@@ -393,6 +393,10 @@ impl ExtensionMap {
 
         self.0.swap(old_index, new_index);
     }
+
+    pub(crate) fn enabled(&self, audio: bool, ext: Extension) -> bool {
+        self.iter(audio).any(|e| e.1 == ext)
+    }
 }
 
 const FIXED_POINT_6_18: i64 = 262_144; // 2 ^ 18

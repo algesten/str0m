@@ -767,7 +767,13 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
                         return index_err(m.mid());
                     }
 
-                    update_media(media, m, &mut session.codec_config, &mut session.streams);
+                    update_media(
+                        media,
+                        m,
+                        &mut session.codec_config,
+                        &mut session.streams,
+                        &session.exts,
+                    );
 
                     continue;
                 }
@@ -814,6 +820,7 @@ fn add_new_lines(
                 m,
                 &mut session.codec_config,
                 &mut session.streams,
+                &session.exts,
             );
 
             session.add_media(media);
@@ -871,7 +878,13 @@ fn as_media_lines(session: &Session) -> Vec<&dyn AsSdpMediaLine> {
     v
 }
 
-fn update_media(media: &mut Media, m: &MediaLine, config: &mut CodecConfig, streams: &mut Streams) {
+fn update_media(
+    media: &mut Media,
+    m: &MediaLine,
+    config: &mut CodecConfig,
+    streams: &mut Streams,
+    session_exts: &ExtensionMap,
+) {
     // Direction changes
     //
     // All changes come from the other side, either via an incoming OFFER
@@ -894,6 +907,10 @@ fn update_media(media: &mut Media, m: &MediaLine, config: &mut CodecConfig, stre
 
     let mut exts = ExtensionMap::empty();
     for (id, ext) in m.extmaps().into_iter() {
+        // Don't set any extensions that aren't enabled in Session.
+        if !session_exts.enabled(media.kind().is_audio(), ext) {
+            continue;
+        }
         exts.set(id, ext);
     }
     media.set_remote_extmap(exts);
