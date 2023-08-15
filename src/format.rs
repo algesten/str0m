@@ -570,7 +570,7 @@ impl CodecConfig {
         // If we have no matching parameters locally, we can't accept the remote in any way.
         let our_params = self.match_params(remote_params)?;
 
-        if remote_dir.is_receiving() {
+        if remote_dir.sdp_is_receiving() {
             // The remote is talking about its own receive requirements. The PTs are not suggestions.
             Some(remote_params.pt())
         } else {
@@ -618,7 +618,7 @@ impl CodecConfig {
         // ANSWER with our own allocations as overrides. If SendRecv or RecvOnly, the remote
         // is talking about its own receiving capapbilities and we are not allowed to change it
         // in the ANSWER.
-        let warn_on_locked = remote_dir.is_receiving();
+        let warn_on_locked = remote_dir.sdp_is_receiving();
 
         for p in self.params.iter_mut() {
             p.update_param(remote_params, &mut claimed, warn_on_locked);
