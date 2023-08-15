@@ -248,6 +248,28 @@ fn answer_remaps() {
     assert_eq!(a_r, vec![(3, TransportSequenceNumber), (12, AudioLevel)]);
 }
 
+#[test]
+fn answer_remaps_does_to_introduce_unconfigured_extensions() {
+    init_log();
+
+    use Extension::*;
+
+    let mut exts_l = ExtensionMap::empty();
+    let exts_r = ExtensionMap::empty();
+
+    // Not same number as the default.
+    exts_l.set(8, ColorSpace);
+
+    // This negotiates a video track.
+    let (l, r) = with_exts(exts_l, exts_r);
+
+    // TODO: Look at the generated SPDs, the offer should include
+    //     a=extmap:8 http://www.webrtc.org/experiments/rtp-hdrext/color-space
+    //  but the answer should not, since that extension isn't supported by the right side.
+    // Cannot assert this easily
+    panic!("");
+}
+
 fn with_params(params_l: &[PayloadParams], params_r: &[PayloadParams]) -> (Rtc, Rtc) {
     let mut l = build_params(params_l);
     let mut r = build_params(params_r);
@@ -282,13 +304,13 @@ fn negotiate(l: &mut Rtc, r: &mut Rtc, kind: MediaKind) {
 
         change.apply().unwrap()
     };
-    println!("L {:#?}", offer);
+    println!("L {}", offer);
     let answer = {
         let span = info_span!("R");
         let _e = span.enter();
         r.sdp_api().accept_offer(offer).unwrap()
     };
-    println!("R {:#?}", answer);
+    println!("R {}", answer);
     {
         let span = info_span!("L");
         let _e = span.enter();
