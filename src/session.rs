@@ -965,7 +965,11 @@ pub struct PacketReceipt {
 }
 
 fn get_params(c: &CodecConfig, pt: Pt) -> Option<&PayloadParams> {
-    c.iter().find(|p| p.pt() == pt)
+    if let p @ Some(_) = c.iter().find(|p| p.pt() == pt) {
+        return p;
+    }
+
+    main_payload_type_for(c, pt).and_then(|pt| c.iter().find(|p| p.pt == pt))
 }
 
 fn main_payload_type_for(c: &CodecConfig, pt: Pt) -> Option<Pt> {
