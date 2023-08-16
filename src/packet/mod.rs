@@ -11,6 +11,7 @@ mod g7xx;
 use g7xx::{G711Packetizer, G722Packetizer};
 
 mod h264;
+pub(crate) use h264::profile::H264ProfileLevel;
 use h264::{H264Depacketizer, H264Packetizer};
 
 mod h265;

@@ -2,6 +2,10 @@ use std::time::{Duration, Instant};
 
 use once_cell::sync::Lazy;
 
+mod bit_pattern;
+
+pub(crate) use bit_pattern::BitPattern;
+
 pub(crate) mod value_history;
 
 pub(crate) fn not_happening() -> Instant {

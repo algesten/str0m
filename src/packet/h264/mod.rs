@@ -30,6 +30,8 @@ pub const OUTPUT_STAP_AHEADER: u8 = 0x78;
 
 pub static ANNEXB_NALUSTART_CODE: &[u8] = &[0x00, 0x00, 0x00, 0x01];
 
+pub mod profile;
+
 impl H264Packetizer {
     fn next_ind(nalu: &[u8], start: usize) -> (isize, isize) {
         let mut zero_count = 0;
