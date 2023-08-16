@@ -1,5 +1,7 @@
 mod common;
 use common::init_log;
+use common::negotiate;
+use common::TestRtc;
 use str0m::change::SdpOffer;
 use str0m::format::Codec;
 use str0m::format::CodecSpec;
@@ -10,6 +12,7 @@ use str0m::media::MediaKind;
 use str0m::rtp::{Extension, ExtensionMap};
 use str0m::Rtc;
 use tracing::info_span;
+use tracing::Span;
 
 #[test]
 pub fn change_default_pt() {
@@ -18,7 +21,9 @@ pub fn change_default_pt() {
     // First proposed PT is 100, R side adjusts its default from 102 -> 100
     let (l, r) = with_params(
         //
+        info_span!("L"),
         &[opus(100)],
+        info_span!("R"),
         &[opus(102)],
     );
 
@@ -38,7 +43,9 @@ pub fn answer_change_order() {
     // First proposed PT are 100/102, but R side has a different order.
     let (l, r) = with_params(
         //
+        info_span!("L"),
         &[vp8(100), h264(102)],
+        info_span!("R"),
         &[h264(96), vp8(98)],
     );
 
@@ -70,7 +77,9 @@ pub fn answer_narrow() {
     // First proposed PT are 100/102, the R side removes unsupported ones.
     let (l, r) = with_params(
         //
+        info_span!("L"),
         &[vp8(100), h264(102)],
+        info_span!("R"),
         &[h264(96)],
     );
 
@@ -109,7 +118,9 @@ pub fn answer_no_match() {
     // L has one codec, and that is not matched by R. This should disable the m-line.
     let (l, r) = with_params(
         //
+        info_span!("L"),
         &[vp8(100)],
+        info_span!("R"),
         &[h264(96)],
     );
 
@@ -143,7 +154,9 @@ pub fn answer_different_pt_to_offer() {
     // L has one codec, and that is not matched by R. This should disable the m-line.
     let (mut l, mut r) = with_params(
         //
+        info_span!("L"),
         &[vp8(96)],
+        info_span!("R"),
         &[vp8(120)],
     );
 
@@ -293,55 +306,105 @@ fn offers_unsupported_extension() {
     );
 }
 
-fn with_params(params_l: &[PayloadParams], params_r: &[PayloadParams]) -> (Rtc, Rtc) {
-    let mut l = build_params(params_l);
-    let mut r = build_params(params_r);
+#[test]
+fn non_media_creator_cannot_change_inactive_to_recvonly() {
+    init_log();
+    let (mut l, mut r) = (
+        TestRtc::new_with_rtc(
+            info_span!("L"),
+            Rtc::builder().clear_codecs().enable_vp8(true).build(),
+        ),
+        TestRtc::new_with_rtc(
+            info_span!("R"),
+            Rtc::builder().clear_codecs().enable_vp8(true).build(),
+        ),
+    );
+
+    negotiate(&mut l, &mut r, |change| {
+        change.add_media(MediaKind::Video, Direction::Inactive, None, None);
+    });
+    let mid = r.mids()[0];
+    let m_r = r.media(mid).unwrap();
+    assert_eq!(m_r.direction(), Direction::Inactive);
+
+    negotiate(&mut r, &mut l, |change| {
+        change.set_direction(mid, Direction::RecvOnly);
+    });
+
+    // r didn't open the media and isn't allowed to change it from inactive to recvonly.
+    let m_r = r.media(mid).unwrap();
+    assert_eq!(m_r.direction(), Direction::Inactive);
+
+    let m_l = l.media(mid).unwrap();
+    assert_eq!(m_l.direction(), Direction::Inactive);
+}
+
+#[test]
+fn media_creator_can_change_inactive_to_recvonly() {
+    init_log();
+    let (mut l, mut r) = (
+        TestRtc::new_with_rtc(
+            info_span!("L"),
+            Rtc::builder().clear_codecs().enable_vp8(true).build(),
+        ),
+        TestRtc::new_with_rtc(
+            info_span!("R"),
+            Rtc::builder().clear_codecs().enable_vp8(true).build(),
+        ),
+    );
+
+    negotiate(&mut l, &mut r, |change| {
+        change.add_media(MediaKind::Video, Direction::Inactive, None, None);
+    });
+    let mid = r.mids()[0];
+    let m_r = r.media(mid).unwrap();
+    assert_eq!(m_r.direction(), Direction::Inactive);
+
+    negotiate(&mut l, &mut r, |change| {
+        change.set_direction(mid, Direction::RecvOnly);
+    });
+
+    // r didn't open the media and isn't allowed to change it from inactive to recvonly.
+    let m_l = l.media(mid).unwrap();
+    assert_eq!(m_l.direction(), Direction::RecvOnly);
+
+    let m_r = r.media(mid).unwrap();
+    assert_eq!(m_r.direction(), Direction::SendOnly);
+}
+
+fn with_params(
+    span_l: Span,
+    params_l: &[PayloadParams],
+    span_r: Span,
+    params_r: &[PayloadParams],
+) -> (TestRtc, TestRtc) {
+    let mut l = build_params(span_l, params_l);
+    let mut r = build_params(span_r, params_r);
 
     let kind = params_l
         .first()
         .map(|p| p.spec().codec.kind())
         .unwrap_or(MediaKind::Audio);
 
-    negotiate(&mut l, &mut r, kind);
+    negotiate(&mut l, &mut r, |change| {
+        change.add_media(kind, Direction::SendRecv, None, None);
+    });
 
     (l, r)
 }
 
-fn with_exts(exts_l: ExtensionMap, exts_r: ExtensionMap) -> (Rtc, Rtc) {
-    let mut l = build_exts(exts_l);
-    let mut r = build_exts(exts_r);
+fn with_exts(exts_l: ExtensionMap, exts_r: ExtensionMap) -> (TestRtc, TestRtc) {
+    let mut l = build_exts(info_span!("L"), exts_l);
+    let mut r = build_exts(info_span!("R"), exts_r);
 
-    negotiate(&mut l, &mut r, MediaKind::Video);
+    negotiate(&mut l, &mut r, |change| {
+        change.add_media(MediaKind::Video, Direction::SendRecv, None, None);
+    });
 
     (l, r)
 }
 
-fn negotiate(l: &mut Rtc, r: &mut Rtc, kind: MediaKind) {
-    let dir = Direction::SendRecv;
-
-    let (offer, pending) = {
-        let span = info_span!("L");
-        let _e = span.enter();
-        let mut change = l.sdp_api();
-        change.add_media(kind, dir, None, None);
-
-        change.apply().unwrap()
-    };
-    println!("L {}", offer);
-    let answer = {
-        let span = info_span!("R");
-        let _e = span.enter();
-        r.sdp_api().accept_offer(offer).unwrap()
-    };
-    println!("R {}", answer);
-    {
-        let span = info_span!("L");
-        let _e = span.enter();
-        l.sdp_api().accept_answer(pending, answer).unwrap();
-    }
-}
-
-fn build_params(params: &[PayloadParams]) -> Rtc {
+fn build_params(span: Span, params: &[PayloadParams]) -> TestRtc {
     let mut b = Rtc::builder().clear_codecs();
     let config = b.codec_config();
     for p in params {
@@ -354,15 +417,19 @@ fn build_params(params: &[PayloadParams]) -> Rtc {
             p.spec().format,
         );
     }
-    b.build()
+    let rtc = b.build();
+
+    TestRtc::new_with_rtc(span, rtc)
 }
 
-fn build_exts(exts: ExtensionMap) -> Rtc {
+fn build_exts(span: Span, exts: ExtensionMap) -> TestRtc {
     let mut b = Rtc::builder().clear_codecs();
     b = b.enable_vp8(true);
     let e = b.extension_map();
     *e = exts;
-    b.build()
+    let rtc = b.build();
+
+    TestRtc::new_with_rtc(span, rtc)
 }
 
 fn opus(pt: u8) -> PayloadParams {
