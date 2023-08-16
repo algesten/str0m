@@ -293,6 +293,76 @@ fn offers_unsupported_extension() {
     );
 }
 
+#[test]
+fn non_media_creator_cannot_change_inactive_to_recvonly() {
+    init_log();
+    let (mut l, mut r) = (Rtc::builder().build(), Rtc::builder().build());
+
+    negotiate(&mut l, &mut r, MediaKind::Video, Direction::Inactive);
+    let mid = r.mids()[0];
+    let m_r = r.media(mid).unwrap();
+    assert_eq!(m_r.direction(), Direction::Inactive);
+
+    let (offer, pending) = info_span!("R").in_scope(|| {
+        let mut r_sdp = r.sdp_api();
+        r_sdp.set_direction(mid, Direction::RecvOnly);
+        r_sdp.apply().unwrap()
+    });
+    println!("R {}", offer);
+
+    let answer = info_span!("L").in_scope(|| l.sdp_api().accept_offer(offer).unwrap());
+    println!("L {}", answer);
+    info_span!("R").in_scope(|| r.sdp_api().accept_answer(pending, answer).unwrap());
+
+    // r didn't open the media and isn't allowed to change it from inactive to recvonly.
+    let m_r = r.media(mid).unwrap();
+    assert_eq!(m_r.direction(), Direction::Inactive);
+
+    let m_l = l.media(mid).unwrap();
+    assert_eq!(m_l.direction(), Direction::Inactive);
+}
+
+#[test]
+fn media_creator_can_change_inactive_to_recvonly() {
+    init_log();
+    let (mut l, mut r) = (Rtc::builder().build(), Rtc::builder().build());
+
+    negotiate(&mut l, &mut r, MediaKind::Video, Direction::Inactive);
+    let mid = r.mids()[0];
+    let m_r = r.media(mid).unwrap();
+    assert_eq!(m_r.direction(), Direction::Inactive);
+
+    let (offer, pending) = {
+        let span = info_span!("L");
+        let _e = span.enter();
+        let mut l_sdp = l.sdp_api();
+        l_sdp.set_direction(mid, Direction::RecvOnly);
+
+        l_sdp.apply().unwrap()
+    };
+    println!("L {}", offer);
+
+    let answer = {
+        let span = info_span!("R");
+        let _e = span.enter();
+        r.sdp_api().accept_offer(offer).unwrap()
+    };
+    println!("R {}", answer);
+
+    {
+        let span = info_span!("L");
+        let _e = span.enter();
+        l.sdp_api().accept_answer(pending, answer).unwrap();
+    }
+
+    // r didn't open the media and isn't allowed to change it from inactive to recvonly.
+    let m_l = l.media(mid).unwrap();
+    assert_eq!(m_l.direction(), Direction::RecvOnly);
+
+    let m_r = r.media(mid).unwrap();
+    assert_eq!(m_r.direction(), Direction::SendOnly);
+}
+
 fn with_params(params_l: &[PayloadParams], params_r: &[PayloadParams]) -> (Rtc, Rtc) {
     let mut l = build_params(params_l);
     let mut r = build_params(params_r);
@@ -302,7 +372,7 @@ fn with_params(params_l: &[PayloadParams], params_r: &[PayloadParams]) -> (Rtc, 
         .map(|p| p.spec().codec.kind())
         .unwrap_or(MediaKind::Audio);
 
-    negotiate(&mut l, &mut r, kind);
+    negotiate(&mut l, &mut r, kind, Direction::SendRecv);
 
     (l, r)
 }
@@ -311,14 +381,12 @@ fn with_exts(exts_l: ExtensionMap, exts_r: ExtensionMap) -> (Rtc, Rtc) {
     let mut l = build_exts(exts_l);
     let mut r = build_exts(exts_r);
 
-    negotiate(&mut l, &mut r, MediaKind::Video);
+    negotiate(&mut l, &mut r, MediaKind::Video, Direction::SendRecv);
 
     (l, r)
 }
 
-fn negotiate(l: &mut Rtc, r: &mut Rtc, kind: MediaKind) {
-    let dir = Direction::SendRecv;
-
+fn negotiate(l: &mut Rtc, r: &mut Rtc, kind: MediaKind, dir: Direction) {
     let (offer, pending) = {
         let span = info_span!("L");
         let _e = span.enter();

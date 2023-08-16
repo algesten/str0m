@@ -798,14 +798,14 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
 fn add_new_lines(
     session: &mut Session,
     new_lines: &[&MediaLine],
-    need_open_event: bool,
+    is_offer: bool,
 ) -> Result<(), String> {
     for m in new_lines {
         let idx = session.line_count();
 
         if m.typ.is_media() {
-            let mut media = Media::from_remote_media_line(m, idx);
-            media.need_open_event = need_open_event;
+            let mut media = Media::from_remote_media_line(m, idx, is_offer);
+            media.need_open_event = is_offer;
 
             // Match/remap remote params.
             session
@@ -891,7 +891,19 @@ fn update_media(
     // or a ANSWER from our OFFER. Either way, the direction is inverted to
     // how we have it locally.
     let new_dir = m.direction().invert();
-    media.set_direction(new_dir);
+    //
+    let change_direction_disallowed = !media.remote_created()
+        && media.direction() == Direction::Inactive
+        && new_dir == Direction::SendOnly;
+
+    if change_direction_disallowed {
+        info!(
+            "Ignore attempt to change inactive to recvonly by remote peer for locally created mid: {}",
+            media.mid()
+        );
+    } else {
+        media.set_direction(new_dir);
+    }
 
     for rid in m.rids().iter() {
         media.expect_rid(*rid);

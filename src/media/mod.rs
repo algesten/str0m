@@ -87,6 +87,9 @@ pub struct Media {
     /// These are 1-indexed to be exactly like in the SDP.
     remote_exts: ExtensionMap,
 
+    /// [`true`] if this media was created by the remote peer, [`false`] if it was created by us.
+    remote_created: bool,
+
     /// Simulcast configuration, if set.
     ///
     /// SDP property.
@@ -427,6 +430,10 @@ impl Media {
     pub fn remote_extmap(&self) -> &ExtensionMap {
         &self.remote_exts
     }
+
+    pub(crate) fn remote_created(&self) -> bool {
+        self.remote_created
+    }
 }
 
 impl Default for Media {
@@ -443,6 +450,7 @@ impl Default for Media {
             kind: MediaKind::Video,
             remote_pts: vec![],
             remote_exts: ExtensionMap::empty(),
+            remote_created: false,
             dir: Direction::SendRecv,
             simulcast: None,
             rids_rx: Rids::Any,
@@ -456,7 +464,11 @@ impl Default for Media {
 }
 
 impl Media {
-    pub(crate) fn from_remote_media_line(l: &MediaLine, index: usize) -> Self {
+    pub(crate) fn from_remote_media_line(
+        l: &MediaLine,
+        index: usize,
+        remote_created: bool,
+    ) -> Self {
         Media {
             mid: l.mid(),
             index,
@@ -465,6 +477,7 @@ impl Media {
             // msid,
             kind: l.typ.clone().into(),
             dir: l.direction().invert(), // remote direction is reverse.
+            remote_created,
             ..Default::default()
         }
     }
@@ -484,6 +497,7 @@ impl Media {
             dir: a.dir,
             remote_pts: a.pts,
             remote_exts: a.exts,
+            remote_created: false,
             ..Default::default()
         }
     }
