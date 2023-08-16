@@ -1486,7 +1486,7 @@ impl Rtc {
 
     /// All media mids (not application). For integration tests.
     #[doc(hidden)]
-    pub fn media_mids(&self) -> Vec<Mid> {
+    pub fn mids(&self) -> Vec<Mid> {
         self.session.medias.iter().map(Media::mid).collect()
     }
 

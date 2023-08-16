@@ -771,8 +771,8 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
                         media,
                         m,
                         &mut session.codec_config,
-                        &mut session.streams,
                         &session.exts,
+                        &mut session.streams,
                     );
 
                     continue;
@@ -819,8 +819,8 @@ fn add_new_lines(
                 &mut media,
                 m,
                 &mut session.codec_config,
-                &mut session.streams,
                 &session.exts,
+                &mut session.streams,
             );
 
             session.add_media(media);
@@ -882,8 +882,8 @@ fn update_media(
     media: &mut Media,
     m: &MediaLine,
     config: &mut CodecConfig,
+    exts: &ExtensionMap,
     streams: &mut Streams,
-    session_exts: &ExtensionMap,
 ) {
     // Direction changes
     //
@@ -905,15 +905,17 @@ fn update_media(
         .collect();
     media.set_remote_pts(pts);
 
-    let mut exts = ExtensionMap::empty();
+    let mut remote_extmap = ExtensionMap::empty();
     for (id, ext) in m.extmaps().into_iter() {
-        // Don't set any extensions that aren't enabled in Session.
-        if !session_exts.enabled(media.kind().is_audio(), ext) {
+        // The remapping of extensions should already have happened, which
+        // means the ID are matching in the session to the remote.
+        if exts.lookup(id) != Some(ext) {
+            // Don't set any extensions that aren't enabled in Session.
             continue;
         }
-        exts.set(id, ext);
+        remote_extmap.set(id, ext);
     }
-    media.set_remote_extmap(exts);
+    media.set_remote_extmap(remote_extmap);
 
     // SSRC changes
     // This will always be for ReceiverSource since any incoming a=ssrc line will be

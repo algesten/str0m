@@ -418,7 +418,13 @@ impl Media {
         &self.remote_pts
     }
 
-    pub(crate) fn remote_extmap(&self) -> &ExtensionMap {
+    /// The remote, agreed on, extension map, configured for this Media.
+    ///
+    /// For the SDP API, these are negotiated with the remote peer.
+    ///
+    /// For the Direct API, these are a clone of the session configured values narrowed by media
+    /// kind (audio/video).
+    pub fn remote_extmap(&self) -> &ExtensionMap {
         &self.remote_exts
     }
 }
