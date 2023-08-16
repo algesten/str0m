@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::ops::RangeInclusive;
 
-use crate::packet::MediaKind;
+use crate::packet::{H264ProfileLevel, MediaKind};
 use crate::rtp_::Direction;
 use crate::rtp_::Pt;
 use crate::sdp::FormatParam;
@@ -270,6 +270,10 @@ impl PayloadParams {
             return Some(Self::match_opus_score(c0, c1));
         }
 
+        if c0.codec == Codec::H264 {
+            return Self::match_h264_score(c0, c1);
+        }
+
         // TODO: Fuzzy matching for any other audio codecs
         // TODO: Fuzzy matching for video
 
@@ -296,6 +300,33 @@ impl PayloadParams {
         }
 
         score
+    }
+
+    fn match_h264_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
+        // Default packetization mode is 0. https://www.rfc-editor.org/rfc/rfc6184#section-6.2
+        let c0_packetization_mode = c0.format.packetization_mode.unwrap_or(0);
+        let c1_packetization_mode = c1.format.packetization_mode.unwrap_or(0);
+
+        if c0_packetization_mode != c1_packetization_mode {
+            return None;
+        }
+
+        let c0_profile_level = c0
+            .format
+            .profile_level_id
+            .map(|l| l.try_into().ok())
+            .unwrap_or(Some(H264ProfileLevel::FALLBACK))?;
+        let c1_profile_level = c1
+            .format
+            .profile_level_id
+            .map(|l| l.try_into().ok())
+            .unwrap_or(Some(H264ProfileLevel::FALLBACK))?;
+
+        if c0_profile_level != c1_profile_level {
+            return None;
+        }
+
+        Some(100)
     }
 
     fn update_param(
@@ -851,5 +882,71 @@ impl std::ops::Deref for CodecConfig {
 impl std::ops::DerefMut for CodecConfig {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.params
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn h264_codec_spec(
+        level_asymmetry_allowed: Option<bool>,
+        packetization_mode: Option<u8>,
+        profile_level_id: Option<u32>,
+    ) -> CodecSpec {
+        CodecSpec {
+            codec: Codec::H264,
+            clock_rate: 90000,
+            channels: None,
+            format: FormatParams {
+                min_p_time: None,
+                use_inband_fec: None,
+                level_asymmetry_allowed,
+                packetization_mode,
+                profile_level_id,
+                profile_id: None, // VP8
+            },
+        }
+    }
+
+    #[test]
+    fn test_h264_profile_matching() {
+        struct Case {
+            c0: CodecSpec,
+            c1: CodecSpec,
+            must_match: bool,
+            msg: &'static str,
+        }
+
+        let cases = [Case {
+            c0: h264_codec_spec(None, None, Some(0x42E01F)),
+            c1: h264_codec_spec(None, None, Some(0x4DA01F)),
+            must_match: true,
+            msg:
+                "0x42A01F and 0x4DF01F should match, they are both constrained baseline subprofile",
+        }, Case {
+            c0: h264_codec_spec(None, None, Some(0x42E01F)),
+            c1: h264_codec_spec(None, Some(1), Some(0x4DA01F)),
+            must_match: false,
+            msg:
+                "0x42A01F and 0x4DF01F with differing packetization modes should not match",
+        },  Case {
+            c0: h264_codec_spec(None, Some(0), Some(0x422000)),
+            c1: h264_codec_spec(None, None, Some(0x42B00A)),
+            must_match: true,
+            msg:
+                "0x424000 and 0x42B00A should match because they are both the baseline subprofile and the level idc of 0x42F01F will be adjusted to Level1B because the constraint set 3 flag is set"
+        }];
+
+        for Case {
+            c0,
+            c1,
+            must_match,
+            msg,
+        } in cases.into_iter()
+        {
+            let matched = PayloadParams::match_h264_score(c0, c1).is_some();
+            assert_eq!(matched, must_match, "{msg}\nc0: {c0:#?}\nc1: {c1:#?}");
+        }
     }
 }
