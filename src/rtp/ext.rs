@@ -6,6 +6,7 @@ use super::{Mid, Rid};
 
 /// RTP header extensions.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum Extension {
     /// <http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time>
     AbsoluteSendTime,
@@ -392,10 +393,6 @@ impl ExtensionMap {
         }
 
         self.0.swap(old_index, new_index);
-    }
-
-    pub(crate) fn enabled(&self, audio: bool, ext: Extension) -> bool {
-        self.iter(audio).any(|e| e.1 == ext)
     }
 }
 

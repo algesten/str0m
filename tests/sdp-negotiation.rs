@@ -42,7 +42,7 @@ pub fn answer_change_order() {
         &[h264(96), vp8(98)],
     );
 
-    let mid = l.media_mids()[0];
+    let mid = l.mids()[0];
 
     // Test left side.
     assert_eq!(&[vp8(100), h264(102)], &**l.codec_config());
@@ -74,7 +74,7 @@ pub fn answer_narrow() {
         &[h264(96)],
     );
 
-    let mid = l.media_mids()[0];
+    let mid = l.mids()[0];
 
     // Test left side.
     assert_eq!(&[vp8(100), h264(102)], &**l.codec_config());
@@ -113,7 +113,7 @@ pub fn answer_no_match() {
         &[h264(96)],
     );
 
-    let mid = l.media_mids()[0];
+    let mid = l.mids()[0];
 
     // Test left side. Nothing has changed. The codec is not locked.
     assert_eq!(&[vp8(100)], &**l.codec_config());
@@ -249,25 +249,48 @@ fn answer_remaps() {
 }
 
 #[test]
-fn answer_remaps_does_to_introduce_unconfigured_extensions() {
+fn offers_unsupported_extension() {
     init_log();
 
     use Extension::*;
 
     let mut exts_l = ExtensionMap::empty();
-    let exts_r = ExtensionMap::empty();
+    let mut exts_r = ExtensionMap::empty();
 
-    // Not same number as the default.
+    // They agree on VideoOrientation, but R has different number
+    // L has introduces an extension R doesn't support.
+    exts_l.set(3, VideoOrientation);
     exts_l.set(8, ColorSpace);
+
+    exts_r.set(5, VideoOrientation);
 
     // This negotiates a video track.
     let (l, r) = with_exts(exts_l, exts_r);
 
-    // TODO: Look at the generated SPDs, the offer should include
-    //     a=extmap:8 http://www.webrtc.org/experiments/rtp-hdrext/color-space
-    //  but the answer should not, since that extension isn't supported by the right side.
-    // Cannot assert this easily
-    panic!("");
+    assert_eq!(
+        l.exts().iter(false).collect::<Vec<_>>(),
+        vec![(3, VideoOrientation), (8, ColorSpace)]
+    );
+    assert_eq!(
+        r.exts().iter(false).collect::<Vec<_>>(),
+        vec![(3, VideoOrientation)]
+    );
+
+    let mid = l.mids()[0];
+    let m_l = l.media(mid).unwrap();
+    let m_r = r.media(mid).unwrap();
+
+    // L media did not get R unsupported ext, despite that being configured on session.
+    assert_eq!(
+        m_l.remote_extmap().iter(false).collect::<Vec<_>>(),
+        vec![(3, VideoOrientation)]
+    );
+
+    // R media didn't get the unsupported ext.
+    assert_eq!(
+        m_r.remote_extmap().iter(false).collect::<Vec<_>>(),
+        vec![(3, VideoOrientation)]
+    );
 }
 
 fn with_params(params_l: &[PayloadParams], params_r: &[PayloadParams]) -> (Rtc, Rtc) {
@@ -336,6 +359,7 @@ fn build_params(params: &[PayloadParams]) -> Rtc {
 
 fn build_exts(exts: ExtensionMap) -> Rtc {
     let mut b = Rtc::builder().clear_codecs();
+    b = b.enable_vp8(true);
     let e = b.extension_map();
     *e = exts;
     b.build()
