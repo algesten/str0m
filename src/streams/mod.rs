@@ -89,7 +89,8 @@ pub struct StreamPaused {
     pub paused: bool,
 }
 
-pub const BLANK_PACKET_DEFAULT_PT: Pt = Pt::new_with_value(0);
+/// 255 is out of range for a real PT, which is 7 bit.
+const BLANK_PACKET_DEFAULT_PT: Pt = Pt::new_with_value(255);
 
 impl RtpPacket {
     fn blank() -> RtpPacket {
@@ -104,6 +105,10 @@ impl RtpPacket {
             nackable: false,
             timestamp: already_happened(),
         }
+    }
+
+    pub(crate) fn is_pt_set(&self) -> bool {
+        self.header.payload_type != BLANK_PACKET_DEFAULT_PT
     }
 }
 

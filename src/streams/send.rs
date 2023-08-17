@@ -24,7 +24,6 @@ use crate::RtcError;
 
 use super::rtx_cache::RtxCache;
 use super::send_queue::SendQueue;
-use super::BLANK_PACKET_DEFAULT_PT;
 use super::{rr_interval, RtpPacket};
 
 /// The smallest size of padding for which we attempt to use a spurious resend. For padding
@@ -759,8 +758,7 @@ impl StreamTx {
 
         // It's only possible to use this sender for padding if RTX is enabled and
         // we know the previous main PT.
-        let is_pt_set = self.blank_packet.header.payload_type != BLANK_PACKET_DEFAULT_PT;
-        let use_for_padding = self.rtx_enabled() && is_pt_set;
+        let use_for_padding = self.rtx_enabled() && self.blank_packet.is_pt_set();
 
         let mut snapshot = self.send_queue.snapshot(now);
 
