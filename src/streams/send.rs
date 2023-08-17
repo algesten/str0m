@@ -53,6 +53,9 @@ pub struct StreamTx {
     /// Set on first handle_timeout.
     kind: Option<MediaKind>,
 
+    /// Set on first handle_timeout.
+    cname: Option<String>,
+
     /// The last main payload clock rate that was sent.
     clock_rate: Option<i64>,
 
@@ -146,6 +149,7 @@ impl StreamTx {
             mid,
             rid,
             kind: None,
+            cname: None,
             clock_rate: None,
             seq_no,
             seq_no_rtx,
@@ -660,7 +664,6 @@ impl StreamTx {
     pub(crate) fn maybe_create_sr(
         &mut self,
         now: Instant,
-        cname: &str,
         feedback: &mut VecDeque<Rtcp>,
     ) -> Option<()> {
         if now < self.sender_report_at() {
@@ -668,11 +671,13 @@ impl StreamTx {
         }
 
         let sr = self.create_sender_report(now);
-        let ds = self.create_sdes(cname);
 
         debug!("Created feedback SR: {:?}", sr);
         feedback.push_back(Rtcp::SenderReport(sr));
-        feedback.push_back(Rtcp::SourceDescription(ds));
+
+        if let Some(ds) = self.create_sdes() {
+            feedback.push_back(Rtcp::SourceDescription(ds));
+        }
 
         // Update timestamp to move time when next is created.
         self.last_sender_report = now;
@@ -687,7 +692,9 @@ impl StreamTx {
         }
     }
 
-    fn create_sdes(&self, cname: &str) -> Descriptions {
+    fn create_sdes(&self) -> Option<Descriptions> {
+        // CNAME is set on first handle_timeout. No SDES before that.
+        let cname = self.cname.as_ref()?;
         let mut s = Sdes {
             ssrc: self.ssrc,
             values: ReportList::new(),
@@ -699,7 +706,7 @@ impl StreamTx {
         };
         d.reports.push(s);
 
-        d
+        Some(d)
     }
 
     fn sender_info(&self, now: Instant) -> SenderInfo {
@@ -858,6 +865,7 @@ impl StreamTx {
     fn on_first_timeout(&mut self, media: &Media, config: &CodecConfig) {
         // Always set on first timeout.
         self.kind = Some(media.kind());
+        self.cname = Some(media.cname().to_string());
 
         // Set on first timeout, if not set already by configuration.
         if self.unpaced.is_none() {
