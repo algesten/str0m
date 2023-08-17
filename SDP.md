@@ -9,7 +9,7 @@ str0m does not follow the exact specification for SDP negotiation, however, almo
 These quotes are from the [spec section 6.1][sdpspec]:
 
 > For recvonly RTP streams, the payload type numbers indicate the value of the payload type field
-> in RTP packets the offerer is expecting to receive for that codec.  For sendonly RTP streams,
+> in RTP packets the offerer is expecting to receive for that codec. For sendonly RTP streams,
 > the payload type numbers indicate the value of the payload type field in RTP packets
 > the offerer is planning to send for that codec. For sendrecv RTP streams, the payload type
 > numbers indicate the value of the payload type field the offerer expects to receive, and would
@@ -48,13 +48,13 @@ are what the receiving side expects.
 
 Example:
 
-* OFFER is `sendrecv` VP8 with PT (Payload Type) 100
-* ANSWER is `sendrecv` VP8 with PT 96
+- OFFER is `sendrecv` VP8 with PT (Payload Type) 100
+- ANSWER is `sendrecv` VP8 with PT 96
 
-The OFFER details the receiving capabilties. It *expects* VP8 to arrive at PT 100. This
+The OFFER details the receiving capabilties. It _expects_ VP8 to arrive at PT 100. This
 is not a suggestion.
 
-Similarly the ANSWER is talking about its receiving capabilities. It *expects* VP8 to arrive
+Similarly the ANSWER is talking about its receiving capabilities. It _expects_ VP8 to arrive
 at PT 96. This is also not a suggestion.
 
 We have an asymmetry…
@@ -86,8 +86,8 @@ be one in codecs. If you want to send a specific codec, you must also be prepare
 
 Example:
 
-* OFFER `sendrecv` VP8 PT 100, H264 PT 102
-* ANSWER `sendrecv` VP8 PT 96
+- OFFER `sendrecv` VP8 PT 100, H264 PT 102
+- ANSWER `sendrecv` VP8 PT 96
 
 The answer side is not allowed to send H264 in the direction of the offer side, because it is not
 prepared to receive it. We do however have an asymmetry in payload types (96 vs 100).
@@ -95,5 +95,26 @@ prepared to receive it. We do however have an asymmetry in payload types (96 vs 
 Thus, a spec compliant implementation does not have to maintain separate codecs per direction,
 only separate payload type numbers.
 
-[quote]:      https://mailarchive.ietf.org/arch/msg/mmusic/2N1_-eUTVrmciX3LpSjkjFH7oCU/
-[sdpspec]:    https://datatracker.ietf.org/doc/html/rfc3264#section-6.1
+## Direction change from Inactive
+
+This is the behavior of libWebRTC:
+
+- SFU adds first media for something we intend to send later.
+- OFFER from SFU for Inactive m-line: mid1
+- ANSWER from client confirming Inactive mid1
+
+- Client adds media it wants to send.
+- OFFER from client for new m-line: mid2, _mid1 is now OFFERed as RecvOnly_
+- ANSWER _should confirm that mid1 is still inactive_
+
+This is because the client is talking about it's receive capabilities. "I can receive on mid1". If the
+SFU blindly follows the client OFFER, it would thus transition (the SFU created)
+mid1 `Inactive` -> `SendOnly`, when the user (probably) didn't intend to.
+
+To get around this str0m breaks with the spec. str0m keeps track of whether a `Media` (m-line) is created
+by str0m or the client. For media str0m creates, it refuses to allow the client to do the specific
+transition `Inactive` -> `RecvOnly`. All other transitions are fine, i.e. a client can change, also a
+str0m created media, from `Inactive` to `SendRecv`.
+
+[quote]: https://mailarchive.ietf.org/arch/msg/mmusic/2N1_-eUTVrmciX3LpSjkjFH7oCU/
+[sdpspec]: https://datatracker.ietf.org/doc/html/rfc3264#section-6.1
