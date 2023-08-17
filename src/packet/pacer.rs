@@ -468,33 +468,30 @@ impl LeakyBucketPacer {
             }
         }
 
-        if self.padding_bitrate > Bitrate::ZERO && self.last_emitted.is_some() {
-            let padding_possible = self.queue_states.iter().any(|q| q.use_for_padding);
+        let any_queue_for_padding = self.queue_states.iter().any(|q| q.use_for_padding);
+        let padding_possible = self.padding_bitrate > Bitrate::ZERO && any_queue_for_padding;
 
-            if padding_possible {
-                // If all queues are empty, we have sent something, and we have a padding rate wait until we have drained
-                // both the media debt and padding debt to send some padding.
-                let mut drain_debt_time = (self.media_debt / self.adjusted_bitrate)
-                    .max(self.padding_debt / self.padding_bitrate);
-                if drain_debt_time.is_zero() {
-                    // Give the main loop some time to doe something else e.g. queue media.
-                    drain_debt_time = Duration::from_micros(1);
-                }
-
-                let padding_at = self
-                    .last_handle_time
-                    .map(|h| h + drain_debt_time)
-                    .unwrap_or(now);
-
-                // We explicitly don't return a queue to poll here. We need another call to
-                // handle_timeout to request the padding before we can poll the selected queue.
-                return Some((padding_at, None));
-            }
+        if !padding_possible {
+            return None;
         }
 
-        // No queues to send on, no poll for now. `poll_timeout` will return a timeout based on
-        // PACING.
-        None
+        // If all queues are empty and we have a padding rate, wait until we have drained
+        // both the media debt and padding debt to send some padding.
+        let mut drain_debt_time =
+            (self.media_debt / self.adjusted_bitrate).max(self.padding_debt / self.padding_bitrate);
+        if drain_debt_time.is_zero() {
+            // Give the main loop some time to do something else e.g. queue media.
+            drain_debt_time = Duration::from_micros(1);
+        }
+
+        let padding_at = self
+            .last_handle_time
+            .map(|h| h + drain_debt_time)
+            .unwrap_or(now);
+
+        // We explicitly don't return a queue to poll here. We need another call to
+        // handle_timeout to request the padding before we can poll the selected queue.
+        Some((padding_at, None))
     }
 
     fn maybe_update_adjusted_bitrate(&mut self, now: Instant) {
@@ -557,9 +554,6 @@ impl LeakyBucketPacer {
         if !all_queues_empty {
             return None;
         }
-
-        // We must have sent some media.
-        self.last_emitted?;
 
         // We must have a padding bitrate.
         if self.padding_bitrate == Bitrate::ZERO {
