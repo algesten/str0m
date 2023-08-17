@@ -240,11 +240,7 @@ impl Streams {
 
             stream.handle_timeout(now, get_media);
 
-            // This unwrap is OK because a StreamTx can't exist without the
-            // corresponding Media (Mid).
-            let cname = medias.iter().find(|m| m.mid() == mid).unwrap().cname();
-
-            stream.maybe_create_sr(now, cname, feedback);
+            stream.maybe_create_sr(now, feedback);
         }
     }
 
