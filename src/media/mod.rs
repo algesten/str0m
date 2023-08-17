@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::change::AddMedia;
+use crate::format::CodecConfig;
 use crate::io::{Id, DATAGRAM_MTU};
 use crate::packet::{DepacketizingBuffer, Payloader, RtpMeta};
 use crate::rtp_::ExtensionMap;
@@ -433,6 +434,13 @@ impl Media {
 
     pub(crate) fn remote_created(&self) -> bool {
         self.remote_created
+    }
+
+    pub(crate) fn first_pt_with_rtx(&self, config: &CodecConfig) -> Option<Pt> {
+        config
+            .all_for_kind(self.kind)
+            .find(|p| p.resend().is_some() && self.remote_pts.contains(&p.pt))
+            .map(|p| p.pt())
     }
 }
 
