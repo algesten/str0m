@@ -2,10 +2,12 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::DATAGRAM_MTU_WARN;
 use crate::io::MAX_RTP_OVERHEAD;
 use crate::media::KeyframeRequestKind;
+use crate::media::Media;
 use crate::packet::QueuePriority;
 use crate::packet::QueueSnapshot;
 use crate::packet::QueueState;
@@ -320,7 +322,6 @@ impl StreamTx {
             return None;
         };
 
-        let is_audio = param.spec().codec.is_audio();
         let mut set_pt = None;
         let mut set_cr = None;
 
@@ -443,12 +444,6 @@ impl StreamTx {
                 .pop(now)
                 .expect("head of send_queue to be there");
             self.rtx_cache.cache_sent_packet(pkt, now);
-        }
-
-        // Set on first send, if not set already by configuration.
-        if self.unpaced.is_none() {
-            // Default audio to be unpaced.
-            self.unpaced = Some(is_audio);
         }
 
         // This is set here due to borrow checker.
@@ -751,7 +746,7 @@ impl StreamTx {
     }
 
     pub(crate) fn queue_state(&mut self, now: Instant) -> QueueState {
-        // The unpaced flag is set to a default value on first ever write. The
+        // The unpaced flag is set to a default value on first handle_timeout. The
         // default is to not pace audio. We unwrap default to "true" here to not
         // apply any pacing until we know what kind of content we are sending.
         let unpaced = self.unpaced.unwrap_or(true);
@@ -838,8 +833,41 @@ impl StreamTx {
         self.send_queue.need_timeout()
     }
 
-    pub(crate) fn handle_timeout(&mut self, now: Instant) {
+    pub(crate) fn handle_timeout<'a>(
+        &mut self,
+        now: Instant,
+        get_media: impl FnOnce() -> (&'a Media, &'a CodecConfig),
+    ) {
+        // If unpaced is None, this is the first time we ever get a handle_timeout.
+        // TODO: Find some better way to detect this.
+        if self.unpaced.is_none() {
+            let (media, config) = get_media();
+            self.on_first_timeout(media, config);
+        }
+
         self.send_queue.handle_timeout(now);
+    }
+
+    fn on_first_timeout(&mut self, media: &Media, config: &CodecConfig) {
+        // Set on first timeout, if not set already by configuration.
+        if self.unpaced.is_none() {
+            // Default audio to be unpaced.
+            self.unpaced = Some(media.kind().is_audio());
+        }
+
+        // To allow for sending padding on a newly created StreamTx, before any regular
+        // packet has been sent, we need an PT that has RTX for any main PT. This is
+        // later be overwritten when we send the first regular packet.
+        if self.rtx_enabled() && !self.blank_packet.is_pt_set() {
+            if let Some(pt) = media.first_pt_with_rtx(config) {
+                trace!(
+                    "StreamTx Mid {} blank packet PT {} before first regular packet",
+                    self.mid,
+                    pt
+                );
+                self.blank_packet.header.payload_type = pt;
+            }
+        }
     }
 
     pub(crate) fn reset_buffers(&mut self) {

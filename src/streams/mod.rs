@@ -3,6 +3,7 @@ use std::fmt;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::format::CodecConfig;
 use crate::media::{KeyframeRequest, Media};
 use crate::rtp_::MediaTime;
 use crate::rtp_::Pt;
@@ -217,6 +218,7 @@ impl Streams {
         sender_ssrc: Ssrc,
         do_nack: bool,
         medias: &[Media],
+        config: &CodecConfig,
         feedback: &mut VecDeque<Rtcp>,
     ) {
         for stream in self.streams_rx.values_mut() {
@@ -229,15 +231,18 @@ impl Streams {
         }
 
         for stream in self.streams_tx.values_mut() {
-            stream.handle_timeout(now);
+            let mid = stream.mid();
+
+            // Finding the first (main) PT that also has RTX for the Media is expensive,
+            // this closure is run only when needed.
+            // The unwrap is okay because we cannot have StreamTx with a Mid without the corresponding Media.
+            let get_media = move || (medias.iter().find(|m| m.mid() == mid).unwrap(), config);
+
+            stream.handle_timeout(now, get_media);
 
             // This unwrap is OK because a StreamTx can't exist without the
             // corresponding Media (Mid).
-            let cname = medias
-                .iter()
-                .find(|m| m.mid() == stream.mid())
-                .unwrap()
-                .cname();
+            let cname = medias.iter().find(|m| m.mid() == mid).unwrap().cname();
 
             stream.maybe_create_sr(now, cname, feedback);
         }

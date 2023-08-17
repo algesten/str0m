@@ -221,6 +221,7 @@ impl Session {
             sender_ssrc,
             do_nack,
             &self.medias,
+            &self.codec_config,
             &mut self.feedback_tx,
         );
 
