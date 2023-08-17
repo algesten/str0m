@@ -8,6 +8,7 @@ use crate::io::DATAGRAM_MTU_WARN;
 use crate::io::MAX_RTP_OVERHEAD;
 use crate::media::KeyframeRequestKind;
 use crate::media::Media;
+use crate::media::MediaKind;
 use crate::packet::QueuePriority;
 use crate::packet::QueueSnapshot;
 use crate::packet::QueueState;
@@ -48,6 +49,9 @@ pub struct StreamTx {
 
     /// The rid that might be used for this stream.
     rid: Option<Rid>,
+
+    /// Set on first handle_timeout.
+    kind: Option<MediaKind>,
 
     /// The last main payload clock rate that was sent.
     clock_rate: Option<i64>,
@@ -141,6 +145,7 @@ impl StreamTx {
             rtx,
             mid,
             rid,
+            kind: None,
             clock_rate: None,
             seq_no,
             seq_no_rtx,
@@ -591,8 +596,11 @@ impl StreamTx {
     }
 
     pub(crate) fn sender_report_at(&self) -> Instant {
-        let is_audio = self.rtx.is_none(); // this is maybe not correct, but it's all we got.
-        self.last_sender_report + rr_interval(is_audio)
+        let Some(kind) = self.kind else {
+            // First handle_timeout sets the kind. No sender report until then.
+            return not_happening();
+        };
+        self.last_sender_report + rr_interval(kind.is_audio())
     }
 
     pub(crate) fn poll_keyframe_request(&mut self) -> Option<KeyframeRequestKind> {
@@ -838,9 +846,8 @@ impl StreamTx {
         now: Instant,
         get_media: impl FnOnce() -> (&'a Media, &'a CodecConfig),
     ) {
-        // If unpaced is None, this is the first time we ever get a handle_timeout.
-        // TODO: Find some better way to detect this.
-        if self.unpaced.is_none() {
+        // If kind is None, this is the first time we ever get a handle_timeout.
+        if self.kind.is_none() {
             let (media, config) = get_media();
             self.on_first_timeout(media, config);
         }
@@ -849,6 +856,9 @@ impl StreamTx {
     }
 
     fn on_first_timeout(&mut self, media: &Media, config: &CodecConfig) {
+        // Always set on first timeout.
+        self.kind = Some(media.kind());
+
         // Set on first timeout, if not set already by configuration.
         if self.unpaced.is_none() {
             // Default audio to be unpaced.
