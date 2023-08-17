@@ -21,7 +21,8 @@ use super::Fingerprint;
 
 const RSA_F4: u32 = 0x10001;
 const DTLS_CIPHERS: &str = "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
-const DTLS_SRTP: &str = "SRTP_AES128_CM_SHA1_80";
+// Order is most preferred first, we want to use `AEAD_AES_128_GCM` if possible.
+const DTLS_SRTP: &str = "SRTP_AEAD_AES_128_GCM:SRTP_AES128_CM_SHA1_80";
 const DTLS_EC_CURVE: Nid = Nid::X9_62_PRIME256V1;
 const DTLS_KEY_LABEL: &str = "EXTRACTOR-dtls_srtp";
 
