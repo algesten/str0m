@@ -506,22 +506,45 @@ impl RtcSctp {
                             // Start over with polling, since we might have caused some network traffic by
                             // writing the DcepOpen.
                             return self.do_poll();
-                        } else {
-                            let label = config.label.clone();
-                            entry.set_state(StreamEntryState::Open);
+                        }
 
-                            return Some(SctpEvent::Open {
-                                id: entry.id,
-                                label,
-                            });
-                        };
+                        // Continuing means we are opening the stream out-of-band.
+                    }
+                    Err(ProtoError::ErrStreamAlreadyExist) => {
+                        let config = entry.config.as_ref().expect("config if AwaitOpen");
+                        let in_band = config.negotiated.is_none();
+
+                        if in_band {
+                            warn!(
+                                "Opening stream {} failed: ErrStreamAlreadyExists with in-band",
+                                entry.id
+                            );
+                            entry.do_close = true;
+                            continue;
+                        }
+
+                        // Continuing means we are opening the stream out-of-band. The error can happen
+                        // if both streams are declared and one side starts sending to the other
                     }
                     Err(e) => {
                         warn!("Opening stream {} failed: {:?}", entry.id, e);
                         entry.do_close = true;
                         continue;
                     }
-                };
+                }
+
+                // Consider out-of-band stream open.
+                let config = entry.config.as_ref().expect("config if AwaitOpen");
+                let in_band = config.negotiated.is_none();
+                assert!(!in_band);
+
+                let label = config.label.clone();
+                entry.set_state(StreamEntryState::Open);
+
+                return Some(SctpEvent::Open {
+                    id: entry.id,
+                    label,
+                });
             }
 
             if entry.do_close && entry.state != StreamEntryState::Closed {
