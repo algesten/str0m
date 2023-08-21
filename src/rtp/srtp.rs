@@ -1035,19 +1035,6 @@ mod test {
             0xB7, 0xBB, 0x52, 0x65, 0x21, 0xD1, 0xE7, 0x3C, 0x0F, 0xC0,
         ];
 
-        // #[test]
-        // fn unprotect_rtcp() {
-        //     let key_mat = KeyingMaterial::new(MAT);
-
-        //     let key_rx = SrtpKey::new(&key_mat, true);
-
-        //     let mut ctx_rx = SrtpContext::new(key_rx);
-
-        //     let decrypted = ctx_rx.unprotect_rtcp(SRTCP);
-
-        //     println!("{:02x?}", decrypted);
-        // }
-
         #[test]
         fn unprotect_rtcp() {
             let key_mat = KeyingMaterial::new(&MAT);
