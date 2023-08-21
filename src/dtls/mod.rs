@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use thiserror::Error;
 
 use crate::io::{DatagramRecv, DatagramSend, Receive, DATAGRAM_MTU_WARN};
+use crate::rtp_::SrtpProfile;
 
 mod ossl;
 use ossl::{dtls_create_ctx, dtls_ssl_create, TlsStream};
@@ -113,8 +114,8 @@ pub enum DtlsEvent {
     /// When the DTLS has finished handshaking.
     Connected,
 
-    /// Keying material for SRTP encryption master key.
-    SrtpKeyingMaterial(KeyingMaterial),
+    /// Keying material for SRTP encryption master key and the selected SRTP profile.
+    SrtpKeyingMaterial(KeyingMaterial, SrtpProfile),
 
     /// The fingerprint of the remote peer.
     ///
@@ -238,7 +239,7 @@ impl Dtls {
         } else if self.tls.complete_handshake_until_block()? {
             self.events.push_back(DtlsEvent::Connected);
 
-            let (keying_material, fingerprint) = self
+            let (keying_material, srtp_profile, fingerprint) = self
                 .tls
                 .take_srtp_keying_material()
                 .expect("Exported keying material");
@@ -247,7 +248,7 @@ impl Dtls {
                 .push_back(DtlsEvent::RemoteFingerprint(fingerprint));
 
             self.events
-                .push_back(DtlsEvent::SrtpKeyingMaterial(keying_material));
+                .push_back(DtlsEvent::SrtpKeyingMaterial(keying_material, srtp_profile));
             Ok(false)
         } else {
             Ok(true)
@@ -320,9 +321,11 @@ impl fmt::Debug for DtlsEvent {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Connected => write!(f, "Connected"),
-            Self::SrtpKeyingMaterial(arg0) => {
-                f.debug_tuple("SrtpKeyingMaterial").field(arg0).finish()
-            }
+            Self::SrtpKeyingMaterial(keying_mat, srtp_profile) => f
+                .debug_tuple("SrtpKeyingMaterial")
+                .field(keying_mat)
+                .field(srtp_profile)
+                .finish(),
             Self::RemoteFingerprint(arg0) => {
                 f.debug_tuple("RemoteFingerprint").field(arg0).finish()
             }
