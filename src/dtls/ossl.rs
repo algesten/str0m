@@ -141,7 +141,7 @@ pub struct KeyingMaterial(Vec<u8>);
 
 impl KeyingMaterial {
     #[cfg(test)]
-    pub fn new<const SIZE: usize>(m: [u8; SIZE]) -> Self {
+    pub fn new(m: &[u8]) -> Self {
         KeyingMaterial(m.into())
     }
 }

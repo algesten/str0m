@@ -116,6 +116,33 @@ impl SrtpContext {
         header: &RtpHeader,
         srtp_index: u64, // same as ext_seq
     ) -> Vec<u8> {
+        // SRTP layout
+        // [header, [rtp, (padding + pad_count)], tag]
+
+        //     0                   1                   2                   3
+        //     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+        //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+<+
+        //    |V=2|P|X|  CC   |M|     PT      |       sequence number         | |
+        //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
+        //    |                           timestamp                           | |
+        //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
+        //    |           synchronization source (SSRC) identifier            | |
+        //    +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+ |
+        //    |            contributing source (CSRC) identifiers             | |
+        //    |                               ....                            | |
+        //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
+        //    |                   RTP extension (OPTIONAL)                    | |
+        //  +>+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
+        //  | |                          payload  ...                         | |
+        //  | |                               +-------------------------------+ |
+        //  | |                               | RTP padding   | RTP pad count | |
+        //  +>+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+<+
+        //  | ~                     SRTP MKI (OPTIONAL)                       ~ |
+        //  | +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
+        //  | :                 authentication tag (RECOMMENDED)              : |
+        //  | +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
+        //  |                                                                   |
+        //  +- Encrypted Portion*                      Authenticated Portion ---+
         let hlen = header.header_len;
         let input = &buf[hlen..];
 
@@ -128,34 +155,6 @@ impl SrtpContext {
             Derived::Aes128CmSha1_80 {
                 hmac, salt, enc, ..
             } => {
-                // SRTP layout
-                // [header, [rtp, (padding + pad_count)], hmac]
-
-                //     0                   1                   2                   3
-                //     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-                //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+<+
-                //    |V=2|P|X|  CC   |M|     PT      |       sequence number         | |
-                //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
-                //    |                           timestamp                           | |
-                //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
-                //    |           synchronization source (SSRC) identifier            | |
-                //    +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+ |
-                //    |            contributing source (CSRC) identifiers             | |
-                //    |                               ....                            | |
-                //    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
-                //    |                   RTP extension (OPTIONAL)                    | |
-                //  +>+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
-                //  | |                          payload  ...                         | |
-                //  | |                               +-------------------------------+ |
-                //  | |                               | RTP padding   | RTP pad count | |
-                //  +>+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+<+
-                //  | ~                     SRTP MKI (OPTIONAL)                       ~ |
-                //  | +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
-                //  | :                 authentication tag (RECOMMENDED)              : |
-                //  | +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+ |
-                //  |                                                                   |
-                //  +- Encrypted Portion*                      Authenticated Portion ---+
-
                 use aes_128_cm_sha1_80::{RtpHmac, ToRtpIv, HMAC_TAG_LEN};
 
                 let iv = salt.rtp_iv(*header.ssrc, srtp_index);
@@ -215,13 +214,8 @@ impl SrtpContext {
                 let iv = salt.rtp_iv(*header.ssrc, srtp_index);
 
                 let input = &buf[header.header_len..hmac_start];
-                // Allocate enough to also hold a header, since this is used in rtp-mode.
-                let mut output = Vec::with_capacity(buf.len());
-                output.resize(input.len(), 0);
+                let mut output = vec![0; buf.len()];
 
-                // TODO: This instantiates a Crypter for every packet. That's kinda wasteful
-                // when it's perfectly possible to reuse the underlying OpenSSL structs for
-                // over and over using a reset.
                 dec.decrypt(&iv, input, &mut output).expect("rtp decrypt");
 
                 Some(output)
@@ -239,9 +233,6 @@ impl SrtpContext {
                 let iv = salt.rtp_iv(*header.ssrc, roc, seq);
 
                 let (aad, input) = buf.split_at(header.header_len);
-                // TODO: This doesn't seem aligned with the comment here:
-                // https://github.com/algesten/str0m/blob/2c59d484ea2748dc4e8535d26188fab6acf4ed39/src/streams/mod.rs#L58-L59
-                // Allocate enough to also hold a header, since this is used in rtp-mode.
                 let mut output = vec![0; buf.len()];
 
                 // TODO: This expect is problematic
@@ -321,19 +312,19 @@ impl SrtpContext {
         }
     }
 
+    // SRTCP layout
+    // ["header", ssrc, payload, ["header", ssrc, payload], ...], ssrtcp_index, tag]
+    //
+    // |----------------------------------------------------------------------|
+    //                          authenticated
+    //
+    //                  |--------------------------------------|
+    //                              encrypted (aes)
     pub fn unprotect_rtcp(&mut self, buf: &[u8]) -> Option<Vec<u8>> {
         match &mut self.rtcp {
             Derived::Aes128CmSha1_80 {
                 hmac, salt, dec, ..
             } => {
-                // SRTCP layout
-                // ["header", ssrc, payload, ["header", ssrc, payload], ...], ssrtcp_index, hmac]
-                //
-                // |----------------------------------------------------------------------|
-                //                          authenticated (hmac)
-                //
-                //                  |--------------------------------------|
-                //                              encrypted (aes)
                 use aes_128_cm_sha1_80::{RtpHmac, ToRtpIv, HMAC_TAG_LEN};
 
                 if buf.len() < HMAC_TAG_LEN + SRTCP_INDEX_LEN {
@@ -1063,7 +1054,7 @@ mod test {
 
         #[test]
         fn unprotect_rtcp() {
-            let key_mat = KeyingMaterial::new(MAT);
+            let key_mat = KeyingMaterial::new(&MAT);
             let mut ctx_rx = SrtpProfile::Aes128CmSha1_80.create_context(&key_mat, true);
 
             let decrypted = ctx_rx.unprotect_rtcp(SRTCP).unwrap();
