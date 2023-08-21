@@ -244,13 +244,14 @@ impl SrtpContext {
     }
 
     pub fn protect_rtcp(&mut self, buf: &[u8]) -> Vec<u8> {
+        let srtcp_index = self.srtcp_index;
+
         // https://tools.ietf.org/html/rfc3711#page-15
         // The SRTCP index MUST be set to zero before the first SRTCP
         // packet is sent, and MUST be incremented by one,
         // modulo 2^31, after each SRTCP packet is sent.
         self.srtcp_index = (self.srtcp_index + 1) % 2_u32.pow(31);
 
-        let srtcp_index = self.srtcp_index;
         // e is always encrypted, rest is 31 byte index.
         let e_and_si = 0x8000_0000 | srtcp_index;
         let ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
