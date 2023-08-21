@@ -1164,7 +1164,7 @@ impl Rtc {
                 }
                 DtlsEvent::SrtpKeyingMaterial(mat, srtp_profile) => {
                     info!(
-                        "Initialising SRTP with keying material and SRTP profile: {}",
+                        "DTLS set SRTP keying material and profile: {}",
                         srtp_profile
                     );
                     let active = self.dtls.is_active().expect("DTLS must be inited by now");
