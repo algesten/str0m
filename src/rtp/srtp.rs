@@ -1021,45 +1021,6 @@ mod test {
         );
     }
 
-    #[test]
-    fn derive_key_tmp() {
-        // https://tools.ietf.org/html/rfc3711#appendix-B.3
-        //
-        // Key Derivation Test Vectors.
-
-        // RTP Session Key: [23, 8c, 88, 2f, 36, f0, 00, 30, 15, 73, e6, 93, 83, 50, 2d, 9d]
-        // RTP Session Salt: [f2, fe, e0, 40, 70, fc, 3f, 65, d7, 06, e2, e4, 9a, 02, f2, 43]
-
-        let master = [
-            0xE1, 0xF9, 0x7A, 0x0D, 0x3E, 0x01, 0x8B, 0xE0, //
-            0xD6, 0x4F, 0xA3, 0x2C, 0x06, 0xDE, 0x41, 0x39,
-        ];
-
-        let salt = [
-            0x0E, 0xC6, 0x75, 0xAD, 0x49, 0x8A, 0xFE, //
-            0xEB, 0xB6, 0x96, 0x0B, 0x3A,
-        ];
-
-        let sk = SrtpKey { master, salt };
-
-        // aes crypto key
-        let mut out = [0_u8; 16];
-        sk.derive(0, &mut out[..]);
-        println!("RTP Session Key: {out:02x?}");
-
-        // salt
-        let mut out = [0_u8; 12];
-        sk.derive(2, &mut out[..]);
-        println!("RTP Session Salt: {out:02x?}");
-
-        // RTCP Salt
-        let mut out = [0_u8; 12];
-        sk.derive(LABEL_RTCP_SALT, &mut out[..]);
-        println!("RTCP Session Salt: {out:02x?}");
-
-        panic!()
-    }
-
     mod test_aes128_cm_sha1_80 {
         use super::aes_128_cm_sha1_80::*;
         use super::*;
@@ -1330,16 +1291,6 @@ mod test {
                 &mut out,
             );
             assert!(result.is_err(), "Should fail to decrypt a SRTP packet that has mismatched authenicated additional data");
-        }
-
-        #[test]
-        fn test_iv() {
-            // [65, 19, d6, 2, 1f, 1e, 37, 6d, c1, 89, eb, 12]
-            let salt = [
-                0x9b, 0xb7, 0x41, 0x13, 0x9a, 0x52, 0x07, 0xf6, 0x1f, 0x89, 0x8d, 0xb2,
-            ];
-            let iv = salt.rtcp_iv(0xDEADBEEF, 0x1);
-            panic!("{iv:x?}")
         }
     }
 }
