@@ -137,15 +137,14 @@ impl SrtpContext {
         let hlen = header.header_len;
         let input = &buf[hlen..];
 
-        assert!(
-            input.len() % SRTP_BLOCK_SIZE == 0,
-            "RTP body should be padded to 16 byte block size, {header:?} with body length {} was not", input.len()
-        );
-
         match &mut self.rtp {
             Derived::Aes128CmSha1_80 {
                 hmac, salt, enc, ..
             } => {
+                assert!(
+                    input.len() % SRTP_BLOCK_SIZE == 0,
+                    "RTP body should be padded to 16 byte block size, {header:?} with body length {} was not", input.len()
+                );
                 use aes_128_cm_sha1_80::{RtpHmac, ToRtpIv, HMAC_TAG_LEN};
 
                 let iv = salt.rtp_iv(*header.ssrc, srtp_index);
