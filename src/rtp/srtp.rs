@@ -1256,7 +1256,7 @@ mod test {
                 // Mess with part of the sequence number, since this makes up part of the
                 // authenticated additional data(AAD) the resulting authenticity tag should not
                 // match.
-                header[3] = header[3] ^ 0xFF;
+                header[3] ^= 0xFF;
 
                 header
             };
