@@ -63,6 +63,31 @@ impl SrtpContext {
             }
         }
     }
+
+    #[cfg(test)]
+    fn new_aead_aes_128_gcm(
+        rtp_key: [u8; aead_aes_128_gcm::KEY_LEN],
+        rtp_salt: [u8; aead_aes_128_gcm::SALT_LEN],
+        rtcp_key: [u8; aead_aes_128_gcm::KEY_LEN],
+        rtcp_salt: [u8; aead_aes_128_gcm::SALT_LEN],
+        srtcp_index: u32,
+    ) -> Self {
+        use aead_aes_128_gcm::*;
+
+        Self {
+            rtp: Derived::AeadAes128Gcm {
+                salt: rtp_salt,
+                enc: Encrypter::new(&rtp_key),
+                dec: Decrypter::new(&rtp_key),
+            },
+            rtcp: Derived::AeadAes128Gcm {
+                salt: rtcp_salt,
+                enc: Encrypter::new(&rtcp_key),
+                dec: Decrypter::new(&rtcp_key),
+            },
+            srtcp_index,
+        }
+    }
 }
 
 #[derive(Debug)]
