@@ -394,6 +394,7 @@ impl SrtpContext {
                         .expect("SRTCP_INDEX_LEN to be 4"),
                 );
                 let is_encrypted = e_and_si & 0x8000_0000 > 0;
+
                 // The Encrypted Portion of an SRTCP packet consists of the encryption
                 // of the RTCP payload of the equivalent compound RTCP packet, from the
                 // first RTCP packet, i.e., from the ninth (9) octet to the end of the
@@ -426,11 +427,22 @@ impl SrtpContext {
                     aads[1] = &buf[idx_start..];
                 };
 
-                let mut output = vec![0_u8; input.len() + 8];
+                let mut output = vec![0_u8; buf.len() - TAG_LEN - SRTCP_INDEX_LEN];
                 output[0..8].copy_from_slice(&buf[0..8]);
 
-                if let Err(e) = dec.decrypt(&iv, &aads, input, &mut output[8..]) {
-                    warn!("Failed to decrypt SRTCP ({}): {:?}", self.rtcp.profile(), e);
+                let count = match dec.decrypt(&iv, &aads, input, &mut output[8..]) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        warn!("Failed to decrypt SRTCP ({}): {:?}", self.rtcp.profile(), e);
+                        return None;
+                    }
+                };
+
+                if is_encrypted {
+                    output.truncate(8 + count);
+                } else {
+                    // decrypt didn't error, the data is authenticated.
+                    output.copy_from_slice(&buf[0..buf.len() - SRTCP_INDEX_LEN - TAG_LEN])
                 }
 
                 Some(output)
@@ -1078,15 +1090,24 @@ mod test {
     }
 
     mod test_aead_aes_128_gcm {
-        use super::SRTCP_INDEX_LEN;
+        use crate::rtp_::ExtensionMap;
+
+        use super::*;
 
         use super::aead_aes_128_gcm::*;
 
         mod rfc7714 {
             // Test vectors from RFC7714
+
+            // Session Key(RTP and RTCP)
             pub(super) const KEY: [u8; 16] = [
                 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, //
                 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+            ];
+
+            // Session Salt(RTP and RTCP)
+            pub(super) const SALT: [u8; 12] = [
+                0x51, 0x75, 0x69, 0x64, 0x20, 0x70, 0x72, 0x6f, 0x20, 0x71, 0x75, 0x6f,
             ];
 
             /// Full plaintext RTP packet. First 12 octets is the header
@@ -1106,11 +1127,6 @@ mod test {
                 0x6a, 0x91, 0x52, 0xcf, 0x76, 0x5e, 0xe4, 0x39, 0x0c, 0xce,
             ];
 
-            pub(super) const RTP_IV: [u8; 12] = [
-                0x51, 0x75, 0x3c, 0x65, 0x80, 0xc2, //
-                0x72, 0x6f, 0x20, 0x71, 0x84, 0x14,
-            ];
-
             // Full plaintext RTCP packet
             pub(super) const PLAINTEXT_RTCP_PACKET: &[u8] = &[
                 0x81, 0xc8, 0x00, 0x0d, 0x4d, 0x61, 0x72, 0x73, 0x4e, 0x54, 0x50, 0x31, 0x4e, 0x54,
@@ -1119,20 +1135,14 @@ mod test {
                 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
             ];
 
-            pub(super) const RTCP_PACKET_AAD: &[u8] = &[
-                // First 8 octets from the RTCP header.
-                0x81, 0xc8, 0x00, 0x0d, 0x4d, 0x61, 0x72, 0x73, //
-                // SRTCP index + 31st bit(to indicate encryption)
-                0x80, 0x00, 0x05, 0xd4,
-            ];
-
             /// Full encrypted RTCP packet
             pub(super) const PROTECTED_RTCP_PACKET: &[u8] = &[
-                0x63, 0xe9, 0x48, 0x85, 0xdc, 0xda, 0xb6, 0x7c, 0xa7, 0x27, 0xd7, 0x66, 0x2f, 0x6b,
-                0x7e, 0x99, 0x7f, 0xf5, 0xc0, 0xf7, 0x6c, 0x06, 0xf3, 0x2d, 0xc6, 0x76, 0xa5, 0xf1,
-                0x73, 0x0d, 0x6f, 0xda, 0x4c, 0xe0, 0x9b, 0x46, 0x86, 0x30, 0x3d, 0xed, 0x0b, 0xb9,
-                0x27, 0x5b, 0xc8, 0x4a, 0xa4, 0x58, 0x96, 0xcf, 0x4d, 0x2f, 0xc5, 0xab, 0xf8, 0x72,
-                0x45, 0xd9, 0xea, 0xde,
+                0x81, 0xc8, 0x00, 0x0d, 0x4d, 0x61, 0x72, 0x73, 0x63, 0xe9, 0x48, 0x85, 0xdc, 0xda,
+                0xb6, 0x7c, 0xa7, 0x27, 0xd7, 0x66, 0x2f, 0x6b, 0x7e, 0x99, 0x7f, 0xf5, 0xc0, 0xf7,
+                0x6c, 0x06, 0xf3, 0x2d, 0xc6, 0x76, 0xa5, 0xf1, 0x73, 0x0d, 0x6f, 0xda, 0x4c, 0xe0,
+                0x9b, 0x46, 0x86, 0x30, 0x3d, 0xed, 0x0b, 0xb9, 0x27, 0x5b, 0xc8, 0x4a, 0xa4, 0x58,
+                0x96, 0xcf, 0x4d, 0x2f, 0xc5, 0xab, 0xf8, 0x72, 0x45, 0xd9, 0xea, 0xde, 0x80, 0x00,
+                0x05, 0xd4,
             ];
 
             // A RTCP packet that hasn't been encrypted, only authenticated.
@@ -1148,117 +1158,92 @@ mod test {
                 // SRTCP Index
                 0x00, 0x00, 0x05, 0xd4,
             ];
-
-            pub(super) const RTCP_IV: [u8; 12] = [
-                0x51, 0x75, 0x24, 0x05, 0x52, 0x03, //
-                0x72, 0x6f, 0x20, 0x71, 0x70, 0xbb,
-            ];
         }
 
         #[test]
         fn protect_rtp_rfc_7714_test() {
-            let mut encrypter = Encrypter::new(&rfc7714::KEY);
-            // first 12 octets contain the header
-            let expected_len = rfc7714::PROTECTED_RTP_PACKET.len() - 12;
-            let mut out = vec![0; expected_len];
+            let mut context = make_rtp_context();
 
-            encrypter
-                .encrypt(
-                    &rfc7714::RTP_IV,
-                    &rfc7714::PLAINTEXT_RTP_PACKET[..12],
-                    &rfc7714::PLAINTEXT_RTP_PACKET[12..],
-                    &mut out,
-                )
-                .expect("Should be able to encrypt");
+            let header =
+                RtpHeader::parse(&rfc7714::PLAINTEXT_RTP_PACKET[..12], &ExtensionMap::empty())
+                    .expect("header to parse");
+            let out = context.protect_rtp(&rfc7714::PLAINTEXT_RTP_PACKET, &header, 0);
 
-            assert_eq!(out, rfc7714::PROTECTED_RTP_PACKET[12..]);
+            assert_eq!(
+                out,
+                rfc7714::PROTECTED_RTP_PACKET,
+                "failed to encrypted packet.\n{:02x?}\n{:02x?}",
+                out,
+                &rfc7714::PLAINTEXT_RTP_PACKET
+            );
         }
 
         #[test]
         fn unprotect_rtp_rfc_7714_test() {
-            let mut decrypter = Decrypter::new(&rfc7714::KEY);
-            // The first 12 octets is the header and the 16 octet tag is also removed.
-            let expected_len = rfc7714::PROTECTED_RTP_PACKET.len() - 12 - 16;
-            let mut out = vec![0; expected_len];
+            let mut context = make_rtp_context();
+            let header =
+                RtpHeader::parse(&rfc7714::PROTECTED_RTP_PACKET[..12], &ExtensionMap::empty())
+                    .expect("header to parse");
 
-            decrypter
-                .decrypt(
-                    &rfc7714::RTP_IV,
-                    &[&rfc7714::PROTECTED_RTP_PACKET[..12]],
-                    &rfc7714::PROTECTED_RTP_PACKET[12..],
-                    &mut out,
-                )
-                .expect("Should be able to decrypt");
+            let out = context
+                .unprotect_rtp(&rfc7714::PROTECTED_RTP_PACKET, &header, 0)
+                .expect("decrypt rtp");
 
-            assert_eq!(out, rfc7714::PLAINTEXT_RTP_PACKET[12..]);
+            assert_eq!(
+                out,
+                rfc7714::PLAINTEXT_RTP_PACKET[12..],
+                "failed to decrypt packet.\n{:02x?}\n{:02x?}",
+                out,
+                &rfc7714::PLAINTEXT_RTP_PACKET
+            );
         }
 
         #[test]
         fn symmetry_rtp_rfc_7714_test() {
-            // First we encrypt
-            let mut encrypter = Encrypter::new(&rfc7714::KEY);
-            // first 12 octets contain the header
-            let expected_len = rfc7714::PROTECTED_RTP_PACKET.len() - 12;
-            let mut cipher_text = vec![0; expected_len];
+            let mut context = make_rtp_context();
 
-            encrypter
-                .encrypt(
-                    &rfc7714::RTP_IV,
-                    &rfc7714::PLAINTEXT_RTP_PACKET[..12],
-                    &rfc7714::PLAINTEXT_RTP_PACKET[12..],
-                    &mut cipher_text,
-                )
-                .expect("Should be able to encrypt");
+            // First we encrypt
+            let header =
+                RtpHeader::parse(&rfc7714::PLAINTEXT_RTP_PACKET[..12], &ExtensionMap::empty())
+                    .expect("header to parse");
+            let encrypted = context.protect_rtp(&rfc7714::PLAINTEXT_RTP_PACKET, &header, 0);
 
             // Then we decrypt the resulting cipher text
-            let mut decrypter = Decrypter::new(&rfc7714::KEY);
-            // The first 12 octets is the header and the 16 octet tag is also removed.
-            let expected_len = rfc7714::PROTECTED_RTP_PACKET.len() - 12 - 16;
-            let mut out = vec![0; expected_len];
-
-            decrypter
-                .decrypt(
-                    &rfc7714::RTP_IV,
-                    &[&rfc7714::PROTECTED_RTP_PACKET[..12]],
-                    &cipher_text,
-                    &mut out,
-                )
-                .expect("Should be able to decrypt");
+            let header = RtpHeader::parse(&encrypted[..12], &ExtensionMap::empty())
+                .expect("header to parse");
+            let decrypted = context
+                .unprotect_rtp(&encrypted, &header, 0)
+                .expect("rtp unprotect");
 
             // And verify we get the input back.
-            assert_eq!(out, rfc7714::PLAINTEXT_RTP_PACKET[12..]);
+            assert_eq!(decrypted, rfc7714::PLAINTEXT_RTP_PACKET[12..]);
         }
 
         #[test]
         fn unprotect_rtp_should_fail_with_broken_tag_data() {
-            let mut decrypter = Decrypter::new(&rfc7714::KEY);
-            // The first 12 octets is the header and the 16 octet tag is also removed.
-            let expected_len = rfc7714::PROTECTED_RTP_PACKET.len() - 12 - 16;
-            let mut out = vec![0; expected_len];
-            let header = {
-                let mut header = rfc7714::PROTECTED_RTP_PACKET[..12].to_vec();
+            let mut context = make_rtp_context();
+
+            let header_buf = {
+                let mut buf = rfc7714::PROTECTED_RTP_PACKET[..12].to_vec();
                 // Mess with part of the sequence number, since this makes up part of the
                 // authenticated additional data(AAD) the resulting authenticity tag should not
                 // match.
-                header[3] ^= 0xFF;
+                buf[3] ^= 0xFF;
 
-                header
+                buf
             };
 
-            let result = decrypter.decrypt(
-                &rfc7714::RTP_IV,
-                &[&header],
-                &rfc7714::PROTECTED_RTP_PACKET[12..],
-                &mut out,
-            );
-            assert!(result.is_err(), "Should fail to decrypt a SRTP packet that has mismatched authenicated additional data");
+            let header =
+                RtpHeader::parse(&header_buf, &ExtensionMap::empty()).expect("header to parse");
+
+            let result = context.unprotect_rtp(&rfc7714::PROTECTED_RTP_PACKET, &header, 0);
+            assert!(result.is_none(), "Should fail to decrypt a SRTP packet that has mismatched authenicated additional data");
         }
 
         #[test]
         fn unprotect_rtp_should_fail_with_broken_null_tag() {
-            let mut decrypter = Decrypter::new(&rfc7714::KEY);
-            // The first 12 octets is the header and the 16 octet tag is also removed.
-            let expected_len = rfc7714::PROTECTED_RTP_PACKET.len() - 12 - 16;
+            let mut context = make_rtp_context();
+
             let input = {
                 let mut input = rfc7714::PROTECTED_RTP_PACKET.to_vec();
                 let len = input.len();
@@ -1266,31 +1251,22 @@ mod test {
 
                 input
             };
-            let mut out = vec![0; expected_len];
 
-            let result = decrypter.decrypt(
-                &rfc7714::RTP_IV,
-                &[rfc7714::RTCP_PACKET_AAD],
-                &input[12..],
-                &mut out,
+            let header =
+                RtpHeader::parse(&input[..12], &ExtensionMap::empty()).expect("header to parse");
+
+            let result = context.unprotect_rtp(&input, &header, 0);
+            assert!(
+                result.is_none(),
+                "Should fail to decrypt a SRTP packet with null tag"
             );
-            assert!(result.is_err(), "Should fail to decrypt a SRTP packet that has mismatched authenicated additional data");
         }
 
         #[test]
         fn protect_rtcp_rfc_7714_test() {
-            let mut encrypter = Encrypter::new(&rfc7714::KEY);
-            let expected_len = rfc7714::PROTECTED_RTCP_PACKET.len();
-            let mut out = vec![0; expected_len];
+            let mut context = make_rtcp_context();
 
-            encrypter
-                .encrypt(
-                    &rfc7714::RTCP_IV,
-                    rfc7714::RTCP_PACKET_AAD,
-                    &rfc7714::PLAINTEXT_RTCP_PACKET[8..],
-                    &mut out,
-                )
-                .expect("Should be able to encrypt");
+            let out = context.protect_rtcp(&rfc7714::PLAINTEXT_RTCP_PACKET);
 
             assert!(
                 out == rfc7714::PROTECTED_RTCP_PACKET,
@@ -1302,25 +1278,33 @@ mod test {
 
         #[test]
         fn unprotect_rtcp_rfc_auth_only_7714_test() {
-            let mut decrypter = Decrypter::new(&rfc7714::KEY);
-            let expected_len = rfc7714::TAGGED_RTCP_PACKET.len() - TAG_LEN - SRTCP_INDEX_LEN;
-            let mut out = vec![0; expected_len];
-            let mut aad = vec![0; rfc7714::TAGGED_RTCP_PACKET.len() - TAG_LEN];
-            aad[..expected_len].copy_from_slice(&rfc7714::TAGGED_RTCP_PACKET[..expected_len]);
-            aad[expected_len..].copy_from_slice(
-                &rfc7714::TAGGED_RTCP_PACKET[&rfc7714::TAGGED_RTCP_PACKET.len() - 4..],
-            );
+            let mut context = make_rtcp_context();
 
-            let count = decrypter
-                .decrypt(
-                    &rfc7714::RTCP_IV,
-                    &[&aad],
-                    &rfc7714::TAGGED_RTCP_PACKET[expected_len..expected_len + TAG_LEN],
-                    &mut out,
-                )
-                .expect("Should be able to decrypt");
+            let out = context
+                .unprotect_rtcp(&rfc7714::TAGGED_RTCP_PACKET)
+                .expect("Unprotect RTCP");
 
-            assert_eq!(count, 0);
+            assert_eq!(out, rfc7714::PLAINTEXT_RTCP_PACKET);
+        }
+
+        fn make_rtp_context() -> SrtpContext {
+            SrtpContext::new_aead_aes_128_gcm(
+                rfc7714::KEY,
+                rfc7714::SALT,
+                rfc7714::KEY,
+                rfc7714::SALT,
+                0,
+            )
+        }
+
+        fn make_rtcp_context() -> SrtpContext {
+            SrtpContext::new_aead_aes_128_gcm(
+                rfc7714::KEY,
+                rfc7714::SALT,
+                rfc7714::KEY,
+                rfc7714::SALT,
+                0x000005d4,
+            )
         }
     }
 }
