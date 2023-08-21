@@ -36,9 +36,9 @@ impl SrtpContext {
     pub fn new(profile: SrtpProfile, mat: &KeyingMaterial, left: bool) -> Self {
         match profile {
             SrtpProfile::Aes128CmSha1_80 => {
-                use aes_128_cm_sha1_80::{MASTER_KEY_LEN, MASTER_SALT_LEN};
+                use aes_128_cm_sha1_80::{KEY_LEN, SALT_LEN};
 
-                let key = SrtpKey::<MASTER_KEY_LEN, MASTER_SALT_LEN>::new(mat, left);
+                let key = SrtpKey::<KEY_LEN, SALT_LEN>::new(mat, left);
 
                 let (rtp, rtcp) = Derived::aes_128_cm_sha1_80(&key);
 
@@ -49,9 +49,9 @@ impl SrtpContext {
                 }
             }
             SrtpProfile::AeadAes128Gcm => {
-                use aead_aes_128_gcm::{MASTER_KEY_LEN, MASTER_SALT_LEN};
+                use aead_aes_128_gcm::{KEY_LEN, SALT_LEN};
 
-                let key = SrtpKey::<MASTER_KEY_LEN, MASTER_SALT_LEN>::new(mat, left);
+                let key = SrtpKey::<KEY_LEN, SALT_LEN>::new(mat, left);
 
                 let (rtp, rtcp) = Derived::aead_aes_128_gcm(&key);
 
@@ -508,15 +508,12 @@ enum Derived {
 
 impl Derived {
     fn aes_128_cm_sha1_80(
-        srtp_key: &SrtpKey<
-            { aes_128_cm_sha1_80::MASTER_KEY_LEN },
-            { aes_128_cm_sha1_80::MASTER_SALT_LEN },
-        >,
+        srtp_key: &SrtpKey<{ aes_128_cm_sha1_80::KEY_LEN }, { aes_128_cm_sha1_80::SALT_LEN }>,
     ) -> (Self, Self) {
         use aes_128_cm_sha1_80::*;
 
         // RTP AES Counter
-        let mut rtp_aes = [0; MASTER_KEY_LEN];
+        let mut rtp_aes = [0; KEY_LEN];
         srtp_key.derive(LABEL_RTP_AES, &mut rtp_aes[..]);
 
         // RTP SHA1 HMAC
@@ -527,11 +524,11 @@ impl Derived {
         };
 
         // RTP IV SALT
-        let mut rtp_salt = [0; MASTER_SALT_LEN];
+        let mut rtp_salt = [0; SALT_LEN];
         srtp_key.derive(LABEL_RTP_SALT, &mut rtp_salt[..]);
 
         // RTCP AES Counter
-        let mut rtcp_aes = [0; MASTER_KEY_LEN];
+        let mut rtcp_aes = [0; KEY_LEN];
         srtp_key.derive(LABEL_RTCP_AES, &mut rtcp_aes[..]);
 
         // RTCP SHA1 HMAC
@@ -542,7 +539,7 @@ impl Derived {
         };
 
         // RTCP IV SALT
-        let mut rtcp_salt = [0; MASTER_SALT_LEN];
+        let mut rtcp_salt = [0; SALT_LEN];
         srtp_key.derive(LABEL_RTCP_SALT, &mut rtcp_salt[..]);
 
         let rtp = Derived::Aes128CmSha1_80 {
@@ -563,27 +560,24 @@ impl Derived {
     }
 
     fn aead_aes_128_gcm(
-        srtp_key: &SrtpKey<
-            { aead_aes_128_gcm::MASTER_KEY_LEN },
-            { aead_aes_128_gcm::MASTER_SALT_LEN },
-        >,
+        srtp_key: &SrtpKey<{ aead_aes_128_gcm::KEY_LEN }, { aead_aes_128_gcm::SALT_LEN }>,
     ) -> (Derived, Derived) {
         use aead_aes_128_gcm::*;
 
         // RTP session key
-        let mut rtp_aes = [0; MASTER_KEY_LEN];
+        let mut rtp_aes = [0; KEY_LEN];
         srtp_key.derive(LABEL_RTP_AES, &mut rtp_aes[..]);
 
         // RTP session salt
-        let mut rtp_salt = [0; MASTER_SALT_LEN];
+        let mut rtp_salt = [0; SALT_LEN];
         srtp_key.derive(LABEL_RTP_SALT, &mut rtp_salt[..]);
 
         // RTCP session key
-        let mut rtcp_aes = [0; MASTER_KEY_LEN];
+        let mut rtcp_aes = [0; KEY_LEN];
         srtp_key.derive(LABEL_RTCP_AES, &mut rtcp_aes[..]);
 
         // RTCP session salt
-        let mut rtcp_salt = [0; MASTER_SALT_LEN];
+        let mut rtcp_salt = [0; SALT_LEN];
         srtp_key.derive(LABEL_RTCP_SALT, &mut rtcp_salt[..]);
 
         let rtp = Derived::AeadAes128Gcm {
@@ -625,8 +619,8 @@ mod aes_128_cm_sha1_80 {
     //    auth_function: HMAC-SHA1
     //    auth_key_length: 160
     //    auth_tag_length: 80
-    pub(super) const MASTER_KEY_LEN: usize = 16;
-    pub(super) const MASTER_SALT_LEN: usize = 14;
+    pub(super) const KEY_LEN: usize = 16;
+    pub(super) const SALT_LEN: usize = 14;
     pub(super) const HMAC_KEY_LEN: usize = 20;
     pub(super) const HMAC_TAG_LEN: usize = 10;
 
@@ -794,16 +788,16 @@ mod aead_aes_128_gcm {
     use openssl::cipher_ctx::CipherCtx;
     use openssl::error::ErrorStack;
 
-    pub(super) const MASTER_KEY_LEN: usize = 16;
-    pub(super) const MASTER_SALT_LEN: usize = 12;
+    pub(super) const KEY_LEN: usize = 16;
+    pub(super) const SALT_LEN: usize = 12;
     pub(super) const RTCP_AAD_LEN: usize = 12;
     pub(super) const TAG_LEN: usize = 16;
     const IV_LEN: usize = 12;
 
-    type EncryptionKey = [u8; MASTER_KEY_LEN];
-    type DecryptionKey = [u8; MASTER_KEY_LEN];
-    pub(super) type RtpSalt = [u8; MASTER_SALT_LEN];
-    type RtpIv = [u8; MASTER_SALT_LEN];
+    type EncryptionKey = [u8; KEY_LEN];
+    type DecryptionKey = [u8; KEY_LEN];
+    pub(super) type RtpSalt = [u8; SALT_LEN];
+    type RtpIv = [u8; SALT_LEN];
 
     pub(super) struct Encrypter {
         ctx: CipherCtx,
@@ -908,7 +902,7 @@ mod aead_aes_128_gcm {
             // See: https://www.rfc-editor.org/rfc/rfc7714#section-8.1
 
             // TODO: See if this is faster if rewritten for u128
-            let mut iv = [0; MASTER_SALT_LEN];
+            let mut iv = [0; SALT_LEN];
 
             let ssrc_be = ssrc.to_be_bytes();
             let roc_be = roc.to_be_bytes();
@@ -919,7 +913,7 @@ mod aead_aes_128_gcm {
             iv[10..12].copy_from_slice(&seq_be);
 
             // XOR with salt
-            for i in 0..MASTER_SALT_LEN {
+            for i in 0..SALT_LEN {
                 iv[i] ^= self[i];
             }
 
@@ -929,7 +923,7 @@ mod aead_aes_128_gcm {
         fn rtcp_iv(&self, ssrc: u32, srtp_index: u32) -> RtpIv {
             // See: https://www.rfc-editor.org/rfc/rfc7714#section-9.1
             // TODO: See if this is faster if rewritten for u128
-            let mut iv = [0; MASTER_SALT_LEN];
+            let mut iv = [0; SALT_LEN];
 
             let ssrc_be = ssrc.to_be_bytes();
             let srtp_be = srtp_index.to_be_bytes();
@@ -938,7 +932,7 @@ mod aead_aes_128_gcm {
             iv[8..12].copy_from_slice(&srtp_be);
 
             // XOR with salt
-            for i in 0..MASTER_SALT_LEN {
+            for i in 0..SALT_LEN {
                 iv[i] ^= self[i];
             }
 
