@@ -7,9 +7,6 @@ use crate::io::Sha1;
 
 use super::header::RtpHeader;
 
-pub const SRTP_BLOCK_SIZE: usize = 16;
-pub const SRTP_OVERHEAD: usize = 10;
-
 // Common among various profiles(defined in RFC3711 Section 4.3)
 const LABEL_RTP_AES: u8 = 0;
 const LABEL_RTP_AUTHENTICATION_KEY: u8 = 1;
@@ -22,14 +19,16 @@ const LABEL_RTCP_SALT: u8 = 5;
 // header = 4 bytes
 // ssrc   = 4 bytes
 // ssrtcp_index = 4 bytes
-// hmac = 10 bytes
-// TOTAL overhead for SRTCP = 22 bytes.
+// tag = <T> bytes
+// TOTAL overhead for SRTCP = 12 + T bytes.
 // However, each RTCP packet must be on a 4 byte boundary since length is
 // given in number of 4 bytes - 1 (making 0 valid).
 
+pub const SRTP_BLOCK_SIZE: usize = 16;
 const SRTCP_INDEX_LEN: usize = 4;
-// TODO: The above is based on AES128_CM_HMAC_SHA1_80
-pub const SRTCP_OVERHEAD: usize = 16;
+const MAX_TAG_LEN: usize = aead_aes_128_gcm::TAG_LEN;
+pub const SRTCP_OVERHEAD: usize = MAX_TAG_LEN + SRTCP_INDEX_LEN;
+pub const SRTP_OVERHEAD: usize = MAX_TAG_LEN;
 
 #[derive(Debug)]
 pub enum SrtpProfile {
