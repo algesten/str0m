@@ -1162,10 +1162,13 @@ impl Rtc {
                     debug!("DTLS connected");
                     dtls_connected = true;
                 }
-                DtlsEvent::SrtpKeyingMaterial(mat) => {
-                    info!("DTLS set SRTP keying material");
+                DtlsEvent::SrtpKeyingMaterial(mat, srtp_profile) => {
+                    info!(
+                        "DTLS set SRTP keying material and profile: {}",
+                        srtp_profile
+                    );
                     let active = self.dtls.is_active().expect("DTLS must be inited by now");
-                    self.session.set_keying_material(mat, active);
+                    self.session.set_keying_material(mat, srtp_profile, active);
                 }
                 DtlsEvent::RemoteFingerprint(v1) => {
                     debug!("DTLS verify remote fingerprint");

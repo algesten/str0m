@@ -5,9 +5,11 @@ use openssl::hash::MessageDigest;
 use openssl::nid::Nid;
 use openssl::pkey::{PKey, Private};
 use openssl::rsa::Rsa;
+use openssl::srtp::SrtpProfileId;
 use openssl::ssl::{HandshakeError, MidHandshakeSslStream, Ssl, SslStream};
 use openssl::ssl::{SslContext, SslContextBuilder, SslMethod, SslOptions, SslVerifyMode};
 use openssl::x509::X509;
+
 use std::io;
 use std::mem;
 use std::ops::Deref;
@@ -15,13 +17,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
 
 use crate::io::DATAGRAM_MTU;
+use crate::rtp_::SrtpProfile;
 
 use super::DtlsError;
 use super::Fingerprint;
 
 const RSA_F4: u32 = 0x10001;
 const DTLS_CIPHERS: &str = "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
-const DTLS_SRTP: &str = "SRTP_AES128_CM_SHA1_80";
 const DTLS_EC_CURVE: Nid = Nid::X9_62_PRIME256V1;
 const DTLS_KEY_LABEL: &str = "EXTRACTOR-dtls_srtp";
 
@@ -94,7 +96,17 @@ pub fn dtls_create_ctx(cert: &DtlsCert) -> Result<SslContext, DtlsError> {
     let mut ctx = SslContextBuilder::new(SslMethod::dtls())?;
 
     ctx.set_cipher_list(DTLS_CIPHERS)?;
-    ctx.set_tlsext_use_srtp(DTLS_SRTP)?;
+    let srtp_profiles = {
+        // Rust can't join directly to a string, need to allocate a vec first :(
+        // This happens very rarely so the extra allocations don't matter
+        let all: Vec<_> = SrtpProfile::ALL
+            .iter()
+            .map(SrtpProfile::openssl_name)
+            .collect();
+
+        all.join(":")
+    };
+    ctx.set_tlsext_use_srtp(&srtp_profiles)?;
 
     let mut mode = SslVerifyMode::empty();
     mode.insert(SslVerifyMode::PEER);
@@ -125,17 +137,17 @@ pub fn dtls_ssl_create(ctx: &SslContext) -> Result<Ssl, DtlsError> {
 }
 
 /// Keying material used as master key for SRTP.
-pub struct KeyingMaterial([u8; 60]);
+pub struct KeyingMaterial(Vec<u8>);
 
 impl KeyingMaterial {
     #[cfg(test)]
-    pub fn new(m: [u8; 60]) -> Self {
-        KeyingMaterial(m)
+    pub fn new(m: &[u8]) -> Self {
+        KeyingMaterial(m.into())
     }
 }
 
 impl Deref for KeyingMaterial {
-    type Target = [u8; 60];
+    type Target = [u8];
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -151,7 +163,7 @@ impl std::fmt::Debug for KeyingMaterial {
 pub struct TlsStream<S> {
     active: Option<bool>,
     state: State<S>,
-    keying_mat: Option<(KeyingMaterial, Fingerprint)>,
+    keying_mat: Option<(KeyingMaterial, SrtpProfile, Fingerprint)>,
     exported: bool,
 }
 
@@ -225,7 +237,9 @@ where
         Ok(v)
     }
 
-    pub fn take_srtp_keying_material(&mut self) -> Option<(KeyingMaterial, Fingerprint)> {
+    pub fn take_srtp_keying_material(
+        &mut self,
+    ) -> Option<(KeyingMaterial, SrtpProfile, Fingerprint)> {
         self.keying_mat.take()
     }
 
@@ -294,7 +308,7 @@ where
 
 fn export_srtp_keying_material<S>(
     stream: &mut SslStream<S>,
-) -> Result<(KeyingMaterial, Fingerprint), io::Error> {
+) -> Result<(KeyingMaterial, SrtpProfile, Fingerprint), io::Error> {
     let ssl = stream.ssl();
 
     // remote peer certificate fingerprint
@@ -308,13 +322,19 @@ fn export_srtp_keying_material<S>(
         bytes: digest.to_vec(),
     };
 
+    let srtp_profile_id = ssl
+        .selected_srtp_profile()
+        .map(|s| s.id())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Failed to negotiate SRTP profile"))?;
+    let srtp_profile: SrtpProfile = srtp_profile_id.try_into()?;
+
     // extract SRTP keying material
-    let mut buf = [0_u8; 60];
+    let mut buf = vec![0_u8; srtp_profile.keying_material_len()];
     ssl.export_keying_material(&mut buf, DTLS_KEY_LABEL, None)?;
 
     let mat = KeyingMaterial(buf);
 
-    Ok((mat, fp))
+    Ok((mat, srtp_profile, fp))
 }
 
 impl<S> io::Read for TlsStream<S>
@@ -336,6 +356,21 @@ where
 
     fn flush(&mut self) -> io::Result<()> {
         self.handshaken()?.flush()
+    }
+}
+
+impl TryFrom<SrtpProfileId> for SrtpProfile {
+    type Error = io::Error;
+
+    fn try_from(value: SrtpProfileId) -> Result<Self, Self::Error> {
+        match value {
+            SrtpProfileId::SRTP_AES128_CM_SHA1_80 => Ok(SrtpProfile::Aes128CmSha1_80),
+            SrtpProfileId::SRTP_AEAD_AES_128_GCM => Ok(SrtpProfile::AeadAes128Gcm),
+            x => Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Unsupported SRTP profile {:x}", x.as_raw()),
+            )),
+        }
     }
 }
 

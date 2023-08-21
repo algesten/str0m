@@ -12,13 +12,13 @@ use crate::media::{MediaAdded, MediaChanged};
 use crate::packet::SendSideBandwithEstimator;
 use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
 use crate::rtp::StreamPaused;
-use crate::rtp_::Direction;
 use crate::rtp_::Pt;
 use crate::rtp_::SeqNo;
 use crate::rtp_::SRTCP_OVERHEAD;
 use crate::rtp_::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
 use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
-use crate::rtp_::{SrtpContext, SrtpKey, Ssrc};
+use crate::rtp_::{Direction, SrtpProfile};
+use crate::rtp_::{SrtpContext, Ssrc};
 use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, Streams};
 use crate::util::{already_happened, not_happening, Soonest};
@@ -194,18 +194,19 @@ impl Session {
         &self.app
     }
 
-    pub fn set_keying_material(&mut self, mat: KeyingMaterial, active: bool) {
+    pub fn set_keying_material(
+        &mut self,
+        mat: KeyingMaterial,
+        srtp_profile: SrtpProfile,
+        active: bool,
+    ) {
+        // TODO: rename this to `initialise_srtp_context`?
         // Whether we're active or passive determines if we use the left or right
         // hand side of the key material to derive input/output.
         let left = active;
 
-        let key_rx = SrtpKey::new(&mat, !left);
-        let ctx_rx = SrtpContext::new(key_rx);
-        self.srtp_rx = Some(ctx_rx);
-
-        let key_tx = SrtpKey::new(&mat, left);
-        let ctx_tx = SrtpContext::new(key_tx);
-        self.srtp_tx = Some(ctx_tx);
+        self.srtp_rx = Some(srtp_profile.create_context(&mat, !left));
+        self.srtp_tx = Some(srtp_profile.create_context(&mat, left));
     }
 
     pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
@@ -671,7 +672,8 @@ impl Session {
             return None;
         }
 
-        const ENCRYPTABLE_MTU: usize = DATAGRAM_MTU - SRTCP_OVERHEAD - 14;
+        // Round to nearest multiple of 4 bytes.
+        const ENCRYPTABLE_MTU: usize = (DATAGRAM_MTU - SRTCP_OVERHEAD + 3) & !3;
         assert!(ENCRYPTABLE_MTU % 4 == 0);
 
         let mut data = vec![0_u8; ENCRYPTABLE_MTU];
