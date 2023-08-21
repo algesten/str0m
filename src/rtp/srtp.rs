@@ -182,7 +182,10 @@ impl SrtpContext {
                 let input = &buf[header.header_len..hmac_start];
                 let mut output = vec![0; buf.len()];
 
-                dec.decrypt(&iv, input, &mut output).expect("rtp decrypt");
+                if let Err(e) = dec.decrypt(&iv, input, &mut output) {
+                    warn!("Failed to decrypt SRTP ({}): {:?}", self.rtp.profile(), e);
+                    return None;
+                };
 
                 Some(output)
             }
@@ -201,10 +204,13 @@ impl SrtpContext {
                 let (aad, input) = buf.split_at(header.header_len);
                 let mut output = vec![0; buf.len()];
 
-                // TODO: This expect is problematic
-                let count = dec
-                    .decrypt(&iv, aad, input, &mut output)
-                    .expect("rtp decrypt");
+                let count = match dec.decrypt(&iv, aad, input, &mut output) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!("Failed to decrypt SRTP ({}): {:?}", self.rtp.profile(), e);
+                        return None;
+                    }
+                };
 
                 output.truncate(count);
 
@@ -337,8 +343,10 @@ impl SrtpContext {
                 let mut output = vec![0_u8; input.len() + 8];
                 output[0..8].copy_from_slice(&buf[0..8]);
 
-                dec.decrypt(&iv, input, &mut output[8..])
-                    .expect("rtcp decrypt");
+                if let Err(e) = dec.decrypt(&iv, input, &mut output[8..]) {
+                    warn!("Failed to decrypt SRTCP ({}): {:?}", self.rtcp.profile(), e);
+                    return None;
+                }
 
                 Some(output)
             }
@@ -382,8 +390,9 @@ impl SrtpContext {
                 let mut output = vec![0_u8; input.len() + 8];
                 output[0..8].copy_from_slice(&buf[0..8]);
 
-                dec.decrypt(&iv, &aad, input, &mut output[8..])
-                    .expect("rtcp decrypt");
+                if let Err(e) = dec.decrypt(&iv, &aad, input, &mut output[8..]) {
+                    warn!("Failed to decrypt SRTCP ({}): {:?}", self.rtcp.profile(), e);
+                }
 
                 Some(output)
             }
@@ -576,6 +585,13 @@ impl Derived {
         };
 
         (rtp, rtcp)
+    }
+
+    fn profile(&self) -> SrtpProfile {
+        match self {
+            Derived::Aes128CmSha1_80 { .. } => SrtpProfile::Aes128CmSha1_80,
+            Derived::AeadAes128Gcm { .. } => SrtpProfile::AeadAes128Gcm,
+        }
     }
 }
 
