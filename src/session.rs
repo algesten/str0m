@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use crate::dtls::KeyingMaterial;
+use crate::dtls::{KeyingMaterial, SrtpProfile};
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
@@ -12,12 +12,12 @@ use crate::media::{MediaAdded, MediaChanged};
 use crate::packet::SendSideBandwithEstimator;
 use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
 use crate::rtp::StreamPaused;
+use crate::rtp_::Direction;
 use crate::rtp_::Pt;
 use crate::rtp_::SeqNo;
 use crate::rtp_::SRTCP_OVERHEAD;
 use crate::rtp_::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
 use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
-use crate::rtp_::{Direction, SrtpProfile};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, Streams};
@@ -205,8 +205,8 @@ impl Session {
         // hand side of the key material to derive input/output.
         let left = active;
 
-        self.srtp_rx = Some(srtp_profile.create_context(&mat, !left));
-        self.srtp_tx = Some(srtp_profile.create_context(&mat, left));
+        self.srtp_rx = Some(SrtpContext::new(srtp_profile, &mat, !left));
+        self.srtp_tx = Some(SrtpContext::new(srtp_profile, &mat, left));
     }
 
     pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {

@@ -3,6 +3,7 @@ use std::fmt;
 use openssl::symm::{Cipher, Crypter, Mode};
 
 use crate::dtls::KeyingMaterial;
+use crate::dtls::SrtpProfile;
 use crate::io::Sha1;
 
 use super::header::RtpHeader;
@@ -30,28 +31,10 @@ const MAX_TAG_LEN: usize = aead_aes_128_gcm::TAG_LEN;
 pub const SRTCP_OVERHEAD: usize = MAX_TAG_LEN + SRTCP_INDEX_LEN;
 pub const SRTP_OVERHEAD: usize = MAX_TAG_LEN;
 
-#[derive(Debug)]
-pub enum SrtpProfile {
-    Aes128CmSha1_80,
-    AeadAes128Gcm,
-}
-
-impl SrtpProfile {
-    // All the profiles we support, ordered from most preferred to least.
-    // TODO: Enable SrtpProfile::Aes128CmSha1_80
-    pub(crate) const ALL: &[SrtpProfile] = &[SrtpProfile::Aes128CmSha1_80];
-
-    /// The length of keying material to extract from the DTLS session in bytes.
-    pub(crate) fn keying_material_len(&self) -> usize {
-        match self {
-            SrtpProfile::Aes128CmSha1_80 => aes_128_cm_sha1_80::KEYING_MATERIAL_LEN,
-            SrtpProfile::AeadAes128Gcm => aead_aes_128_gcm::KEYING_MATERIAL_LEN,
-        }
-    }
-
+impl SrtpContext {
     /// Create an SRTP context for the relevant profile using the provided keying material.
-    pub(crate) fn create_context(&self, mat: &KeyingMaterial, left: bool) -> SrtpContext {
-        match self {
+    pub fn new(profile: SrtpProfile, mat: &KeyingMaterial, left: bool) -> Self {
+        match profile {
             SrtpProfile::Aes128CmSha1_80 => {
                 use aes_128_cm_sha1_80::{MASTER_KEY_LEN, MASTER_SALT_LEN};
 
@@ -78,23 +61,6 @@ impl SrtpProfile {
                     srtcp_index: 0,
                 }
             }
-        }
-    }
-
-    /// What this profile is called in OpenSSL parlance.
-    pub(crate) fn openssl_name(&self) -> &'static str {
-        match self {
-            SrtpProfile::Aes128CmSha1_80 => "SRTP_AES128_CM_SHA1_80",
-            SrtpProfile::AeadAes128Gcm => "SRTP_AEAD_AES_128_GCM",
-        }
-    }
-}
-
-impl fmt::Display for SrtpProfile {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SrtpProfile::Aes128CmSha1_80 => write!(f, "SRTP_AES128_CM_SHA1_80"),
-            SrtpProfile::AeadAes128Gcm => write!(f, "SRTP_AEAD_AES_128_GCM"),
         }
     }
 }
@@ -631,7 +597,6 @@ mod aes_128_cm_sha1_80 {
     //    auth_tag_length: 80
     pub(super) const MASTER_KEY_LEN: usize = 16;
     pub(super) const MASTER_SALT_LEN: usize = 14;
-    pub(super) const KEYING_MATERIAL_LEN: usize = MASTER_KEY_LEN * 2 + MASTER_SALT_LEN * 2;
     pub(super) const HMAC_KEY_LEN: usize = 20;
     pub(super) const HMAC_TAG_LEN: usize = 10;
 
@@ -801,7 +766,6 @@ mod aead_aes_128_gcm {
 
     pub(super) const MASTER_KEY_LEN: usize = 16;
     pub(super) const MASTER_SALT_LEN: usize = 12;
-    pub(super) const KEYING_MATERIAL_LEN: usize = MASTER_KEY_LEN * 2 + MASTER_SALT_LEN * 2;
     pub(super) const RTCP_AAD_LEN: usize = 12;
     pub(super) const TAG_LEN: usize = 16;
     const IV_LEN: usize = 12;
@@ -1055,7 +1019,7 @@ mod test {
         #[test]
         fn unprotect_rtcp() {
             let key_mat = KeyingMaterial::new(&MAT);
-            let mut ctx_rx = SrtpProfile::Aes128CmSha1_80.create_context(&key_mat, true);
+            let mut ctx_rx = SrtpContext::new(SrtpProfile::Aes128CmSha1_80, &key_mat, true);
 
             let decrypted = ctx_rx.unprotect_rtcp(SRTCP).unwrap();
 

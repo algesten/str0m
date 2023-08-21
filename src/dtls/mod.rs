@@ -7,7 +7,6 @@ use std::net::SocketAddr;
 use thiserror::Error;
 
 use crate::io::{DatagramRecv, DatagramSend, Receive, DATAGRAM_MTU_WARN};
-use crate::rtp_::SrtpProfile;
 
 mod ossl;
 use ossl::{dtls_create_ctx, dtls_ssl_create, TlsStream};
@@ -85,6 +84,47 @@ impl std::str::FromStr for Fingerprint {
             hash_func: hash_func.to_owned(),
             bytes,
         })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SrtpProfile {
+    Aes128CmSha1_80,
+    AeadAes128Gcm,
+}
+
+impl SrtpProfile {
+    // All the profiles we support, ordered from most preferred to least.
+    // TODO: Enable SrtpProfile::Aes128CmSha1_80
+    pub(crate) const ALL: &[SrtpProfile] = &[SrtpProfile::Aes128CmSha1_80];
+
+    /// The length of keying material to extract from the DTLS session in bytes.
+    #[rustfmt::skip]
+    pub(crate) fn keying_material_len(&self) -> usize {
+        match self {
+             // MASTER_KEY_LEN * 2 + MASTER_SALT * 2
+             // TODO: This is a duplication of info that is held in srtp.rs, because we
+             // don't want a dependenct in that direction.
+            SrtpProfile::Aes128CmSha1_80 => 16 * 2 + 14 * 2,
+            SrtpProfile::AeadAes128Gcm   => 16 * 2 + 12 * 2,
+        }
+    }
+
+    /// What this profile is called in OpenSSL parlance.
+    pub(crate) fn openssl_name(&self) -> &'static str {
+        match self {
+            SrtpProfile::Aes128CmSha1_80 => "SRTP_AES128_CM_SHA1_80",
+            SrtpProfile::AeadAes128Gcm => "SRTP_AEAD_AES_128_GCM",
+        }
+    }
+}
+
+impl fmt::Display for SrtpProfile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SrtpProfile::Aes128CmSha1_80 => write!(f, "SRTP_AES128_CM_SHA1_80"),
+            SrtpProfile::AeadAes128Gcm => write!(f, "SRTP_AEAD_AES_128_GCM"),
+        }
     }
 }
 

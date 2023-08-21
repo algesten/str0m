@@ -26,7 +26,7 @@ pub(crate) use header::{extend_u16, extend_u32, extend_u8};
 
 mod srtp;
 pub(crate) use srtp::SrtpContext;
-pub(crate) use srtp::{SrtpProfile, SRTCP_OVERHEAD, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
+pub(crate) use srtp::{SRTCP_OVERHEAD, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
 mod rtcp;
 pub use rtcp::*;
