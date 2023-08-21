@@ -322,12 +322,10 @@ fn export_srtp_keying_material<S>(
         bytes: digest.to_vec(),
     };
 
-    let srtp_profile_id = ssl.selected_srtp_profile().map(|s| s.id()).ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            "Failed to negotiate SRTP profile",
-        )
-    })?;
+    let srtp_profile_id = ssl
+        .selected_srtp_profile()
+        .map(|s| s.id())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Failed to negotiate SRTP profile"))?;
     let srtp_profile: SrtpProfile = srtp_profile_id.try_into()?;
 
     // extract SRTP keying material
