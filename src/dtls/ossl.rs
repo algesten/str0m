@@ -325,7 +325,7 @@ fn export_srtp_keying_material<S>(
     let srtp_profile_id = ssl.selected_srtp_profile().map(|s| s.id()).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::Other,
-            "Could not agree on a SRTP profile for the session",
+            "Failed to negotiate SRTP profile",
         )
     })?;
     let srtp_profile: SrtpProfile = srtp_profile_id.try_into()?;
