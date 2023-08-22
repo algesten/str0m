@@ -1,7 +1,11 @@
 [package]
 name = "str0m"
 version = "0.1.0"
-authors = ["Martin Algesten <martin@algesten.se>", "Hugo Tunius <h@tunius.se>", "Davide Bertola <dade@dadeb.it>"]
+authors = [
+    "Martin Algesten <martin@algesten.se>",
+    "Hugo Tunius <h@tunius.se>",
+    "Davide Bertola <dade@dadeb.it>",
+]
 description = "WebRTC library in Sans-IO style"
 license = "MIT/Apache-2.0"
 repository = "https://github.com/algesten/str0m"
@@ -50,7 +54,10 @@ time = "=0.3.23"
 [target.'cfg(fuzzing)'.dev-dependencies]
 fuzzcheck = "0.12"
 
-
 [[bench]]
 name = "srtp_benchmark"
+harness = false
+
+[[bench]]
+name = "cache_sent_packet"
 harness = false
