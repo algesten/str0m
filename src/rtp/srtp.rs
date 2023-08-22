@@ -76,12 +76,12 @@ impl SrtpContext {
 
         Self {
             rtp: Derived::AeadAes128Gcm {
-                salt: rtp_salt,
+                salt: to_salt(rtp_salt),
                 enc: Encrypter::new(&rtp_key),
                 dec: Decrypter::new(&rtp_key),
             },
             rtcp: Derived::AeadAes128Gcm {
-                salt: rtcp_salt,
+                salt: to_salt(rtcp_salt),
                 enc: Encrypter::new(&rtcp_key),
                 dec: Decrypter::new(&rtcp_key),
             },
@@ -190,7 +190,7 @@ impl SrtpContext {
                 output
             }
             Derived::AeadAes128Gcm { salt, enc, .. } => {
-                use aead_aes_128_gcm::{ToRtpIv, TAG_LEN};
+                use aead_aes_128_gcm::{ToRtpIv, IV_LEN, TAG_LEN};
                 let roc = (srtp_index >> 16) as u32;
 
                 let iv = salt.rtp_iv(*header.ssrc, roc, header.sequence_number);
@@ -198,7 +198,7 @@ impl SrtpContext {
 
                 // Input and output lengths for encryption: https://www.rfc-editor.org/rfc/rfc7714#section-5.2.1
                 let mut output = vec![0_u8; buf.len() + TAG_LEN];
-                enc.encrypt(&iv, aad, input, &mut output[hlen..])
+                enc.encrypt(&iv.to_be_bytes()[..IV_LEN], aad, input, &mut output[hlen..])
                     .expect("rtp encrypt");
 
                 output[..hlen].copy_from_slice(aad);
@@ -244,7 +244,7 @@ impl SrtpContext {
                 Some(output)
             }
             Derived::AeadAes128Gcm { salt, dec, .. } => {
-                use aead_aes_128_gcm::{ToRtpIv, TAG_LEN};
+                use aead_aes_128_gcm::{ToRtpIv, IV_LEN, TAG_LEN};
 
                 if buf.len() < TAG_LEN {
                     return None;
@@ -259,7 +259,7 @@ impl SrtpContext {
                 // Input and output lengths for decryption: https://www.rfc-editor.org/rfc/rfc7714#section-5.2.2
                 let mut output = vec![0; input.len() - TAG_LEN];
 
-                match dec.decrypt(&iv, &[aad], input, &mut output) {
+                match dec.decrypt(&iv.to_be_bytes()[..IV_LEN], &[aad], input, &mut output) {
                     Ok(v) => v,
                     Err(e) => {
                         warn!("Failed to decrypt SRTP ({}): {:?}", self.rtp.profile(), e);
@@ -313,7 +313,7 @@ impl SrtpContext {
                 output
             }
             Derived::AeadAes128Gcm { salt, enc, .. } => {
-                use aead_aes_128_gcm::{ToRtpIv, RTCP_AAD_LEN, TAG_LEN};
+                use aead_aes_128_gcm::{ToRtpIv, IV_LEN, RTCP_AAD_LEN, TAG_LEN};
                 let iv = salt.rtcp_iv(ssrc, srtcp_index);
 
                 let mut aad = [0; RTCP_AAD_LEN];
@@ -328,7 +328,8 @@ impl SrtpContext {
                 let enc_end = input.len() + 8 + TAG_LEN;
                 let encout = &mut output[enc_start..enc_end];
 
-                enc.encrypt(&iv, &aad, input, encout).expect("rtcp encrypt");
+                enc.encrypt(&iv.to_be_bytes()[..IV_LEN], &aad, input, encout)
+                    .expect("rtcp encrypt");
 
                 let to = &mut output[enc_end..];
                 to[0..4].copy_from_slice(&e_and_si.to_be_bytes());
@@ -405,7 +406,7 @@ impl SrtpContext {
                 Some(output)
             }
             Derived::AeadAes128Gcm { salt, dec, .. } => {
-                use aead_aes_128_gcm::{ToRtpIv, RTCP_AAD_LEN, TAG_LEN};
+                use aead_aes_128_gcm::{ToRtpIv, IV_LEN, RTCP_AAD_LEN, TAG_LEN};
 
                 if buf.len() < SRTCP_INDEX_LEN + TAG_LEN {
                     // Too short
@@ -459,7 +460,12 @@ impl SrtpContext {
                 let mut output = vec![0_u8; buf.len() - TAG_LEN - SRTCP_INDEX_LEN];
                 output[0..8].copy_from_slice(&buf[0..8]);
 
-                let count = match dec.decrypt(&iv, &aads, input, &mut output[8..]) {
+                let count = match dec.decrypt(
+                    &iv.to_be_bytes()[..IV_LEN],
+                    &aads,
+                    input,
+                    &mut output[8..],
+                ) {
                     Ok(c) => c,
                     Err(e) => {
                         warn!("Failed to decrypt SRTCP ({}): {:?}", self.rtcp.profile(), e);
@@ -647,13 +653,13 @@ impl Derived {
         srtp_key.derive(LABEL_RTCP_SALT, &mut rtcp_salt[..]);
 
         let rtp = Derived::AeadAes128Gcm {
-            salt: rtp_salt,
+            salt: to_salt(rtp_salt),
             enc: Encrypter::new(&rtp_aes),
             dec: Decrypter::new(&rtp_aes),
         };
 
         let rtcp = Derived::AeadAes128Gcm {
-            salt: rtcp_salt,
+            salt: to_salt(rtcp_salt),
             enc: Encrypter::new(&rtcp_aes),
             dec: Decrypter::new(&rtcp_aes),
         };
@@ -858,12 +864,12 @@ mod aead_aes_128_gcm {
     pub(super) const SALT_LEN: usize = 12;
     pub(super) const RTCP_AAD_LEN: usize = 12;
     pub(super) const TAG_LEN: usize = 16;
-    const IV_LEN: usize = 12;
+    pub(super) const IV_LEN: usize = 12;
 
     type EncryptionKey = [u8; KEY_LEN];
     type DecryptionKey = [u8; KEY_LEN];
-    pub(super) type RtpSalt = [u8; SALT_LEN];
-    type RtpIv = [u8; SALT_LEN];
+    pub(super) type RtpSalt = u128;
+    type RtpIv = u128;
 
     pub(super) struct Encrypter {
         ctx: CipherCtx,
@@ -883,7 +889,7 @@ mod aead_aes_128_gcm {
 
         pub(super) fn encrypt(
             &mut self,
-            iv: &[u8; IV_LEN],
+            iv: &[u8],
             aad: &[u8],
             input: &[u8],
             output: &mut [u8],
@@ -930,7 +936,7 @@ mod aead_aes_128_gcm {
 
         pub(super) fn decrypt(
             &mut self,
-            iv: &[u8; IV_LEN],
+            iv: &[u8],
             aads: &[&[u8]],
             input: &[u8],
             output: &mut [u8],
@@ -966,44 +972,42 @@ mod aead_aes_128_gcm {
     impl ToRtpIv for RtpSalt {
         fn rtp_iv(&self, ssrc: u32, roc: u32, seq: u16) -> RtpIv {
             // See: https://www.rfc-editor.org/rfc/rfc7714#section-8.1
-
-            // TODO: See if this is faster if rewritten for u128
-            let mut iv = [0; SALT_LEN];
-
             let ssrc_be = ssrc.to_be_bytes();
             let roc_be = roc.to_be_bytes();
             let seq_be = seq.to_be_bytes();
 
-            iv[2..6].copy_from_slice(&ssrc_be);
-            iv[6..10].copy_from_slice(&roc_be);
-            iv[10..12].copy_from_slice(&seq_be);
+            let iv = u128::from_be_bytes([
+                0, 0, //
+                ssrc_be[0], ssrc_be[1], ssrc_be[2], ssrc_be[3], //
+                roc_be[0], roc_be[1], roc_be[2], roc_be[3], //
+                seq_be[0], seq_be[1], //
+                0, 0, 0, 0,
+            ]);
 
-            // XOR with salt
-            for i in 0..SALT_LEN {
-                iv[i] ^= self[i];
-            }
-
-            iv
+            iv ^ self
         }
 
         fn rtcp_iv(&self, ssrc: u32, srtp_index: u32) -> RtpIv {
             // See: https://www.rfc-editor.org/rfc/rfc7714#section-9.1
             // TODO: See if this is faster if rewritten for u128
-            let mut iv = [0; SALT_LEN];
-
             let ssrc_be = ssrc.to_be_bytes();
             let srtp_be = srtp_index.to_be_bytes();
+            let iv = u128::from_be_bytes([
+                0, 0, //
+                ssrc_be[0], ssrc_be[1], ssrc_be[2], ssrc_be[3], //
+                0, 0, //
+                srtp_be[0], srtp_be[1], srtp_be[2], srtp_be[3], //
+                0, 0, 0, 0,
+            ]);
 
-            iv[2..6].copy_from_slice(&ssrc_be);
-            iv[8..12].copy_from_slice(&srtp_be);
-
-            // XOR with salt
-            for i in 0..SALT_LEN {
-                iv[i] ^= self[i];
-            }
-
-            iv
+            iv ^ self
         }
+    }
+
+    pub(super) fn to_salt(s: [u8; SALT_LEN]) -> RtpSalt {
+        RtpSalt::from_be_bytes([
+            s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9], s[10], s[11], 0, 0, 0, 0,
+        ])
     }
 }
 
@@ -1124,70 +1128,6 @@ mod test {
         use super::*;
 
         use super::aead_aes_128_gcm::*;
-
-        mod rfc7714 {
-            // Test vectors from RFC7714
-
-            // Session Key (RTP and RTCP)
-            pub(super) const KEY: [u8; 16] = [
-                0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, //
-                0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
-            ];
-
-            // Session Salt (RTP and RTCP)
-            pub(super) const SALT: [u8; 12] = [
-                0x51, 0x75, 0x69, 0x64, 0x20, 0x70, 0x72, 0x6f, 0x20, 0x71, 0x75, 0x6f,
-            ];
-
-            /// Full plaintext RTP packet. First 12 octets is the header
-            pub(super) const PLAINTEXT_RTP_PACKET: &[u8] = &[
-                0x80, 0x40, 0xf1, 0x7b, 0x80, 0x41, 0xf8, 0xd3, 0x55, 0x01, 0xa0, 0xb2, 0x47, 0x61,
-                0x6c, 0x6c, 0x69, 0x61, 0x20, 0x65, 0x73, 0x74, 0x20, 0x6f, 0x6d, 0x6e, 0x69, 0x73,
-                0x20, 0x64, 0x69, 0x76, 0x69, 0x73, 0x61, 0x20, 0x69, 0x6e, 0x20, 0x70, 0x61, 0x72,
-                0x74, 0x65, 0x73, 0x20, 0x74, 0x72, 0x65, 0x73,
-            ];
-
-            /// Full encrypted RTP packet. First 12 octets is the header.
-            pub(super) const PROTECTED_RTP_PACKET: &[u8] = &[
-                0x80, 0x40, 0xf1, 0x7b, 0x80, 0x41, 0xf8, 0xd3, 0x55, 0x01, 0xa0, 0xb2, 0xf2, 0x4d,
-                0xe3, 0xa3, 0xfb, 0x34, 0xde, 0x6c, 0xac, 0xba, 0x86, 0x1c, 0x9d, 0x7e, 0x4b, 0xca,
-                0xbe, 0x63, 0x3b, 0xd5, 0x0d, 0x29, 0x4e, 0x6f, 0x42, 0xa5, 0xf4, 0x7a, 0x51, 0xc7,
-                0xd1, 0x9b, 0x36, 0xde, 0x3a, 0xdf, 0x88, 0x33, 0x89, 0x9d, 0x7f, 0x27, 0xbe, 0xb1,
-                0x6a, 0x91, 0x52, 0xcf, 0x76, 0x5e, 0xe4, 0x39, 0x0c, 0xce,
-            ];
-
-            // Full plaintext RTCP packet
-            pub(super) const PLAINTEXT_RTCP_PACKET: &[u8] = &[
-                0x81, 0xc8, 0x00, 0x0d, 0x4d, 0x61, 0x72, 0x73, 0x4e, 0x54, 0x50, 0x31, 0x4e, 0x54,
-                0x50, 0x32, 0x52, 0x54, 0x50, 0x20, 0x00, 0x00, 0x04, 0x2a, 0x00, 0x00, 0xe9, 0x30,
-                0x4c, 0x75, 0x6e, 0x61, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad,
-                0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef,
-            ];
-
-            /// Full encrypted RTCP packet
-            pub(super) const PROTECTED_RTCP_PACKET: &[u8] = &[
-                0x81, 0xc8, 0x00, 0x0d, 0x4d, 0x61, 0x72, 0x73, 0x63, 0xe9, 0x48, 0x85, 0xdc, 0xda,
-                0xb6, 0x7c, 0xa7, 0x27, 0xd7, 0x66, 0x2f, 0x6b, 0x7e, 0x99, 0x7f, 0xf5, 0xc0, 0xf7,
-                0x6c, 0x06, 0xf3, 0x2d, 0xc6, 0x76, 0xa5, 0xf1, 0x73, 0x0d, 0x6f, 0xda, 0x4c, 0xe0,
-                0x9b, 0x46, 0x86, 0x30, 0x3d, 0xed, 0x0b, 0xb9, 0x27, 0x5b, 0xc8, 0x4a, 0xa4, 0x58,
-                0x96, 0xcf, 0x4d, 0x2f, 0xc5, 0xab, 0xf8, 0x72, 0x45, 0xd9, 0xea, 0xde, 0x80, 0x00,
-                0x05, 0xd4,
-            ];
-
-            // A RTCP packet that hasn't been encrypted, only authenticated.
-            pub(super) const TAGGED_RTCP_PACKET: &[u8] = &[
-                // RTCP Packet
-                0x81, 0xc8, 0x00, 0x0d, 0x4d, 0x61, 0x72, 0x73, 0x4e, 0x54, 0x50, 0x31, 0x4e, 0x54,
-                0x50, 0x32, 0x52, 0x54, 0x50, 0x20, 0x00, 0x00, 0x04, 0x2a, 0x00, 0x00, 0xe9, 0x30,
-                0x4c, 0x75, 0x6e, 0x61, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad,
-                0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xde, 0xad, 0xbe, 0xef, //
-                // Tag
-                0x84, 0x1d, 0xd9, 0x68, 0x3d, 0xd7, 0x8e, 0xc9, 0x2a, 0xe5, 0x87, 0x90, 0x12, 0x5f,
-                0x62, 0xb3, //
-                // SRTCP Index
-                0x00, 0x00, 0x05, 0xd4,
-            ];
-        }
 
         #[test]
         fn protect_rtp_rfc_7714_test() {
