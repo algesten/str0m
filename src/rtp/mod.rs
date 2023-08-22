@@ -28,6 +28,12 @@ mod srtp;
 pub(crate) use srtp::SrtpContext;
 pub(crate) use srtp::{SRTCP_OVERHEAD, SRTP_BLOCK_SIZE, SRTP_OVERHEAD};
 
+#[cfg(feature = "bench")]
+/// Benchmarking
+pub mod bench {
+    pub use super::srtp::bench as srtp;
+}
+
 mod rtcp;
 pub use rtcp::*;
 

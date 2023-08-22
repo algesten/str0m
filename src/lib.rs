@@ -521,6 +521,10 @@ mod rtp_;
 pub use rtp_::Bitrate;
 use rtp_::{Extension, ExtensionMap, InstantExt};
 
+#[cfg(feature = "bench")]
+#[doc(hidden)]
+pub mod bench;
+
 /// Low level RTP access.
 pub mod rtp {
     pub use crate::rtp_::{

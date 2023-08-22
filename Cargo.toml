@@ -12,6 +12,7 @@ edition = "2021"
 
 [features]
 _internal_dont_use_log_stats = []
+bench = []
 
 [dependencies]
 thiserror = "1.0.38"
@@ -36,6 +37,7 @@ serde = { version = "1.0.152", features = ["derive"] }
 sha-1 = { version = "0.10.1", features = ["asm"] }
 
 [dev-dependencies]
+criterion = { version = "0.5.1" }
 rouille = { version = "3.5.0", features = ["ssl"] }
 serde_json = "1.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }
@@ -47,3 +49,8 @@ time = "=0.3.23"
 
 [target.'cfg(fuzzing)'.dev-dependencies]
 fuzzcheck = "0.12"
+
+
+[[bench]]
+name = "srtp_benchmark"
+harness = false
