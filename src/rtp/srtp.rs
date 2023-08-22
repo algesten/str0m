@@ -167,6 +167,7 @@ impl SrtpContext {
                 let iv = salt.rtp_iv(*header.ssrc, roc, header.sequence_number);
                 let aad = &buf[..hlen];
 
+                // Input and output lengths for encryption: https://www.rfc-editor.org/rfc/rfc7714#section-5.2.1
                 let mut output = vec![0_u8; buf.len() + TAG_LEN];
                 enc.encrypt(&iv, aad, input, &mut output[hlen..])
                     .expect("rtp encrypt");
@@ -204,7 +205,7 @@ impl SrtpContext {
                 let iv = salt.rtp_iv(*header.ssrc, srtp_index);
 
                 let input = &buf[header.header_len..hmac_start];
-                let mut output = vec![0; buf.len()];
+                let mut output = vec![0; input.len()];
 
                 if let Err(e) = dec.decrypt(&iv, input, &mut output) {
                     warn!("Failed to decrypt SRTP ({}): {:?}", self.rtp.profile(), e);
@@ -226,17 +227,16 @@ impl SrtpContext {
                 let iv = salt.rtp_iv(*header.ssrc, roc, seq);
 
                 let (aad, input) = buf.split_at(header.header_len);
-                let mut output = vec![0; buf.len()];
+                // Input and output lengths for decryption: https://www.rfc-editor.org/rfc/rfc7714#section-5.2.2
+                let mut output = vec![0; input.len() - TAG_LEN];
 
-                let count = match dec.decrypt(&iv, &[aad], input, &mut output) {
+                match dec.decrypt(&iv, &[aad], input, &mut output) {
                     Ok(v) => v,
                     Err(e) => {
                         warn!("Failed to decrypt SRTP ({}): {:?}", self.rtp.profile(), e);
                         return None;
                     }
                 };
-
-                output.truncate(count);
 
                 Some(output)
             }
