@@ -15,10 +15,11 @@ pub(crate) struct RtxCache {
 
     // Data, new additions here probably need to be cleared in [`clear`].
     packet_by_seq_no: BTreeMap<SeqNo, RtpPacket>,
-    seq_no_by_quantized_size: BTreeMap<usize, SeqNo>,
+    seq_no_by_quantized_size: [Option<SeqNo>; RTX_CACHE_QUANTIZED_SLOTS],
 }
 
 const RTX_CACHE_SIZE_QUANTIZER: usize = 25;
+const RTX_CACHE_QUANTIZED_SLOTS: usize = 2000 / RTX_CACHE_SIZE_QUANTIZER;
 
 impl RtxCache {
     pub fn new(max_packet_count: usize, max_packet_age: Duration, evict_in_batches: bool) -> Self {
@@ -27,7 +28,7 @@ impl RtxCache {
             max_packet_age,
             evict_in_batches,
             packet_by_seq_no: BTreeMap::new(),
-            seq_no_by_quantized_size: BTreeMap::new(),
+            seq_no_by_quantized_size: [None; RTX_CACHE_QUANTIZED_SLOTS],
         }
     }
 
@@ -35,7 +36,7 @@ impl RtxCache {
         let seq_no = packet.seq_no;
         let quantized_size = packet.payload.len() / RTX_CACHE_SIZE_QUANTIZER;
         self.packet_by_seq_no.insert(seq_no, packet);
-        self.seq_no_by_quantized_size.insert(quantized_size, seq_no);
+        self.seq_no_by_quantized_size[quantized_size] = Some(seq_no);
         self.remove_old_packets(now);
     }
 
@@ -50,11 +51,11 @@ impl RtxCache {
     pub fn get_cached_packet_smaller_than(&mut self, max_size: usize) -> Option<&mut RtpPacket> {
         let quantized_size = max_size / RTX_CACHE_SIZE_QUANTIZER;
 
-        let seq_no = self
-            .seq_no_by_quantized_size
-            .range(..quantized_size)
+        let seq_no = &self.seq_no_by_quantized_size[..quantized_size]
+            .iter()
             .rev()
-            .find_map(|(_, seq_no)| self.packet_by_seq_no.contains_key(seq_no).then_some(seq_no))
+            .filter_map(|seq_no| seq_no.as_ref())
+            .find_map(|seq_no| self.packet_by_seq_no.contains_key(seq_no).then_some(seq_no))
             .copied();
 
         seq_no.and_then(|seq_no| self.get_cached_packet_by_seq_no(seq_no))
@@ -145,7 +146,7 @@ impl RtxCache {
 
     pub(crate) fn clear(&mut self) {
         self.packet_by_seq_no.clear();
-        self.seq_no_by_quantized_size.clear();
+        self.seq_no_by_quantized_size = [None; RTX_CACHE_QUANTIZED_SLOTS];
     }
 }
 
