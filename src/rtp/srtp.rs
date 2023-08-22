@@ -1070,11 +1070,11 @@ mod test {
         fn unprotect_rtcp() {
             let key_mat = KeyingMaterial::new(&MAT);
             let mut ctx_rx = SrtpContext::new(SrtpProfile::Aes128CmSha1_80, &key_mat, true);
+            ctx_rx.srtcp_index = 1;
 
             let decrypted = ctx_rx.unprotect_rtcp(SRTCP).unwrap();
 
-            // check srtcp_index will be 1
-            assert_eq!(ctx_rx.srtcp_index, 0);
+            assert_eq!(ctx_rx.srtcp_index, 1);
             // check srtcp_index in incoming was indeed 1
             let srtcp_index = SRTCP.len() - HMAC_TAG_LEN - SRTCP_INDEX_LEN;
             let e_and_i = &SRTCP[srtcp_index..(srtcp_index + 4)];
@@ -1167,7 +1167,7 @@ mod test {
             let header =
                 RtpHeader::parse(&rfc7714::PLAINTEXT_RTP_PACKET[..12], &ExtensionMap::empty())
                     .expect("header to parse");
-            let out = context.protect_rtp(&rfc7714::PLAINTEXT_RTP_PACKET, &header, 0);
+            let out = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0);
 
             assert_eq!(
                 out,
@@ -1186,7 +1186,7 @@ mod test {
                     .expect("header to parse");
 
             let out = context
-                .unprotect_rtp(&rfc7714::PROTECTED_RTP_PACKET, &header, 0)
+                .unprotect_rtp(rfc7714::PROTECTED_RTP_PACKET, &header, 0)
                 .expect("decrypt rtp");
 
             assert_eq!(
@@ -1206,7 +1206,7 @@ mod test {
             let header =
                 RtpHeader::parse(&rfc7714::PLAINTEXT_RTP_PACKET[..12], &ExtensionMap::empty())
                     .expect("header to parse");
-            let encrypted = context.protect_rtp(&rfc7714::PLAINTEXT_RTP_PACKET, &header, 0);
+            let encrypted = context.protect_rtp(rfc7714::PLAINTEXT_RTP_PACKET, &header, 0);
 
             // Then we decrypt the resulting cipher text
             let header = RtpHeader::parse(&encrypted[..12], &ExtensionMap::empty())
@@ -1236,7 +1236,7 @@ mod test {
             let header =
                 RtpHeader::parse(&header_buf, &ExtensionMap::empty()).expect("header to parse");
 
-            let result = context.unprotect_rtp(&rfc7714::PROTECTED_RTP_PACKET, &header, 0);
+            let result = context.unprotect_rtp(rfc7714::PROTECTED_RTP_PACKET, &header, 0);
             assert!(result.is_none(), "Should fail to decrypt a SRTP packet that has mismatched authenicated additional data");
         }
 
@@ -1266,7 +1266,7 @@ mod test {
         fn protect_rtcp_rfc_7714_test() {
             let mut context = make_rtcp_context();
 
-            let out = context.protect_rtcp(&rfc7714::PLAINTEXT_RTCP_PACKET);
+            let out = context.protect_rtcp(rfc7714::PLAINTEXT_RTCP_PACKET);
 
             assert!(
                 out == rfc7714::PROTECTED_RTCP_PACKET,
@@ -1281,7 +1281,7 @@ mod test {
             let mut context = make_rtcp_context();
 
             let out = context
-                .unprotect_rtcp(&rfc7714::TAGGED_RTCP_PACKET)
+                .unprotect_rtcp(rfc7714::TAGGED_RTCP_PACKET)
                 .expect("Unprotect RTCP");
 
             assert_eq!(out, rfc7714::PLAINTEXT_RTCP_PACKET);
