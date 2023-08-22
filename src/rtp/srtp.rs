@@ -90,6 +90,7 @@ impl SrtpContext {
     }
 
     #[cfg(any(test, feature = "bench"))]
+    #[allow(unused)]
     fn new_aes128_cm_sha1_80(
         rtp_key: [u8; aes_128_cm_sha1_80::KEY_LEN],
         rtp_salt: [u8; aes_128_cm_sha1_80::SALT_LEN],
@@ -1278,6 +1279,7 @@ mod test {
     }
 }
 #[cfg(any(test, feature = "bench"))]
+#[allow(unused)]
 mod rfc7714 {
     // Test vectors from RFC7714
 
