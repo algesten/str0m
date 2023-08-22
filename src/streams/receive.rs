@@ -387,7 +387,7 @@ impl StreamRx {
 
     fn next_fir_seq_no(&mut self) -> u8 {
         let x = self.fir_seq_no;
-        self.fir_seq_no += 1;
+        self.fir_seq_no = self.fir_seq_no.wrapping_add(1);
         x
     }
 
