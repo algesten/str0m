@@ -95,8 +95,8 @@ pub enum SrtpProfile {
 
 impl SrtpProfile {
     // All the profiles we support, ordered from most preferred to least.
-    // TODO: Enable SrtpProfile::Aes128CmSha1_80
-    pub(crate) const ALL: &[SrtpProfile] = &[SrtpProfile::Aes128CmSha1_80];
+    pub(crate) const ALL: &[SrtpProfile] =
+        &[SrtpProfile::AeadAes128Gcm, SrtpProfile::Aes128CmSha1_80];
 
     /// The length of keying material to extract from the DTLS session in bytes.
     #[rustfmt::skip]
