@@ -54,7 +54,7 @@ impl RtxCache {
             .iter()
             .rev()
             .filter_map(|seq_no| *seq_no)
-            .find(|seq_no| self.packet_by_seq_no.contains_key(&seq_no));
+            .find(|seq_no| self.packet_by_seq_no.contains_key(seq_no));
 
         seq_no.and_then(|seq_no| self.get_cached_packet_by_seq_no(seq_no))
     }
