@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
+use crate::io::DATAGRAM_MAX_PACKET_SIZE;
 use crate::io::DATAGRAM_MTU_WARN;
 use crate::io::MAX_RTP_OVERHEAD;
 use crate::media::KeyframeRequestKind;
@@ -378,7 +379,7 @@ impl StreamTx {
         header.ext_vals.transport_cc = Some(*twcc as u16);
         *twcc += 1;
 
-        buf.resize(2000, 0);
+        buf.resize(DATAGRAM_MAX_PACKET_SIZE, 0);
 
         let header_len = header.write_to(buf, exts);
         assert!(header_len % 4 == 0, "RTP header must be multiple of 4");

@@ -356,7 +356,10 @@ impl Default for RtpHeader {
 
 #[cfg(test)]
 mod test {
-    use crate::rtp_::{Extension, MediaTime};
+    use crate::{
+        io::DATAGRAM_MAX_PACKET_SIZE,
+        rtp_::{Extension, MediaTime},
+    };
 
     use super::*;
 
@@ -443,7 +446,7 @@ mod test {
                 },
                 ..Default::default()
             };
-            let mut buf = vec![0; 2000];
+            let mut buf = vec![0; DATAGRAM_MAX_PACKET_SIZE];
             let n = header.write_to(&mut buf[..], exts);
             buf.truncate(n);
 
