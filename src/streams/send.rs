@@ -160,7 +160,7 @@ impl StreamTx {
             resends: VecDeque::new(),
             padding: 0,
             blank_packet: RtpPacket::blank(),
-            rtx_cache: RtxCache::new(1024, DEFAULT_RTX_CACHE_DURATION, false),
+            rtx_cache: RtxCache::new(1024, DEFAULT_RTX_CACHE_DURATION),
             last_sender_report: already_happened(),
             pending_request_keyframe: None,
             stats: StreamTxStats::default(),
@@ -198,7 +198,7 @@ impl StreamTx {
     /// The default is 1024 packets over 3 seconds.
     pub fn set_rtx_cache(&mut self, max_packets: usize, max_age: Duration) {
         // Dump old cache to avoid having to deal with resizing logic inside the cache impl.
-        self.rtx_cache = RtxCache::new(max_packets, max_age, false);
+        self.rtx_cache = RtxCache::new(max_packets, max_age);
     }
 
     /// Set whether this stream is unpaced or not.

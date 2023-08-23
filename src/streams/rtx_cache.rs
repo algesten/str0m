@@ -15,7 +15,6 @@ pub(crate) struct RtxCache {
     // Config
     max_packet_count: usize,
     max_packet_age: Duration,
-    evict_in_batches: bool,
 
     // Data, new additions here probably need to be cleared in [`clear`].
     packet_by_seq_no: BTreeMap<SeqNo, RtpPacket>,
@@ -23,11 +22,10 @@ pub(crate) struct RtxCache {
 }
 
 impl RtxCache {
-    pub fn new(max_packet_count: usize, max_packet_age: Duration, evict_in_batches: bool) -> Self {
+    pub fn new(max_packet_count: usize, max_packet_age: Duration) -> Self {
         Self {
             max_packet_count,
             max_packet_age,
-            evict_in_batches,
             packet_by_seq_no: BTreeMap::new(),
             seq_no_by_quantized_size: [None; RTX_CACHE_QUANTIZE_SLOTS],
         }
@@ -62,41 +60,18 @@ impl RtxCache {
     }
 
     fn remove_old_packets(&mut self, now: Instant) {
-        if self.evict_in_batches {
-            if let Some(first_seq_no_thats_not_too_old) =
-                self.find_first_seq_no_thats_not_too_old(now)
-            {
-                if let Some(first_seq_no_thats_not_too_old) = first_seq_no_thats_not_too_old {
-                    self.packet_by_seq_no = self
-                        .packet_by_seq_no
-                        .split_off(&first_seq_no_thats_not_too_old);
-                } else {
-                    // They are all too old
-                    self.packet_by_seq_no.clear();
-                }
-            }
-        } else {
-            while let Some(first_seq_no_thats_too_old) = self.find_first_seq_no_thats_too_old(now) {
-                self.packet_by_seq_no.remove(&first_seq_no_thats_too_old);
+        // Confirmed in a microbenchmark that this is faster than removing one-by-one in a while-loop.
+        if let Some(first_seq_no_thats_not_too_old) = self.find_first_seq_no_thats_not_too_old(now)
+        {
+            if let Some(first_seq_no_thats_not_too_old) = first_seq_no_thats_not_too_old {
+                self.packet_by_seq_no = self
+                    .packet_by_seq_no
+                    .split_off(&first_seq_no_thats_not_too_old);
+            } else {
+                // They are all too old
+                self.packet_by_seq_no.clear();
             }
         }
-    }
-
-    fn find_first_seq_no_thats_too_old(&self, now: Instant) -> Option<SeqNo> {
-        if self.packet_by_seq_no.len() > self.max_packet_count {
-            let first_seq_no = self.packet_by_seq_no.keys().next()?;
-            // Too old because of max_packet_count.
-            return Some(*first_seq_no);
-        }
-        // If the max_packet_age is so old that checked_sub returns None, we shouldn't remove based on max_packet_age.
-        let min_queued_at = now.checked_sub(self.max_packet_age)?;
-
-        let (first_seq_no, first_packet) = self.packet_by_seq_no.iter().next()?;
-        if first_packet.timestamp <= min_queued_at {
-            // Too old because of max_packet_age
-            return Some(*first_seq_no);
-        }
-        None
     }
 
     // None == nothing is too old
@@ -175,17 +150,16 @@ mod test {
             nackable: true,
         };
 
-        let evict_in_batches = false;
         let max_packet_count = 0;
         let max_duration = Duration::from_secs(3);
-        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
+        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration);
         rtx_cache.cache_sent_packet(packet(1.into(), 10), after(10));
         assert_eq!(None, rtx_cache.first_cached_seq_no());
         assert_eq!(None, rtx_cache.get_cached_packet_by_seq_no(1.into()));
         assert_eq!(None, rtx_cache.get_cached_packet_smaller_than(1000));
 
         let max_packet_count = 1;
-        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
+        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration);
         rtx_cache.cache_sent_packet(packet(1.into(), 10), after(10));
         assert_eq!(Some(1.into()), rtx_cache.first_cached_seq_no());
         assert_eq!(
@@ -219,7 +193,7 @@ mod test {
         assert_eq!(None, rtx_cache.get_cached_packet_smaller_than(24));
 
         let max_packet_count = 100;
-        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
+        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration);
         for i in 1..=200u32 {
             let seq_no = (201 - i as u64).into();
             let pkt = packet(seq_no, (201 - i) * 10);
@@ -239,7 +213,7 @@ mod test {
         // assert_eq!(Some((200.into(), &mut packet(2000))), rtx_cache.get_cached_packet_smaller_than(1000));
 
         let max_duration = Duration::from_secs(0);
-        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
+        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration);
         rtx_cache.cache_sent_packet(packet(1.into(), 10), after(10));
         assert_eq!(None, rtx_cache.first_cached_seq_no());
         assert_eq!(None, rtx_cache.get_cached_packet_by_seq_no(1.into()));
@@ -247,7 +221,7 @@ mod test {
 
         let max_packet_count = 200;
         let max_duration = Duration::from_secs(1);
-        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
+        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration);
         for i in 1..=200u32 {
             let seq_no = (201 - i as u64).into();
             let pkt = packet(seq_no, (201 - i) * 10);
@@ -264,17 +238,16 @@ mod test {
             rtx_cache.get_cached_packet_by_seq_no(101.into())
         );
 
-        let evict_in_batches = true;
         let max_packet_count = 0;
         let max_duration = Duration::from_secs(3);
-        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
+        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration);
         rtx_cache.cache_sent_packet(packet(1.into(), 10), after(10));
         assert_eq!(None, rtx_cache.first_cached_seq_no());
         assert_eq!(None, rtx_cache.get_cached_packet_by_seq_no(1.into()));
         assert_eq!(None, rtx_cache.get_cached_packet_smaller_than(1000));
 
         let max_packet_count = 1;
-        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
+        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration);
         rtx_cache.cache_sent_packet(packet(1.into(), 10), after(10));
         assert_eq!(Some(1.into()), rtx_cache.first_cached_seq_no());
         assert_eq!(
@@ -308,7 +281,7 @@ mod test {
         assert_eq!(None, rtx_cache.get_cached_packet_smaller_than(24));
 
         let max_packet_count = 100;
-        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
+        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration);
         for i in 1..=200u32 {
             let seq_no = (201 - i as u64).into();
             let pkt = packet(seq_no, (201 - i) * 10);
@@ -328,7 +301,7 @@ mod test {
         // assert_eq!(Some((200.into(), &mut packet(2000))), rtx_cache.get_cached_packet_smaller_than(1000));
 
         let max_duration = Duration::from_secs(0);
-        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
+        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration);
         rtx_cache.cache_sent_packet(packet(1.into(), 10), after(10));
         assert_eq!(None, rtx_cache.first_cached_seq_no());
         assert_eq!(None, rtx_cache.get_cached_packet_by_seq_no(1.into()));
@@ -336,7 +309,7 @@ mod test {
 
         let max_packet_count = 200;
         let max_duration = Duration::from_secs(1);
-        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration, evict_in_batches);
+        let mut rtx_cache = RtxCache::new(max_packet_count, max_duration);
         for i in 1..=200u32 {
             let seq_no = (201 - i as u64).into();
             let pkt = packet(seq_no, (201 - i) * 10);
