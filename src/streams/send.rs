@@ -662,15 +662,11 @@ impl StreamTx {
         Some(())
     }
 
-    pub(crate) fn maybe_create_sr(
-        &mut self,
-        now: Instant,
-        feedback: &mut VecDeque<Rtcp>,
-    ) -> Option<()> {
-        if now < self.sender_report_at() {
-            return None;
-        }
+    pub(crate) fn need_sr(&self, now: Instant) -> bool {
+        now >= self.sender_report_at()
+    }
 
+    pub(crate) fn create_sr_and_update(&mut self, now: Instant, feedback: &mut VecDeque<Rtcp>) {
         let sr = self.create_sender_report(now);
 
         debug!("Created feedback SR: {:?}", sr);
@@ -682,8 +678,6 @@ impl StreamTx {
 
         // Update timestamp to move time when next is created.
         self.last_sender_report = now;
-
-        Some(())
     }
 
     fn create_sender_report(&self, now: Instant) -> SenderReport {
