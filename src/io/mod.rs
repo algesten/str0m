@@ -29,6 +29,9 @@ pub(crate) const DATAGRAM_MTU: usize = 1150;
 /// Warn if any packet we are about to send is above this size.
 pub(crate) const DATAGRAM_MTU_WARN: usize = 1280;
 
+/// Max UDP packet size
+pub(crate) const DATAGRAM_MAX_PACKET_SIZE: usize = 2000;
+
 /// Max expected RTP header over, with full extensions etc.
 pub const MAX_RTP_OVERHEAD: usize = 80;
 

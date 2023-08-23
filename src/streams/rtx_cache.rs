@@ -2,13 +2,13 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::io::DATAGRAM_MTU;
+use crate::io::DATAGRAM_MAX_PACKET_SIZE;
 use crate::rtp_::SeqNo;
 
 use super::RtpPacket;
 
 const RTX_CACHE_SIZE_QUANTIZER: usize = 25;
-const RTX_CACHE_QUANTIZE_SLOTS: usize = DATAGRAM_MTU / RTX_CACHE_SIZE_QUANTIZER;
+const RTX_CACHE_QUANTIZE_SLOTS: usize = DATAGRAM_MAX_PACKET_SIZE / RTX_CACHE_SIZE_QUANTIZER;
 
 #[derive(Debug)]
 pub(crate) struct RtxCache {
