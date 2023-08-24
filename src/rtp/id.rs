@@ -122,6 +122,9 @@ num_id!(SessionId, u64);
 num_id!(SeqNo, u64);
 
 impl SeqNo {
+    pub const MAX: SeqNo = SeqNo(u64::MAX);
+
+    #[inline(always)]
     pub fn is_next(&self, other: SeqNo) -> bool {
         if **self >= *other {
             return false;
@@ -129,10 +132,16 @@ impl SeqNo {
         *other - **self == 1
     }
 
+    #[inline(always)]
     pub fn inc(&mut self) -> SeqNo {
         let n = SeqNo(self.0);
         self.0 += 1;
         n
+    }
+
+    #[inline(always)]
+    pub fn is_max(&self) -> bool {
+        self.0 == Self::MAX.0
     }
 }
 

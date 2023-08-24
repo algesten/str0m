@@ -18,7 +18,11 @@ pub(crate) struct RtxCache {
 
     // Data, new additions here probably need to be cleared in [`clear`].
     packet_by_seq_no: BTreeMap<SeqNo, RtpPacket>,
-    seq_no_by_quantized_size: [Option<SeqNo>; RTX_CACHE_QUANTIZE_SLOTS],
+
+    // Technically we want [Option<SeqNo>; X] to indicate the absence of
+    // a SeqNo. However We can half the storage space by using the sentinel
+    // values SeqNo::MAX to indicate None
+    seq_no_by_quantized_size: [SeqNo; RTX_CACHE_QUANTIZE_SLOTS],
 }
 
 impl RtxCache {
@@ -27,7 +31,7 @@ impl RtxCache {
             max_packet_count,
             max_packet_age,
             packet_by_seq_no: BTreeMap::new(),
-            seq_no_by_quantized_size: [None; RTX_CACHE_QUANTIZE_SLOTS],
+            seq_no_by_quantized_size: [SeqNo::MAX; RTX_CACHE_QUANTIZE_SLOTS],
         }
     }
 
@@ -35,7 +39,7 @@ impl RtxCache {
         let seq_no = packet.seq_no;
         let quantized_size = packet.payload.len() / RTX_CACHE_SIZE_QUANTIZER;
         self.packet_by_seq_no.insert(seq_no, packet);
-        self.seq_no_by_quantized_size[quantized_size] = Some(seq_no);
+        self.seq_no_by_quantized_size[quantized_size] = seq_no;
         self.remove_old_packets(now);
     }
 
@@ -53,10 +57,10 @@ impl RtxCache {
         let seq_no = self.seq_no_by_quantized_size[..quantized_size]
             .iter()
             .rev()
-            .filter_map(|seq_no| *seq_no)
-            .find(|seq_no| self.packet_by_seq_no.contains_key(seq_no));
+            .filter(|seq_no| !seq_no.is_max())
+            .find(|seq_no| self.packet_by_seq_no.contains_key(seq_no))?;
 
-        seq_no.and_then(|seq_no| self.get_cached_packet_by_seq_no(seq_no))
+        self.get_cached_packet_by_seq_no(*seq_no)
     }
 
     fn remove_old_packets(&mut self, now: Instant) {
@@ -121,7 +125,7 @@ impl RtxCache {
 
     pub(crate) fn clear(&mut self) {
         self.packet_by_seq_no.clear();
-        self.seq_no_by_quantized_size = [None; RTX_CACHE_QUANTIZE_SLOTS];
+        self.seq_no_by_quantized_size = [SeqNo::MAX; RTX_CACHE_QUANTIZE_SLOTS];
     }
 }
 
