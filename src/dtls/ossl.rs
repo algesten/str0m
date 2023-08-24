@@ -13,6 +13,7 @@ use openssl::x509::X509;
 use std::io;
 use std::mem;
 use std::ops::Deref;
+use std::panic::UnwindSafe;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
 
@@ -174,9 +175,13 @@ pub enum State<S> {
     Empty,
 }
 
+/// This is okay because there is no way for a user of Rtc to interact with the Dtls subsystem
+/// in a way that would allow them to observe a potentially broken invariant when catching a panic.
+impl<S> UnwindSafe for State<S> {}
+
 impl<S> TlsStream<S>
 where
-    S: io::Read + io::Write,
+    S: io::Read + io::Write + UnwindSafe,
 {
     pub fn new(ssl: Ssl, stream: S) -> Self {
         TlsStream {
@@ -255,7 +260,7 @@ where
 
 impl<S> State<S>
 where
-    S: io::Read + io::Write,
+    S: io::Read + io::Write + UnwindSafe,
 {
     fn handshaken(&mut self, active: bool) -> Result<&mut SslStream<S>, io::Error> {
         if let State::Established(v) = self {
@@ -339,7 +344,7 @@ fn export_srtp_keying_material<S>(
 
 impl<S> io::Read for TlsStream<S>
 where
-    S: io::Read + io::Write,
+    S: io::Read + io::Write + UnwindSafe,
 {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.handshaken()?.read(buf)
@@ -348,7 +353,7 @@ where
 
 impl<S> io::Write for TlsStream<S>
 where
-    S: io::Read + io::Write,
+    S: io::Read + io::Write + UnwindSafe,
 {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.handshaken()?.write(buf)

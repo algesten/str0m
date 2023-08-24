@@ -2019,6 +2019,8 @@ pub(crate) use log_stat;
 
 #[cfg(test)]
 mod test {
+    use std::panic::UnwindSafe;
+
     use super::*;
 
     #[test]
@@ -2027,5 +2029,11 @@ mod test {
         fn is_sync<T: Sync>(_t: T) {}
         is_send(Rtc::new());
         is_sync(Rtc::new());
+    }
+
+    #[test]
+    fn rtc_is_unwind_safe() {
+        fn is_unwind_safe<T: UnwindSafe>(_t: T) {}
+        is_unwind_safe(Rtc::new());
     }
 }

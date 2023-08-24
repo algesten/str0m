@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::net::SocketAddr;
+use std::panic::UnwindSafe;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -52,6 +53,10 @@ pub(crate) struct RtcSctp {
     last_now: Instant,
     client: bool,
 }
+
+/// This is okay because there is no way for a user of Rtc to interact with the Sctp subsystem
+/// in a way that would allow them to observe a potentially broken invariant when catching a panic.
+impl UnwindSafe for RtcSctp {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RtcSctpState {

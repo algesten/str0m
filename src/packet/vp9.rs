@@ -1,6 +1,8 @@
 use super::{BitRead, CodecExtra, Depacketizer, MediaKind, PacketError, Packetizer};
 
 use std::fmt;
+use std::panic::RefUnwindSafe;
+use std::panic::UnwindSafe;
 use std::sync::Arc;
 
 /// Flexible mode 15 bit picture ID
@@ -9,7 +11,7 @@ const MAX_SPATIAL_LAYERS: u8 = 5;
 const MAX_VP9REF_PICS: usize = 3;
 
 /// InitialPictureIDFn is a function that returns random initial picture ID.
-pub type InitialPictureIDFn = Arc<dyn (Fn() -> u16) + Send + Sync>;
+pub type InitialPictureIDFn = Arc<dyn (Fn() -> u16) + Send + Sync + UnwindSafe + RefUnwindSafe>;
 
 /// Packetizes VP9 RTP packets.
 #[derive(Default, Clone)]
