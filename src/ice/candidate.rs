@@ -64,6 +64,9 @@ pub struct Candidate {
     /// when trickle ICE is used in conjunction with ice restart, since it must be
     /// possible the ice agent to know whether a candidate appearing belongs to
     /// the current or previous session.
+    ///
+    /// This value is only set for incoming candidates. Once we use the candidate inside
+    /// pairs, the field is blanked to not be confusing during ice-restarts.
     ufrag: Option<String>,
 
     /// The ice agent might assign a local preference if we have multiple candidates
@@ -343,6 +346,10 @@ impl Candidate {
     #[doc(hidden)]
     pub fn ufrag(&self) -> Option<&str> {
         self.ufrag.as_deref()
+    }
+
+    pub(crate) fn clear_ufrag(&mut self) {
+        self.ufrag = None;
     }
 }
 
