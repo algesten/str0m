@@ -365,6 +365,10 @@ impl IceAgent {
             }
         }
 
+        // We do not want this when the credential is accepted, since it will look
+        // strange on ice-restart.
+        c.clear_ufrag();
+
         // https://datatracker.ietf.org/doc/html/rfc8445#section-5.1.2.1
         // The local preference MUST be an integer from 0 (lowest preference) to
         // 65535 (highest preference) inclusive.  When there is only a single IP
@@ -489,7 +493,7 @@ impl IceAgent {
     /// Returns `false` if the candidate was not added because it is redundant.
     /// Adding loopback addresses or multicast/broadcast addresses causes
     /// an error.
-    pub fn add_remote_candidate(&mut self, c: Candidate) {
+    pub fn add_remote_candidate(&mut self, mut c: Candidate) {
         info!("Add remote candidate: {:?}", c);
 
         // This is a a:rtcp-mux-only implementation. The only component
@@ -510,6 +514,10 @@ impl IceAgent {
                 }
             }
         }
+
+        // We do not want this when the credential is accepted, since it will look
+        // strange on ice-restart.
+        c.clear_ufrag();
 
         let existing_prflx = self
             .remote_candidates
