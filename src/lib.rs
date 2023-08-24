@@ -1726,7 +1726,7 @@ impl RtcConfig {
     /// [`contiguous: false`][crate::media::MediaData::contiguous].
     ///
     /// This setting is ignored in [RTP mode][`RtcConfig::set_rtp_mode()`] where RTP
-    /// packets are arrived out of order.
+    /// packets can arrive out of order.
     pub fn set_reordering_size_audio(mut self, size: usize) -> Self {
         self.reordering_size_audio = size;
 
@@ -1744,7 +1744,7 @@ impl RtcConfig {
     /// ```
     ///
     /// This setting is ignored in [RTP mode][`RtcConfig::set_rtp_mode()`] where RTP
-    /// packets are arrived out of order.
+    /// packets can arrive out of order.
     pub fn reordering_size_audio(&self) -> usize {
         self.reordering_size_audio
     }
@@ -1762,7 +1762,7 @@ impl RtcConfig {
     /// Default: 30
     ///
     /// This setting is ignored in [RTP mode][`RtcConfig::set_rtp_mode()`] where RTP
-    /// packets are arrived out of order.
+    /// packets can arrive out of order.
     pub fn set_reordering_size_video(mut self, size: usize) -> Self {
         self.reordering_size_video = size;
 
@@ -1780,7 +1780,7 @@ impl RtcConfig {
     /// ```
     ///
     /// This setting is ignored in [RTP mode][`RtcConfig::set_rtp_mode()`] where RTP
-    /// packets are arrived out of order.
+    /// packets can arrive out of order.
     pub fn reordering_size_video(&self) -> usize {
         self.reordering_size_video
     }
