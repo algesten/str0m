@@ -407,11 +407,11 @@ impl Client {
     fn handle_incoming_keyframe_req(&self, mut req: KeyframeRequest) -> Propagated {
         // Need to figure out the track_in mid that needs to handle the keyframe request.
         let Some(track_out) = self.tracks_out.iter().find(|t| t.mid() == Some(req.mid)) else {
-                return Propagated::Noop;
-            };
+            return Propagated::Noop;
+        };
         let Some(track_in) = track_out.track_in.upgrade() else {
-                return Propagated::Noop;
-            };
+            return Propagated::Noop;
+        };
 
         // This is the rid picked from incoming mediadata, and to which we need to
         // send the keyframe request.
@@ -447,11 +447,9 @@ impl Client {
             return false;
         };
 
-        let Some(mut channel) = self
-                .cid
-                .and_then(|id| self.rtc.channel(id)) else {
-                    return false;
-                };
+        let Some(mut channel) = self.cid.and_then(|id| self.rtc.channel(id)) else {
+            return false;
+        };
 
         let json = serde_json::to_string(&offer).unwrap();
         channel
@@ -524,14 +522,19 @@ impl Client {
 
     fn handle_media_data(&mut self, origin: ClientId, data: &MediaData) {
         // Figure out which outgoing track maps to the incoming media data.
-        let Some(mid) = self.tracks_out
+        let Some(mid) = self
+            .tracks_out
             .iter()
-            .find(|o| o.track_in.upgrade().filter(|i|
-                i.origin == origin &&
-                i.mid == data.mid).is_some())
-            .and_then(|o| o.mid()) else {
-                return;
-            };
+            .find(|o| {
+                o.track_in
+                    .upgrade()
+                    .filter(|i| i.origin == origin && i.mid == data.mid)
+                    .is_some()
+            })
+            .and_then(|o| o.mid())
+        else {
+            return;
+        };
 
         if data.rid.is_some() && data.rid != Some("h".into()) {
             // This is where we plug in a selection strategy for simulcast. For

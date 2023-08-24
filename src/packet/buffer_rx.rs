@@ -206,11 +206,11 @@ impl DepacketizingBuffer {
                 // missing frame on layer 1 that its contiguous to two frames on layer 0
 
                 let Some(prev_pid) = prev.picture_id else {
-                        return false;
-                    };
+                    return false;
+                };
                 let Some(next_pid) = next.picture_id else {
-                        return false;
-                    };
+                    return false;
+                };
 
                 let allowed =
                     prev.layer_index == 0 && next.layer_index == 0 && (prev_pid + 2 == next_pid);

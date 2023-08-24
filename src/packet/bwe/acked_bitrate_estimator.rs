@@ -48,7 +48,9 @@ impl AckedBitrateEstimator {
         } else {
             self.window
         };
-        let Some((sample_estimate, is_small_sample)) = self.update_window(receive_time, packet_size, window) else {
+        let Some((sample_estimate, is_small_sample)) =
+            self.update_window(receive_time, packet_size, window)
+        else {
             // No update
             return;
         };

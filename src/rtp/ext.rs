@@ -367,9 +367,10 @@ impl ExtensionMap {
             .iter()
             .enumerate()
             .find(|(_, m)| m.map(|m| m.ext) == Some(ext))
-            .map(|(i, _)| i) else {
-                return;
-            };
+            .map(|(i, _)| i)
+        else {
+            return;
+        };
 
         // Unwrap OK because index is checking just above.
         let old = self.0[old_index].as_mut().unwrap();

@@ -53,9 +53,10 @@ impl ArrivalGroup {
 
         let Some(send_diff) = packet
             .local_send_time
-            .checked_duration_since(first_local_send_time) else {
-                // Out of order
-                return Belongs::Skipped;
+            .checked_duration_since(first_local_send_time)
+        else {
+            // Out of order
+            return Belongs::Skipped;
         };
 
         if send_diff < BURST_TIME_INTERVAL {

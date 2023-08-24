@@ -125,7 +125,7 @@ impl RtpHeader {
         }
         let pad_len = buf[buf.len() - 1] as usize;
         let Some(unpadded_len) = buf.len().checked_sub(pad_len) else {
-            return false
+            return false;
         };
         buf.truncate(unpadded_len);
         true

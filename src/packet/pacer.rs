@@ -565,9 +565,10 @@ impl LeakyBucketPacer {
             .queue_states
             .iter()
             .filter(|q| q.use_for_padding)
-            .max_by_key(|q| q.snapshot.last_emitted) else {
-                return None;
-            };
+            .max_by_key(|q| q.snapshot.last_emitted)
+        else {
+            return None;
+        };
 
         // We can generate padding
         let padding = (self.padding_bitrate * PADDING_BURST_INTERVAL).as_bytes_usize();
@@ -1447,7 +1448,7 @@ mod test {
             }
 
             fn update_average_queue_time(&mut self, now: Instant) {
-                let Some(last_update) =  self.last_update else {
+                let Some(last_update) = self.last_update else {
                     self.last_update = Some(now);
                     return;
                 };

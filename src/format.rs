@@ -338,9 +338,10 @@ impl PayloadParams {
         let Some((first, _)) = remote_pts
             .iter()
             .filter_map(|p| self.match_score(p).map(|s| (p, s)))
-            .max_by_key(|(_, s)| *s) else {
-                return;
-            };
+            .max_by_key(|(_, s)| *s)
+        else {
+            return;
+        };
 
         let remote_pt = first.pt;
         let remote_rtx = first.resend;

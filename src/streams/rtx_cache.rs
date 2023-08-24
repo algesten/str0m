@@ -100,7 +100,7 @@ impl RtxCache {
 
         // There is no packet, so I guess we'll clear it.  But that's a no-op anyway.
         let Some(first_packet) = self.packet_by_seq_no.values().next() else {
-            return Some(None)
+            return Some(None);
         };
 
         if first_packet.timestamp <= min_queued_at {

@@ -336,14 +336,17 @@ impl Session {
             // Without RID header we use PT to decide whether the SSRC is for main/RTX.
             let Some(rid) = rid else {
                 if media.rids_rx().is_specific() {
-                    trace!("Media expects RID and RTP packet has only MID: {:?}", media.rids_rx());
+                    trace!(
+                        "Media expects RID and RTP packet has only MID: {:?}",
+                        media.rids_rx()
+                    );
                     return None;
                 }
 
                 // Figure out which payload the PT maps to. Either main or RTX.
-                let payload = self.codec_config
-                    .iter()
-                    .find(|p| p.pt() == header.payload_type || p.resend() == Some(header.payload_type))?;
+                let payload = self.codec_config.iter().find(|p| {
+                    p.pt() == header.payload_type || p.resend() == Some(header.payload_type)
+                })?;
                 let is_main = payload.pt() == header.payload_type;
 
                 let stream_mid_rid = self.streams.stream_rx_by_mid_rid(mid, None);
@@ -515,7 +518,8 @@ impl Session {
             receipt_outer
         };
 
-        let Some(packet) = stream.handle_rtp(now, header, data, receipt.seq_no, receipt.time) else {
+        let Some(packet) = stream.handle_rtp(now, header, data, receipt.seq_no, receipt.time)
+        else {
             return;
         };
 
