@@ -8,6 +8,9 @@ use crate::Candidate;
 
 const MIN_TIMEOUT: Duration = Duration::from_millis(STUN_MAX_RTO_MILLIS);
 
+// When running ice-lite we need a cutoff when we consider the remote definitely gone.
+const RECENT_BINDING_REQUEST: Duration = Duration::from_secs(15);
+
 #[derive(Default)]
 /// A pair of candidates, local and remote, in the ice agent.
 pub struct CandidatePair {
@@ -182,7 +185,7 @@ impl CandidatePair {
         let Some(t) = self.remote_binding_request_time else {
             return false;
         };
-        now - t < 2 * MIN_TIMEOUT
+        now - t < RECENT_BINDING_REQUEST
     }
 
     pub fn is_nominated(&self) -> bool {
