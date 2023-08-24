@@ -270,6 +270,8 @@ impl IceAgent {
     }
 
     /// Local ice candidates.
+    ///
+    /// The candidates have their ufrag filled out to the local credentials.
     pub fn local_candidates(&self) -> &[Candidate] {
         &self.local_candidates
     }
@@ -365,9 +367,8 @@ impl IceAgent {
             }
         }
 
-        // We do not want this when the credential is accepted, since it will look
-        // strange on ice-restart.
-        c.clear_ufrag();
+        // "Adopt" any incoming candidate by setting our current ufrag.
+        c.set_ufrag(&self.local_credentials.ufrag);
 
         // https://datatracker.ietf.org/doc/html/rfc8445#section-5.1.2.1
         // The local preference MUST be an integer from 0 (lowest preference) to
@@ -515,8 +516,8 @@ impl IceAgent {
             }
         }
 
-        // We do not want this when the credential is accepted, since it will look
-        // strange on ice-restart.
+        // After we accepted the ufrag, don't keep this around since it will look
+        // confusing inspecting the state.
         c.clear_ufrag();
 
         let existing_prflx = self
@@ -669,21 +670,32 @@ impl IceAgent {
     /// should continue sending data over the 4G until we redone the ICE gathering
     /// process.
     #[allow(unused)]
-    pub fn ice_restart(&mut self) {
+    pub fn ice_restart(&mut self, local_credentials: IceCreds, keep_local_candidates: bool) {
         // An ICE agent MAY restart ICE for existing data streams.  An ICE
         // restart causes all previous states of the data streams, excluding the
         // roles of the agents, to be flushed.  The only difference between an
         // ICE restart and a brand new data session is that during the restart,
         // data can continue to be sent using existing data sessions, and a new
         // data session always requires the roles to be determined.
-        self.local_credentials = IceCreds::new();
+
         self.remote_credentials = None;
-        self.local_candidates.clear();
         self.remote_candidates.clear();
         self.candidate_pairs.clear();
         self.transmit.clear();
         self.events.clear();
         self.discovered_recv.clear();
+
+        if keep_local_candidates {
+            // If we're keeping the candidates, we must update the ufrag to the new credentials.
+            // This is so anyone inspecting `.local_candidates()` will get the correct ufrag.
+            for c in &mut self.local_candidates {
+                c.set_ufrag(&local_credentials.ufrag)
+            }
+        } else {
+            self.local_candidates.clear();
+        }
+
+        self.local_credentials = local_credentials;
 
         self.emit_event(IceAgentEvent::IceRestart(self.local_credentials.clone()));
         self.set_connection_state(IceConnectionState::Checking, "ice restart");

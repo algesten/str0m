@@ -1151,7 +1151,7 @@ impl From<MediaKind> for MediaType {
 }
 
 struct AsSdpParams<'a, 'b> {
-    pub candidates: &'a [Candidate],
+    pub candidates: Vec<Candidate>,
     pub creds: &'a IceCreds,
     pub fingerprint: &'a Fingerprint,
     pub setup: Setup,
@@ -1161,7 +1161,7 @@ struct AsSdpParams<'a, 'b> {
 impl<'a, 'b> AsSdpParams<'a, 'b> {
     pub fn new(rtc: &'a Rtc, pending: Option<&'b Changes>) -> Self {
         AsSdpParams {
-            candidates: rtc.ice.local_candidates(),
+            candidates: rtc.ice.local_candidates().to_vec(),
             creds: rtc.ice.local_credentials(),
             fingerprint: rtc.dtls.local_fingerprint(),
             setup: match rtc.dtls.is_active() {
