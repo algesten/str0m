@@ -8,7 +8,7 @@ pub fn benchmark_cache_sent_packet() {
     use rand::random;
     use std::time::{Duration, Instant};
 
-    let mut cache = RtxCache::new(1024, Duration::from_secs(3), true);
+    let mut cache = RtxCache::new(1024, Duration::from_secs(3));
 
     let mut start = Instant::now();
 
