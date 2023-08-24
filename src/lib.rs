@@ -1507,6 +1507,12 @@ impl Rtc {
     pub fn exts(&self) -> ExtensionMap {
         self.session.exts
     }
+
+    /// Current local ICE credentials. For integration tests.
+    #[doc(hidden)]
+    pub fn local_ice_creds(&self) -> IceCreds {
+        self.ice.local_credentials().clone()
+    }
 }
 
 /// Customized config for creating an [`Rtc`] instance.

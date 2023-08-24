@@ -489,7 +489,7 @@ impl IceAgent {
         true
     }
 
-    /// Adds a local candidate.
+    /// Adds a remote candidate.
     ///
     /// Returns `false` if the candidate was not added because it is redundant.
     /// Adding loopback addresses or multicast/broadcast addresses causes
@@ -678,6 +678,7 @@ impl IceAgent {
     /// process.
     #[allow(unused)]
     pub fn ice_restart(&mut self, local_credentials: IceCreds, keep_local_candidates: bool) {
+        info!("ICE restart");
         // An ICE agent MAY restart ICE for existing data streams.  An ICE
         // restart causes all previous states of the data streams, excluding the
         // roles of the agents, to be flushed.  The only difference between an
@@ -1480,6 +1481,15 @@ impl IceAgent {
                 }
             }
         }
+    }
+
+    pub(crate) fn remote_credentials_changed(&self, new_creds: Option<&IceCreds>) -> bool {
+        // Before we have set remote credentials we don't consider anything a change.
+        let Some(current) = &self.remote_credentials else {
+            return false
+        };
+
+        Some(current) != new_creds
     }
 }
 
