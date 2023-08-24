@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
+use crate::io::DATAGRAM_MAX_PACKET_SIZE;
 use crate::io::DATAGRAM_MTU_WARN;
 use crate::io::MAX_RTP_OVERHEAD;
 use crate::media::KeyframeRequestKind;
@@ -160,7 +161,7 @@ impl StreamTx {
             resends: VecDeque::new(),
             padding: 0,
             blank_packet: RtpPacket::blank(),
-            rtx_cache: RtxCache::new(1024, DEFAULT_RTX_CACHE_DURATION, false),
+            rtx_cache: RtxCache::new(1024, DEFAULT_RTX_CACHE_DURATION),
             last_sender_report: already_happened(),
             pending_request_keyframe: None,
             stats: StreamTxStats::default(),
@@ -198,7 +199,7 @@ impl StreamTx {
     /// The default is 1024 packets over 3 seconds.
     pub fn set_rtx_cache(&mut self, max_packets: usize, max_age: Duration) {
         // Dump old cache to avoid having to deal with resizing logic inside the cache impl.
-        self.rtx_cache = RtxCache::new(max_packets, max_age, false);
+        self.rtx_cache = RtxCache::new(max_packets, max_age);
     }
 
     /// Set whether this stream is unpaced or not.
@@ -378,7 +379,7 @@ impl StreamTx {
         header.ext_vals.transport_cc = Some(*twcc as u16);
         *twcc += 1;
 
-        buf.resize(2000, 0);
+        buf.resize(DATAGRAM_MAX_PACKET_SIZE, 0);
 
         let header_len = header.write_to(buf, exts);
         assert!(header_len % 4 == 0, "RTP header must be multiple of 4");
@@ -661,15 +662,11 @@ impl StreamTx {
         Some(())
     }
 
-    pub(crate) fn maybe_create_sr(
-        &mut self,
-        now: Instant,
-        feedback: &mut VecDeque<Rtcp>,
-    ) -> Option<()> {
-        if now < self.sender_report_at() {
-            return None;
-        }
+    pub(crate) fn need_sr(&self, now: Instant) -> bool {
+        now >= self.sender_report_at()
+    }
 
+    pub(crate) fn create_sr_and_update(&mut self, now: Instant, feedback: &mut VecDeque<Rtcp>) {
         let sr = self.create_sender_report(now);
 
         debug!("Created feedback SR: {:?}", sr);
@@ -681,8 +678,6 @@ impl StreamTx {
 
         // Update timestamp to move time when next is created.
         self.last_sender_report = now;
-
-        Some(())
     }
 
     fn create_sender_report(&self, now: Instant) -> SenderReport {

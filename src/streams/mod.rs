@@ -128,6 +128,10 @@ pub(crate) struct Streams {
     /// Local SSRC used before we got any StreamTx. This is used for RTCP if we don't
     /// have any reasonable value to use.
     default_ssrc_tx: Ssrc,
+
+    /// We need to report all RR/SR for a Mid together in one RTCP. This is a dynamic
+    /// list that we don't want to allocate on every handle_timeout.
+    mids_to_report: Vec<Mid>,
 }
 
 impl Default for Streams {
@@ -136,6 +140,7 @@ impl Default for Streams {
             streams_rx: Default::default(),
             streams_tx: Default::default(),
             default_ssrc_tx: 0.into(), // this will be changed
+            mids_to_report: Vec::with_capacity(10),
         }
     }
 }
@@ -221,17 +226,42 @@ impl Streams {
         config: &CodecConfig,
         feedback: &mut VecDeque<Rtcp>,
     ) {
+        self.mids_to_report.clear(); // Clear for checking StreamRx.
+        for stream in self.streams_rx.values() {
+            if stream.need_rr(now) {
+                self.mids_to_report.push(stream.mid());
+            }
+        }
+
         for stream in self.streams_rx.values_mut() {
             stream.maybe_create_keyframe_request(sender_ssrc, feedback);
-            stream.maybe_create_rr(now, sender_ssrc, feedback);
+
+            // All StreamRx belonging to the same Mid are reported together.
+            if self.mids_to_report.contains(&stream.mid()) {
+                stream.create_rr_and_update(now, sender_ssrc, feedback);
+            }
+
             if do_nack {
                 stream.maybe_create_nack(sender_ssrc, feedback);
             }
+
             stream.handle_timeout(now);
+        }
+
+        self.mids_to_report.clear(); // start over for StreamTx.
+        for stream in self.streams_tx.values() {
+            if stream.need_sr(now) {
+                self.mids_to_report.push(stream.mid());
+            }
         }
 
         for stream in self.streams_tx.values_mut() {
             let mid = stream.mid();
+
+            // All StreamTx belongin to the same Mid are reported together.
+            if self.mids_to_report.contains(&mid) {
+                stream.create_sr_and_update(now, feedback);
+            }
 
             // Finding the first (main) PT that also has RTX for the Media is expensive,
             // this closure is run only when needed.
@@ -239,8 +269,6 @@ impl Streams {
             let get_media = move || (medias.iter().find(|m| m.mid() == mid).unwrap(), config);
 
             stream.handle_timeout(now, get_media);
-
-            stream.maybe_create_sr(now, feedback);
         }
     }
 

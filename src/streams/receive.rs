@@ -391,16 +391,16 @@ impl StreamRx {
         x
     }
 
-    pub(crate) fn maybe_create_rr(
+    pub(crate) fn need_rr(&self, now: Instant) -> bool {
+        now >= self.receiver_report_at()
+    }
+
+    pub(crate) fn create_rr_and_update(
         &mut self,
         now: Instant,
         sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,
     ) {
-        if now < self.receiver_report_at() {
-            return;
-        }
-
         let mut rr = self.create_receiver_report(now);
         rr.sender_ssrc = sender_ssrc;
 
