@@ -18,7 +18,7 @@ thiserror = "1.0.38"
 tracing = "0.1.37"
 rand = "0.8.5"
 once_cell = "1.17.0"
-sctp-proto = "0.1.5"
+sctp-proto = "0.1.6"
 combine = "4.6.6"
 # Sadly no DTLS support in rustls.
 # If you want to use a system provided openssl you can set env variable
