@@ -17,6 +17,8 @@ use super::{rr_interval, RtpPacket};
 /// Incoming encoded stream.
 ///
 /// A stream is a primary SSRC + optional RTX SSRC.
+///
+/// This is RTP level API. For sample level API see [`Rtc::writer`][crate::Rtc::writer].
 #[derive(Debug)]
 pub struct StreamRx {
     /// Unique idenfier of the remote stream.

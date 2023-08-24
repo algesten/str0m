@@ -117,7 +117,7 @@
 //! # use std::time::Instant;
 //! # let rtc = Rtc::new();
 //! #
-//! // Buffer for reading incoming UDP packet.s
+//! // Buffer for reading incoming UDP packets.
 //! let mut buf = vec![0; 2000];
 //!
 //! // A UdpSocket we obtained _somehow_.
@@ -301,12 +301,11 @@
 //! also work for peer-2-peer (mostly thinking about the ICE agent), but
 //! these areas have not received as much attention and testing.
 //!
-//! While performance is very good, only some attempts have been made to
-//! discover and optimize bottlenecks. For instance, while str0m probably
-//! never be allocation free, there might be unnecessary allocations and
-//! cloning that could be improved. Another area is to make sure the
-//! crypto parts use efficient algorithms and hardware acceleration as far
-//! as possible.
+//! Performance is very good, there have been some work the discover and
+//! optimize bottlenecks. Such efforts are of course never ending with
+//! diminishing returns. While there are no glaringly obvious performance
+//! bottlenecks, more work is always welcome – both algorithmically and
+//! allocation/cloning in hot paths etc.
 //!
 //! # Design
 //!
@@ -314,7 +313,7 @@
 //!
 //! 1. Events (such as receiving media or data channel data).
 //! 2. Network output. Data to be sent, typically from a UDP socket.
-//! 3. Timeouts. When the instance expects a time input.
+//! 3. Timeouts. Indicates when the instance next expects a time input.
 //!
 //! Input to the `Rtc` instance is:
 //!
@@ -322,8 +321,8 @@
 //! 2. Network input. Typically read from a UDP socket.
 //! 3. Timeouts. As obtained from the output above.
 //!
-//! The correct use can be described like below (or seen in the examples).
-//! The TODO lines is where the user would fill in their code.
+//! The correct use can be seen in the above [Run loop](#run-loop) or in the
+//! examples.
 //!
 //! Sans I/O is a pattern where we turn both network input/output as well
 //! as time passing into external input to the API. This means str0m has
@@ -331,6 +330,15 @@
 //! forward by different kinds of input.
 //!
 //! ## Sample or RTP level?
+//!
+//! Str0m defaults to the "sample level" which treats the RTP as an internal detail. The user
+//! will thus mainly interact with:
+//!
+//! 1. [`Event::MediaData`] to receive full "samples" (audio frames or video frames).
+//! 2. [`Writer::write`][crate::media::Writer::write] to write full samples.
+//! 3. [`Writer::request_keyframe`][crate::media::Writer::request_keyframe] to request keyframes.
+//!
+//! ### Sample level
 //!
 //! All codecs such as h264, vp8, vp9 and opus outputs what we call
 //! "Samples". A sample has a very specific meaning for audio, but this
@@ -342,17 +350,12 @@
 //! one they are too big. Samples are therefore further chunked up by
 //! codec specific payloaders into RTP packets.
 //!
+//! ### RTP level
+//!
 //! Str0m also provides an RTP level API. This would be similar to many other
 //! RTP libraries where the RTP packets themselves are the the API surface
 //! towards the user (when building an SFU one would often talk about "forwarding
 //! RTP packets", while with str0m we can also "forward samples").
-//!
-//! Str0m defaults to the "sample level" which treats the RTP as an internal detail. The user
-//! will mainly interact with:
-//!
-//! 1. [`Event::MediaData`] to receive full "samples" (audio frames or video frames).
-//! 2. [`Writer::write`][crate::media::Writer::write] to write full samples.
-//! 3. [`Writer::request_keyframe`][crate::media::Writer::request_keyframe] to request keyframes.
 //!
 //! ### RTP mode
 //!
@@ -366,12 +369,8 @@
 //! # use str0m::Rtc;
 //! let rtc = Rtc::builder()
 //!     // Enable RTP mode for this Rtc instance.
+//!     // This disables `MediaEvent` and the `Writer::write` API.
 //!     .set_rtp_mode(true)
-//!     // Don't hold back audio/video packets to attempt
-//!     // to reorder them. Incoming packets are released
-//!     // in the order they are received.
-//!     .set_reordering_size_audio(0)
-//!     .set_reordering_size_video(0)
 //!     .build();
 //! ```
 //!
@@ -402,41 +401,30 @@
 //! while the actual task of sending the network traffic is left to the
 //! user.
 //!
-//! ### Input
-//!
-//! 1. Incoming network data
-//! 2. Time going forward
-//! 3. User operations such as pushing media data.
-//!
-//! In response to this input, the API will react with various output.
-//!
-//! ### Output
-//!
-//! 1. Outgoing network data
-//! 2. Next required time to "wake up"
-//! 3. Incoming events such as media data.
-//!
 //! ## The importance of `&mut self`
 //!
 //! Rust shines when we can eschew locks and heavily rely `&mut` for data
 //! write access. Since str0m has no internal threads, we never have to
 //! deal with shared data. Furthermore the the internals of the library is
 //! organized such that we don't need multiple references to the same
-//! entities.
+//! entities. In str0m there are no `Rc`, `Mutex`, `mpsc`, `Arc`(*),  or
+//! other locks.
 //!
 //! This means all input to the lib can be modelled as
 //! `handle_something(&mut self, something)`.
 //!
-//! ## Not a standard WebRTC API
+//! (*) Ok. There is one `Arc` if you use Windows where we also require openssl.
+//!
+//! ## Not a standard WebRTC "Peer Connection" API
 //!
 //! The library deliberately steps away from the "standard" WebRTC API as
 //! seen in JavaScript and/or [webrtc-rs][webrtc-rs] (or [Pion][pion] in Go).
 //! There are few reasons for this.
 //!
 //! First, in the standard API, events are callbacks, which are not a
-//! great fit for Rust, since callbacks require some kind of reference
+//! great fit for Rust. Callbacks require some kind of reference
 //! (ownership?) over the entity the callback is being dispatched
-//! upon. I.e. if in Rust we want to `pc.addEventListener(x)`, `x` needs
+//! upon. I.e. if in Rust we want `pc.addEventListener(x)`, `x` needs
 //! to be wholly owned by `pc`, or have some shared reference (like
 //! `Arc`). Shared references means shared data, and to get mutable shared
 //! data, we will need some kind of lock. i.e. `Arc<Mutex<EventListener>>`
@@ -465,10 +453,15 @@
 //! unwrap is okay. This is an internal invariant, a state assumption that
 //! str0m is responsible for maintaining.
 //!
+//! We do not believe it's correct to change every `unwrap()`/`expect()` into
+//! `unwrap_or_else()`, `if let Some(x) = x { ... }` etc, because doing so
+//! brushes an actual problem (an incorrect assumption) under the carpet. Trying
+//! to hobble along with an incorrect state would at best result in broken
+//! behavior, at worst a security risk!
 //!
+//! Panics are our friends: *panic means bug*
 //!
-//! *panic means bug*
-//!
+//! And also: str0m should *never* panic on any user input.
 //!
 //! [sansio]:     https://sans-io.readthedocs.io
 //! [quinn]:      https://github.com/quinn-rs/quinn
@@ -1010,9 +1003,7 @@ impl Rtc {
         DirectApi::new(self)
     }
 
-    /// Send outgoing media data (samples).
-    ///
-    /// This function does not send data that is already RTP packetized.
+    /// Send outgoing media data (samples) or request keyframes.
     ///
     /// Returns `None` if the direction isn't sending (`sendrecv` or `sendonly`).
     ///
@@ -1036,6 +1027,9 @@ impl Rtc {
     ///
     /// writer.write(pt, data.network_time, data.time, &data.data).unwrap();
     /// ```
+    ///
+    /// This is a sample level API: For RTP level see [`DirectApi::stream_tx()`] and [`DirectApi::stream_rx()`].
+    ///
     pub fn writer(&mut self, mid: Mid) -> Option<Writer> {
         if self.session.rtp_mode {
             panic!("In rtp_mode use direct_api().stream_tx().write_rtp()");
@@ -1447,7 +1441,7 @@ impl Rtc {
     /// # use str0m::{Rtc, channel::ChannelId};
     /// let mut rtc = Rtc::new();
     ///
-    /// let cid: ChannelId = todo!(); // obtain Mid from Event::ChannelOpen
+    /// let cid: ChannelId = todo!(); // obtain channel id from Event::ChannelOpen
     /// let channel = rtc.channel(cid).unwrap();
     /// // TODO write data channel data.
     /// ```
@@ -1731,8 +1725,8 @@ impl RtcConfig {
     /// packets to "wait" before releasing media
     /// [`contiguous: false`][crate::media::MediaData::contiguous].
     ///
-    /// Setting this to 0 enables a special mode where we will emit `MediaData` data out of order. This
-    /// works on the assumption that we never split an audio sample over several RTP packets.
+    /// This setting is ignored in [RTP mode][`RtcConfig::set_rtp_mode()`] where RTP
+    /// packets are arrived out of order.
     pub fn set_reordering_size_audio(mut self, size: usize) -> Self {
         self.reordering_size_audio = size;
 
@@ -1748,6 +1742,9 @@ impl RtcConfig {
     /// // Defaults to 15.
     /// assert_eq!(config.reordering_size_audio(), 15);
     /// ```
+    ///
+    /// This setting is ignored in [RTP mode][`RtcConfig::set_rtp_mode()`] where RTP
+    /// packets are arrived out of order.
     pub fn reordering_size_audio(&self) -> usize {
         self.reordering_size_audio
     }
@@ -1763,6 +1760,9 @@ impl RtcConfig {
     /// missing video data. The 0 (as described for audio) is not relevant for video.
     ///
     /// Default: 30
+    ///
+    /// This setting is ignored in [RTP mode][`RtcConfig::set_rtp_mode()`] where RTP
+    /// packets are arrived out of order.
     pub fn set_reordering_size_video(mut self, size: usize) -> Self {
         self.reordering_size_video = size;
 
@@ -1778,6 +1778,9 @@ impl RtcConfig {
     /// // Defaults to 30.
     /// assert_eq!(config.reordering_size_video(), 30);
     /// ```
+    ///
+    /// This setting is ignored in [RTP mode][`RtcConfig::set_rtp_mode()`] where RTP
+    /// packets are arrived out of order.
     pub fn reordering_size_video(&self) -> usize {
         self.reordering_size_video
     }

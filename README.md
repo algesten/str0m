@@ -110,7 +110,7 @@ looks like this.
 
 ```rust
 #
-// Buffer for reading incoming UDP packet.s
+// Buffer for reading incoming UDP packets.
 let mut buf = vec![0; 2000];
 
 // A UdpSocket we obtained _somehow_.
@@ -291,12 +291,11 @@ intended to be an all-purpose WebRTC library, which means it should
 also work for peer-2-peer (mostly thinking about the ICE agent), but
 these areas have not received as much attention and testing.
 
-While performance is very good, only some attempts have been made to
-discover and optimize bottlenecks. For instance, while str0m probably
-never be allocation free, there might be unnecessary allocations and
-cloning that could be improved. Another area is to make sure the
-crypto parts use efficient algorithms and hardware acceleration as far
-as possible.
+Performance is very good, there have been some work the discover and
+optimize bottlenecks. Such efforts are of course never ending with
+diminishing returns. While there are no glaringly obvious performance
+bottlenecks, more work is always welcome – both algorithmically and
+allocation/cloning in hot paths etc.
 
 ## Design
 
@@ -304,7 +303,7 @@ Output from the `Rtc` instance can be grouped into three kinds.
 
 1. Events (such as receiving media or data channel data).
 2. Network output. Data to be sent, typically from a UDP socket.
-3. Timeouts. When the instance expects a time input.
+3. Timeouts. Indicates when the instance next expects a time input.
 
 Input to the `Rtc` instance is:
 
@@ -312,8 +311,8 @@ Input to the `Rtc` instance is:
 2. Network input. Typically read from a UDP socket.
 3. Timeouts. As obtained from the output above.
 
-The correct use can be described like below (or seen in the examples).
-The TODO lines is where the user would fill in their code.
+The correct use can be seen in the above [Run loop](#run-loop) or in the
+examples.
 
 Sans I/O is a pattern where we turn both network input/output as well
 as time passing into external input to the API. This means str0m has
@@ -321,6 +320,15 @@ no internal threads, just an enormous state machine that is driven
 forward by different kinds of input.
 
 ### Sample or RTP level?
+
+Str0m defaults to the "sample level" which treats the RTP as an internal detail. The user
+will thus mainly interact with:
+
+1. [`Event::MediaData`] to receive full "samples" (audio frames or video frames).
+2. [`Writer::write`][crate::media::Writer::write] to write full samples.
+3. [`Writer::request_keyframe`][crate::media::Writer::request_keyframe] to request keyframes.
+
+#### Sample level
 
 All codecs such as h264, vp8, vp9 and opus outputs what we call
 "Samples". A sample has a very specific meaning for audio, but this
@@ -332,17 +340,12 @@ Samples are not suitable to use directly in UDP (RTP) packets - for
 one they are too big. Samples are therefore further chunked up by
 codec specific payloaders into RTP packets.
 
+#### RTP level
+
 Str0m also provides an RTP level API. This would be similar to many other
 RTP libraries where the RTP packets themselves are the the API surface
 towards the user (when building an SFU one would often talk about "forwarding
 RTP packets", while with str0m we can also "forward samples").
-
-Str0m defaults to the "sample level" which treats the RTP as an internal detail. The user
-will mainly interact with:
-
-1. [`Event::MediaData`] to receive full "samples" (audio frames or video frames).
-2. [`Writer::write`][crate::media::Writer::write] to write full samples.
-3. [`Writer::request_keyframe`][crate::media::Writer::request_keyframe] to request keyframes.
 
 #### RTP mode
 
@@ -355,18 +358,15 @@ To enable RTP mode
 ```rust
 let rtc = Rtc::builder()
     // Enable RTP mode for this Rtc instance.
+    // This disables `MediaEvent` and the `Writer::write` API.
     .set_rtp_mode(true)
-    // Don't hold back audio/video packets to attempt
-    // to reorder them. Incoming packets are released
-    // in the order they are received.
-    .set_reordering_size_audio(0)
-    .set_reordering_size_video(0)
     .build();
 ```
 
 RTP mode gives us some new API points.
 
-1. [`Event::RtpPacket`] emitted for every incoming RTP packet.
+1. [`Event::RtpPacket`] emitted for every incoming RTP packet. Empty packets for bandwidth
+   estimation are silently discarded.
 2. [`StreamTx::write_rtp`][crate::rtp::StreamTx::write_rtp] to write outgoing RTP packets.
 3. [`StreamRx::request_keyframe`][crate::rtp::StreamRx::request_keyframe] to request keyframes from remote.
 
@@ -390,41 +390,30 @@ agent, forming "candidate pairs" and figuring out the best connection
 while the actual task of sending the network traffic is left to the
 user.
 
-#### Input
-
-1. Incoming network data
-2. Time going forward
-3. User operations such as pushing media data.
-
-In response to this input, the API will react with various output.
-
-#### Output
-
-1. Outgoing network data
-2. Next required time to "wake up"
-3. Incoming events such as media data.
-
 ### The importance of `&mut self`
 
 Rust shines when we can eschew locks and heavily rely `&mut` for data
 write access. Since str0m has no internal threads, we never have to
 deal with shared data. Furthermore the the internals of the library is
 organized such that we don't need multiple references to the same
-entities.
+entities. In str0m there are no `Rc`, `Mutex`, `mpsc`, `Arc`(*),  or
+other locks.
 
 This means all input to the lib can be modelled as
 `handle_something(&mut self, something)`.
 
-### Not a standard WebRTC API
+(*) Ok. There is one `Arc` if you use Windows where we also require openssl.
+
+### Not a standard WebRTC "Peer Connection" API
 
 The library deliberately steps away from the "standard" WebRTC API as
 seen in JavaScript and/or [webrtc-rs][webrtc-rs] (or [Pion][pion] in Go).
 There are few reasons for this.
 
 First, in the standard API, events are callbacks, which are not a
-great fit for Rust, since callbacks require some kind of reference
+great fit for Rust. Callbacks require some kind of reference
 (ownership?) over the entity the callback is being dispatched
-upon. I.e. if in Rust we want to `pc.addEventListener(x)`, `x` needs
+upon. I.e. if in Rust we want `pc.addEventListener(x)`, `x` needs
 to be wholly owned by `pc`, or have some shared reference (like
 `Arc`). Shared references means shared data, and to get mutable shared
 data, we will need some kind of lock. i.e. `Arc<Mutex<EventListener>>`
@@ -439,11 +428,29 @@ references. I.e. `pc.getTranscievers()` returns objects that can be
 retained and owned by the caller. This pattern is fine for garbage
 collected or reference counted languages, but not great with Rust.
 
-```
-Dec 18 11:33:06.850  INFO str0m: MediaData(MediaData { mid: Mid(0), pt: Pt(104), time: MediaTime(3099135646, 90000), len: 1464 })
-Dec 18 11:33:06.867  INFO str0m: MediaData(MediaData { mid: Mid(0), pt: Pt(104), time: MediaTime(3099138706, 90000), len: 1093 })
-Dec 18 11:33:06.907  INFO str0m: MediaData(MediaData { mid: Mid(0), pt: Pt(104), time: MediaTime(3099141676, 90000), len: 1202 })
-```
+### Panics, Errors and unwraps
+
+Rust adheres to [fail-last][ff]. That means rather than brushing state
+bugs under the carpet, it panics. We make a distinction between errors and
+bugs.
+
+* Errors are as a result of incorrect or impossible to understand user input.
+* Bugs are broken internal invariants (assumptions).
+
+If you scan the str0m code you find a few `unwrap()` (or `expect()`). These
+will (should) always be accompanied by a code comment that explains why the
+unwrap is okay. This is an internal invariant, a state assumption that
+str0m is responsible for maintaining.
+
+We do not believe it's correct to change every `unwrap()`/`expect()` into
+`unwrap_or_else()`, `if let Some(x) = x { ... }` etc, because doing so
+brushes an actual problem (an incorrect assumption) under the carpet. Trying
+to hobble along with an incorrect state would at best result in broken
+behavior, at worst a security risk!
+
+Panics are our friends: *panic means bug*
+
+And also: str0m should *never* panic on any user input.
 
 [sansio]:     https://sans-io.readthedocs.io
 [quinn]:      https://github.com/quinn-rs/quinn
@@ -456,6 +463,7 @@ Dec 18 11:33:06.907  INFO str0m: MediaData(MediaData { mid: Mid(0), pt: Pt(104),
 [x-post]:     https://github.com/algesten/str0m/blob/main/examples/http-post.rs
 [x-chat]:     https://github.com/algesten/str0m/blob/main/examples/chat.rs
 [intg]:       https://github.com/algesten/str0m/blob/main/tests/unidirectional.rs#L12
+[ff]:         https://en.wikipedia.org/wiki/Fail-fast
 
 ---
 

@@ -1,4 +1,4 @@
-//! Ways of changing the Rtc session.
+//! Ways to change the [`Rtc`][crate::Rtc] session. SDP or Direct.
 //!
 //! str0m has two main APIs for changing the WebRTC session.
 //!

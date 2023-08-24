@@ -37,6 +37,10 @@ const MIN_SPURIOUS_PADDING_SIZE: usize = 50;
 pub const DEFAULT_RTX_CACHE_DURATION: Duration = Duration::from_secs(3);
 
 /// Outgoing encoded stream.
+///
+/// A stream is a primary SSRC + optional RTX SSRC.
+///
+/// This is RTP level API. For sample level API see [`Rtc::writer`][crate::Rtc::writer].
 #[derive(Debug)]
 pub struct StreamTx {
     /// Unique identifier of the remote encoded stream.

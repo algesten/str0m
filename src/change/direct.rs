@@ -11,6 +11,14 @@ use crate::RtcError;
 /// Direct change strategy.
 ///
 /// Makes immediate changes to the Rtc session without any Sdp OFFER/ANSWER.
+///
+/// <div class="warning"><b>This is a low level API.</b>
+///
+///  str0m normally guarantees that user input cannot cause panics.
+///  However as an exception, the Direct API does allow the user to configure the
+///  session in a way that is internally inconsistent. Such situations can
+///  result in panics.
+/// </div>
 pub struct DirectApi<'a> {
     rtc: &'a mut Rtc,
 }
@@ -156,6 +164,8 @@ impl<'a> DirectApi<'a> {
 
     /// Obtain a receive stream.
     ///
+    /// In RTP mode, the receive stream is used to signal keyframe requests.
+    ///
     /// The stream must first be declared usig [`DirectApi::expect_stream_rx`].
     pub fn stream_rx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamRx> {
         self.rtc.session.streams.stream_rx(ssrc)
@@ -210,7 +220,7 @@ impl<'a> DirectApi<'a> {
         self.rtc.session.streams.remove_stream_tx(ssrc)
     }
 
-    /// Obtain a send stream.
+    /// Obtain a send stream to write RTP data directly.
     ///
     /// The stream must first be declared usig [`DirectApi::declare_stream_tx`].
     pub fn stream_tx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamTx> {
