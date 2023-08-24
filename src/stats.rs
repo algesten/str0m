@@ -1,4 +1,4 @@
-//! Statistics data carried by [`Event`][crate::Event].
+//! Statistics events.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -53,7 +53,7 @@ pub(crate) enum StatsEvent {
     MediaIngress(MediaIngressStats),
 }
 
-/// An event representing the Peer statistics
+/// Peer statistics in [`Event::PeerStats`][crate::Event::PeerStats].
 ///
 /// This event is generated roughly every second
 #[derive(Debug, Clone)]
@@ -76,7 +76,7 @@ pub struct PeerStats {
     pub ingress_loss_fraction: Option<f32>,
 }
 
-/// An event carrying stats for every (mid, rid) in egress direction
+/// Outgoing media statistics in [`Event::MediaEgressStats`][crate::Event::MediaEgressStats].
 ///
 /// note: when simulcast is disabled, `rid` is `None`
 #[derive(Debug, Clone)]
@@ -121,7 +121,7 @@ pub struct RemoteIngressStats {
     pub bytes_rx: u64,
 }
 
-/// An event carrying stats for every (mid, rid) in ingress direction
+/// Incoming media statistics in [`Event::MediaIngressStats`][crate::Event::MediaIngressStats].
 ///
 /// note: when simulcast is disabled, `rid` is `None`
 #[derive(Debug, Clone)]

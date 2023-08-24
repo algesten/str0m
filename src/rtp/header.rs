@@ -154,21 +154,6 @@ impl RtpHeader {
 
         let ssrc = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
 
-        // use once_cell::sync::Lazy;
-        // use std::collections::HashMap;
-        // use std::sync::Mutex;
-        // use std::time::Instant;
-        // static FIRST: Lazy<Mutex<HashMap<u32, (Instant, u32)>>> =
-        //     Lazy::new(|| Mutex::new(HashMap::new()));
-        // let mut lock = FIRST.lock().unwrap();
-        // if let Some((t, m)) = lock.get_mut(&ssrc) {
-        //     let tdelta = Instant::now() - *t;
-        //     let mdelta = (timestamp as f64 - *m as f64) / 90_000.0;
-        //     println!("{} {}", ssrc, tdelta.as_secs_f64() - mdelta);
-        // } else {
-        //     lock.insert(ssrc, (Instant::now(), timestamp));
-        // }
-
         let buf: &[u8] = &buf[12..];
 
         let csrc_len = 4 * csrc_count;

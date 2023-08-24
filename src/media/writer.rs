@@ -10,6 +10,9 @@ use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid
 /// Writer of sample level data.
 ///
 /// Obtained via [`Rtc::writer`][crate::Rtc::writer].
+///
+/// This is the Sample Level API. For RTP level see
+/// [`DirectApi::stream_tx`][crate::change::DirectApi::stream_tx].
 pub struct Writer<'a> {
     session: &'a mut Session,
     mid: Mid,
