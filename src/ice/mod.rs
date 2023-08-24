@@ -345,6 +345,73 @@ mod test {
         );
     }
 
+    // pub fn init_log() {
+    //     use std::env;
+    //     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+    //     if env::var("RUST_LOG").is_err() {
+    //         env::set_var("RUST_LOG", "trace");
+    //     }
+
+    //     tracing_subscriber::registry()
+    //         .with(fmt::layer())
+    //         .with(EnvFilter::from_default_env())
+    //         .init();
+    // }
+
+    #[test]
+    pub fn ice_lite_disconnect_reconnect() {
+        // init_log();
+
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        let c1 = host("1.1.1.1:1000");
+        a1.add_local_candidate(c1.clone());
+        a2.add_remote_candidate(c1.clone());
+        let c2 = host("2.2.2.2:1000");
+        a2.add_local_candidate(c2.clone());
+        a1.add_remote_candidate(c2.clone());
+
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+        a2.set_ice_lite(true);
+
+        // Connect.
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        // Disconnect
+        a1.drop_sent_packets = true;
+
+        loop {
+            if !a1.state().is_connected() && !a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        // Now reconnect after disconnecting.
+        a1.drop_sent_packets = false;
+
+        // Adding back the remote candidate will for new pairs to try.
+        // This makes a1 start sending new STUN requests.
+        // a2 in ice-lite mode will discover the pair from the STUN
+        // request and come out of disconnected.
+        a1.add_remote_candidate(c2);
+
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+    }
+
     #[test]
     pub fn trickle_host_host() {
         let mut a1 = TestAgent::new(info_span!("L"));
