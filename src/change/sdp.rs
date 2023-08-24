@@ -78,10 +78,13 @@ impl<'a> SdpApi<'a> {
         let ice_restart = self
             .rtc
             .ice
-            .remote_credentials_changed(offer.ice_creds().as_ref());
+            .remote_credentials()
+            .map(|c| Some(c) != offer.ice_creds().as_ref())
+            .unwrap_or(false);
+
         // we always accept the ICE restart by providing new credentials ourselves
         let maybe_new_ice_creds = ice_restart.then(IceCreds::new);
-        add_ice_details(self.rtc, &offer, ice_restart, maybe_new_ice_creds.as_ref())?;
+        add_ice_details(self.rtc, &offer, maybe_new_ice_creds.as_ref())?;
 
         if self.rtc.remote_fingerprint.is_none() {
             if let Some(f) = offer.fingerprint() {
@@ -156,13 +159,7 @@ impl<'a> SdpApi<'a> {
             _ => None,
         });
 
-        // The remote side indicates acceptance by changing its ICE credentials
-        let ice_restart = self
-            .rtc
-            .ice
-            .remote_credentials_changed(answer.ice_creds().as_ref());
-
-        add_ice_details(self.rtc, &answer, ice_restart, new_ice_creds)?;
+        add_ice_details(self.rtc, &answer, new_ice_creds)?;
 
         // Ensure setup=active/passive is corresponding remote and init dtls.
         init_dtls(self.rtc, &answer)?;
@@ -511,12 +508,22 @@ fn create_offer(rtc: &mut Rtc, changes: &Changes) -> SdpOffer {
 fn add_ice_details(
     rtc: &mut Rtc,
     sdp: &Sdp,
-    ice_restart: bool,
     new_ice_creds: Option<&IceCreds>,
 ) -> Result<(), RtcError> {
     let Some(creds) = sdp.ice_creds() else {
         return Err(RtcError::RemoteSdp("missing a=ice-ufrag/pwd".into()));
     };
+
+    // If we are handling an **offer** from the remote, differing ICE credentials indicate an ICE
+    // restart initiated by the remote.
+    //
+    // If we are handling an **answer** from the remote, differing ICE credentials indicate an
+    // acceptance of an ICE restart we requested.
+    let ice_restart = rtc
+        .ice
+        .remote_credentials()
+        .map(|c| *c != creds)
+        .unwrap_or(false);
 
     if ice_restart {
         let Some(new_creds) = new_ice_creds else {

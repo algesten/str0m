@@ -1483,13 +1483,8 @@ impl IceAgent {
         }
     }
 
-    pub(crate) fn remote_credentials_changed(&self, new_creds: Option<&IceCreds>) -> bool {
-        // Before we have set remote credentials we don't consider anything a change.
-        let Some(current) = &self.remote_credentials else {
-            return false
-        };
-
-        Some(current) != new_creds
+    pub(crate) fn remote_credentials(&self) -> Option<&IceCreds> {
+        self.remote_credentials.as_ref()
     }
 }
 
