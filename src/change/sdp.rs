@@ -1209,11 +1209,14 @@ impl<'a, 'b> AsSdpParams<'a, 'b> {
             .and_then(|p| {
                 p.iter().find_map(|c| match c {
                     Change::IceRestart(creds) => {
+                        // If we are preforming an ICE restart we need to include new ICE
+                        // credentials in our offer and update the ufrag in the ICE candidates we
+                        // propose.
                         let new_candidates = Cow::Owned(
                             rtc.ice
                                 .local_candidates()
                                 .iter()
-                                .map(|c| c.replace_creds(creds.ufrag.clone()))
+                                .map(|c| c.replace_ufrag(&creds.ufrag))
                                 .collect(),
                         );
 

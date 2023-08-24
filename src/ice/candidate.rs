@@ -351,6 +351,13 @@ impl Candidate {
     pub(crate) fn clear_ufrag(&mut self) {
         self.ufrag = None;
     }
+
+    pub(crate) fn replace_ufrag(&self, ufrag: &str) -> Candidate {
+        let mut new = self.clone();
+        new.set_ufrag(&ufrag);
+
+        new
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
