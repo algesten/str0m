@@ -461,7 +461,18 @@
 //!
 //! Panics are our friends: *panic means bug*
 //!
-//! And also: str0m should *never* panic on any user input.
+//! And also: str0m should *never* panic on any user input. If you encounter a panic,
+//! please report it!
+//!
+//! ### Catching panics
+//!
+//! Panics should be incredibly rare, or we have a serious problem as a project. For an SFU,
+//! it might not be ideal if str0m encounters a bug and brings the entire server down with it.
+//!
+//! For those who want an extra level of safety, we recommend looking at [`catch_unwind`][catch]
+//! to safely discard a faulty `Rtc` instance. Since `Rtc` has no internal threads, locks or async
+//! tasks, discarding the instance never risk poisoning locks or other issues that can happen
+//! when catching a panic.
 //!
 //! [sansio]:     https://sans-io.readthedocs.io
 //! [quinn]:      https://github.com/quinn-rs/quinn
@@ -475,6 +486,7 @@
 //! [x-chat]:     https://github.com/algesten/str0m/blob/main/examples/chat.rs
 //! [intg]:       https://github.com/algesten/str0m/blob/main/tests/unidirectional.rs#L12
 //! [ff]:         https://en.wikipedia.org/wiki/Fail-fast
+//! [catch]:      https://doc.rust-lang.org/std/panic/fn.catch_unwind.html
 
 #![forbid(unsafe_code)]
 #![allow(clippy::new_without_default)]
