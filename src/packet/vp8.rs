@@ -79,7 +79,7 @@ impl Packetizer for Vp8Packetizer {
             let current_fragment_size =
                 std::cmp::min(max_fragment_size, payload_data_remaining) as usize;
             let mut out = Vec::with_capacity(using_header_size + current_fragment_size);
-            let mut buf = vec![0u8; 4];
+            let mut buf = [0u8; 4];
             if first {
                 buf[0] = 0x10;
                 first = false;
