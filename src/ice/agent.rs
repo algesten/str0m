@@ -590,8 +590,15 @@ impl IceAgent {
                                 "Replace redundant pair, current: {:?} replaced with: {:?}",
                                 check, pair
                             );
+
                             let was_nominated = self.candidate_pairs[check_idx].is_nominated();
                             pair.nominate(was_nominated);
+
+                            if self.ice_lite {
+                                debug!("Retain incoming binding requests for pair");
+                                pair.copy_remote_binding_requests(&self.candidate_pairs[check_idx]);
+                            }
+
                             self.candidate_pairs[check_idx] = pair;
                         }
 
@@ -1460,6 +1467,7 @@ impl IceAgent {
 mod test {
     use super::*;
     use std::net::SocketAddr;
+    use std::sync::Once;
 
     impl IceAgent {
         fn pair_indexes(&self) -> Vec<(usize, usize)> {
@@ -1597,6 +1605,57 @@ mod test {
         agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
 
         assert_eq!(agent.pair_indexes(), [(1, 0)]);
+    }
+
+    #[test]
+    fn form_pairs_replace_remote_redundant() {
+        use std::env;
+        use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+
+        if env::var("RUST_LOG").is_err() {
+            env::set_var("RUST_LOG", "debug");
+        }
+
+        static START: Once = Once::new();
+
+        START.call_once(|| {
+            tracing_subscriber::registry()
+                .with(fmt::layer())
+                .with(EnvFilter::from_default_env())
+                .init();
+        });
+
+        let mut agent = IceAgent::new();
+        agent.set_ice_lite(true);
+
+        // This is just prepping the test, this would have been discovered in a STUN packet.
+        let c = Candidate::peer_reflexive(
+            ipv4_3(),
+            ipv4_3(),
+            123,
+            Some(REMOTE_PEER_REFLEXIVE_TEMP_FOUNDATION.into()),
+            "".to_string(),
+        );
+
+        agent.add_remote_candidate(c);
+        agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
+
+        assert_eq!(agent.pair_indexes(), [(0, 0)]);
+
+        let now = Instant::now();
+        agent.candidate_pairs[0].nominate(true);
+        agent.candidate_pairs[0].increase_remote_binding_requests(now);
+
+        // this remote should replace the "discovered" peer reflexive added above.
+        agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
+
+        // The index should not have changed, since we replaced the peer reflexive remote candidate.
+        assert_eq!(agent.pair_indexes(), [(0, 0)]);
+
+        let pair = &agent.candidate_pairs[0];
+        assert!(pair.is_nominated());
+        assert_eq!(pair.remote_binding_requests, 1);
+        assert_eq!(pair.remote_binding_request_time, Some(now));
     }
 
     #[test]
