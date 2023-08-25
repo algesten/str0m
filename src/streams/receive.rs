@@ -29,6 +29,10 @@ pub struct StreamRx {
     /// Identifier of a resend (RTX) stream. This can be set later, once we discover it.
     rtx: Option<Ssrc>,
 
+    /// Previous main SSRC. This is to ensure we never go "backwards" in terms
+    /// of changing SSRC (for FF).
+    previous_ssrc: Option<Ssrc>,
+
     /// The Media mid this stream belongs to.
     mid: Mid,
 
@@ -119,6 +123,7 @@ impl StreamRx {
         StreamRx {
             ssrc,
             rtx: None,
+            previous_ssrc: None,
             mid,
             rid,
             cname: None,
@@ -411,12 +416,14 @@ impl StreamRx {
             self.stats.update_loss(l);
         }
 
-        debug!("Created feedback RR: {:?}", rr);
-        feedback.push_back(Rtcp::ReceiverReport(rr));
+        let xr = self.create_extended_receiver_report(now);
 
-        let er = self.create_extended_receiver_report(now);
-        debug!("Created feedback extended receiver report: {:?}", er);
-        feedback.push_back(Rtcp::ExtendedReport(er));
+        debug!(
+            "Created feedback RR/XR ({:?}/{:?}): {:?} {:?}",
+            self.mid, self.rid, rr, xr
+        );
+        feedback.push_back(Rtcp::ReceiverReport(rr));
+        feedback.push_back(Rtcp::ExtendedReport(xr));
 
         self.last_receiver_report = now;
     }
@@ -556,8 +563,8 @@ impl StreamRx {
         self.pending_request_keyframe = None;
     }
 
-    pub(crate) fn maybe_reset_ssrc(&mut self, ssrc: Ssrc) {
-        if self.ssrc == ssrc {
+    pub(crate) fn change_ssrc(&mut self, ssrc: Ssrc) {
+        if ssrc == self.ssrc || Some(ssrc) == self.previous_ssrc {
             return;
         }
 
@@ -566,6 +573,9 @@ impl StreamRx {
             self.ssrc, ssrc, self.mid, self.rid
         );
 
+        // Remember which was the previous in case a stray packet turns up
+        // so do we don't go "backwards".
+        self.previous_ssrc = Some(self.ssrc);
         self.ssrc = ssrc;
         self.register = None;
     }

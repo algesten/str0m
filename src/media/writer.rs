@@ -109,6 +109,15 @@ impl<'a> Writer<'a> {
             }
         }
 
+        trace!(
+            "write {:?} {:?} {:?} time: {:?} len: {}",
+            self.mid,
+            self.rid,
+            pt,
+            rtp_time,
+            data.len()
+        );
+
         let to_payload = ToPayload {
             pt,
             rid: self.rid,
