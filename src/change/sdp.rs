@@ -345,7 +345,7 @@ impl<'a> SdpApi<'a> {
     /// candidates must be added via [`Rtc::add_local_candidate`] before connectivity can be
     /// re-established.
     ///
-    /// Returns the new ICE credentials that will be use going forward.
+    /// Returns the new ICE credentials that will be used going forward.
     pub fn ice_restart(&mut self, keep_local_candidates: bool) -> IceCreds {
         self.changes
             .retain(|c| !matches!(c, Change::IceRestart(_, _)));
@@ -1228,7 +1228,7 @@ impl<'a, 'b> AsSdpParams<'a, 'b> {
             pending.and_then(|p| p.ice_restart())
         {
             if keep_local_candidates {
-                // If we are preforming an ICE restart and we are keeping the same
+                // If we are performing an ICE restart and we are keeping the same
                 // candidates we need to use ufrag from the new ICE credentials
                 // in our offer.
                 let mut new_candidates = rtc.ice.local_candidates().to_vec();
