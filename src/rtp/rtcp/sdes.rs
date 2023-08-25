@@ -161,7 +161,9 @@ impl<'a> TryFrom<&'a [u8]> for Descriptions {
             if reports.len() == 31 {
                 break;
             }
-            if buf.is_empty() {
+            // For some reason FF sends us a full SDES and then [0,0,0,0] at the end.
+            // This can't be interpreted as SDES, so we just ignore it.
+            if buf.len() < 8 {
                 break;
             }
             let report: Sdes = buf.try_into()?;
