@@ -1,6 +1,6 @@
 //! Media (audio/video) related content.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 use crate::change::AddMedia;
@@ -105,8 +105,8 @@ pub struct Media {
     /// Payloaders for outoing RTP packets.
     payloaders: HashMap<(Pt, Option<Rid>), Payloader>,
 
-    /// Next sample to payload.
-    to_payload: Option<ToPayload>,
+    /// Samples to payload. Should typically only be 0 or 1.
+    to_payload: VecDeque<ToPayload>,
 
     pub(crate) need_open_event: bool,
     pub(crate) need_changed_event: bool,
@@ -344,17 +344,17 @@ impl Media {
     }
 
     fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {
-        if self.to_payload.is_some() {
+        if self.to_payload.len() > 100 {
             return Err(RtcError::WriteWithoutPoll);
         }
 
-        self.to_payload = Some(to_payload);
+        self.to_payload.push_back(to_payload);
 
         Ok(())
     }
 
     pub(crate) fn poll_timeout(&self) -> Option<Instant> {
-        if self.to_payload.is_some() {
+        if !self.to_payload.is_empty() {
             Some(already_happened())
         } else {
             None
@@ -367,7 +367,7 @@ impl Media {
         streams: &mut Streams,
         params: &[PayloadParams],
     ) -> Result<(), RtcError> {
-        let Some(to_payload) = self.to_payload.take() else {
+        let Some(to_payload) = self.to_payload.pop_front() else {
             return Ok(());
         };
 
@@ -464,7 +464,7 @@ impl Default for Media {
             rids_rx: Rids::Any,
             payloaders: HashMap::new(),
             depayloaders: HashMap::new(),
-            to_payload: None,
+            to_payload: VecDeque::default(),
             need_open_event: true,
             need_changed_event: false,
         }
