@@ -43,10 +43,10 @@ pub struct CandidatePair {
     cached_next_attempt_time: Option<Instant>,
 
     /// Number of remote binding requests we seen for this pair.
-    remote_binding_requests: u64,
+    pub(crate) remote_binding_requests: u64,
 
     /// Last remote binding request.
-    remote_binding_request_time: Option<Instant>,
+    pub(crate) remote_binding_request_time: Option<Instant>,
 
     /// State of nomination for this candidate pair.
     nomination_state: NominationState,
@@ -358,6 +358,11 @@ impl CandidatePair {
             let cutoff = last + stun_resend_delay(STUN_MAX_RETRANS);
             now < cutoff
         }
+    }
+
+    pub(crate) fn copy_remote_binding_requests(&mut self, other: &CandidatePair) {
+        self.remote_binding_requests = other.remote_binding_requests;
+        self.remote_binding_request_time = other.remote_binding_request_time;
     }
 }
 
