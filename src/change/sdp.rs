@@ -1,6 +1,5 @@
 //! Strategy that amends the [`Rtc`] via SDP OFFER/ANSWER negotiation.
 
-use std::borrow::Cow;
 use std::fmt;
 use std::ops::{Deref, DerefMut};
 
@@ -74,17 +73,7 @@ impl<'a> SdpApi<'a> {
             return Err(RtcError::RemoteSdp("No m-lines in offer".into()));
         }
 
-        // When the remote offers, it indicates an ICE restart by changing its ICE credentials
-        let ice_restart = self
-            .rtc
-            .ice
-            .remote_credentials()
-            .map(|c| Some(c) != offer.ice_creds().as_ref())
-            .unwrap_or(false);
-
-        // we always accept the ICE restart by providing new credentials ourselves
-        let maybe_new_ice_creds = ice_restart.then(IceCreds::new);
-        add_ice_details(self.rtc, &offer, maybe_new_ice_creds.as_ref())?;
+        add_ice_details(self.rtc, &offer, None)?;
 
         if self.rtc.remote_fingerprint.is_none() {
             if let Some(f) = offer.fingerprint() {
@@ -154,12 +143,7 @@ impl<'a> SdpApi<'a> {
             return Err(RtcError::ChangesOutOfOrder);
         }
 
-        let new_ice_creds = pending.changes.iter().find_map(|c| match c {
-            Change::IceRestart(c) => Some(c),
-            _ => None,
-        });
-
-        add_ice_details(self.rtc, &answer, new_ice_creds)?;
+        add_ice_details(self.rtc, &answer, Some(&pending))?;
 
         // Ensure setup=active/passive is corresponding remote and init dtls.
         init_dtls(self.rtc, &answer)?;
@@ -353,10 +337,19 @@ impl<'a> SdpApi<'a> {
     }
 
     /// Perform an ICE restart.
-    pub fn ice_restart(&mut self) {
-        self.changes.retain(|c| !matches!(c, Change::IceRestart(_)));
+    ///
+    /// Only one ICE restart can be pending at the time. Calling this repeatedly removes any other
+    /// pending ICE restart.
+    ///
+    /// The local ICE candidates can be kept as is, or be cleared out, in which case new ice
+    /// candidates must be added via [`Rtc::add_local_candidate`] before connectivity can be
+    /// re-established.
+    pub fn ice_restart(&mut self, keep_local_candidates: bool) {
+        self.changes
+            .retain(|c| !matches!(c, Change::IceRestart(_, _)));
 
-        self.changes.push(Change::IceRestart(IceCreds::new()));
+        self.changes
+            .push(Change::IceRestart(IceCreds::new(), keep_local_candidates));
     }
 
     /// Attempt to apply the changes made.
@@ -434,13 +427,28 @@ pub struct SdpPendingOffer {
 #[derive(Default)]
 pub(crate) struct Changes(pub Vec<Change>);
 
+impl Changes {
+    /// Details of the active ICE restart, if any.
+    ///
+    /// Returns the new local ICE credentials and the whether to keep local ICE candidates if an
+    /// ICE restart has been initiated in the offer, otherwise [`None`].
+    fn ice_restart(&self) -> Option<(IceCreds, bool)> {
+        self.iter().find_map(|c| match c {
+            Change::IceRestart(creds, keep_local_candidates) => {
+                Some((creds.clone(), *keep_local_candidates))
+            }
+            _ => None,
+        })
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum Change {
     AddMedia(AddMedia),
     AddApp(Mid),
     AddChannel((ChannelId, ChannelConfig)),
     Direction(Mid, Direction),
-    IceRestart(IceCreds),
+    IceRestart(IceCreds, bool),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -476,7 +484,7 @@ impl DerefMut for Changes {
 
 fn requires_negotiation(c: &Change) -> bool {
     match c {
-        Change::IceRestart(_) => true,
+        Change::IceRestart(_, _) => true,
         Change::AddMedia(_) => true,
         Change::AddApp(_) => true,
         Change::AddChannel(_) => false,
@@ -508,7 +516,7 @@ fn create_offer(rtc: &mut Rtc, changes: &Changes) -> SdpOffer {
 fn add_ice_details(
     rtc: &mut Rtc,
     sdp: &Sdp,
-    new_ice_creds: Option<&IceCreds>,
+    pending: Option<&SdpPendingOffer>,
 ) -> Result<(), RtcError> {
     let Some(creds) = sdp.ice_creds() else {
         return Err(RtcError::RemoteSdp("missing a=ice-ufrag/pwd".into()));
@@ -519,20 +527,20 @@ fn add_ice_details(
     //
     // If we are handling an **answer** from the remote, differing ICE credentials indicate an
     // acceptance of an ICE restart we requested.
-    let ice_restart = rtc
-        .ice
-        .remote_credentials()
-        .map(|c| *c != creds)
-        .unwrap_or(false);
+    let ice_restart = match rtc.ice.remote_credentials() {
+        Some(v) => *v != creds,
+        None => false,
+    };
 
     if ice_restart {
-        let Some(new_creds) = new_ice_creds else {
-            return Err(RtcError::RemoteSdp(
-                "remote changed ICE credentials outside of an ICE restart".into(),
-            ));
-        };
+        // If we initiated the ICE Restart, the credentials are in the
+        // pending SDP changes. Otherwise we need to create new ones now.
+        let (new_local_creds, keep_local_candidates) = pending
+            .and_then(|p| p.changes.ice_restart())
+            .unwrap_or_else(|| (IceCreds::new(), true));
 
-        rtc.ice.ice_restart(new_creds.clone());
+        rtc.ice
+            .ice_restart(new_local_creds.clone(), keep_local_candidates);
     }
 
     rtc.ice.set_remote_credentials(creds);
@@ -1211,33 +1219,28 @@ struct AsSdpParams<'a, 'b> {
 
 impl<'a, 'b> AsSdpParams<'a, 'b> {
     pub fn new(rtc: &'a Rtc, pending: Option<&'b Changes>) -> Self {
-        // TODO: This might warrant its own function it's a bit much...
-        let (creds, candidates) = pending
-            .and_then(|p| {
-                p.iter().find_map(|c| match c {
-                    Change::IceRestart(creds) => {
-                        // If we are preforming an ICE restart we need to include new ICE
-                        // credentials in our offer and update the ufrag in the ICE candidates we
-                        // propose.
-                        let new_candidates = Cow::Owned(
-                            rtc.ice
-                                .local_candidates()
-                                .iter()
-                                .map(|c| c.replace_ufrag(&creds.ufrag))
-                                .collect(),
-                        );
+        let (creds, candidates) = if let Some((new_creds, keep_local_candidates)) =
+            pending.and_then(|p| p.ice_restart())
+        {
+            if keep_local_candidates {
+                // If we are preforming an ICE restart and we are keeping the same
+                // candidates we need to use ufrag from the new ICE credentials
+                // in our offer.
+                let mut new_candidates = rtc.ice.local_candidates().to_vec();
+                for c in &mut new_candidates {
+                    c.set_ufrag(&new_creds.ufrag);
+                }
 
-                        Some((creds.clone(), new_candidates))
-                    }
-                    _ => None,
-                })
-            })
-            .unwrap_or_else(|| {
-                (
-                    rtc.ice.local_credentials().clone(),
-                    Cow::Borrowed(rtc.ice.local_candidates()),
-                )
-            });
+                (new_creds, new_candidates)
+            } else {
+                (new_creds, vec![])
+            }
+        } else {
+            (
+                rtc.ice.local_credentials().clone(),
+                rtc.ice.local_candidates().to_vec(),
+            )
+        };
 
         AsSdpParams {
             candidates,

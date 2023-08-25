@@ -48,7 +48,7 @@ pub fn ice_restart() -> Result<(), RtcError> {
 
     let (offer, pending) = r.span.in_scope(|| {
         let mut change = r.rtc.sdp_api();
-        change.ice_restart();
+        change.ice_restart(true);
 
         change.apply().expect("Should be able to apply changes")
     });
