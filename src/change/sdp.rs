@@ -344,12 +344,17 @@ impl<'a> SdpApi<'a> {
     /// The local ICE candidates can be kept as is, or be cleared out, in which case new ice
     /// candidates must be added via [`Rtc::add_local_candidate`] before connectivity can be
     /// re-established.
-    pub fn ice_restart(&mut self, keep_local_candidates: bool) {
+    ///
+    /// Returns the new ICE credentials that will be use going forward.
+    pub fn ice_restart(&mut self, keep_local_candidates: bool) -> IceCreds {
         self.changes
             .retain(|c| !matches!(c, Change::IceRestart(_, _)));
 
+        let new_creds = IceCreds::new();
         self.changes
-            .push(Change::IceRestart(IceCreds::new(), keep_local_candidates));
+            .push(Change::IceRestart(new_creds.clone(), keep_local_candidates));
+
+        new_creds
     }
 
     /// Attempt to apply the changes made.
