@@ -355,7 +355,8 @@ impl Session {
                     if let Some(stream) = stream_mid_rid {
                         if stream.ssrc() != ssrc {
                             // We got a change in main SSRC for this stream.
-                            stream.maybe_reset_ssrc(ssrc);
+                            let ssrc_from = stream.ssrc();
+                            self.change_stream_rx_ssrc(ssrc_from, ssrc);
                         }
                     }
 
@@ -393,7 +394,8 @@ impl Session {
                 if let Some(stream) = stream_mid_rid {
                     if stream.ssrc() != ssrc {
                         // We got a change in main SSRC for this stream.
-                        stream.maybe_reset_ssrc(ssrc);
+                        let ssrc_from = stream.ssrc();
+                        self.change_stream_rx_ssrc(ssrc_from, ssrc);
                     }
                 }
                 ssrc
@@ -429,6 +431,13 @@ impl Session {
             reason
         );
         self.source_keys.insert(ssrc, (mid, ssrc_main));
+    }
+
+    fn change_stream_rx_ssrc(&mut self, ssrc_from: Ssrc, ssrc_to: Ssrc) {
+        self.streams.change_stream_rx_ssrc(ssrc_from, ssrc_to);
+
+        self.source_keys
+            .retain(|k, (_, s)| *k != ssrc_from && *s != ssrc_from);
     }
 
     fn handle_rtp(&mut self, now: Instant, mut header: RtpHeader, buf: &[u8]) {

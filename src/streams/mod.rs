@@ -427,6 +427,16 @@ impl Streams {
             s.reset_buffers();
         }
     }
+
+    pub(crate) fn change_stream_rx_ssrc(&mut self, ssrc_from: Ssrc, ssrc_to: Ssrc) {
+        // This unwrap is OK, because we can't call change_stream_rx_ssrc without first
+        // knowing there is such a StreamRx.
+        let mut to_change = self.streams_rx.remove(&ssrc_from).unwrap();
+        to_change.change_ssrc(ssrc_to);
+
+        // Reinsert under new SSRC key.
+        self.streams_rx.insert(ssrc_to, to_change);
+    }
 }
 
 impl fmt::Debug for RtpPacket {
