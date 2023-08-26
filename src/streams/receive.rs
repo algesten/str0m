@@ -193,7 +193,7 @@ impl StreamRx {
     /// Suppress NACK sending.
     ///
     /// Normally NACK is disabled by not having an RTX SSRC set. In some situations it might be
-    /// desirable to manuall suppress NACK sending regardless of RTX setting.
+    /// desirable to manually suppress NACK sending regardless of RTX setting.
     pub fn suppress_nack(&mut self, suppress: bool) {
         self.suppress_nack = suppress;
     }

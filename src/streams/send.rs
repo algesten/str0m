@@ -231,7 +231,7 @@ impl StreamTx {
     ///               probably needs to weigh in clock drifts and data provided via the statistics, receiver
     ///               reports etc.
     /// * `marker` Whether to "mark" this packet. This is usually done for the last packet belonging to
-    ///            a series of RTP packets consituting the same frame in a video stream.
+    ///            a series of RTP packets constituting the same frame in a video stream.
     /// * `ext_vals` The RTP header extension values to set. The values must be mapped in the session,
     ///              or they will not be set on the RTP packet.
     /// * `nackable` Whether we should respond this packet for incoming NACK from the remote peer. For

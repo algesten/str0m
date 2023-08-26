@@ -77,7 +77,7 @@ pub struct IceAgent {
     /// to dedupe [`IceAgentEvent::DiscoveredRecv`].
     discovered_recv: HashSet<SocketAddr>,
 
-    /// Currently nominated pair for sending. This is used to evalulate
+    /// Currently nominated pair for sending. This is used to evaluate
     /// if we get a better candidate for [`IceAgentEvent::NominatedSend`].
     nominated_send: Option<PairId>,
 
@@ -433,7 +433,7 @@ impl IceAgent {
         // of another candidate.  The agent SHOULD eliminate the redundant
         // candidate with the lower priority.
         //
-        // NB this must be done _after_ set_local_prefrence(), since the prio() used in the
+        // NB this must be done _after_ set_local_preference(), since the prio() used in the
         // elimination is calculated from that preference.
         if let Some((idx, other)) = self
             .local_candidates

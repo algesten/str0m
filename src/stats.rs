@@ -72,7 +72,7 @@ pub struct PeerStats {
     pub bwe_tx: Option<Bitrate>,
     /// The egress loss over the last second.
     pub egress_loss_fraction: Option<f32>,
-    /// The ingress losss since the last stats event.
+    /// The ingress loss since the last stats event.
     pub ingress_loss_fraction: Option<f32>,
 }
 

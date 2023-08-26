@@ -196,7 +196,7 @@ impl<'a> SdpApi<'a> {
 
     /// Add audio or video media and get the `mid` that will be used.
     ///
-    /// Each call will result in a new m-line in the offer identifed by the [`Mid`].
+    /// Each call will result in a new m-line in the offer identified by the [`Mid`].
     ///
     /// The mid is not valid to use until the SDP offer-answer dance is complete and
     /// the mid been advertised via [`Event::MediaAdded`][crate::Event::MediaAdded].
@@ -1050,7 +1050,7 @@ impl AsSdpMediaLine for Media {
         attrs.push(MediaAttribute::RtcpMux);
 
         // The effective params start from the Session::codec_config to retain the
-        // user's configured prefered order, however they are narrowed only include
+        // user's configured preferred order, however they are narrowed only include
         // those the remote peer wants.
         let effective_params = params.iter().filter(|p| self.remote_pts().contains(&p.pt));
 

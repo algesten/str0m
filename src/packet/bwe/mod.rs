@@ -126,7 +126,7 @@ impl SendSideBandwithEstimator {
 
     pub(crate) fn handle_timeout(&mut self, now: Instant) {
         if !self.trendline_hypothesis_valid(now) {
-            // We haven't received a TWCC report in a while. The trendline hyptohesis can
+            // We haven't received a TWCC report in a while. The trendline hypothesis can
             // no longer be considered valid. We need another TWCC report before we can update
             // estimates.
             let next_timeout_in = self
