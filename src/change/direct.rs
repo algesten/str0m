@@ -166,7 +166,7 @@ impl<'a> DirectApi<'a> {
     ///
     /// In RTP mode, the receive stream is used to signal keyframe requests.
     ///
-    /// The stream must first be declared usig [`DirectApi::expect_stream_rx`].
+    /// The stream must first be declared using [`DirectApi::expect_stream_rx`].
     pub fn stream_rx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamRx> {
         self.rtc.session.streams.stream_rx(ssrc)
     }
@@ -222,7 +222,7 @@ impl<'a> DirectApi<'a> {
 
     /// Obtain a send stream to write RTP data directly.
     ///
-    /// The stream must first be declared usig [`DirectApi::declare_stream_tx`].
+    /// The stream must first be declared using [`DirectApi::declare_stream_tx`].
     pub fn stream_tx(&mut self, ssrc: &Ssrc) -> Option<&mut StreamTx> {
         self.rtc.session.streams.stream_tx(ssrc)
     }

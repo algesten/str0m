@@ -258,7 +258,7 @@ impl Streams {
         for stream in self.streams_tx.values_mut() {
             let mid = stream.mid();
 
-            // All StreamTx belongin to the same Mid are reported together.
+            // All StreamTx belonging to the same Mid are reported together.
             if self.mids_to_report.contains(&mid) {
                 stream.create_sr_and_update(now, feedback);
             }
