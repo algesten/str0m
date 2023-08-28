@@ -371,7 +371,7 @@ impl Session {
                 };
 
                 // If stream already exists, this might only "fill in" the RTX.
-                self.streams.expect_stream_rx(ssrc, rtx, mid, None);
+                self.streams.expect_stream_rx(ssrc_main, rtx, mid, None);
 
                 // Insert an entry so we can look up on SSRC alone later.
                 let reason = format!("MID header, no RID and PT: {}", header.payload_type);
