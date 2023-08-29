@@ -457,7 +457,9 @@ impl StreamTx {
                 .send_queue
                 .pop(now)
                 .expect("head of send_queue to be there");
-            self.rtx_cache.cache_sent_packet(pkt, now);
+            if self.rtx_enabled() {
+                self.rtx_cache.cache_sent_packet(pkt, now);
+            }
         }
 
         // This is set here due to borrow checker.
