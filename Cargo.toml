@@ -44,6 +44,3 @@ systemstat = "0.2.2"
 # This is to ensure MSRV 1.65
 # Remove when we move MSRV
 time = "=0.3.23"
-
-[target.'cfg(fuzzing)'.dev-dependencies]
-fuzzcheck = "0.12"

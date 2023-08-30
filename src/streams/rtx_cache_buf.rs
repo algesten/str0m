@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::mem;
 use std::time::{Duration, Instant};
 

@@ -18,7 +18,7 @@ pub use self::send::StreamTx;
 mod receive;
 mod register;
 mod rtx_cache;
-mod rtx_cache_buf;
+pub(crate) mod rtx_cache_buf;
 mod send;
 mod send_queue;
 

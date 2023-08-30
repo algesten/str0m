@@ -1992,3 +1992,9 @@ mod test {
         is_unwind_safe(Rtc::new());
     }
 }
+
+#[cfg(fuzzing)]
+#[allow(missing_docs)]
+pub mod fuzz {
+    pub use crate::streams::rtx_cache_buf::EvictingBuffer;
+}
