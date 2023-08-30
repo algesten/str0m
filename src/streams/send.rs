@@ -168,7 +168,7 @@ impl StreamTx {
             resends: VecDeque::new(),
             padding: 0,
             blank_packet: RtpPacket::blank(),
-            rtx_cache: RtxCache::new(1024, DEFAULT_RTX_CACHE_DURATION),
+            rtx_cache: RtxCache::new(2000, DEFAULT_RTX_CACHE_DURATION),
             last_sender_report: already_happened(),
             pending_request_keyframe: None,
             stats: StreamTxStats::default(),
