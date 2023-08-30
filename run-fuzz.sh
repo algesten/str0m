@@ -1,3 +1,3 @@
 #!/bin/sh
 
-rm -rf fuzz && cargo +nightly fuzzcheck tests::fuzz_twcc --stop-after-first-failure
+cargo +nightly fuzz run rtx_buffer -- --stop-after-first-failure
