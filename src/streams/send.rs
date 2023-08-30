@@ -108,6 +108,9 @@ pub struct StreamTx {
 
     /// Statistics of outgoing data.
     stats: StreamTxStats,
+
+    // downsampled rtx ratio (value, last calculation)
+    rtx_ratio: (f32, Instant),
 }
 
 /// Holder of stats.
@@ -169,6 +172,7 @@ impl StreamTx {
             last_sender_report: already_happened(),
             pending_request_keyframe: None,
             stats: StreamTxStats::default(),
+            rtx_ratio: (0.0, already_happened()),
         }
     }
 
@@ -478,10 +482,7 @@ impl StreamTx {
 
     fn poll_packet_resend(&mut self, now: Instant) -> Option<NextPacket<'_>> {
         let from = now.checked_sub(Duration::from_secs(1)).unwrap_or(now);
-        let bytes_transmitted = self.stats.bytes_transmitted.sum_since(from);
-        let bytes_retransmitted = self.stats.bytes_retransmitted.sum_since(from);
-        let ratio = bytes_retransmitted as f32 / (bytes_retransmitted + bytes_transmitted) as f32;
-        let ratio = if ratio.is_finite() { ratio } else { 0_f32 };
+        let ratio = self.rtx_ratio_downsampled(now, from);
 
         // If we hit the cap, stop doing resends by clearing those we have queued.
         if ratio > 0.15_f32 {
@@ -490,6 +491,20 @@ impl StreamTx {
         }
 
         self.do_poll_packet_resend(now)
+    }
+
+    fn rtx_ratio_downsampled(&mut self, now: Instant, from: Instant) -> f32 {
+        let (value, ts) = self.rtx_ratio;
+        if now - ts < Duration::from_millis(50) {
+            // not worth re-evaluating, return the old value
+            return value;
+        }
+        let bytes_transmitted = self.stats.bytes_transmitted.sum_since(from);
+        let bytes_retransmitted = self.stats.bytes_retransmitted.sum_since(from);
+        let ratio = bytes_retransmitted as f32 / (bytes_retransmitted + bytes_transmitted) as f32;
+        let ratio = if ratio.is_finite() { ratio } else { 0_f32 };
+        self.rtx_ratio = (ratio, now);
+        ratio
     }
 
     fn do_poll_packet_resend(&mut self, now: Instant) -> Option<NextPacket<'_>> {
