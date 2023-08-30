@@ -605,7 +605,7 @@ impl StreamTx {
         let seq_no = self.seq_no_rtx.inc();
 
         let pkt = &mut self.blank_packet;
-        pkt.seq_no = self.seq_no_rtx.inc();
+        pkt.seq_no = seq_no;
 
         let len = self
             .padding
