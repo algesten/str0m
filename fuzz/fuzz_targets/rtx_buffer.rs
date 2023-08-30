@@ -18,7 +18,7 @@ fuzz_target!(|data: &[u8]| {
     for d in &data[4..] {
         now += Duration::from_millis(*d as u64);
         if d % 2 == 0 {
-            buf.evict_and_maybe_grow(now)
+            buf.maybe_evict(now)
         } else {
             pos += *d as u64;
             buf.push(pos, now, d);

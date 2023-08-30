@@ -10,19 +10,20 @@ use crate::util::already_happened;
 /// The buffer is ringbuffer-esque in that all elements are inserted with a position that is modulo to an
 /// insert index into the buffer. That makes lookups very fast since they are fixed offsets.
 ///
-/// The buffer evicts values based on time. If the size of the buffer is too small and is forced to
+/// The buffer evicts values based on time. If the size of the buffer is too small and would
 /// overwrite an entry that has not been evicted due to age, the buffer grows.
 #[derive(Debug)]
 pub struct EvictingBuffer<T> {
     buf: Vec<Option<Entry<T>>>,
     /// How long to keep entries for.
     max_age: Duration,
+    /// The maximum size allowed to grow to. Once this sized is reached, new pushed
+    /// entries will overwrite older entries even if they haven't reached max_age.
+    max_size: usize,
     /// Last inserted position
     last_position: Option<u64>,
     /// Next element to evict.
     next_evict: Option<u64>,
-    // Number of times we overwritten the tail instead of an evicted value since the last timeout.
-    overwrites: u16,
     // Last timeout when we evicted elements.
     last_timeout: Instant,
 }
@@ -50,13 +51,13 @@ fn prepare_buf<T>(len: usize) -> Vec<Option<T>> {
 
 impl<T> EvictingBuffer<T> {
     /// Creates a new buffer with an initial size.
-    pub fn new(initial_size: usize, max_age: Duration) -> Self {
+    pub fn new(initial_size: usize, max_age: Duration, max_size: usize) -> Self {
         Self {
             buf: prepare_buf(initial_size),
             max_age,
+            max_size,
             last_position: None,
             next_evict: None,
-            overwrites: 0,
             last_timeout: already_happened(),
         }
     }
@@ -96,15 +97,16 @@ impl<T> EvictingBuffer<T> {
             return;
         }
 
-        let index = self.index_for_position(position);
+        let mut index = self.index_for_position(position);
 
         if let Some(entry) = &self.buf[index] {
             // If the position is exactly the same, we allow it since it's
             // replacing the current T value. If position differs, we've
             // wrapped around.
             if entry.position != position {
-                self.overwrites += 1;
-                self.next_evict = Some(next_evict + 1);
+                // Make space to continue.
+                self.grow();
+                index = self.index_for_position(position);
             }
         }
         self.last_position = Some(position);
@@ -146,7 +148,7 @@ impl<T> EvictingBuffer<T> {
         None
     }
 
-    pub fn evict_and_maybe_grow(&mut self, now: Instant) {
+    pub fn maybe_evict(&mut self, now: Instant) {
         if self.is_inert() {
             return;
         }
@@ -158,13 +160,6 @@ impl<T> EvictingBuffer<T> {
         self.last_timeout = now;
 
         self.evict(now);
-
-        // If we had any overwrites since the last call to evict_and_maybe_grow(), we
-        // need to grow the buffer.
-        if self.overwrites > 0 {
-            self.grow();
-            self.overwrites = 0;
-        }
     }
 
     fn evict(&mut self, now: Instant) {
@@ -211,7 +206,7 @@ impl<T> EvictingBuffer<T> {
 
     fn grow(&mut self) {
         // This is the new sized buffer. We can make other strategies for growing.
-        let new_size = self.buf.len() * 2;
+        let new_size = self.max_size.min(self.buf.len() * 2);
 
         let old_buffer = mem::replace(&mut self.buf, prepare_buf(new_size));
 
@@ -256,7 +251,6 @@ impl<T> EvictingBuffer<T> {
         }
         self.last_position = None;
         self.next_evict = None;
-        self.overwrites = 0;
         self.last_timeout = already_happened();
     }
 }
@@ -267,7 +261,7 @@ mod test {
 
     #[test]
     fn push_and_get() {
-        let mut buf = EvictingBuffer::new(1, Duration::from_secs(10));
+        let mut buf = EvictingBuffer::new(1, Duration::from_secs(10), 10);
         let now = Instant::now();
 
         buf.push(5, now, 'A');
@@ -279,46 +273,22 @@ mod test {
 
     #[test]
     fn push_over_capacity() {
-        let mut buf = EvictingBuffer::new(2, Duration::from_secs(10));
+        let mut buf = EvictingBuffer::new(2, Duration::from_secs(10), 10);
         let now = Instant::now();
 
         buf.push(5, now + Duration::from_secs(0), 'A');
         buf.push(6, now + Duration::from_secs(1), 'B');
         buf.push(7, now + Duration::from_secs(2), 'C');
 
-        // The size is 2, we should have overwritten one entry.
-        assert_eq!(buf.get(5), None);
+        // The size is 2, we should have grown to accomodate.
+        assert_eq!(buf.get(5), Some(&'A'));
         assert_eq!(buf.get(6), Some(&'B'));
         assert_eq!(buf.get(7), Some(&'C'));
-
-        assert_eq!(buf.overwrites, 1);
-    }
-
-    #[test]
-    fn push_over_capacity_then_evict() {
-        let mut buf = EvictingBuffer::new(2, Duration::from_secs(1));
-        let now = Instant::now();
-
-        // next_evict is set to 5
-        buf.push(5, now + Duration::from_secs(0), 'A');
-        buf.push(6, now + Duration::from_secs(1), 'B');
-        assert_eq!(buf.next_evict, Some(5));
-
-        // This overwrites and thus we need to ensure next_evict is not stuck on 5.
-        buf.push(7, now + Duration::from_secs(2), 'C');
-        assert_eq!(buf.next_evict, Some(6));
-
-        assert_eq!(buffer_cmp(&buf), &[Some('B'), Some('C')]);
-
-        // Should evict 'B', if it doesn't next_evict is stuck.
-        buf.evict_and_maybe_grow(now + Duration::from_secs(3));
-
-        assert_eq!(buffer_cmp(&buf), &[None, None, None, Some('C')]);
     }
 
     #[test]
     fn push_before_next_evict() {
-        let mut buf = EvictingBuffer::new(2, Duration::from_secs(10));
+        let mut buf = EvictingBuffer::new(2, Duration::from_secs(10), 10);
         let now = Instant::now();
 
         buf.push(6, now + Duration::from_secs(0), 'B');
@@ -332,26 +302,26 @@ mod test {
 
     #[test]
     fn evict_oldest() {
-        let mut buf = EvictingBuffer::new(2, Duration::from_secs(10));
+        let mut buf = EvictingBuffer::new(2, Duration::from_secs(10), 10);
         let now = Instant::now();
 
         buf.push(5, now + Duration::from_secs(0), 'A');
         buf.push(6, now + Duration::from_secs(1), 'B');
 
         // Nothing should go
-        buf.evict_and_maybe_grow(now + Duration::from_secs(1));
+        buf.maybe_evict(now + Duration::from_secs(1));
         assert_eq!(buf.get(5), Some(&'A'));
         assert_eq!(buf.get(6), Some(&'B'));
 
         // One entry gone.
-        buf.evict_and_maybe_grow(now + Duration::from_secs(11));
+        buf.maybe_evict(now + Duration::from_secs(11));
         assert_eq!(buf.get(5), None);
         assert_eq!(buf.get(6), Some(&'B'));
     }
 
     #[test]
     fn evict_with_gap() {
-        let mut buf = EvictingBuffer::new(4, Duration::from_secs(10));
+        let mut buf = EvictingBuffer::new(4, Duration::from_secs(10), 10);
         let now = Instant::now();
 
         buf.push(5, now + Duration::from_secs(0), 'A');
@@ -360,7 +330,7 @@ mod test {
         buf.push(8, now + Duration::from_secs(3), 'D');
 
         // Should evict A and C
-        buf.evict_and_maybe_grow(now + Duration::from_secs(13));
+        buf.maybe_evict(now + Duration::from_secs(13));
 
         assert_eq!(buf.get(5), None);
         assert_eq!(buf.get(7), None);
@@ -369,14 +339,14 @@ mod test {
 
     #[test]
     fn evict_all() {
-        let mut buf = EvictingBuffer::new(4, Duration::from_secs(10));
+        let mut buf = EvictingBuffer::new(4, Duration::from_secs(10), 10);
         let now = Instant::now();
 
         buf.push(5, now + Duration::from_secs(0), 'A');
         buf.push(6, now + Duration::from_secs(1), 'B');
 
         // Should evict A and B
-        buf.evict_and_maybe_grow(now + Duration::from_secs(12));
+        buf.maybe_evict(now + Duration::from_secs(12));
 
         assert_eq!(buf.get(5), None);
         assert_eq!(buf.get(6), None);
@@ -388,23 +358,21 @@ mod test {
 
     #[test]
     fn grow_and_reindex() {
-        let mut buf = EvictingBuffer::new(2, Duration::from_secs(10));
+        let mut buf = EvictingBuffer::new(2, Duration::from_secs(10), 10);
         let now = Instant::now();
 
         buf.push(2, now + Duration::from_secs(0), 'A');
         buf.push(3, now + Duration::from_secs(1), 'B');
-        // overwrites 2
+
+        assert_eq!(buffer_cmp(&buf), &[Some('A'), Some('B')]);
+
+        // overwrites 2, thus grows
         buf.push(4, now + Duration::from_secs(2), 'C');
 
-        assert_eq!(buffer_cmp(&buf), &[Some('C'), Some('B')]);
+        assert_eq!(buffer_cmp(&buf), &[Some('C'), None, Some('A'), Some('B')]);
 
-        // Won't evict anything, but detects the overwrite and shifts the elements to new buf indexes.
-        buf.evict_and_maybe_grow(now + Duration::from_secs(1));
-
-        assert_eq!(buf.get(2), None);
+        assert_eq!(buf.get(2), Some(&'A'));
         assert_eq!(buf.get(3), Some(&'B'));
         assert_eq!(buf.get(4), Some(&'C'));
-
-        assert_eq!(buffer_cmp(&buf), &[Some('C'), None, None, Some('B')]);
     }
 }

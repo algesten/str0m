@@ -24,7 +24,7 @@ pub(crate) struct RtxCache {
 impl RtxCache {
     pub fn new(max_packet_count: usize, max_packet_age: Duration) -> Self {
         Self {
-            packet_by_seq_no: EvictingBuffer::new(max_packet_count, max_packet_age),
+            packet_by_seq_no: EvictingBuffer::new(10, max_packet_age, max_packet_count),
             seq_no_by_quantized_size: [SeqNo::MAX; RTX_CACHE_QUANTIZE_SLOTS],
         }
     }
@@ -58,7 +58,7 @@ impl RtxCache {
     }
 
     fn remove_old_packets(&mut self, now: Instant) {
-        self.packet_by_seq_no.evict_and_maybe_grow(now);
+        self.packet_by_seq_no.maybe_evict(now);
     }
 
     pub(crate) fn last_packet(&self) -> Option<&[u8]> {
@@ -99,8 +99,14 @@ mod test {
         let now = Instant::now();
         let mut rtx_cache = RtxCache::new(0, Duration::from_secs(3));
         rtx_cache.cache_sent_packet(packet(now, 1, 10), after(now, 10));
-        assert_eq!(None, rtx_cache.get_cached_packet_by_seq_no(1.into()));
-        assert_eq!(None, rtx_cache.get_cached_packet_smaller_than(1000));
+        assert_eq!(
+            Some(&mut packet(now, 1, 10)),
+            rtx_cache.get_cached_packet_by_seq_no(1.into())
+        );
+        assert_eq!(
+            Some(&mut packet(now, 1, 10)),
+            rtx_cache.get_cached_packet_smaller_than(1000)
+        );
     }
 
     #[test]
