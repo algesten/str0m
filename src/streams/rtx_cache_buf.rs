@@ -208,6 +208,11 @@ impl<T> EvictingBuffer<T> {
         // This is the new sized buffer. We can make other strategies for growing.
         let new_size = self.max_size.min(self.buf.len() * 2);
 
+        if new_size == self.buf.len() {
+            // No growing.
+            return;
+        }
+
         let old_buffer = mem::replace(&mut self.buf, prepare_buf(new_size));
 
         // Move all entries over to the new buffer. Changing the buffer size might alter the
