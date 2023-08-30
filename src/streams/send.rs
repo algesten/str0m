@@ -662,7 +662,7 @@ impl StreamTx {
     ) -> Option<()> {
         // Turning NackEntry into SeqNo we need to know a SeqNo "close by" to lengthen the 16 bit
         // sequence number into the 64 bit we have in SeqNo.
-        let seq_no = self.rtx_cache.first_cached_seq_no()?;
+        let seq_no = self.rtx_cache.last_cached_seq_no()?;
         let iter = entries.flat_map(|n| n.into_iter(seq_no));
 
         // Schedule all resends. They will be handled on next poll_packet
