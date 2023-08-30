@@ -536,13 +536,21 @@ fn add_ice_details(
         Some(v) => *v != creds,
         None => false,
     };
-
     if ice_restart {
-        // If we initiated the ICE Restart, the credentials are in the
-        // pending SDP changes. Otherwise we need to create new ones now.
-        let (new_local_creds, keep_local_candidates) = pending
-            .and_then(|p| p.changes.ice_restart())
-            .unwrap_or_else(|| (IceCreds::new(), true));
+        let (new_local_creds, keep_local_candidates) = if let Some(pending) = pending {
+            // Since we have a pending, this is an answer to our offer.
+            pending.changes.ice_restart().ok_or_else(||
+                // Answer contained changed remote creds, indicating an ice restart
+                // but since we have no pending ice-creds, we didn't initiate it
+                // Ice restart in an ANSWER breaks spec.
+                    RtcError::RemoteSdp(
+                    "Ice restart in answer without one in the preceeding offer".into(),
+                ))?
+        } else {
+            // The remote OFFER had an ice restart, and we need to respond with
+            // new credentials in the ANSWER.
+            (IceCreds::new(), true)
+        };
 
         rtc.ice
             .ice_restart(new_local_creds.clone(), keep_local_candidates);
