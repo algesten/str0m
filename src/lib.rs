@@ -492,6 +492,7 @@
 #![allow(clippy::new_without_default)]
 #![allow(clippy::bool_to_int_with_if)]
 #![allow(clippy::assertions_on_constants)]
+#![allow(clippy::manual_range_contains)]
 #![deny(missing_docs)]
 
 #[macro_use]
