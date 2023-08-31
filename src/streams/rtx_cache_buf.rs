@@ -211,7 +211,10 @@ impl<T> EvictingBuffer<T> {
         }
 
         // This is the new sized buffer. We can make other strategies for growing.
-        let new_size = self.max_size.min((self.buf.len() * 133) / 100);
+        let new_size = self
+            .max_size
+            .min((self.buf.len() * 133) / 100)
+            .max(self.buf.len() + 1);
 
         let old_buffer = mem::replace(&mut self.buf, prepare_buf(new_size));
 
@@ -374,7 +377,7 @@ mod test {
         // overwrites 2, thus grows
         buf.push(4, now + Duration::from_secs(2), 'C');
 
-        assert_eq!(buffer_cmp(&buf), &[Some('C'), None, Some('A'), Some('B')]);
+        assert_eq!(buffer_cmp(&buf), &[Some('B'), Some('C'), Some('A')]);
 
         assert_eq!(buf.get(2), Some(&'A'));
         assert_eq!(buf.get(3), Some(&'B'));
