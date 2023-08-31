@@ -54,6 +54,9 @@ pub struct StreamRx {
     /// Last received sender info.
     sender_info: Option<(Instant, SenderInfo)>,
 
+    /// ROC to reset with on next incoming packet.
+    reset_roc: Option<u64>,
+
     /// Register of received packets. For NACK handling.
     ///
     /// Set on first ever packet.
@@ -130,6 +133,7 @@ impl StreamRx {
             suppress_nack: false,
             last_used: already_happened(),
             sender_info: None,
+            reset_roc: None,
             register: None,
             register_rtx: None,
             last_time: None,
@@ -298,7 +302,21 @@ impl StreamRx {
         let register =
             register_ref.get_or_insert_with(|| ReceiverRegister::new(header.sequence_number(None)));
 
-        let seq_no = header.sequence_number(Some(register.max_seq()));
+        // If the user has called `reset_seq_no`, this is the time to handle it, but only
+        // if the incoming packet is for main (not repair).
+        let mut reset_seq_no = None;
+        if !is_repair {
+            if let Some(reset_roc) = self.reset_roc.take() {
+                let s: SeqNo = (reset_roc << 16 | header.sequence_number as u64).into();
+                reset_seq_no = Some(s);
+            }
+        }
+
+        let seq_no = if let Some(reset_seq_no) = reset_seq_no {
+            reset_seq_no
+        } else {
+            header.sequence_number(Some(register.max_seq()))
+        };
 
         let is_new_packet = register.update_seq(seq_no);
         register.update_time(now, header.timestamp, clock_rate);
@@ -596,6 +614,25 @@ impl StreamRx {
 
         self.rtx = Some(rtx);
         self.register_rtx = None;
+    }
+
+    /// Reset the current rollover counter (ROC).
+    ///
+    /// This is used in scenarios where we use a single sequence number across all
+    /// receivers of the same stream (as opposed to a sequence number unique per peer).
+    ///
+    /// [RFC3711](https://datatracker.ietf.org/doc/html/rfc3711#section-3.3.1):
+    ///
+    /// > Receivers joining an on-going session MUST be given the
+    /// > current ROC value using out-of-band signaling such as key-management
+    /// > signaling.  Furthermore, the receiver SHALL initialize s_l to the RTP
+    /// > sequence number (SEQ) of the first observed SRTP packet (unless the
+    /// > initial value is provided by out of band signaling such as key
+    /// > management).
+    pub fn reset_roc(&mut self, roc: u64) {
+        self.register = None;
+        self.register_rtx = None;
+        self.reset_roc = Some(roc);
     }
 }
 

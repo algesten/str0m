@@ -161,6 +161,21 @@ num_id!(SessionId, u64);
 /// An RTP packet is identified by: SSRC + SeqNo. However in the RTP header the sequence number
 /// is a `u16`, meaning the value quite quickly "rolls over". To uniquely identify a packet,
 /// str0m keeps track of the roll overs and converts the `u16` to `u64` in this `SeqNo`.
+///
+/// To get the RTP u16 value from a `SeqNo`, use `as_u16()` or cast it to u16.
+///
+/// ```
+/// # use str0m::rtp::SeqNo;
+/// let seq_no: SeqNo = 65_537.into();
+///
+/// // Use `as_u16()`.
+/// let a = seq_no.as_u16();
+/// // Discard upper 48 bits to get RTP u16.
+/// let b = *seq_no as u16;
+///
+/// assert_eq!(a, 1);
+/// assert_eq!(b, 1);
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SeqNo(u64);
 num_id!(SeqNo, u64);
@@ -188,6 +203,41 @@ impl SeqNo {
     #[inline(always)]
     pub(crate) fn is_max(&self) -> bool {
         self.0 == Self::MAX.0
+    }
+
+    /// The RTP header value (discarding the ROC).
+    ///
+    /// This is the same as discarding the top 48 bits by casting to a u16.
+    ///
+    /// ```
+    /// # use str0m::rtp::SeqNo;
+    /// let seq_no: SeqNo = 65_537.into();
+    ///
+    /// // Use `as_u16()`.
+    /// let a = seq_no.as_u16();
+    ///
+    /// assert_eq!(a, 1);
+    /// ```
+    #[inline(always)]
+    pub fn as_u16(&self) -> u16 {
+        self.0 as u16
+    }
+
+    /// Get the rollover counter (ROC) value.
+    ///
+    /// ```
+    /// # use str0m::rtp::SeqNo;
+    /// // More than 2^16, thus rolled over.
+    /// let seq_no: SeqNo = 95_000.into();
+    ///
+    /// assert_eq!(seq_no.roc(), 1);
+    ///
+    /// // Is the same as shifting 16 bits.
+    /// assert_eq!(seq_no.roc(), 95_000 >> 16);
+    /// ```
+    #[inline(always)]
+    pub fn roc(&self) -> u64 {
+        self.0 >> 16
     }
 }
 

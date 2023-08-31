@@ -254,7 +254,13 @@ impl StreamTx {
         nackable: bool,
         payload: Vec<u8>,
     ) -> Result<(), RtcError> {
-        //
+        let first_call = self.rtp_and_wallclock.is_none();
+
+        if first_call && seq_no.roc() > 0 {
+            // TODO: make it possible to supress this.
+            warn!("First SeqNo has non-zero ROC ({}), which needs out-of-band signalling to remote peer", seq_no.roc());
+        }
+
         // This 1 in clock frequency will be fixed in poll_output.
         let media_time = MediaTime::new(time as i64, 1);
         self.rtp_and_wallclock = Some((time, wallclock));
