@@ -154,9 +154,13 @@ pub fn init_log() {
 }
 
 pub fn connect_l_r() -> (TestRtc, TestRtc) {
-    let rtc1 = Rtc::builder().set_rtp_mode(true).build();
+    let rtc1 = Rtc::builder()
+        .set_rtp_mode(true)
+        .enable_raw_packets(true)
+        .build();
     let rtc2 = Rtc::builder()
         .set_rtp_mode(true)
+        .enable_raw_packets(true)
         // release packet straight away
         .set_reordering_size_audio(0)
         .build();
