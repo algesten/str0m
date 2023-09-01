@@ -1,5 +1,9 @@
 
 # 0.2.0
+  * Possible to disable DTLS fingerprint verification
+  * Manually set local ice credentials
+  * enable_raw_packets for debugging RTP/RTCP
+  * ICE restart
   * SRTP: Implement AEAD_AES_128_GCM and use it by default
   * Better FMTP matching of VP8 and H264
   * Fix incorrect handling of header extensions
