@@ -52,6 +52,11 @@ impl<'a> DirectApi<'a> {
         self.rtc.ice.local_credentials().clone()
     }
 
+    /// Sets the local ICE credentials.
+    pub fn set_local_ice_credentials(&mut self, local_ice_credentials: IceCreds) {
+        self.rtc.ice.set_local_credentials(local_ice_credentials);
+    }
+
     /// Sets the remote ICE credentials.
     pub fn set_remote_ice_credentials(&mut self, remote_ice_credentials: IceCreds) {
         self.rtc.ice.set_remote_credentials(remote_ice_credentials);
