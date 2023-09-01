@@ -589,7 +589,7 @@ mod util;
 use util::{already_happened, not_happening, Soonest};
 
 mod session;
-use session::{MediaEvent, Session};
+use session::Session;
 
 pub mod stats;
 use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent, StatsSnapshot};
@@ -845,6 +845,10 @@ pub enum Event {
     /// This clones data, and is therefore expensive.
     /// Should not be enabled outside of tests and troubleshooting.
     RawPacket(RawPacket),
+
+    /// Internal for passing data from Session to Rtc.
+    #[doc(hidden)]
+    Error(RtcError),
 }
 
 /// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.
@@ -1275,20 +1279,12 @@ impl Rtc {
             }
         }
 
-        if let Some(e) = self.session.poll_event() {
-            return Ok(match e {
-                MediaEvent::Added(m) => Output::Event(Event::MediaAdded(m)),
-                MediaEvent::Changed(m) => Output::Event(Event::MediaChanged(m)),
-                MediaEvent::Data(m) => Output::Event(Event::MediaData(m)),
-                MediaEvent::Error(e) => return Err(e),
-                MediaEvent::KeyframeRequest(r) => Output::Event(Event::KeyframeRequest(r)),
-                MediaEvent::EgressBitrateEstimate(b) => {
-                    Output::Event(Event::EgressBitrateEstimate(b))
-                }
-                MediaEvent::RtpPacket(p) => Output::Event(Event::RtpPacket(p)),
-                MediaEvent::StreamPaused(p) => Output::Event(Event::StreamPaused(p)),
-                MediaEvent::RawPacket(p) => Output::Event(Event::RawPacket(p)),
-            });
+        if let Some(ev) = self.session.poll_event() {
+            if let Event::Error(err) = ev {
+                return Err(err);
+            } else {
+                return Ok(Output::Event(ev));
+            }
         }
 
         if let Some(e) = self.stats.as_mut().and_then(|s| s.poll_output()) {
