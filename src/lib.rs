@@ -500,6 +500,7 @@ extern crate tracing;
 
 use bwe::Bwe;
 use change::{DirectApi, SdpApi};
+use rtp::RawPacket;
 use std::fmt;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -530,10 +531,28 @@ use rtp_::{Extension, ExtensionMap, InstantExt};
 
 /// Low level RTP access.
 pub mod rtp {
+    use crate::rtp_::Rtcp;
     pub use crate::rtp_::{
         Extension, ExtensionMap, ExtensionValues, RtpHeader, SeqNo, Ssrc, VideoOrientation,
     };
     pub use crate::streams::{RtpPacket, StreamPaused, StreamRx, StreamTx};
+
+    /// Debug output of the unencrypted RTP and RTCP packets.
+    ///
+    /// Enable using [`RtcConfig::enable_raw_packets()`][crate::RtcConfig::enable_raw_packets].
+    /// This clones data, and is therefore expensive.
+    /// Should not be enabled outside of tests and troubleshooting.
+    #[derive(Debug)]
+    pub enum RawPacket {
+        /// Sent RTCP.
+        RtcpTx(Rtcp),
+        /// Incoming RTCP.
+        RtpcRx(Rtcp),
+        /// Sent RTP.
+        RtpTx(RtpHeader, Vec<u8>),
+        /// Incoming RTP.
+        RtpRx(RtpHeader, Vec<u8>),
+    }
 }
 
 pub mod bwe;
@@ -811,6 +830,13 @@ pub enum Event {
 
     /// Incoming RTP data.
     RtpPacket(RtpPacket),
+
+    /// Debug output of incoming and outgoing RTCP/RTP packets.
+    ///
+    /// Enable using [`RtcConfig::enable_raw_packets()`].
+    /// This clones data, and is therefore expensive.
+    /// Should not be enabled outside of tests and troubleshooting.
+    RawPacket(RawPacket),
 }
 
 /// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.
@@ -1253,6 +1279,7 @@ impl Rtc {
                 }
                 MediaEvent::RtpPacket(p) => Output::Event(Event::RtpPacket(p)),
                 MediaEvent::StreamPaused(p) => Output::Event(Event::StreamPaused(p)),
+                MediaEvent::RawPacket(p) => Output::Event(Event::RawPacket(p)),
             });
         }
 
@@ -1542,6 +1569,7 @@ pub struct RtcConfig {
     send_buffer_audio: usize,
     send_buffer_video: usize,
     rtp_mode: bool,
+    enable_raw_packets: bool,
 }
 
 impl RtcConfig {
@@ -1889,6 +1917,14 @@ impl RtcConfig {
         self.rtp_mode
     }
 
+    /// Enable the [`Event::RawPacket`] event.
+    ///
+    /// This clones data, and is therefore expensive.
+    /// Should not be enabled outside of tests and troubleshooting.
+    pub fn enable_raw_packets(mut self, enabled: bool) {
+        self.enable_raw_packets = enabled;
+    }
+
     /// Create a [`Rtc`] from the configuration.
     pub fn build(self) -> Rtc {
         Rtc::new_from_config(self)
@@ -1910,6 +1946,7 @@ impl Default for RtcConfig {
             send_buffer_audio: 50,
             send_buffer_video: 1000,
             rtp_mode: false,
+            enable_raw_packets: false,
         }
     }
 }
