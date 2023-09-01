@@ -912,7 +912,8 @@ impl Rtc {
         Rtc {
             alive: true,
             ice,
-            dtls: Dtls::new(config.dtls_cert).expect("DTLS to init without problem"),
+            dtls: Dtls::new(config.dtls_cert, config.fingerprint_verification)
+                .expect("DTLS to init without problem"),
             session,
             sctp: RtcSctp::new(),
             chan: ChannelHandler::default(),
@@ -1562,6 +1563,7 @@ impl Rtc {
 pub struct RtcConfig {
     local_ice_credentials: IceCreds,
     dtls_cert: DtlsCert,
+    fingerprint_verification: bool,
     ice_lite: bool,
     codec_config: CodecConfig,
     exts: ExtensionMap,
@@ -1609,6 +1611,26 @@ impl RtcConfig {
     /// [1]: https://www.rfc-editor.org/rfc/rfc8445#page-13
     pub fn set_ice_lite(mut self, enabled: bool) -> Self {
         self.ice_lite = enabled;
+        self
+    }
+
+    /// Get fingerprint verification mode.
+    ///
+    /// ```
+    /// # use str0m::RtcConfig;
+    ///
+    /// // Verify that fingerprint verification is enabled by default.
+    /// assert!(RtcConfig::default().fingerprint_verification());
+    /// ```
+    pub fn fingerprint_verification(&self) -> bool {
+        self.fingerprint_verification
+    }
+
+    /// Toggle certificate fingerprint verification.
+    ///
+    /// By default the certificate fingerprint is verified.
+    pub fn set_fingerprint_verification(mut self, enabled: bool) -> Self {
+        self.fingerprint_verification = enabled;
         self
     }
 
@@ -1947,6 +1969,7 @@ impl Default for RtcConfig {
         Self {
             local_ice_credentials: IceCreds::new(),
             dtls_cert: DtlsCert::new(),
+            fingerprint_verification: true,
             ice_lite: false,
             codec_config: CodecConfig::new_with_defaults(),
             exts: ExtensionMap::standard(),
