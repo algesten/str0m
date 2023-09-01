@@ -148,7 +148,13 @@ impl<'a> DirectApi<'a> {
     /// Allow incoming traffic from remote peer for the given SSRC.
     ///
     /// Can be called multiple times if the `rtx` is discovered later via RTP header extensions.
-    pub fn expect_stream_rx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>, mid: Mid, rid: Option<Rid>) {
+    pub fn expect_stream_rx(
+        &mut self,
+        ssrc: Ssrc,
+        rtx: Option<Ssrc>,
+        mid: Mid,
+        rid: Option<Rid>,
+    ) -> &mut StreamRx {
         self.rtc
             .session
             .streams

@@ -147,7 +147,13 @@ impl Default for Streams {
 }
 
 impl Streams {
-    pub fn expect_stream_rx(&mut self, ssrc: Ssrc, rtx: Option<Ssrc>, mid: Mid, rid: Option<Rid>) {
+    pub fn expect_stream_rx(
+        &mut self,
+        ssrc: Ssrc,
+        rtx: Option<Ssrc>,
+        mid: Mid,
+        rid: Option<Rid>,
+    ) -> &mut StreamRx {
         let stream = self
             .streams_rx
             .entry(ssrc)
@@ -156,6 +162,8 @@ impl Streams {
         if let Some(rtx) = rtx {
             stream.maybe_reset_rtx(rtx);
         }
+
+        stream
     }
 
     pub fn remove_stream_rx(&mut self, ssrc: Ssrc) -> bool {
