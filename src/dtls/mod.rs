@@ -136,6 +136,9 @@ pub struct Dtls {
     /// The fingerprint of the certificate.
     fingerprint: Fingerprint,
 
+    /// Remote fingerprint.
+    remote_fingerprint: Option<Fingerprint>,
+
     /// Context belongs together with Fingerprint.
     ///
     /// This just needs to be kept alive since it pins the entire openssl context
@@ -178,6 +181,7 @@ impl Dtls {
         Ok(Dtls {
             _cert: cert,
             fingerprint,
+            remote_fingerprint: None,
             _context: context,
             tls: TlsStream::new(ssl, IoBuffer::default()),
             events: VecDeque::new(),
@@ -209,6 +213,11 @@ impl Dtls {
     /// To be communicated in SDP offers sent to the remote peer.
     pub fn local_fingerprint(&self) -> &Fingerprint {
         &self.fingerprint
+    }
+
+    /// Remote fingerprint.
+    pub fn remote_fingerprint(&self) -> &Option<Fingerprint> {
+        &self.remote_fingerprint
     }
 
     /// Poll for the next datagram to send.
@@ -284,6 +293,7 @@ impl Dtls {
                 .take_srtp_keying_material()
                 .expect("Exported keying material");
 
+            self.remote_fingerprint = Some(fingerprint.clone());
             self.events
                 .push_back(DtlsEvent::RemoteFingerprint(fingerprint));
 
