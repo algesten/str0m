@@ -117,7 +117,11 @@ impl Rtcp {
         }
     }
 
-    pub fn write_packet(feedback: &mut VecDeque<Rtcp>, buf: &mut [u8]) -> usize {
+    pub fn write_packet(
+        feedback: &mut VecDeque<Rtcp>,
+        buf: &mut [u8],
+        mut output: impl FnMut(Rtcp),
+    ) -> usize {
         if feedback.is_empty() {
             return 0;
         }
@@ -150,6 +154,9 @@ impl Rtcp {
                 written, item_len,
                 "length_words equals write_to length: {fb:?}"
             );
+
+            // When debugging we can pass an output to get the serialized packets.
+            output(fb);
 
             // Move offsets for the amount written.
             offset += item_len;
@@ -461,7 +468,7 @@ mod test {
         twcc.delta.push_back(Delta::Small(0x84));
         queue.push_back(Rtcp::Twcc(twcc));
         let mut buf = vec![0; 1500];
-        let n = Rtcp::write_packet(&mut queue, &mut buf);
+        let n = Rtcp::write_packet(&mut queue, &mut buf, |_| {});
         buf.truncate(n);
         println!("{buf:02x?}");
         assert_eq!(
@@ -545,7 +552,7 @@ mod test {
         feedback.push_back(rr(5));
 
         let mut buf = vec![0_u8; 1360];
-        let n = Rtcp::write_packet(&mut feedback, &mut buf);
+        let n = Rtcp::write_packet(&mut feedback, &mut buf, |_| {});
         buf.truncate(n);
 
         let mut parsed = VecDeque::new();

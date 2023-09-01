@@ -11,6 +11,7 @@ use crate::media::Media;
 use crate::media::{MediaAdded, MediaChanged};
 use crate::packet::SendSideBandwithEstimator;
 use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
+use crate::rtp::RawPacket;
 use crate::rtp::StreamPaused;
 use crate::rtp_::Direction;
 use crate::rtp_::Pt;
@@ -98,6 +99,8 @@ pub(crate) struct Session {
 
     feedback_tx: VecDeque<Rtcp>,
     feedback_rx: VecDeque<Rtcp>,
+
+    raw_packets: Option<VecDeque<RawPacket>>,
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -110,6 +113,7 @@ pub enum MediaEvent {
     EgressBitrateEstimate(Bitrate),
     RtpPacket(RtpPacket),
     StreamPaused(StreamPaused),
+    RawPacket(RawPacket),
 }
 
 impl Session {
@@ -169,6 +173,11 @@ impl Session {
             rtp_mode: config.rtp_mode,
             feedback_tx: VecDeque::new(),
             feedback_rx: VecDeque::new(),
+            raw_packets: if config.enable_raw_packets {
+                Some(VecDeque::new())
+            } else {
+                None
+            },
         }
     }
 
@@ -504,6 +513,10 @@ impl Session {
             return;
         }
 
+        if let Some(raw_packets) = &mut self.raw_packets {
+            raw_packets.push_back(RawPacket::RtpRx(header.clone(), data.clone()));
+        }
+
         // RTX packets must be rewritten to be a normal packet. This only changes the
         // the seq_no, however MediaTime might be different when interpreted against the
         // the "main" register.
@@ -551,11 +564,17 @@ impl Session {
     }
 
     fn handle_rtcp(&mut self, now: Instant, buf: &[u8]) -> Option<()> {
-        let srtp = self.srtp_rx.as_mut()?;
+        let srtp: &mut SrtpContext = self.srtp_rx.as_mut()?;
         let unprotected = srtp.unprotect_rtcp(buf)?;
 
         Rtcp::read_packet(&unprotected, &mut self.feedback_rx);
         let mut need_configure_pacer = false;
+
+        if let Some(raw_packets) = &mut self.raw_packets {
+            for fb in &self.feedback_rx {
+                raw_packets.push_back(RawPacket::RtpcRx(fb.clone()));
+            }
+        }
 
         for fb in RtcpFb::from_rtcp(self.feedback_rx.drain(..)) {
             if let RtcpFb::Twcc(twcc) = fb {
@@ -607,6 +626,12 @@ impl Session {
         // If we're not ready to flow media, don't send any events.
         if !self.ready_for_srtp() {
             return None;
+        }
+
+        if let Some(raw_packets) = &mut self.raw_packets {
+            if let Some(p) = raw_packets.pop_front() {
+                return Some(MediaEvent::RawPacket(p));
+            }
         }
 
         // This must be before pending_packet.take() since we need to emit the unpaused event
@@ -691,7 +716,14 @@ impl Session {
 
         let mut data = vec![0_u8; ENCRYPTABLE_MTU];
 
-        let len = Rtcp::write_packet(&mut self.feedback_tx, &mut data);
+        let mut raw_packets = self.raw_packets.as_mut();
+        let output = move |fb| {
+            if let Some(raw_packets) = &mut raw_packets {
+                raw_packets.push_back(RawPacket::RtcpTx(fb));
+            }
+        };
+
+        let len = Rtcp::write_packet(&mut self.feedback_tx, &mut data, output);
 
         if len == 0 {
             return None;
@@ -748,6 +780,10 @@ impl Session {
         }
 
         self.pacer.register_send(now, payload_size.into(), mid);
+
+        if let Some(raw_packets) = &mut self.raw_packets {
+            raw_packets.push_back(RawPacket::RtpTx(header.clone(), buf.clone()));
+        }
 
         let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
