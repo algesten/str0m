@@ -85,7 +85,7 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
         .count();
 
     assert!(
-        media_count_l > 170,
+        media_count_l > 1700,
         "Not enough MediaData at L: {}",
         media_count_l
     );
