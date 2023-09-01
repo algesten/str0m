@@ -1594,6 +1594,12 @@ impl RtcConfig {
         &self.dtls_cert
     }
 
+    /// Set DTLS certification.
+    pub fn set_dtls_cert(mut self, dtls_cert: DtlsCert) -> Self {
+        self.dtls_cert = dtls_cert;
+        self
+    }
+
     /// Toggle ice lite. Ice lite is a mode for WebRTC servers with public IP address.
     /// An [`Rtc`] instance in ice lite mode will not make STUN binding requests, but only
     /// answer to requests from the remote peer.
