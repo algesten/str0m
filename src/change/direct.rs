@@ -70,6 +70,11 @@ impl<'a> DirectApi<'a> {
         self.rtc.dtls.local_fingerprint().clone()
     }
 
+    /// Returns a reference to the remote DTLS fingerprint used by this peer connection.
+    pub fn remote_dtls_fingerprint(&self) -> Option<Fingerprint> {
+        self.rtc.dtls.remote_fingerprint().clone()
+    }
+
     /// Sets the remote DTLS fingerprint.
     pub fn set_remote_fingerprint(&mut self, dtls_fingerprint: Fingerprint) {
         self.rtc.remote_fingerprint = Some(dtls_fingerprint);
