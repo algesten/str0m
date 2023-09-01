@@ -136,6 +136,9 @@ pub struct Dtls {
     /// The fingerprint of the certificate.
     fingerprint: Fingerprint,
 
+    /// Verify the fingerprint.
+    fingerprint_verification: bool,
+
     /// Remote fingerprint.
     remote_fingerprint: Option<Fingerprint>,
 
@@ -174,13 +177,14 @@ impl Dtls {
     ///
     /// `active` indicates whether this side should initiate the handshake or not.
     /// This in turn is governed by the `a=setup` SDP attribute.
-    pub fn new(cert: DtlsCert) -> Result<Self, DtlsError> {
+    pub fn new(cert: DtlsCert, fingerprint_verification: bool) -> Result<Self, DtlsError> {
         let fingerprint = cert.fingerprint();
         let context = dtls_create_ctx(&cert)?;
         let ssl = dtls_ssl_create(&context)?;
         Ok(Dtls {
             _cert: cert,
             fingerprint,
+            fingerprint_verification,
             remote_fingerprint: None,
             _context: context,
             tls: TlsStream::new(ssl, IoBuffer::default()),
@@ -294,8 +298,11 @@ impl Dtls {
                 .expect("Exported keying material");
 
             self.remote_fingerprint = Some(fingerprint.clone());
-            self.events
-                .push_back(DtlsEvent::RemoteFingerprint(fingerprint));
+
+            if self.fingerprint_verification {
+                self.events
+                    .push_back(DtlsEvent::RemoteFingerprint(fingerprint));
+            }
 
             self.events
                 .push_back(DtlsEvent::SrtpKeyingMaterial(keying_material, srtp_profile));
