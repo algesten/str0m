@@ -83,7 +83,7 @@ pub fn repeated() -> Result<(), RtcError> {
     let packets: Vec<_> = r
         .events
         .iter()
-        .filter_map(|e| {
+        .filter_map(|(_, e)| {
             let Event::RtpPacket(v) = e else {
                 return None;
             };

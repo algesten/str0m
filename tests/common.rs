@@ -18,7 +18,7 @@ pub struct TestRtc {
     pub rtc: Rtc,
     pub start: Instant,
     pub last: Instant,
-    pub events: Vec<Event>,
+    pub events: Vec<(Instant, Event)>,
 }
 
 impl TestRtc {
@@ -84,7 +84,7 @@ pub fn progress(l: &mut TestRtc, r: &mut TestRtc) -> Result<(), RtcError> {
                 t.span.in_scope(|| t.rtc.handle_input(input))?;
             }
             Output::Event(v) => {
-                f.events.push(v);
+                f.events.push((f.last, v));
             }
         }
     }

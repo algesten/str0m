@@ -51,7 +51,7 @@ pub fn flappy_ice_lite_state() -> Result<(), RtcError> {
     let ice_events = r
         .events
         .iter()
-        .filter(|e| matches!(e, Event::IceConnectionStateChange(_)))
+        .filter(|(_, e)| matches!(e, Event::IceConnectionStateChange(_)))
         .count();
 
     assert!(ice_events < 10);

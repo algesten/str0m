@@ -106,7 +106,7 @@ pub fn rtp_direct_with_roc() -> Result<(), RtcError> {
     let media: Vec<_> = r
         .events
         .iter()
-        .filter_map(|e| {
+        .filter_map(|(_, e)| {
             if let Event::RtpPacket(v) = e {
                 Some(v)
             } else {
