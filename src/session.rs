@@ -404,10 +404,10 @@ impl Session {
             // Declare entries in streams for receiving these streams.
             if is_repair {
                 self.streams
-                    .expect_stream_rx(ssrc_main, Some(ssrc), mid, Some(rid))
+                    .expect_stream_rx(ssrc_main, Some(ssrc), mid, Some(rid));
             } else {
                 self.streams
-                    .expect_stream_rx(ssrc_main, None, mid, Some(rid))
+                    .expect_stream_rx(ssrc_main, None, mid, Some(rid));
             }
 
             // Insert an entry so we can look up on SSRC alone later.
