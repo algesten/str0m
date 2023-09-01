@@ -1929,8 +1929,9 @@ impl RtcConfig {
     ///
     /// This clones data, and is therefore expensive.
     /// Should not be enabled outside of tests and troubleshooting.
-    pub fn enable_raw_packets(mut self, enabled: bool) {
+    pub fn enable_raw_packets(mut self, enabled: bool) -> Self {
         self.enable_raw_packets = enabled;
+        self
     }
 
     /// Create a [`Rtc`] from the configuration.
