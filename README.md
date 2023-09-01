@@ -8,6 +8,9 @@ This is a [Sans I/O][sansio] implementation meaning the `Rtc` instance itself is
 talking. Furthermore it has no internal threads or async tasks. All operations are synchronously
 happening from the calls of the public API.
 
+This is deliberately not a standard `RTCPeerConnection` API since that isn't a great fit for Rust.
+See more details in below section.
+
 ## Join us
 
 We are discussing str0m things on Zulip. Join us using this [invitation link][zulip]. Or browse the
