@@ -531,10 +531,18 @@ use rtp_::{Extension, ExtensionMap, InstantExt};
 
 /// Low level RTP access.
 pub mod rtp {
-    use crate::rtp_::Rtcp;
-    pub use crate::rtp_::{
-        Extension, ExtensionMap, ExtensionValues, RtpHeader, SeqNo, Ssrc, VideoOrientation,
-    };
+    /// Feedback for RTP.
+    pub mod rtcp {
+        pub use crate::rtp_::{Descriptions, ExtendedReport, Fir, Goodbye, Nack, Pli};
+        pub use crate::rtp_::{Dlrr, NackEntry, ReceptionReport, ReportBlock};
+        pub use crate::rtp_::{FirEntry, ReceiverReport, SenderInfo, SenderReport, Twcc};
+        pub use crate::rtp_::{ReportList, Rrtr, Rtcp, Sdes, SdesType};
+    }
+    use self::rtcp::Rtcp;
+
+    pub use crate::rtp_::{Extension, ExtensionMap, ExtensionValues};
+
+    pub use crate::rtp_::{RtpHeader, SeqNo, Ssrc, VideoOrientation};
     pub use crate::streams::{RtpPacket, StreamPaused, StreamRx, StreamTx};
 
     /// Debug output of the unencrypted RTP and RTCP packets.
@@ -547,7 +555,7 @@ pub mod rtp {
         /// Sent RTCP.
         RtcpTx(Rtcp),
         /// Incoming RTCP.
-        RtpcRx(Rtcp),
+        RtcpRx(Rtcp),
         /// Sent RTP.
         RtpTx(RtpHeader, Vec<u8>),
         /// Incoming RTP.

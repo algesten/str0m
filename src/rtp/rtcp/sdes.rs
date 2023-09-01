@@ -4,19 +4,25 @@ use super::list::private::WordSized;
 use super::{pad_bytes_to_word, ReportList, RtcpHeader, RtcpPacket};
 use super::{FeedbackMessageType, RtcpType, Ssrc};
 
+/// Multiple source descriptions (SDES).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Descriptions {
+    /// The descriptions.
     pub reports: ReportList<Sdes>,
 }
 
+/// A single source description (SDES).
+#[allow(missing_docs)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sdes {
     pub ssrc: Ssrc,
     pub values: ReportList<(SdesType, String)>,
 }
 
+/// Types of SDES values.
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[allow(missing_docs)]
 pub enum SdesType {
     /// End of SDES list
     END = 0,

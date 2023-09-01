@@ -4,13 +4,19 @@ use super::{RtcpType, Ssrc, TransportType};
 
 use super::list::private::WordSized;
 
+/// A NACK entry indiciating packets missing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Nack {
+    /// Sender of this feedback. Mostly irrelevant, but part of RTCP packets.
     pub sender_ssrc: Ssrc,
+    /// The SSRC this nack reports missing packets for.
     pub ssrc: Ssrc,
+    /// The missing nack. This can be multiple segments.
     pub reports: ReportList<NackEntry>,
 }
 
+/// A range of sequence numbers missing.
+#[allow(missing_docs)]
 #[derive(Debug, PartialEq, Eq, Default, Clone, Copy)]
 pub struct NackEntry {
     pub pid: u16,
@@ -87,6 +93,9 @@ impl<'a> TryFrom<&'a [u8]> for Nack {
 }
 
 impl NackEntry {
+    /// Iterator over sequence numbers missing.
+    ///
+    /// The given sequence number is used to interpret ROC.
     pub fn into_iter(self, seq_no: SeqNo) -> impl Iterator<Item = SeqNo> {
         NackEntryIterator(self, 0, seq_no)
     }

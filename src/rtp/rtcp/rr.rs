@@ -2,12 +2,17 @@ use super::list::private::WordSized;
 use super::Ssrc;
 use super::{FeedbackMessageType, ReportList, RtcpHeader, RtcpPacket, RtcpType};
 
+/// A receiver report.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReceiverReport {
+    /// Sender of this feedback. Mostly irrelevant, but part of RTCP packets.
     pub sender_ssrc: Ssrc,
+    /// The individual reports for received SSRC.
     pub reports: ReportList<ReceptionReport>,
 }
 
+/// An individual report of reception.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReceptionReport {
     pub ssrc: Ssrc,

@@ -7,15 +7,26 @@ use std::time::{Duration, Instant};
 use super::{extend_u16, FeedbackMessageType, RtcpHeader, RtcpPacket};
 use super::{RtcpType, SeqNo, Ssrc, TransportType};
 
+/// Transport Wide Congestion Control.
+///
+/// Sent in response to every RTP packet, but does ranges of packets to respond to.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Twcc {
+    /// Sender of this feedback. Mostly irrelevant, but part of RTCP packets.
     pub sender_ssrc: Ssrc,
+    /// The SSRC this report is for.
     pub ssrc: Ssrc,
+    /// Start sequence number.
     pub base_seq: u16,
+    /// Number of reported statuses.
     pub status_count: u16,
+    /// Clock time this report was produced. Used for RTT measurement.
     pub reference_time: u32, // 24 bit
-    pub feedback_count: u8,  // counter for each Twcc
+    /// Increasing counter for each TWCC. For deduping.
+    pub feedback_count: u8, // counter for each Twcc
+    /// Ranges received.
     pub chunks: VecDeque<PacketChunk>,
+    /// Delta times for the ranges received.
     pub delta: VecDeque<Delta>,
 }
 
@@ -28,6 +39,7 @@ impl Twcc {
         self.delta.iter().map(|d| d.byte_len()).sum()
     }
 
+    /// Iterate over the reported sequences.
     pub fn into_iter(self, time_zero: Instant, extend_from: SeqNo) -> TwccIter {
         let millis = self.reference_time as u64 * 64;
         let time_base = time_zero + Duration::from_millis(millis);

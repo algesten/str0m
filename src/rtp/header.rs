@@ -1,11 +1,9 @@
-#![allow(missing_docs)]
 #![allow(clippy::unusual_byte_groupings)]
 
 use super::ext::{ExtensionMap, ExtensionValues};
 use super::{Pt, SeqNo, Ssrc, MAX_BLANK_PADDING_PAYLOAD_SIZE};
 
 /// Parsed header from an RTP packet.
-#[doc(hidden)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtpHeader {
     /// Always 2
@@ -35,7 +33,7 @@ pub struct RtpHeader {
 }
 
 impl RtpHeader {
-    pub fn write_to(&self, buf: &mut [u8], exts: &ExtensionMap) -> usize {
+    pub(crate) fn write_to(&self, buf: &mut [u8], exts: &ExtensionMap) -> usize {
         buf[0] = 0b10_0_0_0000
             | if self.has_padding { 1 << 5 } else { 0 }
             | if self.has_extension { 1 << 4 } else { 0 };
@@ -79,7 +77,7 @@ impl RtpHeader {
         buf[from + pad - 1] = pad as u8;
     }
 
-    pub fn pad_packet(
+    pub(crate) fn pad_packet(
         buf: &mut [u8],
         header_len: usize,
         body_len: usize,
@@ -119,7 +117,7 @@ impl RtpHeader {
         rounded_len
     }
 
-    pub fn unpad_payload(buf: &mut Vec<u8>) -> bool {
+    pub(crate) fn unpad_payload(buf: &mut Vec<u8>) -> bool {
         if buf.is_empty() {
             return true;
         }
@@ -131,7 +129,7 @@ impl RtpHeader {
         true
     }
 
-    pub fn parse(buf: &[u8], exts: &ExtensionMap) -> Option<RtpHeader> {
+    pub(crate) fn parse(buf: &[u8], exts: &ExtensionMap) -> Option<RtpHeader> {
         let orig_len = buf.len();
         if buf.len() < 12 {
             trace!("RTP header too short < 12: {}", buf.len());
@@ -221,7 +219,7 @@ impl RtpHeader {
         Some(ret)
     }
 
-    pub fn payload_of<'a>(&self, data: &'a [u8]) -> &'a [u8] {
+    pub(crate) fn payload_of<'a>(&self, data: &'a [u8]) -> &'a [u8] {
         if data.is_empty() {
             return &[];
         }

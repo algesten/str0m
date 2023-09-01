@@ -1,12 +1,18 @@
 use super::{FeedbackMessageType, MediaTime, RtcpType, Ssrc};
 use super::{ReceptionReport, ReportList, RtcpHeader, RtcpPacket};
 
+/// A report of packets sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SenderReport {
+    /// Information about the sender of this report.
     pub sender_info: SenderInfo,
+    /// A sender report is implicitly also a receiver report. This
+    /// might hold data that would otherwise come in a separate RR.
     pub reports: ReportList<ReceptionReport>,
 }
 
+/// Information about a stream being sent.
+#[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SenderInfo {
     pub ssrc: Ssrc,

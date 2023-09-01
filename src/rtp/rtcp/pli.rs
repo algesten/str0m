@@ -1,9 +1,12 @@
 use super::{FeedbackMessageType, PayloadType, RtcpHeader, RtcpPacket};
 use super::{RtcpType, Ssrc};
 
+/// Picture loss indicator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pli {
+    /// Sender of this feedback. Mostly irrelevant, but part of RTCP packets.
     pub sender_ssrc: Ssrc,
+    /// The SSRC this picture loss indication is for.
     pub ssrc: Ssrc,
 }
 

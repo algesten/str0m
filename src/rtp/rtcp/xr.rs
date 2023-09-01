@@ -11,15 +11,20 @@ use super::{RtcpHeader, RtcpPacket};
 //   :                         report blocks                         :
 //   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-/// RFC 3611
-/// <https://datatracker.ietf.org/doc/html/rfc3611#page-21>
+/// Extended receiver report (XR).
+///
+/// RFC 3611: <https://datatracker.ietf.org/doc/html/rfc3611#page-21>
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExtendedReport {
+    /// The SSRC this report is for.
     pub ssrc: Ssrc,
+    /// The blocks reported.
     pub blocks: Vec<ReportBlock>,
 }
 
+/// Parts of an extended report XR.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(missing_docs)]
 pub enum ReportBlock {
     Rrtr(Rrtr),
     Dlrr(Dlrr),
@@ -35,9 +40,11 @@ pub enum ReportBlock {
 //   |             NTP timestamp, least significant word              |
 //   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
-/// Receiver Reference Time Report Block
+/// Receiver Reference Time Report Block.
+///
 /// <https://datatracker.ietf.org/doc/html/rfc3611#section-4.4>
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(missing_docs)]
 pub struct Rrtr {
     pub ntp_time: MediaTime,
 }
@@ -59,8 +66,10 @@ pub struct Rrtr {
 //   +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
 
 /// DLRR Report Block
+///
 /// <https://datatracker.ietf.org/doc/html/rfc3611#section-4.5>
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(missing_docs)]
 pub struct Dlrr {
     pub items: Vec<DlrrItem>,
 }
@@ -106,7 +115,7 @@ impl RtcpPacket for ExtendedReport {
 }
 
 impl ReportBlock {
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         match self {
             Self::Rrtr(_) => Rrtr::len(),
             Self::Dlrr(v) => v.len(),

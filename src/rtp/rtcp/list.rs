@@ -6,32 +6,36 @@ use std::ops::Index;
 pub struct ReportList<T>([Option<T>; 31]);
 
 impl<T> ReportList<T> {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         ReportList::default()
     }
 
+    /// Number of elements in the list.
     pub fn len(&self) -> usize {
         self.0.iter().position(|i| i.is_none()).unwrap_or(31)
     }
 
-    pub fn push(&mut self, v: T) {
+    pub(crate) fn push(&mut self, v: T) {
         let pos = self.len();
         self.0[pos] = Some(v);
     }
 
+    /// Get element at position.
     pub fn get(&self, i: usize) -> Option<&T> {
         self.0[i].as_ref()
     }
 
+    /// Iterator over the elements in the list.
     pub fn iter(&self) -> impl Iterator<Item = &T> {
         self.into_iter()
     }
 
+    /// Tells if the list contains zero elements.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    pub fn lists_from_iter(iterator: impl IntoIterator<Item = T>) -> Vec<Self> {
+    pub(crate) fn lists_from_iter(iterator: impl IntoIterator<Item = T>) -> Vec<Self> {
         let mut result = vec![];
         let mut current = Self::default();
 

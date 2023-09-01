@@ -572,7 +572,7 @@ impl Session {
 
         if let Some(raw_packets) = &mut self.raw_packets {
             for fb in &self.feedback_rx {
-                raw_packets.push_back(RawPacket::RtpcRx(fb.clone()));
+                raw_packets.push_back(RawPacket::RtcpRx(fb.clone()));
             }
         }
 

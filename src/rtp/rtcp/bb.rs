@@ -1,7 +1,9 @@
 use super::{FeedbackMessageType, ReportList, RtcpHeader, RtcpPacket, RtcpType, Ssrc};
 
+/// RTCP packet BY
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Goodbye {
+    /// The SSRC that are no longer in use.
     pub reports: ReportList<Ssrc>,
 }
 

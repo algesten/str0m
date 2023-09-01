@@ -1,15 +1,21 @@
 use super::list::private::WordSized;
 use super::{FeedbackMessageType, PayloadType, ReportList, RtcpHeader, RtcpPacket, RtcpType, Ssrc};
 
+/// Full Intra Request (FIR).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fir {
+    /// Sender of this feedback. Mostly irrelevant, but part of RTCP packets.
     pub sender_ssrc: Ssrc,
+    /// The SSRC needing a full codec restart.
     pub reports: ReportList<FirEntry>,
 }
 
+/// Entry reported needing a codec restart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FirEntry {
+    /// The SSRC needing a full codec restart.
     pub ssrc: Ssrc,
+    /// Counter keeping track of which restart request this is.
     pub seq_no: u8,
 }
 
