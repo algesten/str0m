@@ -269,6 +269,14 @@ impl IceAgent {
         &self.local_credentials
     }
 
+    /// Sets the local ice credentials.
+    pub fn set_local_credentials(&mut self, r: IceCreds) {
+        if self.local_credentials != r {
+            info!("Set local credentials: {:?}", r);
+            self.local_credentials = r;
+        }
+    }
+
     /// Local ice candidates.
     ///
     /// The candidates have their ufrag filled out to the local credentials.
