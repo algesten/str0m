@@ -61,7 +61,7 @@ pub fn unidirectional() -> Result<(), RtcError> {
     let media_count = r
         .events
         .iter()
-        .filter(|e| matches!(e, Event::MediaData(_)))
+        .filter(|(_, e)| matches!(e, Event::MediaData(_)))
         .count();
 
     assert!(media_count > 170, "Not enough MediaData: {}", media_count);
