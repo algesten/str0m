@@ -501,12 +501,12 @@ impl MediaLine {
             .any(|a| matches!(a, MediaAttribute::EndOfCandidates))
     }
 
-    pub fn extmaps(&self) -> Vec<(u8, Extension)> {
+    pub fn extmaps(&self) -> Vec<(u8, &Extension)> {
         let mut ret = vec![];
 
         for a in &self.attrs {
             if let MediaAttribute::ExtMap { id, ext } = a {
-                ret.push((*id, *ext));
+                ret.push((*id, ext));
             }
         }
 

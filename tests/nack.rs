@@ -43,8 +43,6 @@ pub fn loss_recovery() -> Result<(), RtcError> {
     assert_eq!(params.spec().codec, Codec::Vp8);
     let pt = params.pt();
 
-    let exts = ExtensionValues::default();
-
     let to_write = &[0x1, 0x2, 0x3, 0x4];
     let num_packets: usize = 1000;
 
@@ -57,6 +55,8 @@ pub fn loss_recovery() -> Result<(), RtcError> {
 
         let time = (index * 1000 + 47_000_000) as u32;
         let seq_no = (47_000 + index as u64).into();
+
+        let exts = ExtensionValues::default();
 
         stream
             .write_rtp(
@@ -199,8 +199,6 @@ pub fn nack_delay() -> Result<(), RtcError> {
     assert_eq!(params.spec().codec, Codec::Vp8);
     let pt = params.pt();
 
-    let mut exts = ExtensionValues::default();
-
     let to_write: Vec<&[u8]> = vec![
         &[0x1, 0x2, 0x3, 0x4],
         &[0x9, 0xa, 0xb, 0xc],
@@ -242,6 +240,7 @@ pub fn nack_delay() -> Result<(), RtcError> {
                     continue;
                 }
 
+                let mut exts = ExtensionValues::default();
                 exts.audio_level = Some(-42 - count as i8);
                 exts.voice_activity = Some(false);
 

@@ -46,8 +46,6 @@ pub fn rtp_direct_with_roc() -> Result<(), RtcError> {
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
 
-    let mut exts = ExtensionValues::default();
-
     let to_write: Vec<&[u8]> = vec![
         // 1
         &[0x1, 0x2, 0x3, 0x4],
@@ -78,6 +76,7 @@ pub fn rtp_direct_with_roc() -> Result<(), RtcError> {
                 // this seqno is already past first ROC
                 let seq_no = (*seq_no_offset + count).into();
 
+                let mut exts = ExtensionValues::default();
                 exts.audio_level = Some(-42 - count as i8);
                 exts.voice_activity = Some(false);
 

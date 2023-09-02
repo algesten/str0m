@@ -136,7 +136,7 @@ impl Session {
             reordering_size_video: config.reordering_size_video,
             send_buffer_audio: config.send_buffer_audio,
             send_buffer_video: config.send_buffer_video,
-            exts: config.exts,
+            exts: config.exts.clone(),
 
             // Both sending and receiving starts from the configured codecs.
             // These can then be changed in the SDP OFFER/ANSWER dance.

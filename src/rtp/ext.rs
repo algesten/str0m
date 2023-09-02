@@ -5,7 +5,7 @@ use super::mtime::MediaTime;
 use super::{Mid, Rid};
 
 /// RTP header extensions.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum Extension {
     /// <http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time>
@@ -109,7 +109,7 @@ impl Extension {
     pub fn from_uri(uri: &str) -> Self {
         for (t, spec) in EXT_URI.iter() {
             if *spec == uri {
-                return *t;
+                return t.clone();
             }
         }
 
@@ -187,10 +187,10 @@ impl Extension {
 // "a=extmap:14 urn:ietf:params:rtp-hdrext:toffset"
 
 /// Mapping between RTP extension id to what extension that is.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ExtensionMap([Option<MapEntry>; 14]); // index 0 is extmap:1.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct MapEntry {
     ext: Extension,
     locked: bool,
@@ -199,7 +199,7 @@ struct MapEntry {
 impl ExtensionMap {
     /// Create an empty map.
     pub fn empty() -> Self {
-        ExtensionMap([None; 14])
+        ExtensionMap(std::array::from_fn(|_| None))
     }
 
     /// Creates a map with the "standard" mappings.
@@ -244,9 +244,9 @@ impl ExtensionMap {
     /// Look up the extension for the id.
     ///
     /// The id must be 1-14 inclusive (1-indexed).
-    pub fn lookup(&self, id: u8) -> Option<Extension> {
+    pub fn lookup(&self, id: u8) -> Option<&Extension> {
         if id >= 1 && id <= 14 {
-            self.0[id as usize - 1].map(|m| m.ext)
+            self.0[id as usize - 1].as_ref().map(|m| &m.ext)
         } else {
             debug!("Lookup RTP extension out of range 1-14: {}", id);
             None
@@ -259,14 +259,14 @@ impl ExtensionMap {
     pub fn id_of(&self, e: Extension) -> Option<u8> {
         self.0
             .iter()
-            .position(|x| x.map(|e| e.ext) == Some(e))
+            .position(|x| x.as_ref().map(|e| &e.ext) == Some(&e))
             .map(|p| p as u8 + 1)
     }
 
     /// Returns an iterator over the elements of the extension map
     ///
     /// Filtering them based on the provided `audio` flag
-    pub fn iter(&self, audio: bool) -> impl Iterator<Item = (u8, Extension)> + '_ {
+    pub fn iter(&self, audio: bool) -> impl Iterator<Item = (u8, &Extension)> + '_ {
         self.0
             .iter()
             .enumerate()
@@ -278,13 +278,13 @@ impl ExtensionMap {
                     e.ext.is_video()
                 }
             })
-            .map(|(i, e)| ((i + 1) as u8, e.ext))
+            .map(|(i, e)| ((i + 1) as u8, &e.ext))
     }
 
     pub(crate) fn cloned_with_type(&self, audio: bool) -> Self {
         let mut x = ExtensionMap::empty();
         for (id, ext) in self.iter(audio) {
-            x.set(id, ext);
+            x.set(id, ext.clone());
         }
         x
     }
@@ -347,14 +347,14 @@ impl ExtensionMap {
         orig_len - b.len()
     }
 
-    pub(crate) fn remap(&mut self, remote_exts: &[(u8, Extension)]) {
+    pub(crate) fn remap(&mut self, remote_exts: &[(u8, &Extension)]) {
         // Match remote numbers and lock down those we see for the first time.
         for (id, ext) in remote_exts {
-            self.swap(*id, *ext);
+            self.swap(*id, ext);
         }
     }
 
-    fn swap(&mut self, id: u8, ext: Extension) {
+    fn swap(&mut self, id: u8, ext: &Extension) {
         if id < 1 || id > 14 {
             return;
         }
@@ -366,7 +366,7 @@ impl ExtensionMap {
             .0
             .iter()
             .enumerate()
-            .find(|(_, m)| m.map(|m| m.ext) == Some(ext))
+            .find(|(_, m)| m.as_ref().map(|m| &m.ext) == Some(ext))
             .map(|(i, _)| i)
         else {
             return;
@@ -599,7 +599,7 @@ impl Extension {
 /// Values in an RTP header extension.
 ///
 /// This is metadata that is available also without decrypting the SRTP packets.
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct ExtensionValues {
     /// Audio level is measured in negative decibel. 0 is max and a "normal" value might be -30.
     pub audio_level: Option<i8>,
@@ -734,7 +734,7 @@ impl fmt::Debug for ExtensionMap {
             .0
             .iter()
             .enumerate()
-            .filter_map(|(i, v)| v.map(|v| (i + 1, v)))
+            .filter_map(|(i, v)| v.as_ref().map(|v| (i + 1, v)))
             .map(|(i, v)| format!("{}={}", i, v.ext))
             .collect::<Vec<_>>()
             .join(", ");
@@ -826,12 +826,12 @@ mod test {
         assert_eq!(
             e1.iter(true).collect::<Vec<_>>(),
             vec![
-                (1, AudioLevel),
-                (2, AbsoluteSendTime),
-                (4, RtpMid),
-                (10, RtpStreamId),
-                (11, RepairedRtpStreamId),
-                (14, TransportSequenceNumber)
+                (1, &AudioLevel),
+                (2, &AbsoluteSendTime),
+                (4, &RtpMid),
+                (10, &RtpStreamId),
+                (11, &RepairedRtpStreamId),
+                (14, &TransportSequenceNumber)
             ]
         );
 
@@ -839,12 +839,12 @@ mod test {
         assert_eq!(
             e1.iter(false).collect::<Vec<_>>(),
             vec![
-                (2, AbsoluteSendTime),
-                (4, RtpMid),
-                (10, RtpStreamId),
-                (11, RepairedRtpStreamId),
-                (13, VideoOrientation),
-                (14, TransportSequenceNumber),
+                (2, &AbsoluteSendTime),
+                (4, &RtpMid),
+                (10, &RtpStreamId),
+                (11, &RepairedRtpStreamId),
+                (13, &VideoOrientation),
+                (14, &TransportSequenceNumber),
             ]
         );
     }
@@ -867,9 +867,9 @@ mod test {
         assert_eq!(
             e1.iter(false).collect::<Vec<_>>(),
             vec![
-                (5, VideoContentType),
-                (12, VideoOrientation),
-                (14, TransportSequenceNumber)
+                (5, &VideoContentType),
+                (12, &VideoOrientation),
+                (14, &TransportSequenceNumber)
             ]
         );
     }
@@ -890,7 +890,7 @@ mod test {
         // just make sure the logic isn't wrong for 12-14 -> 14-12
         assert_eq!(
             e1.iter(false).collect::<Vec<_>>(),
-            vec![(12, VideoOrientation), (14, TransportSequenceNumber)]
+            vec![(12, &VideoOrientation), (14, &TransportSequenceNumber)]
         );
     }
 
@@ -917,7 +917,7 @@ mod test {
         println!("{:#?}", e1.0);
         assert_eq!(
             e1.iter(false).collect::<Vec<_>>(),
-            vec![(12, VideoOrientation), (14, TransportSequenceNumber)]
+            vec![(12, &VideoOrientation), (14, &TransportSequenceNumber)]
         );
 
         // Now attempt e3
@@ -927,7 +927,7 @@ mod test {
         // At this point we should have not allowed the change, but remain as it was in first apply.
         assert_eq!(
             e1.iter(false).collect::<Vec<_>>(),
-            vec![(12, VideoOrientation), (14, TransportSequenceNumber)]
+            vec![(12, &VideoOrientation), (14, &TransportSequenceNumber)]
         );
     }
 }

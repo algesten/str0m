@@ -251,7 +251,7 @@ impl Media {
                         network_time: dep.first_network_time(),
                         seq_range: dep.seq_range(),
                         contiguous: dep.contiguous,
-                        ext_vals: dep.ext_vals(),
+                        ext_vals: dep.ext_vals().clone(),
                         codec_extra: dep.codec_extra,
                         data: dep.data,
                     })

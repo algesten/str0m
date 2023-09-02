@@ -39,8 +39,6 @@ pub fn rtp_direct_mid_rid() -> Result<(), RtcError> {
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
 
-    let mut exts = ExtensionValues::default();
-
     let to_write: Vec<&[u8]> = vec![
         // 1
         &[0x1, 0x2, 0x3, 0x4],
@@ -69,6 +67,7 @@ pub fn rtp_direct_mid_rid() -> Result<(), RtcError> {
                 let time = (count * 1000 + 47_000_000) as u32;
                 let seq_no = (47_000 + count).into();
 
+                let mut exts = ExtensionValues::default();
                 exts.audio_level = Some(-42 - count as i8);
                 exts.voice_activity = Some(false);
 

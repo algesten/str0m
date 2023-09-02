@@ -912,12 +912,6 @@ fn add_new_lines(
 /// Update session level properties like
 /// Extensions from offer or answer.
 fn update_session(session: &mut Session, sdp: &Sdp) {
-    let old = session.exts;
-
-    if old != session.exts {
-        debug!("Updated session extensions: {:?}", session.exts);
-    }
-
     // Does any m-line contain a a=rtcp-fb:xx transport-cc?
     let has_transport_cc = sdp
         .media_lines
@@ -997,7 +991,7 @@ fn update_media(
             // Don't set any extensions that aren't enabled in Session.
             continue;
         }
-        remote_extmap.set(id, ext);
+        remote_extmap.set(id, ext.clone());
     }
     media.set_remote_extmap(remote_extmap);
 
@@ -1114,7 +1108,10 @@ impl AsSdpMediaLine for Media {
 
         let audio = self.kind() == MediaKind::Audio;
         for (id, ext) in self.remote_extmap().iter(audio) {
-            attrs.push(MediaAttribute::ExtMap { id, ext });
+            attrs.push(MediaAttribute::ExtMap {
+                id,
+                ext: ext.clone(),
+            });
         }
 
         attrs.push(self.direction().into());

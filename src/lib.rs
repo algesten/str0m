@@ -1547,8 +1547,8 @@ impl Rtc {
 
     /// All current RTP header extensions. For integration tests.
     #[doc(hidden)]
-    pub fn exts(&self) -> ExtensionMap {
-        self.session.exts
+    pub fn exts(&self) -> &ExtensionMap {
+        &self.session.exts
     }
 
     /// Current local ICE credentials. For integration tests.
