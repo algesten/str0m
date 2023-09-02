@@ -67,7 +67,7 @@ impl Payloader {
                 rtp_time.numer() as u32,
                 wallclock,
                 marker,
-                ext_vals,
+                ext_vals.clone(),
                 nackable,
                 data,
             );

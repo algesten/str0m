@@ -235,30 +235,30 @@ fn answer_remaps() {
     assert_eq!(
         v_l,
         vec![
-            (2, AbsoluteSendTime),
-            (3, TransportSequenceNumber),
-            (4, RtpMid),
-            (10, RtpStreamId),
-            (11, RepairedRtpStreamId),
-            (13, VideoOrientation)
+            (2, &AbsoluteSendTime),
+            (3, &TransportSequenceNumber),
+            (4, &RtpMid),
+            (10, &RtpStreamId),
+            (11, &RepairedRtpStreamId),
+            (13, &VideoOrientation)
         ]
     );
-    assert_eq!(v_r, vec![(3, TransportSequenceNumber)]);
+    assert_eq!(v_r, vec![(3, &TransportSequenceNumber)]);
 
     // L audio exts are left untouched (the defaults), also ones shared with video.
     // R audio exts are left untouched.
     assert_eq!(
         a_l,
         vec![
-            (1, AudioLevel),
-            (2, AbsoluteSendTime),
-            (3, TransportSequenceNumber),
-            (4, RtpMid),
-            (10, RtpStreamId),
-            (11, RepairedRtpStreamId)
+            (1, &AudioLevel),
+            (2, &AbsoluteSendTime),
+            (3, &TransportSequenceNumber),
+            (4, &RtpMid),
+            (10, &RtpStreamId),
+            (11, &RepairedRtpStreamId)
         ]
     );
-    assert_eq!(a_r, vec![(3, TransportSequenceNumber), (12, AudioLevel)]);
+    assert_eq!(a_r, vec![(3, &TransportSequenceNumber), (12, &AudioLevel)]);
 }
 
 #[test]
@@ -282,11 +282,11 @@ fn offers_unsupported_extension() {
 
     assert_eq!(
         l.exts().iter(false).collect::<Vec<_>>(),
-        vec![(3, VideoOrientation), (8, ColorSpace)]
+        vec![(3, &VideoOrientation), (8, &ColorSpace)]
     );
     assert_eq!(
         r.exts().iter(false).collect::<Vec<_>>(),
-        vec![(3, VideoOrientation)]
+        vec![(3, &VideoOrientation)]
     );
 
     let mid = l.mids()[0];
@@ -296,13 +296,13 @@ fn offers_unsupported_extension() {
     // L media did not get R unsupported ext, despite that being configured on session.
     assert_eq!(
         m_l.remote_extmap().iter(false).collect::<Vec<_>>(),
-        vec![(3, VideoOrientation)]
+        vec![(3, &VideoOrientation)]
     );
 
     // R media didn't get the unsupported ext.
     assert_eq!(
         m_r.remote_extmap().iter(false).collect::<Vec<_>>(),
-        vec![(3, VideoOrientation)]
+        vec![(3, &VideoOrientation)]
     );
 }
 

@@ -44,10 +44,10 @@ impl Depacketized {
         first..=last
     }
 
-    pub fn ext_vals(&self) -> ExtensionValues {
+    pub fn ext_vals(&self) -> &ExtensionValues {
         // We use the extensions from the last packet because certain extensions, such as video
         // orientation, are only added on the last packet to save bytes.
-        self.meta[self.meta.len() - 1].header.ext_vals
+        &self.meta[self.meta.len() - 1].header.ext_vals
     }
 }
 
