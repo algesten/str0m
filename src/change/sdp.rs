@@ -448,6 +448,7 @@ impl Changes {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Change {
     AddMedia(AddMedia),
     AddApp(Mid),

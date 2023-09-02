@@ -44,8 +44,8 @@ pub enum Extension {
     FrameMarking,
     /// <http://www.webrtc.org/experiments/rtp-hdrext/color-space>
     ColorSpace,
-    /// Not recognized URI
-    UnknownUri,
+    /// Not recognized UR, but it could still be user parseable.
+    UnknownUri(String),
 }
 
 /// Mapping of extension URI to our enum
@@ -113,23 +113,22 @@ impl Extension {
             }
         }
 
-        trace!("Unknown a=extmap uri: {}", uri);
-
-        Extension::UnknownUri
+        Extension::UnknownUri(uri.to_string())
     }
 
     /// Represents the extension as an URI.
-    pub fn as_uri(&self) -> &'static str {
+    pub fn as_uri(&self) -> &str {
         for (t, spec) in EXT_URI.iter() {
             if t == self {
                 return spec;
             }
         }
-        "unknown"
-    }
 
-    pub(crate) fn is_serialized(&self) -> bool {
-        *self != Extension::UnknownUri
+        if let Extension::UnknownUri(uri) = self {
+            return uri;
+        }
+
+        "unknown"
     }
 
     fn is_audio(&self) -> bool {
@@ -484,9 +483,9 @@ impl Extension {
             }
             ColorSpace => {
                 // TODO HDR color space
-                todo!()
+                None
             }
-            UnknownUri => {
+            UnknownUri(_) => {
                 // do nothing
                 todo!()
             }
@@ -587,7 +586,7 @@ impl Extension {
             ColorSpace => {
                 // TODO HDR color space
             }
-            UnknownUri => {
+            UnknownUri(_) => {
                 // ignore
             }
         }
@@ -721,7 +720,7 @@ impl fmt::Display for Extension {
                 RtpMid => "mid",
                 FrameMarking => "frame-marking07",
                 ColorSpace => "color-space",
-                UnknownUri => "unknown-uri",
+                UnknownUri(uri) => uri,
             }
         )
     }
