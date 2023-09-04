@@ -10,6 +10,164 @@ use str0m::{Event, RtcError};
 mod common;
 use common::{connect_l_r, init_log, progress};
 
+use crate::common::progress_with_loss;
+
+#[test]
+pub fn loss_recovery() -> Result<(), RtcError> {
+    init_log();
+
+    let (mut l, mut r) = connect_l_r();
+
+    let mid = "vid".into();
+
+    // In this example we are using MID only (no RID) to identify the incoming media.
+    let ssrc_tx: Ssrc = 42.into();
+    let ssrc_rtx: Ssrc = 44.into();
+
+    l.direct_api().declare_media(mid, MediaKind::Video);
+
+    l.direct_api()
+        .declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
+
+    r.direct_api().declare_media(mid, MediaKind::Video);
+
+    r.direct_api()
+        .expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
+
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
+
+    let params = l.params_vp8();
+    let ssrc = l.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
+    assert_eq!(params.spec().codec, Codec::Vp8);
+    let pt = params.pt();
+
+    let exts = ExtensionValues::default();
+
+    let to_write = &[0x1, 0x2, 0x3, 0x4];
+    let num_packets: usize = 1000;
+
+    // write all packets num_packets
+    for index in 0..num_packets {
+        let wallclock = l.start + l.duration();
+
+        let mut direct = l.direct_api();
+        let stream = direct.stream_tx(&ssrc).unwrap();
+
+        let time = (index * 1000 + 47_000_000) as u32;
+        let seq_no = (47_000 + index as u64).into();
+
+        stream
+            .write_rtp(
+                pt,
+                seq_no,
+                time,
+                wallclock,
+                false,
+                exts,
+                true,
+                to_write.to_vec(),
+            )
+            .expect("clean write");
+
+        if !(10..=990).contains(&index) {
+            // close to start and end we disable loss to make sure the
+            // retransmission nacking algo is in a stable state
+            // (see MISORDER_DELAY in register.rs)
+            progress(&mut l, &mut r)?;
+        } else {
+            progress_with_loss(&mut l, &mut r, 0.05)?;
+        }
+    }
+
+    // let some time pass for retransmission to happen
+    let settle_time = l.duration() + Duration::from_secs(2);
+    loop {
+        progress(&mut l, &mut r)?;
+
+        if l.duration() > settle_time {
+            break;
+        }
+    }
+
+    // some nacks have been transmitted
+    let nacks_tx = r
+        .events
+        .iter()
+        .filter_map(|(_, e)| match e {
+            Event::RawPacket(RawPacket::RtcpTx(Rtcp::Nack(p))) => Some(p),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(!nacks_tx.is_empty());
+
+    // some nacks have been received
+    let nacks_rx = l
+        .events
+        .iter()
+        .filter_map(|(_, e)| match e {
+            Event::RawPacket(RawPacket::RtcpRx(Rtcp::Nack(p))) => Some(p),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(!nacks_rx.is_empty());
+
+    // all packets were received in the end
+    let mut packets_rx = r
+        .events
+        .iter()
+        .filter_map(|(_, e)| match e {
+            Event::RawPacket(RawPacket::RtpRx(p, b)) => {
+                //
+                if p.payload_type == params.resend().unwrap() {
+                    // read original seq no
+                    let seq_no = u16::from_be_bytes(b.get(0..2)?.try_into().ok()?);
+                    Some(seq_no)
+                } else {
+                    Some(p.sequence_number)
+                }
+            }
+
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    packets_rx.sort();
+
+    let discontinuities = packets_rx
+        .windows(2)
+        .filter_map(|slice| {
+            let a = slice.first()?;
+            let b = slice.get(1)?;
+            if a + 1 != *b {
+                Some((*a, *b))
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let min = packets_rx.first().unwrap();
+    let max = packets_rx.last().unwrap();
+
+    // useful for debugging
+    // println!(
+    //     "min: {}, max: {}, discontinuities: {:?}",
+    //     min, max, discontinuities
+    // );
+
+    assert_eq!(*min, 47_000);
+    assert_eq!(*max, 47_999);
+
+    assert_eq!(discontinuities.len(), 0);
+    assert_eq!(packets_rx.len(), num_packets);
+
+    Ok(())
+}
+
 #[test]
 pub fn nack_delay() -> Result<(), RtcError> {
     init_log();
