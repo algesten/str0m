@@ -4,6 +4,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
+use rand::Rng;
 use str0m::change::SdpApi;
 use str0m::format::Codec;
 use str0m::format::PayloadParams;
@@ -72,6 +73,46 @@ pub fn progress(l: &mut TestRtc, r: &mut TestRtc) -> Result<(), RtcError> {
                 break;
             }
             Output::Transmit(v) => {
+                let data = v.contents;
+                let input = Input::Receive(
+                    f.last,
+                    Receive {
+                        source: v.source,
+                        destination: v.destination,
+                        contents: (&*data).try_into()?,
+                    },
+                );
+                t.span.in_scope(|| t.rtc.handle_input(input))?;
+            }
+            Output::Event(v) => {
+                f.events.push((f.last, v));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub fn progress_with_loss(l: &mut TestRtc, r: &mut TestRtc, loss: f32) -> Result<(), RtcError> {
+    let (f, t) = if l.last < r.last { (l, r) } else { (r, l) };
+    let mut rng = rand::thread_rng();
+
+    loop {
+        f.span
+            .in_scope(|| f.rtc.handle_input(Input::Timeout(f.last)))?;
+
+        match f.span.in_scope(|| f.rtc.poll_output())? {
+            Output::Timeout(v) => {
+                let tick = f.last + Duration::from_millis(10);
+                f.last = if v == f.last { tick } else { tick.min(v) };
+                break;
+            }
+            Output::Transmit(v) => {
+                if rng.gen::<f32>() <= loss {
+                    // LOSS !
+                    break;
+                }
+
                 let data = v.contents;
                 let input = Input::Receive(
                     f.last,
