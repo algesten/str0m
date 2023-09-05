@@ -1,4 +1,7 @@
 
+# Unreleased
+  * User RTP header extensions
+
 # 0.2.0
   * Possible to disable DTLS fingerprint verification
   * Manually set local ice credentials
