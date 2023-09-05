@@ -54,9 +54,11 @@ pub fn repeated() -> Result<(), RtcError> {
             let time = (count * 1000 + 47_000_000) as u32;
             let seq_no = (47_000 + count).into();
 
-            let mut exts = ExtensionValues::default();
-            exts.audio_level = Some(-42 - count as i8);
-            exts.voice_activity = Some(false);
+            let exts = ExtensionValues {
+                audio_level: Some(-42 - count as i8),
+                voice_activity: Some(false),
+                ..Default::default()
+            };
 
             stream
                 .write_rtp(

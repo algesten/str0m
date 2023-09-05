@@ -1,11 +1,19 @@
+use std::any::Any;
+use std::any::TypeId;
+use std::collections::HashMap;
 use std::fmt;
+use std::fmt::Debug;
+use std::hash::BuildHasherDefault;
+use std::hash::Hasher;
+use std::panic::UnwindSafe;
 use std::str::from_utf8;
+use std::sync::Arc;
 
 use super::mtime::MediaTime;
 use super::{Mid, Rid};
 
 /// RTP header extensions.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum Extension {
     /// <http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time>
@@ -44,8 +52,50 @@ pub enum Extension {
     FrameMarking,
     /// <http://www.webrtc.org/experiments/rtp-hdrext/color-space>
     ColorSpace,
-    /// Not recognized UR, but it could still be user parseable.
-    UnknownUri(String),
+
+    /// Not recognized URI, but it could still be user parseable.
+    #[doc(hidden)]
+    UnknownUri(String, Arc<dyn ExtensionSerializer>),
+}
+
+// TODO: think this through. Is it unwind safe?
+impl UnwindSafe for Extension {}
+
+/// Trait for parsing/writing user RTP header extensions.
+pub trait ExtensionSerializer: Debug + Send + Sync + 'static {
+    /// Write the extension to the buffer of bytes. Must return the number
+    /// of bytes written. This can be 0 if the extension could not be serialized.
+    fn write_to(&self, buf: &mut [u8], ev: &ExtensionValues) -> usize;
+
+    /// Parse a value and put it in the [`ExtensionValues::user_values`] field.
+    fn parse_value(&self, buf: &[u8], ev: &mut ExtensionValues) -> bool;
+
+    /// Tell if this extension should be used for video media.
+    fn is_video(&self) -> bool;
+
+    /// Tell if this extension should be used for audio media.
+    fn is_audio(&self) -> bool;
+}
+
+/// This is a placeholder value for when the Extension URI are parsed in an SDP OFFER/ANSWER.
+/// The trait write_to() and parse_value() should never be called (that would be a bug).
+#[derive(Debug)]
+struct SdpUnknownUri;
+
+impl ExtensionSerializer for SdpUnknownUri {
+    // If an unreachable happens, it's a bug.
+    fn write_to(&self, _buf: &mut [u8], _ev: &ExtensionValues) -> usize {
+        unreachable!("Incorrect ExtensionSerializer::write_to")
+    }
+    fn parse_value(&self, _buf: &[u8], _ev: &mut ExtensionValues) -> bool {
+        unreachable!("Incorrect ExtensionSerializer::parse_value")
+    }
+    fn is_video(&self) -> bool {
+        unreachable!("Incorrect ExtensionSerializer::is_video")
+    }
+    fn is_audio(&self) -> bool {
+        unreachable!("Incorrect ExtensionSerializer::is_audio")
+    }
 }
 
 /// Mapping of extension URI to our enum
@@ -105,15 +155,22 @@ const EXT_URI: &[(Extension, &str)] = &[
 ];
 
 impl Extension {
-    /// Parses an extension from a URI.
-    pub fn from_uri(uri: &str) -> Self {
+    /// Parses an extension from a URI. This only happens for incoming SDP OFFER/ANSWER
+    /// while the corresponding Extension with a potential ExtensionSerializer is
+    /// in Rtc::session.
+    pub(crate) fn from_sdp_uri(uri: &str) -> Self {
         for (t, spec) in EXT_URI.iter() {
             if *spec == uri {
                 return t.clone();
             }
         }
 
-        Extension::UnknownUri(uri.to_string())
+        Extension::UnknownUri(uri.to_string(), Arc::new(SdpUnknownUri))
+    }
+
+    /// Extension for a uri not handled by str0m itself.
+    pub fn with_serializer(uri: &str, s: impl ExtensionSerializer) -> Self {
+        Extension::UnknownUri(uri.to_string(), Arc::new(s))
     }
 
     /// Represents the extension as an URI.
@@ -124,15 +181,38 @@ impl Extension {
             }
         }
 
-        if let Extension::UnknownUri(uri) = self {
+        if let Extension::UnknownUri(uri, _) = self {
             return uri;
         }
 
         "unknown"
     }
 
+    pub(crate) fn is_serialized(&self) -> bool {
+        if let Self::UnknownUri(_, s) = self {
+            // Check if this Arc contains the SdpUnknownUri.
+            let is_sdp = (s as &(dyn Any + 'static))
+                .downcast_ref::<SdpUnknownUri>()
+                .is_some();
+
+            // If it is the SdpUnknownUri, we are not serializing. If this happens,
+            // it's probably a bug. The only way to construct SdpUnknownUri is via SDP,
+            // but those values are only for Eq-comparison vs the values in Session.
+            // The SdpUnknownUri should not even try to be serialized.
+            if is_sdp {
+                panic!("is_serialized on SdpUnkownUri, this is a bug");
+            }
+        }
+        true
+    }
+
     fn is_audio(&self) -> bool {
         use Extension::*;
+
+        if let UnknownUri(_, serializer) = self {
+            return serializer.is_audio();
+        }
+
         matches!(
             self,
             RtpStreamId
@@ -148,6 +228,11 @@ impl Extension {
 
     fn is_video(&self) -> bool {
         use Extension::*;
+
+        if let UnknownUri(_, serializer) = self {
+            return serializer.is_video();
+        }
+
         matches!(
             self,
             RtpStreamId
@@ -485,9 +570,14 @@ impl Extension {
                 // TODO HDR color space
                 None
             }
-            UnknownUri(_) => {
-                // do nothing
-                todo!()
+            UnknownUri(_, serializer) => {
+                let n = serializer.write_to(buf, ev);
+
+                if n == 0 {
+                    None
+                } else {
+                    Some(n)
+                }
             }
         }
     }
@@ -586,8 +676,11 @@ impl Extension {
             ColorSpace => {
                 // TODO HDR color space
             }
-            UnknownUri(_) => {
-                // ignore
+            UnknownUri(_, serializer) => {
+                let success = serializer.parse_value(buf, ev);
+                if !success {
+                    return None;
+                }
             }
         }
 
@@ -635,7 +728,111 @@ pub struct ExtensionValues {
     pub mid: Option<Mid>,
     #[doc(hidden)]
     pub frame_mark: Option<u32>,
+
+    /// User values for [`ExtensionSerializer`] to parse into and write from.
+    pub user_values: UserExtensionValues,
 }
+
+/// Space for storing user extension values via [`ExtensionSerializer`].
+#[derive(Clone, Default)]
+pub struct UserExtensionValues {
+    map: Option<AnyMap>,
+}
+
+// The "AnyMap" idea is borrowed from the http crate but replacing Box for Any.
+type AnyMap = HashMap<TypeId, Arc<dyn Any + Send + Sync>, BuildHasherDefault<IdHasher>>;
+
+// No point in hashing the TypeId, since it is already unique.
+#[derive(Default)]
+struct IdHasher(u64);
+
+impl Hasher for IdHasher {
+    fn write(&mut self, _: &[u8]) {
+        unreachable!("TypeId calls write_u64");
+    }
+
+    #[inline]
+    fn write_u64(&mut self, id: u64) {
+        self.0 = id;
+    }
+
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+// TODO: I don't see a good way of comparing this. Is there one?
+impl PartialEq for UserExtensionValues {
+    fn eq(&self, other: &Self) -> bool {
+        let (Some(m1), Some(m2)) = (&self.map, &other.map) else {
+            return self.map.is_none() == other.map.is_none();
+        };
+
+        for k1 in m1.keys() {
+            if !m2.contains_key(k1) {
+                return false;
+            }
+        }
+
+        for k2 in m2.keys() {
+            if !m1.contains_key(k2) {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+impl Eq for UserExtensionValues {}
+
+impl UserExtensionValues {
+    /// Set a user extension value.
+    ///
+    /// This uses the type of the value as "key", i.e. it can only hold a single
+    /// per type. The user should make a wrapper type for the extension they want
+    /// to parse/write.
+    ///
+    /// ```
+    /// # use str0m::rtp::ExtensionValues;
+    /// let mut exts = ExtensionValues::default();
+    ///
+    /// #[derive(Debug, PartialEq, Eq)]
+    /// struct MySpecialType(u8);
+    ///
+    /// exts.user_values.set(MySpecialType(42));
+    /// ```
+    pub fn set<T: Send + Sync + 'static>(&mut self, val: T) {
+        self.map
+            .get_or_insert_with(HashMap::default)
+            .insert(TypeId::of::<T>(), Arc::new(val));
+    }
+
+    /// Get a user extension value (by type).
+    /// ```
+    /// # use str0m::rtp::ExtensionValues;
+    /// let mut exts = ExtensionValues::default();
+    ///
+    /// #[derive(Debug, PartialEq, Eq)]
+    /// struct MySpecialType(u8);
+    ///
+    /// exts.user_values.set(MySpecialType(42));
+    ///
+    /// let v = exts.user_values.get::<MySpecialType>();
+    ///
+    /// assert_eq!(v, Some(&MySpecialType(42)));
+    /// ```
+    pub fn get<T: Send + Sync + 'static>(&self) -> Option<&T> {
+        self.map
+            .as_ref()
+            .and_then(|map| map.get(&TypeId::of::<T>()))
+            // unwrap here is OK because TypeId::of::<T> is guaranteed to be unique
+            .map(|boxed| (&**boxed as &(dyn Any + 'static)).downcast_ref().unwrap())
+    }
+}
+
+impl UnwindSafe for UserExtensionValues {}
 
 impl fmt::Debug for ExtensionValues {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -720,7 +917,7 @@ impl fmt::Display for Extension {
                 RtpMid => "mid",
                 FrameMarking => "frame-marking07",
                 ColorSpace => "color-space",
-                UnknownUri(uri) => uri,
+                UnknownUri(uri, _) => uri,
             }
         )
     }
@@ -766,6 +963,30 @@ impl From<u8> for VideoOrientation {
         }
     }
 }
+
+impl PartialEq for Extension {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Extension::AbsoluteSendTime, Extension::AbsoluteSendTime) => true,
+            (Extension::AudioLevel, Extension::AudioLevel) => true,
+            (Extension::TransmissionTimeOffset, Extension::TransmissionTimeOffset) => true,
+            (Extension::VideoOrientation, Extension::VideoOrientation) => true,
+            (Extension::TransportSequenceNumber, Extension::TransportSequenceNumber) => true,
+            (Extension::PlayoutDelay, Extension::PlayoutDelay) => true,
+            (Extension::VideoContentType, Extension::VideoContentType) => true,
+            (Extension::VideoTiming, Extension::VideoTiming) => true,
+            (Extension::RtpStreamId, Extension::RtpStreamId) => true,
+            (Extension::RepairedRtpStreamId, Extension::RepairedRtpStreamId) => true,
+            (Extension::RtpMid, Extension::RtpMid) => true,
+            (Extension::FrameMarking, Extension::FrameMarking) => true,
+            (Extension::ColorSpace, Extension::ColorSpace) => true,
+            (Extension::UnknownUri(uri1, _), Extension::UnknownUri(uri2, _)) => uri1 == uri2,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Extension {}
 
 #[cfg(test)]
 mod test {

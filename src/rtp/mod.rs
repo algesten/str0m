@@ -7,7 +7,8 @@ mod id;
 pub use id::{Mid, Pt, Rid, SeqNo, SessionId, Ssrc};
 
 mod ext;
-pub use ext::{Extension, ExtensionMap, ExtensionValues, VideoOrientation};
+pub use ext::{Extension, ExtensionMap, ExtensionSerializer, ExtensionValues};
+pub use ext::{UserExtensionValues, VideoOrientation};
 
 mod dir;
 pub use dir::Direction;

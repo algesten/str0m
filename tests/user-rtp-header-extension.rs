@@ -1,0 +1,158 @@
+use std::net::Ipv4Addr;
+use std::time::Duration;
+
+use str0m::format::Codec;
+use str0m::media::{Direction, MediaKind};
+use str0m::rtp::Extension;
+use str0m::rtp::ExtensionSerializer;
+use str0m::rtp::ExtensionValues;
+use str0m::Rtc;
+use str0m::{Candidate, Event, RtcError};
+use tracing::info_span;
+
+mod common;
+use common::{init_log, progress, TestRtc};
+
+#[test]
+pub fn user_rtp_header_extension() -> Result<(), RtcError> {
+    init_log();
+
+    #[derive(Debug, PartialEq, Eq)]
+    struct MyValue(u16);
+
+    #[derive(Debug)]
+    struct MyValueSerializer;
+
+    impl ExtensionSerializer for MyValueSerializer {
+        fn write_to(&self, buf: &mut [u8], ev: &ExtensionValues) -> usize {
+            // Does output have space?
+            if buf.len() < 2 {
+                return 0;
+            }
+
+            // Is there a value set?
+            let Some(my_value) = ev.user_values.get::<MyValue>() else {
+                return 0;
+            };
+
+            // u16 is 2 bytes
+            buf[..2].copy_from_slice(&my_value.0.to_be_bytes());
+
+            2
+        }
+
+        fn parse_value(&self, buf: &[u8], ev: &mut ExtensionValues) -> bool {
+            // Is buffer big enough to hold the value?
+            if buf.len() < 2 {
+                return false;
+            }
+
+            let v = u16::from_be_bytes([buf[0], buf[1]]);
+            let my_value = MyValue(v);
+
+            // Save parsed value
+            ev.user_values.set(my_value);
+
+            true
+        }
+
+        fn is_audio(&self) -> bool {
+            true
+        }
+
+        fn is_video(&self) -> bool {
+            true
+        }
+    }
+
+    let user_ext = Extension::with_serializer("http://my-special-extension", MyValueSerializer);
+
+    // Both L and R must have the uri + serializer configured.
+    let rtc_l = Rtc::builder()
+        //
+        .set_extension(12, user_ext.clone())
+        .build();
+    let rtc_r = Rtc::builder()
+        //
+        .set_extension(12, user_ext)
+        .build();
+
+    let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc_l);
+    let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
+
+    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into())?;
+    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into())?;
+    l.add_local_candidate(host1);
+    r.add_local_candidate(host2);
+
+    // The change is on the L (sending side) with Direction::SendRecv.
+    let mut change = l.sdp_api();
+    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
+    let (offer, pending) = change.apply().unwrap();
+
+    let answer = r.rtc.sdp_api().accept_offer(offer)?;
+    l.rtc.sdp_api().accept_answer(pending, answer)?;
+
+    // Verify that the extension is negotiated.
+    let ext_l = l.media(mid).unwrap().remote_extmap();
+    assert_eq!(
+        ext_l.lookup(12).map(|e| e.as_uri()),
+        Some("http://my-special-extension")
+    );
+
+    let ext_r = r.media(mid).unwrap().remote_extmap();
+    assert_eq!(
+        ext_r.lookup(12).map(|e| e.as_uri()),
+        Some("http://my-special-extension")
+    );
+
+    loop {
+        if l.is_connected() || r.is_connected() {
+            break;
+        }
+        progress(&mut l, &mut r)?;
+    }
+
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
+
+    let params = l.params_opus();
+    assert_eq!(params.spec().codec, Codec::Opus);
+    let pt = params.pt();
+
+    let data_a = vec![1_u8; 80];
+
+    loop {
+        let wallclock = l.start + l.duration();
+        let time = l.duration().into();
+
+        l.writer(mid)
+            .unwrap()
+            // Set my bespoke RTP header value.
+            .user_extension_value(MyValue(42))
+            .write(pt, wallclock, time, &data_a)?;
+
+        progress(&mut l, &mut r)?;
+
+        if l.duration() > Duration::from_secs(3) {
+            break;
+        }
+    }
+
+    let iter = r.events.iter().filter_map(|(_, e)| {
+        if let Event::MediaData(d) = e {
+            Some(d)
+        } else {
+            None
+        }
+    });
+
+    // Assert every media write got the value through.
+    for data in iter {
+        let v = data.ext_vals.user_values.get::<MyValue>();
+        assert_eq!(v, Some(&MyValue(42)));
+    }
+
+    Ok(())
+}
