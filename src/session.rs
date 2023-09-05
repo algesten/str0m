@@ -509,7 +509,7 @@ impl Session {
         let receipt = if is_repair {
             // Drop RTX packets that are just empty padding. The payload here
             // is empty because we would have done RtpHeader::unpad_payload above.
-            // For unpausing, it's enough with the stream.uodate() already done above.
+            // For unpausing, it's enough with the stream.update() already done above.
             if data.is_empty() {
                 return;
             }
