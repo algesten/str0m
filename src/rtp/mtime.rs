@@ -219,7 +219,7 @@ impl InstantExt for Instant {
         let tstart = TIME_START.get().unwrap();
 
         if *self < tstart.0 {
-            panic!("Time must not go backwards from first ever Instant");
+            warn!("Time went backwards from first ever Instant");
         }
 
         let duration_since_time_0 = self.duration_since(tstart.0);

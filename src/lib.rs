@@ -1433,10 +1433,15 @@ impl Rtc {
         Ok(())
     }
 
-    fn do_handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
+    fn init_time(&mut self, now: Instant) {
         // We assume this first "now" is a time 0 start point for calculating ntp/unix time offsets.
         // This initializes the conversion of Instant -> NTP/Unix time.
         let _ = now.to_unix_duration();
+    }
+
+    fn do_handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
+        self.init_time(now);
+
         self.last_now = now;
         self.ice.handle_timeout(now);
         self.sctp.handle_timeout(now);
@@ -1457,6 +1462,8 @@ impl Rtc {
     }
 
     fn do_handle_receive(&mut self, now: Instant, r: net::Receive) -> Result<(), RtcError> {
+        self.init_time(now);
+
         trace!("IN {:?}", r);
         self.last_now = now;
         use net::DatagramRecv::*;
