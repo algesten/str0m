@@ -460,7 +460,7 @@ where
             }),
             optional((token('/'), not_sp().map(|d| Direction::from(&d[..])))),
             token(' '),
-            not_sp().map(|uri| Extension::from_uri(&uri)),
+            not_sp().map(|uri| Extension::from_sdp_uri(&uri)),
             optional((token(' '), any_value())),
         ),
     )

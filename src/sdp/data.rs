@@ -1352,9 +1352,9 @@ impl fmt::Display for MediaAttribute {
             SctpPort(v) => write!(f, "a=sctp-port:{v}\r\n")?,
             MaxMessageSize(v) => write!(f, "a=max-message-size:{v}\r\n")?,
             ExtMap { id, ext } => {
-                // if !ext.is_serialized() {
-                //     return Ok(());
-                // }
+                if !ext.is_serialized() {
+                    return Ok(());
+                }
                 write!(f, "a=extmap:{}", id)?;
                 // if let Some(d) = &e.direction {
                 //     write!(f, "/{d}")?;

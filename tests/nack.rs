@@ -240,9 +240,11 @@ pub fn nack_delay() -> Result<(), RtcError> {
                     continue;
                 }
 
-                let mut exts = ExtensionValues::default();
-                exts.audio_level = Some(-42 - count as i8);
-                exts.voice_activity = Some(false);
+                let exts = ExtensionValues {
+                    audio_level: Some(-42 - count as i8),
+                    voice_activity: Some(false),
+                    ..Default::default()
+                };
 
                 stream
                     .write_rtp(
