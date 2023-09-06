@@ -108,7 +108,7 @@ impl ReceiverRegister {
         if did_wrap {
             // The indices wrapped around the end of `packet_status`, we clear any entries between
             // the current sequence number and nack_check_from.
-            let start = (*seq + 1).into();
+            let start = (*seq - self.packet_index(*seq) as u64).into();
             let end = self.nack_check_from;
             trace!(
                 "ReceiveRegister wrapped, clearing all entries from {start} to {end} on receiving {seq}"
@@ -871,6 +871,27 @@ mod test {
         }
 
         assert_eq!(reg.nack_check_from, 3106.into());
+    }
+
+    #[test]
+    fn nack_report_rollover_rtx_with_seq_jump() {
+        let mut reg = ReceiverRegister::new(3000.into());
+
+        // 2999 is missing
+        for i in 0..2999 {
+            reg.update_seq(i.into());
+        }
+
+        // 3002 is missing
+        reg.update_seq(3003.into());
+        reg.update_seq(3004.into());
+        reg.update_seq(3000.into());
+        reg.update_seq(3001.into());
+
+        let reports = reg.nack_reports();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].reports[0].pid, 2999);
+        assert_eq!(reports[0].reports[0].blp, 4);
     }
 
     #[test]
