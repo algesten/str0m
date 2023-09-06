@@ -129,7 +129,8 @@ impl RtpHeader {
         true
     }
 
-    pub(crate) fn parse(buf: &[u8], exts: &ExtensionMap) -> Option<RtpHeader> {
+    #[doc(hidden)]
+    pub fn parse(buf: &[u8], exts: &ExtensionMap) -> Option<RtpHeader> {
         let orig_len = buf.len();
         if buf.len() < 12 {
             trace!("RTP header too short < 12: {}", buf.len());
