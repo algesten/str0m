@@ -325,33 +325,10 @@ impl ReceiverRegister {
         self.time_point_prior = Some(tp);
     }
 
-    pub fn has_nack_report(&mut self) -> bool {
+    pub fn create_nack_reports(&mut self) -> Option<Vec<Nack>> {
         // No nack report during probation.
         if self.probation > 0 {
-            return false;
-        }
-
-        // nack_check_from tracks where we create the next nack report from.
-        let start = *self.nack_check_from;
-        // MISORDER_DELAY gives us a "grace period" of receiving packets out of
-        // order without reporting it as a NACK straight away.
-        let stop = (*self.max_seq).saturating_sub(MISORDER_DELAY);
-
-        if stop < start {
-            return false;
-        }
-
-        (start..stop).any(|seq| self.packet_status[self.packet_index(seq)].should_nack())
-    }
-
-    pub fn nack_reports(&mut self) -> Vec<Nack> {
-        self.create_nack_reports()
-    }
-
-    fn create_nack_reports(&mut self) -> Vec<Nack> {
-        // No nack report during probation.
-        if self.probation > 0 {
-            return vec![];
+            return None;
         }
 
         // nack_check_from tracks where we create the next nack report from.
@@ -362,57 +339,56 @@ impl ReceiverRegister {
         let u16max = u16::MAX as u64 + 1_u64;
 
         if stop < start {
-            return vec![];
+            return None;
         }
 
         let mut nacks = vec![];
-        let mut first_missing = None;
-        let mut bitmask = 0;
+        let mut last_seq_added = 0;
 
-        for i in start..stop {
-            let j = self.packet_index(i);
+        for seq in start..stop {
+            let index = self.packet_index(seq);
 
-            let should_nack = self.packet_status[j].should_nack();
+            if !self.packet_status[index].should_nack() {
+                continue;
+            };
 
-            if let Some(first) = first_missing {
-                if should_nack {
-                    let o = (i - (first + 1)) as u16;
-                    bitmask |= 1 << o;
-                    self.packet_status[j].nack_count += 1;
-                }
+            let distance = seq - last_seq_added;
 
-                if i - first == 16 {
-                    nacks.push(NackEntry {
-                        pid: (first % u16max) as u16,
-                        blp: bitmask,
-                    });
-                    bitmask = 0;
-                    first_missing = None;
-                }
-            } else if should_nack {
-                self.packet_status[j].nack_count += 1;
-                first_missing = Some(i);
+            let update_last = nacks.last().is_some() && distance <= 16;
+
+            if update_last {
+                let last: &mut NackEntry = nacks.last_mut().expect("last");
+                let pos = (distance - 1) as u16;
+                last.blp |= 1 << pos;
+                self.packet_status[index].nack_count += 1;
+            } else {
+                nacks.push(NackEntry {
+                    pid: (seq % u16max) as u16,
+                    blp: 0,
+                });
+                last_seq_added = seq;
             }
+
+            self.packet_status[index].nack_count += 1;
         }
 
-        if let Some(first) = first_missing {
-            nacks.push(NackEntry {
-                pid: (first % u16max) as u16,
-                blp: bitmask,
-            });
+        if nacks.is_empty() {
+            return None;
         }
 
         let reports = ReportList::lists_from_iter(nacks).into_iter();
 
-        reports
-            .map(|reports| {
-                Nack {
-                    sender_ssrc: 0.into(),
-                    ssrc: 0.into(), // changed when sending
-                    reports,
-                }
-            })
-            .collect()
+        Some(
+            reports
+                .map(|reports| {
+                    Nack {
+                        sender_ssrc: 0.into(),
+                        ssrc: 0.into(), // changed when sending
+                        reports,
+                    }
+                })
+                .collect(),
+        )
     }
 
     /// Create a new reception report.
@@ -702,10 +678,10 @@ mod test {
         for i in [100, 101, 102, 103, 104, 105, 106] {
             reg.update_seq(i.into());
         }
-        assert!(reg.nack_reports().is_empty());
-        assert!(reg.nack_reports().is_empty());
-        assert!(reg.nack_reports().is_empty());
-        assert!(reg.nack_reports().is_empty());
+        assert!(reg.create_nack_reports().is_none());
+        assert!(reg.create_nack_reports().is_none());
+        assert!(reg.create_nack_reports().is_none());
+        assert!(reg.create_nack_reports().is_none());
     }
 
     struct Test {
@@ -721,8 +697,8 @@ mod test {
             reg.update_seq((*i).into());
         }
         assert_eq!(
-            reg.nack_reports(),
-            vec![Nack {
+            reg.create_nack_reports(),
+            Some(vec![Nack {
                 sender_ssrc: 0.into(),
                 ssrc: 0.into(),
                 reports: NackEntry {
@@ -730,7 +706,7 @@ mod test {
                     blp: t.bitmask,
                 }
                 .into()
-            }]
+            }])
         );
         assert_eq!(reg.nack_check_from, t.check_from.into());
     }
@@ -803,7 +779,7 @@ mod test {
         ] {
             reg.update_seq((*i).into());
         }
-        assert!(reg.nack_reports().is_empty());
+        assert!(reg.create_nack_reports().is_none());
         assert_eq!(reg.nack_check_from, (129 - MISORDER_DELAY).into());
     }
 
@@ -815,7 +791,7 @@ mod test {
         ] {
             reg.update_seq((*i).into());
         }
-        assert!(reg.nack_reports().is_empty());
+        assert!(reg.create_nack_reports().is_none());
         assert_eq!(reg.nack_check_from, (105 - MISORDER_DELAY).into());
 
         for i in &[
@@ -823,14 +799,14 @@ mod test {
         ] {
             reg.update_seq((*i).into());
         }
-        assert!(!reg.nack_reports().is_empty());
+        assert!(!reg.create_nack_reports().is_none());
         assert_eq!(reg.nack_check_from, 106.into());
 
         reg.update_seq(107.into()); // Got 107 via RTX
 
-        let nacks = reg.nack_reports();
+        let nacks = reg.create_nack_reports();
         assert!(
-            nacks.is_empty(),
+            nacks.is_none(),
             "Expected no NACKs to be generated after repairing the stream, got {nacks:?}"
         );
         assert_eq!(reg.nack_check_from, (115 - MISORDER_DELAY).into());
@@ -844,7 +820,7 @@ mod test {
         ] {
             reg.update_seq((*i).into());
         }
-        assert!(reg.nack_reports().is_empty());
+        assert!(reg.create_nack_reports().is_none());
         assert_eq!(reg.nack_check_from, (105 - MISORDER_DELAY).into());
 
         for i in &[
@@ -852,7 +828,7 @@ mod test {
         ] {
             reg.update_seq((*i).into());
         }
-        assert!(!reg.nack_reports().is_empty());
+        assert!(!reg.create_nack_reports().is_none());
         assert_eq!(reg.nack_check_from, 106.into());
 
         reg.update_seq(107.into()); // Got 107 via RTX
@@ -888,7 +864,7 @@ mod test {
                 reg.update_seq((*i).into());
             }
 
-            let reports = reg.create_nack_reports();
+            let reports = reg.create_nack_reports().expect("nack reports");
             let nack = reports.get(0).unwrap();
             let pid = nack.reports.get(0).unwrap().pid;
             assert_eq!(pid, *expected);
@@ -901,15 +877,15 @@ mod test {
         for i in 2996..=3003 {
             reg.update_seq((i).into());
         }
-        assert!(reg.nack_reports().is_empty());
+        assert!(reg.create_nack_reports().is_none());
         assert_eq!(reg.nack_check_from, (3003 - MISORDER_DELAY).into());
 
         for i in 3004..=3008 {
             reg.update_seq((i).into());
         }
 
-        let nacks = reg.nack_reports();
-        assert!(nacks.is_empty(), "Expected empty NACKs got {nacks:?}");
+        let nacks = reg.create_nack_reports();
+        assert!(nacks.is_none(), "Expected empty NACKs got {nacks:?}");
         assert_eq!(reg.nack_check_from, (3008 - MISORDER_DELAY).into());
     }
 
@@ -919,14 +895,14 @@ mod test {
         for i in 65500..=65534 {
             reg.update_seq((i).into());
         }
-        assert!(reg.nack_reports().is_empty());
+        assert!(reg.create_nack_reports().is_none());
         assert_eq!(reg.nack_check_from, (65534 - MISORDER_DELAY).into());
 
         for i in 65536..=65566 {
             reg.update_seq((i).into());
         }
 
-        assert!(!reg.nack_reports().is_empty());
+        assert!(!reg.create_nack_reports().is_none());
         assert_eq!(reg.nack_check_from, 65534.into());
 
         for i in 65567..=65666 {
@@ -935,7 +911,7 @@ mod test {
 
         reg.update_seq(65535.into());
 
-        assert!(reg.nack_reports().is_empty());
+        assert!(reg.create_nack_reports().is_none());
         assert_eq!(reg.nack_check_from, (65666 - MISORDER_DELAY).into());
     }
 
@@ -974,7 +950,6 @@ mod test {
         reg.update_seq(2.into());
         reg.update_seq(3.into());
         // Don't panic.
-        let _ = reg.has_nack_report();
         let _ = reg.create_nack_reports();
     }
 }

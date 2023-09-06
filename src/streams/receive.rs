@@ -502,16 +502,6 @@ impl StreamRx {
         self.rtx.is_some() && !self.suppress_nack
     }
 
-    pub(crate) fn has_nack(&mut self) -> bool {
-        if !self.nack_enabled() {
-            return false;
-        }
-        self.register
-            .as_mut()
-            .map(|r| r.has_nack_report())
-            .unwrap_or(false)
-    }
-
     pub(crate) fn maybe_create_nack(
         &mut self,
         sender_ssrc: Ssrc,
@@ -521,7 +511,10 @@ impl StreamRx {
             return None;
         }
 
-        let mut nacks = self.register.as_mut().map(|r| r.nack_reports())?;
+        let mut nacks = self
+            .register
+            .as_mut()
+            .and_then(|r| r.create_nack_reports())?;
 
         for nack in &mut nacks {
             nack.sender_ssrc = sender_ssrc;
