@@ -156,7 +156,7 @@ impl DepacketizingBuffer {
         };
 
         // depack ahead to check contiguity, even if we may not emit right away
-        let dep = match self.depacketize(start, stop, seq) {
+        let mut dep = match self.depacketize(start, stop, seq) {
             Ok(d) => d,
             Err(e) => {
                 // this segment cannot be decoded correctly
@@ -171,13 +171,24 @@ impl DepacketizingBuffer {
 
         let is_more_than_hold_back = self.segments.len() >= self.hold_back;
 
+        let wait_for_contiguity = !contiguous && !is_more_than_hold_back;
+
         // We prefer to just release samples because they are following the last emitted.
         // However as fallback, we "hold back" samples to let RTX mechanics fill in potential
         // gaps in the RTP sequences before letting go.
-        if !contiguous && !is_more_than_hold_back {
+        if wait_for_contiguity {
             // if we are not sending it, cache the depacked
             self.depack_cache = Some((seq, dep));
             return None;
+        }
+
+        if !contiguous {
+            trace!(
+                "Depacketized sample is not contiguous (seq: {}, {})",
+                start,
+                stop
+            );
+            dep.contiguous = false;
         }
 
         let last = self.queue.get(stop).expect("entry for stop index");
