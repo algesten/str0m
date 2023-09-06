@@ -21,7 +21,7 @@ discussions anonymously at [str0m.zulipchat.com][zulip-anon]
 ## Usage
 
 The [`chat`][x-chat] example shows how to connect multiple browsers
-together and act as an SFU (Signal Forwarding Unit). The example
+together and act as an SFU (Selective Forwarding Unit). The example
 multiplexes all traffic over one server UDP socket and uses two threads
 (one for the web server, and one for the SFU loop).
 
