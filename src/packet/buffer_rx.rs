@@ -71,18 +71,6 @@ struct Entry {
     tail: bool,
 }
 
-impl RtpMeta {
-    #[doc(hidden)]
-    pub fn new(received: Instant, time: MediaTime, seq_no: SeqNo, header: RtpHeader) -> Self {
-        RtpMeta {
-            received,
-            time,
-            seq_no,
-            header,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct DepacketizingBuffer {
     hold_back: usize,
