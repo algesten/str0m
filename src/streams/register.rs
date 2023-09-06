@@ -917,7 +917,7 @@ mod test {
     }
 
     #[test]
-    fn nack_check_forward_at_boukdary() {
+    fn nack_check_forward_at_boundary() {
         let mut reg = ReceiverRegister::new(2996.into());
         for i in 2996..=3003 {
             reg.update_seq((i).into());
