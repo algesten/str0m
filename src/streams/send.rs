@@ -290,6 +290,9 @@ impl StreamTx {
             // in handle_timeout() we delegate to self.send_queue.handle_timeout() to mark the enqueued
             // timestamp of all packets that are about to be sent.
             timestamp: not_happening(),
+
+            // This is only relevant for incoming RTP packets.
+            last_sender_info: None,
         };
 
         self.send_queue.push(packet);

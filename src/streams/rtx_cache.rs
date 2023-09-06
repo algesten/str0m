@@ -90,6 +90,7 @@ mod test {
             time: MediaTime::new(0, 90_000),
             payload: millis.to_be_bytes().to_vec(),
             timestamp: after(now, millis),
+            last_sender_info: None,
             nackable: true,
         }
     }
