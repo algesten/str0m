@@ -1271,6 +1271,7 @@ impl Rtc {
                         warn!("Drop ChannelClose event for id: {:?}", id);
                         continue;
                     };
+                    self.chan.remove_channel(id);
                     return Ok(Output::Event(Event::ChannelClose(id)));
                 }
                 SctpEvent::Data { id, binary, data } => {
