@@ -15,7 +15,7 @@ pub(crate) fn not_happening() -> Instant {
 // driven from the external API using `Instant`. What works against us is that Instant can't
 // represent things like UNIX EPOCH (but SystemTime can).
 const HOURS_1: Duration = Duration::from_secs(60);
-static PAST: Lazy<(Instant, SystemTime)> = Lazy::new(|| {
+static BEGINNING_OF_TIME: Lazy<(Instant, SystemTime)> = Lazy::new(|| {
     // These two should be "frozen" the same instant. Hopefully they are not differing too much.
     let now = Instant::now();
     let now_sys = SystemTime::now();
@@ -31,7 +31,7 @@ static PAST: Lazy<(Instant, SystemTime)> = Lazy::new(|| {
 });
 
 pub(crate) fn already_happened() -> Instant {
-    PAST.0
+    BEGINNING_OF_TIME.0
 }
 
 pub trait InstantExt {
@@ -51,12 +51,12 @@ impl InstantExt for Instant {
         // This is a bit fishy. We "freeze" a moment in time for Instant and SystemTime,
         // so we can make relative comparisons of Instant - Instant and translate that to
         // SystemTime - unix epoch. Hopefully the error is quite small.
-        if *self < PAST.0 {
+        if *self < BEGINNING_OF_TIME.0 {
             warn!("Time went backwards from beginning_of_time Instant");
         }
 
-        let duration_since_time_0 = self.duration_since(PAST.0);
-        let system_time = PAST.1 + duration_since_time_0;
+        let duration_since_time_0 = self.duration_since(BEGINNING_OF_TIME.0);
+        let system_time = BEGINNING_OF_TIME.1 + duration_since_time_0;
 
         system_time
             .duration_since(SystemTime::UNIX_EPOCH)
