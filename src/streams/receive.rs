@@ -463,7 +463,7 @@ impl StreamRx {
             let t = self
                 .sender_info
                 .map(|(_, s)| s.ntp_time)
-                .unwrap_or(MediaTime::ZERO);
+                .unwrap_or(already_happened());
 
             let t64 = t.as_ntp_64();
             (t64 >> 16) as u32
@@ -489,9 +489,7 @@ impl StreamRx {
     fn create_extended_receiver_report(&self, now: Instant) -> ExtendedReport {
         // we only want to report our time to measure RTT,
         // the source will answer with Dlrr feedback, allowing us to calculate RTT
-        let block = ReportBlock::Rrtr(Rrtr {
-            ntp_time: MediaTime::new_ntp_time(now),
-        });
+        let block = ReportBlock::Rrtr(Rrtr { ntp_time: now });
         ExtendedReport {
             ssrc: self.ssrc,
             blocks: vec![block],

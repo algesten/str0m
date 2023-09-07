@@ -1,4 +1,8 @@
-use super::{FeedbackMessageType, MediaTime, RtcpType, Ssrc};
+use std::time::Instant;
+
+use crate::util::InstantExt;
+
+use super::{FeedbackMessageType, RtcpType, Ssrc};
 use super::{RtcpHeader, RtcpPacket};
 
 //   0                   1                   2                   3
@@ -46,7 +50,7 @@ pub enum ReportBlock {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(missing_docs)]
 pub struct Rrtr {
-    pub ntp_time: MediaTime,
+    pub ntp_time: Instant,
 }
 
 //   0                   1                   2                   3
@@ -223,7 +227,7 @@ impl<'a> TryFrom<&'a [u8]> for Rrtr {
 
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
         let ntp_time = u64::from_be_bytes(buf[4..4 + 8].try_into().unwrap());
-        let ntp_time = MediaTime::from_ntp_64(ntp_time);
+        let ntp_time = Instant::from_ntp_64(ntp_time);
 
         Ok(Rrtr { ntp_time })
     }

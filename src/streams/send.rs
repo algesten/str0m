@@ -737,7 +737,7 @@ impl StreamTx {
 
         SenderInfo {
             ssrc: self.ssrc,
-            ntp_time: MediaTime::new_ntp_time(now),
+            ntp_time: now,
             rtp_time: rtp_time as u32,
             sender_packet_count: self.stats.packets as u32,
             sender_octet_count: self.stats.bytes as u32,
