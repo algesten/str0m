@@ -13,7 +13,7 @@ use crate::media::MediaKind;
 use crate::packet::QueuePriority;
 use crate::packet::QueueSnapshot;
 use crate::packet::QueueState;
-use crate::rtp_::{extend_u16, Descriptions, InstantExt, ReportList, Rtcp};
+use crate::rtp_::{extend_u16, Descriptions, ReportList, Rtcp};
 use crate::rtp_::{ExtensionMap, ReceptionReport, RtpHeader};
 use crate::rtp_::{ExtensionValues, MediaTime, Mid, NackEntry};
 use crate::rtp_::{Pt, Rid, RtcpFb, SenderInfo, SenderReport, Ssrc};
@@ -23,6 +23,7 @@ use crate::session::PacketReceipt;
 use crate::stats::MediaEgressStats;
 use crate::stats::StatsSnapshot;
 use crate::util::value_history::ValueHistory;
+use crate::util::InstantExt;
 use crate::util::{already_happened, calculate_rtt_ms, not_happening};
 use crate::RtcError;
 

@@ -14,7 +14,6 @@ mod dir;
 pub use dir::Direction;
 
 mod mtime;
-pub(crate) use mtime::InstantExt;
 pub use mtime::MediaTime;
 
 mod header;

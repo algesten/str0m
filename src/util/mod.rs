@@ -1,7 +1,4 @@
-use std::time::SystemTime;
 use std::time::{Duration, Instant};
-
-use once_cell::sync::Lazy;
 
 mod bit_pattern;
 
@@ -9,36 +6,8 @@ pub(crate) use bit_pattern::BitPattern;
 
 pub(crate) mod value_history;
 
-pub(crate) fn not_happening() -> Instant {
-    const YEARS_100: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 100);
-    static FUTURE: Lazy<Instant> = Lazy::new(|| Instant::now() + YEARS_100);
-    *FUTURE
-}
-
-// The goal here is to make a constant "beginning of time" in both Instant and SystemTime
-// that we can use as relative values for the rest of str0m.
-// This is indeed a bit dodgy, but we want str0m's internal idea of time to be completely
-// driven from the external API using `Instant`. What works against us is that Instant can't
-// represent things like UNIX EPOCH (but SystemTime can).
-const HOURS_1: Duration = Duration::from_secs(60);
-static PAST: Lazy<(Instant, SystemTime)> = Lazy::new(|| {
-    // These two should be "frozen" the same instant. Hopefully they are not differing too much.
-    let now = Instant::now();
-    let now_sys = SystemTime::now();
-
-    let beginning_of_time = now.checked_sub(HOURS_1).unwrap();
-    // This might be less than 1 hour if the machine uptime is less.
-    let since_beginning_of_time = Instant::now() - beginning_of_time;
-
-    let beginning_of_time_sys = now_sys - since_beginning_of_time;
-
-    // This pair represents our "beginning of time" for the same moment.
-    (beginning_of_time, beginning_of_time_sys)
-});
-
-pub(crate) fn already_happened() -> Instant {
-    PAST.0
-}
+mod time_tricks;
+pub(crate) use time_tricks::{already_happened, not_happening, InstantExt};
 
 pub(crate) trait Soonest {
     fn soonest(self, other: Self) -> Self;
@@ -104,26 +73,4 @@ pub(crate) fn calculate_rtt_ms(ntp_time: Duration, delay: u32, last_report: u32)
     let rtt_fraction = (rtt & (u16::MAX as u32)) as f32 / (u16::MAX as u32) as f32;
 
     Some(rtt_seconds as f32 * 1000.0 + rtt_fraction * 1000.0)
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn not_happening_works() {
-        assert_eq!(not_happening(), not_happening());
-        assert!(Instant::now() < not_happening());
-    }
-
-    #[test]
-    fn already_happened_works() {
-        assert_eq!(already_happened(), already_happened());
-        assert!(Instant::now() > already_happened());
-    }
-
-    #[test]
-    fn already_happened_ne() {
-        assert_ne!(not_happening(), already_happened())
-    }
 }
