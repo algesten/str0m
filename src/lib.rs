@@ -510,6 +510,7 @@ use std::time::{Duration, Instant};
 use streams::RtpPacket;
 use streams::StreamPaused;
 use thiserror::Error;
+use util::InstantExt;
 
 mod dtls;
 use dtls::DtlsCert;
@@ -530,7 +531,7 @@ mod packet;
 #[path = "rtp/mod.rs"]
 mod rtp_;
 use rtp_::Bitrate;
-use rtp_::{Extension, ExtensionMap, InstantExt};
+use rtp_::{Extension, ExtensionMap};
 
 /// Low level RTP access.
 pub mod rtp {

@@ -2,9 +2,9 @@
 
 use std::cmp::Ordering;
 use std::ops::{Add, Sub};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
-use once_cell::sync::OnceCell;
+use crate::util::InstantExt;
 
 /// 2^32 as float.
 const F32: f64 = 4_294_967_296.0;
@@ -193,53 +193,6 @@ impl Add for MediaTime {
     fn add(self, rhs: Self) -> Self::Output {
         let (t0, t1) = MediaTime::same_base(self, rhs);
         MediaTime::new(t0.0 + t1.0, t0.1)
-    }
-}
-
-pub trait InstantExt {
-    /// Convert an Instant to a Duration for unix time.
-    ///
-    /// First ever time must be "now".
-    ///
-    /// panics if `time` goes backwards, i.e. we use this for one Instant and then an earlier Instant.
-    fn to_unix_duration(&self) -> Duration;
-
-    /// Convert an Instant to a Duration for ntp time.
-    fn to_ntp_duration(&self) -> Duration;
-}
-
-impl InstantExt for Instant {
-    fn to_unix_duration(&self) -> Duration {
-        // This is a bit fishy. We "freeze" a moment in time for Instant and SystemTime,
-        // so we can make relative comparisons of Instant - Instant and translate that to
-        // SystemTime - unix epoch. Hopefully the error is quite small.
-        static TIME_START: OnceCell<(Instant, SystemTime)> = OnceCell::new();
-        let _ = TIME_START.set((*self, SystemTime::now()));
-
-        let tstart = TIME_START.get().unwrap();
-
-        if *self < tstart.0 {
-            warn!("Time went backwards from first ever Instant");
-        }
-
-        let duration_since_time_0 = self.duration_since(tstart.0);
-        let system_time = tstart.1 + duration_since_time_0;
-
-        system_time
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("clock to go forwards from unix epoch")
-    }
-
-    fn to_ntp_duration(&self) -> Duration {
-        // RTP spec "wallclock" uses NTP time, which starts at 1900-01-01.
-        //
-        // https://tools.ietf.org/html/rfc868
-        //
-        // 365 days * 70 years + 17 leap year days
-        // (365 * 70 + 17) * 86400 = 2208988800
-        const MICROS_1900: Duration = Duration::from_micros(2_208_988_800 * MICROS as u64);
-
-        self.to_unix_duration() + MICROS_1900
     }
 }
 
