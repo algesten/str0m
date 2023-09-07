@@ -2,7 +2,6 @@ use std::time::SystemTime;
 use std::time::{Duration, Instant};
 
 use once_cell::sync::Lazy;
-use once_cell::sync::OnceCell;
 
 pub(crate) fn not_happening() -> Instant {
     const YEARS_100: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 100);
@@ -34,6 +33,7 @@ static PAST: Lazy<(Instant, SystemTime)> = Lazy::new(|| {
 pub(crate) fn already_happened() -> Instant {
     PAST.0
 }
+
 pub trait InstantExt {
     /// Convert an Instant to a Duration for unix time.
     ///
@@ -51,17 +51,12 @@ impl InstantExt for Instant {
         // This is a bit fishy. We "freeze" a moment in time for Instant and SystemTime,
         // so we can make relative comparisons of Instant - Instant and translate that to
         // SystemTime - unix epoch. Hopefully the error is quite small.
-        static TIME_START: OnceCell<(Instant, SystemTime)> = OnceCell::new();
-        let _ = TIME_START.set((*self, SystemTime::now()));
-
-        let tstart = TIME_START.get().unwrap();
-
-        if *self < tstart.0 {
-            warn!("Time went backwards from first ever Instant");
+        if *self < PAST.0 {
+            warn!("Time went backwards from beginning_of_time Instant");
         }
 
-        let duration_since_time_0 = self.duration_since(tstart.0);
-        let system_time = tstart.1 + duration_since_time_0;
+        let duration_since_time_0 = self.duration_since(PAST.0);
+        let system_time = PAST.1 + duration_since_time_0;
 
         system_time
             .duration_since(SystemTime::UNIX_EPOCH)
