@@ -733,12 +733,12 @@ impl StreamTx {
     }
 
     fn sender_info(&self, now: Instant) -> SenderInfo {
-        let rtp_time = self.current_rtp_time(now).map(|t| t.numer()).unwrap_or(0);
+        let rtp_time = self.current_rtp_time(now).unwrap_or(MediaTime::ZERO);
 
         SenderInfo {
             ssrc: self.ssrc,
             ntp_time: now,
-            rtp_time: rtp_time as u32,
+            rtp_time,
             sender_packet_count: self.stats.packets as u32,
             sender_octet_count: self.stats.bytes as u32,
         }

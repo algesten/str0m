@@ -51,6 +51,9 @@ pub struct StreamRx {
     /// Timestamp when we got some indication of remote using this stream.
     last_used: Instant,
 
+    /// Last seen pt and clock_rate in
+    last_clock_rate: Option<(Pt, i64)>,
+
     /// Last received sender info.
     sender_info: Option<(Instant, SenderInfo)>,
 
@@ -132,6 +135,7 @@ impl StreamRx {
             cname: None,
             suppress_nack: false,
             last_used: already_happened(),
+            last_clock_rate: None,
             sender_info: None,
             reset_roc: None,
             register: None,
@@ -243,7 +247,21 @@ impl StreamRx {
         }
     }
 
-    fn set_sender_info(&mut self, now: Instant, info: SenderInfo) {
+    fn set_sender_info(&mut self, now: Instant, mut info: SenderInfo) {
+        // Extend the incoming time given our knowledge of last time.
+        let extended = {
+            let prev = self.sender_info.map(|(_, sr)| sr.rtp_time.numer() as u64);
+            let r_u32 = info.rtp_time.numer() as u32;
+            extend_u32(prev, r_u32)
+        };
+
+        // The MediaTime has a base 1 after being parsed. At this point
+        // we know whether it's audio or video and set the base accordingly.
+        let clock_rate = self.last_clock_rate.map(|(_, r)| r).unwrap_or(1);
+
+        // Clock rate is that of the last received packet.
+        info.rtp_time = MediaTime::new(extended as i64, clock_rate);
+
         self.sender_info = Some((now, info));
     }
 
@@ -346,6 +364,16 @@ impl StreamRx {
         time: MediaTime,
     ) -> Option<RtpPacket> {
         trace!("Handle RTP: {:?}", header);
+
+        let need_clock_rate = self.last_clock_rate.map(|(pt, _)| pt) != Some(header.payload_type);
+        if need_clock_rate {
+            self.last_clock_rate = Some((header.payload_type, time.denom()));
+
+            // If we get an SR before the first packet, we update the potential clock rate.
+            if let Some(info) = &mut self.sender_info {
+                info.1.rtp_time = MediaTime::new(info.1.rtp_time.numer(), time.denom());
+            }
+        }
 
         let packet = RtpPacket {
             seq_no,

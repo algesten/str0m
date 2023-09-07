@@ -455,6 +455,8 @@ fn pad_bytes_to_word(n: usize) -> usize {
 mod test {
     use std::time::{Duration, Instant};
 
+    use crate::rtp_::MediaTime;
+
     use super::twcc::{Delta, PacketChunk, PacketStatus};
     use super::*;
 
@@ -590,7 +592,7 @@ mod test {
             sender_info: SenderInfo {
                 ssrc: ssrc.into(),
                 ntp_time,
-                rtp_time: 4,
+                rtp_time: MediaTime::new(4, 1),
                 sender_packet_count: 5,
                 sender_octet_count: 6,
             },
