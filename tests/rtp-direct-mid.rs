@@ -107,7 +107,12 @@ pub fn rtp_direct_mid() -> Result<(), RtcError> {
 
     assert!(l.media(mid).is_some());
     assert!(l.direct_api().stream_tx_by_mid(mid, None).is_some());
+    assert_eq!(
+        l.direct_api().media_kind_by_mid(mid),
+        Some(MediaKind::Audio)
+    );
     l.direct_api().remove_media(mid);
+    assert!(l.direct_api().media_kind_by_mid(mid).is_none());
     assert!(l.media(mid).is_none());
     assert!(l.direct_api().stream_tx_by_mid(mid, None).is_none());
 

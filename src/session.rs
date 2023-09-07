@@ -5,8 +5,8 @@ use crate::dtls::{KeyingMaterial, SrtpProfile};
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
-use crate::media::KeyframeRequestKind;
 use crate::media::Media;
+use crate::media::{KeyframeRequestKind, MediaKind};
 use crate::media::{MediaAdded, MediaChanged};
 use crate::net;
 use crate::packet::SendSideBandwithEstimator;
@@ -882,6 +882,13 @@ impl Session {
 
     pub fn add_media(&mut self, media: Media) {
         self.medias.push(media);
+    }
+
+    pub fn media_kind_by_mid(&mut self, mid: Mid) -> Option<MediaKind> {
+        self.medias
+            .iter()
+            .find(|&x| x.mid() == mid)
+            .map(|media| media.kind())
     }
 
     pub fn medias(&self) -> &[Media] {

@@ -148,6 +148,11 @@ impl<'a> DirectApi<'a> {
         self.rtc.session.medias.last_mut().unwrap()
     }
 
+    /// Obtain `MediaKind` by looking it up via mid.
+    pub fn media_kind_by_mid(&mut self, mid: Mid) -> Option<MediaKind> {
+        self.rtc.session.media_kind_by_mid(mid)
+    }
+
     /// Remove `Media`.
     ///
     /// Removes media and all streams belong to a media identified by a `mid`.
