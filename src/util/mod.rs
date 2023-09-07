@@ -1,3 +1,4 @@
+use std::time::SystemTime;
 use std::time::{Duration, Instant};
 
 use once_cell::sync::Lazy;
@@ -14,10 +15,29 @@ pub(crate) fn not_happening() -> Instant {
     *FUTURE
 }
 
+// The goal here is to make a constant "beginning of time" in both Instant and SystemTime
+// that we can use as relative values for the rest of str0m.
+// This is indeed a bit dodgy, but we want str0m's internal idea of time to be completely
+// driven from the external API using `Instant`. What works against us is that Instant can't
+// represent things like UNIX EPOCH (but SystemTime can).
+const HOURS_1: Duration = Duration::from_secs(60);
+static PAST: Lazy<(Instant, SystemTime)> = Lazy::new(|| {
+    // These two should be "frozen" the same instant. Hopefully they are not differing too much.
+    let now = Instant::now();
+    let now_sys = SystemTime::now();
+
+    let beginning_of_time = now.checked_sub(HOURS_1).unwrap();
+    // This might be less than 1 hour if the machine uptime is less.
+    let since_beginning_of_time = Instant::now() - beginning_of_time;
+
+    let beginning_of_time_sys = now_sys - since_beginning_of_time;
+
+    // This pair represents our "beginning of time" for the same moment.
+    (beginning_of_time, beginning_of_time_sys)
+});
+
 pub(crate) fn already_happened() -> Instant {
-    const HOURS_1: Duration = Duration::from_secs(60);
-    static PAST: Lazy<Instant> = Lazy::new(|| Instant::now().checked_sub(HOURS_1).unwrap());
-    *PAST
+    PAST.0
 }
 
 pub(crate) trait Soonest {
