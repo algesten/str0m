@@ -170,6 +170,10 @@ impl<'a> DirectApi<'a> {
         mid: Mid,
         rid: Option<Rid>,
     ) -> &mut StreamRx {
+        let Some(_media) = self.rtc.session.media_by_mid(mid) else {
+            panic!("No media declared for mid: {}", mid);
+        };
+
         self.rtc
             .session
             .streams
