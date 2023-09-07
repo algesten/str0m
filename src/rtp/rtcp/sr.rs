@@ -1,4 +1,8 @@
-use super::{FeedbackMessageType, MediaTime, RtcpType, Ssrc};
+use std::time::Instant;
+
+use crate::util::InstantExt;
+
+use super::{FeedbackMessageType, RtcpType, Ssrc};
 use super::{ReceptionReport, ReportList, RtcpHeader, RtcpPacket};
 
 /// A report of packets sent.
@@ -16,7 +20,7 @@ pub struct SenderReport {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SenderInfo {
     pub ssrc: Ssrc,
-    pub ntp_time: MediaTime,
+    pub ntp_time: Instant,
     pub rtp_time: u32,
     pub sender_packet_count: u32,
     pub sender_octet_count: u32,
@@ -110,7 +114,7 @@ impl<'a> TryFrom<&'a [u8]> for SenderInfo {
         let ntp_time = u64::from_be_bytes([
             buf[4], buf[5], buf[6], buf[7], buf[8], buf[9], buf[10], buf[11],
         ]);
-        let ntp_time = MediaTime::from_ntp_64(ntp_time);
+        let ntp_time = Instant::from_ntp_64(ntp_time);
 
         // https://www.cs.columbia.edu/~hgs/rtp/faq.html#timestamp-computed
         // For video, time clock rate is fixed at 90 kHz. The timestamps generated

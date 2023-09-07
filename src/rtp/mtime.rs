@@ -2,14 +2,10 @@
 
 use std::cmp::Ordering;
 use std::ops::{Add, Sub};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 
 use crate::util::InstantExt;
-
-/// 2^32 as float.
-const F32: f64 = 4_294_967_296.0;
-// /// 2^16 as float.
-// const F16: f64 = 65_536.0;
 
 /// Microseconds in a second.
 const MICROS: i64 = 1_000_000;
@@ -24,7 +20,6 @@ const MILLIS: i64 = 1_000;
 #[derive(Debug, Clone, Copy)]
 pub struct MediaTime(i64, i64);
 
-#[allow(dead_code)]
 impl MediaTime {
     pub const ZERO: MediaTime = MediaTime(0, 1);
 
@@ -32,13 +27,7 @@ impl MediaTime {
         MediaTime(numer, denom)
     }
 
-    pub fn new_unix_time(time: Instant) -> Self {
-        let dur = time.to_unix_duration();
-        let micros = dur.as_micros() as i64;
-        MediaTime(micros, MICROS)
-    }
-
-    pub fn new_ntp_time(time: Instant) -> Self {
+    pub(crate) fn new_ntp_time(time: Instant) -> Self {
         let dur = time.to_ntp_duration();
         let micros = dur.as_micros() as i64;
         MediaTime(micros, MICROS)
@@ -76,43 +65,6 @@ impl MediaTime {
 
     pub const fn as_micros(&self) -> i64 {
         self.rebase(MICROS).numer()
-    }
-
-    #[inline(always)]
-    pub fn from_ntp_64(v: u64) -> MediaTime {
-        // https://tools.ietf.org/html/rfc3550#section-4
-        // Wallclock time (absolute date and time) is represented using the
-        // timestamp format of the Network Time Protocol (NTP), which is in
-        // seconds relative to 0h UTC on 1 January 1900 [4]. The full
-        // resolution NTP timestamp is a 64-bit unsigned fixed-point number with
-        // the integer part in the first 32 bits and the fractional part in the
-        // last 32 bits.
-        let secs = (v as f64) / F32;
-
-        MediaTime::from_seconds(secs)
-    }
-
-    #[inline(always)]
-    pub fn as_ntp_64(&self) -> u64 {
-        let secs = self.as_seconds();
-        assert!(secs >= 0.0);
-
-        // sec * (2 ^ 32)
-        (secs * F32) as u64
-    }
-
-    // #[inline(always)]
-    // pub fn from_ntp_32(v: u32) -> Ts {
-    //     let secs = (v as f64) / F16;
-
-    //     Ts::from_seconds(secs)
-    // }
-
-    #[inline(always)]
-    pub fn as_ntp_32(&self) -> u32 {
-        let ntp_64 = self.as_ntp_64();
-
-        ((ntp_64 >> 16) & 0xffff_ffff) as u32
     }
 
     #[inline(always)]
@@ -221,12 +173,5 @@ mod test {
         assert_eq!(t2.denom(), 90_000);
 
         println!("{}", (10.0234_f64).fract());
-    }
-
-    #[test]
-    fn from_instant() {
-        let now = Instant::now();
-        let m = MediaTime::new_ntp_time(now);
-        assert!(m.as_seconds() > 3871711275.0);
     }
 }
