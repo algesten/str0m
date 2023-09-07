@@ -97,6 +97,11 @@ impl<'a> DirectApi<'a> {
         id
     }
 
+    /// Close a data channel.
+    pub fn close_data_channel(&mut self, channel_id: ChannelId) {
+        self.rtc.chan.close_channel(channel_id, &mut self.rtc.sctp);
+    }
+
     /// Set whether to enable ice-lite.
     pub fn set_ice_lite(&mut self, ice_lite: bool) {
         self.rtc.ice.set_ice_lite(ice_lite);

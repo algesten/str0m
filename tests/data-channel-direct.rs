@@ -77,11 +77,25 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
         }
     }
 
-    assert!(r.events.len() > 120);
+    l.direct_api().close_data_channel(cid);
+
+    loop {
+        progress(&mut l, &mut r)?;
+
+        if l.duration() > Duration::from_secs(12) {
+            break;
+        }
+    }
+
     assert!(l
         .events
         .iter()
         .any(|(_, event)| event == &Event::ChannelOpen(cid, "my-chan".into())));
+    assert!(r.events.len() > 120);
+    assert!(l
+        .events
+        .iter()
+        .any(|(_, event)| event == &Event::ChannelClose(cid)));
 
     Ok(())
 }

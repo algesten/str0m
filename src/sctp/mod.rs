@@ -301,6 +301,13 @@ impl RtcSctp {
         }
     }
 
+    /// Close stream.
+    pub fn close_stream(&mut self, id: u16) {
+        if let Some(entry) = self.entries.iter_mut().find(|v| v.id == id) {
+            entry.do_close = true;
+        }
+    }
+
     pub fn is_open(&self, id: u16) -> bool {
         if self.state != RtcSctpState::Established {
             return false;

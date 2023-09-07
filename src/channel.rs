@@ -234,4 +234,19 @@ impl ChannelHandler {
             self.allocations.push(alloc);
         }
     }
+
+    pub fn close_channel(&mut self, id: ChannelId, sctp: &mut RtcSctp) {
+        if let Some(sctp_stream_id) = self
+            .allocations
+            .iter()
+            .find(|a| a.id == id)
+            .and_then(|s| s.sctp_stream_id)
+        {
+            sctp.close_stream(sctp_stream_id);
+        }
+    }
+
+    pub fn remove_channel(&mut self, id: ChannelId) {
+        self.allocations.retain(|a| a.id != id)
+    }
 }
