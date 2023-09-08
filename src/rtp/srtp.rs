@@ -103,10 +103,11 @@ pub struct SrtpContext {
 impl SrtpContext {
     pub fn protect_rtp(
         &mut self,
-        buf: &[u8],
+        buf: &mut [u8],
+        payload_len: usize,
         header: &RtpHeader,
         srtp_index: u64, // same as ext_seq
-    ) -> Vec<u8> {
+    ) {
         // SRTP layout
         // [header, [rtp, (padding + pad_count)], tag]
 
@@ -145,36 +146,25 @@ impl SrtpContext {
                     input.len() % SRTP_BLOCK_SIZE == 0,
                     "RTP body should be padded to 16 byte block size, {header:?} with body length {} was not", input.len()
                 );
-                use aes_128_cm_sha1_80::{RtpHmac, ToRtpIv, HMAC_TAG_LEN};
+                use aes_128_cm_sha1_80::{RtpHmac, ToRtpIv};
 
                 let iv = salt.rtp_iv(*header.ssrc, srtp_index);
 
-                let mut output = vec![0_u8; buf.len() + HMAC_TAG_LEN];
-                enc.encrypt(&iv, input, &mut output[hlen..])
+                enc.encrypt(&iv, &mut buf[hlen..], payload_len)
                     .expect("rtp encrypt");
 
-                output[..hlen].copy_from_slice(&buf[..hlen]);
-
-                let hmac_start = buf.len();
-                hmac.rtp_hmac(&mut output, srtp_index, hmac_start);
-
-                output
+                let hmac_start = hlen + payload_len;
+                hmac.rtp_hmac(&mut buf[hlen..], srtp_index, hmac_start);
             }
             Derived::AeadAes128Gcm { salt, enc, .. } => {
-                use aead_aes_128_gcm::{ToRtpIv, TAG_LEN};
+                use aead_aes_128_gcm::ToRtpIv;
                 let roc = (srtp_index >> 16) as u32;
 
                 let iv = salt.rtp_iv(*header.ssrc, roc, header.sequence_number);
                 let aad = &buf[..hlen];
 
-                // Input and output lengths for encryption: https://www.rfc-editor.org/rfc/rfc7714#section-5.2.1
-                let mut output = vec![0_u8; buf.len() + TAG_LEN];
-                enc.encrypt(&iv, aad, input, &mut output[hlen..])
+                enc.encrypt(&iv, aad, &mut buf[hlen..], payload_len)
                     .expect("rtp encrypt");
-
-                output[..hlen].copy_from_slice(aad);
-
-                output
             }
         }
     }
@@ -296,10 +286,12 @@ impl SrtpContext {
                 let input = &buf[8..];
 
                 let enc_start = 8;
-                let enc_end = input.len() + 8 + TAG_LEN;
+                let enc_end = enc_start + input.len() + TAG_LEN;
+                output[enc_start..enc_start + input.len()].copy_from_slice(input);
                 let encout = &mut output[enc_start..enc_end];
 
-                enc.encrypt(&iv, &aad, input, encout).expect("rtcp encrypt");
+                enc.encrypt(&iv, &aad, encout, input.len())
+                    .expect("rtcp encrypt");
 
                 let to = &mut output[enc_end..];
                 to[0..4].copy_from_slice(&e_and_si.to_be_bytes());
@@ -447,6 +439,14 @@ impl SrtpContext {
 
                 Some(output)
             }
+        }
+    }
+
+    /// Return the extra length required to encrypt an RTP packet for the selected ciphersuite.
+    pub fn protect_extra_len(&self) -> usize {
+        match &self.rtp {
+            Derived::Aes128CmSha1_80 { enc, .. } => enc.protect_extra_len(),
+            Derived::AeadAes128Gcm { enc, .. } => enc.protect_extra_len(),
         }
     }
 }
@@ -689,13 +689,17 @@ mod aes_128_cm_sha1_80 {
         pub(super) fn encrypt(
             &mut self,
             iv: &RtpIv,
-            input: &[u8],
             output: &mut [u8],
+            ilen: usize,
         ) -> Result<(), ErrorStack> {
             self.ctx.encrypt_init(None, None, Some(iv))?;
-            let count = self.ctx.cipher_update(input, Some(output))?;
+            let count = self.ctx.cipher_update_inplace(output, ilen)?;
             self.ctx.cipher_final(&mut output[count..])?;
             Ok(())
+        }
+
+        pub(crate) fn protect_extra_len(&self) -> usize {
+            HMAC_TAG_LEN + self.ctx.block_size()
         }
     }
 
@@ -856,8 +860,8 @@ mod aead_aes_128_gcm {
             &mut self,
             iv: &[u8; IV_LEN],
             aad: &[u8],
-            input: &[u8],
             output: &mut [u8],
+            ilen: usize,
         ) -> Result<(), ErrorStack> {
             assert!(
                 aad.len() >= 12,
@@ -873,7 +877,7 @@ mod aead_aes_128_gcm {
             // TODO: This should maybe be an error
             assert!(aad_c == aad.len());
 
-            let count = self.ctx.cipher_update(input, Some(output))?;
+            let count = self.ctx.cipher_update_inplace(output, ilen)?;
             let final_count = self.ctx.cipher_final(&mut output[count..])?;
 
             // Get the authentication tag and append it to the output
@@ -882,6 +886,11 @@ mod aead_aes_128_gcm {
                 .tag(&mut output[tag_offset..tag_offset + TAG_LEN])?;
 
             Ok(())
+        }
+
+        pub(crate) fn protect_extra_len(&self) -> usize {
+            // Input and output lengths for encryption: https://www.rfc-editor.org/rfc/rfc7714#section-5.2.1
+            TAG_LEN + self.ctx.block_size()
         }
     }
 

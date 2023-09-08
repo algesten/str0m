@@ -747,7 +747,8 @@ impl Session {
 
         let params = &self.codec_config;
         let exts = media.remote_extmap();
-        let receipt = stream.poll_packet(now, exts, &mut self.twcc, params, buf)?;
+        let srtp_extra_len = srtp_tx.protect_extra_len();
+        let receipt = stream.poll_packet(now, exts, &mut self.twcc, params, buf, srtp_extra_len)?;
 
         let PacketReceipt {
             header,
@@ -771,7 +772,7 @@ impl Session {
             raw_packets.push_back(RawPacket::RtpTx(header.clone(), buf.clone()));
         }
 
-        let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
+        srtp_tx.protect_rtp(buf, payload_size, &header, *seq_no);
 
         self.twcc_tx_register
             .register_seq(twcc_seq.into(), now, payload_size);
@@ -780,7 +781,7 @@ impl Session {
         // avoiding an extra poll_timeout.
         self.update_queue_state(now);
 
-        Some(protected.into())
+        Some(buf.to_vec().into())
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {

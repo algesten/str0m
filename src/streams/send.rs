@@ -311,6 +311,7 @@ impl StreamTx {
         twcc: &mut u64,
         params: &[PayloadParams],
         buf: &mut Vec<u8>,
+        srtp_extra_len: usize,
     ) -> Option<PacketReceipt> {
         let mid = self.mid;
         let rid = self.rid;
@@ -445,7 +446,7 @@ impl StreamTx {
             }
         };
 
-        buf.truncate(header_len + body_len);
+        buf.truncate(header_len + body_len + srtp_extra_len);
 
         #[cfg(feature = "_internal_dont_use_log_stats")]
         {
