@@ -3,9 +3,6 @@
 use std::cmp::Ordering;
 use std::ops::{Add, Sub};
 use std::time::Duration;
-use std::time::Instant;
-
-use crate::util::InstantExt;
 
 /// Microseconds in a second.
 const MICROS: i64 = 1_000_000;
@@ -25,12 +22,6 @@ impl MediaTime {
 
     pub const fn new(numer: i64, denom: i64) -> MediaTime {
         MediaTime(numer, denom)
-    }
-
-    pub(crate) fn new_ntp_time(time: Instant) -> Self {
-        let dur = time.to_ntp_duration();
-        let micros = dur.as_micros() as i64;
-        MediaTime(micros, MICROS)
     }
 
     #[inline(always)]

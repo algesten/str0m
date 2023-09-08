@@ -8,6 +8,11 @@ use std::hash::Hasher;
 use std::panic::UnwindSafe;
 use std::str::from_utf8;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use crate::util::already_happened;
+use crate::util::epoch_to_beginning;
+use crate::util::InstantExt;
 
 use super::mtime::MediaTime;
 use super::{Mid, Rid};
@@ -604,7 +609,7 @@ impl ExtensionMap {
     }
 }
 
-const FIXED_POINT_6_18: i64 = 262_144; // 2 ^ 18
+const FIXED_POINT_6_18: u128 = 262_144; // 2 ^ 18
 
 impl Extension {
     pub(crate) fn write_to(&self, buf: &mut [u8], ev: &ExtensionValues) -> Option<usize> {
@@ -613,9 +618,19 @@ impl Extension {
             AbsoluteSendTime => {
                 // 24 bit fixed point 6 bits for seconds, 18 for the decimals.
                 // wraps around at 64 seconds.
-                let v = ev.abs_send_time?.rebase(FIXED_POINT_6_18);
-                let time_24 = v.numer() as u32;
-                buf[..3].copy_from_slice(&time_24.to_be_bytes()[1..]);
+
+                // We assume the Instant is absolute.
+                let time_abs = ev.abs_send_time?;
+
+                // This should be a 64 second offset from unix epoch.
+                let dur = time_abs.to_unix_duration();
+
+                let time_micros = dur.as_micros();
+
+                // Rebase to the 6.18 format.
+                let time_24 = (time_micros * FIXED_POINT_6_18) / 1_000_000;
+
+                buf[..3].copy_from_slice(&time_24.to_be_bytes()[13..]);
                 Some(3)
             }
             AudioLevel => {
@@ -710,12 +725,23 @@ impl Extension {
         match self {
             // 3
             AbsoluteSendTime => {
-                // fixed point 6.18
+                // 24 bit fixed point 6 bits for seconds, 18 for the decimals.
+                // wraps around at 64 seconds.
                 if buf.len() < 3 {
                     return None;
                 }
                 let time_24 = u32::from_be_bytes([0, buf[0], buf[1], buf[2]]);
-                ev.abs_send_time = Some(MediaTime::new(time_24 as i64, FIXED_POINT_6_18));
+
+                // Rebase to micros
+                let time_micros = (time_24 as u128 * 1_000_000) / FIXED_POINT_6_18;
+
+                // This should be the duration in 0-64 seconds from a fixed 64 second offset
+                // from UNIX EPOCH. For now, we must save this as offset from _something else_ and
+                // fix the correct value when we have the exact Instant::now() to relate it to.
+                let time_dur = Duration::from_micros(time_micros as u64);
+
+                let time_tmp = already_happened() + time_dur;
+                ev.abs_send_time = Some(time_tmp);
             }
             // 1
             AudioLevel => {
@@ -833,7 +859,7 @@ pub struct ExtensionValues {
     #[doc(hidden)]
     pub tx_time_offs: Option<u32>,
     #[doc(hidden)]
-    pub abs_send_time: Option<MediaTime>,
+    pub abs_send_time: Option<Instant>,
     #[doc(hidden)]
     pub transport_cc: Option<u16>, // (buf[0] << 8) | buf[1];
     #[doc(hidden)]
@@ -854,6 +880,33 @@ pub struct ExtensionValues {
 
     /// User values for [`ExtensionSerializer`] to parse into and write from.
     pub user_values: UserExtensionValues,
+}
+impl ExtensionValues {
+    pub(crate) fn update_absolute_send_time(&mut self, now: Instant) {
+        let Some(v) = self.abs_send_time else {
+            return;
+        };
+
+        // This should be 0-64 seconds, or we are not working with a newly parsed value.
+        let relative_64_secs = v - already_happened();
+        assert!(relative_64_secs <= Duration::from_secs(64));
+
+        let now_since_epoch = now.to_unix_duration();
+
+        let closest_64 = now_since_epoch.saturating_sub(Duration::from_micros(
+            now_since_epoch.as_micros() as u64 % 64_000_000,
+        ));
+
+        let since_beginning = closest_64.saturating_sub(epoch_to_beginning());
+
+        let mut offset = already_happened() + since_beginning;
+
+        if offset + relative_64_secs > now {
+            offset -= Duration::from_secs(64);
+        }
+
+        self.abs_send_time = Some(offset + relative_64_secs);
+    }
 }
 
 /// Space for storing user extension values via [`ExtensionSerializer`].
@@ -1137,10 +1190,12 @@ mod test {
 
     #[test]
     fn abs_send_time() {
+        let now = Instant::now() + Duration::from_secs(1000);
+
         let mut exts = ExtensionMap::empty();
         exts.set(4, Extension::AbsoluteSendTime);
         let ev = ExtensionValues {
-            abs_send_time: Some(MediaTime::new(1, FIXED_POINT_6_18)),
+            abs_send_time: Some(now),
             ..Default::default()
         };
 
@@ -1150,15 +1205,24 @@ mod test {
         let mut ev2 = ExtensionValues::default();
         exts.parse(&buf, ExtensionsForm::OneByte, &mut ev2);
 
-        assert_eq!(ev.abs_send_time, ev2.abs_send_time);
+        // Let's pretend a 50 millisecond network latency.
+        ev2.update_absolute_send_time(now + Duration::from_millis(50));
+
+        let now2 = ev2.abs_send_time.unwrap();
+
+        let abs = if now > now2 { now - now2 } else { now2 - now };
+
+        assert!(abs < Duration::from_millis(1));
     }
 
     #[test]
     fn abs_send_time_two_byte_form() {
+        let now = Instant::now() + Duration::from_secs(1000);
+
         let mut exts = ExtensionMap::empty();
         exts.set(16, Extension::AbsoluteSendTime);
         let ev = ExtensionValues {
-            abs_send_time: Some(MediaTime::new(1, FIXED_POINT_6_18)),
+            abs_send_time: Some(now),
             ..Default::default()
         };
 
@@ -1169,7 +1233,14 @@ mod test {
         let mut ev2 = ExtensionValues::default();
         exts.parse(&buf, ExtensionsForm::TwoByte, &mut ev2);
 
-        assert_eq!(ev.abs_send_time, ev2.abs_send_time);
+        // Let's pretend a 50 millisecond network latency.
+        ev2.update_absolute_send_time(now + Duration::from_millis(50));
+
+        let now2 = ev2.abs_send_time.unwrap();
+
+        let abs = if now > now2 { now - now2 } else { now2 - now };
+
+        assert!(abs < Duration::from_millis(1));
     }
 
     #[test]

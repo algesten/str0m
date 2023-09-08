@@ -43,7 +43,7 @@ static BEGINNING_OF_TIME: Lazy<(Instant, SystemTime)> = Lazy::new(|| {
     (beginning_of_time, beginning_of_time_sys)
 });
 
-fn epoch_to_beginning() -> Duration {
+pub fn epoch_to_beginning() -> Duration {
     BEGINNING_OF_TIME
         .1
         .duration_since(SystemTime::UNIX_EPOCH)
