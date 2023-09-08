@@ -94,17 +94,6 @@ impl ReceiverRegister {
         let did_wrap = (*seq / self.packet_status.len() as u64)
             != (seq.saturating_sub(forward_delta) / self.packet_status.len() as u64);
 
-        let pos = self.packet_index(*seq);
-        let was_set = self.packet_status[pos].received;
-        self.packet_status[pos].received = true;
-
-        if self.packet_status[pos].received && self.packet_status[pos].nack_count > 0 {
-            debug!(
-                "Received packet {} after {} NACKs",
-                seq, self.packet_status[pos].nack_count
-            );
-        }
-
         if did_wrap {
             // The indices wrapped around the end of `packet_status`, we clear any entries between
             // the current sequence number and nack_check_from.
@@ -117,6 +106,17 @@ impl ReceiverRegister {
             );
 
             self.reset_receceived(start, end);
+        }
+
+        let pos = self.packet_index(*seq);
+        let was_set = self.packet_status[pos].received;
+        self.packet_status[pos].received = true;
+
+        if self.packet_status[pos].received && self.packet_status[pos].nack_count > 0 {
+            debug!(
+                "Received packet {} after {} NACKs",
+                seq, self.packet_status[pos].nack_count
+            );
         }
 
         // Move nack_check_from forward
