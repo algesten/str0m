@@ -557,7 +557,7 @@ impl Client {
             return;
         };
 
-        if let Err(e) = writer.write(pt, data.network_time, data.time, &data.data) {
+        if let Err(e) = writer.write(pt, data.network_time, data.time, data.data.clone()) {
             warn!("Client ({}) failed: {:?}", *self.id, e);
             self.rtc.disconnect();
         }

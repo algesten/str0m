@@ -50,13 +50,17 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
         {
             let wallclock = l.start + l.duration();
             let time = l.duration().into();
-            l.writer(mid).unwrap().write(pt, wallclock, time, &data_a)?;
+            l.writer(mid)
+                .unwrap()
+                .write(pt, wallclock, time, data_a.clone())?;
         }
 
         {
             let wallclock = r.start + r.duration();
             let time = l.duration().into();
-            r.writer(mid).unwrap().write(pt, wallclock, time, &data_b)?;
+            r.writer(mid)
+                .unwrap()
+                .write(pt, wallclock, time, data_b.clone())?;
         }
 
         progress(&mut l, &mut r)?;

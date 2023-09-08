@@ -232,7 +232,7 @@
 //! // Write the data
 //! let wallclock = todo!();  // Absolute time of the data
 //! let media_time = todo!(); // Media time, in RTP time
-//! let data = todo!();       // Actual data
+//! let data: Vec<u8> = todo!();       // Actual data
 //! writer.write(pt, wallclock, media_time, data).unwrap();
 //! ```
 //!
@@ -1082,7 +1082,7 @@ impl Rtc {
     /// // Match incoming PT to an outgoing PT.
     /// let pt = writer.match_params(data.params).unwrap();
     ///
-    /// writer.write(pt, data.network_time, data.time, &data.data).unwrap();
+    /// writer.write(pt, data.network_time, data.time, data.data).unwrap();
     /// ```
     ///
     /// This is a sample level API: For RTP level see [`DirectApi::stream_tx()`] and [`DirectApi::stream_rx()`].

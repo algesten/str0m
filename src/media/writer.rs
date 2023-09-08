@@ -101,7 +101,7 @@ impl<'a> Writer<'a> {
         pt: Pt,
         wallclock: Instant,
         rtp_time: MediaTime,
-        data: &[u8],
+        data: impl Into<Vec<u8>>,
     ) -> Result<(), RtcError> {
         let media = media_by_mid_mut(&mut self.session.medias, self.mid);
 
@@ -114,6 +114,8 @@ impl<'a> Writer<'a> {
                 return Err(RtcError::UnknownRid(rid));
             }
         }
+
+        let data: Vec<u8> = data.into();
 
         trace!(
             "write {:?} {:?} {:?} time: {:?} len: {}",
@@ -129,7 +131,7 @@ impl<'a> Writer<'a> {
             rid: self.rid,
             wallclock,
             rtp_time,
-            data: data.into(),
+            data,
             ext_vals: self.ext_vals,
         };
 

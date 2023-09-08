@@ -57,7 +57,9 @@ pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
     loop {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
-        l.writer(mid).unwrap().write(pt, wallclock, time, &data_a)?;
+        l.writer(mid)
+            .unwrap()
+            .write(pt, wallclock, time, data_a.clone())?;
 
         progress(&mut l, &mut r)?;
         progress(&mut l, &mut r)?;
