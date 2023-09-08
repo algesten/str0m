@@ -232,7 +232,7 @@
 //! // Write the data
 //! let wallclock = todo!();  // Absolute time of the data
 //! let media_time = todo!(); // Media time, in RTP time
-//! let data = todo!();       // Actual data
+//! let data: Vec<u8> = todo!();       // Actual data
 //! writer.write(pt, wallclock, media_time, data).unwrap();
 //! ```
 //!
