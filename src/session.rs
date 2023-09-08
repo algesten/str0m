@@ -352,10 +352,8 @@ impl Session {
     }
 
     fn handle_rtp(&mut self, now: Instant, mut header: RtpHeader, buf: &[u8]) {
-        // const INGRESS_PACKET_LOSS_PERCENT: u16 = 5;
-        // if header.sequence_number % (100 / INGRESS_PACKET_LOSS_PERCENT) == 0 {
-        //     return;
-        // }
+        // Rewrite absolute-send-time (if present) to be relative to now.
+        header.ext_vals.update_absolute_send_time(now);
 
         trace!("Handle RTP: {:?}", header);
         if let Some(transport_cc) = header.ext_vals.transport_cc {
