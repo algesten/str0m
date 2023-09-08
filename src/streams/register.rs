@@ -897,6 +897,31 @@ mod test {
     }
 
     #[test]
+    fn out_of_order_and_rollover() {
+        let mut reg = ReceiverRegister::new(0.into());
+
+        reg.update_seq(2998.into());
+        reg.update_seq(2999.into());
+
+        // receive older packet
+        reg.update_seq(2995.into());
+
+        // wrap
+        for i in 3000..5995 {
+            reg.update_seq(i.into());
+        }
+
+        // 5995 is missing
+
+        reg.update_seq(5996.into());
+        reg.update_seq(5997.into());
+
+        let reports = reg.create_nack_reports();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].reports[0].pid, 5995);
+    }
+
+    #[test]
     fn nack_check_on_seq_rollover() {
         let range = 65530..65541 + MISORDER_DELAY;
         let missing = [65535_u64, 65536_u64, 65537_u64];
