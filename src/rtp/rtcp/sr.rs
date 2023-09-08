@@ -17,13 +17,21 @@ pub struct SenderReport {
 }
 
 /// Information about a stream being sent.
-#[allow(missing_docs)]
+///
+/// A subset of the information contained in Sender Reports(SR).
+///
+/// See [RFC 3550 6.4.1](https://www.rfc-editor.org/rfc/rfc3550#section-6.4.1)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SenderInfo {
+    /// The SSRC of the SR originator.
     pub ssrc: Ssrc,
+    /// The 64 bit NTP timestamp converted to an [`Instant`].
     pub ntp_time: Instant,
+    /// The RTP timestamp that corresponds to the same point in time as the NTP timestamp above.
     pub rtp_time: MediaTime,
+    /// The total number of packets the sender had sent when this information was generated.
     pub sender_packet_count: u32,
+    /// The total number of octets the sender had sent when this information was generated.
     pub sender_octet_count: u32,
 }
 

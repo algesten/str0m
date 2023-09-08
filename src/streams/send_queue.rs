@@ -213,6 +213,7 @@ mod test {
             header: RtpHeader::default(),
             payload: vec![],
             timestamp: Instant::now(),
+            last_sender_info: None,
             nackable: true,
         });
 
@@ -247,6 +248,7 @@ mod test {
             header: RtpHeader::default(),
             payload: vec![42, 42],
             timestamp: start,
+            last_sender_info: None,
             nackable: true,
         });
 

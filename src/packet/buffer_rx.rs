@@ -3,7 +3,7 @@ use std::fmt;
 use std::ops::RangeInclusive;
 use std::time::Instant;
 
-use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SeqNo};
+use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SenderInfo, SeqNo};
 
 use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError};
 
@@ -18,6 +18,10 @@ pub struct RtpMeta {
     pub seq_no: SeqNo,
     /// The actual header.
     pub header: RtpHeader,
+    /// Sender information from the most recent Sender Report(SR).
+    ///
+    /// If no Sender Report(SR) has been received this is [`None`].
+    pub last_sender_info: Option<SenderInfo>,
 }
 
 #[derive(Clone)]
@@ -35,6 +39,14 @@ impl Depacketized {
             .iter()
             .map(|m| m.received)
             .min()
+            .expect("a depacketized to consist of at least one packet")
+    }
+
+    pub fn first_sender_info(&self) -> Option<SenderInfo> {
+        self.meta
+            .iter()
+            .min_by_key(|m| m.received)
+            .map(|m| m.last_sender_info)
             .expect("a depacketized to consist of at least one packet")
     }
 
@@ -57,18 +69,6 @@ struct Entry {
     data: Vec<u8>,
     head: bool,
     tail: bool,
-}
-
-impl RtpMeta {
-    #[doc(hidden)]
-    pub fn new(received: Instant, time: MediaTime, seq_no: SeqNo, header: RtpHeader) -> Self {
-        RtpMeta {
-            received,
-            time,
-            seq_no,
-            header,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -550,6 +550,7 @@ mod test {
                 received: Instant::now(),
                 seq_no: (*seq).into(),
                 time: MediaTime::new(*time, 90_000),
+                last_sender_info: None,
                 header: RtpHeader {
                     sequence_number: *seq as u16,
                     timestamp: *time as u32,

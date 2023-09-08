@@ -381,6 +381,7 @@ impl StreamRx {
             header,
             payload: data,
             nackable: false,
+            last_sender_info: self.sender_info.map(|(_, s)| s),
             timestamp: now,
         };
 

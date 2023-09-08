@@ -253,6 +253,7 @@ impl Media {
                         contiguous: dep.contiguous,
                         ext_vals: dep.ext_vals().clone(),
                         codec_extra: dep.codec_extra,
+                        last_sender_info: dep.first_sender_info(),
                         data: dep.data,
                     })
                     .map_err(|e| RtcError::Packet(self.mid, *pt, e)),
@@ -307,6 +308,7 @@ impl Media {
             time: packet.time,
             seq_no: packet.seq_no,
             header: packet.header.clone(),
+            last_sender_info: packet.last_sender_info,
         };
 
         buffer.push(meta, packet.payload);

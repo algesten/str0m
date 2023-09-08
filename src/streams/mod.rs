@@ -5,9 +5,9 @@ use std::time::Instant;
 
 use crate::format::CodecConfig;
 use crate::media::{KeyframeRequest, Media};
-use crate::rtp_::MediaTime;
 use crate::rtp_::Pt;
 use crate::rtp_::Ssrc;
+use crate::rtp_::{MediaTime, SenderInfo};
 use crate::rtp_::{Mid, Rid, SeqNo};
 use crate::rtp_::{Rtcp, RtpHeader};
 use crate::util::already_happened;
@@ -66,6 +66,11 @@ pub struct RtpPacket {
     /// For incoming packets it's the time we received the network packet.
     pub timestamp: Instant,
 
+    /// Sender information from the most recent Sender Report(SR).
+    ///
+    /// If no Sender Report(SR) has been received or this packet is being sent by str0m this is [`None`].
+    pub last_sender_info: Option<SenderInfo>,
+
     /// Whether this packet can be nacked.
     ///
     /// This is often false for audio, but might also be false for discardable frames when
@@ -105,6 +110,7 @@ impl RtpPacket {
             },
             payload: vec![], // This payload is never used. See RtpHeader::create_padding_packet
             nackable: false,
+            last_sender_info: None,
             timestamp: already_happened(),
         }
     }
