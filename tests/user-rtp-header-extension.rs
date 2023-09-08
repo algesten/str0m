@@ -131,7 +131,7 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
             .unwrap()
             // Set my bespoke RTP header value.
             .user_extension_value(MyValue(42))
-            .write(pt, wallclock, time, &data_a)?;
+            .write(pt, wallclock, time, data_a.clone())?;
 
         progress(&mut l, &mut r)?;
 

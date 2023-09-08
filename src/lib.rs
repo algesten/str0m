@@ -1082,7 +1082,7 @@ impl Rtc {
     /// // Match incoming PT to an outgoing PT.
     /// let pt = writer.match_params(data.params).unwrap();
     ///
-    /// writer.write(pt, data.network_time, data.time, &data.data).unwrap();
+    /// writer.write(pt, data.network_time, data.time, data.data).unwrap();
     /// ```
     ///
     /// This is a sample level API: For RTP level see [`DirectApi::stream_tx()`] and [`DirectApi::stream_rx()`].
