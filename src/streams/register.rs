@@ -108,7 +108,9 @@ impl ReceiverRegister {
         if did_wrap {
             // The indices wrapped around the end of `packet_status`, we clear any entries between
             // the current sequence number and nack_check_from.
-            let start = (*seq - self.packet_index(*seq) as u64).into();
+            let start = (*seq - self.packet_index(*seq) as u64)
+                .saturating_sub(self.packet_status.len() as u64)
+                .into();
             let end = self.nack_check_from;
             trace!(
                 "ReceiveRegister wrapped, clearing all entries from {start} to {end} on receiving {seq}"
