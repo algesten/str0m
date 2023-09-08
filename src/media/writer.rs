@@ -96,12 +96,12 @@ impl<'a> Writer<'a> {
     /// If you write media before `IceConnectionState` is `Connected` it will be dropped.
     ///
     /// Panics if [`RtcConfig::set_rtp_mode()`][crate::RtcConfig::set_rtp_mode] is `true`.
-    pub fn write<T: Into<Vec<u8>>>(
+    pub fn write(
         self,
         pt: Pt,
         wallclock: Instant,
         rtp_time: MediaTime,
-        data: T,
+        data: impl Into<Vec<u8>>,
     ) -> Result<(), RtcError> {
         let media = media_by_mid_mut(&mut self.session.medias, self.mid);
 
