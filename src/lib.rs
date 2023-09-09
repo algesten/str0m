@@ -1597,6 +1597,34 @@ impl RtcConfig {
         RtcConfig::default()
     }
 
+    /// Creates a new default config but with specified dtls certificate
+    pub fn new_with_dtls_cert(dtls_cert: DtlsCert) -> Self {
+        Self {
+            dtls_cert,
+            local_ice_credentials: IceCreds::new(),
+            fingerprint_verification: true,
+            ice_lite: false,
+            codec_config: CodecConfig::new_with_defaults(),
+            exts: ExtensionMap::standard(),
+            stats_interval: None,
+            bwe_initial_bitrate: None,
+            reordering_size_audio: 15,
+            reordering_size_video: 30,
+            send_buffer_audio: 50,
+            send_buffer_video: 1000,
+            rtp_mode: false,
+            enable_raw_packets: false,
+        }
+    }
+
+    /// Creates a new default config but with specified dtls certificate
+    pub fn new_with_dtls_cert_and_default(dtls_cert: DtlsCert) -> Self {
+        Self {
+            dtls_cert,
+            ..Default::default()
+        }
+    }
+
     /// The auto generated local ice credentials.
     pub fn local_ice_credentials(&self) -> &IceCreds {
         &self.local_ice_credentials
