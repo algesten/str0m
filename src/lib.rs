@@ -917,8 +917,11 @@ impl Rtc {
         Rtc {
             alive: true,
             ice,
-            dtls: Dtls::new(config.dtls_cert, config.fingerprint_verification)
-                .expect("DTLS to init without problem"),
+            dtls: Dtls::new(
+                config.dtls_cert.unwrap_or_else(DtlsCert::new),
+                config.fingerprint_verification,
+            )
+            .expect("DTLS to init without problem"),
             session,
             sctp: RtcSctp::new(),
             chan: ChannelHandler::default(),
@@ -1575,7 +1578,7 @@ impl Rtc {
 #[derive(Debug, Clone)]
 pub struct RtcConfig {
     local_ice_credentials: IceCreds,
-    dtls_cert: DtlsCert,
+    dtls_cert: Option<DtlsCert>,
     fingerprint_verification: bool,
     ice_lite: bool,
     codec_config: CodecConfig,
@@ -1602,16 +1605,41 @@ impl RtcConfig {
         &self.local_ice_credentials
     }
 
-    /// The configured DtlsCert.
+    /// Get the configured DTLS certificate, if set.
     ///
-    /// The certificate is uniquely created per new RtcConfig.
-    pub fn dtls_cert(&self) -> &DtlsCert {
-        &self.dtls_cert
+    /// Returns [`None`] if no DTLS certificate is set. In such cases,
+    /// the certificate will be created on build and you can use the
+    /// direct API on an [`Rtc`] instance to obtain the local
+    /// DTLS fingerprint.
+    ///
+    /// ```
+    /// use str0m::RtcConfig;
+    ///
+    /// let fingerprint = RtcConfig::default()
+    ///     .build()
+    ///     .direct_api()
+    ///     .local_dtls_fingerprint();
+    /// ```
+    pub fn dtls_cert(&self) -> Option<&DtlsCert> {
+        self.dtls_cert.as_ref()
     }
 
-    /// Set DTLS certification.
+    /// Set the DTLS certificate for secure communication.
+    ///
+    /// Generating a certificate can be a time-consuming process.
+    /// Use this API to reuse a previously created [`DtlsCert`] if available.
+    ///
+    /// ```
+    /// use str0m::RtcConfig;
+    /// use str0m::change::DtlsCert;
+    ///
+    /// let dtls_cert = DtlsCert::new();
+    ///
+    /// let rtc_config = RtcConfig::default()
+    ///     .set_dtls_cert(dtls_cert);
+    /// ```
     pub fn set_dtls_cert(mut self, dtls_cert: DtlsCert) -> Self {
-        self.dtls_cert = dtls_cert;
+        self.dtls_cert = Some(dtls_cert);
         self
     }
 
@@ -1981,7 +2009,7 @@ impl Default for RtcConfig {
     fn default() -> Self {
         Self {
             local_ice_credentials: IceCreds::new(),
-            dtls_cert: DtlsCert::new(),
+            dtls_cert: None,
             fingerprint_verification: true,
             ice_lite: false,
             codec_config: CodecConfig::new_with_defaults(),
