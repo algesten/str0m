@@ -82,7 +82,7 @@ impl ReceiverRegister {
         self.expected_prior = 0;
         self.jitter = 0.0;
         self.packet_status.fill(PacketStatus::default());
-        self.record_received(seq, 0);
+        self.record_received(seq);
         self.nack_check_from = seq;
         self.time_point_prior = None;
     }
@@ -90,31 +90,20 @@ impl ReceiverRegister {
     /// Set a bit indicating we've received a packet.
     ///
     /// Returns true if the packet received wasn't received before.
-    fn record_received(&mut self, seq: SeqNo, forward_delta: u64) -> bool {
-        let did_wrap = (*seq / self.packet_status.len() as u64)
-            != (seq.saturating_sub(forward_delta) / self.packet_status.len() as u64);
+    fn record_received(&mut self, seq: SeqNo) -> bool {
+        if seq < self.nack_check_from {
+            return false;
+        }
 
         let pos = self.packet_index(*seq);
         let was_set = self.packet_status[pos].received;
         self.packet_status[pos].received = true;
 
-        if self.packet_status[pos].received && self.packet_status[pos].nack_count > 0 {
+        if self.packet_status[pos].nack_count > 0 {
             debug!(
                 "Received packet {} after {} NACKs",
                 seq, self.packet_status[pos].nack_count
             );
-        }
-
-        if did_wrap {
-            // The indices wrapped around the end of `packet_status`, we clear any entries between
-            // the current sequence number and nack_check_from.
-            let start = (*seq - self.packet_index(*seq) as u64).into();
-            let end = self.nack_check_from;
-            trace!(
-                "ReceiveRegister wrapped, clearing all entries from {start} to {end} on receiving {seq}"
-            );
-
-            self.reset_receceived(start, end);
         }
 
         // Move nack_check_from forward
@@ -213,7 +202,7 @@ impl ReceiverRegister {
                 // in order, with permissible gap
                 self.max_seq = seq;
                 self.bad_seq = None;
-                self.record_received(seq, udelta)
+                self.record_received(seq)
             } else {
                 // the sequence number made a very large jump
                 self.maybe_seq_jump(seq);
@@ -226,7 +215,7 @@ impl ReceiverRegister {
             let udelta = *self.max_seq - *seq;
 
             if udelta < MAX_MISORDER {
-                self.record_received(seq, 0)
+                self.record_received(seq)
             } else {
                 // the sequence number is too far in the past
                 self.maybe_seq_jump(seq);
@@ -605,11 +594,11 @@ mod test {
         assert_eq!(reg.max_seq, 141.into());
 
         let new = reg.update_seq(120.into());
-        assert!(new);
+        assert!(!new);
         assert_eq!(reg.max_seq, 141.into()); // no jump
         assert!(reg.bad_seq.is_none());
         let new = reg.update_seq(121.into());
-        assert!(new);
+        assert!(!new);
         assert_eq!(reg.max_seq, 141.into()); // no jump
     }
 
