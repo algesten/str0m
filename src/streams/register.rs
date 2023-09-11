@@ -481,8 +481,8 @@ impl ReceiverRegister {
     }
 
     pub(crate) fn clear(&mut self) {
-        self.packet_status.clear();
-        self.nack_check_from = self.max_seq;
+        self.packet_status.fill(PacketStatus::default());
+        self.nack_check_from = (*self.max_seq + 1).into();
     }
 }
 
@@ -554,6 +554,46 @@ mod test {
         let new = reg.update_seq(17.into());
         assert!(new);
         assert_eq!(reg.max_seq, 17.into());
+    }
+
+    #[test]
+    fn clear_and_reuse() {
+        let mut reg = ReceiverRegister::new(14.into());
+
+        // basic functionality
+        for i in (0..10).filter(|i| i % 6 != 0) {
+            let res = reg.update_seq(i.into());
+            assert!(res);
+        }
+
+        assert_eq!(reg.max_seq, 9.into());
+        assert_eq!(reg.nack_check_from, 5.into());
+
+        let reports = reg.nack_reports();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].reports.len(), 1);
+        assert_eq!(reports[0].reports[0].pid, 6);
+
+        reg.clear();
+
+        assert_eq!(reg.max_seq, 9.into());
+        assert_eq!(reg.nack_check_from, 10.into());
+
+        // basic functionality
+        let reports = reg.nack_reports();
+        assert_eq!(reports.len(), 0);
+        for i in (10..20).filter(|i| i % 16 != 0) {
+            let res = reg.update_seq(i.into());
+            assert!(res);
+        }
+
+        assert_eq!(reg.max_seq, 19.into());
+        assert_eq!(reg.nack_check_from, 15.into());
+
+        let reports = reg.nack_reports();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].reports.len(), 1);
+        assert_eq!(reports[0].reports[0].pid, 16);
     }
 
     #[test]
