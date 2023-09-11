@@ -743,7 +743,11 @@ fn ensure_stream_tx(session: &mut Session) {
 
         // If any payload param has RTX, we need to prepare for RTX. This is because we always
         // communicate a=ssrc lines, which need to be complete with main and RTX SSRC.
-        let has_rtx = session.codec_config.iter().any(|p| p.resend().is_some());
+        let has_rtx = session
+            .codec_config
+            .iter()
+            .filter(|p| media.remote_pts().contains(&p.pt))
+            .any(|p| p.resend().is_some());
 
         for rid in rids {
             // If we already have the stream, we don't make any new one.
