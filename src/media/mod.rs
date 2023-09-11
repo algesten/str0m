@@ -27,6 +27,7 @@ pub use writer::Writer;
 pub use crate::packet::MediaKind;
 pub use crate::rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
 
+#[derive(Debug)]
 /// Information about some configured media.
 pub struct Media {
     // ========================================= RTP level =========================================
@@ -143,6 +144,7 @@ impl Rids {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct ToPayload {
     pub pt: Pt,
     pub rid: Option<Rid>,
