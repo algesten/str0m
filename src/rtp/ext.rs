@@ -438,6 +438,22 @@ impl ExtensionMap {
         }
     }
 
+    pub(crate) fn remove(&mut self, ext: Extension) {
+        let maybe_entry = self.0.iter_mut().find_map(|e| {
+            if e.as_mut().map(|e| e.ext == ext).unwrap_or(false) {
+                Some(e)
+            } else {
+                None
+            }
+        });
+
+        let Some(entry) = maybe_entry else {
+            return;
+        };
+
+        let _ = entry.take();
+    }
+
     fn swap(&mut self, id: u8, ext: &Extension) {
         if id < 1 || id > 14 {
             return;
