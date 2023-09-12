@@ -2,7 +2,7 @@
 
 use combine::EasyParser;
 use std::collections::HashSet;
-use std::fmt::{self};
+use std::fmt;
 use std::num::ParseFloatError;
 use std::ops::Deref;
 use std::str::FromStr;
@@ -602,6 +602,7 @@ impl MediaLine {
                 _ => {}
             }
         }
+
         // Match this second to ensure we preserve order of a=ssrc.
         for a in &self.attrs {
             match a {
@@ -616,10 +617,33 @@ impl MediaLine {
                         continue;
                     }
 
-                    let info = by_ssrc(&mut v, ssrcs[1]);
-                    info.repairs = Some(ssrcs[0]);
+                    let repair_info = by_ssrc(&mut v, ssrcs[1]);
+                    repair_info.repairs = Some(ssrcs[0]);
                 }
                 _ => {}
+            }
+        }
+
+        // The order of the `a=ssrc-group:FID` lines map to the declared order of the `a=simulcast`
+        // line. For example
+        // a=simulcast:recv l;m;h
+        // a=ssrc-group:FID 1 2
+        // a=ssrc-group:FID 3 4
+        // a=ssrc-group:FID 5 6
+        //
+        // maps 1 as the SSRC for rid l, 2 as the RTX SSRC for rid l, 3 as the SSRC for rid m, 4 as
+        // the RTX SSRC for rid m and so on.
+        if let Some(simulcast_group) = self.simulcast().map(|s| s.send) {
+            if simulcast_group.len() * 2 == v.len() {
+                for (i, id) in simulcast_group.iter().enumerate() {
+                    let rid = id.0.as_str().into();
+
+                    v[i * 2].rid = Some(rid);
+                    v[i * 2 + 1].rid = Some(rid);
+                }
+            } else if !v.is_empty() {
+                // if v.len() == 0 we are not using signalled SSRCs at all.
+                warn!("a=ssrc-group count doesnt match a=rid count");
             }
         }
 
@@ -635,6 +659,7 @@ pub struct SsrcInfo {
     pub cname: Option<String>,
     pub stream_id: Option<String>,
     pub track_id: Option<String>,
+    pub rid: Option<Rid>,
 }
 
 impl Default for SsrcInfo {
@@ -645,6 +670,7 @@ impl Default for SsrcInfo {
             cname: None,
             stream_id: None,
             track_id: None,
+            rid: None,
         }
     }
 }

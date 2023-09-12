@@ -466,8 +466,6 @@ impl Session {
         let media = self.medias.iter_mut().find(|m| m.mid() == mid).unwrap();
         let stream = self.streams.stream_rx(&ssrc).unwrap();
 
-        // If the header ssrc differs from the main, it's a repair stream.
-        let is_repair = header.ssrc != ssrc;
         let params = match main_payload_params(&self.codec_config, header.payload_type) {
             Some(p) => p,
             None => {
@@ -480,6 +478,7 @@ impl Session {
         };
         let clock_rate = params.spec().clock_rate;
         let pt = params.pt();
+        let is_repair = pt != header.payload_type;
 
         // is_repair controls whether update is updating the main register or the RTX register.
         // Either way we get a seq_no_outer which is used to decrypt the SRTP.

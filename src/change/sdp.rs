@@ -1,6 +1,7 @@
 //! Strategy that amends the [`Rtc`] via SDP OFFER/ANSWER negotiation.
 
 use std::fmt;
+use std::fmt::Write as _;
 use std::ops::{Deref, DerefMut};
 
 use crate::channel::ChannelId;
@@ -925,6 +926,27 @@ fn update_session(session: &mut Session, sdp: &Sdp) {
     if has_transport_cc && has_twcc_header {
         session.enable_twcc_feedback();
     }
+
+    let has_ssrc_signalling = sdp.media_lines.iter().any(|m| {
+        m.attrs
+            .iter()
+            .any(|a| matches!(a, MediaAttribute::SsrcGroup { .. }))
+    });
+
+    if has_ssrc_signalling {
+        info!("Remote uses signalled SSRCs, disabling rid and repaired-rid RTP headers");
+        // If the remote indicated explicit signalling of simulcast via ssrc-group we disabled rid
+        // and repaired-rid
+        // Firefox has had several issue with rid/repaired-rid that made them unreliable, however
+        // Firefox still uses ssrc-group signalling so we can rely on this.
+        //
+        // See:
+        // * https://bugzilla.mozilla.org/show_bug.cgi?id=1852775
+        // * https://hg.mozilla.org/mozilla-central/rev/b0348f1f8d7197fb87158ba74542d28d46133997
+        // * https://hg.mozilla.org/mozilla-central/rev/f8d055fcb63fa2ab11b7b4b58a705a66a8770bdb
+        session.exts.remove(Extension::RtpStreamId);
+        session.exts.remove(Extension::RepairedRtpStreamId);
+    }
 }
 
 /// Returns all media/channels as `AsMediaLine` trait.
@@ -996,21 +1018,64 @@ fn update_media(
     let infos = m.ssrc_info();
 
     let main = infos.iter().filter(|i| i.repairs.is_none());
+    let mid = media.mid();
 
-    if m.simulcast().is_none() {
-        // Only use pre-communicated SSRC if we are running without simulcast.
-        // We found a bug in FF where the order of the simulcast lines does not
-        // correspond to the order of the simulcast declarations. In this case
-        // it's better to fall back on mid/rid dynamic mapping.
+    fn log_change(mut log_message: String, repair_ssrc: Option<Ssrc>, mid: Mid, rid: Option<Rid>) {
+        if let Some(rtx_ssrc) = repair_ssrc {
+            write!(log_message, ", RTX: SSRC: {}", rtx_ssrc).expect("write! to string never fails");
+        }
+        write!(log_message, " for MID: {}", mid).expect("write! to String never fails");
 
-        for i in main {
-            // TODO: If the remote is communicating _BOTH_ rid and a=ssrc this will fail.
-            info!("Adding pre-communicated SSRC: {:?}", i);
-            let repair_ssrc = infos
-                .iter()
-                .find(|r| r.repairs == Some(i.ssrc))
-                .map(|r| r.ssrc);
-            streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), None);
+        if let Some(rid) = rid {
+            write!(log_message, " and RID: {}", rid).expect("write! to String never fails");
+        }
+        info!("{}", log_message);
+    }
+
+    // Use pre-communicated SSRCs if available and prefer them over dynamically signalled SSRCs via
+    // rid and repaired-rid. There's a bug in Firefox that causes it to emit incorrect mappings via
+    // repaired-rid while the values signalled in SDP are correct.
+    for i in main {
+        // If the remote is communicating _BOTH_ rid/repaired-rid and a=ssrc/a=ssrc-group we will
+        // adopt the mapping from the SDP as described above. Since we have already established the
+        // mapping any further mapping via rid/repaired-rid headers for these SSRCs will be ignored
+        let repair_ssrc = infos
+            .iter()
+            .find(|r| r.repairs == Some(i.ssrc))
+            .map(|r| r.ssrc);
+        let rid = i.rid;
+
+        if let Some(existing_stream) = streams.stream_rx_by_mid_rid(mid, rid) {
+            if existing_stream.ssrc() == i.ssrc && existing_stream.rtx() == repair_ssrc {
+                continue;
+            }
+
+            // The remote changed its mapping, this happens in Firefox when transitioning an m-line
+            // from `sendonly` to `inactive` and back to `sendonly`. Firefox changes the SSRCs for
+            // simulcast layer(although not for the lowest quality layer).
+            log_change(
+                format!("Reconfiguring pre-communicated SSRC: {}", i.ssrc),
+                repair_ssrc,
+                mid,
+                i.rid,
+            );
+            let previous_ssrc = existing_stream.ssrc();
+
+            existing_stream.change_ssrc(i.ssrc);
+            if let Some(repair_ssrc) = repair_ssrc {
+                existing_stream.maybe_reset_rtx(repair_ssrc)
+            }
+
+            streams.change_stream_rx_ssrc(previous_ssrc, i.ssrc);
+        } else {
+            log_change(
+                format!("Adding pre-communicated SSRC: {}", i.ssrc),
+                repair_ssrc,
+                mid,
+                rid,
+            );
+
+            streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), rid);
         }
     }
 
