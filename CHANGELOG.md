@@ -1,5 +1,11 @@
 
 # Unreleased
+  * Improve NACK sending with multiple fixes to receive register.
+  * Fix bug where RTX channel would be allocated for audio m-lines.
+  * Delay creation of DtlsCert to avoid unnecessary start-up time.
+  * Writer take Into<Vec<u8>> to make it possible to avoid extra allocation (breaking).
+  * Refactor internal time handling (unix epoch translation)
+  * Fix bug in signaling media discontinuity
   * User RTP header extensions
 
 # 0.2.0
