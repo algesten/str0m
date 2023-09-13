@@ -17,6 +17,7 @@ pub use self::send::StreamTx;
 
 mod receive;
 mod register;
+mod register_nack;
 mod rtx_cache;
 pub(crate) mod rtx_cache_buf;
 mod send;
@@ -210,10 +211,6 @@ impl Streams {
         let r = self.streams_rx.values().map(|s| s.receiver_report_at());
         let s = self.streams_tx.values().map(|s| s.sender_report_at());
         r.chain(s).min()
-    }
-
-    pub(crate) fn need_nack(&mut self) -> bool {
-        self.streams_rx.values_mut().any(|s| s.has_nack())
     }
 
     pub(crate) fn paused_at(&self) -> Option<Instant> {

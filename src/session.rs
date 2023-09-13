@@ -210,7 +210,7 @@ impl Session {
 
         let sender_ssrc = self.streams.first_ssrc_local();
 
-        let do_nack = Some(now) >= self.nack_at();
+        let do_nack = now >= self.nack_at();
 
         self.streams.handle_timeout(
             now,
@@ -784,7 +784,7 @@ impl Session {
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
         let regular_at = Some(self.regular_feedback_at());
-        let nack_at = self.nack_at();
+        let nack_at = Some(self.nack_at());
         let twcc_at = self.twcc_at();
         let pacing_at = self.pacer.poll_timeout();
         let packetize_at = self.medias.iter().flat_map(|m| m.poll_timeout()).next();
@@ -820,12 +820,8 @@ impl Session {
         self.streams.paused_at().unwrap_or_else(not_happening)
     }
 
-    fn nack_at(&mut self) -> Option<Instant> {
-        if self.streams.need_nack() {
-            Some(self.last_nack + NACK_MIN_INTERVAL)
-        } else {
-            None
-        }
+    fn nack_at(&mut self) -> Instant {
+        self.last_nack + NACK_MIN_INTERVAL
     }
 
     fn twcc_at(&self) -> Option<Instant> {
