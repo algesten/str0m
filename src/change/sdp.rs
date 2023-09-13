@@ -14,9 +14,9 @@ use crate::packet::MediaKind;
 use crate::rtp_::Rid;
 use crate::rtp_::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
+use crate::sdp::SimulcastGroups;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
 use crate::sdp::{Proto, SessionAttribute, Setup};
-use crate::sdp::{SimulcastGroups, SimulcastOption};
 use crate::session::Session;
 use crate::Rtc;
 use crate::RtcError;
@@ -724,18 +724,9 @@ fn ensure_stream_tx(session: &mut Session) {
         let mut rids: Vec<Option<Rid>> = vec![];
 
         if let Some(sim) = media.simulcast() {
-            for group in &*sim.send {
-                for opt in &**group {
-                    match opt {
-                        SimulcastOption::Rid(rid) => {
-                            let rid: Rid = rid.0.as_str().into();
-                            rids.push(Some(rid));
-                        }
-                        SimulcastOption::Ssrc(_) => {
-                            warn!("No support for munged simulcast");
-                        }
-                    }
-                }
+            for rid in &*sim.send {
+                let rid: Rid = rid.0.as_str().into();
+                rids.push(Some(rid));
             }
         } else {
             rids.push(None);
@@ -1144,17 +1135,11 @@ impl AsSdpMediaLine for Media {
                 gs: &'a SimulcastGroups,
                 direction: &'static str,
             ) -> impl Iterator<Item = MediaAttribute> + 'a {
-                gs.iter().flat_map(|g| g.iter()).filter_map(move |o| {
-                    if let SimulcastOption::Rid(id) = o {
-                        Some(MediaAttribute::Rid {
-                            id: id.clone(),
-                            direction,
-                            pt: vec![],
-                            restriction: vec![],
-                        })
-                    } else {
-                        None
-                    }
+                gs.iter().map(move |rid| MediaAttribute::Rid {
+                    id: rid.clone(),
+                    direction,
+                    pt: vec![],
+                    restriction: vec![],
                 })
             }
             attrs.extend(to_rids(&s.recv, "recv"));

@@ -605,7 +605,7 @@ where
         (
             string(direction),
             token(' '),
-            sep_by1::<Vec<Vec<String>>, _, _, _>(sep_by1(name(), token(';')), token(',')),
+            sep_by1::<Vec<Vec<String>>, _, _, _>(sep_by1(name(), token(',')), token(';')),
         )
     };
 
@@ -622,11 +622,13 @@ where
 
         fn to_simul(to: &mut SimulcastGroups, groups: Vec<Vec<String>>) {
             for group in groups {
-                let ids = group
-                    .into_iter()
-                    .map(|i| SimulcastOption::Rid(RestrictionId(i)))
-                    .collect::<Vec<_>>();
-                to.0.push(SimulcastGroup(ids));
+                // TODO: Properly support rid alternatives, for now we ignore any alternatives
+                // provided and use the first rid.
+                let first = group.into_iter().next();
+
+                if let Some(rid) = first.map(RestrictionId) {
+                    to.0.push(rid);
+                }
             }
         }
 
@@ -907,7 +909,7 @@ mod test {
         let x = media_attribute_line()
             .parse("a=simulcast:send 2,3;4")
             .unwrap();
-        assert_eq!("a=simulcast:send 2,3;4\r\n", x.0.to_string());
+        assert_eq!("a=simulcast:send 2;4\r\n", x.0.to_string());
     }
 
     #[test]

@@ -11,19 +11,8 @@ use crate::format::CodecExtra;
 
 impl From<SdpSimulcast> for Simulcast {
     fn from(s: SdpSimulcast) -> Self {
-        let send = s
-            .send
-            .iter()
-            .flat_map(|s| s.iter().map(|s| s.as_stream_id().0.as_ref()))
-            .map(Rid::from)
-            .collect();
-
-        let recv = s
-            .recv
-            .iter()
-            .flat_map(|s| s.iter().map(|s| s.as_stream_id().0.as_ref()))
-            .map(Rid::from)
-            .collect();
+        let send = s.send.iter().map(|r| r.0.as_ref()).map(Rid::from).collect();
+        let recv = s.recv.iter().map(|r| r.0.as_ref()).map(Rid::from).collect();
 
         Simulcast { send, recv }
     }
