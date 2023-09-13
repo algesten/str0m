@@ -317,8 +317,7 @@ impl StreamRx {
             &mut self.register
         };
 
-        let register =
-            register_ref.get_or_insert_with(|| ReceiverRegister::new(header.sequence_number(None)));
+        let register = register_ref.get_or_insert_with(ReceiverRegister::new);
 
         // If the user has called `reset_seq_no`, this is the time to handle it, but only
         // if the incoming packet is for main (not repair).
@@ -333,11 +332,10 @@ impl StreamRx {
         let seq_no = if let Some(reset_seq_no) = reset_seq_no {
             reset_seq_no
         } else {
-            header.sequence_number(Some(register.max_seq()))
+            header.sequence_number(register.max_seq())
         };
 
-        let is_new_packet = register.update_seq(seq_no);
-        register.update_time(now, header.timestamp, clock_rate);
+        let is_new_packet = register.update(seq_no, now, header.timestamp, clock_rate);
 
         let previous_time = self.last_time.map(|t| t.numer() as u64);
         let time_u32 = extend_u32(previous_time, header.timestamp);
@@ -476,7 +474,7 @@ impl StreamRx {
     }
 
     fn create_receiver_report(&mut self, now: Instant) -> ReceiverReport {
-        let Some(mut report) = self.register.as_mut().map(|r| r.reception_report()) else {
+        let Some(mut report) = self.register.as_mut().and_then(|r| r.reception_report()) else {
             return ReceiverReport {
                 sender_ssrc: 0.into(), // set one level up
                 reports: ReportList::new(),
@@ -529,16 +527,6 @@ impl StreamRx {
         self.rtx.is_some() && !self.suppress_nack
     }
 
-    pub(crate) fn has_nack(&mut self) -> bool {
-        if !self.nack_enabled() {
-            return false;
-        }
-        self.register
-            .as_mut()
-            .map(|r| r.has_nack_report())
-            .unwrap_or(false)
-    }
-
     pub(crate) fn maybe_create_nack(
         &mut self,
         sender_ssrc: Ssrc,
@@ -548,7 +536,7 @@ impl StreamRx {
             return None;
         }
 
-        let mut nacks = self.register.as_mut().map(|r| r.nack_reports())?;
+        let mut nacks = self.register.as_mut().and_then(|r| r.nack_report())?;
 
         for nack in &mut nacks {
             nack.sender_ssrc = sender_ssrc;
