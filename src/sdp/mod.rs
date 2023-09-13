@@ -8,7 +8,7 @@ use thiserror::Error;
 mod data;
 pub(crate) use data::{FormatParam, Sdp, Session, SessionAttribute, Setup};
 pub(crate) use data::{MediaAttribute, MediaLine, MediaType, Msid, Proto};
-pub(crate) use data::{Simulcast, SimulcastGroups, SimulcastOption};
+pub(crate) use data::{Simulcast, SimulcastGroups};
 
 #[cfg(test)]
 pub(crate) use data::RtpMap;

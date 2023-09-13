@@ -547,75 +547,7 @@ impl MediaLine {
             return found;
         }
 
-        // Fallback simulcast for browser doing SDP munging.
-        //
-        // # MUNGING!
-        //
-        // Original from browser:
-        //
-        // a=ssrc:659652645 cname:Taj3/ieCnLbsUFoH
-        // a=ssrc:659652645 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc:659652645 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
-        // a=ssrc:659652645 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc:98148385 cname:Taj3/ieCnLbsUFoH
-        // a=ssrc:98148385 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc:98148385 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
-        // a=ssrc:98148385 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc-group:FID 659652645 98148385
-        //
-        // Munged to enable simulcast is done by creating new SSRC for the
-        // simulcast layers and communicating it in a a=ssrc-group:SIM.
-        // The layers are in order from low to high bitrate.
-        //
-        // a=ssrc:659652645 cname:Taj3/ieCnLbsUFoH
-        // a=ssrc:659652645 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc:659652645 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
-        // a=ssrc:659652645 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc:98148385 cname:Taj3/ieCnLbsUFoH
-        // a=ssrc:98148385 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc:98148385 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
-        // a=ssrc:98148385 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc:1982135572 cname:Taj3/ieCnLbsUFoH
-        // a=ssrc:1982135572 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc:1982135572 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
-        // a=ssrc:1982135572 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc:2523084908 cname:Taj3/ieCnLbsUFoH
-        // a=ssrc:2523084908 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc:2523084908 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
-        // a=ssrc:2523084908 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc:3604909222 cname:Taj3/ieCnLbsUFoH
-        // a=ssrc:3604909222 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc:3604909222 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
-        // a=ssrc:3604909222 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc:1893605472 cname:Taj3/ieCnLbsUFoH
-        // a=ssrc:1893605472 msid:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk 028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc:1893605472 mslabel:i1zOaprU7rZzMDaOXFdqwkq7Q6wP6f3cgUgk
-        // a=ssrc:1893605472 label:028ab73b-cdd0-4b61-a282-ea0ed0c6a9bb
-        // a=ssrc-group:SIM 659652645 1982135572 3604909222
-        // a=ssrc-group:FID 659652645 98148385
-        // a=ssrc-group:FID 1982135572 2523084908
-        // a=ssrc-group:FID 3604909222 1893605472
-        //
-        for a in &self.attrs {
-            if let MediaAttribute::SsrcGroup { semantics, ssrcs } = a {
-                if semantics != "SIM" {
-                    continue;
-                }
-
-                let group = SimulcastGroup(
-                    ssrcs
-                        .iter()
-                        .map(|ssrc| SimulcastOption::Ssrc(*ssrc))
-                        .collect(),
-                );
-
-                return Some(Simulcast {
-                    recv: SimulcastGroups(vec![]),
-                    send: SimulcastGroups(vec![group]),
-                    is_munged: true,
-                });
-            }
-        }
+        // Here we could handle munged SDPs and we used to, but we have dropped support for this.
 
         None
     }
@@ -1150,42 +1082,18 @@ impl Simulcast {
 /// RID organization inside a=simulcast line.
 ///
 /// `a=simulcast send 2;3,4` would result in
-/// `SimulcastGroups(SimulcastGroup(2,3), SimulcastGroup(4))`
+/// `SimulcastGroups(vec![RestrictionId("2"), RestrictionId("3")])`
+///
+/// The choice between 3 and 4 for the rid is currently ignored and the first option is always
+/// selected.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SimulcastGroups(pub Vec<SimulcastGroup>);
+pub struct SimulcastGroups(pub Vec<RestrictionId>);
 
 impl Deref for SimulcastGroups {
-    type Target = [SimulcastGroup];
+    type Target = [RestrictionId];
 
     fn deref(&self) -> &Self::Target {
         &self.0
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SimulcastGroup(pub Vec<SimulcastOption>);
-
-impl Deref for SimulcastGroup {
-    type Target = [SimulcastOption];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SimulcastOption {
-    Rid(RestrictionId),
-    Ssrc(Ssrc),
-}
-
-impl SimulcastOption {
-    pub fn as_stream_id(&self) -> &RestrictionId {
-        if let SimulcastOption::Rid(stream_id) = self {
-            stream_id
-        } else {
-            panic!("as_stream_id on SimulcastOption::Ssrc");
-        }
     }
 }
 
@@ -1199,22 +1107,9 @@ impl fmt::Display for SimulcastGroups {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (idx, a) in self.0.iter().enumerate() {
             if idx + 1 == self.0.len() {
-                write!(f, "{a}")?;
+                write!(f, "{}", a.0)?;
             } else {
-                write!(f, "{a},")?;
-            }
-        }
-        Ok(())
-    }
-}
-
-impl fmt::Display for SimulcastGroup {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (idx, a) in self.0.iter().enumerate() {
-            if idx + 1 == self.0.len() {
-                write!(f, "{}", a.as_stream_id().0)?;
-            } else {
-                write!(f, "{};", a.as_stream_id().0)?;
+                write!(f, "{};", a.0)?;
             }
         }
         Ok(())
