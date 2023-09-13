@@ -1043,7 +1043,7 @@ fn update_media(
             streams.change_stream_rx_ssrc(from, i.ssrc);
         } else {
             info!(
-                "Adding pre-communicated SSRC: {:?} RTX: {:?} MID: {} RID: {:?}",
+                "Adding pre-communicated SSRC: {:?} RTX: {:?} mid: {} rid: {:?}",
                 i.ssrc, repair_ssrc, mid, rid
             );
             streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), rid);

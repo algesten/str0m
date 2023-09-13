@@ -332,7 +332,7 @@ impl Session {
             let Some(rid) = rid else {
                 if media.rids_rx().is_specific() {
                     trace!(
-                        "Media expects RID and RTP packet has only MID: {:?}",
+                        "Media expects rid and RTP packet has only mid: {:?}",
                         media.rids_rx()
                     );
                     return None;
@@ -406,7 +406,7 @@ impl Session {
             }
 
             // Insert an entry so we can look up on SSRC alone later.
-            let reason = format!("MID header and RID: {}", rid);
+            let reason = format!("Mid header and rid: {}", rid);
             self.associate_ssrc_mid(ssrc, mid, ssrc_main, &reason);
 
             return Some((mid, ssrc_main));
