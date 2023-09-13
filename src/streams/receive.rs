@@ -33,6 +33,10 @@ pub struct StreamRx {
     /// of changing SSRC (for FF).
     previous_ssrc: Option<Ssrc>,
 
+    /// Previous RTX SSRC. This is to ensure we never go "backwards" in terms
+    /// of changing SSRC (for FF).
+    previous_ssrc_rtx: Option<Ssrc>,
+
     /// The Media mid this stream belongs to.
     mid: Mid,
 
@@ -130,6 +134,7 @@ impl StreamRx {
             ssrc,
             rtx: None,
             previous_ssrc: None,
+            previous_ssrc_rtx: None,
             mid,
             rid,
             cname: None,
@@ -622,6 +627,23 @@ impl StreamRx {
         // so do we don't go "backwards".
         self.previous_ssrc = Some(self.ssrc);
         self.ssrc = ssrc;
+        self.register = None;
+    }
+
+    pub(crate) fn change_ssrc_rtx(&mut self, rtx: Ssrc) {
+        if Some(rtx) == self.rtx || Some(rtx) == self.previous_ssrc_rtx {
+            return;
+        }
+
+        info!(
+            "Change RTX SSRC: {:?} -> {} mid: {} rid: {:?}",
+            self.rtx, rtx, self.mid, self.rid
+        );
+
+        // Remember which was the previous in case a stray packet turns up
+        // so do we don't go "backwards".
+        self.previous_ssrc_rtx = self.rtx;
+        self.rtx = Some(rtx);
         self.register = None;
     }
 

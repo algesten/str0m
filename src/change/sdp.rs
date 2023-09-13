@@ -1005,7 +1005,14 @@ fn update_media(
             .iter()
             .find(|r| r.repairs == Some(i.ssrc))
             .map(|r| r.ssrc);
-        streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), i.rid);
+        if let Some(rx) = streams.stream_rx_by_mid_rid(media.mid(), i.rid) {
+            rx.change_ssrc(i.ssrc);
+            if let Some(rtx) = repair_ssrc {
+                rx.change_ssrc_rtx(rtx);
+            }
+        } else {
+            streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), i.rid);
+        }
     }
 
     // Simulcast configuration
