@@ -623,6 +623,17 @@ impl MediaLine {
             }
         }
 
+        if let Some(s) = self.simulcast() {
+            if s.recv.len() == v.len() {
+                for (info, rid) in v.iter_mut().zip(s.recv.iter()) {
+                    let rid: Rid = rid.0.as_str().into();
+                    info.rid = Some(rid);
+                }
+            } else {
+                warn!("a=ssrc-group count doesnt match a=rid count");
+            }
+        }
+
         v
     }
 }
@@ -635,6 +646,7 @@ pub struct SsrcInfo {
     pub cname: Option<String>,
     pub stream_id: Option<String>,
     pub track_id: Option<String>,
+    pub rid: Option<Rid>,
 }
 
 impl Default for SsrcInfo {
@@ -645,6 +657,7 @@ impl Default for SsrcInfo {
             cname: None,
             stream_id: None,
             track_id: None,
+            rid: None,
         }
     }
 }

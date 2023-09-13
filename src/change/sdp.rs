@@ -997,21 +997,15 @@ fn update_media(
 
     let main = infos.iter().filter(|i| i.repairs.is_none());
 
-    if m.simulcast().is_none() {
-        // Only use pre-communicated SSRC if we are running without simulcast.
-        // We found a bug in FF where the order of the simulcast lines does not
-        // correspond to the order of the simulcast declarations. In this case
-        // it's better to fall back on mid/rid dynamic mapping.
-
-        for i in main {
-            // TODO: If the remote is communicating _BOTH_ rid and a=ssrc this will fail.
-            info!("Adding pre-communicated SSRC: {:?}", i);
-            let repair_ssrc = infos
-                .iter()
-                .find(|r| r.repairs == Some(i.ssrc))
-                .map(|r| r.ssrc);
-            streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), None);
-        }
+    // Always use pre-communicated SSRCs, also if this is a simulcast situation.
+    for i in main {
+        // TODO: If the remote is communicating _BOTH_ rid and a=ssrc this will fail.
+        info!("Adding pre-communicated SSRC: {:?}", i);
+        let repair_ssrc = infos
+            .iter()
+            .find(|r| r.repairs == Some(i.ssrc))
+            .map(|r| r.ssrc);
+        streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), i.rid);
     }
 
     // Simulcast configuration
