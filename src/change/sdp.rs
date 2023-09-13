@@ -1,7 +1,6 @@
 //! Strategy that amends the [`Rtc`] via SDP OFFER/ANSWER negotiation.
 
 use std::fmt;
-use std::fmt::Write as _;
 use std::ops::{Deref, DerefMut};
 
 use crate::channel::ChannelId;
@@ -1020,18 +1019,6 @@ fn update_media(
     let main = infos.iter().filter(|i| i.repairs.is_none());
     let mid = media.mid();
 
-    fn log_change(mut log_message: String, repair_ssrc: Option<Ssrc>, mid: Mid, rid: Option<Rid>) {
-        if let Some(rtx_ssrc) = repair_ssrc {
-            write!(log_message, ", RTX: SSRC: {}", rtx_ssrc).expect("write! to string never fails");
-        }
-        write!(log_message, " for MID: {}", mid).expect("write! to String never fails");
-
-        if let Some(rid) = rid {
-            write!(log_message, " and RID: {}", rid).expect("write! to String never fails");
-        }
-        info!("{}", log_message);
-    }
-
     // Use pre-communicated SSRCs if available and prefer them over dynamically signalled SSRCs via
     // rid and repaired-rid. There's a bug in Firefox that causes it to emit incorrect mappings via
     // repaired-rid while the values signalled in SDP are correct.
@@ -1045,36 +1032,20 @@ fn update_media(
             .map(|r| r.ssrc);
         let rid = i.rid;
 
-        if let Some(existing_stream) = streams.stream_rx_by_mid_rid(mid, rid) {
-            if existing_stream.ssrc() == i.ssrc && existing_stream.rtx() == repair_ssrc {
-                continue;
-            }
-
-            // The remote changed its mapping, this happens in Firefox when transitioning an m-line
-            // from `sendonly` to `inactive` and back to `sendonly`. Firefox changes the SSRCs for
-            // simulcast layer(although not for the lowest quality layer).
-            log_change(
-                format!("Reconfiguring pre-communicated SSRC: {}", i.ssrc),
-                repair_ssrc,
-                mid,
-                i.rid,
-            );
-            let previous_ssrc = existing_stream.ssrc();
-
-            existing_stream.change_ssrc(i.ssrc);
+        if let Some(stream) = streams.stream_rx_by_mid_rid(mid, rid) {
+            // For existing streams, there might be an SSRC and RTX change.
+            // This happens with FF when toggling an m-line such as
+            // SendRecv -> Inactive -> SendRecv.
             if let Some(repair_ssrc) = repair_ssrc {
-                existing_stream.maybe_reset_rtx(repair_ssrc)
+                stream.maybe_reset_rtx(repair_ssrc)
             }
-
-            streams.change_stream_rx_ssrc(previous_ssrc, i.ssrc);
+            let from = stream.ssrc();
+            streams.change_stream_rx_ssrc(from, i.ssrc);
         } else {
-            log_change(
-                format!("Adding pre-communicated SSRC: {}", i.ssrc),
-                repair_ssrc,
-                mid,
-                rid,
+            info!(
+                "Adding pre-communicated SSRC: {:?} RTX: {:?} MID: {} RID: {:?}",
+                i.ssrc, repair_ssrc, mid, rid
             );
-
             streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), rid);
         }
     }
