@@ -696,7 +696,7 @@ impl Session {
         }
 
         // Round to nearest multiple of 4 bytes.
-        const ENCRYPTABLE_MTU: usize = (DATAGRAM_MTU - SRTCP_OVERHEAD + 3) & !3;
+        const ENCRYPTABLE_MTU: usize = (DATAGRAM_MTU - SRTCP_OVERHEAD) & !3;
         assert!(ENCRYPTABLE_MTU % 4 == 0);
 
         let mut data = vec![0_u8; ENCRYPTABLE_MTU];
