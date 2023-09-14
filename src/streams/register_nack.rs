@@ -2,17 +2,16 @@ use std::ops::Range;
 
 use crate::rtp_::{Nack, NackEntry, ReportList, SeqNo};
 
-/// How many sequence numbers we keep track of
-const MAX_DROPOUT: u64 = 3000;
-
 /// Number of out of order packets we keep track of for reports
-/// A suggested maximum value min is MAX_DROPOUT / 2
 const MAX_MISORDER: u64 = 100;
 
 const U16_MAX: u64 = u16::MAX as u64 + 1_u64;
 
 /// The max number of NACKs we perform for a single packet
 const MAX_NACKS: u8 = 5;
+
+/// Circular buffer size
+const BUFFER_SIZE: u64 = MAX_MISORDER + 1;
 
 #[derive(Debug)]
 pub struct NackRegister {
@@ -49,7 +48,7 @@ impl PacketStatus {
 impl NackRegister {
     pub fn new() -> Self {
         NackRegister {
-            packets: vec![PacketStatus::default(); MAX_DROPOUT as usize],
+            packets: vec![PacketStatus::default(); BUFFER_SIZE as usize],
             active: None,
         }
     }
@@ -67,15 +66,15 @@ impl NackRegister {
             return false;
         }
 
-        let mut next_active = active.start..active.end.max(seq);
+        let new = !self.packet(seq).received || seq > active.end;
 
-        let new = self.packet(seq).mark_received();
+        let end = active.end.max(seq);
 
-        next_active.start = {
-            let min = next_active.end.saturating_sub(MAX_MISORDER);
-            let mut start = (*next_active.start).max(min);
-            while start < *next_active.end {
-                if !self.packet(start.into()).received {
+        let start: SeqNo = {
+            let min = end.saturating_sub(MAX_MISORDER);
+            let mut start = (*active.start).max(min);
+            while start < *end {
+                if !self.packet(start.into()).received && start != *seq {
                     break;
                 }
                 start += 1;
@@ -84,7 +83,7 @@ impl NackRegister {
         };
 
         // reset packets that are rolling our of the nack window
-        for s in *active.start..*next_active.start {
+        for s in *active.start..*start {
             let p = self.packet(s.into());
             if !p.received {
                 debug!("Seq no {} missing after {} attempts", seq, p.nack_count);
@@ -92,7 +91,11 @@ impl NackRegister {
             self.packet(s.into()).reset();
         }
 
-        self.active = Some(next_active);
+        if (start..=end).contains(&seq) {
+            self.packet(seq).mark_received();
+        }
+
+        self.active = Some(start..end);
 
         new
     }
@@ -245,7 +248,6 @@ mod test {
         // future packet accepted, sliding window
         let next = 12 + MAX_MISORDER;
         assert_update(&mut reg, next, true, true, 12..next);
-        assert!(!reg.packet(11.into()).received);
 
         // older packet received within window
         let next = 13;
@@ -254,7 +256,6 @@ mod test {
         // future packet accepted, sliding window start skips over received
         let next = 13 + MAX_MISORDER;
         assert_update(&mut reg, next, true, true, 14..next);
-        assert!(!reg.packet(11.into()).received);
 
         // older packet accepted, window star moves ahead
         let next = 14;
