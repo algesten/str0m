@@ -90,8 +90,8 @@ impl ReceiverRegister {
     }
 
     /// Generates a NACK report
-    pub fn nack_report(&mut self) -> Option<Vec<Nack>> {
-        self.nack.nack_report()
+    pub fn nack_report(&mut self) -> Option<impl Iterator<Item = Nack>> {
+        self.nack.nack_reports()
     }
 
     /// Create a new reception report.

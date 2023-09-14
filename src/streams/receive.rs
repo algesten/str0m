@@ -536,9 +536,9 @@ impl StreamRx {
             return None;
         }
 
-        let mut nacks = self.register.as_mut().and_then(|r| r.nack_report())?;
+        let nacks = self.register.as_mut().and_then(|r| r.nack_report())?;
 
-        for nack in &mut nacks {
+        for mut nack in nacks {
             nack.sender_ssrc = sender_ssrc;
             nack.ssrc = self.ssrc;
 

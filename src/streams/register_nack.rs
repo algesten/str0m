@@ -45,6 +45,41 @@ impl PacketStatus {
     }
 }
 
+struct NackIterator<'a> {
+    reg: &'a mut NackRegister,
+    next: u64,
+    end: u64,
+}
+
+impl<'a> Iterator for NackIterator<'a> {
+    type Item = NackEntry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next = (self.next..=self.end).find(|s| self.reg.packet((*s).into()).needs_nack())?;
+
+        let mut entry = NackEntry {
+            pid: (self.next % U16_MAX) as u16,
+            blp: 0,
+        };
+
+        self.reg.packet(self.next.into()).nack_count += 1;
+        self.next += 1;
+
+        for (i, s) in (self.next..self.end).take(16).enumerate() {
+            let packet = self.reg.packet(s.into());
+            if packet.needs_nack() {
+                self.reg.packet(self.next.into()).nack_count += 1;
+                entry.blp |= 1 << i
+            }
+            self.next += 1;
+        }
+
+        self.next += 1;
+
+        Some(entry)
+    }
+}
+
 impl NackRegister {
     pub fn new() -> Self {
         NackRegister {
@@ -107,58 +142,24 @@ impl NackRegister {
     /// Create a new nack report
     ///
     /// This modifies the state as it counts how many times packets have been nacked
-    pub fn nack_report(&mut self) -> Option<Vec<Nack>> {
-        let active = self.active.as_ref()?;
-
-        if active.is_empty() {
-            return None;
-        }
-
-        let mut nacks = vec![];
-        let mut last_seq_added = 0;
-
-        for seq in *active.start..*active.end {
-            let packet = self.packet(seq.into());
-
-            if !packet.needs_nack() {
-                continue;
-            }
-
-            let distance = seq - last_seq_added;
-
-            let update_last = nacks.last().is_some() && distance <= 16;
-
-            if update_last {
-                let last: &mut NackEntry = nacks.last_mut().expect("last");
-                let pos = (distance - 1) as u16;
-                last.blp |= 1 << pos;
-            } else {
-                nacks.push(NackEntry {
-                    pid: (seq % U16_MAX) as u16,
-                    blp: 0,
-                });
-                last_seq_added = seq;
-            }
-
-            self.packet(seq.into()).nack_count += 1;
-        }
-
-        if nacks.is_empty() {
-            return None;
-        }
-
-        let reports = ReportList::lists_from_iter(nacks).into_iter();
+    pub fn nack_reports(&mut self) -> Option<impl Iterator<Item = Nack>> {
+        let Range { start, end } = self.active.clone()?;
+        let start = (*start..=*end).find(|s| self.packet((*s).into()).needs_nack())?;
 
         Some(
-            reports
-                .map(|reports| {
-                    Nack {
-                        sender_ssrc: 0.into(),
-                        ssrc: 0.into(), // changed when sending
-                        reports,
-                    }
-                })
-                .collect(),
+            ReportList::lists_from_iter(NackIterator {
+                reg: self,
+                next: start,
+                end: *end,
+            })
+            .into_iter()
+            .map(|reports| {
+                Nack {
+                    sender_ssrc: 0.into(),
+                    ssrc: 0.into(), // changed when sending
+                    reports,
+                }
+            }),
         )
     }
 
@@ -265,25 +266,25 @@ mod test {
     #[test]
     fn nack_report_none() {
         let mut reg = NackRegister::new();
-        assert!(reg.nack_report().is_none());
+        assert!(reg.nack_reports().is_none());
 
         reg.update(110.into());
-        assert!(reg.nack_report().is_none());
+        assert!(reg.nack_reports().is_none());
 
         reg.update(111.into());
-        assert!(reg.nack_report().is_none());
+        assert!(reg.nack_reports().is_none());
     }
 
     #[test]
     fn nack_report_one() {
         let mut reg = NackRegister::new();
-        assert!(reg.nack_report().is_none());
+        assert!(reg.nack_reports().is_none());
 
         reg.update(110.into());
-        assert!(reg.nack_report().is_none());
+        assert!(reg.nack_reports().is_none());
 
         reg.update(112.into());
-        let report = reg.nack_report().expect("some report");
+        let report = reg.nack_reports().map(Vec::from_iter).expect("some report");
         assert!(report.len() == 1);
         assert_eq!(report[0].reports.len(), 1);
         assert_eq!(report[0].reports[0].pid, 111);
@@ -293,13 +294,13 @@ mod test {
     #[test]
     fn nack_report_two() {
         let mut reg = NackRegister::new();
-        assert!(reg.nack_report().is_none());
+        assert!(reg.nack_reports().is_none());
 
         reg.update(110.into());
-        assert!(reg.nack_report().is_none());
+        assert!(reg.nack_reports().is_none());
 
         reg.update(113.into());
-        let report = reg.nack_report().expect("some report");
+        let report = reg.nack_reports().map(Vec::from_iter).expect("some report");
         assert!(report.len() == 1);
         assert_eq!(report[0].reports.len(), 1);
         assert_eq!(report[0].reports[0].pid, 111);
@@ -314,7 +315,7 @@ mod test {
             reg.update((*i).into());
         }
 
-        let report = reg.nack_report().expect("some report");
+        let report = reg.nack_reports().map(Vec::from_iter).expect("some report");
         assert!(report.len() == 1);
         assert_eq!(report[0].reports.len(), 1);
         assert_eq!(report[0].reports[0].pid, 102);
@@ -335,7 +336,7 @@ mod test {
             reg.update((*i).into());
         }
 
-        let report = reg.nack_report().expect("some report");
+        let report = reg.nack_reports().map(Vec::from_iter).expect("some report");
         assert_eq!(report.len(), 1);
         assert_eq!(report[0].reports.len(), 2);
         assert_eq!(report[0].reports[0].pid, 102);
@@ -356,7 +357,7 @@ mod test {
             reg.update((*i).into());
         }
 
-        let report = reg.nack_report().expect("some report");
+        let report = reg.nack_reports().map(Vec::from_iter).expect("some report");
         assert_eq!(report.len(), 1);
         assert_eq!(report[0].reports.len(), 1);
         assert_eq!(report[0].reports[0].pid, 102);
@@ -377,7 +378,7 @@ mod test {
             reg.update((*i).into());
         }
 
-        assert_eq!(reg.nack_report(), None);
+        assert!(reg.nack_reports().is_none());
     }
 
     #[test]
@@ -388,7 +389,7 @@ mod test {
         ] {
             reg.update((*i).into());
         }
-        assert!(reg.nack_report().is_none());
+        assert!(reg.nack_reports().is_none());
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 105);
 
@@ -397,16 +398,15 @@ mod test {
         ] {
             reg.update((*i).into());
         }
-        assert!(reg.nack_report().is_some());
+        assert!(reg.nack_reports().is_some());
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 107);
 
         reg.update(107.into()); // Got 107 via RTX
 
-        let nacks = reg.nack_report();
-        assert_eq!(
-            reg.nack_report(),
-            None,
+        let nacks = reg.nack_reports().map(Vec::from_iter);
+        assert!(
+            nacks.is_none(),
             "Expected no NACKs to be generated after repairing the stream, got {nacks:?}"
         );
         let active = reg.active.clone().expect("nack range");
@@ -457,7 +457,7 @@ mod test {
         reg.update(3000.into());
         reg.update(3001.into());
 
-        let reports = reg.nack_report().expect("some report");
+        let reports = reg.nack_reports().map(Vec::from_iter).expect("some report");
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].reports[0].pid, 2999);
         assert_eq!(reports[0].reports[0].blp, 4);
@@ -483,7 +483,7 @@ mod test {
         reg.update(5996.into());
         reg.update(5997.into());
 
-        let reports = reg.nack_report().expect("some report");
+        let reports = reg.nack_reports().map(Vec::from_iter).expect("some report");
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].reports[0].pid, 5995);
     }
@@ -503,7 +503,7 @@ mod test {
                 reg.update((*i).into());
             }
 
-            let reports = reg.nack_report().expect("some report");
+            let reports = reg.nack_reports().map(Vec::from_iter).expect("some report");
             let pid = reports[0].reports[0].pid;
             assert_eq!(pid, *expected);
         }
@@ -516,7 +516,7 @@ mod test {
             reg.update(i.into());
         }
 
-        assert!(reg.nack_report().is_none());
+        assert!(reg.nack_reports().is_none());
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 3003);
 
@@ -524,7 +524,7 @@ mod test {
             reg.update(i.into());
         }
 
-        let report = reg.nack_report();
+        let report = reg.nack_reports().map(Vec::from_iter);
         assert!(report.is_none(), "Expected empty NACKs got {:?}", report);
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 3008);
@@ -536,7 +536,7 @@ mod test {
         for i in 65500..=65534 {
             reg.update(i.into());
         }
-        assert!(reg.nack_report().is_none());
+        assert!(reg.nack_reports().is_none());
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 65534);
 
@@ -544,7 +544,7 @@ mod test {
             reg.update(i.into());
         }
 
-        assert!(reg.nack_report().is_some());
+        assert!(reg.nack_reports().is_some());
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 65535);
 
@@ -554,7 +554,7 @@ mod test {
 
         reg.update(65535.into());
 
-        assert!(reg.nack_report().is_none());
+        assert!(reg.nack_reports().is_none());
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 65666);
     }
