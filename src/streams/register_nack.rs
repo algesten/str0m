@@ -120,8 +120,8 @@ impl NackRegister {
         // reset packets that are rolling our of the nack window
         for s in *active.start..*start {
             let p = self.packet(s.into());
-            if !p.received {
-                debug!("Seq no {} missing after {} attempts", seq, p.nack_count);
+            if !p.received && s != *seq {
+                debug!("Seq no {} missing after {} attempts", s, p.nack_count);
             }
             self.packet(s.into()).reset();
         }
