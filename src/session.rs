@@ -318,6 +318,15 @@ impl Session {
             return Some((mid, ssrc_main));
         }
 
+        // Based on the pt, we may expect this stream to have an RTX ssrc.
+        // Using a fake rtx ssrc value we allow nacking and we will pick up the
+        // correct ssrc later
+        let rtx_for_main_pt: Option<Ssrc> = self
+            .codec_config
+            .iter()
+            .find_map(|c| (c.pt == header.payload_type).then_some(c.resend()))
+            .map(|_| 0.into());
+
         // Find receiver/source via mid/rid. This is used when the SSRC is not declared
         // in the SDP as a=ssrc lines.
         if let Some(mid) = header.ext_vals.mid {
@@ -356,7 +365,7 @@ impl Session {
                     }
 
                     // SSRC is main, we don't know the RTX.
-                    (ssrc, None)
+                    (ssrc, rtx_for_main_pt)
                 } else {
                     // This can bail if the main SSRC has not been discovered yet.
                     let stream = stream_mid_rid?;
@@ -402,7 +411,7 @@ impl Session {
                     .expect_stream_rx(ssrc_main, Some(ssrc), mid, Some(rid));
             } else {
                 self.streams
-                    .expect_stream_rx(ssrc_main, None, mid, Some(rid));
+                    .expect_stream_rx(ssrc_main, rtx_for_main_pt, mid, Some(rid));
             }
 
             // Insert an entry so we can look up on SSRC alone later.
