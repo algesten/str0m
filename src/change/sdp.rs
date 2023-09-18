@@ -1046,7 +1046,11 @@ fn update_media(
                 "Adding pre-communicated SSRC: {:?} RTX: {:?} mid: {} rid: {:?}",
                 i.ssrc, repair_ssrc, mid, rid
             );
-            streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), rid);
+
+            // If remote communicated a main a=ssrc, but no RTX, we will not send nacks.
+            let suppress_nack = repair_ssrc.is_none();
+
+            streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), rid, suppress_nack);
         }
     }
 

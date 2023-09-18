@@ -45,6 +45,8 @@ pub struct StreamRx {
     /// Whether we explicitly want to supress NACK sending. This is normally done by not
     /// setting an RTX, however this can be toggled off manually despite RTX being there.
     ///
+    /// This is also set to true if the SDP negotiation disables RTX.
+    ///
     /// Defaults to false.
     suppress_nack: bool,
 
@@ -123,7 +125,7 @@ pub(crate) struct StreamRxStats {
 }
 
 impl StreamRx {
-    pub(crate) fn new(ssrc: Ssrc, mid: Mid, rid: Option<Rid>) -> Self {
+    pub(crate) fn new(ssrc: Ssrc, mid: Mid, rid: Option<Rid>, suppress_nack: bool) -> Self {
         debug!("Create StreamRx for SSRC: {}", ssrc);
 
         StreamRx {
@@ -133,7 +135,7 @@ impl StreamRx {
             mid,
             rid,
             cname: None,
-            suppress_nack: false,
+            suppress_nack,
             last_used: already_happened(),
             last_clock_rate: None,
             sender_info: None,
@@ -524,7 +526,9 @@ impl StreamRx {
     }
 
     fn nack_enabled(&self) -> bool {
-        self.rtx.is_some() && !self.suppress_nack
+        // Deliberately don't look at RTX is_some() here, since when using dynamic SSRC, we might need
+        // to send NACK before discovering the remote RTX.
+        !self.suppress_nack
     }
 
     pub(crate) fn maybe_create_nack(

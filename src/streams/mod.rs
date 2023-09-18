@@ -160,11 +160,12 @@ impl Streams {
         rtx: Option<Ssrc>,
         mid: Mid,
         rid: Option<Rid>,
+        suppress_nack: bool,
     ) -> &mut StreamRx {
         let stream = self
             .streams_rx
             .entry(ssrc)
-            .or_insert_with(|| StreamRx::new(ssrc, mid, rid));
+            .or_insert_with(|| StreamRx::new(ssrc, mid, rid, suppress_nack));
 
         if let Some(rtx) = rtx {
             stream.maybe_reset_rtx(rtx);
