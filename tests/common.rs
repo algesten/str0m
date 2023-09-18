@@ -141,16 +141,18 @@ pub fn progress_with_loss(l: &mut TestRtc, r: &mut TestRtc, loss: f32) -> Result
 ///
 /// The closure is passed the [`SdpApi`] for the offer side to make any changes, these are then
 /// applied locally and the offer is negotiated with the answerer.
-pub fn negotiate<F>(offerer: &mut TestRtc, answerer: &mut TestRtc, mut do_change: F)
+pub fn negotiate<F, R>(offerer: &mut TestRtc, answerer: &mut TestRtc, mut do_change: F) -> R
 where
-    F: FnMut(&mut SdpApi),
+    F: FnMut(&mut SdpApi) -> R,
 {
-    let (offer, pending) = offerer.span.in_scope(|| {
+    let (offer, pending, result) = offerer.span.in_scope(|| {
         let mut change = offerer.rtc.sdp_api();
 
-        do_change(&mut change);
+        let result = do_change(&mut change);
 
-        change.apply().unwrap()
+        let (offer, pending) = change.apply().unwrap();
+
+        (offer, pending, result)
     });
 
     let answer = answerer
@@ -164,6 +166,8 @@ where
             .accept_answer(pending, answer)
             .unwrap();
     });
+
+    result
 }
 
 impl Deref for TestRtc {
