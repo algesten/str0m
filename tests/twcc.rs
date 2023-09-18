@@ -1,0 +1,119 @@
+use std::net::Ipv4Addr;
+use std::time::Duration;
+
+use str0m::format::Codec;
+use str0m::media::{Direction, MediaKind};
+use str0m::rtp::rtcp::Twcc;
+use str0m::{Candidate, Event, Rtc, RtcError};
+use tracing::info_span;
+
+mod common;
+use common::{init_log, negotiate, progress, TestRtc};
+
+#[test]
+pub fn twcc() -> Result<(), RtcError> {
+    init_log();
+    let l_rtc = Rtc::builder().enable_raw_packets(true).build();
+    let r_rtc = Rtc::builder().enable_raw_packets(true).build();
+
+    let mut l = TestRtc::new_with_rtc(info_span!("L"), l_rtc);
+    let mut r = TestRtc::new_with_rtc(info_span!("R"), r_rtc);
+
+    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into())?;
+    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into())?;
+    l.add_local_candidate(host1);
+    r.add_local_candidate(host2);
+
+    let mid = negotiate(&mut l, &mut r, |change| {
+        change.add_media(MediaKind::Video, Direction::SendOnly, None, None)
+    });
+
+    loop {
+        if l.is_connected() || r.is_connected() {
+            break;
+        }
+        progress(&mut l, &mut r)?;
+    }
+
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
+
+    let params = l.params_vp8();
+    assert_eq!(params.spec().codec, Codec::Vp8);
+    let pt = params.pt();
+
+    let data_a = [1_u8; 80];
+
+    loop {
+        {
+            let wallclock = l.start + l.duration();
+            let time = l.duration().into();
+            l.writer(mid).unwrap().write(pt, wallclock, time, data_a)?;
+        }
+
+        progress(&mut l, &mut r)?;
+
+        if l.duration() > Duration::from_secs(10) {
+            break;
+        }
+    }
+
+    let (sent_twcc, received_twcc) = {
+        use str0m::rtp::{rtcp::Rtcp, RawPacket};
+        let r_twcc: Vec<_> = r
+            .events
+            .iter()
+            .filter_map(|(_, e)| {
+                if let Event::RawPacket(RawPacket::RtcpTx(Rtcp::Twcc(twcc))) = e {
+                    Some(twcc)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let l_twcc: Vec<_> = l
+            .events
+            .iter()
+            .filter_map(|(_, e)| {
+                if let Event::RawPacket(RawPacket::RtcpRx(Rtcp::Twcc(twcc))) = e {
+                    Some(twcc)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        (r_twcc, l_twcc)
+    };
+
+    assert!(!sent_twcc.is_empty(), "Should've sent TWCC");
+    assert!(
+        sent_twcc.len() == received_twcc.len(),
+        "The number of TWCC packets received should match what was sent"
+    );
+    assert!(
+        sent_twcc == received_twcc,
+        "The same TWCC packets that were sent should be received"
+    );
+
+    let sent_is_consecutive = sent_twcc
+        .iter()
+        .fold((true, None), |(consecutive, last), packet| {
+            let consecutive = consecutive
+                && last
+                    .map(|l: &Twcc| l.feedback_count.wrapping_add(1) == packet.feedback_count)
+                    .unwrap_or(true);
+
+            (consecutive, Some(packet))
+        })
+        .0;
+
+    assert!(!sent_twcc.is_empty(), "Should have sent some TWCC");
+    assert!(
+        sent_is_consecutive,
+        "Sent TWCC packets should contain no gaps in terms of `feedback_count`"
+    );
+
+    Ok(())
+}
