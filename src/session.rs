@@ -318,14 +318,15 @@ impl Session {
             return Some((mid, ssrc_main));
         }
 
-        // Based on the pt, we may expect this stream to have an RTX ssrc.
-        // Using a fake rtx ssrc value we allow nacking and we will pick up the
-        // correct ssrc later
-        let rtx_for_main_pt: Option<Ssrc> = self
+        // Figure out which payload the PT maps to. Either main or RTX.
+        // If we don't find it, bail out.
+        let payload = self
             .codec_config
             .iter()
-            .find_map(|c| (c.pt == header.payload_type).then_some(c.resend()))
-            .map(|_| 0.into());
+            .find(|p| p.pt() == header.payload_type || p.resend() == Some(header.payload_type))?;
+
+        // If we don't have an RTX PT configured, we don't want NACK.
+        let suppress_nack = payload.resend.is_none();
 
         // Find receiver/source via mid/rid. This is used when the SSRC is not declared
         // in the SDP as a=ssrc lines.
@@ -347,10 +348,6 @@ impl Session {
                     return None;
                 }
 
-                // Figure out which payload the PT maps to. Either main or RTX.
-                let payload = self.codec_config.iter().find(|p| {
-                    p.pt() == header.payload_type || p.resend() == Some(header.payload_type)
-                })?;
                 let is_main = payload.pt() == header.payload_type;
 
                 let stream_mid_rid = self.streams.stream_rx_by_mid_rid(mid, None);
@@ -365,7 +362,7 @@ impl Session {
                     }
 
                     // SSRC is main, we don't know the RTX.
-                    (ssrc, rtx_for_main_pt)
+                    (ssrc, None)
                 } else {
                     // This can bail if the main SSRC has not been discovered yet.
                     let stream = stream_mid_rid?;
@@ -375,7 +372,8 @@ impl Session {
                 };
 
                 // If stream already exists, this might only "fill in" the RTX.
-                self.streams.expect_stream_rx(ssrc_main, rtx, mid, None);
+                self.streams
+                    .expect_stream_rx(ssrc_main, rtx, mid, None, suppress_nack);
 
                 // Insert an entry so we can look up on SSRC alone later.
                 let reason = format!("MID header, no RID and PT: {}", header.payload_type);
@@ -408,10 +406,10 @@ impl Session {
             // Declare entries in streams for receiving these streams.
             if is_repair {
                 self.streams
-                    .expect_stream_rx(ssrc_main, Some(ssrc), mid, Some(rid));
+                    .expect_stream_rx(ssrc_main, Some(ssrc), mid, Some(rid), suppress_nack);
             } else {
                 self.streams
-                    .expect_stream_rx(ssrc_main, rtx_for_main_pt, mid, Some(rid));
+                    .expect_stream_rx(ssrc_main, None, mid, Some(rid), suppress_nack);
             }
 
             // Insert an entry so we can look up on SSRC alone later.

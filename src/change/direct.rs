@@ -174,10 +174,13 @@ impl<'a> DirectApi<'a> {
             panic!("No media declared for mid: {}", mid);
         };
 
+        // By default we do not suppress nacks, this has to be called explicitly by the user of direct API.
+        let suppress_nack = false;
+
         self.rtc
             .session
             .streams
-            .expect_stream_rx(ssrc, rtx, mid, rid)
+            .expect_stream_rx(ssrc, rtx, mid, rid, suppress_nack)
     }
 
     /// Remove the receive stream for the given SSRC.
