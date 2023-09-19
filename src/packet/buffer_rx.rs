@@ -1,3 +1,4 @@
+use core::panic;
 use std::collections::VecDeque;
 use std::fmt;
 use std::ops::RangeInclusive;
@@ -5,7 +6,11 @@ use std::time::Instant;
 
 use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SenderInfo, SeqNo};
 
-use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError};
+use self::vp8_contiguity::Vp8Contiguity;
+
+use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError, Vp8CodecExtra};
+
+mod vp8_contiguity;
 
 #[derive(Clone, PartialEq, Eq)]
 /// Holds metadata incoming RTP data.
@@ -80,6 +85,7 @@ pub struct DepacketizingBuffer {
     last_emitted: Option<(SeqNo, CodecExtra)>,
     max_time: Option<MediaTime>,
     depack_cache: Option<(SeqNo, Depacketized)>,
+    vp8_contiguity: vp8_contiguity::Vp8Contiguity,
 }
 
 impl DepacketizingBuffer {
@@ -92,6 +98,7 @@ impl DepacketizingBuffer {
             last_emitted: None,
             max_time: None,
             depack_cache: None,
+            vp8_contiguity: Vp8Contiguity::new(),
         }
     }
 
@@ -155,7 +162,7 @@ impl DepacketizingBuffer {
             last.meta.seq_no
         };
 
-        // depack ahead to check contiguity, even if we may not emit right away
+        // depack ahead, even if we may not emit right away
         let mut dep = match self.depacketize(start, stop, seq) {
             Ok(d) => d,
             Err(e) => {
@@ -167,80 +174,45 @@ impl DepacketizingBuffer {
             }
         };
 
-        let contiguous = self.contiguous(start, stop, &dep);
+        // If we have contiguity of seq numbers we emit right away,
+        // Otherwise, we wait for retransmissions up to `hold_back` frames
+        // and re-evaluate contiguity based on codec specific information
 
-        let is_more_than_hold_back = self.segments.len() >= self.hold_back;
+        let more_than_hold_back = self.segments.len() >= self.hold_back;
+        let contiguous_seq = self.is_following_last(start);
+        let wait_for_contiguity = !contiguous_seq && !more_than_hold_back;
 
-        let wait_for_contiguity = !contiguous && !is_more_than_hold_back;
-
-        // We prefer to just release samples because they are following the last emitted.
-        // However as fallback, we "hold back" samples to let RTX mechanics fill in potential
-        // gaps in the RTP sequences before letting go.
         if wait_for_contiguity {
-            // if we are not sending it, cache the depacked
+            // if we are not sending, cache the depacked
             self.depack_cache = Some((seq, dep));
             return None;
         }
 
-        if !contiguous {
-            trace!(
-                "Depacketized sample is not contiguous (seq: {}, {})",
-                start,
-                stop
-            );
-            dep.contiguous = false;
-        }
+        let (can_emit, contiguous_codec) = match dep.codec_extra {
+            CodecExtra::None => (true, contiguous_seq),
+            CodecExtra::Vp8(next) => self.vp8_contiguity.check(&next, contiguous_seq),
+        };
 
-        let last = self.queue.get(stop).expect("entry for stop index");
-        self.last_emitted = Some((last.meta.seq_no, dep.codec_extra));
+        dep.contiguous = contiguous_codec;
+
+        let last = self
+            .queue
+            .get(stop)
+            .expect("entry for stop index")
+            .meta
+            .seq_no;
 
         // We're not going to emit samples in the incorrect order, there's no point in keeping
         // stuff before the emitted range.
         self.queue.drain(0..=stop);
 
+        if !can_emit {
+            return None;
+        }
+
+        self.last_emitted = Some((last, dep.codec_extra));
+
         Some(Ok(dep))
-    }
-
-    fn contiguous(&self, start: usize, stop: usize, dep: &Depacketized) -> bool {
-        if self.is_following_last(start) {
-            return true;
-        }
-
-        let Some((last_seq, last_codec_extra)) = self.last_emitted else {
-            return true;
-        };
-
-        match (last_codec_extra, dep.codec_extra) {
-            (CodecExtra::Vp8(prev), CodecExtra::Vp8(next)) => {
-                // In the case of VP8 chrome doesn't answer nacks for frames that are on
-                // temporal layer1 Since VP8 frames are interleaved, we can tolerate a
-                // missing frame on layer 1 that its contiguous to two frames on layer 0
-
-                let Some(prev_pid) = prev.picture_id else {
-                    return false;
-                };
-                let Some(next_pid) = next.picture_id else {
-                    return false;
-                };
-
-                let allowed =
-                    prev.layer_index == 0 && next.layer_index == 0 && (prev_pid + 2 == next_pid);
-
-                if allowed {
-                    let last = self.queue.get(stop).expect("entry for stop index");
-                    trace!(
-                        "Depack gap allowed for Seq: {} - {}, PIDs: {} - {}",
-                        last_seq,
-                        last.meta.seq_no,
-                        prev_pid,
-                        next_pid
-                    );
-                }
-
-                allowed
-            }
-            _ => false,
-        }
     }
 
     fn depacketize(
