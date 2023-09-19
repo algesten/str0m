@@ -8,17 +8,15 @@ pub const VP8_HEADER_SIZE: usize = 1;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Vp8CodecExtra {
     /// True if the frame can be discarded safely, without causing decoding problems
-    /// No other frames are encoded depending on this frame
+    /// No other frames are encoded depending on this frame (non-reference frame)
     pub discardable: bool,
-    /// True if the frame is encoded only depending on a frame on layer 0.
-    /// This attribute can only be true for frames on layer 1
+    /// True if this frame and subsequent ones on this layer depend only on tl0_pic_idx
     pub sync: bool,
     /// Index of the vp8 temporal layer.
-    /// Only 2 layers are possible in WebRTC
     pub layer_index: u8,
-    /// extended picture id, if present
+    /// Extended picture id, if present
     pub picture_id: Option<u64>,
-    /// extended picture id of layer 0 frames, if present
+    /// Extended picture id of layer 0 frames, if present
     pub tl0_picture_id: Option<u64>,
 }
 
