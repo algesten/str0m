@@ -265,7 +265,7 @@ macro_rules! mk_extend {
             //
             let seq = seq as u64;
 
-            if prev_ext_seq.is_none() {
+            if prev_ext_seq.is_none() || prev_ext_seq == Some(0) {
                 // No wrap-around so far.
                 return seq;
             }
@@ -329,6 +329,7 @@ mod test {
     fn extend_u16_wrap_around() {
         assert_eq!(extend_u16(None, 0), 0);
         assert_eq!(extend_u16(Some(0), 1), 1);
+        assert_eq!(extend_u16(Some(0), 65_000), 65_000);
         assert_eq!(extend_u16(Some(65_535), 0), 65_536);
         assert_eq!(extend_u16(Some(65_500), 2), 65_538);
         assert_eq!(extend_u16(Some(2), 1), 1);
@@ -339,11 +340,8 @@ mod test {
 
     #[test]
     fn extend_u16_with_0_prev() {
-        // This tests going backwards from previous 0. This should wrap
-        // around "backwards" making a ridiculous number.
         let seq = u16::MAX / 2 + 2;
-        let expected = u64::MAX - (u16::MAX - seq) as u64;
-        assert_eq!(extend_u16(Some(0), seq), expected);
+        assert_eq!(extend_u16(Some(0), seq), seq as u64);
     }
 
     #[test]
@@ -364,11 +362,8 @@ mod test {
 
     #[test]
     fn extend_u32_with_0_prev() {
-        // This tests going backwards from previous 0. This should wrap
-        // around "backwards" making a ridiculous number.
         let seq = u32::MAX / 2 + 2;
-        let expected = u64::MAX - (u32::MAX - seq) as u64;
-        assert_eq!(extend_u32(Some(0), seq), expected);
+        assert_eq!(extend_u32(Some(0), seq), seq as u64);
     }
 
     #[test]
