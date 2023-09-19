@@ -147,7 +147,7 @@ pub struct Vp8Depacketizer {
     /// 8 or 16 bits, picture ID
     pub picture_id: u16,
     // extended picture id
-    pub extended_pid: u64,
+    pub extended_pid: Option<u64>,
 
     /// 8 bits temporal level zero index
     pub tl0_pic_idx: u8,
@@ -213,11 +213,11 @@ impl Depacketizer for Vp8Depacketizer {
             if b & 0x80 > 0 {
                 // M == 1, PID is 16bit
                 self.picture_id = (((b & 0x7f) as u16) << 8) | (reader.get_u8() as u16);
-                self.extended_pid = extend_u15(Some(self.extended_pid), self.picture_id);
+                self.extended_pid = Some(extend_u15(self.extended_pid, self.picture_id));
                 payload_index += 1;
             } else {
                 self.picture_id = b as u16;
-                self.extended_pid = extend_u7(Some(self.extended_pid), b);
+                self.extended_pid = Some(extend_u7(self.extended_pid, b));
             }
         }
 
@@ -256,8 +256,7 @@ impl Depacketizer for Vp8Depacketizer {
             discardable: self.n == 1,
             sync: self.y == 1,
             layer_index: self.tid,
-            picture_id: if self.i == 1 {
-                Some(self.extended_pid)
+            picture_id: if self.i == 1 { self.extended_pid } else { None },
             } else {
                 None
             },
