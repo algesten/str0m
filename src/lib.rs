@@ -228,7 +228,7 @@
 //! let writer = rtc.writer(mid).unwrap();
 //!
 //! // Get the payload type (pt) for the wanted codec.
-//! let pt = writer.payload_params()[0].pt();
+//! let pt = writer.payload_params().nth(0).unwrap().pt();
 //!
 //! // Write the data
 //! let wallclock = todo!();   // Absolute time of the data
