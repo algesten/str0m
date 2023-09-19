@@ -21,6 +21,9 @@ pub struct Writer<'a> {
 }
 
 impl<'a> Writer<'a> {
+    /// Create a new writer object.
+    ///
+    /// The `mid` parameter is required to have a corresponding media in `self.session`.
     pub(crate) fn new(session: &'a mut Session, mid: Mid) -> Self {
         Writer {
             session,
@@ -33,8 +36,14 @@ impl<'a> Writer<'a> {
     /// Get the configured payload parameters for the `mid` this writer is for.
     ///
     /// For the [`Writer::write()`] call, the `pt` must be set correctly.
-    pub fn payload_params(&self) -> &[PayloadParams] {
-        &self.session.codec_config
+    pub fn payload_params(&self) -> impl Iterator<Item = &PayloadParams> {
+        // This unwrap is OK due to the invariant of self.mid being resolvable
+        let media = self.session.media_by_mid(self.mid).unwrap();
+        self.session
+            .codec_config
+            .params()
+            .iter()
+            .filter(|p| media.remote_pts().contains(&p.pt))
     }
 
     /// Match the given parameters to the configured parameters for this [`Media`].
@@ -103,6 +112,7 @@ impl<'a> Writer<'a> {
         rtp_time: MediaTime,
         data: impl Into<Vec<u8>>,
     ) -> Result<(), RtcError> {
+        // This (indirect) unwrap is OK due to the invariant of self.mid being resolvable
         let media = media_by_mid_mut(&mut self.session.medias, self.mid);
 
         if !self.session.codec_config.has_pt(pt) {
@@ -198,6 +208,9 @@ impl<'a> Writer<'a> {
     }
 }
 
+/// Get a &mut Media in a slice for a `mid`.
+///
+/// `mid` must be resolvable or panic will ensue.
 fn media_by_mid_mut(medias: &mut [Media], mid: Mid) -> &mut Media {
     medias.iter_mut().find(|m| m.mid() == mid).unwrap()
 }
