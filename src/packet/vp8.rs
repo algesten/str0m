@@ -1,4 +1,4 @@
-use crate::rtp_::{extend_u16, extend_u8};
+use crate::rtp_::{extend_u15, extend_u16, extend_u7, extend_u8};
 
 use super::{BitRead, CodecExtra, Depacketizer, MediaKind, PacketError, Packetizer};
 
@@ -213,11 +213,11 @@ impl Depacketizer for Vp8Depacketizer {
             if b & 0x80 > 0 {
                 // M == 1, PID is 16bit
                 self.picture_id = (((b & 0x7f) as u16) << 8) | (reader.get_u8() as u16);
-                self.extended_pid = extend_u16(Some(self.extended_pid), self.picture_id);
+                self.extended_pid = extend_u15(Some(self.extended_pid), self.picture_id);
                 payload_index += 1;
             } else {
                 self.picture_id = b as u16;
-                self.extended_pid = extend_u8(Some(self.extended_pid), b);
+                self.extended_pid = extend_u7(Some(self.extended_pid), b);
             }
         }
 
