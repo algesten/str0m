@@ -18,7 +18,7 @@ pub use mtime::MediaTime;
 
 mod header;
 pub use header::RtpHeader;
-pub(crate) use header::{extend_u16, extend_u32, extend_u8};
+pub(crate) use header::{extend_u15, extend_u16, extend_u32, extend_u7, extend_u8};
 
 mod srtp;
 pub(crate) use srtp::SrtpContext;

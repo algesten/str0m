@@ -247,14 +247,14 @@ impl RtpHeader {
 }
 
 macro_rules! mk_extend {
-    ($id:ident, $t:ty) => {
+    ($id:ident, $t:ty, $bits:expr) => {
         /// "extend" a less than 64 bit sequence number into a 64 bit by
         /// using the knowledge of the previous such sequence number.
         pub fn $id(prev_ext_seq: Option<u64>, seq: $t) -> u64 {
-            use std::mem;
-            const MAX: u64 = <$t>::MAX as u64 + 1; // u16: 65_536;
+            const MAX: u64 = 2_u64.pow($bits); // u16: 65_536;
             const HALF: u64 = MAX / 2; // u16: 32_768
-            const BITS: usize = mem::size_of::<$t>() * 8;
+            const BITS: usize = $bits;
+            const VAL_MASK: u64 = ((1 << BITS) - 1);
             const ROC_MASK: i64 = (u64::MAX >> BITS) as i64;
 
             // We define the index of the SRTP packet corresponding to a given
@@ -263,7 +263,11 @@ macro_rules! mk_extend {
             //
             // https://tools.ietf.org/html/rfc3711#appendix-A
             //
-            let seq = seq as u64;
+
+            // Mask seq to the N bits we are considering.
+            // As an example, this allows us to handle the wrap-around of 7 bit
+            // values while storing them in u8
+            let seq = seq as u64 & VAL_MASK;
 
             if prev_ext_seq.is_none() {
                 // No wrap-around so far.
@@ -295,9 +299,13 @@ macro_rules! mk_extend {
     };
 }
 
-mk_extend!(extend_u8, u8);
-mk_extend!(extend_u16, u16);
-mk_extend!(extend_u32, u32);
+mk_extend!(extend_u8, u8, 8);
+mk_extend!(extend_u16, u16, 16);
+mk_extend!(extend_u32, u32, 32);
+
+// we 'host' 7 bits in u8 but we ignore the most significant one
+mk_extend!(extend_u7, u8, 7);
+mk_extend!(extend_u15, u16, 15);
 
 impl Default for RtpHeader {
     fn default() -> Self {
@@ -369,6 +377,43 @@ mod test {
         let seq = u32::MAX / 2 + 2;
         let expected = u64::MAX - (u32::MAX - seq) as u64;
         assert_eq!(extend_u32(Some(0), seq), expected);
+    }
+
+    #[test]
+    fn extend_u7_wrap_around() {
+        let max = 2_u64.pow(7) - 1;
+        let half = max / 2;
+        assert_eq!(extend_u7(None, 0), 0);
+        assert_eq!(extend_u7(None, 1), 1);
+
+        // most significant bit gets ignored
+        assert_eq!(extend_u7(None, max as u8), max);
+        assert_eq!(extend_u7(None, (max + 1) as u8), 0);
+
+        assert_eq!(extend_u7(Some(0), half as u8), half);
+        assert_eq!(extend_u7(Some(0), (half + 1) as u8), half + 1);
+
+        let seq = max / 2 + 2;
+        let expected = u64::MAX - (max - seq);
+        assert_eq!(extend_u7(Some(0), seq as u8), expected);
+    }
+
+    #[test]
+    fn extend_u15_wrap_around() {
+        let max = 2_u64.pow(15) - 1;
+        let half = max / 2;
+        assert_eq!(extend_u15(None, 0), 0);
+        assert_eq!(extend_u15(None, 1), 1);
+
+        assert_eq!(extend_u15(None, max as u16), max);
+        assert_eq!(extend_u15(None, (max + 1) as u16), 0);
+
+        assert_eq!(extend_u15(Some(0), half as u16), half);
+        assert_eq!(extend_u15(Some(0), (half + 1) as u16), half + 1);
+
+        let seq = max / 2 + 2;
+        let expected = u64::MAX - (max - seq);
+        assert_eq!(extend_u15(Some(0), seq as u16), expected);
     }
 
     #[test]
