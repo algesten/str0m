@@ -1,6 +1,6 @@
 //! Data channel related types.
 
-use std::{fmt, time::Instant};
+use std::{fmt, str, time::Instant};
 
 use crate::sctp::RtcSctp;
 use crate::util::already_happened;
@@ -58,11 +58,29 @@ impl<'a> Channel<'a> {
 
 impl fmt::Debug for ChannelData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ChannelData")
-            .field("id", &self.id)
-            .field("binary", &self.binary)
-            .field("data", &self.data.len())
-            .finish()
+        let mut ds = f.debug_struct("ChannelData");
+
+        ds.field("id", &self.id);
+        ds.field("binary", &self.binary);
+
+        if self.binary {
+            ds.field("data", &self.data.len());
+        } else {
+            match str::from_utf8(&self.data) {
+                Ok(s) => {
+                    if s.is_ascii() {
+                        ds.field("data", &s);
+                    } else {
+                        ds.field("data", &self.data.len());
+                    }
+                }
+                Err(e) => {
+                    ds.field("data", &e);
+                }
+            }
+        }
+
+        ds.finish()
     }
 }
 
