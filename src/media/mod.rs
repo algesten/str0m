@@ -343,7 +343,7 @@ impl Media {
         self.payloaders.entry((pt, rid)).or_insert_with(|| {
             // Unwrap is OK, the pt should be checked already when calling this function.
             let params = params.iter().find(|p| p.pt == pt).unwrap();
-            Payloader::new(params.spec.codec.into())
+            Payloader::new(params.spec)
         })
     }
 
