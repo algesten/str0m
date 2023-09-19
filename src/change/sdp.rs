@@ -789,7 +789,8 @@ fn ensure_stream_tx(session: &mut Session) {
         let has_rtx = session
             .codec_config
             .iter()
-            .any(|p| p.resend().is_some() && media.remote_pts().contains(&p.pt));
+            .filter(|p| media.remote_pts().contains(&p.pt))
+            .any(|p| p.resend().is_some());
 
         for rid in rids {
             // If we already have the stream, we don't make any new one.
