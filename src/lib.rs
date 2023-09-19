@@ -1635,7 +1635,7 @@ impl Rtc {
         n
     }
 
-    /// The codec configs for sending/receiving data..
+    /// The codec configs for sending/receiving data.
     ///
     /// The configurations can be set with [`RtcConfig`] before setting up the session, and they
     /// might be further updated by SDP negotiation.
@@ -1786,7 +1786,7 @@ impl RtcConfig {
         self.ice_lite
     }
 
-    /// Lower level access to precis configuration of codecs (payload types).
+    /// Lower level access to precise configuration of codecs (payload types).
     pub fn codec_config(&mut self) -> &mut CodecConfig {
         &mut self.codec_config
     }
