@@ -191,13 +191,16 @@ pub fn not_contiguous() -> Result<(), RtcError> {
     // Contiguous all the way through.
     for data in iter {
         count += 1;
-        // We dropped packet 14337, which means 14338 should not be contiguous.
-        let assume_contiguous = !data.seq_range.contains(&14338.into());
-        assert!(assume_contiguous == data.contiguous);
+        // We dropped packet 14337, which means its dependendant 14338 is not
+        // emitted, and 14339 is emitted and marked as discontinuous.
+        let assume_contiguous = !data.seq_range.contains(&14339.into());
+        assert_eq!(assume_contiguous, data.contiguous);
     }
 
-    // We have 3 continuations, one missing packet, and one last packet missing: 104 - 3 - 1 - 1 == 99
-    assert_eq!(count, 99);
+    // assert!(false);
+    // We have 3 continuations, 2 missing packet (14337 14338), and one last
+    // packet missing: 104 - 3 - 1 - 1 == 99
+    assert_eq!(count, 98);
 
     Ok(())
 }
