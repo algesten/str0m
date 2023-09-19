@@ -18,6 +18,8 @@ pub struct Vp8CodecExtra {
     pub layer_index: u8,
     /// extended picture id, if present
     pub picture_id: Option<u64>,
+    /// extended picture id of layer 0 frames, if present
+    pub tl0_picture_id: Option<u64>,
 }
 
 /// Packetizes VP8 RTP packets.
@@ -151,6 +153,8 @@ pub struct Vp8Depacketizer {
 
     /// 8 bits temporal level zero index
     pub tl0_pic_idx: u8,
+    /// extended version of picture_id of temporal layer 0
+    pub extended_tl0_pic_idx: Option<u64>,
     /// 2 bits temporal layer index
     pub tid: u8,
     /// 1 bit layer sync bit
@@ -227,6 +231,8 @@ impl Depacketizer for Vp8Depacketizer {
 
         if self.l == 1 {
             self.tl0_pic_idx = reader.get_u8();
+            self.extended_tl0_pic_idx =
+                Some(extend_u8(self.extended_tl0_pic_idx, self.tl0_pic_idx));
             payload_index += 1;
         }
 
@@ -257,6 +263,8 @@ impl Depacketizer for Vp8Depacketizer {
             sync: self.y == 1,
             layer_index: self.tid,
             picture_id: if self.i == 1 { self.extended_pid } else { None },
+            tl0_picture_id: if self.l == 1 {
+                self.extended_tl0_pic_idx
             } else {
                 None
             },
