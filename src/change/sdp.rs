@@ -507,7 +507,7 @@ fn apply_direct_changes(rtc: &mut Rtc, mut changes: Changes) {
     }
 }
 
-fn create_offer(rtc: &mut Rtc, changes: &Changes) -> SdpOffer {
+pub(crate) fn create_offer(rtc: &mut Rtc, changes: &Changes) -> SdpOffer {
     if !rtc.dtls.is_inited() {
         // The side that makes the first offer is the controlling side.
         rtc.ice.set_controlling(true);
@@ -517,6 +517,38 @@ fn create_offer(rtc: &mut Rtc, changes: &Changes) -> SdpOffer {
     let sdp = as_sdp(&rtc.session, params);
 
     sdp.into()
+}
+
+pub(crate) fn accept_answer(
+    rtc: &mut Rtc,
+    answer: SdpAnswer,
+) -> Result<(), RtcError> {
+    debug!("Accept answer");
+
+    add_ice_details(rtc, &answer, None)?;
+
+    // Ensure setup=active/passive is corresponding remote and init dtls.
+    init_dtls(rtc, &answer)?;
+
+    if rtc.remote_fingerprint.is_none() {
+        if let Some(f) = answer.fingerprint() {
+            rtc.remote_fingerprint = Some(f);
+        } else {
+            rtc.disconnect();
+            return Err(RtcError::RemoteSdp("missing a=fingerprint".into()));
+        }
+    }
+
+    // Modify session with answer
+    apply_answer(&mut rtc.session, Changes(Vec::new()), answer)?;
+
+    // Handle potentially new m=application line.
+    let client = rtc.dtls.is_active().expect("DTLS to be inited");
+    if rtc.session.app().is_some() {
+        rtc.init_sctp(client);
+    }
+
+    Ok(())
 }
 
 fn add_ice_details(

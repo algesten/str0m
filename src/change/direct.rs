@@ -1,3 +1,4 @@
+use crate::change::sdp::{accept_answer, Changes, create_offer};
 use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
 use crate::ice::IceCreds;
@@ -7,6 +8,7 @@ use crate::sctp::ChannelConfig;
 use crate::streams::{StreamRx, StreamTx, DEFAULT_RTX_CACHE_DURATION};
 use crate::Rtc;
 use crate::RtcError;
+use crate::sdp::{SdpAnswer, SdpOffer};
 
 /// Direct change strategy.
 ///
@@ -147,7 +149,8 @@ impl<'a> DirectApi<'a> {
         };
 
         let exts = self.rtc.session.exts.cloned_with_type(kind.is_audio());
-        let m = Media::from_direct_api(mid, next_index, kind, exts);
+        let pts = self.rtc.session.codec_config.all_for_kind(kind).map(|p| p.pt()).collect();
+        let m = Media::from_direct_api(mid, next_index, kind, exts, pts);
 
         self.rtc.session.medias.push(m);
         self.rtc.session.medias.last_mut().unwrap()
@@ -239,6 +242,14 @@ impl<'a> DirectApi<'a> {
         stream.set_rtx_cache(size, DEFAULT_RTX_CACHE_DURATION);
 
         stream
+    }
+
+    pub fn create_offer(&mut self) -> SdpOffer {
+        create_offer(self.rtc, &Changes(Vec::new()))
+    }
+
+    pub fn accept_answer(&mut self, answer: SdpAnswer) -> Result<(), RtcError> {
+        accept_answer(self.rtc, answer)
     }
 
     /// Remove the transmit stream for the given SSRC.

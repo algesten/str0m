@@ -528,11 +528,13 @@ impl Media {
         index: usize,
         kind: MediaKind,
         exts: ExtensionMap,
+        pts: Vec<Pt>,
     ) -> Media {
         Media {
             mid,
             index,
             kind,
+            remote_pts: pts,
             dir: Direction::SendRecv,
             remote_exts: exts,
             ..Default::default()
