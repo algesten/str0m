@@ -288,8 +288,7 @@ impl Rtcp {
             // if we manage to merge anything into fb_a.
             let mut any_change = false;
 
-            // j goes from the item _after_ i and indexes fb_b.
-            #[allow(clippy::needless_range_loop)]
+            // fb_b goes from the item _after_ i
             for fb_b in pack_from {
                 // if fb_a is full (or empty), we don't want to move any more elements into fb_a.
                 if fb_a.is_full() || fb_a.is_empty() {
@@ -315,7 +314,7 @@ impl Rtcp {
             }
         }
 
-        // Prune empty, however must keep the first SR/RR even if it is empty for SRTCP.
+        // Prune empty.
         feedback.retain(|f| !f.is_empty());
     }
 
