@@ -484,18 +484,13 @@ impl Streams {
         }
     }
 
-    pub(crate) fn change_stream_rx_ssrc(
-        &mut self,
-        ssrc_from: Ssrc,
-        ssrc_to: Ssrc,
-        rtx_to: Option<Ssrc>,
-    ) {
+    pub(crate) fn change_stream_rx_ssrc(&mut self, ssrc_from: Ssrc, ssrc_to: Ssrc) {
         // This unwrap is OK, because we can't call change_stream_rx_ssrc without first
         // knowing there is such a StreamRx.
         let mut to_change = self.streams_rx.remove(&ssrc_from).unwrap();
         to_change.change_ssrc(ssrc_to);
         let mid = to_change.mid();
-        let rtx = rtx_to.or(to_change.rtx());
+        let rtx = to_change.rtx();
 
         // Reinsert under new SSRC key.
         self.streams_rx.insert(ssrc_to, to_change);
@@ -511,6 +506,27 @@ impl Streams {
         if let Some(rtx) = rtx {
             self.associate_ssrc_mid(rtx, mid, ssrc_to, None);
         }
+    }
+
+    pub(crate) fn change_stream_rx_rtx(&mut self, rtx_from: Ssrc, rtx_to: Ssrc) {
+        // Remove the SSRC mapping
+        self.source_keys_rx.remove(&rtx_from);
+
+        let Some(to_change) = self
+            .streams_rx
+            .values_mut()
+            .find(|s| s.rtx() == Some(rtx_from))
+        else {
+            // If there's no main stream associated with the RTX our job is done.
+            return;
+        };
+        let mid = to_change.mid();
+        let ssrc = to_change.ssrc();
+
+        to_change.maybe_reset_rtx(rtx_to);
+
+        // Map the new RTX to the main SSRC
+        self.associate_ssrc_mid(rtx_to, mid, ssrc, None);
     }
 
     pub(crate) fn debug(&self) {
