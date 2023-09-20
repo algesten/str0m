@@ -1033,14 +1033,15 @@ fn update_media(
         let rid = i.rid;
 
         if let Some(stream) = streams.stream_rx_by_mid_rid(mid, rid) {
+            let from = stream.ssrc();
             // For existing streams, there might be an SSRC and RTX change.
             // This happens with FF when toggling an m-line such as
             // SendRecv -> Inactive -> SendRecv.
             if let Some(repair_ssrc) = repair_ssrc {
-                stream.maybe_reset_rtx(repair_ssrc)
+                stream.maybe_reset_rtx(repair_ssrc);
             }
-            let from = stream.ssrc();
-            streams.change_stream_rx_ssrc(from, i.ssrc);
+
+            streams.change_stream_rx_ssrc(from, i.ssrc, repair_ssrc);
         } else {
             info!(
                 "Adding pre-communicated SSRC: {:?} RTX: {:?} mid: {} rid: {:?}",
@@ -1050,7 +1051,7 @@ fn update_media(
             // If remote communicated a main a=ssrc, but no RTX, we will not send nacks.
             let suppress_nack = repair_ssrc.is_none();
 
-            streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), rid, suppress_nack);
+            streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), rid, suppress_nack, None);
         }
     }
 
