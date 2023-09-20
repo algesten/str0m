@@ -336,7 +336,7 @@ impl Session {
                         if stream.ssrc() != ssrc {
                             // We got a change in main SSRC for this stream.
                             let ssrc_from = stream.ssrc();
-                            self.streams.change_stream_rx_ssrc(ssrc_from, ssrc, None);
+                            self.streams.change_stream_rx_ssrc(ssrc_from, ssrc);
                         }
                     }
 
@@ -352,8 +352,14 @@ impl Session {
 
                 // If stream already exists, this might only "fill in" the RTX.
                 let reason = format!("MID header, no RID and PT: {}", header.payload_type);
-                self.streams
-                    .expect_stream_rx(ssrc_main, rtx, mid, None, suppress_nack, Some(&reason));
+                self.streams.expect_stream_rx(
+                    ssrc_main,
+                    rtx,
+                    mid,
+                    None,
+                    suppress_nack,
+                    Some(&reason),
+                );
 
                 return Some((mid, ssrc_main));
             };
@@ -374,7 +380,7 @@ impl Session {
                     if stream.ssrc() != ssrc {
                         // We got a change in main SSRC for this stream.
                         let ssrc_from = stream.ssrc();
-                        self.streams.change_stream_rx_ssrc(ssrc_from, ssrc, None);
+                        self.streams.change_stream_rx_ssrc(ssrc_from, ssrc);
                     }
                 }
                 ssrc

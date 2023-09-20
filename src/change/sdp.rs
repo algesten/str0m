@@ -1034,14 +1034,15 @@ fn update_media(
 
         if let Some(stream) = streams.stream_rx_by_mid_rid(mid, rid) {
             let from = stream.ssrc();
+            let from_rtx = stream.rtx();
             // For existing streams, there might be an SSRC and RTX change.
             // This happens with FF when toggling an m-line such as
             // SendRecv -> Inactive -> SendRecv.
-            if let Some(repair_ssrc) = repair_ssrc {
-                stream.maybe_reset_rtx(repair_ssrc);
+            if let Some((rtx_from, rtx_to)) = repair_ssrc.and_then(|t| from_rtx.map(|f| (f, t))) {
+                streams.change_stream_rx_rtx(rtx_from, rtx_to);
             }
 
-            streams.change_stream_rx_ssrc(from, i.ssrc, repair_ssrc);
+            streams.change_stream_rx_ssrc(from, i.ssrc);
         } else {
             info!(
                 "Adding pre-communicated SSRC: {:?} RTX: {:?} mid: {} rid: {:?}",
