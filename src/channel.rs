@@ -63,19 +63,31 @@ impl fmt::Debug for ChannelData {
         ds.field("id", &self.id);
         ds.field("binary", &self.binary);
 
+        let len = &self.data.len();
         if self.binary {
-            ds.field("data", &self.data.len());
+            ds.field("data", len);
         } else {
             match str::from_utf8(&self.data) {
                 Ok(s) => {
+                    const MAX_LINE_WIDTH: usize = 79;
+                    const REST_OF_LINE_WIDTH: usize =
+                        "ChannelData { id: ChannelId(0), binary: false, data: \"\" }".len();
+                    const TUPLE_WIDTH: usize = "(xxx, ..)".len();
+                    const DATA_WIDTH: usize = MAX_LINE_WIDTH - REST_OF_LINE_WIDTH;
+                    const PREFIX_WIDTH: usize = DATA_WIDTH - TUPLE_WIDTH;
                     if s.is_ascii() {
-                        ds.field("data", &s);
+                        if len > &DATA_WIDTH {
+                            let trunc: String = s.chars().take(PREFIX_WIDTH).collect();
+                            ds.field("data", &format_args!("({}, \"{}\"..)", len, trunc));
+                        } else {
+                            ds.field("data", &s);
+                        }
                     } else {
-                        ds.field("data", &self.data.len());
+                        ds.field("data", len);
                     }
                 }
                 Err(e) => {
-                    ds.field("data", &e);
+                    ds.field("data", &format_args!("{:?}", (len, &e)));
                 }
             }
         }
