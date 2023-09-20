@@ -1,5 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::fmt::{self, Write};
+use std::fmt::{self};
 use std::time::Duration;
 use std::time::Instant;
 
@@ -242,7 +242,6 @@ impl Streams {
                 ssrc_main,
                 Some("Known SSRC"),
             );
-            self.debug();
 
             return Some((mid, ssrc_main));
         }
@@ -527,23 +526,6 @@ impl Streams {
 
         // Map the new RTX to the main SSRC
         self.associate_ssrc_mid(rtx_to, mid, ssrc, None);
-    }
-
-    pub(crate) fn debug(&self) {
-        let mut out = String::new();
-
-        for (ssrc, (mid, main_ssrc)) in self.source_keys_rx.iter() {
-            let is_repair = ssrc != main_ssrc;
-
-            write!(
-                out,
-                "{ssrc:10} -({})-> ({mid}, {main_ssrc:10})\n",
-                if is_repair { "R" } else { "M" }
-            )
-            .expect("Writing to String never fails");
-        }
-
-        println!("{out}");
     }
 
     fn stream_rx_by_ssrc_or_rtx(&self, ssrc: Ssrc) -> Option<&StreamRx> {
