@@ -244,10 +244,12 @@ impl<'a> DirectApi<'a> {
         stream
     }
 
+    /// Creates new [`SdpOffer`] from the `str0m`'s state.
     pub fn create_offer(&mut self) -> SdpOffer {
         create_offer(self.rtc, &Changes(Vec::new()))
     }
 
+    /// Accept an answer to a previously created [`SdpOffer`].
     pub fn accept_answer(&mut self, answer: SdpAnswer) -> Result<(), RtcError> {
         accept_answer(self.rtc, answer)
     }

@@ -523,8 +523,6 @@ pub(crate) fn accept_answer(
     rtc: &mut Rtc,
     answer: SdpAnswer,
 ) -> Result<(), RtcError> {
-    debug!("Accept answer");
-
     add_ice_details(rtc, &answer, None)?;
 
     // Ensure setup=active/passive is corresponding remote and init dtls.
