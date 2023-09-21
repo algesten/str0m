@@ -1011,58 +1011,68 @@ fn update_media(
     }
     media.set_remote_extmap(remote_extmap);
 
-    // SSRC changes
-    // This will always be for ReceiverSource since any incoming a=ssrc line will be
-    // about the remote side's SSRC.
-    let infos = m.ssrc_info();
+    if new_dir.is_receiving() {
+        // SSRC changes
+        // This will always be for ReceiverSource since any incoming a=ssrc line will be
+        // about the remote side's SSRC.
+        let infos = m.ssrc_info();
 
-    let main = infos.iter().filter(|i| i.repairs.is_none());
-    let mid = media.mid();
+        let main = infos.iter().filter(|i| i.repairs.is_none());
+        let mid = media.mid();
 
-    // Use pre-communicated SSRCs if available and prefer them over dynamically signalled SSRCs via
-    // rid and repaired-rid. There's a bug in Firefox that causes it to emit incorrect mappings via
-    // repaired-rid while the values signalled in SDP are correct.
-    for i in main {
-        // If the remote is communicating _BOTH_ rid/repaired-rid and a=ssrc/a=ssrc-group we will
-        // adopt the mapping from the SDP as described above. Since we have already established the
-        // mapping any further mapping via rid/repaired-rid headers for these SSRCs will be ignored
-        let repair_ssrc = infos
-            .iter()
-            .find(|r| r.repairs == Some(i.ssrc))
-            .map(|r| r.ssrc);
-        let rid = i.rid;
+        // Use pre-communicated SSRCs if available and prefer them over dynamically signalled SSRCs via
+        // rid and repaired-rid. There's a bug in Firefox that causes it to emit incorrect mappings via
+        // repaired-rid while the values signalled in SDP are correct.
+        for i in main {
+            // If the remote is communicating _BOTH_ rid/repaired-rid and a=ssrc/a=ssrc-group we will
+            // adopt the mapping from the SDP as described above. Since we have already established the
+            // mapping any further mapping via rid/repaired-rid headers for these SSRCs will be ignored
+            let repair_ssrc = infos
+                .iter()
+                .find(|r| r.repairs == Some(i.ssrc))
+                .map(|r| r.ssrc);
+            let rid = i.rid;
 
-        if let Some(stream) = streams.stream_rx_by_mid_rid(mid, rid) {
-            let from = stream.ssrc();
-            let from_rtx = stream.rtx();
-            // For existing streams, there might be an SSRC and RTX change.
-            // This happens with FF when toggling an m-line such as
-            // SendRecv -> Inactive -> SendRecv.
-            if let Some((rtx_from, rtx_to)) = repair_ssrc.and_then(|t| from_rtx.map(|f| (f, t))) {
-                streams.change_stream_rx_rtx(rtx_from, rtx_to);
+            if let Some(stream) = streams.stream_rx_by_mid_rid(mid, rid) {
+                let from = stream.ssrc();
+                let from_rtx = stream.rtx();
+                // For existing streams, there might be an SSRC and RTX change.
+                // This happens with FF when toggling an m-line such as
+                // SendRecv -> Inactive -> SendRecv.
+                if let Some((rtx_from, rtx_to)) = repair_ssrc.and_then(|t| from_rtx.map(|f| (f, t)))
+                {
+                    streams.change_stream_rx_rtx(rtx_from, rtx_to);
+                }
+
+                streams.change_stream_rx_ssrc(from, i.ssrc);
+            } else {
+                info!(
+                    "Adding pre-communicated SSRC: {:?} RTX: {:?} mid: {} rid: {:?}",
+                    i.ssrc, repair_ssrc, mid, rid
+                );
+
+                // If remote communicated a main a=ssrc, but no RTX, we will not send nacks.
+                let suppress_nack = repair_ssrc.is_none();
+
+                streams.expect_stream_rx(
+                    i.ssrc,
+                    repair_ssrc,
+                    media.mid(),
+                    rid,
+                    suppress_nack,
+                    None,
+                );
             }
-
-            streams.change_stream_rx_ssrc(from, i.ssrc);
-        } else {
-            info!(
-                "Adding pre-communicated SSRC: {:?} RTX: {:?} mid: {} rid: {:?}",
-                i.ssrc, repair_ssrc, mid, rid
-            );
-
-            // If remote communicated a main a=ssrc, but no RTX, we will not send nacks.
-            let suppress_nack = repair_ssrc.is_none();
-
-            streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), rid, suppress_nack, None);
         }
-    }
 
-    // Simulcast configuration
-    if let Some(s) = m.simulcast() {
-        if s.is_munged {
-            warn!("Not supporting simulcast via munging SDP");
-        } else if media.simulcast().is_none() {
-            // Invert before setting, since it has a recv and send config.
-            media.set_simulcast(s.invert());
+        // Simulcast configuration
+        if let Some(s) = m.simulcast() {
+            if s.is_munged {
+                warn!("Not supporting simulcast via munging SDP");
+            } else if media.simulcast().is_none() {
+                // Invert before setting, since it has a recv and send config.
+                media.set_simulcast(s.invert());
+            }
         }
     }
 }
