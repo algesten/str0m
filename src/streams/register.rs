@@ -89,6 +89,10 @@ impl ReceiverRegister {
         new
     }
 
+    pub fn accept_resend(&self, seq: SeqNo) -> bool {
+        self.nack.accept_resend(seq)
+    }
+
     /// Generates a NACK report
     pub fn nack_report(&mut self) -> Option<impl Iterator<Item = Nack>> {
         self.nack.nack_reports()

@@ -139,6 +139,14 @@ impl NackRegister {
         self.active.as_ref().map(|a| a.end)
     }
 
+    pub fn accept_resend(&self, seq: SeqNo) -> bool {
+        let Some(active) = self.active.clone() else {
+            return false;
+        };
+        let packet = self.packets[self.as_index(seq)];
+        active.contains(&seq) && !packet.received
+    }
+
     /// Create a new nack report
     ///
     /// This modifies the state as it counts how many times packets have been nacked

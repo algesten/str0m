@@ -391,22 +391,35 @@ impl StreamRx {
         Some(packet)
     }
 
-    pub(crate) fn un_rtx(&self, header: &mut RtpHeader, data: &mut Vec<u8>, pt: Pt) {
+    pub(crate) fn un_rtx(&self, header: &mut RtpHeader, data: &mut Vec<u8>, pt: Pt) -> bool {
         let mut orig_seq_no_16 = 0;
 
         let n = RtpHeader::read_original_sequence_number(data, &mut orig_seq_no_16);
         data.drain(0..n);
 
-        trace!(
-            "Repaired seq no {} -> {}",
-            header.sequence_number,
-            orig_seq_no_16
-        );
-
+        let seq_rtx = header.sequence_number;
         header.sequence_number = orig_seq_no_16;
 
         header.ssrc = self.ssrc;
         header.payload_type = pt;
+
+        // Firefox does spurious resends reusing packets from another main ssrc.
+        // This is a hack to detect that and ignore extraneous packets.
+        let accepted = if let Some(register) = &self.register {
+            let extended = header.sequence_number(register.max_seq());
+            register.accept_resend(extended)
+        } else {
+            false
+        };
+
+        trace!(
+            "Repair seq no {} -> {}, accepted: {}",
+            seq_rtx,
+            orig_seq_no_16,
+            accepted
+        );
+
+        accepted
     }
 
     pub(crate) fn maybe_create_keyframe_request(

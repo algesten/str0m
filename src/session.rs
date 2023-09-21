@@ -494,7 +494,10 @@ impl Session {
             }
 
             // Rewrite the header, and removes the resent seq_no from the body.
-            stream.un_rtx(&mut header, &mut data, pt);
+            if !stream.un_rtx(&mut header, &mut data, pt) {
+                // Discard the packet if we did not ask for it
+                return;
+            }
 
             // Now update the "main" register with the repaired packet info.
             // This gives us the extended sequence number of the main stream.
