@@ -9,6 +9,9 @@ pub(crate) mod value_history;
 mod time_tricks;
 pub(crate) use time_tricks::{already_happened, not_happening, InstantExt};
 
+mod bitstream;
+pub(crate) use bitstream::BitStream;
+
 pub(crate) trait Soonest {
     fn soonest(self, other: Self) -> Self;
 }
