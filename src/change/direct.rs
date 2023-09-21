@@ -1,14 +1,14 @@
-use crate::change::sdp::{accept_answer, Changes, create_offer};
+use crate::change::sdp::{accept_answer, create_offer, Changes};
 use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
 use crate::ice::IceCreds;
 use crate::media::{Media, MediaKind};
 use crate::rtp_::{Mid, Rid, Ssrc};
 use crate::sctp::ChannelConfig;
+use crate::sdp::{SdpAnswer, SdpOffer};
 use crate::streams::{StreamRx, StreamTx, DEFAULT_RTX_CACHE_DURATION};
 use crate::Rtc;
 use crate::RtcError;
-use crate::sdp::{SdpAnswer, SdpOffer};
 
 /// Direct change strategy.
 ///
@@ -149,7 +149,13 @@ impl<'a> DirectApi<'a> {
         };
 
         let exts = self.rtc.session.exts.cloned_with_type(kind.is_audio());
-        let pts = self.rtc.session.codec_config.all_for_kind(kind).map(|p| p.pt()).collect();
+        let pts = self
+            .rtc
+            .session
+            .codec_config
+            .all_for_kind(kind)
+            .map(|p| p.pt())
+            .collect();
         let m = Media::from_direct_api(mid, next_index, kind, exts, pts);
 
         self.rtc.session.medias.push(m);

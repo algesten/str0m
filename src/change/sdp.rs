@@ -519,10 +519,7 @@ pub(crate) fn create_offer(rtc: &mut Rtc, changes: &Changes) -> SdpOffer {
     sdp.into()
 }
 
-pub(crate) fn accept_answer(
-    rtc: &mut Rtc,
-    answer: SdpAnswer,
-) -> Result<(), RtcError> {
+pub(crate) fn accept_answer(rtc: &mut Rtc, answer: SdpAnswer) -> Result<(), RtcError> {
     add_ice_details(rtc, &answer, None)?;
 
     // Ensure setup=active/passive is corresponding remote and init dtls.
