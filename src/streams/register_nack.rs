@@ -20,6 +20,9 @@ pub struct NackRegister {
 
     /// Range of seq numbers considered NACK reporting.
     active: Option<Range<SeqNo>>,
+
+    // true if we have ever generated any nack report
+    reporting: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -85,10 +88,13 @@ impl NackRegister {
         NackRegister {
             packets: vec![PacketStatus::default(); BUFFER_SIZE as usize],
             active: None,
+            reporting: false,
         }
     }
 
     pub fn update(&mut self, seq: SeqNo) -> bool {
+        let reporting = self.reporting;
+
         let Some(active) = self.active.clone() else {
             // automatically pick up the first seq number
             self.active = Some(seq..seq);
@@ -120,7 +126,7 @@ impl NackRegister {
         // reset packets that are rolling our of the nack window
         for s in *active.start..*start {
             let p = self.packet(s.into());
-            if !p.received && s != *seq {
+            if reporting && !p.received && s != *seq {
                 debug!("Seq no {} missing after {} attempts", s, p.nack_count);
             }
             self.packet(s.into()).reset();
@@ -151,6 +157,8 @@ impl NackRegister {
     ///
     /// This modifies the state as it counts how many times packets have been nacked
     pub fn nack_reports(&mut self) -> Option<impl Iterator<Item = Nack>> {
+        self.reporting = true;
+
         let Range { start, end } = self.active.clone()?;
         let start = (*start..=*end).find(|s| self.packet((*s).into()).needs_nack())?;
 
