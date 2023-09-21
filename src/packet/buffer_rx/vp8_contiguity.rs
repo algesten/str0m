@@ -27,8 +27,7 @@ impl Vp8Contiguity {
         };
 
         let Some(tl0_picture_id) = next.tl0_picture_id else {
-            // at this point we expect to receive a tl0 picture id for this algo to work
-            panic!("missing tl0 picture id");
+            return (true, contiguous_seq);
         };
 
         let (Some(last_tl0_picture_id), Some(last_picture_id)) =
@@ -45,10 +44,9 @@ impl Vp8Contiguity {
         }
 
         if next.layer_index == 0 {
-            assert_ne!(
-                tl0_picture_id, last_tl0_picture_id,
-                "2 subsequent frames on layer zero must have different tl0 picture id"
-            );
+            if tl0_picture_id == last_tl0_picture_id {
+                warn!("VP8: 2 subsequent frames on layer zero must have different tl0 picture id: encoding problem?")
+            }
 
             // Frame on layer 0: always emit and report discontinuity if not subsequent
             let emit = true;
@@ -66,10 +64,10 @@ impl Vp8Contiguity {
 
         if emit {
             self.last_picture_id = Some(picture_id);
-            assert!(
-                contiguous_seq,
-                "contiguous pictures imples contiguous seq numbers: encoding issue ?"
-            );
+            if contiguous_seq {
+                // this as happened in Safari + very lossy network (very rare)
+                warn!("VP8: contiguous pictures implies contiguous seq numbers: encoding issue ?")
+            }
         }
 
         (emit, true)
