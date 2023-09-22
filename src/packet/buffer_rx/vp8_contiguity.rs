@@ -64,7 +64,7 @@ impl Vp8Contiguity {
 
         if emit {
             self.last_picture_id = Some(picture_id);
-            if contiguous_seq {
+            if !contiguous_seq {
                 // this as happened in Safari + very lossy network (very rare)
                 warn!("VP8: contiguous pictures implies contiguous seq numbers: encoding issue ?")
             }
