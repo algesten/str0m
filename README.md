@@ -433,7 +433,7 @@ collected or reference counted languages, but not great with Rust.
 
 ### Panics, Errors and unwraps
 
-Rust adheres to [fail-last][ff]. That means rather than brushing state
+Rust adheres to [fail-fast][ff]. That means rather than brushing state
 bugs under the carpet, it panics. We make a distinction between errors and
 bugs.
 
