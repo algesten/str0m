@@ -10,9 +10,13 @@ use crate::RtcError;
 
 /// Direct change strategy.
 ///
-/// Makes immediate changes to the Rtc session without any Sdp OFFER/ANSWER.
+/// Makes immediate changes to the Rtc session without any SDP OFFER/ANSWER.
 ///
 /// <div class="warning"><b>This is a low level API.</b>
+///
+/// To use the Direct API together with a browser client, you would need to make
+/// the equivalent changes on the browser side by manually generating the correct
+/// SDP OFFER/ANSWER to match str0m's state.
 ///
 ///  str0m normally guarantees that user input cannot cause panics.
 ///  However as an exception, the Direct API does allow the user to configure the
