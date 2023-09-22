@@ -102,12 +102,23 @@ impl ReceiverRegister {
         let first = self.first?;
         let last = self.max_seq()?;
 
-        let expected = expected(first, last);
+        // expected and received since the last time
+        let (expected_delta, received_delta) = {
+            let expected = expected(first, last);
+            let expected_delta = expected - self.expected_prior;
+            self.expected_prior = expected;
+
+            let received = self.count as i64;
+            let received_delta = received - self.received_prior;
+            self.received_prior = received;
+
+            (expected_delta, received_delta)
+        };
 
         Some(ReceptionReport {
             ssrc: 0.into(),
-            fraction_lost: self.fraction_lost(expected, self.count as i64),
-            packets_lost: packets_lost(expected, self.count as i64),
+            fraction_lost: fraction_lost(expected_delta, received_delta),
+            packets_lost: packets_lost(expected_delta, received_delta),
             max_seq: (*last % ((u32::MAX as u64) + 1_u64)) as u32,
             jitter: self.jitter as u32,
             last_sr_time: 0,
@@ -201,31 +212,10 @@ impl ReceiverRegister {
 
         self.time_point_prior = Some(tp);
     }
-
-    // Calculations from here
-    // https://www.rfc-editor.org/rfc/rfc3550#appendix-A.3
-
-    /// Fraction lost since last call.
-    fn fraction_lost(&mut self, expected: i64, received: i64) -> u8 {
-        let expected_interval = expected - self.expected_prior;
-        self.expected_prior = expected;
-
-        let received_interval = received - self.received_prior;
-        self.received_prior = received;
-
-        let lost_interval = expected_interval - received_interval;
-
-        let lost = if expected_interval == 0 || lost_interval == 0 {
-            0
-        } else {
-            (lost_interval << 8) / expected_interval
-        } as u8;
-
-        trace!("Reception fraction lost: {}", lost);
-
-        lost
-    }
 }
+
+// Calculations from here
+// https://www.rfc-editor.org/rfc/rfc3550#appendix-A.3
 
 /// Absolute number of lost packets.
 fn packets_lost(expected: i64, received: i64) -> u32 {
@@ -240,6 +230,21 @@ fn packets_lost(expected: i64, received: i64) -> u32 {
     } else {
         lost_t as u32
     }
+}
+
+/// Fraction lost as u8
+fn fraction_lost(expected: i64, received: i64) -> u8 {
+    let lost_interval = expected - received;
+
+    let lost = if expected == 0 || lost_interval == 0 {
+        0
+    } else {
+        (lost_interval << 8) / expected
+    } as u8;
+
+    trace!("Reception fraction lost: {}", lost);
+
+    lost
 }
 
 fn expected(first: SeqNo, last: SeqNo) -> i64 {
@@ -330,5 +335,10 @@ mod test {
         assert_eq!(5, report.packets_lost);
         assert_eq!(19, report.max_seq);
         assert_eq!(0, report.jitter);
+
+        // fraction lost and packets lost are calculated since last report
+        let report = r.reception_report().expect("some report");
+        assert_eq!(0, report.packets_lost);
+        assert_eq!(0, report.fraction_lost);
     }
 }
