@@ -14,8 +14,6 @@ use crate::RtcError;
 /// is an alternative to [`Rtc::sdp_api()`] for use cases when you don’t want to use SDP
 /// (or when you want to write RTP directly).
 ///
-/// <div class="warning"><b>This is a low level API.</b>
-///
 /// To use the Direct API together with a browser client, you would need to make
 /// the equivalent changes on the browser side by manually generating the correct
 /// SDP OFFER/ANSWER to make the `RTCPeerConnection` match str0m's state.
@@ -23,6 +21,8 @@ use crate::RtcError;
 /// To change str0m's state through the Direct API followed by the SDP API produce
 /// an SDP OFFER is not a supported use case. Either pick SDP API and let str0m handle
 /// the OFFER/ANSWER or use Direct API and deal with SDP manually. Not both.
+///
+/// <div class="warning"><b>This is a low level API.</b>
 ///
 ///  str0m normally guarantees that user input cannot cause panics.
 ///  However as an exception, the Direct API does allow the user to configure the
