@@ -397,7 +397,7 @@ pub fn pending_offer_retry() {
     r.sdp_api().accept_answer(pending_r, answer_l).unwrap();
 
     // Retry the defunct pending_l;
-    let (offer_l, pending_l) = pending_l.retry(&mut *l).unwrap();
+    let (offer_l, pending_l) = pending_l.retry(&mut l).unwrap();
     let answer_r = r.sdp_api().accept_offer(offer_l).unwrap();
 
     l.sdp_api().accept_answer(pending_l, answer_r).unwrap();
