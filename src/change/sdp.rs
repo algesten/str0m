@@ -435,8 +435,8 @@ impl SdpPendingOffer {
     /// This is useful for this sequence of events.
     ///
     /// 1. str0m creates an OFFER with some changes (this results in `SdpPendingOffer`).
-    /// 2. Client creates an OFFER with other changes.
-    /// 3. Client OFFER is applied to str0m (this invalidates the `SdpPendingOffer`).
+    /// 2. Remote peer creates an OFFER with other changes.
+    /// 3. Remote peer OFFER is applied to str0m (this invalidates the `SdpPendingOffer`).
     /// 4. We want to attempt the pending changes from 1.
     ///
     /// The call will ensure the changes in the pending offer are still relevant. If any
