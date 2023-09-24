@@ -429,6 +429,47 @@ pub struct SdpPendingOffer {
     changes: Changes,
 }
 
+impl SdpPendingOffer {
+    /// Retry this `SdpPendingOffer`.
+    ///
+    /// This is useful for this sequence of events.
+    ///
+    /// 1. str0m creates an OFFER with some changes (this results in `SdpPendingOffer`).
+    /// 2. Client creates an OFFER with other changes.
+    /// 3. Client OFFER is applied to str0m (this invalidates the `SdpPendingOffer`).
+    /// 4. We want to attempt the pending changes from 1.
+    ///
+    /// The call will ensure the changes in the pending offer are still relevant. If any
+    /// change is still relevant, a new `SdpOffer` is returned. Changes that might
+    /// make the OFFER irrelevant:
+    ///
+    /// * Data channel m-line (application) already negotiated.
+    /// * A m-line with the same `Mid` already exists.
+    /// * The direction of an m-line is already the same as the change.
+    pub fn retry(mut self, rtc: &mut Rtc) -> Option<(SdpOffer, SdpPendingOffer)> {
+        fn is_relevant(rtc: &mut Rtc, c: &Change) -> bool {
+            match c {
+                Change::AddMedia(v) => rtc.media(v.mid).is_none(),
+                Change::AddApp(_) => rtc.session.app().is_none(),
+                Change::AddChannel(v) => rtc.chan.stream_id_by_channel_id(v.0).is_none(),
+                Change::Direction(m, d) => {
+                    // If mid is missing, this is not relevant.
+                    rtc.media(*m).map(|m| m.direction() != *d).unwrap_or(false)
+                }
+                Change::IceRestart(v, _) => rtc.ice.local_credentials() != v,
+            }
+        }
+
+        self.changes.retain(|c| is_relevant(rtc, c));
+
+        // Go back to the usual code path.
+        let mut api = rtc.sdp_api();
+        api.changes = self.changes;
+
+        api.apply()
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Changes(pub Vec<Change>);
 

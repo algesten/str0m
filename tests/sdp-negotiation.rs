@@ -371,6 +371,44 @@ fn media_creator_can_change_inactive_to_recvonly() {
     assert_eq!(m_r.direction(), Direction::SendOnly);
 }
 
+#[test]
+pub fn pending_offer_retry() {
+    init_log();
+
+    // First proposed PT is 100, R side adjusts its default from 102 -> 100
+    let (mut l, mut r) = with_params(
+        //
+        info_span!("L"),
+        &[opus(100)],
+        info_span!("R"),
+        &[opus(100)],
+    );
+
+    let mut api_l = l.sdp_api();
+    let mid_l = api_l.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
+    let (_ignored_offer_l, pending_l) = api_l.apply().unwrap();
+
+    let mut api_r = r.sdp_api();
+    let mid_r = api_r.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
+    let (offer_r, pending_r) = api_r.apply().unwrap();
+
+    // R is applied before L, thus making pending_l defunct.
+    let answer_l = l.sdp_api().accept_offer(offer_r).unwrap();
+    r.sdp_api().accept_answer(pending_r, answer_l).unwrap();
+
+    // Retry the defunct pending_l;
+    let (offer_l, pending_l) = pending_l.retry(&mut *l).unwrap();
+    let answer_r = r.sdp_api().accept_offer(offer_l).unwrap();
+
+    l.sdp_api().accept_answer(pending_l, answer_r).unwrap();
+
+    // We expect 3 media. One from the initial negotiation. One from R -> L and one L -> R.
+    l.media(mid_l).unwrap();
+    r.media(mid_l).unwrap();
+    l.media(mid_r).unwrap();
+    r.media(mid_r).unwrap();
+}
+
 fn with_params(
     span_l: Span,
     params_l: &[PayloadParams],
