@@ -475,7 +475,7 @@ impl<'a> SdpApi<'a> {
         mut self,
         pending_offer: &mut SdpPendingOffer,
     ) -> Option<(SdpOffer, SdpPendingOffer)> {
-        pending_offer.retain_relevant(&self.rtc);
+        pending_offer.retain_relevant(self.rtc);
 
         pending_offer.changes.extend(self.changes.drain(..));
         swap(&mut self.changes, &mut pending_offer.changes);
