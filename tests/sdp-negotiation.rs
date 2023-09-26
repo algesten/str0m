@@ -230,9 +230,6 @@ fn answer_remaps() {
     let a_l: Vec<_> = l.exts().iter(true).collect();
     let a_r: Vec<_> = r.exts().iter(true).collect();
 
-    // NB: `RtpStreamId` and `RepairedStreamId` are not negotiated because str0m disables them if
-    // the offering side uses `a=ssrc-group:FID {main} {rtx}`, which str0m does.
-
     // L locks 3 and changes it from 14
     // R keeps 3 and changes it from 14.
     assert_eq!(
@@ -241,6 +238,8 @@ fn answer_remaps() {
             (2, &AbsoluteSendTime),
             (3, &TransportSequenceNumber),
             (4, &RtpMid),
+            (10, &RtpStreamId),
+            (11, &RepairedRtpStreamId),
             (13, &VideoOrientation)
         ]
     );
@@ -255,6 +254,8 @@ fn answer_remaps() {
             (2, &AbsoluteSendTime),
             (3, &TransportSequenceNumber),
             (4, &RtpMid),
+            (10, &RtpStreamId),
+            (11, &RepairedRtpStreamId)
         ]
     );
     assert_eq!(a_r, vec![(3, &TransportSequenceNumber), (12, &AudioLevel)]);

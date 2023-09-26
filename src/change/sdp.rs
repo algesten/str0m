@@ -925,27 +925,6 @@ fn update_session(session: &mut Session, sdp: &Sdp) {
     if has_transport_cc && has_twcc_header {
         session.enable_twcc_feedback();
     }
-
-    let has_ssrc_signalling = sdp.media_lines.iter().any(|m| {
-        m.attrs
-            .iter()
-            .any(|a| matches!(a, MediaAttribute::SsrcGroup { .. }))
-    });
-
-    if has_ssrc_signalling {
-        info!("Remote uses signalled SSRCs, disabling rid and repaired-rid RTP headers");
-        // If the remote indicated explicit signalling of simulcast via ssrc-group we disabled rid
-        // and repaired-rid
-        // Firefox has had several issue with rid/repaired-rid that made them unreliable, however
-        // Firefox still uses ssrc-group signalling so we can rely on this.
-        //
-        // See:
-        // * https://bugzilla.mozilla.org/show_bug.cgi?id=1852775
-        // * https://hg.mozilla.org/mozilla-central/rev/b0348f1f8d7197fb87158ba74542d28d46133997
-        // * https://hg.mozilla.org/mozilla-central/rev/f8d055fcb63fa2ab11b7b4b58a705a66a8770bdb
-        session.exts.remove(Extension::RtpStreamId);
-        session.exts.remove(Extension::RepairedRtpStreamId);
-    }
 }
 
 /// Returns all media/channels as `AsMediaLine` trait.
@@ -1016,49 +995,29 @@ fn update_media(
         // This will always be for ReceiverSource since any incoming a=ssrc line will be
         // about the remote side's SSRC.
         let infos = m.ssrc_info();
-
         let main = infos.iter().filter(|i| i.repairs.is_none());
-        let mid = media.mid();
 
-        // Use pre-communicated SSRCs if available and prefer them over dynamically signalled SSRCs via
-        // rid and repaired-rid. There's a bug in Firefox that causes it to emit incorrect mappings via
-        // repaired-rid while the values signalled in SDP are correct.
-        for i in main {
-            // If the remote is communicating _BOTH_ rid/repaired-rid and a=ssrc/a=ssrc-group we will
-            // adopt the mapping from the SDP as described above. Since we have already established the
-            // mapping any further mapping via rid/repaired-rid headers for these SSRCs will be ignored
-            let repair_ssrc = infos
-                .iter()
-                .find(|r| r.repairs == Some(i.ssrc))
-                .map(|r| r.ssrc);
-            let rid = i.rid;
+        if m.simulcast().is_none() {
+            // Only use pre-communicated SSRC if we are running without simulcast.
+            // We found a bug in FF where the order of the simulcast lines does not
+            // correspond to the order of the simulcast declarations. In this case
+            // it's better to fall back on mid/rid dynamic mapping.
 
-            if let Some(stream) = streams.stream_rx_by_mid_rid(mid, rid) {
-                let from = stream.ssrc();
-                let from_rtx = stream.rtx();
-                // For existing streams, there might be an SSRC and RTX change.
-                // This happens with FF when toggling an m-line such as
-                // SendRecv -> Inactive -> SendRecv.
-                if let Some((rtx_from, rtx_to)) = repair_ssrc.and_then(|t| from_rtx.map(|f| (f, t)))
-                {
-                    streams.change_stream_rx_rtx(rtx_from, rtx_to);
-                }
-
-                streams.change_stream_rx_ssrc(from, i.ssrc);
-            } else {
-                info!(
-                    "Adding pre-communicated SSRC: {:?} RTX: {:?} mid: {} rid: {:?}",
-                    i.ssrc, repair_ssrc, mid, rid
-                );
+            for i in main {
+                // TODO: If the remote is communicating _BOTH_ rid and a=ssrc this will fail.
+                info!("Adding pre-communicated SSRC: {:?}", i);
+                let repair_ssrc = infos
+                    .iter()
+                    .find(|r| r.repairs == Some(i.ssrc))
+                    .map(|r| r.ssrc);
 
                 // If remote communicated a main a=ssrc, but no RTX, we will not send nacks.
                 let suppress_nack = repair_ssrc.is_none();
-
                 streams.expect_stream_rx(
                     i.ssrc,
                     repair_ssrc,
                     media.mid(),
-                    rid,
+                    None,
                     suppress_nack,
                     None,
                 );
