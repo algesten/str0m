@@ -446,6 +446,11 @@ impl Media {
             .find(|p| p.resend().is_some() && self.remote_pts.contains(&p.pt))
             .map(|p| p.pt())
     }
+
+    pub(crate) fn reset_depayloader(&mut self, payload_type: Pt, rid: Option<Rid>) {
+        // Simply remove the depayloader, it will be re-created on the next RTP packet.
+        self.depayloaders.remove(&(payload_type, rid));
+    }
 }
 
 impl Default for Media {
