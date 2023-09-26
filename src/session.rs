@@ -378,7 +378,15 @@ impl Session {
             let stream_mid_rid = self.streams.stream_rx_by_mid_rid(mid, Some(rid));
 
             let ssrc_main = if is_repair {
-                stream_mid_rid?.ssrc()
+                let stream = stream_mid_rid?;
+                let main = stream.ssrc();
+
+                if let Some(rtx) = stream.rtx().and_then(|rtx| (rtx != ssrc).then_some(rtx)) {
+                    // We got a change in the RTX SSRC
+                    self.streams.change_stream_rx_rtx(rtx, ssrc);
+                }
+
+                main
             } else {
                 if let Some(stream) = stream_mid_rid {
                     if stream.ssrc() != ssrc {
