@@ -337,6 +337,10 @@ impl Session {
                             // We got a change in main SSRC for this stream.
                             let ssrc_from = stream.ssrc();
                             self.streams.change_stream_rx_ssrc(ssrc_from, ssrc);
+                            // When the SSRCs changes the sequence number typically also does, the
+                            // depayloader(if in use) relies on sequence numbers and will not handle a
+                            // large jump corretly, reset it.
+                            media.reset_depayloader(header.payload_type, None);
                         }
                     }
 
@@ -381,6 +385,10 @@ impl Session {
                         // We got a change in main SSRC for this stream.
                         let ssrc_from = stream.ssrc();
                         self.streams.change_stream_rx_ssrc(ssrc_from, ssrc);
+                        // When the SSRCs changes the sequence number typically also does, the
+                        // depayloader(if in use) relies on sequence numbers and will not handle a
+                        // large jump corretly, reset it.
+                        media.reset_depayloader(header.payload_type, Some(rid));
                     }
                 }
                 ssrc
