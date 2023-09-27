@@ -291,144 +291,63 @@ impl Session {
     }
 
     fn mid_and_ssrc_for_header(&mut self, header: &RtpHeader) -> Option<(Mid, Ssrc)> {
-        let ssrc = header.ssrc;
+        let ssrc_header = header.ssrc;
 
-        if let Some(r) = self.streams.mid_ssrc_rx_by_ssrc_or_rtx(ssrc) {
+        if let Some(r) = self.streams.mid_ssrc_rx_by_ssrc_or_rtx(ssrc_header) {
             return Some(r);
         }
 
+        // Attempt to dynamically map this header to some Media/ReceiveStream.
+        self.map_dynamic(header);
+
+        // The dynamic mapping might have added an entry by now.
+        self.streams.mid_ssrc_rx_by_ssrc_or_rtx(ssrc_header)
+    }
+
+    fn map_dynamic(&mut self, header: &RtpHeader) {
+        // There are two strategies for dynamically mapping SSRC. Both use the RTP "mid"
+        // header extension.
+        // A) Mid+Rid - used when doing simulcast. Rid points out which
+        //              simulcast layer is in use. There is a separate header
+        //              to indicate repair (RTX) stream.
+        // B) Mid+PT - when not doing simulcast, the PT identifies whether
+        //             this is a repair stream.
+
+        let Some(mid) = header.ext_vals.mid else {
+            return;
+        };
+        let rid = header.ext_vals.rid.or(header.ext_vals.rid_repair);
+
+        // The media the mid points out. Bail if the mid points to something
+        // we don't know about.
+        let Some(media) = self.medias.iter_mut().find(|m| m.mid() == mid) else {
+            return;
+        };
+
         // Figure out which payload the PT maps to. Either main or RTX.
-        // If we don't find it, bail out.
-        let payload = self
+        let maybe_payload = self
             .codec_config
             .iter()
-            .find(|p| p.pt() == header.payload_type || p.resend() == Some(header.payload_type))?;
+            .find(|p| p.pt() == header.payload_type || p.resend() == Some(header.payload_type));
 
-        // If we don't have an RTX PT configured, we don't want NACK.
-        let suppress_nack = payload.resend.is_none();
+        // If we don't find it, bail out.
+        let Some(payload) = maybe_payload else {
+            return;
+        };
 
-        // Find receiver/source via mid/rid. This is used when the SSRC is not declared
-        // in the SDP as a=ssrc lines or we haven't previously mapped it.
-        if let Some(mid) = header.ext_vals.mid {
-            // The media the mid points out. Bail if the mid points to something
-            // we don't know about.
-            let media = self.medias.iter_mut().find(|m| m.mid() == mid)?;
+        if let Some(rid) = rid {
+            // Case A - use the rid_repair header to identify RTX.
+            let is_main = header.ext_vals.rid.is_some();
 
-            let rid = header.ext_vals.rid.or(header.ext_vals.rid_repair);
+            self.streams
+                .map_dynamic_by_rid(header.ssrc, mid, rid, media, *payload, is_main);
+        } else {
+            // Case B - the payload type identifies RTX.
+            let is_main = payload.pt() == header.payload_type;
 
-            // It's possible to send a MID header only. No RID.
-            // Without RID header we use PT to decide whether the SSRC is for main/RTX.
-            let Some(rid) = rid else {
-                if media.rids_rx().is_specific() {
-                    trace!(
-                        "Media expects rid and RTP packet has only mid: {:?}",
-                        media.rids_rx()
-                    );
-                    return None;
-                }
-
-                let is_main = payload.pt() == header.payload_type;
-
-                let stream_mid_rid = self.streams.stream_rx_by_mid_rid(mid, None);
-
-                let (ssrc_main, rtx) = if is_main {
-                    if let Some(stream) = stream_mid_rid {
-                        if stream.ssrc() != ssrc {
-                            // We got a change in main SSRC for this stream.
-                            let ssrc_from = stream.ssrc();
-                            self.streams.change_stream_rx_ssrc(ssrc_from, ssrc);
-                            // When the SSRCs changes the sequence number typically also does, the
-                            // depayloader(if in use) relies on sequence numbers and will not handle a
-                            // large jump corretly, reset it.
-                            media.reset_depayloader(header.payload_type, None);
-                        }
-                    }
-
-                    // SSRC is main, we don't know the RTX.
-                    (ssrc, None)
-                } else {
-                    // This can bail if the main SSRC has not been discovered yet.
-                    let stream = stream_mid_rid?;
-                    // The main is the SSRC in the stream already. The incoming is RTX.
-                    let ssrc_main = stream.ssrc();
-                    (ssrc_main, Some(ssrc))
-                };
-
-                // If stream already exists, this might only "fill in" the RTX.
-                let reason = format!("MID header, no RID and PT: {}", header.payload_type);
-                self.streams.expect_stream_rx(
-                    ssrc_main,
-                    rtx,
-                    mid,
-                    None,
-                    suppress_nack,
-                    Some(&reason),
-                );
-
-                return Some((mid, ssrc_main));
-            };
-
-            let is_repair = header.ext_vals.rid_repair.is_some();
-
-            // Check if the mid/rid combo is not expected
-            if !media.rids_rx().expects(rid) {
-                trace!("Mid does not expect rid: {} {}", mid, rid);
-            }
-
-            let stream_mid_rid = self.streams.stream_rx_by_mid_rid(mid, Some(rid));
-
-            let ssrc_main = if is_repair {
-                let stream = stream_mid_rid?;
-                let main = stream.ssrc();
-
-                if let Some(rtx) = stream.rtx().and_then(|rtx| (rtx != ssrc).then_some(rtx)) {
-                    // We got a change in the RTX SSRC
-                    self.streams.change_stream_rx_rtx(rtx, ssrc);
-                }
-
-                main
-            } else {
-                if let Some(stream) = stream_mid_rid {
-                    if stream.ssrc() != ssrc {
-                        // We got a change in main SSRC for this stream.
-                        let ssrc_from = stream.ssrc();
-                        self.streams.change_stream_rx_ssrc(ssrc_from, ssrc);
-                        // When the SSRCs changes the sequence number typically also does, the
-                        // depayloader(if in use) relies on sequence numbers and will not handle a
-                        // large jump corretly, reset it.
-                        media.reset_depayloader(header.payload_type, Some(rid));
-                    }
-                }
-                ssrc
-            };
-
-            let reason = format!("Mid header and rid: {}", rid);
-            // Declare entries in streams for receiving these streams.
-            if is_repair {
-                self.streams.expect_stream_rx(
-                    ssrc_main,
-                    Some(ssrc),
-                    mid,
-                    Some(rid),
-                    suppress_nack,
-                    Some(&reason),
-                );
-            } else {
-                self.streams.expect_stream_rx(
-                    ssrc_main,
-                    None,
-                    mid,
-                    Some(rid),
-                    suppress_nack,
-                    Some(&reason),
-                );
-            }
-
-            return Some((mid, ssrc_main));
+            self.streams
+                .map_dynamic_by_pt(header.ssrc, mid, media, *payload, is_main);
         }
-
-        // No way to map this RtpHeader.
-        None
     }
 
     fn handle_rtp(&mut self, now: Instant, mut header: RtpHeader, buf: &[u8]) {
