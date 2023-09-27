@@ -1,7 +1,6 @@
 //! Strategy that amends the [`Rtc`] via SDP OFFER/ANSWER negotiation.
 
 use std::fmt;
-use std::mem::swap;
 use std::ops::{Deref, DerefMut};
 
 use crate::channel::ChannelId;
@@ -403,84 +402,35 @@ impl<'a> SdpApi<'a> {
         }
     }
 
-    /// Combines the modifications made in [`SdpApi`] with those in [`SdpPendingOffer`], generating
-    /// a new [`SdpOffer`] and [`SdpPendingOffer`].
+    /// Combines the modifications made in [`SdpApi`] with those in [`SdpPendingOffer`].
     ///
     /// This function merges the changes present in [`SdpApi`] with the changes
-    /// in [`SdpPendingOffer`]. The resulting [`SdpOffer`] incorporates modifications
+    /// in [`SdpPendingOffer`]. In result this [`SdpApi`] will incorporate modifications
     /// from both the previous [`SdpPendingOffer`] and any newly added changes.
-    ///
-    /// The original [`SdpPendingOffer`] is intentionally not consumed by this function to
-    /// allow users the flexibility to retain it for case when [`SdpAnswer`] for the
-    /// old [`SdpPendingOffer`] is received. It will not affect any state, but it can be used
-    /// to discard outdated [`SdpAnswer`]s.
     ///
     /// ## Example
     ///
     /// ```no_run
-    /// # use std::collections::VecDeque;
-    /// # use str0m::{Rtc, RtcError};
-    /// # use str0m::media::{MediaKind, Direction};
-    /// # use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
     ///
+    /// # use str0m::media::{Direction, MediaKind};
+    /// # use str0m::Rtc;
     ///
-    /// struct MediaController {
-    ///     rtc: Rtc,
-    ///     pending_offers: VecDeque<SdpPendingOffer>,
-    /// }
+    /// let mut rtc = Rtc::new();
+    /// let mut changes = rtc.sdp_api();
+    /// changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
+    /// let (_offer, pending) = changes.apply().unwrap();
     ///
-    /// impl MediaController {
-    ///     pub fn new() -> Self {
-    ///         Self {
-    ///             rtc: Rtc::new(),
-    ///             pending_offers: VecDeque::new(),
-    ///         }
-    ///     }
+    /// let mut changes = rtc.sdp_api();
+    /// changes.add_media(MediaKind::Video, Direction::SendOnly, None, None);
+    /// changes.merge(pending);
     ///
-    ///     pub fn add_media(&mut self) -> SdpOffer {
-    ///         let mut changes = self.rtc.sdp_api();
-    ///         changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
-    ///         if self.pending_offers.is_empty() {
-    ///             let (offer, pending) = changes.apply().unwrap();
-    ///             self.pending_offers.push_front(pending);
-    ///             offer
-    ///         } else {
-    ///             let last_pending_offer = self.pending_offers.back_mut().unwrap();
-    ///             let (offer, pending) = changes.merge_and_apply(last_pending_offer).unwrap();
-    ///             self.pending_offers.push_back(pending);
-    ///             offer
-    ///         }
-    ///     }
-    ///
-    ///     pub fn accept_answer(&mut self, answer: SdpAnswer) -> Result<(), RtcError> {
-    ///         let pending = self.pending_offers.pop_front().unwrap();
-    ///         self.rtc.sdp_api().accept_answer(pending, answer)
-    ///     }
-    /// }
-    ///
-    /// let mut media_controller = MediaController::new();
-    ///
-    /// let first_offer = media_controller.add_media();
-    /// let first_answer: SdpAnswer = todo!();
-    /// let second_offer = media_controller.add_media();
-    /// let second_answer: SdpAnswer = todo!();
-    /// let third_offer = media_controller.add_media();
-    /// let third_answer: SdpAnswer = todo!();
-    ///
-    /// media_controller.accept_answer(first_answer).unwrap_err();
-    /// media_controller.accept_answer(second_answer).unwrap_err();
-    /// media_controller.accept_answer(third_answer).unwrap();
+    /// // This `SdpOffer` will have changes from the first `SdpPendingChanges`
+    /// // and new changes from `SdpApi`
+    /// let (_offer, pending) = changes.apply().unwrap();
     /// ```
-    pub fn merge_and_apply(
-        mut self,
-        pending_offer: &mut SdpPendingOffer,
-    ) -> Option<(SdpOffer, SdpPendingOffer)> {
+    pub fn merge(&mut self, mut pending_offer: SdpPendingOffer) {
         pending_offer.retain_relevant(self.rtc);
-
-        pending_offer.changes.extend(self.changes.drain(..));
-        swap(&mut self.changes, &mut pending_offer.changes);
-
-        self.apply()
+        self.changes.extend(pending_offer.changes.drain(..));
     }
 }
 
@@ -1585,66 +1535,20 @@ mod test {
         assert!(matches!(r, Err(RtcError::ChangesOutOfOrder)));
     }
 
-    mod merge_and_apply {
-        use super::*;
+    #[test]
+    fn sdp_api_merge_works() {
+        let mut rtc = Rtc::new();
+        let mut changes = rtc.sdp_api();
+        changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
+        let (offer, pending) = changes.apply().unwrap();
 
-        fn add_media_with_apply(rtc: &mut Rtc) -> (SdpOffer, SdpPendingOffer) {
-            let mut changes = rtc.sdp_api();
-            changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
-            changes.apply().unwrap()
-        }
+        let mut changes = rtc.sdp_api();
+        changes.add_media(MediaKind::Video, Direction::SendOnly, None, None);
+        changes.merge(pending);
+        let (new_offer, _) = changes.apply().unwrap();
 
-        fn add_media_with_merge_and_apply(
-            rtc: &mut Rtc,
-            prev_pending: &mut SdpPendingOffer,
-        ) -> (SdpOffer, SdpPendingOffer) {
-            let mut changes = rtc.sdp_api();
-            changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
-            changes.merge_and_apply(prev_pending).unwrap()
-        }
-
-        #[test]
-        fn pending_offer_cancelling_works() {
-            let mut rtc = Rtc::new();
-            let (first_offer, mut first_pending) = add_media_with_apply(&mut rtc);
-            let first_answer = SdpAnswer::from((*first_offer).clone());
-
-            let (_, _) = add_media_with_merge_and_apply(&mut rtc, &mut first_pending);
-
-            assert!(matches!(
-                rtc.sdp_api()
-                    .accept_answer(first_pending, first_answer)
-                    .unwrap_err(),
-                RtcError::ChangesOutOfOrder
-            ));
-        }
-
-        #[test]
-        fn media_lines_ordering_is_correct() {
-            let mut rtc = Rtc::new();
-            let (first_offer, mut first_pending) = add_media_with_apply(&mut rtc);
-            let (second_offer, mut second_pending) =
-                add_media_with_merge_and_apply(&mut rtc, &mut first_pending);
-            let (third_offer, _) = add_media_with_merge_and_apply(&mut rtc, &mut second_pending);
-
-            assert_eq!(second_offer.media_lines[0], first_offer.media_lines[0]);
-            assert!(second_offer.media_lines.get(1).is_some());
-
-            assert_eq!(third_offer.media_lines[0], second_offer.media_lines[0]);
-            assert_eq!(third_offer.media_lines[1], second_offer.media_lines[1]);
-            assert!(third_offer.media_lines.get(2).is_some());
-        }
-
-        #[test]
-        fn applying_of_last_merged_pending_offer_works() {
-            let mut rtc = Rtc::new();
-            let (_, mut pending) = add_media_with_apply(&mut rtc);
-            let (_, mut pending) = add_media_with_merge_and_apply(&mut rtc, &mut pending);
-            let (offer, pending) = add_media_with_merge_and_apply(&mut rtc, &mut pending);
-
-            let answer = SdpAnswer::from((*offer).clone());
-            rtc.sdp_api().accept_answer(pending, answer).unwrap();
-        }
+        assert_eq!(offer.media_lines[0], new_offer.media_lines[1]);
+        assert_eq!(new_offer.media_lines.len(), 2);
     }
 
     #[test]
