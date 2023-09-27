@@ -4,6 +4,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::format::CodecConfig;
+use crate::format::PayloadParams;
 use crate::media::{KeyframeRequest, Media};
 use crate::rtp_::Pt;
 use crate::rtp_::Ssrc;
@@ -159,6 +160,116 @@ impl Default for Streams {
 }
 
 impl Streams {
+    pub(crate) fn map_dynamic_by_rid(
+        &mut self,
+        ssrc: Ssrc,
+        mid: Mid,
+        rid: Rid,
+        media: &mut Media,
+        payload: PayloadParams,
+        is_main: bool,
+    ) {
+        // Check if the mid/rid combo is not expected
+        if !media.rids_rx().expects(rid) {
+            trace!("Mid does not expect rid: {} {}", mid, rid);
+            return;
+        }
+
+        let maybe_stream = self.stream_rx_by_mid_rid(mid, Some(rid));
+
+        let (ssrc_main, rtx) = if is_main {
+            let maybe_rtx = maybe_stream.and_then(|s| s.rtx());
+            (ssrc, maybe_rtx)
+        } else {
+            // This can bail if the main SSRC has not been discovered yet.
+            let Some(stream) = maybe_stream else {
+                return;
+            };
+            (stream.ssrc(), Some(ssrc))
+        };
+
+        let reason = format!("Mid header and rid: {}", rid);
+        self.map_dynamic_finish(mid, Some(rid), ssrc_main, rtx, media, payload, &reason);
+    }
+
+    pub(crate) fn map_dynamic_by_pt(
+        &mut self,
+        ssrc: Ssrc,
+        mid: Mid,
+        media: &mut Media,
+        payload: PayloadParams,
+        is_main: bool,
+    ) {
+        if media.rids_rx().is_specific() {
+            trace!(
+                "Media expects rid and RTP packet has only mid: {:?}",
+                media.rids_rx()
+            );
+            return;
+        }
+
+        let maybe_stream = self.stream_rx_by_mid_rid(mid, None);
+
+        let (ssrc_main, rtx) = if is_main {
+            let maybe_rtx = maybe_stream.and_then(|s| s.rtx());
+            (ssrc, maybe_rtx)
+        } else {
+            // This can bail if the main SSRC has not been discovered yet.
+            let Some(stream) = maybe_stream else {
+                return;
+            };
+            // The main is the SSRC in the stream already. The incoming is RTX.
+            let ssrc_main = stream.ssrc();
+            (ssrc_main, Some(ssrc))
+        };
+
+        let reason = format!("MID header, no RID and PT: {}", payload.pt());
+        self.map_dynamic_finish(mid, None, ssrc_main, rtx, media, payload, &reason);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn map_dynamic_finish(
+        &mut self,
+        mid: Mid,
+        rid: Option<Rid>,
+        ssrc_main: Ssrc,
+        rtx: Option<Ssrc>,
+        media: &mut Media,
+        payload: PayloadParams,
+        reason: &str,
+    ) {
+        let maybe_stream = self.stream_rx_by_mid_rid(mid, rid);
+
+        if let Some(stream) = maybe_stream {
+            let ssrc_from = stream.ssrc();
+            let rtx_from = stream.rtx();
+
+            // Handle changes in SSRC.
+            if ssrc_from != ssrc_main {
+                // We got a change in main SSRC for this stream.
+                self.change_stream_rx_ssrc(ssrc_from, ssrc_main);
+
+                // When the SSRCs changes the sequence number typically also does, the
+                // depayloader(if in use) relies on sequence numbers and will not handle a
+                // large jump corretly, reset it.
+                media.reset_depayloader(payload.pt(), rid);
+            }
+
+            // Handle changes in RTX
+            if let (Some(rtx_from), Some(rtx_to)) = (rtx_from, rtx) {
+                if rtx_from != rtx_to {
+                    self.change_stream_rx_rtx(rtx_from, rtx_to);
+                }
+            }
+        }
+
+        // If we don't have an RTX PT configured, we don't want NACK.
+        let suppress_nack = payload.resend.is_none();
+
+        // If stream already exists, this might only "fill in" the RTX.
+        self.expect_stream_rx(ssrc_main, rtx, mid, rid, suppress_nack, Some(reason));
+    }
+
     pub fn expect_stream_rx(
         &mut self,
         ssrc: Ssrc,
