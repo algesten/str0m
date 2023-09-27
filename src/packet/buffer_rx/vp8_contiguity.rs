@@ -50,10 +50,10 @@ impl Vp8Contiguity {
 
             // Frame on layer 0: always emit and report discontinuity if not subsequent
             let emit = true;
-            // note: we use overflowing add because the encoder can restart if the
+            // note: we use wrapping add because the encoder can restart if the
             // camera is closed / reopened and here we only care about
             // contiguity
-            let contiguous = tl0_picture_id == last_tl0_picture_id.overflowing_add(1).0;
+            let contiguous = tl0_picture_id == last_tl0_picture_id.wrapping_add(1);
 
             self.last_tl0_picture_id = Some(tl0_picture_id);
             self.last_picture_id = Some(picture_id);
@@ -63,8 +63,8 @@ impl Vp8Contiguity {
 
         // Frame on layer 1 or 2: only emit if they refer to the current layer 0
         // and they are subsequent
-        let emit = tl0_picture_id == last_tl0_picture_id
-            && picture_id == last_picture_id.overflowing_add(1).0;
+        let emit =
+            tl0_picture_id == last_tl0_picture_id && picture_id == last_picture_id.wrapping_add(1);
 
         if emit {
             self.last_picture_id = Some(picture_id);
