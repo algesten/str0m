@@ -8,7 +8,7 @@ use super::{FeedbackMessageType, RtcpType, Ssrc};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Descriptions {
     /// The descriptions.
-    pub reports: ReportList<Sdes>,
+    pub reports: Box<ReportList<Sdes>>,
 }
 
 /// A single source description (SDES).
@@ -71,7 +71,7 @@ impl RtcpPacket for Descriptions {
         let mut buf = &mut buf[4..];
         let mut tot = 4;
 
-        for r in &self.reports {
+        for r in &*self.reports {
             let n = r.write_to(buf);
             buf = &mut buf[n..];
             tot += n;
@@ -180,7 +180,9 @@ impl<'a> TryFrom<&'a [u8]> for Descriptions {
             reports.push(report);
         }
 
-        Ok(Descriptions { reports })
+        Ok(Descriptions {
+            reports: Box::new(reports),
+        })
     }
 }
 
