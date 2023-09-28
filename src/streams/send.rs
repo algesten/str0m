@@ -728,7 +728,7 @@ impl StreamTx {
         s.values.push((SdesType::CNAME, cname.to_string()));
 
         let mut d = Descriptions {
-            reports: ReportList::new(),
+            reports: Box::new(ReportList::new()),
         };
         d.reports.push(s);
 
