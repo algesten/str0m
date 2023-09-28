@@ -2114,6 +2114,13 @@ mod test {
         fn is_unwind_safe<T: UnwindSafe>(_t: T) {}
         is_unwind_safe(Rtc::new());
     }
+
+    #[test]
+    fn event_is_reasonably_sized() {
+        let n = std::mem::size_of::<Event>();
+        println!("{:?}", n);
+        assert!(n < 450);
+    }
 }
 
 #[cfg(fuzzing)]
