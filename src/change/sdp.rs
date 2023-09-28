@@ -411,10 +411,8 @@ impl<'a> SdpApi<'a> {
     /// ## Example
     ///
     /// ```no_run
-    ///
     /// # use str0m::media::{Direction, MediaKind};
     /// # use str0m::Rtc;
-    ///
     /// let mut rtc = Rtc::new();
     /// let mut changes = rtc.sdp_api();
     /// changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
