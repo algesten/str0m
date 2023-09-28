@@ -764,7 +764,6 @@ struct SendAddr {
 /// Events produced by [`Rtc::poll_output()`].
 #[derive(Debug)]
 #[non_exhaustive]
-#[allow(clippy::large_enum_variant)]
 #[rustfmt::skip]
 pub enum Event {
     // =================== ICE related events ===================
@@ -849,11 +848,22 @@ pub enum Event {
     /// Enable using [`RtcConfig::enable_raw_packets()`].
     /// This clones data, and is therefore expensive.
     /// Should not be enabled outside of tests and troubleshooting.
-    RawPacket(RawPacket),
+    RawPacket(Box<RawPacket>),
 
     /// Internal for passing data from Session to Rtc.
     #[doc(hidden)]
     Error(RtcError),
+}
+
+impl Event {
+    /// Reference to the [`RawPacket`] if this is indeed an `Event::RawPacket`.
+    pub fn as_raw_packet(&self) -> Option<&RawPacket> {
+        if let Self::RawPacket(boxed) = &self {
+            Some(&**boxed)
+        } else {
+            None
+        }
+    }
 }
 
 /// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.

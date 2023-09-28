@@ -4,7 +4,7 @@ use std::time::Duration;
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
 use str0m::rtp::rtcp::Twcc;
-use str0m::{Candidate, Event, Rtc, RtcError};
+use str0m::{Candidate, Rtc, RtcError};
 use tracing::info_span;
 
 mod common;
@@ -65,7 +65,7 @@ pub fn twcc() -> Result<(), RtcError> {
             .events
             .iter()
             .filter_map(|(_, e)| {
-                if let Event::RawPacket(RawPacket::RtcpTx(Rtcp::Twcc(twcc))) = e {
+                if let Some(RawPacket::RtcpTx(Rtcp::Twcc(twcc))) = e.as_raw_packet() {
                     Some(twcc)
                 } else {
                     None
@@ -77,7 +77,7 @@ pub fn twcc() -> Result<(), RtcError> {
             .events
             .iter()
             .filter_map(|(_, e)| {
-                if let Event::RawPacket(RawPacket::RtcpRx(Rtcp::Twcc(twcc))) = e {
+                if let Some(RawPacket::RtcpRx(Rtcp::Twcc(twcc))) = e.as_raw_packet() {
                     Some(twcc)
                 } else {
                     None

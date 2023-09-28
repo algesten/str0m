@@ -5,7 +5,7 @@ use str0m::format::Codec;
 use str0m::media::MediaKind;
 use str0m::rtp::rtcp::Rtcp;
 use str0m::rtp::{ExtensionValues, RawPacket, SeqNo, Ssrc};
-use str0m::{Event, RtcError};
+use str0m::RtcError;
 
 mod common;
 use common::{connect_l_r, init_log, progress};
@@ -95,8 +95,8 @@ pub fn loss_recovery() -> Result<(), RtcError> {
     let nacks_tx = r
         .events
         .iter()
-        .filter_map(|(_, e)| match e {
-            Event::RawPacket(RawPacket::RtcpTx(Rtcp::Nack(p))) => Some(p),
+        .filter_map(|(_, e)| match e.as_raw_packet() {
+            Some(RawPacket::RtcpTx(Rtcp::Nack(p))) => Some(p),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -107,8 +107,8 @@ pub fn loss_recovery() -> Result<(), RtcError> {
     let nacks_rx = l
         .events
         .iter()
-        .filter_map(|(_, e)| match e {
-            Event::RawPacket(RawPacket::RtcpRx(Rtcp::Nack(p))) => Some(p),
+        .filter_map(|(_, e)| match e.as_raw_packet() {
+            Some(RawPacket::RtcpRx(Rtcp::Nack(p))) => Some(p),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -119,8 +119,8 @@ pub fn loss_recovery() -> Result<(), RtcError> {
     let mut packets_rx = r
         .events
         .iter()
-        .filter_map(|(_, e)| match e {
-            Event::RawPacket(RawPacket::RtpRx(p, b)) => {
+        .filter_map(|(_, e)| match e.as_raw_packet() {
+            Some(RawPacket::RtpRx(p, b)) => {
                 //
                 if p.payload_type == params.resend().unwrap() {
                     // read original seq no
@@ -271,8 +271,8 @@ pub fn nack_delay() -> Result<(), RtcError> {
     let nacks_tx = r
         .events
         .iter()
-        .filter_map(|(t, e)| match e {
-            Event::RawPacket(RawPacket::RtcpTx(Rtcp::Nack(p))) => {
+        .filter_map(|(t, e)| match e.as_raw_packet() {
+            Some(RawPacket::RtcpTx(Rtcp::Nack(p))) => {
                 if p.reports
                     .iter()
                     .any(|r| SeqNo::from(r.pid as u64) == dropped.1)
@@ -294,8 +294,8 @@ pub fn nack_delay() -> Result<(), RtcError> {
     let nacks_rx = l
         .events
         .iter()
-        .filter_map(|(t, e)| match e {
-            Event::RawPacket(RawPacket::RtcpRx(Rtcp::Nack(p))) => {
+        .filter_map(|(t, e)| match e.as_raw_packet() {
+            Some(RawPacket::RtcpRx(Rtcp::Nack(p))) => {
                 if p.reports
                     .iter()
                     .any(|r| SeqNo::from(r.pid as u64) == dropped.1)
