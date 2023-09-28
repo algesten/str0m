@@ -95,7 +95,7 @@ pub(crate) struct Session {
     feedback_tx: VecDeque<Rtcp>,
     feedback_rx: VecDeque<Rtcp>,
 
-    raw_packets: Option<VecDeque<RawPacket>>,
+    raw_packets: Option<VecDeque<Box<RawPacket>>>,
 }
 
 impl Session {
@@ -414,7 +414,7 @@ impl Session {
         }
 
         if let Some(raw_packets) = &mut self.raw_packets {
-            raw_packets.push_back(RawPacket::RtpRx(header.clone(), data.clone()));
+            raw_packets.push_back(Box::new(RawPacket::RtpRx(header.clone(), data.clone())));
         }
 
         // RTX packets must be rewritten to be a normal packet. This only changes the
@@ -472,7 +472,7 @@ impl Session {
 
         if let Some(raw_packets) = &mut self.raw_packets {
             for fb in &self.feedback_rx {
-                raw_packets.push_back(RawPacket::RtcpRx(fb.clone()));
+                raw_packets.push_back(Box::new(RawPacket::RtcpRx(fb.clone())));
             }
         }
 
@@ -619,7 +619,7 @@ impl Session {
         let mut raw_packets = self.raw_packets.as_mut();
         let output = move |fb| {
             if let Some(raw_packets) = &mut raw_packets {
-                raw_packets.push_back(RawPacket::RtcpTx(fb));
+                raw_packets.push_back(Box::new(RawPacket::RtcpTx(fb)));
             }
         };
 
@@ -682,7 +682,7 @@ impl Session {
         self.pacer.register_send(now, payload_size.into(), mid);
 
         if let Some(raw_packets) = &mut self.raw_packets {
-            raw_packets.push_back(RawPacket::RtpTx(header.clone(), buf.clone()));
+            raw_packets.push_back(Box::new(RawPacket::RtpTx(header.clone(), buf.clone())));
         }
 
         let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
