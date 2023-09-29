@@ -71,6 +71,12 @@ impl From<Vec<u8>> for DatagramSend {
     }
 }
 
+impl From<DatagramSend> for Vec<u8> {
+    fn from(value: DatagramSend) -> Self {
+        value.0
+    }
+}
+
 #[derive(Debug)]
 /// Received incoming data.
 pub struct Receive<'a> {
