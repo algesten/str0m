@@ -14,7 +14,7 @@ pub(crate) struct ValueHistory<T> {
     max_time: Duration,
 }
 
-const DEFAULT_VALUE_HISTORY_DURATION: Duration = Duration::from_secs(2);
+const DEFAULT_VALUE_HISTORY_DURATION: Duration = Duration::from_secs(1);
 
 impl<T: Default> Default for ValueHistory<T> {
     fn default() -> Self {
