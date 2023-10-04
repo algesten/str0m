@@ -1,7 +1,7 @@
 use std::{
     collections::VecDeque,
     iter::Sum,
-    ops::AddAssign,
+    ops::{AddAssign, SubAssign},
     time::{Duration, Instant},
 };
 
@@ -28,7 +28,7 @@ impl<T: Default> Default for ValueHistory<T> {
 
 impl<T> ValueHistory<T>
 where
-    T: Copy + AddAssign + Sum,
+    T: Copy + AddAssign + SubAssign + Sum,
 {
     /// Adds a timed value
     /// Note: time should always monotonically increase in subsequent calls to add()
@@ -38,18 +38,17 @@ where
         self.drain(t);
     }
 
-    /// Returns the sum of the values more recent than given Instant
-    pub fn sum_since(&self, t: Instant) -> T {
-        self.history
-            .iter()
-            .filter(|(vt, _)| vt >= &t)
-            .map(|(_, v)| *v)
-            .sum()
+    /// Returns the sum of all values in the history up to max_time
+    /// This is more efficient than sum_since() as it does not need to iterate over the history
+    pub fn sum(&self) -> T {
+        self.value
     }
 
     fn drain(&mut self, t: Instant) -> Option<()> {
         while t.duration_since(self.history.front()?.0) > self.max_time {
-            self.history.pop_front();
+            if let Some((_, v)) = self.history.pop_front() {
+                self.value -= v;
+            }
         }
 
         Some(())
@@ -73,17 +72,11 @@ mod test {
             ..Default::default()
         };
 
+        assert_eq!(h.sum(), 11);
         h.push(now - Duration::from_millis(1500), 22);
         h.push(now - Duration::from_millis(500), 22);
-
-        let sum = h.sum_since(now - Duration::from_millis(600));
-        assert_eq!(sum, 22);
-
-        let sum = h.sum_since(now - Duration::from_millis(1600));
-        assert_eq!(sum, 44);
-
-        h.push(now, 0); // the oldest element will be discarded
-        let sum = h.sum_since(now - Duration::from_millis(1600));
-        assert_eq!(sum, 22);
+        assert_eq!(h.sum(), 55);
+        h.push(now, 0);
+        assert_eq!(h.sum(), 33);
     }
 }
