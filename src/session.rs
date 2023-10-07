@@ -930,6 +930,5 @@ pub struct PacketReceipt {
 /// Find the PayloadParams for the given Pt, either when the Pt is the main Pt for the Codec or
 /// when it's the RTX Pt.
 fn main_payload_params(c: &CodecConfig, pt: Pt) -> Option<&PayloadParams> {
-    c.iter()
-        .find_map(|p| (p.pt == pt || p.resend == Some(pt)).then_some(p))
+    c.iter().find(|p| (p.pt == pt || p.resend == Some(pt)))
 }

@@ -109,8 +109,7 @@ impl Eq for MediaTime {}
 impl PartialOrd for MediaTime {
     #[inline(always)]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        let (t0, t1) = MediaTime::same_base(*self, *other);
-        Some(t0.cmp(&t1))
+        Some(self.cmp(other))
     }
 }
 
