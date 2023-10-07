@@ -695,7 +695,7 @@ pub enum RtcError {
 
     /// [`SdpApi`] was not done in a correct order.
     ///
-    /// For [`SdpApi`][change::SdpApi]:
+    /// For [`SdpApi`]:
     ///
     /// 1. We created an [`SdpOffer`][change::SdpOffer].
     /// 2. The remote side created an [`SdpOffer`][change::SdpOffer] at the same time.
@@ -1976,7 +1976,7 @@ impl RtcConfig {
 
     /// Make the entire Rtc be in RTP mode.
     ///
-    /// This means all media, read from [`RtpPacket`][crate::rtp::RtpPacket] and written to
+    /// This means all media, read from [`RtpPacket`] and written to
     /// [`StreamTx::write_rtp`][crate::rtp::StreamTx::write_rtp] are RTP packetized.
     /// It bypasses all internal packetization/depacketization inside str0m.
     ///
