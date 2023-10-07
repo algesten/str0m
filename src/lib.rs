@@ -1272,6 +1272,11 @@ impl Rtc {
                             }
                         }
                         packets.pop_front();
+                        // If there are still packets, they are sent on next
+                        // poll_output()
+                        if !packets.is_empty() {
+                            self.sctp.push_back_transmit(packets);
+                        }
                         break;
                     }
                 }
