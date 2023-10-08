@@ -1,5 +1,7 @@
-
 # Unreleased
+
+# 0.3.0
+  * Fix bad bug causing SCTP packets to not send
   * Improve performance by reducing Event enum size
   * SdpPendingOffer mergable into new OFFER
   * Improved VP8 temporal layer handling
