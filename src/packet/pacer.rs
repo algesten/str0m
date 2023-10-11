@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::time::{Duration, Instant};
 
+use crate::rtp_::MAX_BLANK_PADDING_PAYLOAD_SIZE;
 use crate::rtp_::{Bitrate, DataSize, Mid};
 use crate::util::already_happened;
 use crate::util::not_happening;
@@ -11,7 +12,7 @@ use super::MediaKind;
 
 const MAX_BITRATE: Bitrate = Bitrate::gbps(10);
 const MAX_DEBT_IN_TIME: Duration = Duration::from_millis(500);
-const MAX_PADDING_PACKET_SIZE: DataSize = DataSize::bytes(224);
+const MAX_PADDING_PACKET_SIZE: DataSize = DataSize::bytes(MAX_BLANK_PADDING_PAYLOAD_SIZE as u64);
 const PADDING_BURST_INTERVAL: Duration = Duration::from_millis(5);
 const PACING: Duration = Duration::from_millis(40);
 
