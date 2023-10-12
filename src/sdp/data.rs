@@ -699,11 +699,15 @@ impl FromStr for F32Eq {
 /// "audio", "video", "application"
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub enum MediaType {
+    /// audio
     #[default]
     Audio,
+    /// video
     Video,
+    /// application
     Application,
     #[doc(hidden)]
+    /// unknown
     Unknown(String),
 }
 

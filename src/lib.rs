@@ -575,6 +575,12 @@ use sctp::{RtcSctp, SctpEvent};
 
 mod sdp;
 
+/// type of media
+pub type MediaType = crate::sdp::MediaType;
+
+/// SDP media line
+pub type MediaLine = crate::sdp::MediaLine;
+
 pub mod format;
 use format::CodecConfig;
 
