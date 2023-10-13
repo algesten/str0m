@@ -519,6 +519,7 @@ use dtls::{Dtls, DtlsEvent};
 
 mod ice;
 pub use ice::Candidate;
+pub use ice::CandidateKind;
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use ice::IceCreds;
