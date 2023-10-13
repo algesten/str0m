@@ -518,7 +518,7 @@ use dtls::Fingerprint;
 use dtls::{Dtls, DtlsEvent};
 
 mod ice;
-pub use ice::Candidate;
+pub use ice::{Candidate, CandidateKind};
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use ice::IceCreds;
