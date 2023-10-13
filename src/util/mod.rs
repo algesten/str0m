@@ -63,7 +63,7 @@ pub(crate) fn calculate_rtt_ms(ntp_time: Duration, delay: u32, last_report: u32)
 
     // As per RFC delay is 0 in case no SR packet has been received yet.
     if delay == 0 {
-        return None
+        return None;
     }
 
     let now_secs = ntp_time.as_secs();
