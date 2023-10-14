@@ -173,7 +173,8 @@ impl Candidate {
 
     /// Creates a server reflexive ICE candidate.
     ///
-    /// Server reflexive candidates are local sockets mapped to external ip discovered via a STUN binding request.
+    /// Server reflexive candidates are local sockets mapped to external ip discovered
+    /// via a STUN binding request.
     pub fn server_reflexive(addr: SocketAddr) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
@@ -194,7 +195,8 @@ impl Candidate {
 
     /// Creates a relayed ICE candidate.
     ///
-    /// Relayed candidates are server sockets relaying traffic to a local socket. Allocate a TURN addr to use as a local candidate.
+    /// Relayed candidates are server sockets relaying traffic to a local socket. 
+    /// Allocate a TURN addr to use as a local candidate.
     pub fn relayed(addr: SocketAddr, network_type: String) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
