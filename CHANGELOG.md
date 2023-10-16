@@ -1,5 +1,8 @@
 # Unreleased
 
+  * Remove a statistics performance bottleneck
+  * New ICE Candidate types `server_reflexive` and `relayed`
+
 # 0.3.0
   * Fix bad bug causing SCTP packets to not send
   * Improve performance by reducing Event enum size
