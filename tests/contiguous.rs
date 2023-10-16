@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
-use str0m::Rtc;
 use str0m::{Candidate, Event, RtcError};
+use str0m::{CandidateProtocol, Rtc};
 use tracing::info_span;
 
 mod common;
@@ -18,8 +18,14 @@ pub fn contiguous_all_the_way() -> Result<(), RtcError> {
     let mut l = TestRtc::new(info_span!("L"));
     let mut r = TestRtc::new(info_span!("R"));
 
-    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into())?;
-    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into())?;
+    let host1 = Candidate::host(
+        (Ipv4Addr::new(1, 1, 1, 1), 1000).into(),
+        CandidateProtocol::Udp,
+    )?;
+    let host2 = Candidate::host(
+        (Ipv4Addr::new(2, 2, 2, 2), 2000).into(),
+        CandidateProtocol::Udp,
+    )?;
     l.add_local_candidate(host1);
     r.add_local_candidate(host2);
 
@@ -114,8 +120,14 @@ pub fn not_contiguous() -> Result<(), RtcError> {
 
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
 
-    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into())?;
-    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into())?;
+    let host1 = Candidate::host(
+        (Ipv4Addr::new(1, 1, 1, 1), 1000).into(),
+        CandidateProtocol::Udp,
+    )?;
+    let host2 = Candidate::host(
+        (Ipv4Addr::new(2, 2, 2, 2), 2000).into(),
+        CandidateProtocol::Udp,
+    )?;
     l.add_local_candidate(host1);
     r.add_local_candidate(host2);
 

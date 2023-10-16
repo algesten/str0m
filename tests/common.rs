@@ -13,7 +13,7 @@ use str0m::format::PayloadParams;
 use str0m::net::Receive;
 use str0m::rtp::ExtensionMap;
 use str0m::rtp::RtpHeader;
-use str0m::Candidate;
+use str0m::{Candidate, CandidateProtocol};
 use str0m::{Event, Input, Output, Rtc, RtcError};
 use tracing::info_span;
 use tracing::Span;
@@ -81,6 +81,7 @@ pub fn progress(l: &mut TestRtc, r: &mut TestRtc) -> Result<(), RtcError> {
                 let input = Input::Receive(
                     f.last,
                     Receive {
+                        proto: v.proto,
                         source: v.source,
                         destination: v.destination,
                         contents: (&*data).try_into()?,
@@ -121,6 +122,7 @@ pub fn progress_with_loss(l: &mut TestRtc, r: &mut TestRtc, loss: f32) -> Result
                 let input = Input::Receive(
                     f.last,
                     Receive {
+                        proto: v.proto,
                         source: v.source,
                         destination: v.destination,
                         contents: (&*data).try_into()?,
@@ -217,8 +219,16 @@ pub fn connect_l_r() -> (TestRtc, TestRtc) {
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc1);
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc2);
 
-    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into()).unwrap();
-    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into()).unwrap();
+    let host1 = Candidate::host(
+        (Ipv4Addr::new(1, 1, 1, 1), 1000).into(),
+        CandidateProtocol::Udp,
+    )
+    .unwrap();
+    let host2 = Candidate::host(
+        (Ipv4Addr::new(2, 2, 2, 2), 2000).into(),
+        CandidateProtocol::Udp,
+    )
+    .unwrap();
     l.add_local_candidate(host1.clone());
     l.add_remote_candidate(host2.clone());
     r.add_local_candidate(host2);

@@ -58,7 +58,7 @@ let mut rtc = Rtc::new();
 
 //  Add some ICE candidate such as a locally bound UDP port.
 let addr = "1.2.3.4:5000".parse().unwrap();
-let candidate = Candidate::host(addr).unwrap();
+let candidate = Candidate::host(addr, CandidateProtocol::Udp).unwrap();
 rtc.add_local_candidate(candidate);
 
 // Accept an incoming offer from the remote peer
@@ -83,7 +83,7 @@ let mut rtc = Rtc::new();
 
 // Add some ICE candidate such as a locally bound UDP port.
 let addr = "1.2.3.4:5000".parse().unwrap();
-let candidate = Candidate::host(addr).unwrap();
+let candidate = Candidate::host(addr, CandidateProtocol::Udp).unwrap();
 rtc.add_local_candidate(candidate);
 
 // Create a `SdpApi`. The change lets us make multiple changes

@@ -16,6 +16,8 @@ pub(crate) use stun::{
 };
 
 mod sha1;
+use crate::CandidateProtocol;
+
 pub(crate) use self::sha1::Sha1;
 
 mod id;
@@ -49,6 +51,9 @@ pub enum NetError {
 
 /// An outgoing packet
 pub struct Transmit {
+    /// This protocol the socket is using.
+    pub proto: CandidateProtocol,
+
     /// The source socket this packet should be sent from.
     ///
     /// For ICE it's important to match up outgoing packets with source network interface.
@@ -80,6 +85,9 @@ impl From<DatagramSend> for Vec<u8> {
 #[derive(Debug)]
 /// Received incoming data.
 pub struct Receive<'a> {
+    /// The protocol the socket this received data originated from is using.
+    pub proto: CandidateProtocol,
+
     /// The socket this received data originated from.
     pub source: SocketAddr,
 
@@ -93,12 +101,14 @@ pub struct Receive<'a> {
 impl<'a> Receive<'a> {
     /// Creates a new instance by trying to parse the contents of `buf`.
     pub fn new(
+        proto: CandidateProtocol,
         source: SocketAddr,
         destination: SocketAddr,
         buf: &'a [u8],
     ) -> Result<Self, NetError> {
         let contents = DatagramRecv::try_from(buf)?;
         Ok(Receive {
+            proto,
             source,
             destination,
             contents,
@@ -183,6 +193,7 @@ impl<'a> TryFrom<&'a Transmit> for Receive<'a> {
 
     fn try_from(t: &'a Transmit) -> Result<Self, Self::Error> {
         Ok(Receive {
+            proto: t.proto,
             source: t.source,
             destination: t.destination,
             contents: DatagramRecv::try_from(&t.contents[..])?,

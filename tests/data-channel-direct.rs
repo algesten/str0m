@@ -2,7 +2,7 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use str0m::channel::ChannelConfig;
-use str0m::{Candidate, Event, RtcConfig, RtcError};
+use str0m::{Candidate, CandidateProtocol, Event, RtcConfig, RtcError};
 use tracing::info_span;
 
 mod common;
@@ -17,8 +17,14 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
     let rtc_r = RtcConfig::new().set_ice_lite(true).build();
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
 
-    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into())?;
-    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into())?;
+    let host1 = Candidate::host(
+        (Ipv4Addr::new(1, 1, 1, 1), 1000).into(),
+        CandidateProtocol::Udp,
+    )?;
+    let host2 = Candidate::host(
+        (Ipv4Addr::new(2, 2, 2, 2), 2000).into(),
+        CandidateProtocol::Udp,
+    )?;
     l.add_local_candidate(host1.clone());
     l.add_remote_candidate(host2.clone());
     r.add_local_candidate(host2);

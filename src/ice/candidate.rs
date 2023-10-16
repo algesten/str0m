@@ -32,7 +32,7 @@ pub struct Candidate {
     component_id: u16, // 1 for RTP, 2 for RTCP
 
     /// Protocol for the candidate.
-    proto: String, // "udp" or "tcp"
+    proto: CandidateProtocol,
 
     /// Priority.
     ///
@@ -80,7 +80,7 @@ pub struct Candidate {
 
 impl fmt::Debug for Candidate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Candidate({}={}", self.kind, self.addr)?;
+        write!(f, "Candidate({}={}/{}", self.kind, self.addr, self.proto)?;
         if let Some(base) = self.base {
             if base != self.addr {
                 write!(f, " base={base}")?;
@@ -102,7 +102,7 @@ impl Candidate {
     fn new(
         foundation: Option<String>,
         component_id: u16,
-        proto: String,
+        proto: CandidateProtocol,
         prio: Option<u32>,
         addr: SocketAddr,
         base: Option<SocketAddr>,
@@ -130,7 +130,7 @@ impl Candidate {
     pub fn parsed(
         foundation: String,
         component_id: u16,
-        proto: String,
+        proto: CandidateProtocol,
         prio: u32,
         addr: SocketAddr,
         kind: CandidateKind,
@@ -153,7 +153,7 @@ impl Candidate {
     /// Creates a host ICE candidate.
     ///
     /// Host candidates are local sockets directly on the host.
-    pub fn host(addr: SocketAddr) -> Result<Self, IceError> {
+    pub fn host(addr: SocketAddr, proto: CandidateProtocol) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
         }
@@ -161,7 +161,7 @@ impl Candidate {
         Ok(Candidate::new(
             None,
             1, // only RTP
-            "udp".into(),
+            proto,
             None,
             addr,
             Some(addr),
@@ -175,7 +175,7 @@ impl Candidate {
     ///
     /// Server reflexive candidates are local sockets mapped to external ip discovered
     /// via a STUN binding request.
-    pub fn server_reflexive(addr: SocketAddr) -> Result<Self, IceError> {
+    pub fn server_reflexive(addr: SocketAddr, proto: CandidateProtocol) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
         }
@@ -183,7 +183,7 @@ impl Candidate {
         Ok(Candidate::new(
             None,
             1, // only RTP
-            "udp".into(),
+            proto,
             None,
             addr,
             Some(addr),
@@ -205,7 +205,7 @@ impl Candidate {
         Ok(Candidate::new(
             None,
             1, // only RTP
-            network_type.into(),
+            network_type.try_into()?,
             None,
             addr,
             Some(addr),
@@ -221,6 +221,7 @@ impl Candidate {
     /// binding responses. `addr` is the discovered address. `base` is the local
     /// (host) address inside the NAT we used to get this response.
     pub(crate) fn peer_reflexive(
+        proto: CandidateProtocol,
         addr: SocketAddr,
         base: SocketAddr,
         prio: u32,
@@ -230,7 +231,7 @@ impl Candidate {
         Candidate::new(
             found,
             1, // only RTP
-            "udp".into(),
+            proto,
             Some(prio),
             addr,
             Some(base),
@@ -241,11 +242,15 @@ impl Candidate {
     }
 
     #[cfg(test)]
-    pub(crate) fn test_peer_rflx(addr: SocketAddr, base: SocketAddr) -> Self {
+    pub(crate) fn test_peer_rflx(
+        addr: SocketAddr,
+        base: SocketAddr,
+        proto: CandidateProtocol,
+    ) -> Self {
         Candidate::new(
             None,
             1, // only RTP
-            "udp".into(),
+            proto,
             None,
             addr,
             Some(base),
@@ -307,18 +312,26 @@ impl Candidate {
             return *prio;
         }
 
-        // The RECOMMENDED values for type preferences are 126 for host
-        // candidates, 110 for peer-reflexive candidates, 100 for server-
-        // reflexive candidates, and 0 for relayed candidates.
-        let type_preference = if as_prflx {
-            110
+        let kind = if as_prflx {
+            CandidateKind::PeerReflexive
         } else {
-            match self.kind {
-                CandidateKind::Host => 126,
-                CandidateKind::PeerReflexive => 110,
-                CandidateKind::ServerReflexive => 100,
-                CandidateKind::Relayed => 0,
-            }
+            self.kind
+        };
+
+        // Per RFC5245 Sec. 4.1.2.1, the RECOMMENDED values for type preferences are
+        // 126 for host candidates, 110 for peer-reflexive candidates, 100 for
+        // server-reflexive candidates, and 0 for relayed candidates. The variations
+        // for non-UDP protocols are taken from libwebrtc:
+        // <https://webrtc.googlesource.com/src/+/refs/heads/main/p2p/base/port.h#68>
+        let type_preference = match (kind, self.proto) {
+            (CandidateKind::Host, CandidateProtocol::Udp) => 126,
+            (CandidateKind::PeerReflexive, CandidateProtocol::Udp) => 110,
+            (CandidateKind::ServerReflexive, _) => 100,
+            (CandidateKind::Host, _) => 90,
+            (CandidateKind::PeerReflexive, _) => 80,
+            (CandidateKind::Relayed, CandidateProtocol::Udp) => 2,
+            (CandidateKind::Relayed, CandidateProtocol::Tcp) => 1,
+            (CandidateKind::Relayed, _) => 0,
         };
 
         // The recommended formula combines a preference for the candidate type
@@ -355,8 +368,8 @@ impl Candidate {
 
     /// Returns a reference to the String containing the transport protocol of
     /// the ICE candidate. For example tcp/udp/..
-    pub fn proto(&self) -> &String {
-        &self.proto
+    pub fn proto(&self) -> CandidateProtocol {
+        self.proto
     }
 
     pub(crate) fn base(&self) -> SocketAddr {
@@ -418,6 +431,57 @@ impl fmt::Display for CandidateKind {
             CandidateKind::ServerReflexive => "srflx",
             CandidateKind::Relayed => "relay",
         };
+        write!(f, "{x}")
+    }
+}
+
+/// Type of candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CandidateProtocol {
+    /// UDP
+    Udp,
+    /// TCP (See RFC 4571 for framing)
+    Tcp,
+    /// TCP with fixed SSL Hello Exchange
+    /// See AsyncSSLServerSocket implementation for exchange details:
+    /// <https://webrtc.googlesource.com/src/+/refs/heads/main/rtc_base/server_socket_adapters.cc#19>
+    SslTcp,
+    /// TLS (only used via relay)
+    Tls,
+}
+
+impl TryFrom<&str> for CandidateProtocol {
+    type Error = IceError;
+
+    fn try_from(proto: &str) -> Result<Self, Self::Error> {
+        let proto = proto.to_lowercase();
+        match proto.as_str() {
+            "udp" => Ok(CandidateProtocol::Udp),
+            "tcp" => Ok(CandidateProtocol::Tcp),
+            "ssltcp" => Ok(CandidateProtocol::SslTcp),
+            "tls" => Ok(CandidateProtocol::Tls),
+            _ => Err(IceError::BadCandidate(format!(
+                "invalid protocol {}",
+                proto
+            ))),
+        }
+    }
+}
+
+impl From<CandidateProtocol> for &str {
+    fn from(proto: CandidateProtocol) -> Self {
+        match proto {
+            CandidateProtocol::Udp => "udp",
+            CandidateProtocol::Tcp => "tcp",
+            CandidateProtocol::SslTcp => "ssltcp",
+            CandidateProtocol::Tls => "tls",
+        }
+    }
+}
+
+impl fmt::Display for CandidateProtocol {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let x: &str = (*self).into();
         write!(f, "{x}")
     }
 }
