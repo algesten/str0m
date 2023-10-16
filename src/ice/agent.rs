@@ -8,7 +8,7 @@ use crate::io::{DatagramRecv, Receive, Transmit, DATAGRAM_MTU};
 use crate::io::{Id, DATAGRAM_MTU_WARN};
 use crate::io::{StunMessage, TransId, STUN_TIMEOUT};
 
-use super::candidate::{Candidate, CandidateKind};
+use super::candidate::{Candidate, CandidateKind, CandidateProtocol};
 use super::pair::{CandidatePair, CheckState, PairId};
 
 /// Timing advance (Ta) value.
@@ -75,7 +75,7 @@ pub struct IceAgent {
 
     /// Remote addresses we have seen traffic appear from. This is used
     /// to dedupe [`IceAgentEvent::DiscoveredRecv`].
-    discovered_recv: HashSet<SocketAddr>,
+    discovered_recv: HashSet<(CandidateProtocol, SocketAddr)>,
 
     /// Currently nominated pair for sending. This is used to evaluate
     /// if we get a better candidate for [`IceAgentEvent::NominatedSend`].
@@ -88,6 +88,7 @@ pub struct IceAgent {
 #[derive(Debug)]
 struct StunRequest {
     now: Instant,
+    proto: CandidateProtocol,
     source: SocketAddr,
     destination: SocketAddr,
     trans_id: TransId,
@@ -194,6 +195,8 @@ pub enum IceAgentEvent {
     ///
     /// For each ICE restart, the app will only receive unique addresses once.
     DiscoveredRecv {
+        // The protocol to use for the socket.
+        proto: CandidateProtocol,
         /// The remote socket to look out for.
         source: SocketAddr,
     },
@@ -204,6 +207,8 @@ pub enum IceAgentEvent {
     /// requiring an ICE restart. The application should always use the values
     /// of the last emitted event to send data.
     NominatedSend {
+        // The protocol to use for the socket.
+        proto: CandidateProtocol,
         /// The local socket address to send datagrams from.
         ///
         /// This will correspond to some local address added to
@@ -443,11 +448,10 @@ impl IceAgent {
         //
         // NB this must be done _after_ set_local_preference(), since the prio() used in the
         // elimination is calculated from that preference.
-        if let Some((idx, other)) = self
-            .local_candidates
-            .iter_mut()
-            .enumerate()
-            .find(|(_, v)| v.addr() == c.addr() && v.base() == c.base())
+        if let Some((idx, other)) =
+            self.local_candidates.iter_mut().enumerate().find(|(_, v)| {
+                v.addr() == c.addr() && v.base() == c.base() && v.proto() == c.proto()
+            })
         {
             if c.prio() < other.prio() {
                 // The new candidate is not better than what we already got.
@@ -574,6 +578,11 @@ impl IceAgent {
                 let local = &self.local_candidates[*local_idx];
                 let remote = &self.remote_candidates[*remote_idx];
 
+                // Candidates in a pair must share the same protocol
+                if local.proto() != remote.proto() {
+                    continue 'outer;
+                }
+
                 let prio =
                     CandidatePair::calculate_prio(self.controlling, remote.prio(), local.prio());
                 let mut pair = CandidatePair::new(*local_idx, *remote_idx, prio);
@@ -590,8 +599,10 @@ impl IceAgent {
                     let check_local = check.local_candidate(&self.local_candidates);
                     let check_remote = check.remote_candidate(&self.remote_candidates);
 
-                    let redundant =
-                        local.base() == check_local.base() && remote.addr() == check_remote.addr();
+                    let redundant = local.base() == check_local.base()
+                        && remote.addr() == check_remote.addr()
+                        && local.proto() == check_local.proto()
+                        && remote.proto() == check_remote.proto();
 
                     if redundant {
                         if check.prio() >= pair.prio() {
@@ -795,12 +806,15 @@ impl IceAgent {
         }
 
         if message.is_binding_request() {
-            self.stun_server_handle_message(now, r.source, r.destination, message);
+            self.stun_server_handle_message(now, r.proto, r.source, r.destination, message);
         } else if message.is_successful_binding_response() {
             self.stun_client_handle_response(now, message);
         }
 
-        self.emit_event(IceAgentEvent::DiscoveredRecv { source: r.source });
+        self.emit_event(IceAgentEvent::DiscoveredRecv {
+            proto: r.proto,
+            source: r.source,
+        });
 
         // TODO handle unsuccessful responses.
     }
@@ -960,8 +974,8 @@ impl IceAgent {
     }
 
     fn emit_event(&mut self, event: IceAgentEvent) {
-        if let IceAgentEvent::DiscoveredRecv { source } = event {
-            if !self.discovered_recv.insert(source) {
+        if let IceAgentEvent::DiscoveredRecv { proto, source } = event {
+            if !self.discovered_recv.insert((proto, source)) {
                 // we already dispatched this discovered
                 return;
             }
@@ -985,6 +999,7 @@ impl IceAgent {
     fn stun_server_handle_message(
         &mut self,
         now: Instant,
+        proto: CandidateProtocol,
         source: SocketAddr,
         destination: SocketAddr,
         message: StunMessage,
@@ -1008,6 +1023,7 @@ impl IceAgent {
         // credentials, we extract all relevant bits of information so it can be owned.
         let req = StunRequest {
             now,
+            proto,
             source,
             destination,
             trans_id,
@@ -1075,7 +1091,7 @@ impl IceAgent {
             .remote_candidates
             .iter()
             .enumerate()
-            .find(|(_, c)| !c.discarded() && c.addr() == req.source);
+            .find(|(_, c)| !c.discarded() && c.proto() == req.proto && c.addr() == req.source);
 
         let remote_idx = if let Some((idx, _)) = found_in_remote {
             trace!("Remote candidate for STUN request found");
@@ -1089,6 +1105,7 @@ impl IceAgent {
             //     candidate exchanges contain this peer-reflexive candidate, it will
             //     signal the actual foundation for the candidate.
             let c = Candidate::peer_reflexive(
+                req.proto,
                 req.source,
                 req.source,
                 req.prio,
@@ -1124,7 +1141,7 @@ impl IceAgent {
                 // received through a relay).  The local candidate can never be a
                 // server-reflexive candidate.
                 matches!(v.kind(), CandidateKind::Host | CandidateKind::Relayed)
-                    && v.addr() == req.destination
+                    && v.addr() == req.destination && v.proto() == req.proto
             })
             // Receiving traffic for an IP address that neither is a HOST nor RELAY is a configuration
             // fault. We need to be aware of the interfaces that the ice agent is connected to.
@@ -1172,6 +1189,7 @@ impl IceAgent {
             .unwrap();
 
         let local = pair.local_candidate(&self.local_candidates);
+        let proto = local.proto();
         let local_addr = local.base();
         let remote = pair.remote_candidate(&self.remote_candidates);
         let remote_addr = remote.addr();
@@ -1208,6 +1226,7 @@ impl IceAgent {
         buf.truncate(n);
 
         let trans = Transmit {
+            proto,
             source: local_addr,
             destination: remote_addr,
             contents: buf.into(),
@@ -1254,6 +1273,7 @@ impl IceAgent {
         buf.truncate(n);
 
         let trans = Transmit {
+            proto: local.proto(),
             source: local.base(),
             destination: remote.addr(),
             contents: buf.into(),
@@ -1329,6 +1349,7 @@ impl IceAgent {
 
             // o  The type is peer reflexive.
             let candidate = Candidate::peer_reflexive(
+                local_sent_from.proto(),
                 mapped_address,
                 base,
                 prio,
@@ -1416,6 +1437,7 @@ impl IceAgent {
 
             self.nominated_send = Some(best);
             self.emit_event(IceAgentEvent::NominatedSend {
+                proto: local.proto(),
                 source: local.base(),
                 destination: remote.addr(),
             })
@@ -1534,10 +1556,10 @@ mod test {
     fn local_preference_host() {
         let mut agent = IceAgent::new();
 
-        agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
-        agent.add_local_candidate(Candidate::host(ipv6_1()).unwrap());
-        agent.add_local_candidate(Candidate::host(ipv6_2()).unwrap());
-        agent.add_local_candidate(Candidate::host(ipv4_2()).unwrap());
+        agent.add_local_candidate(Candidate::host(ipv4_1(), CandidateProtocol::Udp).unwrap());
+        agent.add_local_candidate(Candidate::host(ipv6_1(), CandidateProtocol::Udp).unwrap());
+        agent.add_local_candidate(Candidate::host(ipv6_2(), CandidateProtocol::Udp).unwrap());
+        agent.add_local_candidate(Candidate::host(ipv4_2(), CandidateProtocol::Udp).unwrap());
 
         let v: Vec<_> = agent
             .local_candidates
@@ -1555,12 +1577,46 @@ mod test {
         // Frequently, a server-reflexive candidate and a host candidate will be
         // redundant when the agent is not behind a NAT.
 
-        let x2 = agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
+        let x2 =
+            agent.add_local_candidate(Candidate::host(ipv4_1(), CandidateProtocol::Udp).unwrap());
         assert!(x2);
 
         // this is redundant given we have the direct host candidate above.
-        let x1 = agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_1(), ipv4_1()));
+        let x1 = agent.add_local_candidate(Candidate::test_peer_rflx(
+            ipv4_1(),
+            ipv4_1(),
+            CandidateProtocol::Udp,
+        ));
         assert!(!x1);
+    }
+
+    #[test]
+    fn discard_adding_redundant_by_address_and_protocol() {
+        let mut agent = IceAgent::new();
+
+        // Candidates with the same SocketAddr but different protocols are considered distinct.
+        assert!(
+            agent.add_local_candidate(Candidate::host(ipv4_1(), CandidateProtocol::Udp).unwrap())
+        );
+        assert!(
+            agent.add_local_candidate(Candidate::host(ipv4_1(), CandidateProtocol::Tcp).unwrap())
+        );
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_1(), CandidateProtocol::SslTcp).unwrap()));
+
+        // Verify these are rejected, since these tuples of address and protocol have been added.
+        assert!(
+            !agent.add_local_candidate(Candidate::host(ipv4_1(), CandidateProtocol::Udp).unwrap())
+        );
+        assert!(!agent
+            .add_local_candidate(Candidate::host(ipv4_1(), CandidateProtocol::SslTcp).unwrap()));
+
+        // Verify these are allowed, since these have different addresses.
+        assert!(
+            agent.add_local_candidate(Candidate::host(ipv4_2(), CandidateProtocol::Udp).unwrap())
+        );
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_2(), CandidateProtocol::SslTcp).unwrap()));
     }
 
     #[test]
@@ -1571,10 +1627,15 @@ mod test {
         // redundant when the agent is not behind a NAT.
 
         // this is contrived, but it is redundant when we add the host candidate below.
-        let x1 = agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_1(), ipv4_1()));
+        let x1 = agent.add_local_candidate(Candidate::test_peer_rflx(
+            ipv4_1(),
+            ipv4_1(),
+            CandidateProtocol::Udp,
+        ));
         assert!(x1);
 
-        let x2 = agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
+        let x2 =
+            agent.add_local_candidate(Candidate::host(ipv4_1(), CandidateProtocol::Udp).unwrap());
         assert!(x2);
 
         let v: Vec<_> = agent
@@ -1591,51 +1652,86 @@ mod test {
         let mut agent = IceAgent::new();
 
         // local 0
-        agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
+        agent.add_local_candidate(Candidate::host(ipv4_1(), CandidateProtocol::Udp).unwrap());
         // local 1
-        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_4(), ipv4_2()));
+        agent.add_local_candidate(Candidate::test_peer_rflx(
+            ipv4_4(),
+            ipv4_2(),
+            CandidateProtocol::Udp,
+        ));
+        // local 2
+        agent.add_local_candidate(Candidate::host(ipv4_1(), CandidateProtocol::Tcp).unwrap());
 
         // remote 0
-        agent.add_remote_candidate(Candidate::test_peer_rflx(ipv4_4(), ipv4_3()));
+        agent.add_remote_candidate(Candidate::test_peer_rflx(
+            ipv4_4(),
+            ipv4_3(),
+            CandidateProtocol::Udp,
+        ));
         // remote 1
-        agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
+        agent.add_remote_candidate(Candidate::host(ipv4_3(), CandidateProtocol::Udp).unwrap());
+        // remote 2
+        agent.add_remote_candidate(Candidate::host(ipv4_3(), CandidateProtocol::Tcp).unwrap());
 
         // we expect:
-        // (host host) - (0, 1)
-        // (host rflx) - (0, 1)
-        // (rflx host) - (1, 1)
-        // (rflx rflx) - (1, 0)
+        // (host/udp host/udp) - (0, 1)
+        // (host/udp rflx/udp) - (0, 1)
+        // (rflx/udp host/udp) - (1, 1)
+        // (rflx/udp rflx/udp) - (1, 0)
+        // (host/tcp host/tcp) - (2, 2)
 
-        assert_eq!(agent.pair_indexes(), [(0, 1), (0, 0), (1, 1), (1, 0)]);
+        assert_eq!(
+            agent.pair_indexes(),
+            [(0, 1), (0, 0), (1, 1), (1, 0), (2, 2)]
+        );
     }
 
     #[test]
     fn form_pairs_skip_redundant() {
         let mut agent = IceAgent::new();
 
-        agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
-        agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
+        agent.add_remote_candidate(Candidate::host(ipv4_3(), CandidateProtocol::Udp).unwrap());
+        agent.add_remote_candidate(Candidate::host(ipv4_3(), CandidateProtocol::Tcp).unwrap());
+        agent.add_local_candidate(Candidate::host(ipv4_1(), CandidateProtocol::Udp).unwrap());
+
+        // the UDP candidates should be pair up.
+        assert_eq!(agent.pair_indexes(), [(0, 0)]);
+
+        // this local UDP candidate is redundant an won't form a new pair.
+        agent.add_local_candidate(Candidate::test_peer_rflx(
+            ipv4_2(),
+            ipv4_1(),
+            CandidateProtocol::Udp,
+        ));
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 
-        // this local candidate is redundant an won't form a new pair.
-        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1()));
+        // this local TCP candidate will be paired up (This is the 3rd local candidate)
+        agent.add_local_candidate(Candidate::test_peer_rflx(
+            ipv4_2(),
+            ipv4_1(),
+            CandidateProtocol::Tcp,
+        ));
 
-        assert_eq!(agent.pair_indexes(), [(0, 0)]);
+        assert_eq!(agent.pair_indexes(), [(0, 0), (2, 1)]);
     }
 
     #[test]
     fn form_pairs_replace_redundant() {
         let mut agent = IceAgent::new();
 
-        agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
-        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1()));
+        agent.add_remote_candidate(Candidate::host(ipv4_3(), CandidateProtocol::Udp).unwrap());
+        agent.add_local_candidate(Candidate::test_peer_rflx(
+            ipv4_2(),
+            ipv4_1(),
+            CandidateProtocol::Udp,
+        ));
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 
         // this local candidate is redundant, but has higher priority than then existing pair.
         // it replaces the existing pair.
-        agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
+        agent.add_local_candidate(Candidate::host(ipv4_1(), CandidateProtocol::Udp).unwrap());
 
         assert_eq!(agent.pair_indexes(), [(1, 0)]);
     }
@@ -1663,6 +1759,7 @@ mod test {
 
         // This is just prepping the test, this would have been discovered in a STUN packet.
         let c = Candidate::peer_reflexive(
+            CandidateProtocol::Udp,
             ipv4_3(),
             ipv4_3(),
             123,
@@ -1671,7 +1768,7 @@ mod test {
         );
 
         agent.add_remote_candidate(c);
-        agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
+        agent.add_local_candidate(Candidate::host(ipv4_1(), CandidateProtocol::Udp).unwrap());
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 
@@ -1680,7 +1777,7 @@ mod test {
         agent.candidate_pairs[0].increase_remote_binding_requests(now);
 
         // this remote should replace the "discovered" peer reflexive added above.
-        agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
+        agent.add_remote_candidate(Candidate::host(ipv4_3(), CandidateProtocol::Udp).unwrap());
 
         // The index should not have changed, since we replaced the peer reflexive remote candidate.
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
@@ -1694,8 +1791,8 @@ mod test {
     #[test]
     fn poll_time_must_timing_advance() {
         let mut agent = IceAgent::new();
-        agent.add_local_candidate(Candidate::host(ipv4_1()).unwrap());
-        agent.add_remote_candidate(Candidate::host(ipv4_3()).unwrap());
+        agent.add_local_candidate(Candidate::host(ipv4_1(), CandidateProtocol::Udp).unwrap());
+        agent.add_remote_candidate(Candidate::host(ipv4_3(), CandidateProtocol::Udp).unwrap());
 
         let now1 = Instant::now();
         agent.handle_timeout(now1);

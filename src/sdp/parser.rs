@@ -242,7 +242,11 @@ where
                     .map_err(StreamErrorFor::<Input>::message_format)
             }),
             token(' '),
-            not_sp(),
+            not_sp().and_then(|s| {
+                s.as_str()
+                    .try_into()
+                    .map_err(StreamErrorFor::<Input>::message_format)
+            }),
             token(' '),
             not_sp().and_then(|s| {
                 s.parse::<u32>()

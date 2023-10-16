@@ -51,13 +51,13 @@
 //! made by a remote peer, we need these steps to open the connection.
 //!
 //! ```no_run
-//! # use str0m::{Rtc, Candidate};
+//! # use str0m::{Rtc, Candidate, CandidateProtocol};
 //! // Instantiate a new Rtc instance.
 //! let mut rtc = Rtc::new();
 //!
 //! //  Add some ICE candidate such as a locally bound UDP port.
 //! let addr = "1.2.3.4:5000".parse().unwrap();
-//! let candidate = Candidate::host(addr).unwrap();
+//! let candidate = Candidate::host(addr, CandidateProtocol::Udp).unwrap();
 //! rtc.add_local_candidate(candidate);
 //!
 //! // Accept an incoming offer from the remote peer
@@ -76,7 +76,7 @@
 //! remote ANSWER to start the connection.
 //!
 //! ```no_run
-//! # use str0m::{Rtc, Candidate};
+//! # use str0m::{Rtc, Candidate, CandidateProtocol};
 //! # use str0m::media::{MediaKind, Direction};
 //! #
 //! // Instantiate a new Rtc instance.
@@ -84,7 +84,7 @@
 //!
 //! // Add some ICE candidate such as a locally bound UDP port.
 //! let addr = "1.2.3.4:5000".parse().unwrap();
-//! let candidate = Candidate::host(addr).unwrap();
+//! let candidate = Candidate::host(addr, CandidateProtocol::Udp).unwrap();
 //! rtc.add_local_candidate(candidate);
 //!
 //! // Create a `SdpApi`. The change lets us make multiple changes
@@ -113,7 +113,7 @@
 //! looks like this.
 //!
 //! ```no_run
-//! # use str0m::{Rtc, Output, IceConnectionState, Event, Input};
+//! # use str0m::{Rtc, Output, IceConnectionState, Event, Input, CandidateProtocol};
 //! # use str0m::net::Receive;
 //! # use std::io::ErrorKind;
 //! # use std::net::UdpSocket;
@@ -183,6 +183,7 @@
 //!             Input::Receive(
 //!                 Instant::now(),
 //!                 Receive {
+//!                     proto: CandidateProtocol::Udp,
 //!                     source,
 //!                     destination: socket.local_addr().unwrap(),
 //!                     contents: buf.as_slice().try_into().unwrap(),
@@ -521,7 +522,7 @@ mod ice;
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use ice::IceCreds;
-pub use ice::{Candidate, CandidateKind};
+pub use ice::{Candidate, CandidateKind, CandidateProtocol};
 
 mod io;
 use io::DatagramRecv;
@@ -757,6 +758,7 @@ pub struct Rtc {
 }
 
 struct SendAddr {
+    proto: CandidateProtocol,
     source: SocketAddr,
     destination: SocketAddr,
 }
@@ -997,11 +999,11 @@ impl Rtc {
     /// however advisable to add at least one local candidate before starting the instance.
     ///
     /// ```
-    /// # use str0m::{Rtc, Candidate};
+    /// # use str0m::{Rtc, Candidate, CandidateProtocol};
     /// let mut rtc = Rtc::new();
     ///
     /// let a = "127.0.0.1:5000".parse().unwrap();
-    /// let c = Candidate::host(a).unwrap();
+    /// let c = Candidate::host(a, CandidateProtocol::Udp).unwrap();
     ///
     /// rtc.add_local_candidate(c);
     /// ```
@@ -1020,11 +1022,11 @@ impl Rtc {
     /// that are "trickled" from the other side.
     ///
     /// ```
-    /// # use str0m::{Rtc, Candidate};
+    /// # use str0m::{Rtc, Candidate, CandidateProtocol};
     /// let mut rtc = Rtc::new();
     ///
     /// let a = "1.2.3.4:5000".parse().unwrap();
-    /// let c = Candidate::host(a).unwrap();
+    /// let c = Candidate::host(a, CandidateProtocol::Udp).unwrap();
     ///
     /// rtc.add_remote_candidate(c);
     /// ```
@@ -1198,22 +1200,24 @@ impl Rtc {
                 IceAgentEvent::IceConnectionStateChange(v) => {
                     return Ok(Output::Event(Event::IceConnectionStateChange(v)))
                 }
-                IceAgentEvent::DiscoveredRecv { source } => {
-                    info!("ICE remote address: {:?}", source);
+                IceAgentEvent::DiscoveredRecv { proto, source } => {
+                    info!("ICE remote address: {:?}/{:?}", source, proto);
                     self.remote_addrs.push(source);
                     while self.remote_addrs.len() > 20 {
                         self.remote_addrs.remove(0);
                     }
                 }
                 IceAgentEvent::NominatedSend {
+                    proto,
                     source,
                     destination,
                 } => {
                     info!(
-                        "ICE nominated send from: {:?} to: {:?}",
-                        source, destination
+                        "ICE nominated send from: {:?} to: {:?} with protocol {:?}",
+                        source, destination, proto,
                     );
                     self.send_addr = Some(SendAddr {
+                        proto,
                         source,
                         destination,
                     });
@@ -1332,6 +1336,7 @@ impl Rtc {
 
             if let Some(contents) = datagram {
                 let t = net::Transmit {
+                    proto: send.proto,
                     source: send.source,
                     destination: send.destination,
                     contents,
