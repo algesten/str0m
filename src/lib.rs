@@ -231,9 +231,9 @@
 //! let pt = writer.payload_params()[0].pt();
 //!
 //! // Write the data
-//! let wallclock = todo!();  // Absolute time of the data
-//! let media_time = todo!(); // Media time, in RTP time
-//! let data: Vec<u8> = todo!();       // Actual data
+//! let wallclock = todo!();   // Absolute time of the data
+//! let media_time = todo!();  // Media time, in RTP time
+//! let data: &[u8] = todo!(); // Actual data
 //! writer.write(pt, wallclock, media_time, data).unwrap();
 //! ```
 //!
@@ -445,7 +445,7 @@
 //!
 //! ## Panics, Errors and unwraps
 //!
-//! Rust adheres to [fail-last][ff]. That means rather than brushing state
+//! Rust adheres to [fail-fast][ff]. That means rather than brushing state
 //! bugs under the carpet, it panics. We make a distinction between errors and
 //! bugs.
 //!
