@@ -8,7 +8,7 @@ pub(crate) use agent::{IceAgent, IceAgentEvent};
 pub use agent::{IceConnectionState, IceCreds};
 
 mod candidate;
-pub use candidate::{Candidate, CandidateKind, CandidateProtocol};
+pub use candidate::{Candidate, CandidateKind};
 
 mod pair;
 
@@ -74,6 +74,7 @@ mod test {
     use std::ops::{Deref, DerefMut};
     use std::time::{Duration, Instant};
 
+    use crate::io::CandidateProtocol;
     use crate::io::Receive;
     use tracing::Span;
 

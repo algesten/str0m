@@ -3,8 +3,9 @@ use std::time::Duration;
 
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
+use str0m::net::CandidateProtocol;
 use str0m::rtp::rtcp::Twcc;
-use str0m::{Candidate, CandidateProtocol, Rtc, RtcError};
+use str0m::{Candidate, Rtc, RtcError};
 use tracing::info_span;
 
 mod common;

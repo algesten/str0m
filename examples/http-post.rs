@@ -11,10 +11,9 @@ use rouille::Server;
 use rouille::{Request, Response};
 
 use str0m::change::SdpOffer;
+use str0m::net::CandidateProtocol;
 use str0m::net::Receive;
-use str0m::{
-    Candidate, CandidateProtocol, Event, IceConnectionState, Input, Output, Rtc, RtcError,
-};
+use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcError};
 
 mod util;
 
