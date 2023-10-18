@@ -522,7 +522,7 @@ mod ice;
 use ice::IceAgent;
 use ice::IceAgentEvent;
 use ice::IceCreds;
-pub use ice::{Candidate, CandidateKind, CandidateProtocol};
+pub use ice::{Candidate, CandidateKind};
 
 mod io;
 use io::DatagramRecv;
@@ -604,7 +604,7 @@ mod streams;
 
 /// Network related types to get socket data in/out of [`Rtc`].
 pub mod net {
-    pub use crate::io::{DatagramRecv, DatagramSend, Receive, Transmit};
+    pub use crate::io::{CandidateProtocol, DatagramRecv, DatagramSend, Receive, Transmit};
 }
 
 /// Various error types.
@@ -758,7 +758,7 @@ pub struct Rtc {
 }
 
 struct SendAddr {
-    proto: CandidateProtocol,
+    proto: net::CandidateProtocol,
     source: SocketAddr,
     destination: SocketAddr,
 }

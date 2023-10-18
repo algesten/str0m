@@ -16,8 +16,6 @@ pub(crate) use stun::{
 };
 
 mod sha1;
-use crate::CandidateProtocol;
-
 pub(crate) use self::sha1::Sha1;
 
 mod id;
@@ -47,6 +45,21 @@ pub enum NetError {
     /// A wrapped IO error.
     #[error("{0}")]
     Io(#[from] io::Error),
+}
+
+/// Type of protocol used when transmitting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CandidateProtocol {
+    /// UDP
+    Udp,
+    /// TCP (See RFC 4571 for framing)
+    Tcp,
+    /// TCP with fixed SSL Hello Exchange
+    /// See AsyncSSLServerSocket implementation for exchange details:
+    /// <https://webrtc.googlesource.com/src/+/refs/heads/main/rtc_base/server_socket_adapters.cc#19>
+    SslTcp,
+    /// TLS (only used via relay)
+    Tls,
 }
 
 /// An outgoing packet

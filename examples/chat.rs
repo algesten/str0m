@@ -17,10 +17,8 @@ use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::channel::{ChannelData, ChannelId};
 use str0m::media::MediaKind;
 use str0m::media::{Direction, KeyframeRequest, MediaData, Mid, Rid};
-use str0m::{
-    net::Receive, Candidate, CandidateProtocol, Event, IceConnectionState, Input, Output, Rtc,
-    RtcError,
-};
+use str0m::net::CandidateProtocol;
+use str0m::{net::Receive, Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcError};
 
 mod util;
 

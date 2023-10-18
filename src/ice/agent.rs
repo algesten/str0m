@@ -4,11 +4,12 @@ use std::time::{Duration, Instant};
 
 use rand::random;
 
+use crate::io::CandidateProtocol;
 use crate::io::{DatagramRecv, Receive, Transmit, DATAGRAM_MTU};
 use crate::io::{Id, DATAGRAM_MTU_WARN};
 use crate::io::{StunMessage, TransId, STUN_TIMEOUT};
 
-use super::candidate::{Candidate, CandidateKind, CandidateProtocol};
+use super::candidate::{Candidate, CandidateKind};
 use super::pair::{CandidatePair, CheckState, PairId};
 
 /// Timing advance (Ta) value.

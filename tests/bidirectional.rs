@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
-use str0m::{Candidate, CandidateProtocol, Event, RtcError};
+use str0m::net::CandidateProtocol;
+use str0m::{Candidate, Event, RtcError};
 use tracing::info_span;
 
 mod common;
@@ -16,10 +17,7 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
     let mut l = TestRtc::new(info_span!("L"));
     let mut r = TestRtc::new(info_span!("R"));
 
-    let host1 = Candidate::host(
-        (Ipv4Addr::new(1, 1, 1, 1), 1000).into(),
-        CandidateProtocol::Udp,
-    )?;
+    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp")?;
     let host2 = Candidate::host(
         (Ipv4Addr::new(2, 2, 2, 2), 2000).into(),
         CandidateProtocol::Udp,

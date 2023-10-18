@@ -3,11 +3,12 @@ use std::time::Duration;
 
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
+use str0m::net::CandidateProtocol;
 use str0m::rtp::Extension;
 use str0m::rtp::ExtensionSerializer;
 use str0m::rtp::ExtensionValues;
+use str0m::Rtc;
 use str0m::{Candidate, Event, RtcError};
-use str0m::{CandidateProtocol, Rtc};
 use tracing::info_span;
 
 mod common;

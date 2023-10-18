@@ -3,6 +3,8 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, SocketAddr};
 
+use crate::io::CandidateProtocol;
+
 use super::IceError;
 
 /// ICE candidates are network addresses used to connect to a peer.
@@ -448,21 +450,6 @@ impl fmt::Display for CandidateKind {
         };
         write!(f, "{x}")
     }
-}
-
-/// Type of candidate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CandidateProtocol {
-    /// UDP
-    Udp,
-    /// TCP (See RFC 4571 for framing)
-    Tcp,
-    /// TCP with fixed SSL Hello Exchange
-    /// See AsyncSSLServerSocket implementation for exchange details:
-    /// <https://webrtc.googlesource.com/src/+/refs/heads/main/rtc_base/server_socket_adapters.cc#19>
-    SslTcp,
-    /// TLS (only used via relay)
-    Tls,
 }
 
 impl TryFrom<&str> for CandidateProtocol {
