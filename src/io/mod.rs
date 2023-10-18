@@ -47,9 +47,9 @@ pub enum NetError {
     Io(#[from] io::Error),
 }
 
-/// Type of protocol used when transmitting.
+/// Type of protocol used in [`Transmit`] and [`Receive`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CandidateProtocol {
+pub enum Protocol {
     /// UDP
     Udp,
     /// TCP (See RFC 4571 for framing)
@@ -65,7 +65,7 @@ pub enum CandidateProtocol {
 /// An outgoing packet
 pub struct Transmit {
     /// This protocol the socket is using.
-    pub proto: CandidateProtocol,
+    pub proto: Protocol,
 
     /// The source socket this packet should be sent from.
     ///
@@ -99,7 +99,7 @@ impl From<DatagramSend> for Vec<u8> {
 /// Received incoming data.
 pub struct Receive<'a> {
     /// The protocol the socket this received data originated from is using.
-    pub proto: CandidateProtocol,
+    pub proto: Protocol,
 
     /// The socket this received data originated from.
     pub source: SocketAddr,
@@ -114,7 +114,7 @@ pub struct Receive<'a> {
 impl<'a> Receive<'a> {
     /// Creates a new instance by trying to parse the contents of `buf`.
     pub fn new(
-        proto: CandidateProtocol,
+        proto: Protocol,
         source: SocketAddr,
         destination: SocketAddr,
         buf: &'a [u8],

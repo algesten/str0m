@@ -10,7 +10,7 @@ use rand::Rng;
 use str0m::change::SdpApi;
 use str0m::format::Codec;
 use str0m::format::PayloadParams;
-use str0m::net::CandidateProtocol;
+use str0m::net::Protocol;
 use str0m::net::Receive;
 use str0m::rtp::ExtensionMap;
 use str0m::rtp::RtpHeader;
@@ -220,16 +220,8 @@ pub fn connect_l_r() -> (TestRtc, TestRtc) {
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc1);
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc2);
 
-    let host1 = Candidate::host(
-        (Ipv4Addr::new(1, 1, 1, 1), 1000).into(),
-        CandidateProtocol::Udp,
-    )
-    .unwrap();
-    let host2 = Candidate::host(
-        (Ipv4Addr::new(2, 2, 2, 2), 2000).into(),
-        CandidateProtocol::Udp,
-    )
-    .unwrap();
+    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), Protocol::Udp).unwrap();
+    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), Protocol::Udp).unwrap();
     l.add_local_candidate(host1.clone());
     l.add_remote_candidate(host2.clone());
     r.add_local_candidate(host2);
