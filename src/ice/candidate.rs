@@ -3,7 +3,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, SocketAddr};
 
-use crate::io::CandidateProtocol;
+use crate::io::Protocol;
 
 use super::IceError;
 
@@ -34,7 +34,7 @@ pub struct Candidate {
     component_id: u16, // 1 for RTP, 2 for RTCP
 
     /// Protocol for the candidate.
-    proto: CandidateProtocol,
+    proto: Protocol,
 
     /// Priority.
     ///
@@ -104,7 +104,7 @@ impl Candidate {
     fn new(
         foundation: Option<String>,
         component_id: u16,
-        proto: CandidateProtocol,
+        proto: Protocol,
         prio: Option<u32>,
         addr: SocketAddr,
         base: Option<SocketAddr>,
@@ -132,7 +132,7 @@ impl Candidate {
     pub fn parsed(
         foundation: String,
         component_id: u16,
-        proto: CandidateProtocol,
+        proto: Protocol,
         prio: u32,
         addr: SocketAddr,
         kind: CandidateKind,
@@ -155,10 +155,7 @@ impl Candidate {
     /// Creates a host ICE candidate.
     ///
     /// Host candidates are local sockets directly on the host.
-    pub fn host(
-        addr: SocketAddr,
-        proto: impl TryInto<CandidateProtocol>,
-    ) -> Result<Self, IceError> {
+    pub fn host(addr: SocketAddr, proto: impl TryInto<Protocol>) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
         }
@@ -182,7 +179,7 @@ impl Candidate {
     /// via a STUN binding request.
     pub fn server_reflexive(
         addr: SocketAddr,
-        proto: impl TryInto<CandidateProtocol>,
+        proto: impl TryInto<Protocol>,
     ) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
@@ -205,10 +202,7 @@ impl Candidate {
     ///
     /// Relayed candidates are server sockets relaying traffic to a local socket.
     /// Allocate a TURN addr to use as a local candidate.
-    pub fn relayed(
-        addr: SocketAddr,
-        proto: impl TryInto<CandidateProtocol>,
-    ) -> Result<Self, IceError> {
+    pub fn relayed(addr: SocketAddr, proto: impl TryInto<Protocol>) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
         }
@@ -232,7 +226,7 @@ impl Candidate {
     /// binding responses. `addr` is the discovered address. `base` is the local
     /// (host) address inside the NAT we used to get this response.
     pub(crate) fn peer_reflexive(
-        proto: CandidateProtocol,
+        proto: Protocol,
         addr: SocketAddr,
         base: SocketAddr,
         prio: u32,
@@ -253,11 +247,7 @@ impl Candidate {
     }
 
     #[cfg(test)]
-    pub(crate) fn test_peer_rflx(
-        addr: SocketAddr,
-        base: SocketAddr,
-        proto: CandidateProtocol,
-    ) -> Self {
+    pub(crate) fn test_peer_rflx(addr: SocketAddr, base: SocketAddr, proto: Protocol) -> Self {
         Candidate::new(
             None,
             1, // only RTP
@@ -335,13 +325,13 @@ impl Candidate {
         // for non-UDP protocols are taken from libwebrtc:
         // <https://webrtc.googlesource.com/src/+/refs/heads/main/p2p/base/port.h#68>
         let type_preference = match (kind, self.proto) {
-            (CandidateKind::Host, CandidateProtocol::Udp) => 126,
-            (CandidateKind::PeerReflexive, CandidateProtocol::Udp) => 110,
+            (CandidateKind::Host, Protocol::Udp) => 126,
+            (CandidateKind::PeerReflexive, Protocol::Udp) => 110,
             (CandidateKind::ServerReflexive, _) => 100,
             (CandidateKind::Host, _) => 90,
             (CandidateKind::PeerReflexive, _) => 80,
-            (CandidateKind::Relayed, CandidateProtocol::Udp) => 2,
-            (CandidateKind::Relayed, CandidateProtocol::Tcp) => 1,
+            (CandidateKind::Relayed, Protocol::Udp) => 2,
+            (CandidateKind::Relayed, Protocol::Tcp) => 1,
             (CandidateKind::Relayed, _) => 0,
         };
 
@@ -379,7 +369,7 @@ impl Candidate {
 
     /// Returns a reference to the String containing the transport protocol of
     /// the ICE candidate. For example tcp/udp/..
-    pub fn proto(&self) -> CandidateProtocol {
+    pub fn proto(&self) -> Protocol {
         self.proto
     }
 
@@ -421,7 +411,7 @@ impl Candidate {
     }
 }
 
-fn parse_proto(proto: impl TryInto<CandidateProtocol>) -> Result<CandidateProtocol, IceError> {
+fn parse_proto(proto: impl TryInto<Protocol>) -> Result<Protocol, IceError> {
     proto
         .try_into()
         .map_err(|_| IceError::BadCandidate(format!("invalid protocol")))
@@ -452,33 +442,33 @@ impl fmt::Display for CandidateKind {
     }
 }
 
-impl TryFrom<&str> for CandidateProtocol {
+impl TryFrom<&str> for Protocol {
     type Error = ();
 
     fn try_from(proto: &str) -> Result<Self, Self::Error> {
         let proto = proto.to_lowercase();
         match proto.as_str() {
-            "udp" => Ok(CandidateProtocol::Udp),
-            "tcp" => Ok(CandidateProtocol::Tcp),
-            "ssltcp" => Ok(CandidateProtocol::SslTcp),
-            "tls" => Ok(CandidateProtocol::Tls),
+            "udp" => Ok(Protocol::Udp),
+            "tcp" => Ok(Protocol::Tcp),
+            "ssltcp" => Ok(Protocol::SslTcp),
+            "tls" => Ok(Protocol::Tls),
             _ => Err(()),
         }
     }
 }
 
-impl From<CandidateProtocol> for &str {
-    fn from(proto: CandidateProtocol) -> Self {
+impl From<Protocol> for &str {
+    fn from(proto: Protocol) -> Self {
         match proto {
-            CandidateProtocol::Udp => "udp",
-            CandidateProtocol::Tcp => "tcp",
-            CandidateProtocol::SslTcp => "ssltcp",
-            CandidateProtocol::Tls => "tls",
+            Protocol::Udp => "udp",
+            Protocol::Tcp => "tcp",
+            Protocol::SslTcp => "ssltcp",
+            Protocol::Tls => "tls",
         }
     }
 }
 
-impl fmt::Display for CandidateProtocol {
+impl fmt::Display for Protocol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let x: &str = (*self).into();
         write!(f, "{}", x)

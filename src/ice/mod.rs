@@ -30,10 +30,10 @@ mod test {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 
-        let c1 = host("1.1.1.1:9999", CandidateProtocol::Udp); // 9999 is just dropped by propagate
+        let c1 = host("1.1.1.1:9999", Protocol::Udp); // 9999 is just dropped by propagate
         a1.add_local_candidate(c1.clone());
         a2.add_remote_candidate(c1);
-        let c2 = host("2.2.2.2:1000", CandidateProtocol::Udp);
+        let c2 = host("2.2.2.2:1000", Protocol::Udp);
         a2.add_local_candidate(c2.clone());
         a1.add_remote_candidate(c2);
         a1.set_controlling(true);
@@ -74,7 +74,7 @@ mod test {
     use std::ops::{Deref, DerefMut};
     use std::time::{Duration, Instant};
 
-    use crate::io::CandidateProtocol;
+    use crate::io::Protocol;
     use crate::io::Receive;
     use tracing::Span;
 
@@ -83,7 +83,7 @@ mod test {
         s.parse().unwrap()
     }
 
-    pub fn host(s: impl Into<String>, proto: CandidateProtocol) -> Candidate {
+    pub fn host(s: impl Into<String>, proto: Protocol) -> Candidate {
         Candidate::host(sock(s), proto).unwrap()
     }
 
@@ -140,10 +140,10 @@ mod test {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 
-        let c1 = host("1.1.1.1:1000", CandidateProtocol::Udp);
+        let c1 = host("1.1.1.1:1000", Protocol::Udp);
         a1.add_local_candidate(c1.clone());
         a2.add_remote_candidate(c1);
-        let c2 = host("2.2.2.2:1000", CandidateProtocol::Udp);
+        let c2 = host("2.2.2.2:1000", Protocol::Udp);
         a2.add_local_candidate(c2.clone());
         a1.add_remote_candidate(c2);
 
@@ -211,10 +211,10 @@ mod test {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 
-        let c1 = host("1.1.1.1:1000", CandidateProtocol::Udp);
+        let c1 = host("1.1.1.1:1000", Protocol::Udp);
         a1.add_local_candidate(c1.clone());
         a2.add_remote_candidate(c1);
-        let c2 = host("2.2.2.2:1000", CandidateProtocol::Udp);
+        let c2 = host("2.2.2.2:1000", Protocol::Udp);
         a2.add_local_candidate(c2.clone());
         a1.add_remote_candidate(c2);
         a1.set_controlling(true);
@@ -258,10 +258,10 @@ mod test {
         // a1 acts as "server"
         a1.agent.set_ice_lite(true);
 
-        let c1 = host("1.1.1.1:9999", CandidateProtocol::Udp); // 9999 is just dropped by propagate
+        let c1 = host("1.1.1.1:9999", Protocol::Udp); // 9999 is just dropped by propagate
         a1.add_local_candidate(c1.clone());
         a2.add_remote_candidate(c1);
-        let c2 = host("2.2.2.2:1000", CandidateProtocol::Udp);
+        let c2 = host("2.2.2.2:1000", Protocol::Udp);
         a2.add_local_candidate(c2.clone());
         a1.add_remote_candidate(c2);
         a1.set_controlling(true);
@@ -306,10 +306,10 @@ mod test {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 
-        let c1 = host("3.3.3.3:1000", CandidateProtocol::Udp); // will be rewritten to 4.4.4.4
+        let c1 = host("3.3.3.3:1000", Protocol::Udp); // will be rewritten to 4.4.4.4
         a1.add_local_candidate(c1.clone());
         a2.add_remote_candidate(c1);
-        let c2 = host("2.2.2.2:1000", CandidateProtocol::Udp);
+        let c2 = host("2.2.2.2:1000", Protocol::Udp);
         a2.add_local_candidate(c2.clone());
         a1.add_remote_candidate(c2);
 
@@ -367,10 +367,10 @@ mod test {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 
-        let c1 = host("1.1.1.1:1000", CandidateProtocol::Udp);
+        let c1 = host("1.1.1.1:1000", Protocol::Udp);
         a1.add_local_candidate(c1.clone());
         a2.add_remote_candidate(c1.clone());
-        let c2 = host("2.2.2.2:1000", CandidateProtocol::Udp);
+        let c2 = host("2.2.2.2:1000", Protocol::Udp);
         a2.add_local_candidate(c2.clone());
         a1.add_remote_candidate(c2.clone());
 
@@ -418,10 +418,10 @@ mod test {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 
-        let c1 = host("3.3.3.3:9999", CandidateProtocol::Udp); // no traffic possible
+        let c1 = host("3.3.3.3:9999", Protocol::Udp); // no traffic possible
         a1.add_local_candidate(c1.clone());
         a2.add_remote_candidate(c1);
-        let c2 = host("2.2.2.2:1000", CandidateProtocol::Udp);
+        let c2 = host("2.2.2.2:1000", Protocol::Udp);
         a2.add_local_candidate(c2.clone());
         a1.add_remote_candidate(c2);
 
@@ -434,7 +434,7 @@ mod test {
         }
 
         // "trickle" a possible candidate
-        a1.add_local_candidate(host("1.1.1.1:1000", CandidateProtocol::Udp)); // possible
+        a1.add_local_candidate(host("1.1.1.1:1000", Protocol::Udp)); // possible
 
         // loop until we're connected.
         loop {

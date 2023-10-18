@@ -58,7 +58,7 @@ let mut rtc = Rtc::new();
 
 //  Add some ICE candidate such as a locally bound UDP port.
 let addr = "1.2.3.4:5000".parse().unwrap();
-let candidate = Candidate::host(addr, CandidateProtocol::Udp).unwrap();
+let candidate = Candidate::host(addr, "udp").unwrap();
 rtc.add_local_candidate(candidate);
 
 // Accept an incoming offer from the remote peer
@@ -83,7 +83,7 @@ let mut rtc = Rtc::new();
 
 // Add some ICE candidate such as a locally bound UDP port.
 let addr = "1.2.3.4:5000".parse().unwrap();
-let candidate = Candidate::host(addr, CandidateProtocol::Udp).unwrap();
+let candidate = Candidate::host(addr, "udp").unwrap();
 rtc.add_local_candidate(candidate);
 
 // Create a `SdpApi`. The change lets us make multiple changes
@@ -176,6 +176,7 @@ loop {
             Input::Receive(
                 Instant::now(),
                 Receive {
+                    proto: Protocol::Udp,
                     source,
                     destination: socket.local_addr().unwrap(),
                     contents: buf.as_slice().try_into().unwrap(),
@@ -222,7 +223,7 @@ let pt = writer.payload_params()[0].pt();
 // Write the data
 let wallclock = todo!();  // Absolute time of the data
 let media_time = todo!(); // Media time, in RTP time
-let data = todo!();       // Actual data
+let data: Vec<u8> = todo!();       // Actual data
 writer.write(pt, wallclock, media_time, data).unwrap();
 ```
 
@@ -433,7 +434,7 @@ collected or reference counted languages, but not great with Rust.
 
 ### Panics, Errors and unwraps
 
-Rust adheres to [fail-fast][ff]. That means rather than brushing state
+Rust adheres to [fail-last][ff]. That means rather than brushing state
 bugs under the carpet, it panics. We make a distinction between errors and
 bugs.
 
@@ -486,4 +487,4 @@ when catching a panic.
 
 <a href="https://zulip.com/"><image width="70px" src="https://raw.githubusercontent.com/zulip/zulip/main/static/images/logo/zulip-icon-circle.svg" alt="Zulip logo"></image></a>
 
-License: MIT/Apache-2.0
+License: MIT OR Apache-2.0

@@ -17,7 +17,7 @@ use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::channel::{ChannelData, ChannelId};
 use str0m::media::MediaKind;
 use str0m::media::{Direction, KeyframeRequest, MediaData, Mid, Rid};
-use str0m::net::CandidateProtocol;
+use str0m::net::Protocol;
 use str0m::{net::Receive, Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcError};
 
 mod util;
@@ -87,7 +87,7 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
         .build();
 
     // Add the shared UDP socket as a host candidate
-    let candidate = Candidate::host(addr, CandidateProtocol::Udp).expect("a host candidate");
+    let candidate = Candidate::host(addr, "udp").expect("a host candidate");
     rtc.add_local_candidate(candidate);
 
     // Create an SDP Answer.
@@ -240,7 +240,7 @@ fn read_socket_input<'a>(socket: &UdpSocket, buf: &'a mut Vec<u8>) -> Option<Inp
             return Some(Input::Receive(
                 Instant::now(),
                 Receive {
-                    proto: CandidateProtocol::Udp,
+                    proto: Protocol::Udp,
                     source,
                     destination: socket.local_addr().unwrap(),
                     contents,

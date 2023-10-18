@@ -11,7 +11,7 @@ use rouille::Server;
 use rouille::{Request, Response};
 
 use str0m::change::SdpOffer;
-use str0m::net::CandidateProtocol;
+use str0m::net::Protocol;
 use str0m::net::Receive;
 use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcError};
 
@@ -62,7 +62,7 @@ fn web_request(request: &Request) -> Response {
     // Spin up a UDP socket for the RTC
     let socket = UdpSocket::bind(format!("{addr}:0")).expect("binding a random UDP port");
     let addr = socket.local_addr().expect("a local socket adddress");
-    let candidate = Candidate::host(addr, CandidateProtocol::Udp).expect("a host candidate");
+    let candidate = Candidate::host(addr, "udp").expect("a host candidate");
     rtc.add_local_candidate(candidate);
 
     // Create an SDP Answer.
@@ -124,7 +124,7 @@ fn run(mut rtc: Rtc, socket: UdpSocket) -> Result<(), RtcError> {
                 Input::Receive(
                     Instant::now(),
                     Receive {
-                        proto: CandidateProtocol::Udp,
+                        proto: Protocol::Udp,
                         source,
                         destination: socket.local_addr().unwrap(),
                         contents: buf.as_slice().try_into()?,

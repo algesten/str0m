@@ -51,13 +51,13 @@
 //! made by a remote peer, we need these steps to open the connection.
 //!
 //! ```no_run
-//! # use str0m::{Rtc, Candidate, CandidateProtocol};
+//! # use str0m::{Rtc, Candidate};
 //! // Instantiate a new Rtc instance.
 //! let mut rtc = Rtc::new();
 //!
 //! //  Add some ICE candidate such as a locally bound UDP port.
 //! let addr = "1.2.3.4:5000".parse().unwrap();
-//! let candidate = Candidate::host(addr, CandidateProtocol::Udp).unwrap();
+//! let candidate = Candidate::host(addr, "udp").unwrap();
 //! rtc.add_local_candidate(candidate);
 //!
 //! // Accept an incoming offer from the remote peer
@@ -76,7 +76,7 @@
 //! remote ANSWER to start the connection.
 //!
 //! ```no_run
-//! # use str0m::{Rtc, Candidate, CandidateProtocol};
+//! # use str0m::{Rtc, Candidate};
 //! # use str0m::media::{MediaKind, Direction};
 //! #
 //! // Instantiate a new Rtc instance.
@@ -84,7 +84,7 @@
 //!
 //! // Add some ICE candidate such as a locally bound UDP port.
 //! let addr = "1.2.3.4:5000".parse().unwrap();
-//! let candidate = Candidate::host(addr, CandidateProtocol::Udp).unwrap();
+//! let candidate = Candidate::host(addr, "udp").unwrap();
 //! rtc.add_local_candidate(candidate);
 //!
 //! // Create a `SdpApi`. The change lets us make multiple changes
@@ -113,8 +113,8 @@
 //! looks like this.
 //!
 //! ```no_run
-//! # use str0m::{Rtc, Output, IceConnectionState, Event, Input, CandidateProtocol};
-//! # use str0m::net::Receive;
+//! # use str0m::{Rtc, Output, IceConnectionState, Event, Input};
+//! # use str0m::net::{Receive, Protocol};
 //! # use std::io::ErrorKind;
 //! # use std::net::UdpSocket;
 //! # use std::time::Instant;
@@ -183,7 +183,7 @@
 //!             Input::Receive(
 //!                 Instant::now(),
 //!                 Receive {
-//!                     proto: CandidateProtocol::Udp,
+//!                     proto: Protocol::Udp,
 //!                     source,
 //!                     destination: socket.local_addr().unwrap(),
 //!                     contents: buf.as_slice().try_into().unwrap(),
@@ -604,7 +604,7 @@ mod streams;
 
 /// Network related types to get socket data in/out of [`Rtc`].
 pub mod net {
-    pub use crate::io::{CandidateProtocol, DatagramRecv, DatagramSend, Receive, Transmit};
+    pub use crate::io::{DatagramRecv, DatagramSend, Protocol, Receive, Transmit};
 }
 
 /// Various error types.
@@ -758,7 +758,7 @@ pub struct Rtc {
 }
 
 struct SendAddr {
-    proto: net::CandidateProtocol,
+    proto: net::Protocol,
     source: SocketAddr,
     destination: SocketAddr,
 }
@@ -999,11 +999,11 @@ impl Rtc {
     /// however advisable to add at least one local candidate before starting the instance.
     ///
     /// ```
-    /// # use str0m::{Rtc, Candidate, CandidateProtocol};
+    /// # use str0m::{Rtc, Candidate};
     /// let mut rtc = Rtc::new();
     ///
     /// let a = "127.0.0.1:5000".parse().unwrap();
-    /// let c = Candidate::host(a, CandidateProtocol::Udp).unwrap();
+    /// let c = Candidate::host(a, "udp").unwrap();
     ///
     /// rtc.add_local_candidate(c);
     /// ```
@@ -1022,11 +1022,11 @@ impl Rtc {
     /// that are "trickled" from the other side.
     ///
     /// ```
-    /// # use str0m::{Rtc, Candidate, CandidateProtocol};
+    /// # use str0m::{Rtc, Candidate};
     /// let mut rtc = Rtc::new();
     ///
     /// let a = "1.2.3.4:5000".parse().unwrap();
-    /// let c = Candidate::host(a, CandidateProtocol::Udp).unwrap();
+    /// let c = Candidate::host(a, "udp").unwrap();
     ///
     /// rtc.add_remote_candidate(c);
     /// ```
