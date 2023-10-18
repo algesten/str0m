@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Add protocol specified in Candidate creation (breaking)
   * Remove a statistics performance bottleneck
   * New ICE Candidate types `server_reflexive` and `relayed`
 
