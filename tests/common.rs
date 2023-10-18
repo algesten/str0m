@@ -220,8 +220,8 @@ pub fn connect_l_r() -> (TestRtc, TestRtc) {
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc1);
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc2);
 
-    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), Protocol::Udp).unwrap();
-    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), Protocol::Udp).unwrap();
+    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp").unwrap();
+    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp").unwrap();
     l.add_local_candidate(host1.clone());
     l.add_remote_candidate(host2.clone());
     r.add_local_candidate(host2);

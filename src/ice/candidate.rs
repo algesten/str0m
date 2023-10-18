@@ -226,7 +226,7 @@ impl Candidate {
     /// binding responses. `addr` is the discovered address. `base` is the local
     /// (host) address inside the NAT we used to get this response.
     pub(crate) fn peer_reflexive(
-        proto: Protocol,
+        proto: impl TryInto<Protocol>,
         addr: SocketAddr,
         base: SocketAddr,
         prio: u32,
@@ -236,7 +236,7 @@ impl Candidate {
         Candidate::new(
             found,
             1, // only RTP
-            proto,
+            parse_proto(proto).expect("internal call to have correct protocol"),
             Some(prio),
             addr,
             Some(base),
@@ -247,11 +247,15 @@ impl Candidate {
     }
 
     #[cfg(test)]
-    pub(crate) fn test_peer_rflx(addr: SocketAddr, base: SocketAddr, proto: Protocol) -> Self {
+    pub(crate) fn test_peer_rflx(
+        addr: SocketAddr,
+        base: SocketAddr,
+        proto: impl TryInto<Protocol>,
+    ) -> Self {
         Candidate::new(
             None,
             1, // only RTP
-            proto,
+            parse_proto(proto).expect("internal test to have correct protocol"),
             None,
             addr,
             Some(base),
@@ -414,7 +418,7 @@ impl Candidate {
 fn parse_proto(proto: impl TryInto<Protocol>) -> Result<Protocol, IceError> {
     proto
         .try_into()
-        .map_err(|_| IceError::BadCandidate(format!("invalid protocol")))
+        .map_err(|_| IceError::BadCandidate("invalid protocol".into()))
 }
 
 /// Type of candidate.
