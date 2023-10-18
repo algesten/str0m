@@ -243,9 +243,9 @@ where
             }),
             token(' '),
             not_sp().and_then(|s| {
-                s.as_str()
-                    .try_into()
-                    .map_err(StreamErrorFor::<Input>::message_format)
+                s.as_str().try_into().map_err(|_| {
+                    StreamErrorFor::<Input>::message_format(format!("invalid protocol: {}", s))
+                })
             }),
             token(' '),
             not_sp().and_then(|s| {

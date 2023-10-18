@@ -153,7 +153,10 @@ impl Candidate {
     /// Creates a host ICE candidate.
     ///
     /// Host candidates are local sockets directly on the host.
-    pub fn host(addr: SocketAddr, proto: CandidateProtocol) -> Result<Self, IceError> {
+    pub fn host(
+        addr: SocketAddr,
+        proto: impl TryInto<CandidateProtocol>,
+    ) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
         }
@@ -161,7 +164,7 @@ impl Candidate {
         Ok(Candidate::new(
             None,
             1, // only RTP
-            proto,
+            parse_proto(proto)?,
             None,
             addr,
             Some(addr),
@@ -175,7 +178,10 @@ impl Candidate {
     ///
     /// Server reflexive candidates are local sockets mapped to external ip discovered
     /// via a STUN binding request.
-    pub fn server_reflexive(addr: SocketAddr, proto: CandidateProtocol) -> Result<Self, IceError> {
+    pub fn server_reflexive(
+        addr: SocketAddr,
+        proto: impl TryInto<CandidateProtocol>,
+    ) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
         }
@@ -183,7 +189,7 @@ impl Candidate {
         Ok(Candidate::new(
             None,
             1, // only RTP
-            proto,
+            parse_proto(proto)?,
             None,
             addr,
             Some(addr),
@@ -197,7 +203,10 @@ impl Candidate {
     ///
     /// Relayed candidates are server sockets relaying traffic to a local socket.
     /// Allocate a TURN addr to use as a local candidate.
-    pub fn relayed(addr: SocketAddr, network_type: &str) -> Result<Self, IceError> {
+    pub fn relayed(
+        addr: SocketAddr,
+        proto: impl TryInto<CandidateProtocol>,
+    ) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
         }
@@ -205,7 +214,7 @@ impl Candidate {
         Ok(Candidate::new(
             None,
             1, // only RTP
-            network_type.try_into()?,
+            parse_proto(proto)?,
             None,
             addr,
             Some(addr),
@@ -410,6 +419,12 @@ impl Candidate {
     }
 }
 
+fn parse_proto(proto: impl TryInto<CandidateProtocol>) -> Result<CandidateProtocol, IceError> {
+    proto
+        .try_into()
+        .map_err(|_| IceError::BadCandidate(format!("invalid protocol")))
+}
+
 /// Type of candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CandidateKind {
@@ -451,7 +466,7 @@ pub enum CandidateProtocol {
 }
 
 impl TryFrom<&str> for CandidateProtocol {
-    type Error = IceError;
+    type Error = ();
 
     fn try_from(proto: &str) -> Result<Self, Self::Error> {
         let proto = proto.to_lowercase();
@@ -460,10 +475,7 @@ impl TryFrom<&str> for CandidateProtocol {
             "tcp" => Ok(CandidateProtocol::Tcp),
             "ssltcp" => Ok(CandidateProtocol::SslTcp),
             "tls" => Ok(CandidateProtocol::Tls),
-            _ => Err(IceError::BadCandidate(format!(
-                "invalid protocol {}",
-                proto
-            ))),
+            _ => Err(()),
         }
     }
 }
@@ -482,7 +494,7 @@ impl From<CandidateProtocol> for &str {
 impl fmt::Display for CandidateProtocol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let x: &str = (*self).into();
-        write!(f, "{x}")
+        write!(f, "{}", x)
     }
 }
 
