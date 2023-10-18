@@ -446,39 +446,6 @@ impl fmt::Display for CandidateKind {
     }
 }
 
-impl TryFrom<&str> for Protocol {
-    type Error = ();
-
-    fn try_from(proto: &str) -> Result<Self, Self::Error> {
-        let proto = proto.to_lowercase();
-        match proto.as_str() {
-            "udp" => Ok(Protocol::Udp),
-            "tcp" => Ok(Protocol::Tcp),
-            "ssltcp" => Ok(Protocol::SslTcp),
-            "tls" => Ok(Protocol::Tls),
-            _ => Err(()),
-        }
-    }
-}
-
-impl From<Protocol> for &str {
-    fn from(proto: Protocol) -> Self {
-        match proto {
-            Protocol::Udp => "udp",
-            Protocol::Tcp => "tcp",
-            Protocol::SslTcp => "ssltcp",
-            Protocol::Tls => "tls",
-        }
-    }
-}
-
-impl fmt::Display for Protocol {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let x: &str = (*self).into();
-        write!(f, "{}", x)
-    }
-}
-
 fn is_valid_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v) => {
