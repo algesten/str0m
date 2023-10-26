@@ -467,6 +467,76 @@ to safely discard a faulty `Rtc` instance. Since `Rtc` has no internal threads, 
 tasks, discarding the instance never risk poisoning locks or other issues that can happen
 when catching a panic.
 
+### FAQ
+
+#### Features
+
+Below is a brief comparison of features between libWebRTC and str0m to help you determine if str0m is suitable for your project.
+
+| Feature                  | str0m              | libWebRTC          |
+| ------------------------ | ------------------ | ------------------ |
+| Peer Connection API      | :x:                | :white_check_mark: |
+| SDP                      | :white_check_mark: | :white_check_mark: |
+| ICE                      | :white_check_mark: | :white_check_mark: |
+| Data Channels            | :white_check_mark: | :white_check_mark: |
+| Send/Recv Reports        | :white_check_mark: | :white_check_mark: |
+| Transport Wide CC        | :white_check_mark: | :white_check_mark: |
+| Bandwidth Estimation     | :white_check_mark: | :white_check_mark: |
+| Simulcast                | :white_check_mark: | :white_check_mark: |
+| NACK                     | :white_check_mark: | :white_check_mark: |
+| Packetize                | :white_check_mark: | :white_check_mark: |
+| Fixed Depacketize Buffer | :white_check_mark: | :white_check_mark: |
+| Adaptive Jitter Buffer   | :x:                | :white_check_mark: |
+| Video encode             | :x:                | :white_check_mark: |
+| Video decode             | :x:                | :white_check_mark: |
+| Video capture            | :x:                | :white_check_mark: |
+| Audio encode             | :x:                | :white_check_mark: |
+| Audio decode             | :x:                | :white_check_mark: |
+| Audio capture            | :x:                | :white_check_mark: |
+| Audio render             | :x:                | :white_check_mark: |
+| Turn                     | :x:                | :white_check_mark: |
+| Network interface enum   | :x:                | :white_check_mark: |
+
+#### Platform Support
+
+Platforms str0m is compiled and tested on:
+
+| Platform                   | Compiled          | Tested            |
+| -------------------------- | ----------------- | ----------------- |
+| `x86_64-pc-windows-msvc`   | :white_check_mark:| :white_check_mark:|
+| `x86_64-unknown-linux-gnu` | :white_check_mark:| :white_check_mark:|
+| `x86_64-apple-darwin`      | :white_check_mark:| :white_check_mark:|
+
+If your platform isn't listed but is supported by Rust, we'd love for you to give str0m a try and share your experience. We greatly appreciate your feedback!
+
+#### Does str0m support IPv4, IPv6, UDP and TCP?
+
+Certainly! str0m fully support IPv4, IPv6, UDP and TCP protocols.
+
+#### Can I utilize str0m with any Rust async runtime?
+
+Absolutely! str0m is fully sync, ensuring that it integrates seamlessly with any Rust async runtime you opt for.
+
+#### Can I create a client with str0m?
+
+Of course! You have the freedom to create a client with str0m. However, please note that some common client features like media encoding, decoding, and capture are not included in str0m. But don't let that stop you from building amazing applications!
+
+#### Can I use str0m in a media server?
+
+Yes! str0m excels as a server component with support for both RTP API and Sample API. You can easily build that recording server or SFU you dreamt of in Rust!
+
+#### Can I deploy the chat example into production?
+
+While the chat example showcases how to use str0m's API, it's not intended for production use or heavy load. Writing a full-featured SFU or MCU (Multipoint Control Unit) is a significant undertaking, involving various design decisions based on production requirements.
+
+#### Discovered a bug? Here's how to share it with us
+
+We'd love to hear about it! Please submit an issue and consider joining our Zulip community to discuss further. For a seamless reporting experience, refer to this exemplary bug report: <https://github.com/algesten/str0m/issues/382>. We appreciate your contribution to making str0m better!
+
+#### I am allergic to SDP can you help me?
+
+Yes use the direct API!
+
 [sansio]:     https://sans-io.readthedocs.io
 [quinn]:      https://github.com/quinn-rs/quinn
 [pion]:       https://github.com/pion/webrtc
