@@ -6,11 +6,8 @@ use std::time::Instant;
 
 use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SenderInfo, SeqNo};
 
-use self::vp8_contiguity::Vp8Contiguity;
-
+use super::vp8_contiguity::Vp8Contiguity;
 use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError, Vp8CodecExtra};
-
-mod vp8_contiguity;
 
 #[derive(Clone, PartialEq, Eq)]
 /// Holds metadata incoming RTP data.
@@ -85,7 +82,7 @@ pub struct DepacketizingBuffer {
     last_emitted: Option<(SeqNo, CodecExtra)>,
     max_time: Option<MediaTime>,
     depack_cache: Option<(SeqNo, Depacketized)>,
-    vp8_contiguity: vp8_contiguity::Vp8Contiguity,
+    vp8_contiguity: Vp8Contiguity,
 }
 
 impl DepacketizingBuffer {
