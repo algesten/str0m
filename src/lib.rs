@@ -499,12 +499,9 @@
 //! | Packetize                | :white_check_mark: | :white_check_mark: |
 //! | Fixed Depacketize Buffer | :white_check_mark: | :white_check_mark: |
 //! | Adaptive Jitter Buffer   | :x:                | :white_check_mark: |
-//! | Video encode             | :x:                | :white_check_mark: |
-//! | Video decode             | :x:                | :white_check_mark: |
-//! | Video capture            | :x:                | :white_check_mark: |
-//! | Audio encode             | :x:                | :white_check_mark: |
-//! | Audio decode             | :x:                | :white_check_mark: |
-//! | Audio capture            | :x:                | :white_check_mark: |
+//! | Video/audio capture      | :x:                | :white_check_mark: |
+//! | Video/audio encode       | :x:                | :white_check_mark: |
+//! | Video/audio decode       | :x:                | :white_check_mark: |
 //! | Audio render             | :x:                | :white_check_mark: |
 //! | Turn                     | :x:                | :white_check_mark: |
 //! | Network interface enum   | :x:                | :white_check_mark: |
