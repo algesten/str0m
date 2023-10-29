@@ -482,7 +482,8 @@
 //!
 //! ### Features
 //!
-//! Below is a brief comparison of features between libWebRTC and str0m to help you determine if str0m is suitable for your project.
+//! Below is a brief comparison of features between libWebRTC and str0m to help you determine
+//! if str0m is suitable for your project.
 //!
 //! | Feature                  | str0m              | libWebRTC          |
 //! | ------------------------ | ------------------ | ------------------ |
@@ -518,7 +519,8 @@
 //! | `x86_64-unknown-linux-gnu` | :white_check_mark:| :white_check_mark:|
 //! | `x86_64-apple-darwin`      | :white_check_mark:| :white_check_mark:|
 //!
-//! If your platform isn't listed but is supported by Rust, we'd love for you to give str0m a try and share your experience. We greatly appreciate your feedback!
+//! If your platform isn't listed but is supported by Rust, we'd love for you to give str0m a try and
+//! share your experience. We greatly appreciate your feedback!
 //!
 //! ### Does str0m support IPv4, IPv6, UDP and TCP?
 //!
@@ -526,23 +528,32 @@
 //!
 //! ### Can I utilize str0m with any Rust async runtime?
 //!
-//! Absolutely! str0m is fully sync, ensuring that it integrates seamlessly with any Rust async runtime you opt for.
+//! Absolutely! str0m is fully sync, ensuring that it integrates seamlessly with any Rust async
+//! runtime you opt for.
 //!
 //! ### Can I create a client with str0m?
 //!
-//! Of course! You have the freedom to create a client with str0m. However, please note that some common client features like media encoding, decoding, and capture are not included in str0m. But don't let that stop you from building amazing applications!
+//! Of course! You have the freedom to create a client with str0m. However, please note that some
+//! common client features like media encoding, decoding, and capture are not included in str0m. But
+//! don't let that stop you from building amazing applications!
 //!
 //! ### Can I use str0m in a media server?
 //!
-//! Yes! str0m excels as a server component with support for both RTP API and Sample API. You can easily build that recording server or SFU you dreamt of in Rust!
+//! Yes! str0m excels as a server component with support for both RTP API and Sample API. You can
+//! easily build that recording server or SFU you dreamt of in Rust!
 //!
 //! ### Can I deploy the chat example into production?
 //!
-//! While the chat example showcases how to use str0m's API, it's not intended for production use or heavy load. Writing a full-featured SFU or MCU (Multipoint Control Unit) is a significant undertaking, involving various design decisions based on production requirements.
+//! While the chat example showcases how to use str0m's API, it's not intended for production use or
+//! heavy load. Writing a full-featured SFU or MCU (Multipoint Control Unit) is a significant
+//! undertaking, involving various design decisions based on production requirements.
 //!
 //! ### Discovered a bug? Here's how to share it with us
 //!
-//! We'd love to hear about it! Please submit an issue and consider joining our Zulip community to discuss further. For a seamless reporting experience, refer to this exemplary bug report: <https://github.com/algesten/str0m/issues/382>. We appreciate your contribution to making str0m better!
+//! We'd love to hear about it! Please submit an issue and consider joining our Zulip community
+//! to discuss further. For a seamless reporting experience, refer to this exemplary
+//! bug report: <https://github.com/algesten/str0m/issues/382>. We appreciate your contribution
+//! to making str0m better!
 //!
 //! ### I am allergic to SDP can you help me?
 //!
