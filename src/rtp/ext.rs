@@ -927,6 +927,7 @@ impl UserExtensionValues {
     /// exts.user_values.set(MySpecialType(42));
     /// ```
     pub fn set<T: Send + Sync + 'static>(&mut self, val: T) {
+        // TODO: Consider simplifying to "self.set_arc(Arc::new(val))";
         self.map
             .get_or_insert_with(HashMap::default)
             .insert(TypeId::of::<T>(), Arc::new(val));
@@ -952,6 +953,25 @@ impl UserExtensionValues {
             .and_then(|map| map.get(&TypeId::of::<T>()))
             // unwrap here is OK because TypeId::of::<T> is guaranteed to be unique
             .map(|boxed| (&**boxed as &(dyn Any + 'static)).downcast_ref().unwrap())
+    }
+
+    /// Like .set(), but takes an Arc, which can be nice to avoid cloning
+    /// large extension values.
+    pub fn set_arc<T: Send + Sync + 'static>(&mut self, val: Arc<T>) {
+        self.map
+            .get_or_insert_with(HashMap::default)
+            .insert(TypeId::of::<T>(), val);
+    }
+
+    /// Like .get(), but clones and returns the Arc, which can be nice to
+    /// avoid cloning large extension values.
+    pub fn get_arc<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        self.map
+            .as_ref()?
+            .get(&TypeId::of::<T>())?
+            .clone()
+            .downcast()
+            .ok()
     }
 }
 
