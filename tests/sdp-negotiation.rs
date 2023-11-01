@@ -225,10 +225,10 @@ fn answer_remaps() {
     // This negotiates a video track.
     let (l, r) = with_exts(exts_l, exts_r);
 
-    let v_l: Vec<_> = l.exts().iter(false).collect();
-    let v_r: Vec<_> = r.exts().iter(false).collect();
-    let a_l: Vec<_> = l.exts().iter(true).collect();
-    let a_r: Vec<_> = r.exts().iter(true).collect();
+    let v_l: Vec<_> = l.exts().iter_video().collect();
+    let v_r: Vec<_> = r.exts().iter_video().collect();
+    let a_l: Vec<_> = l.exts().iter_audio().collect();
+    let a_r: Vec<_> = r.exts().iter_audio().collect();
 
     // L locks 3 and changes it from 14
     // R keeps 3 and changes it from 14.
@@ -281,11 +281,11 @@ fn offers_unsupported_extension() {
     let (l, r) = with_exts(exts_l, exts_r);
 
     assert_eq!(
-        l.exts().iter(false).collect::<Vec<_>>(),
+        l.exts().iter_video().collect::<Vec<_>>(),
         vec![(3, &VideoOrientation), (8, &ColorSpace)]
     );
     assert_eq!(
-        r.exts().iter(false).collect::<Vec<_>>(),
+        r.exts().iter_video().collect::<Vec<_>>(),
         vec![(3, &VideoOrientation)]
     );
 
@@ -295,13 +295,13 @@ fn offers_unsupported_extension() {
 
     // L media did not get R unsupported ext, despite that being configured on session.
     assert_eq!(
-        m_l.remote_extmap().iter(false).collect::<Vec<_>>(),
+        m_l.remote_extmap().iter_video().collect::<Vec<_>>(),
         vec![(3, &VideoOrientation)]
     );
 
     // R media didn't get the unsupported ext.
     assert_eq!(
-        m_r.remote_extmap().iter(false).collect::<Vec<_>>(),
+        m_r.remote_extmap().iter_video().collect::<Vec<_>>(),
         vec![(3, &VideoOrientation)]
     );
 }
