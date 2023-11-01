@@ -183,7 +183,10 @@ impl RtpHeader {
             }
 
             let Some(exts_form) = ExtensionsForm::parse([buf[0], buf[1]]) else {
-                trace!("Ignoring unknown RTP header extensions form: {:?}", u16::from_be_bytes([buf[0], buf[1]]));
+                trace!(
+                    "Ignoring unknown RTP header extensions form: {:?}",
+                    u16::from_be_bytes([buf[0], buf[1]])
+                );
                 return None;
             };
             let ext_words = u16::from_be_bytes([buf[2], buf[3]]);
