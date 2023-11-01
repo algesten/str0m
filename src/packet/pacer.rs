@@ -431,30 +431,32 @@ impl LeakyBucketPacer {
             .filter_map(|qs| (qs.snapshot.first_unsent.map(|t| (t, qs))))
             .min_by_key(|(t, _)| *t);
 
-        // Unpaced packets (such as audio by default) are sent immediately.
+        // Unpaced packets (such as audio buy default) are sent immediately.
         if let Some((queued_at, qs)) = unpaced {
             return Some((queued_at, Some(qs)));
         }
 
         // "Media queue" as opposed to a "padding queue".
-        let non_empty_media_queue = {
-            let non_empty_media_queues = self.queue_states.iter().filter(|q| {
-                let is_none_empty_media_queue = match q.snapshot.priority {
+        let non_empty_queue = {
+            let non_empty_queues = self.queue_states.iter().filter(|q| {
+                let is_none_empty_queue = match q.snapshot.priority {
                     QueuePriority::Media => true,
-                    QueuePriority::Padding => false,
-                    QueuePriority::Empty => false,
+                    // TODO: Try changing this to false.  Currently, if it's false, the test_realistic test fails.
+                    QueuePriority::Padding => true,
+                    // TODO: Try removing "q.snapshot.packet_count > 0" and using "QueuePriority::Empty => false" instead
+                    QueuePriority::Empty => true,
                 };
-                q.snapshot.packet_count > 0 && is_none_empty_media_queue
+                q.snapshot.packet_count > 0 && is_none_empty_queue
             });
 
-            // Send on the non-empty media queue with the lowest priority that, was least recently
+            // Send on the non-empty queue with the lowest priority that, was least recently
             // sent on.
-            non_empty_media_queues.min_by_key(|q| (q.snapshot.priority, q.snapshot.last_emitted))
+            non_empty_queues.min_by_key(|q| (q.snapshot.priority, q.snapshot.last_emitted))
         };
 
-        if let Some(non_empty_media_queue) = non_empty_media_queue {
+        if let Some(queue) = non_empty_queue {
             if self.adjusted_bitrate > Bitrate::ZERO {
-                // If we have a non-empty media queue, send on it as soon as possible, possibly waiting
+                // If we have a non-empty queue, send on it as soon as possible, possibly waiting
                 // for the next pacing interval.
                 let drain_debt_time = self.media_debt / self.adjusted_bitrate;
                 let next_send_offset = if drain_debt_time > PACING {
@@ -470,7 +472,7 @@ impl LeakyBucketPacer {
                     .map(|h| h + next_send_offset)
                     .unwrap_or(now);
 
-                return Some((poll_at, Some(non_empty_media_queue)));
+                return Some((poll_at, Some(queue)));
             }
         }
 
