@@ -58,6 +58,52 @@ pub enum Extension {
     UnknownUri(String, Arc<dyn ExtensionSerializer>),
 }
 
+// All header extensions must have a common "form", either using
+// 1 byte for the (ID, len) or 2 bytes for the (ID, len).
+// If one extension requires the two byte form
+// (probably because of its size, but possibly because of ID),
+// The form must be the two-byte variety for all of them.
+#[repr(u16)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ExtensionsForm {
+    // See RFC 8285 Section 4.2
+    // ID Range: 1..=14
+    // Length Range: 1..=16
+    OneByte = 0xBEDE,
+    // See RFC 8285 Section 4.3
+    // ID Range: 1..=255
+    // Length Range: 0..=255
+    TwoByte = 0x1000,
+}
+
+pub const MAX_ID_ONE_BYTE_FORM: u8 = 14;
+// With the two byte form, it could be 255, but supporting larger values makes the ExtensionMap larger.
+// So we support only up to this ID for now.
+pub const MAX_ID: u8 = 16;
+
+impl ExtensionsForm {
+    pub(crate) fn as_u16(self) -> u16 {
+        self as u16
+    }
+
+    pub(crate) fn serialize(self) -> [u8; 2] {
+        // App bits set to 0
+        self.as_u16().to_be_bytes()
+    }
+
+    pub(crate) fn parse(bytes: [u8; 2]) -> Option<Self> {
+        let serialized = u16::from_be_bytes(bytes);
+        if serialized == ExtensionsForm::OneByte.as_u16() {
+            Some(ExtensionsForm::OneByte)
+        // Ignore the app bits
+        } else if (serialized & 0xFFF0) == ExtensionsForm::TwoByte.as_u16() {
+            Some(ExtensionsForm::TwoByte)
+        } else {
+            None
+        }
+    }
+}
+
 // TODO: think this through. Is it unwind safe?
 impl UnwindSafe for Extension {}
 
@@ -75,6 +121,22 @@ pub trait ExtensionSerializer: Debug + Send + Sync + 'static {
 
     /// Tell if this extension should be used for audio media.
     fn is_audio(&self) -> bool;
+
+    /// When calling write_to, if the size of the written value may exceed 16 bytes,
+    /// or may be 0 bytes, the two byte header extension form must be used.
+    /// Otherwise, the one byte form may be used, which is usually the case.
+    fn requires_two_byte_form(&self, _ev: &ExtensionValues) -> bool {
+        false
+    }
+}
+
+impl Extension {
+    fn requires_two_byte_form(&self, ev: &ExtensionValues) -> bool {
+        match self {
+            Extension::UnknownUri(_, serializer) => serializer.requires_two_byte_form(ev),
+            _ => false,
+        }
+    }
 }
 
 /// This is a placeholder value for when the Extension URI are parsed in an SDP OFFER/ANSWER.
@@ -272,7 +334,7 @@ impl Extension {
 
 /// Mapping between RTP extension id to what extension that is.
 #[derive(Clone, PartialEq, Eq)]
-pub struct ExtensionMap([Option<MapEntry>; 14]); // index 0 is extmap:1.
+pub struct ExtensionMap([Option<MapEntry>; MAX_ID as usize]); // index 0 is extmap:1.
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MapEntry {
@@ -312,10 +374,10 @@ impl ExtensionMap {
 
     /// Set a mapping for an extension.
     ///
-    /// The id must be 1-14 inclusive (1-indexed).
+    /// The id must be in 1..=MAX_ID (1-indexed).
     pub fn set(&mut self, id: u8, ext: Extension) {
-        if id < 1 || id > 14 {
-            debug!("Set RTP extension out of range 1-14: {}", id);
+        if id < 1 || id > MAX_ID {
+            debug!("Set RTP extension out of range 1-{}: {}", MAX_ID, id);
             return;
         }
         let idx = id as usize - 1;
@@ -327,12 +389,12 @@ impl ExtensionMap {
 
     /// Look up the extension for the id.
     ///
-    /// The id must be 1-14 inclusive (1-indexed).
+    /// The id must be in 1..=MAX_ID (1-indexed).
     pub fn lookup(&self, id: u8) -> Option<&Extension> {
-        if id >= 1 && id <= 14 {
+        if id >= 1 && id <= MAX_ID {
             self.0[id as usize - 1].as_ref().map(|m| &m.ext)
         } else {
-            debug!("Lookup RTP extension out of range 1-14: {}", id);
+            debug!("Lookup RTP extension out of range 1-{}: {}", MAX_ID, id);
             None
         }
     }
@@ -348,33 +410,52 @@ impl ExtensionMap {
     }
 
     /// Returns an iterator over the elements of the extension map
-    ///
-    /// Filtering them based on the provided `audio` flag
-    pub fn iter(&self, audio: bool) -> impl Iterator<Item = (u8, &Extension)> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = (u8, &Extension)> + '_ {
         self.0
             .iter()
             .enumerate()
             .filter_map(|(i, e)| e.as_ref().map(|e| (i, e)))
-            .filter(move |(_, e)| {
-                if audio {
-                    e.ext.is_audio()
-                } else {
-                    e.ext.is_video()
-                }
-            })
             .map(|(i, e)| ((i + 1) as u8, &e.ext))
+    }
+
+    /// Returns an iterator over the audio or video elements of the extension map
+    pub fn iter_by_media_type(&self, audio: bool) -> impl Iterator<Item = (u8, &Extension)> + '_ {
+        self.iter().filter(move |(_id, ext)| {
+            if audio {
+                ext.is_audio()
+            } else {
+                ext.is_video()
+            }
+        })
+    }
+
+    /// Returns an iterator over the audio elements of the extension map
+    #[allow(unused)]
+    pub fn iter_audio(&self) -> impl Iterator<Item = (u8, &Extension)> + '_ {
+        self.iter_by_media_type(true)
+    }
+
+    /// Returns an iterator over the video elements of the extension map
+    #[allow(unused)]
+    pub fn iter_video(&self) -> impl Iterator<Item = (u8, &Extension)> + '_ {
+        self.iter_by_media_type(false)
     }
 
     pub(crate) fn cloned_with_type(&self, audio: bool) -> Self {
         let mut x = ExtensionMap::empty();
-        for (id, ext) in self.iter(audio) {
+        for (id, ext) in self.iter_by_media_type(audio) {
             x.set(id, ext.clone());
         }
         x
     }
 
     // https://tools.ietf.org/html/rfc5285
-    pub(crate) fn parse(&self, mut buf: &[u8], ext_vals: &mut ExtensionValues) {
+    pub(crate) fn parse(
+        &self,
+        mut buf: &[u8],
+        form: ExtensionsForm,
+        ext_vals: &mut ExtensionValues,
+    ) {
         loop {
             if buf.is_empty() {
                 return;
@@ -386,18 +467,33 @@ impl ExtensionMap {
                 continue;
             }
 
-            let id = buf[0] >> 4;
-            let len = (buf[0] & 0xf) as usize + 1;
-            buf = &buf[1..];
+            let (id, len) = match form {
+                ExtensionsForm::OneByte => {
+                    let id = buf[0] >> 4;
+                    let len = (buf[0] & 0xf) as usize + 1;
+                    buf = &buf[1..];
 
-            if id == 15 {
-                // If the ID value 15 is
-                // encountered, its length field should be ignored, processing of the
-                // entire extension should terminate at that point, and only the
-                // extension elements present prior to the element with ID 15
-                // considered.
-                return;
-            }
+                    if id == 15 {
+                        // If the ID value 15 is
+                        // encountered, its length field should be ignored, processing of the
+                        // entire extension should terminate at that point, and only the
+                        // extension elements present prior to the element with ID 15
+                        // considered.
+                        return;
+                    }
+                    (id, len)
+                }
+                ExtensionsForm::TwoByte => {
+                    if buf.len() < 2 {
+                        trace!("Not enough ext header len: {} < {}", buf.len(), 2);
+                        return;
+                    }
+                    let id = buf[0];
+                    let len = buf[1] as usize;
+                    buf = &buf[2..];
+                    (id, len)
+                }
+            };
 
             if buf.len() < len {
                 trace!("Not enough type ext len: {} < {}", buf.len(), len);
@@ -413,18 +509,45 @@ impl ExtensionMap {
         }
     }
 
-    pub(crate) fn write_to(&self, ext_buf: &mut [u8], ev: &ExtensionValues) -> usize {
+    pub(crate) fn form(&self, ev: &ExtensionValues) -> ExtensionsForm {
+        if self
+            .iter()
+            .any(|(id, ext)| id > MAX_ID_ONE_BYTE_FORM || ext.requires_two_byte_form(ev))
+        {
+            ExtensionsForm::TwoByte
+        } else {
+            ExtensionsForm::OneByte
+        }
+    }
+
+    pub(crate) fn write_to(
+        &self,
+        ext_buf: &mut [u8],
+        ev: &ExtensionValues,
+        form: ExtensionsForm,
+    ) -> usize {
         let orig_len = ext_buf.len();
         let mut b = ext_buf;
 
         for (idx, x) in self.0.iter().enumerate() {
             if let Some(v) = x {
-                if let Some(n) = v.ext.write_to(&mut b[1..], ev) {
-                    assert!(n <= 16);
-                    assert!(n > 0);
-                    b[0] = (idx as u8 + 1) << 4 | (n as u8 - 1);
-                    b = &mut b[1 + n..];
-                }
+                match form {
+                    ExtensionsForm::OneByte => {
+                        if let Some(n) = v.ext.write_to(&mut b[1..], ev) {
+                            assert!(n <= 16);
+                            assert!(n > 0);
+                            b[0] = (idx as u8 + 1) << 4 | (n as u8 - 1);
+                            b = &mut b[1 + n..];
+                        }
+                    }
+                    ExtensionsForm::TwoByte => {
+                        if let Some(n) = v.ext.write_to(&mut b[2..], ev) {
+                            b[0] = (idx + 1) as u8;
+                            b[1] = n as u8;
+                            b = &mut b[2 + n..];
+                        }
+                    }
+                };
             }
         }
 
@@ -439,7 +562,7 @@ impl ExtensionMap {
     }
 
     fn swap(&mut self, id: u8, ext: &Extension) {
-        if id < 1 || id > 14 {
+        if id < 1 || id > MAX_ID {
             return;
         }
 
@@ -1002,10 +1125,29 @@ mod test {
         };
 
         let mut buf = vec![0_u8; 8];
-        exts.write_to(&mut buf[..], &ev);
+        exts.write_to(&mut buf[..], &ev, ExtensionsForm::OneByte);
 
         let mut ev2 = ExtensionValues::default();
-        exts.parse(&buf, &mut ev2);
+        exts.parse(&buf, ExtensionsForm::OneByte, &mut ev2);
+
+        assert_eq!(ev.abs_send_time, ev2.abs_send_time);
+    }
+
+    #[test]
+    fn abs_send_time_two_byte_form() {
+        let mut exts = ExtensionMap::empty();
+        exts.set(16, Extension::AbsoluteSendTime);
+        let ev = ExtensionValues {
+            abs_send_time: Some(MediaTime::new(1, FIXED_POINT_6_18)),
+            ..Default::default()
+        };
+
+        let mut buf = vec![0_u8; 8];
+        assert_eq!(ExtensionsForm::TwoByte, exts.form(&ev));
+        exts.write_to(&mut buf[..], &ev, ExtensionsForm::TwoByte);
+
+        let mut ev2 = ExtensionValues::default();
+        exts.parse(&buf, ExtensionsForm::TwoByte, &mut ev2);
 
         assert_eq!(ev.abs_send_time, ev2.abs_send_time);
     }
@@ -1021,10 +1163,10 @@ mod test {
         };
 
         let mut buf = vec![0_u8; 8];
-        exts.write_to(&mut buf[..], &ev);
+        exts.write_to(&mut buf[..], &ev, ExtensionsForm::OneByte);
 
         let mut ev2 = ExtensionValues::default();
-        exts.parse(&buf, &mut ev2);
+        exts.parse(&buf, ExtensionsForm::OneByte, &mut ev2);
 
         assert_eq!(ev.play_delay_min, ev2.play_delay_min);
         assert_eq!(ev.play_delay_max, ev2.play_delay_max);
@@ -1038,13 +1180,13 @@ mod test {
         let mut e2 = ExtensionMap::empty();
         e2.set(14, TransportSequenceNumber);
 
-        println!("{:?}", e1.iter(false).collect::<Vec<_>>());
+        println!("{:?}", e1.iter_video().collect::<Vec<_>>());
 
-        e1.remap(&e2.iter(true).collect::<Vec<_>>());
+        e1.remap(&e2.iter_audio().collect::<Vec<_>>());
 
         // e1 should have adjusted the TransportSequenceNumber for audio
         assert_eq!(
-            e1.iter(true).collect::<Vec<_>>(),
+            e1.iter_audio().collect::<Vec<_>>(),
             vec![
                 (1, &AudioLevel),
                 (2, &AbsoluteSendTime),
@@ -1057,7 +1199,7 @@ mod test {
 
         // e1 should have adjusted the TransportSequenceNumber for vudeo
         assert_eq!(
-            e1.iter(false).collect::<Vec<_>>(),
+            e1.iter_video().collect::<Vec<_>>(),
             vec![
                 (2, &AbsoluteSendTime),
                 (4, &RtpMid),
@@ -1081,11 +1223,11 @@ mod test {
         e2.set(14, TransportSequenceNumber);
         e2.set(12, VideoOrientation);
 
-        e1.remap(&e2.iter(false).collect::<Vec<_>>());
+        e1.remap(&e2.iter_video().collect::<Vec<_>>());
 
         // e1 should have adjusted to e2.
         assert_eq!(
-            e1.iter(false).collect::<Vec<_>>(),
+            e1.iter_video().collect::<Vec<_>>(),
             vec![
                 (5, &VideoContentType),
                 (12, &VideoOrientation),
@@ -1105,11 +1247,11 @@ mod test {
         e2.set(14, TransportSequenceNumber);
         e2.set(12, VideoOrientation);
 
-        e1.remap(&e2.iter(false).collect::<Vec<_>>());
+        e1.remap(&e2.iter_video().collect::<Vec<_>>());
 
         // just make sure the logic isn't wrong for 12-14 -> 14-12
         assert_eq!(
-            e1.iter(false).collect::<Vec<_>>(),
+            e1.iter_video().collect::<Vec<_>>(),
             vec![(12, &VideoOrientation), (14, &TransportSequenceNumber)]
         );
     }
@@ -1132,21 +1274,21 @@ mod test {
         e3.set(12, AudioLevel); // change of type for existing.
 
         // First apply e2
-        e1.remap(&e2.iter(false).collect::<Vec<_>>());
+        e1.remap(&e2.iter_video().collect::<Vec<_>>());
 
         println!("{:#?}", e1.0);
         assert_eq!(
-            e1.iter(false).collect::<Vec<_>>(),
+            e1.iter_video().collect::<Vec<_>>(),
             vec![(12, &VideoOrientation), (14, &TransportSequenceNumber)]
         );
 
         // Now attempt e3
-        e1.remap(&e3.iter(true).collect::<Vec<_>>());
+        e1.remap(&e3.iter_audio().collect::<Vec<_>>());
 
         println!("{:#?}", e1.0);
         // At this point we should have not allowed the change, but remain as it was in first apply.
         assert_eq!(
-            e1.iter(false).collect::<Vec<_>>(),
+            e1.iter_video().collect::<Vec<_>>(),
             vec![(12, &VideoOrientation), (14, &TransportSequenceNumber)]
         );
     }

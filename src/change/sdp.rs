@@ -1165,7 +1165,7 @@ impl AsSdpMediaLine for Media {
         attrs.push(MediaAttribute::Mid(self.mid()));
 
         let audio = self.kind() == MediaKind::Audio;
-        for (id, ext) in self.remote_extmap().iter(audio) {
+        for (id, ext) in self.remote_extmap().iter_by_media_type(audio) {
             attrs.push(MediaAttribute::ExtMap {
                 id,
                 ext: ext.clone(),
