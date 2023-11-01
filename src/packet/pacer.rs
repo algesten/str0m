@@ -436,20 +436,25 @@ impl LeakyBucketPacer {
             return Some((queued_at, Some(qs)));
         }
 
-        let non_empty_queue = {
-            let queues = self
-                .queue_states
-                .iter()
-                .filter(|q| q.snapshot.packet_count > 0 && !q.unpaced);
+        // "Media queue" as opposed to a "padding queue".
+        let non_empty_media_queue = {
+            let non_empty_media_queues = self.queue_states.iter().filter(|q| {
+                let is_none_empty_media_queue = match q.snapshot.priority {
+                    QueuePriority::Media => true,
+                    QueuePriority::Padding => false,
+                    QueuePriority::Empty => false,
+                };
+                q.snapshot.packet_count > 0 && is_none_empty_media_queue
+            });
 
-            // Send on the non-empty video queue with the lowest priority that, was least recently
+            // Send on the non-empty media queue with the lowest priority that, was least recently
             // sent on.
-            queues.min_by_key(|q| (q.snapshot.priority, q.snapshot.last_emitted))
+            non_empty_media_queues.min_by_key(|q| (q.snapshot.priority, q.snapshot.last_emitted))
         };
 
-        if let Some(queue) = non_empty_queue {
+        if let Some(non_empty_media_queue) = non_empty_media_queue {
             if self.adjusted_bitrate > Bitrate::ZERO {
-                // If we have a non-empty queue send on it as soon as possible, possibly waiting
+                // If we have a non-empty media queue, send on it as soon as possible, possibly waiting
                 // for the next pacing interval.
                 let drain_debt_time = self.media_debt / self.adjusted_bitrate;
                 let next_send_offset = if drain_debt_time > PACING {
@@ -465,7 +470,7 @@ impl LeakyBucketPacer {
                     .map(|h| h + next_send_offset)
                     .unwrap_or(now);
 
-                return Some((poll_at, Some(queue)));
+                return Some((poll_at, Some(non_empty_media_queue)));
             }
         }
 
