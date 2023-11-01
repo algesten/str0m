@@ -407,6 +407,7 @@ impl StreamRx {
 
         header.ssrc = self.ssrc;
         header.payload_type = pt;
+        header.ext_vals.rid = header.ext_vals.rid_repair.take();
     }
 
     pub(crate) fn maybe_create_keyframe_request(
