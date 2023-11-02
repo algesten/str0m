@@ -217,6 +217,7 @@ impl<'a> TryFrom<&'a Transmit> for Receive<'a> {
 impl fmt::Debug for Transmit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Transmit")
+            .field("proto", &self.proto)
             .field("source", &self.source)
             .field("destination", &self.destination)
             .field("len", &self.contents.len())
