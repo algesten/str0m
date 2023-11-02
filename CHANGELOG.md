@@ -1,5 +1,8 @@
 # Unreleased
 
+  * UserExtensionValues set_arc/get_arc to avoid cloning
+  * Provide correct Rid for repaired RTP headers
+  * Support 2-byte header extensions
   * Remove a statistics performance bottleneck
   * New ICE Candidate types `server_reflexive` and `relayed`
 
