@@ -431,7 +431,7 @@ impl LeakyBucketPacer {
             .filter_map(|qs| (qs.snapshot.first_unsent.map(|t| (t, qs))))
             .min_by_key(|(t, _)| *t);
 
-        // Unpaced packets (such as audio buy default) are sent immediately.
+        // Unpaced packets (such as audio by default) are sent immediately.
         if let Some((queued_at, qs)) = unpaced {
             return Some((queued_at, Some(qs)));
         }
