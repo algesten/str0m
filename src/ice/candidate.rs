@@ -1,3 +1,9 @@
+use combine::error::StreamError;
+use combine::parser::char::string;
+use combine::stream::StreamErrorFor;
+use combine::{attempt, choice, many1, optional, satisfy, token, ParseError, Parser, Stream};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;
 use std::hash::{Hash, Hasher};
@@ -412,6 +418,33 @@ impl Candidate {
     pub(crate) fn clear_ufrag(&mut self) {
         self.ufrag = None;
     }
+
+    /// Generates a String representation of the candidate.
+    ///
+    /// Specifying m_line will prefix the candidate with "a=" and add a trailing "\r\n".
+    pub(crate) fn to_ice_string(&self, m_line: bool) -> String {
+        let attribute = if m_line { "a=" } else { "" };
+        let mut s = format!(
+            "{attribute}candidate:{} {} {} {} {} {} typ {}",
+            self.foundation(),
+            self.component_id,
+            self.proto,
+            self.prio(),
+            self.addr.ip(),
+            self.addr.port(),
+            self.kind
+        );
+        if let Some((raddr, rport)) = self.raddr.as_ref().map(|r| (r.ip(), r.port())) {
+            s.push_str(&format!(" raddr {} rport {}", raddr, rport));
+        }
+        if let Some(ufrag) = &self.ufrag {
+            s.push_str(&format!(" ufrag {}", ufrag));
+        }
+        if m_line {
+            s.push_str("\r\n");
+        }
+        s
+    }
 }
 
 fn parse_proto(proto: impl TryInto<Protocol>) -> Result<Protocol, IceError> {
@@ -457,23 +490,191 @@ fn is_valid_ip(ip: IpAddr) -> bool {
 // TODO: maybe a bit strange this is used for SDP serializing?
 impl fmt::Display for Candidate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "a=candidate:{} {} {} {} {} {} typ {}",
-            self.foundation(),
-            self.component_id,
-            self.proto,
-            self.prio(),
-            self.addr.ip(),
-            self.addr.port(),
-            self.kind
-        )?;
-        if let Some((raddr, rport)) = self.raddr.as_ref().map(|r| (r.ip(), r.port())) {
-            write!(f, " raddr {raddr} rport {rport}")?;
+        write!(f, "{}", self.to_ice_string(true))
+    }
+}
+
+/// Serialize [Candidate] into trickle ICE candidate format.
+///
+/// Always set `sdpMid` to "" and `sdpMLineIndex` to 0, as we only support one media line.
+///
+/// e.g. serde_json would produce:
+/// ```json
+/// {
+///  "candidate": "candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 1234 typ host",
+///  "sdpMid": "",
+///  "sdpMLineIndex": 0
+///  "usernameFragment": "ufrag"
+/// }
+/// ```
+impl Serialize for Candidate {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut o = serializer.serialize_struct("Candidate", 4)?;
+        o.serialize_field("candidate", &self.to_ice_string(false))?;
+        o.serialize_field("sdpMid", "")?;
+        o.serialize_field("sdpMLineIndex", &0)?;
+        o.serialize_field("usernameFragment", &self.ufrag())?;
+        o.end()
+    }
+}
+
+/// Deserialize [Candidate] from trickle ICE candidate format.
+///
+/// Similar to [Candidate::serialize], we drop `sdpMid` and `sdpMLineIndex` when parsing.
+impl<'de> Deserialize<'de> for Candidate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct CandidateJson {
+            candidate: String,
+            username_fragment: Option<String>,
         }
-        if let Some(ufrag) = &self.ufrag {
-            write!(f, " ufrag {ufrag}")?;
+
+        let CandidateJson {
+            candidate,
+            username_fragment,
+        } = CandidateJson::deserialize(deserializer)?;
+        let (mut c, _) = trickle_candidate_parser()
+            .parse(candidate.as_str())
+            .map_err(|e| serde::de::Error::custom(e))?;
+        if let Some(ufrag) = username_fragment {
+            c.set_ufrag(&ufrag);
         }
-        write!(f, "\r\n")
+
+        Ok(c)
+    }
+}
+
+fn trickle_candidate_parser<Input>() -> impl Parser<Input, Output = Candidate>
+where
+    Input: Stream<Token = char>,
+    Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
+{
+    let port = || {
+        not_sp::<Input>().and_then(|s| {
+            s.parse::<u16>()
+                .map_err(StreamErrorFor::<Input>::message_format)
+        })
+    };
+
+    let ip_addr = || {
+        not_sp().and_then(|s| {
+            s.parse::<IpAddr>()
+                .map_err(StreamErrorFor::<Input>::message_format)
+        })
+    };
+
+    let kind = choice((
+        string("host").map(|_| CandidateKind::Host),
+        string("prflx").map(|_| CandidateKind::PeerReflexive),
+        string("srflx").map(|_| CandidateKind::ServerReflexive),
+        string("relay").map(|_| CandidateKind::Relayed),
+    ));
+
+    (
+        string("candidate:").and_then(|s| {
+            s.parse::<String>()
+                .map_err(StreamErrorFor::<Input>::message_format)
+        }),
+        not_sp(),
+        token(' '),
+        not_sp().and_then(|s| {
+            s.parse::<u16>()
+                .map_err(StreamErrorFor::<Input>::message_format)
+        }),
+        token(' '),
+        not_sp().and_then(|s| {
+            s.as_str().try_into().map_err(|_| {
+                StreamErrorFor::<Input>::message_format(format!("invalid protocol: {}", s))
+            })
+        }),
+        token(' '),
+        not_sp().and_then(|s| {
+            s.parse::<u32>()
+                .map_err(StreamErrorFor::<Input>::message_format)
+        }),
+        token(' '),
+        ip_addr(),
+        token(' '),
+        port(),
+        string(" typ "),
+        kind,
+        optional((
+            attempt(string(" raddr ")),
+            ip_addr(),
+            string(" rport "),
+            port(),
+        )),
+        optional((attempt(string(" ufrag ")), not_sp())),
+    )
+        .map(
+            |(_, found, _, comp_id, _, proto, _, prio, _, addr, _, port, _, kind, raddr, ufrag)| {
+                Candidate::parsed(
+                    found,
+                    comp_id,
+                    proto,
+                    prio, // remote candidates calculate prio on their side
+                    SocketAddr::from((addr, port)),
+                    kind,
+                    raddr.map(|(_, addr, _, port)| SocketAddr::from((addr, port))),
+                    ufrag.map(|(_, u)| u),
+                )
+            },
+        )
+}
+
+fn not_sp<Input>() -> impl Parser<Input, Output = String>
+where
+    Input: Stream<Token = char>,
+    Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
+{
+    many1(satisfy(|c| c != ' ' && c != '\r' && c != '\n'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn serialize_deserialize() {
+        let addr = "1.2.3.4:9876".parse().unwrap();
+        let c1 = Candidate::host(addr, Protocol::Udp).unwrap();
+        let json = serde_json::to_string(&c1).unwrap();
+        println!("{}", json);
+        let c2: Candidate = serde_json::from_str(&json).unwrap();
+        assert_eq!(c1.to_string(), c2.to_string());
+    }
+
+    #[test]
+    fn to_string() {
+        let mut candidate =
+            Candidate::host("1.2.3.4:9876".parse().unwrap(), Protocol::Udp).unwrap();
+        assert_eq!(
+            candidate.to_string(),
+            "a=candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host\r\n"
+        );
+
+        candidate.ufrag = Some("ufrag".into());
+        assert_eq!(
+            candidate.to_string(),
+            "a=candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag\r\n");
+
+        candidate.raddr = Some("5.5.5.5:5555".parse().unwrap());
+        assert_eq!(
+            candidate.to_string(),
+            "a=candidate:6812072969737413130 1 udp 2130706175 1.2.3.4 9876 typ host raddr 5.5.5.5 rport 5555 ufrag ufrag\r\n");
+
+        let candidate =
+            Candidate::relayed("1.2.3.4:9876".parse().unwrap(), Protocol::SslTcp).unwrap();
+        assert_eq!(
+            candidate.to_string(),
+            "a=candidate:432709134138909083 1 ssltcp 16776959 1.2.3.4 9876 typ relay\r\n"
+        );
     }
 }
