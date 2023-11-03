@@ -128,8 +128,7 @@ impl Candidate {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[doc(hidden)]
-    pub fn parsed(
+    pub(crate) fn parsed(
         foundation: String,
         component_id: u16,
         proto: Protocol,
