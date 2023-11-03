@@ -436,18 +436,11 @@ impl LeakyBucketPacer {
             return Some((queued_at, Some(qs)));
         }
 
-        // "Media queue" as opposed to a "padding queue".
         let non_empty_queue = {
-            let non_empty_queues = self.queue_states.iter().filter(|q| {
-                let is_none_empty_queue = match q.snapshot.priority {
-                    QueuePriority::Media => true,
-                    // TODO: Try changing this to false.  Currently, if it's false, the test_realistic test fails.
-                    QueuePriority::Padding => true,
-                    // TODO: Try removing "q.snapshot.packet_count > 0" and using "QueuePriority::Empty => false" instead
-                    QueuePriority::Empty => true,
-                };
-                q.snapshot.packet_count > 0 && is_none_empty_queue
-            });
+            let non_empty_queues = self
+                .queue_states
+                .iter()
+                .filter(|q| q.snapshot.packet_count > 0);
 
             // Send on the non-empty queue with the lowest priority that, was least recently
             // sent on.
