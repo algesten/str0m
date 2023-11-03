@@ -1,3 +1,5 @@
+use super::IceError;
+use crate::io::Protocol;
 use combine::error::StreamError;
 use combine::parser::char::string;
 use combine::stream::StreamErrorFor;
@@ -8,10 +10,6 @@ use std::collections::hash_map::DefaultHasher;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, SocketAddr};
-
-use crate::io::Protocol;
-
-use super::IceError;
 
 /// ICE candidates are network addresses used to connect to a peer.
 ///
@@ -445,6 +443,14 @@ impl Candidate {
         }
         s
     }
+
+    pub fn new_from_ice_string(s: &str) -> Result<Self, IceError> {
+        let (c, _) = trickle_candidate_parser()
+            .parse(s)
+            .map_err(|e| IceError::BadCandidate(format!("{}: {}", s, e)))?;
+
+        Ok(c)
+    }
 }
 
 fn parse_proto(proto: impl TryInto<Protocol>) -> Result<Protocol, IceError> {
@@ -541,15 +547,14 @@ impl<'de> Deserialize<'de> for Candidate {
             username_fragment,
         } = CandidateDeserialized::deserialize(deserializer)?;
 
-        let (mut c, _) = trickle_candidate_parser()
-            .parse(candidate.as_str())
-            .map_err(|e| serde::de::Error::custom(e))?;
+        let mut candidate =
+            Candidate::new_from_ice_string(&candidate).map_err(|e| serde::de::Error::custom(e))?;
 
         if let Some(ufrag) = username_fragment {
-            c.set_ufrag(&ufrag);
+            candidate.set_ufrag(&ufrag);
         }
 
-        Ok(c)
+        Ok(candidate)
     }
 }
 
@@ -709,5 +714,16 @@ mod tests {
             candidate.to_string(),
             "a=candidate:432709134138909083 1 ssltcp 16776959 1.2.3.4 9876 typ relay\r\n"
         );
+    }
+
+    #[test]
+    fn new_from_ice_string() {
+        let candidate = Candidate::new_from_ice_string(
+            "candidate:6812072969737413130 1 udp 2130706175 1.2.3.4 9876 typ host ufrag myuserfrag",
+        )
+        .unwrap();
+
+        assert_eq!(candidate.ufrag(), Some("myuserfrag"));
+        assert_eq!(candidate.addr().to_string(), "1.2.3.4:9876");
     }
 }
