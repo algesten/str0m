@@ -224,7 +224,7 @@ impl Candidate {
     }
 
     /// Creates a new ICE candidate from a string.
-    pub fn new_from_ice_string(s: &str) -> Result<Self, IceError> {
+    pub fn new_from_ice_str(s: &str) -> Result<Self, IceError> {
         let (c, _) = trickle_candidate_parser()
             .parse(s)
             .map_err(|e| IceError::BadCandidate(format!("{}: {}", s, e)))?;
@@ -549,7 +549,7 @@ impl<'de> Deserialize<'de> for Candidate {
         } = CandidateDeserialized::deserialize(deserializer)?;
 
         let mut candidate =
-            Candidate::new_from_ice_string(&candidate).map_err(|e| serde::de::Error::custom(e))?;
+            Candidate::new_from_ice_str(&candidate).map_err(|e| serde::de::Error::custom(e))?;
 
         if let Some(ufrag) = username_fragment {
             candidate.set_ufrag(&ufrag);
@@ -719,7 +719,7 @@ mod tests {
 
     #[test]
     fn new_from_ice_string() {
-        let candidate = Candidate::new_from_ice_string(
+        let candidate = Candidate::new_from_ice_str(
             "candidate:6812072969737413130 1 udp 2130706175 1.2.3.4 9876 typ host ufrag myuserfrag",
         )
         .unwrap();
