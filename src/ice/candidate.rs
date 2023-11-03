@@ -429,7 +429,7 @@ impl Candidate {
     /// Generates a String representation of the candidate.
     ///
     /// Specifying m_line will prefix the candidate with "a=" and add a trailing "\r\n".
-    pub(crate) fn to_ice_string(&self, m_line: bool) -> String {
+    pub fn to_ice_string(&self, m_line: bool) -> String {
         let attribute = if m_line { "a=" } else { "" };
         let mut s = format!(
             "{attribute}candidate:{} {} {} {} {} {} typ {}",
