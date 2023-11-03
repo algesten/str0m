@@ -531,18 +531,20 @@ impl<'de> Deserialize<'de> for Candidate {
     {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
-        struct CandidateJson {
+        struct CandidateDeserialized {
             candidate: String,
             username_fragment: Option<String>,
         }
 
-        let CandidateJson {
+        let CandidateDeserialized {
             candidate,
             username_fragment,
-        } = CandidateJson::deserialize(deserializer)?;
+        } = CandidateDeserialized::deserialize(deserializer)?;
+
         let (mut c, _) = trickle_candidate_parser()
             .parse(candidate.as_str())
             .map_err(|e| serde::de::Error::custom(e))?;
+
         if let Some(ufrag) = username_fragment {
             c.set_ufrag(&ufrag);
         }
@@ -642,19 +644,51 @@ mod tests {
     use super::*;
 
     #[test]
-    fn serialize_deserialize() {
-        let addr = "1.2.3.4:9876".parse().unwrap();
-        let c1 = Candidate::host(addr, Protocol::Udp).unwrap();
+    fn basic_serialize_deserialize() {
+        let socket_addr = "1.2.3.4:9876".parse().unwrap();
+        let c1 = Candidate::host(socket_addr, Protocol::Udp).unwrap();
         let json = serde_json::to_string(&c1).unwrap();
-        println!("{}", json);
         let c2: Candidate = serde_json::from_str(&json).unwrap();
+        // Can't test equality because foundation is calculated on the fly. Use string compare instead.
         assert_eq!(c1.to_string(), c2.to_string());
     }
 
     #[test]
+    fn serialize() {
+        let socket_addr = "1.2.3.4:9876".parse().unwrap();
+        let mut candidate = Candidate::host(socket_addr, Protocol::Udp).unwrap();
+        assert_eq!(
+            serde_json::to_string(&candidate).unwrap(),
+            r#"{"candidate":"candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host","sdpMid":"","sdpMLineIndex":0,"usernameFragment":null}"#
+        );
+
+        // Add a username fragment
+        candidate.ufrag = Some("ufrag".to_string());
+        assert_eq!(
+            serde_json::to_string(&candidate).unwrap(),
+            r#"{"candidate":"candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag","sdpMid":"","sdpMLineIndex":0,"usernameFragment":"ufrag"}"#
+        );
+    }
+
+    #[test]
+    fn deserialize() {
+        let json = r#"{"candidate":"candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag","sdpMid":"ignored","sdpMLineIndex":123,"usernameFragment":"ufrag"}"#;
+        let candidate: Candidate = serde_json::from_str(json).unwrap();
+        assert_eq!(candidate.ufrag(), Some("ufrag"));
+        assert_eq!(candidate.addr().to_string(), "1.2.3.4:9876");
+        assert_eq!(candidate.base().to_string(), "1.2.3.4:9876");
+        assert_eq!(candidate.kind(), CandidateKind::Host);
+        assert_eq!(candidate.proto(), Protocol::Udp);
+        assert_eq!(candidate.prio(), 2130706175);
+        assert_eq!(candidate.component_id(), 1);
+        assert_eq!(candidate.raddr(), None);
+        assert_eq!(candidate.discarded(), false);
+    }
+
+    #[test]
     fn to_string() {
-        let mut candidate =
-            Candidate::host("1.2.3.4:9876".parse().unwrap(), Protocol::Udp).unwrap();
+        let socket_addr = "1.2.3.4:9876".parse().unwrap();
+        let mut candidate = Candidate::host(socket_addr, Protocol::Udp).unwrap();
         assert_eq!(
             candidate.to_string(),
             "a=candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host\r\n"
@@ -670,8 +704,7 @@ mod tests {
             candidate.to_string(),
             "a=candidate:6812072969737413130 1 udp 2130706175 1.2.3.4 9876 typ host raddr 5.5.5.5 rport 5555 ufrag ufrag\r\n");
 
-        let candidate =
-            Candidate::relayed("1.2.3.4:9876".parse().unwrap(), Protocol::SslTcp).unwrap();
+        let candidate = Candidate::relayed(socket_addr, Protocol::SslTcp).unwrap();
         assert_eq!(
             candidate.to_string(),
             "a=candidate:432709134138909083 1 ssltcp 16776959 1.2.3.4 9876 typ relay\r\n"
