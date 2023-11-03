@@ -223,6 +223,14 @@ impl Candidate {
         ))
     }
 
+    pub fn new_from_ice_string(s: &str) -> Result<Self, IceError> {
+        let (c, _) = trickle_candidate_parser()
+            .parse(s)
+            .map_err(|e| IceError::BadCandidate(format!("{}: {}", s, e)))?;
+
+        Ok(c)
+    }
+
     /// Creates a peer reflexive ICE candidate.
     ///
     /// Peer reflexive candidates are NAT:ed addresses discovered via STUN
