@@ -451,14 +451,6 @@ impl Candidate {
         }
         s
     }
-
-    pub fn new_from_ice_string(s: &str) -> Result<Self, IceError> {
-        let (c, _) = trickle_candidate_parser()
-            .parse(s)
-            .map_err(|e| IceError::BadCandidate(format!("{}: {}", s, e)))?;
-
-        Ok(c)
-    }
 }
 
 fn parse_proto(proto: impl TryInto<Protocol>) -> Result<Protocol, IceError> {
