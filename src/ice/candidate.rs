@@ -223,6 +223,7 @@ impl Candidate {
         ))
     }
 
+    /// Creates a new ICE candidate from a string.
     pub fn new_from_ice_string(s: &str) -> Result<Self, IceError> {
         let (c, _) = trickle_candidate_parser()
             .parse(s)
