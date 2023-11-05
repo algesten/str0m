@@ -1,9 +1,6 @@
 use super::IceError;
 use crate::io::Protocol;
-use combine::error::StreamError;
-use combine::parser::char::string;
-use combine::stream::StreamErrorFor;
-use combine::{attempt, choice, many1, optional, satisfy, token, ParseError, Parser, Stream};
+use crate::sdp::parse_candidate_attribute;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::hash_map::DefaultHasher;
@@ -225,11 +222,7 @@ impl Candidate {
 
     /// Creates a new ICE candidate from a string.
     pub fn from_sdp_string(s: &str) -> Result<Self, IceError> {
-        let (c, _) = trickle_candidate_parser()
-            .parse(s)
-            .map_err(|e| IceError::BadCandidate(format!("{}: {}", s, e)))?;
-
-        Ok(c)
+        parse_candidate_attribute(s).map_err(|e| IceError::BadCandidate(format!("{}: {}", s, e)))
     }
 
     /// Creates a peer reflexive ICE candidate.
@@ -553,92 +546,6 @@ impl<'de> Deserialize<'de> for Candidate {
     }
 }
 
-fn trickle_candidate_parser<Input>() -> impl Parser<Input, Output = Candidate>
-where
-    Input: Stream<Token = char>,
-    Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
-{
-    let port = || {
-        not_sp::<Input>().and_then(|s| {
-            s.parse::<u16>()
-                .map_err(StreamErrorFor::<Input>::message_format)
-        })
-    };
-
-    let ip_addr = || {
-        not_sp().and_then(|s| {
-            s.parse::<IpAddr>()
-                .map_err(StreamErrorFor::<Input>::message_format)
-        })
-    };
-
-    let kind = choice((
-        string("host").map(|_| CandidateKind::Host),
-        string("prflx").map(|_| CandidateKind::PeerReflexive),
-        string("srflx").map(|_| CandidateKind::ServerReflexive),
-        string("relay").map(|_| CandidateKind::Relayed),
-    ));
-
-    (
-        string("candidate:").and_then(|s| {
-            s.parse::<String>()
-                .map_err(StreamErrorFor::<Input>::message_format)
-        }),
-        not_sp(),
-        token(' '),
-        not_sp().and_then(|s| {
-            s.parse::<u16>()
-                .map_err(StreamErrorFor::<Input>::message_format)
-        }),
-        token(' '),
-        not_sp().and_then(|s| {
-            s.as_str().try_into().map_err(|_| {
-                StreamErrorFor::<Input>::message_format(format!("invalid protocol: {}", s))
-            })
-        }),
-        token(' '),
-        not_sp().and_then(|s| {
-            s.parse::<u32>()
-                .map_err(StreamErrorFor::<Input>::message_format)
-        }),
-        token(' '),
-        ip_addr(),
-        token(' '),
-        port(),
-        string(" typ "),
-        kind,
-        optional((
-            attempt(string(" raddr ")),
-            ip_addr(),
-            string(" rport "),
-            port(),
-        )),
-        optional((attempt(string(" ufrag ")), not_sp())),
-    )
-        .map(
-            |(_, found, _, comp_id, _, proto, _, prio, _, addr, _, port, _, kind, raddr, ufrag)| {
-                Candidate::parsed(
-                    found,
-                    comp_id,
-                    proto,
-                    prio, // remote candidates calculate prio on their side
-                    SocketAddr::from((addr, port)),
-                    kind,
-                    raddr.map(|(_, addr, _, port)| SocketAddr::from((addr, port))),
-                    ufrag.map(|(_, u)| u),
-                )
-            },
-        )
-}
-
-fn not_sp<Input>() -> impl Parser<Input, Output = String>
-where
-    Input: Stream<Token = char>,
-    Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
-{
-    many1(satisfy(|c| c != ' ' && c != '\r' && c != '\n'))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -721,5 +628,11 @@ mod tests {
 
         assert_eq!(candidate.ufrag(), Some("myuserfrag"));
         assert_eq!(candidate.addr().to_string(), "1.2.3.4:9876");
+    }
+
+    #[test]
+    fn bad_candidate() {
+        let s = "candidate:12344 bad value";
+        assert!(Candidate::from_sdp_string(s).is_err());
     }
 }
