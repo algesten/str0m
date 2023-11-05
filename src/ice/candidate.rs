@@ -503,13 +503,13 @@ impl fmt::Display for Candidate {
 
 /// Serialize [Candidate] into trickle ICE candidate format.
 ///
-/// Always set `sdpMid` to "" and `sdpMLineIndex` to 0, as we only support one media line.
+/// Always set `sdpMid` to null and `sdpMLineIndex` to 0, as we only support one media line.
 ///
 /// e.g. serde_json would produce:
 /// ```json
 /// {
 ///  "candidate": "candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 1234 typ host",
-///  "sdpMid": "",
+///  "sdpMid": null,
 ///  "sdpMLineIndex": 0
 ///  "usernameFragment": "ufrag"
 /// }
@@ -521,7 +521,7 @@ impl Serialize for Candidate {
     {
         let mut o = serializer.serialize_struct("Candidate", 4)?;
         o.serialize_field("candidate", &self.to_sdp_string(false))?;
-        o.serialize_field("sdpMid", "")?;
+        o.serialize_field("sdpMid", &None::<()>)?;
         o.serialize_field("sdpMLineIndex", &0)?;
         o.serialize_field("usernameFragment", &self.ufrag())?;
         o.end()
@@ -665,14 +665,14 @@ mod tests {
         let mut candidate = Candidate::host(socket_addr, Protocol::Udp).unwrap();
         assert_eq!(
             serde_json::to_string(&candidate).unwrap(),
-            r#"{"candidate":"candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host","sdpMid":"","sdpMLineIndex":0,"usernameFragment":null}"#
+            r#"{"candidate":"candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host","sdpMid":null,"sdpMLineIndex":0,"usernameFragment":null}"#
         );
 
         // Add a username fragment
         candidate.ufrag = Some("ufrag".to_string());
         assert_eq!(
             serde_json::to_string(&candidate).unwrap(),
-            r#"{"candidate":"candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag","sdpMid":"","sdpMLineIndex":0,"usernameFragment":"ufrag"}"#
+            r#"{"candidate":"candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag","sdpMid":null,"sdpMLineIndex":0,"usernameFragment":"ufrag"}"#
         );
     }
 
