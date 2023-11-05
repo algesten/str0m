@@ -224,7 +224,7 @@ impl Candidate {
     }
 
     /// Creates a new ICE candidate from a string.
-    pub fn new_from_ice_str(s: &str) -> Result<Self, IceError> {
+    pub fn from_sdp_string(s: &str) -> Result<Self, IceError> {
         let (c, _) = trickle_candidate_parser()
             .parse(s)
             .map_err(|e| IceError::BadCandidate(format!("{}: {}", s, e)))?;
@@ -429,7 +429,7 @@ impl Candidate {
     /// Generates a String representation of the candidate.
     ///
     /// Specifying m_line will prefix the candidate with "a=" and add a trailing "\r\n".
-    pub fn to_ice_string(&self, m_line: bool) -> String {
+    pub fn to_sdp_string(&self, m_line: bool) -> String {
         let attribute = if m_line { "a=" } else { "" };
         let mut s = format!(
             "{attribute}candidate:{} {} {} {} {} {} typ {}",
@@ -497,7 +497,7 @@ fn is_valid_ip(ip: IpAddr) -> bool {
 // TODO: maybe a bit strange this is used for SDP serializing?
 impl fmt::Display for Candidate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_ice_string(true))
+        write!(f, "{}", self.to_sdp_string(true))
     }
 }
 
@@ -520,7 +520,7 @@ impl Serialize for Candidate {
         S: Serializer,
     {
         let mut o = serializer.serialize_struct("Candidate", 4)?;
-        o.serialize_field("candidate", &self.to_ice_string(false))?;
+        o.serialize_field("candidate", &self.to_sdp_string(false))?;
         o.serialize_field("sdpMid", "")?;
         o.serialize_field("sdpMLineIndex", &0)?;
         o.serialize_field("usernameFragment", &self.ufrag())?;
@@ -549,7 +549,7 @@ impl<'de> Deserialize<'de> for Candidate {
         } = CandidateDeserialized::deserialize(deserializer)?;
 
         let mut candidate =
-            Candidate::new_from_ice_str(&candidate).map_err(|e| serde::de::Error::custom(e))?;
+            Candidate::from_sdp_string(&candidate).map_err(|e| serde::de::Error::custom(e))?;
 
         if let Some(ufrag) = username_fragment {
             candidate.set_ufrag(&ufrag);
@@ -719,7 +719,7 @@ mod tests {
 
     #[test]
     fn new_from_ice_string() {
-        let candidate = Candidate::new_from_ice_str(
+        let candidate = Candidate::from_sdp_string(
             "candidate:6812072969737413130 1 udp 2130706175 1.2.3.4 9876 typ host ufrag myuserfrag",
         )
         .unwrap();
