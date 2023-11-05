@@ -11,6 +11,7 @@ use {
 use crate::dtls::Fingerprint;
 use crate::ice::{Candidate, CandidateKind};
 use crate::rtp_::{Direction, Extension, Mid, Pt, SessionId, Ssrc};
+use crate::sdp::SdpError;
 
 use super::data::*;
 
@@ -201,16 +202,22 @@ where
     ))
 }
 
-#[doc(hidden)]
-pub fn candidate<Input>() -> impl Parser<Input, Output = Candidate>
+/// Parse a candidate string into a [Candidate].
+///
+/// Does not parse an `a=` prefix.
+pub fn parse_candidate_attribute(s: &str) -> Result<Candidate, SdpError> {
+    candidate_attribute()
+        .parse(s)
+        .map(|(c, _)| c)
+        .map_err(|e| SdpError::ParseError(e.to_string()))
+}
+
+/// Parser for candidate attributes without attribute prefix (a=).
+fn candidate_attribute<Input>() -> impl Parser<Input, Output = Candidate>
 where
     Input: Stream<Token = char>,
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
 {
-    // a=candidate:1 1 udp 2113929471 203.0.113.100 10100 typ host
-    // a=candidate:1 2 udp 2113929470 203.0.113.100 10101 typ host
-    // a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ srflx raddr 203.0.113.100 rport 10100
-    // a=candidate:1 1 udp 255 192.0.2.100 12100 typ relay raddr 198.51.100.100 rport 11100
     let port = || {
         not_sp::<Input>().and_then(|s| {
             s.parse::<u16>()
@@ -232,55 +239,71 @@ where
         string("relay").map(|_| CandidateKind::Relayed),
     ));
 
-    attribute_line(
-        "candidate",
-        (
-            not_sp(),
-            token(' '),
-            not_sp().and_then(|s| {
-                s.parse::<u16>()
-                    .map_err(StreamErrorFor::<Input>::message_format)
-            }),
-            token(' '),
-            not_sp().and_then(|s| {
-                s.as_str().try_into().map_err(|_| {
-                    StreamErrorFor::<Input>::message_format(format!("invalid protocol: {}", s))
-                })
-            }),
-            token(' '),
-            not_sp().and_then(|s| {
-                s.parse::<u32>()
-                    .map_err(StreamErrorFor::<Input>::message_format)
-            }),
-            token(' '),
+    (
+        string("candidate:").and_then(|s| {
+            s.parse::<String>()
+                .map_err(StreamErrorFor::<Input>::message_format)
+        }),
+        not_sp(),
+        token(' '),
+        not_sp().and_then(|s| {
+            s.parse::<u16>()
+                .map_err(StreamErrorFor::<Input>::message_format)
+        }),
+        token(' '),
+        not_sp().and_then(|s| {
+            s.as_str().try_into().map_err(|_| {
+                StreamErrorFor::<Input>::message_format(format!("invalid protocol: {}", s))
+            })
+        }),
+        token(' '),
+        not_sp().and_then(|s| {
+            s.parse::<u32>()
+                .map_err(StreamErrorFor::<Input>::message_format)
+        }),
+        token(' '),
+        ip_addr(),
+        token(' '),
+        port(),
+        string(" typ "),
+        kind,
+        optional((
+            attempt(string(" raddr ")),
             ip_addr(),
-            token(' '),
+            string(" rport "),
             port(),
-            string(" typ "),
-            kind,
-            optional((
-                attempt(string(" raddr ")),
-                ip_addr(),
-                string(" rport "),
-                port(),
-            )),
-            optional((attempt(string(" ufrag ")), not_sp())),
-        ),
+        )),
+        optional((attempt(string(" ufrag ")), not_sp())),
     )
-    .map(
-        |(found, _, comp_id, _, proto, _, prio, _, addr, _, port, _, kind, raddr, ufrag)| {
-            Candidate::parsed(
-                found,
-                comp_id,
-                proto,
-                prio, // remote candidates calculate prio on their side
-                SocketAddr::from((addr, port)),
-                kind,
-                raddr.map(|(_, addr, _, port)| SocketAddr::from((addr, port))),
-                ufrag.map(|(_, u)| u),
-            )
-        },
-    )
+        .map(
+            |(_, found, _, comp_id, _, proto, _, prio, _, addr, _, port, _, kind, raddr, ufrag)| {
+                Candidate::parsed(
+                    found,
+                    comp_id,
+                    proto,
+                    prio, // remote candidates calculate prio on their side
+                    SocketAddr::from((addr, port)),
+                    kind,
+                    raddr.map(|(_, addr, _, port)| SocketAddr::from((addr, port))),
+                    ufrag.map(|(_, u)| u),
+                )
+            },
+        )
+}
+
+/// Parser for a=candidate lines.
+#[doc(hidden)]
+pub fn candidate<Input>() -> impl Parser<Input, Output = Candidate>
+where
+    Input: Stream<Token = char>,
+    Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
+{
+    // a=candidate:1 1 udp 2113929471 203.0.113.100 10100 typ host
+    // a=candidate:1 2 udp 2113929470 203.0.113.100 10101 typ host
+    // a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ srflx raddr 203.0.113.100 rport 10100
+    // a=candidate:1 1 udp 255 192.0.2.100 12100 typ relay raddr 198.51.100.100 rport 11100
+
+    (string("a="), candidate_attribute()).map(|(_, c)| c)
 }
 
 /// Session line with a key we ignore (spec says we should validate them, but meh).
