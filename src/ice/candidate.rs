@@ -426,13 +426,10 @@ impl Candidate {
         self.ufrag = None;
     }
 
-    /// Generates a String representation of the candidate.
-    ///
-    /// Specifying m_line will prefix the candidate with "a=" and add a trailing "\r\n".
-    pub fn to_sdp_string(&self, m_line: bool) -> String {
-        let attribute = if m_line { "a=" } else { "" };
+    /// Generates a String representation of the candidate attribute.
+    pub fn to_sdp_string(&self) -> String {
         let mut s = format!(
-            "{attribute}candidate:{} {} {} {} {} {} typ {}",
+            "candidate:{} {} {} {} {} {} typ {}",
             self.foundation(),
             self.component_id,
             self.proto,
@@ -441,14 +438,11 @@ impl Candidate {
             self.addr.port(),
             self.kind
         );
-        if let Some((raddr, rport)) = self.raddr.as_ref().map(|r| (r.ip(), r.port())) {
-            s.push_str(&format!(" raddr {} rport {}", raddr, rport));
+        if let Some(raddr) = &self.raddr {
+            s.push_str(&format!(" raddr {} rport {}", raddr.ip(), raddr.port()))
         }
         if let Some(ufrag) = &self.ufrag {
             s.push_str(&format!(" ufrag {}", ufrag));
-        }
-        if m_line {
-            s.push_str("\r\n");
         }
         s
     }
@@ -497,11 +491,11 @@ fn is_valid_ip(ip: IpAddr) -> bool {
 // TODO: maybe a bit strange this is used for SDP serializing?
 impl fmt::Display for Candidate {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_sdp_string(true))
+        write!(f, "{}", self.to_sdp_string())
     }
 }
 
-/// Serialize [Candidate] into trickle ICE candidate format.
+/// Serialize [Candidate] into candidate info.
 ///
 /// Always set `sdpMid` to null and `sdpMLineIndex` to 0, as we only support one media line.
 ///
@@ -519,8 +513,8 @@ impl Serialize for Candidate {
     where
         S: Serializer,
     {
-        let mut o = serializer.serialize_struct("Candidate", 4)?;
-        o.serialize_field("candidate", &self.to_sdp_string(false))?;
+        let mut o = serializer.serialize_struct("CandidateInfo", 4)?;
+        o.serialize_field("candidate", &self.to_sdp_string())?;
         o.serialize_field("sdpMid", &None::<()>)?;
         o.serialize_field("sdpMLineIndex", &0)?;
         o.serialize_field("usernameFragment", &self.ufrag())?;
@@ -528,7 +522,7 @@ impl Serialize for Candidate {
     }
 }
 
-/// Deserialize [Candidate] from trickle ICE candidate format.
+/// Deserialize [Candidate] from a candidate info.
 ///
 /// Similar to [Candidate::serialize], we drop `sdpMid` and `sdpMLineIndex` when parsing.
 impl<'de> Deserialize<'de> for Candidate {
@@ -538,15 +532,15 @@ impl<'de> Deserialize<'de> for Candidate {
     {
         #[derive(Deserialize)]
         #[serde(rename_all = "camelCase")]
-        struct CandidateDeserialized {
+        struct CandidateInfo {
             candidate: String,
             username_fragment: Option<String>,
         }
 
-        let CandidateDeserialized {
+        let CandidateInfo {
             candidate,
             username_fragment,
-        } = CandidateDeserialized::deserialize(deserializer)?;
+        } = CandidateInfo::deserialize(deserializer)?;
 
         let mut candidate =
             Candidate::from_sdp_string(&candidate).map_err(serde::de::Error::custom)?;
@@ -718,7 +712,7 @@ mod tests {
     }
 
     #[test]
-    fn new_from_ice_string() {
+    fn new_from_sdp_string() {
         let candidate = Candidate::from_sdp_string(
             "candidate:6812072969737413130 1 udp 2130706175 1.2.3.4 9876 typ host ufrag myuserfrag",
         )
