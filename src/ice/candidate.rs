@@ -549,7 +549,7 @@ impl<'de> Deserialize<'de> for Candidate {
         } = CandidateDeserialized::deserialize(deserializer)?;
 
         let mut candidate =
-            Candidate::from_sdp_string(&candidate).map_err(|e| serde::de::Error::custom(e))?;
+            Candidate::from_sdp_string(&candidate).map_err(serde::de::Error::custom)?;
 
         if let Some(ufrag) = username_fragment {
             candidate.set_ufrag(&ufrag);
