@@ -691,23 +691,24 @@ mod tests {
         let mut candidate = Candidate::host(socket_addr, Protocol::Udp).unwrap();
         assert_eq!(
             candidate.to_string(),
-            "a=candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host\r\n"
+            "candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host"
         );
 
         candidate.ufrag = Some("ufrag".into());
         assert_eq!(
             candidate.to_string(),
-            "a=candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag\r\n");
+            "candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag"
+        );
 
         candidate.raddr = Some("5.5.5.5:5555".parse().unwrap());
         assert_eq!(
             candidate.to_string(),
-            "a=candidate:6812072969737413130 1 udp 2130706175 1.2.3.4 9876 typ host raddr 5.5.5.5 rport 5555 ufrag ufrag\r\n");
+            "candidate:6812072969737413130 1 udp 2130706175 1.2.3.4 9876 typ host raddr 5.5.5.5 rport 5555 ufrag ufrag");
 
         let candidate = Candidate::relayed(socket_addr, Protocol::SslTcp).unwrap();
         assert_eq!(
             candidate.to_string(),
-            "a=candidate:432709134138909083 1 ssltcp 16776959 1.2.3.4 9876 typ relay\r\n"
+            "candidate:432709134138909083 1 ssltcp 16776959 1.2.3.4 9876 typ relay"
         );
     }
 
