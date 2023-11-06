@@ -1174,7 +1174,7 @@ impl fmt::Display for SessionAttribute {
                 )?;
             }
             Setup(v) => write!(f, "a=setup:{}\r\n", v.setup_line())?,
-            Candidate(c) => write!(f, "{c}")?,
+            Candidate(c) => write!(f, "a={}\r\n", c.to_sdp_string())?,
             EndOfCandidates => write!(f, "a=end-of-candidates\r\n")?,
             Unused(v) => write!(f, "a={v}\r\n")?,
         }
@@ -1270,7 +1270,7 @@ impl fmt::Display for MediaAttribute {
             RtcpMux => write!(f, "a=rtcp-mux\r\n")?,
             RtcpMuxOnly => write!(f, "a=rtcp-mux-only\r\n")?,
             RtcpRsize => write!(f, "a=rtcp-rsize\r\n")?,
-            Candidate(c) => write!(f, "{c}")?,
+            Candidate(c) => write!(f, "a={}\r\n", c.to_sdp_string())?,
             EndOfCandidates => write!(f, "a=end-of-candidates\r\n")?,
             RtpMap { pt, value: c } => {
                 write!(f, "a=rtpmap:{} {}/{}", pt, c.codec, c.clock_rate)?;

@@ -1,6 +1,6 @@
 use super::IceError;
 use crate::io::Protocol;
-use crate::sdp::parse_candidate_attribute;
+use crate::sdp::parse_candidate;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 use std::collections::hash_map::DefaultHasher;
@@ -222,7 +222,7 @@ impl Candidate {
 
     /// Creates a new ICE candidate from a string.
     pub fn from_sdp_string(s: &str) -> Result<Self, IceError> {
-        parse_candidate_attribute(s).map_err(|e| IceError::BadCandidate(format!("{}: {}", s, e)))
+        parse_candidate(s).map_err(|e| IceError::BadCandidate(format!("{}: {}", s, e)))
     }
 
     /// Creates a peer reflexive ICE candidate.
@@ -419,7 +419,7 @@ impl Candidate {
         self.ufrag = None;
     }
 
-    /// Generates a String representation of the candidate attribute.
+    /// Generates a candidate attribute string.
     pub fn to_sdp_string(&self) -> String {
         let mut s = format!(
             "candidate:{} {} {} {} {} {} typ {}",
@@ -438,6 +438,12 @@ impl Candidate {
             s.push_str(&format!(" ufrag {}", ufrag));
         }
         s
+    }
+}
+
+impl fmt::Display for Candidate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.to_sdp_string())
     }
 }
 
@@ -478,13 +484,6 @@ fn is_valid_ip(ip: IpAddr) -> bool {
             !v.is_link_local() && !v.is_broadcast() && !v.is_multicast() && !v.is_unspecified()
         }
         IpAddr::V6(v) => !v.is_multicast() && !v.is_unspecified(),
-    }
-}
-
-// TODO: maybe a bit strange this is used for SDP serializing?
-impl fmt::Display for Candidate {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_sdp_string())
     }
 }
 

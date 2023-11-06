@@ -177,7 +177,7 @@ where
     let setup = attribute_line("setup", setup_val).map(SessionAttribute::Setup);
 
     // a=candidate
-    let cand = candidate().map(SessionAttribute::Candidate);
+    let cand = candidate_attribute().map(SessionAttribute::Candidate);
 
     // a=end-of-candidates
     let endof = attribute_line_flag("end-of-candidates").map(|_| SessionAttribute::EndOfCandidates);
@@ -204,16 +204,16 @@ where
 
 /// Parse a candidate string into a [Candidate].
 ///
-/// Does not parse an `a=` prefix.
-pub fn parse_candidate_attribute(s: &str) -> Result<Candidate, SdpError> {
-    candidate_attribute()
+/// Does not parse an `a=` prefix or trailing newline.
+pub fn parse_candidate(s: &str) -> Result<Candidate, SdpError> {
+    candidate()
         .parse(s)
         .map(|(c, _)| c)
         .map_err(|e| SdpError::ParseError(e.to_string()))
 }
 
-/// Parser for candidate attributes without attribute prefix (a=).
-fn candidate_attribute<Input>() -> impl Parser<Input, Output = Candidate>
+/// Parser for candidate, without attribute prefix (a=).
+fn candidate<Input>() -> impl Parser<Input, Output = Candidate>
 where
     Input: Stream<Token = char>,
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
@@ -293,7 +293,7 @@ where
 
 /// Parser for a=candidate lines.
 #[doc(hidden)]
-pub fn candidate<Input>() -> impl Parser<Input, Output = Candidate>
+pub fn candidate_attribute<Input>() -> impl Parser<Input, Output = Candidate>
 where
     Input: Stream<Token = char>,
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
@@ -303,7 +303,7 @@ where
     // a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ srflx raddr 203.0.113.100 rport 10100
     // a=candidate:1 1 udp 255 192.0.2.100 12100 typ relay raddr 198.51.100.100 rport 11100
 
-    (string("a="), candidate_attribute()).map(|(_, c)| c)
+    (string("a="), candidate(), line_end()).map(|(_, c, _)| c)
 }
 
 /// Session line with a key we ignore (spec says we should validate them, but meh).
@@ -516,7 +516,7 @@ where
     let rtcprsize = attribute_line_flag("rtcp-rsize").map(|_| MediaAttribute::RtcpRsize);
 
     // a=candidate
-    let cand = candidate().map(MediaAttribute::Candidate);
+    let cand = candidate_attribute().map(MediaAttribute::Candidate);
 
     // a=end-of-candidates
     let endof = attribute_line_flag("end-of-candidates").map(|_| MediaAttribute::EndOfCandidates);
@@ -1174,11 +1174,11 @@ mod test {
     fn parse_candidate_ufrag() {
         let a = "a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ srflx raddr 203.0.113.100 rport 10100 ufrag abc\r\n";
 
-        let (c, _) = candidate().parse(a).unwrap();
+        let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(c.ufrag(), Some("abc"));
 
         let a = "a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ host ufrag abc\r\n";
-        let (c, _) = candidate().parse(a).unwrap();
+        let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(c.ufrag(), Some("abc"));
     }
 
