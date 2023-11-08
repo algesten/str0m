@@ -588,7 +588,7 @@ mod tests {
         assert_eq!(candidate.prio(), 2130706175);
         assert_eq!(candidate.component_id(), 1);
         assert_eq!(candidate.raddr(), None);
-        assert_eq!(candidate.discarded(), false);
+        assert!(!candidate.discarded());
     }
 
     #[test]
