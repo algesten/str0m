@@ -664,17 +664,23 @@ impl From<Direction> for MediaAttribute {
 ///
 /// Defined in https://tools.ietf.org/html/draft-ietf-avtext-rid-09
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RestrictionId(pub String);
+pub struct RestrictionId(pub String, pub bool);
 
 impl RestrictionId {
     pub fn new(v: String) -> Self {
-        RestrictionId(v)
+        let rid = v.trim_start_matches("~");  
+        
+        RestrictionId(rid.to_string(), v == rid)
+    }
+
+    pub fn to_sdp(&self) -> String {
+        format!("{}{}", if self.1 {""} else {"~"}, self.0)
     }
 }
 
 impl Default for RestrictionId {
     fn default() -> Self {
-        RestrictionId("".to_string())
+        RestrictionId("".to_string(), true)
     }
 }
 
@@ -1107,9 +1113,9 @@ impl fmt::Display for SimulcastGroups {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for (idx, a) in self.0.iter().enumerate() {
             if idx + 1 == self.0.len() {
-                write!(f, "{}", a.0)?;
+                write!(f, "{}", a.to_sdp())?;
             } else {
-                write!(f, "{};", a.0)?;
+                write!(f, "{};", a.to_sdp())?;
             }
         }
         Ok(())
