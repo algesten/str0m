@@ -632,7 +632,13 @@ where
         (
             string(direction),
             token(' '),
-            sep_by1::<Vec<Vec<String>>, _, _, _>(sep_by1(many1(satisfy(|c: char| c == '~' || c.is_alphanumeric())), token(',')), token(';')),
+            sep_by1::<Vec<Vec<String>>, _, _, _>(
+                sep_by1(
+                    many1(satisfy(|c: char| c == '~' || c.is_alphanumeric())),
+                    token(','),
+                ),
+                token(';'),
+            ),
         )
     };
 
@@ -646,8 +652,6 @@ where
     let simulcast = attribute_line("simulcast", simul2).map(|(s1, maybe_s2)| {
         let mut send = SimulcastGroups(vec![]);
         let mut recv = SimulcastGroups(vec![]);
-        error!("s1: {s1:?}");
-        error!("maybe_s2: {maybe_s2:?}");
 
         fn to_simul(to: &mut SimulcastGroups, groups: Vec<Vec<String>>) {
             for group in groups {
