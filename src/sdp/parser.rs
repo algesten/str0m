@@ -593,7 +593,7 @@ where
     let rid = attribute_line(
         "rid",
         (
-            name().map(RestrictionId::new),
+            name().map(RestrictionId::new_active),
             token(' '),
             choice((string("send"), string("recv"))),
             optional((
@@ -632,9 +632,11 @@ where
         (
             string(direction),
             token(' '),
-            sep_by1::<Vec<Vec<String>>, _, _, _>(
+            sep_by1::<Vec<Vec<(String, bool)>>, _, _, _>(
                 sep_by1(
-                    many1(satisfy(|c: char| c == '~' || c.is_alphanumeric())),
+                    optional(token('~'))
+                        .and(name())
+                        .map(|x| (x.1, x.0.is_none())),
                     token(','),
                 ),
                 token(';'),
@@ -653,13 +655,13 @@ where
         let mut send = SimulcastGroups(vec![]);
         let mut recv = SimulcastGroups(vec![]);
 
-        fn to_simul(to: &mut SimulcastGroups, groups: Vec<Vec<String>>) {
+        fn to_simul(to: &mut SimulcastGroups, groups: Vec<Vec<(String, bool)>>) {
             for group in groups {
                 // TODO: Properly support rid alternatives, for now we ignore any alternatives
                 // provided and use the first rid.
                 let first = group.into_iter().next();
 
-                if let Some(rid) = first.map(RestrictionId::new) {
+                if let Some(rid) = first.map(|(rid, active)| RestrictionId::new(rid, active)) {
                     to.0.push(rid);
                 }
             }
