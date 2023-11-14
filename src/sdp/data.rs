@@ -667,14 +667,16 @@ impl From<Direction> for MediaAttribute {
 pub struct RestrictionId(pub String, pub bool);
 
 impl RestrictionId {
-    pub fn new(v: String) -> Self {
-        let rid = v.trim_start_matches("~");  
-        
-        RestrictionId(rid.to_string(), v == rid)
+    pub fn new(rid: String, active: bool) -> Self {
+        RestrictionId(rid, active)
+    }
+
+    pub fn new_active(rid: String) -> Self {
+        RestrictionId(rid, true)
     }
 
     pub fn to_sdp(&self) -> String {
-        format!("{}{}", if self.1 {""} else {"~"}, self.0)
+        format!("{}{}", if self.1 { "" } else { "~" }, self.0)
     }
 }
 
