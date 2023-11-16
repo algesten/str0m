@@ -191,7 +191,7 @@ mod tests {
             ssrcs: vec![1215622422],
         };
 
-        let expected = vec![
+        let expected = [
             143, 206, 0, 5, 0, 0, 0, 1, 0, 0, 0, 0, 82, 69, 77, 66, 1, 26, 32, 223, 72, 116, 237,
             22,
         ];
@@ -204,7 +204,7 @@ mod tests {
     #[test]
     fn test_receiver_estimated_maximum_bitrate_unmarshal() {
         // Real data sent by Chrome while watching a 6Mb/s stream
-        let input: Vec<u8> = vec![
+        let input = [
             143, 206, 0, 5, 0, 0, 0, 1, 0, 0, 0, 0, 82, 69, 77, 66, 1, 26, 32, 223, 72, 116, 237,
             22,
         ];
@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn test_receiver_estimated_maximum_bitrate_truncate() {
-        let input: Vec<u8> = vec![
+        let input = [
             143, 206, 0, 5, 0, 0, 0, 1, 0, 0, 0, 0, 82, 69, 77, 66, 1, 26, 32, 223, 72, 116, 237,
             22,
         ];
@@ -241,7 +241,7 @@ mod tests {
         assert_eq!(8927168.0, packet.bitrate);
 
         // Just verify marshal produces the same input.
-        let mut output = vec![0; 1500];
+        let mut output = [0; 1500];
         let output_len = packet.write_to(&mut output);
         assert_eq!(input, output[0..output_len]);
 
@@ -253,8 +253,8 @@ mod tests {
         // exp = 6
 
         let output_len = packet.write_to(&mut output);
-        assert_ne!(input, output);
-        let expected = vec![
+        assert_ne!(input, output[0..output_len]);
+        let expected = [
             143, 206, 0, 5, 0, 0, 0, 1, 0, 0, 0, 0, 82, 69, 77, 66, 1, 26, 32, 222, 72, 116, 237,
             22,
         ];
@@ -282,11 +282,11 @@ mod tests {
         // mantissa = 262143 = 0x3FFFF
         // exp = 63
 
-        let expected = vec![
+        let expected = [
             143, 206, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 82, 69, 77, 66, 0, 255, 255, 255,
         ];
 
-        let mut output = vec![0; 1500];
+        let mut output = [0; 1500];
         let output_len = packet.write_to(&mut output);
         assert_eq!(expected, output[0..output_len]);
 
@@ -302,7 +302,7 @@ mod tests {
         assert_eq!(expected, output[0..output_len]);
 
         // Finally, try unmarshalling one number higher than we used to be able to handle.
-        let input = vec![
+        let input = [
             143, 206, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 82, 69, 77, 66, 0, 188, 0, 0,
         ];
         let packet = Remb::try_from(&input[4..]).unwrap();
