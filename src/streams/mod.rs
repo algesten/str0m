@@ -400,6 +400,7 @@ impl Streams {
 
         for stream in self.streams_rx.values_mut() {
             stream.maybe_create_keyframe_request(sender_ssrc, feedback);
+            stream.maybe_create_remb_request(sender_ssrc, feedback);
 
             // All StreamRx belonging to the same Mid are reported together.
             if self.mids_to_report.contains(&stream.mid()) {

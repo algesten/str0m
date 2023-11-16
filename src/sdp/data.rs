@@ -346,7 +346,7 @@ impl MediaLine {
                 if **pt == p.pt {
                     match &value[..] {
                         "goog-remb" => {
-                            //
+                            p.fb_remb = true;
                         }
                         "transport-cc" => {
                             p.fb_transport_cc = true;
@@ -995,6 +995,12 @@ impl PayloadParams {
             attrs.push(MediaAttribute::RtcpFb {
                 pt: self.pt,
                 value: "transport-cc".into(),
+            });
+        }
+        if self.fb_remb {
+            attrs.push(MediaAttribute::RtcpFb {
+                pt: self.pt,
+                value: "goog-remb".into(),
             });
         }
         if self.fb_fir {

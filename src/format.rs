@@ -56,6 +56,9 @@ pub struct PayloadParams {
     /// Whether the payload uses the FIR (Full Intra Request) mechanic.
     pub(crate) fb_fir: bool,
 
+    /// Whether the payload uses the REMB (Receiver Estimated Maximum Bitrate) mechanic.
+    pub(crate) fb_remb: bool,
+
     /// Whether the payload is locked by negotiation or can still be debated.
     ///
     /// If we make an OFFER or ANSWER and the direction is sendrecv/recvonly, the parameters are locked
@@ -179,6 +182,7 @@ impl PayloadParams {
             fb_fir: is_video,
             fb_nack: is_video,
             fb_pli: is_video,
+            fb_remb: is_video,
 
             locked: false,
         }
@@ -238,6 +242,16 @@ impl PayloadParams {
     /// Whether the payload uses the FIR (Full Intra Request) mechanic.
     pub fn fb_fir(&self) -> bool {
         self.fb_fir
+    }
+
+    /// Set whether the payload uses the REMB (Receiver Estimated Maximum Bitrate) mechanic.
+    pub fn set_fb_remb(&mut self, fb_remb: bool) {
+        self.fb_remb = fb_remb
+    }
+
+    /// Whether the payload uses the REMB (Receiver Estimated Maximum Bitrate) mechanic.
+    pub fn fb_remb(&self) -> bool {
+        self.fb_remb
     }
 
     pub(crate) fn match_score(&self, o: &PayloadParams) -> Option<usize> {
@@ -430,10 +444,10 @@ impl CodecConfig {
         channels: Option<u8>,
         format: FormatParams,
     ) {
-        let (fb_transport_cc, fb_fir, fb_nack, fb_pli) = if codec.is_video() {
-            (true, true, true, true)
+        let (fb_transport_cc, fb_fir, fb_nack, fb_pli, fb_remb) = if codec.is_video() {
+            (true, true, true, true, true)
         } else {
-            (true, false, false, false)
+            (true, false, false, false, false)
         };
 
         let p = PayloadParams {
@@ -449,6 +463,7 @@ impl CodecConfig {
             fb_fir,
             fb_nack,
             fb_pli,
+            fb_remb,
             locked: false,
         };
 
