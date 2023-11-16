@@ -95,7 +95,7 @@ pub enum SrtpProfile {
 
 impl SrtpProfile {
     // All the profiles we support, ordered from most preferred to least.
-    pub(crate) const ALL: &[SrtpProfile] =
+    pub(crate) const ALL: &'static [SrtpProfile] =
         &[SrtpProfile::AeadAes128Gcm, SrtpProfile::Aes128CmSha1_80];
 
     /// The length of keying material to extract from the DTLS session in bytes.

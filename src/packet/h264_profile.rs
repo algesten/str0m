@@ -23,7 +23,7 @@ impl H264ProfileLevel {
     ///
     /// The first value in each tuple is the profile that is matched if the profile-idc and the
     /// BitPattern matches a given fmtp line.
-    const PROFILES: &[(H264Profile, H264ProfileIdc, BitPattern)] = &[
+    const PROFILES: &'static [(H264Profile, H264ProfileIdc, BitPattern)] = &[
         // Constrained Baseline
         (
             H264Profile::ConstrainedBaseline,
