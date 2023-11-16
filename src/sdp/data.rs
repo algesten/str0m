@@ -12,9 +12,8 @@ use crate::format::Codec;
 use crate::format::CodecSpec;
 use crate::format::FormatParams;
 use crate::format::PayloadParams;
-use crate::ice::{Candidate, IceCreds};
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, Rid, SessionId, Ssrc};
-use crate::VERSION;
+use crate::{Candidate, IceCreds, VERSION};
 
 use super::parser::sdp_parser;
 use super::SdpError;

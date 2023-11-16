@@ -596,11 +596,17 @@ use dtls::DtlsCert;
 use dtls::Fingerprint;
 use dtls::{Dtls, DtlsEvent};
 
-mod ice;
-use ice::IceAgent;
-use ice::IceAgentEvent;
-use ice::IceCreds;
-pub use ice::{Candidate, CandidateKind};
+#[path = "ice/mod.rs"]
+mod ice_;
+use ice_::IceAgent;
+use ice_::IceAgentEvent;
+use ice_::IceCreds;
+pub use ice_::{Candidate, CandidateKind, IceConnectionState};
+
+/// Low level ICE access.
+pub mod ice {
+    pub use crate::ice_::{IceAgent as Agent, IceAgentEvent as AgentEvent};
+}
 
 mod io;
 use io::DatagramRecv;
@@ -659,8 +665,6 @@ mod sdp;
 pub mod format;
 use format::CodecConfig;
 
-pub use ice::IceConnectionState;
-
 pub mod channel;
 use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
 
@@ -690,7 +694,7 @@ pub mod net {
 /// Various error types.
 pub mod error {
     pub use crate::dtls::DtlsError;
-    pub use crate::ice::IceError;
+    pub use crate::ice_::IceError;
     pub use crate::io::NetError;
     pub use crate::packet::PacketError;
     pub use crate::rtp_::RtpError;

@@ -9,9 +9,9 @@ use {
 };
 
 use crate::dtls::Fingerprint;
-use crate::ice::{Candidate, CandidateKind};
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, SessionId, Ssrc};
 use crate::sdp::SdpError;
+use crate::{Candidate, CandidateKind};
 
 use super::data::*;
 
