@@ -1,10 +1,10 @@
 use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
-use crate::ice::IceCreds;
 use crate::media::{Media, MediaKind};
 use crate::rtp_::{Mid, Rid, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::streams::{StreamRx, StreamTx, DEFAULT_RTX_CACHE_DURATION};
+use crate::IceCreds;
 use crate::Rtc;
 use crate::RtcError;
 

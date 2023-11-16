@@ -7,7 +7,6 @@ use crate::channel::ChannelId;
 use crate::dtls::Fingerprint;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
-use crate::ice::{Candidate, IceCreds};
 use crate::io::Id;
 use crate::media::Media;
 use crate::packet::MediaKind;
@@ -20,6 +19,7 @@ use crate::sdp::{Proto, SessionAttribute, Setup};
 use crate::session::Session;
 use crate::Rtc;
 use crate::RtcError;
+use crate::{Candidate, IceCreds};
 
 pub use crate::sdp::{SdpAnswer, SdpOffer};
 use crate::streams::Streams;

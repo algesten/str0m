@@ -20,4 +20,4 @@ mod direct;
 pub use direct::DirectApi;
 
 pub use crate::dtls::{DtlsCert, Fingerprint};
-pub use crate::ice::IceCreds;
+pub use crate::ice_::IceCreds;
