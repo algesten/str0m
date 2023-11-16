@@ -1,5 +1,6 @@
 # Unreleased
 
+# 0.4.0
   * Allow SDP RID with `~` prefix (to indicate paused state)
   * Fix problem with using RTX for audio
   * Make IceCandidate serializable to SDP form (to/from_sdp_string)
