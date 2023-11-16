@@ -42,6 +42,9 @@ pub use twcc::{Twcc, TwccRecvRegister, TwccSendRecord, TwccSendRegister};
 mod rtcpfb;
 pub use rtcpfb::RtcpFb;
 
+mod remb;
+pub use remb::Remb;
+
 use super::extend_u16;
 use super::SeqNo;
 use super::Ssrc;
@@ -83,6 +86,8 @@ pub enum Rtcp {
     Fir(Fir),
     /// Transport Wide Congestion Control. Feedback for every received RTP packet.
     Twcc(Twcc),
+    /// Receiver Estimated Maximum Bitrate. Feedback to the sender about the maximum bitrate.
+    Remb(Remb),
 }
 
 impl Rtcp {
@@ -230,6 +235,7 @@ impl Rtcp {
             Rtcp::Pli(_) => true,
             Rtcp::Fir(v) => v.reports.is_full(),
             Rtcp::Twcc(_) => true,
+            Rtcp::Remb(_) => true,
         }
     }
 
@@ -255,6 +261,8 @@ impl Rtcp {
             Rtcp::Fir(v) => v.reports.is_empty(),
             // A twcc report is never empty.
             Rtcp::Twcc(_) => false,
+            // A REMB report is never empty.
+            Rtcp::Remb(_) => false,
         }
     }
 
@@ -331,6 +339,7 @@ impl Rtcp {
             Pli(_) => 4,
             Fir(_) => 5,
             Twcc(_) => 6,
+            Remb(_) => 7,
             ExtendedReport(_) => 10,
 
             // Goodbye last since they remove stuff.
@@ -351,6 +360,7 @@ impl RtcpPacket for Rtcp {
             Rtcp::Pli(v) => v.header(),
             Rtcp::Fir(v) => v.header(),
             Rtcp::Twcc(v) => v.header(),
+            Rtcp::Remb(v) => v.header(),
         }
     }
 
@@ -365,6 +375,7 @@ impl RtcpPacket for Rtcp {
             Rtcp::Pli(v) => v.length_words(),
             Rtcp::Fir(v) => v.length_words(),
             Rtcp::Twcc(v) => v.length_words(),
+            Rtcp::Remb(v) => v.length_words(),
         }
     }
 
@@ -379,6 +390,7 @@ impl RtcpPacket for Rtcp {
             Rtcp::Pli(v) => v.write_to(buf),
             Rtcp::Fir(v) => v.write_to(buf),
             Rtcp::Twcc(v) => v.write_to(buf),
+            Rtcp::Remb(v) => v.write_to(buf),
         }
     }
 }

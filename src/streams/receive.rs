@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::media::KeyframeRequestKind;
-use crate::rtp_::{extend_u32, DlrrItem, ExtendedReport, Fir, FirEntry, MediaTime};
+use crate::rtp_::{extend_u32, Bitrate, DlrrItem, ExtendedReport, Fir, FirEntry, MediaTime, Remb};
 use crate::rtp_::{Mid, Pli, Pt, ReceiverReport};
 use crate::rtp_::{ReportBlock, ReportList, Rid, Rrtr, Rtcp, RtcpFb, RtpHeader, SenderInfo, SeqNo};
 use crate::rtp_::{SdesType, Ssrc};
@@ -78,6 +78,9 @@ pub struct StreamRx {
     /// If we have a pending keyframe request to send.
     pending_request_keyframe: Option<KeyframeRequestKind>,
 
+    /// If we have a pending REMB request to send.
+    pending_request_remb: Option<Bitrate>,
+
     /// Sequence number of the next FIR.
     fir_seq_no: u8,
 
@@ -144,6 +147,7 @@ impl StreamRx {
             register_rtx: None,
             last_time: None,
             pending_request_keyframe: None,
+            pending_request_remb: None,
             fir_seq_no: 0,
             last_receiver_report: already_happened(),
             stats: StreamRxStats::default(),
@@ -198,6 +202,13 @@ impl StreamRx {
     /// * kind PLI or FIR.
     pub fn request_keyframe(&mut self, kind: KeyframeRequestKind) {
         self.pending_request_keyframe = Some(kind);
+    }
+
+    /// Request max recv bitrate for an incoming encoded stream.
+    ///
+    /// * bitrate Bitrate.
+    pub fn request_remb(&mut self, bitrate: Bitrate) {
+        self.pending_request_remb = Some(bitrate);
     }
 
     /// Suppress NACK sending.
@@ -438,6 +449,23 @@ impl StreamRx {
                 }))
             }
         }
+    }
+
+    pub(crate) fn maybe_create_remb_request(
+        &mut self,
+        sender_ssrc: Ssrc,
+        feedback: &mut VecDeque<Rtcp>,
+    ) {
+        let Some(bitrate) = self.pending_request_remb.take() else {
+            return;
+        };
+
+        feedback.push_back(Rtcp::Remb(Remb {
+            sender_ssrc,
+            ssrc: 0.into(),
+            bitrate: bitrate.as_f64() as f32,
+            ssrcs: vec![*self.ssrc],
+        }))
     }
 
     fn next_fir_seq_no(&mut self) -> u8 {
