@@ -1,5 +1,8 @@
 # Unreleased
 
+  * Allow SDP RID with `~` prefix (to indicate paused state)
+  * Fix problem with using RTX for audio
+  * Make IceCandidate serializable to SDP form (to/from_sdp_string)
   * UserExtensionValues set_arc/get_arc to avoid cloning
   * Provide correct Rid for repaired RTP headers
   * Support 2-byte header extensions
