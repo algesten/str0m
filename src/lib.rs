@@ -580,7 +580,7 @@
 #[macro_use]
 extern crate tracing;
 
-use bwe::Bwe;
+use bwe::{Bwe, BweKind};
 use change::{DirectApi, SdpApi};
 use rtp::RawPacket;
 use std::fmt;
@@ -906,7 +906,7 @@ pub enum Event {
     MediaEgressStats(MediaEgressStats),
 
     /// A new estimate from the bandwidth estimation subsystem.
-    EgressBitrateEstimate(Bitrate),
+    EgressBitrateEstimate(BweKind),
 
     // =================== RTP related events ===================
 

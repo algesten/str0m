@@ -6,8 +6,8 @@ use std::time::Instant;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::media::{KeyframeRequest, Media};
-use crate::rtp_::Pt;
 use crate::rtp_::Ssrc;
+use crate::rtp_::{Bitrate, Pt};
 use crate::rtp_::{MediaTime, SenderInfo};
 use crate::rtp_::{Mid, Rid, SeqNo};
 use crate::rtp_::{Rtcp, RtpHeader};
@@ -459,6 +459,12 @@ impl Streams {
                 kind,
             })
         })
+    }
+
+    pub(crate) fn poll_remb_request(&mut self) -> Option<(Mid, Bitrate)> {
+        self.streams_tx
+            .values_mut()
+            .find_map(|s| s.poll_remb_request().map(|b| (s.mid(), b)))
     }
 
     pub(crate) fn poll_stream_paused(&mut self) -> Option<StreamPaused> {

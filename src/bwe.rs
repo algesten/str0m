@@ -1,8 +1,17 @@
 //! Bandwidth estimation.
 
-use crate::Rtc;
+use crate::{rtp_::Mid, Rtc};
 
 pub use crate::rtp_::Bitrate;
+
+#[derive(Debug)]
+/// Bandwidth estimation kind.
+pub enum BweKind {
+    /// Transport wide congestion control.
+    Twcc(Bitrate),
+    /// REMB (Receiver Estimated Maximum Bitrate)
+    Remb(Mid, Bitrate),
+}
 
 /// Access to the Bandwidth Estimate subsystem.
 pub struct Bwe<'a>(pub(crate) &'a mut Rtc);
