@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+use crate::bwe::BweKind;
 use crate::dtls::{KeyingMaterial, SrtpProfile};
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
@@ -520,7 +521,9 @@ impl Session {
 
     pub fn poll_event(&mut self) -> Option<Event> {
         if let Some(bitrate_estimate) = self.bwe.as_mut().and_then(|bwe| bwe.poll_estimate()) {
-            return Some(Event::EgressBitrateEstimate(bitrate_estimate));
+            return Some(Event::EgressBitrateEstimate(BweKind::Twcc(
+                bitrate_estimate,
+            )));
         }
 
         // If we're not ready to flow media, don't send any events.
@@ -546,6 +549,10 @@ impl Session {
 
         if let Some(req) = self.streams.poll_keyframe_request() {
             return Some(Event::KeyframeRequest(req));
+        }
+
+        if let Some((mid, bitrate)) = self.streams.poll_remb_request() {
+            return Some(Event::EgressBitrateEstimate(BweKind::Remb(mid, bitrate)));
         }
 
         for media in &mut self.medias {

@@ -13,6 +13,7 @@ use crate::media::MediaKind;
 use crate::packet::QueuePriority;
 use crate::packet::QueueSnapshot;
 use crate::packet::QueueState;
+use crate::rtp_::Bitrate;
 use crate::rtp_::{extend_u16, Descriptions, ReportList, Rtcp};
 use crate::rtp_::{ExtensionMap, ReceptionReport, RtpHeader};
 use crate::rtp_::{ExtensionValues, MediaTime, Mid, NackEntry};
@@ -107,6 +108,9 @@ pub struct StreamTx {
     /// If we have a pending incoming keyframe request.
     pending_request_keyframe: Option<KeyframeRequestKind>,
 
+    /// If we have a pending incoming remb request.
+    pending_request_remb: Option<Bitrate>,
+
     /// Statistics of outgoing data.
     stats: StreamTxStats,
 
@@ -172,6 +176,7 @@ impl StreamTx {
             rtx_cache: RtxCache::new(2000, DEFAULT_RTX_CACHE_DURATION),
             last_sender_report: already_happened(),
             pending_request_keyframe: None,
+            pending_request_remb: None,
             stats: StreamTxStats::default(),
             rtx_ratio: (0.0, already_happened()),
         }
@@ -644,6 +649,10 @@ impl StreamTx {
         self.pending_request_keyframe.take()
     }
 
+    pub(crate) fn poll_remb_request(&mut self) -> Option<Bitrate> {
+        self.pending_request_remb.take()
+    }
+
     pub(crate) fn handle_rtcp(&mut self, now: Instant, fb: RtcpFb) {
         use RtcpFb::*;
         match fb {
@@ -660,6 +669,9 @@ impl StreamTx {
             Fir(_) => {
                 self.stats.increase_firs();
                 self.pending_request_keyframe = Some(KeyframeRequestKind::Fir);
+            }
+            Remb(r) => {
+                self.pending_request_remb = Some(Bitrate::from(r.bitrate as f64));
             }
             Twcc(_) => unreachable!("TWCC should be handled on session level"),
             _ => {}
