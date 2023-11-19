@@ -437,7 +437,15 @@ impl<'a> TryFrom<&'a [u8]> for Rtcp {
                     }
                     PayloadType::FullIntraRequest => Rtcp::Fir(buf.try_into()?),
                     PayloadType::ApplicationLayer => {
-                        return Err("Ignore PayloadType: ApplicationLayer")
+                        match header.rtcp_type() {
+                            RtcpType::PayloadSpecificFeedback => {
+                                if let Ok(remb) = Remb::try_from(buf) {
+                                    return Ok(Rtcp::Remb(remb));
+                                }
+                            }
+                            _ => {}
+                        }
+                        return Err("Ignore PayloadType: ApplicationLayer");
                     }
                 }
             }

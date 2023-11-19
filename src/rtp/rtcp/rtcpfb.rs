@@ -89,7 +89,7 @@ impl RtcpFb {
             RtcpFb::Pli(v) => *v,
             RtcpFb::Fir(v) => v.ssrc,
             RtcpFb::Twcc(v) => v.ssrc,
-            RtcpFb::Remb(v) => v.ssrc,
+            RtcpFb::Remb(v) => v.ssrcs.first().map(|ssrc| (*ssrc).into()).unwrap_or(v.ssrc),
         }
     }
 }
