@@ -64,7 +64,7 @@ pub struct StreamTx {
     cname: Option<String>,
 
     /// The last main payload clock rate that was sent.
-    clock_rate: Option<i64>,
+    clock_rate: Option<u64>,
 
     /// If we are doing seq_no ourselves (when writing sample mode).
     seq_no: SeqNo,
@@ -364,7 +364,7 @@ impl StreamTx {
                 // because we already have a mutable borrow.
                 set_pt = Some(param.pt());
 
-                let clock_rate = param.spec().clock_rate as i64;
+                let clock_rate = param.spec().clock_rate as u64;
                 set_cr = Some(clock_rate);
 
                 // Modify the cached packet time. This is so write_rtp can use u32 media time without

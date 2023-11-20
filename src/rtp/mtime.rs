@@ -5,23 +5,23 @@ use std::ops::{Add, Sub};
 use std::time::Duration;
 
 /// Microseconds in a second.
-const MICROS: i64 = 1_000_000;
+const MICROS: u64 = 1_000_000;
 
 /// Milliseconds in a second.
-const MILLIS: i64 = 1_000;
+const MILLIS: u64 = 1_000;
 
 /// Media time represented by a numerator / denominator.
 ///
 /// The numerator is typically the packet time of an Rtp header. The denominator is the
 /// clock frequency of the media source (typically 90kHz for video and 48kHz for audio).
 #[derive(Debug, Clone, Copy)]
-pub struct MediaTime(i64, i64);
+pub struct MediaTime(i64, u64);
 
 impl MediaTime {
     pub const ZERO: MediaTime = MediaTime(0, 1);
 
-    pub const fn new(numer: i64, denom: i64) -> MediaTime {
-        MediaTime(numer, denom)
+    pub const fn new(numer: i64, denom: u64) -> Self {
+        Self(numer, denom)
     }
 
     #[inline(always)]
@@ -30,7 +30,7 @@ impl MediaTime {
     }
 
     #[inline(always)]
-    pub const fn denom(&self) -> i64 {
+    pub const fn denom(&self) -> u64 {
         self.1
     }
 
@@ -72,7 +72,7 @@ impl MediaTime {
     }
 
     #[inline(always)]
-    pub const fn rebase(self, denom: i64) -> MediaTime {
+    pub const fn rebase(self, denom: u64) -> MediaTime {
         if denom == self.1 {
             self
         } else {
@@ -170,19 +170,6 @@ mod test {
         let t = MediaTime::new(-1, 1);
         let t_dur: Duration = t.into();
         assert_eq!(t_dur.as_secs(), 1);
-    }
-
-    #[test]
-    fn ts_eq_negative_denom() {
-        let t1 = MediaTime::new(-1, -2);
-        let t2 = MediaTime::new(0, 1);
-        assert_ne!(t1, t2)
-    }
-
-    #[test]
-    fn ts_abs_negative_denom() {
-        let t1 = MediaTime::new(-1, -1);
-        assert!(t1.abs() >= MediaTime::ZERO)
     }
 
     #[test]
