@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::fmt::Display;
 use std::num::{NonZeroU32, TryFromIntError};
-use std::ops::{Add, Sub};
+use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::str::FromStr;
 use std::time::Duration;
 use std::time::Instant;
@@ -255,6 +255,18 @@ impl Add for MediaTime {
     fn add(self, rhs: Self) -> Self::Output {
         let (t0, t1) = MediaTime::same_base(self, rhs);
         MediaTime::new(t0.0 + t1.0, t0.1)
+    }
+}
+
+impl AddAssign for MediaTime {
+    fn add_assign(&mut self, rhs: Self) {
+        *self = *self + rhs;
+    }
+}
+
+impl SubAssign for MediaTime {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
     }
 }
 
