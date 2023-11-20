@@ -54,7 +54,7 @@ pub struct StreamRx {
     last_used: Instant,
 
     /// Last seen pt and clock_rate in
-    last_clock_rate: Option<(Pt, i64)>,
+    last_clock_rate: Option<(Pt, u64)>,
 
     /// Last received sender info.
     sender_info: Option<(Instant, SenderInfo)>,
@@ -352,7 +352,7 @@ impl StreamRx {
 
         let previous_time = self.last_time.map(|t| t.numer() as u64);
         let time_u32 = extend_u32(previous_time, header.timestamp);
-        let time = MediaTime::new(time_u32 as i64, clock_rate as i64);
+        let time = MediaTime::new(time_u32 as i64, clock_rate as u64);
 
         if !is_repair {
             self.last_time = Some(time);
