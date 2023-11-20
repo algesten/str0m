@@ -164,4 +164,31 @@ mod test {
 
         println!("{}", (10.0234_f64).fract());
     }
+
+    #[test]
+    fn ts_negative_duration() {
+        let t = MediaTime::new(-1, 1);
+        let t_dur: Duration = t.into();
+        assert_eq!(t_dur.as_secs(), 1);
+    }
+
+    #[test]
+    fn ts_eq_negative_denom() {
+        let t1 = MediaTime::new(-1, -2);
+        let t2 = MediaTime::new(0, 1);
+        assert_ne!(t1, t2)
+    }
+
+    #[test]
+    fn ts_abs_negative_denom() {
+        let t1 = MediaTime::new(-1, -1);
+        assert!(t1.abs() >= MediaTime::ZERO)
+    }
+
+    #[test]
+    fn ts_zero_denom() {
+        let t1 = MediaTime::new(1, 1);
+        let t2 = MediaTime::new(0, 0);
+        assert_ne!(t1, t2)
+    }
 }
