@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use crate::format::CodecSpec;
 use crate::media::ToPayload;
-use crate::rtp_::{ExtensionValues, MediaTime, Rid, RtpHeader, SeqNo, Ssrc};
+use crate::rtp_::{ExtensionValues, Frequency, MediaTime, Rid, RtpHeader, SeqNo, Ssrc};
 use crate::streams::StreamTx;
 
 use super::{CodecPacketizer, PacketError, Packetizer, QueueSnapshot};
@@ -15,7 +15,7 @@ use super::{MediaKind, QueuePriority};
 #[derive(Debug)]
 pub struct Payloader {
     pack: CodecPacketizer,
-    clock_rate: u32,
+    clock_rate: Frequency,
 }
 
 impl Payloader {
@@ -67,7 +67,7 @@ impl Payloader {
             stream.write_rtp(
                 pt,
                 seq_no,
-                rtp_time.rebase(self.clock_rate.into()).numer() as u32,
+                rtp_time.rebase(self.clock_rate).numer() as u32,
                 wallclock,
                 marker,
                 ext_vals.clone(),

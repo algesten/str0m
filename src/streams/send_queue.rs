@@ -209,7 +209,7 @@ mod test {
 
         queue.push(RtpPacket {
             seq_no: 0.into(),
-            time: MediaTime::new(10, 90_000),
+            time: MediaTime::from_90khz(10),
             header: RtpHeader::default(),
             payload: vec![],
             timestamp: Instant::now(),
@@ -244,7 +244,7 @@ mod test {
 
         queue.push(RtpPacket {
             seq_no: 0.into(),
-            time: MediaTime::new(10, 90_000),
+            time: MediaTime::from_90khz(10),
             header: RtpHeader::default(),
             payload: vec![42, 42],
             timestamp: start,

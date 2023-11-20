@@ -5,8 +5,8 @@ use std::fmt;
 use std::ops::RangeInclusive;
 
 use crate::packet::{H264ProfileLevel, MediaKind};
-use crate::rtp_::Direction;
 use crate::rtp_::Pt;
+use crate::rtp_::{Direction, Frequency};
 use crate::sdp::FormatParam;
 
 // These really don't belong anywhere, but I guess they're kind of related
@@ -89,7 +89,7 @@ pub struct CodecSpec {
     pub codec: Codec,
 
     /// Clock rate of the codec.
-    pub clock_rate: u32,
+    pub clock_rate: Frequency,
 
     /// Number of audio channels (if any).
     pub channels: Option<u8>,
@@ -440,7 +440,7 @@ impl CodecConfig {
         pt: Pt,
         resend: Option<Pt>,
         codec: Codec,
-        clock_rate: u32,
+        clock_rate: Frequency,
         channels: Option<u8>,
         format: FormatParams,
     ) {
@@ -482,7 +482,7 @@ impl CodecConfig {
             pt,
             resend,
             Codec::H264,
-            90_000,
+            Frequency::NINETY_KHZ,
             None,
             FormatParams {
                 level_asymmetry_allowed: Some(true),
@@ -503,7 +503,7 @@ impl CodecConfig {
             111.into(),
             None,
             Codec::Opus,
-            48_000,
+            Frequency::FORTY_EIGHT_KHZ,
             Some(2),
             FormatParams {
                 min_p_time: Some(10),
@@ -523,7 +523,7 @@ impl CodecConfig {
             96.into(),
             Some(97.into()),
             Codec::Vp8,
-            90_000,
+            Frequency::NINETY_KHZ,
             None,
             FormatParams::default(),
         )
@@ -574,7 +574,7 @@ impl CodecConfig {
             98.into(),
             Some(99.into()),
             Codec::Vp9,
-            90_000,
+            Frequency::NINETY_KHZ,
             None,
             FormatParams {
                 profile_id: Some(0),
@@ -585,7 +585,7 @@ impl CodecConfig {
             100.into(),
             Some(101.into()),
             Codec::Vp9,
-            90_000,
+            Frequency::NINETY_KHZ,
             None,
             FormatParams {
                 profile_id: Some(2),
@@ -903,6 +903,8 @@ impl std::ops::DerefMut for CodecConfig {
 
 #[cfg(test)]
 mod test {
+    use crate::rtp_::Frequency;
+
     use super::*;
 
     fn h264_codec_spec(
@@ -912,7 +914,7 @@ mod test {
     ) -> CodecSpec {
         CodecSpec {
             codec: Codec::H264,
-            clock_rate: 90000,
+            clock_rate: Frequency::NINETY_KHZ,
             channels: None,
             format: FormatParams {
                 min_p_time: None,

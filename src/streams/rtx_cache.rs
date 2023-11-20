@@ -87,7 +87,7 @@ mod test {
         RtpPacket {
             header: RtpHeader::default(),
             seq_no: seq_no.into(),
-            time: MediaTime::new(0, 90_000),
+            time: MediaTime::from_90khz(0),
             payload: millis.to_be_bytes().to_vec(),
             timestamp: after(now, millis),
             last_sender_info: None,

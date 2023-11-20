@@ -134,7 +134,7 @@ impl<'a> TryFrom<&'a [u8]> for SenderInfo {
         // frame, for a 25 f/s video by 3,600 for each frame.
         let rtp_time = u32::from_be_bytes([buf[12], buf[13], buf[14], buf[15]]);
         // The base (90kHz etc) is set higher up the stack (in StreamRx to be precise).
-        let rtp_time = MediaTime::new(rtp_time as i64, 1);
+        let rtp_time = MediaTime::from_secs(rtp_time as i64);
 
         let sender_packet_count = u32::from_be_bytes([buf[16], buf[17], buf[18], buf[19]]);
         let sender_octet_count = u32::from_be_bytes([buf[20], buf[21], buf[22], buf[23]]);

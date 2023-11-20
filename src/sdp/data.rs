@@ -13,7 +13,7 @@ use crate::format::CodecSpec;
 use crate::format::FormatParams;
 use crate::format::PayloadParams;
 use crate::ice::{Candidate, IceCreds};
-use crate::rtp_::{Direction, Extension, Mid, Pt, Rid, SessionId, Ssrc};
+use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, Rid, SessionId, Ssrc};
 use crate::VERSION;
 
 use super::parser::sdp_parser;
@@ -1050,7 +1050,7 @@ impl PayloadParams {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtpMap {
     pub codec: Codec,
-    pub clock_rate: u32,
+    pub clock_rate: Frequency,
     pub channels: Option<u8>,
 }
 
@@ -1402,7 +1402,7 @@ impl<'a> std::fmt::Display for FingerprintFmt<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::rtp_::Extension;
+    use crate::rtp_::{Extension, Frequency};
     use crate::VERSION;
 
     use super::*;
@@ -1498,7 +1498,7 @@ mod test {
                         MediaAttribute::SendRecv,
                         MediaAttribute::Msid(Msid { stream_id: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into(), track_id: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() }),
                         MediaAttribute::RtcpMux,
-                        MediaAttribute::RtpMap { pt: 111.into(), value: RtpMap {  codec: "opus".into(), clock_rate: 48_000, channels: Some(2) }},
+                        MediaAttribute::RtpMap { pt: 111.into(), value: RtpMap {  codec: "opus".into(), clock_rate: Frequency::FORTY_EIGHT_KHZ, channels: Some(2) }},
                         MediaAttribute::RtcpFb { pt: 111.into(), value: "transport-cc".into() },
                         MediaAttribute::Fmtp { pt: 111.into(), values: vec![FormatParam::MinPTime(10), FormatParam::UseInbandFec(true)] },
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "cname".into(), value: "xeXs3aE9AOBn00yJ".into() },

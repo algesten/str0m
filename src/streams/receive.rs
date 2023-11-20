@@ -2,7 +2,9 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::media::KeyframeRequestKind;
-use crate::rtp_::{extend_u32, Bitrate, DlrrItem, ExtendedReport, Fir, FirEntry, MediaTime, Remb};
+use crate::rtp_::{
+    extend_u32, Bitrate, DlrrItem, ExtendedReport, Fir, FirEntry, Frequency, MediaTime, Remb,
+};
 use crate::rtp_::{Mid, Pli, Pt, ReceiverReport};
 use crate::rtp_::{ReportBlock, ReportList, Rid, Rrtr, Rtcp, RtcpFb, RtpHeader, SenderInfo, SeqNo};
 use crate::rtp_::{SdesType, Ssrc};
@@ -54,7 +56,7 @@ pub struct StreamRx {
     last_used: Instant,
 
     /// Last seen pt and clock_rate in
-    last_clock_rate: Option<(Pt, u64)>,
+    last_clock_rate: Option<(Pt, Frequency)>,
 
     /// Last received sender info.
     sender_info: Option<(Instant, SenderInfo)>,
@@ -270,7 +272,10 @@ impl StreamRx {
 
         // The MediaTime has a base 1 after being parsed. At this point
         // we know whether it's audio or video and set the base accordingly.
-        let clock_rate = self.last_clock_rate.map(|(_, r)| r).unwrap_or(1);
+        let clock_rate = self
+            .last_clock_rate
+            .map(|(_, r)| r)
+            .unwrap_or(Frequency::SECONDS);
 
         // Clock rate is that of the last received packet.
         info.rtp_time = MediaTime::new(extended as i64, clock_rate);
@@ -311,7 +316,7 @@ impl StreamRx {
         &mut self,
         now: Instant,
         header: &RtpHeader,
-        clock_rate: u32,
+        clock_rate: Frequency,
         is_repair: bool,
     ) -> RegisterUpdateReceipt {
         self.last_used = now;
@@ -348,11 +353,11 @@ impl StreamRx {
             header.sequence_number(register.max_seq())
         };
 
-        let is_new_packet = register.update(seq_no, now, header.timestamp, clock_rate);
+        let is_new_packet = register.update(seq_no, now, header.timestamp, clock_rate.get());
 
         let previous_time = self.last_time.map(|t| t.numer() as u64);
         let time_u32 = extend_u32(previous_time, header.timestamp);
-        let time = MediaTime::new(time_u32 as i64, clock_rate as u64);
+        let time = MediaTime::new(time_u32 as i64, clock_rate);
 
         if !is_repair {
             self.last_time = Some(time);
@@ -378,11 +383,11 @@ impl StreamRx {
 
         let need_clock_rate = self.last_clock_rate.map(|(pt, _)| pt) != Some(header.payload_type);
         if need_clock_rate {
-            self.last_clock_rate = Some((header.payload_type, time.denom()));
+            self.last_clock_rate = Some((header.payload_type, time.frequency()));
 
             // If we get an SR before the first packet, we update the potential clock rate.
             if let Some(info) = &mut self.sender_info {
-                info.1.rtp_time = MediaTime::new(info.1.rtp_time.numer(), time.denom());
+                info.1.rtp_time = MediaTime::new(info.1.rtp_time.numer(), time.frequency());
             }
         }
 
