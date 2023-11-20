@@ -518,7 +518,7 @@ mod test {
             let meta = RtpMeta {
                 received: Instant::now(),
                 seq_no: (*seq).into(),
-                time: MediaTime::new(*time, 90_000),
+                time: MediaTime::from_90khz(*time),
                 last_sender_info: None,
                 header: RtpHeader {
                     sequence_number: *seq as u16,

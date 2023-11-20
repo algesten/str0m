@@ -14,6 +14,7 @@ mod dir;
 pub use dir::Direction;
 
 mod mtime;
+pub use mtime::Frequency;
 pub use mtime::MediaTime;
 
 mod header;

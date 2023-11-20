@@ -10,7 +10,7 @@ use {
 
 use crate::dtls::Fingerprint;
 use crate::ice::{Candidate, CandidateKind};
-use crate::rtp_::{Direction, Extension, Mid, Pt, SessionId, Ssrc};
+use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, SessionId, Ssrc};
 use crate::sdp::SdpError;
 
 use super::data::*;
@@ -567,7 +567,7 @@ where
             many1::<String, _, _>(satisfy(|c| c != '/' && c != '\r' && c != '\n')),
             token('/'),
             many1::<String, _, _>(satisfy(|c| c != '/' && c != '\r' && c != '\n')).and_then(|s| {
-                s.parse::<u32>()
+                s.parse::<Frequency>()
                     .map_err(StreamErrorFor::<Input>::message_format)
             }),
             optional((

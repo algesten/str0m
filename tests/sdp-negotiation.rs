@@ -8,6 +8,7 @@ use str0m::format::CodecSpec;
 use str0m::format::FormatParams;
 use str0m::format::PayloadParams;
 use str0m::media::Direction;
+use str0m::media::Frequency;
 use str0m::media::MediaKind;
 use str0m::rtp::{Extension, ExtensionMap};
 use str0m::Rtc;
@@ -439,7 +440,7 @@ fn opus(pt: u8) -> PayloadParams {
         CodecSpec {
             codec: Codec::Opus,
             channels: Some(2),
-            clock_rate: 48_000,
+            clock_rate: Frequency::FORTY_EIGHT_KHZ,
             format: FormatParams::default(),
         },
     )
@@ -452,7 +453,7 @@ fn vp8(pt: u8) -> PayloadParams {
         CodecSpec {
             codec: Codec::Vp8,
             channels: None,
-            clock_rate: 90_000,
+            clock_rate: Frequency::NINETY_KHZ,
             format: FormatParams::default(),
         },
     )
@@ -465,7 +466,7 @@ fn h264(pt: u8) -> PayloadParams {
         CodecSpec {
             codec: Codec::H264,
             channels: None,
-            clock_rate: 90_000,
+            clock_rate: Frequency::NINETY_KHZ,
             format: FormatParams::default(),
         },
     )

@@ -105,7 +105,7 @@ impl RtpPacket {
     fn blank() -> RtpPacket {
         RtpPacket {
             seq_no: 0.into(),
-            time: MediaTime::new(0, 90_000),
+            time: MediaTime::from_90khz(0),
             header: RtpHeader {
                 payload_type: BLANK_PACKET_DEFAULT_PT,
                 ..Default::default()

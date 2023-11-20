@@ -14,6 +14,8 @@ use crate::util::already_happened;
 use crate::util::epoch_to_beginning;
 use crate::util::InstantExt;
 
+use crate::rtp_::Frequency;
+
 use super::mtime::MediaTime;
 use super::{Mid, Rid};
 
@@ -609,8 +611,6 @@ impl ExtensionMap {
     }
 }
 
-const FIXED_POINT_6_18: u128 = 262_144; // 2 ^ 18
-
 impl Extension {
     pub(crate) fn write_to(&self, buf: &mut [u8], ev: &ExtensionValues) -> Option<usize> {
         use Extension::*;
@@ -625,12 +625,12 @@ impl Extension {
                 // This should be a 64 second offset from unix epoch.
                 let dur = time_abs.to_unix_duration();
 
-                let time_micros = dur.as_micros();
-
                 // Rebase to the 6.18 format.
-                let time_24 = (time_micros * FIXED_POINT_6_18) / 1_000_000;
+                let time_24 = MediaTime::from(dur)
+                    .rebase(Frequency::FIXED_POINT_6_18)
+                    .numer() as u32;
 
-                buf[..3].copy_from_slice(&time_24.to_be_bytes()[13..]);
+                buf[..3].copy_from_slice(&time_24.to_be_bytes()[1..]);
                 Some(3)
             }
             AudioLevel => {
@@ -655,8 +655,8 @@ impl Extension {
                 Some(2)
             }
             PlayoutDelay => {
-                let v1 = ev.play_delay_min?.rebase(100);
-                let v2 = ev.play_delay_max?.rebase(100);
+                let v1 = ev.play_delay_min?.rebase(Frequency::HUNDREDTHS);
+                let v2 = ev.play_delay_max?.rebase(Frequency::HUNDREDTHS);
                 let min = (v1.numer() & 0xfff) as u32;
                 let max = (v2.numer() & 0xfff) as u32;
                 buf[0] = (min >> 4) as u8;
@@ -733,7 +733,9 @@ impl Extension {
                 let time_24 = u32::from_be_bytes([0, buf[0], buf[1], buf[2]]);
 
                 // Rebase to micros
-                let time_micros = (time_24 as u128 * 1_000_000) / FIXED_POINT_6_18;
+                let time_micros = MediaTime::from_fixed_point_6_18(time_24 as i64)
+                    .rebase(Frequency::MICROS)
+                    .numer();
 
                 // This should be the duration in 0-64 seconds from a fixed 64 second offset
                 // from UNIX EPOCH. For now, we must save this as offset from _something else_ and
@@ -779,8 +781,8 @@ impl Extension {
                 }
                 let min = (buf[0] as u32) << 4 | (buf[1] as u32) >> 4;
                 let max = ((buf[1] & 0xf) as u32) << 8 | buf[2] as u32;
-                ev.play_delay_min = Some(MediaTime::new(min as i64, 100));
-                ev.play_delay_max = Some(MediaTime::new(max as i64, 100));
+                ev.play_delay_min = Some(MediaTime::from_hundredths(min as i64));
+                ev.play_delay_max = Some(MediaTime::from_hundredths(max as i64));
             }
             // 1
             VideoContentType => {
@@ -1248,8 +1250,8 @@ mod test {
         let mut exts = ExtensionMap::empty();
         exts.set(2, Extension::PlayoutDelay);
         let ev = ExtensionValues {
-            play_delay_min: Some(MediaTime::new(100, 100)),
-            play_delay_max: Some(MediaTime::new(200, 100)),
+            play_delay_min: Some(MediaTime::from_hundredths(100)),
+            play_delay_max: Some(MediaTime::from_hundredths(200)),
             ..Default::default()
         };
 

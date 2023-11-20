@@ -1,27 +1,120 @@
 #![allow(missing_docs)]
 
 use std::cmp::Ordering;
-use std::num::TryFromIntError;
+use std::fmt::Display;
+use std::num::{NonZeroU32, TryFromIntError};
 use std::ops::{Add, Sub};
+use std::str::FromStr;
 use std::time::Duration;
+use std::time::Instant;
 
-/// Microseconds in a second.
-const MICROS: u64 = 1_000_000;
+use serde::{Deserialize, Serialize};
 
-/// Milliseconds in a second.
-const MILLIS: u64 = 1_000;
+use crate::util::InstantExt;
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct Frequency(NonZeroU32);
+
+impl Frequency {
+    /// Microseconds in a second.
+    pub const MICROS: Self = Self::make(1_000_000);
+
+    /// 1 / 2 ^ 18 seconds in a second.
+    pub const FIXED_POINT_6_18: Frequency = Self::make(2u32.pow(18)); // 262_144
+
+    /// Cycles in a second of a 90 kHz signal.
+    pub const NINETY_KHZ: Frequency = Self::make(90_000);
+
+    /// Cycles in a second of a 48 kHz signal.
+    pub const FORTY_EIGHT_KHZ: Frequency = Self::make(48_000);
+
+    /// Milliseconds in a second.
+    pub const MILLIS: Frequency = Self::make(1_000);
+
+    /// Hundredths in a second.
+    pub const HUNDREDTHS: Frequency = Self::make(100);
+
+    /// Seconds in a second.
+    pub const SECONDS: Frequency = Self::make(1);
+
+    /// Private unconditional non-zero constructor for use with constants
+    const fn make(v: u32) -> Frequency {
+        match NonZeroU32::new(v) {
+            Some(v) => Self(v),
+            None => panic!("assured non-zero value is zero"),
+        }
+    }
+
+    pub const fn from_nonzero(v: NonZeroU32) -> Self {
+        Self(v)
+    }
+
+    pub fn new(v: u32) -> Option<Self> {
+        NonZeroU32::new(v).map(Self)
+    }
+
+    pub const fn get(&self) -> u32 {
+        self.0.get()
+    }
+
+    pub const fn nonzero(&self) -> NonZeroU32 {
+        self.0
+    }
+}
+
+impl PartialEq for Frequency {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+impl Eq for Frequency {}
+
+impl From<Frequency> for NonZeroU32 {
+    fn from(value: Frequency) -> Self {
+        value.0
+    }
+}
+
+impl From<NonZeroU32> for Frequency {
+    fn from(value: NonZeroU32) -> Self {
+        Self(value)
+    }
+}
+
+impl FromStr for Frequency {
+    type Err = <NonZeroU32 as FromStr>::Err;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        NonZeroU32::from_str(s).map(Self)
+    }
+}
+
+impl Display for Frequency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl<'de> Deserialize<'de> for Frequency {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        NonZeroU32::deserialize(deserializer).map(Self)
+    }
+}
 
 /// Media time represented by a numerator / denominator.
 ///
 /// The numerator is typically the packet time of an Rtp header. The denominator is the
 /// clock frequency of the media source (typically 90kHz for video and 48kHz for audio).
 #[derive(Debug, Clone, Copy)]
-pub struct MediaTime(i64, u64);
+pub struct MediaTime(i64, Frequency);
 
 impl MediaTime {
-    pub const ZERO: MediaTime = MediaTime(0, 1);
+    pub const ZERO: MediaTime = MediaTime::from_secs(0);
 
-    pub const fn new(numer: i64, denom: u64) -> Self {
+    pub const fn new(numer: i64, denom: Frequency) -> Self {
         Self(numer, denom)
     }
 
@@ -31,18 +124,43 @@ impl MediaTime {
     }
 
     #[inline(always)]
-    pub const fn denom(&self) -> u64 {
+    pub const fn denom(&self) -> u32 {
+        self.1.get()
+    }
+
+    #[inline(always)]
+    pub const fn frequency(&self) -> Frequency {
         self.1
     }
 
     #[inline(always)]
     pub const fn from_micros(v: i64) -> MediaTime {
-        MediaTime(v, MICROS)
+        MediaTime(v, Frequency::MICROS)
+    }
+
+    #[inline(always)]
+    pub const fn from_fixed_point_6_18(v: i64) -> MediaTime {
+        MediaTime(v, Frequency::FIXED_POINT_6_18)
+    }
+
+    #[inline(always)]
+    pub const fn from_90khz(v: i64) -> MediaTime {
+        MediaTime(v, Frequency::NINETY_KHZ)
     }
 
     #[inline(always)]
     pub const fn from_millis(v: i64) -> MediaTime {
-        MediaTime(v, MILLIS)
+        MediaTime(v, Frequency::MILLIS)
+    }
+
+    #[inline(always)]
+    pub const fn from_hundredths(v: i64) -> MediaTime {
+        MediaTime(v, Frequency::HUNDREDTHS)
+    }
+
+    #[inline(always)]
+    pub const fn from_secs(v: i64) -> MediaTime {
+        MediaTime(v, Frequency::SECONDS)
     }
 
     #[inline(always)]
@@ -52,11 +170,12 @@ impl MediaTime {
 
     #[inline(always)]
     pub fn as_seconds(&self) -> f64 {
-        self.0 as f64 / self.1 as f64
+        let denom: f64 = self.1.get().into();
+        self.0 as f64 / denom
     }
 
     pub const fn as_micros(&self) -> i64 {
-        self.rebase(MICROS).numer()
+        self.rebase(Frequency::MICROS).numer()
     }
 
     #[inline(always)]
@@ -73,18 +192,18 @@ impl MediaTime {
     }
 
     #[inline(always)]
-    pub const fn rebase(self, denom: u64) -> MediaTime {
-        if denom == self.1 {
+    pub const fn rebase(self, denom: Frequency) -> MediaTime {
+        if denom.get() == self.1.get() {
             self
         } else {
-            let numer = self.0 as i128 * denom as i128 / self.1 as i128;
+            let numer = self.0 as i128 * denom.get() as i128 / self.1.get() as i128;
             MediaTime::new(numer as i64, denom)
         }
     }
 
     #[inline(always)]
     fn same_base(t0: MediaTime, t1: MediaTime) -> (MediaTime, MediaTime) {
-        let max = t0.1.max(t1.1);
+        let max = Frequency(t0.1 .0.max(t1.1 .0));
         (t0.rebase(max), t1.rebase(max))
     }
 }
@@ -144,7 +263,7 @@ impl TryFrom<MediaTime> for Duration {
 
     fn try_from(value: MediaTime) -> Result<Self, Self::Error> {
         value
-            .rebase(MICROS)
+            .rebase(Frequency::MICROS)
             .numer()
             .try_into()
             .map(Duration::from_micros)
@@ -153,7 +272,7 @@ impl TryFrom<MediaTime> for Duration {
 
 impl From<Duration> for MediaTime {
     fn from(v: Duration) -> Self {
-        MediaTime::new(v.as_micros() as i64, MICROS)
+        MediaTime::new(v.as_micros() as i64, Frequency::MICROS)
     }
 }
 
@@ -164,7 +283,7 @@ mod test {
     #[test]
     fn ts_rebase() {
         let t1 = MediaTime::from_seconds(10.0);
-        let t2 = t1.rebase(90_000);
+        let t2 = t1.rebase(Frequency::NINETY_KHZ);
         assert_eq!(t2.numer(), 90_000 * 10);
         assert_eq!(t2.denom(), 90_000);
 
@@ -173,17 +292,10 @@ mod test {
 
     #[test]
     fn ts_negative_duration() {
-        let t = MediaTime::new(-1, 1);
+        let t = MediaTime::new(-1, Frequency::make(1));
         let t_dur: Result<Duration, TryFromIntError> = t.try_into();
         if let Ok(dur) = t_dur {
             panic!("expected conversion of negative MediaTime to fail but got {dur:?}")
         }
-    }
-
-    #[test]
-    fn ts_zero_denom() {
-        let t1 = MediaTime::new(1, 1);
-        let t2 = MediaTime::new(0, 0);
-        assert_ne!(t1, t2)
     }
 }

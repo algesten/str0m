@@ -608,7 +608,7 @@ mod test {
             sender_info: SenderInfo {
                 ssrc: ssrc.into(),
                 ntp_time,
-                rtp_time: MediaTime::new(4, 1),
+                rtp_time: MediaTime::from_secs(4),
                 sender_packet_count: 5,
                 sender_octet_count: 6,
             },

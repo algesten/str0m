@@ -25,7 +25,7 @@ mod writer;
 pub use writer::Writer;
 
 pub use crate::packet::MediaKind;
-pub use crate::rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid};
+pub use crate::rtp_::{Direction, ExtensionValues, Frequency, MediaTime, Mid, Pt, Rid};
 
 #[derive(Debug)]
 /// Information about some configured media.

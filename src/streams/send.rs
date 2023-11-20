@@ -16,7 +16,7 @@ use crate::packet::QueueState;
 use crate::rtp_::Bitrate;
 use crate::rtp_::{extend_u16, Descriptions, ReportList, Rtcp};
 use crate::rtp_::{ExtensionMap, ReceptionReport, RtpHeader};
-use crate::rtp_::{ExtensionValues, MediaTime, Mid, NackEntry};
+use crate::rtp_::{ExtensionValues, Frequency, MediaTime, Mid, NackEntry};
 use crate::rtp_::{Pt, Rid, RtcpFb, SenderInfo, SenderReport, Ssrc};
 use crate::rtp_::{Sdes, SdesType, MAX_BLANK_PADDING_PAYLOAD_SIZE};
 use crate::rtp_::{SeqNo, SRTP_BLOCK_SIZE};
@@ -64,7 +64,7 @@ pub struct StreamTx {
     cname: Option<String>,
 
     /// The last main payload clock rate that was sent.
-    clock_rate: Option<u64>,
+    clock_rate: Option<Frequency>,
 
     /// If we are doing seq_no ourselves (when writing sample mode).
     seq_no: SeqNo,
@@ -268,7 +268,7 @@ impl StreamTx {
         }
 
         // This 1 in clock frequency will be fixed in poll_output.
-        let media_time = MediaTime::new(time as i64, 1);
+        let media_time = MediaTime::from_secs(time as i64);
         self.rtp_and_wallclock = Some((time, wallclock));
 
         let header = RtpHeader {
@@ -364,7 +364,7 @@ impl StreamTx {
                 // because we already have a mutable borrow.
                 set_pt = Some(param.pt());
 
-                let clock_rate = param.spec().clock_rate as u64;
+                let clock_rate = param.spec().clock_rate;
                 set_cr = Some(clock_rate);
 
                 // Modify the cached packet time. This is so write_rtp can use u32 media time without
