@@ -1,3 +1,4 @@
+use openssl::asn1::Asn1Type;
 use openssl::asn1::{Asn1Integer, Asn1Time};
 use openssl::bn::BigNum;
 use openssl::ec::EcKey;
@@ -8,6 +9,7 @@ use openssl::rsa::Rsa;
 use openssl::srtp::SrtpProfileId;
 use openssl::ssl::{HandshakeError, MidHandshakeSslStream, Ssl, SslStream};
 use openssl::ssl::{SslContext, SslContextBuilder, SslMethod, SslOptions, SslVerifyMode};
+use openssl::x509::X509Name;
 use openssl::x509::X509;
 
 use std::io;
@@ -28,6 +30,14 @@ const DTLS_CIPHERS: &str = "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
 const DTLS_EC_CURVE: Nid = Nid::X9_62_PRIME256V1;
 const DTLS_KEY_LABEL: &str = "EXTRACTOR-dtls_srtp";
 
+// libWebRTC says "WebRTC" here when doing OpenSSL, for BoringSSL they seem
+// to generate a random 8 characters.
+// https://webrtc.googlesource.com/src/+/1568f1b1330f94494197696fe235094e6293b258/rtc_base/rtc_certificate_generator.cc#27
+//
+// Pion also sets this to "WebRTC", maybe for compatibility reasons.
+// https://github.com/pion/webrtc/blob/eed2bb2d3b9f204f9de1cd7e1046ca5d652778d2/constants.go#L31
+const DTLS_CERT_IDENTITY: &str = "WebRTC";
+
 // extern "C" {
 //     pub fn DTLSv1_2_method() -> *const openssl_sys::SSL_METHOD;
 // }
@@ -45,12 +55,15 @@ impl DtlsCert {
         Self::self_signed().expect("create dtls cert")
     }
 
+    // The libWebRTC code we try to match is at:
+    // https://webrtc.googlesource.com/src/+/1568f1b1330f94494197696fe235094e6293b258/rtc_base/openssl_certificate.cc#58
     fn self_signed() -> Result<Self, DtlsError> {
         let f4 = BigNum::from_u32(RSA_F4).unwrap();
         let key = Rsa::generate_with_e(2048, &f4)?;
         let pkey = PKey::from_rsa(key)?;
 
         let mut x509b = X509::builder()?;
+        x509b.set_version(2)?; // X509.V3 (zero indexed)
 
         // For firefox, we must increase the serial number for each generated certificate.
         // See https://github.com/versatica/mediasoup/issues/127#issuecomment-474460153
@@ -65,6 +78,25 @@ impl DtlsCert {
         let after = Asn1Time::days_from_now(7)?;
         x509b.set_not_after(&after)?;
         x509b.set_pubkey(&pkey)?;
+
+        // The libWebRTC code for this is:
+        //
+        // !X509_NAME_add_entry_by_NID(name.get(), NID_commonName, MBSTRING_UTF8,
+        // (unsigned char*)params.common_name.c_str(), -1, -1, 0) ||
+        //
+        // libWebRTC allows this name to be configured by the user of the library.
+        // That's a future TODO for str0m.
+        let mut nameb = X509Name::builder()?;
+        nameb.append_entry_by_nid_with_type(
+            Nid::COMMONNAME,
+            DTLS_CERT_IDENTITY,
+            Asn1Type::UTF8STRING,
+        )?;
+
+        let name = nameb.build();
+
+        x509b.set_subject_name(&name)?;
+        x509b.set_issuer_name(&name)?;
 
         x509b.sign(&pkey, MessageDigest::sha1())?;
         let x509 = x509b.build();
