@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 
 use std::cmp::Ordering;
+use std::num::TryFromIntError;
 use std::ops::{Add, Sub};
 use std::time::Duration;
 
@@ -138,10 +139,15 @@ impl Add for MediaTime {
     }
 }
 
-impl From<MediaTime> for Duration {
-    fn from(val: MediaTime) -> Self {
-        let m = val.rebase(MICROS);
-        Duration::from_micros(m.0 as u64)
+impl TryFrom<MediaTime> for Duration {
+    type Error = TryFromIntError;
+
+    fn try_from(value: MediaTime) -> Result<Self, Self::Error> {
+        value
+            .rebase(MICROS)
+            .numer()
+            .try_into()
+            .map(Duration::from_micros)
     }
 }
 
@@ -168,8 +174,10 @@ mod test {
     #[test]
     fn ts_negative_duration() {
         let t = MediaTime::new(-1, 1);
-        let t_dur: Duration = t.into();
-        assert_eq!(t_dur.as_secs(), 1);
+        let t_dur: Result<Duration, TryFromIntError> = t.try_into();
+        if let Ok(dur) = t_dur {
+            panic!("expected conversion of negative MediaTime to fail but got {dur:?}")
+        }
     }
 
     #[test]
