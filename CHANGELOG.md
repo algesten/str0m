@@ -1,5 +1,8 @@
 # Unreleased
 
+# 0.4.1
+  * Generated DTLS certificates set issuer/subject for compat with OBS/libdatachannel
+
 # 0.4.0
   * Allow SDP RID with `~` prefix (to indicate paused state)
   * Fix problem with using RTX for audio
