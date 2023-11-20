@@ -4,7 +4,7 @@ use std::time::Duration;
 use str0m::bwe::{Bitrate, BweKind};
 use str0m::media::{Direction, MediaKind};
 use str0m::{Candidate, Event, Rtc, RtcError};
-use tracing::{info, info_span};
+use tracing::info_span;
 
 mod common;
 use common::{init_log, negotiate, progress, TestRtc};
