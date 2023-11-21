@@ -248,6 +248,32 @@ impl Sub for MediaTime {
     }
 }
 
+impl SubAssign for MediaTime {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl Sub<MediaTime> for Instant {
+    type Output = Instant;
+
+    fn sub(self, rhs: MediaTime) -> Self::Output {
+        if rhs.numer() < 0 {
+            // abs(numer < 0) => positive i64 which can always fit in u64
+            self + Duration::try_from(rhs.abs()).unwrap()
+        } else {
+            // numer >= 0 => positive i64 which can always fit in u64
+            self - Duration::try_from(rhs).unwrap()
+        }
+    }
+}
+
+impl SubAssign<MediaTime> for Instant {
+    fn sub_assign(&mut self, rhs: MediaTime) {
+        *self = *self - rhs;
+    }
+}
+
 impl Add for MediaTime {
     type Output = MediaTime;
 
@@ -264,9 +290,23 @@ impl AddAssign for MediaTime {
     }
 }
 
-impl SubAssign for MediaTime {
-    fn sub_assign(&mut self, rhs: Self) {
-        *self = *self - rhs;
+impl Add<MediaTime> for Instant {
+    type Output = Instant;
+
+    fn add(self, rhs: MediaTime) -> Self::Output {
+        if rhs.numer() < 0 {
+            // abs(numer < 0) => positive i64 which can always fit in u64
+            self - Duration::try_from(rhs.abs()).unwrap()
+        } else {
+            // numer >= 0 => positive i64 which can always fit in u64
+            self + Duration::try_from(rhs).unwrap()
+        }
+    }
+}
+
+impl AddAssign<MediaTime> for Instant {
+    fn add_assign(&mut self, rhs: MediaTime) {
+        *self = *self + rhs;
     }
 }
 
