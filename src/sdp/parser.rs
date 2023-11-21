@@ -267,16 +267,41 @@ where
         port(),
         string(" typ "),
         kind,
+        optional((attempt(string(" tcptype ")), not_sp())),
         optional((
             attempt(string(" raddr ")),
             ip_addr(),
             string(" rport "),
             port(),
         )),
+        optional((attempt(string(" generation ")), not_sp())),
+        optional((attempt(string(" network-id ")), not_sp())),
         optional((attempt(string(" ufrag ")), not_sp())),
+        optional((attempt(string(" network-cost ")), not_sp())),
     )
         .map(
-            |(_, found, _, comp_id, _, proto, _, prio, _, addr, _, port, _, kind, raddr, ufrag)| {
+            |(
+                _,
+                found,
+                _,
+                comp_id,
+                _,
+                proto,
+                _,
+                prio,
+                _,
+                addr,
+                _,
+                port,
+                _,
+                kind,
+                _,
+                raddr,
+                _,
+                _,
+                ufrag,
+                _,
+            )| {
                 Candidate::parsed(
                     found,
                     comp_id,
@@ -302,6 +327,10 @@ where
     // a=candidate:1 2 udp 2113929470 203.0.113.100 10101 typ host
     // a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ srflx raddr 203.0.113.100 rport 10100
     // a=candidate:1 1 udp 255 192.0.2.100 12100 typ relay raddr 198.51.100.100 rport 11100
+    // a=candidate:3684617590 1 udp 2122260223 10.217.229.219 50028 typ host generation 0 network-id 1 network-cost 900
+    // a=candidate:387183333 1 udp 1686052607 113.185.55.72 31267 typ srflx raddr 10.217.229.219 rport 50028 generation 0 network-id 1 network-cost 900
+    // a=candidate:2501718406 1 tcp 1518280447 10.217.229.219 9 typ host tcptype active generation 0 network-id 1 network-cost 900
+    // a=candidate:387183333 1 udp 1686052607 113.185.55.72 41775 typ srflx raddr 10.217.229.219 rport 50028 generation 0 network-id 1 network-cost 900
 
     (string("a="), candidate(), line_end()).map(|(_, c, _)| c)
 }
@@ -1188,6 +1217,22 @@ mod test {
         let a = "a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ host ufrag abc\r\n";
         let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(c.ufrag(), Some("abc"));
+
+        let a = "a=candidate:3684617590 1 udp 2122260223 10.217.229.219 50028 typ host generation 0 network-id 1 network-cost 900";
+        let (c, _) = candidate_attribute().parse(a).unwrap();
+        assert_eq!(c.addr(), "10.217.229.219:50028".parse().unwrap());
+
+        let a = "a=candidate:387183333 1 udp 1686052607 113.185.55.72 31267 typ srflx raddr 10.217.229.219 rport 50028 generation 0 network-id 1 network-cost 900";
+        let (c, _) = candidate_attribute().parse(a).unwrap();
+        assert_eq!(c.addr(), "113.185.55.72:31267".parse().unwrap());
+
+        let a = "a=candidate:2501718406 1 tcp 1518280447 10.217.229.219 9 typ host tcptype active generation 0 network-id 1 network-cost 900";
+        let (c, _) = candidate_attribute().parse(a).unwrap();
+        assert_eq!(c.addr(), "10.217.229.219:9".parse().unwrap());
+
+        let a = "a=candidate:387183333 1 udp 1686052607 113.185.55.72 41775 typ srflx raddr 10.217.229.219 rport 50028 generation 0 network-id 1 network-cost 900";
+        let (c, _) = candidate_attribute().parse(a).unwrap();
+        assert_eq!(c.addr(), "113.185.55.72:41775".parse().unwrap());
     }
 
     #[test]
