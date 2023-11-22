@@ -295,12 +295,12 @@ where
                 port,
                 _,
                 kind,
-                _,
-                raddr,
-                _,
-                _,
-                ufrag,
-                _,
+                _,     // (" tcptype ", tcptype)
+                raddr, // (" raddr ", addr, " rport ", port)
+                _,     // (" generation ", generation)
+                _,     // (" network-id ", network_id)
+                ufrag, // (" ufrag ", ufrag)
+                _,     // ("network-cost", network_cost)
             )| {
                 Candidate::parsed(
                     found,
