@@ -1,4 +1,6 @@
 # Unreleased
+  * Handle more a=candidate parameter variants.
+  * Support REMB (receiver estimated maximum bitrate) feedback packets (breaking)
 
 # 0.4.1
   * Generated DTLS certificates set issuer/subject for compat with OBS/libdatachannel
