@@ -1,5 +1,6 @@
 # Unreleased
-  * Handle more a=candidate parameter variants.
+  * Header extension abs_send_time is now an Instant
+  * Handle more optional a=candidate parameters
   * Support REMB (receiver estimated maximum bitrate) feedback packets (breaking)
 
 # 0.4.1
