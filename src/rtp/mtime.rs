@@ -10,7 +10,28 @@ use serde::{Deserialize, Serialize};
 
 /// Media timeline frequency as represented by a non-zero unsigned integer.
 ///
+/// The frequency can be found in the negotiated payload parameters for a
+/// media writer.
 ///
+/// ```no_run
+/// # use str0m::Rtc;
+/// # use str0m::media::{Mid, MediaTime};
+/// # let rtc: Rtc = todo!();
+/// #
+/// // Obtain mid from Event::MediaAdded
+/// let mid: Mid = todo!();
+///
+/// // Create a media writer for the mid.
+/// let writer = rtc.writer(mid).unwrap();
+///
+/// // Get the payload type (pt) for the wanted codec.
+/// let params = writer.payload_params().nth(0).unwrap();
+///
+/// // Obtain the frequency for the selected codec.
+/// let freq = params.spec().clock_rate;
+///
+/// let mtime = MediaTime::new(2000, freq);
+/// ```
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Frequency(NonZeroU32);
 
@@ -115,6 +136,29 @@ impl<'de> Deserialize<'de> for Frequency {
 /// 90kHz for video and 48kHz for audio). The denominator is
 /// guaranteed to be a positive integer while the numerator could be
 /// positive, negative, or zero.
+///
+/// The frequency can be found in the negotiated payload parameters for a
+/// media writer.
+///
+/// ```no_run
+/// # use str0m::Rtc;
+/// # use str0m::media::{Mid, MediaTime};
+/// # let rtc: Rtc = todo!();
+/// #
+/// // Obtain mid from Event::MediaAdded
+/// let mid: Mid = todo!();
+///
+/// // Create a media writer for the mid.
+/// let writer = rtc.writer(mid).unwrap();
+///
+/// // Get the payload type (pt) for the wanted codec.
+/// let params = writer.payload_params().nth(0).unwrap();
+///
+/// // Obtain the frequency for the selected codec.
+/// let freq = params.spec().clock_rate;
+///
+/// let mtime = MediaTime::new(2000, freq);
+/// ```
 #[derive(Debug, Clone, Copy)]
 pub struct MediaTime(i64, Frequency);
 
