@@ -842,7 +842,7 @@ impl Codec {
     /// Tells if codec is video.
     pub fn is_video(&self) -> bool {
         use Codec::*;
-        matches!(self, H264 | Vp8 | Vp9 | Av1)
+        matches!(self, H265 | H264 | Vp8 | Vp9 | Av1)
     }
 
     /// Audio/Video.
