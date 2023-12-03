@@ -185,6 +185,11 @@ fn poll_until_timeout(
     socket: &UdpSocket,
 ) -> Instant {
     loop {
+        if !client.rtc.is_alive() {
+            // This client will be cleaned up in the next run of the main loop.
+            return Instant::now();
+        }
+
         let propagated = client.poll_output(socket);
 
         if let Propagated::Timeout(t) = propagated {
