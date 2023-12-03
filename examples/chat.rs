@@ -185,11 +185,6 @@ fn poll_until_timeout(
     socket: &UdpSocket,
 ) -> Instant {
     loop {
-        if !client.rtc.is_alive() {
-            // This client will be cleaned up in the next run of the main loop.
-            return Instant::now();
-        }
-
         let propagated = client.poll_output(socket);
 
         if let Propagated::Timeout(t) = propagated {
@@ -349,10 +344,6 @@ impl Client {
     }
 
     fn poll_output(&mut self, socket: &UdpSocket) -> Propagated {
-        if !self.rtc.is_alive() {
-            return Propagated::Noop;
-        }
-
         // Incoming tracks from other clients cause new entries in track_out that
         // need SDP negotiation with the remote peer.
         if self.negotiate_if_needed() {
