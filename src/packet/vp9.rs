@@ -13,6 +13,89 @@ const MAX_VP9REF_PICS: usize = 3;
 /// InitialPictureIDFn is a function that returns random initial picture ID.
 pub type InitialPictureIDFn = Arc<dyn (Fn() -> u16) + Send + Sync + UnwindSafe + RefUnwindSafe>;
 
+/// Vp9 information describing the depacketized/packetized data.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Vp9CodecExtra {
+    /// Map of the SVC layers.
+    ///
+    /// Index of each element corresponds to `spatial layer` index.
+    ///  
+    /// Each element represents the end (not including) in [`MediaData::data`]
+    /// for `spatial layer` it belongs.
+    ///
+    /// The all `spatial layer`s (up to 3) in [`MediaData::data`] are sorted by
+    /// `spatial layer` index from lower to greater. So, the beginning of some
+    /// `spatial layer` is the end (including) of the previous `spatial layer`
+    /// (for the `spatial layer` with index 0 the beginning is 0).
+    ///
+    /// ```text
+    /// [MediaData::data]:
+    /// +-----+----------------------+---------------------------+
+    /// | SL0 |         SL1          |            SL2            |
+    /// +-----+----------------------+---------------------------+
+    /// |     |                      |                           |
+    /// V     V                      V                           V
+    /// 0   layers_scheme[0]       layers_scheme[1]            layers_scheme[2]
+    /// ```
+    ///
+    /// **Note:** There is no syncronization between
+    /// [`Vp9CodecExtra::layers_scheme`] and [`MediaData::data`]! If you need
+    /// to keep [`Vp9CodecExtra::layers_scheme`] in actual state you have to
+    /// update the [`Vp9CodecExtra::layers_scheme`] on mutating the
+    /// [`MediaData::data`].
+    ///
+    /// [`MediaData::data`]: crate::media::MediaData::data
+    ///
+    /// ## Example
+    ///
+    /// Say you have a VP9 track working in "L3T3" scalability mode and you
+    /// want to retranslate S1T2 layer. So you need to retranslate the all
+    /// spatial and temporal layers <= target layer.
+    ///
+    /// ```no_run
+    /// # use str0m::{format::CodecExtra, media::MediaData};
+    /// #
+    /// // We want to receive S1T2 layer.
+    /// let (target_spatial, target_temporal) = (1u8, 2u8);
+    ///
+    /// let mut media_data: MediaData = todo!();
+    ///
+    /// if let CodecExtra::Vp9(vp9_extra) = media_data.codec_extra {
+    ///     // Try to get current `temporal layer`. If `None` there is no SVC.
+    ///     if let Some(tid) = vp9_extra.tid {
+    ///         if let (true, Some(end_of_target_layer)) = (
+    ///             // Check whether we need this `temporal layer`.
+    ///             tid <= target_temporal,
+    ///             // Check whether we have information about the right
+    ///             // border of data for the target `spatial layer`.
+    ///             vp9_extra.layers_scheme[target_spatial as usize],
+    ///         ) {
+    ///             // Cut off unwanted data of `spatial layer`s with spatial
+    ///             // indeces higher than `target_spatial`.
+    ///             media_data.data.drain(end_of_target_layer..);
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub layers_scheme: [Option<usize>; 3],
+
+    /// Temporal layer id.
+    pub tid: Option<u8>,
+
+    /// Map of the SVC layers widths.
+    ///
+    /// Specified for every spatial layer.
+    pub layers_widths: [Option<u16>; 3],
+
+    /// Map of the SVC layers heights.
+    ///
+    /// Specified for every spatial layer.
+    pub layers_heights: [Option<u16>; 3],
+
+    /// Picture ID.
+    pub pid: u16,
+}
+
 /// Packetizes VP9 RTP packets.
 #[derive(Default, Clone)]
 pub struct Vp9Packetizer {
@@ -184,8 +267,8 @@ pub struct Vp9Depacketizer {
     pub g: bool,
     /// N_G indicates the number of pictures in a Picture Group (PG)
     pub ng: u8,
-    pub width: Vec<u16>,
-    pub height: Vec<u16>,
+    pub width: [Option<u16>; MAX_SPATIAL_LAYERS as usize],
+    pub height: [Option<u16>; MAX_SPATIAL_LAYERS as usize],
     /// Temporal layer ID of pictures in a Picture Group
     pub pgtid: Vec<u8>,
     /// Switching up point of pictures in a Picture Group
@@ -200,7 +283,7 @@ impl Depacketizer for Vp9Depacketizer {
         &mut self,
         packet: &[u8],
         out: &mut Vec<u8>,
-        _: &mut CodecExtra,
+        extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
         if packet.is_empty() {
             return Err(PacketError::ErrShortPacket);
@@ -236,6 +319,8 @@ impl Depacketizer for Vp9Depacketizer {
             payload_index = self.parse_ssdata(&mut reader, payload_index)?;
         }
 
+        self.update_extra(extra, out.len(), packet.len(), payload_index)?;
+
         out.extend_from_slice(&packet[payload_index..]);
 
         Ok(())
@@ -256,6 +341,42 @@ impl Depacketizer for Vp9Depacketizer {
 }
 
 impl Vp9Depacketizer {
+    /// Updates provided [`CodecExtra`].
+    /// __MUST__ be called after the all transformations of `payload_index`.
+    fn update_extra(
+        &mut self,
+        extra: &mut CodecExtra,
+        out_len: usize,
+        packet_len: usize,
+        payload_index: usize,
+    ) -> Result<(), PacketError> {
+        let mut vp9_extra = match extra {
+            CodecExtra::Vp9(e) => *e,
+            _ => Vp9CodecExtra::default(),
+        };
+
+        if self.l {
+            let mut new_stop = out_len + packet_len - payload_index;
+
+            if let Some(stop) = vp9_extra.layers_scheme[self.sid as usize] {
+                if stop != out_len {
+                    return Err(PacketError::ErrVP9CorruptedPacket);
+                }
+            }
+
+            vp9_extra.layers_scheme[self.sid as usize] = Some(new_stop);
+            vp9_extra.tid = Some(self.tid);
+        }
+
+        vp9_extra.pid = self.picture_id;
+        vp9_extra.layers_widths.copy_from_slice(&self.width[..3]);
+        vp9_extra.layers_heights.copy_from_slice(&self.height[..3]);
+
+        *extra = CodecExtra::Vp9(vp9_extra);
+
+        Ok(())
+    }
+
     // Picture ID:
     //
     //      +-+-+-+-+-+-+-+-+
@@ -426,11 +547,9 @@ impl Vp9Depacketizer {
                 return Err(PacketError::ErrShortPacket);
             }
 
-            self.width = vec![0u16; ns];
-            self.height = vec![0u16; ns];
             for i in 0..ns {
-                self.width[i] = reader.get_u16();
-                self.height[i] = reader.get_u16();
+                self.width[i] = Some(reader.get_u16());
+                self.height[i] = Some(reader.get_u16());
             }
             payload_index += 4 * ns;
         }
@@ -652,8 +771,20 @@ mod test {
                     y: true,
                     g: false,
                     ng: 0,
-                    width: vec![640, 1280],
-                    height: vec![360, 720],
+                    width: {
+                        let mut res = [None; MAX_SPATIAL_LAYERS as usize];
+                        res[0] = Some(640);
+                        res[1] = Some(1280);
+
+                        res
+                    },
+                    height: {
+                        let mut res = [None; MAX_SPATIAL_LAYERS as usize];
+                        res[0] = Some(360);
+                        res[1] = Some(720);
+
+                        res
+                    },
                     ..Default::default()
                 },
                 &[],
