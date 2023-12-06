@@ -11,7 +11,7 @@ pub const URI: &str = "http://www.webrtc.org/experiments/rtp-hdrext/video-layers
 /// In practice, there are either many simulcast streams with 1 spatial layer each (simulcast)
 /// or 1 simulcast stream with many spatial layers (SVC)
 /// or 1 simulcast stream with 1 spatial layer (only temporal layers used).
-/// But theoretically, you could have N simulcast streams with M spatial layers each.
+/// But theoretically, you could have 5 simulcast streams with 4 spatial layers each.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct VideoLayersAllocation {
     /// The index of the current simulcast stream.
@@ -21,30 +21,33 @@ pub struct VideoLayersAllocation {
     pub current_simulcast_stream_index: u8,
 
     /// AKA RTP streams
+    /// Max size of this Vec: 5
     pub simulcast_streams: Vec<SimulcastStreamAllocation>,
 }
 
-/// An allocation for a simulcast stream, which may contain many allocations for spatial layers.
-/// There may be many of these per top-level allocation.
+/// An allocation for a simulcast stream, which may contain up to 4 allocations for spatial layers.
+/// There may be up to 5 of these per top-level allocation.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SimulcastStreamAllocation {
     /// May contains many spatial layers, or none.
+    /// Max size of this Vec: 4
     pub spatial_layers: Vec<SpatialLayerAllocation>,
 }
 
-/// An allocation for a spatial layer, which may contain many allocations for temporal layers.
-/// There may be many per simulcast stream.
+/// An allocation for a spatial layer, which may contain up to 5 allocations for temporal layers.
+/// There may be up to 4 per simulcast stream.
 /// Also contains an optional resolution and framerate.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct SpatialLayerAllocation {
     /// Contains many temporal layers, or none.
     /// If empty, the spatial layer is not active.
+    /// Max size of this Vec: 5
     pub temporal_layers: Vec<TemporalLayerAllocation>,
     /// Contains an optional resolution and framerate
     pub resolution_and_framerate: Option<ResolutionAndFramerate>,
 }
 
-/// An allocation for a temporal layer.  There may be many per spatial layer.
+/// An allocation for a temporal layer.  There may be up to 5 per spatial layer.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct TemporalLayerAllocation {
     /// Cumulative bitrate for this temporal layer and all below it within a spatial layer.
@@ -76,12 +79,14 @@ impl VideoLayersAllocation {
             });
         }
         let current_simulcast_stream_index = read_bits(b0, 0..2);
+        // Maximum of 5 simulcast streams
         let simulcast_stream_count = read_bits(b0, 2..4) + 1;
         let shared_spatial_layer_bitmask = read_bits(b0, 4..8);
 
         // Spatial layer bitmasks, which can be either "shared" or not.
         // If shared, each simulcast stream as the same spatial layers active.
         // If not, each simulcast stream has its own 4 bits indicating which spatial layers are active.
+        // So, a maximum of 4 spatial layers per simulcast stream.
         let (spatial_layer_active_bits, after_spatial_layer_bitmasks) =
             if shared_spatial_layer_bitmask > 0 {
                 let shared_spatial_layer_active_bits =
@@ -104,6 +109,7 @@ impl VideoLayersAllocation {
             };
         // The number of active bits that are set across all simulcast streams,
         // which is the number of active spatial layers across all simulcast streams.
+        // A maximum of 5x4 = 20 spatial layers across all simulcast streams.
         let total_active_spatial_layer_count = spatial_layer_active_bits
             .iter()
             .flatten()
@@ -112,10 +118,13 @@ impl VideoLayersAllocation {
 
         // Temporal layer counts
         // 2 bits per spatial layer
+        // A maximum of 5 temporal layers per spatial layer.
+        // For a maximum of 5x4x5 = 100 temporal layers across all spatial layers across all simulcast streams.
         let (temporal_layer_counts, after_temporal_layer_counts) = split_at(
             after_spatial_layer_bitmasks,
             div_round_up(total_active_spatial_layer_count, 4),
         )?;
+        // Max size of this VecDeque: 20
         let mut temporal_layer_counts: VecDeque<u8> = temporal_layer_counts
             .iter()
             .flat_map(|&byte| split_byte_in4(byte))
@@ -126,6 +135,7 @@ impl VideoLayersAllocation {
 
         // Temporal layer bitrates
         let mut next_temporal_layer_bitrate = after_temporal_layer_counts;
+        // Max size of this VecDeque: 100
         let mut temporal_layer_cumulative_bitrates: VecDeque<u64> = (0..total_temporal_layer_count)
             .map(|_temporal_layer_index| {
                 let (bitrate, after_temporal_layer_bitrate) =
