@@ -623,6 +623,8 @@ pub mod rtp {
     }
     use self::rtcp::Rtcp;
 
+    /// Video Layers Allocation RTP Header Extension
+    pub mod vla;
     pub use crate::rtp_::{Extension, ExtensionMap, ExtensionSerializer};
     pub use crate::rtp_::{ExtensionValues, UserExtensionValues};
 
