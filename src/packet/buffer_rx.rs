@@ -366,7 +366,10 @@ impl fmt::Debug for Depacketized {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::rtp_::MediaTime;
+    use crate::{
+        packet::vp9::Vp9Depacketizer,
+        rtp_::{Frequency, MediaTime, Pt, Ssrc},
+    };
 
     #[test]
     fn end_on_marker() {
@@ -589,5 +592,188 @@ mod test {
         fn is_partition_tail(&self, _marker: bool, packet: &[u8]) -> bool {
             !packet.is_empty() && packet.iter().any(|v| *v == 9)
         }
+    }
+
+    #[test]
+    fn rtp_out_of_order() {
+        let construct_input =
+            |(time, seq, marker, cc, data): (u32, u16, bool, u16, Vec<u8>)| -> (RtpMeta, Vec<u8>) {
+                (
+                    RtpMeta {
+                        received: Instant::now(),
+                        time: MediaTime::new(time.into(), Frequency::new(90000).unwrap()),
+                        seq_no: SeqNo::from(seq as u64),
+                        header: RtpHeader {
+                            version: 2,
+                            has_padding: false,
+                            has_extension: true,
+                            marker,
+                            payload_type: Pt::new_with_value(98),
+                            sequence_number: seq,
+                            timestamp: time,
+                            ssrc: Ssrc::from(2930203832),
+                            ext_vals: ExtensionValues {
+                                transport_cc: Some(cc),
+                                ..Default::default()
+                            },
+                            header_len: 28,
+                        },
+                        last_sender_info: None,
+                    },
+                    data,
+                )
+            };
+
+        let inputs = [
+            /// PID: 23860
+            (
+                821395241, // Timestamp
+                8685,      // SeqN
+                false,     // Marker
+                56,        // Transport CC
+                // VP9 header--------+
+                //                   |
+                //        +--------------------+
+                Vec::from([236, 221, 52, 80, 26, 10, 1, 1, 1, 1, 1, 1, 1, 1]), // Data
+            ),
+            /// PID: 23860
+            (
+                821395241, // Timestamp
+                8686,      // SeqN
+                true,      // Marker
+                57,        // Transport CC
+                // VP9 header--------+
+                //                   |
+                //        +--------------------+
+                Vec::from([237, 221, 52, 83, 26, 10, 2, 2, 2, 2, 2, 2, 2, 2]), // Data
+            ),
+            /// PID: 23861
+            (
+                821398481, // Timestamp
+                8687,      // SeqN
+                false,     // Marker
+                60,        // Transport CC
+                // VP9 header--------+
+                //                   |
+                //        +------------------------+
+                Vec::from([170, 221, 53, 16, 27, 56, 20, 0, 0, 0, 0, 0, 0, 0, 0]), // Data
+            ),
+            /// PID: 23861
+            (
+                821398481, // Timestamp
+                8688,      // SeqN
+                false,     // Marker
+                61,        // Transport CC
+                // VP9 header--------+
+                //                   |
+                //        +--------------------+
+                Vec::from([160, 221, 53, 16, 27, 20, 1, 1, 1, 1, 1, 1, 1, 1]), // Data
+            ),
+            /// PID: 23861
+            (
+                821398481,
+                8689,
+                false,
+                62,
+                // VP9 header--------+
+                //                   |
+                //        +--------------------+
+                Vec::from([164, 221, 53, 16, 27, 20, 2, 2, 2, 2, 2, 2, 2, 2]), // Data
+            ),
+            /// PID: 23861
+            (
+                821398481, // Timestamp
+                8690,      // SeqN
+                false,     // Marker
+                63,        // Transport CC
+                // VP9 header--------+
+                //                   |
+                //        +--------------------+
+                Vec::from([169, 221, 53, 19, 27, 20, 3, 3, 3, 3, 3, 3, 3, 3]), // Data
+            ),
+            /// PID: 23861
+            (
+                821398481, // Timestamp
+                8691,      // SeqN
+                false,     // Marker
+                64,        // Transport CC
+                // VP9 header--------+
+                //                   |
+                //        +--------------------+
+                Vec::from([161, 221, 53, 19, 27, 20, 4, 4, 4, 4, 4, 4, 4, 4]), // Data
+            ),
+            /// PID: 23861
+            (
+                821398481, // Timestamp
+                8692,      // SeqN
+                false,     // Marker
+                65,        // Transport CC
+                // VP9 header--------+
+                //                   |
+                //        +--------------------+
+                Vec::from([161, 221, 53, 19, 27, 20, 5, 5, 5, 5, 5, 5, 5, 5]), // Data
+            ),
+            /// PID: 23861
+            (
+                821398481, // Timestamp
+                8693,      // SeqN
+                false,     // Marker
+                66,        // Transport CC
+                // VP9 header--------+
+                //                   |
+                //        +--------------------+
+                Vec::from([161, 221, 53, 19, 27, 20, 6, 6, 6, 6, 6, 6, 6, 6]), // Data
+            ),
+            /// PID: 23861
+            (
+                821398481, // Timestamp
+                8694,      // SeqN
+                true,      // Marker
+                67,        // Transport CC
+                // VP9 header--------+
+                //                   |
+                //        +--------------------+
+                Vec::from([165, 221, 53, 19, 27, 20, 7, 7, 7, 7, 7, 7, 7, 7]), // Data
+            ),
+        ];
+
+        let mut buffer =
+            DepacketizingBuffer::new(CodecDepacketizer::Vp9(Vp9Depacketizer::default()), 30);
+
+        for input in &inputs {
+            let (meta, data) = construct_input(input.clone());
+            buffer.push(meta, data);
+        }
+
+        let res0before = buffer.pop().unwrap().unwrap(); // Pop PID: 23860, `contiguous_seq == true`.
+        let res1before = buffer.pop().unwrap().unwrap(); // Pop PID: 23861, `contiguous_seq == true`.
+
+        let mut buffer =
+            DepacketizingBuffer::new(CodecDepacketizer::Vp9(Vp9Depacketizer::default()), 30);
+
+        for input in &inputs {
+            let (meta, data) = construct_input(input.clone());
+            if meta.seq_no == SeqNo::from(8689) {
+                continue; // Skip RTP packet with seq_num=8689 vp9_payload=[20, 2, 2, 2, 2, 2, 2, 2, 2].
+            }
+            buffer.push(meta.clone(), data.clone());
+        }
+
+        let res0after = buffer.pop().unwrap().unwrap(); // Pop PID: 23860, `contiguous_seq == true`.
+        assert!(buffer.pop().is_none()); // Try to pop PID: 23861. `None` because `contiguous_seq == false` -- no seq_num=8689.
+        assert!(buffer.pop().is_none()); // Ensure once again.
+
+        for input in &inputs {
+            let (meta, data) = construct_input(input.clone());
+            if meta.seq_no == SeqNo::from(8689) {
+                buffer.push(meta.clone(), data.clone()); // Send RTP packet with seq_num=8689 vp9_payload=[20, 2, 2, 2, 2, 2, 2, 2, 2].
+                break;
+            }
+        }
+
+        let res1after = buffer.pop().unwrap().unwrap();
+
+        assert_eq!(res0before.data, res0after.data);
+        assert_eq!(res1before.data, res1after.data);
     }
 }
