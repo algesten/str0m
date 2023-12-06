@@ -144,17 +144,19 @@ impl VideoLayersAllocation {
                 bitrate
             })
             .collect();
-        // libwebrtc fails to parse at a value of 1_000_000 kbps.  We are a little more forgiving, 
+        // libwebrtc fails to parse at a value of 1_000_000 kbps.  We are a little more forgiving,
         // but since we limit the LEB parse at 63 bits, we should be at least that strict.
-        if temporal_layer_cumulative_bitrates.iter().any(|&kbps| kbps > (1u64 << 63)) {
-            return None
+        if temporal_layer_cumulative_bitrates
+            .iter()
+            .any(|&kbps| kbps > (1u64 << 63))
+        {
+            return None;
         }
 
         // (Optional) resolutions and framerates
         let mut next_resolution_and_framerate = next_temporal_layer_bitrate;
-        let mut resolutions_and_framerates = (0
-            ..total_active_spatial_layer_count)
-            .filter_map(|_| {
+        let mut resolutions_and_framerates =
+            (0..total_active_spatial_layer_count).filter_map(|_| {
                 let (resolution_and_framerate, after_resolution_and_framerate) =
                     split_at(next_resolution_and_framerate, 5)?;
                 next_resolution_and_framerate = after_resolution_and_framerate;
@@ -178,7 +180,8 @@ impl VideoLayersAllocation {
                             let temporal_layers = (0..temporal_layer_count)
                                 .filter_map(|_temporal_layer_index| {
                                     Some(TemporalLayerAllocation {
-                                        cumulative_kbps: temporal_layer_cumulative_bitrates.pop_front()?,
+                                        cumulative_kbps: temporal_layer_cumulative_bitrates
+                                            .pop_front()?,
                                     })
                                 })
                                 .collect();
@@ -359,12 +362,34 @@ mod test {
         assert_eq!(2097152, value);
         assert_eq!(&[5], rest);
 
-        let (value, rest) = parse_leb_u63(&[0b1000_0000, 0b1000_0000, 0b1000_0000, 0b1000_0000, 0b1000_0000, 0b1000_0000, 0b1000_0000, 0b1000_0000, 0b0000_0001, 5]);
+        let (value, rest) = parse_leb_u63(&[
+            0b1000_0000,
+            0b1000_0000,
+            0b1000_0000,
+            0b1000_0000,
+            0b1000_0000,
+            0b1000_0000,
+            0b1000_0000,
+            0b1000_0000,
+            0b0000_0001,
+            5,
+        ]);
         assert_eq!(72057594037927936, value);
         assert_eq!(&[5], rest);
 
         // Too many bytes, so stop early.
-        let (value, rest) = parse_leb_u63(&[0b1000_0000, 0b1000_0000, 0b1000_0000, 0b1000_0000, 0b1000_0000, 0b1000_0000, 0b1000_0000, 0b1000_0000, 0b1000_0001, 5]);
+        let (value, rest) = parse_leb_u63(&[
+            0b1000_0000,
+            0b1000_0000,
+            0b1000_0000,
+            0b1000_0000,
+            0b1000_0000,
+            0b1000_0000,
+            0b1000_0000,
+            0b1000_0000,
+            0b1000_0001,
+            5,
+        ]);
         assert_eq!(72057594037927936, value);
         assert_eq!(&[5], rest);
     }
