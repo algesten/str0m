@@ -1,4 +1,7 @@
 # Unreleased
+  * Optional parser for VLA (Video Layers Allocation) RTP header extension
+  * Chat example send PLI on RTC sequence interruption
+  * Improved VP9 support with parsing layer metadata
   * Fix race in chat example on client disconnect
   * MediaTime improve safety with Frequency newtype (breaking)
   * Header extension abs_send_time is now an Instant
