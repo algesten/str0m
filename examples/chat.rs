@@ -217,7 +217,7 @@ fn propagate(propagated: &Propagated, clients: &mut [Client]) {
 
         match &propagated {
             Propagated::TrackOpen(_, track_in) => client.handle_track_open(track_in.clone()),
-            Propagated::MediaData(_, data) => client.handle_media_data(client_id, data),
+            Propagated::MediaData(_, data) => client.handle_media_data_out(client_id, data),
             Propagated::KeyframeRequest(_, req, origin, mid_in) => {
                 // Only one origin client handles the keyframe request.
                 if *origin == client.id {
@@ -388,16 +388,7 @@ impl Client {
                     Propagated::Noop
                 }
                 Event::MediaAdded(e) => self.handle_media_added(e.mid, e.kind),
-                Event::MediaData(data) => {
-                    if !data.contiguous {
-                        self.request_keyframe_throttled(
-                            data.mid,
-                            data.rid,
-                            KeyframeRequestKind::Fir,
-                        );
-                    }
-                    Propagated::MediaData(self.id, data)
-                }
+                Event::MediaData(data) => self.handle_media_data_in(data),
                 Event::KeyframeRequest(req) => self.handle_incoming_keyframe_req(req),
                 Event::ChannelOpen(cid, _) => {
                     self.cid = Some(cid);
@@ -421,6 +412,32 @@ impl Client {
                 _ => Propagated::Noop,
             },
         }
+    }
+
+    fn handle_media_added(&mut self, mid: Mid, kind: MediaKind) -> Propagated {
+        let track_in = TrackInEntry {
+            id: Arc::new(TrackIn {
+                origin: self.id,
+                mid,
+                kind,
+            }),
+            last_keyframe_request: None,
+        };
+
+        // The Client instance owns the strong reference to the incoming
+        // track, all other clients have a weak reference.
+        let weak = Arc::downgrade(&track_in.id);
+        self.tracks_in.push(track_in);
+
+        Propagated::TrackOpen(self.id, weak)
+    }
+
+    fn handle_media_data_in(&mut self, data: MediaData) -> Propagated {
+        if !data.contiguous {
+            self.request_keyframe_throttled(data.mid, data.rid, KeyframeRequestKind::Fir);
+        }
+
+        Propagated::MediaData(self.id, data)
     }
 
     fn request_keyframe_throttled(
@@ -448,24 +465,6 @@ impl Client {
         _ = writer.request_keyframe(rid, kind);
 
         track_entry.last_keyframe_request = Some(Instant::now());
-    }
-
-    fn handle_media_added(&mut self, mid: Mid, kind: MediaKind) -> Propagated {
-        let track_in = TrackInEntry {
-            id: Arc::new(TrackIn {
-                origin: self.id,
-                mid,
-                kind,
-            }),
-            last_keyframe_request: None,
-        };
-
-        // The Client instance owns the strong reference to the incoming
-        // track, all other clients have a weak reference.
-        let weak = Arc::downgrade(&track_in.id);
-        self.tracks_in.push(track_in);
-
-        Propagated::TrackOpen(self.id, weak)
     }
 
     fn handle_incoming_keyframe_req(&self, mut req: KeyframeRequest) -> Propagated {
@@ -584,7 +583,7 @@ impl Client {
         self.tracks_out.push(track_out);
     }
 
-    fn handle_media_data(&mut self, origin: ClientId, data: &MediaData) {
+    fn handle_media_data_out(&mut self, origin: ClientId, data: &MediaData) {
         // Figure out which outgoing track maps to the incoming media data.
         let Some(mid) = self
             .tracks_out
