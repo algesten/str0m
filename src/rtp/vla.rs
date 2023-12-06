@@ -111,7 +111,7 @@ impl VideoLayersAllocation {
             .count();
 
         // Temporal layer counts
-        // 2 bits per temporal layer
+        // 2 bits per spatial layer
         let (temporal_layer_counts, after_temporal_layer_counts) = split_at(
             after_spatial_layer_bitmasks,
             div_round_up(total_active_spatial_layer_count, 4),
@@ -142,7 +142,7 @@ impl VideoLayersAllocation {
 
         // (Optional) resolutions and framerates
         let mut next_resolution_and_framerate = next_temporal_layer_bitrate;
-        let mut resolutions_and_framerates: VecDeque<ResolutionAndFramerate> = (0
+        let mut resolutions_and_framerates = (0
             ..total_active_spatial_layer_count)
             .filter_map(|_| {
                 let (resolution_and_framerate, after_resolution_and_framerate) =
@@ -155,8 +155,7 @@ impl VideoLayersAllocation {
                         + 1,
                     framerate: resolution_and_framerate[4],
                 })
-            })
-            .collect();
+            });
 
         let simulcast_streams = spatial_layer_active_bits
             .into_iter()
@@ -173,7 +172,7 @@ impl VideoLayersAllocation {
                                     })
                                 })
                                 .collect();
-                            let resolution_and_framerate = resolutions_and_framerates.pop_front();
+                            let resolution_and_framerate = resolutions_and_framerates.next();
                             (temporal_layers, resolution_and_framerate)
                         } else {
                             (vec![], None)
