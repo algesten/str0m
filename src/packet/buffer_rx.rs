@@ -1,7 +1,7 @@
 use core::panic;
 use std::collections::VecDeque;
 use std::fmt;
-use std::ops::RangeInclusive;
+use std::ops::{Range, RangeInclusive};
 use std::time::Instant;
 
 use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SenderInfo, SeqNo};
@@ -81,7 +81,7 @@ pub struct DepacketizingBuffer {
     segments: Vec<(usize, usize)>,
     last_emitted: Option<(SeqNo, CodecExtra)>,
     max_time: Option<MediaTime>,
-    depack_cache: Option<(SeqNo, Depacketized)>,
+    depack_cache: Option<(Range<usize>, Depacketized)>,
     vp8_contiguity: Vp8Contiguity,
 }
 
@@ -181,7 +181,7 @@ impl DepacketizingBuffer {
 
         if wait_for_contiguity {
             // if we are not sending, cache the depacked
-            self.depack_cache = Some((seq, dep));
+            self.depack_cache = Some((start..stop, dep));
             return None;
         }
 
@@ -220,7 +220,7 @@ impl DepacketizingBuffer {
         seq: SeqNo,
     ) -> Result<Depacketized, PacketError> {
         if let Some(cached) = self.depack_cache.take() {
-            if cached.0 == seq {
+            if cached.0 == (start..stop) {
                 trace!("depack cache hit for segment start {}", start);
                 return Ok(cached.1);
             }
