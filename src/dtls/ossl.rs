@@ -43,7 +43,7 @@ const DTLS_CERT_IDENTITY: &str = "WebRTC";
 // }
 
 /// Certificate used for DTLS.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DtlsCert {
     pkey: PKey<Private>,
     x509: X509,
@@ -117,6 +117,16 @@ impl DtlsCert {
         Fingerprint {
             hash_func: "sha-256".into(),
             bytes: digest.to_vec(),
+        }
+    }
+
+    /// Reusing certificates is a security hole.
+    ///
+    /// If you know what you're doing, this allows you to clone despite that.
+    pub fn i_know_what_am_doing_and_dangerously_clone(&self) -> DtlsCert {
+        DtlsCert {
+            pkey: self.pkey.clone(),
+            x509: self.x509.clone(),
         }
     }
 }

@@ -1674,8 +1674,10 @@ impl Rtc {
 ///     .build();
 /// ```
 ///
-/// Configs implement [`Clone`] to help create multiple `Rtc` instances.
-#[derive(Debug, Clone)]
+/// Configs implement [`Clone`] to help create multiple `Rtc` instances. However notice that if you
+/// manually set the [`DtlsCert`], this is _NOT_ cloned, since that would be a security hole. See
+/// [`DtlsCert`][DtlsCert::i_know_what_am_doing_and_dangerously_clone()] if you absolutely want to clone it.
+#[derive(Debug)]
 pub struct RtcConfig {
     local_ice_credentials: IceCreds,
     dtls_cert: Option<DtlsCert>,
@@ -2122,6 +2124,30 @@ impl Default for RtcConfig {
             send_buffer_video: 1000,
             rtp_mode: false,
             enable_raw_packets: false,
+        }
+    }
+}
+
+impl Clone for RtcConfig {
+    fn clone(&self) -> Self {
+        Self {
+            // This is the point. DtlsCert should not be cloned.
+            dtls_cert: None,
+
+            // Rest is Clone.
+            local_ice_credentials: self.local_ice_credentials.clone(),
+            fingerprint_verification: self.fingerprint_verification,
+            ice_lite: self.ice_lite,
+            codec_config: self.codec_config.clone(),
+            exts: self.exts.clone(),
+            stats_interval: self.stats_interval,
+            bwe_initial_bitrate: self.bwe_initial_bitrate,
+            reordering_size_audio: self.reordering_size_audio,
+            reordering_size_video: self.reordering_size_video,
+            send_buffer_audio: self.send_buffer_audio,
+            send_buffer_video: self.send_buffer_video,
+            rtp_mode: self.rtp_mode,
+            enable_raw_packets: self.enable_raw_packets,
         }
     }
 }
