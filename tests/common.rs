@@ -62,6 +62,22 @@ impl TestRtc {
             .cloned()
             .unwrap()
     }
+
+    pub fn params_vp9(&self) -> PayloadParams {
+        self.rtc
+            .codec_config()
+            .find(|p| p.spec().codec == Codec::Vp9)
+            .cloned()
+            .unwrap()
+    }
+
+    pub fn params_h264(&self) -> PayloadParams {
+        self.rtc
+            .codec_config()
+            .find(|p| p.spec().codec == Codec::H264)
+            .cloned()
+            .unwrap()
+    }
 }
 
 pub fn progress(l: &mut TestRtc, r: &mut TestRtc) -> Result<(), RtcError> {
@@ -261,6 +277,66 @@ pub fn connect_l_r() -> (TestRtc, TestRtc) {
 pub fn vp8_data() -> Vec<(Duration, RtpHeader, Vec<u8>)> {
     let reader = Cursor::new(include_bytes!("data/vp8.pcap"));
     let mut r = PcapReader::new(reader).expect("vp8 pcap reader");
+
+    let exts = ExtensionMap::standard();
+
+    let mut ret = vec![];
+
+    let mut first = None;
+
+    while let Some(pkt) = r.next_packet() {
+        let pkt = pkt.unwrap();
+
+        if first.is_none() {
+            first = Some(pkt.timestamp);
+        }
+        let relative_time = pkt.timestamp - first.unwrap();
+
+        // This magic number 42 is the ethernet/IP/UDP framing of the packet.
+        let rtp_data = &pkt.data[42..];
+
+        let header = RtpHeader::parse(rtp_data, &exts).unwrap();
+        let payload = &rtp_data[header.header_len..];
+
+        ret.push((relative_time, header, payload.to_vec()));
+    }
+
+    ret
+}
+
+pub fn vp9_data() -> Vec<(Duration, RtpHeader, Vec<u8>)> {
+    let reader = Cursor::new(include_bytes!("data/vp9.pcap"));
+    let mut r = PcapReader::new(reader).expect("vp9 pcap reader");
+
+    let exts = ExtensionMap::standard();
+
+    let mut ret = vec![];
+
+    let mut first = None;
+
+    while let Some(pkt) = r.next_packet() {
+        let pkt = pkt.unwrap();
+
+        if first.is_none() {
+            first = Some(pkt.timestamp);
+        }
+        let relative_time = pkt.timestamp - first.unwrap();
+
+        // This magic number 42 is the ethernet/IP/UDP framing of the packet.
+        let rtp_data = &pkt.data[42..];
+
+        let header = RtpHeader::parse(rtp_data, &exts).unwrap();
+        let payload = &rtp_data[header.header_len..];
+
+        ret.push((relative_time, header, payload.to_vec()));
+    }
+
+    ret
+}
+
+pub fn h264_data() -> Vec<(Duration, RtpHeader, Vec<u8>)> {
+    let reader = Cursor::new(include_bytes!("data/h264.pcap"));
+    let mut r = PcapReader::new(reader).expect("h264 pcap reader");
 
     let exts = ExtensionMap::standard();
 

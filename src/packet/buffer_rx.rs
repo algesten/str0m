@@ -188,6 +188,7 @@ impl DepacketizingBuffer {
         let (can_emit, contiguous_codec) = match dep.codec_extra {
             CodecExtra::Vp8(next) => self.vp8_contiguity.check(&next, contiguous_seq),
             CodecExtra::Vp9(_) => (true, contiguous_seq),
+            CodecExtra::H264(_) => (true, contiguous_seq),
             CodecExtra::None => (true, contiguous_seq),
         };
 
