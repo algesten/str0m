@@ -18,6 +18,12 @@ pub struct Vp8CodecExtra {
     pub picture_id: Option<u64>,
     /// Extended picture id of layer 0 frames, if present
     pub tl0_picture_id: Option<u64>,
+    /// Flag which indicates that within [`MediaData`], there is an individual frame
+    /// containing complete and independent visual information. This frame serves
+    /// as a reference point for other frames in the video sequence.
+    ///
+    /// [`MediaData`]: crate::media::MediaData
+    pub is_keyframe: bool,
 }
 
 /// Packetizes VP8 RTP packets.
@@ -159,6 +165,11 @@ pub struct Vp8Depacketizer {
     pub y: u8,
     /// 5 bits temporal key frame index
     pub key_idx: u8,
+
+    /// Inverse key frame flag.
+    ///
+    /// 0 if the current frame is a key frame.
+    pub p: u8,
 }
 
 impl Depacketizer for Vp8Depacketizer {
@@ -256,6 +267,42 @@ impl Depacketizer for Vp8Depacketizer {
 
         out.extend_from_slice(&packet[payload_index..]);
 
+        // VP8 Payload Header
+        // https://datatracker.ietf.org/doc/html/rfc7741#section-4.3
+        //
+        //  0 1 2 3 4 5 6 7
+        // +-+-+-+-+-+-+-+-+
+        // |Size0|H| VER |P|
+        // +-+-+-+-+-+-+-+-+
+        // |     Size1     |
+        // +-+-+-+-+-+-+-+-+
+        // |     Size2     |
+        // +-+-+-+-+-+-+-+-+
+        // | Octets 4..N of|
+        // | VP8 payload   |
+        // :               :
+        // +-+-+-+-+-+-+-+-+
+        // | OPTIONAL RTP  |
+        // | padding       |
+        // :               :
+        // +-+-+-+-+-+-+-+-+
+        //
+        // The header is present only in packets that have the S bit equal
+        // to one and the PID equal to zero in the payload descriptor
+        self.p = if self.s == 1 && self.pid == 0 {
+            b = reader.get_u8();
+            payload_index += 1;
+            b & 1
+        } else {
+            1
+        };
+
+        let is_keyframe = if let CodecExtra::Vp8(e) = extra {
+            e.is_keyframe | (self.p == 0)
+        } else {
+            self.p == 0
+        };
+
         *extra = CodecExtra::Vp8(Vp8CodecExtra {
             discardable: self.n == 1,
             sync: self.y == 1,
@@ -266,6 +313,7 @@ impl Depacketizer for Vp8Depacketizer {
             } else {
                 None
             },
+            is_keyframe,
         });
         Ok(())
     }
@@ -329,6 +377,7 @@ mod test {
         assert_eq!(pck.l, 0, "L must be 0");
         assert_eq!(pck.t, 0, "T must be 0");
         assert_eq!(pck.k, 0, "K must be 0");
+        assert_eq!(pck.p, 1, "P must be 1");
 
         // Header size, X and I, PID 16bits
         let raw_bytes = &[0x80, 0x80, 0x81, 0x00, 0x00];
@@ -341,6 +390,7 @@ mod test {
         assert_eq!(pck.l, 0, "L must be 0");
         assert_eq!(pck.t, 0, "T must be 0");
         assert_eq!(pck.k, 0, "K must be 0");
+        assert_eq!(pck.p, 1, "P must be 1");
 
         // Header size, X and L
         let raw_bytes = &[0x80, 0x40, 0x00, 0x00];
@@ -353,6 +403,7 @@ mod test {
         assert_eq!(pck.l, 1, "L must be 1");
         assert_eq!(pck.t, 0, "T must be 0");
         assert_eq!(pck.k, 0, "K must be 0");
+        assert_eq!(pck.p, 1, "P must be 1");
 
         // Header size, X and T
         let raw_bytes = &[0x80, 0x20, 0x00, 0x00];
@@ -365,6 +416,7 @@ mod test {
         assert_eq!(pck.l, 0, "L must be 0");
         assert_eq!(pck.t, 1, "T must be 1");
         assert_eq!(pck.k, 0, "K must be 0");
+        assert_eq!(pck.p, 1, "P must be 1");
 
         // Header size, X and K
         let raw_bytes = &[0x80, 0x10, 0x00, 0x00];
@@ -377,6 +429,7 @@ mod test {
         assert_eq!(pck.l, 0, "L must be 0");
         assert_eq!(pck.t, 0, "T must be 0");
         assert_eq!(pck.k, 1, "K must be 1");
+        assert_eq!(pck.p, 1, "P must be 1");
 
         // Header size, all flags and 8bit picture_id
         let raw_bytes = &[0xff, 0xff, 0x00, 0x00, 0x00, 0x00];
@@ -389,6 +442,7 @@ mod test {
         assert_eq!(pck.l, 1, "L must be 1");
         assert_eq!(pck.t, 1, "T must be 1");
         assert_eq!(pck.k, 1, "K must be 1");
+        assert_eq!(pck.p, 1, "P must be 1");
 
         // Header size, all flags and 16bit picture_id
         let raw_bytes = &[0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x00];
@@ -401,6 +455,20 @@ mod test {
         assert_eq!(pck.l, 1, "L must be 1");
         assert_eq!(pck.t, 1, "T must be 1");
         assert_eq!(pck.k, 1, "K must be 1");
+        assert_eq!(pck.p, 1, "P must be 1");
+
+        // Header size, X, I and P
+        let raw_bytes = &[0x90, 0x80, 0x11, 0x10, 0x00, 0x00, 0x00];
+        let mut payload = Vec::new();
+        pck.depacketize(raw_bytes, &mut payload, &mut extra)
+            .expect("all flags and 16bit picture_id");
+        assert!(!payload.is_empty(), "Payload must be not empty");
+        assert_eq!(pck.x, 1, "X must be 1");
+        assert_eq!(pck.i, 1, "I must be 1");
+        assert_eq!(pck.l, 0, "L must be 0");
+        assert_eq!(pck.t, 0, "T must be 0");
+        assert_eq!(pck.k, 0, "K must be 0");
+        assert_eq!(pck.p, 0, "P must be 0");
 
         Ok(())
     }

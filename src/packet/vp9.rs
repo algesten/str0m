@@ -94,6 +94,13 @@ pub struct Vp9CodecExtra {
 
     /// Picture ID.
     pub pid: u16,
+
+    /// Flag which indicates that within [`MediaData`], there is an individual frame
+    /// containing complete and independent visual information. This frame serves
+    /// as a reference point for other frames in the video sequence.
+    ///
+    /// [`MediaData`]: crate::media::MediaData
+    pub is_keyframe: bool,
 }
 
 /// Packetizes VP9 RTP packets.
@@ -371,6 +378,7 @@ impl Vp9Depacketizer {
         vp9_extra.pid = self.picture_id;
         vp9_extra.layers_widths.copy_from_slice(&self.width[..3]);
         vp9_extra.layers_heights.copy_from_slice(&self.height[..3]);
+        vp9_extra.is_keyframe |= !self.p && (self.sid == 0 || !self.l) && self.b;
 
         *extra = CodecExtra::Vp9(vp9_extra);
 

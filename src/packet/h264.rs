@@ -2,6 +2,17 @@
 
 use super::{CodecExtra, Depacketizer, MediaKind, PacketError, Packetizer};
 
+/// H264 information describing the depacketized / packetized data
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct H264CodecExtra {
+    /// Flag which indicates that within [`MediaData`], there is an individual frame
+    /// containing complete and independent visual information. This frame serves
+    /// as a reference point for other frames in the video sequence.
+    ///
+    /// [`MediaData`]: crate::media::MediaData
+    pub is_keyframe: bool,
+}
+
 /// Packetizes H264 RTP packets.
 #[derive(Default, Debug, Clone)]
 pub struct H264Packetizer {
@@ -12,6 +23,7 @@ pub struct H264Packetizer {
 pub const STAPA_NALU_TYPE: u8 = 24;
 pub const FUA_NALU_TYPE: u8 = 28;
 pub const FUB_NALU_TYPE: u8 = 29;
+pub const IDR_NALU_TYPE: u8 = 5;
 pub const SPS_NALU_TYPE: u8 = 7;
 pub const PPS_NALU_TYPE: u8 = 8;
 pub const AUD_NALU_TYPE: u8 = 9;
@@ -206,7 +218,7 @@ impl Depacketizer for H264Depacketizer {
         &mut self,
         packet: &[u8],
         out: &mut Vec<u8>,
-        _: &mut CodecExtra,
+        extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
         if packet.len() == 0 {
             return Err(PacketError::ErrShortPacket);
@@ -218,7 +230,14 @@ impl Depacketizer for H264Depacketizer {
         let nalu_type = b0 & NALU_TYPE_BITMASK;
 
         match nalu_type {
-            1..=23 => {
+            t @ 1..=23 => {
+                let is_keyframe = if let CodecExtra::H264(e) = extra {
+                    (t == IDR_NALU_TYPE) | e.is_keyframe
+                } else {
+                    t == IDR_NALU_TYPE
+                };
+                *extra = CodecExtra::H264(H264CodecExtra { is_keyframe });
+
                 if self.is_avc {
                     out.extend_from_slice(&(packet.len() as u32).to_be_bytes());
                 } else {
@@ -240,6 +259,15 @@ impl Depacketizer for H264Depacketizer {
                             packet.len() - curr_offset,
                         ));
                     }
+
+                    let b0 = packet[curr_offset];
+                    let t = b0 & NALU_TYPE_BITMASK;
+                    let is_keyframe = if let CodecExtra::H264(e) = extra {
+                        (t == IDR_NALU_TYPE) | e.is_keyframe
+                    } else {
+                        t == IDR_NALU_TYPE
+                    };
+                    *extra = CodecExtra::H264(H264CodecExtra { is_keyframe });
 
                     if self.is_avc {
                         out.extend_from_slice(&(nalu_size as u32).to_be_bytes());
@@ -269,6 +297,13 @@ impl Depacketizer for H264Depacketizer {
                 if b1 & FU_END_BITMASK != 0 {
                     let nalu_ref_idc = b0 & NALU_REF_IDC_BITMASK;
                     let fragmented_nalu_type = b1 & NALU_TYPE_BITMASK;
+
+                    let is_keyframe = if let CodecExtra::H264(e) = extra {
+                        (fragmented_nalu_type == IDR_NALU_TYPE) | e.is_keyframe
+                    } else {
+                        fragmented_nalu_type == IDR_NALU_TYPE
+                    };
+                    *extra = CodecExtra::H264(H264CodecExtra { is_keyframe });
 
                     if let Some(fua_buffer) = self.fua_buffer.take() {
                         if self.is_avc {
@@ -581,6 +616,47 @@ mod test {
         let actual = pck.packetize(1500, &[0x05, 0x04, 0x05])?;
         assert_eq!(actual, expected, "SPS and PPS aren't packed together");
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_h264_depacketizer_idr_handling() -> Result<(), PacketError> {
+        let mut pck = H264Depacketizer::default();
+        let mut extra = CodecExtra::None;
+        let mut out = vec![];
+
+        // First byte is NALU type
+        let packet = [0x85];
+        pck.depacketize(&packet, &mut out, &mut extra)?;
+        let CodecExtra::H264(e) = extra else {
+            panic!("Expected CodecExtra::H264");
+        };
+        assert!(e.is_keyframe);
+
+        // First byte is STAPA NALU type
+        let packet = vec![
+            vec![
+                120, 0, 15, 103, 66, 192, 21, 140, 141, 64, 160, 203, 207, 0, 240, 136, 70, 160, 0,
+                4, 104, 206, 60, 128, 1, 20, 101,
+            ],
+            vec![0; 275],
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        pck.depacketize(packet.as_slice(), &mut out, &mut extra)?;
+        let CodecExtra::H264(e) = extra else {
+            panic!("Expected CodecExtra::H264");
+        };
+        assert!(e.is_keyframe);
+
+        // First byte is FUA NALU type
+        let packet = [124, 69];
+        pck.depacketize(&packet, &mut out, &mut extra)?;
+        let CodecExtra::H264(e) = extra else {
+            panic!("Expected CodecExtra::H264");
+        };
+        assert!(e.is_keyframe);
         Ok(())
     }
 }

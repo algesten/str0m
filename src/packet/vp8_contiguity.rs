@@ -97,6 +97,7 @@ mod test {
                 layer_index: L1T3_LAYERS[i as usize % 4] as u8,
                 picture_id: Some(i),
                 tl0_picture_id: Some(i / 4),
+                is_keyframe: false,
             };
 
             let res = contiguity.check(next, true);
@@ -122,6 +123,7 @@ mod test {
                 layer_index,
                 picture_id: Some(i),
                 tl0_picture_id: Some(i / 4),
+                is_keyframe: false,
             };
 
             let (emit, contiguous) = contiguity.check(next, true);
@@ -157,6 +159,7 @@ mod test {
                 layer_index,
                 picture_id: Some(i),
                 tl0_picture_id: Some(i),
+                is_keyframe: false,
             };
 
             let (emit, contiguous) = contiguity.check(next, true);
@@ -176,6 +179,7 @@ mod test {
                 layer_index: L1T2_LAYERS[i as usize % 4] as u8,
                 picture_id: Some(i),
                 tl0_picture_id: Some(i / 2),
+                is_keyframe: false,
             };
 
             let res = contiguity.check(next, true);
@@ -201,6 +205,7 @@ mod test {
                 layer_index,
                 picture_id: Some(i),
                 tl0_picture_id: Some(i / 2),
+                is_keyframe: false,
             };
 
             let (emit, contiguous) = contiguity.check(next, true);

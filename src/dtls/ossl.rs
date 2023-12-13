@@ -317,7 +317,7 @@ where
 
         match result {
             Ok(v) => {
-                debug!("Established");
+                debug!("Established version: {:}", v.ssl().version_str());
 
                 let _ = mem::replace(self, State::Established(v));
 

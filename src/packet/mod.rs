@@ -12,6 +12,7 @@ mod g7xx;
 use g7xx::{G711Packetizer, G722Packetizer};
 
 mod h264;
+pub use h264::H264CodecExtra;
 use h264::{H264Depacketizer, H264Packetizer};
 
 mod h264_profile;
@@ -89,6 +90,8 @@ pub enum CodecExtra {
     Vp8(Vp8CodecExtra),
     /// Codec extra parameters for VP9.
     Vp9(Vp9CodecExtra),
+    /// Codec extra parameters for H264.
+    H264(H264CodecExtra),
 }
 
 /// Depacketizes an RTP payload.
