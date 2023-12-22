@@ -775,6 +775,18 @@ impl IceAgent {
             }
         }
 
+        if message.is_successful_binding_response() {
+            let belongs_to_a_candidate_pair = self
+                .candidate_pairs
+                .iter()
+                .any(|pair| pair.has_binding_attempt(message.trans_id()));
+
+            if !belongs_to_a_candidate_pair {
+                trace!("Message rejected, transaction ID does not belong to any of our candidate pairs");
+                return false;
+            }
+        }
+
         let (_, password) = self.stun_credentials(!message.is_response());
         if !message.check_integrity(&password) {
             trace!("Message rejected, integrity check failed");
@@ -1780,5 +1792,42 @@ mod test {
                 assert!(s != IceConnectionState::Disconnected);
             }
         }
+    }
+
+    #[test]
+    fn does_not_accept_response_with_unknown_transaction_id() {
+        let mut agent = IceAgent::new();
+        let remote_creds = IceCreds::new();
+        let mut remote_candidate = Candidate::host(ipv4_3(), "udp").unwrap();
+        remote_candidate.set_ufrag(&remote_creds.ufrag);
+
+        agent.set_remote_credentials(remote_creds.clone());
+        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+        agent.add_remote_candidate(remote_candidate);
+        agent.handle_timeout(Instant::now());
+
+        let payload = Vec::from(agent.poll_transmit().unwrap().contents);
+        let stun_message = StunMessage::parse(&payload).unwrap();
+
+        let valid_reply =
+            make_authenticated_stun_reply(stun_message.trans_id(), ipv4_4(), &remote_creds.pass);
+        let fake_reply =
+            make_authenticated_stun_reply(TransId::new(), ipv4_4(), &remote_creds.pass);
+
+        assert!(!agent.accepts_message(&StunMessage::parse(&fake_reply).unwrap()));
+        assert!(agent.accepts_message(&StunMessage::parse(&valid_reply).unwrap()));
+    }
+
+    fn make_authenticated_stun_reply(tx_id: TransId, addr: SocketAddr, password: &str) -> Vec<u8> {
+        let reply = StunMessage::reply(tx_id, addr);
+
+        let mut buf = vec![0_u8; DATAGRAM_MTU];
+
+        let n = reply
+            .to_bytes(password, &mut buf)
+            .expect("IO error writing STUN reply");
+        buf.truncate(n);
+
+        buf
     }
 }
