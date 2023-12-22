@@ -775,16 +775,16 @@ impl IceAgent {
             }
         }
 
-        if message.is_successful_binding_response()
-            && !self
+        if message.is_successful_binding_response() {
+            let belongs_to_a_candidate_pair = self
                 .candidate_pairs
                 .iter()
-                .any(|p| p.has_binding_attempt(message.trans_id()))
-        {
-            trace!(
-                "Message rejected, transaction ID does not belong to any of our candidate pairs"
-            );
-            return false;
+                .any(|pair| pair.has_binding_attempt(message.trans_id()));
+
+            if !belongs_to_a_candidate_pair {
+                trace!("Message rejected, transaction ID does not belong to any of our candidate pairs");
+                return false;
+            }
         }
 
         let (_, password) = self.stun_credentials(!message.is_response());
