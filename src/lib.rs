@@ -1593,7 +1593,7 @@ impl Rtc {
             Stun(stun) => self
                 .ice
                 .handle_receive(now, r.proto, r.source, r.destination, stun),
-            Dtls(_) => self.dtls.handle_receive(r)?,
+            Dtls(dtls) => self.dtls.handle_receive(dtls)?,
             Rtp(_) | Rtcp(_) => self.session.handle_receive(now, r),
         }
 
