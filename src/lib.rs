@@ -1594,7 +1594,8 @@ impl Rtc {
                 .ice
                 .handle_receive(now, r.proto, r.source, r.destination, stun),
             Dtls(dtls) => self.dtls.handle_receive(dtls)?,
-            Rtp(_) | Rtcp(_) => self.session.handle_receive(now, r),
+            Rtp(rtp) => self.session.handle_rtp_receive(now, rtp),
+            Rtcp(rtcp) => self.session.handle_rtcp_receive(now, rtcp),
         }
 
         Ok(())
