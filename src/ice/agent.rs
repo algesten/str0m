@@ -804,19 +804,19 @@ impl IceAgent {
     /// Handles an incoming STUN message.
     ///
     /// Will not be used if [`IceAgent::accepts_message`] returns false.
-    pub fn handle_receive(&mut self, now: Instant, r: Receive) {
+    pub fn handle_receive(&mut self, now: Instant, r: Receive) -> bool {
         trace!("Handle receive: {:?}", r);
 
         if !self.accepts_message(&r) {
             debug!("Message not accepted");
-            return;
+            return false;
         }
 
         let message = match r.contents {
             DatagramRecv::Stun(v) => v,
             _ => {
                 trace!("Receive rejected, not STUN");
-                return;
+                return false;
             }
         };
 
@@ -832,6 +832,8 @@ impl IceAgent {
         });
 
         // TODO handle unsuccessful responses.
+
+        true
     }
 
     pub fn handle_timeout(&mut self, now: Instant) {

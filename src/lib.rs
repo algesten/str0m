@@ -1578,7 +1578,9 @@ impl Rtc {
         self.peer_bytes_rx += bytes_rx as u64;
 
         match r.contents {
-            Stun(_) => self.ice.handle_receive(now, r),
+            Stun(_) => {
+                self.ice.handle_receive(now, r);
+            }
             Dtls(_) => self.dtls.handle_receive(r)?,
             Rtp(_) | Rtcp(_) => self.session.handle_receive(now, r),
         }
