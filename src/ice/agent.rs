@@ -775,6 +775,18 @@ impl IceAgent {
             }
         }
 
+        if message.is_successful_binding_response()
+            && !self
+                .candidate_pairs
+                .iter()
+                .any(|p| p.has_binding_attempt(message.trans_id()))
+        {
+            trace!(
+                "Message rejected, transaction ID does not belong to any of our candidate pairs"
+            );
+            return false;
+        }
+
         let (_, password) = self.stun_credentials(!message.is_response());
         if !message.check_integrity(&password) {
             trace!("Message rejected, integrity check failed");
