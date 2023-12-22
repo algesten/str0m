@@ -493,7 +493,12 @@ mod test {
                     // drop packet
                     t.span.in_scope(|| t.agent.handle_timeout(t.time));
                 } else {
-                    t.span.in_scope(|| t.agent.handle_receive(t.time, receive));
+                    if let Ok(stun) = receive.contents.try_into_stun() {
+                        t.span.in_scope(|| {
+                            t.agent
+                                .handle_receive(t.time, receive.proto, source, destination, stun)
+                        });
+                    }
                 }
             } else {
                 // drop packet

@@ -140,6 +140,16 @@ pub enum DatagramRecv<'a> {
     Rtcp(&'a [u8]),
 }
 
+impl<'a> DatagramRecv<'a> {
+    #[cfg(test)]
+    pub(crate) fn try_into_stun(self) -> Result<StunMessage<'a>, Self> {
+        match self {
+            DatagramRecv::Stun(stun) => Ok(stun),
+            _ => Err(self),
+        }
+    }
+}
+
 impl<'a> TryFrom<&'a [u8]> for DatagramRecv<'a> {
     type Error = NetError;
 
