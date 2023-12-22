@@ -39,9 +39,6 @@ pub enum StunError {
 
     #[error("STUN io: {0}")]
     Io(#[from] io::Error),
-
-    #[error("STUN error: {0}")]
-    Other(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -232,11 +229,6 @@ impl<'a> StunMessage<'a> {
     }
 
     pub fn to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, StunError> {
-        self.do_to_bytes(password, buf)
-            .map_err(|e| StunError::Other(format!("io write: {e:?}")))
-    }
-
-    fn do_to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, io::Error> {
         let attr_len = self.attrs.iter().fold(0, |p, a| p + a.padded_len());
         let msg_len = 20 + attr_len;
 

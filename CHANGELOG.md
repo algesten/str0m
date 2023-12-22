@@ -7,6 +7,7 @@
   * Header extension abs_send_time is now an Instant
   * Handle more optional a=candidate parameters
   * Support REMB (receiver estimated maximum bitrate) feedback packets (breaking)
+  * Remove `StunError::Other` because it was unused
 
 # 0.4.1
   * Generated DTLS certificates set issuer/subject for compat with OBS/libdatachannel
