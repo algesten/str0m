@@ -1537,6 +1537,8 @@ impl IceAgent {
 
 #[cfg(test)]
 mod test {
+    use crate::net;
+
     use super::*;
     use std::net::SocketAddr;
     use std::sync::Once;
@@ -1818,8 +1820,12 @@ mod test {
         let fake_reply =
             make_authenticated_stun_reply(TransId::new(), ipv4_4(), &remote_creds.pass);
 
-        assert!(!agent.accepts_message(&StunMessage::parse(&fake_reply).unwrap()));
-        assert!(agent.accepts_message(&StunMessage::parse(&valid_reply).unwrap()));
+        assert!(!agent.accepts_message(
+            &net::Receive::new(Protocol::Udp, ipv4_1(), ipv4_1(), &fake_reply).unwrap()
+        ));
+        assert!(agent.accepts_message(
+            &net::Receive::new(Protocol::Udp, ipv4_1(), ipv4_1(), &valid_reply).unwrap()
+        ));
     }
 
     fn make_authenticated_stun_reply(tx_id: TransId, addr: SocketAddr, password: &str) -> Vec<u8> {
