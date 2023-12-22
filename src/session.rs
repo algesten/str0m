@@ -265,30 +265,19 @@ impl Session {
         Some(())
     }
 
-    pub fn handle_receive(&mut self, now: Instant, r: net::Receive) {
-        self.do_handle_receive(now, r);
+    pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8]) {
+        if let Some(header) = RtpHeader::parse(message, &self.exts) {
+            self.handle_rtp(now, header, message);
+        } else {
+            trace!("Failed to parse RTP header");
+        }
     }
 
-    fn do_handle_receive(&mut self, now: Instant, r: net::Receive) -> Option<()> {
-        use crate::io::DatagramRecv::*;
-        match r.contents {
-            Rtp(buf) => {
-                if let Some(header) = RtpHeader::parse(buf, &self.exts) {
-                    self.handle_rtp(now, header, buf);
-                } else {
-                    trace!("Failed to parse RTP header");
-                }
-            }
-            Rtcp(buf) => {
-                // According to spec, the outer enclosing SRTCP packet should always be a SR or RR,
-                // even if it's irrelevant and empty.
-                // In practice I'm not sure that is happening, because libWebRTC hates empty packets.
-                self.handle_rtcp(now, buf)?;
-            }
-            _ => {}
-        }
-
-        Some(())
+    pub fn handle_rtcp_receive(&mut self, now: Instant, message: &[u8]) {
+        // According to spec, the outer enclosing SRTCP packet should always be a SR or RR,
+        // even if it's irrelevant and empty.
+        // In practice I'm not sure that is happening, because libWebRTC hates empty packets.
+        self.handle_rtcp(now, message);
     }
 
     fn mid_and_ssrc_for_header(&mut self, header: &RtpHeader) -> Option<(Mid, Ssrc)> {
