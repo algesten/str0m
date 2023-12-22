@@ -603,7 +603,6 @@ use ice::IceCreds;
 pub use ice::{Candidate, CandidateKind};
 
 mod io;
-use io::DatagramRecv;
 
 mod packet;
 
@@ -1493,11 +1492,7 @@ impl Rtc {
 
         // STUN can use the ufrag/password to identify that a message belongs
         // to this Rtc instance.
-        if let DatagramRecv::Stun(v) = &r.contents {
-            return self.ice.accepts_message(v);
-        }
-
-        false
+        self.ice.accepts_message(&r)
     }
 
     /// Provide input to this `Rtc` instance. Input is either a [`Input::Timeout`] for some

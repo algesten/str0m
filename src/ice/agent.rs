@@ -743,7 +743,11 @@ impl IceAgent {
     ///
     /// If no remote credentials have been set using `set_remote_credentials`, the remote
     /// ufrag is not checked.
-    pub fn accepts_message(&self, message: &StunMessage<'_>) -> bool {
+    pub fn accepts_message(&self, receive: &Receive) -> bool {
+        let DatagramRecv::Stun(message) = &receive.contents else {
+            return false;
+        };
+
         trace!("Check if accepts message: {:?}", message);
 
         // The username for the credential is formed by concatenating the
@@ -803,6 +807,11 @@ impl IceAgent {
     pub fn handle_receive(&mut self, now: Instant, r: Receive) {
         trace!("Handle receive: {:?}", r);
 
+        if !self.accepts_message(&r) {
+            debug!("Message not accepted");
+            return;
+        }
+
         let message = match r.contents {
             DatagramRecv::Stun(v) => v,
             _ => {
@@ -810,13 +819,6 @@ impl IceAgent {
                 return;
             }
         };
-
-        // Regardless of whether we have remote_creds at this point, we can
-        // at least check the message integrity.
-        if !self.accepts_message(&message) {
-            debug!("Message not accepted");
-            return;
-        }
 
         if message.is_binding_request() {
             self.stun_server_handle_message(now, r.proto, r.source, r.destination, message);
