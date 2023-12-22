@@ -82,6 +82,12 @@ pub struct Transmit {
 #[derive(Debug)]
 pub struct DatagramSend(Vec<u8>);
 
+impl AsRef<[u8]> for DatagramSend {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
 impl From<Vec<u8>> for DatagramSend {
     fn from(value: Vec<u8>) -> Self {
         DatagramSend(value)
@@ -138,16 +144,6 @@ pub enum DatagramRecv<'a> {
     Rtp(&'a [u8]),
     #[doc(hidden)]
     Rtcp(&'a [u8]),
-}
-
-impl<'a> DatagramRecv<'a> {
-    #[cfg(test)]
-    pub(crate) fn try_into_stun(self) -> Result<StunMessage<'a>, Self> {
-        match self {
-            DatagramRecv::Stun(stun) => Ok(stun),
-            _ => Err(self),
-        }
-    }
 }
 
 impl<'a> TryFrom<&'a [u8]> for DatagramRecv<'a> {

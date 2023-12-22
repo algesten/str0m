@@ -73,8 +73,7 @@ mod test {
     use std::ops::{Deref, DerefMut};
     use std::time::{Duration, Instant};
 
-    use crate::io::Protocol;
-    use crate::io::Receive;
+    use crate::io::{Protocol, StunMessage};
     use tracing::Span;
 
     pub fn sock(s: impl Into<String>) -> SocketAddr {
@@ -482,23 +481,19 @@ mod test {
         }
 
         if let Some(trans) = f.span.in_scope(|| f.agent.poll_transmit()) {
-            let mut receive = Receive::try_from(&trans).unwrap();
+            let message =
+                StunMessage::parse(&trans.contents).expect("IceAgent to only emit StunMessages");
 
             // rewrite receive with test transforms, and potentially drop the packet.
-            if let Some((source, destination)) = transform(receive.source, receive.destination) {
-                receive.source = source;
-                receive.destination = destination;
-
+            if let Some((source, destination)) = transform(trans.source, trans.destination) {
                 if f.drop_sent_packets {
                     // drop packet
                     t.span.in_scope(|| t.agent.handle_timeout(t.time));
                 } else {
-                    if let Ok(stun) = receive.contents.try_into_stun() {
-                        t.span.in_scope(|| {
-                            t.agent
-                                .handle_receive(t.time, receive.proto, source, destination, stun)
-                        });
-                    }
+                    t.span.in_scope(|| {
+                        t.agent
+                            .handle_receive(t.time, trans.proto, source, destination, message)
+                    });
                 }
             } else {
                 // drop packet
