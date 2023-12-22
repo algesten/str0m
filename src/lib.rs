@@ -1492,7 +1492,7 @@ impl Rtc {
 
         // STUN can use the ufrag/password to identify that a message belongs
         // to this Rtc instance.
-        self.ice.accepts_message(&r)
+        self.ice.accepts_message(r)
     }
 
     /// Provide input to this `Rtc` instance. Input is either a [`Input::Timeout`] for some
