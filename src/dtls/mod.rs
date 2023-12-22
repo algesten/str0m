@@ -6,7 +6,7 @@ use std::io::{self, ErrorKind, Read, Write};
 use std::net::SocketAddr;
 use thiserror::Error;
 
-use crate::io::{DatagramRecv, DatagramSend, Receive, DATAGRAM_MTU_WARN};
+use crate::io::{DatagramSend, DATAGRAM_MTU_WARN};
 
 mod ossl;
 use ossl::{dtls_create_ctx, dtls_ssl_create, TlsStream};
@@ -251,15 +251,7 @@ impl Dtls {
     }
 
     /// Handles an incoming DTLS datagrams.
-    pub fn handle_receive(&mut self, r: Receive) -> Result<(), DtlsError> {
-        let message = match r.contents {
-            DatagramRecv::Dtls(v) => v,
-            _ => {
-                trace!("Receive rejected, not DTLS");
-                return Ok(());
-            }
-        };
-
+    pub fn handle_receive(&mut self, message: &[u8]) -> Result<(), DtlsError> {
         self.tls.inner_mut().set_incoming(message);
 
         if self.handle_handshake()? {
