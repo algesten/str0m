@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 use rand::random;
 
 use crate::io::Protocol;
-use crate::io::{DatagramRecv, Receive, Transmit, DATAGRAM_MTU};
 use crate::io::{Id, DATAGRAM_MTU_WARN};
 use crate::io::{StunMessage, TransId, STUN_TIMEOUT};
+use crate::io::{Transmit, DATAGRAM_MTU};
 
 use super::candidate::{Candidate, CandidateKind};
 use super::pair::{CandidatePair, CheckState, PairId};
@@ -811,16 +811,15 @@ impl IceAgent {
     /// Handles an incoming STUN message.
     ///
     /// Will not be used if [`IceAgent::accepts_message`] returns false.
-    pub fn handle_receive(&mut self, now: Instant, r: Receive) {
-        trace!("Handle receive: {:?}", r);
-
-        let message = match r.contents {
-            DatagramRecv::Stun(v) => v,
-            _ => {
-                trace!("Receive rejected, not STUN");
-                return;
-            }
-        };
+    pub fn handle_receive(
+        &mut self,
+        now: Instant,
+        proto: Protocol,
+        source: SocketAddr,
+        destination: SocketAddr,
+        message: StunMessage<'_>,
+    ) {
+        trace!("Handle receive: {:?}", message);
 
         // Regardless of whether we have remote_creds at this point, we can
         // at least check the message integrity.
@@ -830,15 +829,12 @@ impl IceAgent {
         }
 
         if message.is_binding_request() {
-            self.stun_server_handle_message(now, r.proto, r.source, r.destination, message);
+            self.stun_server_handle_message(now, proto, source, destination, message);
         } else if message.is_successful_binding_response() {
             self.stun_client_handle_response(now, message);
         }
 
-        self.emit_event(IceAgentEvent::DiscoveredRecv {
-            proto: r.proto,
-            source: r.source,
-        });
+        self.emit_event(IceAgentEvent::DiscoveredRecv { proto, source });
 
         // TODO handle unsuccessful responses.
     }
