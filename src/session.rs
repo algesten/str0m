@@ -266,11 +266,12 @@ impl Session {
     }
 
     pub fn handle_rtp_receive(&mut self, now: Instant, message: &[u8]) {
-        if let Some(header) = RtpHeader::parse(message, &self.exts) {
-            self.handle_rtp(now, header, message);
-        } else {
+        let Some(header) = RtpHeader::parse(message, &self.exts) else {
             trace!("Failed to parse RTP header");
-        }
+            return;
+        };
+
+        self.handle_rtp(now, header, message);
     }
 
     pub fn handle_rtcp_receive(&mut self, now: Instant, message: &[u8]) {
