@@ -1590,7 +1590,7 @@ impl Rtc {
         self.peer_bytes_rx += bytes_rx as u64;
 
         match r.contents {
-            Stun(_) => self.ice.handle_receive(now, r.into_stun_packet()),
+            Stun(_) => self.ice.handle_receive(now, r.as_stun_packet()),
             Dtls(dtls) => self.dtls.handle_receive(dtls)?,
             Rtp(rtp) => self.session.handle_rtp_receive(now, rtp),
             Rtcp(rtcp) => self.session.handle_rtcp_receive(now, rtcp),
