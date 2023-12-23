@@ -82,12 +82,6 @@ pub struct Transmit {
 #[derive(Debug)]
 pub struct DatagramSend(Vec<u8>);
 
-impl AsRef<[u8]> for DatagramSend {
-    fn as_ref(&self) -> &[u8] {
-        self.0.as_ref()
-    }
-}
-
 impl From<Vec<u8>> for DatagramSend {
     fn from(value: Vec<u8>) -> Self {
         DatagramSend(value)
