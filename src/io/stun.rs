@@ -32,11 +32,14 @@ pub fn stun_resend_delay(send_count: usize) -> Duration {
     Duration::from_millis(capped)
 }
 
+/// Possible errors when handling STUN messages.
 #[derive(Debug, Error)]
 pub enum StunError {
+    /// A STUN message could not be parsed.
     #[error("STUN parse error: {0}")]
     Parse(String),
 
+    /// An IO error occurred while handling a STUN message.
     #[error("STUN io: {0}")]
     Io(#[from] io::Error),
 }
@@ -60,6 +63,10 @@ impl TransId {
     }
 }
 
+/// Represents a STUN message as fit for our purposes.
+///
+/// STUN is a very flexible protocol.
+/// This implementations only provides what we need for our ICE implementation.
 #[derive(Clone)]
 pub struct StunMessage<'a> {
     method: Method,
@@ -71,6 +78,7 @@ pub struct StunMessage<'a> {
 }
 
 impl<'a> StunMessage<'a> {
+    /// Parse a STUN message from a slice of bytes.
     pub fn parse(buf: &[u8]) -> Result<StunMessage, StunError> {
         let typ = (buf[0] as u16 & 0b0011_1111) << 8 | buf[1] as u16;
         let len = (buf[2] as u16) << 8 | buf[3] as u16;
@@ -132,22 +140,30 @@ impl<'a> StunMessage<'a> {
         })
     }
 
+    /// Whether this STUN message is a BINDING request.
     pub fn is_binding_request(&self) -> bool {
         self.method == Method::Binding && self.class == Class::Request
     }
 
+    /// Whether this STUN message is a response.
     pub fn is_response(&self) -> bool {
         matches!(self.class, Class::Success | Class::Failure)
     }
 
+    /// Whether this STUN message is a _successful_ BINDING response.
+    ///
+    /// STUN binding requests are very simple, they just return the observed address.
+    /// As such, they cannot actually fail which is why we don't have `is_failed_binding_response`.
     pub fn is_successful_binding_response(&self) -> bool {
         self.method == Method::Binding && self.class == Class::Success
     }
 
+    /// The transaction ID of this STUN message.
     pub fn trans_id(&self) -> TransId {
         self.trans_id
     }
 
+    /// Constructs a new BINDING request from the provided data.
     pub fn binding_request(
         username: &'a str,
         trans_id: TransId,
@@ -183,6 +199,7 @@ impl<'a> StunMessage<'a> {
         m
     }
 
+    /// Constructs a new STUN BINDING reply.
     pub fn reply(trans_id: TransId, mapped_address: SocketAddr) -> StunMessage<'a> {
         StunMessage {
             class: Class::Success,
@@ -198,22 +215,28 @@ impl<'a> StunMessage<'a> {
         }
     }
 
+    /// If present, splits the value of the USERNAME attribute into local and remote (separated by `:`).
     pub fn split_username(&self) -> Option<(&str, &str)> {
         self.attrs.split_username()
     }
 
+    /// If present, returns the value of XOR-MAPPED-ADDRESS attribute.
     pub fn mapped_address(&self) -> Option<SocketAddr> {
         self.attrs.mapped_address()
     }
 
+    /// If present, returns the value of the PRIORITY attribute.
     pub fn prio(&self) -> Option<u32> {
         self.attrs.prio()
     }
 
+    /// Whether this message has the USE-CANDIDATE attribute.
     pub fn use_candidate(&self) -> bool {
         self.attrs.use_candidate()
     }
 
+    /// Verify the integrity of this message against the provided password.
+    #[must_use]
     pub fn check_integrity(&self, password: &str) -> bool {
         if let Some(integ) = self.attrs.message_integrity() {
             let sha1: Sha1 = password.as_bytes().into();
@@ -228,6 +251,9 @@ impl<'a> StunMessage<'a> {
         }
     }
 
+    /// Serialize this message into the provided buffer, returning the final length of the message.
+    ///
+    /// The provided password is used to authenticate the message.
     pub fn to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, StunError> {
         let attr_len = self.attrs.iter().fold(0, |p, a| p + a.padded_len());
         let msg_len = 20 + attr_len;
