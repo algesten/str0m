@@ -8,6 +8,7 @@
   * Handle more optional a=candidate parameters
   * Support REMB (receiver estimated maximum bitrate) feedback packets (breaking)
   * Remove `StunError::Other` because it was unused
+  * Introduce top-level `ice` module, providing access to the `ice::Agent` for standalone usage
 
 # 0.4.1
   * Generated DTLS certificates set issuer/subject for compat with OBS/libdatachannel
