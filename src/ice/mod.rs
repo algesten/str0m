@@ -494,7 +494,7 @@ mod test {
                         proto: trans.proto,
                         source,
                         destination,
-                        message: &message,
+                        message,
                     };
                     t.span.in_scope(|| t.agent.handle_receive(t.time, packet));
                 }
