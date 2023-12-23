@@ -241,6 +241,7 @@ impl IceCreds {
 
 impl IceAgent {
     /// Create a new [`IceAgent`] with randomly generated credentials.
+    #[allow(unused)]
     pub fn new() -> Self {
         Self::with_local_credentials(IceCreds::new())
     }
