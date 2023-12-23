@@ -127,9 +127,9 @@ impl<'a> Receive<'a> {
         })
     }
 
-    pub(crate) fn into_stun_packet(&self) -> StunPacket {
+    pub(crate) fn as_stun_packet(&self) -> StunPacket {
         let DatagramRecv::Stun(message) = &self.contents else {
-            panic!("into_stun_packet on non-stun packet");
+            panic!("as_stun_packet on non-stun packet");
         };
 
         StunPacket {
