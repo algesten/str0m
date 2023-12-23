@@ -126,26 +126,13 @@ impl<'a> Receive<'a> {
             contents,
         })
     }
-
-    pub(crate) fn as_stun_packet(&self) -> StunPacket {
-        let DatagramRecv::Stun(message) = &self.contents else {
-            panic!("as_stun_packet on non-stun packet");
-        };
-
-        StunPacket {
-            proto: self.proto,
-            source: self.source,
-            destination: self.destination,
-            message,
-        }
-    }
 }
 
-pub struct StunPacket<'a, 'b> {
+pub struct StunPacket<'a> {
     pub proto: Protocol,
     pub source: SocketAddr,
     pub destination: SocketAddr,
-    pub message: &'b StunMessage<'a>,
+    pub message: StunMessage<'a>,
 }
 
 /// Wrapper for a parsed payload to be received.

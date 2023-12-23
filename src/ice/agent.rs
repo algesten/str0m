@@ -1298,7 +1298,7 @@ impl IceAgent {
         self.transmit.push_back(trans);
     }
 
-    fn stun_client_handle_response(&mut self, now: Instant, message: &StunMessage<'_>) {
+    fn stun_client_handle_response(&mut self, now: Instant, message: StunMessage<'_>) {
         // Find the candidate pair that this trans_id was sent for.
         let trans_id = message.trans_id();
         let maybe_pair = self

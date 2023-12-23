@@ -1590,7 +1590,15 @@ impl Rtc {
         self.peer_bytes_rx += bytes_rx as u64;
 
         match r.contents {
-            Stun(_) => self.ice.handle_receive(now, r.as_stun_packet()),
+            Stun(stun) => self.ice.handle_receive(
+                now,
+                StunPacket {
+                    proto: r.proto,
+                    source: r.source,
+                    destination: r.destination,
+                    message: stun,
+                },
+            ),
             Dtls(dtls) => self.dtls.handle_receive(dtls)?,
             Rtp(rtp) => self.session.handle_rtp_receive(now, rtp),
             Rtcp(rtcp) => self.session.handle_rtcp_receive(now, rtcp),
@@ -2191,6 +2199,8 @@ macro_rules! log_stat {
     };
 }
 pub(crate) use log_stat;
+
+use crate::io::StunPacket;
 
 #[cfg(test)]
 mod test {
