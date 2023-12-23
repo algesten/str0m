@@ -4,8 +4,8 @@ use std::time::{Duration, Instant};
 
 use rand::random;
 
-use crate::io::Protocol;
 use crate::io::{Id, DATAGRAM_MTU_WARN};
+use crate::io::{Protocol, StunPacket};
 use crate::io::{StunMessage, TransId, STUN_TIMEOUT};
 use crate::io::{Transmit, DATAGRAM_MTU};
 
@@ -811,14 +811,8 @@ impl IceAgent {
     /// Handles an incoming STUN message.
     ///
     /// Will not be used if [`IceAgent::accepts_message`] returns false.
-    pub fn handle_receive(
-        &mut self,
-        now: Instant,
-        proto: Protocol,
-        source: SocketAddr,
-        destination: SocketAddr,
-        message: StunMessage<'_>,
-    ) {
+    pub fn handle_receive(&mut self, now: Instant, packet: StunPacket) {
+        let message = &packet.message;
         trace!("Handle receive: {:?}", message);
 
         // Regardless of whether we have remote_creds at this point, we can
@@ -828,13 +822,16 @@ impl IceAgent {
             return;
         }
 
-        if message.is_binding_request() {
-            self.stun_server_handle_message(now, proto, source, destination, message);
+        if packet.message.is_binding_request() {
+            self.stun_server_handle_message(now, &packet);
         } else if message.is_successful_binding_response() {
-            self.stun_client_handle_response(now, message);
+            self.stun_client_handle_response(now, packet.message);
         }
 
-        self.emit_event(IceAgentEvent::DiscoveredRecv { proto, source });
+        self.emit_event(IceAgentEvent::DiscoveredRecv {
+            proto: packet.proto,
+            source: packet.source,
+        });
 
         // TODO handle unsuccessful responses.
     }
@@ -1021,14 +1018,8 @@ impl IceAgent {
         x
     }
 
-    fn stun_server_handle_message(
-        &mut self,
-        now: Instant,
-        proto: Protocol,
-        source: SocketAddr,
-        destination: SocketAddr,
-        message: StunMessage,
-    ) {
+    fn stun_server_handle_message(&mut self, now: Instant, packet: &StunPacket) {
+        let message = &packet.message;
         let prio = message
             .prio()
             // this should be guarded in the parsing
@@ -1048,9 +1039,9 @@ impl IceAgent {
         // credentials, we extract all relevant bits of information so it can be owned.
         let req = StunRequest {
             now,
-            proto,
-            source,
-            destination,
+            proto: packet.proto,
+            source: packet.source,
+            destination: packet.destination,
             trans_id,
             prio,
             use_candidate,
@@ -1307,7 +1298,7 @@ impl IceAgent {
         self.transmit.push_back(trans);
     }
 
-    fn stun_client_handle_response(&mut self, now: Instant, message: StunMessage<'_>) {
+    fn stun_client_handle_response(&mut self, now: Instant, message: &StunMessage<'_>) {
         // Find the candidate pair that this trans_id was sent for.
         let trans_id = message.trans_id();
         let maybe_pair = self

@@ -73,7 +73,7 @@ mod test {
     use std::ops::{Deref, DerefMut};
     use std::time::{Duration, Instant};
 
-    use crate::io::{Protocol, StunMessage};
+    use crate::io::{Protocol, StunMessage, StunPacket};
     use tracing::Span;
 
     pub fn sock(s: impl Into<String>) -> SocketAddr {
@@ -490,10 +490,13 @@ mod test {
                     // drop packet
                     t.span.in_scope(|| t.agent.handle_timeout(t.time));
                 } else {
-                    t.span.in_scope(|| {
-                        t.agent
-                            .handle_receive(t.time, trans.proto, source, destination, message)
-                    });
+                    let packet = StunPacket {
+                        proto: trans.proto,
+                        source,
+                        destination,
+                        message: &message,
+                    };
+                    t.span.in_scope(|| t.agent.handle_receive(t.time, packet));
                 }
             } else {
                 // drop packet

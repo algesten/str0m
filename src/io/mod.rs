@@ -44,6 +44,10 @@ pub enum NetError {
     /// A wrapped IO error.
     #[error("{0}")]
     Io(#[from] io::Error),
+
+    /// Some other net level error.
+    #[error("Net error: {0}")]
+    Other(String),
 }
 
 /// Type of protocol used in [`Transmit`] and [`Receive`].
@@ -125,6 +129,30 @@ impl<'a> Receive<'a> {
             destination,
             contents,
         })
+    }
+}
+
+pub struct StunPacket<'a, 'b> {
+    pub proto: Protocol,
+    pub source: SocketAddr,
+    pub destination: SocketAddr,
+    pub message: &'b StunMessage<'a>,
+}
+
+impl<'a, 'b> TryFrom<&'b Receive<'a>> for StunPacket<'a, 'b> {
+    type Error = NetError;
+
+    fn try_from(value: &'b Receive<'a>) -> Result<Self, Self::Error> {
+        if let DatagramRecv::Stun(message) = &value.contents {
+            Ok(StunPacket {
+                proto: value.proto,
+                source: value.source,
+                destination: value.destination,
+                message,
+            })
+        } else {
+            Err(NetError::Other("Receive is not a STUN packet".into()))
+        }
     }
 }
 
