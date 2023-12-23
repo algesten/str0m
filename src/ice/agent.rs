@@ -18,6 +18,10 @@ use super::pair::{CandidatePair, CheckState, PairId};
 /// value based on the characteristics of the associated data.
 const TIMING_ADVANCE: Duration = Duration::from_millis(50);
 
+/// Handles the ICE protocol for a given peer.
+///
+/// Each connection between two peers corresponds to one [`IceAgent`] on either end.
+/// To form connections to multiple peers, a peer needs to create a dedicated [`IceAgent`] for each one.
 #[derive(Debug)]
 pub struct IceAgent {
     /// Last time handle_timeout run (paced by timing_advance).
@@ -196,7 +200,7 @@ pub enum IceAgentEvent {
     ///
     /// For each ICE restart, the app will only receive unique addresses once.
     DiscoveredRecv {
-        // The protocol to use for the socket.
+        /// The protocol to use for the socket.
         proto: Protocol,
         /// The remote socket to look out for.
         source: SocketAddr,
@@ -208,7 +212,7 @@ pub enum IceAgentEvent {
     /// requiring an ICE restart. The application should always use the values
     /// of the last emitted event to send data.
     NominatedSend {
-        // The protocol to use for the socket.
+        /// The protocol to use for the socket.
         proto: Protocol,
         /// The local socket address to send datagrams from.
         ///
@@ -236,11 +240,12 @@ impl IceCreds {
 }
 
 impl IceAgent {
-    #[allow(unused)]
+    /// Create a new [`IceAgent`] with randomly generated credentials.
     pub fn new() -> Self {
         Self::with_local_credentials(IceCreds::new())
     }
 
+    /// Create a new [`IceAgent`] with a specific set of credentials.
     pub fn with_local_credentials(local_credentials: IceCreds) -> Self {
         IceAgent {
             last_now: None,
@@ -832,6 +837,10 @@ impl IceAgent {
         // TODO handle unsuccessful responses.
     }
 
+    /// Provide the current time to the [`IceAgent`].
+    ///
+    /// Typically, you will want to call [`IceAgent::poll_timeout`] and "wake-up" the agent once that time is reached.
+    /// It is save to call this function more often as the agent will internally only operate in steps of at most 50ms (`TIMING_ADVANCE`).
     pub fn handle_timeout(&mut self, now: Instant) {
         // The generation of ordinary and triggered connectivity checks is
         // governed by timer Ta.
@@ -1001,6 +1010,7 @@ impl IceAgent {
         self.events.push_back(event);
     }
 
+    /// Return a pending [`IceAgentEvent`] from this agent.
     pub fn poll_event(&mut self) -> Option<IceAgentEvent> {
         let x = self.events.pop_front();
         if x.is_some() {
