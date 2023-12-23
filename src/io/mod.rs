@@ -11,9 +11,8 @@ use thiserror::Error;
 
 mod stun;
 pub(crate) use stun::stun_resend_delay;
-pub(crate) use stun::{
-    StunError, StunMessage, TransId, STUN_MAX_RETRANS, STUN_MAX_RTO_MILLIS, STUN_TIMEOUT,
-};
+pub use stun::StunMessage;
+pub(crate) use stun::{StunError, TransId, STUN_MAX_RETRANS, STUN_MAX_RTO_MILLIS, STUN_TIMEOUT};
 
 mod sha1;
 pub(crate) use self::sha1::Sha1;

@@ -606,6 +606,7 @@ pub use ice_::{Candidate, CandidateKind, IceConnectionState};
 /// Low level ICE access.
 pub mod ice {
     pub use crate::ice_::{IceAgent as Agent, IceAgentEvent as AgentEvent};
+    pub use crate::io::StunMessage;
 }
 
 mod io;
