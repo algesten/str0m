@@ -817,7 +817,7 @@ impl IceAgent {
 
         // Regardless of whether we have remote_creds at this point, we can
         // at least check the message integrity.
-        if !self.accepts_message(&message) {
+        if !self.accepts_message(message) {
             debug!("Message not accepted");
             return;
         }
