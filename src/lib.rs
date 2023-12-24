@@ -607,7 +607,7 @@ pub use ice_::{Candidate, CandidateKind, IceConnectionState};
 #[cfg_attr(not(feature = "ice-agent"), doc(hidden))]
 pub mod ice {
     pub use crate::ice_::IceCreds;
-    pub use crate::ice_::{IceAgent as Agent, IceAgentEvent as AgentEvent};
+    pub use crate::ice_::{IceAgent, IceAgentEvent};
     pub use crate::io::StunMessage;
 }
 
