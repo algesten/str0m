@@ -592,15 +592,13 @@ use thiserror::Error;
 use util::InstantExt;
 
 mod dtls;
-use dtls::DtlsCert;
-use dtls::Fingerprint;
 use dtls::{Dtls, DtlsEvent};
+pub use dtls::{DtlsCert, Fingerprint};
 
 mod ice;
 use ice::IceAgent;
 use ice::IceAgentEvent;
-use ice::IceCreds;
-pub use ice::{Candidate, CandidateKind};
+pub use ice::{Candidate, CandidateKind, IceCreds};
 
 mod io;
 use io::DatagramRecv;
@@ -1713,8 +1711,7 @@ impl RtcConfig {
     /// DTLS fingerprint.
     ///
     /// ```
-    /// use str0m::RtcConfig;
-    ///
+    /// # use str0m::RtcConfig;
     /// let fingerprint = RtcConfig::default()
     ///     .build()
     ///     .direct_api()
@@ -1730,9 +1727,7 @@ impl RtcConfig {
     /// Use this API to reuse a previously created [`DtlsCert`] if available.
     ///
     /// ```
-    /// use str0m::RtcConfig;
-    /// use str0m::change::DtlsCert;
-    ///
+    /// # use str0m::{RtcConfig, DtlsCert};
     /// let dtls_cert = DtlsCert::new();
     ///
     /// let rtc_config = RtcConfig::default()
@@ -1759,7 +1754,6 @@ impl RtcConfig {
     ///
     /// ```
     /// # use str0m::RtcConfig;
-    ///
     /// // Verify that fingerprint verification is enabled by default.
     /// assert!(RtcConfig::default().fingerprint_verification());
     /// ```
