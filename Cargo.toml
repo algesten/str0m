@@ -12,6 +12,7 @@ edition = "2021"
 
 [features]
 _internal_dont_use_log_stats = []
+ice-agent = []
 
 [dependencies]
 thiserror = "1.0.38"
