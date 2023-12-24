@@ -604,6 +604,7 @@ use ice_::IceAgentEvent;
 pub use ice_::{Candidate, CandidateKind, IceConnectionState};
 
 /// Low level ICE access.
+#[cfg_attr(not(feature = "ice-agent"), doc(hidden))]
 pub mod ice {
     pub use crate::ice_::IceCreds;
     pub use crate::ice_::{IceAgent as Agent, IceAgentEvent as AgentEvent};
