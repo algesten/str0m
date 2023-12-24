@@ -582,6 +582,7 @@ extern crate tracing;
 
 use bwe::{Bwe, BweKind};
 use change::{DirectApi, SdpApi};
+use ice::IceCreds;
 use rtp::RawPacket;
 use std::fmt;
 use std::net::SocketAddr;
@@ -600,11 +601,11 @@ use dtls::{Dtls, DtlsEvent};
 mod ice_;
 use ice_::IceAgent;
 use ice_::IceAgentEvent;
-use ice_::IceCreds;
 pub use ice_::{Candidate, CandidateKind, IceConnectionState};
 
 /// Low level ICE access.
 pub mod ice {
+    pub use crate::ice_::IceCreds;
     pub use crate::ice_::{IceAgent as Agent, IceAgentEvent as AgentEvent};
     pub use crate::io::StunMessage;
 }
