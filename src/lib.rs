@@ -1708,6 +1708,7 @@ impl RtcConfig {
     }
 
     /// The auto generated local ice credentials.
+    #[cfg_attr(not(feature = "ice-agent"), doc(hidden))]
     pub fn local_ice_credentials(&self) -> &IceCreds {
         &self.local_ice_credentials
     }
@@ -1720,8 +1721,7 @@ impl RtcConfig {
     /// DTLS fingerprint.
     ///
     /// ```
-    /// use str0m::RtcConfig;
-    ///
+    /// # use str0m::RtcConfig;
     /// let fingerprint = RtcConfig::default()
     ///     .build()
     ///     .direct_api()
@@ -1737,9 +1737,8 @@ impl RtcConfig {
     /// Use this API to reuse a previously created [`DtlsCert`] if available.
     ///
     /// ```
-    /// use str0m::RtcConfig;
-    /// use str0m::change::DtlsCert;
-    ///
+    /// # use str0m::RtcConfig;
+    /// # use str0m::change::DtlsCert;
     /// let dtls_cert = DtlsCert::new();
     ///
     /// let rtc_config = RtcConfig::default()
@@ -1765,10 +1764,11 @@ impl RtcConfig {
     /// Get fingerprint verification mode.
     ///
     /// ```
-    /// # use str0m::RtcConfig;
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
     ///
-    /// // Verify that fingerprint verification is enabled by default.
-    /// assert!(RtcConfig::default().fingerprint_verification());
+    /// // Defaults to true.
+    /// assert!(config.fingerprint_verification());
     /// ```
     pub fn fingerprint_verification(&self) -> bool {
         self.fingerprint_verification
@@ -1804,7 +1804,6 @@ impl RtcConfig {
     ///
     /// ```
     /// # use str0m::RtcConfig;
-    ///
     /// // For the session to use only OPUS and VP8.
     /// let mut rtc = RtcConfig::default()
     ///     .clear_codecs()
