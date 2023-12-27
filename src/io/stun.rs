@@ -372,15 +372,13 @@ pub struct Attributes<'a> {
     realm: Option<&'a str>,                 // < 128 utf8 chars
     nonce: Option<&'a str>,                 // < 128 utf8 chars
     xor_mapped_address: Option<SocketAddr>, // 0x0020
-    software: Option<&'a str>,
-    fingerprint: Option<u32>, // crc32
-    // https://tools.ietf.org/html/rfc8445
-    priority: Option<u32>,        // 0x0024
-    use_candidate: bool,          // 0x0025
-    ice_controlled: Option<u64>,  // 0x8029
-    ice_controlling: Option<u64>, // 0x802a
-    // https://tools.ietf.org/html/draft-thatcher-ice-network-cost-00
-    network_cost: Option<(u16, u16)>, // 0xc057
+    software: Option<&'a str>,              // 0x0022
+    fingerprint: Option<u32>,               // crc32
+    priority: Option<u32>,                  // 0x0024
+    use_candidate: bool,                    // 0x0025
+    ice_controlled: Option<u64>,            // 0x8029
+    ice_controlling: Option<u64>,           // 0x802a
+    network_cost: Option<(u16, u16)>,       // 0xc057
 }
 
 impl<'a> Attributes<'a> {
