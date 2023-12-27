@@ -389,17 +389,18 @@ impl<'a> Attributes<'a> {
         // usernames are on the form gfNK:062g where
         // gfNK is my local sdp ice username and
         // 062g is the remote.
-        if let Some(v) = self.username {
-            let idx = v.find(':');
-            if let Some(idx) = idx {
-                if idx + 1 < v.len() {
-                    let local = &v[..idx];
-                    let remote = &v[(idx + 1)..];
-                    return Some((local, remote));
-                }
-            }
+
+        let v = self.username?;
+        let idx = v.find(':')?;
+
+        if idx + 1 >= v.len() {
+            return None;
         }
-        None
+
+        let local = &v[..idx];
+        let remote = &v[(idx + 1)..];
+
+        Some((local, remote))
     }
 
     fn use_candidate(&self) -> bool {
