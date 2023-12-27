@@ -414,24 +414,35 @@ use super::Sha1;
 
 impl<'a> Attributes<'a> {
     fn padded_len(&self) -> usize {
+        const ATTR_TLV_LENGTH: usize = 4;
+
         let username = self
             .username
             .map(|v| {
                 let pad = 4 - (v.as_bytes().len() % 4) % 4;
-                4 + v.len() + pad
+                ATTR_TLV_LENGTH + v.len() + pad
             })
             .unwrap_or_default();
-        let ice_controlled = self.ice_controlled.map(|_| 4 + 8).unwrap_or_default();
-        let ice_controlling = self.ice_controlling.map(|_| 4 + 8).unwrap_or_default();
+        let ice_controlled = self
+            .ice_controlled
+            .map(|_| ATTR_TLV_LENGTH + 8)
+            .unwrap_or_default();
+        let ice_controlling = self
+            .ice_controlling
+            .map(|_| ATTR_TLV_LENGTH + 8)
+            .unwrap_or_default();
         let priority = self
             .priority
-            .map(|p| 4 + p.to_le_bytes().len())
+            .map(|p| ATTR_TLV_LENGTH + p.to_le_bytes().len())
             .unwrap_or_default();
         let address = self
             .xor_mapped_address
-            .map(|a| 4 + if a.is_ipv4() { 8 } else { 20 })
+            .map(|a| ATTR_TLV_LENGTH + if a.is_ipv4() { 8 } else { 20 })
             .unwrap_or_default();
-        let use_candidate = self.use_candidate.map(|_| 4).unwrap_or_default();
+        let use_candidate = self
+            .use_candidate
+            .map(|_| ATTR_TLV_LENGTH)
+            .unwrap_or_default();
 
         username + ice_controlled + ice_controlling + priority + address + use_candidate
     }
