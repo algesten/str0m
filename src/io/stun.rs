@@ -381,7 +381,6 @@ pub struct Attributes<'a> {
     ice_controlling: Option<u64>, // 0x802a
     // https://tools.ietf.org/html/draft-thatcher-ice-network-cost-00
     network_cost: Option<(u16, u16)>, // 0xc057
-                                      // Unknown: u16,
 }
 
 impl<'a> Attributes<'a> {
