@@ -365,6 +365,7 @@ impl Method {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[rustfmt::skip]
 pub struct Attributes<'a> {
     username: Option<&'a str>,              // < 128 utf8 chars
     message_integrity: Option<&'a [u8]>,    // 20 bytes sha-1
