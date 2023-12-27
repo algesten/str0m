@@ -516,8 +516,8 @@ impl<'a> Attributes<'a> {
             if buf.is_empty() {
                 break;
             }
-            let typ = (buf[0] as u16) << 8 | buf[1] as u16;
-            let len = (buf[2] as usize) << 8 | buf[3] as usize;
+            let typ = u16::from_le_bytes([buf[1], buf[0]]);
+            let len = u16::from_le_bytes([buf[3], buf[2]]) as usize;
             // trace!(
             //     "STUN attribute typ 0x{:04x?} len {}: {:02x?}",
             //     typ,
