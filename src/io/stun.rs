@@ -243,7 +243,7 @@ impl<'a> StunMessage<'a> {
     /// Serialize this message into the provided buffer, returning the final length of the message.
     ///
     /// The provided password is used to authenticate the message.
-    pub(crate) fn to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, StunError> {
+    pub(crate) fn to_bytes(self, password: &str, buf: &mut [u8]) -> Result<usize, StunError> {
         const MSG_HEADER_LEN: usize = 20;
         const MSG_INTEGRITY_LEN: usize = 20;
         const FPRINT_LEN: usize = 4;
@@ -435,7 +435,7 @@ impl<'a> Attributes<'a> {
         username + ice_controlled + ice_controlling + priority + address + use_candidate
     }
 
-    fn to_bytes(&self, vec: &mut dyn Write, trans_id: &[u8]) -> io::Result<()> {
+    fn to_bytes(self, vec: &mut dyn Write, trans_id: &[u8]) -> io::Result<()> {
         if let Some(v) = self.username {
             vec.write_all(&0x0006_u16.to_be_bytes())?;
             vec.write_all(&(v.as_bytes().len() as u16).to_be_bytes())?;
