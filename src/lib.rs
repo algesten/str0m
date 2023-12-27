@@ -1592,7 +1592,7 @@ impl Rtc {
         match r.contents {
             Stun(stun) => self.ice.handle_receive(
                 now,
-                StunPacket {
+                io::StunPacket {
                     proto: r.proto,
                     source: r.source,
                     destination: r.destination,
@@ -2199,8 +2199,6 @@ macro_rules! log_stat {
     };
 }
 pub(crate) use log_stat;
-
-use crate::io::StunPacket;
 
 #[cfg(test)]
 mod test {
