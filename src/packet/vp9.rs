@@ -92,6 +92,9 @@ pub struct Vp9CodecExtra {
     /// Specified for every spatial layer.
     pub layers_heights: [Option<u16>; 3],
 
+    /// Extended picture id of layer 0 frames, if present
+    pub tl0_picture_id: Option<u8>,
+
     /// Picture ID.
     pub pid: u16,
 
@@ -373,6 +376,10 @@ impl Vp9Depacketizer {
 
             vp9_extra.layers_scheme[self.sid as usize] = Some(new_stop);
             vp9_extra.tid = Some(self.tid);
+
+            if !self.f {
+                vp9_extra.tl0_picture_id = Some(self.tl0picidx);
+            }
         }
 
         vp9_extra.pid = self.picture_id;

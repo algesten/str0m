@@ -37,7 +37,9 @@ use null::{NullDepacketizer, NullPacketizer};
 
 mod buffer_rx;
 pub(crate) use buffer_rx::{Depacketized, DepacketizingBuffer, RtpMeta};
+mod contiguity;
 mod vp8_contiguity;
+mod vp9_contiguity;
 
 mod payload;
 pub(crate) use payload::Payloader;

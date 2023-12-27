@@ -6,7 +6,9 @@ use std::time::Instant;
 
 use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SenderInfo, SeqNo};
 
+use super::contiguity::{self, Contiguity};
 use super::vp8_contiguity::Vp8Contiguity;
+use super::vp9_contiguity::Vp9Contiguity;
 use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError, Vp8CodecExtra};
 
 #[derive(Clone, PartialEq, Eq)]
@@ -82,11 +84,21 @@ pub struct DepacketizingBuffer {
     last_emitted: Option<(SeqNo, CodecExtra)>,
     max_time: Option<MediaTime>,
     depack_cache: Option<(Range<usize>, Depacketized)>,
-    vp8_contiguity: Vp8Contiguity,
+    contiguity: Contiguity,
 }
 
 impl DepacketizingBuffer {
     pub(crate) fn new(depack: CodecDepacketizer, hold_back: usize) -> Self {
+        let contiguity = match depack {
+            CodecDepacketizer::Vp8(_) => Contiguity::Vp8(Vp8Contiguity::new()),
+            CodecDepacketizer::Vp9(_) => Contiguity::Vp9(Vp9Contiguity::new()),
+            CodecDepacketizer::H264(_)
+            | CodecDepacketizer::H265(_)
+            | CodecDepacketizer::Boxed(_)
+            | CodecDepacketizer::Opus(_)
+            | CodecDepacketizer::Null(_) => Contiguity::None,
+        };
+
         DepacketizingBuffer {
             hold_back,
             depack,
@@ -95,7 +107,7 @@ impl DepacketizingBuffer {
             last_emitted: None,
             max_time: None,
             depack_cache: None,
-            vp8_contiguity: Vp8Contiguity::new(),
+            contiguity,
         }
     }
 
@@ -185,13 +197,7 @@ impl DepacketizingBuffer {
             return None;
         }
 
-        let (can_emit, contiguous_codec) = match dep.codec_extra {
-            CodecExtra::Vp8(next) => self.vp8_contiguity.check(&next, contiguous_seq),
-            CodecExtra::Vp9(_) => (true, contiguous_seq),
-            CodecExtra::H264(_) => (true, contiguous_seq),
-            CodecExtra::None => (true, contiguous_seq),
-        };
-
+        let (can_emit, contiguous_codec) = self.contiguity.check(&dep.codec_extra, contiguous_seq);
         dep.contiguous = contiguous_codec;
 
         let last = self
