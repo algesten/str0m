@@ -129,6 +129,7 @@ impl<'a> Receive<'a> {
 }
 
 /// Wrapper for a parsed payload to be received.
+#[allow(clippy::large_enum_variant)] // We purposely don't want to allocate.
 pub enum DatagramRecv<'a> {
     #[doc(hidden)]
     Stun(StunMessage<'a>),
