@@ -181,7 +181,7 @@ impl<'a> StunMessage<'a> {
                 ice_controlling: controlling.then_some(control_tie_breaker),
                 ice_controlled: (!controlling).then_some(control_tie_breaker),
                 priority: Some(prio),
-                use_candidate: use_candidate.then_some(true),
+                use_candidate,
                 ..Default::default()
             },
             integrity: &[],
@@ -221,7 +221,7 @@ impl<'a> StunMessage<'a> {
 
     /// Whether this message has the USE-CANDIDATE attribute.
     pub(crate) fn use_candidate(&self) -> bool {
-        self.attrs.use_candidate()
+        self.attrs.use_candidate
     }
 
     /// Verify the integrity of this message against the provided password.
@@ -376,7 +376,7 @@ pub struct Attributes<'a> {
     fingerprint: Option<u32>, // crc32
     // https://tools.ietf.org/html/rfc8445
     priority: Option<u32>,        // 0x0024
-    use_candidate: Option<bool>,  // 0x0025
+    use_candidate: bool,          // 0x0025
     ice_controlled: Option<u64>,  // 0x8029
     ice_controlling: Option<u64>, // 0x802a
     // https://tools.ietf.org/html/draft-thatcher-ice-network-cost-00
@@ -400,10 +400,6 @@ impl<'a> Attributes<'a> {
         let remote = &v[(idx + 1)..];
 
         Some((local, remote))
-    }
-
-    fn use_candidate(&self) -> bool {
-        self.use_candidate.unwrap_or(false)
     }
 }
 
@@ -455,10 +451,11 @@ impl<'a> Attributes<'a> {
             .xor_mapped_address
             .map(|a| ATTR_TLV_LENGTH + if a.is_ipv4() { 8 } else { 20 })
             .unwrap_or_default();
-        let use_candidate = self
-            .use_candidate
-            .map(|_| ATTR_TLV_LENGTH)
-            .unwrap_or_default();
+        let use_candidate = if self.use_candidate {
+            ATTR_TLV_LENGTH
+        } else {
+            0
+        };
 
         username + ice_controlled + ice_controlling + priority + address + use_candidate
     }
@@ -495,7 +492,7 @@ impl<'a> Attributes<'a> {
             vec.write_all(&((len as u16).to_be_bytes()))?;
             vec.write_all(&buf[0..len])?;
         }
-        if self.use_candidate() {
+        if self.use_candidate {
             vec.write_all(&Self::USE_CANDIDATE.to_be_bytes())?;
             vec.write_all(&0_u16.to_be_bytes())?;
         }
@@ -595,7 +592,7 @@ impl<'a> Attributes<'a> {
                                 "UseCandidate that isnt 0 in length".into(),
                             ));
                         }
-                        attributes.use_candidate = Some(true);
+                        attributes.use_candidate = true;
                     }
                     Self::ALTERNATE_SERVER => {
                         warn!("STUN got AlternateServer");
