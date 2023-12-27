@@ -272,13 +272,13 @@ impl<'a> StunMessage<'a> {
         self.attrs.to_bytes(&mut buf, &self.trans_id.0)?;
 
         // Message integrity
-        buf.write_all(&0x0008_u16.to_be_bytes())?;
+        buf.write_all(&Attributes::MESSAGE_INTEGRITY.to_be_bytes())?;
         buf.write_all(&(MSG_INTEGRITY_LEN as u16).to_be_bytes())?;
         buf.write_all(&[0; MSG_INTEGRITY_LEN])?; // placeholder
         let integrity_value_offset = MSG_HEADER_LEN + self.attrs.padded_len() + ATTR_TLV_LENGTH;
 
         // Fingerprint
-        buf.write_all(&0x8028_u16.to_be_bytes())?;
+        buf.write_all(&Attributes::FINGERPRINT.to_be_bytes())?;
         buf.write_all(&(FPRINT_LEN as u16).to_be_bytes())?;
         buf.write_all(&[0; FPRINT_LEN])?; // placeholder
         let fingerprint_value_offest = integrity_value_offset + MSG_INTEGRITY_LEN + ATTR_TLV_LENGTH;
@@ -413,6 +413,23 @@ use std::{io, str};
 use super::Sha1;
 
 impl<'a> Attributes<'a> {
+    const ALTERNATE_SERVER: u16 = 0x8023;
+    const ERROR_CODE: u16 = 0x0009;
+    const FINGERPRINT: u16 = 0x8028;
+    const ICE_CONTROLLED: u16 = 0x8029;
+    const ICE_CONTROLLING: u16 = 0x802a;
+    const MAPPED_ADDRESS: u16 = 0x0001;
+    const MESSAGE_INTEGRITY: u16 = 0x0008;
+    const NETWORK_COST: u16 = 0xc057;
+    const NONCE: u16 = 0x0015;
+    const PRIORITY: u16 = 0x0024;
+    const REALM: u16 = 0x0014;
+    const SOFTWARE: u16 = 0x0022;
+    const UNKNOWN_ATTRIBUTES: u16 = 0x000a;
+    const USE_CANDIDATE: u16 = 0x0025;
+    const USERNAME: u16 = 0x0006;
+    const XOR_MAPPED_ADDRESS: u16 = 0x0020;
+
     fn padded_len(&self) -> usize {
         const ATTR_TLV_LENGTH: usize = 4;
 
@@ -449,7 +466,7 @@ impl<'a> Attributes<'a> {
 
     fn to_bytes(self, vec: &mut dyn Write, trans_id: &[u8]) -> io::Result<()> {
         if let Some(v) = self.username {
-            vec.write_all(&0x0006_u16.to_be_bytes())?;
+            vec.write_all(&Self::USERNAME.to_be_bytes())?;
             vec.write_all(&(v.as_bytes().len() as u16).to_be_bytes())?;
             vec.write_all(v.as_bytes())?;
             let pad = 4 - (v.as_bytes().len() % 4) % 4;
@@ -458,29 +475,29 @@ impl<'a> Attributes<'a> {
             }
         }
         if let Some(v) = self.ice_controlled {
-            vec.write_all(&0x8029_u16.to_be_bytes())?;
+            vec.write_all(&Self::ICE_CONTROLLED.to_be_bytes())?;
             vec.write_all(&8_u16.to_be_bytes())?;
             vec.write_all(&v.to_be_bytes())?;
         }
         if let Some(v) = self.ice_controlling {
-            vec.write_all(&0x802a_u16.to_be_bytes())?;
+            vec.write_all(&Self::ICE_CONTROLLING.to_be_bytes())?;
             vec.write_all(&8_u16.to_be_bytes())?;
             vec.write_all(&v.to_be_bytes())?;
         }
         if let Some(v) = self.priority {
-            vec.write_all(&0x0024_u16.to_be_bytes())?;
+            vec.write_all(&Self::PRIORITY.to_be_bytes())?;
             vec.write_all(&4_u16.to_be_bytes())?;
             vec.write_all(&v.to_be_bytes())?;
         }
         if let Some(v) = self.xor_mapped_address {
             let mut buf = [0_u8; 20];
             let len = encode_xor(v, &mut buf, trans_id);
-            vec.write_all(&0x0020_u16.to_be_bytes())?;
+            vec.write_all(&Self::XOR_MAPPED_ADDRESS.to_be_bytes())?;
             vec.write_all(&((len as u16).to_be_bytes()))?;
             vec.write_all(&buf[0..len])?;
         }
         if self.use_candidate() {
-            vec.write_all(&0x0025_u16.to_be_bytes())?;
+            vec.write_all(&Self::USE_CANDIDATE.to_be_bytes())?;
             vec.write_all(&0_u16.to_be_bytes())?;
         }
 
@@ -518,15 +535,15 @@ impl<'a> Attributes<'a> {
                     buf.len() - 4,
                 )));
             }
-            if !ignore_rest || typ == 0x8028 {
+            if !ignore_rest || typ == Self::FINGERPRINT {
                 match typ {
-                    0x0001 => {
+                    Self::MAPPED_ADDRESS => {
                         warn!("STUN got MappedAddress");
                     }
-                    0x0006 => {
+                    Self::USERNAME => {
                         attributes.username = Some(decode_str(typ, &buf[4..], len)?);
                     }
-                    0x0008 => {
+                    Self::MESSAGE_INTEGRITY => {
                         if len != 20 {
                             return Err(StunError::Parse(
                                 "Expected message integrity to have length 20".into(),
@@ -538,7 +555,7 @@ impl<'a> Attributes<'a> {
                         ignore_rest = true;
                         attributes.message_integrity = Some(&buf[4..24]);
                     }
-                    0x0009 => {
+                    Self::ERROR_CODE => {
                         if buf[4] != 0 || buf[5] != 0 || buf[6] & 0b1111_1000 != 0 {
                             return Err(StunError::Parse("Expected 0 at top of error code".into()));
                         }
@@ -551,29 +568,29 @@ impl<'a> Attributes<'a> {
                         let code = class + (buf[7] % 100) as u16;
                         attributes.error_code = Some((code, decode_str(typ, &buf[8..], len - 4)?));
                     }
-                    0x000a => {
+                    Self::UNKNOWN_ATTRIBUTES => {
                         warn!("STUN got UnknownAttributes");
                     }
-                    0x0014 => {
+                    Self::REALM => {
                         attributes.realm = Some(decode_str(typ, &buf[4..], len)?);
                     }
-                    0x0015 => {
+                    Self::NONCE => {
                         attributes.nonce = Some(decode_str(typ, &buf[4..], len)?);
                     }
-                    0x0020 => {
+                    Self::XOR_MAPPED_ADDRESS => {
                         attributes.xor_mapped_address = Some(decode_xor(&buf[4..], trans_id)?);
                     }
-                    0x0022 => {
+                    Self::SOFTWARE => {
                         attributes.software = Some(decode_str(typ, &buf[4..], len)?);
                     }
-                    0x0024 => {
+                    Self::PRIORITY => {
                         if len != 4 {
                             return Err(StunError::Parse("Priority that isnt 4 in length".into()));
                         }
                         let bytes = [buf[4], buf[5], buf[6], buf[7]];
                         attributes.priority = Some(u32::from_be_bytes(bytes));
                     }
-                    0x0025 => {
+                    Self::USE_CANDIDATE => {
                         if len != 0 {
                             return Err(StunError::Parse(
                                 "UseCandidate that isnt 0 in length".into(),
@@ -581,14 +598,14 @@ impl<'a> Attributes<'a> {
                         }
                         attributes.use_candidate = Some(true);
                     }
-                    0x8023 => {
+                    Self::ALTERNATE_SERVER => {
                         warn!("STUN got AlternateServer");
                     }
-                    0x8028 => {
+                    Self::FINGERPRINT => {
                         let bytes = [buf[4], buf[5], buf[6], buf[7]];
                         attributes.fingerprint = Some(u32::from_be_bytes(bytes));
                     }
-                    0x8029 => {
+                    Self::ICE_CONTROLLED => {
                         if len != 8 {
                             return Err(StunError::Parse(
                                 "IceControlled that isnt 8 in length".into(),
@@ -598,7 +615,7 @@ impl<'a> Attributes<'a> {
                         bytes.copy_from_slice(&buf[4..(4 + 8)]);
                         attributes.ice_controlled = Some(u64::from_be_bytes(bytes));
                     }
-                    0x802a => {
+                    Self::ICE_CONTROLLING => {
                         if len != 8 {
                             return Err(StunError::Parse(
                                 "IceControlling that isnt 8 in length".into(),
@@ -608,7 +625,7 @@ impl<'a> Attributes<'a> {
                         bytes.copy_from_slice(&buf[4..(4 + 8)]);
                         attributes.ice_controlling = Some(u64::from_be_bytes(bytes));
                     }
-                    0xc057 => {
+                    Self::NETWORK_COST => {
                         if len != 4 {
                             warn!("NetworkCost that isnt 4 in length");
                         } else {
