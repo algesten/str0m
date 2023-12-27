@@ -1,4 +1,7 @@
 # Unreleased
+  * Parse `StunMessage` without allocations (and huge STUN parsing cleanup)
+  * Introduce top-level `ice` module having `ice::IceAgent` for standalone usage
+  * Remove `StunError::Other` because it was unused
   * Optional parser for VLA (Video Layers Allocation) RTP header extension
   * Chat example send PLI on RTC sequence interruption
   * Improved VP9 support with parsing layer metadata
@@ -7,8 +10,6 @@
   * Header extension abs_send_time is now an Instant
   * Handle more optional a=candidate parameters
   * Support REMB (receiver estimated maximum bitrate) feedback packets (breaking)
-  * Remove `StunError::Other` because it was unused
-  * Introduce top-level `ice` module, providing access to the `ice::Agent` for standalone usage
 
 # 0.4.1
   * Generated DTLS certificates set issuer/subject for compat with OBS/libdatachannel
