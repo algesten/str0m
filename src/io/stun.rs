@@ -72,7 +72,7 @@ pub struct StunMessage<'a> {
     method: Method,
     class: Class,
     trans_id: TransId,
-    attrs: Vec<Attribute<'a>>,
+    attrs: Attributes<'a>,
     integrity: &'a [u8],
     integrity_len: u16,
 }
@@ -102,7 +102,7 @@ impl<'a> StunMessage<'a> {
 
         let mut message_integrity_offset = 0;
 
-        let attrs = Attribute::parse(&buf[20..], trans_id, &mut message_integrity_offset)?;
+        let attrs = Attributes::parse(&buf[20..], trans_id, &mut message_integrity_offset)?;
 
         // message-integrity only includes the length up until and including
         // the message-integrity attribute.
@@ -118,14 +118,14 @@ impl<'a> StunMessage<'a> {
         let integrity = &buf[0..(message_integrity_offset + 20)];
 
         if method == Method::Binding && class == Class::Success {
-            if attrs.mapped_address().is_none() {
+            if attrs.xor_mapped_address.is_none() {
                 return Err(StunError::Parse("STUN packet missing mapped addr".into()));
             }
         } else if method == Method::Binding && class == Class::Request {
             if attrs.split_username().is_none() {
                 return Err(StunError::Parse("STUN packet missing username".into()));
             }
-            if attrs.prio().is_none() {
+            if attrs.priority.is_none() {
                 return Err(StunError::Parse("STUN packet missing mapped addr".into()));
             }
         }
@@ -172,44 +172,39 @@ impl<'a> StunMessage<'a> {
         prio: u32,
         use_candidate: bool,
     ) -> Self {
-        let mut m = StunMessage {
+        let mut attrs = Attributes::default();
+        attrs.username = Some(username);
+        if controlling {
+            attrs.ice_controlling = Some(control_tie_breaker);
+        } else {
+            attrs.ice_controlled = Some(control_tie_breaker);
+        }
+        attrs.priority = Some(prio);
+
+        if use_candidate {
+            attrs.use_candidate = Some(true);
+        }
+
+        StunMessage {
             class: Class::Request,
             method: Method::Binding,
             trans_id,
-            attrs: vec![
-                Attribute::Username(username),
-                if controlling {
-                    Attribute::IceControlling(control_tie_breaker)
-                } else {
-                    Attribute::IceControlled(control_tie_breaker)
-                },
-                Attribute::Priority(prio),
-            ],
+            attrs,
             integrity: &[],
             integrity_len: 0,
-        };
-
-        if use_candidate {
-            m.attrs.push(Attribute::UseCandidate);
         }
-
-        m.attrs.push(Attribute::MessageIntegrityMark);
-        m.attrs.push(Attribute::FingerprintMark);
-
-        m
     }
 
     /// Constructs a new STUN BINDING reply.
     pub(crate) fn reply(trans_id: TransId, mapped_address: SocketAddr) -> StunMessage<'a> {
+        let mut attrs = Attributes::default();
+        attrs.xor_mapped_address = Some(mapped_address);
+
         StunMessage {
             class: Class::Success,
             method: Method::Binding,
             trans_id,
-            attrs: vec![
-                Attribute::XorMappedAddress(mapped_address),
-                Attribute::MessageIntegrityMark,
-                Attribute::FingerprintMark,
-            ],
+            attrs,
             integrity: &[],
             integrity_len: 0,
         }
@@ -222,12 +217,12 @@ impl<'a> StunMessage<'a> {
 
     /// If present, returns the value of XOR-MAPPED-ADDRESS attribute.
     pub(crate) fn mapped_address(&self) -> Option<SocketAddr> {
-        self.attrs.mapped_address()
+        self.attrs.xor_mapped_address
     }
 
     /// If present, returns the value of the PRIORITY attribute.
     pub(crate) fn prio(&self) -> Option<u32> {
-        self.attrs.prio()
+        self.attrs.priority
     }
 
     /// Whether this message has the USE-CANDIDATE attribute.
@@ -238,7 +233,7 @@ impl<'a> StunMessage<'a> {
     /// Verify the integrity of this message against the provided password.
     #[must_use]
     pub(crate) fn check_integrity(&self, password: &str) -> bool {
-        if let Some(integ) = self.attrs.message_integrity() {
+        if let Some(integ) = self.attrs.message_integrity {
             let sha1: Sha1 = password.as_bytes().into();
             let comp = sha1.hmac(&[
                 &self.integrity[..2],
@@ -255,49 +250,64 @@ impl<'a> StunMessage<'a> {
     ///
     /// The provided password is used to authenticate the message.
     pub(crate) fn to_bytes(&self, password: &str, buf: &mut [u8]) -> Result<usize, StunError> {
-        let attr_len = self.attrs.iter().fold(0, |p, a| p + a.padded_len());
-        let msg_len = 20 + attr_len;
+        const MSG_HEADER_LEN: usize = 20;
+        const MSG_INTEGRITY_LEN: usize = 20;
+        const FPRINT_LEN: usize = 4;
+        const ATTR_TLV_LENGTH: usize = 4;
+
+        let attr_len = self.attrs.padded_len()
+            + MSG_INTEGRITY_LEN
+            + ATTR_TLV_LENGTH
+            + FPRINT_LEN
+            + ATTR_TLV_LENGTH;
 
         let mut buf = io::Cursor::new(buf);
 
-        let typ = self.class.to_u16() | self.method.to_u16();
-        buf.write_all(&typ.to_be_bytes())?;
-
-        // -8 for fingerprint
-        buf.write_all(&((attr_len - 8) as u16).to_be_bytes())?;
-        buf.write_all(MAGIC)?;
-        buf.write_all(&self.trans_id.0)?;
-
-        let mut i_off = 0;
-        let mut f_off = 0;
-
+        // Message header
         {
-            let mut off = 20; // attribute start
-            for a in &self.attrs {
-                a.to_bytes(&mut buf, &self.trans_id.0)?;
-                if let Attribute::MessageIntegrityMark = a {
-                    i_off = off;
-                }
-                if let Attribute::FingerprintMark = a {
-                    f_off = off;
-                }
-                off += a.padded_len();
-            }
+            let typ = self.class.to_u16() | self.method.to_u16();
+            buf.write_all(&typ.to_be_bytes())?;
+
+            // -8 for fingerprint
+            buf.write_all(&((attr_len - 8) as u16).to_be_bytes())?;
+            buf.write_all(MAGIC)?;
+            buf.write_all(&self.trans_id.0)?;
         }
+
+        // Custom attributes
+        self.attrs.to_bytes(&mut buf, &self.trans_id.0)?;
+
+        // Message integrity
+        buf.write_all(&0x0008_u16.to_be_bytes())?;
+        buf.write_all(&(MSG_INTEGRITY_LEN as u16).to_be_bytes())?;
+        buf.write_all(&[0; MSG_INTEGRITY_LEN])?; // placeholder
+        let integrity_value_offset = MSG_HEADER_LEN + self.attrs.padded_len() + ATTR_TLV_LENGTH;
+
+        // Fingerprint
+        buf.write_all(&0x8028_u16.to_be_bytes())?;
+        buf.write_all(&(FPRINT_LEN as u16).to_be_bytes())?;
+        buf.write_all(&[0; FPRINT_LEN])?; // placeholder
+        let fingerprint_value_offest = integrity_value_offset + MSG_INTEGRITY_LEN + ATTR_TLV_LENGTH;
 
         let buf = buf.into_inner();
 
+        // Compute and fill in message integrity
         let sha1: Sha1 = password.as_bytes().into();
-        let hmac = sha1.hmac(&[&buf[0..i_off]]);
-        buf[i_off + 4..(i_off + 4 + 20)].copy_from_slice(&hmac);
+        let hmac = sha1.hmac(&[&buf[0..(integrity_value_offset - ATTR_TLV_LENGTH)]]);
+        buf[integrity_value_offset..(integrity_value_offset + MSG_INTEGRITY_LEN)]
+            .copy_from_slice(&hmac);
 
-        // fill in correct length
+        // Fill in total message length
         buf[2..4].copy_from_slice(&(attr_len as u16).to_be_bytes());
 
-        let crc = Crc::<u32>::new(&CRC_32_ISO_HDLC).checksum(&buf[0..f_off]) ^ 0x5354_554e;
-        buf[f_off + 4..(f_off + 4 + 4)].copy_from_slice(&crc.to_be_bytes());
+        // Compute and fill in fingerprint
+        let crc = Crc::<u32>::new(&CRC_32_ISO_HDLC)
+            .checksum(&buf[0..(fingerprint_value_offest - ATTR_TLV_LENGTH)])
+            ^ 0x5354_554e;
+        buf[fingerprint_value_offest..(fingerprint_value_offest + FPRINT_LEN)]
+            .copy_from_slice(&crc.to_be_bytes());
 
-        Ok(msg_len)
+        Ok(MSG_HEADER_LEN + attr_len)
     }
 }
 
@@ -360,55 +370,32 @@ impl Method {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
-pub enum Attribute<'a> {
-    MappedAddress,                // TODO
-    Username(&'a str),            // < 128 utf8 chars
-    MessageIntegrity(&'a [u8]),   // 20 bytes sha-1
-    MessageIntegrityMark,         // 20 bytes sha-1
-    ErrorCode(u16, &'a str),      // 300-699 and reason phrase < 128 utf8 chars
-    UnknownAttributes,            // TODO
-    Realm(&'a str),               // < 128 utf8 chars
-    Nonce(&'a str),               // < 128 utf8 chars
-    XorMappedAddress(SocketAddr), // 0x0020
-    Software(&'a str),
-    AlternateServer,  // TODO
-    Fingerprint(u32), // crc32
-    FingerprintMark,  // crc32
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Attributes<'a> {
+    username: Option<&'a str>,              // < 128 utf8 chars
+    message_integrity: Option<&'a [u8]>,    // 20 bytes sha-1
+    error_code: Option<(u16, &'a str)>,     // 300-699 and reason phrase < 128 utf8 chars
+    realm: Option<&'a str>,                 // < 128 utf8 chars
+    nonce: Option<&'a str>,                 // < 128 utf8 chars
+    xor_mapped_address: Option<SocketAddr>, // 0x0020
+    software: Option<&'a str>,
+    fingerprint: Option<u32>, // crc32
     // https://tools.ietf.org/html/rfc8445
-    Priority(u32),       // 0x0024
-    UseCandidate,        // 0x0025
-    IceControlled(u64),  // 0x8029
-    IceControlling(u64), // 0x802a
+    priority: Option<u32>,        // 0x0024
+    use_candidate: Option<bool>,  // 0x0025
+    ice_controlled: Option<u64>,  // 0x8029
+    ice_controlling: Option<u64>, // 0x802a
     // https://tools.ietf.org/html/draft-thatcher-ice-network-cost-00
-    NetworkCost(u16, u16), // 0xc057
-    Unknown(u16),
+    network_cost: Option<(u16, u16)>, // 0xc057
+                                      // Unknown: u16,
 }
 
-trait Attributes<'a> {
-    fn username(&self) -> Option<&'a str>;
-    fn split_username(&self) -> Option<(&'a str, &'a str)>;
-    fn mapped_address(&self) -> Option<SocketAddr>;
-    fn prio(&self) -> Option<u32>;
-    fn use_candidate(&self) -> bool;
-    fn message_integrity(&self) -> Option<&'a [u8]>;
-}
-
-impl<'a> Attributes<'a> for Vec<Attribute<'a>> {
-    fn username(&self) -> Option<&'a str> {
-        for a in self {
-            if let Attribute::Username(v) = a {
-                return Some(v);
-            }
-        }
-        None
-    }
-
+impl<'a> Attributes<'a> {
     fn split_username(&self) -> Option<(&'a str, &'a str)> {
         // usernames are on the form gfNK:062g where
         // gfNK is my local sdp ice username and
         // 062g is the remote.
-        if let Some(v) = self.username() {
+        if let Some(v) = self.username {
             let idx = v.find(':');
             if let Some(idx) = idx {
                 if idx + 1 < v.len() {
@@ -421,35 +408,8 @@ impl<'a> Attributes<'a> for Vec<Attribute<'a>> {
         None
     }
 
-    fn mapped_address(&self) -> Option<SocketAddr> {
-        for a in self {
-            if let Attribute::XorMappedAddress(v) = a {
-                return Some(*v);
-            }
-        }
-        None
-    }
-
-    fn prio(&self) -> Option<u32> {
-        for a in self {
-            if let Attribute::Priority(v) = a {
-                return Some(*v);
-            }
-        }
-        None
-    }
-
     fn use_candidate(&self) -> bool {
-        self.iter().any(|a| matches!(a, Attribute::UseCandidate))
-    }
-
-    fn message_integrity(&self) -> Option<&'a [u8]> {
-        for a in self {
-            if let Attribute::MessageIntegrity(v) = a {
-                return Some(v);
-            }
-        }
-        None
+        self.use_candidate.unwrap_or(false)
     }
 }
 
@@ -457,80 +417,65 @@ use std::{io, str};
 
 use super::Sha1;
 
-impl<'a> Attribute<'a> {
+impl<'a> Attributes<'a> {
     fn padded_len(&self) -> usize {
-        use Attribute::*;
-        4 + match self {
-            Username(v) => {
+        let username = self
+            .username
+            .map(|v| {
                 let pad = 4 - (v.as_bytes().len() % 4) % 4;
-                v.len() + pad
-            }
-            IceControlled(_) => 8,
-            IceControlling(_) => 8,
-            MessageIntegrityMark => 20,
-            FingerprintMark => 4,
-            Priority(_) => 4,
-            XorMappedAddress(v) => {
-                if v.is_ipv4() {
-                    8
-                } else {
-                    20
-                }
-            }
-            UseCandidate => 0,
-            _ => panic!("No length for: {self:?}"),
-        }
+                4 + v.len() + pad
+            })
+            .unwrap_or_default();
+        let ice_controlled = self.ice_controlled.map(|_| 4 + 8).unwrap_or_default();
+        let ice_controlling = self.ice_controlling.map(|_| 4 + 8).unwrap_or_default();
+        let priority = self
+            .priority
+            .map(|p| 4 + p.to_le_bytes().len())
+            .unwrap_or_default();
+        let address = self
+            .xor_mapped_address
+            .map(|a| 4 + if a.is_ipv4() { 8 } else { 20 })
+            .unwrap_or_default();
+        let use_candidate = self.use_candidate.map(|_| 4).unwrap_or_default();
+
+        username + ice_controlled + ice_controlling + priority + address + use_candidate
     }
 
     fn to_bytes(&self, vec: &mut dyn Write, trans_id: &[u8]) -> io::Result<()> {
-        use Attribute::*;
-        match self {
-            Username(v) => {
-                vec.write_all(&0x0006_u16.to_be_bytes())?;
-                vec.write_all(&(v.as_bytes().len() as u16).to_be_bytes())?;
-                vec.write_all(v.as_bytes())?;
-                let pad = 4 - (v.as_bytes().len() % 4) % 4;
-                for _ in 0..pad {
-                    vec.write_all(&[0])?;
-                }
+        if let Some(v) = self.username {
+            vec.write_all(&0x0006_u16.to_be_bytes())?;
+            vec.write_all(&(v.as_bytes().len() as u16).to_be_bytes())?;
+            vec.write_all(v.as_bytes())?;
+            let pad = 4 - (v.as_bytes().len() % 4) % 4;
+            for _ in 0..pad {
+                vec.write_all(&[0])?;
             }
-            IceControlled(v) => {
-                vec.write_all(&0x8029_u16.to_be_bytes())?;
-                vec.write_all(&8_u16.to_be_bytes())?;
-                vec.write_all(&v.to_be_bytes())?;
-            }
-            IceControlling(v) => {
-                vec.write_all(&0x802a_u16.to_be_bytes())?;
-                vec.write_all(&8_u16.to_be_bytes())?;
-                vec.write_all(&v.to_be_bytes())?;
-            }
-            MessageIntegrityMark => {
-                vec.write_all(&0x0008_u16.to_be_bytes())?;
-                vec.write_all(&20_u16.to_be_bytes())?;
-                vec.write_all(&[0; 20])?; // filled in later
-            }
-            FingerprintMark => {
-                vec.write_all(&0x8028_u16.to_be_bytes())?;
-                vec.write_all(&4_u16.to_be_bytes())?;
-                vec.write_all(&[0; 4])?; // filled in later
-            }
-            Priority(v) => {
-                vec.write_all(&0x0024_u16.to_be_bytes())?;
-                vec.write_all(&4_u16.to_be_bytes())?;
-                vec.write_all(&v.to_be_bytes())?;
-            }
-            XorMappedAddress(v) => {
-                let mut buf = [0_u8; 20];
-                let len = encode_xor(*v, &mut buf, trans_id);
-                vec.write_all(&0x0020_u16.to_be_bytes())?;
-                vec.write_all(&((len as u16).to_be_bytes()))?;
-                vec.write_all(&buf[0..len])?;
-            }
-            UseCandidate => {
-                vec.write_all(&0x0025_u16.to_be_bytes())?;
-                vec.write_all(&0_u16.to_be_bytes())?;
-            }
-            _ => panic!("Can't write bytes for: {self:?}"),
+        }
+        if let Some(v) = self.ice_controlled {
+            vec.write_all(&0x8029_u16.to_be_bytes())?;
+            vec.write_all(&8_u16.to_be_bytes())?;
+            vec.write_all(&v.to_be_bytes())?;
+        }
+        if let Some(v) = self.ice_controlling {
+            vec.write_all(&0x802a_u16.to_be_bytes())?;
+            vec.write_all(&8_u16.to_be_bytes())?;
+            vec.write_all(&v.to_be_bytes())?;
+        }
+        if let Some(v) = self.priority {
+            vec.write_all(&0x0024_u16.to_be_bytes())?;
+            vec.write_all(&4_u16.to_be_bytes())?;
+            vec.write_all(&v.to_be_bytes())?;
+        }
+        if let Some(v) = self.xor_mapped_address {
+            let mut buf = [0_u8; 20];
+            let len = encode_xor(v, &mut buf, trans_id);
+            vec.write_all(&0x0020_u16.to_be_bytes())?;
+            vec.write_all(&((len as u16).to_be_bytes()))?;
+            vec.write_all(&buf[0..len])?;
+        }
+        if self.use_candidate() {
+            vec.write_all(&0x0025_u16.to_be_bytes())?;
+            vec.write_all(&0_u16.to_be_bytes())?;
         }
 
         Ok(())
@@ -540,8 +485,9 @@ impl<'a> Attribute<'a> {
         mut buf: &'a [u8],
         trans_id: TransId,
         msg_integrity_off: &mut usize,
-    ) -> Result<Vec<Attribute<'a>>, StunError> {
-        let mut ret = vec![];
+    ) -> Result<Attributes<'a>, StunError> {
+        let mut attributes = Attributes::default();
+
         let mut off = 0;
         // With the exception of the FINGERPRINT
         //    attribute, which appears after MESSAGE-INTEGRITY, agents MUST ignore
@@ -553,12 +499,12 @@ impl<'a> Attribute<'a> {
             }
             let typ = (buf[0] as u16) << 8 | buf[1] as u16;
             let len = (buf[2] as usize) << 8 | buf[3] as usize;
-            // trace!(
-            //     "STUN attribute typ 0x{:04x?} len {}: {:02x?}",
-            //     typ,
-            //     len,
-            //     buf
-            // );
+            trace!(
+                "STUN attribute typ 0x{:04x?} len {}: {:02x?}",
+                typ,
+                len,
+                buf
+            );
             if len > buf.len() - 4 {
                 return Err(StunError::Parse(format!(
                     "Bad STUN attribute length: {} > {}",
@@ -570,10 +516,9 @@ impl<'a> Attribute<'a> {
                 match typ {
                     0x0001 => {
                         warn!("STUN got MappedAddress");
-                        ret.push(Attribute::MappedAddress);
                     }
                     0x0006 => {
-                        ret.push(Attribute::Username(decode_str(typ, &buf[4..], len)?));
+                        attributes.username = Some(decode_str(typ, &buf[4..], len)?);
                     }
                     0x0008 => {
                         if len != 20 {
@@ -585,7 +530,7 @@ impl<'a> Attribute<'a> {
                         // integrity attribute.
                         *msg_integrity_off = off;
                         ignore_rest = true;
-                        ret.push(Attribute::MessageIntegrity(&buf[4..24]));
+                        attributes.message_integrity = Some(&buf[4..24]);
                     }
                     0x0009 => {
                         if buf[4] != 0 || buf[5] != 0 || buf[6] & 0b1111_1000 != 0 {
@@ -598,36 +543,29 @@ impl<'a> Attribute<'a> {
                             )));
                         }
                         let code = class + (buf[7] % 100) as u16;
-                        ret.push(Attribute::ErrorCode(
-                            code,
-                            decode_str(typ, &buf[8..], len - 4)?,
-                        ));
+                        attributes.error_code = Some((code, decode_str(typ, &buf[8..], len - 4)?));
                     }
                     0x000a => {
                         warn!("STUN got UnknownAttributes");
-                        ret.push(Attribute::UnknownAttributes);
                     }
                     0x0014 => {
-                        ret.push(Attribute::Realm(decode_str(typ, &buf[4..], len)?));
+                        attributes.realm = Some(decode_str(typ, &buf[4..], len)?);
                     }
                     0x0015 => {
-                        ret.push(Attribute::Nonce(decode_str(typ, &buf[4..], len)?));
+                        attributes.nonce = Some(decode_str(typ, &buf[4..], len)?);
                     }
                     0x0020 => {
-                        ret.push(Attribute::XorMappedAddress(decode_xor(
-                            &buf[4..],
-                            trans_id,
-                        )?));
+                        attributes.xor_mapped_address = Some(decode_xor(&buf[4..], trans_id)?);
                     }
                     0x0022 => {
-                        ret.push(Attribute::Software(decode_str(typ, &buf[4..], len)?));
+                        attributes.software = Some(decode_str(typ, &buf[4..], len)?);
                     }
                     0x0024 => {
                         if len != 4 {
                             return Err(StunError::Parse("Priority that isnt 4 in length".into()));
                         }
                         let bytes = [buf[4], buf[5], buf[6], buf[7]];
-                        ret.push(Attribute::Priority(u32::from_be_bytes(bytes)));
+                        attributes.priority = Some(u32::from_be_bytes(bytes));
                     }
                     0x0025 => {
                         if len != 0 {
@@ -635,15 +573,14 @@ impl<'a> Attribute<'a> {
                                 "UseCandidate that isnt 0 in length".into(),
                             ));
                         }
-                        ret.push(Attribute::UseCandidate);
+                        attributes.use_candidate = Some(true);
                     }
                     0x8023 => {
                         warn!("STUN got AlternateServer");
-                        ret.push(Attribute::AlternateServer);
                     }
                     0x8028 => {
                         let bytes = [buf[4], buf[5], buf[6], buf[7]];
-                        ret.push(Attribute::Fingerprint(u32::from_be_bytes(bytes)));
+                        attributes.fingerprint = Some(u32::from_be_bytes(bytes));
                     }
                     0x8029 => {
                         if len != 8 {
@@ -653,7 +590,7 @@ impl<'a> Attribute<'a> {
                         }
                         let mut bytes = [0_u8; 8];
                         bytes.copy_from_slice(&buf[4..(4 + 8)]);
-                        ret.push(Attribute::IceControlled(u64::from_be_bytes(bytes)));
+                        attributes.ice_controlled = Some(u64::from_be_bytes(bytes));
                     }
                     0x802a => {
                         if len != 8 {
@@ -663,7 +600,7 @@ impl<'a> Attribute<'a> {
                         }
                         let mut bytes = [0_u8; 8];
                         bytes.copy_from_slice(&buf[4..(4 + 8)]);
-                        ret.push(Attribute::IceControlling(u64::from_be_bytes(bytes)));
+                        attributes.ice_controlling = Some(u64::from_be_bytes(bytes));
                     }
                     0xc057 => {
                         if len != 4 {
@@ -671,12 +608,10 @@ impl<'a> Attribute<'a> {
                         } else {
                             let net_id = (buf[4] as u16) << 8 | buf[5] as u16;
                             let cost = (buf[6] as u16) << 8 | buf[7] as u16;
-                            ret.push(Attribute::NetworkCost(net_id, cost));
+                            attributes.network_cost = Some((net_id, cost));
                         }
                     }
-                    _ => {
-                        ret.push(Attribute::Unknown(typ));
-                    }
+                    _ => {}
                 }
             }
             // attributes are on even 32 bit boundaries
@@ -685,7 +620,7 @@ impl<'a> Attribute<'a> {
             buf = &buf[(4 + pad_len)..];
             off += 4 + pad_len;
         }
-        Ok(ret)
+        Ok(attributes)
     }
 }
 
@@ -764,38 +699,6 @@ impl<'a> fmt::Debug for StunMessage<'a> {
             .field("attrs", &self.attrs)
             .field("integrity_len", &self.integrity.len())
             .finish()
-    }
-}
-
-impl<'a> fmt::Debug for Attribute<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MappedAddress => write!(f, "MappedAddress"),
-            Self::Username(arg0) => f.debug_tuple("Username").field(arg0).finish(),
-            Self::MessageIntegrity(_) => f.debug_tuple("MessageIntegrity(_)").finish(),
-            Self::MessageIntegrityMark => write!(f, "MessageIntegrityMark"),
-            Self::ErrorCode(arg0, arg1) => {
-                f.debug_tuple("ErrorCode").field(arg0).field(arg1).finish()
-            }
-            Self::UnknownAttributes => write!(f, "UnknownAttributes"),
-            Self::Realm(arg0) => f.debug_tuple("Realm").field(arg0).finish(),
-            Self::Nonce(arg0) => f.debug_tuple("Nonce").field(arg0).finish(),
-            Self::XorMappedAddress(arg0) => f.debug_tuple("XorMappedAddress").field(arg0).finish(),
-            Self::Software(arg0) => f.debug_tuple("Software").field(arg0).finish(),
-            Self::AlternateServer => write!(f, "AlternateServer"),
-            Self::Fingerprint(arg0) => f.debug_tuple("Fingerprint").field(arg0).finish(),
-            Self::FingerprintMark => write!(f, "FingerprintMark"),
-            Self::Priority(arg0) => f.debug_tuple("Priority").field(arg0).finish(),
-            Self::UseCandidate => write!(f, "UseCandidate"),
-            Self::IceControlled(arg0) => f.debug_tuple("IceControlled").field(arg0).finish(),
-            Self::IceControlling(arg0) => f.debug_tuple("IceControlling").field(arg0).finish(),
-            Self::NetworkCost(arg0, arg1) => f
-                .debug_tuple("NetworkCost")
-                .field(arg0)
-                .field(arg1)
-                .finish(),
-            Self::Unknown(arg0) => f.debug_tuple("Unknown").field(arg0).finish(),
-        }
     }
 }
 
