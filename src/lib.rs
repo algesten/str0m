@@ -957,6 +957,7 @@ impl Event {
 
 /// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // We purposely don't want to allocate.
 pub enum Input<'a> {
     /// A timeout without any network input.
     Timeout(Instant),
