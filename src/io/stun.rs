@@ -67,7 +67,7 @@ impl TransId {
 ///
 /// STUN is a very flexible protocol.
 /// This implementations only provides what we need for our ICE implementation.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct StunMessage<'a> {
     method: Method,
     class: Class,
