@@ -2,31 +2,29 @@ use super::Vp8CodecExtra;
 use std::collections::VecDeque;
 
 #[derive(Debug)]
-pub struct Vp8Contiguity {
+pub(crate) struct FrameContiguityState {
     /// last picture id of layer 0 that we allowed emitting
-    last_tl0_picture_id: Option<u64>,
+    pub(crate) last_picture_id: Option<u64>,
+
     /// last picture id of any layer that we allowed emitting
-    last_picture_id: Option<u64>,
+    pub(crate) last_tl0_picture_id: Option<u64>,
 }
 
-impl Vp8Contiguity {
-    pub fn new() -> Self {
-        Vp8Contiguity {
-            last_tl0_picture_id: None,
-            last_picture_id: None,
-        }
-    }
-
-    /// Called when depacketizing a new frame is ready to be emitted
-    ///
-    /// Returns whether we can emit suchfameh and whether it's decodable with contiguity
-    pub fn check(&mut self, next: &Vp8CodecExtra, contiguous_seq: bool) -> (bool, bool) {
-        let Some(picture_id) = next.picture_id else {
+impl FrameContiguityState {
+    /// Returns whether we can emit such frame and whether it's decodable with contiguity
+    pub(crate) fn next_frame(
+        &mut self,
+        picture_id: Option<u64>,
+        tl0_picture_id: Option<u64>,
+        layer_index: Option<u64>,
+        contiguous_seq: bool,
+    ) -> (bool, bool) {
+        let Some(picture_id) = picture_id else {
             // picture id is not enabled or not progressing anyway
             return (true, contiguous_seq);
         };
 
-        let Some(tl0_picture_id) = next.tl0_picture_id else {
+        let Some(tl0_picture_id) = tl0_picture_id else {
             return (true, contiguous_seq);
         };
 
@@ -43,9 +41,9 @@ impl Vp8Contiguity {
             return (false, true);
         }
 
-        if next.layer_index == 0 {
+        if layer_index == Some(0) {
             if tl0_picture_id == last_tl0_picture_id {
-                warn!("VP8: 2 subsequent frames on layer zero must have different tl0 picture id: encoding problem?")
+                warn!("VP8 or VP9: 2 subsequent frames on layer zero must have different tl0 picture id: encoding problem?")
             }
 
             // Frame on layer 0: always emit and report discontinuity if not subsequent
@@ -70,11 +68,59 @@ impl Vp8Contiguity {
             self.last_picture_id = Some(picture_id);
             if !contiguous_seq {
                 // this as happened in Safari + very lossy network (very rare)
-                warn!("VP8: contiguous pictures implies contiguous seq numbers: encoding issue ?")
+                warn!("VP8 or VP9: contiguous pictures implies contiguous seq numbers: encoding issue ?")
             }
         }
 
         (emit, true)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Vp8Contiguity {
+    /// last picture id of layer 0 that we allowed emitting
+    last_tl0_picture_id: Option<u64>,
+    /// last picture id of any layer that we allowed emitting
+    last_picture_id: Option<u64>,
+}
+
+impl Vp8Contiguity {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Called when depacketizing a new frame is ready to be emitted
+    ///
+    /// Returns whether we can emit such frame and whether it's decodable with contiguity
+    pub fn check(&mut self, next: &Vp8CodecExtra, contiguous_seq: bool) -> (bool, bool) {
+        let mut frame_state: FrameContiguityState = self.into();
+        let res = frame_state.next_frame(
+            next.picture_id,
+            next.tl0_picture_id,
+            Some(next.layer_index.into()),
+            contiguous_seq,
+        );
+
+        *self = frame_state.into();
+        res
+    }
+}
+
+impl From<&mut Vp8Contiguity> for FrameContiguityState {
+    fn from(value: &mut Vp8Contiguity) -> Self {
+        Self {
+            last_picture_id: value.last_picture_id,
+            last_tl0_picture_id: value.last_tl0_picture_id,
+        }
+    }
+}
+
+impl From<FrameContiguityState> for Vp8Contiguity {
+    fn from(value: FrameContiguityState) -> Self {
+        Self {
+            last_picture_id: value.last_picture_id,
+            last_tl0_picture_id: value.last_tl0_picture_id,
+        }
     }
 }
 
