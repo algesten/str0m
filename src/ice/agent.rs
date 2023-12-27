@@ -812,19 +812,18 @@ impl IceAgent {
     ///
     /// Will not be used if [`IceAgent::accepts_message`] returns false.
     pub fn handle_receive(&mut self, now: Instant, packet: StunPacket) {
-        let message = &packet.message;
-        trace!("Handle receive: {:?}", message);
+        trace!("Handle receive: {:?}", &packet.message);
 
         // Regardless of whether we have remote_creds at this point, we can
         // at least check the message integrity.
-        if !self.accepts_message(message) {
+        if !self.accepts_message(&packet.message) {
             debug!("Message not accepted");
             return;
         }
 
         if packet.message.is_binding_request() {
             self.stun_server_handle_message(now, &packet);
-        } else if message.is_successful_binding_response() {
+        } else if packet.message.is_successful_binding_response() {
             self.stun_client_handle_response(now, packet.message);
         }
 
