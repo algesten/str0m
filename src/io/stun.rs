@@ -172,24 +172,18 @@ impl<'a> StunMessage<'a> {
         prio: u32,
         use_candidate: bool,
     ) -> Self {
-        let mut attrs = Attributes::default();
-        attrs.username = Some(username);
-        if controlling {
-            attrs.ice_controlling = Some(control_tie_breaker);
-        } else {
-            attrs.ice_controlled = Some(control_tie_breaker);
-        }
-        attrs.priority = Some(prio);
-
-        if use_candidate {
-            attrs.use_candidate = Some(true);
-        }
-
         StunMessage {
             class: Class::Request,
             method: Method::Binding,
             trans_id,
-            attrs,
+            attrs: Attributes {
+                username: Some(username),
+                ice_controlling: controlling.then_some(control_tie_breaker),
+                ice_controlled: (!controlling).then_some(control_tie_breaker),
+                priority: Some(prio),
+                use_candidate: use_candidate.then_some(true),
+                ..Default::default()
+            },
             integrity: &[],
             integrity_len: 0,
         }
@@ -197,14 +191,14 @@ impl<'a> StunMessage<'a> {
 
     /// Constructs a new STUN BINDING reply.
     pub(crate) fn reply(trans_id: TransId, mapped_address: SocketAddr) -> StunMessage<'a> {
-        let mut attrs = Attributes::default();
-        attrs.xor_mapped_address = Some(mapped_address);
-
         StunMessage {
             class: Class::Success,
             method: Method::Binding,
             trans_id,
-            attrs,
+            attrs: Attributes {
+                xor_mapped_address: Some(mapped_address),
+                ..Default::default()
+            },
             integrity: &[],
             integrity_len: 0,
         }
