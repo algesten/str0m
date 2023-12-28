@@ -1591,7 +1591,7 @@ impl Rtc {
         self.peer_bytes_rx += bytes_rx as u64;
 
         match r.contents {
-            Stun(stun) => self.ice.handle_receive(
+            Stun(stun) => self.ice.handle_packet(
                 now,
                 io::StunPacket {
                     proto: r.proto,

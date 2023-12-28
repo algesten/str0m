@@ -496,7 +496,7 @@ mod test {
                         destination,
                         message,
                     };
-                    t.span.in_scope(|| t.agent.handle_receive(t.time, packet));
+                    t.span.in_scope(|| t.agent.handle_packet(t.time, packet));
                 }
             } else {
                 // drop packet

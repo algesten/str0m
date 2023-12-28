@@ -811,7 +811,7 @@ impl IceAgent {
     /// Handles an incoming STUN message.
     ///
     /// Will not be used if [`IceAgent::accepts_message`] returns false.
-    pub fn handle_receive(&mut self, now: Instant, packet: StunPacket) {
+    pub fn handle_packet(&mut self, now: Instant, packet: StunPacket) {
         trace!("Handle receive: {:?}", &packet.message);
 
         // Regardless of whether we have remote_creds at this point, we can
