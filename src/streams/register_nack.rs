@@ -118,12 +118,17 @@ impl NackRegister {
         };
 
         // reset packets that are rolling our of the nack window
-        for s in *active.start..*start {
+        for (i, s) in (*active.start..*start).enumerate() {
             let p = self.packet(s.into());
             if !p.received && s != *seq {
                 debug!("Seq no {} missing after {} attempts", s, p.nack_count);
             }
             self.packet(s.into()).reset();
+
+            if i > self.packets.len() {
+                // we have reset all entries already
+                break;
+            }
         }
 
         if (start..=end).contains(&seq) {
@@ -273,6 +278,14 @@ mod test {
 
         reg.update(111.into());
         assert!(reg.nack_reports().is_none());
+    }
+
+    #[test]
+    fn nack_test_huge_seq_gap_no_hang() {
+        let mut reg = NackRegister::new();
+
+        reg.update(0.into());
+        reg.update(18446744073709551515.into());
     }
 
     #[test]
