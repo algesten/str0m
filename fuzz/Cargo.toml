@@ -26,3 +26,9 @@ name = "rtx_buffer"
 path = "fuzz_targets/rtx_buffer.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "rtp_data"
+path = "fuzz_targets/rtp_data.rs"
+test = false
+doc = false

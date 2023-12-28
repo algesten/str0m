@@ -1,3 +1,8 @@
 #!/bin/sh
 
-cargo +nightly fuzz run rtx_buffer -- --stop-after-first-failure
+if [ "$1" == "" ]; then
+    cargo +nightly fuzz list
+else
+    cargo +nightly fuzz run $1 -- --stop-after-first-failure
+fi
+
