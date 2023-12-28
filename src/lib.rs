@@ -2229,8 +2229,6 @@ mod test {
     }
 }
 
-#[cfg(fuzzing)]
+#[cfg(feature = "_internal_test_exports")]
 #[allow(missing_docs)]
-pub mod fuzz {
-    pub use crate::streams::rtx_cache_buf::EvictingBuffer;
-}
+pub mod _internal_test_exports;
