@@ -25,38 +25,33 @@ pub struct Sdp {
 }
 
 impl Sdp {
-    #[doc(hidden)]
-    pub fn parse(input: &str) -> Result<Sdp, SdpError> {
+    pub(crate) fn parse(input: &str) -> Result<Sdp, SdpError> {
         sdp_parser()
             .easy_parse(input)
             .map(|(sdp, _)| sdp)
             .map_err(|e| SdpError::ParseError(e.to_string()))
     }
 
-    #[doc(hidden)]
-    pub fn assert_consistency(&self) -> Result<(), SdpError> {
+    pub(crate) fn assert_consistency(&self) -> Result<(), SdpError> {
         match self.do_assert_consistency() {
             None => Ok(()),
             Some(error) => Err(SdpError::Inconsistent(error)),
         }
     }
 
-    #[doc(hidden)]
-    pub fn fingerprint(&self) -> Option<Fingerprint> {
+    pub(crate) fn fingerprint(&self) -> Option<Fingerprint> {
         self.session
             .fingerprint()
             .or_else(|| self.media_lines.iter().find_map(|m| m.fingerprint()))
     }
 
-    #[doc(hidden)]
-    pub fn ice_creds(&self) -> Option<IceCreds> {
+    pub(crate) fn ice_creds(&self) -> Option<IceCreds> {
         self.session
             .ice_creds()
             .or_else(|| self.media_lines.iter().find_map(|m| m.ice_creds()))
     }
 
-    #[doc(hidden)]
-    pub fn ice_candidates(&self) -> impl Iterator<Item = &Candidate> {
+    pub(crate) fn ice_candidates(&self) -> impl Iterator<Item = &Candidate> {
         let mut candidates: HashSet<&Candidate> = HashSet::new();
 
         // Session level ice candidates.
@@ -70,8 +65,7 @@ impl Sdp {
         candidates.into_iter()
     }
 
-    #[doc(hidden)]
-    pub fn setup(&self) -> Option<Setup> {
+    pub(crate) fn setup(&self) -> Option<Setup> {
         self.session
             .setup()
             .or_else(|| self.media_lines.iter().find_map(|m| m.setup()))

@@ -1,0 +1,11 @@
+# Dummy package to enable the _internal_test_exports for the integration tests.
+# This is a hack until Rust lets us enable features per profile (dev/test profile)
+# https://github.com/rust-lang/cargo/issues/2911
+
+[package]
+name = "_str0m_test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+str0m = { path = "..", features = ["_internal_test_exports"] }

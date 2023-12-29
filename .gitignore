@@ -1,8 +1,9 @@
 target
 chrome-user-data-dir
 .DS_Store
-fuzz
 tracing*
 *.svg
 xamples
 .vscode
+fuzz/corpus
+fuzz/artifacts

@@ -3,6 +3,13 @@
 version = 3
 
 [[package]]
+name = "_str0m_test"
+version = "0.1.0"
+dependencies = [
+ "str0m",
+]
+
+[[package]]
 name = "adler32"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -928,6 +935,7 @@ checksum = "4dccd0940a2dcdf68d092b8cbab7dc0ad8fa938bf95787e1b916b0e3d0e8e970"
 name = "str0m"
 version = "0.4.1"
 dependencies = [
+ "_str0m_test",
  "combine",
  "crc",
  "hmac",
