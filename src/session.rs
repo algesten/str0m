@@ -531,8 +531,10 @@ impl Session {
             return Some(Event::StreamPaused(paused));
         }
 
-        if let Some(packet) = self.pending_packet.take() {
-            return Some(Event::RtpPacket(packet));
+        if self.rtp_mode {
+            if let Some(packet) = self.pending_packet.take() {
+                return Some(Event::RtpPacket(packet));
+            }
         }
 
         if let Some(req) = self.streams.poll_keyframe_request() {
@@ -562,16 +564,24 @@ impl Session {
                     direction: media.direction(),
                 }));
             }
-
-            if let Some(r) = media.poll_sample(&self.codec_config) {
-                match r {
-                    Ok(v) => return Some(Event::MediaData(v)),
-                    Err(e) => return Some(Event::Error(e)),
-                }
-            }
         }
 
         None
+    }
+
+    pub fn poll_event_fallible(&mut self) -> Result<Option<Event>, RtcError> {
+        // Not relevant in rtp_mode, where the packets are picked up by poll_event().
+        if self.rtp_mode {
+            return Ok(None);
+        }
+
+        for media in &mut self.medias {
+            if let Some(e) = media.poll_sample(&self.codec_config)? {
+                return Ok(Some(Event::MediaData(e)));
+            }
+        }
+
+        Ok(None)
     }
 
     fn ready_for_srtp(&self) -> bool {
