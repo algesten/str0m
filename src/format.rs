@@ -390,12 +390,6 @@ impl PayloadParams {
             }
         }
     }
-
-    /// Exposed for integration tests.
-    #[doc(hidden)]
-    pub fn is_locked(&self) -> bool {
-        self.locked
-    }
 }
 
 impl CodecConfig {

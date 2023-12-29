@@ -1661,24 +1661,6 @@ impl Rtc {
     pub fn codec_config(&self) -> &CodecConfig {
         &self.session.codec_config
     }
-
-    /// All media mids (not application). For integration tests.
-    #[doc(hidden)]
-    pub fn mids(&self) -> Vec<Mid> {
-        self.session.medias.iter().map(Media::mid).collect()
-    }
-
-    /// All current RTP header extensions. For integration tests.
-    #[doc(hidden)]
-    pub fn exts(&self) -> &ExtensionMap {
-        &self.session.exts
-    }
-
-    /// Current local ICE credentials. For integration tests.
-    #[doc(hidden)]
-    pub fn local_ice_creds(&self) -> IceCreds {
-        self.ice.local_credentials().clone()
-    }
 }
 
 /// Customized config for creating an [`Rtc`] instance.
@@ -2229,8 +2211,6 @@ mod test {
     }
 }
 
-#[cfg(fuzzing)]
+#[cfg(feature = "_internal_test_exports")]
 #[allow(missing_docs)]
-pub mod fuzz {
-    pub use crate::streams::rtx_cache_buf::EvictingBuffer;
-}
+pub mod _internal_test_exports;

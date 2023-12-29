@@ -411,8 +411,7 @@ impl Candidate {
         self.ufrag = Some(ufrag.into());
     }
 
-    #[doc(hidden)]
-    pub fn ufrag(&self) -> Option<&str> {
+    pub(crate) fn ufrag(&self) -> Option<&str> {
         self.ufrag.as_deref()
     }
 

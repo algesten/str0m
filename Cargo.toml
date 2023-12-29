@@ -13,6 +13,7 @@ edition = "2021"
 [features]
 default = []
 _internal_dont_use_log_stats = []
+_internal_test_exports = []
 
 [dependencies]
 thiserror = "1.0.38"
@@ -41,6 +42,7 @@ rouille = { version = "3.5.0", features = ["ssl"] }
 serde_json = "1.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }
 systemstat = "0.2.2"
+_str0m_test = { path = "_str0m_test" } # dummy package that enables "_internal_test_exports"
 
 # This is to ensure MSRV 1.65
 # Remove when we move MSRV

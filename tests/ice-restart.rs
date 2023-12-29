@@ -43,8 +43,8 @@ pub fn ice_restart() -> Result<(), RtcError> {
         progress(&mut l, &mut r)?;
     }
 
-    let l_creds = l.local_ice_creds();
-    let r_creds = r.local_ice_creds();
+    let l_creds = l._local_ice_creds();
+    let r_creds = r._local_ice_creds();
 
     let (offer, pending) = r.span.in_scope(|| {
         let mut change = r.rtc.sdp_api();
@@ -76,12 +76,12 @@ pub fn ice_restart() -> Result<(), RtcError> {
 
     assert_ne!(
         r_creds,
-        r.local_ice_creds(),
+        r._local_ice_creds(),
         "After an ICE restart ICE credentials should have changed"
     );
     assert_ne!(
         l_creds,
-        l.local_ice_creds(),
+        l._local_ice_creds(),
         "After an ICE restart ICE credentials should have changed"
     );
 

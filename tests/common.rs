@@ -295,7 +295,7 @@ pub fn vp8_data() -> Vec<(Duration, RtpHeader, Vec<u8>)> {
         // This magic number 42 is the ethernet/IP/UDP framing of the packet.
         let rtp_data = &pkt.data[42..];
 
-        let header = RtpHeader::parse(rtp_data, &exts).unwrap();
+        let header = RtpHeader::_parse(rtp_data, &exts).unwrap();
         let payload = &rtp_data[header.header_len..];
 
         ret.push((relative_time, header, payload.to_vec()));
@@ -325,7 +325,7 @@ pub fn vp9_data() -> Vec<(Duration, RtpHeader, Vec<u8>)> {
         // This magic number 42 is the ethernet/IP/UDP framing of the packet.
         let rtp_data = &pkt.data[42..];
 
-        let header = RtpHeader::parse(rtp_data, &exts).unwrap();
+        let header = RtpHeader::_parse(rtp_data, &exts).unwrap();
         let payload = &rtp_data[header.header_len..];
 
         ret.push((relative_time, header, payload.to_vec()));
@@ -355,7 +355,7 @@ pub fn h264_data() -> Vec<(Duration, RtpHeader, Vec<u8>)> {
         // This magic number 42 is the ethernet/IP/UDP framing of the packet.
         let rtp_data = &pkt.data[42..];
 
-        let header = RtpHeader::parse(rtp_data, &exts).unwrap();
+        let header = RtpHeader::_parse(rtp_data, &exts).unwrap();
         let payload = &rtp_data[header.header_len..];
 
         ret.push((relative_time, header, payload.to_vec()));
