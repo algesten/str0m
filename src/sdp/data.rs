@@ -704,6 +704,8 @@ pub enum MediaType {
     Audio,
     Video,
     Application,
+    // If a parsed SDP has a value we don't recognize, we stick it
+    // in here. We could consider making that a parse exception instead.
     #[doc(hidden)]
     Unknown(String),
 }
