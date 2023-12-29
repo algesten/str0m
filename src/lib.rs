@@ -613,7 +613,7 @@ pub mod ice {
 }
 
 mod io;
-use io::DatagramRecv;
+use io::DatagramRecvInner;
 
 mod packet;
 
@@ -1502,7 +1502,7 @@ impl Rtc {
 
         // STUN can use the ufrag/password to identify that a message belongs
         // to this Rtc instance.
-        if let DatagramRecv::Stun(v) = &r.contents {
+        if let DatagramRecvInner::Stun(v) = &r.contents.inner {
             return self.ice.accepts_message(v);
         }
 
@@ -1581,9 +1581,9 @@ impl Rtc {
 
         trace!("IN {:?}", r);
         self.last_now = now;
-        use net::DatagramRecv::*;
+        use DatagramRecvInner::*;
 
-        let bytes_rx = match r.contents {
+        let bytes_rx = match r.contents.inner {
             // TODO: stun is already parsed (depacketized) here
             Stun(_) => 0,
             Dtls(v) | Rtp(v) | Rtcp(v) => v.len(),
@@ -1591,7 +1591,7 @@ impl Rtc {
 
         self.peer_bytes_rx += bytes_rx as u64;
 
-        match r.contents {
+        match r.contents.inner {
             Stun(stun) => self.ice.handle_packet(
                 now,
                 io::StunPacket {

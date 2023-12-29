@@ -136,15 +136,15 @@ pub struct StunPacket<'a> {
 }
 
 /// Wrapper for a parsed payload to be received.
+pub struct DatagramRecv<'a> {
+    pub(crate) inner: DatagramRecvInner<'a>,
+}
+
 #[allow(clippy::large_enum_variant)] // We purposely don't want to allocate.
-pub enum DatagramRecv<'a> {
-    #[doc(hidden)]
+pub(crate) enum DatagramRecvInner<'a> {
     Stun(StunMessage<'a>),
-    #[doc(hidden)]
     Dtls(&'a [u8]),
-    #[doc(hidden)]
     Rtp(&'a [u8]),
-    #[doc(hidden)]
     Rtcp(&'a [u8]),
 }
 
@@ -152,16 +152,18 @@ impl<'a> TryFrom<&'a [u8]> for DatagramRecv<'a> {
     type Error = NetError;
 
     fn try_from(value: &'a [u8]) -> Result<Self, Self::Error> {
-        use DatagramRecv::*;
+        use DatagramRecvInner::*;
 
         let kind = MultiplexKind::try_from(value)?;
 
-        Ok(match kind {
+        let inner = match kind {
             MultiplexKind::Stun => Stun(StunMessage::parse(value)?),
             MultiplexKind::Dtls => Dtls(value),
             MultiplexKind::Rtp => Rtp(value),
             MultiplexKind::Rtcp => Rtcp(value),
-        })
+        };
+
+        Ok(DatagramRecv { inner })
     }
 }
 
@@ -241,6 +243,12 @@ impl Deref for DatagramSend {
 }
 
 impl fmt::Debug for DatagramRecv<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.inner.fmt(f)
+    }
+}
+
+impl fmt::Debug for DatagramRecvInner<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Stun(v) => f.debug_tuple("Stun").field(v).finish(),
