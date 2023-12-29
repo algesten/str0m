@@ -943,10 +943,6 @@ pub enum Event {
     /// This clones data, and is therefore expensive.
     /// Should not be enabled outside of tests and troubleshooting.
     RawPacket(Box<RawPacket>),
-
-    /// Internal for passing data from Session to Rtc.
-    #[doc(hidden)]
-    Error(RtcError),
 }
 
 impl Event {
@@ -1402,11 +1398,12 @@ impl Rtc {
         }
 
         if let Some(ev) = self.session.poll_event() {
-            if let Event::Error(err) = ev {
-                return Err(err);
-            } else {
-                return Ok(Output::Event(ev));
-            }
+            return Ok(Output::Event(ev));
+        }
+
+        // Some polling needs to bubble up errors.
+        if let Some(ev) = self.session.poll_event_fallible()? {
+            return Ok(Output::Event(ev));
         }
 
         if let Some(e) = self.stats.as_mut().and_then(|s| s.poll_output()) {

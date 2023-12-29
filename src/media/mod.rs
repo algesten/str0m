@@ -239,30 +239,30 @@ impl Media {
     pub(crate) fn poll_sample(
         &mut self,
         params: &[PayloadParams],
-    ) -> Option<Result<MediaData, RtcError>> {
+    ) -> Result<Option<MediaData>, RtcError> {
         for ((pt, rid), buf) in &mut self.depayloaders {
             if let Some(r) = buf.pop() {
-                let codec = *params.iter().find(|c| c.pt() == *pt)?;
-                return Some(
-                    r.map(|dep| MediaData {
-                        mid: self.mid,
-                        pt: *pt,
-                        rid: *rid,
-                        params: codec,
-                        time: dep.time,
-                        network_time: dep.first_network_time(),
-                        seq_range: dep.seq_range(),
-                        contiguous: dep.contiguous,
-                        ext_vals: dep.ext_vals().clone(),
-                        codec_extra: dep.codec_extra,
-                        last_sender_info: dep.first_sender_info(),
-                        data: dep.data,
-                    })
-                    .map_err(|e| RtcError::Packet(self.mid, *pt, e)),
-                );
+                let dep = r.map_err(|e| RtcError::Packet(self.mid, *pt, e))?;
+                let Some(codec) = params.iter().find(|c| c.pt() == *pt) else {
+                    return Ok(None);
+                };
+                return Ok(Some(MediaData {
+                    mid: self.mid,
+                    pt: *pt,
+                    rid: *rid,
+                    params: *codec,
+                    time: dep.time,
+                    network_time: dep.first_network_time(),
+                    seq_range: dep.seq_range(),
+                    contiguous: dep.contiguous,
+                    ext_vals: dep.ext_vals().clone(),
+                    codec_extra: dep.codec_extra,
+                    last_sender_info: dep.first_sender_info(),
+                    data: dep.data,
+                }));
             }
         }
-        None
+        Ok(None)
     }
 
     pub(crate) fn depayload(
