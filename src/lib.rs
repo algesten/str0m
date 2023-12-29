@@ -605,7 +605,11 @@ use ice_::IceAgentEvent;
 pub use ice_::{Candidate, CandidateKind, IceConnectionState};
 
 /// Low level ICE access.
-#[doc(hidden)] // Only for advanced users.
+// The ICE API is not necessary to interact with directly for "regular"
+// use of str0m. This is exported for other libraries that want to
+// reuse str0m's ICE implementation. In the future we might turn this
+// into a separate crate.
+#[doc(hidden)]
 pub mod ice {
     pub use crate::ice_::IceCreds;
     pub use crate::ice_::{IceAgent, IceAgentEvent};
