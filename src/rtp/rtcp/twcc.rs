@@ -262,11 +262,7 @@ impl TwccRecvRegister {
     }
 
     pub fn max_seq(&self) -> SeqNo {
-        self.queue
-            .iter()
-            .map(|r| r.seq)
-            .max_by_key(|r| *r)
-            .unwrap_or_else(|| 0.into())
+        self.queue.back().map(|r| r.seq).unwrap_or_else(|| 0.into())
     }
 
     pub fn update_seq(&mut self, seq: SeqNo, time: Instant) {
