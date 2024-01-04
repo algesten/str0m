@@ -262,6 +262,8 @@ impl TwccRecvRegister {
     }
 
     pub fn max_seq(&self) -> SeqNo {
+        // The highest seq must be the last since update_seq inserts values
+        // using a binary search.
         self.queue.back().map(|r| r.seq).unwrap_or_else(|| 0.into())
     }
 
