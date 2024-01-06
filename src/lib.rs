@@ -2021,6 +2021,8 @@ impl RtcConfig {
     /// fits in one. If you can guarantee that every `write()` is a single RTP packet, and is always
     /// followed by a `poll_output()`, it might be possible to set this value to 1. But that would give
     /// no margins for unexpected patterns.
+    ///
+    /// panics if set to 0.
     pub fn set_send_buffer_audio(mut self, size: usize) -> Self {
         assert!(size > 0);
         self.send_buffer_audio = size;

@@ -32,3 +32,9 @@ name = "rtp_header"
 path = "fuzz_targets/rtp_header.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "rtp_packet"
+path = "fuzz_targets/rtp_packet.rs"
+test = false
+doc = false

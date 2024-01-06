@@ -341,7 +341,7 @@ impl Session {
         }
     }
 
-    fn handle_rtp(&mut self, now: Instant, mut header: RtpHeader, buf: &[u8]) {
+    pub(crate) fn handle_rtp(&mut self, now: Instant, mut header: RtpHeader, buf: &[u8]) {
         // Rewrite absolute-send-time (if present) to be relative to now.
         header.ext_vals.update_absolute_send_time(now);
 
