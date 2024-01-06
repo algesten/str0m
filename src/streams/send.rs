@@ -24,8 +24,8 @@ use crate::session::PacketReceipt;
 use crate::stats::MediaEgressStats;
 use crate::stats::StatsSnapshot;
 use crate::util::value_history::ValueHistory;
-use crate::util::InstantExt;
 use crate::util::{already_happened, calculate_rtt_ms, not_happening};
+use crate::util::{InstantExt, NonCryptographicRng};
 use crate::RtcError;
 
 use super::rtx_cache::RtxCache;
@@ -151,8 +151,8 @@ impl StreamTx {
         // https://www.rfc-editor.org/rfc/rfc3550#page-13
         // The initial value of the sequence number SHOULD be random (unpredictable)
         // to make known-plaintext attacks on encryption more difficult
-        let seq_no = (rand::random::<u16>() as u64).into();
-        let seq_no_rtx = (rand::random::<u16>() as u64).into();
+        let seq_no = (NonCryptographicRng::u16() as u64).into();
+        let seq_no_rtx = (NonCryptographicRng::u16() as u64).into();
 
         debug!("Create StreamTx for SSRC: {}", ssrc);
 

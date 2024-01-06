@@ -6,7 +6,6 @@ use std::sync::Once;
 use std::time::{Duration, Instant};
 
 use pcap_file::pcap::PcapReader;
-use rand::Rng;
 use str0m::change::SdpApi;
 use str0m::format::Codec;
 use str0m::format::PayloadParams;
@@ -117,7 +116,6 @@ pub fn progress(l: &mut TestRtc, r: &mut TestRtc) -> Result<(), RtcError> {
 
 pub fn progress_with_loss(l: &mut TestRtc, r: &mut TestRtc, loss: f32) -> Result<(), RtcError> {
     let (f, t) = if l.last < r.last { (l, r) } else { (r, l) };
-    let mut rng = rand::thread_rng();
 
     loop {
         f.span
@@ -130,7 +128,7 @@ pub fn progress_with_loss(l: &mut TestRtc, r: &mut TestRtc, loss: f32) -> Result
                 break;
             }
             Output::Transmit(v) => {
-                if rng.gen::<f32>() <= loss {
+                if fastrand::f32() <= loss {
                     // LOSS !
                     break;
                 }

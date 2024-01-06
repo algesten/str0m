@@ -618,8 +618,6 @@ mod test {
     use super::*;
 
     use queue::{PacketKind, Queue, QueuedPacket};
-    use rand::distributions::Standard;
-    use rand::prelude::*;
 
     #[test]
     fn test_typical_behavior() {
@@ -1179,10 +1177,9 @@ mod test {
         let mut media_sent = DataSize::ZERO;
         let mut padding_sent = DataSize::ZERO;
         let mut elapsed = Duration::ZERO;
-        let mut rng = thread_rng();
 
         let mut generate_padding = |queue: &mut Queue, now: Instant, request: PaddingRequest| {
-            let rand: f32 = (StdRng::from_entropy().sample(Standard));
+            let rand: f32 = fastrand::f32();
             let overshoot_factor: f32 = rand * max_overshoot_factor;
             let final_size = ((request.padding as f32) * (1.0 + overshoot_factor).round()) as usize;
             queue.generate_padding(final_size, now);
@@ -1240,7 +1237,7 @@ mod test {
                 elapsed += sleep_until_media;
             }
 
-            let large_overshoot = (rand::random::<u8>() % 100) >= (100 - spike_probability);
+            let large_overshoot = (fastrand::u8(..) % 100) >= (100 - spike_probability);
             let mut to_add = if large_overshoot {
                 (media_rate * 2.5) * frame_pacing
             } else {
@@ -1349,8 +1346,6 @@ mod test {
             }
 
             pub(super) fn generate_padding(&mut self, mut pad_size: usize, now: Instant) {
-                let mut rng = thread_rng();
-
                 while pad_size > 0 {
                     let final_packet_size = pad_size.min(1200);
                     let final_packet_size = DataSize::bytes(final_packet_size as u64);

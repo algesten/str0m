@@ -1,7 +1,7 @@
 use std::fmt;
 use std::str::from_utf8;
 
-use rand::Rng;
+use crate::util::NonCryptographicRng;
 
 // deliberate subset of ice-char, etc that are "safe"
 const CHARS: &[u8] = b"abcdefghijklmnopqrstuvxyzABCDEFGHIJKLMNOPQRSTUVXYZ0123456789";
@@ -11,9 +11,8 @@ pub struct Id<const L: usize>([u8; L]);
 impl<const L: usize> Id<L> {
     pub fn random() -> Id<L> {
         let mut x = [0; L];
-        let mut rng = rand::thread_rng();
         for val in x.iter_mut().take(L) {
-            let y: f32 = rng.gen();
+            let y: f32 = NonCryptographicRng::f32();
             let idx = (CHARS.len() as f32 * y).floor() as usize;
             *val = CHARS[idx];
         }

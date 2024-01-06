@@ -170,7 +170,8 @@ impl Packetizer for Vp9Packetizer {
             }
             #[cfg(not(test))]
             {
-                self.picture_id = rand::random::<u16>() & 0x7FFF;
+                use crate::util::NonCryptographicRng;
+                self.picture_id = NonCryptographicRng::u16() & 0x7FFF;
             }
             self.initialized = true;
         }

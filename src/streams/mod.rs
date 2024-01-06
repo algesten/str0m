@@ -11,7 +11,7 @@ use crate::rtp_::{Bitrate, Pt};
 use crate::rtp_::{MediaTime, SenderInfo};
 use crate::rtp_::{Mid, Rid, SeqNo};
 use crate::rtp_::{Rtcp, RtpHeader};
-use crate::util::already_happened;
+use crate::util::{already_happened, NonCryptographicRng};
 
 pub use self::receive::StreamRx;
 pub use self::send::StreamTx;
@@ -497,7 +497,7 @@ impl Streams {
 
     pub(crate) fn new_ssrc(&self) -> Ssrc {
         loop {
-            let ssrc: Ssrc = (rand::random::<u32>()).into();
+            let ssrc: Ssrc = (NonCryptographicRng::u32()).into();
 
             let has_ssrc = self.has_stream_rx(ssrc) || self.has_stream_tx(ssrc);
 

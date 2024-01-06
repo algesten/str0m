@@ -5,7 +5,6 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use crc::{Crc, CRC_32_ISO_HDLC};
-use rand::random;
 use thiserror::Error;
 
 // Consult libwebrtc for default values here.
@@ -51,7 +50,7 @@ impl TransId {
     pub fn new() -> Self {
         let mut t = [0_u8; 12];
         for v in &mut t {
-            *v = random();
+            *v = NonCryptographicRng::u8();
         }
         TransId(t)
     }
@@ -403,6 +402,8 @@ impl<'a> Attributes<'a> {
 }
 
 use std::{io, str};
+
+use crate::util::NonCryptographicRng;
 
 use super::Sha1;
 
