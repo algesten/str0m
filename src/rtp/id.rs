@@ -4,9 +4,8 @@ use std::str::from_utf8;
 
 use serde::{Deserialize, Serialize};
 
-use rand::random;
-
 use crate::io::Id;
+use crate::util::NonCryptographicRng;
 
 macro_rules! str_id {
     ($id:ident, $name:literal, $num:tt, $new_len:tt) => {
@@ -77,11 +76,11 @@ macro_rules! str_id {
 }
 
 macro_rules! num_id {
-    ($id:ident, $t:ty) => {
+    ($id:ident, $t:tt) => {
         impl $id {
             /// Creates a new random id.
             pub fn new() -> Self {
-                $id(random())
+                $id(NonCryptographicRng::$t())
             }
         }
 

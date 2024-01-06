@@ -49,7 +49,7 @@ mod test {
         const TEST_MTU: usize = 1500;
 
         //generate random 8-bit g722 samples
-        let samples: Vec<u8> = (0..TEST_LEN).map(|_| rand::random::<u8>()).collect();
+        let samples: Vec<u8> = (0..TEST_LEN).map(|_| fastrand::u8(..)).collect();
 
         //make a copy, for packetizer input
         let mut samples_in = vec![0u8; TEST_LEN];

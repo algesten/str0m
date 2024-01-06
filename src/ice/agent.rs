@@ -2,12 +2,11 @@ use std::collections::{HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use rand::random;
-
 use crate::io::{Id, DATAGRAM_MTU_WARN};
 use crate::io::{Protocol, StunPacket};
 use crate::io::{StunMessage, TransId, STUN_TIMEOUT};
 use crate::io::{Transmit, DATAGRAM_MTU};
+use crate::util::NonCryptographicRng;
 
 use super::candidate::{Candidate, CandidateKind};
 use super::pair::{CandidatePair, CheckState, PairId};
@@ -255,7 +254,7 @@ impl IceAgent {
             local_credentials,
             remote_credentials: None,
             controlling: false,
-            control_tie_breaker: random(),
+            control_tie_breaker: NonCryptographicRng::u64(),
             state: IceConnectionState::New,
             local_candidates: vec![],
             remote_candidates: vec![],
