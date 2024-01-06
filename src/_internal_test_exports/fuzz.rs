@@ -3,8 +3,12 @@
 use std::time::Duration;
 use std::time::Instant;
 
-use crate::rtp_::{Extension, ExtensionMap, RtpHeader};
+use crate::dtls::{KeyingMaterial, SrtpProfile};
+use crate::rtp_::RtpHeader;
 use crate::streams::rtx_cache_buf::EvictingBuffer;
+
+use super::setup::{random_config, random_extmap};
+use super::Rng;
 
 pub fn rtx_buffer(data: &[u8]) {
     if data.len() < 4 {
@@ -29,40 +33,36 @@ pub fn rtx_buffer(data: &[u8]) {
     }
 }
 
-pub fn rtp_header(data: &[u8]) {
-    if data.len() < 21 {
-        return;
-    }
-    let exts = random_extmap(&data[..20], 10);
-    let data = &data[20..];
-    RtpHeader::_parse(data, &exts);
+pub fn rtp_header(data: &[u8]) -> Option<()> {
+    let mut rng = Rng::new(data);
+    let exts = random_extmap(&mut rng, 10)?;
+    let len = rng.usize(200)?;
+    RtpHeader::_parse(rng.slice(len)?, &exts);
+    Some(())
 }
 
-fn random_extmap(data: &[u8], to_set: usize) -> ExtensionMap {
-    let mut e = ExtensionMap::empty();
-    for (i, n) in (&data[..to_set]).iter().enumerate() {
-        // extmap numbers 1 <= x <= 14
-        let id = (*n as f32 * 13.0 / 255.0).floor() as u8 + 1;
+#[cfg(feature = "_internal_test_exports")]
+pub fn rtp_packet(data: &[u8]) -> Option<()> {
+    use crate::Session;
+    let mut rng = Rng::new(data);
 
-        use Extension::*;
-        let ext = match (data[i + to_set] as u16 * 12) / 255 {
-            0 => AbsoluteSendTime,
-            1 => AudioLevel,
-            2 => TransmissionTimeOffset,
-            3 => VideoOrientation,
-            4 => TransportSequenceNumber,
-            5 => PlayoutDelay,
-            6 => VideoContentType,
-            7 => VideoTiming,
-            8 => RtpStreamId,
-            9 => RepairedRtpStreamId,
-            10 => RtpMid,
-            11 => FrameMarking,
-            12 => ColorSpace,
-            _ => unreachable!(),
-        };
+    let config = random_config(&mut rng)?;
 
-        e.set(id, ext);
+    let mut session = Session::new(&config);
+    session.set_keying_material(
+        KeyingMaterial::new(rng.slice(16)?),
+        SrtpProfile::PassThrough,
+        rng.bool()?,
+    );
+
+    // Loop rest of data as RTP input.
+    let start = Instant::now();
+    loop {
+        let now = start + Duration::from_micros(rng.u64(u64::MAX)?);
+        let len = rng.usize(200)?;
+        let header = RtpHeader::_parse(rng.slice(len)?, &session.exts)?;
+        let pkt_len = rng.usize(20_000)?;
+        let data = rng.slice(pkt_len)?;
+        session.handle_rtp(now, header, data);
     }
-    e
 }

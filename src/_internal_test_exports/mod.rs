@@ -8,6 +8,10 @@ use crate::rtp::{ExtensionMap, RtpHeader};
 use crate::Rtc;
 
 pub mod fuzz;
+mod rng;
+use rng::Rng;
+
+mod setup;
 
 impl Rtc {
     /// UNSTABLE: not public API!

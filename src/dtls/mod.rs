@@ -89,6 +89,8 @@ impl std::str::FromStr for Fingerprint {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SrtpProfile {
+    #[cfg(feature = "_internal_test_exports")]
+    PassThrough,
     Aes128CmSha1_80,
     AeadAes128Gcm,
 }
@@ -102,6 +104,8 @@ impl SrtpProfile {
     #[rustfmt::skip]
     pub(crate) fn keying_material_len(&self) -> usize {
         match self {
+            #[cfg(feature = "_internal_test_exports")]
+            SrtpProfile::PassThrough => 0,
              // MASTER_KEY_LEN * 2 + MASTER_SALT * 2
              // TODO: This is a duplication of info that is held in srtp.rs, because we
              // don't want a dependency in that direction.
@@ -113,6 +117,8 @@ impl SrtpProfile {
     /// What this profile is called in OpenSSL parlance.
     pub(crate) fn openssl_name(&self) -> &'static str {
         match self {
+            #[cfg(feature = "_internal_test_exports")]
+            SrtpProfile::PassThrough => "NULL",
             SrtpProfile::Aes128CmSha1_80 => "SRTP_AES128_CM_SHA1_80",
             SrtpProfile::AeadAes128Gcm => "SRTP_AEAD_AES_128_GCM",
         }
@@ -122,6 +128,8 @@ impl SrtpProfile {
 impl fmt::Display for SrtpProfile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            #[cfg(feature = "_internal_test_exports")]
+            SrtpProfile::PassThrough => write!(f, "PassThrough"),
             SrtpProfile::Aes128CmSha1_80 => write!(f, "SRTP_AES128_CM_SHA1_80"),
             SrtpProfile::AeadAes128Gcm => write!(f, "SRTP_AEAD_AES_128_GCM"),
         }

@@ -35,6 +35,12 @@ impl SrtpContext {
     /// Create an SRTP context for the relevant profile using the provided keying material.
     pub fn new(profile: SrtpProfile, mat: &KeyingMaterial, left: bool) -> Self {
         match profile {
+            #[cfg(feature = "_internal_test_exports")]
+            SrtpProfile::PassThrough => SrtpContext {
+                rtp: Derived::PassThrough,
+                rtcp: Derived::PassThrough,
+                srtcp_index: 0,
+            },
             SrtpProfile::Aes128CmSha1_80 => {
                 use aes_128_cm_sha1_80::{KEY_LEN, SALT_LEN};
 
@@ -138,6 +144,8 @@ impl SrtpContext {
         let input = &buf[hlen..];
 
         match &mut self.rtp {
+            #[cfg(feature = "_internal_test_exports")]
+            Derived::PassThrough => input.to_vec(),
             Derived::Aes128CmSha1_80 {
                 hmac, salt, enc, ..
             } => {
@@ -186,6 +194,8 @@ impl SrtpContext {
         srtp_index: u64, // same as ext_seq
     ) -> Option<Vec<u8>> {
         match &mut self.rtp {
+            #[cfg(feature = "_internal_test_exports")]
+            Derived::PassThrough => Some(buf.to_vec()),
             Derived::Aes128CmSha1_80 {
                 hmac, salt, dec, ..
             } => {
@@ -261,6 +271,8 @@ impl SrtpContext {
         }
 
         match &mut self.rtcp {
+            #[cfg(feature = "_internal_test_exports")]
+            Derived::PassThrough => buf.to_vec(),
             Derived::Aes128CmSha1_80 {
                 hmac, salt, enc, ..
             } => {
@@ -319,6 +331,8 @@ impl SrtpContext {
     //                              encrypted (aes)
     pub fn unprotect_rtcp(&mut self, buf: &[u8]) -> Option<Vec<u8>> {
         match &mut self.rtcp {
+            #[cfg(feature = "_internal_test_exports")]
+            Derived::PassThrough => Some(buf.to_vec()),
             Derived::Aes128CmSha1_80 {
                 hmac, salt, dec, ..
             } => {
@@ -530,6 +544,8 @@ impl<const ML: usize, const SL: usize> SrtpKey<ML, SL> {
 
 /// Encryption/decryption derived from the SrtpKey.
 enum Derived {
+    #[cfg(feature = "_internal_test_exports")]
+    PassThrough,
     Aes128CmSha1_80 {
         hmac: Sha1,
         salt: aes_128_cm_sha1_80::RtpSalt,
@@ -634,6 +650,8 @@ impl Derived {
 
     fn profile(&self) -> SrtpProfile {
         match self {
+            #[cfg(feature = "_internal_test_exports")]
+            Derived::PassThrough => SrtpProfile::PassThrough,
             Derived::Aes128CmSha1_80 { .. } => SrtpProfile::Aes128CmSha1_80,
             Derived::AeadAes128Gcm { .. } => SrtpProfile::AeadAes128Gcm,
         }

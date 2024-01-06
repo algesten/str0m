@@ -173,7 +173,7 @@ pub fn dtls_ssl_create(ctx: &SslContext) -> Result<Ssl, DtlsError> {
 pub struct KeyingMaterial(Vec<u8>);
 
 impl KeyingMaterial {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "_internal_test_exports"))]
     pub fn new(m: &[u8]) -> Self {
         KeyingMaterial(m.into())
     }
