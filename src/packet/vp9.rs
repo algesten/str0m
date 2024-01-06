@@ -10,16 +10,13 @@ const VP9HEADER_SIZE: usize = 3;
 const MAX_SPATIAL_LAYERS: u8 = 5;
 const MAX_VP9REF_PICS: usize = 3;
 
-/// InitialPictureIDFn is a function that returns random initial picture ID.
-pub type InitialPictureIDFn = Arc<dyn (Fn() -> u16) + Send + Sync + UnwindSafe + RefUnwindSafe>;
-
 /// Vp9 information describing the depacketized/packetized data.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Vp9CodecExtra {
     /// Map of the SVC layers.
     ///
     /// Index of each element corresponds to `spatial layer` index.
-    ///  
+    ///
     /// Each element represents the end (not including) in [`MediaData::data`]
     /// for `spatial layer` it belongs.
     ///
@@ -108,7 +105,8 @@ pub struct Vp9CodecExtra {
 pub struct Vp9Packetizer {
     picture_id: u16,
     initialized: bool,
-    initial_picture_id_fn: Option<InitialPictureIDFn>,
+    #[cfg(test)]
+    initial_picture_id: u16,
 }
 
 impl fmt::Debug for Vp9Packetizer {
@@ -166,15 +164,14 @@ impl Packetizer for Vp9Packetizer {
         }
 
         if !self.initialized {
-            if self.initial_picture_id_fn.is_none() {
-                self.initial_picture_id_fn =
-                    Some(Arc::new(|| -> u16 { rand::random::<u16>() & 0x7FFF }));
+            #[cfg(test)]
+            {
+                self.picture_id = self.initial_picture_id;
             }
-            self.picture_id = if let Some(f) = &self.initial_picture_id_fn {
-                f()
-            } else {
-                0
-            };
+            #[cfg(not(test))]
+            {
+                self.picture_id = rand::random::<u16>() & 0x7FFF;
+            }
             self.initialized = true;
         }
 
@@ -903,7 +900,7 @@ mod test {
 
         for (name, bs, mtu, expected) in tests {
             let mut pck = Vp9Packetizer {
-                initial_picture_id_fn: Some(Arc::new(|| -> u16 { 8692 })),
+                initial_picture_id: 8692,
                 ..Default::default()
             };
 
@@ -917,7 +914,7 @@ mod test {
         //"PictureIDOverflow"
         {
             let mut pck = Vp9Packetizer {
-                initial_picture_id_fn: Some(Arc::new(|| -> u16 { 8692 })),
+                initial_picture_id: 8692,
                 ..Default::default()
             };
             let mut p_prev = Vp9Depacketizer::default();
