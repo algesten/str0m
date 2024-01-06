@@ -1872,6 +1872,12 @@ impl RtcConfig {
         &mut self.exts
     }
 
+    /// Set the extension map replacing the existing.
+    pub fn set_extension_map(mut self, exts: ExtensionMap) -> Self {
+        self.exts = exts;
+        self
+    }
+
     /// Clear out the standard extension mappings.
     pub fn clear_extension_map(mut self) -> Self {
         self.exts.clear();
