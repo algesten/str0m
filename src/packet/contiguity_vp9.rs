@@ -1,4 +1,4 @@
-use super::vp8_contiguity::FrameContiguityState;
+use super::contiguity::FrameContiguityState;
 use super::Vp9CodecExtra;
 
 #[derive(Debug, Default)]

@@ -7,8 +7,8 @@ use std::time::Instant;
 use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SenderInfo, SeqNo};
 
 use super::contiguity::{self, Contiguity};
-use super::vp8_contiguity::Vp8Contiguity;
-use super::vp9_contiguity::Vp9Contiguity;
+use super::contiguity_vp8::Vp8Contiguity;
+use super::contiguity_vp9::Vp9Contiguity;
 use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError, Vp8CodecExtra};
 
 #[derive(Clone, PartialEq, Eq)]
