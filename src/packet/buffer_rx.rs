@@ -234,12 +234,8 @@ impl DepacketizingBuffer {
         let mut meta = Vec::with_capacity(stop - start + 1);
 
         for entry in self.queue.range_mut(start..=stop) {
-            if let Err(e) = self
-                .depack
-                .depacketize(&entry.data, &mut data, &mut codec_extra)
-            {
-                return Err(e);
-            }
+            self.depack
+                .depacketize(&entry.data, &mut data, &mut codec_extra)?;
             meta.push(entry.meta.clone());
         }
 
