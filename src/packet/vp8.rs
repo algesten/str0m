@@ -202,7 +202,7 @@ impl Depacketizer for Vp8Depacketizer {
         let mut reader = (packet, 0);
         let mut payload_index = 0;
 
-        let mut b = reader.get_u8();
+        let mut b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
         payload_index += 1;
 
         self.x = (b & 0x80) >> 7;
@@ -211,7 +211,7 @@ impl Depacketizer for Vp8Depacketizer {
         self.pid = b & 0x07;
 
         if self.x == 1 {
-            b = reader.get_u8();
+            b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
             payload_index += 1;
             self.i = (b & 0x80) >> 7;
             self.l = (b & 0x40) >> 6;
@@ -220,12 +220,13 @@ impl Depacketizer for Vp8Depacketizer {
         }
 
         if self.i == 1 {
-            b = reader.get_u8();
+            b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
             payload_index += 1;
             // PID present?
             if b & 0x80 > 0 {
                 // M == 1, PID is 16bit
-                self.picture_id = (((b & 0x7f) as u16) << 8) | (reader.get_u8() as u16);
+                let x = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
+                self.picture_id = (((b & 0x7f) as u16) << 8) | (x as u16);
                 self.extended_pid = Some(extend_u15(self.extended_pid, self.picture_id));
                 payload_index += 1;
             } else {
@@ -239,7 +240,7 @@ impl Depacketizer for Vp8Depacketizer {
         }
 
         if self.l == 1 {
-            self.tl0_pic_idx = reader.get_u8();
+            self.tl0_pic_idx = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
             self.extended_tl0_pic_idx =
                 Some(extend_u8(self.extended_tl0_pic_idx, self.tl0_pic_idx));
             payload_index += 1;
@@ -250,7 +251,7 @@ impl Depacketizer for Vp8Depacketizer {
         }
 
         if self.t == 1 || self.k == 1 {
-            let b = reader.get_u8();
+            let b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
             if self.t == 1 {
                 self.tid = b >> 6;
                 self.y = (b >> 5) & 0x1;
@@ -290,7 +291,7 @@ impl Depacketizer for Vp8Depacketizer {
         // The header is present only in packets that have the S bit equal
         // to one and the PID equal to zero in the payload descriptor
         self.p = if self.s == 1 && self.pid == 0 {
-            b = reader.get_u8();
+            b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
             payload_index += 1;
             b & 1
         } else {

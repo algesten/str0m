@@ -269,7 +269,7 @@ impl DepacketizingBuffer {
         for (index, entry) in self.queue.iter().enumerate() {
             let index = index as i64;
             let iseq = *entry.meta.seq_no as i64;
-            let expected_seq = start.map(|s| s.offset + index);
+            let expected_seq = start.map(|s| s.offset.saturating_add(index));
 
             let is_expected_seq = expected_seq == Some(iseq);
             let is_same_timestamp = start.map(|s| s.time) == Some(entry.meta.time);
@@ -294,7 +294,7 @@ impl DepacketizingBuffer {
                 start = Some(Start {
                     index,
                     time: entry.meta.time,
-                    offset: iseq - index,
+                    offset: iseq.saturating_sub(index),
                 });
             }
 
