@@ -3,8 +3,11 @@
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::change::{SdpAnswer, SdpOffer};
 use crate::dtls::{KeyingMaterial, SrtpProfile};
-use crate::rtp_::RtpHeader;
+use crate::format::Codec;
+use crate::packet::{DepacketizingBuffer, RtpMeta};
+use crate::rtp_::{Frequency, MediaTime, RtpHeader};
 use crate::streams::rtx_cache_buf::EvictingBuffer;
 
 use super::setup::{random_config, random_extmap};
@@ -36,7 +39,7 @@ pub fn rtx_buffer(data: &[u8]) {
 pub fn rtp_header(data: &[u8]) -> Option<()> {
     let mut rng = Rng::new(data);
     let exts = random_extmap(&mut rng, 10)?;
-    let len = rng.usize(200)?;
+    let len = rng.usize(76)?;
     RtpHeader::_parse(rng.slice(len)?, &exts);
     Some(())
 }
@@ -59,10 +62,62 @@ pub fn rtp_packet(data: &[u8]) -> Option<()> {
     let start = Instant::now();
     loop {
         let now = start + Duration::from_micros(rng.u64(u64::MAX)?);
-        let len = rng.usize(200)?;
+        let len = rng.usize(76)?;
         let header = RtpHeader::_parse(rng.slice(len)?, &session.exts)?;
-        let pkt_len = rng.usize(20_000)?;
+        let pkt_len = rng.usize(1500)?;
         let data = rng.slice(pkt_len)?;
         session.handle_rtp(now, header, data);
+    }
+}
+
+pub fn sdp_offer(data: &[u8]) -> Option<()> {
+    let str = std::str::from_utf8(data).ok()?;
+    let _ = SdpOffer::from_sdp_string(str);
+    Some(())
+}
+
+pub fn sdp_answer(data: &[u8]) -> Option<()> {
+    let str = std::str::from_utf8(data).ok()?;
+    let _ = SdpAnswer::from_sdp_string(str);
+    Some(())
+}
+
+pub fn depack(data: &[u8]) -> Option<()> {
+    let mut rng = Rng::new(data);
+
+    let codec = match rng.u8(4)? {
+        0 => Codec::Opus,
+        1 => Codec::Vp8,
+        2 => Codec::Vp9,
+        3 => Codec::H264,
+        4 => Codec::H265,
+        _ => unreachable!(),
+    };
+
+    let mut depack = DepacketizingBuffer::new(codec.into(), rng.usize(300)?);
+
+    let exts = random_extmap(&mut rng, 10)?;
+
+    let start = Instant::now();
+
+    loop {
+        let do_push = rng.bool()?;
+
+        if do_push {
+            let hlen = rng.usize(76)?;
+            let header = RtpHeader::_parse(rng.slice(hlen)?, &exts)?;
+            let meta = RtpMeta {
+                received: start + Duration::from_millis(rng.u64(10000)?),
+                time: MediaTime::new(rng.i64(i64::MAX)?, Frequency::MICROS),
+                seq_no: rng.u64(u64::MAX)?.into(),
+                header,
+                last_sender_info: None,
+            };
+            let len = rng.usize(1200)?;
+            let data = rng.slice(len)?.to_vec();
+            depack.push(meta, data);
+        } else {
+            depack.pop();
+        }
     }
 }

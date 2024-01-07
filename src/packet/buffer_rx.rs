@@ -238,7 +238,6 @@ impl DepacketizingBuffer {
                 .depack
                 .depacketize(&entry.data, &mut data, &mut codec_extra)
             {
-                println!("depacketize error: {} {}", start, stop);
                 return Err(e);
             }
             meta.push(entry.meta.clone());
