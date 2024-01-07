@@ -2216,7 +2216,6 @@ mod test {
     #[test]
     fn event_is_reasonably_sized() {
         let n = std::mem::size_of::<Event>();
-        println!("{:?}", n);
         assert!(n < 450);
     }
 }
