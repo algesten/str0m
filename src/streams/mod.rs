@@ -17,8 +17,8 @@ pub use self::receive::StreamRx;
 pub use self::send::StreamTx;
 
 mod receive;
-mod register;
-mod register_nack;
+pub(crate) mod register;
+pub(crate) mod register_nack;
 mod rtx_cache;
 pub(crate) mod rtx_cache_buf;
 mod send;

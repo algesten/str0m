@@ -56,3 +56,9 @@ name = "depack"
 path = "fuzz_targets/depack.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "receive_register"
+path = "fuzz_targets/receive_register.rs"
+test = false
+doc = false

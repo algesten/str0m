@@ -8,6 +8,7 @@ use crate::dtls::{KeyingMaterial, SrtpProfile};
 use crate::format::Codec;
 use crate::packet::{DepacketizingBuffer, RtpMeta};
 use crate::rtp_::{Frequency, MediaTime, RtpHeader};
+use crate::streams::register::ReceiverRegister;
 use crate::streams::rtx_cache_buf::EvictingBuffer;
 
 use super::setup::{random_config, random_extmap};
@@ -118,6 +119,30 @@ pub fn depack(data: &[u8]) -> Option<()> {
             depack.push(meta, data);
         } else {
             depack.pop();
+        }
+    }
+}
+
+pub fn receive_register(data: &[u8]) -> Option<()> {
+    let mut rng = Rng::new(data);
+    let mut rr = ReceiverRegister::new();
+    let start = Instant::now();
+    loop {
+        match rng.u8(2)? {
+            0 => {
+                let seq = rng.u64(u64::MAX / 2)?;
+                let arrival = start + Duration::from_micros(rng.u64(u64::MAX / 100)?);
+                let rtp_time = rng.u32(u32::MAX / 2)?;
+                let clock_rate = rng.u32(u32::MAX / 2)?;
+                rr.update(seq.into(), arrival, rtp_time, clock_rate);
+            }
+            1 => {
+                rr.nack_report();
+            }
+            2 => {
+                rr.reception_report();
+            }
+            _ => unreachable!(),
         }
     }
 }
