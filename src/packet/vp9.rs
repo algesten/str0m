@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 /// Flexible mode 15 bit picture ID
 const VP9HEADER_SIZE: usize = 3;
-const MAX_SPATIAL_LAYERS: u8 = 5;
+const MAX_SPATIAL_LAYERS: usize = 3;
 const MAX_VP9REF_PICS: usize = 3;
 
 /// Vp9 information describing the depacketized/packetized data.
@@ -298,7 +298,7 @@ impl Depacketizer for Vp9Depacketizer {
         }
 
         let mut reader = (packet, 0);
-        let b = reader.get_u8();
+        let b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
 
         self.i = (b & 0x80) != 0;
         self.p = (b & 0x40) != 0;
@@ -406,7 +406,7 @@ impl Vp9Depacketizer {
         if reader.remaining() == 0 {
             return Err(PacketError::ErrShortPacket);
         }
-        let b = reader.get_u8();
+        let b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
         payload_index += 1;
         // PID present?
         if (b & 0x80) != 0 {
@@ -414,7 +414,8 @@ impl Vp9Depacketizer {
                 return Err(PacketError::ErrShortPacket);
             }
             // M == 1, PID is 15bit
-            self.picture_id = (((b & 0x7f) as u16) << 8) | (reader.get_u8() as u16);
+            let x = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
+            self.picture_id = (((b & 0x7f) as u16) << 8) | (x as u16);
             payload_index += 1;
         } else {
             self.picture_id = (b & 0x7F) as u16;
@@ -451,7 +452,7 @@ impl Vp9Depacketizer {
         if reader.remaining() == 0 {
             return Err(PacketError::ErrShortPacket);
         }
-        let b = reader.get_u8();
+        let b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
         payload_index += 1;
 
         self.tid = b >> 5;
@@ -459,7 +460,7 @@ impl Vp9Depacketizer {
         self.sid = (b >> 1) & 0x7;
         self.d = b & 0x01 != 0;
 
-        if self.sid >= MAX_SPATIAL_LAYERS {
+        if self.sid as usize >= MAX_SPATIAL_LAYERS {
             Err(PacketError::ErrTooManySpatialLayers)
         } else {
             Ok(payload_index)
@@ -482,7 +483,7 @@ impl Vp9Depacketizer {
         if reader.remaining() == 0 {
             return Err(PacketError::ErrShortPacket);
         }
-        self.tl0picidx = reader.get_u8();
+        self.tl0picidx = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
         payload_index += 1;
         Ok(payload_index)
     }
@@ -504,7 +505,7 @@ impl Vp9Depacketizer {
             if reader.remaining() == 0 {
                 return Err(PacketError::ErrShortPacket);
             }
-            b = reader.get_u8();
+            b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
             payload_index += 1;
 
             self.pdiff.push(b >> 1);
@@ -545,7 +546,7 @@ impl Vp9Depacketizer {
             return Err(PacketError::ErrShortPacket);
         }
 
-        let b = reader.get_u8();
+        let b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
         payload_index += 1;
 
         self.ns = b >> 5;
@@ -555,14 +556,18 @@ impl Vp9Depacketizer {
         let ns = (self.ns + 1) as usize;
         self.ng = 0;
 
+        if ns >= MAX_SPATIAL_LAYERS {
+            return Err(PacketError::ErrVP9CorruptedPacket);
+        }
+
         if self.y {
             if reader.remaining() < 4 * ns {
                 return Err(PacketError::ErrShortPacket);
             }
 
             for i in 0..ns {
-                self.width[i] = Some(reader.get_u16());
-                self.height[i] = Some(reader.get_u16());
+                self.width[i] = Some(reader.get_u16().ok_or(PacketError::ErrShortPacket)?);
+                self.height[i] = Some(reader.get_u16().ok_or(PacketError::ErrShortPacket)?);
             }
             payload_index += 4 * ns;
         }
@@ -572,7 +577,7 @@ impl Vp9Depacketizer {
                 return Err(PacketError::ErrShortPacket);
             }
 
-            self.ng = reader.get_u8();
+            self.ng = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
             payload_index += 1;
         }
 
@@ -580,7 +585,7 @@ impl Vp9Depacketizer {
             if reader.remaining() == 0 {
                 return Err(PacketError::ErrShortPacket);
             }
-            let b = reader.get_u8();
+            let b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
             payload_index += 1;
 
             self.pgtid.push(b >> 5);
@@ -593,7 +598,7 @@ impl Vp9Depacketizer {
 
             self.pgpdiff.push(vec![]);
             for _ in 0..r {
-                let b = reader.get_u8();
+                let b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
                 payload_index += 1;
 
                 self.pgpdiff[i].push(b);
