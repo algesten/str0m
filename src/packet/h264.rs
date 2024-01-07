@@ -570,44 +570,52 @@ mod test {
 
     #[test]
     fn single_payload_multi_nalu() -> Result<(), PacketError> {
-        let mut pkt = H264Depacketizer::default();
-        let mut extra = CodecExtra::None;
-        let mut out: Vec<u8> = Vec::new();
         let single_payload_multi_nalu = &[
             0x78, 0x00, 0x0f, 0x67, 0x42, 0xc0, 0x1f, 0x1a, 0x32, 0x35, 0x01, 0x40, 0x7a, 0x40,
-            0x3c, 0x22, 0x11, 0xa8, 0x00, 0x05, 0x68, 0x1a, 0x34, 0xe3, 0xc8,
+            0x3c, 0x22, 0x11, 0xa8, 0x00, 0x05, 0x68, 0x1a, 0x34, 0xe3, 0xc8, 0x00,
         ];
-        let result = pkt.depacketize(single_payload_multi_nalu, &mut out, &mut extra);
         let single_payload_multi_nalu_unmarshaled = &[
             0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xc0, 0x1f, 0x1a, 0x32, 0x35, 0x01, 0x40, 0x7a,
             0x40, 0x3c, 0x22, 0x11, 0xa8, 0x00, 0x00, 0x00, 0x01, 0x68, 0x1a, 0x34, 0xe3, 0xc8,
         ];
+
+        let mut pkt = H264Depacketizer::default();
+
+        let mut extra = CodecExtra::None;
+
+        let mut out = Vec::new();
+        pkt.depacketize(single_payload_multi_nalu, &mut out, &mut extra)?;
         assert_eq!(
             out, single_payload_multi_nalu_unmarshaled,
             "Failed to unmarshal a single packet with multiple NALUs"
         );
+
         Ok(())
     }
 
     #[test]
     fn single_payload_multi_nalu_avc() -> Result<(), PacketError> {
-        let mut pkt = H264Depacketizer::default();
-        pkt.is_avc = true;
-        let mut extra = CodecExtra::None;
-        let mut out: Vec<u8> = Vec::new();
         let single_payload_multi_nalu = &[
             0x78, 0x00, 0x0f, 0x67, 0x42, 0xc0, 0x1f, 0x1a, 0x32, 0x35, 0x01, 0x40, 0x7a, 0x40,
-            0x3c, 0x22, 0x11, 0xa8, 0x00, 0x05, 0x68, 0x1a, 0x34, 0xe3, 0xc8,
+            0x3c, 0x22, 0x11, 0xa8, 0x00, 0x05, 0x68, 0x1a, 0x34, 0xe3, 0xc8, 0x00,
         ];
-        let result = pkt.depacketize(single_payload_multi_nalu, &mut out, &mut extra);
         let single_payload_multi_nalu_unmarshaled_avc = &[
             0x00, 0x00, 0x00, 0x0f, 0x67, 0x42, 0xc0, 0x1f, 0x1a, 0x32, 0x35, 0x01, 0x40, 0x7a,
             0x40, 0x3c, 0x22, 0x11, 0xa8, 0x00, 0x00, 0x00, 0x05, 0x68, 0x1a, 0x34, 0xe3, 0xc8,
         ];
+
+        let mut avc_pkt = H264Depacketizer::default();
+        avc_pkt.is_avc = true;
+
+        let mut extra = CodecExtra::None;
+
+        let mut out = Vec::new();
+        avc_pkt.depacketize(single_payload_multi_nalu, &mut out, &mut extra)?;
         assert_eq!(
             out, single_payload_multi_nalu_unmarshaled_avc,
             "Failed to unmarshal a single packet with multiple NALUs into avc stream"
         );
+
         Ok(())
     }
 
