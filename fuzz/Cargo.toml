@@ -38,3 +38,21 @@ name = "rtp_packet"
 path = "fuzz_targets/rtp_packet.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "sdp_offer"
+path = "fuzz_targets/sdp_offer.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "sdp_answer"
+path = "fuzz_targets/sdp_answer.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "depack"
+path = "fuzz_targets/depack.rs"
+test = false
+doc = false

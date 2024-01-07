@@ -50,5 +50,6 @@ impl<'a> Rng<'a> {
 
     rng_primary!(u8, u16);
     rng_primary!(u64, u128);
+    rng_primary!(i64, i128);
     rng_primary!(usize, u128);
 }
