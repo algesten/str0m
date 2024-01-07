@@ -74,7 +74,7 @@ pub struct Vp9CodecExtra {
     ///     }
     /// }
     /// ```
-    pub layers_scheme: [Option<usize>; 3],
+    pub layers_scheme: [Option<usize>; MAX_SPATIAL_LAYERS],
 
     /// Temporal layer id.
     pub tid: Option<u8>,
@@ -82,12 +82,12 @@ pub struct Vp9CodecExtra {
     /// Map of the SVC layers widths.
     ///
     /// Specified for every spatial layer.
-    pub layers_widths: [Option<u16>; 3],
+    pub layers_widths: [Option<u16>; MAX_SPATIAL_LAYERS],
 
     /// Map of the SVC layers heights.
     ///
     /// Specified for every spatial layer.
-    pub layers_heights: [Option<u16>; 3],
+    pub layers_heights: [Option<u16>; MAX_SPATIAL_LAYERS],
 
     /// Extended picture id of layer 0 frames, if present
     pub tl0_picture_id: Option<u8>,
@@ -275,8 +275,8 @@ pub struct Vp9Depacketizer {
     pub g: bool,
     /// N_G indicates the number of pictures in a Picture Group (PG)
     pub ng: u8,
-    pub width: [Option<u16>; MAX_SPATIAL_LAYERS as usize],
-    pub height: [Option<u16>; MAX_SPATIAL_LAYERS as usize],
+    pub width: [Option<u16>; MAX_SPATIAL_LAYERS],
+    pub height: [Option<u16>; MAX_SPATIAL_LAYERS],
     /// Temporal layer ID of pictures in a Picture Group
     pub pgtid: Vec<u8>,
     /// Switching up point of pictures in a Picture Group
@@ -381,8 +381,12 @@ impl Vp9Depacketizer {
         }
 
         vp9_extra.pid = self.picture_id;
-        vp9_extra.layers_widths.copy_from_slice(&self.width[..3]);
-        vp9_extra.layers_heights.copy_from_slice(&self.height[..3]);
+        vp9_extra
+            .layers_widths
+            .copy_from_slice(&self.width[..MAX_SPATIAL_LAYERS]);
+        vp9_extra
+            .layers_heights
+            .copy_from_slice(&self.height[..MAX_SPATIAL_LAYERS]);
         vp9_extra.is_keyframe |= !self.p && (self.sid == 0 || !self.l) && self.b;
 
         *extra = CodecExtra::Vp9(vp9_extra);
@@ -790,14 +794,14 @@ mod test {
                     g: false,
                     ng: 0,
                     width: {
-                        let mut res = [None; MAX_SPATIAL_LAYERS as usize];
+                        let mut res = [None; MAX_SPATIAL_LAYERS];
                         res[0] = Some(640);
                         res[1] = Some(1280);
 
                         res
                     },
                     height: {
-                        let mut res = [None; MAX_SPATIAL_LAYERS as usize];
+                        let mut res = [None; MAX_SPATIAL_LAYERS];
                         res[0] = Some(360);
                         res[1] = Some(720);
 
