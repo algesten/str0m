@@ -243,7 +243,8 @@ fn packets_lost(expected: i64, received: i64) -> u32 {
 }
 
 fn expected(first: SeqNo, last: SeqNo) -> i64 {
-    *last as i64 - *first as i64 + 1
+    let delta = (*last - *first) as i64;
+    delta.saturating_add(1)
 }
 
 #[cfg(test)]
@@ -311,6 +312,14 @@ mod test {
         assert_eq!(packets_lost(expected, 4), 0);
         // one of 4 was lost:329
         assert_eq!(packets_lost(expected, 3), 1);
+    }
+
+    #[test]
+    fn expected_overflow() {
+        let last = 0x7fff_ffff_ffff_ffff_u64.into();
+        let first = 0_u64.into();
+        let expected = expected(first, last);
+        assert_eq!(expected, i64::MAX);
     }
 
     #[test]
