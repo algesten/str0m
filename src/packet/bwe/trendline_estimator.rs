@@ -171,6 +171,7 @@ impl TrendlineEstimator {
     fn detect(&mut self, trend: f64, variation: InterGroupDelayDelta, now: Instant) {
         if self.num_delay_variations < 2 {
             self.update_hypothesis(BandwithUsage::Normal);
+            return;
         }
 
         let modified_trend = self.num_delay_variations.min(*DELAY_COUNT_RANGE.start()) as f64
