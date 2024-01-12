@@ -559,7 +559,7 @@ impl StreamRx {
         }
     }
 
-    fn nack_enabled(&self) -> bool {
+    pub(crate) fn nack_enabled(&self) -> bool {
         // Deliberately don't look at RTX is_some() here, since when using dynamic SSRC, we might need
         // to send NACK before discovering the remote RTX.
         !self.suppress_nack

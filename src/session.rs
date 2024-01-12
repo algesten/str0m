@@ -741,6 +741,10 @@ impl Session {
     }
 
     fn nack_at(&mut self) -> Instant {
+        if !self.streams.any_nack_enabled() {
+            return not_happening();
+        }
+
         self.last_nack + NACK_MIN_INTERVAL
     }
 
