@@ -116,6 +116,9 @@ pub struct StreamTx {
 
     // downsampled rtx ratio (value, last calculation)
     rtx_ratio: (f32, Instant),
+
+    // The PT to use for padding RTX.
+    pt_for_padding: Option<Pt>,
 }
 
 /// Holder of stats.
@@ -179,6 +182,7 @@ impl StreamTx {
             pending_request_remb: None,
             stats: StreamTxStats::default(),
             rtx_ratio: (0.0, already_happened()),
+            pt_for_padding: None,
         }
     }
 
@@ -305,8 +309,8 @@ impl StreamTx {
         Ok(())
     }
 
-    fn rtx_enabled(&self) -> bool {
-        self.rtx.is_some()
+    fn padding_enabled(&self) -> bool {
+        self.rtx.is_some() && self.pt_for_padding.is_some()
     }
 
     pub(crate) fn poll_packet(
@@ -320,6 +324,7 @@ impl StreamTx {
         let mid = self.mid;
         let rid = self.rid;
         let ssrc_rtx = self.rtx;
+        let pt_for_padding = self.pt_for_padding;
 
         let (next, is_padding) = if let Some(next) = self.poll_packet_resend(now) {
             (next, false)
@@ -355,14 +360,23 @@ impl StreamTx {
             return None;
         };
 
-        let mut set_pt = None;
+        let mut set_pt_for_padding = None;
         let mut set_cr = None;
 
         let mut header = match next.kind {
             NextPacketKind::Regular => {
-                // Remember PT We want to set these directly on `self` here, but can't
-                // because we already have a mutable borrow.
-                set_pt = Some(param.pt());
+                if let Some(pt_rtx) = param.resend() {
+                    // Remember PT We want to set these directly on `self` here, but can't
+                    // because we already have a mutable borrow.
+                    set_pt_for_padding = Some(pt_rtx);
+                } else {
+                    // If the PT we're sending on doesn't have a corresponding RTX PT,
+                    // the packet is de-facto not nackable.
+                    //
+                    // This blocks incoming NACK requests and thus ensures there are no
+                    // entries in self.retries without a RTX PT.
+                    next.pkt.nackable = false;
+                }
 
                 let clock_rate = param.spec().clock_rate;
                 set_cr = Some(clock_rate);
@@ -379,7 +393,12 @@ impl StreamTx {
                 header_ref.clone()
             }
             NextPacketKind::Resend(_) | NextPacketKind::Blank(_) => {
-                let pt_rtx = param.resend().expect("pt_rtx resend/blank");
+                let pt_rtx = if matches!(next.kind, NextPacketKind::Blank(_)) {
+                    pt_for_padding
+                } else {
+                    param.resend()
+                }
+                .expect("PT for resend or blank");
 
                 // Clone header to not change the original (cached) header.
                 let mut header = header_ref.clone();
@@ -470,23 +489,30 @@ impl StreamTx {
         let seq_no = next.seq_no;
         self.last_used = now;
 
+        // Padding comes in two forms, "spurious resends" of sent packets where
+        // the remote side didn't ask for a resend. The other variant are blank
+        // packets, containing nothing but zeroes. Such packets must be sent from
+        // _some_ RTX PT. A good pick is the RTX for the PT last used to send
+        // regular media data.
+        //
+        // This is set here due to borrow checker.
+        if self.pt_for_padding != set_pt_for_padding {
+            self.pt_for_padding = set_pt_for_padding;
+        }
+
+        if set_cr.is_some() && self.clock_rate != set_cr {
+            self.clock_rate = set_cr;
+        }
+
         if pop_send_queue {
             // poll_packet_regular leaves the packet in the head of the send_queue
             let pkt = self
                 .send_queue
                 .pop(now)
                 .expect("head of send_queue to be there");
-            if self.rtx_enabled() {
+            if pkt.nackable {
                 self.rtx_cache.cache_sent_packet(pkt, now);
             }
-        }
-
-        // This is set here due to borrow checker.
-        if let Some(pt) = set_pt {
-            self.blank_packet.header.payload_type = pt;
-        }
-        if set_cr.is_some() && self.clock_rate != set_cr {
-            self.clock_rate = set_cr;
         }
 
         Some(PacketReceipt {
@@ -495,18 +521,6 @@ impl StreamTx {
             is_padding,
             payload_size: body_len,
         })
-    }
-
-    fn poll_packet_resend(&mut self, now: Instant) -> Option<NextPacket<'_>> {
-        let ratio = self.rtx_ratio_downsampled(now);
-
-        // If we hit the cap, stop doing resends by clearing those we have queued.
-        if ratio > 0.15_f32 {
-            self.resends.clear();
-            return None;
-        }
-
-        self.do_poll_packet_resend(now)
     }
 
     fn rtx_ratio_downsampled(&mut self, now: Instant) -> f32 {
@@ -525,9 +539,12 @@ impl StreamTx {
         ratio
     }
 
-    fn do_poll_packet_resend(&mut self, now: Instant) -> Option<NextPacket<'_>> {
-        if !self.rtx_enabled() {
-            // We're not doing resends for non-RTX.
+    fn poll_packet_resend(&mut self, now: Instant) -> Option<NextPacket<'_>> {
+        let ratio = self.rtx_ratio_downsampled(now);
+
+        // If we hit the cap, stop doing resends by clearing those we have queued.
+        if ratio > 0.15_f32 {
+            self.resends.clear();
             return None;
         }
 
@@ -542,9 +559,9 @@ impl StreamTx {
                 continue;
             };
 
-            if !pkt.nackable {
-                trace!("SSRC {} resend {} not nackable", self.ssrc, pkt.seq_no);
-            }
+            // Cached packets must be nackable. This is ensured before adding the
+            // entry to the self.rtx_cache.
+            assert!(pkt.nackable);
 
             break pkt.seq_no;
         };
@@ -589,6 +606,11 @@ impl StreamTx {
     }
 
     fn poll_packet_padding(&mut self, _now: Instant) -> Option<NextPacket> {
+        if !self.padding_enabled() {
+            self.padding = 0;
+            return None;
+        }
+
         if self.padding == 0 {
             return None;
         }
@@ -806,8 +828,8 @@ impl StreamTx {
         let unpaced = self.unpaced.unwrap_or(true);
 
         // It's only possible to use this sender for padding if RTX is enabled and
-        // we know the previous main PT.
-        let use_for_padding = self.rtx_enabled() && self.blank_packet.is_pt_set();
+        // we know a PT to use for it.
+        let use_for_padding = self.padding_enabled();
 
         let mut snapshot = self.send_queue.snapshot(now);
 
@@ -877,7 +899,7 @@ impl StreamTx {
     }
 
     pub(crate) fn generate_padding(&mut self, padding: usize) {
-        if !self.rtx_enabled() {
+        if !self.padding_enabled() {
             return;
         }
         self.padding += padding;
@@ -915,14 +937,17 @@ impl StreamTx {
         // To allow for sending padding on a newly created StreamTx, before any regular
         // packet has been sent, we need an PT that has RTX for any main PT. This is
         // later be overwritten when we send the first regular packet.
-        if self.rtx_enabled() && !self.blank_packet.is_pt_set() {
-            if let Some(pt) = media.first_pt_with_rtx(config) {
+        if self.rtx.is_some() && self.pt_for_padding.is_none() {
+            if let Some(pt_rtx) = media.first_rtx_pt(config) {
                 trace!(
-                    "StreamTx Mid {} blank packet PT {} before first regular packet",
+                    "StreamTx Mid {} RTX PT {} before first regular packet",
                     self.mid,
-                    pt
+                    pt_rtx
                 );
-                self.blank_packet.header.payload_type = pt;
+                self.pt_for_padding = Some(pt_rtx);
+
+                // Setting the pt_for_rtx should enable RTX.
+                assert!(self.padding_enabled());
             }
         }
     }

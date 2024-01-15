@@ -116,10 +116,6 @@ impl RtpPacket {
             timestamp: already_happened(),
         }
     }
-
-    pub(crate) fn is_pt_set(&self) -> bool {
-        self.header.payload_type != BLANK_PACKET_DEFAULT_PT
-    }
 }
 
 /// Holder of incoming/outgoing encoded streams.

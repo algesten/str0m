@@ -30,6 +30,7 @@ impl RtxCache {
     }
 
     pub fn cache_sent_packet(&mut self, packet: RtpPacket, now: Instant) {
+        assert!(packet.nackable);
         let seq_no = packet.seq_no;
         let quantized_size = packet.payload.len() / RTX_CACHE_SIZE_QUANTIZER;
         self.packet_by_seq_no.push(*seq_no, now, packet);
