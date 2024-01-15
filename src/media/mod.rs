@@ -440,11 +440,13 @@ impl Media {
         self.remote_created
     }
 
-    pub(crate) fn first_pt_with_rtx(&self, config: &CodecConfig) -> Option<Pt> {
+    pub(crate) fn first_rtx_pt(&self, config: &CodecConfig) -> Option<Pt> {
         config
             .all_for_kind(self.kind)
-            .find(|p| p.resend().is_some() && self.remote_pts.contains(&p.pt))
-            .map(|p| p.pt())
+            // Only consider negotiated PTs
+            .filter(|p| self.remote_pts.contains(&p.pt))
+            // Map to the first RTX found
+            .find_map(|p| p.resend())
     }
 
     pub(crate) fn reset_depayloader(&mut self, payload_type: Pt, rid: Option<Rid>) {
