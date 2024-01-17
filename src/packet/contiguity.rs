@@ -90,7 +90,7 @@ impl FrameContiguityState {
             self.last_picture_id = Some(picture_id);
             if !contiguous_seq {
                 // this as happened in Safari + very lossy network (very rare)
-                warn!("VP8 or VP9: contiguous pictures implies contiguous seq numbers: encoding issue ?")
+                debug!("VP8 or VP9: contiguous pictures implies contiguous seq numbers: encoding issue ?")
             }
         }
 
