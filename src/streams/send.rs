@@ -117,7 +117,8 @@ pub struct StreamTx {
     // downsampled rtx ratio (value, last calculation)
     rtx_ratio: (f32, Instant),
 
-    // The PT to use for padding RTX.
+    // The _main_ PT to use for padding. This is main PT, since the poll_packet() loop
+    // figures out the param.resend() RTX PT using main.
     pt_for_padding: Option<Pt>,
 }
 
@@ -324,7 +325,6 @@ impl StreamTx {
         let mid = self.mid;
         let rid = self.rid;
         let ssrc_rtx = self.rtx;
-        let pt_for_padding = self.pt_for_padding;
 
         let (next, is_padding) = if let Some(next) = self.poll_packet_resend(now) {
             (next, false)
@@ -365,10 +365,14 @@ impl StreamTx {
 
         let mut header = match next.kind {
             NextPacketKind::Regular => {
-                if let Some(pt_rtx) = param.resend() {
+                let rtx_possible = param.resend().is_some();
+
+                if rtx_possible {
                     // Remember PT We want to set these directly on `self` here, but can't
-                    // because we already have a mutable borrow.
-                    set_pt_for_padding = Some(pt_rtx);
+                    // because we already have a mutable borrow. We are using pt_main
+                    // since the above loop figuring out param needs to be correct also
+                    // for the NextPacketKind::Blank case.
+                    set_pt_for_padding = Some(pt_main);
                 } else {
                     // If the PT we're sending on doesn't have a corresponding RTX PT,
                     // the packet is de-facto not nackable.
@@ -393,12 +397,13 @@ impl StreamTx {
                 header_ref.clone()
             }
             NextPacketKind::Resend(_) | NextPacketKind::Blank(_) => {
-                let pt_rtx = if matches!(next.kind, NextPacketKind::Blank(_)) {
-                    pt_for_padding
-                } else {
-                    param.resend()
-                }
-                .expect("PT for resend or blank");
+                // * For the Resend case, we will not have accepted/cached the packet unless
+                //   we have a RTX PT (see logic setting next.pkt.nackable above).
+                // * For the Blank case, we will only have produced blank packets if we
+                //   got a "real" PTX RT, either via set_pt_for_padding above, or via
+                //   the on_first_timeout() further down.
+                // Either way, unwrapping this optional _should_ be correct.
+                let pt_rtx = param.resend().expect("PT for resend or blank");
 
                 // Clone header to not change the original (cached) header.
                 let mut header = header_ref.clone();
@@ -644,6 +649,8 @@ impl StreamTx {
 
         let pkt = &mut self.blank_packet;
         pkt.seq_no = seq_no;
+        // Unwrap here is correct because self.padding_enabled() above checks the we got the PT set.
+        pkt.header.payload_type = self.pt_for_padding.unwrap();
 
         let len = self
             .padding
