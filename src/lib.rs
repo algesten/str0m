@@ -593,6 +593,7 @@ use streams::StreamPaused;
 use thiserror::Error;
 use util::InstantExt;
 
+mod crypto;
 mod dtls;
 use dtls::DtlsCert;
 use dtls::Fingerprint;
