@@ -4,7 +4,6 @@ use openssl::symm::{Cipher, Crypter, Mode};
 
 use crate::dtls::KeyingMaterial;
 use crate::dtls::SrtpProfile;
-use crate::io::Sha1;
 
 use super::header::RtpHeader;
 
@@ -147,13 +146,16 @@ impl SrtpContext {
             #[cfg(feature = "_internal_test_exports")]
             Derived::PassThrough => input.to_vec(),
             Derived::Aes128CmSha1_80 {
-                hmac, salt, enc, ..
+                hmac_key,
+                salt,
+                enc,
+                ..
             } => {
                 assert!(
                     input.len() % SRTP_BLOCK_SIZE == 0,
                     "RTP body should be padded to 16 byte block size, {header:?} with body length {} was not", input.len()
                 );
-                use aes_128_cm_sha1_80::{RtpHmac, ToRtpIv, HMAC_TAG_LEN};
+                use aes_128_cm_sha1_80::{ToRtpIv, HMAC_TAG_LEN};
 
                 let iv = salt.rtp_iv(*header.ssrc, srtp_index);
 
@@ -164,7 +166,7 @@ impl SrtpContext {
                 output[..hlen].copy_from_slice(&buf[..hlen]);
 
                 let hmac_start = buf.len();
-                hmac.rtp_hmac(&mut output, srtp_index, hmac_start);
+                aes_128_cm_sha1_80::rtp_hmac(hmac_key, &mut output, srtp_index, hmac_start);
 
                 output
             }
@@ -197,9 +199,12 @@ impl SrtpContext {
             #[cfg(feature = "_internal_test_exports")]
             Derived::PassThrough => Some(buf.to_vec()),
             Derived::Aes128CmSha1_80 {
-                hmac, salt, dec, ..
+                hmac_key,
+                salt,
+                dec,
+                ..
             } => {
-                use aes_128_cm_sha1_80::{RtpHmac, ToRtpIv, HMAC_TAG_LEN};
+                use aes_128_cm_sha1_80::{ToRtpIv, HMAC_TAG_LEN};
 
                 if buf.len() < HMAC_TAG_LEN {
                     return None;
@@ -207,7 +212,12 @@ impl SrtpContext {
 
                 let hmac_start = buf.len() - HMAC_TAG_LEN;
 
-                if !hmac.rtp_verify(&buf[..hmac_start], srtp_index, &buf[hmac_start..]) {
+                if !aes_128_cm_sha1_80::rtp_verify(
+                    hmac_key,
+                    &buf[..hmac_start],
+                    srtp_index,
+                    &buf[hmac_start..],
+                ) {
                     trace!("unprotect_rtp hmac verify fail");
                     return None;
                 }
@@ -274,9 +284,12 @@ impl SrtpContext {
             #[cfg(feature = "_internal_test_exports")]
             Derived::PassThrough => buf.to_vec(),
             Derived::Aes128CmSha1_80 {
-                hmac, salt, enc, ..
+                hmac_key,
+                salt,
+                enc,
+                ..
             } => {
-                use aes_128_cm_sha1_80::{RtpHmac, ToRtpIv, HMAC_TAG_LEN};
+                use aes_128_cm_sha1_80::{ToRtpIv, HMAC_TAG_LEN};
 
                 let iv = salt.rtp_iv(ssrc, srtcp_index as u64);
 
@@ -291,7 +304,7 @@ impl SrtpContext {
                 to[0..4].copy_from_slice(&e_and_si.to_be_bytes());
 
                 let hmac_index = output.len() - HMAC_TAG_LEN;
-                hmac.rtcp_hmac(&mut output, hmac_index);
+                aes_128_cm_sha1_80::rtcp_hmac(hmac_key, &mut output, hmac_index);
 
                 output
             }
@@ -334,9 +347,12 @@ impl SrtpContext {
             #[cfg(feature = "_internal_test_exports")]
             Derived::PassThrough => Some(buf.to_vec()),
             Derived::Aes128CmSha1_80 {
-                hmac, salt, dec, ..
+                hmac_key,
+                salt,
+                dec,
+                ..
             } => {
-                use aes_128_cm_sha1_80::{RtpHmac, ToRtpIv, HMAC_TAG_LEN};
+                use aes_128_cm_sha1_80::{ToRtpIv, HMAC_TAG_LEN};
 
                 if buf.len() < HMAC_TAG_LEN + SRTCP_INDEX_LEN {
                     return None;
@@ -344,7 +360,11 @@ impl SrtpContext {
 
                 let hmac_start = buf.len() - HMAC_TAG_LEN;
 
-                if !hmac.rtcp_verify(&buf[..hmac_start], &buf[hmac_start..]) {
+                if !aes_128_cm_sha1_80::rtcp_verify(
+                    hmac_key,
+                    &buf[..hmac_start],
+                    &buf[hmac_start..],
+                ) {
                     trace!("unprotect_rtcp hmac verify fail");
                     return None;
                 }
@@ -547,7 +567,7 @@ enum Derived {
     #[cfg(feature = "_internal_test_exports")]
     PassThrough,
     Aes128CmSha1_80 {
-        hmac: Sha1,
+        hmac_key: [u8; 20],
         salt: aes_128_cm_sha1_80::RtpSalt,
         enc: aes_128_cm_sha1_80::Encrypter,
         dec: aes_128_cm_sha1_80::Decrypter,
@@ -573,7 +593,7 @@ impl Derived {
         let rtp_hmac = {
             let mut hmac = [0; HMAC_KEY_LEN];
             srtp_key.derive(LABEL_RTP_AUTHENTICATION_KEY, &mut hmac[..]);
-            (&hmac[..]).into()
+            hmac
         };
 
         // RTP IV SALT
@@ -588,7 +608,7 @@ impl Derived {
         let rtcp_hmac = {
             let mut hmac = [0; HMAC_KEY_LEN];
             srtp_key.derive(LABEL_RTCP_AUTHENTICATION_KEY, &mut hmac[..]);
-            (&hmac[..]).into()
+            hmac
         };
 
         // RTCP IV SALT
@@ -596,14 +616,14 @@ impl Derived {
         srtp_key.derive(LABEL_RTCP_SALT, &mut rtcp_salt[..]);
 
         let rtp = Derived::Aes128CmSha1_80 {
-            hmac: rtp_hmac,
+            hmac_key: rtp_hmac,
             salt: rtp_salt,
             enc: Encrypter::new(rtp_aes),
             dec: Decrypter::new(rtp_aes),
         };
 
         let rtcp = Derived::Aes128CmSha1_80 {
-            hmac: rtcp_hmac,
+            hmac_key: rtcp_hmac,
             salt: rtcp_salt,
             enc: Encrypter::new(rtcp_aes),
             dec: Decrypter::new(rtcp_aes),
@@ -743,49 +763,40 @@ mod aes_128_cm_sha1_80 {
         }
     }
 
-    pub(super) trait RtpHmac {
-        fn rtp_hmac(&self, buf: &mut [u8], srtp_index: u64, hmac_start: usize);
-        fn rtp_verify(&self, buf: &[u8], srtp_index: u64, cmp: &[u8]) -> bool;
-        fn rtcp_hmac(&self, buf: &mut [u8], hmac_index: usize);
-        fn rtcp_verify(&self, buf: &[u8], cmp: &[u8]) -> bool;
+    pub fn rtp_hmac(key: &[u8], buf: &mut [u8], srtp_index: u64, hmac_start: usize) {
+        let sha1 = Sha1::from(key);
+
+        let roc = (srtp_index >> 16) as u32;
+
+        let tag = sha1.hmac(&[&buf[..hmac_start], &roc.to_be_bytes()]);
+
+        buf[hmac_start..(hmac_start + HMAC_TAG_LEN)].copy_from_slice(&tag[0..HMAC_TAG_LEN]);
     }
 
-    impl RtpHmac for Sha1 {
-        fn rtp_hmac(&self, buf: &mut [u8], srtp_index: u64, hmac_start: usize) {
-            let sha1 = self.clone();
+    pub fn rtp_verify(key: &[u8], buf: &[u8], srtp_index: u64, cmp: &[u8]) -> bool {
+        let sha1 = Sha1::from(key);
 
-            let roc = (srtp_index >> 16) as u32;
+        let roc = (srtp_index >> 16) as u32;
 
-            let tag = sha1.hmac(&[&buf[..hmac_start], &roc.to_be_bytes()]);
+        let tag = sha1.hmac(&[buf, &roc.to_be_bytes()]);
 
-            buf[hmac_start..(hmac_start + HMAC_TAG_LEN)].copy_from_slice(&tag[0..HMAC_TAG_LEN]);
-        }
+        &tag[0..HMAC_TAG_LEN] == cmp
+    }
 
-        fn rtp_verify(&self, buf: &[u8], srtp_index: u64, cmp: &[u8]) -> bool {
-            let sha1 = self.clone();
+    pub fn rtcp_hmac(key: &[u8], buf: &mut [u8], hmac_index: usize) {
+        let sha1 = Sha1::from(key);
 
-            let roc = (srtp_index >> 16) as u32;
+        let tag = sha1.hmac(&[&buf[0..hmac_index]]);
 
-            let tag = sha1.hmac(&[buf, &roc.to_be_bytes()]);
+        buf[hmac_index..(hmac_index + HMAC_TAG_LEN)].copy_from_slice(&tag[0..HMAC_TAG_LEN]);
+    }
 
-            &tag[0..HMAC_TAG_LEN] == cmp
-        }
+    pub fn rtcp_verify(key: &[u8], buf: &[u8], cmp: &[u8]) -> bool {
+        let sha1 = Sha1::from(key);
 
-        fn rtcp_hmac(&self, buf: &mut [u8], hmac_index: usize) {
-            let sha1 = self.clone();
+        let tag = sha1.hmac(&[buf]);
 
-            let tag = sha1.hmac(&[&buf[0..hmac_index]]);
-
-            buf[hmac_index..(hmac_index + HMAC_TAG_LEN)].copy_from_slice(&tag[0..HMAC_TAG_LEN]);
-        }
-
-        fn rtcp_verify(&self, buf: &[u8], cmp: &[u8]) -> bool {
-            let sha1 = self.clone();
-
-            let tag = sha1.hmac(&[buf]);
-
-            &tag[0..HMAC_TAG_LEN] == cmp
-        }
+        &tag[0..HMAC_TAG_LEN] == cmp
     }
 
     pub(super) trait ToRtpIv {
