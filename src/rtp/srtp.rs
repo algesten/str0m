@@ -705,8 +705,6 @@ mod aes_128_cm_sha1_80 {
     use openssl::cipher_ctx::CipherCtx;
     use openssl::error::ErrorStack;
 
-    use crate::io::Sha1;
-
     type AesKey = [u8; 16];
     pub(super) type RtpSalt = [u8; 14];
     type RtpIv = [u8; 16];
@@ -764,37 +762,29 @@ mod aes_128_cm_sha1_80 {
     }
 
     pub fn rtp_hmac(key: &[u8], buf: &mut [u8], srtp_index: u64, hmac_start: usize) {
-        let sha1 = Sha1::from(key);
-
         let roc = (srtp_index >> 16) as u32;
 
-        let tag = sha1.hmac(&[&buf[..hmac_start], &roc.to_be_bytes()]);
+        let tag = crate::crypto::sha1_hmac(key, &[&buf[..hmac_start], &roc.to_be_bytes()]);
 
         buf[hmac_start..(hmac_start + HMAC_TAG_LEN)].copy_from_slice(&tag[0..HMAC_TAG_LEN]);
     }
 
     pub fn rtp_verify(key: &[u8], buf: &[u8], srtp_index: u64, cmp: &[u8]) -> bool {
-        let sha1 = Sha1::from(key);
-
         let roc = (srtp_index >> 16) as u32;
 
-        let tag = sha1.hmac(&[buf, &roc.to_be_bytes()]);
+        let tag = crate::crypto::sha1_hmac(key, &[buf, &roc.to_be_bytes()]);
 
         &tag[0..HMAC_TAG_LEN] == cmp
     }
 
     pub fn rtcp_hmac(key: &[u8], buf: &mut [u8], hmac_index: usize) {
-        let sha1 = Sha1::from(key);
-
-        let tag = sha1.hmac(&[&buf[0..hmac_index]]);
+        let tag = crate::crypto::sha1_hmac(key, &[&buf[0..hmac_index]]);
 
         buf[hmac_index..(hmac_index + HMAC_TAG_LEN)].copy_from_slice(&tag[0..HMAC_TAG_LEN]);
     }
 
     pub fn rtcp_verify(key: &[u8], buf: &[u8], cmp: &[u8]) -> bool {
-        let sha1 = Sha1::from(key);
-
-        let tag = sha1.hmac(&[buf]);
+        let tag = crate::crypto::sha1_hmac(key, &[buf]);
 
         &tag[0..HMAC_TAG_LEN] == cmp
     }

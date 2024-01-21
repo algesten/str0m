@@ -31,10 +31,6 @@ openssl-sys = "0.9.80"
 hmac = "0.12.1"
 crc = "3.0.0"
 serde = { version = "1.0.152", features = ["derive"] }
-
-
-# asm feature breaks on windows, but it is much faster than openssl
-[target.'cfg(unix)'.dependencies]
 sha-1 = { version = "0.10.1", features = ["asm"] }
 
 [dev-dependencies]

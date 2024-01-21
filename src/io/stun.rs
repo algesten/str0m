@@ -227,12 +227,15 @@ impl<'a> StunMessage<'a> {
     #[must_use]
     pub(crate) fn check_integrity(&self, password: &str) -> bool {
         if let Some(integ) = self.attrs.message_integrity {
-            let sha1: Sha1 = password.as_bytes().into();
-            let comp = sha1.hmac(&[
-                &self.integrity[..2],
-                &[(self.integrity_len >> 8) as u8, self.integrity_len as u8],
-                &self.integrity[4..],
-            ]);
+            let comp = crate::crypto::sha1_hmac(
+                password.as_bytes(),
+                &[
+                    &self.integrity[..2],
+                    &[(self.integrity_len >> 8) as u8, self.integrity_len as u8],
+                    &self.integrity[4..],
+                ],
+            );
+
             comp == integ
         } else {
             false
@@ -285,8 +288,10 @@ impl<'a> StunMessage<'a> {
         let buf = buf.into_inner();
 
         // Compute and fill in message integrity
-        let sha1: Sha1 = password.as_bytes().into();
-        let hmac = sha1.hmac(&[&buf[0..(integrity_value_offset - ATTR_TLV_LENGTH)]]);
+        let hmac = crate::crypto::sha1_hmac(
+            password.as_bytes(),
+            &[&buf[0..(integrity_value_offset - ATTR_TLV_LENGTH)]],
+        );
         buf[integrity_value_offset..(integrity_value_offset + MSG_INTEGRITY_LEN)]
             .copy_from_slice(&hmac);
 
@@ -404,8 +409,6 @@ impl<'a> Attributes<'a> {
 use std::{io, str};
 
 use crate::util::NonCryptographicRng;
-
-use super::Sha1;
 
 impl<'a> Attributes<'a> {
     const ALTERNATE_SERVER: u16 = 0x8023;

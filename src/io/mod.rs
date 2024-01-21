@@ -14,9 +14,6 @@ pub(crate) use stun::stun_resend_delay;
 pub use stun::StunMessage;
 pub(crate) use stun::{StunError, TransId, STUN_MAX_RETRANS, STUN_MAX_RTO_MILLIS, STUN_TIMEOUT};
 
-mod sha1;
-pub(crate) use self::sha1::Sha1;
-
 mod id;
 // this is only exported from this crate to avoid needing
 // a "util" crate or similar.
