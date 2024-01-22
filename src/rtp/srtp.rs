@@ -166,10 +166,10 @@ impl SrtpContext {
                 output
             }
             Derived::AeadAes128Gcm { salt, enc, .. } => {
-                use aead_aes_128_gcm::{ToRtpIv, TAG_LEN};
+                use aead_aes_128_gcm::TAG_LEN;
                 let roc = (srtp_index >> 16) as u32;
 
-                let iv = salt.rtp_iv(*header.ssrc, roc, header.sequence_number);
+                let iv = aead_aes_128_gcm::rtp_iv(*salt, *header.ssrc, roc, header.sequence_number);
                 let aad = &buf[..hlen];
 
                 // Input and output lengths for encryption: https://www.rfc-editor.org/rfc/rfc7714#section-5.2.1
@@ -225,7 +225,7 @@ impl SrtpContext {
                 Some(output)
             }
             Derived::AeadAes128Gcm { salt, dec, .. } => {
-                use aead_aes_128_gcm::{ToRtpIv, TAG_LEN};
+                use aead_aes_128_gcm::TAG_LEN;
 
                 if buf.len() < TAG_LEN {
                     return None;
@@ -234,7 +234,7 @@ impl SrtpContext {
                 let roc: u32 = (srtp_index >> 16) as u32;
                 let seq = header.sequence_number;
 
-                let iv = salt.rtp_iv(*header.ssrc, roc, seq);
+                let iv = aead_aes_128_gcm::rtp_iv(*salt, *header.ssrc, roc, seq);
 
                 let (aad, input) = buf.split_at(header.header_len);
                 // Input and output lengths for decryption: https://www.rfc-editor.org/rfc/rfc7714#section-5.2.2
@@ -294,8 +294,8 @@ impl SrtpContext {
                 output
             }
             Derived::AeadAes128Gcm { salt, enc, .. } => {
-                use aead_aes_128_gcm::{ToRtpIv, RTCP_AAD_LEN, TAG_LEN};
-                let iv = salt.rtcp_iv(ssrc, srtcp_index);
+                use aead_aes_128_gcm::{RTCP_AAD_LEN, TAG_LEN};
+                let iv = aead_aes_128_gcm::rtcp_iv(*salt, ssrc, srtcp_index);
 
                 let mut aad = [0; RTCP_AAD_LEN];
                 aad[..8].copy_from_slice(&buf[..8]);
@@ -386,7 +386,7 @@ impl SrtpContext {
                 Some(output)
             }
             Derived::AeadAes128Gcm { salt, dec, .. } => {
-                use aead_aes_128_gcm::{ToRtpIv, RTCP_AAD_LEN, TAG_LEN};
+                use aead_aes_128_gcm::{RTCP_AAD_LEN, TAG_LEN};
 
                 if buf.len() < SRTCP_INDEX_LEN + TAG_LEN {
                     // Too short
@@ -421,7 +421,7 @@ impl SrtpContext {
                 let srtcp_index = e_and_si & 0x7fff_ffff;
                 let ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
 
-                let iv = salt.rtcp_iv(ssrc, srtcp_index);
+                let iv = aead_aes_128_gcm::rtcp_iv(*salt, ssrc, srtcp_index);
                 // Declared out here for lifetime purposes, only used in the first branch of the if.
                 let mut encrypted_aad = [0; RTCP_AAD_LEN];
                 let mut aads: [&[u8]; 2] = [&[], &[]];
@@ -917,52 +917,45 @@ mod aead_aes_128_gcm {
         }
     }
 
-    pub(super) trait ToRtpIv {
-        fn rtp_iv(&self, ssrc: u32, roc: u32, seq: u16) -> RtpIv;
-        fn rtcp_iv(&self, ssrc: u32, srtp_index: u32) -> RtpIv;
+    pub fn rtp_iv(salt: RtpSalt, ssrc: u32, roc: u32, seq: u16) -> RtpIv {
+        // See: https://www.rfc-editor.org/rfc/rfc7714#section-8.1
+
+        // TODO: See if this is faster if rewritten for u128
+        let mut iv = [0; SALT_LEN];
+
+        let ssrc_be = ssrc.to_be_bytes();
+        let roc_be = roc.to_be_bytes();
+        let seq_be = seq.to_be_bytes();
+
+        iv[2..6].copy_from_slice(&ssrc_be);
+        iv[6..10].copy_from_slice(&roc_be);
+        iv[10..12].copy_from_slice(&seq_be);
+
+        // XOR with salt
+        for i in 0..SALT_LEN {
+            iv[i] ^= salt[i];
+        }
+
+        iv
     }
 
-    impl ToRtpIv for RtpSalt {
-        fn rtp_iv(&self, ssrc: u32, roc: u32, seq: u16) -> RtpIv {
-            // See: https://www.rfc-editor.org/rfc/rfc7714#section-8.1
+    pub fn rtcp_iv(salt: RtpSalt, ssrc: u32, srtp_index: u32) -> RtpIv {
+        // See: https://www.rfc-editor.org/rfc/rfc7714#section-9.1
+        // TODO: See if this is faster if rewritten for u128
+        let mut iv = [0; SALT_LEN];
 
-            // TODO: See if this is faster if rewritten for u128
-            let mut iv = [0; SALT_LEN];
+        let ssrc_be = ssrc.to_be_bytes();
+        let srtp_be = srtp_index.to_be_bytes();
 
-            let ssrc_be = ssrc.to_be_bytes();
-            let roc_be = roc.to_be_bytes();
-            let seq_be = seq.to_be_bytes();
+        iv[2..6].copy_from_slice(&ssrc_be);
+        iv[8..12].copy_from_slice(&srtp_be);
 
-            iv[2..6].copy_from_slice(&ssrc_be);
-            iv[6..10].copy_from_slice(&roc_be);
-            iv[10..12].copy_from_slice(&seq_be);
-
-            // XOR with salt
-            for i in 0..SALT_LEN {
-                iv[i] ^= self[i];
-            }
-
-            iv
+        // XOR with salt
+        for i in 0..SALT_LEN {
+            iv[i] ^= salt[i];
         }
 
-        fn rtcp_iv(&self, ssrc: u32, srtp_index: u32) -> RtpIv {
-            // See: https://www.rfc-editor.org/rfc/rfc7714#section-9.1
-            // TODO: See if this is faster if rewritten for u128
-            let mut iv = [0; SALT_LEN];
-
-            let ssrc_be = ssrc.to_be_bytes();
-            let srtp_be = srtp_index.to_be_bytes();
-
-            iv[2..6].copy_from_slice(&ssrc_be);
-            iv[8..12].copy_from_slice(&srtp_be);
-
-            // XOR with salt
-            for i in 0..SALT_LEN {
-                iv[i] ^= self[i];
-            }
-
-            iv
-        }
+        iv
     }
 }
 
