@@ -1214,7 +1214,7 @@ impl Rtc {
             return Ok(());
         }
 
-        info!("DTLS setup is: {:?}", active);
+        info!("DTLS setup is: {active}");
         self.dtls.set_active(active)?;
 
         Ok(())
