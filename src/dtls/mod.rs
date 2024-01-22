@@ -209,10 +209,15 @@ impl Dtls {
 
     /// Set whether this instance is active or passive.
     ///
-    /// i.e. initiating the client hello or not. This must be called
-    /// exactly once before starting to handshake (I/O).
-    pub fn set_active(&mut self, active: bool) {
+    /// In case `active` is `true`, we will start a handshake.
+    pub fn set_active(&mut self, active: bool) -> Result<(), DtlsError> {
         self.tls.set_active(active);
+
+        if active {
+            self.handle_handshake()?;
+        }
+
+        Ok(())
     }
 
     /// If set_active, returns what was set.
@@ -285,7 +290,7 @@ impl Dtls {
     /// Handle handshaking.
     ///
     /// Once handshaken, this becomes a noop.
-    pub fn handle_handshake(&mut self) -> Result<bool, DtlsError> {
+    fn handle_handshake(&mut self) -> Result<bool, DtlsError> {
         if self.tls.is_handshaken() {
             // Nice. Nothing to do.
             return Ok(false);

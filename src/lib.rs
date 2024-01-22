@@ -1215,11 +1215,7 @@ impl Rtc {
         }
 
         info!("DTLS setup is: {:?}", active);
-        self.dtls.set_active(active);
-
-        if active {
-            self.dtls.handle_handshake()?;
-        }
+        self.dtls.set_active(active)?;
 
         Ok(())
     }
