@@ -14,16 +14,15 @@ use openssl::x509::X509;
 
 use std::io;
 use std::mem;
-use std::ops::Deref;
 use std::panic::UnwindSafe;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
 
 use crate::io::DATAGRAM_MTU;
 
-use super::DtlsError;
 use super::Fingerprint;
 use super::SrtpProfile;
+use super::{DtlsError, KeyingMaterial};
 
 const RSA_F4: u32 = 0x10001;
 const DTLS_CIPHERS: &str = "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
@@ -167,30 +166,6 @@ pub fn dtls_ssl_create(ctx: &SslContext) -> Result<Ssl, DtlsError> {
     ssl.set_tmp_ecdh(&eckey)?;
 
     Ok(ssl)
-}
-
-/// Keying material used as master key for SRTP.
-pub struct KeyingMaterial(Vec<u8>);
-
-impl KeyingMaterial {
-    #[cfg(any(test, feature = "_internal_test_exports"))]
-    pub fn new(m: &[u8]) -> Self {
-        KeyingMaterial(m.into())
-    }
-}
-
-impl Deref for KeyingMaterial {
-    type Target = [u8];
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::fmt::Debug for KeyingMaterial {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "KeyingMaterial")
-    }
 }
 
 pub struct TlsStream<S> {

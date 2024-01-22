@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::io::{self, ErrorKind, Read, Write};
 use std::net::SocketAddr;
+use std::ops::Deref;
 use thiserror::Error;
 
 use crate::io::{DatagramSend, DATAGRAM_MTU_WARN};
@@ -12,7 +13,6 @@ mod ossl;
 use ossl::{dtls_create_ctx, dtls_ssl_create, TlsStream};
 
 pub use ossl::DtlsCert;
-pub(crate) use ossl::KeyingMaterial;
 
 /// Errors that can arise in DTLS.
 #[derive(Debug, Error)]
@@ -322,6 +322,30 @@ impl Dtls {
 
     pub(crate) fn is_connected(&self) -> bool {
         self.tls.is_connected()
+    }
+}
+
+/// Keying material used as master key for SRTP.
+pub(crate) struct KeyingMaterial(Vec<u8>);
+
+impl KeyingMaterial {
+    #[cfg(any(test, feature = "_internal_test_exports"))]
+    pub(crate) fn new(m: &[u8]) -> Self {
+        KeyingMaterial(m.into())
+    }
+}
+
+impl Deref for KeyingMaterial {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for KeyingMaterial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "KeyingMaterial")
     }
 }
 
