@@ -19,4 +19,10 @@ pub use sdp::{SdpAnswer, SdpApi, SdpOffer, SdpPendingOffer};
 mod direct;
 pub use direct::DirectApi;
 
-pub use crate::dtls::{DtlsCert, Fingerprint};
+pub use crate::dtls::Fingerprint;
+
+/// Re-exports for the OpenSSL specific DTLS implementation.
+#[cfg(feature = "openssl")]
+pub mod openssl {
+    pub use crate::dtls::ossl::DtlsCert;
+}

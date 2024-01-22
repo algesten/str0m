@@ -1,7 +1,5 @@
 use std::fmt;
 
-use openssl::symm::{Cipher, Crypter, Mode};
-
 use crate::dtls::KeyingMaterial;
 use crate::dtls::SrtpProfile;
 
@@ -32,6 +30,7 @@ pub const SRTP_OVERHEAD: usize = MAX_TAG_LEN;
 
 impl SrtpContext {
     /// Create an SRTP context for the relevant profile using the provided keying material.
+    #[allow(unused_variables)]
     pub fn new(profile: SrtpProfile, mat: &KeyingMaterial, left: bool) -> Self {
         match profile {
             #[cfg(feature = "_internal_test_exports")]
@@ -40,6 +39,7 @@ impl SrtpContext {
                 rtcp: Derived::PassThrough,
                 srtcp_index: 0,
             },
+            #[cfg(feature = "openssl")]
             SrtpProfile::Aes128CmSha1_80 => {
                 use aes_128_cm_sha1_80::{KEY_LEN, SALT_LEN};
 
@@ -53,6 +53,7 @@ impl SrtpContext {
                     srtcp_index: 0,
                 }
             }
+            #[cfg(feature = "openssl")]
             SrtpProfile::AeadAes128Gcm => {
                 use aead_aes_128_gcm::{KEY_LEN, SALT_LEN};
 
@@ -69,7 +70,7 @@ impl SrtpContext {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "openssl"))]
     fn new_aead_aes_128_gcm(
         rtp_key: [u8; aead_aes_128_gcm::KEY_LEN],
         rtp_salt: [u8; aead_aes_128_gcm::SALT_LEN],
@@ -82,13 +83,13 @@ impl SrtpContext {
         Self {
             rtp: Derived::AeadAes128Gcm {
                 salt: rtp_salt,
-                enc: Encrypter::new(&rtp_key),
-                dec: Decrypter::new(&rtp_key),
+                enc: Encrypter::new_openssl(&rtp_key),
+                dec: Decrypter::new_openssl(&rtp_key),
             },
             rtcp: Derived::AeadAes128Gcm {
                 salt: rtcp_salt,
-                enc: Encrypter::new(&rtcp_key),
-                dec: Decrypter::new(&rtcp_key),
+                enc: Encrypter::new_openssl(&rtcp_key),
+                dec: Decrypter::new_openssl(&rtcp_key),
             },
             srtcp_index,
         }
@@ -96,7 +97,7 @@ impl SrtpContext {
 }
 
 #[derive(Debug)]
-pub struct SrtpContext {
+pub(crate) struct SrtpContext {
     /// Encryption/decryption derived from srtp_key for RTP.
     rtp: Derived,
     /// Encryption/decryption derived from srtp_key for RTCP.
@@ -218,7 +219,7 @@ impl SrtpContext {
                 let mut output = vec![0; input.len()];
 
                 if let Err(e) = dec.decrypt(&iv, input, &mut output) {
-                    warn!("Failed to decrypt SRTP ({}): {:?}", self.rtp.profile(), e);
+                    warn!("Failed to decrypt SRTP: {e}");
                     return None;
                 };
 
@@ -243,7 +244,7 @@ impl SrtpContext {
                 match dec.decrypt(&iv, &[aad], input, &mut output) {
                     Ok(v) => v,
                     Err(e) => {
-                        warn!("Failed to decrypt SRTP ({}): {:?}", self.rtp.profile(), e);
+                        warn!("Failed to decrypt SRTP: {e}");
                         return None;
                     }
                 };
@@ -379,7 +380,7 @@ impl SrtpContext {
                 output[0..8].copy_from_slice(&buf[0..8]);
 
                 if let Err(e) = dec.decrypt(&iv, input, &mut output[8..]) {
-                    warn!("Failed to decrypt SRTCP ({}): {:?}", self.rtcp.profile(), e);
+                    warn!("Failed to decrypt SRTCP: {e}");
                     return None;
                 }
 
@@ -443,7 +444,7 @@ impl SrtpContext {
                 let count = match dec.decrypt(&iv, &aads, input, &mut output[8..]) {
                     Ok(c) => c,
                     Err(e) => {
-                        warn!("Failed to decrypt SRTCP ({}): {:?}", self.rtcp.profile(), e);
+                        warn!("Failed to decrypt SRTCP: {e}");
                         return None;
                     }
                 };
@@ -490,7 +491,8 @@ impl<const ML: usize, const SL: usize> SrtpKey<ML, SL> {
         SrtpKey { master, salt }
     }
 
-    fn derive(&self, label: u8, out: &mut [u8]) {
+    #[cfg(feature = "openssl")]
+    fn derive_openssl(&self, label: u8, out: &mut [u8]) {
         // AEC-CM (128 bits) defined in RFC3711
         assert!(ML == 16, "Only valid for 128 bit master keys");
         assert!(SL <= 14, "Only valid for 128 bit master keys");
@@ -515,8 +517,13 @@ impl<const ML: usize, const SL: usize> SrtpKey<ML, SL> {
             input[14..].copy_from_slice(&round.to_be_bytes()[..]);
 
             // default key derivation function, which uses AES-128 in Counter Mode
-            let mut aes = Crypter::new(Cipher::aes_128_ecb(), Mode::Encrypt, &self.master, None)
-                .expect("AES deriver");
+            let mut aes = openssl::symm::Crypter::new(
+                openssl::symm::Cipher::aes_128_ecb(),
+                openssl::symm::Mode::Encrypt,
+                &self.master,
+                None,
+            )
+            .expect("AES deriver");
 
             // Run AES
             let count = aes.update(&input[..], &mut buf[..]).expect("AES update");
@@ -556,6 +563,7 @@ enum Derived {
 }
 
 impl Derived {
+    #[cfg(feature = "openssl")]
     fn aes_128_cm_sha1_80(
         srtp_key: &SrtpKey<{ aes_128_cm_sha1_80::KEY_LEN }, { aes_128_cm_sha1_80::SALT_LEN }>,
     ) -> (Self, Self) {
@@ -563,51 +571,52 @@ impl Derived {
 
         // RTP AES Counter
         let mut rtp_aes = [0; KEY_LEN];
-        srtp_key.derive(LABEL_RTP_AES, &mut rtp_aes[..]);
+        srtp_key.derive_openssl(LABEL_RTP_AES, &mut rtp_aes[..]);
 
         // RTP SHA1 HMAC
         let rtp_hmac = {
             let mut hmac = [0; HMAC_KEY_LEN];
-            srtp_key.derive(LABEL_RTP_AUTHENTICATION_KEY, &mut hmac[..]);
+            srtp_key.derive_openssl(LABEL_RTP_AUTHENTICATION_KEY, &mut hmac[..]);
             hmac
         };
 
         // RTP IV SALT
         let mut rtp_salt = [0; SALT_LEN];
-        srtp_key.derive(LABEL_RTP_SALT, &mut rtp_salt[..]);
+        srtp_key.derive_openssl(LABEL_RTP_SALT, &mut rtp_salt[..]);
 
         // RTCP AES Counter
         let mut rtcp_aes = [0; KEY_LEN];
-        srtp_key.derive(LABEL_RTCP_AES, &mut rtcp_aes[..]);
+        srtp_key.derive_openssl(LABEL_RTCP_AES, &mut rtcp_aes[..]);
 
         // RTCP SHA1 HMAC
         let rtcp_hmac = {
             let mut hmac = [0; HMAC_KEY_LEN];
-            srtp_key.derive(LABEL_RTCP_AUTHENTICATION_KEY, &mut hmac[..]);
+            srtp_key.derive_openssl(LABEL_RTCP_AUTHENTICATION_KEY, &mut hmac[..]);
             hmac
         };
 
         // RTCP IV SALT
         let mut rtcp_salt = [0; SALT_LEN];
-        srtp_key.derive(LABEL_RTCP_SALT, &mut rtcp_salt[..]);
+        srtp_key.derive_openssl(LABEL_RTCP_SALT, &mut rtcp_salt[..]);
 
         let rtp = Derived::Aes128CmSha1_80 {
             key: rtp_hmac,
             salt: rtp_salt,
-            enc: Encrypter::new(rtp_aes),
-            dec: Decrypter::new(rtp_aes),
+            enc: Encrypter::new_openssl(rtp_aes),
+            dec: Decrypter::new_openssl(rtp_aes),
         };
 
         let rtcp = Derived::Aes128CmSha1_80 {
             key: rtcp_hmac,
             salt: rtcp_salt,
-            enc: Encrypter::new(rtcp_aes),
-            dec: Decrypter::new(rtcp_aes),
+            enc: Encrypter::new_openssl(rtcp_aes),
+            dec: Decrypter::new_openssl(rtcp_aes),
         };
 
         (rtp, rtcp)
     }
 
+    #[cfg(feature = "openssl")]
     fn aead_aes_128_gcm(
         srtp_key: &SrtpKey<{ aead_aes_128_gcm::KEY_LEN }, { aead_aes_128_gcm::SALT_LEN }>,
     ) -> (Derived, Derived) {
@@ -615,42 +624,33 @@ impl Derived {
 
         // RTP session key
         let mut rtp_aes = [0; KEY_LEN];
-        srtp_key.derive(LABEL_RTP_AES, &mut rtp_aes[..]);
+        srtp_key.derive_openssl(LABEL_RTP_AES, &mut rtp_aes[..]);
 
         // RTP session salt
         let mut rtp_salt = [0; SALT_LEN];
-        srtp_key.derive(LABEL_RTP_SALT, &mut rtp_salt[..]);
+        srtp_key.derive_openssl(LABEL_RTP_SALT, &mut rtp_salt[..]);
 
         // RTCP session key
         let mut rtcp_aes = [0; KEY_LEN];
-        srtp_key.derive(LABEL_RTCP_AES, &mut rtcp_aes[..]);
+        srtp_key.derive_openssl(LABEL_RTCP_AES, &mut rtcp_aes[..]);
 
         // RTCP session salt
         let mut rtcp_salt = [0; SALT_LEN];
-        srtp_key.derive(LABEL_RTCP_SALT, &mut rtcp_salt[..]);
+        srtp_key.derive_openssl(LABEL_RTCP_SALT, &mut rtcp_salt[..]);
 
         let rtp = Derived::AeadAes128Gcm {
             salt: rtp_salt,
-            enc: Encrypter::new(&rtp_aes),
-            dec: Decrypter::new(&rtp_aes),
+            enc: Encrypter::new_openssl(&rtp_aes),
+            dec: Decrypter::new_openssl(&rtp_aes),
         };
 
         let rtcp = Derived::AeadAes128Gcm {
             salt: rtcp_salt,
-            enc: Encrypter::new(&rtcp_aes),
-            dec: Decrypter::new(&rtcp_aes),
+            enc: Encrypter::new_openssl(&rtcp_aes),
+            dec: Decrypter::new_openssl(&rtcp_aes),
         };
 
         (rtp, rtcp)
-    }
-
-    fn profile(&self) -> SrtpProfile {
-        match self {
-            #[cfg(feature = "_internal_test_exports")]
-            Derived::PassThrough => SrtpProfile::PassThrough,
-            Derived::Aes128CmSha1_80 { .. } => SrtpProfile::Aes128CmSha1_80,
-            Derived::AeadAes128Gcm { .. } => SrtpProfile::AeadAes128Gcm,
-        }
     }
 }
 
@@ -662,6 +662,8 @@ impl fmt::Debug for Derived {
 
 // Implementation specific to `AES128_CM_SHA1_80`
 mod aes_128_cm_sha1_80 {
+    use core::fmt;
+
     // SRTP_AES128_CM_HMAC_SHA1_80
     //    cipher: AES_128_CM
     //    cipher_key_length: 128
@@ -670,70 +672,162 @@ mod aes_128_cm_sha1_80 {
     //    auth_function: HMAC-SHA1
     //    auth_key_length: 160
     //    auth_tag_length: 80
-    pub(super) const KEY_LEN: usize = 16;
-    pub(super) const SALT_LEN: usize = 14;
-    pub(super) const HMAC_KEY_LEN: usize = 20;
-    pub(super) const HMAC_TAG_LEN: usize = 10;
-
-    use std::fmt;
-
-    use openssl::cipher;
-    use openssl::cipher_ctx::CipherCtx;
-    use openssl::error::ErrorStack;
+    pub const KEY_LEN: usize = 16;
+    pub const SALT_LEN: usize = 14;
+    pub const HMAC_KEY_LEN: usize = 20;
+    pub const HMAC_TAG_LEN: usize = 10;
 
     type AesKey = [u8; 16];
-    pub(super) type RtpSalt = [u8; 14];
+    pub type RtpSalt = [u8; 14];
     type RtpIv = [u8; 16];
 
-    pub(super) struct Encrypter {
-        ctx: CipherCtx,
+    pub enum Encrypter {
+        #[cfg(feature = "openssl")]
+        Openssl(openssl::Encrypter),
     }
 
     impl Encrypter {
-        pub(super) fn new(key: AesKey) -> Self {
-            let t = cipher::Cipher::aes_128_ctr();
-            let mut ctx = CipherCtx::new().expect("a reusable cipher context");
-            ctx.encrypt_init(Some(t), Some(&key[..]), None)
-                .expect("enc init");
-            Encrypter { ctx }
+        #[cfg(feature = "openssl")]
+        pub fn new_openssl(key: AesKey) -> Self {
+            Self::Openssl(openssl::Encrypter::new(key))
         }
 
-        pub(super) fn encrypt(
+        #[allow(unused_variables)]
+        pub fn encrypt(
             &mut self,
             iv: &RtpIv,
             input: &[u8],
             output: &mut [u8],
-        ) -> Result<(), ErrorStack> {
-            self.ctx.encrypt_init(None, None, Some(iv))?;
-            let count = self.ctx.cipher_update(input, Some(output))?;
-            self.ctx.cipher_final(&mut output[count..])?;
-            Ok(())
+        ) -> Result<(), Error> {
+            match self {
+                #[cfg(feature = "openssl")]
+                Self::Openssl(i) => Ok(i.encrypt(iv, input, output)?),
+                #[cfg(not(feature = "openssl"))]
+                _ => unimplemented!(),
+            }
         }
-    }
-
-    pub(super) struct Decrypter {
-        ctx: CipherCtx,
     }
 
     impl Decrypter {
-        pub(super) fn new(key: AesKey) -> Self {
-            let t = cipher::Cipher::aes_128_ctr();
-            let mut ctx = CipherCtx::new().expect("a reusable cipher context");
-            ctx.decrypt_init(Some(t), Some(&key[..]), None)
-                .expect("enc init");
-            Decrypter { ctx }
+        #[cfg(feature = "openssl")]
+        pub fn new_openssl(key: AesKey) -> Self {
+            Self::Openssl(openssl::Decrypter::new(key))
         }
 
-        pub(super) fn decrypt(
+        #[allow(unused_variables)]
+        pub fn decrypt(
             &mut self,
             iv: &RtpIv,
             input: &[u8],
             output: &mut [u8],
-        ) -> Result<(), ErrorStack> {
-            self.ctx.decrypt_init(None, None, Some(iv))?;
-            let count = self.ctx.cipher_update(input, Some(output))?;
-            self.ctx.cipher_final(&mut output[count..])?;
-            Ok(())
+        ) -> Result<(), Error> {
+            match self {
+                #[cfg(feature = "openssl")]
+                Self::Openssl(i) => Ok(i.decrypt(iv, input, output)?),
+                #[cfg(not(feature = "openssl"))]
+                _ => unimplemented!(),
+            }
+        }
+    }
+
+    #[derive(Debug)]
+    pub enum Error {
+        #[cfg(feature = "openssl")]
+        Openssl(::openssl::error::ErrorStack),
+    }
+
+    impl fmt::Display for Error {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                #[cfg(feature = "openssl")]
+                Error::Openssl(e) => write!(f, "OpenSSL error in `aes_128_cm_sha1_80`: {e}"),
+                #[cfg(not(feature = "openssl"))]
+                _ => unimplemented!(),
+            }
+        }
+    }
+
+    pub enum Decrypter {
+        #[cfg(feature = "openssl")]
+        Openssl(openssl::Decrypter),
+    }
+
+    #[cfg(feature = "openssl")]
+    pub mod openssl {
+        use super::*;
+        use ::openssl::cipher;
+        use ::openssl::cipher_ctx::CipherCtx;
+        use ::openssl::error::ErrorStack;
+        use std::fmt;
+
+        pub struct Encrypter {
+            ctx: CipherCtx,
+        }
+
+        impl Encrypter {
+            pub fn new(key: AesKey) -> Self {
+                let t = cipher::Cipher::aes_128_ctr();
+                let mut ctx = CipherCtx::new().expect("a reusable cipher context");
+                ctx.encrypt_init(Some(t), Some(&key[..]), None)
+                    .expect("enc init");
+                Encrypter { ctx }
+            }
+
+            pub fn encrypt(
+                &mut self,
+                iv: &RtpIv,
+                input: &[u8],
+                output: &mut [u8],
+            ) -> Result<(), ErrorStack> {
+                self.ctx.encrypt_init(None, None, Some(iv))?;
+                let count = self.ctx.cipher_update(input, Some(output))?;
+                self.ctx.cipher_final(&mut output[count..])?;
+                Ok(())
+            }
+        }
+
+        pub struct Decrypter {
+            ctx: CipherCtx,
+        }
+
+        impl Decrypter {
+            pub fn new(key: AesKey) -> Self {
+                let t = cipher::Cipher::aes_128_ctr();
+                let mut ctx = CipherCtx::new().expect("a reusable cipher context");
+                ctx.decrypt_init(Some(t), Some(&key[..]), None)
+                    .expect("enc init");
+                Decrypter { ctx }
+            }
+
+            pub fn decrypt(
+                &mut self,
+                iv: &RtpIv,
+                input: &[u8],
+                output: &mut [u8],
+            ) -> Result<(), ErrorStack> {
+                self.ctx.decrypt_init(None, None, Some(iv))?;
+                let count = self.ctx.cipher_update(input, Some(output))?;
+                self.ctx.cipher_final(&mut output[count..])?;
+                Ok(())
+            }
+        }
+
+        impl fmt::Debug for Encrypter {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_struct("Encrypter").finish()
+            }
+        }
+
+        impl fmt::Debug for Decrypter {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_struct("Decrypter").finish()
+            }
+        }
+
+        impl From<ErrorStack> for Error {
+            fn from(value: ErrorStack) -> Self {
+                Error::Openssl(value)
+            }
         }
     }
 
@@ -770,6 +864,7 @@ mod aes_128_cm_sha1_80 {
 
         iv
     }
+
     pub fn rtcp_hmac(key: &[u8], buf: &mut [u8], hmac_index: usize) {
         let tag = crate::crypto::sha1_hmac(key, &[&buf[0..hmac_index]]);
 
@@ -780,18 +875,6 @@ mod aes_128_cm_sha1_80 {
         let tag = crate::crypto::sha1_hmac(key, &[buf]);
 
         &tag[0..HMAC_TAG_LEN] == cmp
-    }
-
-    impl fmt::Debug for Encrypter {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("Encrypter").finish()
-        }
-    }
-
-    impl fmt::Debug for Decrypter {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("Decrypter").finish()
-        }
     }
 }
 
@@ -809,9 +892,7 @@ mod aead_aes_128_gcm {
     // | AEAD authentication tag length | 128 bits                     |
     // +--------------------------------+------------------------------+
 
-    use openssl::cipher;
-    use openssl::cipher_ctx::CipherCtx;
-    use openssl::error::ErrorStack;
+    use std::fmt;
 
     pub(super) const KEY_LEN: usize = 16;
     pub(super) const SALT_LEN: usize = 12;
@@ -824,96 +905,196 @@ mod aead_aes_128_gcm {
     pub(super) type RtpSalt = [u8; SALT_LEN];
     type RtpIv = [u8; SALT_LEN];
 
-    pub(super) struct Encrypter {
-        ctx: CipherCtx,
+    pub enum Encrypter {
+        #[cfg(feature = "openssl")]
+        Openssl(openssl::Encrypter),
     }
 
     impl Encrypter {
-        pub(super) fn new(key: &EncryptionKey) -> Self {
-            let t = cipher::Cipher::aes_128_gcm();
-            let mut ctx = CipherCtx::new().expect("a reusable cipher context");
-            ctx.encrypt_init(Some(t), Some(key), None)
-                .expect("enc init");
-            ctx.set_iv_length(IV_LEN).expect("IV length");
-            ctx.set_padding(false);
-
-            Self { ctx }
+        #[cfg(feature = "openssl")]
+        pub fn new_openssl(key: &EncryptionKey) -> Self {
+            Self::Openssl(openssl::Encrypter::new(key))
         }
 
+        #[allow(unused_variables)]
         pub(super) fn encrypt(
             &mut self,
             iv: &[u8; IV_LEN],
             aad: &[u8],
             input: &[u8],
             output: &mut [u8],
-        ) -> Result<(), ErrorStack> {
-            assert!(
-                aad.len() >= 12,
-                "Associated data length MUST be at least 12 octets"
-            );
-
-            // Set the IV
-            self.ctx.encrypt_init(None, None, Some(iv))?;
-
-            // Add the additional authenticated data, omitting the output argument informs
-            // OpenSSL that we are providing AAD.
-            let aad_c = self.ctx.cipher_update(aad, None)?;
-            // TODO: This should maybe be an error
-            assert!(aad_c == aad.len());
-
-            let count = self.ctx.cipher_update(input, Some(output))?;
-            let final_count = self.ctx.cipher_final(&mut output[count..])?;
-
-            // Get the authentication tag and append it to the output
-            let tag_offset = count + final_count;
-            self.ctx
-                .tag(&mut output[tag_offset..tag_offset + TAG_LEN])?;
-
-            Ok(())
+        ) -> Result<(), Error> {
+            match self {
+                #[cfg(feature = "openssl")]
+                Self::Openssl(i) => Ok(i.encrypt(iv, aad, input, output)?),
+                #[cfg(not(feature = "openssl"))]
+                _ => unimplemented!(),
+            }
         }
-    }
-
-    pub(super) struct Decrypter {
-        ctx: CipherCtx,
     }
 
     impl Decrypter {
-        pub(super) fn new(key: &DecryptionKey) -> Self {
-            let t = cipher::Cipher::aes_128_gcm();
-            let mut ctx = CipherCtx::new().expect("a reusable cipher context");
-            ctx.decrypt_init(Some(t), Some(key), None)
-                .expect("dec init");
-
-            Self { ctx }
+        #[cfg(feature = "openssl")]
+        pub fn new_openssl(key: &DecryptionKey) -> Self {
+            Self::Openssl(openssl::Decrypter::new(key))
         }
 
-        pub(super) fn decrypt(
+        #[allow(unused_variables)]
+        pub fn decrypt(
             &mut self,
             iv: &[u8; IV_LEN],
             aads: &[&[u8]],
             input: &[u8],
             output: &mut [u8],
-        ) -> Result<usize, ErrorStack> {
-            // This needs to be converted to an error maybe
-            assert!(input.len() >= TAG_LEN);
+        ) -> Result<usize, Error> {
+            match self {
+                #[cfg(feature = "openssl")]
+                Self::Openssl(i) => Ok(i.decrypt(iv, aads, input, output)?),
+                #[cfg(not(feature = "openssl"))]
+                _ => unimplemented!(),
+            }
+        }
+    }
 
-            let (cipher_text, tag) = input.split_at(input.len() - TAG_LEN);
-            self.ctx.decrypt_init(None, None, Some(iv))?;
+    #[derive(Debug)]
+    pub enum Error {
+        #[cfg(feature = "openssl")]
+        Openssl(::openssl::error::ErrorStack),
+    }
 
-            // Add the additional authenticated data, omitting the output argument informs
-            // OpenSSL that we are providing AAD.
-            // With this the authentication tag will be verified.
-            for aad in aads {
-                self.ctx.cipher_update(aad, None)?;
+    impl fmt::Display for Error {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                #[cfg(feature = "openssl")]
+                Error::Openssl(e) => write!(f, "OpenSSL error in `aead_aes_128_gcm`: {e}"),
+                #[cfg(not(feature = "openssl"))]
+                _ => unimplemented!(),
+            }
+        }
+    }
+
+    pub enum Decrypter {
+        #[cfg(feature = "openssl")]
+        Openssl(openssl::Decrypter),
+    }
+
+    #[cfg(feature = "openssl")]
+    pub mod openssl {
+        use super::*;
+        use ::openssl::cipher;
+        use ::openssl::cipher_ctx::CipherCtx;
+        use ::openssl::error::ErrorStack;
+        use std::fmt;
+
+        pub struct Encrypter {
+            ctx: CipherCtx,
+        }
+
+        impl Encrypter {
+            pub fn new(key: &EncryptionKey) -> Self {
+                let t = cipher::Cipher::aes_128_gcm();
+                let mut ctx = CipherCtx::new().expect("a reusable cipher context");
+                ctx.encrypt_init(Some(t), Some(key), None)
+                    .expect("enc init");
+                ctx.set_iv_length(IV_LEN).expect("IV length");
+                ctx.set_padding(false);
+
+                Self { ctx }
             }
 
-            self.ctx.set_tag(tag)?;
+            pub fn encrypt(
+                &mut self,
+                iv: &[u8; IV_LEN],
+                aad: &[u8],
+                input: &[u8],
+                output: &mut [u8],
+            ) -> Result<(), ErrorStack> {
+                assert!(
+                    aad.len() >= 12,
+                    "Associated data length MUST be at least 12 octets"
+                );
 
-            let count = self.ctx.cipher_update(cipher_text, Some(output))?;
+                // Set the IV
+                self.ctx.encrypt_init(None, None, Some(iv))?;
 
-            let final_count = self.ctx.cipher_final(&mut output[count..])?;
+                // Add the additional authenticated data, omitting the output argument informs
+                // OpenSSL that we are providing AAD.
+                let aad_c = self.ctx.cipher_update(aad, None)?;
+                // TODO: This should maybe be an error
+                assert!(aad_c == aad.len());
 
-            Ok(count + final_count)
+                let count = self.ctx.cipher_update(input, Some(output))?;
+                let final_count = self.ctx.cipher_final(&mut output[count..])?;
+
+                // Get the authentication tag and append it to the output
+                let tag_offset = count + final_count;
+                self.ctx
+                    .tag(&mut output[tag_offset..tag_offset + TAG_LEN])?;
+
+                Ok(())
+            }
+        }
+
+        pub struct Decrypter {
+            ctx: CipherCtx,
+        }
+
+        impl Decrypter {
+            pub fn new(key: &DecryptionKey) -> Self {
+                let t = cipher::Cipher::aes_128_gcm();
+                let mut ctx = CipherCtx::new().expect("a reusable cipher context");
+                ctx.decrypt_init(Some(t), Some(key), None)
+                    .expect("dec init");
+
+                Self { ctx }
+            }
+
+            pub fn decrypt(
+                &mut self,
+                iv: &[u8; IV_LEN],
+                aads: &[&[u8]],
+                input: &[u8],
+                output: &mut [u8],
+            ) -> Result<usize, ErrorStack> {
+                // This needs to be converted to an error maybe
+                assert!(input.len() >= TAG_LEN);
+
+                let (cipher_text, tag) = input.split_at(input.len() - TAG_LEN);
+                self.ctx.decrypt_init(None, None, Some(iv))?;
+
+                // Add the additional authenticated data, omitting the output argument informs
+                // OpenSSL that we are providing AAD.
+                // With this the authentication tag will be verified.
+                for aad in aads {
+                    self.ctx.cipher_update(aad, None)?;
+                }
+
+                self.ctx.set_tag(tag)?;
+
+                let count = self.ctx.cipher_update(cipher_text, Some(output))?;
+
+                let final_count = self.ctx.cipher_final(&mut output[count..])?;
+
+                Ok(count + final_count)
+            }
+        }
+
+        impl fmt::Debug for Encrypter {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_struct("Encrypter").finish()
+            }
+        }
+
+        impl fmt::Debug for Decrypter {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_struct("Decrypter").finish()
+            }
+        }
+
+        impl From<ErrorStack> for Error {
+            fn from(value: ErrorStack) -> Self {
+                Error::Openssl(value)
+            }
         }
     }
 
@@ -983,7 +1164,7 @@ mod test {
 
         // aes crypto key
         let mut out = [0_u8; 16];
-        sk.derive(0, &mut out[..]);
+        sk.derive_openssl(0, &mut out[..]);
 
         assert_eq!(
             out,
@@ -995,7 +1176,7 @@ mod test {
 
         // hmac
         let mut out = [0_u8; 20];
-        sk.derive(1, &mut out[..]);
+        sk.derive_openssl(1, &mut out[..]);
 
         assert_eq!(
             out,
@@ -1008,7 +1189,7 @@ mod test {
 
         // salt
         let mut out = [0_u8; 14];
-        sk.derive(2, &mut out[..]);
+        sk.derive_openssl(2, &mut out[..]);
 
         assert_eq!(
             out,

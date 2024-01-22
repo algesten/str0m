@@ -11,7 +11,8 @@ categories = ["web-programming", "multimedia", "network-programming"]
 edition = "2021"
 
 [features]
-default = []
+default = ["openssl"]
+openssl = ["dep:openssl", "dep:openssl-sys"]
 _internal_dont_use_log_stats = []
 _internal_test_exports = []
 
@@ -25,8 +26,8 @@ combine = "4.6.6"
 # Sadly no DTLS support in rustls.
 # If you want to use a system provided openssl you can set env variable
 # OPENSSL_NO_VENDOR=1 to override the feature flag vendored
-openssl = { version = "0.10.45", features = ["vendored"] }
-openssl-sys = "0.9.80"
+openssl = { version = "0.10.45", features = ["vendored"], optional = true }
+openssl-sys = {version = "0.9.80", optional = true }
 # STUN
 hmac = "0.12.1"
 crc = "3.0.0"

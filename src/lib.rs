@@ -577,6 +577,10 @@
 #![allow(clippy::manual_range_contains)]
 #![allow(clippy::get_first)]
 #![deny(missing_docs)]
+#![cfg_attr(
+    not(feature = "openssl"),
+    allow(unused_variables, dead_code, unreachable_code)
+)] // Catch-all fix for feature-gated code.
 
 #[macro_use]
 extern crate tracing;
@@ -595,9 +599,8 @@ use util::InstantExt;
 
 mod crypto;
 mod dtls;
-use dtls::DtlsCert;
-use dtls::Fingerprint;
 use dtls::{Dtls, DtlsEvent};
+use dtls::{DtlsCert, Fingerprint};
 
 #[path = "ice/mod.rs"]
 mod ice_;
@@ -685,7 +688,7 @@ use media::{MediaAdded, MediaChanged, MediaData};
 pub mod change;
 
 mod util;
-use util::{already_happened, not_happening, Soonest};
+use util::{not_happening, Soonest};
 
 mod session;
 use session::Session;
@@ -991,6 +994,7 @@ impl Rtc {
     ///
     /// let rtc = Rtc::new();
     /// ```
+    #[cfg(feature = "openssl")]
     pub fn new() -> Self {
         let config = RtcConfig::default();
         Self::new_from_config(config)
@@ -1008,6 +1012,7 @@ impl Rtc {
         RtcConfig::new()
     }
 
+    #[cfg(feature = "openssl")]
     pub(crate) fn new_from_config(config: RtcConfig) -> Self {
         let session = Session::new(&config);
 
@@ -1020,7 +1025,7 @@ impl Rtc {
             alive: true,
             ice,
             dtls: Dtls::new(
-                config.dtls_cert.unwrap_or_else(DtlsCert::new),
+                config.dtls_cert.unwrap_or_else(DtlsCert::new_openssl),
                 config.fingerprint_verification,
             )
             .expect("DTLS to init without problem"),
@@ -1031,7 +1036,7 @@ impl Rtc {
             remote_fingerprint: None,
             remote_addrs: vec![],
             send_addr: None,
-            last_now: already_happened(),
+            last_now: util::already_happened(),
             peer_bytes_rx: 0,
             peer_bytes_tx: 0,
             change_counter: 0,
@@ -1718,25 +1723,29 @@ impl RtcConfig {
     ///     .direct_api()
     ///     .local_dtls_fingerprint();
     /// ```
-    pub fn dtls_cert(&self) -> Option<&DtlsCert> {
-        self.dtls_cert.as_ref()
+    #[cfg(feature = "openssl")]
+    pub fn dtls_cert(&self) -> Option<&dtls::ossl::DtlsCert> {
+        match self.dtls_cert.as_ref()? {
+            DtlsCert::Openssl(i) => Some(i),
+        }
     }
 
     /// Set the DTLS certificate for secure communication.
     ///
     /// Generating a certificate can be a time-consuming process.
-    /// Use this API to reuse a previously created [`DtlsCert`] if available.
+    /// Use this API to reuse a previously created [`DtlsCert`](dtls::ossl::DtlsCert) if available.
     ///
     /// ```
     /// # use str0m::RtcConfig;
-    /// # use str0m::change::DtlsCert;
+    /// # use str0m::change::openssl::DtlsCert;
     /// let dtls_cert = DtlsCert::new();
     ///
     /// let rtc_config = RtcConfig::default()
     ///     .set_dtls_cert(dtls_cert);
     /// ```
-    pub fn set_dtls_cert(mut self, dtls_cert: DtlsCert) -> Self {
-        self.dtls_cert = Some(dtls_cert);
+    #[cfg(feature = "openssl")]
+    pub fn set_dtls_cert(mut self, dtls_cert: dtls::ossl::DtlsCert) -> Self {
+        self.dtls_cert = Some(DtlsCert::Openssl(dtls_cert));
         self
     }
 
@@ -2105,6 +2114,7 @@ impl RtcConfig {
     }
 
     /// Create a [`Rtc`] from the configuration.
+    #[cfg(feature = "openssl")]
     pub fn build(self) -> Rtc {
         Rtc::new_from_config(self)
     }

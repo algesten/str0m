@@ -1,5 +1,3 @@
-use openssl::error::ErrorStack;
-use openssl::ssl::SslContext;
 use std::collections::VecDeque;
 use std::fmt;
 use std::io::{self, ErrorKind, Read, Write};
@@ -9,17 +7,16 @@ use thiserror::Error;
 
 use crate::io::{DatagramSend, DATAGRAM_MTU_WARN};
 
-mod ossl;
-use ossl::{dtls_create_ctx, dtls_ssl_create, TlsStream};
-
-pub use ossl::DtlsCert;
+#[cfg(feature = "openssl")]
+pub(crate) mod ossl;
 
 /// Errors that can arise in DTLS.
 #[derive(Debug, Error)]
 pub enum DtlsError {
     /// Some error from OpenSSL layer (used for DTLS).
     #[error("{0}")]
-    OpenSsl(#[from] ErrorStack),
+    #[cfg(feature = "openssl")]
+    OpenSsl(#[from] openssl::error::ErrorStack),
 
     /// Other IO errors.
     #[error("{0}")]
@@ -27,6 +24,7 @@ pub enum DtlsError {
 }
 
 impl DtlsError {
+    #[allow(irrefutable_let_patterns)]
     pub(crate) fn is_would_block(&self) -> bool {
         let DtlsError::Io(e) = self else {
             return false;
@@ -91,10 +89,13 @@ impl std::str::FromStr for Fingerprint {
 pub enum SrtpProfile {
     #[cfg(feature = "_internal_test_exports")]
     PassThrough,
+    #[cfg(feature = "openssl")]
     Aes128CmSha1_80,
+    #[cfg(feature = "openssl")]
     AeadAes128Gcm,
 }
 
+#[cfg(feature = "openssl")]
 impl SrtpProfile {
     // All the profiles we support, ordered from most preferred to least.
     pub(crate) const ALL: &'static [SrtpProfile] =
@@ -106,9 +107,9 @@ impl SrtpProfile {
         match self {
             #[cfg(feature = "_internal_test_exports")]
             SrtpProfile::PassThrough => 0,
-             // MASTER_KEY_LEN * 2 + MASTER_SALT * 2
-             // TODO: This is a duplication of info that is held in srtp.rs, because we
-             // don't want a dependency in that direction.
+            // MASTER_KEY_LEN * 2 + MASTER_SALT * 2
+            // TODO: This is a duplication of info that is held in srtp.rs, because we
+            // don't want a dependency in that direction.
             SrtpProfile::Aes128CmSha1_80 => 16 * 2 + 14 * 2,
             SrtpProfile::AeadAes128Gcm   => 16 * 2 + 12 * 2,
         }
@@ -130,8 +131,12 @@ impl fmt::Display for SrtpProfile {
         match self {
             #[cfg(feature = "_internal_test_exports")]
             SrtpProfile::PassThrough => write!(f, "PassThrough"),
+            #[cfg(feature = "openssl")]
             SrtpProfile::Aes128CmSha1_80 => write!(f, "SRTP_AES128_CM_SHA1_80"),
+            #[cfg(feature = "openssl")]
             SrtpProfile::AeadAes128Gcm => write!(f, "SRTP_AEAD_AES_128_GCM"),
+            #[cfg(not(feature = "openssl"))]
+            _ => write!(f, ""),
         }
     }
 }
@@ -154,10 +159,10 @@ pub struct Dtls {
     ///
     /// This just needs to be kept alive since it pins the entire openssl context
     /// from which `Ssl` is created.
-    _context: SslContext,
+    _context: TlsContext,
 
-    /// The actual openssl TLS stream.
-    tls: TlsStream<IoBuffer>,
+    /// The actual TLS stream.
+    tls: TlsStream,
 
     /// Outgoing events, ready to be polled.
     events: VecDeque<DtlsEvent>,
@@ -185,17 +190,17 @@ impl Dtls {
     ///
     /// `active` indicates whether this side should initiate the handshake or not.
     /// This in turn is governed by the `a=setup` SDP attribute.
-    pub fn new(cert: DtlsCert, fingerprint_verification: bool) -> Result<Self, DtlsError> {
+    pub(crate) fn new(cert: DtlsCert, fingerprint_verification: bool) -> Result<Self, DtlsError> {
         let fingerprint = cert.fingerprint();
-        let context = dtls_create_ctx(&cert)?;
-        let ssl = dtls_ssl_create(&context)?;
+        let context = cert.new_context()?;
+        let stream = context.new_stream()?;
         Ok(Dtls {
             _cert: cert,
             fingerprint,
             fingerprint_verification,
             remote_fingerprint: None,
             _context: context,
-            tls: TlsStream::new(ssl, IoBuffer::default()),
+            tls: stream,
             events: VecDeque::new(),
         })
     }
@@ -239,7 +244,7 @@ impl Dtls {
 
     /// Poll for the next datagram to send.
     pub fn poll_datagram(&mut self) -> Option<DatagramSend> {
-        let x = self.tls.inner_mut().pop_outgoing();
+        let x = self.tls.pop_outgoing();
         if let Some(x) = &x {
             if x.len() > DATAGRAM_MTU_WARN {
                 warn!("DTLS above MTU {}: {}", DATAGRAM_MTU_WARN, x.len());
@@ -265,7 +270,7 @@ impl Dtls {
 
     /// Handles an incoming DTLS datagrams.
     pub fn handle_receive(&mut self, message: &[u8]) -> Result<(), DtlsError> {
-        self.tls.inner_mut().set_incoming(message);
+        self.tls.set_incoming(message);
 
         if self.handle_handshake()? {
             // early return as long as we're handshaking
@@ -326,7 +331,7 @@ impl Dtls {
 }
 
 /// Keying material used as master key for SRTP.
-pub(crate) struct KeyingMaterial(Vec<u8>);
+pub struct KeyingMaterial(Vec<u8>);
 
 impl KeyingMaterial {
     #[cfg(any(test, feature = "_internal_test_exports"))]
@@ -346,6 +351,177 @@ impl Deref for KeyingMaterial {
 impl std::fmt::Debug for KeyingMaterial {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "KeyingMaterial")
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum DtlsCert {
+    #[cfg(feature = "openssl")]
+    Openssl(ossl::DtlsCert),
+}
+
+impl DtlsCert {
+    #[cfg(feature = "openssl")]
+    pub(crate) fn new_openssl() -> DtlsCert {
+        DtlsCert::Openssl(ossl::DtlsCert::new())
+    }
+}
+
+enum TlsContext {
+    #[cfg(feature = "openssl")]
+    Openssl(openssl::ssl::SslContext),
+}
+
+enum TlsStream {
+    #[cfg(feature = "openssl")]
+    Openssl(ossl::TlsStream<IoBuffer>),
+}
+
+impl TlsStream {
+    fn is_inited(&self) -> bool {
+        match self {
+            #[cfg(feature = "openssl")]
+            TlsStream::Openssl(i) => i.is_inited(),
+            #[cfg(not(feature = "openssl"))]
+            _ => unreachable!(),
+        }
+    }
+
+    fn set_active(&mut self, active: bool) {
+        match self {
+            #[cfg(feature = "openssl")]
+            TlsStream::Openssl(i) => i.set_active(active),
+            #[cfg(not(feature = "openssl"))]
+            _ => unreachable!(),
+        }
+    }
+
+    fn is_active(&self) -> Option<bool> {
+        match self {
+            #[cfg(feature = "openssl")]
+            TlsStream::Openssl(i) => i.is_active(),
+            #[cfg(not(feature = "openssl"))]
+            _ => unreachable!(),
+        }
+    }
+
+    fn pop_outgoing(&mut self) -> Option<DatagramSend> {
+        match self {
+            #[cfg(feature = "openssl")]
+            TlsStream::Openssl(i) => i.inner_mut().pop_outgoing(),
+            #[cfg(not(feature = "openssl"))]
+            _ => unreachable!(),
+        }
+    }
+
+    fn is_connected(&self) -> bool {
+        match self {
+            #[cfg(feature = "openssl")]
+            TlsStream::Openssl(i) => i.is_connected(),
+            #[cfg(not(feature = "openssl"))]
+            _ => unreachable!(),
+        }
+    }
+
+    fn is_handshaken(&self) -> bool {
+        match self {
+            #[cfg(feature = "openssl")]
+            TlsStream::Openssl(i) => i.is_handshaken(),
+            #[cfg(not(feature = "openssl"))]
+            _ => unreachable!(),
+        }
+    }
+
+    fn complete_handshake_until_block(&mut self) -> Result<bool, DtlsError> {
+        match self {
+            #[cfg(feature = "openssl")]
+            TlsStream::Openssl(i) => i.complete_handshake_until_block(),
+            #[cfg(not(feature = "openssl"))]
+            _ => unreachable!(),
+        }
+    }
+
+    fn take_srtp_keying_material(&mut self) -> Option<(KeyingMaterial, SrtpProfile, Fingerprint)> {
+        match self {
+            #[cfg(feature = "openssl")]
+            TlsStream::Openssl(i) => i.take_srtp_keying_material(),
+            #[cfg(not(feature = "openssl"))]
+            _ => unreachable!(),
+        }
+    }
+
+    fn set_incoming(&mut self, message: &[u8]) {
+        match self {
+            #[cfg(feature = "openssl")]
+            TlsStream::Openssl(i) => i.inner_mut().set_incoming(message),
+            #[cfg(not(feature = "openssl"))]
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl Read for TlsStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            #[cfg(feature = "openssl")]
+            TlsStream::Openssl(i) => i.read(buf),
+            #[cfg(not(feature = "openssl"))]
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl Write for TlsStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            #[cfg(feature = "openssl")]
+            TlsStream::Openssl(i) => i.write(buf),
+            #[cfg(not(feature = "openssl"))]
+            _ => unreachable!(),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            #[cfg(feature = "openssl")]
+            TlsStream::Openssl(i) => i.flush(),
+            #[cfg(not(feature = "openssl"))]
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl TlsContext {
+    fn new_stream(&self) -> Result<TlsStream, DtlsError> {
+        match self {
+            #[cfg(feature = "openssl")]
+            TlsContext::Openssl(inner) => Ok(TlsStream::Openssl(ossl::TlsStream::new(
+                ossl::dtls_ssl_create(inner)?,
+                IoBuffer::default(),
+            ))),
+            #[cfg(not(feature = "openssl"))]
+            _ => unimplemented!(),
+        }
+    }
+}
+
+impl DtlsCert {
+    fn fingerprint(&self) -> Fingerprint {
+        match self {
+            #[cfg(feature = "openssl")]
+            DtlsCert::Openssl(inner) => inner.fingerprint(),
+            #[cfg(not(feature = "openssl"))]
+            _ => unreachable!(),
+        }
+    }
+
+    fn new_context(&self) -> Result<TlsContext, DtlsError> {
+        match self {
+            #[cfg(feature = "openssl")]
+            DtlsCert::Openssl(inner) => Ok(TlsContext::Openssl(ossl::dtls_create_ctx(inner)?)),
+            #[cfg(not(feature = "openssl"))]
+            _ => unreachable!(),
+        }
     }
 }
 
