@@ -288,28 +288,31 @@ impl Dtls {
     pub fn handle_handshake(&mut self) -> Result<bool, DtlsError> {
         if self.tls.is_handshaken() {
             // Nice. Nothing to do.
-            Ok(false)
-        } else if self.tls.complete_handshake_until_block()? {
-            self.events.push_back(DtlsEvent::Connected);
-
-            let (keying_material, srtp_profile, fingerprint) = self
-                .tls
-                .take_srtp_keying_material()
-                .expect("Exported keying material");
-
-            self.remote_fingerprint = Some(fingerprint.clone());
-
-            if self.fingerprint_verification {
-                self.events
-                    .push_back(DtlsEvent::RemoteFingerprint(fingerprint));
-            }
-
-            self.events
-                .push_back(DtlsEvent::SrtpKeyingMaterial(keying_material, srtp_profile));
-            Ok(false)
-        } else {
-            Ok(true)
+            return Ok(false);
         }
+
+        if !self.tls.complete_handshake_until_block()? {
+            return Ok(true);
+        }
+
+        self.events.push_back(DtlsEvent::Connected);
+
+        let (keying_material, srtp_profile, fingerprint) = self
+            .tls
+            .take_srtp_keying_material()
+            .expect("Exported keying material");
+
+        self.remote_fingerprint = Some(fingerprint.clone());
+
+        if self.fingerprint_verification {
+            self.events
+                .push_back(DtlsEvent::RemoteFingerprint(fingerprint));
+        }
+
+        self.events
+            .push_back(DtlsEvent::SrtpKeyingMaterial(keying_material, srtp_profile));
+
+        Ok(false)
     }
 
     pub(crate) fn is_connected(&self) -> bool {
