@@ -54,6 +54,10 @@ jobs:
         with:
           command: clippy
           args: --all-targets -- -D warnings
+      - uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: --all-targets --no-default-features -- -D warnings
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
