@@ -150,9 +150,9 @@ impl SrtpContext {
                     input.len() % SRTP_BLOCK_SIZE == 0,
                     "RTP body should be padded to 16 byte block size, {header:?} with body length {} was not", input.len()
                 );
-                use aes_128_cm_sha1_80::{ToRtpIv, HMAC_TAG_LEN};
+                use aes_128_cm_sha1_80::HMAC_TAG_LEN;
 
-                let iv = salt.rtp_iv(*header.ssrc, srtp_index);
+                let iv = aes_128_cm_sha1_80::rtp_iv(*salt, *header.ssrc, srtp_index);
 
                 let mut output = vec![0_u8; buf.len() + HMAC_TAG_LEN];
                 enc.encrypt(&iv, input, &mut output[hlen..])
@@ -194,7 +194,7 @@ impl SrtpContext {
             #[cfg(feature = "_internal_test_exports")]
             Derived::PassThrough => Some(buf.to_vec()),
             Derived::Aes128CmSha1_80 { key, salt, dec, .. } => {
-                use aes_128_cm_sha1_80::{ToRtpIv, HMAC_TAG_LEN};
+                use aes_128_cm_sha1_80::HMAC_TAG_LEN;
 
                 if buf.len() < HMAC_TAG_LEN {
                     return None;
@@ -212,7 +212,7 @@ impl SrtpContext {
                     return None;
                 }
 
-                let iv = salt.rtp_iv(*header.ssrc, srtp_index);
+                let iv = aes_128_cm_sha1_80::rtp_iv(*salt, *header.ssrc, srtp_index);
 
                 let input = &buf[header.header_len..hmac_start];
                 let mut output = vec![0; input.len()];
@@ -274,9 +274,9 @@ impl SrtpContext {
             #[cfg(feature = "_internal_test_exports")]
             Derived::PassThrough => buf.to_vec(),
             Derived::Aes128CmSha1_80 { key, salt, enc, .. } => {
-                use aes_128_cm_sha1_80::{ToRtpIv, HMAC_TAG_LEN};
+                use aes_128_cm_sha1_80::HMAC_TAG_LEN;
 
-                let iv = salt.rtp_iv(ssrc, srtcp_index as u64);
+                let iv = aes_128_cm_sha1_80::rtp_iv(*salt, ssrc, srtcp_index as u64);
 
                 let mut output = vec![0_u8; buf.len() + SRTCP_INDEX_LEN + HMAC_TAG_LEN];
                 output[0..8].copy_from_slice(&buf[0..8]);
@@ -332,7 +332,7 @@ impl SrtpContext {
             #[cfg(feature = "_internal_test_exports")]
             Derived::PassThrough => Some(buf.to_vec()),
             Derived::Aes128CmSha1_80 { key, salt, dec, .. } => {
-                use aes_128_cm_sha1_80::{ToRtpIv, HMAC_TAG_LEN};
+                use aes_128_cm_sha1_80::HMAC_TAG_LEN;
 
                 if buf.len() < HMAC_TAG_LEN + SRTCP_INDEX_LEN {
                     return None;
@@ -368,7 +368,7 @@ impl SrtpContext {
                 let srtcp_index = e_and_si & 0x7fff_ffff;
                 let ssrc = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
 
-                let iv = salt.rtp_iv(ssrc, srtcp_index as u64);
+                let iv = aes_128_cm_sha1_80::rtp_iv(*salt, ssrc, srtcp_index as u64);
 
                 // The Encrypted Portion of an SRTCP packet consists of the encryption
                 // of the RTCP payload of the equivalent compound RTCP packet, from the
@@ -753,6 +753,23 @@ mod aes_128_cm_sha1_80 {
         &tag[0..HMAC_TAG_LEN] == cmp
     }
 
+    pub fn rtp_iv(salt: RtpSalt, ssrc: u32, srtp_index: u64) -> RtpIv {
+        let mut iv = [0; 16];
+
+        let ssrc_be = ssrc.to_be_bytes();
+        let srtp_be = srtp_index.to_be_bytes();
+
+        iv[4..8].copy_from_slice(&ssrc_be);
+
+        for i in 0..8 {
+            iv[i + 6] ^= srtp_be[i];
+        }
+        for i in 0..14 {
+            iv[i] ^= salt[i];
+        }
+
+        iv
+    }
     pub fn rtcp_hmac(key: &[u8], buf: &mut [u8], hmac_index: usize) {
         let tag = crate::crypto::sha1_hmac(key, &[&buf[0..hmac_index]]);
 
@@ -763,30 +780,6 @@ mod aes_128_cm_sha1_80 {
         let tag = crate::crypto::sha1_hmac(key, &[buf]);
 
         &tag[0..HMAC_TAG_LEN] == cmp
-    }
-
-    pub(super) trait ToRtpIv {
-        fn rtp_iv(&self, ssrc: u32, srtp_index: u64) -> RtpIv;
-    }
-
-    impl ToRtpIv for RtpSalt {
-        fn rtp_iv(&self, ssrc: u32, srtp_index: u64) -> RtpIv {
-            let mut iv = [0; 16];
-
-            let ssrc_be = ssrc.to_be_bytes();
-            let srtp_be = srtp_index.to_be_bytes();
-
-            iv[4..8].copy_from_slice(&ssrc_be);
-
-            for i in 0..8 {
-                iv[i + 6] ^= srtp_be[i];
-            }
-            for i in 0..14 {
-                iv[i] ^= self[i];
-            }
-
-            iv
-        }
     }
 
     impl fmt::Debug for Encrypter {
