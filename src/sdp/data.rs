@@ -7,7 +7,7 @@ use std::num::ParseFloatError;
 use std::ops::Deref;
 use std::str::FromStr;
 
-use crate::dtls::Fingerprint;
+use crate::crypto::Fingerprint;
 use crate::format::Codec;
 use crate::format::CodecSpec;
 use crate::format::FormatParams;

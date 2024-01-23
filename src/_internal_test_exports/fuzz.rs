@@ -4,7 +4,8 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::change::{SdpAnswer, SdpOffer};
-use crate::dtls::{KeyingMaterial, SrtpProfile};
+use crate::crypto::KeyingMaterial;
+use crate::crypto::SrtpProfile;
 use crate::format::Codec;
 use crate::packet::{DepacketizingBuffer, RtpMeta};
 use crate::rtp_::{Frequency, MediaTime, RtpHeader};
@@ -54,7 +55,7 @@ pub fn rtp_packet(data: &[u8]) -> Option<()> {
 
     let mut session = Session::new(&config);
     session.set_keying_material(
-        KeyingMaterial::new(rng.slice(16)?),
+        KeyingMaterial::new(rng.slice(16)?.to_vec()),
         SrtpProfile::PassThrough,
         rng.bool()?,
     );

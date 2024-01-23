@@ -2,8 +2,8 @@ use std::fmt;
 
 use openssl::symm::{Cipher, Crypter, Mode};
 
-use crate::dtls::KeyingMaterial;
-use crate::dtls::SrtpProfile;
+use crate::crypto::KeyingMaterial;
+use crate::crypto::SrtpProfile;
 
 use super::header::RtpHeader;
 
@@ -1049,7 +1049,7 @@ mod test {
 
         #[test]
         fn unprotect_rtcp() {
-            let key_mat = KeyingMaterial::new(&MAT);
+            let key_mat = KeyingMaterial::new(MAT.to_vec());
             let mut ctx_rx = SrtpContext::new(SrtpProfile::Aes128CmSha1_80, &key_mat, true);
             ctx_rx.srtcp_index = 1;
 

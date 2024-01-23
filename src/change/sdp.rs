@@ -4,7 +4,7 @@ use std::fmt;
 use std::ops::{Deref, DerefMut};
 
 use crate::channel::ChannelId;
-use crate::dtls::Fingerprint;
+use crate::crypto::Fingerprint;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::Id;

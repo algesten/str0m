@@ -8,7 +8,7 @@ use {
     combine::{ParseError, Parser, Stream},
 };
 
-use crate::dtls::Fingerprint;
+use crate::crypto::Fingerprint;
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, SessionId, Ssrc};
 use crate::sdp::SdpError;
 use crate::{Candidate, CandidateKind};
