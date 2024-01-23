@@ -3,8 +3,6 @@ use std::fmt;
 use self::aead_aes_128_gcm::AeadKey;
 use self::aes_128_cm_sha1_80::AesKey;
 
-use super::ossl::OsslSrtpCryptoImpl;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SrtpProfile {
     #[cfg(feature = "_internal_test_exports")]
@@ -13,21 +11,48 @@ pub enum SrtpProfile {
     AeadAes128Gcm,
 }
 
+#[allow(unused)]
+
 pub fn new_aes_128_cm_sha1_80(
     key: AesKey,
     encrypt: bool,
 ) -> Box<dyn aes_128_cm_sha1_80::CipherCtx> {
-    let ctx = super::ossl::OsslSrtpCryptoImpl::new_aes_128_cm_sha1_80(key, encrypt);
-    Box::new(ctx)
+    #[cfg(feature = "openssl")]
+    {
+        let ctx = super::ossl::OsslSrtpCryptoImpl::new_aes_128_cm_sha1_80(key, encrypt);
+        Box::new(ctx)
+    }
+    #[cfg(not(feature = "openssl"))]
+    {
+        panic!("No SRTP implementation. Enable openssl feature");
+    }
 }
+
+#[allow(unused)]
 
 pub fn new_aead_aes_128_gcm(key: AeadKey, encrypt: bool) -> Box<dyn aead_aes_128_gcm::CipherCtx> {
-    let ctx = super::ossl::OsslSrtpCryptoImpl::new_aead_aes_128_gcm(key, encrypt);
-    Box::new(ctx)
+    #[cfg(feature = "openssl")]
+    {
+        let ctx = super::ossl::OsslSrtpCryptoImpl::new_aead_aes_128_gcm(key, encrypt);
+        Box::new(ctx)
+    }
+    #[cfg(not(feature = "openssl"))]
+    {
+        panic!("No SRTP implementation. Enable openssl feature");
+    }
 }
 
+#[allow(unused)]
+
 pub fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
-    OsslSrtpCryptoImpl::srtp_aes_128_ecb_round(key, input, output)
+    #[cfg(feature = "openssl")]
+    {
+        super::ossl::OsslSrtpCryptoImpl::srtp_aes_128_ecb_round(key, input, output)
+    }
+    #[cfg(not(feature = "openssl"))]
+    {
+        panic!("No SRTP implementation. Enable openssl feature");
+    }
 }
 
 pub trait SrtpCryptoImpl {
