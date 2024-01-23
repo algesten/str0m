@@ -7,9 +7,6 @@ use crate::net::DatagramSend;
 
 use super::{CryptoError, Fingerprint, KeyingMaterial, SrtpProfile};
 
-#[cfg(feature = "openssl")]
-use super::ossl;
-
 // libWebRTC says "WebRTC" here when doing OpenSSL, for BoringSSL they seem
 // to generate a random 8 characters.
 // https://webrtc.googlesource.com/src/+/1568f1b1330f94494197696fe235094e6293b258/rtc_base/rtc_certificate_generator.cc#27
@@ -42,14 +39,14 @@ pub struct DtlsCert(DtlsCertInner);
 #[derive(Debug, Clone)]
 pub enum DtlsCertInner {
     #[cfg(feature = "openssl")]
-    OpenSsl(ossl::OsslDtlsCert),
+    OpenSsl(super::ossl::OsslDtlsCert),
 }
 
 impl DtlsCert {
     /// Create a new OpenSSL variant of the certificate.
     #[cfg(feature = "openssl")]
     pub fn new_openssl() -> Self {
-        let cert = ossl::OsslDtlsCert::new();
+        let cert = super::ossl::OsslDtlsCert::new();
         DtlsCert(DtlsCertInner::OpenSsl(cert))
     }
 
@@ -67,7 +64,9 @@ impl DtlsCert {
     pub(crate) fn create_dtls_impl(&self) -> Result<DtlsImpl, CryptoError> {
         let dtls_impl = match &self.0 {
             #[cfg(feature = "openssl")]
-            DtlsCertInner::OpenSsl(c) => DtlsImpl::OpenSsl(ossl::OsslDtlsImpl::new(c.clone())?),
+            DtlsCertInner::OpenSsl(c) => {
+                DtlsImpl::OpenSsl(super::ossl::OsslDtlsImpl::new(c.clone())?)
+            }
             _ => unreachable!(),
         };
         Ok(dtls_impl)
@@ -112,7 +111,7 @@ pub trait DtlsInner: Sized {
 
 pub enum DtlsImpl {
     #[cfg(feature = "openssl")]
-    OpenSsl(ossl::OsslDtlsImpl),
+    OpenSsl(super::ossl::OsslDtlsImpl),
 }
 
 impl DtlsImpl {

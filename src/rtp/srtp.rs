@@ -1,9 +1,7 @@
 use std::fmt;
 
-use openssl::symm::{Cipher, Crypter, Mode};
-
-use crate::crypto::KeyingMaterial;
-use crate::crypto::SrtpProfile;
+use crate::crypto::{self, new_aead_aes_128_gcm, new_aes_128_cm_sha1_80, KeyingMaterial};
+use crate::crypto::{aead_aes_128_gcm, aes_128_cm_sha1_80, SrtpProfile};
 
 use super::header::RtpHeader;
 
@@ -77,18 +75,16 @@ impl SrtpContext {
         rtcp_salt: [u8; aead_aes_128_gcm::SALT_LEN],
         srtcp_index: u32,
     ) -> Self {
-        use aead_aes_128_gcm::*;
-
         Self {
             rtp: Derived::AeadAes128Gcm {
                 salt: rtp_salt,
-                enc: Encrypter::new(&rtp_key),
-                dec: Decrypter::new(&rtp_key),
+                enc: new_aead_aes_128_gcm(rtp_key, true),
+                dec: new_aead_aes_128_gcm(rtp_key, false),
             },
             rtcp: Derived::AeadAes128Gcm {
                 salt: rtcp_salt,
-                enc: Encrypter::new(&rtcp_key),
-                dec: Decrypter::new(&rtcp_key),
+                enc: new_aead_aes_128_gcm(rtcp_key, true),
+                dec: new_aead_aes_128_gcm(rtcp_key, false),
             },
             srtcp_index,
         }
@@ -515,13 +511,7 @@ impl<const ML: usize, const SL: usize> SrtpKey<ML, SL> {
             input[14..].copy_from_slice(&round.to_be_bytes()[..]);
 
             // default key derivation function, which uses AES-128 in Counter Mode
-            let mut aes = Crypter::new(Cipher::aes_128_ecb(), Mode::Encrypt, &self.master, None)
-                .expect("AES deriver");
-
-            // Run AES
-            let count = aes.update(&input[..], &mut buf[..]).expect("AES update");
-            let rest = aes.finalize(&mut buf[count..]).expect("AES finalize");
-            assert_eq!(count + rest, 16 + 16); // input len + block size
+            crypto::srtp_aes_128_ecb_round(&self.master, &input[..], &mut buf[..]);
 
             // Copy to output. Even if we get 32 bytes of output with AES 128 ECB, we
             // only use the first 16. That matches the tests in the RFC.
@@ -545,13 +535,13 @@ enum Derived {
     Aes128CmSha1_80 {
         key: [u8; 20],
         salt: aes_128_cm_sha1_80::RtpSalt,
-        enc: aes_128_cm_sha1_80::Encrypter,
-        dec: aes_128_cm_sha1_80::Decrypter,
+        enc: Box<dyn aes_128_cm_sha1_80::CipherCtx>,
+        dec: Box<dyn aes_128_cm_sha1_80::CipherCtx>,
     },
     AeadAes128Gcm {
         salt: aead_aes_128_gcm::RtpSalt,
-        enc: aead_aes_128_gcm::Encrypter,
-        dec: aead_aes_128_gcm::Decrypter,
+        enc: Box<dyn aead_aes_128_gcm::CipherCtx>,
+        dec: Box<dyn aead_aes_128_gcm::CipherCtx>,
     },
 }
 
@@ -594,15 +584,15 @@ impl Derived {
         let rtp = Derived::Aes128CmSha1_80 {
             key: rtp_hmac,
             salt: rtp_salt,
-            enc: Encrypter::new(rtp_aes),
-            dec: Decrypter::new(rtp_aes),
+            enc: new_aes_128_cm_sha1_80(rtp_aes, true),
+            dec: new_aes_128_cm_sha1_80(rtp_aes, false),
         };
 
         let rtcp = Derived::Aes128CmSha1_80 {
             key: rtcp_hmac,
             salt: rtcp_salt,
-            enc: Encrypter::new(rtcp_aes),
-            dec: Decrypter::new(rtcp_aes),
+            enc: new_aes_128_cm_sha1_80(rtcp_aes, true),
+            dec: new_aes_128_cm_sha1_80(rtcp_aes, false),
         };
 
         (rtp, rtcp)
@@ -631,14 +621,14 @@ impl Derived {
 
         let rtp = Derived::AeadAes128Gcm {
             salt: rtp_salt,
-            enc: Encrypter::new(&rtp_aes),
-            dec: Decrypter::new(&rtp_aes),
+            enc: new_aead_aes_128_gcm(rtp_aes, true),
+            dec: new_aead_aes_128_gcm(rtp_aes, false),
         };
 
         let rtcp = Derived::AeadAes128Gcm {
             salt: rtcp_salt,
-            enc: Encrypter::new(&rtcp_aes),
-            dec: Decrypter::new(&rtcp_aes),
+            enc: new_aead_aes_128_gcm(rtcp_aes, true),
+            dec: new_aead_aes_128_gcm(rtcp_aes, false),
         };
 
         (rtp, rtcp)
@@ -657,305 +647,6 @@ impl Derived {
 impl fmt::Debug for Derived {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Derived")
-    }
-}
-
-// Implementation specific to `AES128_CM_SHA1_80`
-mod aes_128_cm_sha1_80 {
-    // SRTP_AES128_CM_HMAC_SHA1_80
-    //    cipher: AES_128_CM
-    //    cipher_key_length: 128
-    //    cipher_salt_length: 112
-    //    maximum_lifetime: 2^31
-    //    auth_function: HMAC-SHA1
-    //    auth_key_length: 160
-    //    auth_tag_length: 80
-    pub(super) const KEY_LEN: usize = 16;
-    pub(super) const SALT_LEN: usize = 14;
-    pub(super) const HMAC_KEY_LEN: usize = 20;
-    pub(super) const HMAC_TAG_LEN: usize = 10;
-
-    use std::fmt;
-
-    use openssl::cipher;
-    use openssl::cipher_ctx::CipherCtx;
-    use openssl::error::ErrorStack;
-
-    type AesKey = [u8; 16];
-    pub(super) type RtpSalt = [u8; 14];
-    type RtpIv = [u8; 16];
-
-    pub(super) struct Encrypter {
-        ctx: CipherCtx,
-    }
-
-    impl Encrypter {
-        pub(super) fn new(key: AesKey) -> Self {
-            let t = cipher::Cipher::aes_128_ctr();
-            let mut ctx = CipherCtx::new().expect("a reusable cipher context");
-            ctx.encrypt_init(Some(t), Some(&key[..]), None)
-                .expect("enc init");
-            Encrypter { ctx }
-        }
-
-        pub(super) fn encrypt(
-            &mut self,
-            iv: &RtpIv,
-            input: &[u8],
-            output: &mut [u8],
-        ) -> Result<(), ErrorStack> {
-            self.ctx.encrypt_init(None, None, Some(iv))?;
-            let count = self.ctx.cipher_update(input, Some(output))?;
-            self.ctx.cipher_final(&mut output[count..])?;
-            Ok(())
-        }
-    }
-
-    pub(super) struct Decrypter {
-        ctx: CipherCtx,
-    }
-
-    impl Decrypter {
-        pub(super) fn new(key: AesKey) -> Self {
-            let t = cipher::Cipher::aes_128_ctr();
-            let mut ctx = CipherCtx::new().expect("a reusable cipher context");
-            ctx.decrypt_init(Some(t), Some(&key[..]), None)
-                .expect("enc init");
-            Decrypter { ctx }
-        }
-
-        pub(super) fn decrypt(
-            &mut self,
-            iv: &RtpIv,
-            input: &[u8],
-            output: &mut [u8],
-        ) -> Result<(), ErrorStack> {
-            self.ctx.decrypt_init(None, None, Some(iv))?;
-            let count = self.ctx.cipher_update(input, Some(output))?;
-            self.ctx.cipher_final(&mut output[count..])?;
-            Ok(())
-        }
-    }
-
-    pub fn rtp_hmac(key: &[u8], buf: &mut [u8], srtp_index: u64, hmac_start: usize) {
-        let roc = (srtp_index >> 16) as u32;
-
-        let tag = crate::crypto::sha1_hmac(key, &[&buf[..hmac_start], &roc.to_be_bytes()]);
-
-        buf[hmac_start..(hmac_start + HMAC_TAG_LEN)].copy_from_slice(&tag[0..HMAC_TAG_LEN]);
-    }
-
-    pub fn rtp_verify(key: &[u8], buf: &[u8], srtp_index: u64, cmp: &[u8]) -> bool {
-        let roc = (srtp_index >> 16) as u32;
-
-        let tag = crate::crypto::sha1_hmac(key, &[buf, &roc.to_be_bytes()]);
-
-        &tag[0..HMAC_TAG_LEN] == cmp
-    }
-
-    pub fn rtp_iv(salt: RtpSalt, ssrc: u32, srtp_index: u64) -> RtpIv {
-        let mut iv = [0; 16];
-
-        let ssrc_be = ssrc.to_be_bytes();
-        let srtp_be = srtp_index.to_be_bytes();
-
-        iv[4..8].copy_from_slice(&ssrc_be);
-
-        for i in 0..8 {
-            iv[i + 6] ^= srtp_be[i];
-        }
-        for i in 0..14 {
-            iv[i] ^= salt[i];
-        }
-
-        iv
-    }
-    pub fn rtcp_hmac(key: &[u8], buf: &mut [u8], hmac_index: usize) {
-        let tag = crate::crypto::sha1_hmac(key, &[&buf[0..hmac_index]]);
-
-        buf[hmac_index..(hmac_index + HMAC_TAG_LEN)].copy_from_slice(&tag[0..HMAC_TAG_LEN]);
-    }
-
-    pub fn rtcp_verify(key: &[u8], buf: &[u8], cmp: &[u8]) -> bool {
-        let tag = crate::crypto::sha1_hmac(key, &[buf]);
-
-        &tag[0..HMAC_TAG_LEN] == cmp
-    }
-
-    impl fmt::Debug for Encrypter {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("Encrypter").finish()
-        }
-    }
-
-    impl fmt::Debug for Decrypter {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.debug_struct("Decrypter").finish()
-        }
-    }
-}
-
-// Implementation specific to `AEAD_AES_128_GCM`
-mod aead_aes_128_gcm {
-    // +--------------------------------+------------------------------+
-    // | Parameter                      | Value                        |
-    // +--------------------------------+------------------------------+
-    // | Master key length              | 128 bits                     |
-    // | Master salt length             | 96 bits                      |
-    // | Key Derivation Function        | AES_CM PRF(RFC3711)          |
-    // | Maximum key lifetime (SRTP)    | 2^48 packets                 |
-    // | Maximum key lifetime (SRTCP)   | 2^31 packets                 |
-    // | Cipher (for SRTP and SRTCP)    | AEAD_AES_128_GCM             |
-    // | AEAD authentication tag length | 128 bits                     |
-    // +--------------------------------+------------------------------+
-
-    use openssl::cipher;
-    use openssl::cipher_ctx::CipherCtx;
-    use openssl::error::ErrorStack;
-
-    pub(super) const KEY_LEN: usize = 16;
-    pub(super) const SALT_LEN: usize = 12;
-    pub(super) const RTCP_AAD_LEN: usize = 12;
-    pub(super) const TAG_LEN: usize = 16;
-    const IV_LEN: usize = 12;
-
-    type EncryptionKey = [u8; KEY_LEN];
-    type DecryptionKey = [u8; KEY_LEN];
-    pub(super) type RtpSalt = [u8; SALT_LEN];
-    type RtpIv = [u8; SALT_LEN];
-
-    pub(super) struct Encrypter {
-        ctx: CipherCtx,
-    }
-
-    impl Encrypter {
-        pub(super) fn new(key: &EncryptionKey) -> Self {
-            let t = cipher::Cipher::aes_128_gcm();
-            let mut ctx = CipherCtx::new().expect("a reusable cipher context");
-            ctx.encrypt_init(Some(t), Some(key), None)
-                .expect("enc init");
-            ctx.set_iv_length(IV_LEN).expect("IV length");
-            ctx.set_padding(false);
-
-            Self { ctx }
-        }
-
-        pub(super) fn encrypt(
-            &mut self,
-            iv: &[u8; IV_LEN],
-            aad: &[u8],
-            input: &[u8],
-            output: &mut [u8],
-        ) -> Result<(), ErrorStack> {
-            assert!(
-                aad.len() >= 12,
-                "Associated data length MUST be at least 12 octets"
-            );
-
-            // Set the IV
-            self.ctx.encrypt_init(None, None, Some(iv))?;
-
-            // Add the additional authenticated data, omitting the output argument informs
-            // OpenSSL that we are providing AAD.
-            let aad_c = self.ctx.cipher_update(aad, None)?;
-            // TODO: This should maybe be an error
-            assert!(aad_c == aad.len());
-
-            let count = self.ctx.cipher_update(input, Some(output))?;
-            let final_count = self.ctx.cipher_final(&mut output[count..])?;
-
-            // Get the authentication tag and append it to the output
-            let tag_offset = count + final_count;
-            self.ctx
-                .tag(&mut output[tag_offset..tag_offset + TAG_LEN])?;
-
-            Ok(())
-        }
-    }
-
-    pub(super) struct Decrypter {
-        ctx: CipherCtx,
-    }
-
-    impl Decrypter {
-        pub(super) fn new(key: &DecryptionKey) -> Self {
-            let t = cipher::Cipher::aes_128_gcm();
-            let mut ctx = CipherCtx::new().expect("a reusable cipher context");
-            ctx.decrypt_init(Some(t), Some(key), None)
-                .expect("dec init");
-
-            Self { ctx }
-        }
-
-        pub(super) fn decrypt(
-            &mut self,
-            iv: &[u8; IV_LEN],
-            aads: &[&[u8]],
-            input: &[u8],
-            output: &mut [u8],
-        ) -> Result<usize, ErrorStack> {
-            // This needs to be converted to an error maybe
-            assert!(input.len() >= TAG_LEN);
-
-            let (cipher_text, tag) = input.split_at(input.len() - TAG_LEN);
-            self.ctx.decrypt_init(None, None, Some(iv))?;
-
-            // Add the additional authenticated data, omitting the output argument informs
-            // OpenSSL that we are providing AAD.
-            // With this the authentication tag will be verified.
-            for aad in aads {
-                self.ctx.cipher_update(aad, None)?;
-            }
-
-            self.ctx.set_tag(tag)?;
-
-            let count = self.ctx.cipher_update(cipher_text, Some(output))?;
-
-            let final_count = self.ctx.cipher_final(&mut output[count..])?;
-
-            Ok(count + final_count)
-        }
-    }
-
-    pub fn rtp_iv(salt: RtpSalt, ssrc: u32, roc: u32, seq: u16) -> RtpIv {
-        // See: https://www.rfc-editor.org/rfc/rfc7714#section-8.1
-
-        // TODO: See if this is faster if rewritten for u128
-        let mut iv = [0; SALT_LEN];
-
-        let ssrc_be = ssrc.to_be_bytes();
-        let roc_be = roc.to_be_bytes();
-        let seq_be = seq.to_be_bytes();
-
-        iv[2..6].copy_from_slice(&ssrc_be);
-        iv[6..10].copy_from_slice(&roc_be);
-        iv[10..12].copy_from_slice(&seq_be);
-
-        // XOR with salt
-        for i in 0..SALT_LEN {
-            iv[i] ^= salt[i];
-        }
-
-        iv
-    }
-
-    pub fn rtcp_iv(salt: RtpSalt, ssrc: u32, srtp_index: u32) -> RtpIv {
-        // See: https://www.rfc-editor.org/rfc/rfc7714#section-9.1
-        // TODO: See if this is faster if rewritten for u128
-        let mut iv = [0; SALT_LEN];
-
-        let ssrc_be = ssrc.to_be_bytes();
-        let srtp_be = srtp_index.to_be_bytes();
-
-        iv[2..6].copy_from_slice(&ssrc_be);
-        iv[8..12].copy_from_slice(&srtp_be);
-
-        // XOR with salt
-        for i in 0..SALT_LEN {
-            iv[i] ^= salt[i];
-        }
-
-        iv
     }
 }
 
