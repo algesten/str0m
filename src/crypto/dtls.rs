@@ -37,7 +37,7 @@ pub enum DtlsEvent {
 pub struct DtlsCert(DtlsCertInner);
 
 #[derive(Debug, Clone)]
-pub enum DtlsCertInner {
+enum DtlsCertInner {
     #[cfg(feature = "openssl")]
     OpenSsl(super::ossl::OsslDtlsCert),
 }
