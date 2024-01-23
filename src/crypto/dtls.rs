@@ -1,4 +1,4 @@
-#![allow(unreachable_patterns)]
+#![allow(unreachable_patterns, dead_code, unused_variables)]
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -62,14 +62,13 @@ impl DtlsCert {
     }
 
     pub(crate) fn create_dtls_impl(&self) -> Result<DtlsImpl, CryptoError> {
-        let dtls_impl = match &self.0 {
+        match &self.0 {
             #[cfg(feature = "openssl")]
-            DtlsCertInner::OpenSsl(c) => {
-                DtlsImpl::OpenSsl(super::ossl::OsslDtlsImpl::new(c.clone())?)
-            }
+            DtlsCertInner::OpenSsl(c) => Ok(DtlsImpl::OpenSsl(super::ossl::OsslDtlsImpl::new(
+                c.clone(),
+            )?)),
             _ => unreachable!(),
-        };
-        Ok(dtls_impl)
+        }
     }
 }
 

@@ -22,7 +22,9 @@ pub enum DtlsError {
 
 impl DtlsError {
     pub(crate) fn is_would_block(&self) -> bool {
-        let DtlsError::Io(e) = self else {
+        #[allow(irrefutable_let_patterns)]
+        let DtlsError::Io(e) = self
+        else {
             return false;
         };
         e.kind() == io::ErrorKind::WouldBlock
