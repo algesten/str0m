@@ -1,10 +1,16 @@
 # Unreleased
+  * Refactor all OpenSSL (and other crypto code) to mod crypto
+  * Fix bugs in RTX PT selection for BWE padding
+  * Don't enable NACK timers unless there are stream to nack
+  * Fix bug in BWE trendline estimator
+  * Fix (unlikely) nack overflow error
   * Speed up twcc register updates using max_seq()
   * Parse `StunMessage` without allocations (and huge STUN parsing cleanup)
   * Introduce top-level `ice` module having `ice::IceAgent` for standalone usage
   * Remove `StunError::Other` because it was unused
   * Optional parser for VLA (Video Layers Allocation) RTP header extension
   * Chat example send PLI on RTC sequence interruption
+  * VP9 contiguity checks in depacketizer
   * Improved VP9 support with parsing layer metadata
   * Fix race in chat example on client disconnect
   * MediaTime improve safety with Frequency newtype (breaking)
@@ -55,7 +61,7 @@
   * Major refactor of Media/Stream handling (we call it "kaboom")
   * RTP Mode (directly using RTP packets)
   * Bandwidth Estimation (BWE)
-  * Direct API for SDP-free control    
+  * Direct API for SDP-free control
   * SDP Api to formalize SDP handling
 
 # 0.1.0
