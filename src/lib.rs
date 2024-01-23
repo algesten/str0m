@@ -594,9 +594,10 @@ use thiserror::Error;
 use util::InstantExt;
 
 mod crypto;
+use crypto::Fingerprint;
+
 mod dtls;
 use dtls::DtlsCert;
-use dtls::Fingerprint;
 use dtls::{Dtls, DtlsEvent};
 
 #[path = "ice/mod.rs"]
@@ -1019,11 +1020,8 @@ impl Rtc {
         Rtc {
             alive: true,
             ice,
-            dtls: Dtls::new(
-                config.dtls_cert.unwrap_or_else(DtlsCert::new),
-                config.fingerprint_verification,
-            )
-            .expect("DTLS to init without problem"),
+            dtls: Dtls::new(config.dtls_cert.unwrap_or_else(DtlsCert::new_openssl))
+                .expect("DTLS to init without problem"),
             session,
             sctp: RtcSctp::new(),
             chan: ChannelHandler::default(),
@@ -1734,7 +1732,7 @@ impl RtcConfig {
     /// ```
     /// # use str0m::RtcConfig;
     /// # use str0m::change::DtlsCert;
-    /// let dtls_cert = DtlsCert::new();
+    /// let dtls_cert = DtlsCert::new_openssl();
     ///
     /// let rtc_config = RtcConfig::default()
     ///     .set_dtls_cert(dtls_cert);

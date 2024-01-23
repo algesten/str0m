@@ -2,7 +2,8 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::bwe::BweKind;
-use crate::dtls::{KeyingMaterial, SrtpProfile};
+use crate::crypto::KeyingMaterial;
+use crate::crypto::SrtpProfile;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};

@@ -1,5 +1,5 @@
 use crate::channel::ChannelId;
-use crate::dtls::Fingerprint;
+use crate::crypto::Fingerprint;
 use crate::media::{Media, MediaKind};
 use crate::rtp_::{Mid, Rid, Ssrc};
 use crate::sctp::ChannelConfig;
