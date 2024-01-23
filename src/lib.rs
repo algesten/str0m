@@ -1017,11 +1017,23 @@ impl Rtc {
             ice.set_ice_lite(config.ice_lite);
         }
 
+        let dtls_cert = if let Some(c) = config.dtls_cert {
+            c
+        } else {
+            #[cfg(feature = "openssl")]
+            {
+                DtlsCert::new_openssl()
+            }
+            #[cfg(not(feature = "openssl"))]
+            {
+                panic!("No DTLS implementation. Enable openssl feature");
+            }
+        };
+
         Rtc {
             alive: true,
             ice,
-            dtls: Dtls::new(config.dtls_cert.unwrap_or_else(DtlsCert::new_openssl))
-                .expect("DTLS to init without problem"),
+            dtls: Dtls::new(dtls_cert).expect("DTLS to init without problem"),
             session,
             sctp: RtcSctp::new(),
             chan: ChannelHandler::default(),

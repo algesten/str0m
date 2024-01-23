@@ -12,6 +12,7 @@ use crate::net::DatagramSend;
 pub enum DtlsError {
     /// Some error from OpenSSL layer (used for DTLS).
     #[error("{0}")]
+    #[cfg(feature = "openssl")]
     OpenSsl(#[from] openssl::error::ErrorStack),
 
     /// Other IO errors.
@@ -31,6 +32,7 @@ impl DtlsError {
 impl From<CryptoError> for DtlsError {
     fn from(value: CryptoError) -> Self {
         match value {
+            #[cfg(feature = "openssl")]
             CryptoError::OpenSsl(e) => DtlsError::OpenSsl(e),
             CryptoError::Io(e) => DtlsError::Io(e),
         }
