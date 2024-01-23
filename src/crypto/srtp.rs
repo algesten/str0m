@@ -11,6 +11,7 @@ pub enum SrtpProfile {
     AeadAes128Gcm,
 }
 
+#[allow(dead_code)]
 impl SrtpProfile {
     // All the profiles we support, ordered from most preferred to least.
     pub(crate) const ALL: &'static [SrtpProfile] =
@@ -32,7 +33,7 @@ impl SrtpProfile {
 }
 
 // TODO: Can we avoice dynamic dispatch in this signature? The parameters are:
-//       1. As few "touch points" beteen rtp/srtp.rs and here.
+//       1. As few "touch points" beteen rtp/srtp.rs and here as possible.
 //       2. Clear contract towards the actual impl.
 //       3. Choice of impl passed all the way from RtcConfig.
 #[allow(unused)]
@@ -52,7 +53,7 @@ pub fn new_aes_128_cm_sha1_80(
 }
 
 // TODO: Can we avoice dynamic dispatch in this signature? The parameters are:
-//       1. As few "touch points" beteen rtp/srtp.rs and here.
+//       1. As few "touch points" beteen rtp/srtp.rs and here as possible.
 //       2. Clear contract towards the actual impl.
 //       3. Choice of impl passed all the way from RtcConfig.
 #[allow(unused)]
