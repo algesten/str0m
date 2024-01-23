@@ -9,7 +9,8 @@ use openssl::pkey::{PKey, Private};
 use openssl::rsa::Rsa;
 use openssl::x509::{X509Name, X509};
 
-use crate::crypto::{Fingerprint, DTLS_CERT_IDENTITY};
+use crate::crypto::dtls::DTLS_CERT_IDENTITY;
+use crate::crypto::Fingerprint;
 
 use super::CryptoError;
 

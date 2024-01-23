@@ -5,7 +5,8 @@ use openssl::ec::EcKey;
 use openssl::nid::Nid;
 use openssl::ssl::{Ssl, SslContext, SslContextBuilder, SslMethod, SslOptions, SslVerifyMode};
 
-use crate::crypto::{DtlsEvent, DtlsInner, SrtpProfile};
+use crate::crypto::dtls::DtlsInner;
+use crate::crypto::{DtlsEvent, SrtpProfile};
 use crate::io::{DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 
 use super::cert::OsslDtlsCert;
