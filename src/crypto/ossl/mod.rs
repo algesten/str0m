@@ -11,6 +11,9 @@ mod stream;
 mod dtls;
 pub use dtls::OsslDtlsImpl;
 
+mod srtp;
+pub use srtp::OsslSrtpCryptoImpl;
+
 impl SrtpProfile {
     // All the profiles we support, ordered from most preferred to least.
     pub(crate) const ALL: &'static [SrtpProfile] =

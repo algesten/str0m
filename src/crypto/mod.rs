@@ -16,7 +16,10 @@ mod keying;
 pub use keying::KeyingMaterial;
 
 mod srtp;
-pub use srtp::SrtpProfile;
+pub use srtp::{
+    aead_aes_128_gcm, aes_128_cm_sha1_80, new_aead_aes_128_gcm, new_aes_128_cm_sha1_80,
+    srtp_aes_128_ecb_round, SrtpProfile,
+};
 
 /// SHA1 HMAC as used for STUN and older SRTP.
 pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
