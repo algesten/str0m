@@ -43,8 +43,6 @@ impl OsslDtlsImpl {
 }
 
 impl DtlsInner for OsslDtlsImpl {
-    type Cert = OsslDtlsCert;
-
     fn set_active(&mut self, active: bool) {
         self.tls.set_active(active);
     }

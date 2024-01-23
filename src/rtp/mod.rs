@@ -1,6 +1,5 @@
 use std::io;
 
-use openssl::error::ErrorStack;
 use thiserror::Error;
 
 mod id;
@@ -39,7 +38,8 @@ pub const MAX_BLANK_PADDING_PAYLOAD_SIZE: usize = 240;
 pub enum RtpError {
     /// Some error from OpenSSL layer (used for SRTP).
     #[error("{0}")]
-    OpenSsl(#[from] ErrorStack),
+    #[cfg(feature = "openssl")]
+    OpenSsl(#[from] openssl::error::ErrorStack),
 
     /// Other IO errors.
     #[error("{0}")]
