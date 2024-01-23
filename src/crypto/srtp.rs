@@ -31,8 +31,11 @@ impl SrtpProfile {
     }
 }
 
+// TODO: Can we avoice dynamic dispatch in this signature? The parameters are:
+//       1. As few "touch points" beteen rtp/srtp.rs and here.
+//       2. Clear contract towards the actual impl.
+//       3. Choice of impl passed all the way from RtcConfig.
 #[allow(unused)]
-
 pub fn new_aes_128_cm_sha1_80(
     key: AesKey,
     encrypt: bool,
@@ -48,9 +51,15 @@ pub fn new_aes_128_cm_sha1_80(
     }
 }
 
+// TODO: Can we avoice dynamic dispatch in this signature? The parameters are:
+//       1. As few "touch points" beteen rtp/srtp.rs and here.
+//       2. Clear contract towards the actual impl.
+//       3. Choice of impl passed all the way from RtcConfig.
 #[allow(unused)]
-
 pub fn new_aead_aes_128_gcm(key: AeadKey, encrypt: bool) -> Box<dyn aead_aes_128_gcm::CipherCtx> {
+    /// TODO: The exact mechanism for passing which crypto to use from
+    ///       RtcConfig to here. We're not going to instantiate openssl
+    ///       automatically.
     #[cfg(feature = "openssl")]
     {
         let ctx = super::ossl::OsslSrtpCryptoImpl::new_aead_aes_128_gcm(key, encrypt);
@@ -65,6 +74,9 @@ pub fn new_aead_aes_128_gcm(key: AeadKey, encrypt: bool) -> Box<dyn aead_aes_128
 #[allow(unused)]
 
 pub fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
+    /// TODO: The exact mechanism for passing which crypto to use from
+    ///       RtcConfig to here. We're not going to instantiate openssl
+    ///       automatically.
     #[cfg(feature = "openssl")]
     {
         super::ossl::OsslSrtpCryptoImpl::srtp_aes_128_ecb_round(key, input, output)
