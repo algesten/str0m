@@ -1,3 +1,5 @@
+use core::fmt;
+
 /// Certificate fingerprint.
 ///
 /// DTLS uses self signed certificates, and the fingerprint is communicated via
@@ -13,18 +15,20 @@ pub struct Fingerprint {
     pub bytes: Vec<u8>,
 }
 
-impl ToString for Fingerprint {
-    /// Convert to the hex string you find in SDP
-    fn to_string(&self) -> String {
-        format!(
-            "{} {}",
-            self.hash_func,
-            self.bytes
-                .iter()
-                .map(|b| format!("{:02X}", b))
-                .collect::<Vec<_>>()
-                .join(":")
-        )
+// DO NOT CHANGE!
+// This format is exactly what's needed in n SDP.
+impl fmt::Display for Fingerprint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ", self.hash_func)?;
+        write!(f, "[")?;
+        for (i, b) in self.bytes.iter().enumerate() {
+            if i > 0 {
+                write!(f, ":")?;
+            }
+            write!(f, "{:02X}", b)?;
+        }
+        write!(f, "]")?;
+        Ok(())
     }
 }
 
