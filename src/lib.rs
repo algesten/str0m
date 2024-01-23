@@ -615,7 +615,7 @@ pub use ice_::{Candidate, CandidateKind, IceConnectionState};
 pub mod ice {
     pub use crate::ice_::IceCreds;
     pub use crate::ice_::{IceAgent, IceAgentEvent};
-    pub use crate::io::StunMessage;
+    pub use crate::io::{StunMessage, StunPacket};
 }
 
 mod io;
