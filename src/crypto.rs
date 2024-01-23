@@ -3,8 +3,7 @@ pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
     use hmac::Mac;
     use sha1::Sha1;
 
-    let mut hmac =
-        Hmac::<Sha1>::new_from_slice(key).expect("`Hmac` normalizes the key to 20 bytes");
+    let mut hmac = Hmac::<Sha1>::new_from_slice(key).expect("hmac to normalize size to 20");
 
     for payload in payloads {
         hmac.update(payload);
