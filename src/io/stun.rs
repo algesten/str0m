@@ -368,7 +368,7 @@ impl Method {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 #[rustfmt::skip]
 pub struct Attributes<'a> {
     username: Option<&'a str>,              // < 128 utf8 chars
@@ -384,6 +384,54 @@ pub struct Attributes<'a> {
     ice_controlled: Option<u64>,            // 0x8029
     ice_controlling: Option<u64>,           // 0x802a
     network_cost: Option<(u16, u16)>,       // 0xc057 https://tools.ietf.org/html/draft-thatcher-ice-network-cost-00
+}
+
+impl<'a> fmt::Debug for Attributes<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let debug_struct = &mut f.debug_struct("Attributes");
+
+        if let Some(value) = self.username {
+            debug_struct.field("username", &value);
+        }
+        if let Some(value) = self.message_integrity {
+            debug_struct.field("message_integrity", &value);
+        }
+        if let Some(value) = self.error_code {
+            debug_struct.field("error_code", &value);
+        }
+        if let Some(value) = self.realm {
+            debug_struct.field("realm", &value);
+        }
+        if let Some(value) = self.nonce {
+            debug_struct.field("nonce", &value);
+        }
+        if let Some(value) = self.xor_mapped_address {
+            debug_struct.field("xor_mapped_address", &value);
+        }
+        if let Some(value) = self.software {
+            debug_struct.field("software", &value);
+        }
+        if let Some(value) = self.fingerprint {
+            debug_struct.field("fingerprint", &value);
+        }
+        if let Some(value) = self.priority {
+            debug_struct.field("priority", &value);
+        }
+        if self.use_candidate {
+            debug_struct.field("use_candidate", &true);
+        }
+        if let Some(value) = self.ice_controlled {
+            debug_struct.field("ice_controlled", &value);
+        }
+        if let Some(value) = self.ice_controlling {
+            debug_struct.field("ice_controlling", &value);
+        }
+        if let Some(value) = self.network_cost {
+            debug_struct.field("network_cost", &value);
+        }
+
+        debug_struct.finish()
+    }
 }
 
 impl<'a> Attributes<'a> {
@@ -727,6 +775,8 @@ impl<'a> fmt::Debug for StunMessage<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::net::SocketAddrV4;
+    use systemstat::Ipv4Addr;
 
     #[test]
     fn parse_stun_message() {
@@ -744,5 +794,44 @@ mod test {
         let packet = PACKET.to_vec();
         let message = StunMessage::parse(&packet).unwrap();
         assert!(message.check_integrity("xJcE9AQAR7kczUDVOXRUCl"));
+    }
+
+    #[test]
+    fn minimal_debug_print() {
+        let attrs = Attributes {
+            username: Some("foo"),
+            ..Default::default()
+        };
+
+        let dbg_print = format!("{attrs:?}");
+
+        assert_eq!(dbg_print, r#"Attributes { username: "foo" }"#);
+    }
+
+    // README: IF YOU NEED TO ADJUST THIS TEST BECAUSE YOU ADDED AN ATTRIBUTE, MAKE SURE TO ADJUST THE `fmt::Debug` impl.
+    #[test]
+    fn all_attributes_are_printed() {
+        let attrs = Attributes {
+            username: Some("foo"),
+            message_integrity: Some(b"0000"),
+            error_code: Some((401, "Unauthorized")),
+            realm: Some("baz"),
+            nonce: Some("abcd"),
+            xor_mapped_address: Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))),
+            software: Some("str0m"),
+            fingerprint: Some(9999),
+            priority: Some(1),
+            use_candidate: true,
+            ice_controlled: Some(10),
+            ice_controlling: Some(100),
+            network_cost: Some((10, 10)),
+        };
+
+        let dbg_print = format!("{attrs:?}");
+
+        assert_eq!(
+            dbg_print,
+            r#"Attributes { username: "foo", message_integrity: [48, 48, 48, 48], error_code: (401, "Unauthorized"), realm: "baz", nonce: "abcd", xor_mapped_address: 127.0.0.1:0, software: "str0m", fingerprint: 9999, priority: 1, use_candidate: true, ice_controlled: 10, ice_controlling: 100, network_cost: (10, 10) }"#
+        );
     }
 }
