@@ -218,7 +218,7 @@ let mid: Mid = todo!();
 let writer = rtc.writer(mid).unwrap();
 
 // Get the payload type (pt) for the wanted codec.
-let pt = writer.payload_params()[0].pt();
+let pt = writer.payload_params().nth(0).unwrap().pt();
 
 // Write the data
 let wallclock = todo!();   // Absolute time of the data
@@ -434,7 +434,7 @@ collected or reference counted languages, but not great with Rust.
 
 ### Panics, Errors and unwraps
 
-Rust adheres to [fail-fast][ff]. That means rather than brushing state
+Str0m adheres to [fail-fast][ff]. That means rather than brushing state
 bugs under the carpet, it panics. We make a distinction between errors and
 bugs.
 

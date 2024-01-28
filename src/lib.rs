@@ -445,7 +445,7 @@
 //!
 //! ## Panics, Errors and unwraps
 //!
-//! Rust adheres to [fail-fast][ff]. That means rather than brushing state
+//! Str0m adheres to [fail-fast][ff]. That means rather than brushing state
 //! bugs under the carpet, it panics. We make a distinction between errors and
 //! bugs.
 //!
