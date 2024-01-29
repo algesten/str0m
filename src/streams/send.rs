@@ -501,7 +501,7 @@ impl StreamTx {
         // regular media data.
         //
         // This is set here due to borrow checker.
-        if self.pt_for_padding != set_pt_for_padding {
+        if set_pt_for_padding.is_some() && self.pt_for_padding != set_pt_for_padding {
             self.pt_for_padding = set_pt_for_padding;
         }
 
