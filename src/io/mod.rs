@@ -58,17 +58,54 @@ pub enum Protocol {
     Tls,
 }
 
-/// An outgoing packet
+/// An instruction to send an outgoing packet.
 pub struct Transmit {
-    /// This protocol the socket is using.
+    /// Protocol the transmission should use.
+    ///
+    /// Provided to each of the [`Candidate`][crate::Candidate] constructors.
     pub proto: Protocol,
 
-    /// The source socket this packet should be sent from.
+    /// The source IP this packet should be sent from.
     ///
-    /// For ICE it's important to match up outgoing packets with source network interface.
+    /// For ICE it's important to send outgoing packets from the correct IP address.
+    /// The IP could come from a local socket or relayed over a TURN server. Features like
+    /// hole-punching will only work if the packets are routed through the correct interfaces.
+    ///
+    /// This address will either be:
+    /// - The address of a socket you have bound locally, such as with [`UdpSocket::bind`][std::net::UdpSocket].
+    /// - The address of a relay socket that you have
+    ///     [allocated](https://www.rfc-editor.org/rfc/rfc8656#name-allocations-2) using TURN.
+    ///
+    /// To correctly handle an instance of [`Transmit`], you should:
+    ///
+    /// - Check if [`Transmit::source`] corresponds to one of your local sockets,
+    ///     if yes, send it through that.
+    /// - Check if [`Transmit::source`] corresponds to one of your relay sockets (i.e. allocations),
+    ///     if yes, send it via one of:
+    ///     - a [TURN channel data message](https://www.rfc-editor.org/rfc/rfc8656#name-sending-a-channeldata-messa)
+    ///     - a [SEND indication](https://www.rfc-editor.org/rfc/rfc8656#name-send-and-data-methods)
+    ///
+    /// `str0m` learns about the source address using [`Candidate`][crate::Candidate] that are added using
+    /// [`Rtc::add_local_candidate`][crate::Rtc::add_local_candidate].
+    ///
+    /// The different candidate types are:
+    ///
+    /// * [`Candidate::host()`][crate::Candidate::host]: Used for locally bound UDP sockets.
+    /// * [`Candidate::relayed()`][crate::Candidate::relayed]: Used for sockets relayed via some
+    ///     other server (normally TURN).
+    /// * [`Candidate::server_reflexive()`][crate::Candidate::server_reflexive]: Used when a local
+    ///     (host) socket appears as some another IP address to the remote peer (usually due to a
+    ///     NAT firewall on the local side). STUN servers can be used to discover the external address.
+    ///     In this case the `base` parameter to `server_reflexive()` is the local address and
+    ///     used for [`Transmit::source`].
+    /// * `Peer reflexive` is another, internal, type of candidate that str0m infers by using the other
+    ///     types of candidates.
     pub source: SocketAddr,
 
-    /// This socket this datagram should be sent to.
+    /// The destination address this datagram should be sent to.
+    ///
+    /// This will be one of the [`Candidate`][crate::Candidate] provided explicitly using
+    /// [`Rtc::add_remote_candidate`][crate::Rtc::add_remote_candidate] or via SDP negotiation.
     pub destination: SocketAddr,
 
     /// Contents of the datagram.
