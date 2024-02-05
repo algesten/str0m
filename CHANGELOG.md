@@ -1,4 +1,6 @@
 # Unreleased
+  * Fix bug making SCTP fail under packet loss
+  * Add `base` parameter to `Candidate::server_reflexive` (breaking)
   * Refactor all OpenSSL (and other crypto code) to mod crypto
   * Fix bugs in RTX PT selection for BWE padding
   * Don't enable NACK timers unless there are stream to nack
