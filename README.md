@@ -77,7 +77,6 @@ Active connections means we are making the inital OFFER and waiting for a
 remote ANSWER to start the connection.
 
 ```rust
-#
 // Instantiate a new Rtc instance.
 let mut rtc = Rtc::new();
 
@@ -112,7 +111,6 @@ Driving the state of the `Rtc` forward is a run loop that, regardless of sync or
 looks like this.
 
 ```rust
-#
 // Buffer for reading incoming UDP packets.
 let mut buf = vec![0; 2000];
 
@@ -210,7 +208,6 @@ are negotiated with the remote side. Each codec corresponds to a
 to use when sending.
 
 ```rust
-#
 // Obtain mid from Event::MediaAdded
 let mid: Mid = todo!();
 
@@ -328,9 +325,9 @@ forward by different kinds of input.
 Str0m defaults to the "sample level" which treats the RTP as an internal detail. The user
 will thus mainly interact with:
 
-1. [`Event::MediaData`] to receive full "samples" (audio frames or video frames).
-2. [`Writer::write`][crate::media::Writer::write] to write full samples.
-3. [`Writer::request_keyframe`][crate::media::Writer::request_keyframe] to request keyframes.
+1. [`Event::MediaData`][evmed] to receive full "samples" (audio frames or video frames).
+2. [`Writer::write`][writer] to write full samples.
+3. [`Writer::request_keyframe`][reqkey] to request keyframes.
 
 #### Sample level
 
@@ -344,18 +341,13 @@ Samples are not suitable to use directly in UDP (RTP) packets - for
 one they are too big. Samples are therefore further chunked up by
 codec specific payloaders into RTP packets.
 
-#### RTP level
+#### RTP mode
 
 Str0m also provides an RTP level API. This would be similar to many other
 RTP libraries where the RTP packets themselves are the the API surface
 towards the user (when building an SFU one would often talk about "forwarding
-RTP packets", while with str0m we can also "forward samples").
-
-#### RTP mode
-
-str0m has a lower level API which let's the user write/receive RTP
-packets directly. Using this API requires a deeper knowledge of
-RTP and WebRTC.
+RTP packets", while with str0m we can also "forward samples").  Using
+this API requires a deeper knowledge of RTP and WebRTC.
 
 To enable RTP mode
 
@@ -369,10 +361,10 @@ let rtc = Rtc::builder()
 
 RTP mode gives us some new API points.
 
-1. [`Event::RtpPacket`] emitted for every incoming RTP packet. Empty packets for bandwidth
+1. [`Event::RtpPacket`][rtppak] emitted for every incoming RTP packet. Empty packets for bandwidth
    estimation are silently discarded.
-2. [`StreamTx::write_rtp`][crate::rtp::StreamTx::write_rtp] to write outgoing RTP packets.
-3. [`StreamRx::request_keyframe`][crate::rtp::StreamRx::request_keyframe] to request keyframes from remote.
+2. [`StreamTx::write_rtp`][wrtrtp] to write outgoing RTP packets.
+3. [`StreamRx::request_keyframe`][reqkey2] to request keyframes from remote.
 
 ### NIC enumeration and TURN (and STUN)
 
@@ -558,6 +550,12 @@ Yes use the direct API!
 [intg]:       https://github.com/algesten/str0m/blob/main/tests/unidirectional.rs#L12
 [ff]:         https://en.wikipedia.org/wiki/Fail-fast
 [catch]:      https://doc.rust-lang.org/std/panic/fn.catch_unwind.html
+[evmed]:      https://docs.rs/str0m/*/str0m/enum.Event.html#variant.MediaData
+[writer]:     https://docs.rs/str0m/*/str0m/media/struct.Writer.html#method.write
+[reqkey]:     https://docs.rs/str0m/*/str0m/media/struct.Writer.html#method.request_keyframe
+[rtppak]:     https://docs.rs/str0m/*/str0m/enum.Event.html#variant.RtpPacket
+[wrtrtp]:     https://docs.rs/str0m/*/str0m/rtp/struct.StreamTx.html#method.write_rtp
+[reqkey2]:    https://docs.rs/str0m/*/str0m/rtp/struct.StreamRx.html#method.request_keyframe
 
 ---
 
