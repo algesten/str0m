@@ -19,6 +19,7 @@
   * Header extension abs_send_time is now an Instant
   * Handle more optional a=candidate parameters
   * Support REMB (receiver estimated maximum bitrate) feedback packets (breaking)
+  * `IceAgent::invalidate_candidate` returns whether the candidate was part of the currently nominated pair (breaking)
 
 # 0.4.1
   * Generated DTLS certificates set issuer/subject for compat with OBS/libdatachannel
