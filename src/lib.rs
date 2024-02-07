@@ -612,7 +612,7 @@ pub use ice_::{Candidate, CandidateKind, IceConnectionState};
 #[doc(hidden)]
 pub mod ice {
     pub use crate::ice_::IceCreds;
-    pub use crate::ice_::{IceAgent, IceAgentEvent};
+    pub use crate::ice_::{IceAgent, IceAgentEvent, Invalidated};
     pub use crate::io::{StunMessage, StunPacket};
 }
 

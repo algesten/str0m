@@ -4,7 +4,7 @@
 use thiserror::Error;
 
 mod agent;
-pub use agent::{IceAgent, IceAgentEvent, IceConnectionState, IceCreds};
+pub use agent::{IceAgent, IceAgentEvent, IceConnectionState, IceCreds, Invalidated};
 
 mod candidate;
 pub use candidate::{Candidate, CandidateKind};
