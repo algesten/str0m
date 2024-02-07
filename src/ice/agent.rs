@@ -679,7 +679,7 @@ impl IceAgent {
     /// This is done for host candidates disappearing due to changes in the network
     /// interfaces like a WiFi disconnecting or changing IPs.
     ///
-    /// Returns `true` if the candidate was found and invalidated.
+    /// Returns `Ok()` if we invalidated a candidate or `Err` if the candidate was unknown to us.
     #[allow(unused)]
     pub fn invalidate_candidate(&mut self, c: &Candidate) -> Result<Invalidated, IceError> {
         info!("Invalidate candidate: {:?}", c);
@@ -693,8 +693,13 @@ impl IceAgent {
                 debug!("Local candidate to discard {:?}", other);
                 other.set_discarded();
                 self.discard_candidate_pairs(idx);
+
+                let nominated_is_gone = self.nominated_send.is_some_and(|nominated| {
+                    self.candidate_pairs.iter().all(|p| p.id() != nominated)
+                });
+
                 return Ok(Invalidated {
-                    was_nominated: false,
+                    was_nominated: nominated_is_gone,
                 });
             }
         }
@@ -1540,6 +1545,9 @@ impl IceAgent {
 /// This struct returns further details on the new state of the agent.
 #[derive(Debug)]
 pub struct Invalidated {
+    /// Whether the invalidated candidate was part of the nominated pair.
+    ///
+    /// This means the connection is now likely broken and you may want to consider triggering an ICE restart.
     pub was_nominated: bool,
 }
 
