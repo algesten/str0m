@@ -251,7 +251,7 @@ mod test {
     }
 
     #[test]
-    pub fn invalidating_candidate_of_nominated_pair_returns_true() {
+    pub fn invalidate_candidate() {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 
@@ -289,9 +289,14 @@ mod test {
             "c1 and c2 should be the nominated pair"
         );
 
-        let invalidated = a1.invalidate_candidate(&c1).unwrap();
+        let invalidated = a1.invalidate_candidate(&c3).unwrap();
+        assert!(
+            !invalidated.was_nominated,
+            "expect `c3` to not be nominated"
+        );
 
-        assert!(invalidated.was_nominated);
+        let invalidated = a1.invalidate_candidate(&c1).unwrap();
+        assert!(invalidated.was_nominated, "expect `c1` to be nominated");
     }
 
     #[test]
