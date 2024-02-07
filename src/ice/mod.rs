@@ -17,6 +17,8 @@ mod pair;
 pub enum IceError {
     #[error("ICE bad candidate: {0}")]
     BadCandidate(String),
+    #[error("The candidate is not known to the agent")]
+    UnknownCandidate,
 }
 
 #[cfg(test)]
@@ -246,6 +248,50 @@ mod test {
                 nomination_send_count: 1,
             }
         );
+    }
+
+    #[test]
+    pub fn invalidating_candidate_of_nominated_pair_returns_true() {
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        let c1 = host("1.1.1.1:1000", "udp");
+        let c3 = host("1.1.1.1:9999", "udp"); // 9999 is just dropped by propagate
+        a1.add_local_candidate(c1.clone());
+        a2.add_remote_candidate(c1.clone());
+        a1.add_local_candidate(c3.clone());
+        a2.add_remote_candidate(c3.clone());
+        let c2 = host("2.2.2.2:1000", "udp");
+        let c4 = host("2.2.2.2:9999", "udp"); // 9999 is just dropped by propagate
+        a2.add_local_candidate(c2.clone());
+        a1.add_remote_candidate(c2.clone());
+        a2.add_local_candidate(c4.clone());
+        a1.add_remote_candidate(c4.clone());
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        assert!(
+            a1.events.iter().any(|(_, event)| match event {
+                IceAgentEvent::NominatedSend {
+                    source,
+                    destination,
+                    ..
+                } => source == &c1.addr() && destination == &c2.addr(),
+                _ => false,
+            }),
+            "c1 and c2 should be the nominated pair"
+        );
+
+        let invalidated = a1.invalidate_candidate(&c1).unwrap();
+
+        assert!(invalidated.was_nominated);
     }
 
     #[test]

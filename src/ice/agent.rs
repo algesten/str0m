@@ -10,6 +10,7 @@ use crate::util::NonCryptographicRng;
 
 use super::candidate::{Candidate, CandidateKind};
 use super::pair::{CandidatePair, CheckState, PairId};
+use super::IceError;
 
 /// Timing advance (Ta) value.
 ///
@@ -680,7 +681,7 @@ impl IceAgent {
     ///
     /// Returns `true` if the candidate was found and invalidated.
     #[allow(unused)]
-    pub fn invalidate_candidate(&mut self, c: &Candidate) -> bool {
+    pub fn invalidate_candidate(&mut self, c: &Candidate) -> Result<Invalidated, IceError> {
         info!("Invalidate candidate: {:?}", c);
 
         if let Some((idx, other)) =
@@ -692,12 +693,14 @@ impl IceAgent {
                 debug!("Local candidate to discard {:?}", other);
                 other.set_discarded();
                 self.discard_candidate_pairs(idx);
-                return true;
+                return Ok(Invalidated {
+                    was_nominated: false,
+                });
             }
         }
 
         debug!("Candidate to discard not found: {:?}", c);
-        false
+        Err(IceError::UnknownCandidate)
     }
 
     /// Restart ICE.
@@ -1530,6 +1533,14 @@ impl IceAgent {
     pub(crate) fn remote_credentials(&self) -> Option<&IceCreds> {
         self.remote_credentials.as_ref()
     }
+}
+
+/// A candidate was successfully invalidated.
+///
+/// This struct returns further details on the new state of the agent.
+#[derive(Debug)]
+pub struct Invalidated {
+    pub was_nominated: bool,
 }
 
 #[cfg(test)]
