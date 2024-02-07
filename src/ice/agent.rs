@@ -694,9 +694,10 @@ impl IceAgent {
                 other.set_discarded();
                 self.discard_candidate_pairs(idx);
 
-                let nominated_is_gone = self.nominated_send.is_some_and(|nominated| {
-                    self.candidate_pairs.iter().all(|p| p.id() != nominated)
-                });
+                let nominated_is_gone = match self.nominated_send {
+                    Some(nominated) => self.candidate_pairs.iter().all(|p| p.id() != nominated),
+                    None => false,
+                };
 
                 return Ok(Invalidated {
                     was_nominated: nominated_is_gone,
