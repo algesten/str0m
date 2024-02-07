@@ -1542,8 +1542,6 @@ impl IceAgent {
 }
 
 /// A candidate was successfully invalidated.
-///
-/// This struct returns further details on the new state of the agent.
 #[derive(Debug)]
 pub struct Invalidated {
     /// Whether the invalidated candidate was part of the nominated pair.
