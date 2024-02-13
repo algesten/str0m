@@ -85,6 +85,10 @@ mod test {
         Candidate::host(sock(s), proto).unwrap()
     }
 
+    pub fn relay(s: impl Into<String>, proto: impl TryInto<Protocol>) -> Candidate {
+        Candidate::relayed(sock(s), proto).unwrap()
+    }
+
     /// Transform the socket to rig different test scenarios.
     ///
     /// * either port 9999 -> closed (packets dropped)
@@ -341,6 +345,76 @@ mod test {
                 discovered_recv_count: 1,
                 nomination_send_count: 1,
             }
+        );
+    }
+
+    #[test]
+    pub fn invalidate_candidate_nominates_next_one() {
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        let c1 = host("1.1.1.1:1000", "udp");
+        let c3 = relay("5.5.5.5:1000", "udp");
+        a1.add_local_candidate(c1.clone());
+        a2.add_remote_candidate(c1.clone());
+        a1.add_local_candidate(c3.clone());
+        a2.add_remote_candidate(c3.clone());
+        let c2 = host("2.2.2.2:1000", "udp");
+        a2.add_local_candidate(c2.clone());
+        a1.add_remote_candidate(c2.clone());
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        assert!(
+            a1.events.iter().any(|(_, event)| match event {
+                IceAgentEvent::NominatedSend {
+                    source,
+                    destination,
+                    ..
+                } => source == &c1.addr() && destination == &c2.addr(),
+                _ => false,
+            }),
+            "c1 and c2 should be the nominated pair"
+        );
+
+        a1.invalidate_candidate(&c1);
+        a2.invalidate_candidate(&c1);
+
+        a1.events.clear();
+        a2.events.clear();
+
+        loop {
+            if a1.state().is_disconnected() && a2.state().is_disconnected() {
+                break;
+            }
+
+            progress(&mut a1, &mut a2);
+        }
+
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        assert!(
+            a1.events.iter().any(|(_, event)| match event {
+                IceAgentEvent::NominatedSend {
+                    source,
+                    destination,
+                    ..
+                } => source == &c3.addr() && destination == &c2.addr(),
+                _ => false,
+            }),
+            "c3 and c4 should be the nominated pair"
         );
     }
 

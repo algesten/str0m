@@ -692,6 +692,13 @@ impl IceAgent {
                 debug!("Local candidate to discard {:?}", other);
                 other.set_discarded();
                 self.discard_candidate_pairs(idx);
+
+                if let Some(nominated) = self.nominated_send {
+                    if self.candidate_pairs.iter().all(|p| p.id() != nominated) {
+                        self.nominated_send = None;
+                    }
+                }
+
                 return true;
             }
         }
