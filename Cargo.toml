@@ -9,6 +9,7 @@ readme = "README.md"
 keywords = ["webrtc", "streaming", "video", "audio", "media"]
 categories = ["web-programming", "multimedia", "network-programming"]
 edition = "2021"
+exclude = ["/cargo_deny.sh", "/deny.toml", "/run-fuzz.sh"]
 
 [features]
 default = ["openssl"]
