@@ -797,6 +797,12 @@ impl IceAgent {
             }
         }
 
+        // The integrity check below may panic if no remote ICE credentials yet exist
+        if self.remote_credentials.is_none() {
+            trace!("Message rejected, no remote ICE credentials");
+            return false;
+        }
+
         let (_, password) = self.stun_credentials(!message.is_response());
         if !message.check_integrity(&password) {
             trace!("Message rejected, integrity check failed");
