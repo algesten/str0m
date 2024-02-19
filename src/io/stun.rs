@@ -11,26 +11,32 @@ use thiserror::Error;
 pub const STUN_INITIAL_RTO_MILLIS: u64 = 250;
 pub const STUN_MAX_RETRANS: usize = 9;
 pub const STUN_MAX_RTO_MILLIS: u64 = 3000;
-pub const STUN_TIMEOUT: Duration = compute_progressive_timeout(
-    STUN_INITIAL_RTO_MILLIS,
-    STUN_MAX_RETRANS,
-    STUN_MAX_RTO_MILLIS,
-);
+pub const STUN_TIMEOUT: Duration = compute_progressive_timeout(STUN_MAX_RETRANS);
+
+macro_rules! min {
+    ($a:expr, $b:expr) => {
+        if ($a) < ($b) {
+            $a
+        } else {
+            $b
+        }
+    };
+}
 
 /// Calculate the send delay given how many times we tried.
 ///
 // Technically RTO should be calculated as per https://datatracker.ietf.org/doc/html/rfc2988, and
 // modified by https://datatracker.ietf.org/doc/html/rfc5389#section-7.2.1,
 // but chrome does it like this. https://webrtc.googlesource.com/src/+/refs/heads/main/p2p/base/stun_request.cc
-pub fn stun_resend_delay(send_count: usize) -> Duration {
+pub const fn stun_resend_delay(send_count: usize) -> Duration {
     if send_count == 0 {
         return Duration::ZERO;
     }
 
-    let retrans = (send_count - 1).min(STUN_MAX_RETRANS);
+    let retrans = min!(send_count - 1, STUN_MAX_RETRANS);
 
     let rto = STUN_INITIAL_RTO_MILLIS << retrans;
-    let capped = rto.min(STUN_MAX_RTO_MILLIS);
+    let capped = min!(rto, STUN_MAX_RTO_MILLIS);
 
     Duration::from_millis(capped)
 }
@@ -777,28 +783,22 @@ impl<'a> fmt::Debug for StunMessage<'a> {
 }
 
 /// Computes the maximum timeout based on doubling the initial delay.
-const fn compute_progressive_timeout(
-    initial: u64,
-    max_retransmits: usize,
-    max_delay: u64,
-) -> Duration {
+const fn compute_progressive_timeout(max_retrans: usize) -> Duration {
     let mut timeout = 0;
 
     let mut x = 0;
-    let mut step = initial;
 
     loop {
-        timeout += if step > max_delay { max_delay } else { step };
+        timeout += stun_resend_delay(x).as_millis();
 
         x += 1;
-        step *= 2;
 
-        if x >= max_retransmits {
+        if x > max_retrans {
             break;
         }
     }
 
-    Duration::from_millis(timeout)
+    Duration::from_millis(timeout as u64)
 }
 
 #[cfg(test)]
@@ -809,7 +809,7 @@ mod test {
 
     #[test]
     fn test_progressive_timeout() {
-        let timeout = compute_progressive_timeout(250, 9, 3000);
+        let timeout = compute_progressive_timeout(9);
 
         assert_eq!(
             timeout.as_millis(),
