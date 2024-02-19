@@ -11,32 +11,22 @@ use thiserror::Error;
 pub const STUN_INITIAL_RTO_MILLIS: u64 = 250;
 pub const STUN_MAX_RETRANS: usize = 9;
 pub const STUN_MAX_RTO_MILLIS: u64 = 3000;
-pub const STUN_TIMEOUT: Duration = compute_progressive_timeout(STUN_MAX_RETRANS);
-
-macro_rules! min {
-    ($a:expr, $b:expr) => {
-        if ($a) < ($b) {
-            $a
-        } else {
-            $b
-        }
-    };
-}
+pub const STUN_TIMEOUT: Duration = Duration::from_millis(18_750); // See test for how this is calculated.
 
 /// Calculate the send delay given how many times we tried.
 ///
 // Technically RTO should be calculated as per https://datatracker.ietf.org/doc/html/rfc2988, and
 // modified by https://datatracker.ietf.org/doc/html/rfc5389#section-7.2.1,
 // but chrome does it like this. https://webrtc.googlesource.com/src/+/refs/heads/main/p2p/base/stun_request.cc
-pub const fn stun_resend_delay(send_count: usize) -> Duration {
+pub fn stun_resend_delay(send_count: usize) -> Duration {
     if send_count == 0 {
         return Duration::ZERO;
     }
 
-    let retrans = min!(send_count - 1, STUN_MAX_RETRANS);
+    let retrans = (send_count - 1).min(STUN_MAX_RETRANS);
 
     let rto = STUN_INITIAL_RTO_MILLIS << retrans;
-    let capped = min!(rto, STUN_MAX_RTO_MILLIS);
+    let capped = rto.min(STUN_MAX_RTO_MILLIS);
 
     Duration::from_millis(capped)
 }
@@ -782,25 +772,6 @@ impl<'a> fmt::Debug for StunMessage<'a> {
     }
 }
 
-/// Computes the maximum timeout based on doubling the initial delay.
-const fn compute_progressive_timeout(max_retrans: usize) -> Duration {
-    let mut timeout = 0;
-
-    let mut x = 0;
-
-    loop {
-        timeout += stun_resend_delay(x).as_millis();
-
-        x += 1;
-
-        if x > max_retrans {
-            break;
-        }
-    }
-
-    Duration::from_millis(timeout as u64)
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -808,12 +779,12 @@ mod test {
     use systemstat::Ipv4Addr;
 
     #[test]
-    fn test_progressive_timeout() {
-        let timeout = compute_progressive_timeout(9);
-
+    fn test_stun_timeout() {
         assert_eq!(
-            timeout.as_millis(),
-            250 + 500 + 1000 + 2000 + 3000 + 3000 + 3000 + 3000 + 3000
+            STUN_TIMEOUT,
+            (0..=STUN_MAX_RETRANS)
+                .map(stun_resend_delay)
+                .sum::<Duration>()
         );
     }
 
