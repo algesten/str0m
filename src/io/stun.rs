@@ -11,7 +11,11 @@ use thiserror::Error;
 pub const STUN_INITIAL_RTO_MILLIS: u64 = 250;
 pub const STUN_MAX_RETRANS: usize = 9;
 pub const STUN_MAX_RTO_MILLIS: u64 = 3000;
-pub const STUN_TIMEOUT: Duration = Duration::from_secs(40); // the above algo gives us 39_750
+pub const STUN_TIMEOUT: Duration = compute_progressive_timeout(
+    STUN_INITIAL_RTO_MILLIS,
+    STUN_MAX_RETRANS,
+    STUN_MAX_RTO_MILLIS,
+);
 
 /// Calculate the send delay given how many times we tried.
 ///
@@ -772,11 +776,46 @@ impl<'a> fmt::Debug for StunMessage<'a> {
     }
 }
 
+/// Computes the maximum timeout based on doubling the initial delay.
+const fn compute_progressive_timeout(
+    initial: u64,
+    max_retransmits: usize,
+    max_delay: u64,
+) -> Duration {
+    let mut timeout = 0;
+
+    let mut x = 0;
+    let mut step = initial;
+
+    loop {
+        timeout += if step > max_delay { max_delay } else { step };
+
+        x += 1;
+        step *= 2;
+
+        if x >= max_retransmits {
+            break;
+        }
+    }
+
+    Duration::from_millis(timeout)
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use std::net::SocketAddrV4;
     use systemstat::Ipv4Addr;
+
+    #[test]
+    fn test_progressive_timeout() {
+        let timeout = compute_progressive_timeout(250, 9, 3000);
+
+        assert_eq!(
+            timeout.as_millis(),
+            250 + 500 + 1000 + 2000 + 3000 + 3000 + 3000 + 3000 + 3000
+        );
+    }
 
     #[test]
     fn parse_stun_message() {
