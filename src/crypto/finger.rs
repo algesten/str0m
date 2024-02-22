@@ -20,14 +20,12 @@ pub struct Fingerprint {
 impl fmt::Display for Fingerprint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} ", self.hash_func)?;
-        write!(f, "[")?;
         for (i, b) in self.bytes.iter().enumerate() {
             if i > 0 {
                 write!(f, ":")?;
             }
             write!(f, "{:02X}", b)?;
         }
-        write!(f, "]")?;
         Ok(())
     }
 }
