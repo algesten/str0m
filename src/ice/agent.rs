@@ -1410,48 +1410,39 @@ impl IceAgent {
     }
 
     fn evaluate_nomination(&mut self) {
-        let best = if self.controlling {
+        let best_prio = if self.controlling {
             // For controlling agents, we pick the best candidate pair using
             // this strategy.
             self.candidate_pairs
                 .iter()
                 .filter(|p| p.state() == CheckState::Succeeded)
-                .max_by_key(|p| p.prio())
-                .filter(|new| {
-                    self.nominated_pair()
-                        .map_or(true, |nominated| new.prio() > nominated.prio())
-                })
-                .map(|p| p.id())
+                .map(|p| p.prio())
+                .max()
         } else {
             // For controlled agents, we pick the best pair from what the controlling
             // agent has indicated with USE-CANDIDATE stun attribute.
             self.candidate_pairs
                 .iter()
                 .filter(|p| p.is_nominated())
-                .max_by_key(|p| p.prio())
-                .filter(|new| {
-                    self.nominated_pair()
-                        .map_or(true, |nominated| new.prio() > nominated.prio())
-                })
-                .map(|p| p.id())
+                .map(|p| p.prio())
+                .max()
         };
 
-        if let Some(best) = best {
-            if let Some(current_best) = self.nominated_send {
-                if best == current_best {
-                    // The best is also the current best.
+        if let Some(best_prio) = best_prio {
+            if let Some(nominated) = self.nominated_pair() {
+                if nominated.prio() == best_prio {
+                    // The best prio is also the current nominated prio. Make
+                    // no changes since there can be multiple pairs having the
+                    // same best_prio.
                     return;
-                } else {
-                    trace!("Found better nomination than current");
                 }
-            } else {
-                trace!("Nominating best candidate");
             }
+            trace!("Nominating best candidate");
 
             let pair = self
                 .candidate_pairs
                 .iter_mut()
-                .find(|p| p.id() == best)
+                .find(|p| p.prio() == best_prio)
                 // above logic means this can't fail
                 .unwrap();
 
@@ -1463,7 +1454,7 @@ impl IceAgent {
             let local = pair.local_candidate(&self.local_candidates);
             let remote = pair.remote_candidate(&self.remote_candidates);
 
-            self.nominated_send = Some(best);
+            self.nominated_send = Some(pair.id());
             self.emit_event(IceAgentEvent::NominatedSend {
                 proto: local.proto(),
                 source: local.base(),
