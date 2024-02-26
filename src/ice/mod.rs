@@ -85,6 +85,18 @@ mod test {
         Candidate::host(sock(s), proto).unwrap()
     }
 
+    pub fn srflx(
+        s: impl Into<String>,
+        base: impl Into<String>,
+        proto: impl TryInto<Protocol>,
+    ) -> Candidate {
+        Candidate::server_reflexive(sock(s), sock(base), proto).unwrap()
+    }
+
+    pub fn relay(s: impl Into<String>, proto: impl TryInto<Protocol>) -> Candidate {
+        Candidate::relayed(sock(s), proto).unwrap()
+    }
+
     /// Transform the socket to rig different test scenarios.
     ///
     /// * either port 9999 -> closed (packets dropped)
@@ -443,6 +455,53 @@ mod test {
         }
     }
 
+    #[test]
+    pub fn candidate_pair_of_same_kind_does_not_get_nominated() {
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        let c1 = relay("1.1.1.1:1000", "udp");
+        a1.add_local_candidate(c1.clone());
+        a2.add_remote_candidate(c1);
+        let c2 = srflx("4.4.4.4:1000", "3.3.3.3:1000", "udp");
+        let c3 = host("3.3.3.3:1000", "udp");
+        a2.add_local_candidate(c2.clone());
+        a1.add_remote_candidate(c2);
+        a2.add_local_candidate(c3.clone());
+        a1.add_remote_candidate(c3);
+
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+
+        // loop until we're connected.
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        a1.add_local_candidate(relay("1.1.1.1:1001", "udp"));
+        a2.add_remote_candidate(relay("1.1.1.1:1001", "udp"));
+
+        loop {
+            if a2.has_event(|e| {
+                matches!(e, IceAgentEvent::DiscoveredRecv { source, .. } if source == &sock("1.1.1.1:1001"))
+            }) {
+                break;
+            }
+
+            progress(&mut a1, &mut a2);
+        }
+
+        assert!(!a1.has_event(|e| {
+            matches!(e, IceAgentEvent::NominatedSend { source, .. } if source == &sock("1.1.1.1:1001"))
+        }));
+        assert!(!a2.has_event(|e| {
+            matches!(e, IceAgentEvent::NominatedSend { destination, .. } if destination == &sock("1.1.1.1:1001"))
+        }));
+    }
+
     pub struct TestAgent {
         pub start_time: Instant,
         pub agent: IceAgent,
@@ -465,6 +524,10 @@ mod test {
                 time: now,
                 drop_sent_packets: false,
             }
+        }
+
+        fn has_event(&self, predicate: impl Fn(&IceAgentEvent) -> bool) -> bool {
+            self.events.iter().any(|(_, e)| predicate(&e))
         }
     }
 
