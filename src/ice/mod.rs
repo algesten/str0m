@@ -527,7 +527,7 @@ mod test {
         }
 
         fn has_event(&self, predicate: impl Fn(&IceAgentEvent) -> bool) -> bool {
-            self.events.iter().any(|(_, e)| predicate(&e))
+            self.events.iter().any(|(_, e)| predicate(e))
         }
     }
 
