@@ -1417,6 +1417,10 @@ impl IceAgent {
                 .iter()
                 .filter(|p| p.state() == CheckState::Succeeded)
                 .max_by_key(|p| p.prio())
+                .filter(|new| {
+                    self.nominated_pair()
+                        .map_or(true, |nominated| new.prio() > nominated.prio())
+                })
                 .map(|p| p.id())
         } else {
             // For controlled agents, we pick the best pair from what the controlling
@@ -1425,6 +1429,10 @@ impl IceAgent {
                 .iter()
                 .filter(|p| p.is_nominated())
                 .max_by_key(|p| p.prio())
+                .filter(|new| {
+                    self.nominated_pair()
+                        .map_or(true, |nominated| new.prio() > nominated.prio())
+                })
                 .map(|p| p.id())
         };
 
@@ -1462,6 +1470,12 @@ impl IceAgent {
                 destination: remote.addr(),
             })
         }
+    }
+
+    fn nominated_pair(&self) -> Option<&CandidatePair> {
+        let id = self.nominated_send?;
+
+        self.candidate_pairs.iter().find(|p| p.id() == id)
     }
 
     fn set_connection_state(&mut self, state: IceConnectionState, reason: &'static str) {
