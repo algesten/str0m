@@ -1410,27 +1410,27 @@ impl IceAgent {
     }
 
     fn evaluate_nomination(&mut self) {
+        let nominated_pair_priority = self.nominated_pair_priority();
+
         let best_prio = if self.controlling {
             // For controlling agents, we pick the best candidate pair using
             // this strategy.
             self.candidate_pairs
-                .iter()
+                .iter_mut()
                 .filter(|p| p.state() == CheckState::Succeeded)
-                .map(|p| p.prio())
-                .max()
+                .max_by_key(|p| p.prio())
         } else {
             // For controlled agents, we pick the best pair from what the controlling
             // agent has indicated with USE-CANDIDATE stun attribute.
             self.candidate_pairs
-                .iter()
+                .iter_mut()
                 .filter(|p| p.is_nominated())
-                .map(|p| p.prio())
-                .max()
+                .max_by_key(|p| p.prio())
         };
 
         if let Some(best_prio) = best_prio {
-            if let Some(nominated) = self.nominated_pair() {
-                if nominated.prio() == best_prio {
+            if let Some(nominated) = nominated_pair_priority {
+                if nominated == best_prio.prio() {
                     // The best prio is also the current nominated prio. Make
                     // no changes since there can be multiple pairs having the
                     // same best_prio.
@@ -1439,22 +1439,15 @@ impl IceAgent {
             }
             trace!("Nominating best candidate");
 
-            let pair = self
-                .candidate_pairs
-                .iter_mut()
-                .find(|p| p.prio() == best_prio)
-                // above logic means this can't fail
-                .unwrap();
-
-            if !pair.is_nominated() && (self.controlling || self.ice_lite) {
+            if !best_prio.is_nominated() && (self.controlling || self.ice_lite) {
                 // ice lite progresses pair to success straight away.
-                pair.nominate(self.ice_lite);
+                best_prio.nominate(self.ice_lite);
             }
 
-            let local = pair.local_candidate(&self.local_candidates);
-            let remote = pair.remote_candidate(&self.remote_candidates);
+            let local = best_prio.local_candidate(&self.local_candidates);
+            let remote = best_prio.remote_candidate(&self.remote_candidates);
 
-            self.nominated_send = Some(pair.id());
+            self.nominated_send = Some(best_prio.id());
             self.emit_event(IceAgentEvent::NominatedSend {
                 proto: local.proto(),
                 source: local.base(),
@@ -1463,10 +1456,12 @@ impl IceAgent {
         }
     }
 
-    fn nominated_pair(&self) -> Option<&CandidatePair> {
+    fn nominated_pair_priority(&self) -> Option<u64> {
         let id = self.nominated_send?;
 
-        self.candidate_pairs.iter().find(|p| p.id() == id)
+        self.candidate_pairs
+            .iter()
+            .find_map(|p| (p.id() == id).then_some(p.prio()))
     }
 
     fn set_connection_state(&mut self, state: IceConnectionState, reason: &'static str) {
