@@ -1186,6 +1186,11 @@ impl IceAgent {
             // If the pair is not already on the checklist:
             let local = &self.local_candidates[local_idx];
             let remote = &self.remote_candidates[remote_idx];
+
+            if local.discarded() {
+                return; // Ignore STUN requests to discarded candidates
+            }
+
             let prio = CandidatePair::calculate_prio(self.controlling, remote.prio(), local.prio());
 
             // *  Its state is set to Waiting. (this is the default)
