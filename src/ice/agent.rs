@@ -518,8 +518,6 @@ impl IceAgent {
     /// Adding loopback addresses or multicast/broadcast addresses causes
     /// an error.
     pub fn add_remote_candidate(&mut self, mut c: Candidate) {
-        info!("Add remote candidate: {:?}", c);
-
         // This is a a:rtcp-mux-only implementation. The only component
         // we accept is 1 for RTP.
         if c.component_id() != 1 {
@@ -565,6 +563,8 @@ impl IceAgent {
             *existing = c;
             idx
         } else {
+            info!("Add remote candidate: {:?}", c);
+
             self.remote_candidates.push(c);
             self.remote_candidates.len() - 1
         };
