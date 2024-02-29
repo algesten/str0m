@@ -471,15 +471,15 @@ impl IceAgent {
                     other, c
                 );
                 return false;
-            } else {
-                // Stop using the current candidate in favor of the new one.
-                debug!(
-                    "Replace redundant candidate, current: {:?} replaced with: {:?}",
-                    other, c
-                );
-                other.set_discarded();
-                self.discard_candidate_pairs(idx);
             }
+
+            // Stop using the current candidate in favor of the new one.
+            debug!(
+                "Replace redundant candidate, current: {:?} replaced with: {:?}",
+                other, c
+            );
+            other.set_discarded();
+            self.discard_candidate_pairs(idx);
         }
 
         // Tie this ufrag to this ICE-session.
