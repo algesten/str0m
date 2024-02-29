@@ -379,8 +379,6 @@ impl IceAgent {
     /// Adding loopback addresses or multicast/broadcast addresses causes
     /// an error.
     pub fn add_local_candidate(&mut self, mut c: Candidate) -> bool {
-        info!("Add local candidate: {:?}", c);
-
         let ip = c.addr().ip();
 
         if self.ice_lite {
@@ -493,6 +491,8 @@ impl IceAgent {
             .filter(|(_, v)| !v.discarded() && v.addr().is_ipv4() == ip.is_ipv4())
             .map(|(i, _)| i)
             .collect();
+
+        info!("Add local candidate: {:?}", c);
 
         self.local_candidates.push(c);
 
