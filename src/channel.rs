@@ -99,6 +99,7 @@ impl fmt::Debug for ChannelData {
 #[derive(Debug, Default)]
 pub(crate) struct ChannelHandler {
     allocations: Vec<ChannelAllocation>,
+    next_channel_id: usize,
 }
 
 #[derive(Debug)]
@@ -115,7 +116,7 @@ struct ChannelAllocation {
 
 impl ChannelHandler {
     pub fn new_channel(&mut self, config: &ChannelConfig) -> ChannelId {
-        let id = ChannelId(self.allocations.len());
+        let id = self.next_channel_id();
 
         // For out-of-band negotiated, the id is already set.
         let sctp_stream_id = config.negotiated;
@@ -179,6 +180,14 @@ impl ChannelHandler {
 
         // After do_allocations so we get a channel for any confirmed.
         self.open_channels(sctp);
+    }
+
+    /// Allocate next available `ChannelId`.
+    fn next_channel_id(&mut self) -> ChannelId {
+        let id = self.next_channel_id;
+        self.next_channel_id += 1;
+
+        ChannelId(id)
     }
 
     fn need_allocation(&self) -> bool {
@@ -255,7 +264,7 @@ impl ChannelHandler {
             .any(|a| a.sctp_stream_id == Some(sctp_stream_id));
 
         if !exists {
-            let id = ChannelId(self.allocations.len());
+            let id = self.next_channel_id();
             let alloc = ChannelAllocation {
                 id,
                 sctp_stream_id: Some(sctp_stream_id),
@@ -278,5 +287,27 @@ impl ChannelHandler {
 
     pub fn remove_channel(&mut self, id: ChannelId) {
         self.allocations.retain(|a| a.id != id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn channel_id_allocation() {
+        let mut handler = ChannelHandler::default();
+
+        // allocate first channel, get unique id
+        assert_eq!(handler.new_channel(&Default::default()), ChannelId(0));
+
+        // allocate second channel, get unique id
+        assert_eq!(handler.new_channel(&Default::default()), ChannelId(1));
+
+        // free channel 0, allocate two more channels and verify that the
+        // new channels have unique IDs.
+        handler.remove_channel(ChannelId(0));
+        assert_eq!(handler.new_channel(&Default::default()), ChannelId(2));
+        assert_eq!(handler.new_channel(&Default::default()), ChannelId(3));
     }
 }
