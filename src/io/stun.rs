@@ -79,6 +79,10 @@ pub struct StunMessage<'a> {
 impl<'a> StunMessage<'a> {
     /// Parse a STUN message from a slice of bytes.
     pub fn parse(buf: &[u8]) -> Result<StunMessage, StunError> {
+        if buf.len() < 4 {
+            return Err(StunError::Parse("Buffer too short".into()));
+        }
+
         let typ = (buf[0] as u16 & 0b0011_1111) << 8 | buf[1] as u16;
         let len = (buf[2] as u16) << 8 | buf[3] as u16;
         if len & 0b0000_0011 > 0 {
