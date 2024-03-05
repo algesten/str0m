@@ -844,4 +844,11 @@ mod test {
             r#"Attributes { username: "foo", message_integrity: [48, 48, 48, 48], error_code: (401, "Unauthorized"), realm: "baz", nonce: "abcd", xor_mapped_address: 127.0.0.1:0, software: "str0m", fingerprint: 9999, priority: 1, use_candidate: true, ice_controlled: 10, ice_controlling: 100, network_cost: (10, 10) }"#
         );
     }
+
+    #[test]
+    fn parse_zero_length_buffer() {
+        let result = StunMessage::parse(&[]);
+
+        assert!(result.is_err());
+    }
 }
