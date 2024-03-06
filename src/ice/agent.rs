@@ -671,6 +671,20 @@ impl IceAgent {
             let pair = self.candidate_pairs.pop();
             debug!("Remove overflow pair {:?}", pair);
         }
+
+        let newly_formed_pairs = self
+            .candidate_pairs
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, p)| {
+                (local_idxs.contains(&p.local_idx()) && remote_idxs.contains(&p.remote_idx()))
+                    .then_some(idx)
+            })
+            .collect::<Vec<_>>();
+
+        for idx in newly_formed_pairs {
+            self.stun_client_binding_request(self.last_now.unwrap(), idx)
+        }
     }
 
     /// Invalidate a candidate and remove it from the connection.
