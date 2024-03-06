@@ -268,6 +268,13 @@ impl IceAgent {
         }
     }
 
+    /// The maximum number of candidate pairs to test.
+    ///
+    /// Any pairs above this limit will be dropped (worst priority first).
+    pub fn set_max_candidate_pairs(&mut self, max: usize) {
+        self.max_candidate_pairs = Some(max);
+    }
+
     /// Enable or disable ice_lite.
     ///
     /// Default is disabled.
