@@ -850,15 +850,6 @@ impl IceAgent {
     /// Typically, you will want to call [`IceAgent::poll_timeout`] and "wake-up" the agent once that time is reached.
     /// It is save to call this function more often as the agent will internally only operate in steps of at most 50ms (`TIMING_ADVANCE`).
     pub fn handle_timeout(&mut self, now: Instant) {
-        // The generation of ordinary and triggered connectivity checks is
-        // governed by timer Ta.
-        if let Some(last_now) = self.last_now {
-            let min_step = last_now + TIMING_ADVANCE;
-            if now < min_step {
-                return;
-            }
-        }
-
         // This happens exactly once because evaluate_state() below will
         // switch away from New -> Checking.
         if self.state == IceConnectionState::New {
