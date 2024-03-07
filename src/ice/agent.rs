@@ -848,7 +848,6 @@ impl IceAgent {
     /// Provide the current time to the [`IceAgent`].
     ///
     /// Typically, you will want to call [`IceAgent::poll_timeout`] and "wake-up" the agent once that time is reached.
-    /// It is save to call this function more often as the agent will internally only operate in steps of at most 50ms (`TIMING_ADVANCE`).
     pub fn handle_timeout(&mut self, now: Instant) {
         // This happens exactly once because evaluate_state() below will
         // switch away from New -> Checking.
@@ -954,6 +953,9 @@ impl IceAgent {
     }
 
     /// Poll for the next time to call [`IceAgent::handle_timeout`].
+    ///
+    /// For optimal performance, you should call this every time the [`IceAgent`]s state changes.
+    /// For example, after you call [`IceAgent::add_local_candidate`] or [`IceAgent::add_remote_candidate`].
     ///
     /// Returns `None` until the first ever `handle_timeout` is called.
     pub fn poll_timeout(&mut self) -> Option<Instant> {
