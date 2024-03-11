@@ -73,7 +73,7 @@ mod test {
     use std::ops::{Deref, DerefMut};
     use std::time::{Duration, Instant};
 
-    use crate::io::{Protocol, StunMessage, StunPacket};
+    use crate::io::{Protocol, StunMessage, StunPacket, STUN_TIMEOUT};
     use tracing::Span;
 
     pub fn sock(s: impl Into<String>) -> SocketAddr {
@@ -184,7 +184,7 @@ mod test {
                 *e,
                 IceAgentEvent::IceConnectionStateChange(IceConnectionState::Disconnected)
             );
-            assert!(*d > Duration::from_secs(15));
+            assert!(*d > STUN_TIMEOUT);
         }
 
         let (d, e) = a1.events.last().unwrap();
