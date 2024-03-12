@@ -9,7 +9,7 @@ use crate::rtp_::{Mid, Rid};
 use crate::Bitrate;
 
 pub(crate) struct Stats {
-    last_now: Instant,
+    last_now: Option<Instant>,
     events: VecDeque<StatsEvent>,
     interval: Duration,
 }
@@ -199,7 +199,7 @@ impl Stats {
     pub fn new(interval: Duration) -> Stats {
         Stats {
             // by starting with the current time we can generate stats right on first timeout
-            last_now: Instant::now(),
+            last_now: None,
             events: VecDeque::new(),
             interval,
         }
@@ -209,7 +209,13 @@ impl Stats {
     ///
     /// The caller can use this to compute the snapshot only if needed, before calling [`Stats::do_handle_timeout`]
     pub fn wants_timeout(&mut self, now: Instant) -> bool {
-        let min_step = self.last_now + self.interval;
+        let Some(last_now) = self.last_now else {
+            // Learn our first ever `now`
+            self.last_now = Some(now);
+            return false;
+        };
+
+        let min_step = last_now + self.interval;
         now >= min_step
     }
 
@@ -238,14 +244,16 @@ impl Stats {
             self.events.push_back(StatsEvent::MediaEgress(event));
         }
 
-        self.last_now = snapshot.timestamp;
+        self.last_now = Some(snapshot.timestamp);
     }
 
     /// Poll for the next time to call [`Stats::wants_timeout`] and [`Stats::do_handle_timeout`].
     ///
     /// NOTE: we only need Option<_> to conform to .soonest() (see caller)
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        let last_now = self.last_now;
+        let Some(last_now) = self.last_now else {
+            return None;
+        };
         Some(last_now + self.interval)
     }
 
