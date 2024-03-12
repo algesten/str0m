@@ -843,6 +843,7 @@ pub struct Rtc {
     remote_fingerprint: Option<Fingerprint>,
     remote_addrs: Vec<SocketAddr>,
     send_addr: Option<SendAddr>,
+    need_init_time: bool,
     last_now: Instant,
     peer_bytes_rx: u64,
     peer_bytes_tx: u64,
@@ -1039,6 +1040,7 @@ impl Rtc {
             remote_fingerprint: None,
             remote_addrs: vec![],
             send_addr: None,
+            need_init_time: true,
             last_now: already_happened(),
             peer_bytes_rx: 0,
             peer_bytes_tx: 0,
@@ -1559,9 +1561,16 @@ impl Rtc {
     }
 
     fn init_time(&mut self, now: Instant) {
+        // The operation is somewhat expensive, hence we only do it once.
+        if !self.need_init_time {
+            return;
+        }
+
         // We assume this first "now" is a time 0 start point for calculating ntp/unix time offsets.
         // This initializes the conversion of Instant -> NTP/Unix time.
         let _ = now.to_unix_duration();
+
+        self.need_init_time = false;
     }
 
     fn do_handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
