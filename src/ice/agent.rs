@@ -713,7 +713,6 @@ impl IceAgent {
     /// process.
     #[allow(unused)]
     pub fn ice_restart(&mut self, local_credentials: IceCreds, keep_local_candidates: bool) {
-        info!("ICE restart");
         // An ICE agent MAY restart ICE for existing data streams.  An ICE
         // restart causes all previous states of the data streams, excluding the
         // roles of the agents, to be flushed.  The only difference between an
