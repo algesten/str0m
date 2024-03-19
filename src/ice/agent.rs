@@ -801,12 +801,6 @@ impl IceAgent {
             }
         }
 
-        // The integrity check below may panic if no remote ICE credentials yet exist
-        if self.remote_credentials.is_none() {
-            trace!("Message rejected, no remote ICE credentials");
-            return false;
-        }
-
         let (_, password) = self.stun_credentials(!message.is_response());
         if !message.check_integrity(&password) {
             trace!("Message rejected, integrity check failed");
@@ -1827,14 +1821,75 @@ mod test {
         assert!(agent.accepts_message(&StunMessage::parse(&valid_reply).unwrap()));
     }
 
+    #[test]
+    fn queues_stun_binding_before_remote_creds() {
+        let mut agent = IceAgent::new();
+        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+
+        let remote_creds = IceCreds::new();
+        let mut remote_candidate = Candidate::host(ipv4_3(), "udp").unwrap();
+        remote_candidate.set_ufrag(&remote_creds.ufrag);
+        let prio = remote_candidate.prio();
+        agent.add_remote_candidate(remote_candidate);
+
+        let serialized_req = make_serialized_binding_request(
+            &agent.local_credentials,
+            &remote_creds,
+            !agent.controlling(),
+            prio,
+        );
+        let binding_req = StunMessage::parse(&serialized_req).unwrap();
+
+        // Should not be dropped
+        assert!(agent.accepts_message(&binding_req));
+        agent.handle_packet(
+            Instant::now(),
+            StunPacket {
+                message: binding_req,
+                source: ipv4_3(),
+                destination: ipv4_1(),
+                proto: Protocol::Udp,
+            },
+        );
+
+        // Should not yet get a response
+        agent.handle_timeout(Instant::now());
+        assert!(agent.poll_transmit().is_none());
+
+        agent.set_remote_credentials(remote_creds.clone());
+        agent.handle_timeout(Instant::now());
+
+        // Now should have a response
+        let payload = Vec::from(agent.poll_transmit().unwrap().contents);
+        let stun_message = StunMessage::parse(&payload).unwrap();
+        assert!(stun_message.is_successful_binding_response());
+    }
+
+    fn make_serialized_binding_request(
+        local_creds: &IceCreds,
+        remote_creds: &IceCreds,
+        controlling: bool,
+        prio: u32,
+    ) -> Vec<u8> {
+        let username = format!("{}:{}", local_creds.ufrag, remote_creds.ufrag);
+        let binding_req =
+            StunMessage::binding_request(&username, TransId::new(), controlling, 0, prio, false);
+        serialize_stun_msg(binding_req, &local_creds.pass)
+    }
+
     fn make_authenticated_stun_reply(tx_id: TransId, addr: SocketAddr, password: &str) -> Vec<u8> {
         let reply = StunMessage::reply(tx_id, addr);
+        serialize_stun_msg(reply, password)
+    }
 
+    /// Serializing will calculate a message integrity for it. You can then re-parse to get a message
+    /// that contains that correct integrity value.
+    fn serialize_stun_msg(msg: StunMessage<'_>, password: &str) -> Vec<u8> {
         let mut buf = vec![0_u8; DATAGRAM_MTU];
 
-        let n = reply
+        let n = msg
             .to_bytes(password, &mut buf)
-            .expect("IO error writing STUN reply");
+            .expect("IO error writing STUN message");
         buf.truncate(n);
 
         buf
