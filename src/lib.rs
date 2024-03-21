@@ -1520,8 +1520,7 @@ impl Rtc {
         // Slow path: Occasionally, traffic comes in on a socket address corresponding
         // to a successful candidate pair other than the one we've currently nominated.
         // This typically happens at the beginning of the connection
-        let remote_candidates = self.ice.remote_candidates();
-        if remote_candidates.iter().any(|cand| cand.addr() == r.source) {
+        if self.ice.has_viable_remote_candidate(r.source) {
             return true;
         }
 
