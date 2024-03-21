@@ -1473,7 +1473,8 @@ impl Rtc {
     /// [`Input::Timeout`] is always accepted. [`Input::Receive`] is tested against the nominated
     /// ICE candidate. If that doesn't match and the incoming data is a STUN packet, the accept call
     /// is delegated to the ICE agent which recognizes the remote peer from `a=ufrag`/`a=password`
-    /// credentials negotiated in the SDP.
+    /// credentials negotiated in the SDP. If that also doesn't match, all remote ICE candidates are
+    /// checked for a match.
     ///
     /// In a server setup, the server would try to find an `Rtc` instances using [`Rtc::accepts()`].
     /// The first found instance would be given the input via [`Rtc::handle_input()`].
@@ -1502,11 +1503,9 @@ impl Rtc {
             return true;
         };
 
-        // This should cover Dtls, Rtp and Rtcp
+        // Fast path: DTLS, RTP, and RTCP traffic coming in from the same socket address
+        // we've nominated for sending via the ICE agent. This is the typical case
         if let Some(send_addr) = &self.send_addr {
-            // TODO: This assume symmetrical routing, i.e. we are getting
-            // the incoming traffic from a remote peer from the same socket address
-            // we've nominated for sending via the ICE agent.
             if r.source == send_addr.destination {
                 return true;
             }
@@ -1516,6 +1515,14 @@ impl Rtc {
         // to this Rtc instance.
         if let DatagramRecvInner::Stun(v) = &r.contents.inner {
             return self.ice.accepts_message(v);
+        }
+
+        // Slow path: Occasionally, traffic comes in on a socket address corresponding
+        // to a successful candidate pair other than the one we've currently nominated.
+        // This typically happens at the beginning of the connection
+        let remote_candidates = self.ice.remote_candidates();
+        if remote_candidates.iter().any(|cand| cand.addr() == r.source) {
+            return true;
         }
 
         false
