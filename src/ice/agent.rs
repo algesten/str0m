@@ -307,6 +307,15 @@ impl IceAgent {
         &self.remote_candidates
     }
 
+    /// Determines whether any remote candidates match the specified address and
+    /// have been verified with a STUN request/response.
+    pub fn has_viable_remote_candidate(&self, addr: SocketAddr) -> bool {
+        self.candidate_pairs
+            .iter()
+            .filter(|cand| cand.state() == CheckState::Succeeded)
+            .any(|pair| self.remote_candidates[pair.remote_idx()].addr() == addr)
+    }
+
     /// Sets the remote ice credentials.
     pub fn set_remote_credentials(&mut self, r: IceCreds) {
         if self.remote_credentials.as_ref() != Some(&r) {
