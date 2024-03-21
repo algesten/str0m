@@ -413,7 +413,7 @@ impl TwccRecvRegister {
 
                 if i.consume(appended) {
                     // it was fully consumed.
-                    if matches!(i, ChunkInterim::Received(_, _, _)) {
+                    if matches!(i, ChunkInterim::Received(_, _)) {
                         self.report_from += 1;
                     }
 
@@ -498,11 +498,11 @@ fn build_interims(
     interims: &mut VecDeque<ChunkInterim>,
 ) {
     interims.clear();
-    let report_from = queue.iter().enumerate().skip(report_from);
+    let report_from = queue.iter().skip(report_from);
 
     let mut prev = (base_seq, base_time);
 
-    for (index, r) in report_from {
+    for r in report_from {
         let diff_seq = *r.seq - *prev.0;
 
         if diff_seq > 1 {
@@ -538,7 +538,7 @@ fn build_interims(
             (PacketStatus::ReceivedSmallDelta, t as i16)
         };
 
-        interims.push_back(ChunkInterim::Received(index, status, time));
+        interims.push_back(ChunkInterim::Received(status, time));
         prev = (r.seq, r.time);
     }
 }
@@ -546,7 +546,7 @@ fn build_interims(
 #[derive(Debug, Clone, Copy)]
 enum ChunkInterim {
     Missing(u16), // max 2^13 (one run length)
-    Received(usize, PacketStatus, i16),
+    Received(PacketStatus, i16),
 }
 
 #[derive(Debug, Default)]
@@ -582,14 +582,14 @@ impl ChunkInterim {
     fn status(&self) -> PacketStatus {
         match self {
             ChunkInterim::Missing(_) => PacketStatus::NotReceived,
-            ChunkInterim::Received(_, s, _) => *s,
+            ChunkInterim::Received(s, _) => *s,
         }
     }
 
     fn delta(&self) -> Option<Delta> {
         match self {
             ChunkInterim::Missing(_) => None,
-            ChunkInterim::Received(_, s, d) => match *s {
+            ChunkInterim::Received(s, d) => match *s {
                 PacketStatus::ReceivedSmallDelta => Some(Delta::Small(*d as u8)),
                 PacketStatus::ReceivedLargeOrNegativeDelta => Some(Delta::Large(*d)),
                 _ => unreachable!(),
@@ -603,7 +603,7 @@ impl ChunkInterim {
                 *c -= n;
                 *c == 0
             }
-            ChunkInterim::Received(_, _, _) => {
+            ChunkInterim::Received(_, _) => {
                 assert!(n <= 1);
                 n == 1
             }
@@ -663,7 +663,7 @@ impl PacketChunk {
                 *n += max;
                 max
             }
-            (Run(s, n), Received(_, s2, _)) => {
+            (Run(s, n), Received(s2, _)) => {
                 if *s != *s2 {
                     return 0;
                 }
@@ -677,7 +677,7 @@ impl PacketChunk {
                 *f += max;
                 max
             }
-            (VectorSingle(n, f), Received(_, s2, _)) => {
+            (VectorSingle(n, f), Received(s2, _)) => {
                 if *s2 == PacketStatus::ReceivedLargeOrNegativeDelta {
                     return 0;
                 }
@@ -695,7 +695,7 @@ impl PacketChunk {
                 *f += max;
                 max
             }
-            (VectorDouble(n, f), Received(_, s2, _)) => {
+            (VectorDouble(n, f), Received(s2, _)) => {
                 let max = free.min(1);
                 if max == 1 {
                     *n <<= 2;
