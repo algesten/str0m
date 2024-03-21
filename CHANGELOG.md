@@ -1,4 +1,9 @@
 # Unreleased
+  * Accept all good remote address candidates, not just the nominated
+  * Improve performance by only calling `init_time` once
+  * Fix SCTP channel ID allocation bug when reusing channels
+  * Fix bug causing nomination of ICE candidate pair that isn't better
+  * Lower STUN_TIMEOUT for quicker connection checking
   * Fix bug making SCTP fail under packet loss
   * Add `base` parameter to `Candidate::server_reflexive` (breaking)
   * Refactor all OpenSSL (and other crypto code) to mod crypto
