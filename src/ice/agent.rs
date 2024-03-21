@@ -798,7 +798,7 @@ impl IceAgent {
             }
         }
 
-        if message.is_successful_binding_response() {
+        if message.is_response() {
             let belongs_to_a_candidate_pair = self
                 .candidate_pairs
                 .iter()
