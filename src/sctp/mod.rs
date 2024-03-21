@@ -446,9 +446,7 @@ impl RtcSctp {
             return None;
         }
 
-        let Some(assoc) = &mut self.assoc else {
-            return None;
-        };
+        let assoc = self.assoc.as_mut()?;
 
         while let Some(e) = assoc.poll() {
             if let Event::Connected = e {

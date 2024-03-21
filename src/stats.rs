@@ -251,9 +251,7 @@ impl Stats {
     ///
     /// NOTE: we only need Option<_> to conform to .soonest() (see caller)
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        let Some(last_now) = self.last_now else {
-            return None;
-        };
+        let last_now = self.last_now?;
         Some(last_now + self.interval)
     }
 
