@@ -1011,7 +1011,8 @@ impl Rtc {
     pub(crate) fn new_from_config(config: RtcConfig) -> Self {
         let session = Session::new(&config);
 
-        let mut ice = IceAgent::with_local_credentials(config.local_ice_credentials);
+        let local_creds = config.local_ice_credentials.unwrap_or_else(IceCreds::new);
+        let mut ice = IceAgent::with_local_credentials(local_creds);
         if config.ice_lite {
             ice.set_ice_lite(config.ice_lite);
         }
@@ -1702,7 +1703,7 @@ impl Rtc {
 /// Configs implement [`Clone`] to help create multiple `Rtc` instances.
 #[derive(Debug, Clone)]
 pub struct RtcConfig {
-    local_ice_credentials: IceCreds,
+    local_ice_credentials: Option<IceCreds>,
     dtls_cert: Option<DtlsCert>,
     fingerprint_verification: bool,
     ice_lite: bool,
@@ -1725,10 +1726,20 @@ impl RtcConfig {
         RtcConfig::default()
     }
 
-    /// The auto generated local ice credentials.
+    /// Get the local ICE credentials, if set.
+    ///
+    /// If not specified, local credentials will be randomly generated when
+    /// building the [`Rtc`] instance.
     #[cfg_attr(not(feature = "ice-agent"), doc(hidden))]
-    pub fn local_ice_credentials(&self) -> &IceCreds {
+    pub fn local_ice_credentials(&self) -> &Option<IceCreds> {
         &self.local_ice_credentials
+    }
+
+    /// Explicitly sets local ICE credentials.
+    #[cfg_attr(not(feature = "ice-agent"), doc(hidden))]
+    pub fn set_local_ice_credentials(mut self, local_ice_credentials: IceCreds) -> Self {
+        self.local_ice_credentials = Some(local_ice_credentials);
+        self
     }
 
     /// Get the configured DTLS certificate, if set.
@@ -2140,7 +2151,7 @@ impl RtcConfig {
 impl Default for RtcConfig {
     fn default() -> Self {
         Self {
-            local_ice_credentials: IceCreds::new(),
+            local_ice_credentials: None,
             dtls_cert: None,
             fingerprint_verification: true,
             ice_lite: false,
