@@ -138,6 +138,12 @@ pub struct FormatParams {
     /// Specifies that the decoder can do Opus in-band FEC
     pub use_inband_fec: Option<bool>,
 
+    /// Opus specific parameter.
+    ///
+    /// Specifies that the decoder prefers DTX (Discontinuous Transmission) such that
+    /// the packet rate is greatly lowered during periods of silence.
+    pub use_dtx: Option<bool>,
+
     /// Whether h264 sending media encoded at a different level in the offerer-to-answerer
     /// direction than the level in the answerer-to-offerer direction, is allowed.
     pub level_asymmetry_allowed: Option<bool>,
@@ -311,6 +317,13 @@ impl PayloadParams {
 
         if either_fec_specified && c0.format.use_inband_fec != c1.format.use_inband_fec {
             score = score.saturating_sub(2);
+        }
+
+        // If neither value is specified both sides should assume DTX is not used as this is
+        // the default.
+        let either_dtx_specified = c0.format.use_dtx.is_some() || c1.format.use_dtx.is_some();
+        if either_dtx_specified && c0.format.use_dtx != c1.format.use_dtx {
+            score = score.saturating_sub(1);
         }
 
         score
@@ -778,6 +791,7 @@ impl FormatParams {
         match param {
             MinPTime(v) => self.min_p_time = Some(*v),
             UseInbandFec(v) => self.use_inband_fec = Some(*v),
+            UseDtx(v) => self.use_dtx = Some(*v),
             LevelAsymmetryAllowed(v) => self.level_asymmetry_allowed = Some(*v),
             PacketizationMode(v) => self.packetization_mode = Some(*v),
             ProfileLevelId(v) => self.profile_level_id = Some(*v),
@@ -796,6 +810,9 @@ impl FormatParams {
         }
         if let Some(v) = self.use_inband_fec {
             r.push(UseInbandFec(v));
+        }
+        if let Some(v) = self.use_dtx {
+            r.push(UseDtx(v));
         }
         if let Some(v) = self.level_asymmetry_allowed {
             r.push(LevelAsymmetryAllowed(v));
@@ -913,6 +930,7 @@ mod test {
             format: FormatParams {
                 min_p_time: None,
                 use_inband_fec: None,
+                use_dtx: None,
                 level_asymmetry_allowed,
                 packetization_mode,
                 profile_level_id,
