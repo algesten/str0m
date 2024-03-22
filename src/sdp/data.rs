@@ -882,6 +882,9 @@ pub enum FormatParam {
     /// Specifies that the decoder can do Opus in-band FEC
     UseInbandFec(bool),
 
+    /// Specifies that the decoder can do Opus DTX
+    UseDtx(bool),
+
     /// Whether h264 sending media encoded at a different level in the offerer-to-answerer
     /// direction than the level in the answerer-to-offerer direction, is allowed.
     LevelAsymmetryAllowed(bool),
@@ -923,6 +926,7 @@ impl FormatParam {
                 }
             }
             "useinbandfec" => UseInbandFec(v == "1"),
+            "usedtx" => UseDtx(v == "1"),
             "level-asymmetry-allowed" => LevelAsymmetryAllowed(v == "1"),
             "packetization-mode" => {
                 if let Ok(v) = v.parse() {
@@ -967,6 +971,7 @@ impl fmt::Display for FormatParam {
         match self {
             MinPTime(v) => write!(f, "minptime={v}"),
             UseInbandFec(v) => write!(f, "useinbandfec={}", i32::from(*v)),
+            UseDtx(v) => write!(f, "usedtx={}", i32::from(*v)),
             LevelAsymmetryAllowed(v) => {
                 write!(f, "level-asymmetry-allowed={}", i32::from(*v))
             }
