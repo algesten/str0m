@@ -1420,9 +1420,7 @@ mod test {
             }
 
             fn pop_packet(&mut self) -> Option<QueuedPacket> {
-                let Some(packet) = self.queue.pop_front() else {
-                    return None;
-                };
+                let packet = self.queue.pop_front()?;
 
                 let time_spent_queued = self
                     .last_update

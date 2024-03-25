@@ -76,7 +76,7 @@ impl RateControl {
             self.averaged_observed_bitrate
                 .average
                 .map(|avg| avg.to_string())
-                .unwrap_or_else(|| "".to_string())
+                .unwrap_or_default()
         );
 
         match self.state {
