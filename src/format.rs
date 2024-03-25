@@ -323,7 +323,7 @@ impl PayloadParams {
         // the default.
         let either_dtx_specified = c0.format.use_dtx.is_some() || c1.format.use_dtx.is_some();
         if either_dtx_specified && c0.format.use_dtx != c1.format.use_dtx {
-            score = score.saturating_sub(1);
+            score = score.saturating_sub(4);
         }
 
         score
