@@ -1522,6 +1522,8 @@ impl IceAgent {
                     if !any_still_possible {
                         self.set_connection_state(Completed, "no more possible to try");
                     }
+                } else if any_still_possible {
+                    self.set_connection_state(Checking, "got new possible");
                 } else {
                     self.set_connection_state(Disconnected, "none nominated");
                 }
@@ -1531,6 +1533,8 @@ impl IceAgent {
                     if any_still_possible && !self.ice_lite {
                         self.set_connection_state(Connected, "got new possible");
                     }
+                } else if any_still_possible {
+                    self.set_connection_state(Checking, "got new possible");
                 } else {
                     self.set_connection_state(Disconnected, "none nominated");
                 }
