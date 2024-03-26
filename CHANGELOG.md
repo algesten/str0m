@@ -1,13 +1,15 @@
 # Unreleased
-  * Accept all good remote address candidates, not just the nominated
-  * Improve performance by only calling `init_time` once
-  * Fix SCTP channel ID allocation bug when reusing channels
-  * Fix bug causing nomination of ICE candidate pair that isn't better
-  * Lower STUN_TIMEOUT for quicker connection checking
-  * Fix bug making SCTP fail under packet loss
-  * Add `base` parameter to `Candidate::server_reflexive` (breaking)
-  * Refactor all OpenSSL (and other crypto code) to mod crypto
-  * Fix bugs in RTX PT selection for BWE padding
+  * Opus DTX support #492
+  * RtcConfig does not generate the ICE creds #491
+  * Accept all good remote address candidates, not just the nominated #487
+  * Improve performance by only calling `init_time` once #479
+  * Fix SCTP channel ID allocation bug when reusing channels #470
+  * Fix bug causing nomination of ICE candidate pair that isn't better #463
+  * Lower STUN_TIMEOUT for quicker connection checking #462
+  * Fix bug making SCTP fail under packet loss #482
+  * Add `base` parameter to `Candidate::server_reflexive` (breaking) #455
+  * Refactor all OpenSSL (and other crypto code) to mod crypto #449
+  * Fix bugs in RTX PT selection for BWE padding #454
   * Don't enable NACK timers unless there are stream to nack
   * Fix bug in BWE trendline estimator
   * Fix (unlikely) nack overflow error
