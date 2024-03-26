@@ -1,4 +1,6 @@
 # Unreleased
+
+# 0.5.0
   * Opus DTX support #492
   * RtcConfig does not generate the ICE creds #491
   * Accept all good remote address candidates, not just the nominated #487
