@@ -12,10 +12,8 @@ use thiserror::Error;
 mod stun;
 pub(crate) use stun::stun_resend_delay;
 pub use stun::StunMessage;
-pub(crate) use stun::{
-    Class as StunClass, Method as StunMethod, StunError, TransId, STUN_MAX_RETRANS,
-    STUN_MAX_RTO_MILLIS, STUN_TIMEOUT,
-};
+pub(crate) use stun::{Class as StunClass, Method as StunMethod, StunError};
+pub(crate) use stun::{TransId, STUN_MAX_RETRANS, STUN_MAX_RTO_MILLIS, STUN_TIMEOUT};
 
 mod id;
 // this is only exported from this crate to avoid needing
