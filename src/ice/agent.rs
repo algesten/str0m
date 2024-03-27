@@ -2,7 +2,7 @@ use std::collections::{HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
-use crate::io::{Id, DATAGRAM_MTU_WARN};
+use crate::io::{Id, StunClass, StunMethod, DATAGRAM_MTU_WARN};
 use crate::io::{Protocol, StunPacket};
 use crate::io::{StunMessage, TransId, STUN_TIMEOUT};
 use crate::io::{Transmit, DATAGRAM_MTU};
@@ -761,63 +761,82 @@ impl IceAgent {
     /// Tells whether the message is for this agent instance.
     ///
     /// This is used to multiplex multiple ice agents on a server sharing the same UDP socket.
-    /// For this to work, the server should operate in ice-lite mode and not initiate any
-    /// binding requests itself.
     ///
-    /// If no remote credentials have been set using `set_remote_credentials`, the remote
-    /// ufrag is not checked.
+    /// For binding requests, if no remote credentials have been set using
+    /// `set_remote_credentials`, the remote ufrag is not checked.
     pub fn accepts_message(&self, message: &StunMessage<'_>) -> bool {
         trace!("Check if accepts message: {:?}", message);
 
-        // The username for the credential is formed by concatenating the
-        // username fragment provided by the peer with the username fragment of
-        // the ICE agent sending the request, separated by a colon (":").
-        if message.is_binding_request() {
-            // The existence of USERNAME is checked in the STUN parser.
-            let (local, remote) = message.split_username().unwrap();
+        let do_integrity_check = |is_request: bool| -> bool {
+            let (_, password) = self.stun_credentials(is_request);
+            let integrity_passed = message.check_integrity(&password);
 
-            let local_creds = self.local_credentials();
-            if local != local_creds.ufrag {
-                trace!(
-                    "Message rejected, local user mismatch: {} != {}",
-                    local,
-                    local_creds.ufrag
-                );
-                return false;
+            // The integrity is always the last thing we check
+            if integrity_passed {
+                trace!("Message accepted");
+            } else {
+                trace!("Message rejected, integrity check failed");
             }
+            integrity_passed
+        };
 
-            if let Some(remote_creds) = &self.remote_credentials {
-                if remote != remote_creds.ufrag {
+        let method = message.method();
+        let class = message.class();
+        match (method, class) {
+            (StunMethod::Binding, StunClass::Request | StunClass::Indication) => {
+                // The username for the credential is formed by concatenating the
+                // username fragment provided by the peer with the username fragment of
+                // the ICE agent sending the request, separated by a colon (":").
+                // The existence of this username is checked in the STUN parser.
+                let (local, remote) = message.split_username().unwrap();
+
+                let local_creds = self.local_credentials();
+                if local != local_creds.ufrag {
                     trace!(
-                        "Message rejected, remote user mismatch: {} != {}",
-                        remote,
-                        remote_creds.ufrag
+                        "Message rejected, local user mismatch: {} != {}",
+                        local,
+                        local_creds.ufrag
                     );
                     return false;
                 }
+
+                if let Some(remote_creds) = &self.remote_credentials {
+                    if remote != remote_creds.ufrag {
+                        trace!(
+                            "Message rejected, remote user mismatch: {} != {}",
+                            remote,
+                            remote_creds.ufrag
+                        );
+                        return false;
+                    }
+                }
+
+                do_integrity_check(true)
+            }
+            (StunMethod::Binding, StunClass::Success | StunClass::Failure) => {
+                let belongs_to_a_candidate_pair = self
+                    .candidate_pairs
+                    .iter()
+                    .any(|pair| pair.has_binding_attempt(message.trans_id()));
+
+                if !belongs_to_a_candidate_pair {
+                    trace!("Message rejected, transaction ID does not belong to any of our candidate pairs");
+                    return false;
+                }
+
+                do_integrity_check(false)
+            }
+            (StunMethod::Binding, StunClass::Unknown) => {
+                // Without a known class, it's impossible to know how to validate the message
+                trace!("Message rejected, unknown STUN class");
+                false
+            }
+            (StunMethod::Unknown, _) => {
+                // Without a known method, it's impossible to know how to validate the message
+                trace!("Message rejected, unknown STUN method");
+                false
             }
         }
-
-        if message.is_response() {
-            let belongs_to_a_candidate_pair = self
-                .candidate_pairs
-                .iter()
-                .any(|pair| pair.has_binding_attempt(message.trans_id()));
-
-            if !belongs_to_a_candidate_pair {
-                trace!("Message rejected, transaction ID does not belong to any of our candidate pairs");
-                return false;
-            }
-        }
-
-        let (_, password) = self.stun_credentials(!message.is_response());
-        if !message.check_integrity(&password) {
-            trace!("Message rejected, integrity check failed");
-            return false;
-        }
-
-        trace!("Message accepted");
-        true
     }
 
     /// Handles an incoming STUN message.

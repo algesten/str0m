@@ -143,14 +143,17 @@ impl<'a> StunMessage<'a> {
         })
     }
 
+    pub(crate) fn method(&self) -> Method {
+        self.method
+    }
+
+    pub(crate) fn class(&self) -> Class {
+        self.class
+    }
+
     /// Whether this STUN message is a BINDING request.
     pub(crate) fn is_binding_request(&self) -> bool {
         self.method == Method::Binding && self.class == Class::Request
-    }
-
-    /// Whether this STUN message is a response.
-    pub(crate) fn is_response(&self) -> bool {
-        matches!(self.class, Class::Success | Class::Failure)
     }
 
     /// Whether this STUN message is a _successful_ BINDING response.
@@ -316,7 +319,7 @@ impl<'a> StunMessage<'a> {
 const MAGIC: &[u8] = &[0x21, 0x12, 0xA4, 0x42];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Class {
+pub(crate) enum Class {
     Request,
     Indication,
     Success,
@@ -349,7 +352,7 @@ impl Class {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Method {
+pub(crate) enum Method {
     Binding,
     Unknown,
 }
