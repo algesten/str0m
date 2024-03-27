@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Improve IceAgent `accepts_message` to avoid panic in some situations #488
+
 # 0.5.0
   * Opus DTX support #492
   * RtcConfig does not generate the ICE creds #491
