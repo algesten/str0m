@@ -1893,6 +1893,28 @@ mod test {
         assert!(stun_message.is_successful_binding_response());
     }
 
+    #[test]
+    pub fn discards_packet_from_unknown_candidate() {
+        let mut agent = IceAgent::new();
+        let remote_creds = IceCreds::new();
+        agent.set_remote_credentials(remote_creds.clone());
+
+        let request =
+            make_serialized_binding_request(&agent.local_credentials, &remote_creds, false, 0);
+
+        agent.handle_packet(
+            Instant::now(),
+            StunPacket {
+                proto: Protocol::Udp,
+                source: ipv4_1(),
+                destination: ipv4_2(),
+                message: StunMessage::parse(&request).unwrap(),
+            },
+        );
+
+        assert!(agent.poll_transmit().is_none());
+    }
+
     fn make_serialized_binding_request(
         local_creds: &IceCreds,
         remote_creds: &IceCreds,
