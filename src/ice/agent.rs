@@ -1169,25 +1169,28 @@ impl IceAgent {
             self.remote_candidates.len() - 1
         };
 
-        let local_idx = self
-            .local_candidates
-            .iter()
-            .enumerate()
-            .find(|(_, v)| {
-                // The local candidate will be
-                // either a host candidate (for cases where the request was not received
-                // through a relay) or a relayed candidate (for cases where it is
-                // received through a relay).  The local candidate can never be a
-                // server-reflexive candidate.
-                matches!(v.kind(), CandidateKind::Host | CandidateKind::Relayed)
-                    && v.addr() == req.destination && v.proto() == req.proto
-            })
-            // Receiving traffic for an IP address that neither is a HOST nor RELAY is a configuration
-            // fault. We need to be aware of the interfaces that the ice agent is connected to.
-            .expect(
-                "STUN request for socket that is neither a host nor a relay candidate. This is a config error.",
-            )
-            .0;
+        let local_idx = match self.local_candidates.iter().enumerate().find(|(_, v)| {
+            // The local candidate will be
+            // either a host candidate (for cases where the request was not received
+            // through a relay) or a relayed candidate (for cases where it is
+            // received through a relay).  The local candidate can never be a
+            // server-reflexive candidate.
+            matches!(v.kind(), CandidateKind::Host | CandidateKind::Relayed)
+                && v.addr() == req.destination
+                && v.proto() == req.proto
+        }) {
+            Some((i, _)) => i,
+            None => {
+                // Receiving traffic for an IP address that neither is a HOST nor RELAY is most likely a configuration fault where the user forgot to add a candidate for the local interface.
+                // We are network-connected application so we need to handle this gracefully: Log a message and discard the packet.
+
+                debug!(
+                    "Discarding STUN request on unknown interface: {}",
+                    req.destination
+                );
+                return;
+            }
+        };
 
         let maybe_pair = self
             .candidate_pairs
