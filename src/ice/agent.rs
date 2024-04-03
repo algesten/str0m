@@ -842,14 +842,14 @@ impl IceAgent {
     /// Handles an incoming STUN message.
     ///
     /// Will not be used if [`IceAgent::accepts_message`] returns false.
-    pub fn handle_packet(&mut self, now: Instant, packet: StunPacket) {
+    pub fn handle_packet(&mut self, now: Instant, packet: StunPacket) -> bool {
         trace!("Handle receive: {:?}", &packet.message);
 
         // Regardless of whether we have remote_creds at this point, we can
         // at least check the message integrity.
         if !self.accepts_message(&packet.message) {
             debug!("Message not accepted");
-            return;
+            return false;
         }
 
         if packet.message.is_binding_request() {
@@ -864,6 +864,8 @@ impl IceAgent {
         });
 
         // TODO handle unsuccessful responses.
+
+        true
     }
 
     /// Provide the current time to the [`IceAgent`].
