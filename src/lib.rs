@@ -1618,15 +1618,15 @@ impl Rtc {
         self.peer_bytes_rx += bytes_rx as u64;
 
         match r.contents.inner {
-            Stun(stun) => self.ice.handle_packet(
-                now,
-                io::StunPacket {
+            Stun(stun) => {
+                let packet = io::StunPacket {
                     proto: r.proto,
                     source: r.source,
                     destination: r.destination,
                     message: stun,
-                },
-            ),
+                };
+                self.ice.handle_packet(now, packet);
+            }
             Dtls(dtls) => self.dtls.handle_receive(dtls)?,
             Rtp(rtp) => self.session.handle_rtp_receive(now, rtp),
             Rtcp(rtcp) => self.session.handle_rtcp_receive(now, rtcp),
