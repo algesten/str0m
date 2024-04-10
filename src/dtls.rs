@@ -125,6 +125,11 @@ impl Dtls {
 
     /// Handles an incoming DTLS datagrams.
     pub fn handle_receive(&mut self, message: &[u8]) -> Result<(), DtlsError> {
+        if self.dtls_impl.is_active().is_none() {
+            debug!("Ignoring DTLS datagram prior to DTLS start");
+            return Ok(());
+        }
+
         Ok(self.dtls_impl.handle_receive(message, &mut self.events)?)
     }
 
