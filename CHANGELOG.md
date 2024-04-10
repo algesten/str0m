@@ -1,5 +1,8 @@
 # Unreleased
 
+  * Avoid panic on too early DTLS traffic #495
+  * `IceAgent::handle_packet` return false if packet not accepted #493
+  * Don't panic on STUN requests for unknown NICs #493
   * Improve IceAgent `accepts_message` to avoid panic in some situations #488
 
 # 0.5.0
