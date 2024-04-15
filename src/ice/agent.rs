@@ -1460,9 +1460,8 @@ impl IceAgent {
         if let Some(best_prio) = best_prio {
             if let Some(nominated) = nominated_pair_priority {
                 if nominated == best_prio.prio() && self.controlling {
-                    // The best prio is also the current nominated prio. Make
-                    // no changes since there can be multiple pairs having the
-                    // same best_prio.
+                    // The best prio is also the current nominated prio.
+                    // If we are the controlling agent, don't nominate it to avoid socket hopping.
                     return;
                 }
             }
