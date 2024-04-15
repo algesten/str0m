@@ -1459,7 +1459,7 @@ impl IceAgent {
 
         if let Some(best_prio) = best_prio {
             if let Some(nominated) = nominated_pair_priority {
-                if nominated == best_prio.prio() {
+                if nominated == best_prio.prio() && self.controlling {
                     // The best prio is also the current nominated prio. Make
                     // no changes since there can be multiple pairs having the
                     // same best_prio.
