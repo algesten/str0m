@@ -75,6 +75,7 @@ mod test {
 
     use crate::io::{Protocol, StunMessage, StunPacket, STUN_TIMEOUT};
     use tracing::Span;
+    use tracing_subscriber::util::SubscriberInitExt;
 
     pub fn sock(s: impl Into<String>) -> SocketAddr {
         let s: String = s.into();
@@ -542,6 +543,64 @@ mod test {
         assert!(!a2.has_event(|e| {
             matches!(e, IceAgentEvent::NominatedSend { destination, .. } if destination == &sock("1.1.1.1:1001"))
         }));
+    }
+
+    #[test]
+    pub fn controlled_agent_follows_nomination_without_ice_timeout() {
+        let _guard = tracing_subscriber::fmt()
+            .with_env_filter("debug")
+            .with_test_writer()
+            .set_default();
+
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        let c1 = relay("1.1.1.1:1000", "udp");
+        a1.add_local_candidate(c1.clone());
+        a2.add_remote_candidate(c1.clone());
+
+        let c2 = relay("1.1.1.1:2000", "udp");
+        a1.add_remote_candidate(c2.clone());
+        a2.add_local_candidate(c2.clone());
+
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+        a1.set_remote_credentials(a2.local_credentials().clone());
+        a2.set_remote_credentials(a1.local_credentials().clone());
+
+        // loop until we're connected.
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        let c3 = relay("2.2.2.2:1000", "udp");
+
+        a1.add_local_candidate(c3.clone());
+        a2.add_remote_candidate(c3.clone());
+        a1.invalidate_candidate(&c1); // Only A1 knows that c1 is invalid.
+
+        loop {
+            progress(&mut a1, &mut a2);
+
+            let a1_nominated_c3 = a1.has_event(|e| {
+                matches!(e, IceAgentEvent::NominatedSend { source, .. } if source == &c3.addr())
+            });
+            let a2_nominated_c3 = a2.has_event(|e| {
+                matches!(e, IceAgentEvent::NominatedSend { destination, .. } if destination == &c3.addr())
+            });
+
+            if a1_nominated_c3 && a2_nominated_c3 {
+                break;
+            }
+        }
+
+        assert!(
+            a2.has_viable_remote_candidate(c1.addr()),
+            "expect a2 to still consider c1 to be valid (i.e. not timed out yet)"
+        );
     }
 
     pub struct TestAgent {
