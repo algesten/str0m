@@ -407,7 +407,7 @@ impl Candidate {
 
     /// Whether the candidate has been discarded.
     ///
-    /// For example, it might be redundant or invalidated via [`IceAgent::invalidate_candidate`].
+    /// For example, it might be redundant or invalidated via [`IceAgent::invalidate_candidate`](crate::ice::IceAgent::invalidate_candidate).
     pub fn discarded(&self) -> bool {
         self.discarded
     }
