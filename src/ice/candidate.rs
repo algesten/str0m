@@ -405,7 +405,10 @@ impl Candidate {
         self.discarded = true;
     }
 
-    pub(crate) fn discarded(&self) -> bool {
+    /// Whether the candidate has been discarded.
+    ///
+    /// For example, it might be redundant or invalidated via [`IceAgent::invalidate_candidate`].
+    pub fn discarded(&self) -> bool {
         self.discarded
     }
 
