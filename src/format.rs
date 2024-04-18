@@ -294,6 +294,10 @@ impl PayloadParams {
             return Self::match_h264_score(c0, c1);
         }
 
+        if c0.codec == Codec::Vp9 {
+            return Self::match_vp9_score(c0, c1);
+        }
+
         // TODO: Fuzzy matching for any other audio codecs
         // TODO: Fuzzy matching for video
 
@@ -327,6 +331,18 @@ impl PayloadParams {
         }
 
         score
+    }
+
+    fn match_vp9_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
+        // Default profile_id is 0. https://datatracker.ietf.org/doc/html/draft-ietf-payload-vp9-16#section-6
+        let c0_profile_id = c0.format.profile_id.unwrap_or(0);
+        let c1_profile_id = c1.format.profile_id.unwrap_or(0);
+
+        if c0_profile_id != c1_profile_id {
+            return None;
+        }
+
+        Some(100)
     }
 
     fn match_h264_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
