@@ -493,7 +493,7 @@ impl IceAgent {
                 other, c
             );
             other.set_discarded();
-            self.discard_candidate_pairs(idx);
+            self.discard_candidate_pairs_by_local(idx);
         }
 
         // Tie this ufrag to this ICE-session.
@@ -694,6 +694,9 @@ impl IceAgent {
     /// This is done for host candidates disappearing due to changes in the network
     /// interfaces like a WiFi disconnecting or changing IPs.
     ///
+    /// It can also be used to invalidate _remote_ candidates, i.e. if the remote
+    /// has signalled us that they have invalidated one of their candidates.
+    ///
     /// Returns `true` if the candidate was found and invalidated.
     #[allow(unused)]
     pub fn invalidate_candidate(&mut self, c: &Candidate) -> bool {
@@ -705,12 +708,26 @@ impl IceAgent {
             if !other.discarded() {
                 info!("Local candidate to discard {:?}", other);
                 other.set_discarded();
-                self.discard_candidate_pairs(idx);
+                self.discard_candidate_pairs_by_local(idx);
                 return true;
             }
         }
 
-        debug!("Candidate to discard not found: {:?}", c);
+        if let Some((idx, other)) = self
+            .remote_candidates
+            .iter_mut()
+            .enumerate()
+            .find(|(_, v)| v.addr() == c.addr() && v.base() == c.base() && v.raddr() == c.raddr())
+        {
+            if !other.discarded() {
+                info!("Remote candidate to discard {:?}", other);
+                other.set_discarded();
+                self.discard_candidate_pairs_by_remote(idx);
+                return true;
+            }
+        }
+
+        debug!("No local or remote candidate found: {:?}", c);
         false
     }
 
@@ -753,9 +770,15 @@ impl IceAgent {
     }
 
     /// Discard candidate pairs that contain the candidate identified by a local index.
-    fn discard_candidate_pairs(&mut self, local_idx: usize) {
+    fn discard_candidate_pairs_by_local(&mut self, local_idx: usize) {
         trace!("Discard pairs for local candidate index: {:?}", local_idx);
         self.candidate_pairs.retain(|c| c.local_idx() != local_idx);
+    }
+
+    /// Discard candidate pairs that contain the candidate identified by a remote index.
+    fn discard_candidate_pairs_by_remote(&mut self, remote: usize) {
+        trace!("Discard pairs for remote candidate index: {:?}", remote);
+        self.candidate_pairs.retain(|c| c.remote_idx() != remote);
     }
 
     /// Tells whether the message is for this agent instance.
