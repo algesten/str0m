@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use crc::{Crc, CRC_32_ISO_HDLC};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 // Consult libwebrtc for default values here.
@@ -43,7 +44,7 @@ pub enum StunError {
     Io(#[from] io::Error),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransId([u8; 12]);
 
 impl TransId {
@@ -66,7 +67,7 @@ impl TransId {
 ///
 /// STUN is a very flexible protocol.
 /// This implementations only provides what we need for our ICE implementation.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct StunMessage<'a> {
     method: Method,
     class: Class,
@@ -318,7 +319,7 @@ impl<'a> StunMessage<'a> {
 
 const MAGIC: &[u8] = &[0x21, 0x12, 0xA4, 0x42];
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Class {
     Request,
     Indication,
@@ -351,7 +352,7 @@ impl Class {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Method {
     Binding,
     Unknown,
@@ -375,7 +376,7 @@ impl Method {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[rustfmt::skip]
 pub struct Attributes<'a> {
     username: Option<&'a str>,              // < 128 utf8 chars
