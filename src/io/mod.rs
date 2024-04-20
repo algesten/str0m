@@ -7,6 +7,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::ops::Deref;
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 mod stun;
@@ -45,7 +46,7 @@ pub enum NetError {
 }
 
 /// Type of protocol used in [`Transmit`] and [`Receive`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Protocol {
     /// UDP
     Udp,
@@ -60,6 +61,7 @@ pub enum Protocol {
 }
 
 /// An instruction to send an outgoing packet.
+#[derive(Serialize, Deserialize)]
 pub struct Transmit {
     /// Protocol the transmission should use.
     ///
@@ -114,7 +116,7 @@ pub struct Transmit {
 }
 
 /// A wrapper for some payload that is to be sent.
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct DatagramSend(Vec<u8>);
 
 impl From<Vec<u8>> for DatagramSend {
@@ -129,7 +131,7 @@ impl From<DatagramSend> for Vec<u8> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 /// Received incoming data.
 pub struct Receive<'a> {
     /// The protocol the socket this received data originated from is using.
@@ -142,6 +144,7 @@ pub struct Receive<'a> {
     pub destination: SocketAddr,
 
     /// Parsed contents of the datagram.
+    #[serde(borrow)]
     pub contents: DatagramRecv<'a>,
 }
 
@@ -177,11 +180,14 @@ pub struct StunPacket<'a> {
 }
 
 /// Wrapper for a parsed payload to be received.
+#[derive(Serialize, Deserialize)]
 pub struct DatagramRecv<'a> {
+    #[serde(borrow)]
     pub(crate) inner: DatagramRecvInner<'a>,
 }
 
 #[allow(clippy::large_enum_variant)] // We purposely don't want to allocate.
+#[derive(Serialize, Deserialize)]
 pub(crate) enum DatagramRecvInner<'a> {
     Stun(StunMessage<'a>),
     Dtls(&'a [u8]),
