@@ -379,7 +379,7 @@ impl Media {
 
         let is_audio = self.kind.is_audio();
 
-        let stream = streams.tx_by_mid_rid(self.mid, *rid);
+        let stream = streams.stream_tx_by_mid_rid(self.mid, *rid);
 
         let Some(stream) = stream else {
             return Err(RtcError::NoSenderSource);

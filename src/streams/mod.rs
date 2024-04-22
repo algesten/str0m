@@ -442,18 +442,6 @@ impl Streams {
         }
     }
 
-    pub(crate) fn tx_by_mid_rid(&mut self, mid: Mid, rid: Option<Rid>) -> Option<&mut StreamTx> {
-        self.streams_tx
-            .values_mut()
-            .find(|s| s.mid() == mid && (rid.is_none() || s.rid() == rid))
-    }
-
-    pub(crate) fn rx_by_mid_rid(&mut self, mid: Mid, rid: Option<Rid>) -> Option<&mut StreamRx> {
-        self.streams_rx
-            .values_mut()
-            .find(|s| s.mid() == mid && (rid.is_none() || s.rid() == rid))
-    }
-
     pub(crate) fn poll_keyframe_request(&mut self) -> Option<KeyframeRequest> {
         self.streams_tx.values_mut().find_map(|s| {
             let kind = s.poll_keyframe_request()?;
