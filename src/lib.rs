@@ -581,7 +581,6 @@ extern crate tracing;
 
 use bwe::{Bwe, BweKind};
 use change::{DirectApi, SdpApi};
-use ice::IceCreds;
 use rtp::RawPacket;
 use std::fmt;
 use std::net::SocketAddr;
@@ -602,7 +601,7 @@ use dtls::{Dtls, DtlsEvent};
 mod ice_;
 use ice_::IceAgent;
 use ice_::IceAgentEvent;
-pub use ice_::{Candidate, CandidateKind, IceConnectionState};
+pub use ice_::{Candidate, CandidateKind, IceConnectionState, IceCreds};
 
 /// Low level ICE access.
 // The ICE API is not necessary to interact with directly for "regular"
@@ -1730,13 +1729,11 @@ impl RtcConfig {
     ///
     /// If not specified, local credentials will be randomly generated when
     /// building the [`Rtc`] instance.
-    #[cfg_attr(not(feature = "ice-agent"), doc(hidden))]
     pub fn local_ice_credentials(&self) -> &Option<IceCreds> {
         &self.local_ice_credentials
     }
 
     /// Explicitly sets local ICE credentials.
-    #[cfg_attr(not(feature = "ice-agent"), doc(hidden))]
     pub fn set_local_ice_credentials(mut self, local_ice_credentials: IceCreds) -> Self {
         self.local_ice_credentials = Some(local_ice_credentials);
         self
