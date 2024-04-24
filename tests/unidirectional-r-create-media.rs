@@ -12,7 +12,7 @@ use common::{init_log, progress, TestRtc};
 
 #[test]
 pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
 
     let mut l = TestRtc::new(info_span!("L"));
     let mut r = TestRtc::new(info_span!("R"));

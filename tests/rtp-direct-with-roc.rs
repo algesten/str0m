@@ -12,7 +12,7 @@ use common::{connect_l_r, init_log, progress};
 
 #[test]
 pub fn rtp_direct_with_roc() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
 
     let (mut l, mut r) = connect_l_r();
 

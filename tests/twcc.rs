@@ -12,7 +12,7 @@ use common::{init_log, negotiate, progress, TestRtc};
 
 #[test]
 pub fn twcc() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
     let l_rtc = Rtc::builder().enable_raw_packets(true).build();
     let r_rtc = Rtc::builder().enable_raw_packets(true).build();
 

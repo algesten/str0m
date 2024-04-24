@@ -11,7 +11,7 @@ use common::{init_log, negotiate, progress, TestRtc};
 
 #[test]
 pub fn remb() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
     let l_rtc = Rtc::builder().build();
     let r_rtc = Rtc::builder().build();
 

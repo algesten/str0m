@@ -15,7 +15,7 @@ use common::{init_log, progress, TestRtc};
 
 #[test]
 pub fn user_rtp_header_extension() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
 
     #[derive(Debug, PartialEq, Eq)]
     struct MyValue(u16);
@@ -159,7 +159,7 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
 
 #[test]
 pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
 
     #[derive(Debug, PartialEq, Eq, Clone)]
     struct MyValue(Vec<u8>);
