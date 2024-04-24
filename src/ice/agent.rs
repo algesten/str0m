@@ -702,11 +702,12 @@ impl IceAgent {
     /// Returns `true` if the candidate was found and invalidated.
     #[allow(unused)]
     pub fn invalidate_candidate(&mut self, c: &Candidate) -> bool {
-        if let Some((idx, other)) =
-            self.local_candidates.iter_mut().enumerate().find(|(_, v)| {
-                v.addr() == c.addr() && v.base() == c.base() && v.raddr() == c.raddr()
-            })
-        {
+        if let Some((idx, other)) = self.local_candidates.iter_mut().enumerate().find(|(_, v)| {
+            v.addr() == c.addr()
+                && v.base() == c.base()
+                && v.raddr() == c.raddr()
+                && v.kind() == c.kind()
+        }) {
             if !other.discarded() {
                 info!("Local candidate to discard {:?}", other);
                 other.set_discarded();
@@ -719,7 +720,12 @@ impl IceAgent {
             .remote_candidates
             .iter_mut()
             .enumerate()
-            .find(|(_, v)| v.addr() == c.addr() && v.base() == c.base() && v.raddr() == c.raddr())
+            .find(|(_, v)| {
+                v.addr() == c.addr()
+                    && v.base() == c.base()
+                    && v.raddr() == c.raddr()
+                    && v.kind() == c.kind()
+            })
         {
             if !other.discarded() {
                 info!("Remote candidate to discard {:?}", other);
@@ -1657,6 +1663,35 @@ mod test {
         // this is redundant given we have the direct host candidate above.
         let x1 = agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_1(), ipv4_1(), "udp"));
         assert!(!x1);
+    }
+
+    #[test]
+    fn does_not_invalidate_local_candidate_with_same_ip_but_different_kind() {
+        let mut agent = IceAgent::new();
+        let host = Candidate::host(ipv4_1(), "udp").unwrap();
+        let srflx = Candidate::server_reflexive(ipv4_1(), ipv4_1(), "udp").unwrap();
+
+        agent.add_local_candidate(host.clone());
+        let invalidated = agent.invalidate_candidate(&srflx);
+        assert!(!invalidated);
+
+        let invalidated = agent.invalidate_candidate(&host);
+        assert!(invalidated);
+    }
+
+    #[test]
+    fn does_not_invalidate_remote_candidate_with_same_ip_but_different_kind() {
+        let mut agent = IceAgent::new();
+        let host = Candidate::host(ipv4_1(), "udp").unwrap();
+        let srflx = Candidate::server_reflexive(ipv4_1(), ipv4_1(), "udp").unwrap();
+
+        agent.add_remote_candidate(host.clone());
+        let invalidated = agent.invalidate_candidate(&srflx);
+
+        assert!(!invalidated);
+
+        let invalidated = agent.invalidate_candidate(&host);
+        assert!(invalidated);
     }
 
     #[test]
