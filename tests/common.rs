@@ -16,7 +16,10 @@ use str0m::rtp::RtpHeader;
 use str0m::Candidate;
 use str0m::{Event, Input, Output, Rtc, RtcError};
 use tracing::info_span;
+use tracing::subscriber::DefaultGuard;
 use tracing::Span;
+use tracing_subscriber::util::SubscriberInitExt as _;
+use tracing_subscriber::EnvFilter;
 
 pub struct TestRtc {
     pub span: Span,
@@ -201,22 +204,16 @@ impl DerefMut for TestRtc {
     }
 }
 
-pub fn init_log() {
-    use std::env;
-    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-
-    if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", "str0m=debug");
-    }
-
-    static START: Once = Once::new();
-
-    START.call_once(|| {
-        tracing_subscriber::registry()
-            .with(fmt::layer())
-            .with(EnvFilter::from_default_env())
-            .init();
-    });
+pub fn init_log() -> DefaultGuard {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::builder()
+                .with_default_directive("str0m=debug".parse().unwrap())
+                .from_env()
+                .unwrap(),
+        )
+        .with_test_writer()
+        .set_default()
 }
 
 pub fn connect_l_r() -> (TestRtc, TestRtc) {
