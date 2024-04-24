@@ -212,7 +212,6 @@ pub fn init_log() -> DefaultGuard {
                 .from_env()
                 .unwrap(),
         )
-        .with_test_writer()
         .set_default()
 }
 
