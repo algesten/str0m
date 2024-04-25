@@ -212,7 +212,7 @@ impl<'a> StunMessage<'a> {
     }
 
     /// If present, splits the value of the USERNAME attribute into local and remote (separated by `:`).
-    pub(crate) fn split_username(&self) -> Option<(&str, &str)> {
+    pub fn split_username(&self) -> Option<(&str, &str)> {
         self.attrs.split_username()
     }
 
