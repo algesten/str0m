@@ -82,4 +82,16 @@ impl<'a> Bwe<'a> {
     pub fn set_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
         self.0.session.set_bwe_desired_bitrate(desired_bitrate);
     }
+
+    /// Reset the BWE with a new init_bitrate
+    ///
+    /// # Example
+    ///
+    /// This method is useful when you initially start with only an audio stream. In this case, the BWE will report a very low estimated bitrate.
+    /// Later, when you start a video stream, the estimated bitrate will be affected by the previous low bitrate, resulting in a very low estimated bitrate, which can cause poor video stream quality.
+    /// To avoid this, you need to warm up the video stream for a while then calling reset with a provided init_bitrate.
+    ///
+    pub fn reset(&mut self, init_bitrate: Bitrate) {
+        self.0.session.reset_bwe(init_bitrate);
+    }
 }

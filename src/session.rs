@@ -796,6 +796,12 @@ impl Session {
         }
     }
 
+    pub fn reset_bwe(&mut self, init_bitrate: Bitrate) {
+        if let Some(bwe) = self.bwe.as_mut() {
+            bwe.reset(init_bitrate);
+        }
+    }
+
     pub fn line_count(&self) -> usize {
         self.medias.len() + if self.app.is_some() { 1 } else { 0 }
     }
@@ -896,6 +902,10 @@ struct Bwe {
 impl Bwe {
     fn handle_timeout(&mut self, now: Instant) {
         self.bwe.handle_timeout(now);
+    }
+
+    pub fn reset(&mut self, init_bitrate: Bitrate) {
+        self.bwe = SendSideBandwithEstimator::new(init_bitrate);
     }
 
     pub fn update<'t>(
