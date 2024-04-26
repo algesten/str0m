@@ -73,8 +73,7 @@ impl AckedBitrateEstimator {
         // current estimate. With low values of uncertainty_symmetry_cap_ we add more
         // uncertainty to increases than to decreases. For higher values we approach
         // symmetry.
-        let sample_uncertainty =
-            scale * (estimate_bps - sample_estimate_bps).abs() / (estimate_bps.max(25_000.0));
+        let sample_uncertainty = scale * (estimate_bps - sample_estimate_bps).abs() / estimate_bps;
         let sample_var = sample_uncertainty.powf(2.0);
 
         // Update a bayesian estimate of the rate, weighting it lower if the sample
@@ -85,6 +84,7 @@ impl AckedBitrateEstimator {
         let mut new_estimate = (sample_var * estimate_bps
             + pred_bitrate_estimate_var * sample_estimate_bps)
             / (sample_var + pred_bitrate_estimate_var);
+
         new_estimate = new_estimate.max(ESTIMATE_FLOOR.as_f64());
         self.estimate = Some(Bitrate::bps(new_estimate.ceil() as u64));
         self.estimate_var =
@@ -136,7 +136,7 @@ impl AckedBitrateEstimator {
 
         self.sum += packet_size;
 
-        estimate.map(|e| (e, false))
+        estimate.map(|e| (e, is_small))
     }
 }
 
@@ -200,7 +200,7 @@ mod test {
 
         assert_eq!(
             estimate.as_u64(),
-            99530,
+            108320,
             "AckedBitrateEstiamtor should produce the correct bitrate"
         );
     }
