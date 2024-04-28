@@ -590,10 +590,25 @@ impl IceAgent {
             *existing = c;
             idx
         } else {
-            info!("Add remote candidate: {:?}", c);
+            let maybe_discarded = self.remote_candidates.iter().position(|o| {
+                o.discarded()
+                    && c.addr() == o.addr()
+                    && c.base() == o.base()
+                    && c.proto() == o.proto()
+                    && c.kind() == o.kind()
+                    && c.raddr() == o.raddr()
+            });
 
-            self.remote_candidates.push(c);
-            self.remote_candidates.len() - 1
+            if let Some(idx) = maybe_discarded {
+                let other = &mut self.remote_candidates[idx];
+                debug!("Re-enable previously discarded remote: {:?}", other);
+                other.set_discarded(false);
+                idx
+            } else {
+                info!("Add remote candidate: {:?}", c);
+                self.remote_candidates.push(c);
+                self.remote_candidates.len() - 1
+            }
         };
 
         // These are the indexes of the local candidates this candidate should be paired with.
