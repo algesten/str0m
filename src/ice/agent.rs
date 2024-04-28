@@ -1169,6 +1169,18 @@ impl IceAgent {
             trace!("Remote candidate for STUN request found");
             idx
         } else {
+            let maybe_discarded = self
+                .remote_candidates
+                .iter()
+                .any(|c| c.discarded() && c.proto() == req.proto && c.addr() == req.source);
+
+            if maybe_discarded {
+                // The remote has been discarded, we do not want to create a
+                // peer reflexive in this case.
+                trace!("STUN request ignored because remote candidate is discarded");
+                return;
+            }
+
             // o  The priority is the value of the PRIORITY attribute in the Binding
             //     request.
             //
