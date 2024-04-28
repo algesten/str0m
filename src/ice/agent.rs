@@ -494,7 +494,7 @@ impl IceAgent {
                 "Replace redundant candidate, current: {:?} replaced with: {:?}",
                 other, c
             );
-            other.set_discarded();
+            other.set_discarded(true);
             self.discard_candidate_pairs_by_local(idx);
         }
 
@@ -710,7 +710,7 @@ impl IceAgent {
         }) {
             if !other.discarded() {
                 info!("Local candidate to discard {:?}", other);
-                other.set_discarded();
+                other.set_discarded(true);
                 self.discard_candidate_pairs_by_local(idx);
                 return true;
             }
@@ -729,7 +729,7 @@ impl IceAgent {
         {
             if !other.discarded() {
                 info!("Remote candidate to discard {:?}", other);
-                other.set_discarded();
+                other.set_discarded(true);
                 self.discard_candidate_pairs_by_remote(idx);
                 return true;
             }
