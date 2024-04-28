@@ -469,37 +469,52 @@ impl IceAgent {
 
         c.set_local_preference(pref);
 
+        // Tie this ufrag to this ICE-session.
+        c.set_ufrag(&self.local_credentials.ufrag);
+
         // A candidate is redundant if and only if its transport address and base equal those
         // of another candidate.  The agent SHOULD eliminate the redundant
         // candidate with the lower priority.
         //
         // NB this must be done _after_ set_local_preference(), since the prio() used in the
         // elimination is calculated from that preference.
-        if let Some((idx, other)) =
+        let maybe_redundant =
             self.local_candidates.iter_mut().enumerate().find(|(_, v)| {
                 v.addr() == c.addr() && v.base() == c.base() && v.proto() == c.proto()
-            })
-        {
-            if c.prio() < other.prio() {
-                // The new candidate is not better than what we already got.
+            });
+
+        let local_idx = if let Some((idx, other)) = maybe_redundant {
+            if other.discarded() && c.kind() == other.kind() && c.raddr() == other.raddr() {
+                debug!("Re-enable previously discarded local: {:?}", other);
+                other.set_discarded(false);
+                idx
+            } else {
+                if c.prio() < other.prio() {
+                    // The new candidate is not better than what we already got.
+                    debug!(
+                        "Reject redundant candidate, current: {:?} rejected: {:?}",
+                        other, c
+                    );
+                    return false;
+                }
+
+                // Stop using the current candidate in favor of the new one.
                 debug!(
-                    "Reject redundant candidate, current: {:?} rejected: {:?}",
+                    "Replace redundant candidate, current: {:?} replaced with: {:?}",
                     other, c
                 );
-                return false;
+                other.set_discarded(true);
+                self.discard_candidate_pairs_by_local(idx);
+
+                info!("Add local candidate: {:?}", c);
+                self.local_candidates.push(c);
+                self.local_candidates.len() - 1
             }
-
-            // Stop using the current candidate in favor of the new one.
-            debug!(
-                "Replace redundant candidate, current: {:?} replaced with: {:?}",
-                other, c
-            );
-            other.set_discarded(true);
-            self.discard_candidate_pairs_by_local(idx);
-        }
-
-        // Tie this ufrag to this ICE-session.
-        c.set_ufrag(&self.local_credentials.ufrag);
+        } else {
+            info!("Add local candidate: {:?}", c);
+            self.local_candidates.push(c);
+            self.local_candidates.len() - 1
+        };
 
         // These are the indexes of the remote candidates this candidate should be paired with.
         let remote_idxs: Vec<_> = self
@@ -510,12 +525,6 @@ impl IceAgent {
             .map(|(i, _)| i)
             .collect();
 
-        info!("Add local candidate: {:?}", c);
-
-        self.local_candidates.push(c);
-
-        let local_idxs = [self.local_candidates.len() - 1];
-
         // We always run in trickle ice mode.
         //
         // https://www.rfc-editor.org/rfc/rfc8838.html#section-10
@@ -525,7 +534,7 @@ impl IceAgent {
         // TODO: The trickle ice spec is strange. What does it mean "has been trickled to the
         // remote party"? Since we don't get a confirmation that the candidate has been received
         // by the remote party, whether we form local pairs directly or later seems irrelevant.
-        self.form_pairs(&local_idxs, &remote_idxs);
+        self.form_pairs(&[local_idx], &remote_idxs);
 
         true
     }
