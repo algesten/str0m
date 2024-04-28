@@ -22,7 +22,8 @@ const TIMING_ADVANCE: Duration = Duration::from_millis(50);
 /// Handles the ICE protocol for a given peer.
 ///
 /// Each connection between two peers corresponds to one [`IceAgent`] on either end.
-/// To form connections to multiple peers, a peer needs to create a dedicated [`IceAgent`] for each one.
+/// To form connections to multiple peers, a peer needs to create a dedicated [`IceAgent`] for
+/// each one.
 #[derive(Debug)]
 pub struct IceAgent {
     /// Last time handle_timeout run (paced by timing_advance).
@@ -925,7 +926,8 @@ impl IceAgent {
 
     /// Provide the current time to the [`IceAgent`].
     ///
-    /// Typically, you will want to call [`IceAgent::poll_timeout`] and "wake-up" the agent once that time is reached.
+    /// Typically, you will want to call [`IceAgent::poll_timeout`] and "wake-up"
+    /// the agent once that time is reached.
     pub fn handle_timeout(&mut self, now: Instant) {
         // This happens exactly once because evaluate_state() below will
         // switch away from New -> Checking.
@@ -1250,8 +1252,10 @@ impl IceAgent {
         }) {
             Some((i, _)) => i,
             None => {
-                // Receiving traffic for an IP address that neither is a HOST nor RELAY is most likely a configuration fault where the user forgot to add a candidate for the local interface.
-                // We are network-connected application so we need to handle this gracefully: Log a message and discard the packet.
+                // Receiving traffic for an IP address that neither is a HOST nor RELAY
+                // is most likely a configuration fault where the user forgot to add a
+                // candidate for the local interface. We are network-connected application
+                // so we need to handle this gracefully: Log a message and discard the packet.
 
                 debug!(
                     "Discarding STUN request on unknown interface: {}",
