@@ -1602,7 +1602,6 @@ impl IceAgent {
 mod test {
     use super::*;
     use std::net::SocketAddr;
-    use std::sync::Once;
 
     impl IceAgent {
         fn pair_indexes(&self) -> Vec<(usize, usize)> {
@@ -1806,22 +1805,6 @@ mod test {
 
     #[test]
     fn form_pairs_replace_remote_redundant() {
-        use std::env;
-        use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-
-        if env::var("RUST_LOG").is_err() {
-            env::set_var("RUST_LOG", "debug");
-        }
-
-        static START: Once = Once::new();
-
-        START.call_once(|| {
-            tracing_subscriber::registry()
-                .with(fmt::layer())
-                .with(EnvFilter::from_default_env())
-                .init();
-        });
-
         let mut agent = IceAgent::new();
         agent.set_ice_lite(true);
 
