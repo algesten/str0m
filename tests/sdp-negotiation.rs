@@ -17,7 +17,7 @@ use tracing::Span;
 
 #[test]
 pub fn change_default_pt() {
-    init_log();
+    let _guard = init_log();
 
     // First proposed PT is 100, R side adjusts its default from 102 -> 100
     let (l, r) = with_params(
@@ -39,7 +39,7 @@ pub fn change_default_pt() {
 
 #[test]
 pub fn answer_change_order() {
-    init_log();
+    let _guard = init_log();
 
     // First proposed PT are 100/102, but R side has a different order.
     let (l, r) = with_params(
@@ -73,7 +73,7 @@ pub fn answer_change_order() {
 
 #[test]
 pub fn answer_narrow() {
-    init_log();
+    let _guard = init_log();
 
     // First proposed PT are 100/102, the R side removes unsupported ones.
     let (l, r) = with_params(
@@ -114,7 +114,7 @@ pub fn answer_narrow() {
 
 #[test]
 pub fn answer_no_match() {
-    init_log();
+    let _guard = init_log();
 
     // L has one codec, and that is not matched by R. This should disable the m-line.
     let (l, r) = with_params(
@@ -144,7 +144,7 @@ pub fn answer_no_match() {
 
 #[test]
 pub fn answer_different_pt_to_offer() {
-    init_log();
+    let _guard = init_log();
 
     // This test case checks a scenario happening with Firefox.
     // 1. SDP -> FF: OFFER to sendonly VP8 PT 96.
@@ -212,7 +212,7 @@ pub fn answer_different_pt_to_offer() {
 
 #[test]
 fn answer_remaps() {
-    init_log();
+    let _guard = init_log();
 
     use Extension::*;
 
@@ -264,7 +264,7 @@ fn answer_remaps() {
 
 #[test]
 fn offers_unsupported_extension() {
-    init_log();
+    let _guard = init_log();
 
     use Extension::*;
 
@@ -309,7 +309,7 @@ fn offers_unsupported_extension() {
 
 #[test]
 fn non_media_creator_cannot_change_inactive_to_recvonly() {
-    init_log();
+    let _guard = init_log();
     let (mut l, mut r) = (
         TestRtc::new_with_rtc(
             info_span!("L"),
@@ -342,7 +342,7 @@ fn non_media_creator_cannot_change_inactive_to_recvonly() {
 
 #[test]
 fn media_creator_can_change_inactive_to_recvonly() {
-    init_log();
+    let _guard = init_log();
     let (mut l, mut r) = (
         TestRtc::new_with_rtc(
             info_span!("L"),

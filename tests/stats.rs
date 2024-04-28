@@ -12,7 +12,7 @@ use common::{init_log, progress, TestRtc};
 
 #[test]
 pub fn stats() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
 
     let l_config = RtcConfig::new().set_stats_interval(Some(Duration::from_secs(10)));
     let r_config = RtcConfig::new().set_stats_interval(Some(Duration::from_secs(10)));

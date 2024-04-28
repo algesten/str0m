@@ -12,7 +12,7 @@ use common::{init_log, progress, TestRtc};
 
 #[test]
 pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
 
     let mut l = TestRtc::new(info_span!("L"));
     let mut r = TestRtc::new(info_span!("R"));
@@ -103,7 +103,7 @@ pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
 
 #[test]
 pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
 
     let mut l = TestRtc::new(info_span!("L"));
     let mut r = TestRtc::new(info_span!("R"));
@@ -195,7 +195,7 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
 
 #[test]
 pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
 
     let mut l = TestRtc::new(info_span!("L"));
     let mut r = TestRtc::new(info_span!("R"));

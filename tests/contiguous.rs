@@ -11,7 +11,7 @@ use common::{init_log, progress, TestRtc};
 
 #[test]
 pub fn contiguous_all_the_way() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
 
     let output = Server::with_vp8_input()
         .timeout(Duration::seconds(5))
@@ -34,7 +34,7 @@ pub fn contiguous_all_the_way() -> Result<(), RtcError> {
 
 #[test]
 pub fn not_contiguous() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
 
     let output = Server::with_vp8_input()
         .skip_packet(14337)
@@ -61,7 +61,7 @@ pub fn not_contiguous() -> Result<(), RtcError> {
 
 #[test]
 pub fn vp9_contiguous_all_the_way() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
 
     let output = Server::with_vp9_input().get_output()?;
     let mut count = 0;
@@ -82,7 +82,7 @@ pub fn vp9_contiguous_all_the_way() -> Result<(), RtcError> {
 
 #[test]
 pub fn vp9_not_contiguous() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
 
     let output = Server::with_vp9_input().skip_packet(30952).get_output()?;
     let mut count = 0;

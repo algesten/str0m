@@ -14,25 +14,25 @@ use str0m::change::SdpOffer;
 use str0m::net::Protocol;
 use str0m::net::Receive;
 use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcError};
+use tracing::subscriber::DefaultGuard;
+use tracing_subscriber::util::SubscriberInitExt as _;
+use tracing_subscriber::EnvFilter;
 
 mod util;
 
-fn init_log() {
-    use std::env;
-    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
-
-    if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", "http_post=debug,str0m=debug");
-    }
-
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
-        .init();
+fn init_log() -> DefaultGuard {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::builder()
+                .with_default_directive("http_post=debug,str0m=debug".parse().unwrap())
+                .from_env()
+                .unwrap(),
+        )
+        .set_default()
 }
 
 pub fn main() {
-    init_log();
+    let _guard = init_log();
 
     let certificate = include_bytes!("cer.pem").to_vec();
     let private_key = include_bytes!("key.pem").to_vec();

@@ -14,7 +14,7 @@ use crate::common::progress_with_loss;
 
 #[test]
 pub fn loss_recovery() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
 
     let (mut l, mut r) = connect_l_r();
 
@@ -170,7 +170,7 @@ pub fn loss_recovery() -> Result<(), RtcError> {
 
 #[test]
 pub fn nack_delay() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
 
     let (mut l, mut r) = connect_l_r();
 

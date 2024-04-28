@@ -10,7 +10,7 @@ use common::{init_log, progress, TestRtc};
 
 #[test]
 pub fn data_channel_direct() -> Result<(), RtcError> {
-    init_log();
+    let _guard = init_log();
 
     let mut l = TestRtc::new(info_span!("L"));
 
