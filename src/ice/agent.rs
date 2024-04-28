@@ -1852,6 +1852,36 @@ mod test {
     }
 
     #[test]
+    fn form_pairs_skip_invalidated_local() {
+        let mut agent = IceAgent::new();
+
+        let local = Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp");
+
+        agent.add_local_candidate(local.clone());
+        agent.invalidate_candidate(&local);
+
+        agent.add_remote_candidate(Candidate::host(ipv4_3(), "udp").unwrap());
+
+        // There should be no pairs since we invalidated the local candidate.
+        assert_eq!(agent.pair_indexes(), []);
+    }
+
+    #[test]
+    fn form_pairs_skip_invalidated_remote() {
+        let mut agent = IceAgent::new();
+
+        let remote = Candidate::host(ipv4_3(), "udp").unwrap();
+
+        agent.add_remote_candidate(remote.clone());
+        agent.invalidate_candidate(&remote);
+
+        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp"));
+
+        // There should be no pairs since we invalidated the local candidate.
+        assert_eq!(agent.pair_indexes(), []);
+    }
+
+    #[test]
     fn poll_time_must_timing_advance() {
         let mut agent = IceAgent::new();
         agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
