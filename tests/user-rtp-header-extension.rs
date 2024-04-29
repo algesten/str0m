@@ -1,6 +1,7 @@
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
+use str0m::change::SdpOffer;
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
 use str0m::rtp::Extension;
@@ -89,8 +90,10 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
     let mut change = l.sdp_api();
     let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
     let (offer, pending) = change.apply().unwrap();
-
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
+    let offer_str = offer.to_sdp_string();
+    let offer_parsed =
+        SdpOffer::from_sdp_string(&offer_str).expect("Should parse offer from string");
+    let answer = r.rtc.sdp_api().accept_offer(offer_parsed)?;
     l.rtc.sdp_api().accept_answer(pending, answer)?;
 
     // Verify that the extension is negotiated.
