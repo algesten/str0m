@@ -1032,13 +1032,24 @@ fn update_media(
     media.set_remote_pts(pts);
 
     let mut remote_extmap = ExtensionMap::empty();
-    for (id, _ext) in m.extmaps().into_iter() {
+    for (id, ext) in m.extmaps().into_iter() {
         // The remapping of extensions should already have happened, which
         // means the ID are matching in the session to the remote.
-        // Only set extensions that are enabled in Session.
-        if let Some(ext) = exts.lookup(id) {
-            remote_extmap.set(id, ext.clone());
+
+        // Does the ID exist in session?
+        let in_session = match exts.lookup(id) {
+            Some(v) => v,
+            None => continue,
+        };
+
+        if in_session != ext {
+            // Don't set any extensions that aren't enabled in Session.
+            continue;
         }
+
+        // Use the Extension from session, since there might be a special
+        // serializer for cases like VLA.
+        remote_extmap.set(id, in_session.clone());
     }
     media.set_remote_extmap(remote_extmap);
 
