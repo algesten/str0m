@@ -1274,7 +1274,9 @@ impl Rtc {
 
         match &o {
             Output::Event(e) => match e {
-                Event::ChannelData(_) | Event::MediaData(_) => trace!("{:?}", e),
+                Event::ChannelData(_) | Event::MediaData(_) | Event::RtpPacket(_) => {
+                    trace!("{:?}", e)
+                }
                 _ => debug!("{:?}", e),
             },
             Output::Transmit(t) => {

@@ -1333,9 +1333,11 @@ impl IceAgent {
 
         let reply = StunMessage::reply(req.trans_id, req.source);
 
-        debug!(
+        trace!(
             "Send STUN reply: {} -> {} {:?}",
-            local_addr, remote_addr, reply
+            local_addr,
+            remote_addr,
+            reply
         );
 
         let mut buf = vec![0_u8; DATAGRAM_MTU];
@@ -1378,7 +1380,7 @@ impl IceAgent {
             use_candidate,
         );
 
-        debug!(
+        trace!(
             "Send STUN request: {} -> {} {:?}",
             local.base(),
             remote.addr(),

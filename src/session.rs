@@ -256,12 +256,12 @@ impl Session {
         self.last_twcc = now;
         let mut twcc = self.twcc_rx_register.build_report(DATAGRAM_MTU - 100)?;
 
-        // These SSRC are on medial level, but twcc is on session level,
+        // These SSRC are on media level, but twcc is on session level,
         // we fill in the first discovered media SSRC in each direction.
         twcc.sender_ssrc = sender_ssrc;
         twcc.ssrc = self.streams.first_ssrc_remote();
 
-        debug!("Created feedback TWCC: {:?}", twcc);
+        trace!("Created feedback TWCC: {:?}", twcc);
         self.feedback_tx.push_front(Rtcp::Twcc(twcc));
         Some(())
     }
@@ -468,7 +468,7 @@ impl Session {
 
         for fb in RtcpFb::from_rtcp(self.feedback_rx.drain(..)) {
             if let RtcpFb::Twcc(twcc) = fb {
-                debug!("Handle TWCC: {:?}", twcc);
+                trace!("Handle TWCC: {:?}", twcc);
                 let range = self.twcc_tx_register.apply_report(twcc, now);
 
                 if let Some(bwe) = &mut self.bwe {

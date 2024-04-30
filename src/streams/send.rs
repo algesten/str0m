@@ -742,7 +742,7 @@ impl StreamTx {
     pub(crate) fn create_sr_and_update(&mut self, now: Instant, feedback: &mut VecDeque<Rtcp>) {
         let sr = self.create_sender_report(now);
 
-        debug!("Created feedback SR: {:?}", sr);
+        trace!("Created feedback SR: {:?}", sr);
         feedback.push_back(Rtcp::SenderReport(sr));
 
         if let Some(ds) = self.create_sdes() {

@@ -499,9 +499,12 @@ impl StreamRx {
 
         let xr = self.create_extended_receiver_report(now);
 
-        debug!(
+        trace!(
             "Created feedback RR/XR ({:?}/{:?}): {:?} {:?}",
-            self.mid, self.rid, rr, xr
+            self.mid,
+            self.rid,
+            rr,
+            xr
         );
         feedback.push_back(Rtcp::ReceiverReport(rr));
         feedback.push_back(Rtcp::ExtendedReport(xr));
@@ -580,7 +583,7 @@ impl StreamRx {
             nack.sender_ssrc = sender_ssrc;
             nack.ssrc = self.ssrc;
 
-            debug!("Created feedback NACK: {:?}", nack);
+            trace!("Created feedback NACK: {:?}", nack);
             feedback.push_back(Rtcp::Nack(nack));
             self.stats.nacks += 1;
         }
