@@ -62,9 +62,6 @@ pub trait InstantExt {
     /// panics if `time` goes backwards, i.e. we use this for one Instant and then an earlier Instant.
     fn to_unix_duration(&self) -> Duration;
 
-    /// Convert a unix duration to our relative Instant.
-    fn from_unix_duration(d: Duration) -> Self;
-
     /// Convert an Instant to a Duration for ntp time.
     fn to_ntp_duration(&self) -> Duration;
 
@@ -102,11 +99,6 @@ impl InstantExt for Instant {
         system_time
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("clock to go forwards from unix epoch")
-    }
-
-    fn from_unix_duration(d: Duration) -> Self {
-        let since_beginning_of_time = d.saturating_sub(epoch_to_beginning());
-        BEGINNING_OF_TIME.0 + since_beginning_of_time
     }
 
     fn to_ntp_duration(&self) -> Duration {
