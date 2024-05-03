@@ -1,5 +1,12 @@
 # Unreleased
 
+  * Bump sctp-proto to 0.2.2 #511
+  * Adjust logging levels to be less noisy #510
+  * Fix crash when using VLA (or other) optional RTP exts with SDP #509
+  * Re-add manually invalidated IceAgent candidates #508
+  * New API to reset BWE state #506
+  * Change parameter in BWE algo to match libwebrtc #506
+
 # 0.5.1
 
   * Expose STUN packet split_username() fn #505
