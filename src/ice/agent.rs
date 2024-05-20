@@ -288,7 +288,10 @@ impl IceAgent {
 
     /// Set a new timing advance (Ta) value.
     ///
-    /// Ta specifies the minimum increment of time that has to pass between calls to [`IceAgent::handle_timeout`]s (guided via [`IceAgent::poll_timeout`]).
+    /// Ta specifies the minimum increment of time that has to pass between calls to
+    /// [`IceAgent::handle_timeout`]s (guided via [`IceAgent::poll_timeout`]).
+    ///
+    /// Defaults to 50ms.
     pub fn set_timing_advance(&mut self, duration: Duration) {
         self.timing_advance = duration
     }
