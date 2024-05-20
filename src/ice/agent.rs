@@ -13,12 +13,6 @@ use crate::util::NonCryptographicRng;
 use super::candidate::{Candidate, CandidateKind};
 use super::pair::{CandidatePair, CheckState, PairId};
 
-/// Timing advance (Ta) value.
-///
-/// ICE agents SHOULD use a default Ta value, 50 ms, but MAY use another
-/// value based on the characteristics of the associated data.
-const TIMING_ADVANCE: Duration = Duration::from_millis(50);
-
 /// Handles the ICE protocol for a given peer.
 ///
 /// Each connection between two peers corresponds to one [`IceAgent`] on either end.
@@ -30,6 +24,12 @@ pub struct IceAgent {
     ///
     /// This drives the state forward.
     last_now: Option<Instant>,
+
+    /// Timing advance (Ta) value.
+    ///
+    /// ICE agents SHOULD use a default Ta value, 50 ms, but MAY use another
+    /// value based on the characteristics of the associated data.
+    timing_advance: Duration,
 
     /// Whether this agent is operating as ice-lite.
     /// ice-lite is a minimal version of the ICE specification, intended for servers
@@ -268,6 +268,7 @@ impl IceAgent {
             discovered_recv: HashSet::new(),
             nominated_send: None,
             stats: IceAgentStats::default(),
+            timing_advance: Duration::from_millis(50),
         }
     }
 
@@ -283,6 +284,13 @@ impl IceAgent {
     /// Default is disabled.
     pub fn set_ice_lite(&mut self, enabled: bool) {
         self.ice_lite = enabled;
+    }
+
+    /// Set a new timing advance (Ta) value.
+    ///
+    /// Ta specifies the minimum increment of time that has to pass between calls to [`IceAgent::handle_timeout`]s (guided via [`IceAgent::poll_timeout`]).
+    pub fn set_timing_advance(&mut self, duration: Duration) {
+        self.timing_advance = duration
     }
 
     /// Local ice credentials.
@@ -1047,7 +1055,7 @@ impl IceAgent {
 
         // We must empty the queued replies or stuff to send as soon as possible.
         if has_request || has_transmit {
-            return Some(last_now + TIMING_ADVANCE);
+            return Some(last_now + self.timing_advance);
         }
 
         // when do we need to handle the next candidate pair?
@@ -1063,8 +1071,8 @@ impl IceAgent {
 
         // Time must advance with at least Ta.
         let next = if let Some(next) = maybe_next {
-            if next < last_now + TIMING_ADVANCE {
-                last_now + TIMING_ADVANCE
+            if next < last_now + self.timing_advance {
+                last_now + self.timing_advance
             } else {
                 next
             }
@@ -1919,7 +1927,7 @@ mod test {
         agent.handle_timeout(now1);
         let now2 = agent.poll_timeout().unwrap();
 
-        assert!(now2 - now1 == TIMING_ADVANCE);
+        assert!(now2 - now1 == Duration::from_millis(50));
     }
 
     #[test]
