@@ -1,4 +1,3 @@
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::SystemTime;
 
 use openssl::asn1::{Asn1Integer, Asn1Time, Asn1Type};
@@ -39,12 +38,13 @@ impl OsslDtlsCert {
         let mut x509b = X509::builder()?;
         x509b.set_version(2)?; // X509.V3 (zero indexed)
 
-        // For firefox, we must increase the serial number for each generated certificate.
-        // See https://github.com/versatica/mediasoup/issues/127#issuecomment-474460153
-        static SERIAL: AtomicU32 = AtomicU32::new(1);
-        let serial = SERIAL.fetch_add(1, Ordering::SeqCst);
+        // For Firefox, the serial number must be unique across all certificates, including those of other
+        // processes/machines! See https://github.com/versatica/mediasoup/issues/127#issuecomment-474460153
+        // and https://github.com/algesten/str0m/issues/517
+        let mut serial_buf = [0u8; 16];
+        openssl::rand::rand_bytes(&mut serial_buf)?;
 
-        let serial_bn = BigNum::from_u32(serial)?;
+        let serial_bn = BigNum::from_slice(&serial_buf)?;
         let serial = Asn1Integer::from_bn(&serial_bn)?;
         x509b.set_serial_number(&serial)?;
         let before = Asn1Time::from_unix(unix_time() - 3600)?;
