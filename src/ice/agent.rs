@@ -279,6 +279,13 @@ impl IceAgent {
         self.max_candidate_pairs = Some(max);
     }
 
+    /// Whether ice_lite is enabled.
+    ///
+    /// Default is disabled.
+    pub fn ice_lite(&self) -> bool {
+        self.ice_lite
+    }
+
     /// Enable or disable ice_lite.
     ///
     /// Default is disabled.
@@ -383,9 +390,8 @@ impl IceAgent {
 
     /// Set whether we are the controlling side.
     ///
-    /// ### Panics
-    ///
-    /// Panics if we have started running the ice agent.
+    /// You should not call this function after ICE candidate pair formation
+    /// has started, as the controlling state influences candidate prio!
     pub fn set_controlling(&mut self, v: bool) {
         self.controlling = v;
     }
