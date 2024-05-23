@@ -85,8 +85,11 @@ impl<'a> SdpApi<'a> {
         }
 
         if !self.rtc.dtls.is_inited() {
-            // The side that makes the first offer is the controlling side.
-            self.rtc.ice.set_controlling(false);
+            // The side that makes the first offer is the controlling side, unless they
+            // are ICE Lite and we are ICE Full, in which case the roles are reversed.
+            self.rtc
+                .ice
+                .set_controlling(offer.session.ice_lite() && !self.rtc.ice.ice_lite());
         }
 
         // Ensure setup=active/passive is corresponding remote and init dtls.
@@ -144,6 +147,14 @@ impl<'a> SdpApi<'a> {
         }
 
         add_ice_details(self.rtc, &answer, Some(&pending))?;
+
+        if !self.rtc.dtls.is_inited() && self.rtc.ice.ice_lite() && answer.session.ice_lite() {
+            // If we were the initial offerer running in ICE Lite, then we initially set ourselves
+            // as the controlled side, anticipating that the remote end may be ICE Full. However,
+            // if the remote end answers that they are also running ICE Lite, then RFC 5245
+            // dictates that we must become the controlling side again.
+            self.rtc.ice.set_controlling(true);
+        }
 
         // Ensure setup=active/passive is corresponding remote and init dtls.
         init_dtls(self.rtc, &answer)?;
@@ -561,8 +572,11 @@ fn apply_direct_changes(rtc: &mut Rtc, mut changes: Changes) {
 
 fn create_offer(rtc: &mut Rtc, changes: &Changes) -> SdpOffer {
     if !rtc.dtls.is_inited() {
-        // The side that makes the first offer is the controlling side.
-        rtc.ice.set_controlling(true);
+        // In ICE Full, the side that makes the first offer is the controlling
+        // side. In ICE Lite, we start as the controlled side, only switching
+        // back if the remote end reports that they are also using ICE Lite.
+        // (See RFC 5245 Sec 5.2)
+        rtc.ice.set_controlling(!rtc.ice.ice_lite());
     }
 
     let params = AsSdpParams::new(rtc, Some(changes));
