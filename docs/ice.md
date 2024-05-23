@@ -76,6 +76,13 @@ Global Ta pacing is out of scope this implementation.
 
 We do not switch ice-lite during a session.
 
+## One or both sides must be ICE-Full
+
+Handling connections where both sides are ICE-Lite requires specialized logic,
+such as assuming connectivity without checks, after-the-fact candidate pair
+reconciliation, and switching roles after initial determination. We consider
+both sides being ICE-Lite exceedingly rare and thus do not support this case.
+
 ## ICE role conflicts won't happen
 
 https://datatracker.ietf.org/doc/html/rfc8445#section-6.1.1
