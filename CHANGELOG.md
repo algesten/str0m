@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Provide reason for timeout #520
   * Reject ice-lite - ice-lite scenario #519
   * Fix bug in ice agent roles for ice-lite #519
   * DLTS cert serial number as random instead of sequential #518
