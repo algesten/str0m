@@ -10,7 +10,6 @@ use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::media::KeyframeRequestKind;
 use crate::media::Media;
 use crate::media::{MediaAdded, MediaChanged};
-use crate::net;
 use crate::packet::SendSideBandwithEstimator;
 use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
 use crate::rtp::RawPacket;
@@ -25,6 +24,7 @@ use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, Streams};
 use crate::util::{already_happened, not_happening, Soonest};
 use crate::Event;
+use crate::{net, Reason};
 use crate::{RtcConfig, RtcError};
 
 /// Minimum time we delay between sending nacks. This should be
@@ -207,7 +207,7 @@ impl Session {
 
         let sender_ssrc = self.streams.first_ssrc_local();
 
-        let do_nack = now >= self.nack_at();
+        let do_nack = now >= self.nack_at().unwrap_or(not_happening());
 
         self.streams.handle_timeout(
             now,
@@ -703,50 +703,44 @@ impl Session {
         Some(protected.into())
     }
 
-    pub fn poll_timeout(&mut self) -> Option<Instant> {
-        let regular_at = Some(self.regular_feedback_at());
-        let nack_at = Some(self.nack_at());
+    pub fn poll_timeout(&mut self) -> (Option<Instant>, Reason) {
+        let feedback_at = self.regular_feedback_at();
+        let nack_at = self.nack_at();
         let twcc_at = self.twcc_at();
         let pacing_at = self.pacer.poll_timeout();
         let packetize_at = self.medias.iter().flat_map(|m| m.poll_timeout()).next();
         let bwe_at = self.bwe.as_ref().map(|bwe| bwe.poll_timeout());
-        let paused_at = Some(self.paused_at());
-        let timestamp_writes_at = self.streams.timestamp_writes_at();
+        let paused_at = self.paused_at();
+        let send_stream_at = self.streams.send_stream();
 
-        let timeout = (regular_at, "regular")
-            .soonest((nack_at, "nack"))
-            .soonest((twcc_at, "twcc"))
-            .soonest((pacing_at, "pacing"))
-            .soonest((packetize_at, "media"))
-            .soonest((bwe_at, "bwe"))
-            .soonest((paused_at, "paused"))
-            .soonest((timestamp_writes_at, "timestamp writes"));
-
-        // trace!("poll_timeout soonest is: {}", timeout.1);
-
-        timeout.0
+        (feedback_at, Reason::Feedback)
+            .soonest((nack_at, Reason::Nack))
+            .soonest((twcc_at, Reason::Twcc))
+            .soonest((pacing_at, Reason::Pacing))
+            .soonest((packetize_at, Reason::Packetize))
+            .soonest((bwe_at, Reason::Bwe))
+            .soonest((paused_at, Reason::PauseCheck))
+            .soonest((send_stream_at, Reason::SendStream))
     }
 
     pub fn has_mid(&self, mid: Mid) -> bool {
         self.medias.iter().any(|m| m.mid() == mid)
     }
 
-    fn regular_feedback_at(&self) -> Instant {
-        self.streams
-            .regular_feedback_at()
-            .unwrap_or_else(not_happening)
+    fn regular_feedback_at(&self) -> Option<Instant> {
+        self.streams.regular_feedback_at()
     }
 
-    fn paused_at(&self) -> Instant {
-        self.streams.paused_at().unwrap_or_else(not_happening)
+    fn paused_at(&self) -> Option<Instant> {
+        self.streams.paused_at()
     }
 
-    fn nack_at(&mut self) -> Instant {
+    fn nack_at(&mut self) -> Option<Instant> {
         if !self.streams.any_nack_enabled() {
-            return not_happening();
+            return None;
         }
 
-        self.last_nack + NACK_MIN_INTERVAL
+        Some(self.last_nack + NACK_MIN_INTERVAL)
     }
 
     fn twcc_at(&self) -> Option<Instant> {

@@ -13,7 +13,7 @@ pub(crate) trait Soonest {
     fn soonest(self, other: Self) -> Self;
 }
 
-impl Soonest for (Option<Instant>, &'static str) {
+impl<T: Default> Soonest for (Option<Instant>, T) {
     fn soonest(self, other: Self) -> Self {
         match (self, other) {
             ((Some(v1), s1), (Some(v2), s2)) => {
@@ -23,7 +23,7 @@ impl Soonest for (Option<Instant>, &'static str) {
                     (Some(v2), s2)
                 }
             }
-            ((None, _), (None, _)) => (None, ""),
+            ((None, _), (None, _)) => (None, T::default()),
             ((None, _), (v, s)) => (v, s),
             ((v, s), (None, _)) => (v, s),
         }
