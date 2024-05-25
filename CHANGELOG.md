@@ -1,5 +1,10 @@
 # Unreleased
 
+  * Reject ice-lite - ice-lite scenario #519
+  * Fix bug in ice agent roles for ice-lite #519
+  * DLTS cert serial number as random instead of sequential #518
+  * IceAgent make timing advance (TA) configurable #515
+  * Use sha1 crate instead of the deprecated sha-1 #512
   * Bump sctp-proto to 0.2.2 #511
   * Adjust logging levels to be less noisy #510
   * Fix crash when using VLA (or other) optional RTP exts with SDP #509
