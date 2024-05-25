@@ -847,6 +847,7 @@ pub struct Rtc {
     peer_bytes_rx: u64,
     peer_bytes_tx: u64,
     change_counter: usize,
+    last_timeout_reason: Reason,
 }
 
 struct SendAddr {
@@ -967,7 +968,6 @@ pub enum Input<'a> {
 }
 
 /// Output produced by [`Rtc::poll_output()`]
-
 #[allow(clippy::large_enum_variant)]
 pub enum Output {
     /// When the [`Rtc`] instance expects an [`Input::Timeout`].
@@ -978,6 +978,83 @@ pub enum Output {
 
     /// Some event such as media data arriving from the remote peer or connection events.
     Event(Event),
+}
+
+/// The reason for the next [`Output::Timeout`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Reason {
+    /// No timeout scheduled.
+    ///
+    /// The timeout value is in the distant future.
+    NotHappening,
+
+    /// The ICE agent.
+    ///
+    /// Includes checking candidate pairs and various cleanups.
+    Ice,
+
+    /// The SCTP subsystem.
+    ///
+    /// Things like handling retransmissions and keep-alive checks.
+    Sctp,
+
+    /// Data channels.
+    ///
+    /// Scheduled when we need to open allocations using SCTP.
+    Channel,
+
+    /// Stats gathering (if enabled).
+    ///
+    /// Periodic gathering of statistics.
+    Stats,
+
+    /// Regular RTP feedback.
+    ///
+    /// Receiver reports (RR) and sender reports (SR).
+    Feedback,
+
+    /// Sending of RTP NACK.
+    ///
+    /// When missing packets are discovered, a NACK is scheduled.
+    Nack,
+
+    /// Reporting of TWCC (if enabled).
+    ///
+    /// All incoming RTP packets are reported using TWCC. Enabled via SDP if both
+    /// sides support it.
+    Twcc,
+
+    /// RTP streams not receiving data goes into a paused state.
+    ///
+    /// Whenever an RTP receive stream receives data, a new timeout is scheduled.
+    PauseCheck,
+
+    /// Preprocessing of RTP packets to be sent.
+    ///
+    /// Housekeeping task in RTP send streams.
+    SendStream,
+
+    /// Packetizing of media into RTP data (if used).
+    ///
+    /// Written media data needs packetizing. This is not used in RTP mode.
+    Packetize,
+
+    /// Paced sending of RTP packets (if BWE is enabled).
+    ///
+    /// The pacer ensures bigger RTP chunks, like keyframes, are not sent as a burst,
+    /// but sent smoothly.
+    Pacing,
+
+    /// Bandwidth estimation update (if enabled).
+    ///
+    /// Calculations regarding sender bandwidth using incoming TWCC.
+    Bwe,
+}
+
+impl Default for Reason {
+    fn default() -> Self {
+        Self::NotHappening
+    }
 }
 
 impl Rtc {
@@ -1045,6 +1122,7 @@ impl Rtc {
             peer_bytes_rx: 0,
             peer_bytes_tx: 0,
             change_counter: 0,
+            last_timeout_reason: Reason::NotHappening,
         }
     }
 
@@ -1291,6 +1369,7 @@ impl Rtc {
 
     fn do_poll_output(&mut self) -> Result<Output, RtcError> {
         if !self.alive {
+            self.last_timeout_reason = Reason::NotHappening;
             return Ok(Output::Timeout(not_happening()));
         }
 
@@ -1448,16 +1527,19 @@ impl Rtc {
             }
         }
 
-        let time_and_reason = (None, "<not happening>")
-            .soonest((self.ice.poll_timeout(), "ice"))
-            .soonest((self.session.poll_timeout(), "session"))
-            .soonest((self.sctp.poll_timeout(), "sctp"))
-            .soonest((self.chan.poll_timeout(&self.sctp), "chan"))
-            .soonest((self.stats.as_mut().and_then(|s| s.poll_timeout()), "stats"));
+        let stats = self.stats.as_mut();
+
+        let time_and_reason = (None, Reason::NotHappening)
+            .soonest((self.ice.poll_timeout(), Reason::Ice))
+            .soonest(self.session.poll_timeout())
+            .soonest((self.sctp.poll_timeout(), Reason::Sctp))
+            .soonest((self.chan.poll_timeout(&self.sctp), Reason::Channel))
+            .soonest((stats.and_then(|s| s.poll_timeout()), Reason::Stats));
 
         // trace!("poll_output timeout reason: {}", time_and_reason.1);
 
         let time = time_and_reason.0.unwrap_or_else(not_happening);
+        let reason = time_and_reason.1;
 
         // We want to guarantee time doesn't go backwards.
         let next = if time < self.last_now {
@@ -1466,7 +1548,31 @@ impl Rtc {
             time
         };
 
+        self.last_timeout_reason = reason;
+
         Ok(Output::Timeout(next))
+    }
+
+    /// The reason for the last [`Output::Timeout`]
+    ///
+    /// This is updated when calling [`Rtc::poll_output()`] and the next output
+    /// is a timeout.
+    ///
+    /// ```
+    /// # use str0m::{Rtc, Input, Output, Reason};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let output = rtc.poll_output().unwrap();
+    ///
+    /// // Reason updates every time we get an Output::Timeout
+    /// assert!(matches!(output, Output::Timeout(_)));
+    ///
+    /// // If there are no timeouts scheduled, we get NotHappening. The timeout
+    /// // value itself will be in the distant future.
+    /// assert_eq!(rtc.last_timeout_reason(), Reason::NotHappening);
+    /// ```
+    pub fn last_timeout_reason(&self) -> Reason {
+        self.last_timeout_reason
     }
 
     /// Check if this `Rtc` instance accepts the given input. This is used for demultiplexing

@@ -374,7 +374,7 @@ impl Streams {
         self.streams_rx.values().find_map(|s| s.paused_at())
     }
 
-    pub(crate) fn timestamp_writes_at(&self) -> Option<Instant> {
+    pub(crate) fn send_stream(&self) -> Option<Instant> {
         if self.streams_tx.values().any(|s| s.need_timeout()) {
             Some(already_happened())
         } else {
