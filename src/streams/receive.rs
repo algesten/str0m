@@ -265,7 +265,7 @@ impl StreamRx {
     fn set_sender_info(&mut self, now: Instant, mut info: SenderInfo) {
         // Extend the incoming time given our knowledge of last time.
         let extended = {
-            let prev = self.sender_info.map(|(_, sr)| sr.rtp_time.numer() as u64);
+            let prev = self.sender_info.map(|(_, sr)| sr.rtp_time.numer());
             let r_u32 = info.rtp_time.numer() as u32;
             extend_u32(prev, r_u32)
         };
@@ -278,7 +278,7 @@ impl StreamRx {
             .unwrap_or(Frequency::SECONDS);
 
         // Clock rate is that of the last received packet.
-        info.rtp_time = MediaTime::new(extended as u64, clock_rate);
+        info.rtp_time = MediaTime::new(extended, clock_rate);
 
         self.sender_info = Some((now, info));
     }
@@ -355,9 +355,9 @@ impl StreamRx {
 
         let is_new_packet = register.update(seq_no, now, header.timestamp, clock_rate.get());
 
-        let previous_time = self.last_time.map(|t| t.numer() as u64);
+        let previous_time = self.last_time.map(|t| t.numer());
         let time_u32 = extend_u32(previous_time, header.timestamp);
-        let time = MediaTime::new(time_u32 as u64, clock_rate);
+        let time = MediaTime::new(time_u32, clock_rate);
 
         if !is_repair {
             self.last_time = Some(time);

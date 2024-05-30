@@ -740,7 +740,7 @@ impl Extension {
                 // This should be the duration in 0-64 seconds from a fixed 64 second offset
                 // from UNIX EPOCH. For now, we must save this as offset from _something else_ and
                 // fix the correct value when we have the exact Instant::now() to relate it to.
-                let time_dur = Duration::from_micros(time_micros as u64);
+                let time_dur = Duration::from_micros(time_micros);
 
                 let time_tmp = already_happened() + time_dur;
                 ev.abs_send_time = Some(time_tmp);

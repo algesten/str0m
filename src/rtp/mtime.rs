@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::fmt::Display;
-use std::num::{NonZeroU32, TryFromIntError};
-use std::ops::{Add, AddAssign, Sub, SubAssign};
+use std::num::NonZeroU32;
+use std::ops::{Add, AddAssign};
 use std::str::FromStr;
 use std::time::Duration;
 use std::time::Instant;
@@ -298,36 +298,6 @@ impl Ord for MediaTime {
         } else {
             Ordering::Greater
         }
-    }
-}
-
-impl Sub for MediaTime {
-    type Output = MediaTime;
-
-    #[inline(always)]
-    fn sub(self, rhs: Self) -> Self::Output {
-        let (t0, t1) = MediaTime::same_base(self, rhs);
-        MediaTime::new(t0.0.saturating_sub(t1.0), t0.1)
-    }
-}
-
-impl SubAssign for MediaTime {
-    fn sub_assign(&mut self, rhs: Self) {
-        *self = *self - rhs;
-    }
-}
-
-impl Sub<MediaTime> for Instant {
-    type Output = Instant;
-
-    fn sub(self, rhs: MediaTime) -> Self::Output {
-        self - Duration::from(rhs)
-    }
-}
-
-impl SubAssign<MediaTime> for Instant {
-    fn sub_assign(&mut self, rhs: MediaTime) {
-        *self = *self - rhs;
     }
 }
 
