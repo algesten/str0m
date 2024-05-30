@@ -160,20 +160,20 @@ impl<'de> Deserialize<'de> for Frequency {
 /// let mtime = MediaTime::new(2000, freq);
 /// ```
 #[derive(Debug, Clone, Copy)]
-pub struct MediaTime(i64, Frequency);
+pub struct MediaTime(u64, Frequency);
 
 impl MediaTime {
     /// The additive identity: 0/1.
     pub const ZERO: MediaTime = MediaTime::from_secs(0);
 
     /// Construct a [`MediaTime`] from a guaranteed non-zero [`Frequency`].
-    pub const fn new(numer: i64, denom: Frequency) -> Self {
+    pub const fn new(numer: u64, denom: Frequency) -> Self {
         Self(numer, denom)
     }
 
     /// The numerator of the offset time.
     #[inline(always)]
-    pub const fn numer(&self) -> i64 {
+    pub const fn numer(&self) -> u64 {
         self.0
     }
 
@@ -191,44 +191,44 @@ impl MediaTime {
 
     /// Convenience constructor for numbers of microseconds (v/1_000_000).
     #[inline(always)]
-    pub const fn from_micros(v: i64) -> MediaTime {
+    pub const fn from_micros(v: u64) -> MediaTime {
         MediaTime(v, Frequency::MICROS)
     }
 
     /// Convenience constructor for numbers of 24-bit 6.18 fixed point units (v/2^18).
     #[inline(always)]
-    pub const fn from_fixed_point_6_18(v: i64) -> MediaTime {
+    pub const fn from_fixed_point_6_18(v: u64) -> MediaTime {
         MediaTime(v, Frequency::FIXED_POINT_6_18)
     }
 
     /// Convenience constructor for numbers of 90kHz units (v/90_000).
     #[inline(always)]
-    pub const fn from_90khz(v: i64) -> MediaTime {
+    pub const fn from_90khz(v: u64) -> MediaTime {
         MediaTime(v, Frequency::NINETY_KHZ)
     }
 
     /// Convenience constructor for numbers of milliseconds (v/1000).
     #[inline(always)]
-    pub const fn from_millis(v: i64) -> MediaTime {
+    pub const fn from_millis(v: u64) -> MediaTime {
         MediaTime(v, Frequency::MILLIS)
     }
 
     /// Convenience constructor for numbers of hundredths of seconds (v/100).
     #[inline(always)]
-    pub const fn from_hundredths(v: i64) -> MediaTime {
+    pub const fn from_hundredths(v: u64) -> MediaTime {
         MediaTime(v, Frequency::HUNDREDTHS)
     }
 
     /// Convenience constructor for numbers of seconds (v/1).
     #[inline(always)]
-    pub const fn from_secs(v: i64) -> MediaTime {
+    pub const fn from_secs(v: u64) -> MediaTime {
         MediaTime(v, Frequency::SECONDS)
     }
 
     /// Convenience constructor for floating point fractions of seconds as microsecond units.
     #[inline(always)]
     pub fn from_seconds(v: impl Into<f64>) -> MediaTime {
-        Self::from_micros((v.into() * 1_000_000.0_f64) as i64)
+        Self::from_micros((v.into() * 1_000_000.0_f64) as u64)
     }
 
     /// A floating point fraction second representation.
@@ -239,7 +239,7 @@ impl MediaTime {
     }
 
     /// A microsecond representation.
-    pub const fn as_micros(&self) -> i64 {
+    pub const fn as_micros(&self) -> u64 {
         self.rebase(Frequency::MICROS).numer()
     }
 
@@ -249,14 +249,6 @@ impl MediaTime {
         self.0 == 0
     }
 
-    /// The absolute value of the offset time.
-    #[inline(always)]
-    pub const fn abs(mut self) -> MediaTime {
-        if self.0 < 0 {
-            self.0 = -self.0;
-        }
-        self
-    }
 
     /// Convert this offset time to have a different denominator
     /// (frequency). This conversion may lose precision and, after
@@ -268,7 +260,7 @@ impl MediaTime {
             self
         } else {
             let numer = self.0 as i128 * denom.get() as i128 / self.1.get() as i128;
-            MediaTime::new(numer as i64, denom)
+            MediaTime::new(numer as u64, denom)
         }
     }
 
@@ -315,7 +307,7 @@ impl Sub for MediaTime {
     #[inline(always)]
     fn sub(self, rhs: Self) -> Self::Output {
         let (t0, t1) = MediaTime::same_base(self, rhs);
-        MediaTime::new(t0.0 - t1.0, t0.1)
+        MediaTime::new(t0.0.saturating_sub(t1.0), t0.1)
     }
 }
 
@@ -329,13 +321,7 @@ impl Sub<MediaTime> for Instant {
     type Output = Instant;
 
     fn sub(self, rhs: MediaTime) -> Self::Output {
-        if rhs.numer() < 0 {
-            // abs(numer < 0) => positive i64 which can always fit in u64
-            self + Duration::try_from(rhs.abs()).unwrap()
-        } else {
-            // numer >= 0 => positive i64 which can always fit in u64
-            self - Duration::try_from(rhs).unwrap()
-        }
+        self - Duration::from(rhs)
     }
 }
 
@@ -365,13 +351,7 @@ impl Add<MediaTime> for Instant {
     type Output = Instant;
 
     fn add(self, rhs: MediaTime) -> Self::Output {
-        if rhs.numer() < 0 {
-            // abs(numer < 0) => positive i64 which can always fit in u64
-            self - Duration::try_from(rhs.abs()).unwrap()
-        } else {
-            // numer >= 0 => positive i64 which can always fit in u64
-            self + Duration::try_from(rhs).unwrap()
-        }
+        self + Duration::from(rhs)
     }
 }
 
@@ -381,21 +361,17 @@ impl AddAssign<MediaTime> for Instant {
     }
 }
 
-impl TryFrom<MediaTime> for Duration {
-    type Error = TryFromIntError;
-
-    fn try_from(value: MediaTime) -> Result<Self, Self::Error> {
-        value
+impl From<MediaTime> for Duration {
+    fn from(value: MediaTime) -> Self {
+        Duration::from_micros(value
             .rebase(Frequency::MICROS)
-            .numer()
-            .try_into()
-            .map(Duration::from_micros)
+            .numer())
     }
 }
 
 impl From<Duration> for MediaTime {
     fn from(v: Duration) -> Self {
-        MediaTime::new(v.as_micros() as i64, Frequency::MICROS)
+        MediaTime::new(v.as_micros() as u64, Frequency::MICROS)
     }
 }
 
@@ -411,14 +387,5 @@ mod test {
         assert_eq!(t2.denom(), 90_000);
 
         println!("{}", (10.0234_f64).fract());
-    }
-
-    #[test]
-    fn ts_negative_duration() {
-        let t = MediaTime::new(-1, Frequency::make(1));
-        let t_dur: Result<Duration, TryFromIntError> = t.try_into();
-        if let Ok(dur) = t_dur {
-            panic!("expected conversion of negative MediaTime to fail but got {dur:?}")
-        }
     }
 }

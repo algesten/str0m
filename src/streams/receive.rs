@@ -278,7 +278,7 @@ impl StreamRx {
             .unwrap_or(Frequency::SECONDS);
 
         // Clock rate is that of the last received packet.
-        info.rtp_time = MediaTime::new(extended as i64, clock_rate);
+        info.rtp_time = MediaTime::new(extended as u64, clock_rate);
 
         self.sender_info = Some((now, info));
     }
@@ -357,7 +357,7 @@ impl StreamRx {
 
         let previous_time = self.last_time.map(|t| t.numer() as u64);
         let time_u32 = extend_u32(previous_time, header.timestamp);
-        let time = MediaTime::new(time_u32 as i64, clock_rate);
+        let time = MediaTime::new(time_u32 as u64, clock_rate);
 
         if !is_repair {
             self.last_time = Some(time);
