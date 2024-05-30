@@ -249,7 +249,6 @@ impl MediaTime {
         self.0 == 0
     }
 
-
     /// Convert this offset time to have a different denominator
     /// (frequency). This conversion may lose precision and, after
     /// arithmetic operations with other times of higher frequencies,
@@ -333,9 +332,7 @@ impl AddAssign<MediaTime> for Instant {
 
 impl From<MediaTime> for Duration {
     fn from(value: MediaTime) -> Self {
-        Duration::from_micros(value
-            .rebase(Frequency::MICROS)
-            .numer())
+        Duration::from_micros(value.rebase(Frequency::MICROS).numer())
     }
 }
 
