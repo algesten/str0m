@@ -273,7 +273,7 @@ impl StreamTx {
         }
 
         // This 1 in clock frequency will be fixed in poll_output.
-        let media_time = MediaTime::from_secs(time as i64);
+        let media_time = MediaTime::from_secs(time as u64);
         self.rtp_and_wallclock = Some((time, wallclock));
 
         let header = RtpHeader {
@@ -796,7 +796,7 @@ impl StreamTx {
         let (t_u32, w) = self.rtp_and_wallclock?;
 
         let clock_rate = self.clock_rate?;
-        let t = MediaTime::new(t_u32 as i64, clock_rate);
+        let t = MediaTime::new(t_u32 as u64, clock_rate);
 
         // Wallclock needs to be in the past.
         if w > now {

@@ -90,8 +90,8 @@ pub struct MediaData {
     /// Parameters for the codec. This is used to match incoming PT to outgoing PT.
     pub params: PayloadParams,
 
-    /// The RTP media time of this packet. Media time is described as a nominator/denominator
-    /// quantity. The nominator is the timestamp field from the RTP header, the denominator
+    /// The RTP media time of this packet. Media time is described as a numerator/denominator
+    /// quantity. The numerator is the timestamp field from the RTP header, the denominator
     /// depends on whether this is an audio or video packet.
     ///
     /// For audio the timebase is 48kHz for video it is 90kHz.

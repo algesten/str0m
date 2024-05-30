@@ -110,7 +110,7 @@ pub fn depack(data: &[u8]) -> Option<()> {
             let header = RtpHeader::_parse(rng.slice(hlen)?, &exts)?;
             let meta = RtpMeta {
                 received: start + Duration::from_millis(rng.u64(10000)?),
-                time: MediaTime::new(rng.i64(i64::MAX)?, Frequency::MICROS),
+                time: MediaTime::new(rng.u64(u64::MAX)?, Frequency::MICROS),
                 seq_no: rng.u64(u64::MAX)?.into(),
                 header,
                 last_sender_info: None,

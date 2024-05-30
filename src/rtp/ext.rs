@@ -733,14 +733,14 @@ impl Extension {
                 let time_24 = u32::from_be_bytes([0, buf[0], buf[1], buf[2]]);
 
                 // Rebase to micros
-                let time_micros = MediaTime::from_fixed_point_6_18(time_24 as i64)
+                let time_micros = MediaTime::from_fixed_point_6_18(time_24 as u64)
                     .rebase(Frequency::MICROS)
                     .numer();
 
                 // This should be the duration in 0-64 seconds from a fixed 64 second offset
                 // from UNIX EPOCH. For now, we must save this as offset from _something else_ and
                 // fix the correct value when we have the exact Instant::now() to relate it to.
-                let time_dur = Duration::from_micros(time_micros as u64);
+                let time_dur = Duration::from_micros(time_micros);
 
                 let time_tmp = already_happened() + time_dur;
                 ev.abs_send_time = Some(time_tmp);
@@ -781,8 +781,8 @@ impl Extension {
                 }
                 let min = (buf[0] as u32) << 4 | (buf[1] as u32) >> 4;
                 let max = ((buf[1] & 0xf) as u32) << 8 | buf[2] as u32;
-                ev.play_delay_min = Some(MediaTime::from_hundredths(min as i64));
-                ev.play_delay_max = Some(MediaTime::from_hundredths(max as i64));
+                ev.play_delay_min = Some(MediaTime::from_hundredths(min as u64));
+                ev.play_delay_max = Some(MediaTime::from_hundredths(max as u64));
             }
             // 1
             VideoContentType => {

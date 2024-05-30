@@ -478,10 +478,10 @@ mod test {
     fn test(
         v: &[(
             u64,   // seq
-            i64,   // time
+            u64,   // time
             &[u8], // data
             &[(
-                i64,   // time
+                u64,   // time
                 &[u8], // depacketized data
             )],
         )],
@@ -492,10 +492,10 @@ mod test {
     fn test0(
         v: &[(
             u64,   // seq
-            i64,   // time
+            u64,   // time
             &[u8], // data
             &[(
-                i64,   // time
+                u64,   // time
                 &[u8], // depacketized data
             )],
         )],
@@ -507,10 +507,10 @@ mod test {
         hold_back: usize,
         v: &[(
             u64,   // seq
-            i64,   // time
+            u64,   // time
             &[u8], // data
             &[(
-                i64,   // time
+                u64,   // time
                 &[u8], // depacketized data
             )],
         )],
