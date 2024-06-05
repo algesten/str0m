@@ -1090,14 +1090,7 @@ fn update_media(
 
                 // If remote communicated a main a=ssrc, but no RTX, we will not send nacks.
                 let suppress_nack = repair_ssrc.is_none();
-                streams.expect_stream_rx(
-                    i.ssrc,
-                    repair_ssrc,
-                    media.mid(),
-                    None,
-                    suppress_nack,
-                    None,
-                );
+                streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), None, suppress_nack);
             }
         }
 

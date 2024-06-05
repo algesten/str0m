@@ -282,10 +282,10 @@ impl Session {
         self.handle_rtcp(now, message);
     }
 
-    fn mid_and_ssrc_for_header(&mut self, header: &RtpHeader) -> Option<(Mid, Ssrc)> {
+    fn mid_and_ssrc_for_header(&mut self, now: Instant, header: &RtpHeader) -> Option<(Mid, Ssrc)> {
         let ssrc_header = header.ssrc;
 
-        if let Some(r) = self.streams.mid_ssrc_rx_by_ssrc_or_rtx(ssrc_header) {
+        if let Some(r) = self.streams.mid_ssrc_rx_by_ssrc_or_rtx(now, ssrc_header) {
             return Some(r);
         }
 
@@ -293,7 +293,7 @@ impl Session {
         self.map_dynamic(header);
 
         // The dynamic mapping might have added an entry by now.
-        self.streams.mid_ssrc_rx_by_ssrc_or_rtx(ssrc_header)
+        self.streams.mid_ssrc_rx_by_ssrc_or_rtx(now, ssrc_header)
     }
 
     fn map_dynamic(&mut self, header: &RtpHeader) {
@@ -354,7 +354,7 @@ impl Session {
         }
 
         // The ssrc is the _main_ ssrc (no the rtx, that might be in the header).
-        let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(&header) else {
+        let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(now, &header) else {
             debug!("No mid/SSRC for header: {:?}", header);
             return;
         };

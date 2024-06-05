@@ -129,7 +129,10 @@ pub(crate) struct Streams {
 
     /// Each incoming SSRC is mapped to a Mid/Ssrc. The Ssrc in the value is for the case
     /// where the incoming SSRC is for an RTX and we want the "main".
-    source_keys_rx: HashMap<Ssrc, (Mid, Ssrc)>,
+    rx_lookup: HashMap<Ssrc, RxLookup>,
+
+    /// Time we last cleaned up unused entries from source_keys_rx.
+    last_rx_lookup_cleanup: Instant,
 
     /// All outgoing encoded streams.
     streams_tx: HashMap<Ssrc, StreamTx>,
@@ -147,11 +150,25 @@ pub(crate) struct Streams {
     any_nack_active: Option<bool>,
 }
 
+/// Delay between cleaning up the RxLookup.
+const RX_LOOKUP_CLEANUP_INTERVAL: Duration = Duration::from_millis(10_000);
+
+/// How old an RxLookup entry may be.
+const RX_LOOKUP_EXPIRY: Duration = Duration::from_millis(30_000);
+
+#[derive(Debug)]
+struct RxLookup {
+    mid: Mid,
+    main: Ssrc,
+    last_used: Instant,
+}
+
 impl Default for Streams {
     fn default() -> Self {
         Self {
             streams_rx: Default::default(),
-            source_keys_rx: Default::default(),
+            rx_lookup: Default::default(),
+            last_rx_lookup_cleanup: already_happened(),
             streams_tx: Default::default(),
             default_ssrc_tx: 0.into(), // this will be changed
             mids_to_report: Vec::with_capacity(10),
@@ -189,8 +206,7 @@ impl Streams {
             (stream.ssrc(), Some(ssrc))
         };
 
-        let reason = format!("Mid header and rid: {}", rid);
-        self.map_dynamic_finish(mid, Some(rid), ssrc_main, rtx, media, payload, &reason);
+        self.map_dynamic_finish(mid, Some(rid), ssrc_main, rtx, media, payload);
     }
 
     pub(crate) fn map_dynamic_by_pt(
@@ -224,8 +240,7 @@ impl Streams {
             (ssrc_main, Some(ssrc))
         };
 
-        let reason = format!("MID header, no RID and PT: {}", payload.pt());
-        self.map_dynamic_finish(mid, None, ssrc_main, rtx, media, payload, &reason);
+        self.map_dynamic_finish(mid, None, ssrc_main, rtx, media, payload);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -237,7 +252,6 @@ impl Streams {
         rtx: Option<Ssrc>,
         media: &mut Media,
         payload: PayloadParams,
-        reason: &str,
     ) {
         let maybe_stream = self.stream_rx_by_mid_rid(mid, rid);
 
@@ -268,7 +282,7 @@ impl Streams {
         let suppress_nack = payload.resend.is_none();
 
         // If stream already exists, this might only "fill in" the RTX.
-        self.expect_stream_rx(ssrc_main, rtx, mid, rid, suppress_nack, Some(reason));
+        self.expect_stream_rx(ssrc_main, rtx, mid, rid, suppress_nack);
     }
 
     pub fn expect_stream_rx(
@@ -278,7 +292,6 @@ impl Streams {
         mid: Mid,
         rid: Option<Rid>,
         suppress_nack: bool,
-        reason: Option<&str>,
     ) -> &mut StreamRx {
         // New stream might have enabled nacks.
         self.any_nack_active = None;
@@ -290,9 +303,7 @@ impl Streams {
 
         if let Some(rtx) = rtx {
             stream.maybe_reset_rtx(rtx);
-            associate_ssrc_mid(&mut self.source_keys_rx, rtx, mid, ssrc, reason);
         }
-        associate_ssrc_mid(&mut self.source_keys_rx, ssrc, mid, ssrc, reason);
 
         stream
     }
@@ -300,11 +311,8 @@ impl Streams {
     pub fn remove_stream_rx(&mut self, ssrc: Ssrc) -> bool {
         let stream = self.streams_rx.remove(&ssrc);
         let existed = stream.is_some();
-        if let Some(rtx) = stream.and_then(|s| s.rtx()) {
-            self.source_keys_rx.remove(&rtx);
-        }
 
-        self.source_keys_rx.remove(&ssrc);
+        self.rx_lookup.retain(|k, l| *k != ssrc && l.main != ssrc);
 
         existed
     }
@@ -334,28 +342,30 @@ impl Streams {
     }
 
     /// Lookup the "main" SSRC and mid for a given SSRC(main or RTX).
-    pub(crate) fn mid_ssrc_rx_by_ssrc_or_rtx(&mut self, ssrc: Ssrc) -> Option<(Mid, Ssrc)> {
+    pub(crate) fn mid_ssrc_rx_by_ssrc_or_rtx(
+        &mut self,
+        now: Instant,
+        ssrc: Ssrc,
+    ) -> Option<(Mid, Ssrc)> {
         // A direct hit on SSRC is to prefer. The idea is that mid/rid are only sent
         // for the initial x seconds and then we start using SSRC only instead.
-        if let Some(r) = self.source_keys_rx.get(&ssrc).copied() {
-            return Some(r);
+        if let Some(r) = self.rx_lookup.get_mut(&ssrc) {
+            r.last_used = now;
+            return Some((r.mid, r.main));
         }
 
-        // The receiver/source SSRC might already exist.
-        // This would happen when the SSRC is communicated as a=ssrc lines in the SDP.
-        // In this case the encoded stream should have been declared already.
         let maybe_stream = self.stream_rx_by_ssrc_or_rtx(ssrc);
         if let Some(stream) = maybe_stream {
             let mid = stream.mid();
             let ssrc_main = stream.ssrc();
 
-            // SSRC is mapped to a Sender/Receiver in this media. Make an entry for it.
-            associate_ssrc_mid(
-                &mut self.source_keys_rx,
+            self.rx_lookup.insert(
                 ssrc,
-                mid,
-                ssrc_main,
-                Some("Known SSRC"),
+                RxLookup {
+                    mid,
+                    main: ssrc_main,
+                    last_used: now,
+                },
             );
 
             return Some((mid, ssrc_main));
@@ -439,6 +449,11 @@ impl Streams {
             let get_media = move || (medias.iter().find(|m| m.mid() == mid).unwrap(), config);
 
             stream.handle_timeout(now, get_media);
+        }
+
+        if now > self.rx_lookup_at() {
+            self.rx_lookup
+                .retain(|_, l| now - l.last_used <= RX_LOOKUP_EXPIRY);
         }
     }
 
@@ -572,7 +587,7 @@ impl Streams {
     pub(crate) fn remove_streams_by_mid(&mut self, mid: Mid) {
         self.streams_tx.retain(|_, s| s.mid() != mid);
         self.streams_rx.retain(|_, s| s.mid() != mid);
-        self.source_keys_rx.retain(|_, v| v.0 != mid);
+        self.rx_lookup.retain(|_, v| v.mid != mid);
     }
 
     /// An iterator over all the tx streams for a given mid.
@@ -602,23 +617,13 @@ impl Streams {
         // knowing there is such a StreamRx.
         let mut to_change = self.streams_rx.remove(&ssrc_from).unwrap();
         to_change.change_ssrc(ssrc_to);
-        let mid = to_change.mid();
-        let rtx = to_change.rtx();
 
         // Reinsert under new SSRC key.
         self.streams_rx.insert(ssrc_to, to_change);
 
         // Remove previous mappings for the SSRC
-        self.source_keys_rx
-            .retain(|k, (_, s)| *k != ssrc_from && *s != ssrc_from);
-
-        // Add mapping for new main SSRC
-        self.associate_ssrc_mid(ssrc_to, mid, ssrc_to, None);
-
-        // Map the RTX to the new main SSRC
-        if let Some(rtx) = rtx {
-            self.associate_ssrc_mid(rtx, mid, ssrc_to, None);
-        }
+        self.rx_lookup
+            .retain(|k, l| *k != ssrc_from && l.main != ssrc_from);
     }
 
     fn change_stream_rx_rtx(&mut self, rtx_from: Ssrc, rtx_to: Ssrc) {
@@ -626,7 +631,7 @@ impl Streams {
         self.any_nack_active = None;
 
         // Remove the SSRC mapping
-        self.source_keys_rx.remove(&rtx_from);
+        self.rx_lookup.remove(&rtx_from);
 
         let Some(to_change) = self
             .streams_rx
@@ -636,13 +641,8 @@ impl Streams {
             // If there's no main stream associated with the RTX our job is done.
             return;
         };
-        let mid = to_change.mid();
-        let ssrc = to_change.ssrc();
 
         to_change.maybe_reset_rtx(rtx_to);
-
-        // Map the new RTX to the main SSRC
-        self.associate_ssrc_mid(rtx_to, mid, ssrc, None);
     }
 
     fn stream_rx_by_ssrc_or_rtx(&self, ssrc: Ssrc) -> Option<&StreamRx> {
@@ -651,64 +651,16 @@ impl Streams {
             .find(|s| s.ssrc() == ssrc || s.rtx() == Some(ssrc))
     }
 
-    fn associate_ssrc_mid(&mut self, ssrc: Ssrc, mid: Mid, ssrc_main: Ssrc, reason: Option<&str>) {
-        associate_ssrc_mid(&mut self.source_keys_rx, ssrc, mid, ssrc_main, reason);
-    }
-
     pub(crate) fn any_nack_enabled(&mut self) -> bool {
         if self.any_nack_active.is_none() {
             self.any_nack_active = Some(self.streams_rx.values().any(|s| s.nack_enabled()));
         }
         self.any_nack_active.unwrap()
     }
-}
 
-fn associate_ssrc_mid(
-    source_keys_rx: &mut HashMap<Ssrc, (Mid, Ssrc)>,
-    ssrc: Ssrc,
-    mid: Mid,
-    ssrc_main: Ssrc,
-    reason: Option<&str>,
-) {
-    let existing = source_keys_rx.get(&ssrc);
-    let mid_change = existing.map(|(m, _)| *m != mid).unwrap_or(false);
-    let ssrc_change = existing.map(|(_, s)| *s != ssrc_main).unwrap_or(false);
-    let no_change = !mid_change && !ssrc_change;
-
-    if existing.is_some() && no_change {
-        return;
+    fn rx_lookup_at(&mut self) -> Instant {
+        self.last_rx_lookup_cleanup + RX_LOOKUP_CLEANUP_INTERVAL
     }
-
-    if mid_change {
-        // This would be odd, SSRCs are supposed to be kept unique and thus shouldn't migrate to
-        // new mids.
-        warn!("Changing StreamRx mapping for mid {mid}");
-    }
-
-    let is_rtx = ssrc != ssrc_main;
-    // Logging trick to avoid allocation
-    struct Reason<'a> {
-        r: Option<&'a str>,
-    }
-
-    impl<'a> fmt::Display for Reason<'a> {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            match self.r {
-                Some(r) => write!(f, " ({r})"),
-                None => write!(f, ""),
-            }
-        }
-    }
-
-    info!(
-        "{} {}SSRC-mid: {} - {}{}",
-        if no_change { "Associate" } else { "Changed" },
-        if is_rtx { "(RTX) " } else { "" },
-        ssrc,
-        mid,
-        Reason { r: reason }
-    );
-    source_keys_rx.insert(ssrc, (mid, ssrc_main));
 }
 
 impl fmt::Debug for RtpPacket {

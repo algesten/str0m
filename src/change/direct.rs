@@ -190,7 +190,7 @@ impl<'a> DirectApi<'a> {
         self.rtc
             .session
             .streams
-            .expect_stream_rx(ssrc, rtx, mid, rid, suppress_nack, None)
+            .expect_stream_rx(ssrc, rtx, mid, rid, suppress_nack)
     }
 
     /// Remove the receive stream for the given SSRC.
