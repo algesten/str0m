@@ -518,10 +518,10 @@ fn build_interims(
         let diff_time = if r.time < prev.1 {
             // negative
             let dur = prev.1 - r.time;
-            -(dur.as_micros() as i32)
+            -(dur.as_micros() as i64)
         } else {
             let dur = r.time - prev.1;
-            dur.as_micros() as i32
+            dur.as_micros() as i64
         };
 
         let (status, time) = if diff_time < -8_192_000 || diff_time > 8_191_750 {
@@ -1730,6 +1730,38 @@ mod test {
 
         assert_eq!(report.status_count, 3);
         assert_eq!(report.delta, vec![Small(0), Large(-32768), Large(32767)]);
+    }
+
+    #[test]
+    fn twcc_crazy_negative_time_delta() {
+        let mut reg = TwccRecvRegister::new(100);
+
+        // Deltas so big they wrap around the bounds of an i32 to become small again.
+        // These constants are chosen carefully to look normal when wrapped
+        let now = Instant::now();
+        reg.update_seq(0.into(), now + Duration::from_micros(4_294_967_547)); // Wraps to -251
+        reg.update_seq(1.into(), now + Duration::from_micros(0));
+
+        // The bogus value should be ignored
+        let report = reg.build_report(1000).unwrap();
+        assert_eq!(report.status_count, 1);
+        assert_eq!(report.delta, vec![Small(0)]);
+    }
+
+    #[test]
+    fn twcc_crazy_positive_time_delta() {
+        let mut reg = TwccRecvRegister::new(100);
+
+        // Deltas so big they wrap around the bounds of an i32 to become small again.
+        // These constants are chosen carefully to look normal when wrapped
+        let now = Instant::now();
+        reg.update_seq(0.into(), now + Duration::from_micros(0));
+        reg.update_seq(1.into(), now + Duration::from_micros(4_294_967_547)); // Wraps to 251
+
+        // The bogus value should be ignored
+        let report = reg.build_report(1000).unwrap();
+        assert_eq!(report.status_count, 1);
+        assert_eq!(report.delta, vec![Small(0)]);
     }
 
     #[test]
