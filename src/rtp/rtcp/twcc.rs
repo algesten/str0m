@@ -530,7 +530,7 @@ fn build_interims(
             break;
         } else if diff_time < 0 || diff_time > 63_750 {
             let t = diff_time / 250;
-            assert!(t >= -32_765 && t <= 32_767);
+            assert!(t >= -32_768 && t <= 32_767);
             (PacketStatus::ReceivedLargeOrNegativeDelta, t as i16)
         } else {
             let t = diff_time / 250;
@@ -1714,6 +1714,22 @@ mod test {
 
         assert_eq!(header, report.header());
         assert_eq!(parsed, report);
+    }
+
+    #[test]
+    fn twcc_large_time_delta_edges() {
+        let mut reg = TwccRecvRegister::new(100);
+
+        // Stretch the boundaries of the i16 type used for deltas
+        let now = Instant::now();
+        reg.update_seq(0.into(), now + Duration::from_micros(8_192_000));
+        reg.update_seq(1.into(), now + Duration::from_micros(0));
+        reg.update_seq(2.into(), now + Duration::from_micros(8_191_750));
+
+        let report = reg.build_report(1000).unwrap();
+
+        assert_eq!(report.status_count, 3);
+        assert_eq!(report.delta, vec![Small(0), Large(-32768), Large(32767)]);
     }
 
     #[test]
