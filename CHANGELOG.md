@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Fix bug in TWCC time delta #524
+  * Make MediaTime nominator unsigned (breaking) #521
   * Provide reason for timeout #520
   * Reject ice-lite - ice-lite scenario #519
   * Fix bug in ice agent roles for ice-lite #519
