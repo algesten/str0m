@@ -615,15 +615,24 @@ impl Streams {
     pub(crate) fn change_stream_rx_ssrc(&mut self, ssrc_from: Ssrc, ssrc_to: Ssrc) {
         // This unwrap is OK, because we can't call change_stream_rx_ssrc without first
         // knowing there is such a StreamRx.
-        let mut to_change = self.streams_rx.remove(&ssrc_from).unwrap();
-        to_change.change_ssrc(ssrc_to);
+        let maybe_change = self.streams_rx.get_mut(&ssrc_from).unwrap();
 
-        // Reinsert under new SSRC key.
-        self.streams_rx.insert(ssrc_to, to_change);
+        // The StreamRx is allowed to not change the SSRC in case it is switching back
+        // to the previous SSRC. This is to avoid flapping in case RTP packets arrive
+        // out of order.
+        let did_change = maybe_change.change_ssrc(ssrc_to);
 
-        // Remove previous mappings for the SSRC
-        self.rx_lookup
-            .retain(|k, l| *k != ssrc_from && l.main != ssrc_from);
+        if did_change {
+            // Unwrap is OK, see above.
+            let to_change = self.streams_rx.remove(&ssrc_from).unwrap();
+
+            // Reinsert under new SSRC key.
+            self.streams_rx.insert(ssrc_to, to_change);
+
+            // Remove previous mappings for the SSRC
+            self.rx_lookup
+                .retain(|k, l| *k != ssrc_from && l.main != ssrc_from);
+        }
     }
 
     fn change_stream_rx_rtx(&mut self, rtx_from: Ssrc, rtx_to: Ssrc) {
