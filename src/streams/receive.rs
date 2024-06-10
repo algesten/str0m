@@ -629,9 +629,11 @@ impl StreamRx {
         self.pending_request_keyframe = None;
     }
 
-    pub(crate) fn change_ssrc(&mut self, ssrc: Ssrc) {
+    #[must_use]
+    pub(crate) fn change_ssrc(&mut self, ssrc: Ssrc) -> bool {
+        // Avoid flapping
         if ssrc == self.ssrc || Some(ssrc) == self.previous_ssrc {
-            return;
+            return false;
         }
 
         info!(
@@ -644,6 +646,8 @@ impl StreamRx {
         self.previous_ssrc = Some(self.ssrc);
         self.ssrc = ssrc;
         self.register = None;
+
+        true
     }
 
     pub(crate) fn maybe_reset_rtx(&mut self, rtx: Ssrc) {
