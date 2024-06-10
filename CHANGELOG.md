@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Fix bug when changing StreamRx SSRC #522
+  * Simplify StreamRx lookup state cache #522
   * Fix bug in TWCC time delta #524
   * Make MediaTime nominator unsigned (breaking) #521
   * Provide reason for timeout #520
