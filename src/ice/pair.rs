@@ -159,6 +159,10 @@ impl CandidatePair {
         &cs[self.local_idx]
     }
 
+    pub fn local_valid_candidate<'a>(&self, cs: &'a [Candidate]) -> Option<&'a Candidate> {
+        self.valid_idx.map(|idx| &cs[idx])
+    }
+
     pub fn remote_candidate<'a>(&self, cs: &'a [Candidate]) -> &'a Candidate {
         &cs[self.remote_idx]
     }

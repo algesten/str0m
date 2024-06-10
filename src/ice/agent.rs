@@ -1563,7 +1563,9 @@ impl IceAgent {
                 best_prio.nominate(self.ice_lite);
             }
 
-            let local = best_prio.local_candidate(&self.local_candidates);
+            let local = best_prio
+                .local_valid_candidate(&self.local_candidates)
+                .unwrap_or(best_prio.local_candidate(&self.local_candidates));
             let remote = best_prio.remote_candidate(&self.remote_candidates);
 
             self.nominated_send = Some(best_prio.id());
