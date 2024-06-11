@@ -347,11 +347,6 @@ impl Session {
         header.ext_vals.update_absolute_send_time(now);
 
         trace!("Handle RTP: {:?}", header);
-        if let Some(transport_cc) = header.ext_vals.transport_cc {
-            let prev = self.twcc_rx_register.max_seq();
-            let extended = extend_u16(Some(*prev), transport_cc);
-            self.twcc_rx_register.update_seq(extended.into(), now);
-        }
 
         // The ssrc is the _main_ ssrc (no the rtx, that might be in the header).
         let Some((mid, ssrc)) = self.mid_and_ssrc_for_header(now, &header) else {
@@ -387,9 +382,9 @@ impl Session {
 
         // is_repair controls whether update is updating the main register or the RTX register.
         // Either way we get a seq_no_outer which is used to decrypt the SRTP.
-        let receipt_outer = stream.update(now, &header, clock_rate, is_repair);
+        let mut seq_no = stream.extend_seq(&header, is_repair);
 
-        let mut data = match srtp.unprotect_rtp(buf, &header, *receipt_outer.seq_no) {
+        let mut data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
             Some(v) => v,
             None => {
                 trace!("Failed to unprotect SRTP");
@@ -407,6 +402,16 @@ impl Session {
             raw_packets.push_back(Box::new(RawPacket::RtpRx(header.clone(), data.clone())));
         }
 
+        // Mark as received for TWCC purposes
+        if let Some(transport_cc) = header.ext_vals.transport_cc {
+            let prev = self.twcc_rx_register.max_seq();
+            let extended = extend_u16(Some(*prev), transport_cc);
+            self.twcc_rx_register.update_seq(extended.into(), now);
+        }
+
+        // Register reception in nack registers.
+        let receipt_outer = stream.update_register(now, &header, clock_rate, is_repair, seq_no);
+
         // RTX packets must be rewritten to be a normal packet. This only changes the
         // the seq_no, however MediaTime might be different when interpreted against the
         // the "main" register.
@@ -421,19 +426,20 @@ impl Session {
             // Rewrite the header, and removes the resent seq_no from the body.
             stream.un_rtx(&mut header, &mut data, pt);
 
+            // Header has changed, which means we extend a new seq_no. This time
+            // without is_repair since this is the wrapped resend. This is the
+            // extended number of the main stream.
+            seq_no = stream.extend_seq(&header, false);
+
             // Now update the "main" register with the repaired packet info.
-            // This gives us the extended sequence number of the main stream.
-            stream.update(now, &header, clock_rate, false)
+            stream.update_register(now, &header, clock_rate, false, seq_no)
         } else {
             // This is not RTX, the outer seq and time is what we use. The first
             // stream.update will have updated the main register.
             receipt_outer
         };
 
-        let Some(packet) = stream.handle_rtp(now, header, data, receipt.seq_no, receipt.time)
-        else {
-            return;
-        };
+        let packet = stream.handle_rtp(now, header, data, seq_no, receipt.time);
 
         if self.rtp_mode {
             // In RTP mode, we store the packet temporarily here for the next poll_output().

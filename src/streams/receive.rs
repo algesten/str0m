@@ -312,21 +312,7 @@ impl StreamRx {
         self.need_paused_event = true;
     }
 
-    pub(crate) fn update(
-        &mut self,
-        now: Instant,
-        header: &RtpHeader,
-        clock_rate: Frequency,
-        is_repair: bool,
-    ) -> RegisterUpdateReceipt {
-        self.last_used = now;
-
-        if self.paused {
-            self.paused = false;
-            self.need_paused_event = true;
-        }
-        self.check_paused_at = Some(now + self.pause_threshold);
-
+    pub(crate) fn extend_seq(&mut self, header: &RtpHeader, is_repair: bool) -> SeqNo {
         // Select reference to register to use depending on RTX or not. The RTX has a separate
         // sequence number series to the main register.
         let register_ref = if is_repair {
@@ -347,11 +333,37 @@ impl StreamRx {
             }
         }
 
-        let seq_no = if let Some(reset_seq_no) = reset_seq_no {
+        if let Some(reset_seq_no) = reset_seq_no {
             reset_seq_no
         } else {
             header.sequence_number(register.max_seq())
+        }
+    }
+
+    pub(crate) fn update_register(
+        &mut self,
+        now: Instant,
+        header: &RtpHeader,
+        clock_rate: Frequency,
+        is_repair: bool,
+        seq_no: SeqNo,
+    ) -> RegisterUpdateReceipt {
+        self.last_used = now;
+
+        if self.paused {
+            self.paused = false;
+            self.need_paused_event = true;
+        }
+        self.check_paused_at = Some(now + self.pause_threshold);
+
+        let register_ref = if is_repair {
+            &mut self.register_rtx
+        } else {
+            &mut self.register
         };
+
+        // Unwrap is OK because we always call extend_seq() for the same is_repair flag beforehand
+        let register = register_ref.as_mut().unwrap();
 
         let is_new_packet = register.update(seq_no, now, header.timestamp, clock_rate.get());
 
@@ -364,7 +376,6 @@ impl StreamRx {
         }
 
         RegisterUpdateReceipt {
-            seq_no,
             time,
             is_new_packet,
         }
@@ -378,7 +389,7 @@ impl StreamRx {
         data: Vec<u8>,
         seq_no: SeqNo,
         time: MediaTime,
-    ) -> Option<RtpPacket> {
+    ) -> RtpPacket {
         trace!("Handle RTP: {:?}", header);
 
         let need_clock_rate = self.last_clock_rate.map(|(pt, _)| pt) != Some(header.payload_type);
@@ -404,7 +415,7 @@ impl StreamRx {
         self.stats.bytes += packet.payload.len() as u64;
         self.stats.packets += 1;
 
-        Some(packet)
+        packet
     }
 
     pub(crate) fn un_rtx(&self, header: &mut RtpHeader, data: &mut Vec<u8>, pt: Pt) {
@@ -732,7 +743,6 @@ impl StreamRxStats {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RegisterUpdateReceipt {
-    pub seq_no: SeqNo,
     pub time: MediaTime,
     pub is_new_packet: bool,
 }
