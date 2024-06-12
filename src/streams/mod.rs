@@ -282,7 +282,8 @@ impl Streams {
         let suppress_nack = payload.resend.is_none();
 
         // If stream already exists, this might only "fill in" the RTX.
-        self.expect_stream_rx(ssrc_main, rtx, mid, rid, suppress_nack);
+        // Dynamic mapping does not allow us to set a starting ROC.
+        self.expect_stream_rx(ssrc_main, rtx, mid, rid, suppress_nack, None);
     }
 
     pub fn expect_stream_rx(
@@ -292,6 +293,7 @@ impl Streams {
         mid: Mid,
         rid: Option<Rid>,
         suppress_nack: bool,
+        roc: Option<u64>,
     ) -> &mut StreamRx {
         // New stream might have enabled nacks.
         self.any_nack_active = None;
@@ -299,7 +301,7 @@ impl Streams {
         let stream = self
             .streams_rx
             .entry(ssrc)
-            .or_insert_with(|| StreamRx::new(ssrc, mid, rid, suppress_nack));
+            .or_insert_with(|| StreamRx::new(ssrc, mid, rid, suppress_nack, roc));
 
         if let Some(rtx) = rtx {
             stream.maybe_reset_rtx(rtx);

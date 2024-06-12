@@ -130,7 +130,13 @@ pub(crate) struct StreamRxStats {
 }
 
 impl StreamRx {
-    pub(crate) fn new(ssrc: Ssrc, mid: Mid, rid: Option<Rid>, suppress_nack: bool) -> Self {
+    pub(crate) fn new(
+        ssrc: Ssrc,
+        mid: Mid,
+        rid: Option<Rid>,
+        suppress_nack: bool,
+        roc: Option<u64>,
+    ) -> Self {
         debug!("Create StreamRx for SSRC: {}", ssrc);
 
         StreamRx {
@@ -144,7 +150,7 @@ impl StreamRx {
             last_used: already_happened(),
             last_clock_rate: None,
             sender_info: None,
-            reset_roc: None,
+            reset_roc: roc,
             register: None,
             register_rtx: None,
             last_time: None,
@@ -677,25 +683,6 @@ impl StreamRx {
 
         self.rtx = Some(rtx);
         self.register_rtx = None;
-    }
-
-    /// Reset the current rollover counter (ROC).
-    ///
-    /// This is used in scenarios where we use a single sequence number across all
-    /// receivers of the same stream (as opposed to a sequence number unique per peer).
-    ///
-    /// [RFC3711](https://datatracker.ietf.org/doc/html/rfc3711#section-3.3.1):
-    ///
-    /// > Receivers joining an on-going session MUST be given the
-    /// > current ROC value using out-of-band signaling such as key-management
-    /// > signaling.  Furthermore, the receiver SHALL initialize s_l to the RTP
-    /// > sequence number (SEQ) of the first observed SRTP packet (unless the
-    /// > initial value is provided by out of band signaling such as key
-    /// > management).
-    pub fn reset_roc(&mut self, roc: u64) {
-        self.register = None;
-        self.register_rtx = None;
-        self.reset_roc = Some(roc);
     }
 }
 

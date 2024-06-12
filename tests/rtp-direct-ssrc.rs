@@ -27,7 +27,7 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
 
     r.direct_api().declare_media(mid, MediaKind::Audio);
 
-    r.direct_api().expect_stream_rx(ssrc, None, mid, None);
+    r.direct_api().expect_stream_rx(ssrc, None, mid, None, None);
 
     let max = l.last.max(r.last);
     l.last = max;

@@ -173,12 +173,28 @@ impl<'a> DirectApi<'a> {
     /// Allow incoming traffic from remote peer for the given SSRC.
     ///
     /// Can be called multiple times if the `rtx` is discovered later via RTP header extensions.
+    ///
+    /// The rollover counter (ROC) can bet set when the stream is first created.
+    ///
+    /// This is used in fan-out scenarios where we have multiple clients decrypting the same stream
+    /// using the same SRTP keys. The extended sequence number is used as nonce for the encryption,
+    /// which means it must be set correctly when starting to receive such as stream.
+    ///
+    /// [RFC3711](https://datatracker.ietf.org/doc/html/rfc3711#section-3.3.1):
+    ///
+    /// > Receivers joining an on-going session MUST be given the
+    /// > current ROC value using out-of-band signaling such as key-management
+    /// > signaling.  Furthermore, the receiver SHALL initialize s_l to the RTP
+    /// > sequence number (SEQ) of the first observed SRTP packet (unless the
+    /// > initial value is provided by out of band signaling such as key
+    /// > management).
     pub fn expect_stream_rx(
         &mut self,
         ssrc: Ssrc,
         rtx: Option<Ssrc>,
         mid: Mid,
         rid: Option<Rid>,
+        roc: Option<u64>,
     ) -> &mut StreamRx {
         let Some(_media) = self.rtc.session.media_by_mid(mid) else {
             panic!("No media declared for mid: {}", mid);
@@ -190,7 +206,7 @@ impl<'a> DirectApi<'a> {
         self.rtc
             .session
             .streams
-            .expect_stream_rx(ssrc, rtx, mid, rid, suppress_nack)
+            .expect_stream_rx(ssrc, rtx, mid, rid, suppress_nack, roc)
     }
 
     /// Remove the receive stream for the given SSRC.

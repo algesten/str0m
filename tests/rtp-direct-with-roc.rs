@@ -28,14 +28,13 @@ pub fn rtp_direct_with_roc() -> Result<(), RtcError> {
     r.direct_api().declare_media(mid, MediaKind::Audio);
 
     let mut d = r.direct_api();
-    let rx = d.expect_stream_rx(ssrc_tx, None, mid, None);
 
     // Above 2^16, which means we have ROC:ed.
     let seq_no_offset: SeqNo = 100_000.into();
 
     // By telling the receiver side to start at a specific ROC, we can send first ever
     // packet from a high sequence number.
-    rx.reset_roc(seq_no_offset.roc());
+    d.expect_stream_rx(ssrc_tx, None, mid, None, Some(seq_no_offset.roc()));
 
     let max = l.last.max(r.last);
     l.last = max;

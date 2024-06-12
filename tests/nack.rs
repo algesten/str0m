@@ -32,7 +32,7 @@ pub fn loss_recovery() -> Result<(), RtcError> {
     r.direct_api().declare_media(mid, MediaKind::Video);
 
     r.direct_api()
-        .expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
+        .expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None, None);
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -188,7 +188,7 @@ pub fn nack_delay() -> Result<(), RtcError> {
     r.direct_api().declare_media(mid, MediaKind::Video);
 
     r.direct_api()
-        .expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
+        .expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None, None);
 
     let max = l.last.max(r.last);
     l.last = max;
