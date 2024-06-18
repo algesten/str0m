@@ -72,14 +72,7 @@ impl RtcpPacket for Remb {
 
     fn write_to(&self, buf: &mut [u8]) -> usize {
         let mut exp = 0;
-        let mut bitrate = self.bitrate;
-        if bitrate >= BITRATE_MAX {
-            bitrate = BITRATE_MAX
-        }
-
-        if bitrate < 0.0 {
-            bitrate = 0.0;
-        }
+        let mut bitrate = self.bitrate.clamp(0.0, BITRATE_MAX);
 
         while bitrate >= (1 << 18) as f32 {
             bitrate /= 2.0;
