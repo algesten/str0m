@@ -226,6 +226,10 @@ impl<'a> TryFrom<&'a [u8]> for MultiplexKind {
     type Error = io::Error;
 
     fn try_from(value: &'a [u8]) -> Result<Self, io::Error> {
+        if value.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Empty datagram"));
+        }
+
         let byte0 = value[0];
         let len = value.len();
 
