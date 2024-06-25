@@ -101,9 +101,9 @@ impl OsslDtlsCert {
 //
 // This is not a super high priority since it's only used for setting a before
 // time in the generated certificate, and one hour back from that.
-pub fn unix_time() -> i64 {
+pub fn unix_time() -> libc::time_t {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
-        .as_secs() as i64
+        .as_secs() as libc::time_t
 }
