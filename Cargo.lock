@@ -928,6 +928,7 @@ dependencies = [
  "crc",
  "fastrand",
  "hmac",
+ "libc",
  "once_cell",
  "openssl",
  "openssl-sys",

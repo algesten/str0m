@@ -16,7 +16,7 @@ rust-version = "1.65"
 
 [features]
 default = ["openssl"]
-openssl = ["dep:openssl", "dep:openssl-sys"]
+openssl = ["dep:openssl", "dep:openssl-sys", "dep:libc"]
 _internal_dont_use_log_stats = []
 _internal_test_exports = []
 
@@ -32,6 +32,7 @@ combine = "4.6.6"
 # OPENSSL_NO_VENDOR=1 to override the feature flag vendored
 openssl = { version = ">=0.10.66", features = ["vendored"], optional = true }
 openssl-sys = { version = "0.9.80", optional = true }
+libc = { version = "0.2", optional = true }
 # STUN
 hmac = "0.12.1"
 crc = "3.0.0"
