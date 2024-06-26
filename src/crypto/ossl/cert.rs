@@ -95,13 +95,21 @@ impl OsslDtlsCert {
     }
 }
 
+// The goal here is to match the behavior in the libc crate without
+// actually needing to declare the libc crate for a type alias.
+// https://docs.rs/libc/latest/src/libc/unix/linux_like/linux/gnu/b64/mod.rs.html#17-27
+#[cfg(all(target_arch = "aarch64", target_pointer_width = "32"))]
+type Time = i32;
+#[cfg(not(all(target_arch = "aarch64", target_pointer_width = "32")))]
+type Time = i64;
+
 // TODO: Refactor away this use of System::now, to instead go via InstantExt
 // and base the time on the first Instant. This would require lazy init of
 // Dtls, or that we pass a first ever Instant into the creation of Rtc.
 //
 // This is not a super high priority since it's only used for setting a before
 // time in the generated certificate, and one hour back from that.
-pub fn unix_time() -> i64 {
+pub fn unix_time() -> Time {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
