@@ -312,7 +312,12 @@ impl StreamRx {
         self.need_paused_event = true;
     }
 
-    pub(crate) fn extend_seq(&mut self, header: &RtpHeader, is_repair: bool) -> SeqNo {
+    pub(crate) fn extend_seq(
+        &mut self,
+        header: &RtpHeader,
+        is_repair: bool,
+        max_seq_lookup: impl Fn(Ssrc) -> Option<SeqNo>,
+    ) -> SeqNo {
         // Select reference to register to use depending on RTX or not. The RTX has a separate
         // sequence number series to the main register.
         let register_ref = if is_repair {
@@ -321,7 +326,8 @@ impl StreamRx {
             &mut self.register
         };
 
-        let register = register_ref.get_or_insert_with(ReceiverRegister::new);
+        let register =
+            register_ref.get_or_insert_with(|| ReceiverRegister::new(max_seq_lookup(header.ssrc)));
 
         // If the user has called `reset_seq_no`, this is the time to handle it, but only
         // if the incoming packet is for main (not repair).
@@ -629,13 +635,13 @@ impl StreamRx {
         })
     }
 
-    pub(crate) fn reset_buffers(&mut self) {
+    pub(crate) fn reset_buffers(&mut self, max_seq_lookup: impl Fn(Ssrc) -> Option<SeqNo>) {
         if let Some(r) = &mut self.register {
-            r.clear();
+            r.clear(max_seq_lookup(self.ssrc));
         }
 
         if let Some(r) = &mut self.register_rtx {
-            r.clear();
+            r.clear(self.rtx.and_then(max_seq_lookup));
         }
         self.pending_request_keyframe = None;
     }

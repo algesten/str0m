@@ -606,9 +606,13 @@ impl Streams {
         }
     }
 
-    pub(crate) fn reset_buffers_rx(&mut self, mid: Mid) {
+    pub(crate) fn reset_buffers_rx(
+        &mut self,
+        mid: Mid,
+        max_seq_lookup: impl Fn(Ssrc) -> Option<SeqNo>,
+    ) {
         for s in self.streams_rx_by_mid(mid) {
-            s.reset_buffers();
+            s.reset_buffers(&max_seq_lookup);
         }
     }
 
