@@ -391,7 +391,15 @@ impl Session {
         let mut data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
             Some(v) => v,
             None => {
-                trace!("Failed to unprotect SRTP");
+                trace!(
+                    "Failed to unprotect SRTP for SSRC: {} pt: {}  mid: {} rid: {:?} seq_no: {} is_repair: {}",
+                    header.ssrc,
+                    pt,
+                    stream.mid(),
+                    stream.rid(),
+                    seq_no,
+                    is_repair
+                );
                 return;
             }
         };
