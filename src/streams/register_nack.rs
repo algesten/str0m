@@ -81,18 +81,26 @@ impl<'a> Iterator for NackIterator<'a> {
 }
 
 impl NackRegister {
-    pub fn new() -> Self {
-        NackRegister {
+    /// Creates a new register.
+    ///
+    /// The max_seq_no is to provide a starting point for ROC calculations.
+    pub fn new(max_seq_no: Option<SeqNo>) -> Self {
+        let mut n = NackRegister {
             packets: vec![PacketStatus::default(); BUFFER_SIZE as usize],
             active: None,
+        };
+
+        if let Some(seq) = max_seq_no {
+            n.init_with_seq(seq);
         }
+
+        n
     }
 
     pub fn update(&mut self, seq: SeqNo) -> bool {
         let Some(active) = self.active.clone() else {
             // automatically pick up the first seq number
-            self.active = Some(seq..seq);
-            self.packet(seq).mark_received();
+            self.init_with_seq(seq);
             return true;
         };
 
@@ -138,6 +146,11 @@ impl NackRegister {
         self.active = Some(start..end);
 
         new
+    }
+
+    fn init_with_seq(&mut self, seq: SeqNo) {
+        self.active = Some(seq..seq);
+        self.packet(seq).mark_received();
     }
 
     pub fn max_seq(&self) -> Option<SeqNo> {
@@ -235,7 +248,7 @@ mod test {
 
     #[test]
     fn active_window_sliding() {
-        let mut reg = NackRegister::new();
+        let mut reg = NackRegister::new(None);
 
         assert_update(&mut reg, 10, true, true, 10..10);
 
@@ -270,7 +283,7 @@ mod test {
 
     #[test]
     fn nack_report_none() {
-        let mut reg = NackRegister::new();
+        let mut reg = NackRegister::new(None);
         assert!(reg.nack_reports().is_none());
 
         reg.update(110.into());
@@ -282,7 +295,7 @@ mod test {
 
     #[test]
     fn nack_test_huge_seq_gap_no_hang() {
-        let mut reg = NackRegister::new();
+        let mut reg = NackRegister::new(None);
 
         reg.update(0.into());
         reg.update(18446744073709551515.into());
@@ -290,7 +303,7 @@ mod test {
 
     #[test]
     fn nack_report_one() {
-        let mut reg = NackRegister::new();
+        let mut reg = NackRegister::new(None);
         assert!(reg.nack_reports().is_none());
 
         reg.update(110.into());
@@ -306,7 +319,7 @@ mod test {
 
     #[test]
     fn nack_report_two() {
-        let mut reg = NackRegister::new();
+        let mut reg = NackRegister::new(None);
         assert!(reg.nack_reports().is_none());
 
         reg.update(110.into());
@@ -322,7 +335,7 @@ mod test {
 
     #[test]
     fn nack_report_with_hole() {
-        let mut reg = NackRegister::new();
+        let mut reg = NackRegister::new(None);
 
         for i in &[100, 101, 103, 105, 106, 107, 108, 109, 110] {
             reg.update((*i).into());
@@ -337,7 +350,7 @@ mod test {
 
     #[test]
     fn nack_report_stop_at_17() {
-        let mut reg = NackRegister::new();
+        let mut reg = NackRegister::new(None);
 
         let seq = &[
             100, 101, 103, 104, 105, 106, 107, 108, 109, 110, //
@@ -358,7 +371,7 @@ mod test {
 
     #[test]
     fn nack_report_hole_at_17() {
-        let mut reg = NackRegister::new();
+        let mut reg = NackRegister::new(None);
 
         let seq = &[
             100, 101, 103, 104, 105, 106, 107, 108, 109, 110, //
@@ -379,7 +392,7 @@ mod test {
 
     #[test]
     fn nack_report_no_stop_all_there() {
-        let mut reg = NackRegister::new();
+        let mut reg = NackRegister::new(None);
 
         let seq = &[
             100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, //
@@ -396,7 +409,7 @@ mod test {
 
     #[test]
     fn nack_report_rtx() {
-        let mut reg = NackRegister::new();
+        let mut reg = NackRegister::new(None);
         for i in &[
             100, 101, 102, 103, 104, 105, //
         ] {
@@ -430,7 +443,7 @@ mod test {
     fn nack_report_rollover_rtx() {
         // This test is checking that after rollover nacks are not skipped because of
         // packet position that would remain marked as received from before the rollover
-        let mut reg = NackRegister::new();
+        let mut reg = NackRegister::new(None);
         for i in &[
             100, 101, 102, 103, 104, 105, 106, 108, 109, 110, 111, 112, 113, 114, 115,
         ] {
@@ -457,7 +470,7 @@ mod test {
 
     #[test]
     fn nack_report_rollover_rtx_with_seq_jump() {
-        let mut reg = NackRegister::new();
+        let mut reg = NackRegister::new(None);
 
         // 2999 is missing
         for i in 0..2999 {
@@ -478,7 +491,7 @@ mod test {
 
     #[test]
     fn out_of_order_and_rollover() {
-        let mut reg = NackRegister::new();
+        let mut reg = NackRegister::new(None);
 
         reg.update(2998.into());
         reg.update(2999.into());
@@ -509,7 +522,7 @@ mod test {
 
         for (missing, expected) in missing.iter().zip(expected.iter()) {
             let mut seqs: Vec<_> = range.clone().collect();
-            let mut reg = NackRegister::new();
+            let mut reg = NackRegister::new(None);
 
             seqs.retain(|x| *x != *missing);
             for i in seqs.as_slice() {
@@ -524,7 +537,7 @@ mod test {
 
     #[test]
     fn nack_check_forward_at_boundary() {
-        let mut reg = NackRegister::new();
+        let mut reg = NackRegister::new(None);
         for i in 2996..=3003 {
             reg.update(i.into());
         }
@@ -545,7 +558,7 @@ mod test {
 
     #[test]
     fn nack_check_forward_at_u16_boundary() {
-        let mut reg = NackRegister::new();
+        let mut reg = NackRegister::new(None);
         for i in 65500..=65534 {
             reg.update(i.into());
         }

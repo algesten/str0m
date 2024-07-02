@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::bwe::BweKind;
@@ -75,6 +75,7 @@ pub(crate) struct Session {
     twcc: u64,
     twcc_rx_register: TwccRecvRegister,
     twcc_tx_register: TwccSendRegister,
+    max_rx_seq_lookup: HashMap<Ssrc, SeqNo>,
 
     bwe: Option<Bwe>,
 
@@ -147,6 +148,7 @@ impl Session {
             twcc: 0,
             twcc_rx_register: TwccRecvRegister::new(100),
             twcc_tx_register: TwccSendRegister::new(1000),
+            max_rx_seq_lookup: HashMap::new(),
             bwe,
             enable_twcc_feedback: false,
             pacer,
@@ -380,9 +382,11 @@ impl Session {
         let pt = params.pt();
         let is_repair = pt != header.payload_type;
 
+        let max_seq_lookup = make_max_seq_lookup(&self.max_rx_seq_lookup);
+
         // is_repair controls whether update is updating the main register or the RTX register.
         // Either way we get a seq_no_outer which is used to decrypt the SRTP.
-        let mut seq_no = stream.extend_seq(&header, is_repair);
+        let mut seq_no = stream.extend_seq(&header, is_repair, max_seq_lookup);
 
         let mut data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
             Some(v) => v,
@@ -409,6 +413,10 @@ impl Session {
             self.twcc_rx_register.update_seq(extended.into(), now);
         }
 
+        // Store largest seen seq_no for the SSRC. This is used in case we get SSRC changes
+        // like A -> B -> A. When we go back to A, we must keep the ROC.
+        update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
+
         // Register reception in nack registers.
         let receipt_outer = stream.update_register(now, &header, clock_rate, is_repair, seq_no);
 
@@ -426,10 +434,15 @@ impl Session {
             // Rewrite the header, and removes the resent seq_no from the body.
             stream.un_rtx(&mut header, &mut data, pt);
 
+            let max_seq_lookup = make_max_seq_lookup(&self.max_rx_seq_lookup);
+
             // Header has changed, which means we extend a new seq_no. This time
             // without is_repair since this is the wrapped resend. This is the
             // extended number of the main stream.
-            seq_no = stream.extend_seq(&header, false);
+            seq_no = stream.extend_seq(&header, false, max_seq_lookup);
+
+            // header.ssrc is changed by un_rtx() above to be main SSRC.
+            update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
 
             // Now update the "main" register with the repaired packet info.
             stream.update_register(now, &header, clock_rate, false, seq_no)
@@ -872,8 +885,9 @@ impl Session {
             self.streams.reset_buffers_tx(mid);
         }
 
+        let max_seq_lookup = make_max_seq_lookup(&self.max_rx_seq_lookup);
         if old_dir.is_receiving() && !direction.is_receiving() {
-            self.streams.reset_buffers_rx(mid);
+            self.streams.reset_buffers_rx(mid, max_seq_lookup);
         }
 
         true
@@ -951,4 +965,15 @@ pub struct PacketReceipt {
 /// when it's the RTX Pt.
 fn main_payload_params(c: &CodecConfig, pt: Pt) -> Option<&PayloadParams> {
     c.iter().find(|p| (p.pt == pt || p.resend == Some(pt)))
+}
+
+fn make_max_seq_lookup(map: &HashMap<Ssrc, SeqNo>) -> impl Fn(Ssrc) -> Option<SeqNo> + '_ {
+    |ssrc| map.get(&ssrc).cloned()
+}
+
+fn update_max_seq(map: &mut HashMap<Ssrc, SeqNo>, ssrc: Ssrc, seq_no: SeqNo) {
+    let current = map.entry(ssrc).or_insert(seq_no);
+    if seq_no > *current {
+        *current = seq_no;
+    }
 }

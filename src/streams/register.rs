@@ -61,9 +61,9 @@ impl TimePoint {
 }
 
 impl ReceiverRegister {
-    pub fn new() -> Self {
+    pub fn new(max_seq_no: Option<SeqNo>) -> Self {
         ReceiverRegister {
-            nack: NackRegister::new(),
+            nack: NackRegister::new(max_seq_no),
             first: None,
             count: 0,
             time_point_prior: None,
@@ -119,8 +119,8 @@ impl ReceiverRegister {
         self.nack.max_seq()
     }
 
-    pub fn clear(&mut self) {
-        self.nack = NackRegister::new();
+    pub fn clear(&mut self, max_seq_no: Option<SeqNo>) {
+        self.nack = NackRegister::new(max_seq_no);
         self.count = 0;
         self.first = None;
         self.time_point_prior = None;
@@ -255,7 +255,7 @@ mod test {
 
     #[test]
     fn jitter_at_0() {
-        let mut r = ReceiverRegister::new();
+        let mut r = ReceiverRegister::new(None);
 
         // 100 fps in clock rate 90kHz => 90_000/100 = 900 per frame
         // 1/100 * 1_000_000 = 10_000 microseconds per frame.
@@ -272,7 +272,7 @@ mod test {
 
     #[test]
     fn jitter_at_20() {
-        let mut r = ReceiverRegister::new();
+        let mut r = ReceiverRegister::new(None);
 
         // 100 fps in clock rate 90kHz => 90_000/100 = 900 per frame
         // 1/100 * 1_000_000 = 10_000 microseconds per frame.
@@ -324,7 +324,7 @@ mod test {
 
     #[test]
     fn receiver_report() {
-        let mut r = ReceiverRegister::new();
+        let mut r = ReceiverRegister::new(None);
         let now = Instant::now();
         let rtp_time = 0;
 
