@@ -214,7 +214,12 @@ impl SrtpContext {
                 let mut output = vec![0; input.len()];
 
                 if let Err(e) = dec.decrypt(&iv, input, &mut output) {
-                    warn!("Failed to decrypt SRTP ({}): {:?}", self.rtp.profile(), e);
+                    warn!(
+                        "Failed to decrypt SRTP {} ({}): {}",
+                        self.rtp.profile(),
+                        error_details(header, srtp_index),
+                        e
+                    );
                     return None;
                 };
 
@@ -239,7 +244,12 @@ impl SrtpContext {
                 match dec.decrypt(&iv, &[aad], input, &mut output) {
                     Ok(v) => v,
                     Err(e) => {
-                        warn!("Failed to decrypt SRTP ({}): {:?}", self.rtp.profile(), e);
+                        warn!(
+                            "Failed to decrypt SRTP {} ({}): {}",
+                            self.rtp.profile(),
+                            error_details(header, srtp_index),
+                            e
+                        );
                         return None;
                     }
                 };
@@ -375,7 +385,7 @@ impl SrtpContext {
                 output[0..8].copy_from_slice(&buf[0..8]);
 
                 if let Err(e) = dec.decrypt(&iv, input, &mut output[8..]) {
-                    warn!("Failed to decrypt SRTCP ({}): {:?}", self.rtcp.profile(), e);
+                    warn!("Failed to decrypt SRTCP {}: {}", self.rtcp.profile(), e);
                     return None;
                 }
 
@@ -439,7 +449,7 @@ impl SrtpContext {
                 let count = match dec.decrypt(&iv, &aads, input, &mut output[8..]) {
                     Ok(c) => c,
                     Err(e) => {
-                        warn!("Failed to decrypt SRTCP ({}): {:?}", self.rtcp.profile(), e);
+                        warn!("Failed to decrypt SRTCP {}: {}", self.rtcp.profile(), e);
                         return None;
                     }
                 };
@@ -648,6 +658,19 @@ impl fmt::Debug for Derived {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Derived")
     }
+}
+
+fn error_details(header: &RtpHeader, srtp_index: u64) -> String {
+    format!(
+        "SSRC: {} seq_no: {} pt: {} mid: {:?} rid: {:?} rid_repair: {:?} srtp_index: {}",
+        header.ssrc,
+        header.sequence_number,
+        header.payload_type,
+        header.ext_vals.mid,
+        header.ext_vals.rid,
+        header.ext_vals.rid_repair,
+        srtp_index
+    )
 }
 
 #[cfg(test)]
