@@ -8,28 +8,61 @@ use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-// Consult libwebrtc for default values here.
-pub const STUN_INITIAL_RTO_MILLIS: u64 = 250;
-pub const STUN_MAX_RETRANS: usize = 9;
-pub const STUN_MAX_RTO_MILLIS: u64 = 3000;
-pub const STUN_TIMEOUT: Duration = Duration::from_millis(18_750); // See test for how this is calculated.
+#[derive(Debug, Clone, Copy)]
+pub struct StunTiming {
+    pub(crate) initial_rto: Duration,
+    pub(crate) max_retransmits: usize,
+    pub(crate) max_rto: Duration,
+}
 
-/// Calculate the send delay given how many times we tried.
-///
-// Technically RTO should be calculated as per https://datatracker.ietf.org/doc/html/rfc2988, and
-// modified by https://datatracker.ietf.org/doc/html/rfc5389#section-7.2.1,
-// but chrome does it like this. https://webrtc.googlesource.com/src/+/refs/heads/main/p2p/base/stun_request.cc
-pub fn stun_resend_delay(send_count: usize) -> Duration {
-    if send_count == 0 {
-        return Duration::ZERO;
+impl StunTiming {
+    /// Calculate the ICE timeout.
+    pub fn timeout(&self) -> Duration {
+        (0..=self.max_retransmits)
+            .map(|n| self.stun_resend_delay(n))
+            .sum::<Duration>()
     }
 
-    let retrans = (send_count - 1).min(STUN_MAX_RETRANS);
+    /// Calculate the send delay given how many times we tried.
+    ///
+    // Technically RTO should be calculated as per https://datatracker.ietf.org/doc/html/rfc2988, and
+    // modified by https://datatracker.ietf.org/doc/html/rfc5389#section-7.2.1,
+    // but chrome does it like this. https://webrtc.googlesource.com/src/+/refs/heads/main/p2p/base/stun_request.cc
+    pub fn stun_resend_delay(&self, send_count: usize) -> Duration {
+        if send_count == 0 {
+            return Duration::ZERO;
+        }
 
-    let rto = STUN_INITIAL_RTO_MILLIS << retrans;
-    let capped = rto.min(STUN_MAX_RTO_MILLIS);
+        let retrans = (send_count - 1).min(self.max_retransmits);
 
-    Duration::from_millis(capped)
+        let rto = self.initial_rto.as_millis() << retrans;
+        let capped = rto.min(self.max_rto.as_millis());
+
+        Duration::from_millis(capped as u64)
+    }
+
+    pub fn stun_last_resend_delay(&self) -> Duration {
+        self.stun_resend_delay(self.max_retransmits)
+    }
+
+    pub fn max_retransmits(&self) -> usize {
+        self.max_retransmits
+    }
+
+    pub fn max_rto(&self) -> Duration {
+        self.max_rto
+    }
+}
+
+// Consult libwebrtc for default values here.
+impl Default for StunTiming {
+    fn default() -> Self {
+        Self {
+            initial_rto: Duration::from_millis(250),
+            max_retransmits: 9,
+            max_rto: Duration::from_millis(3000), // libwebrtc uses 8000 here but we want faster detection of gone peers.
+        }
+    }
 }
 
 /// Possible errors when handling STUN messages.
@@ -785,16 +818,6 @@ mod test {
     use super::*;
     use std::net::SocketAddrV4;
     use systemstat::Ipv4Addr;
-
-    #[test]
-    fn test_stun_timeout() {
-        assert_eq!(
-            STUN_TIMEOUT,
-            (0..=STUN_MAX_RETRANS)
-                .map(stun_resend_delay)
-                .sum::<Duration>()
-        );
-    }
 
     #[test]
     fn parse_stun_message() {

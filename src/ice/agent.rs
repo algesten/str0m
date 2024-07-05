@@ -4,9 +4,9 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::io::{Id, StunClass, StunMethod, DATAGRAM_MTU_WARN};
+use crate::io::{Id, StunClass, StunMethod, StunTiming, DATAGRAM_MTU_WARN};
 use crate::io::{Protocol, StunPacket};
-use crate::io::{StunMessage, TransId, STUN_TIMEOUT};
+use crate::io::{StunMessage, TransId};
 use crate::io::{Transmit, DATAGRAM_MTU};
 use crate::util::NonCryptographicRng;
 
@@ -90,6 +90,9 @@ pub struct IceAgent {
 
     /// Statistics counter for the agent.
     stats: IceAgentStats,
+
+    /// The timing configuration for STUN bindings.
+    timing_config: StunTiming,
 }
 
 #[derive(Debug)]
@@ -269,6 +272,7 @@ impl IceAgent {
             nominated_send: None,
             stats: IceAgentStats::default(),
             timing_advance: Duration::from_millis(50),
+            timing_config: StunTiming::default(),
         }
     }
 
@@ -314,6 +318,39 @@ impl IceAgent {
             info!("Set local credentials: {:?}", r);
             self.local_credentials = r;
         }
+    }
+
+    /// Sets the initial STUN **R**etransmission **T**ime**O**ut.
+    ///
+    /// It defines the initial period of time between transmission of a request and the first retransmit of that request.
+    /// The actual RTO doubles with each retransmit up until the configured maximum RTO.
+    ///
+    /// Defaults to 250ms.
+    pub fn set_initial_stun_rto(&mut self, timeout: Duration) {
+        self.timing_config.initial_rto = timeout;
+    }
+
+    /// Sets the maximum STUN **R**etransmission **T**ime**O**ut.
+    ///
+    /// It defines the maximum period of time between transmission of a request and the first retransmit of that request.
+    /// Once a candidate pair is successful, this is how often we check that a STUN binding is alive.
+    /// As the STUN bindings of a successful candidate pair start to time out, we probe the binding more often by halfing this value, up until the maximum number of retransmits before we declare them failed.
+    ///
+    /// Defaults to 3000ms.
+    pub fn set_max_stun_rto(&mut self, timeout: Duration) {
+        self.timing_config.max_rto = timeout;
+    }
+
+    /// Sets the maximum number of retransmits for STUN messages.
+    ///
+    /// Defaults to 9.
+    pub fn set_max_stun_retransmits(&mut self, num: usize) {
+        self.timing_config.max_retransmits = num;
+    }
+
+    /// How long we at most tolerate missing replies for a candidate pair before considering it failed.
+    pub fn ice_timeout(&self) -> Duration {
+        self.timing_config.timeout()
     }
 
     /// Local ice candidates.
@@ -656,7 +693,8 @@ impl IceAgent {
 
                 let prio =
                     CandidatePair::calculate_prio(self.controlling, remote.prio(), local.prio());
-                let mut pair = CandidatePair::new(*local_idx, *remote_idx, prio);
+                let mut pair =
+                    CandidatePair::new(*local_idx, *remote_idx, prio, self.timing_config);
 
                 trace!("Form pair local: {:?} remote: {:?}", local, remote);
 
@@ -960,7 +998,7 @@ impl IceAgent {
 
             // No need hanging on to very old requests.
             while let Some(peek) = queue.front() {
-                if now - peek.now >= STUN_TIMEOUT {
+                if now - peek.now >= self.timing_config.timeout() {
                     let r = queue.pop_front();
                     trace!("Drop too old enqueued STUN request: {:?}", r.unwrap());
                 } else {
@@ -1310,7 +1348,7 @@ impl IceAgent {
             // *  Its state is set to Waiting. (this is the default)
             // *  The pair is inserted into the checklist based on its priority.
             // *  The pair is enqueued into the triggered-check queue.
-            let pair = CandidatePair::new(local_idx, remote_idx, prio);
+            let pair = CandidatePair::new(local_idx, remote_idx, prio, self.timing_config);
 
             debug!("Created new pair for STUN request: {:?}", pair);
 

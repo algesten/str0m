@@ -2,16 +2,12 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::io::{stun_resend_delay, STUN_MAX_RETRANS};
-use crate::io::{Id, TransId, STUN_MAX_RTO_MILLIS};
+use crate::io::{Id, StunTiming, TransId};
 use crate::Candidate;
-
-const MIN_TIMEOUT: Duration = Duration::from_millis(STUN_MAX_RTO_MILLIS);
 
 // When running ice-lite we need a cutoff when we consider the remote definitely gone.
 const RECENT_BINDING_REQUEST: Duration = Duration::from_secs(15);
 
-#[derive(Default)]
 /// A pair of candidates, local and remote, in the ice agent.
 pub struct CandidatePair {
     id: PairId,
@@ -50,6 +46,8 @@ pub struct CandidatePair {
 
     /// State of nomination for this candidate pair.
     nomination_state: NominationState,
+
+    timing_config: StunTiming,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -116,13 +114,20 @@ impl Default for PairId {
 }
 
 impl CandidatePair {
-    pub fn new(local_idx: usize, remote_idx: usize, prio: u64) -> Self {
+    pub fn new(local_idx: usize, remote_idx: usize, prio: u64, timing_config: StunTiming) -> Self {
         CandidatePair {
             local_idx,
             remote_idx,
             prio,
-            binding_attempts: VecDeque::with_capacity(STUN_MAX_RETRANS + 1),
-            ..Default::default()
+            binding_attempts: VecDeque::with_capacity(timing_config.max_retransmits() + 1),
+            timing_config,
+            id: Default::default(),
+            valid_idx: Default::default(),
+            state: Default::default(),
+            cached_next_attempt_time: Default::default(),
+            remote_binding_requests: Default::default(),
+            remote_binding_request_time: Default::default(),
+            nomination_state: Default::default(),
         }
     }
 
@@ -225,7 +230,7 @@ impl CandidatePair {
         self.binding_attempts.push_back(attempt);
 
         // Never keep more than STUN_MAX_RETRANS attempts.
-        while self.binding_attempts.len() > STUN_MAX_RETRANS {
+        while self.binding_attempts.len() > self.timing_config.max_retransmits() {
             self.binding_attempts.pop_front();
         }
 
@@ -320,19 +325,19 @@ impl CandidatePair {
             // checking more often.
             let unanswered_count = self
                 .unanswered()
-                .filter(|(_, since)| now - *since > Duration::from_millis(STUN_MAX_RTO_MILLIS) / 2)
+                .filter(|(_, since)| now - *since > self.timing_config.max_rto() / 2)
                 .map(|(count, _)| count);
 
             let send_count = unanswered_count.unwrap_or(self.binding_attempts.len());
 
-            last + stun_resend_delay(send_count)
+            last + self.timing_config.stun_resend_delay(send_count)
         } else {
             // No previous attempt, do next retry straight away.
             now
         };
 
         // At least do a check at this time.
-        let min = now + MIN_TIMEOUT;
+        let min = now + self.timing_config.max_rto();
 
         let at_least = next.min(min);
 
@@ -349,13 +354,15 @@ impl CandidatePair {
         let attempts = self.binding_attempts.len();
         let unanswered = self.unanswered().map(|b| b.0).unwrap_or(0);
 
-        if attempts < STUN_MAX_RETRANS || unanswered < STUN_MAX_RETRANS {
+        if attempts < self.timing_config.max_retransmits()
+            || unanswered < self.timing_config.max_retransmits()
+        {
             true
         } else {
             // check to see if we are still waiting for the last attempt
             // this unwrap is fine because unanswered count > 0
             let last = self.last_attempt_time().unwrap();
-            let cutoff = last + stun_resend_delay(STUN_MAX_RETRANS);
+            let cutoff = last + self.timing_config.stun_last_resend_delay();
             now < cutoff
         }
     }
