@@ -73,7 +73,7 @@ mod test {
     use std::ops::{Deref, DerefMut};
     use std::time::{Duration, Instant};
 
-    use crate::io::{Protocol, StunMessage, StunPacket, STUN_TIMEOUT};
+    use crate::io::{Protocol, StunMessage, StunPacket};
     use tracing::Span;
     use tracing_subscriber::util::SubscriberInitExt;
 
@@ -180,19 +180,19 @@ mod test {
         println!("{:?}", a1.events);
         println!("{:?}", a2.events);
 
-        fn assert_last_event(d: &Duration, e: &IceAgentEvent) {
+        fn assert_last_event(d: &Duration, e: &IceAgentEvent, a: &IceAgent) {
             assert_eq!(
                 *e,
                 IceAgentEvent::IceConnectionStateChange(IceConnectionState::Disconnected)
             );
-            assert!(*d > STUN_TIMEOUT);
+            assert!(*d > a.ice_timeout());
         }
 
         let (d, e) = a1.events.last().unwrap();
-        assert_last_event(d, e);
+        assert_last_event(d, e, &a1);
 
         let (d, e) = a2.events.last().unwrap();
-        assert_last_event(d, e);
+        assert_last_event(d, e, &a2);
 
         assert_eq!(
             a1.stats(),
@@ -357,8 +357,8 @@ mod test {
             progress(&mut a1, &mut a2);
         }
 
-        assert!(a1.time.duration_since(a1_time) < STUN_TIMEOUT);
-        assert!(a2.time.duration_since(a2_time) < STUN_TIMEOUT);
+        assert!(a1.time.duration_since(a1_time) < a1.ice_timeout());
+        assert!(a2.time.duration_since(a2_time) < a2.ice_timeout());
     }
 
     #[test]
