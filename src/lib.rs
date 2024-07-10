@@ -45,6 +45,11 @@
 //! cargo run --example http-post
 //! ```
 //!
+//! ### Real example
+//!
+//! To see how str0m is used in a real project, check out [BitWHIP][bitwhip] –
+//! a CLI WebRTC Agent written in Rust.
+//!
 //! ## Passive
 //!
 //! For passive connections, i.e. where the media and initial OFFER is
@@ -567,6 +572,7 @@
 //! [rtppak]:     https://docs.rs/str0m/*/str0m/enum.Event.html#variant.RtpPacket
 //! [wrtrtp]:     https://docs.rs/str0m/*/str0m/rtp/struct.StreamTx.html#method.write_rtp
 //! [reqkey2]:    https://docs.rs/str0m/*/str0m/rtp/struct.StreamRx.html#method.request_keyframe
+//! [bitwhip]:    https://github.com/bitwhip/bitwhip
 
 #![forbid(unsafe_code)]
 #![allow(clippy::new_without_default)]
