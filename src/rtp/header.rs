@@ -13,8 +13,10 @@ pub struct RtpHeader {
     /// RTP packet has "RTP header extensions".
     pub has_extension: bool,
     // pub csrc_count: usize, // "contributing source" (other ssrc)
-    /// A marker indicates the end of a series of packets belonging together such
-    /// as for a single video frame.
+    /// For video, this marker signifies the end of a series of packets that
+    /// together form a single video frame.
+    /// For audio, it marks the beginning of a talkspurt, which is a burst of
+    /// audio packets.
     pub marker: bool,
     /// Type of payload being carried. What this correlates to is sent in the SDP.
     pub payload_type: Pt,
