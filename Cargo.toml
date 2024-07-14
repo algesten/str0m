@@ -1,6 +1,6 @@
 [package]
 name = "str0m"
-version = "0.5.1"
+version = "0.6.0"
 authors = ["Martin Algesten <martin@algesten.se>", "Hugo Tunius <h@tunius.se>", "Davide Bertola <dade@dadeb.it>"]
 description = "WebRTC library in Sans-IO style"
 license = "MIT OR Apache-2.0"
@@ -10,6 +10,9 @@ keywords = ["webrtc", "streaming", "video", "audio", "media"]
 categories = ["web-programming", "multimedia", "network-programming"]
 edition = "2021"
 exclude = ["/cargo_deny.sh", "/deny.toml", "/run-fuzz.sh"]
+
+# MSRV
+rust-version = "1.65"
 
 [features]
 default = ["openssl"]
