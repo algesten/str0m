@@ -1,5 +1,12 @@
 # Unreleased
 
+# 0.6.0
+
+  * Doc updates
+  * IceAgent make timeout values configurable #537
+  * Log more details when failing to decrypt SRTP #536
+  * Remember max SeqNo per SSRC for reuse ROC #535
+  * Only update NACK/TWCC registers after succesful SRTP decrypt #528
   * Fix bug when changing StreamRx SSRC #522
   * Simplify StreamRx lookup state cache #522
   * Fix bug in TWCC time delta #524
