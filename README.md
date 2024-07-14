@@ -5,7 +5,8 @@
 A Sans I/O WebRTC implementation in Rust.
 
 This is a [Sans I/O][sansio] implementation meaning the `Rtc` instance itself is not doing any network
-talking. Furthermore it has no internal threads or async tasks. All operations are happening from the calls of the public API.
+talking. Furthermore it has no internal threads or async tasks. All operations are happening from the
+calls of the public API.
 
 This is deliberately not a standard `RTCPeerConnection` API since that isn't a great fit for Rust.
 See more details in below section.
