@@ -293,9 +293,8 @@ Str0m was originally developed by Martin Algesten of
 [Lookback][lookback]. We use str0m for a specific use case: str0m as a
 server SFU (as opposed to peer-2-peer). That means we are heavily
 testing and developing the parts needed for our use case. Str0m is
-intended to be an all-purpose WebRTC library, which means it should
-also work for peer-2-peer (mostly thinking about the ICE agent), but
-these areas have not received as much attention and testing.
+intended to be an all-purpose WebRTC library, which means it also
+works for peer-2-peer, though that aspect has received less testing.
 
 Performance is very good, there have been some work the discover and
 optimize bottlenecks. Such efforts are of course never ending with
