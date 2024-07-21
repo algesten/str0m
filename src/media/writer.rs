@@ -84,6 +84,14 @@ impl<'a> Writer<'a> {
         self
     }
 
+    /// Set the minimum and maximum playout delay values. This can be used by a player
+    /// on the receiver end to determine the size of the jitter buffer.
+    pub fn playout_delay(mut self, min: MediaTime, max: MediaTime) -> Self {
+        self.ext_vals.play_delay_min = Some(min);
+        self.ext_vals.play_delay_max = Some(max);
+        self
+    }
+
     /// Set a user extension value.
     pub fn user_extension_value<T: Send + Sync + 'static>(mut self, val: T) -> Self {
         self.ext_vals.user_values.set(val);
