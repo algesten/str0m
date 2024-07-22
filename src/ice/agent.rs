@@ -728,8 +728,7 @@ impl IceAgent {
                                 check, pair
                             );
 
-                            let was_nominated = self.candidate_pairs[check_idx].is_nominated();
-                            pair.nominate(was_nominated);
+                            pair.copy_nominated_and_success_state(&self.candidate_pairs[check_idx]);
 
                             if self.ice_lite {
                                 debug!("Retain incoming binding requests for pair");

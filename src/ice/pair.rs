@@ -208,6 +208,16 @@ impl CandidatePair {
         }
     }
 
+    pub fn copy_nominated_and_success_state(&mut self, other: &CandidatePair) {
+        match other.nomination_state {
+            NominationState::Nominated | NominationState::Success => {
+                self.nomination_state = other.nomination_state;
+            }
+            NominationState::None => {} // None is the default, no need to copy
+            NominationState::Attempt => {} // Attempt can't be copied because we don't have sent binding requests in the new pair.
+        }
+    }
+
     /// Records a new binding request attempt.
     ///
     /// Returns the transaction id to use in the STUN message.
