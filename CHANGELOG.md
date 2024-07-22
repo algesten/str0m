@@ -1,5 +1,10 @@
 # Unreleased
 
+# 0.6.1
+  * Force openssl to be >=0.10.66 #545
+  * Fix bug when replacing redundant ice candidates #544
+  * Add playout_delay builder function #543
+
 # 0.6.0
 
   * Doc updates
