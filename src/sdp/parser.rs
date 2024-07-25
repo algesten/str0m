@@ -33,6 +33,7 @@ where
 /// 2. The second SDP line MUST be an "o=" line The sess-id MUST be representable by a 64-bit signed
 ///    integer, and the initial value MUST be less than (2**62)-1
 /// 3. Third line a single dash SHOULD be used as the session name, e.g. "s=-"
+///
 /// Session is over when we find a "t=" line MUST be added, both <start-time> and <stop-time>
 ///    SHOULD be set to zero, e.g. "t=0 0".
 pub fn session_parser<Input>() -> impl Parser<Input, Output = Session>

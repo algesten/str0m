@@ -24,10 +24,10 @@ impl<'a> Bwe<'a> {
     /// [`RtcConfig::enable_bwe`][crate::RtcConfig::enable_bwe].
     ///
     /// * `current_bitrate` an estimate of the current bitrate being sent. When the media is
-    /// produced by encoders this value should be the sum of all the target bitrates for these
-    /// encoders, when the media originates from another WebRTC client it should be the sum of the
-    /// configure bitrates for all tracks being sent. This value should only account for video i.e.
-    /// audio bitrates should be ignored.
+    ///    produced by encoders this value should be the sum of all the target bitrates for these
+    ///    encoders, when the media originates from another WebRTC client it should be the sum of the
+    ///    configure bitrates for all tracks being sent. This value should only account for video i.e.
+    ///    audio bitrates should be ignored.
     ///
     /// ## Example
     ///
@@ -68,10 +68,10 @@ impl<'a> Bwe<'a> {
     /// [`RtcConfig::enable_bwe`][crate::RtcConfig::enable_bwe].
     ///
     /// * `desired_bitrate` The bitrate you would like to eventually send at. The BWE system will
-    /// try to reach this bitrate by probing with padding packets. You should allocate your media
-    /// bitrate based on the estimated the BWE system produces via
-    /// [`Event::EgressBitrateEstimate`][crate::Event::EgressBitrateEstimate]. This rate might
-    /// not be reached if the network link cannot sustain the desired bitrate.
+    ///    try to reach this bitrate by probing with padding packets. You should allocate your media
+    ///    bitrate based on the estimated the BWE system produces via
+    ///    [`Event::EgressBitrateEstimate`][crate::Event::EgressBitrateEstimate]. This rate might
+    ///    not be reached if the network link cannot sustain the desired bitrate.
     ///
     /// ## Example
     ///
