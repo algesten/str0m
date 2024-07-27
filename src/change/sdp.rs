@@ -308,7 +308,9 @@ impl<'a> SdpApi<'a> {
         }
     }
 
-    /// Add a new data channel and get the `id` that will be used.
+    /// Add a new reliable ordered data channel and get the `id` that will be used.
+    ///
+    /// Use `add_channel_with_config` when unreliable or unordered data channels are preferred.
     ///
     /// The first ever data channel added to a WebRTC session results in a media
     /// of a special "application" type in the SDP. The m-line is for a SCTP association over
@@ -318,7 +320,7 @@ impl<'a> SdpApi<'a> {
     /// Consecutive channels will be opened without needing a negotiation.
     ///
     /// The label is used to identify the data channel to the remote peer. This is mostly
-    /// useful whe multiple channels are in use at the same time.
+    /// useful when multiple channels are in use at the same time.
     ///
     /// ```
     /// # use str0m::Rtc;
@@ -329,6 +331,29 @@ impl<'a> SdpApi<'a> {
     /// let cid = changes.add_channel("my special channel".to_string());
     /// ```
     pub fn add_channel(&mut self, label: String) -> ChannelId {
+        self.add_channel_with_config(ChannelConfig {
+            label,
+            ..Default::default()
+        })
+    }
+    /// Add a new data channel with a given configuration and get the `id` that will be used.
+    ///
+    /// Refer to `add_channel` for more details.
+    ///
+    /// ```
+    /// # use str0m::{channel::{ChannelConfig, Reliability}, Rtc};
+    /// let mut rtc = Rtc::new();
+    ///
+    /// let mut changes = rtc.sdp_api();
+    ///
+    /// let cid = changes.add_channel_with_config(ChannelConfig {
+    ///     label: "my special channel".to_string(),
+    ///     reliability: Reliability::MaxRetransmits{ retransmits: 0 },
+    ///     ordered: false,
+    ///     ..Default::default()
+    /// });
+    /// ```
+    pub fn add_channel_with_config(&mut self, config: ChannelConfig) -> ChannelId {
         let has_media = self.rtc.session.app().is_some();
         let changes_contains_add_app = self.changes.contains_add_app();
 
@@ -336,11 +361,6 @@ impl<'a> SdpApi<'a> {
             let mid = self.rtc.new_mid();
             self.changes.0.push(Change::AddApp(mid));
         }
-
-        let config = ChannelConfig {
-            label,
-            ..Default::default()
-        };
 
         let id = self.rtc.chan.new_channel(&config);
 
