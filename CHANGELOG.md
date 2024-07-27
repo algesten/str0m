@@ -1,5 +1,8 @@
 # Unreleased
 
+  * Fix bug using unreliable channels by default #548
+  * New add_channel_with_config() for configured data channels #548
+
 # 0.6.1
   * Force openssl to be >=0.10.66 #545
   * Fix bug when replacing redundant ice candidates #544

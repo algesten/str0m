@@ -336,6 +336,7 @@ impl<'a> SdpApi<'a> {
             ..Default::default()
         })
     }
+
     /// Add a new data channel with a given configuration and get the `id` that will be used.
     ///
     /// Refer to `add_channel` for more details.

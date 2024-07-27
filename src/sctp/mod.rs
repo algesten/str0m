@@ -145,6 +145,7 @@ pub struct ChannelConfig {
     /// Defaults to ""
     pub protocol: String,
 }
+
 impl Default for ChannelConfig {
     fn default() -> Self {
         Self {
