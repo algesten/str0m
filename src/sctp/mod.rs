@@ -129,7 +129,7 @@ enum StreamEntryState {
 }
 
 /// (Low level) configuration for a data channel.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ChannelConfig {
     /// The label to use for the user to identify the channel.
     pub label: String,
@@ -144,6 +144,17 @@ pub struct ChannelConfig {
     ///
     /// Defaults to ""
     pub protocol: String,
+}
+impl Default for ChannelConfig {
+    fn default() -> Self {
+        Self {
+            label: Default::default(),
+            ordered: true,
+            reliability: Default::default(),
+            negotiated: Default::default(),
+            protocol: Default::default(),
+        }
+    }
 }
 
 /// Reliability setting of a data channel.
