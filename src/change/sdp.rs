@@ -741,6 +741,7 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
             typ: "BUNDLE".into(),
             mids,
         },
+        SessionAttribute::AllowMixedExts,
         SessionAttribute::MsidSemantic {
             semantic: "WMS".to_string(),
             stream_ids,
