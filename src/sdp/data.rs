@@ -243,6 +243,7 @@ impl MediaLine {
             // a mid line. This is checked by `check_consistent`.
             .expect("missing a=mid")
     }
+
     pub fn msid(&self) -> Option<Msid> {
         self.attrs.iter().find_map(|a| {
             if let MediaAttribute::Msid(m) = a {
@@ -1126,6 +1127,7 @@ pub struct Msid {
     pub stream_id: String,
     pub track_id: String,
 }
+
 impl Msid {
     pub fn random() -> Self {
         Msid {

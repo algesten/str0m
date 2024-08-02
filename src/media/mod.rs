@@ -206,10 +206,12 @@ impl Media {
     pub(crate) fn msid(&self) -> &Msid {
         &self.msid
     }
+
     /// Identifier for the group this Media belongs to.
     pub fn stream_id(&self) -> &str {
         &self.msid().stream_id
     }
+
     /// Identifier for this Media. Should be unique for the given stream id.
     pub fn track_id(&self) -> &str {
         &self.msid().track_id
