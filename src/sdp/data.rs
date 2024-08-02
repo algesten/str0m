@@ -200,6 +200,7 @@ pub enum SessionAttribute {
         semantic: String, // WMS
         stream_ids: Vec<String>,
     },
+    AllowMixedExts,
     IceLite,
     IceUfrag(String),
     IcePwd(String),
@@ -1164,6 +1165,7 @@ impl fmt::Display for SessionAttribute {
                 let mids: Vec<_> = mids.iter().map(|m| m.to_string()).collect();
                 write!(f, "a=group:{} {}\r\n", typ, mids.join(" "))?;
             }
+            AllowMixedExts => write!(f, "a=extmap-allow-mixed\r\n")?,
             MsidSemantic {
                 semantic,
                 stream_ids,
