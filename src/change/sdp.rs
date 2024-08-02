@@ -736,6 +736,11 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
         (lines, mids, stream_ids)
     };
 
+    // AllowMixedExts adds "a=extmap-allow-mixed" at session level to signal
+    // support for mixing one-byte and two-byte RTP header extensions.
+    // TODO: It would make sense to perform an actual negotiation, however
+    //       just adding this line should work fine:
+    //       https://github.com/meetecho/janus-gateway/blob/d2e74fdf9bb8aa7a39ed68ed28394afe1e0cd22d/src/sdp.c#L1519
     let mut attrs = vec![
         SessionAttribute::Group {
             typ: "BUNDLE".into(),
