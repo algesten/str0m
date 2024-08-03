@@ -12,6 +12,7 @@ use crate::format::Codec;
 use crate::format::CodecSpec;
 use crate::format::FormatParams;
 use crate::format::PayloadParams;
+use crate::io::Id;
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, Rid, SessionId, Ssrc};
 use crate::{Candidate, IceCreds, VERSION};
 
@@ -242,6 +243,16 @@ impl MediaLine {
             // We should only use `mid()` once we're certain there is
             // a mid line. This is checked by `check_consistent`.
             .expect("missing a=mid")
+    }
+
+    pub fn msid(&self) -> Option<Msid> {
+        self.attrs.iter().find_map(|a| {
+            if let MediaAttribute::Msid(m) = a {
+                Some(m.clone())
+            } else {
+                None
+            }
+        })
     }
 
     pub fn direction(&self) -> Direction {
@@ -1116,6 +1127,15 @@ impl Deref for SimulcastGroups {
 pub struct Msid {
     pub stream_id: String,
     pub track_id: String,
+}
+
+impl Msid {
+    pub fn random() -> Self {
+        Msid {
+            stream_id: Id::<30>::random().to_string(),
+            track_id: Id::<30>::random().to_string(),
+        }
+    }
 }
 
 impl fmt::Display for SimulcastGroups {

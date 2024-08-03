@@ -207,6 +207,16 @@ impl Media {
         &self.msid
     }
 
+    /// Identifier for the group this Media belongs to.
+    pub fn stream_id(&self) -> &str {
+        &self.msid().stream_id
+    }
+
+    /// Identifier for this Media. Should be unique for the given stream id.
+    pub fn track_id(&self) -> &str {
+        &self.msid().track_id
+    }
+
     /// Whether this media is audio or video.
     ///
     /// SDP level property.
@@ -462,10 +472,7 @@ impl Default for Media {
             index: 0,
             app_tmp: false,
             cname: Id::<20>::random().to_string(),
-            msid: Msid {
-                stream_id: Id::<30>::random().to_string(),
-                track_id: Id::<30>::random().to_string(),
-            },
+            msid: Msid::random(),
             kind: MediaKind::Video,
             remote_pts: vec![],
             remote_exts: ExtensionMap::empty(),
@@ -491,9 +498,9 @@ impl Media {
         Media {
             mid: l.mid(),
             index,
-            // These two are not reflected back, and thus added by add_pending_changes().
+            // This is not reflected back, and thus added by add_pending_changes().
             // cname,
-            // msid,
+            msid: l.msid().unwrap_or(Msid::random()),
             kind: l.typ.clone().into(),
             dir: l.direction().invert(), // remote direction is reverse.
             remote_created,
