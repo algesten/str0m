@@ -240,6 +240,20 @@ impl SeqNo {
     }
 }
 
+impl Default for SeqNo {
+    fn default() -> Self {
+        // https://www.rfc-editor.org/rfc/rfc3550#page-13
+        // The initial value of the sequence number SHOULD be random (unpredictable)
+        // to make known-plaintext attacks on encryption more difficult
+        // Upper half of range is avoided in order to prevent SRTP wraparound issues
+        // during startup.
+        // Sequence number 0 is avoided for historical reasons, presumably to avoid
+        // debugability or test usage conflicts.
+        // i.e the range is (1, 2^15-1)
+        Self((NonCryptographicRng::u16() % 32767 + 1) as u64)
+    }
+}
+
 impl Pt {
     /// Create a PT with a specific value.
     ///
