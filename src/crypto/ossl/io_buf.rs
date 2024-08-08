@@ -11,9 +11,14 @@ pub struct IoBuffer {
 
 impl IoBuffer {
     pub(crate) fn set_incoming(&mut self, buf: &[u8]) {
-        assert!(self.incoming.is_empty());
-        self.incoming.resize(buf.len(), 0);
-        self.incoming.copy_from_slice(buf);
+        self.incoming.extend_from_slice(buf);
+
+        // Each packet ought to be ~MTU 1400. If openssl is
+        // not consuming all incoming data, we got some problem.
+        assert!(
+            self.incoming.len() < 30_000,
+            "Incoming DTLS data is not being consumed"
+        );
     }
 
     pub(crate) fn pop_outgoing(&mut self) -> Option<DatagramSend> {
@@ -29,12 +34,18 @@ impl io::Read for IoBuffer {
             return Err(io::Error::new(io::ErrorKind::WouldBlock, "WouldBlock"));
         }
 
-        // read buffer must read entire packet in one go.
-        // we can't fragment incoming datagrams.
-        assert!(buf.len() >= n);
+        let max = buf.len().min(n);
 
-        buf[0..n].copy_from_slice(&self.incoming);
-        self.incoming.truncate(0);
+        buf[..max].copy_from_slice(&self.incoming[..max]);
+
+        if max == self.incoming.len() {
+            // The typical case is that the entire input is consumed at once,
+            // which means the happy path is cheap.
+            self.incoming.truncate(0);
+        } else {
+            // Shifting data inside a vector is not good. This should be rare.
+            self.incoming.drain(..max);
+        }
 
         Ok(n)
     }
