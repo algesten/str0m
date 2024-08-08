@@ -1,5 +1,11 @@
 # Unreleased
 
+  * Fix edge case breaking DTLS #531
+  * Bump sctp-proto to be compatible with libdatachannel #558
+  * Ensure not risk of ROC on initial sequence number #553
+  * API for getting a=msid details #550
+  * Use a=extmap-allow-mixed SDP attribute #551
+  * Ensure compatibility with some 32-bit targets #533
   * Fix bug using unreliable channels by default #548
   * New add_channel_with_config() for configured data channels #548
 
