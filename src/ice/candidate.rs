@@ -303,7 +303,7 @@ impl Candidate {
 
         let hash = hasher.finish();
 
-        format!("{:x}{hash:x}", self.prio().to_be())
+        format!("{:08x}{hash:x}", self.prio().to_be())
     }
 
     /// Returns the priority value for the specified ICE candidate.
