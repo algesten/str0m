@@ -388,6 +388,18 @@ impl Session {
         // Either way we get a seq_no_outer which is used to decrypt the SRTP.
         let mut seq_no = stream.extend_seq(&header, is_repair, max_seq_lookup);
 
+        if !stream.is_new_packet(is_repair, seq_no) {
+            // Dupe packet. This could be a potential SRTP replay attack, which means
+            // we should not spend any CPU cycles towards decrypting it.
+            trace!(
+                "Ignoring dupe packet mid: {} seq_no: {} is_repair: {}",
+                mid,
+                seq_no,
+                is_repair
+            );
+            return;
+        }
+
         let mut data = match srtp.unprotect_rtp(buf, &header, *seq_no) {
             Some(v) => v,
             None => {
