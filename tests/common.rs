@@ -230,7 +230,10 @@ pub fn connect_l_r() -> (TestRtc, TestRtc) {
         // release packet straight away
         .set_reordering_size_audio(0)
         .build();
+    connect_l_r_with_rtc(rtc1, rtc2)
+}
 
+pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc1);
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc2);
 
