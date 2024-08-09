@@ -303,7 +303,7 @@ impl Candidate {
 
         let hash = hasher.finish();
 
-        hash.to_string()
+        format!("{:08x}{hash:x}", self.prio().to_be())
     }
 
     /// Returns the priority value for the specified ICE candidate.
@@ -567,14 +567,14 @@ mod tests {
         let mut candidate = Candidate::host(socket_addr, Protocol::Udp).unwrap();
         assert_eq!(
             serde_json::to_string(&candidate).unwrap(),
-            r#"{"candidate":"candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host","sdpMid":null,"sdpMLineIndex":0,"usernameFragment":null}"#
+            r#"{"candidate":"candidate:fffeff7ea7250f6f639706d6 1 udp 2130706175 1.2.3.4 9876 typ host","sdpMid":null,"sdpMLineIndex":0,"usernameFragment":null}"#
         );
 
         // Add a username fragment
         candidate.ufrag = Some("ufrag".to_string());
         assert_eq!(
             serde_json::to_string(&candidate).unwrap(),
-            r#"{"candidate":"candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag","sdpMid":null,"sdpMLineIndex":0,"usernameFragment":"ufrag"}"#
+            r#"{"candidate":"candidate:fffeff7ea7250f6f639706d6 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag","sdpMid":null,"sdpMLineIndex":0,"usernameFragment":"ufrag"}"#
         );
     }
 
@@ -599,31 +599,31 @@ mod tests {
         let mut candidate = Candidate::host(socket_addr, Protocol::Udp).unwrap();
         assert_eq!(
             candidate.to_string(),
-            "candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host"
+            "candidate:fffeff7ea7250f6f639706d6 1 udp 2130706175 1.2.3.4 9876 typ host"
         );
 
         candidate.ufrag = Some("ufrag".into());
         assert_eq!(
             candidate.to_string(),
-            "candidate:12044049749558888150 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag"
+            "candidate:fffeff7ea7250f6f639706d6 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag"
         );
 
         candidate.raddr = Some("5.5.5.5:5555".parse().unwrap());
         assert_eq!(
             candidate.to_string(),
-            "candidate:6812072969737413130 1 udp 2130706175 1.2.3.4 9876 typ host raddr 5.5.5.5 rport 5555 ufrag ufrag");
+            "candidate:fffeff7e5e895846293d220a 1 udp 2130706175 1.2.3.4 9876 typ host raddr 5.5.5.5 rport 5555 ufrag ufrag");
 
         let candidate = Candidate::relayed(socket_addr, Protocol::SslTcp).unwrap();
         assert_eq!(
             candidate.to_string(),
-            "candidate:432709134138909083 1 ssltcp 16776959 1.2.3.4 9876 typ relay"
+            "candidate:fffeff006014aaa376aa19b 1 ssltcp 16776959 1.2.3.4 9876 typ relay"
         );
     }
 
     #[test]
     fn new_from_sdp_string() {
         let candidate = Candidate::from_sdp_string(
-            "candidate:6812072969737413130 1 udp 2130706175 1.2.3.4 9876 typ host ufrag myuserfrag",
+            "candidate:fffeff7e5e895846293d220a 1 udp 2130706175 1.2.3.4 9876 typ host ufrag myuserfrag",
         )
         .unwrap();
 
@@ -635,5 +635,43 @@ mod tests {
     fn bad_candidate() {
         let s = "candidate:12344 bad value";
         assert!(Candidate::from_sdp_string(s).is_err());
+    }
+
+    #[test]
+    fn lexical_ordering_of_sdp_is_follows_priority() {
+        let mut candidates = Vec::from([
+            host("1.1.1.1:0"),
+            host("2.2.2.2:0"),
+            srflx("3.3.3.3:0", "4.4.4.4:0"),
+            srflx("5.5.5.5:0", "6.6.6.6:0"),
+            relay("8.8.8.8:0"),
+            relay("7.7.7.7:0"),
+        ]);
+        candidates.sort();
+
+        assert!(candidates[0].contains("relay"));
+        assert!(candidates[1].contains("relay"));
+        assert!(candidates[2].contains("srflx"));
+        assert!(candidates[3].contains("srflx"));
+        assert!(candidates[4].contains("host"));
+        assert!(candidates[5].contains("host"));
+    }
+
+    fn host(socket: &str) -> String {
+        Candidate::host(socket.parse().unwrap(), "udp")
+            .unwrap()
+            .to_sdp_string()
+    }
+
+    fn srflx(addr: &str, base: &str) -> String {
+        Candidate::server_reflexive(addr.parse().unwrap(), base.parse().unwrap(), "udp")
+            .unwrap()
+            .to_sdp_string()
+    }
+
+    fn relay(addr: &str) -> String {
+        Candidate::relayed(addr.parse().unwrap(), "udp")
+            .unwrap()
+            .to_sdp_string()
     }
 }
