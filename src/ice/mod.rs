@@ -693,6 +693,55 @@ mod test {
         }));
     }
 
+    #[test]
+    pub fn no_disconnect_when_replacing_pflx_with_real_candidate() {
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        let c1 = host("1.1.1.1:1000", "udp");
+        let c2 = host("1.1.1.1:1001", "udp");
+
+        // We need a 2nd pair of candidates to make sure the agent doesn't go straight into `Completed`.
+        let c3 = relay("2.2.2.2:1000", "udp");
+        let c4 = relay("2.2.2.2:1001", "udp");
+
+        // Agent 1 knows all candidates ahead of time.
+        a1.add_local_candidate(c1.clone());
+        a1.add_remote_candidate(c2.clone());
+        a1.add_local_candidate(c3.clone());
+        a1.add_remote_candidate(c4.clone());
+
+        // Agent 2 only knows his own candidates (imagine signalling layer being a bit slow)
+        a2.add_local_candidate(c2.clone());
+        a2.add_local_candidate(c4.clone());
+
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+
+        // Wait until agent 2 is connected (based on a peer-reflexive candidate)
+        loop {
+            if a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        // Candidates arrive via signalling layer
+        a2.add_remote_candidate(c1.clone());
+        a2.add_remote_candidate(c3.clone());
+
+        // Continue normal operation.
+        for _ in 0..50 {
+            progress(&mut a1, &mut a2);
+        }
+
+        // We expect to not disconnect as part of this.
+        assert!(!a2.has_event(|e| matches!(
+            e,
+            IceAgentEvent::IceConnectionStateChange(IceConnectionState::Disconnected)
+        )));
+    }
+
     pub struct TestAgent {
         pub start_time: Instant,
         pub agent: IceAgent,
