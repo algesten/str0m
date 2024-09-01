@@ -55,15 +55,36 @@ impl Depacketized {
     }
 
     pub fn seq_range(&self) -> RangeInclusive<SeqNo> {
-        let first = self.meta[0].seq_no;
-        let last = self.meta.last().expect("at least one element").seq_no;
+        let first = self
+            .meta
+            .first()
+            .expect("a depacketized to consist of at least one packet")
+            .seq_no;
+        let last = self
+            .meta
+            .last()
+            .expect("a depacketized to consist of at least one packet")
+            .seq_no;
         first..=last
+    }
+
+    pub fn start_of_talkspurt(&self) -> bool {
+        self.meta
+            .first()
+            .expect("a depacketized to consist of at least one packet")
+            .header
+            .marker
     }
 
     pub fn ext_vals(&self) -> &ExtensionValues {
         // We use the extensions from the last packet because certain extensions, such as video
         // orientation, are only added on the last packet to save bytes.
-        &self.meta[self.meta.len() - 1].header.ext_vals
+        &self
+            .meta
+            .last()
+            .expect("a depacketized to consist of at least one packet")
+            .header
+            .ext_vals
     }
 }
 

@@ -268,6 +268,8 @@ impl Media {
                     ext_vals: dep.ext_vals().clone(),
                     codec_extra: dep.codec_extra,
                     last_sender_info: dep.first_sender_info(),
+                    audio_start_of_talk_spurt: codec.spec().codec.is_audio()
+                        && dep.start_of_talkspurt(),
                     data: dep.data,
                 }));
             }
