@@ -94,7 +94,7 @@ pub struct MediaData {
     /// quantity. The numerator is the timestamp field from the RTP header, the denominator
     /// depends on whether this is an audio or video packet.
     ///
-    /// For audio the timebase is 48kHz for video it is 90kHz.
+    /// For audio the timebase is often 48kHz for video it is 90kHz.
     pub time: MediaTime,
 
     /// The time of the [`Input::Receive`][crate::Input::Receive] of the first packet that caused this MediaData.
@@ -131,6 +131,12 @@ pub struct MediaData {
     ///
     /// If no Sender Report(SR) has been received this is [`None`].
     pub last_sender_info: Option<SenderInfo>,
+
+    /// First packet of a talkspurt, that is the first packet after a silence period during
+    /// which packets have not been transmitted contiguously.
+    ///
+    /// For audio only when dtx or silence suppression is enabled.
+    pub audio_start_of_talk_spurt: bool,
 }
 
 /// Details for an incoming a keyframe request (PLI or FIR).
