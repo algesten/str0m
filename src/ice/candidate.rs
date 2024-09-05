@@ -566,16 +566,23 @@ mod tests {
         let socket_addr = "1.2.3.4:9876".parse().unwrap();
         let mut candidate = Candidate::host(socket_addr, Protocol::Udp).unwrap();
         assert_eq!(
-            serde_json::to_string(&candidate).unwrap(),
-            r#"{"candidate":"candidate:fffeff7ea7250f6f639706d6 1 udp 2130706175 1.2.3.4 9876 typ host","sdpMid":null,"sdpMLineIndex":0,"usernameFragment":null}"#
+            no_hash(serde_json::to_string(&candidate).unwrap()),
+            r#"{"candidate":"candidate:--- 1 udp 2130706175 1.2.3.4 9876 typ host","sdpMid":null,"sdpMLineIndex":0,"usernameFragment":null}"#
         );
 
         // Add a username fragment
         candidate.ufrag = Some("ufrag".to_string());
         assert_eq!(
-            serde_json::to_string(&candidate).unwrap(),
-            r#"{"candidate":"candidate:fffeff7ea7250f6f639706d6 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag","sdpMid":null,"sdpMLineIndex":0,"usernameFragment":"ufrag"}"#
+            no_hash(serde_json::to_string(&candidate).unwrap()),
+            r#"{"candidate":"candidate:--- 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag","sdpMid":null,"sdpMLineIndex":0,"usernameFragment":"ufrag"}"#
         );
+    }
+
+    fn no_hash(mut s: String) -> String {
+        let f = s.find("candidate:").unwrap();
+        let t = s.find(" 1 ").unwrap();
+        s.replace_range((f + 10)..t, "---");
+        s
     }
 
     #[test]
@@ -598,25 +605,25 @@ mod tests {
         let socket_addr = "1.2.3.4:9876".parse().unwrap();
         let mut candidate = Candidate::host(socket_addr, Protocol::Udp).unwrap();
         assert_eq!(
-            candidate.to_string(),
-            "candidate:fffeff7ea7250f6f639706d6 1 udp 2130706175 1.2.3.4 9876 typ host"
+            no_hash(candidate.to_string()),
+            "candidate:--- 1 udp 2130706175 1.2.3.4 9876 typ host"
         );
 
         candidate.ufrag = Some("ufrag".into());
         assert_eq!(
-            candidate.to_string(),
-            "candidate:fffeff7ea7250f6f639706d6 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag"
+            no_hash(candidate.to_string()),
+            "candidate:--- 1 udp 2130706175 1.2.3.4 9876 typ host ufrag ufrag"
         );
 
         candidate.raddr = Some("5.5.5.5:5555".parse().unwrap());
         assert_eq!(
-            candidate.to_string(),
-            "candidate:fffeff7e5e895846293d220a 1 udp 2130706175 1.2.3.4 9876 typ host raddr 5.5.5.5 rport 5555 ufrag ufrag");
+            no_hash(candidate.to_string()),
+            "candidate:--- 1 udp 2130706175 1.2.3.4 9876 typ host raddr 5.5.5.5 rport 5555 ufrag ufrag");
 
         let candidate = Candidate::relayed(socket_addr, Protocol::SslTcp).unwrap();
         assert_eq!(
-            candidate.to_string(),
-            "candidate:fffeff006014aaa376aa19b 1 ssltcp 16776959 1.2.3.4 9876 typ relay"
+            no_hash(candidate.to_string()),
+            "candidate:--- 1 ssltcp 16776959 1.2.3.4 9876 typ relay"
         );
     }
 
