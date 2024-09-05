@@ -1,7 +1,7 @@
 use std::cmp::Ordering;
 use std::fmt::Display;
 use std::num::NonZeroU32;
-use std::ops::{Add, AddAssign};
+use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::str::FromStr;
 use std::time::Duration;
 use std::time::Instant;
@@ -268,6 +268,48 @@ impl MediaTime {
         let max = Frequency(t0.1 .0.max(t1.1 .0));
         (t0.rebase(max), t1.rebase(max))
     }
+
+    /// Checked `MediaTime` subtraction. Returns [`None`] if the result
+    /// would be negative.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    /// ```
+    /// use str0m::media::MediaTime;
+    ///
+    /// assert_eq!(MediaTime::from_micros(10).checked_sub(MediaTime::from_micros(5)), Some(MediaTime::from_micros(5)));
+    /// assert_eq!(MediaTime::from_micros(5).checked_sub(MediaTime::from_micros(10)), None);
+    /// ```
+    #[inline]
+    pub fn checked_sub(self, rhs: MediaTime) -> Option<MediaTime> {
+        let (lhs, rhs) = MediaTime::same_base(self, rhs);
+        if lhs.0 < rhs.0 {
+            None
+        } else {
+            Some(MediaTime::new(lhs.0 - rhs.0, lhs.1))
+        }
+    }
+
+    /// Saturating `MediaTime` subtraction. Returns [`MediaTime::ZERO`] if the result
+    /// would be negative.
+    ///
+    /// # Examples
+    ///
+    /// Basic usage:
+    /// ```
+    /// use str0m::media::MediaTime;
+    ///
+    /// assert_eq!(MediaTime::from_micros(10).saturating_sub(MediaTime::from_micros(5)), MediaTime::from_micros(5));
+    /// assert_eq!(MediaTime::from_micros(5).saturating_sub(MediaTime::from_micros(10)), MediaTime::ZERO);
+    /// ```
+    #[inline]
+    pub fn saturating_sub(self, rhs: MediaTime) -> MediaTime {
+        match self.checked_sub(rhs) {
+            Some(v) => v,
+            None => MediaTime::ZERO,
+        }
+    }
 }
 
 impl PartialEq for MediaTime {
@@ -307,6 +349,35 @@ impl Add for MediaTime {
     fn add(self, rhs: Self) -> Self::Output {
         let (t0, t1) = MediaTime::same_base(self, rhs);
         MediaTime::new(t0.0 + t1.0, t0.1)
+    }
+}
+
+impl Sub for MediaTime {
+    type Output = MediaTime;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.checked_sub(rhs)
+            .expect("overflow when subtracting MediaTime")
+    }
+}
+
+impl SubAssign for MediaTime {
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = *self - rhs;
+    }
+}
+
+impl Sub<MediaTime> for Instant {
+    type Output = Instant;
+
+    fn sub(self, rhs: MediaTime) -> Self::Output {
+        self - Duration::from(rhs)
+    }
+}
+
+impl SubAssign<MediaTime> for Instant {
+    fn sub_assign(&mut self, rhs: MediaTime) {
+        *self = *self - rhs;
     }
 }
 
