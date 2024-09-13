@@ -40,17 +40,11 @@ pub fn main() {
     // Figure out some public IP address, since Firefox will not accept 127.0.0.1 for WebRTC traffic.
     let host_addr = util::select_host_address();
 
-    // Spin up a UDP socket for the RTC. All WebRTC traffic is going to be multiplexed over this single
-    // server socket. Clients are identified via their respective remote (UDP) socket address.
-    let socket = UdpSocket::bind(format!("{host_addr}:0")).expect("binding a random UDP port");
-    let addr = socket.local_addr().expect("a local socket adddress");
-    info!("Bound UDP port: {}", addr);
-
     let server = Server::new_ssl("0.0.0.0:3000", web_request, certificate, private_key)
         .expect("starting the web server");
 
     let port = server.server_addr().port();
-    info!("Connect a browser to https://{:?}:{:?}", addr.ip(), port);
+    info!("Connect a browser to https://{:?}:{:?}", host_addr, port);
 
     server.run();
 }
