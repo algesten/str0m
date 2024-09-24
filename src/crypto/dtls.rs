@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 use std::fmt;
+use std::time::Instant;
 
 use crate::net::DatagramSend;
 
@@ -101,6 +102,9 @@ pub trait DtlsInner: Sized {
     /// Poll for the next datagram to send.
     fn poll_datagram(&mut self) -> Option<DatagramSend>;
 
+    /// Poll for next timeout. This is only used during DTLS handshake.
+    fn poll_timeout(&mut self, now: Instant) -> Option<Instant>;
+
     /// Handling incoming data to be sent as DTLS datagrams.
     fn handle_input(&mut self, data: &[u8]) -> Result<(), CryptoError>;
 
@@ -154,6 +158,14 @@ impl DtlsImpl {
         match self {
             #[cfg(feature = "openssl")]
             DtlsImpl::OpenSsl(i) => i.poll_datagram(),
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn poll_timeout(&mut self, now: Instant) -> Option<Instant> {
+        match self {
+            #[cfg(feature = "openssl")]
+            DtlsImpl::OpenSsl(i) => i.poll_timeout(now),
             _ => unreachable!(),
         }
     }

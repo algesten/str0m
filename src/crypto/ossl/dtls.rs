@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
+use std::time::{Duration, Instant};
 
 use openssl::ec::EcKey;
 use openssl::nid::Nid;
@@ -84,6 +85,18 @@ impl DtlsInner for OsslDtlsImpl {
             trace!("Poll datagram: {}", x.len());
         }
         x
+    }
+
+    fn poll_timeout(&mut self, now: Instant) -> Option<Instant> {
+        // OpenSSL has a built-in timeout of 1 second that is doubled for
+        // each retry. There is a way to get direct control over the
+        // timeout (using DTLS_set_timer_cb), but that function doesn't
+        // appear to be exposed in openssl crate yet.
+        // TODO(martin): Write PR for openssl crate to be able to use this
+        // callback to make a tighter timeout handling here.
+        self.tls
+            .is_handshaking()
+            .then(|| now + Duration::from_millis(500))
     }
 
     fn handle_input(&mut self, data: &[u8]) -> Result<(), CryptoError> {
