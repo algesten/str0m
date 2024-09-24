@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::time::Instant;
 use std::{fmt, io};
 use thiserror::Error;
 
@@ -107,6 +108,11 @@ impl Dtls {
     /// Poll for the next datagram to send.
     pub fn poll_datagram(&mut self) -> Option<DatagramSend> {
         self.dtls_impl.poll_datagram()
+    }
+
+    /// Poll for a timeout.
+    pub fn poll_timeout(&mut self, now: Instant) -> Option<Instant> {
+        self.dtls_impl.poll_timeout(now)
     }
 
     /// Poll for an event.

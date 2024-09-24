@@ -67,6 +67,10 @@ where
         }
     }
 
+    pub fn is_handshaking(&self) -> bool {
+        matches!(self.state, State::Init(_, _) | State::Handshaking(_))
+    }
+
     pub fn is_connected(&self) -> bool {
         matches!(self.state, State::Established(_))
     }
