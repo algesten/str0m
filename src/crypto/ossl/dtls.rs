@@ -95,7 +95,7 @@ impl DtlsInner for OsslDtlsImpl {
     }
 
     fn handle_handshake(&mut self, output: &mut VecDeque<DtlsEvent>) -> Result<bool, CryptoError> {
-        if self.tls.is_handshaken() {
+        if self.tls.is_connected() {
             // Nice. Nothing to do.
             Ok(false)
         } else if self.tls.complete_handshake_until_block()? {
