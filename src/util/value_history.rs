@@ -35,12 +35,12 @@ where
     pub fn push(&mut self, t: Instant, v: T) {
         self.value += v;
         self.history.push_back((t, v));
-        self.drain(t);
     }
 
-    /// Returns the sum of all values in the history up to max_time
-    /// This is more efficient than sum_since() as it does not need to iterate over the history
-    pub fn sum(&self) -> T {
+    /// Returns the sum of all values in the history up to now - max_time.
+    pub fn sum(&mut self, now: Instant) -> T {
+        self.drain(now);
+
         self.value
     }
 
@@ -63,7 +63,7 @@ mod test {
     use super::ValueHistory;
 
     #[test]
-    fn test() {
+    fn with_value_test() {
         let now = Instant::now();
 
         let mut h = ValueHistory {
@@ -72,11 +72,26 @@ mod test {
             ..Default::default()
         };
 
-        assert_eq!(h.sum(), 11);
+        assert_eq!(h.sum(now), h.value);
         h.push(now - Duration::from_millis(1500), 22);
         h.push(now - Duration::from_millis(500), 22);
-        assert_eq!(h.sum(), 55);
+        assert_eq!(h.sum(now), h.value + 22);
         h.push(now, 0);
-        assert_eq!(h.sum(), 33);
+        assert_eq!(h.sum(now), h.value + 22);
+    }
+
+    #[test]
+    fn test() {
+        let now = Instant::now();
+        let mut h = ValueHistory::default();
+
+        assert_eq!(h.sum(now), 0);
+        h.push(now - Duration::from_millis(1500), 22);
+        assert_eq!(h.sum(now), 0);
+        h.push(now - Duration::from_millis(700), 22);
+        h.push(now - Duration::from_millis(500), 33);
+        assert_eq!(h.sum(now), 22 + 33);
+        assert_eq!(h.sum(now + Duration::from_millis(400)), 33);
+        assert_eq!(h.sum(now + Duration::from_millis(600)), 0);
     }
 }
