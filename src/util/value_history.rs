@@ -72,12 +72,12 @@ mod test {
             ..Default::default()
         };
 
-        assert_eq!(h.sum(now), h.value);
+        assert_eq!(h.sum(now), 11);
         h.push(now - Duration::from_millis(1500), 22);
         h.push(now - Duration::from_millis(500), 22);
-        assert_eq!(h.sum(now), h.value + 22);
+        assert_eq!(h.sum(now), 11 + 22);
         h.push(now, 0);
-        assert_eq!(h.sum(now), h.value + 22);
+        assert_eq!(h.sum(now), 11 + 22);
     }
 
     #[test]
