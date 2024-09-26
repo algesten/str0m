@@ -24,7 +24,7 @@ pub(crate) mod rtx_cache_buf;
 mod send;
 mod send_queue;
 
-pub(crate) use send::DEFAULT_RTX_CACHE_DURATION;
+pub(crate) use send::{DEFAULT_RTX_CACHE_DROP_RATIO, DEFAULT_RTX_CACHE_DURATION};
 
 // Time between regular receiver reports.
 // https://www.rfc-editor.org/rfc/rfc8829#section-5.1.2

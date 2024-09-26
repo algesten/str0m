@@ -22,8 +22,7 @@ use crate::RtcError;
 use crate::{Candidate, IceCreds};
 
 pub use crate::sdp::{SdpAnswer, SdpOffer};
-use crate::streams::Streams;
-use crate::streams::DEFAULT_RTX_CACHE_DURATION;
+use crate::streams::{Streams, DEFAULT_RTX_CACHE_DROP_RATIO, DEFAULT_RTX_CACHE_DURATION};
 
 /// Changes to the Rtc via SDP Offer/Answer dance.
 pub struct SdpApi<'a> {
@@ -863,7 +862,11 @@ fn ensure_stream_tx(session: &mut Session) {
                 session.send_buffer_video
             };
 
-            stream.set_rtx_cache(size, DEFAULT_RTX_CACHE_DURATION);
+            stream.set_rtx_cache(
+                size,
+                DEFAULT_RTX_CACHE_DURATION,
+                DEFAULT_RTX_CACHE_DROP_RATIO,
+            );
         }
     }
 }
@@ -899,7 +902,11 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
                 session.send_buffer_video
             };
 
-            stream.set_rtx_cache(size, DEFAULT_RTX_CACHE_DURATION);
+            stream.set_rtx_cache(
+                size,
+                DEFAULT_RTX_CACHE_DURATION,
+                DEFAULT_RTX_CACHE_DROP_RATIO,
+            );
         }
     }
 }
