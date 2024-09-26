@@ -8,6 +8,7 @@
   * Ensure compatibility with some 32-bit targets #533
   * Fix bug using unreliable channels by default #548
   * New add_channel_with_config() for configured data channels #548
+  * Fix RTX stops working after packet loss spike #566
 
 # 0.6.1
   * Force openssl to be >=0.10.66 #545
