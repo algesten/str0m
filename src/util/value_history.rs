@@ -37,21 +37,24 @@ where
         self.history.push_back((t, v));
     }
 
-    /// Returns the sum of all values in the history up to now - max_time.
-    pub fn sum(&mut self, now: Instant) -> T {
-        self.drain(now);
-
+    /// Returns the sum of all values in the history up to max_time. Might
+    /// return stale value unless [`ValueHistory::purge_old`] is called before.
+    pub fn sum(&self) -> T {
         self.value
     }
 
-    fn drain(&mut self, t: Instant) -> Option<()> {
-        while t.duration_since(self.history.front()?.0) > self.max_time {
+    /// Recalculates sum purging values older than `now - max_time`.
+    pub fn purge_old(&mut self, now: Instant) {
+        while {
+            let Some(front_t) = self.history.front().map(|v| v.0) else {
+                return;
+            };
+            now.duration_since(front_t) > self.max_time
+        } {
             if let Some((_, v)) = self.history.pop_front() {
                 self.value -= v;
             }
         }
-
-        Some(())
     }
 }
 
@@ -72,12 +75,16 @@ mod test {
             ..Default::default()
         };
 
-        assert_eq!(h.sum(now), 11);
+        assert_eq!(h.sum(), 11);
+        h.purge_old(now);
+        assert_eq!(h.sum(), 11);
         h.push(now - Duration::from_millis(1500), 22);
         h.push(now - Duration::from_millis(500), 22);
-        assert_eq!(h.sum(now), 11 + 22);
+        assert_eq!(h.sum(), 11 + 22 + 22);
+        h.purge_old(now);
+        assert_eq!(h.sum(), 11 + 22);
         h.push(now, 0);
-        assert_eq!(h.sum(now), 11 + 22);
+        assert_eq!(h.sum(), 11 + 22);
     }
 
     #[test]
@@ -85,13 +92,20 @@ mod test {
         let now = Instant::now();
         let mut h = ValueHistory::default();
 
-        assert_eq!(h.sum(now), 0);
+        assert_eq!(h.sum(), 0);
         h.push(now - Duration::from_millis(1500), 22);
-        assert_eq!(h.sum(now), 0);
+        assert_eq!(h.sum(), 22);
+        h.purge_old(now);
+        assert_eq!(h.sum(), 0);
         h.push(now - Duration::from_millis(700), 22);
         h.push(now - Duration::from_millis(500), 33);
-        assert_eq!(h.sum(now), 22 + 33);
-        assert_eq!(h.sum(now + Duration::from_millis(400)), 33);
-        assert_eq!(h.sum(now + Duration::from_millis(600)), 0);
+        assert_eq!(h.sum(), 22 + 33);
+        h.purge_old(now);
+        assert_eq!(h.sum(), 22 + 33);
+
+        h.purge_old(now + Duration::from_millis(400));
+        assert_eq!(h.sum(), 33);
+        h.purge_old(now + Duration::from_millis(600));
+        assert_eq!(h.sum(), 0);
     }
 }

@@ -530,8 +530,11 @@ impl StreamTx {
         }
 
         // bytes stats refer to the last second by default
-        let bytes_transmitted = self.stats.bytes_transmitted.sum(now);
-        let bytes_retransmitted = self.stats.bytes_retransmitted.sum(now);
+        self.stats.bytes_transmitted.purge_old(now);
+        self.stats.bytes_retransmitted.purge_old(now);
+
+        let bytes_transmitted = self.stats.bytes_transmitted.sum();
+        let bytes_retransmitted = self.stats.bytes_retransmitted.sum();
         let ratio = bytes_retransmitted as f32 / (bytes_retransmitted + bytes_transmitted) as f32;
         let ratio = if ratio.is_finite() { ratio } else { 0_f32 };
         self.rtx_ratio = (ratio, now);
