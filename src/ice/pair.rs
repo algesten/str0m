@@ -31,7 +31,8 @@ pub struct CandidatePair {
 
     /// Record of the latest STUN messages we've tried using this pair.
     ///
-    /// This list will never grow beyond STUN_MAX_RETRANS + 1
+    /// This list will usually not grow beyond [`DEFAULT_MAX_RETRANSMITS`] * 2
+    /// unless the user configures a very large retransmission counter.
     binding_attempts: VecDeque<BindingAttempt>,
 
     /// The next time we are to do a binding attempt, cached, since we
@@ -236,7 +237,7 @@ impl CandidatePair {
 
         self.binding_attempts.push_back(attempt);
 
-        // Never keep more than STUN_MAX_RETRANS attempts.
+        // Never keep more than the maximum allowed retransmits.
         while self.binding_attempts.len() > timing_config.max_retransmits() {
             self.binding_attempts.pop_front();
         }
