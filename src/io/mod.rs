@@ -12,7 +12,10 @@ use thiserror::Error;
 
 mod stun;
 pub use stun::StunMessage;
-pub(crate) use stun::{Class as StunClass, Method as StunMethod, StunError, StunTiming, TransId};
+pub(crate) use stun::{
+    Class as StunClass, Method as StunMethod, StunError, StunTiming, TransId,
+    DEFAULT_MAX_RETRANSMITS,
+};
 
 mod id;
 // this is only exported from this crate to avoid needing

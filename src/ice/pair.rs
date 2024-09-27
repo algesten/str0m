@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::io::{Id, StunTiming, TransId};
+use crate::io::{Id, StunTiming, TransId, DEFAULT_MAX_RETRANSMITS};
 use crate::Candidate;
 
 // When running ice-lite we need a cutoff when we consider the remote definitely gone.
@@ -31,7 +31,8 @@ pub struct CandidatePair {
 
     /// Record of the latest STUN messages we've tried using this pair.
     ///
-    /// This list will never grow beyond STUN_MAX_RETRANS + 1
+    /// This list will usually not grow beyond [`DEFAULT_MAX_RETRANSMITS`] * 2
+    /// unless the user configures a very large retransmission counter.
     binding_attempts: VecDeque<BindingAttempt>,
 
     /// The next time we are to do a binding attempt, cached, since we
@@ -46,8 +47,6 @@ pub struct CandidatePair {
 
     /// State of nomination for this candidate pair.
     nomination_state: NominationState,
-
-    timing_config: StunTiming,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -114,13 +113,12 @@ impl Default for PairId {
 }
 
 impl CandidatePair {
-    pub fn new(local_idx: usize, remote_idx: usize, prio: u64, timing_config: StunTiming) -> Self {
+    pub fn new(local_idx: usize, remote_idx: usize, prio: u64) -> Self {
         CandidatePair {
             local_idx,
             remote_idx,
             prio,
-            binding_attempts: VecDeque::with_capacity(timing_config.max_retransmits() + 1),
-            timing_config,
+            binding_attempts: VecDeque::with_capacity(DEFAULT_MAX_RETRANSMITS * 2),
             id: Default::default(),
             valid_idx: Default::default(),
             state: Default::default(),
@@ -221,7 +219,7 @@ impl CandidatePair {
     /// Records a new binding request attempt.
     ///
     /// Returns the transaction id to use in the STUN message.
-    pub fn new_attempt(&mut self, now: Instant) -> TransId {
+    pub fn new_attempt(&mut self, now: Instant, timing_config: &StunTiming) -> TransId {
         // calculate a new time
         self.cached_next_attempt_time = None;
 
@@ -239,8 +237,8 @@ impl CandidatePair {
 
         self.binding_attempts.push_back(attempt);
 
-        // Never keep more than STUN_MAX_RETRANS attempts.
-        while self.binding_attempts.len() > self.timing_config.max_retransmits() {
+        // Never keep more than the maximum allowed retransmits.
+        while self.binding_attempts.len() > timing_config.max_retransmits() {
             self.binding_attempts.pop_front();
         }
 
@@ -322,7 +320,7 @@ impl CandidatePair {
     /// When we should do the next retry.
     ///
     /// Returns `None` if we are not to attempt this pair anymore.
-    pub fn next_binding_attempt(&mut self, now: Instant) -> Instant {
+    pub fn next_binding_attempt(&mut self, now: Instant, timing_config: &StunTiming) -> Instant {
         if let Some(cached) = self.cached_next_attempt_time {
             return cached;
         }
@@ -335,19 +333,19 @@ impl CandidatePair {
             // checking more often.
             let unanswered_count = self
                 .unanswered()
-                .filter(|(_, since)| now - *since > self.timing_config.max_rto() / 2)
+                .filter(|(_, since)| now - *since > timing_config.max_rto() / 2)
                 .map(|(count, _)| count);
 
             let send_count = unanswered_count.unwrap_or(self.binding_attempts.len());
 
-            last + self.timing_config.stun_resend_delay(send_count)
+            last + timing_config.stun_resend_delay(send_count)
         } else {
             // No previous attempt, do next retry straight away.
             now
         };
 
         // At least do a check at this time.
-        let min = now + self.timing_config.max_rto();
+        let min = now + timing_config.max_rto();
 
         let at_least = next.min(min);
 
@@ -360,19 +358,19 @@ impl CandidatePair {
     /// Tells if this candidate pair is still possible to use for connectivity.
     ///
     /// Returns `false` if the candidate has failed.
-    pub fn is_still_possible(&self, now: Instant) -> bool {
+    pub fn is_still_possible(&self, now: Instant, timing_config: &StunTiming) -> bool {
         let attempts = self.binding_attempts.len();
         let unanswered = self.unanswered().map(|b| b.0).unwrap_or(0);
 
-        if attempts < self.timing_config.max_retransmits()
-            || unanswered < self.timing_config.max_retransmits()
+        if attempts < timing_config.max_retransmits()
+            || unanswered < timing_config.max_retransmits()
         {
             true
         } else {
             // check to see if we are still waiting for the last attempt
             // this unwrap is fine because unanswered count > 0
             let last = self.last_attempt_time().unwrap();
-            let cutoff = last + self.timing_config.stun_last_resend_delay();
+            let cutoff = last + timing_config.stun_last_resend_delay();
             now < cutoff
         }
     }

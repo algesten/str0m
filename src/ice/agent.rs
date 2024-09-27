@@ -693,8 +693,7 @@ impl IceAgent {
 
                 let prio =
                     CandidatePair::calculate_prio(self.controlling, remote.prio(), local.prio());
-                let mut pair =
-                    CandidatePair::new(*local_idx, *remote_idx, prio, self.timing_config);
+                let mut pair = CandidatePair::new(*local_idx, *remote_idx, prio);
 
                 trace!("Form pair local: {:?} remote: {:?}", local, remote);
 
@@ -1022,7 +1021,7 @@ impl IceAgent {
             let keep = if self.ice_lite {
                 p.has_recent_remote_binding_request(now)
             } else {
-                p.is_still_possible(now)
+                p.is_still_possible(now, &self.timing_config)
             };
             if !keep {
                 debug!("Remove failed pair: {:?}", p);
@@ -1060,7 +1059,7 @@ impl IceAgent {
             .candidate_pairs
             .iter_mut()
             .enumerate()
-            .map(|(i, c)| (i, c.next_binding_attempt(now)))
+            .map(|(i, c)| (i, c.next_binding_attempt(now, &self.timing_config)))
             .min_by_key(|(_, t)| *t);
 
         if let Some((idx, deadline)) = next {
@@ -1111,7 +1110,7 @@ impl IceAgent {
         } else {
             self.candidate_pairs
                 .iter_mut()
-                .map(|c| c.next_binding_attempt(last_now))
+                .map(|c| c.next_binding_attempt(last_now, &self.timing_config))
                 .min()
         };
 
@@ -1347,7 +1346,7 @@ impl IceAgent {
             // *  Its state is set to Waiting. (this is the default)
             // *  The pair is inserted into the checklist based on its priority.
             // *  The pair is enqueued into the triggered-check queue.
-            let pair = CandidatePair::new(local_idx, remote_idx, prio, self.timing_config);
+            let pair = CandidatePair::new(local_idx, remote_idx, prio);
 
             debug!("Created new pair for STUN request: {:?}", pair);
 
@@ -1421,7 +1420,7 @@ impl IceAgent {
         // Only the controlling side sends USE-CANDIDATE.
         let use_candidate = self.controlling && pair.is_nominated();
 
-        let trans_id = pair.new_attempt(now);
+        let trans_id = pair.new_attempt(now, &self.timing_config);
 
         self.stats.bind_request_sent += 1;
 
@@ -1637,7 +1636,7 @@ impl IceAgent {
         for p in &self.candidate_pairs {
             if p.is_nominated() {
                 any_nomination = true;
-            } else if p.is_still_possible(now) {
+            } else if p.is_still_possible(now, &self.timing_config) {
                 any_still_possible = true;
             }
         }
