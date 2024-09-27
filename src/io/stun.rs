@@ -8,6 +8,8 @@ use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub(crate) const DEFAULT_MAX_RETRANSMITS: usize = 9;
+
 #[derive(Debug, Clone, Copy)]
 pub struct StunTiming {
     pub(crate) initial_rto: Duration,
@@ -59,7 +61,7 @@ impl Default for StunTiming {
     fn default() -> Self {
         Self {
             initial_rto: Duration::from_millis(250),
-            max_retransmits: 9,
+            max_retransmits: DEFAULT_MAX_RETRANSMITS,
             max_rto: Duration::from_millis(3000), // libwebrtc uses 8000 here but we want faster detection of gone peers.
         }
     }

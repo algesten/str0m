@@ -693,8 +693,7 @@ impl IceAgent {
 
                 let prio =
                     CandidatePair::calculate_prio(self.controlling, remote.prio(), local.prio());
-                let mut pair =
-                    CandidatePair::new(*local_idx, *remote_idx, prio, &self.timing_config);
+                let mut pair = CandidatePair::new(*local_idx, *remote_idx, prio);
 
                 trace!("Form pair local: {:?} remote: {:?}", local, remote);
 
@@ -1347,7 +1346,7 @@ impl IceAgent {
             // *  Its state is set to Waiting. (this is the default)
             // *  The pair is inserted into the checklist based on its priority.
             // *  The pair is enqueued into the triggered-check queue.
-            let pair = CandidatePair::new(local_idx, remote_idx, prio, &self.timing_config);
+            let pair = CandidatePair::new(local_idx, remote_idx, prio);
 
             debug!("Created new pair for STUN request: {:?}", pair);
 

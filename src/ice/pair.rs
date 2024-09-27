@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::io::{Id, StunTiming, TransId};
+use crate::io::{Id, StunTiming, TransId, DEFAULT_MAX_RETRANSMITS};
 use crate::Candidate;
 
 // When running ice-lite we need a cutoff when we consider the remote definitely gone.
@@ -112,12 +112,12 @@ impl Default for PairId {
 }
 
 impl CandidatePair {
-    pub fn new(local_idx: usize, remote_idx: usize, prio: u64, timing_config: &StunTiming) -> Self {
+    pub fn new(local_idx: usize, remote_idx: usize, prio: u64) -> Self {
         CandidatePair {
             local_idx,
             remote_idx,
             prio,
-            binding_attempts: VecDeque::with_capacity(timing_config.max_retransmits() + 1),
+            binding_attempts: VecDeque::with_capacity(DEFAULT_MAX_RETRANSMITS * 2),
             id: Default::default(),
             valid_idx: Default::default(),
             state: Default::default(),
