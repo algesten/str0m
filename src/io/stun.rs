@@ -10,7 +10,7 @@ use thiserror::Error;
 
 pub(crate) const DEFAULT_MAX_RETRANSMITS: usize = 9;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)] // Purposely not `Clone` / `Copy` to ensure we always use the latest one everywhere.
 pub struct StunTiming {
     pub(crate) initial_rto: Duration,
     pub(crate) max_retransmits: usize,
