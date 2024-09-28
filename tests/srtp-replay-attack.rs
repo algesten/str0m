@@ -85,7 +85,7 @@ pub fn srtp_replay_attack_rtp_mode() -> Result<(), RtcError> {
             }
         })
         .collect();
-    assert_eq!(rtp_raw_rx.len(), EXPECTED_PACKETS * REPLAY_PER_PACKET);
+    assert_eq!(rtp_raw_rx.len(), EXPECTED_PACKETS);
 
     let rtp: Vec<_> = r
         .events
@@ -186,7 +186,7 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
             }
         })
         .collect();
-    assert_eq!(rtp_raw_rx.len(), EXPECTED_PACKETS * REPLAY_PER_PACKET);
+    assert_eq!(rtp_raw_rx.len(), EXPECTED_PACKETS);
 
     let media: Vec<_> = r
         .events
