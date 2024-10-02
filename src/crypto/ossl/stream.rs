@@ -47,10 +47,6 @@ where
         self.active
     }
 
-    pub fn is_connected(&self) -> bool {
-        matches!(self.state, State::Established(_))
-    }
-
     pub fn set_active(&mut self, active: bool) {
         assert!(
             self.active.is_none(),
@@ -71,7 +67,11 @@ where
         }
     }
 
-    pub fn is_handshaken(&self) -> bool {
+    pub fn is_handshaking(&self) -> bool {
+        matches!(self.state, State::Init(_, _) | State::Handshaking(_))
+    }
+
+    pub fn is_connected(&self) -> bool {
         matches!(self.state, State::Established(_))
     }
 

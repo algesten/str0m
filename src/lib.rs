@@ -974,6 +974,7 @@ pub enum Input<'a> {
 
 /// Output produced by [`Rtc::poll_output()`]
 #[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
 pub enum Output {
     /// When the [`Rtc`] instance expects an [`Input::Timeout`].
     Timeout(Instant),
@@ -992,6 +993,11 @@ pub enum Reason {
     ///
     /// The timeout value is in the distant future.
     NotHappening,
+
+    /// The DTLS subsystem.
+    ///
+    /// Only relevant during handshaking.
+    DTLS,
 
     /// The ICE agent.
     ///
@@ -1535,6 +1541,7 @@ impl Rtc {
         let stats = self.stats.as_mut();
 
         let time_and_reason = (None, Reason::NotHappening)
+            .soonest((self.dtls.poll_timeout(self.last_now), Reason::DTLS))
             .soonest((self.ice.poll_timeout(), Reason::Ice))
             .soonest(self.session.poll_timeout())
             .soonest((self.sctp.poll_timeout(), Reason::Sctp))
@@ -1574,7 +1581,7 @@ impl Rtc {
     ///
     /// // If there are no timeouts scheduled, we get NotHappening. The timeout
     /// // value itself will be in the distant future.
-    /// assert_eq!(rtc.last_timeout_reason(), Reason::NotHappening);
+    /// assert_eq!(rtc.last_timeout_reason(), Reason::DTLS);
     /// ```
     pub fn last_timeout_reason(&self) -> Reason {
         self.last_timeout_reason

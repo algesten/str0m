@@ -346,6 +346,17 @@ impl StreamRx {
         }
     }
 
+    pub(crate) fn is_new_packet(&self, is_repair: bool, seq_no: SeqNo) -> bool {
+        let register_ref = if is_repair {
+            self.register_rtx.as_ref()
+        } else {
+            self.register.as_ref()
+        };
+
+        // Unwrap is OK because we always call extend_seq() for the same is_repair flag beforehand
+        register_ref.unwrap().accepts(seq_no)
+    }
+
     pub(crate) fn update_register(
         &mut self,
         now: Instant,

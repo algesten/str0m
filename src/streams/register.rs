@@ -73,6 +73,10 @@ impl ReceiverRegister {
         }
     }
 
+    pub fn accepts(&self, seq: SeqNo) -> bool {
+        self.nack.accepts(seq)
+    }
+
     pub fn update(&mut self, seq: SeqNo, arrival: Instant, rtp_time: u32, clock_rate: u32) -> bool {
         if self.first.is_none() {
             self.first = Some(seq);
