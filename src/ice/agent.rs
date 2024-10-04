@@ -1703,6 +1703,10 @@ mod test {
     use std::net::SocketAddr;
 
     impl IceAgent {
+        pub(crate) fn num_candidate_pairs(&self) -> usize {
+            self.candidate_pairs.len()
+        }
+
         fn pair_indexes(&self) -> Vec<(usize, usize)> {
             self.candidate_pairs
                 .iter()
