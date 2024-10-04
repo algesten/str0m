@@ -742,6 +742,38 @@ mod test {
         )));
     }
 
+    #[test]
+    pub fn identical_host_and_server_reflexive_candidates_dont_create_new_pairs_on_inbound_stun_request(
+    ) {
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        let c1 = host("1.1.1.1:1000", "udp");
+        a1.add_local_candidate(c1.clone());
+        a2.add_remote_candidate(c1);
+        let c2 = srflx("2.2.2.2:1000", "2.2.2.2:1000", "udp");
+        let c3 = host("2.2.2.2:1000", "udp");
+        a2.add_local_candidate(c2.clone());
+        a1.add_remote_candidate(c2);
+        a2.add_local_candidate(c3.clone());
+        a1.add_remote_candidate(c3);
+
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+
+        // loop until we're connected.
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        // Each agent should only have a single candidate pair.
+        assert_eq!(a1.num_candidate_pairs(), 1);
+        assert_eq!(a2.num_candidate_pairs(), 1);
+    }
+
     pub struct TestAgent {
         pub start_time: Instant,
         pub agent: IceAgent,
