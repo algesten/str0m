@@ -1242,7 +1242,8 @@ impl IceAgent {
             .remote_candidates
             .iter()
             .enumerate()
-            .find(|(_, c)| !c.discarded() && c.proto() == req.proto && c.addr() == req.source);
+            .filter(|(_, c)| !c.discarded() && c.proto() == req.proto && c.addr() == req.source)
+            .max_by_key(|(_, c)| c.prio()); // We may have multiple candidates with the same address (i.e. host and server-reflexive could be the same).
 
         let remote_idx = if let Some((idx, _)) = found_in_remote {
             trace!("Remote candidate for STUN request found");
@@ -1703,6 +1704,10 @@ mod test {
     use std::net::SocketAddr;
 
     impl IceAgent {
+        pub(crate) fn num_candidate_pairs(&self) -> usize {
+            self.candidate_pairs.len()
+        }
+
         fn pair_indexes(&self) -> Vec<(usize, usize)> {
             self.candidate_pairs
                 .iter()
