@@ -38,7 +38,7 @@ const MIN_SPURIOUS_PADDING_SIZE: usize = 50;
 
 pub const DEFAULT_RTX_CACHE_DURATION: Duration = Duration::from_secs(3);
 
-pub const DEFAULT_RTX_CACHE_DROP_RATIO: Option<f32> = Some(0.15f32);
+pub const DEFAULT_RTX_RATIO_CAP: Option<f32> = Some(0.15f32);
 
 /// Outgoing encoded stream.
 ///
@@ -104,7 +104,8 @@ pub struct StreamTx {
     /// sending spurious resends as padding.
     rtx_cache: RtxCache,
 
-    rtx_cache_drop_ratio: Option<f32>,
+    /// Determines retransmitted bytes ratio value to clear queued resends.
+    rtx_ratio_cap: Option<f32>,
 
     /// Last time we produced a SR.
     last_sender_report: Instant,
@@ -150,7 +151,11 @@ pub(crate) struct StreamTxStats {
     rtt: Option<f32>,
     /// losses collecter from RR (known packets, lost ratio)
     losses: Vec<(u64, f32)>,
+
+    /// `None` if `rtx_ratio_cap` is `None`.
     bytes_transmitted: Option<ValueHistory<u64>>,
+
+    /// `None` if `rtx_ratio_cap` is `None`.
     bytes_retransmitted: Option<ValueHistory<u64>>,
 }
 
@@ -194,7 +199,7 @@ impl StreamTx {
             padding: 0,
             blank_packet: RtpPacket::blank(),
             rtx_cache: RtxCache::new(2000, DEFAULT_RTX_CACHE_DURATION),
-            rtx_cache_drop_ratio: DEFAULT_RTX_CACHE_DROP_RATIO,
+            rtx_ratio_cap: DEFAULT_RTX_RATIO_CAP,
             last_sender_report: already_happened(),
             pending_request_keyframe: None,
             pending_request_remb: None,
@@ -232,23 +237,27 @@ impl StreamTx {
     ///
     /// This determines how old incoming NACKs we can reply to.
     ///
-    /// The default is 1024 packets over 3 seconds.
+    /// `rtx_ratio_cap` determines when to clear queued resends because of too many resends,
+    /// i.e. if `tx_sum / (rtx_sum + tx_sum) > rtx_ratio_cap`. `None` disables this functionality
+    /// so all queued resends will be sent.
+    ///
+    /// The default is 1024 packets over 3 seconds and RTX cache drop ratio of 0.15.
     pub fn set_rtx_cache(
         &mut self,
         max_packets: usize,
         max_age: Duration,
-        rtx_cache_drop_ratio: Option<f32>,
+        rtx_ratio_cap: Option<f32>,
     ) {
         // Dump old cache to avoid having to deal with resizing logic inside the cache impl.
         self.rtx_cache = RtxCache::new(max_packets, max_age);
-        if rtx_cache_drop_ratio.is_some() {
-            self.stats.bytes_transmitted = Some(Default::default());
-            self.stats.bytes_retransmitted = Some(Default::default());
+        if rtx_ratio_cap.is_some() {
+            self.stats.bytes_transmitted = Some(ValueHistory::default());
+            self.stats.bytes_retransmitted = Some(ValueHistory::default());
         } else {
             self.stats.bytes_transmitted = None;
             self.stats.bytes_retransmitted = None;
         }
-        self.rtx_cache_drop_ratio = rtx_cache_drop_ratio;
+        self.rtx_ratio_cap = rtx_ratio_cap;
     }
 
     /// Set whether this stream is unpaced or not.
@@ -561,11 +570,11 @@ impl StreamTx {
     fn rtx_ratio_downsampled(&mut self, now: Instant) -> f32 {
         assert!(
             self.stats.bytes_transmitted.is_some(),
-            "must only be called if rtx_cache_drop_ratio is enabled"
+            "rtx_ratio_cap must be enabled"
         );
         assert!(
             self.stats.bytes_retransmitted.is_some(),
-            "must only be called if rtx_cache_drop_ratio is enabled"
+            "rtx_ratio_cap must be enabled"
         );
 
         let (value, ts) = self.rtx_ratio;
@@ -575,6 +584,17 @@ impl StreamTx {
         }
 
         // bytes stats refer to the last second by default
+        self.stats
+            .bytes_transmitted
+            .as_mut()
+            .unwrap()
+            .purge_old(now);
+        self.stats
+            .bytes_retransmitted
+            .as_mut()
+            .unwrap()
+            .purge_old(now);
+
         let bytes_transmitted = self.stats.bytes_transmitted.as_mut().unwrap().sum();
         let bytes_retransmitted = self.stats.bytes_retransmitted.as_mut().unwrap().sum();
         let ratio = bytes_retransmitted as f32 / (bytes_retransmitted + bytes_transmitted) as f32;
@@ -584,11 +604,11 @@ impl StreamTx {
     }
 
     fn poll_packet_resend(&mut self, now: Instant) -> Option<NextPacket<'_>> {
-        if let Some(drop_ratio) = self.rtx_cache_drop_ratio {
+        if let Some(ratio_cap) = self.rtx_ratio_cap {
             let ratio = self.rtx_ratio_downsampled(now);
 
             // If we hit the cap, stop doing resends by clearing those we have queued.
-            if ratio > drop_ratio {
+            if ratio > ratio_cap {
                 self.resends.clear();
                 return None;
             }
