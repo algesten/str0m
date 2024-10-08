@@ -27,7 +27,7 @@ pub fn rtx_cache_0() -> Result<(), RtcError> {
         .declare_stream_tx(ssrc_tx, None, mid, Some(rid))
         //
         // disable RTX cache by setting 0
-        .set_rtx_cache(0, Duration::ZERO);
+        .set_rtx_cache(0, Duration::ZERO, Some(0.15));
 
     r.direct_api()
         .declare_media(mid, MediaKind::Audio)

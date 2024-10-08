@@ -3,7 +3,7 @@ use crate::crypto::Fingerprint;
 use crate::media::{Media, MediaKind};
 use crate::rtp_::{Mid, Rid, Ssrc};
 use crate::sctp::ChannelConfig;
-use crate::streams::{StreamRx, StreamTx, DEFAULT_RTX_CACHE_DURATION};
+use crate::streams::{StreamRx, StreamTx, DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP};
 use crate::IceCreds;
 use crate::Rtc;
 use crate::RtcError;
@@ -246,7 +246,7 @@ impl<'a> DirectApi<'a> {
             self.rtc.session.send_buffer_video
         };
 
-        stream.set_rtx_cache(size, DEFAULT_RTX_CACHE_DURATION);
+        stream.set_rtx_cache(size, DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP);
 
         stream
     }
