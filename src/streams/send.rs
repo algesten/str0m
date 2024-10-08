@@ -251,8 +251,12 @@ impl StreamTx {
         // Dump old cache to avoid having to deal with resizing logic inside the cache impl.
         self.rtx_cache = RtxCache::new(max_packets, max_age);
         if rtx_ratio_cap.is_some() {
-            self.stats.bytes_transmitted = Some(ValueHistory::default());
-            self.stats.bytes_retransmitted = Some(ValueHistory::default());
+            self.stats
+                .bytes_transmitted
+                .get_or_insert_with(ValueHistory::default);
+            self.stats
+                .bytes_retransmitted
+                .get_or_insert_with(ValueHistory::default);
         } else {
             self.stats.bytes_transmitted = None;
             self.stats.bytes_retransmitted = None;
