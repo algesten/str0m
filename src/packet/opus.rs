@@ -2,7 +2,10 @@ use super::{CodecExtra, Depacketizer, MediaKind, PacketError, Packetizer};
 
 /// Packetizes Opus RTP packets.
 #[derive(Default, Debug, Copy, Clone)]
-pub struct OpusPacketizer;
+pub struct OpusPacketizer {
+    // stores if a marker was previously set
+    marker: bool,
+}
 
 impl Packetizer for OpusPacketizer {
     fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
@@ -23,8 +26,23 @@ impl Packetizer for OpusPacketizer {
     }
 
     fn is_marker(&mut self, data: &[u8], previous: Option<&[u8]>, last: bool) -> bool {
-        // TODO: dtx
-        false
+        // any non silenced packet would generally have more than 2 byts
+        let mut is_marker = data.len() > 2;
+
+        match self.marker {
+            true => {
+                if !is_marker {
+                    self.marker = false;
+                }
+                is_marker = false;
+            }
+            false => {
+                if is_marker {
+                    self.marker = true;
+                }
+            }
+        }
+        is_marker
     }
 }
 
@@ -84,7 +102,7 @@ mod test {
 
     #[test]
     fn test_opus_payload() -> Result<(), PacketError> {
-        let mut pck = OpusPacketizer;
+        let mut pck = OpusPacketizer::default();
         let empty = &[];
         let payload = &[0x90, 0x90, 0x90];
 

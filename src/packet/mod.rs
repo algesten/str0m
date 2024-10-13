@@ -209,7 +209,7 @@ pub(crate) enum CodecDepacketizer {
 impl From<Codec> for CodecPacketizer {
     fn from(c: Codec) -> Self {
         match c {
-            Codec::Opus => CodecPacketizer::Opus(OpusPacketizer),
+            Codec::Opus => CodecPacketizer::Opus(OpusPacketizer::default()),
             Codec::H264 => CodecPacketizer::H264(H264Packetizer::default()),
             Codec::H265 => unimplemented!("Missing packetizer for H265"),
             Codec::Vp8 => CodecPacketizer::Vp8(Vp8Packetizer::default()),
