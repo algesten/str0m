@@ -5,7 +5,7 @@ use std::fmt;
 use std::panic::UnwindSafe;
 use thiserror::Error;
 
-use crate::format::Codec;
+use crate::format::{Codec, CodecSpec};
 use crate::sdp::MediaType;
 
 mod g7xx;
@@ -206,10 +206,12 @@ pub(crate) enum CodecDepacketizer {
     Boxed(Box<dyn Depacketizer + Send + Sync + UnwindSafe>),
 }
 
-impl From<Codec> for CodecPacketizer {
-    fn from(c: Codec) -> Self {
-        match c {
-            Codec::Opus => CodecPacketizer::Opus(OpusPacketizer::default()),
+impl From<CodecSpec> for CodecPacketizer {
+    fn from(c: CodecSpec) -> Self {
+        match c.codec {
+            Codec::Opus => {
+                CodecPacketizer::Opus(OpusPacketizer::new(c.format.use_dtx.unwrap_or_default()))
+            }
             Codec::H264 => CodecPacketizer::H264(H264Packetizer::default()),
             Codec::H265 => unimplemented!("Missing packetizer for H265"),
             Codec::Vp8 => CodecPacketizer::Vp8(Vp8Packetizer::default()),
