@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use str0m::format::Codec;
+use str0m::format::{Codec, FormatParams};
 use str0m::media::{Frequency, MediaKind, MediaTime};
 use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, Rtc, RtcError};
@@ -113,7 +113,26 @@ pub fn audio_start_of_talk_spurt_frame() -> Result<(), RtcError> {
 pub fn audio_start_of_talk_spurt_rtp() -> Result<(), RtcError> {
     init_log();
 
-    let rtc1 = Rtc::builder().build();
+    let mut rtc1_config = Rtc::builder().clear_codecs();
+    let codec_config = rtc1_config.codec_config();
+
+    // add a custom opus config with dtx flag set to true
+    codec_config.add_config(
+        111.into(),
+        None,
+        Codec::Opus,
+        Frequency::FORTY_EIGHT_KHZ,
+        Some(2),
+        FormatParams {
+            min_p_time: Some(10),
+            use_inband_fec: Some(true),
+            use_dtx: Some(true),
+            ..Default::default()
+        },
+    );
+
+    let rtc1 = rtc1_config.build();
+
     let rtc2 = Rtc::builder()
         .set_reordering_size_audio(0)
         .set_rtp_mode(true)
