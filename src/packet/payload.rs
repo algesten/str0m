@@ -21,7 +21,7 @@ pub struct Payloader {
 impl Payloader {
     pub(crate) fn new(spec: CodecSpec) -> Self {
         Payloader {
-            pack: spec.codec.into(),
+            pack: spec.into(),
             clock_rate: spec.clock_rate,
         }
     }

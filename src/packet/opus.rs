@@ -1,8 +1,21 @@
 use super::{CodecExtra, Depacketizer, MediaKind, PacketError, Packetizer};
 
 /// Packetizes Opus RTP packets.
-#[derive(Default, Debug, Copy, Clone)]
-pub struct OpusPacketizer;
+#[derive(Debug, Copy, Clone)]
+pub struct OpusPacketizer {
+    // stores if a marker was previously set
+    marker: bool,
+    use_dtx: bool,
+}
+
+impl OpusPacketizer {
+    pub fn new(use_dtx: bool) -> Self {
+        Self {
+            marker: false,
+            use_dtx,
+        }
+    }
+}
 
 impl Packetizer for OpusPacketizer {
     fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
@@ -23,8 +36,26 @@ impl Packetizer for OpusPacketizer {
     }
 
     fn is_marker(&mut self, data: &[u8], previous: Option<&[u8]>, last: bool) -> bool {
-        // TODO: dtx
-        false
+        if !self.use_dtx {
+            return false;
+        }
+        // any non silenced packet would generally have more than 2 byts
+        let mut is_marker = data.len() > 2;
+
+        match self.marker {
+            true => {
+                if !is_marker {
+                    self.marker = false;
+                }
+                is_marker = false;
+            }
+            false => {
+                if is_marker {
+                    self.marker = true;
+                }
+            }
+        }
+        is_marker
     }
 }
 
@@ -84,7 +115,7 @@ mod test {
 
     #[test]
     fn test_opus_payload() -> Result<(), PacketError> {
-        let mut pck = OpusPacketizer;
+        let mut pck = OpusPacketizer::new(true);
         let empty = &[];
         let payload = &[0x90, 0x90, 0x90];
 
@@ -99,6 +130,43 @@ mod test {
         // Positive MTU, small payload
         let result = pck.packetize(2, payload)?;
         assert_eq!(result.len(), 2, "Generated payload should be the 2");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_opus_packetizer_dtx() -> Result<(), PacketError> {
+        // packetizer with dtx on
+        let mut pck = OpusPacketizer::new(true);
+
+        let payload = &[0x90, 0x90, 0x90];
+
+        // Start of talking spurt, marker bit is set.
+        let is_marker = pck.is_marker(payload, None, false);
+        assert!(is_marker);
+        assert!(pck.marker);
+
+        // More talking so is_marker should be false.
+        let is_marker = pck.is_marker(payload, None, false);
+        assert!(!is_marker);
+        assert!(pck.marker);
+
+        // silence packet inserted, internal packetizer state should be reset.
+        let is_marker = pck.is_marker(&[], None, false);
+        assert!(!is_marker);
+        assert!(!pck.marker);
+
+        // talking start again, marker bit is set.
+        let is_marker = pck.is_marker(payload, None, false);
+        assert!(is_marker);
+        assert!(pck.marker);
+
+        let mut pck = OpusPacketizer::new(false);
+
+        // Start of talking spurt, since dtx is false marker should be false
+        let is_marker = pck.is_marker(payload, None, false);
+        assert!(!is_marker);
+        assert!(!pck.marker);
 
         Ok(())
     }
