@@ -1012,9 +1012,10 @@ fn update_session(session: &mut Session, sdp: &Sdp) {
         .id_of(Extension::TransportSequenceNumber)
         .is_some();
 
-    // Since twcc feedback is session wide and not per m-line or pt, we enable it if
-    // there are _any_ m-line with a a=rtcp-fb transport-cc parameter and the sequence
-    // number header is enabled.
+    // Since twcc feedback is session wide we enable it if there are _any_
+    // m-line with a a=rtcp-fb transport-cc parameter and the sequence number
+    // header is enabled. It can later be disabled for specific m-lines based
+    // on the extensions map.
     if has_transport_cc && has_twcc_header {
         session.enable_twcc_feedback();
     }

@@ -12,7 +12,7 @@ use crate::media::Media;
 use crate::media::{MediaAdded, MediaChanged};
 use crate::packet::SendSideBandwithEstimator;
 use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
-use crate::rtp::RawPacket;
+use crate::rtp::{Extension, RawPacket};
 use crate::rtp_::Direction;
 use crate::rtp_::Pt;
 use crate::rtp_::SeqNo;
@@ -706,7 +706,13 @@ impl Session {
 
         let params = &self.codec_config;
         let exts = media.remote_extmap();
-        let receipt = stream.poll_packet(now, exts, &mut self.twcc, params, buf)?;
+
+        // TWCC might not be enabled for this m-line. Firefox do use TWCC, but not
+        // for audio. This is indiciated via the SDP.
+        let twcc_enabled = exts.id_of(Extension::TransportSequenceNumber).is_some();
+        let twcc = twcc_enabled.then_some(&mut self.twcc);
+
+        let receipt = stream.poll_packet(now, exts, twcc, params, buf)?;
 
         let PacketReceipt {
             header,
@@ -732,8 +738,10 @@ impl Session {
 
         let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
-        self.twcc_tx_register
-            .register_seq(twcc_seq.into(), now, payload_size);
+        if twcc_enabled {
+            self.twcc_tx_register
+                .register_seq(twcc_seq.into(), now, payload_size);
+        }
 
         // Technically we should wait for the next handle_timeout, but this speeds things up a bit
         // avoiding an extra poll_timeout.

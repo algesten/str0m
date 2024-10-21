@@ -361,7 +361,7 @@ impl StreamTx {
         &mut self,
         now: Instant,
         exts: &ExtensionMap,
-        twcc: &mut u64,
+        twcc: Option<&mut u64>,
         params: &[PayloadParams],
         buf: &mut Vec<u8>,
     ) -> Option<PacketReceipt> {
@@ -466,8 +466,12 @@ impl StreamTx {
         // These need to match `Extension::is_supported()` so we are sending what we are
         // declaring we support.
         header.ext_vals.abs_send_time = Some(now);
-        header.ext_vals.transport_cc = Some(*twcc as u16);
-        *twcc += 1;
+
+        // TWCC might not be enabled for this m-line.
+        if let Some(twcc) = twcc {
+            header.ext_vals.transport_cc = Some(*twcc as u16);
+            *twcc += 1;
+        }
 
         buf.resize(DATAGRAM_MAX_PACKET_SIZE, 0);
 
