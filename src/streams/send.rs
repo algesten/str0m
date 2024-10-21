@@ -466,9 +466,7 @@ impl StreamTx {
 
         // These need to match `Extension::is_supported()` so we are sending what we are
         // declaring we support.
-        if exts.id_of(Extension::AbsoluteSendTime).is_some() {
-            header.ext_vals.abs_send_time = Some(now);
-        }
+        header.ext_vals.abs_send_time = Some(now);
         if exts.id_of(Extension::TransportSequenceNumber).is_some() {
             header.ext_vals.transport_cc = Some(*twcc as u16);
             *twcc += 1;
