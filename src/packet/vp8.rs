@@ -1,6 +1,6 @@
-use crate::rtp_::{extend_u15, extend_u16, extend_u7, extend_u8};
+use crate::rtp_::{extend_u15, extend_u7, extend_u8};
 
-use super::{BitRead, CodecExtra, Depacketizer, MediaKind, PacketError, Packetizer};
+use super::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
 
 pub const VP8_HEADER_SIZE: usize = 1;
 
@@ -121,7 +121,7 @@ impl Packetizer for Vp8Packetizer {
         Ok(payloads)
     }
 
-    fn is_marker(&mut self, data: &[u8], previous: Option<&[u8]>, last: bool) -> bool {
+    fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, last: bool) -> bool {
         last
     }
 }
@@ -316,6 +316,9 @@ impl Depacketizer for Vp8Depacketizer {
             },
             is_keyframe,
         });
+
+        let _ = payload_index;
+
         Ok(())
     }
 

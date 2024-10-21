@@ -143,6 +143,7 @@ enum Belongs {
 }
 
 impl Belongs {
+    #[cfg(test)]
     fn new_group(&self) -> bool {
         matches!(self, Self::NewGroup)
     }

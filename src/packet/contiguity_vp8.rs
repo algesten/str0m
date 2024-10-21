@@ -1,6 +1,5 @@
 use super::contiguity::FrameContiguityState;
 use super::Vp8CodecExtra;
-use std::collections::VecDeque;
 
 #[derive(Debug, Default)]
 pub struct Vp8Contiguity {
@@ -52,7 +51,6 @@ impl From<FrameContiguityState> for Vp8Contiguity {
 
 #[cfg(test)]
 mod test {
-    use tracing_subscriber::layer;
 
     use super::Vp8Contiguity;
     const L1T3_LAYERS: &[u64] = &[0, 2, 1, 2];
@@ -63,7 +61,7 @@ mod test {
         let mut contiguity = Vp8Contiguity::new();
 
         for i in 0..100 {
-            let mut next = &crate::packet::Vp8CodecExtra {
+            let next = &crate::packet::Vp8CodecExtra {
                 discardable: false,
                 sync: true,
                 layer_index: L1T3_LAYERS[i as usize % 4] as u8,
@@ -89,7 +87,7 @@ mod test {
                 continue;
             }
 
-            let mut next = &crate::packet::Vp8CodecExtra {
+            let next = &crate::packet::Vp8CodecExtra {
                 discardable: false,
                 sync: i % 8 == 0,
                 layer_index,
@@ -125,7 +123,7 @@ mod test {
                 continue;
             }
 
-            let mut next = &crate::packet::Vp8CodecExtra {
+            let next = &crate::packet::Vp8CodecExtra {
                 discardable: false,
                 sync: i % 8 == 0,
                 layer_index,
@@ -134,7 +132,7 @@ mod test {
                 is_keyframe: false,
             };
 
-            let (emit, contiguous) = contiguity.check(next, true);
+            let (emit, _) = contiguity.check(next, true);
 
             assert!(emit == (next.layer_index == 0));
         }
@@ -145,7 +143,7 @@ mod test {
         let mut contiguity = Vp8Contiguity::new();
 
         for i in 0..100 {
-            let mut next = &crate::packet::Vp8CodecExtra {
+            let next = &crate::packet::Vp8CodecExtra {
                 discardable: false,
                 sync: true,
                 layer_index: L1T2_LAYERS[i as usize % 4] as u8,
@@ -161,8 +159,6 @@ mod test {
 
     #[test]
     fn contiguous_l1t1_no_l1_contig_l0() {
-        const L1T3_LAYERS: &[u64] = &[0, 2, 1, 2];
-
         let mut contiguity = Vp8Contiguity::new();
 
         for i in 0..100 {
@@ -171,7 +167,7 @@ mod test {
                 continue;
             }
 
-            let mut next = &crate::packet::Vp8CodecExtra {
+            let next = &crate::packet::Vp8CodecExtra {
                 discardable: false,
                 sync: i % 8 == 0,
                 layer_index,
@@ -180,7 +176,7 @@ mod test {
                 is_keyframe: false,
             };
 
-            let (emit, contiguous) = contiguity.check(next, true);
+            let (emit, _) = contiguity.check(next, true);
 
             // all layer 0 are contiguous therefore can be emitted
             assert_eq!(emit, next.layer_index == 0);

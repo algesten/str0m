@@ -1,5 +1,4 @@
 #![allow(clippy::type_complexity)]
-#![allow(unused)]
 
 use std::fmt;
 use std::panic::UnwindSafe;
@@ -36,7 +35,7 @@ mod null;
 use null::{NullDepacketizer, NullPacketizer};
 
 mod buffer_rx;
-pub(crate) use buffer_rx::{Depacketized, DepacketizingBuffer, RtpMeta};
+pub(crate) use buffer_rx::{DepacketizingBuffer, RtpMeta};
 mod contiguity;
 mod contiguity_vp8;
 mod contiguity_vp9;
@@ -184,7 +183,9 @@ impl BitRead for (&[u8], usize) {
 
 #[derive(Debug)]
 pub(crate) enum CodecPacketizer {
+    #[allow(unused)]
     G711(G711Packetizer),
+    #[allow(unused)]
     G722(G722Packetizer),
     H264(H264Packetizer),
     // H265() TODO
@@ -192,6 +193,7 @@ pub(crate) enum CodecPacketizer {
     Vp8(Vp8Packetizer),
     Vp9(Vp9Packetizer),
     Null(NullPacketizer),
+    #[allow(unused)]
     Boxed(Box<dyn Packetizer + Send + Sync + UnwindSafe>),
 }
 
@@ -203,6 +205,7 @@ pub(crate) enum CodecDepacketizer {
     Vp8(Vp8Depacketizer),
     Vp9(Vp9Depacketizer),
     Null(NullDepacketizer),
+    #[allow(unused)]
     Boxed(Box<dyn Depacketizer + Send + Sync + UnwindSafe>),
 }
 
@@ -218,7 +221,6 @@ impl From<Codec> for CodecPacketizer {
             Codec::Null => CodecPacketizer::Null(NullPacketizer),
             Codec::Rtx => panic!("Cant instantiate packetizer for RTX codec"),
             Codec::Unknown => panic!("Cant instantiate packetizer for unknown codec"),
-            _ => panic!("Cant instantiate packetizer for unhandled codec"),
         }
     }
 }
@@ -235,7 +237,6 @@ impl From<Codec> for CodecDepacketizer {
             Codec::Null => CodecDepacketizer::Null(NullDepacketizer),
             Codec::Rtx => panic!("Cant instantiate depacketizer for RTX codec"),
             Codec::Unknown => panic!("Cant instantiate depacketizer for unknown codec"),
-            _ => panic!("Cant instantiate packetizer for unhandled codec"),
         }
     }
 }

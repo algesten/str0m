@@ -1,6 +1,6 @@
 #![allow(clippy::all)]
 
-use super::{CodecExtra, Depacketizer, MediaKind, PacketError, Packetizer};
+use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
 
 /// H264 information describing the depacketized / packetized data
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -200,7 +200,7 @@ impl Packetizer for H264Packetizer {
         Ok(payloads)
     }
 
-    fn is_marker(&mut self, data: &[u8], previous: Option<&[u8]>, last: bool) -> bool {
+    fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, last: bool) -> bool {
         last
     }
 }
@@ -479,7 +479,7 @@ mod test {
         let mut extra = CodecExtra::None;
         let mut out: Vec<u8> = Vec::new();
         let single_payload = &[0x90, 0x90, 0x90];
-        let result = pkt.depacketize(single_payload, &mut out, &mut extra);
+        let _ = pkt.depacketize(single_payload, &mut out, &mut extra);
         let single_payload_unmarshaled = &[0x00, 0x00, 0x00, 0x01, 0x90, 0x90, 0x90];
         assert_eq!(
             out, single_payload_unmarshaled,
@@ -495,7 +495,7 @@ mod test {
         let mut extra = CodecExtra::None;
         let mut out: Vec<u8> = Vec::new();
         let single_payload = &[0x90, 0x90, 0x90];
-        let result = pkt.depacketize(single_payload, &mut out, &mut extra);
+        let _ = pkt.depacketize(single_payload, &mut out, &mut extra);
         let single_payload_unmarshaled_avc = &[0x00, 0x00, 0x00, 0x03, 0x90, 0x90, 0x90];
         assert_eq!(
             out, single_payload_unmarshaled_avc,

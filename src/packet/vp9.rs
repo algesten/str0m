@@ -1,9 +1,6 @@
-use super::{BitRead, CodecExtra, Depacketizer, MediaKind, PacketError, Packetizer};
+use super::{BitRead, CodecExtra, Depacketizer, PacketError, Packetizer};
 
 use std::fmt;
-use std::panic::RefUnwindSafe;
-use std::panic::UnwindSafe;
-use std::sync::Arc;
 
 /// Flexible mode 15 bit picture ID
 const VP9HEADER_SIZE: usize = 3;
@@ -221,7 +218,7 @@ impl Packetizer for Vp9Packetizer {
         Ok(payloads)
     }
 
-    fn is_marker(&mut self, data: &[u8], previous: Option<&[u8]>, last: bool) -> bool {
+    fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, last: bool) -> bool {
         last
     }
 }
@@ -364,7 +361,7 @@ impl Vp9Depacketizer {
         };
 
         if self.l {
-            let mut new_stop = out_len + packet_len - payload_index;
+            let new_stop = out_len + packet_len - payload_index;
 
             if let Some(stop) = vp9_extra.layers_scheme[self.sid as usize] {
                 if stop != out_len {

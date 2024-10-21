@@ -205,7 +205,7 @@ impl Session {
 
     pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
         // Payload any waiting samples
-        self.do_payload(now)?;
+        self.do_payload()?;
 
         let sender_ssrc = self.streams.first_ssrc_local();
 
@@ -882,9 +882,9 @@ impl Session {
         self.medias.iter_mut().find(|m| m.mid() == mid)
     }
 
-    fn do_payload(&mut self, now: Instant) -> Result<(), RtcError> {
+    fn do_payload(&mut self) -> Result<(), RtcError> {
         for m in &mut self.medias {
-            m.do_payload(now, &mut self.streams, &self.codec_config)?;
+            m.do_payload(&mut self.streams, &self.codec_config)?;
         }
 
         Ok(())

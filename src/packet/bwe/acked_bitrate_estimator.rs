@@ -191,7 +191,7 @@ mod test {
         estimator.update(now + Duration::from_millis(550), DataSize::bytes(271));
         estimator.update(now + Duration::from_millis(558), DataSize::bytes(813));
         estimator.update(now + Duration::from_millis(648), DataSize::bytes(731));
-        /// Will not be counted, part of next window
+        // Will not be counted, part of next window
         estimator.update(now + Duration::from_millis(651), DataSize::bytes(900));
 
         let estimate = estimator.current_estimate().expect(
