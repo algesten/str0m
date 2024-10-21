@@ -14,7 +14,6 @@ use crate::packet::QueuePriority;
 use crate::packet::QueueSnapshot;
 use crate::packet::QueueState;
 use crate::rtp_::Bitrate;
-use crate::rtp_::Extension;
 use crate::rtp_::{extend_u16, Descriptions, ReportList, Rtcp};
 use crate::rtp_::{ExtensionMap, ReceptionReport, RtpHeader};
 use crate::rtp_::{ExtensionValues, Frequency, MediaTime, Mid, NackEntry};
@@ -362,7 +361,7 @@ impl StreamTx {
         &mut self,
         now: Instant,
         exts: &ExtensionMap,
-        twcc: &mut u64,
+        twcc: Option<&mut u64>,
         params: &[PayloadParams],
         buf: &mut Vec<u8>,
     ) -> Option<PacketReceipt> {
@@ -467,7 +466,9 @@ impl StreamTx {
         // These need to match `Extension::is_supported()` so we are sending what we are
         // declaring we support.
         header.ext_vals.abs_send_time = Some(now);
-        if exts.id_of(Extension::TransportSequenceNumber).is_some() {
+
+        // TWCC might not be enabled for this m-line.
+        if let Some(twcc) = twcc {
             header.ext_vals.transport_cc = Some(*twcc as u16);
             *twcc += 1;
         }

@@ -706,7 +706,13 @@ impl Session {
 
         let params = &self.codec_config;
         let exts = media.remote_extmap();
-        let receipt = stream.poll_packet(now, exts, &mut self.twcc, params, buf)?;
+
+        // TWCC might not be enabled for this m-line. Firefox do use TWCC, but not
+        // for audio. This is indiciated via the SDP.
+        let twcc_enabled = exts.id_of(Extension::TransportSequenceNumber).is_some();
+        let twcc = twcc_enabled.then_some(&mut self.twcc);
+
+        let receipt = stream.poll_packet(now, exts, twcc, params, buf)?;
 
         let PacketReceipt {
             header,
@@ -732,7 +738,7 @@ impl Session {
 
         let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
-        if exts.id_of(Extension::TransportSequenceNumber).is_some() {
+        if twcc_enabled {
             self.twcc_tx_register
                 .register_seq(twcc_seq.into(), now, payload_size);
         }
