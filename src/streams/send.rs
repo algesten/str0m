@@ -14,6 +14,7 @@ use crate::packet::QueuePriority;
 use crate::packet::QueueSnapshot;
 use crate::packet::QueueState;
 use crate::rtp_::Bitrate;
+use crate::rtp_::Extension;
 use crate::rtp_::{extend_u16, Descriptions, ReportList, Rtcp};
 use crate::rtp_::{ExtensionMap, ReceptionReport, RtpHeader};
 use crate::rtp_::{ExtensionValues, Frequency, MediaTime, Mid, NackEntry};
@@ -465,9 +466,13 @@ impl StreamTx {
 
         // These need to match `Extension::is_supported()` so we are sending what we are
         // declaring we support.
-        header.ext_vals.abs_send_time = Some(now);
-        header.ext_vals.transport_cc = Some(*twcc as u16);
-        *twcc += 1;
+        if exts.id_of(Extension::AbsoluteSendTime).is_some() {
+            header.ext_vals.abs_send_time = Some(now);
+        }
+        if exts.id_of(Extension::TransportSequenceNumber).is_some() {
+            header.ext_vals.transport_cc = Some(*twcc as u16);
+            *twcc += 1;
+        }
 
         buf.resize(DATAGRAM_MAX_PACKET_SIZE, 0);
 
