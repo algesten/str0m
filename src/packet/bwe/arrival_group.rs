@@ -20,8 +20,8 @@ impl ArrivalGroup {
     /// Maybe add a packet to the group.
     ///
     /// Returns [`true`] if a new group needs to be created and [`false`] otherwise.
-    fn add_packet(&mut self, packet: AckedPacket) -> bool {
-        match self.belongs_to_group(&packet) {
+    fn add_packet(&mut self, packet: &AckedPacket) -> bool {
+        match self.belongs_to_group(packet) {
             Belongs::NewGroup => return true,
             Belongs::Skipped => return false,
             Belongs::Yes => {}
@@ -156,12 +156,13 @@ pub struct ArrivalGroupAccumulator {
 }
 
 impl ArrivalGroupAccumulator {
+    ///
     /// Accumulate a packet.
     ///
     /// If adding this packet produced a new delay delta it is returned.
     pub(super) fn accumulate_packet(
         &mut self,
-        packet: AckedPacket,
+        packet: &AckedPacket,
     ) -> Option<InterGroupDelayDelta> {
         let need_new_group = self.current_group.add_packet(packet);
 
@@ -287,7 +288,7 @@ mod test {
         for p in packets {
             let need_new_group = group.belongs_to_group(&p).new_group();
             if !need_new_group {
-                group.add_packet(p);
+                group.add_packet(&p);
             }
         }
 
@@ -353,7 +354,7 @@ mod test {
         for p in packets {
             let need_new_group = group.belongs_to_group(&p).new_group();
             if !need_new_group {
-                group.add_packet(p);
+                group.add_packet(&p);
             }
         }
 
@@ -405,7 +406,7 @@ mod test {
         for p in packets {
             let need_new_group = group.belongs_to_group(&p).new_group();
             if !need_new_group {
-                group.add_packet(p);
+                group.add_packet(&p);
             }
         }
 
