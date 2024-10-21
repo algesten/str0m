@@ -1,4 +1,3 @@
-use core::panic;
 use std::collections::VecDeque;
 use std::fmt;
 use std::ops::{Range, RangeInclusive};
@@ -6,10 +5,10 @@ use std::time::Instant;
 
 use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SenderInfo, SeqNo};
 
-use super::contiguity::{self, Contiguity};
+use super::contiguity::Contiguity;
 use super::contiguity_vp8::Vp8Contiguity;
 use super::contiguity_vp9::Vp9Contiguity;
-use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError, Vp8CodecExtra};
+use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError};
 
 #[derive(Clone, PartialEq, Eq)]
 /// Holds metadata incoming RTP data.
@@ -245,7 +244,7 @@ impl DepacketizingBuffer {
         &mut self,
         start: usize,
         stop: usize,
-        seq: SeqNo,
+        _seq: SeqNo,
     ) -> Result<Depacketized, PacketError> {
         if let Some(cached) = self.depack_cache.take() {
             if cached.0 == (start..stop) {
@@ -358,10 +357,6 @@ impl DepacketizingBuffer {
         let start_entry = self.queue.get(start).expect("entry for start index");
 
         seq.is_next(start_entry.meta.seq_no)
-    }
-
-    pub fn max_time(&self) -> Option<MediaTime> {
-        self.max_time
     }
 }
 
@@ -648,7 +643,7 @@ mod test {
             };
 
         let inputs = [
-            /// PID: 23860
+            // PID: 23860
             (
                 821395241, // Timestamp
                 8685,      // SeqN
@@ -659,7 +654,7 @@ mod test {
                 //        +--------------------+
                 Vec::from([236, 221, 52, 80, 26, 10, 1, 1, 1, 1, 1, 1, 1, 1]), // Data
             ),
-            /// PID: 23860
+            // PID: 23860
             (
                 821395241, // Timestamp
                 8686,      // SeqN
@@ -670,7 +665,7 @@ mod test {
                 //        +--------------------+
                 Vec::from([237, 221, 52, 83, 26, 10, 2, 2, 2, 2, 2, 2, 2, 2]), // Data
             ),
-            /// PID: 23861
+            // PID: 23861
             (
                 821398481, // Timestamp
                 8687,      // SeqN
@@ -681,7 +676,7 @@ mod test {
                 //        +------------------------+
                 Vec::from([170, 221, 53, 16, 27, 56, 20, 0, 0, 0, 0, 0, 0, 0, 0]), // Data
             ),
-            /// PID: 23861
+            // PID: 23861
             (
                 821398481, // Timestamp
                 8688,      // SeqN
@@ -692,7 +687,7 @@ mod test {
                 //        +--------------------+
                 Vec::from([160, 221, 53, 16, 27, 20, 1, 1, 1, 1, 1, 1, 1, 1]), // Data
             ),
-            /// PID: 23861
+            // PID: 23861
             (
                 821398481,
                 8689,
@@ -703,7 +698,7 @@ mod test {
                 //        +--------------------+
                 Vec::from([164, 221, 53, 16, 27, 20, 2, 2, 2, 2, 2, 2, 2, 2]), // Data
             ),
-            /// PID: 23861
+            // PID: 23861
             (
                 821398481, // Timestamp
                 8690,      // SeqN
@@ -714,7 +709,7 @@ mod test {
                 //        +--------------------+
                 Vec::from([169, 221, 53, 19, 27, 20, 3, 3, 3, 3, 3, 3, 3, 3]), // Data
             ),
-            /// PID: 23861
+            // PID: 23861
             (
                 821398481, // Timestamp
                 8691,      // SeqN
@@ -725,7 +720,7 @@ mod test {
                 //        +--------------------+
                 Vec::from([161, 221, 53, 19, 27, 20, 4, 4, 4, 4, 4, 4, 4, 4]), // Data
             ),
-            /// PID: 23861
+            // PID: 23861
             (
                 821398481, // Timestamp
                 8692,      // SeqN
@@ -736,7 +731,7 @@ mod test {
                 //        +--------------------+
                 Vec::from([161, 221, 53, 19, 27, 20, 5, 5, 5, 5, 5, 5, 5, 5]), // Data
             ),
-            /// PID: 23861
+            // PID: 23861
             (
                 821398481, // Timestamp
                 8693,      // SeqN
@@ -747,7 +742,7 @@ mod test {
                 //        +--------------------+
                 Vec::from([161, 221, 53, 19, 27, 20, 6, 6, 6, 6, 6, 6, 6, 6]), // Data
             ),
-            /// PID: 23861
+            // PID: 23861
             (
                 821398481, // Timestamp
                 8694,      // SeqN

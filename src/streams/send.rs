@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 use std::time::Instant;
 
+use crate::error::PacketError;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::DATAGRAM_MAX_PACKET_SIZE;
@@ -26,7 +27,6 @@ use crate::stats::StatsSnapshot;
 use crate::util::value_history::ValueHistory;
 use crate::util::InstantExt;
 use crate::util::{already_happened, calculate_rtt_ms, not_happening};
-use crate::RtcError;
 
 use super::rtx_cache::RtxCache;
 use super::send_queue::SendQueue;
@@ -307,7 +307,7 @@ impl StreamTx {
         ext_vals: ExtensionValues,
         nackable: bool,
         payload: Vec<u8>,
-    ) -> Result<(), RtcError> {
+    ) -> Result<(), PacketError> {
         let first_call = self.rtp_and_wallclock.is_none();
 
         if first_call && seq_no.roc() > 0 {

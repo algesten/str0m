@@ -1,4 +1,4 @@
-use super::{CodecExtra, Depacketizer, MediaKind, PacketError, Packetizer};
+use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
 
 /// Packetizes Opus RTP packets.
 #[derive(Default, Debug, Copy, Clone)]
@@ -22,7 +22,7 @@ impl Packetizer for OpusPacketizer {
         Ok(out)
     }
 
-    fn is_marker(&mut self, data: &[u8], previous: Option<&[u8]>, last: bool) -> bool {
+    fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, _last: bool) -> bool {
         // TODO: dtx
         false
     }

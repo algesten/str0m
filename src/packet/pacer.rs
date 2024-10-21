@@ -1,18 +1,13 @@
 use std::collections::HashMap;
-use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::rtp_::MAX_BLANK_PADDING_PAYLOAD_SIZE;
 use crate::rtp_::{Bitrate, DataSize, Mid};
 use crate::util::already_happened;
 use crate::util::not_happening;
 use crate::util::Soonest;
 
-use super::MediaKind;
-
 const MAX_BITRATE: Bitrate = Bitrate::gbps(10);
 const MAX_DEBT_IN_TIME: Duration = Duration::from_millis(500);
-const MAX_PADDING_PACKET_SIZE: DataSize = DataSize::bytes(MAX_BLANK_PADDING_PAYLOAD_SIZE as u64);
 const PADDING_BURST_INTERVAL: Duration = Duration::from_millis(5);
 const PACING: Duration = Duration::from_millis(40);
 
@@ -143,13 +138,6 @@ pub enum QueuePriority {
 }
 
 impl QueueSnapshot {
-    /// Whether anything has ever been sent on this queue.
-    ///
-    /// Used to ensure we don't send padding before sending the first bits of media.
-    pub fn has_ever_sent(&self) -> bool {
-        self.last_emitted.is_some()
-    }
-
     /// Update the priority if the snapshot is non-empty.
     ///
     /// Sets the priority to the provided priority if the queue is non-empty, otherwise empty.
@@ -606,8 +594,6 @@ impl QueueSnapshot {
 
 #[cfg(test)]
 mod test {
-    use std::ops::Range;
-    use std::thread;
     use std::time::{Duration, Instant};
 
     use crate::rtp_::{DataSize, RtpHeader};
@@ -1119,7 +1105,7 @@ mod test {
     }
 
     fn make_packet(seq_no: u16, size: usize, kind: PacketKind) -> (RtpHeader, usize, PacketKind) {
-        let mut header = RtpHeader {
+        let header = RtpHeader {
             sequence_number: seq_no,
             ..Default::default()
         };
@@ -1164,7 +1150,7 @@ mod test {
             frame_pacing,
         } = config;
 
-        let mut base = Instant::now();
+        let base = Instant::now();
         let mut queue = Queue::default();
         let mut pacer = LeakyBucketPacer::new(media_rate);
         pacer.set_pacing_rate(padding_rate);
@@ -1175,7 +1161,7 @@ mod test {
         let mut padding_sent = DataSize::ZERO;
         let mut elapsed = Duration::ZERO;
 
-        let mut generate_padding = |queue: &mut Queue, now: Instant, request: PaddingRequest| {
+        let generate_padding = |queue: &mut Queue, now: Instant, request: PaddingRequest| {
             let rand: f32 = fastrand::f32();
             let overshoot_factor: f32 = rand * max_overshoot_factor;
             let final_size = ((request.padding as f32) * (1.0 + overshoot_factor).round()) as usize;
@@ -1207,10 +1193,7 @@ mod test {
                     continue;
                 }
 
-                let t = pacer.poll_timeout();
-                let next_poll_in = t.map(|t| t - (base + elapsed));
-
-                t
+                pacer.poll_timeout()
             };
 
             let sleep_until_poll = timeout
@@ -1360,10 +1343,6 @@ mod test {
                 }
             }
 
-            pub(super) fn padding_mid(&self) -> Mid {
-                self.padding_queue.mid
-            }
-
             fn queue_for_kind_mut(&mut self, kind: PacketKind) -> &mut Inner {
                 match kind {
                     PacketKind::Audio => &mut self.audio_queue,
@@ -1466,6 +1445,8 @@ mod test {
                 }
             }
         }
+
+        use std::fmt;
 
         impl fmt::Display for PacketKind {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

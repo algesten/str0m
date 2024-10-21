@@ -278,6 +278,7 @@ impl TrendlineEstimator {
 
 #[derive(Debug)]
 struct Timing {
+    #[allow(unused)]
     at: Instant,
     remote_recv_time_ms: f64,
     smoothed_delay_ms: f64,
@@ -307,7 +308,7 @@ mod test {
             now,
         );
 
-        for i in 0..25 {
+        for _ in 0..25 {
             estimator.add_delay_observation(
                 delay_variation(
                     10.0,

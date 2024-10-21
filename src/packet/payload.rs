@@ -1,16 +1,10 @@
-use std::collections::HashMap;
-use std::collections::{BTreeMap, VecDeque};
-
-use std::fmt;
-use std::time::{Duration, Instant};
-
 use crate::format::CodecSpec;
 use crate::media::ToPayload;
-use crate::rtp_::{ExtensionValues, Frequency, MediaTime, Rid, RtpHeader, SeqNo, Ssrc};
+use crate::rtp_::Frequency;
 use crate::streams::StreamTx;
 
-use super::{CodecPacketizer, PacketError, Packetizer, QueueSnapshot};
-use super::{MediaKind, QueuePriority};
+use super::PacketError;
+use super::{CodecPacketizer, Packetizer};
 
 #[derive(Debug)]
 pub struct Payloader {
@@ -28,7 +22,6 @@ impl Payloader {
 
     pub(crate) fn push_sample(
         &mut self,
-        now: Instant,
         to_payload: ToPayload,
         mtu: usize,
         is_audio: bool,
@@ -36,28 +29,21 @@ impl Payloader {
     ) -> Result<(), PacketError> {
         let ToPayload {
             pt,
-            rid,
             wallclock,
             rtp_time,
             data,
             ext_vals,
+            ..
         } = to_payload;
 
         let chunks = self.pack.packetize(mtu, &data)?;
         let len = chunks.len();
 
-        let ssrc = stream.ssrc();
-
-        let mut data_len = 0;
-
         for (idx, data) in chunks.into_iter().enumerate() {
-            let first = idx == 0;
             let last = idx == len - 1;
 
             let previous_data = stream.last_packet();
             let marker = self.pack.is_marker(data.as_slice(), previous_data, last);
-
-            data_len += data.len();
 
             let seq_no = stream.next_seq_no();
 
@@ -73,7 +59,7 @@ impl Payloader {
                 ext_vals.clone(),
                 nackable,
                 data,
-            );
+            )?;
         }
 
         Ok(())

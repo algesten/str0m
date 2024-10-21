@@ -55,7 +55,6 @@ mod test {
     use crate::packet::Vp9CodecExtra;
 
     use super::Vp9Contiguity;
-    use tracing_subscriber::layer;
 
     const L1T3_LAYERS: &[u64] = &[0, 2, 1, 2];
     const L1T2_LAYERS: &[u64] = &[0, 1, 0, 1];
@@ -74,7 +73,7 @@ mod test {
         let mut contiguity = Vp9Contiguity::new();
 
         for i in 0..100 {
-            let mut next = get_codec_extra(i, L1T3_LAYERS[i as usize % 4] as u8, (i / 4) as u8);
+            let next = get_codec_extra(i, L1T3_LAYERS[i as usize % 4] as u8, (i / 4) as u8);
 
             let res = contiguity.check(&next, true);
             assert_eq!(res, (true, true), "Failure at picture {} {:?}", i, next);
@@ -93,7 +92,7 @@ mod test {
                 continue;
             }
 
-            let mut next = get_codec_extra(i, layer_index, (i / 4) as u8);
+            let next = get_codec_extra(i, layer_index, (i / 4) as u8);
             let (emit, contiguous) = contiguity.check(&next, true);
 
             // all layer 0 are contiguous therefore no discontinuity
@@ -121,8 +120,8 @@ mod test {
                 continue;
             }
 
-            let mut next = get_codec_extra(i, layer_index, i as u8);
-            let (emit, contiguous) = contiguity.check(&next, true);
+            let next = get_codec_extra(i, layer_index, i as u8);
+            let (emit, _) = contiguity.check(&next, true);
 
             assert!(emit == (next.tid == Some(0)));
         }
@@ -133,7 +132,7 @@ mod test {
         let mut contiguity = Vp9Contiguity::new();
 
         for i in 0..100 {
-            let mut next = get_codec_extra(i, L1T2_LAYERS[i as usize % 4] as u8, (i / 2) as u8);
+            let next = get_codec_extra(i, L1T2_LAYERS[i as usize % 4] as u8, (i / 2) as u8);
 
             let res = contiguity.check(&next, true);
             assert_eq!(res, (true, true), "Failure at picture {} {:?}", i, next);
@@ -142,8 +141,6 @@ mod test {
 
     #[test]
     fn contiguous_l1t1_no_l1_contig_l0() {
-        const L1T3_LAYERS: &[u64] = &[0, 2, 1, 2];
-
         let mut contiguity = Vp9Contiguity::new();
 
         for i in 0..100 {
@@ -152,8 +149,8 @@ mod test {
                 continue;
             }
 
-            let mut next = get_codec_extra(i, layer_index, (i / 2) as u8);
-            let (emit, contiguous) = contiguity.check(&next, true);
+            let next = get_codec_extra(i, layer_index, (i / 2) as u8);
+            let (emit, _) = contiguity.check(&next, true);
 
             // all layer 0 are contiguous therefore can be emitted
             assert_eq!(emit, next.tid == Some(0));

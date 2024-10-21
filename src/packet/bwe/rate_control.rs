@@ -109,7 +109,7 @@ impl RateControl {
             self.averaged_observed_bitrate.reset();
         }
 
-        let since_last_update = (now - last_estimate_update);
+        let since_last_update = now - last_estimate_update;
         assert!(since_last_update >= Duration::ZERO);
         let near_convergence = self.is_near_convergence();
 
@@ -158,6 +158,7 @@ impl RateControl {
         self.averaged_observed_bitrate
             .update(observed_bitrate.as_f64());
 
+        #[allow(unused)]
         if let Some(observed_average) = self.averaged_observed_bitrate.average {
             crate::packet::bwe::macros::log_rate_control_observed_bitrate!(
                 observed_bitrate.as_u64(),
@@ -392,7 +393,6 @@ mod test {
 
         #[test]
         fn test_initial_estimate() {
-            let now = Instant::now();
             let rate_controller = make_control(100_000);
 
             assert_eq!(rate_controller.estimated_bitrate().as_u64(), 100_000);

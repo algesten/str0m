@@ -379,7 +379,6 @@ impl Media {
 
     pub(crate) fn do_payload(
         &mut self,
-        now: Instant,
         streams: &mut Streams,
         params: &[PayloadParams],
     ) -> Result<(), RtcError> {
@@ -406,7 +405,7 @@ impl Media {
         const MTU: usize = RTP_SIZE - RTP_SIZE % SRTP_BLOCK_SIZE;
 
         payloader
-            .push_sample(now, to_payload, MTU, is_audio, stream)
+            .push_sample(to_payload, MTU, is_audio, stream)
             .map_err(|e| RtcError::Packet(self.mid, pt, e))?;
 
         Ok(())
