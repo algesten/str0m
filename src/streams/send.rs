@@ -14,7 +14,7 @@ use crate::media::MediaKind;
 use crate::packet::QueuePriority;
 use crate::packet::QueueSnapshot;
 use crate::packet::QueueState;
-use crate::rtp_::Bitrate;
+use crate::rtp_::{Bitrate, Extension};
 use crate::rtp_::{extend_u16, Descriptions, ReportList, Rtcp};
 use crate::rtp_::{ExtensionMap, ReceptionReport, RtpHeader};
 use crate::rtp_::{ExtensionValues, Frequency, MediaTime, Mid, NackEntry};
@@ -465,7 +465,11 @@ impl StreamTx {
 
         // These need to match `Extension::is_supported()` so we are sending what we are
         // declaring we support.
-        header.ext_vals.abs_send_time = Some(now);
+
+        // Absolute Send Time might not be enabled for this m-line.
+        if exts.id_of(Extension::AbsoluteSendTime).is_some() {
+            header.ext_vals.abs_send_time = Some(now);
+        }
 
         // TWCC might not be enabled for this m-line.
         if let Some(twcc) = twcc {
