@@ -8,23 +8,11 @@ use std::cmp::min;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+use crate::rtp_::TwccSendRecord;
 use crate::{Bitrate, DataSize};
 
 use super::super_instant::SuperInstant;
-
-// WIP: temporary definitions to be removed when integrating with the rest of the bwe system
-pub struct PacketResult {
-    pub receive_time: Option<Instant>,
-    pub first_send_time: Instant,
-    pub size: DataSize,
-}
-
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum DelayDetectorBandwidthUsage {
-    Normal,
-    Underusing,
-    Overusing,
-}
+use super::BandwidthUsage;
 
 /// Loss Controller
 ///
@@ -102,7 +90,7 @@ pub struct LossController {
     delay_based_estimate: Bitrate,
 
     /// Prior states from the delay based estimator
-    delay_detector_states: VecDeque<DelayDetectorBandwidthUsage>,
+    delay_detector_states: VecDeque<BandwidthUsage>,
 
     // output
     loss_based_results: Bitrate,
@@ -200,11 +188,11 @@ impl LossController {
 
     pub fn update_bandwidth_estimate(
         &mut self,
-        packet_results: Vec<PacketResult>,
+        packet_results: &[TwccSendRecord],
         delay_based_estimated: Bitrate,
         // TODO: not used ?
         // _acknowledged_bitrate: Bitrate,
-        delay_detector_state: DelayDetectorBandwidthUsage,
+        delay_detector_state: BandwidthUsage,
     ) {
         self.delay_based_estimate = delay_based_estimated;
 
@@ -506,8 +494,8 @@ impl LossController {
 
     fn maybe_add_observation(
         &mut self,
-        packet_results: &[PacketResult],
-        delay_detector_state: DelayDetectorBandwidthUsage,
+        packet_results: &[TwccSendRecord],
+        delay_detector_state: BandwidthUsage,
     ) -> bool {
         self.delay_detector_states.push_front(delay_detector_state);
         if self.delay_detector_states.len() > self.config.trendline_observations_window_size {
@@ -539,7 +527,7 @@ impl LossController {
         // decide if we can accept the partial observation as complete
 
         let too_small = observation_duration <= self.config.observation_duration_lower_bound;
-        let overusing = delay_detector_state == DelayDetectorBandwidthUsage::Overusing;
+        let overusing = delay_detector_state == BandwidthUsage::Overuse;
         if too_small && (overusing || !self.config.trendline_integration_enabled) {
             return false;
         }
@@ -778,9 +766,7 @@ impl LossController {
         }
 
         for state in self.delay_detector_states.iter() {
-            if *state == DelayDetectorBandwidthUsage::Overusing
-                || *state == DelayDetectorBandwidthUsage::Underusing
-            {
+            if *state == BandwidthUsage::Overuse || *state == BandwidthUsage::Underuse {
                 return false;
             }
         }
@@ -799,7 +785,7 @@ impl LossController {
 
         // TODO: consider passing this in as params
         for state in self.delay_detector_states.iter() {
-            if *state == DelayDetectorBandwidthUsage::Overusing {
+            if *state == BandwidthUsage::Overuse {
                 return true;
             }
         }
@@ -855,16 +841,18 @@ impl PacketResultsSummary {
         }
     }
 
-    pub fn from(packet_results: &[PacketResult]) -> Option<PacketResultsSummary> {
-        let first = packet_results.first()?;
+    pub fn from(records: &[TwccSendRecord]) -> Option<PacketResultsSummary> {
+        let first = records.first()?;
 
-        let mut summary = PacketResultsSummary::new(first.first_send_time, first.first_send_time);
-        for packet in packet_results.iter() {
+        let mut summary =
+            PacketResultsSummary::new(first.local_send_time(), first.local_send_time());
+        for record in records {
             summary.num_packets += 1;
-            summary.total_size += packet.size.as_bytes_usize() as u64;
-            summary.first_send_time = min(summary.first_send_time, packet.first_send_time);
-            summary.last_send_time = max(summary.last_send_time, packet.first_send_time);
-            if packet.receive_time.is_none() {
+            summary.total_size += record.size() as u64;
+            summary.first_send_time = min(summary.first_send_time, record.local_send_time());
+            summary.last_send_time = max(summary.last_send_time, record.local_send_time());
+
+            if record.remote_recv_time().is_none() {
                 summary.num_lost_packets += 1;
             }
         }
@@ -1015,8 +1003,11 @@ mod test {
     use fastrand::Rng;
     use systemstat::Duration;
 
+    use crate::rtp_::SeqNo;
+
     use super::{
-        Bitrate, DataSize, LossBasedBweResult, LossController, LossControllerState, PacketResult,
+        BandwidthUsage, Bitrate, DataSize, LossBasedBweResult, LossController, LossControllerState,
+        TwccSendRecord,
     };
 
     #[test]
@@ -1038,9 +1029,9 @@ mod test {
         for _ in 0..200 {
             let result = pkt_builder.build_packets();
             lbc.update_bandwidth_estimate(
-                result,
+                &result,
                 Bitrate::bps(1_500_000),
-                super::DelayDetectorBandwidthUsage::Underusing,
+                BandwidthUsage::Underuse,
             );
 
             pkt_builder = pkt_builder.forward_time(Duration::from_millis(50));
@@ -1080,9 +1071,9 @@ mod test {
         for _ in 0..10 {
             let result = pkt_builder.build_packets();
             lbc.update_bandwidth_estimate(
-                result,
+                &result,
                 Bitrate::bps(1_500_000),
-                super::DelayDetectorBandwidthUsage::Underusing,
+                BandwidthUsage::Underuse,
             );
 
             pkt_builder = pkt_builder.forward_time(Duration::from_millis(500));
@@ -1093,9 +1084,9 @@ mod test {
         for _ in 0..2 {
             let result = pkt_builder.build_packets();
             lbc.update_bandwidth_estimate(
-                result,
+                &result,
                 Bitrate::bps(1_500_000),
-                super::DelayDetectorBandwidthUsage::Underusing,
+                BandwidthUsage::Underuse,
             );
 
             pkt_builder = pkt_builder.forward_time(Duration::from_millis(500));
@@ -1134,9 +1125,9 @@ mod test {
         for _ in 0..200 {
             let result = pkt_builder.build_packets();
             lbc.update_bandwidth_estimate(
-                result,
+                &result,
                 Bitrate::bps(1_500_000),
-                super::DelayDetectorBandwidthUsage::Underusing,
+                BandwidthUsage::Underuse,
             );
 
             pkt_builder = pkt_builder.forward_time(Duration::from_millis(50));
@@ -1147,9 +1138,9 @@ mod test {
         for _ in 0..40 {
             let result = pkt_builder.build_packets();
             lbc.update_bandwidth_estimate(
-                result,
+                &result,
                 Bitrate::bps(1_500_000),
-                super::DelayDetectorBandwidthUsage::Underusing,
+                BandwidthUsage::Underuse,
             );
 
             pkt_builder = pkt_builder.forward_time(Duration::from_millis(50));
@@ -1165,9 +1156,9 @@ mod test {
         for _ in 0..200 {
             let result = pkt_builder.build_packets();
             lbc.update_bandwidth_estimate(
-                result,
+                &result,
                 Bitrate::bps(1_500_000),
-                super::DelayDetectorBandwidthUsage::Underusing,
+                BandwidthUsage::Underuse,
             );
 
             pkt_builder = pkt_builder.forward_time(Duration::from_millis(50));
@@ -1207,9 +1198,9 @@ mod test {
         for _ in 0..200 {
             let result = pkt_builder.build_packets();
             lbc.update_bandwidth_estimate(
-                result,
+                &result,
                 Bitrate::bps(1_500_000),
-                super::DelayDetectorBandwidthUsage::Underusing,
+                BandwidthUsage::Underuse,
             );
 
             pkt_builder = pkt_builder.forward_time(Duration::from_millis(50));
@@ -1222,9 +1213,9 @@ mod test {
             for _ in 0..4 {
                 let result = pkt_builder.build_packets();
                 lbc.update_bandwidth_estimate(
-                    result,
+                    &result,
                     Bitrate::bps(1_500_000),
-                    super::DelayDetectorBandwidthUsage::Underusing,
+                    BandwidthUsage::Underuse,
                 );
 
                 pkt_builder = pkt_builder.forward_time(Duration::from_millis(50));
@@ -1253,6 +1244,7 @@ mod test {
         recv_distribution: LogNormalDistribution,
         num_packets: u32,
         packet_size: DataSize,
+        seq: SeqNo,
     }
 
     impl PacketBuilder {
@@ -1271,6 +1263,7 @@ mod test {
                 },
                 num_packets: 10,
                 packet_size: DataSize::bytes(1200),
+                seq: 0.into(),
             }
         }
 
@@ -1289,10 +1282,10 @@ mod test {
             self
         }
 
-        fn build_packets(&mut self) -> Vec<PacketResult> {
+        fn build_packets(&mut self) -> Vec<TwccSendRecord> {
             let mut last_send_time = self.now;
             let mut last_recv_time = self.now;
-            let mut result: Vec<PacketResult> = Vec::with_capacity(self.num_packets as usize);
+            let mut result: Vec<TwccSendRecord> = Vec::with_capacity(self.num_packets as usize);
 
             for i in 0..self.num_packets {
                 let lost = self.rng.f64() <= self.loss_rate;
@@ -1305,11 +1298,13 @@ mod test {
                         self.recv_distribution.sample(&mut self.rng) / 1000.0,
                     );
 
-                result.push(PacketResult {
-                    receive_time: (!lost).then_some(recv_time),
+                result.push(TwccSendRecord::new_reported(
+                    self.seq,
                     first_send_time,
-                    size: self.packet_size,
-                });
+                    self.packet_size.as_bytes_usize() as u16,
+                    first_send_time + Duration::from_nanos(50),
+                    (!lost).then_some(recv_time),
+                ));
 
                 last_send_time = first_send_time;
                 if !lost {

@@ -1,5 +1,5 @@
 use std::{
-    ops::{Add, AddAssign, Deref, Sub, SubAssign},
+    ops::{Add, AddAssign, Sub, SubAssign},
     time::{Duration, Instant},
 };
 

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::rtp_::Bitrate;
 
-use super::BandwithUsage;
+use super::BandwidthUsage;
 
 // Recommended values from https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02#section-5
 /// Smoothing factor applied to moving stats for observed bitrates when we are in the decreasing
@@ -243,12 +243,12 @@ impl State {
     }
 }
 
-impl From<BandwithUsage> for Signal {
-    fn from(value: BandwithUsage) -> Self {
+impl From<BandwidthUsage> for Signal {
+    fn from(value: BandwidthUsage) -> Self {
         match value {
-            BandwithUsage::Overuse => Signal::Overuse,
-            BandwithUsage::Normal => Signal::Normal,
-            BandwithUsage::Underuse => Signal::Underuse,
+            BandwidthUsage::Overuse => Signal::Overuse,
+            BandwidthUsage::Normal => Signal::Normal,
+            BandwidthUsage::Underuse => Signal::Underuse,
         }
     }
 }
@@ -317,10 +317,6 @@ impl MovingAverage {
         }
 
         self.average.map(|avg| avg - num_std * self.std)
-    }
-
-    pub fn get_average(&self) -> Option<f64> {
-        self.average
     }
 
     pub fn update(&mut self, value: f64) {
