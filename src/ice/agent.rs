@@ -390,16 +390,14 @@ impl IceAgent {
         self.candidate_pairs
             .iter()
             .filter(|cand| cand.state() == CheckState::Succeeded)
-            .find_map(|pair| {
+            .find(|pair| {
                 let o = &self.remote_candidates[pair.remote_idx()];
 
-                let same = c.addr() == o.addr()
+                c.addr() == o.addr()
                     && c.base() == o.base()
                     && c.proto() == o.proto()
                     && c.kind() == o.kind()
-                    && c.raddr() == o.raddr();
-
-                same.then(|| pair)
+                    && c.raddr() == o.raddr()
             })
     }
 
@@ -684,7 +682,7 @@ impl IceAgent {
             let existing_discarded = existing_idx.and_then(|idx| {
                 let o = &mut self.remote_candidates[idx];
 
-                o.discarded().then(|| (idx, o))
+                o.discarded().then_some((idx, o))
             });
 
             if let Some((idx, other)) = existing_discarded {
