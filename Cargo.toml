@@ -15,8 +15,9 @@ exclude = ["/cargo_deny.sh", "/deny.toml", "/run-fuzz.sh"]
 rust-version = "1.65"
 
 [features]
-default = ["openssl"]
+default = ["openssl", "sha1"]
 openssl = ["dep:openssl", "dep:openssl-sys", "dep:libc"]
+sha1 = ["dep:sha1"]
 _internal_dont_use_log_stats = []
 _internal_test_exports = []
 
@@ -39,13 +40,13 @@ crc = "3.0.0"
 serde = { version = "1.0.152", features = ["derive"] }
 
 [target.'cfg(unix)'.dependencies]
-sha1 = { version = "0.10.6", features = ["asm"] }
+sha1 = { version = "0.10.6", features = ["asm"], optional = true }
 
 # Don't use `asm` on Windows until https://github.com/RustCrypto/asm-hashes/issues/45 is fixed.
 # The `asm` feature isn't compatible with `windows-msvc` toolchain and `openssl` breaks if we want to use `windows-gnu`.
 # Thus, don't use `asm` feature on Windows.
 [target.'cfg(windows)'.dependencies]
-sha1 = { version = "0.10.6" }
+sha1 = { version = "0.10.6" , optional = true}
 
 [dev-dependencies]
 rouille = { version = "3.5.0", features = ["ssl"] }
