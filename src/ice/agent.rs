@@ -382,6 +382,27 @@ impl IceAgent {
         }
     }
 
+    /// Determine whether an equivalent remote candidate is part of a viable candidate pair.
+    pub fn find_viable_pair_for_equivalent_remote_candidate(
+        &self,
+        c: &Candidate,
+    ) -> Option<&CandidatePair> {
+        self.candidate_pairs
+            .iter()
+            .filter(|cand| cand.state() == CheckState::Succeeded)
+            .find_map(|pair| {
+                let o = &self.remote_candidates[pair.remote_idx()];
+
+                let same = c.addr() == o.addr()
+                    && c.base() == o.base()
+                    && c.proto() == o.proto()
+                    && c.kind() == o.kind()
+                    && c.raddr() == o.raddr();
+
+                same.then(|| pair)
+            })
+    }
+
     /// Credentials for STUN.
     ///
     /// The username for the credential is formed by concatenating the
@@ -623,6 +644,21 @@ impl IceAgent {
         // confusing inspecting the state.
         c.clear_ufrag();
 
+        let existing_pair = self.find_viable_pair_for_equivalent_remote_candidate(&c);
+        let existing_candidate =
+            existing_pair.map(|p| (p.remote_idx(), &self.remote_candidates[p.remote_idx()]));
+
+        let existing_idx = match existing_candidate {
+            Some((_, o)) if !o.discarded() => {
+                // Existing non-discarded candidate in viable pair, ignore
+                // Discarded candidates and candidates not in a viable pair are handled below
+                trace!("Ignoring candidate({c:?}) that exactly matches existing non-discarded candidate");
+                return;
+            }
+            Some((i, o)) if o.discarded() => Some(i),
+            _ => None,
+        };
+
         let existing_prflx = self
             .remote_candidates
             .iter_mut()
@@ -645,17 +681,13 @@ impl IceAgent {
             *existing = c;
             idx
         } else {
-            let maybe_discarded = self.remote_candidates.iter().position(|o| {
-                o.discarded()
-                    && c.addr() == o.addr()
-                    && c.base() == o.base()
-                    && c.proto() == o.proto()
-                    && c.kind() == o.kind()
-                    && c.raddr() == o.raddr()
+            let existing_discarded = existing_idx.and_then(|idx| {
+                let o = &mut self.remote_candidates[idx];
+
+                o.discarded().then(|| (idx, o))
             });
 
-            if let Some(idx) = maybe_discarded {
-                let other = &mut self.remote_candidates[idx];
+            if let Some((idx, other)) = existing_discarded {
                 debug!("Re-enable previously discarded remote: {:?}", other);
                 other.set_discarded(false);
                 idx
