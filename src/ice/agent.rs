@@ -383,22 +383,18 @@ impl IceAgent {
     }
 
     /// Determine whether an equivalent remote candidate is part of a viable candidate pair.
-    pub fn find_viable_pair_for_equivalent_remote_candidate(
+    pub fn find_pair_for_equivalent_remote_candidate(
         &self,
         c: &Candidate,
     ) -> Option<&CandidatePair> {
-        self.candidate_pairs
-            .iter()
-            .filter(|cand| cand.state() == CheckState::Succeeded)
-            .find(|pair| {
-                let o = &self.remote_candidates[pair.remote_idx()];
-
-                c.addr() == o.addr()
-                    && c.base() == o.base()
-                    && c.proto() == o.proto()
-                    && c.kind() == o.kind()
-                    && c.raddr() == o.raddr()
-            })
+        self.candidate_pairs.iter().find(|pair| {
+            let o = &self.remote_candidates[pair.remote_idx()];
+            c.addr() == o.addr()
+                && c.base() == o.base()
+                && c.proto() == o.proto()
+                && c.kind() == o.kind()
+                && c.raddr() == o.raddr()
+        })
     }
 
     /// Credentials for STUN.
@@ -642,7 +638,7 @@ impl IceAgent {
         // confusing inspecting the state.
         c.clear_ufrag();
 
-        let existing_pair = self.find_viable_pair_for_equivalent_remote_candidate(&c);
+        let existing_pair = self.find_pair_for_equivalent_remote_candidate(&c);
         let existing_candidate =
             existing_pair.map(|p| (p.remote_idx(), &self.remote_candidates[p.remote_idx()]));
 
