@@ -20,6 +20,8 @@ pub use srtp::{aead_aes_128_gcm, aes_128_cm_sha1_80, new_aead_aes_128_gcm};
 pub use srtp::{new_aes_128_cm_sha1_80, srtp_aes_128_ecb_round, SrtpProfile};
 
 /// SHA1 HMAC as used for STUN and older SRTP.
+/// If sha1 feature is enabled, it uses `rust-crypto` crate.
+#[cfg(feature = "sha1")]
 pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
     use hmac::Hmac;
     use hmac::Mac;
@@ -32,6 +34,25 @@ pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
     }
 
     hmac.finalize().into_bytes().into()
+}
+
+/// If openssl is enabled and sha1 is not, it uses `openssl` crate.
+#[cfg(all(feature = "openssl", not(feature = "sha1")))]
+pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
+    use openssl::hash::MessageDigest;
+    use openssl::pkey::PKey;
+    use openssl::sign::Signer;
+
+    let key = PKey::hmac(key).expect("valid hmac key");
+    let mut signer = Signer::new(MessageDigest::sha1(), &key).expect("valid signer");
+
+    for payload in payloads {
+        signer.update(payload).expect("signer update");
+    }
+
+    let mut hash = [0u8; 20];
+    signer.sign(&mut hash).expect("sign to array");
+    hash
 }
 
 /// Errors that can arise in DTLS.
