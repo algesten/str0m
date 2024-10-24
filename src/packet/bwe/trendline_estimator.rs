@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
-use super::{BandwithUsage, InterGroupDelayDelta};
+use super::{BandwidthUsage, InterGroupDelayDelta};
 
 const SMOOTHING_COEF: f64 = 0.9;
 const OVER_USE_THRESHOLD_DEFAULT_MS: f64 = 12.5;
@@ -47,7 +47,7 @@ pub(super) struct TrendlineEstimator {
     last_threshold_update: Option<Instant>,
 
     /// Our current hypothesis about the bandwidth usage.
-    hypothesis: BandwithUsage,
+    hypothesis: BandwidthUsage,
 }
 
 impl TrendlineEstimator {
@@ -63,7 +63,7 @@ impl TrendlineEstimator {
             previous_trend: 0.0,
             overuse: None,
             last_threshold_update: None,
-            hypothesis: BandwithUsage::Normal,
+            hypothesis: BandwidthUsage::Normal,
         }
     }
 
@@ -97,7 +97,7 @@ impl TrendlineEstimator {
         }
     }
 
-    pub(super) fn hypothesis(&self) -> BandwithUsage {
+    pub(super) fn hypothesis(&self) -> BandwidthUsage {
         self.hypothesis
     }
 
@@ -170,7 +170,7 @@ impl TrendlineEstimator {
 
     fn detect(&mut self, trend: f64, variation: InterGroupDelayDelta, now: Instant) {
         if self.num_delay_variations < 2 {
-            self.update_hypothesis(BandwithUsage::Normal);
+            self.update_hypothesis(BandwidthUsage::Normal);
             return;
         }
 
@@ -217,14 +217,14 @@ impl TrendlineEstimator {
             {
                 self.overuse = None;
 
-                self.update_hypothesis(BandwithUsage::Overuse);
+                self.update_hypothesis(BandwidthUsage::Overuse);
             }
         } else if modified_trend < -self.delay_threshold {
             self.overuse = None;
-            self.update_hypothesis(BandwithUsage::Underuse);
+            self.update_hypothesis(BandwidthUsage::Underuse);
         } else {
             self.overuse = None;
-            self.update_hypothesis(BandwithUsage::Normal);
+            self.update_hypothesis(BandwidthUsage::Normal);
         }
 
         self.previous_trend = trend;
@@ -266,7 +266,7 @@ impl TrendlineEstimator {
         );
     }
 
-    fn update_hypothesis(&mut self, new_hypothesis: BandwithUsage) {
+    fn update_hypothesis(&mut self, new_hypothesis: BandwidthUsage) {
         if self.hypothesis == new_hypothesis {
             return;
         }
@@ -293,7 +293,7 @@ struct Overuse {
 mod test {
     use std::time::{Duration, Instant};
 
-    use crate::packet::bwe::BandwithUsage;
+    use crate::packet::bwe::BandwidthUsage;
 
     use super::{InterGroupDelayDelta, TrendlineEstimator};
 
@@ -341,7 +341,7 @@ mod test {
             }
         }
 
-        assert_eq!(estimator.hypothesis(), BandwithUsage::Normal);
+        assert_eq!(estimator.hypothesis(), BandwidthUsage::Normal);
         assert_eq!(estimator.history.len(), 20);
 
         estimator.add_delay_observation(
@@ -354,7 +354,7 @@ mod test {
         );
         assert_eq!(
             estimator.hypothesis(),
-            BandwithUsage::Normal,
+            BandwidthUsage::Normal,
             "After getting an initial increasing delay the hypothesis should remain at normal"
         );
 
@@ -368,7 +368,7 @@ mod test {
         );
         assert_eq!(
             estimator.hypothesis(),
-            BandwithUsage::Normal,
+            BandwidthUsage::Normal,
             "After getting an a second increasing delay the hypothesis should remain at normal because we the time overusing threshold hasn't been reached yet"
         );
 
@@ -382,7 +382,7 @@ mod test {
         );
         assert_eq!(
             estimator.hypothesis(),
-            BandwithUsage::Overuse,
+            BandwidthUsage::Overuse,
             "After getting a third increasing delay the hypothesis should move to over because we have been overusing for more than 10ms"
         );
     }

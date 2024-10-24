@@ -13,6 +13,12 @@ pub struct Bitrate(f64);
 impl Bitrate {
     /// A bitrate of zero bit/s.
     pub const ZERO: Self = Self::bps(0);
+    /// The maximum bitrate that can be represented.
+    pub const MAX: Self = Self::bps(u64::MAX);
+    /// Positive infinity, useful as an invalid value with comparison semantics
+    pub const INFINITY: Self = Self(f64::INFINITY);
+    /// Negative infinity, useful as an invalid value with comparison semantics
+    pub const NEG_INFINITY: Self = Self(f64::NEG_INFINITY);
 
     /// Create a bitrate of some bit per second(bps).
     pub const fn bps(bps: u64) -> Self {
@@ -57,6 +63,16 @@ impl Bitrate {
     /// Return the maximum bitrate between `self` and `other`.
     pub fn max(&self, other: Self) -> Self {
         Self(self.0.max(other.0))
+    }
+
+    /// Whether this bitrate is valid
+    pub fn is_valid(&self) -> bool {
+        self.0.is_finite()
+    }
+
+    /// Turn self into `Option<Bitrate>` based on its validity
+    pub fn as_valid(&self) -> Option<Bitrate> {
+        self.is_valid().then(|| *self)
     }
 }
 

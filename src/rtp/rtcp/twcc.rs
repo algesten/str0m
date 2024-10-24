@@ -1010,7 +1010,7 @@ impl<'a> IntoIterator for &'a TwccSendRegister {
 }
 
 /// Record for a send entry in twcc.
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct TwccSendRecord {
     /// Twcc sequence number for a packet we sent.
     seq: SeqNo,
@@ -1025,6 +1025,35 @@ pub struct TwccSendRecord {
 }
 
 impl TwccSendRecord {
+    /// Create a new record for which no report has been received.
+    pub fn new_unreported(seq: SeqNo, local_send_time: Instant, size: u16) -> Self {
+        Self {
+            seq,
+            local_send_time,
+            size,
+            recv_report: None,
+        }
+    }
+
+    /// Create a new received record for which we have a report.
+    pub fn new_reported(
+        seq: SeqNo,
+        local_send_time: Instant,
+        size: u16,
+        local_recv_time: Instant,
+        remote_recv_time: Option<Instant>,
+    ) -> Self {
+        Self {
+            seq,
+            local_send_time,
+            size,
+            recv_report: Some(TwccRecvReport {
+                local_recv_time,
+                remote_recv_time,
+            }),
+        }
+    }
+
     /// The twcc sequence number of the packet we sent.
     pub fn seq(&self) -> SeqNo {
         self.seq
@@ -1033,6 +1062,11 @@ impl TwccSendRecord {
     /// The time we sent the packet.
     pub fn local_send_time(&self) -> Instant {
         self.local_send_time
+    }
+
+    /// The time we received this TWCC record. [`None`] if no feedback has been received yet.
+    pub fn local_recv_time(&self) -> Option<Instant> {
+        self.recv_report.as_ref().map(|r| r.local_recv_time)
     }
 
     pub fn size(&self) -> usize {
@@ -1051,7 +1085,7 @@ impl TwccSendRecord {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct TwccRecvReport {
     ///  The (local) time we received confirmation the other side received the seq.
     local_recv_time: Instant,
