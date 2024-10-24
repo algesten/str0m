@@ -748,12 +748,12 @@ impl IceAgent {
                             );
                         } else {
                             // replace the existing candidate pair, since the new one got a higher prio.
+                            pair.copy_nominated_and_success_state(&self.candidate_pairs[check_idx]);
+
                             debug!(
                                 "Replace redundant pair, current: {:?} replaced with: {:?}",
                                 check, pair
                             );
-
-                            pair.copy_nominated_and_success_state(&self.candidate_pairs[check_idx]);
 
                             if self.ice_lite {
                                 debug!("Retain incoming binding requests for pair");
