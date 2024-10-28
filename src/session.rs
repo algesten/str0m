@@ -730,7 +730,7 @@ impl Session {
             crate::log_stat!("PACKET_SENT", header.ssrc, payload_size, kind);
         }
 
-        self.pacer.register_send(now, payload_size.into(), mid);
+        self.pacer.register_send(now, buf.len().into(), mid);
 
         if let Some(raw_packets) = &mut self.raw_packets {
             raw_packets.push_back(Box::new(RawPacket::RtpTx(header.clone(), buf.clone())));
@@ -740,7 +740,7 @@ impl Session {
 
         if twcc_enabled {
             self.twcc_tx_register
-                .register_seq(twcc_seq.into(), now, payload_size);
+                .register_seq(twcc_seq.into(), now, buf.len());
         }
 
         // Technically we should wait for the next handle_timeout, but this speeds things up a bit
