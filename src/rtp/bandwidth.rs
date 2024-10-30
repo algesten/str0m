@@ -189,8 +189,13 @@ impl Div<Duration> for DataSize {
 
     fn div(self, rhs: Duration) -> Self::Output {
         let bytes = self.as_bytes_f64();
+        let s = rhs.as_secs_f64();
 
-        let bps = (bytes * 8.0) / rhs.as_secs_f64();
+        if s == 0.0 {
+            return Bitrate::ZERO;
+        }
+
+        let bps = (bytes * 8.0) / s;
 
         bps.into()
     }
@@ -201,7 +206,13 @@ impl Div<Bitrate> for DataSize {
 
     fn div(self, rhs: Bitrate) -> Self::Output {
         let bits = self.as_bytes_f64() * 8.0;
-        let seconds = bits / rhs.as_f64();
+        let rhs = rhs.as_f64();
+
+        if rhs == 0.0 {
+            return Duration::ZERO;
+        }
+
+        let seconds = bits / rhs;
 
         Duration::from_secs_f64(seconds)
     }
@@ -211,6 +222,10 @@ impl Div<f64> for Bitrate {
     type Output = Bitrate;
 
     fn div(self, rhs: f64) -> Self::Output {
+        if rhs == 0.0 {
+            return Self::ZERO;
+        }
+
         Self(self.0 / rhs)
     }
 }
