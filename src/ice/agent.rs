@@ -411,7 +411,7 @@ impl IceAgent {
     /// ### Panics
     ///
     /// Panics if there are no remote credentials set.
-    fn stun_credentials(&self, reply: bool) -> (String, String) {
+    fn stun_credentials(&self, reply: bool) -> (String, &str) {
         let local = &self.local_credentials;
 
         let (left, right, peer_pass) = if reply {
@@ -425,11 +425,7 @@ impl IceAgent {
         };
 
         let username = format!("{left}:{right}");
-        let password = if reply {
-            local.pass.clone()
-        } else {
-            peer_pass.into()
-        };
+        let password = if reply { &local.pass } else { peer_pass };
 
         (username, password)
     }
@@ -904,7 +900,7 @@ impl IceAgent {
 
         let do_integrity_check = |is_request: bool| -> bool {
             let (_, password) = self.stun_credentials(is_request);
-            let integrity_passed = message.check_integrity(&password);
+            let integrity_passed = message.check_integrity(password);
 
             // The integrity is always the last thing we check
             if integrity_passed {
@@ -1423,7 +1419,7 @@ impl IceAgent {
         let mut buf = vec![0_u8; DATAGRAM_MTU];
 
         let n = reply
-            .to_bytes(&password, &mut buf)
+            .to_bytes(password, &mut buf)
             .expect("IO error writing STUN reply");
         buf.truncate(n);
 
@@ -1438,8 +1434,6 @@ impl IceAgent {
     }
 
     fn stun_client_binding_request(&mut self, now: Instant, pair_idx: usize) {
-        let (username, password) = self.stun_credentials(false);
-
         let pair = &mut self.candidate_pairs[pair_idx];
         let local = pair.local_candidate(&self.local_candidates);
         let remote = pair.remote_candidate(&self.remote_candidates);
@@ -1450,6 +1444,8 @@ impl IceAgent {
         let trans_id = pair.new_attempt(now, &self.timing_config);
 
         self.stats.bind_request_sent += 1;
+
+        let (username, password) = self.stun_credentials(false);
 
         let binding = StunMessage::binding_request(
             &username,
@@ -1470,7 +1466,7 @@ impl IceAgent {
         let mut buf = vec![0_u8; DATAGRAM_MTU];
 
         let n = binding
-            .to_bytes(&password, &mut buf)
+            .to_bytes(password, &mut buf)
             .expect("IO error writing STUN reply");
         buf.truncate(n);
 
