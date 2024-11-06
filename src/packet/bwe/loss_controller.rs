@@ -912,7 +912,7 @@ impl Default for Config {
             newton_step_size: 0.75,
             not_increase_if_inherent_loss_less_than_average_loss: true,
             delayed_increase_window: Duration::from_millis(1000),
-            bandwidth_rampup_upper_bound_factor: 1000000.0,
+            bandwidth_rampup_upper_bound_factor: 1_000_000.0,
             candidate_factor: [1.02, 1.0, 0.95],
             append_acknowledged_rate_candidate: true,
             append_delay_based_estimate_candidate: true,
