@@ -70,11 +70,18 @@ macro_rules! log_loss {
     }
 }
 
+macro_rules! log_loss_bw_limit_in_window {
+    ($($arg:expr),+) => {
+        crate::log_stat!("LOSS_BW_LIMIT_IN_WINDOW", $($arg),+);
+    }
+}
+
 pub(crate) use log_bitrate_estimate;
 pub(crate) use log_delay_variation;
 pub(crate) use log_inherent_loss;
 pub(crate) use log_loss;
 pub(crate) use log_loss_based_bitrate_estimate;
+pub(crate) use log_loss_bw_limit_in_window;
 pub(crate) use log_pacer_media_debt;
 pub(crate) use log_pacer_padding_debt;
 pub(crate) use log_rate_control_applied_change;
