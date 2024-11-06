@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::packet::bwe::macros::log_inherent_loss;
 use crate::packet::bwe::macros::log_loss_based_bitrate_estimate;
+use crate::packet::bwe::macros::log_loss_bw_limit_in_window;
 use crate::rtp_::TwccSendRecord;
 use crate::{Bitrate, DataSize};
 
@@ -264,6 +265,7 @@ impl LossController {
                 .max(loss_limited_bandwidth * CONF_MAX_INCREASE_FACTOR);
 
             self.recovering_after_loss_timestamp = self.last_send_time_most_recent_observation;
+            log_loss_bw_limit_in_window!(self.bandwidth_limit_in_current_window.as_f64());
         }
     }
 
