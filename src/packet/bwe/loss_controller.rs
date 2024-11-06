@@ -231,8 +231,6 @@ impl LossController {
                     } else {
                         self.acknowledged_bitrate * self.config.bandwidth_rampup_upper_bound_factor
                     };
-
-                self.recovering_after_loss_timestamp = self.last_send_time_most_recent_observation;
             }
         }
 
