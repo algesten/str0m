@@ -151,6 +151,7 @@ impl LossController {
         self.current_estimate.loss_limited_bandwidth = bandwidth_estimate;
     }
 
+    /// Update the acknowledged bitrate based on TWCC feedback.
     pub fn set_acknowledged_bitrate(&mut self, acknowledged_bitrate: Bitrate) {
         self.acknowledged_bitrate = acknowledged_bitrate;
     }
