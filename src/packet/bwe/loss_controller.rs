@@ -981,15 +981,16 @@ mod test {
         lbc.set_acknowledged_bitrate(acknowledged_bitrate);
         lbc.set_bandwidth_estimate(Bitrate::from(1_250_000)); // 1.25Mbps
 
-        let mut pkt_builder = PacketBuilder::new(Instant::now()).num_packets(11);
+        let mut pkt_builder = PacketBuilder::new(Instant::now()).num_packets(26);
 
-        // 10 seconds of sending at ~1Mbps
-        for _ in 0..200 {
-            let result = pkt_builder.build_packets();
-            lbc.update_bandwidth_estimate(&result, Bitrate::bps(1_500_000));
+        // A single observation at 1Mbps
+        let result = pkt_builder.build_packets();
+        lbc.update_bandwidth_estimate(&result, Bitrate::bps(1_500_000));
+        pkt_builder = pkt_builder.forward_time(Duration::from_millis(250));
 
-            pkt_builder = pkt_builder.forward_time(Duration::from_millis(50));
-        }
+        // A single observation at 1Mbps
+        let result = pkt_builder.build_packets();
+        lbc.update_bandwidth_estimate(&result, Bitrate::bps(1_500_000));
 
         let LossBasedBweResult {
             bandwidth_estimate,
@@ -1017,14 +1018,16 @@ mod test {
 
         let mut pkt_builder = PacketBuilder::new(Instant::now())
             .with_loss(0.05)
-            .num_packets(5);
+            .num_packets(26);
 
-        // 10 seconds of sending at ~1Mbps(5 packets of 1200 bytes every 50ms)
-        for _ in 0..200 {
+        // It takes a while for the maximum likelihood estimation to react to the inherent loss
+        // this is why we need quite a few observations before the estimate increases to the delay
+        // based bound
+        // 40 observations(10 seconds) at 1Mbps
+        for _ in 0..40 {
             let result = pkt_builder.build_packets();
             lbc.update_bandwidth_estimate(&result, Bitrate::bps(1_500_000));
-
-            pkt_builder = pkt_builder.forward_time(Duration::from_millis(50));
+            pkt_builder = pkt_builder.forward_time(Duration::from_millis(250));
         }
 
         let LossBasedBweResult {
@@ -1054,23 +1057,25 @@ mod test {
 
         let mut pkt_builder = PacketBuilder::new(Instant::now())
             .with_loss(0.05)
-            .num_packets(5);
+            .num_packets(26);
 
-        // 10 seconds of sending at ~1Mbps
-        for _ in 0..10 {
+        // It takes a while for the maximum likelihood estimation to react to the inherent loss
+        // this is why we need quite a few observations before the estimate increases to the delay
+        // based bound and is stable.
+        // 40 observations(10 seconds) at 1Mbps
+        for _ in 0..40 {
             let result = pkt_builder.build_packets();
             lbc.update_bandwidth_estimate(&result, Bitrate::bps(1_500_000));
-
-            pkt_builder = pkt_builder.forward_time(Duration::from_millis(50));
+            pkt_builder = pkt_builder.forward_time(Duration::from_millis(250));
         }
 
         pkt_builder = pkt_builder.with_loss(0.9);
-        // Loss spike
-        for _ in 0..20 {
+        // Loss spike(1second at 90% loss)
+        for _ in 0..4 {
             let result = pkt_builder.build_packets();
             lbc.update_bandwidth_estimate(&result, Bitrate::bps(1_500_000));
 
-            pkt_builder = pkt_builder.forward_time(Duration::from_millis(50));
+            pkt_builder = pkt_builder.forward_time(Duration::from_millis(250));
         }
 
         let LossBasedBweResult {
@@ -1100,33 +1105,33 @@ mod test {
 
         let mut pkt_builder = PacketBuilder::new(Instant::now())
             .with_loss(0.05)
-            .num_packets(5);
+            .num_packets(26);
 
-        // 10 seconds of sending at ~1Mbps
-        for _ in 0..200 {
+        // It takes a while for the maximum likelihood estimation to react to the inherent loss
+        // this is why we need quite a few observations before the estimate increases to the delay
+        // based bound and is stable.
+        // 40 observations(10 seconds) at 1Mbps
+        for _ in 0..40 {
             let result = pkt_builder.build_packets();
             lbc.update_bandwidth_estimate(&result, Bitrate::bps(1_500_000));
-
-            pkt_builder = pkt_builder.forward_time(Duration::from_millis(50));
+            pkt_builder = pkt_builder.forward_time(Duration::from_millis(250));
         }
 
-        pkt_builder = pkt_builder.with_loss(0.9);
         // Loss spike
-        for _ in 0..4 {
-            let result = pkt_builder.build_packets();
-            lbc.update_bandwidth_estimate(&result, Bitrate::bps(1_500_000));
+        pkt_builder = pkt_builder.with_loss(0.9);
+        let result = pkt_builder.build_packets();
+        lbc.update_bandwidth_estimate(&result, Bitrate::bps(1_500_000));
+        pkt_builder = pkt_builder.forward_time(Duration::from_millis(250));
 
-            pkt_builder = pkt_builder.forward_time(Duration::from_millis(50));
-        }
-
+        pkt_builder = pkt_builder.with_loss(0.05);
         // Set loss back to 5% and gradually ramp up the bitrate
-        for i in 0..200 {
-            pkt_builder = pkt_builder.with_loss(0.05).num_packets(1 + i / 50);
+        for i in 0..40 {
+            pkt_builder = pkt_builder.num_packets(6 + i / 2);
 
             let result = pkt_builder.build_packets();
             lbc.update_bandwidth_estimate(&result, Bitrate::bps(1_500_000));
 
-            pkt_builder = pkt_builder.forward_time(Duration::from_millis(50));
+            pkt_builder = pkt_builder.forward_time(Duration::from_millis(250));
         }
 
         let LossBasedBweResult {
@@ -1157,14 +1162,17 @@ mod test {
 
         let mut pkt_builder = PacketBuilder::new(Instant::now())
             .with_loss(0.05)
-            .num_packets(5);
+            .num_packets(26);
 
-        // 10 seconds of sending at ~1Mbps
-        for _ in 0..200 {
+        // It takes a while for the maximum likelihood estimation to react to the inherent loss
+        // this is why we need quite a few observations before the estimate increases to the delay
+        // based bound
+        // 40 observations(10 seconds) at 1Mbps
+        for _ in 0..40 {
             let result = pkt_builder.build_packets();
             lbc.update_bandwidth_estimate(&result, Bitrate::bps(1_500_000));
 
-            pkt_builder = pkt_builder.forward_time(Duration::from_millis(50));
+            pkt_builder = pkt_builder.forward_time(Duration::from_millis(250));
         }
 
         // Gradual increase
@@ -1175,7 +1183,7 @@ mod test {
                 let result = pkt_builder.build_packets();
                 lbc.update_bandwidth_estimate(&result, Bitrate::bps(1_500_000));
 
-                pkt_builder = pkt_builder.forward_time(Duration::from_millis(50));
+                pkt_builder = pkt_builder.forward_time(Duration::from_millis(250));
             }
         }
 
