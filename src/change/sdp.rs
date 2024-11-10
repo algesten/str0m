@@ -1474,7 +1474,7 @@ impl Changes {
         index_start: usize,
         config: &'b CodecConfig,
         exts: &'b ExtensionMap,
-    ) -> impl Iterator<Item = Media> + '_ {
+    ) -> impl Iterator<Item = Media> + 'a {
         self.0
             .iter()
             .enumerate()
