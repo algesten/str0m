@@ -472,6 +472,13 @@ mod test {
         ],
         "Unmarshal accepted a STAP-A packet with insufficient data"
     );
+    test_h264!(
+        stapa_bad_nalu_size_payload,
+        false,
+        false,
+        &[0x78, 0x00, 0x03, 0xFF, 0xFF, 0xFF],
+        "Unmarshal accepted a STAP-A packet with insufficient data"
+    );
 
     #[test]
     fn single_payload() -> Result<(), PacketError> {
