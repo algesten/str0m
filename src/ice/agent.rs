@@ -789,6 +789,12 @@ impl IceAgent {
         //
         // TODO: How does this work with trickle ice?
         let max = self.max_candidate_pairs.unwrap_or(100);
+
+        let num_pairs = self.candidate_pairs.len();
+        if num_pairs > max {
+            warn!(%max, %num_pairs, "Exceeding max number of candidate pairs");
+        }
+
         while self.candidate_pairs.len() > max {
             let pair = self.candidate_pairs.pop();
             debug!("Remove overflow pair {:?}", pair);
