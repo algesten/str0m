@@ -12,6 +12,7 @@
   * Configure RTX ratio cap via `StreamTx::set_rtx_cache` #570
   * Correctly handle per m-line TWCC #573
   * Correctly handle per m-line Absolute Send Time #575
+  * Take into account RTP packets header sizes when calculating BWE and pacing #581
 
 # 0.6.1
   * Force openssl to be >=0.10.66 #545
