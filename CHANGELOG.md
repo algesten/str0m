@@ -1,17 +1,37 @@
 # Unreleased
 
+# 0.6.3
+
+  * Add warning log when exceeding max number of pairs #587
+  * Add fuzz to Nightly CI #585
+  * Add new loss based BWE controlled #579 #582 #583
+  * Add new `vendored` feature flag affecting openssl #580
+  * Make use of sha1 crate an optional feature #577
+  * Dedupe remote ICE candidates #576 #578
+  * Correctly handle per m-line Absolute Send Time #575
+  * Correctly handle per m-line TWCC #573
+  * Configure RTX ratio cap via `StreamTx::set_rtx_cache` #570
+  * Match remote candidate of stun request by priority #569
+  * Improve timeouts during DTLS handshake #565
+  * Do not decrypt already received packets #554
+  * Test for SRTP replay attack #555
+  * refactor(ice): always use latest timing config #568
+  * Fix RTX stops working after packet loss spike #566
+  * Add Sub trait impl (back) to MediaTime #560
+  * Make start of talkspurt information available for sample api #559
+  * Do not disconnect whilst we still check new candidates #489
+  * Ensure lexical ordering of SDP-formatted candidates follows priority #557
+
+# 0.6.2
+
   * Fix edge case breaking DTLS #531
   * Bump sctp-proto to be compatible with libdatachannel #558
   * Ensure not risk of ROC on initial sequence number #553
-  * API for getting a=msid details #550
+  * API for getting stream_id/track_id from a=msid #550
   * Use a=extmap-allow-mixed SDP attribute #551
-  * Ensure compatibility with some 32-bit targets #533
+  * Change the unix_time function to return libc::time_t (32-bit compat) #533
   * Fix bug using unreliable channels by default #548
   * New add_channel_with_config() for configured data channels #548
-  * Fix RTX stops working after packet loss spike #566
-  * Configure RTX ratio cap via `StreamTx::set_rtx_cache` #570
-  * Correctly handle per m-line TWCC #573
-  * Correctly handle per m-line Absolute Send Time #575
 
 # 0.6.1
   * Force openssl to be >=0.10.66 #545
