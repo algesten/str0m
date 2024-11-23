@@ -1892,19 +1892,13 @@ impl RtcConfig {
     /// Generating a certificate can be a time-consuming process.
     /// Use this API to reuse a previously created [`DtlsCert`] if available.
     ///
-    #[cfg_attr(
-        feature = "openssl",
-        doc = r##"
-    /// ```
     /// # use str0m::RtcConfig;
     /// # use str0m::change::DtlsCert;
+    /// ![cfg(feature = 'openssl')]
     /// let dtls_cert = DtlsCert::new_openssl();
     ///
     /// let rtc_config = RtcConfig::default()
     ///     .set_dtls_cert(dtls_cert);
-    /// ```
-    "##
-    )]
     pub fn set_dtls_cert(mut self, dtls_cert: DtlsCert) -> Self {
         self.dtls_cert = Some(dtls_cert);
         self
