@@ -55,16 +55,15 @@ hmac = "0.12.1"
 crc = "3.0.0"
 serde = { version = "1.0.152", features = ["derive"] }
 
-# Windows Crypto (CNG + SChannel)
-str0m_wincrypto = { path = "wincrypto", optional = true }
-
 [target.'cfg(unix)'.dependencies]
 sha1 = { version = "0.10.6", features = ["asm"], optional = true }
 
+[target.'cfg(windows)'.dependencies]
 # The ASM feature is broken on windows. Unclear where in the rust-crypto project
 # we're supposed to check when it gets sorted out.
-[target.'cfg(windows)'.dependencies]
 sha1 = { version = "0.10.6", optional = true }
+# Windows Crypto (CNG + SChannel)
+str0m_wincrypto = { path = "wincrypto", optional = true }
 
 [dev-dependencies]
 rouille = { version = "3.5.0", features = [] }

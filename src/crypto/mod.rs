@@ -22,6 +22,11 @@ mod srtp;
 pub use srtp::{aead_aes_128_gcm, aes_128_cm_sha1_80, new_aead_aes_128_gcm};
 pub use srtp::{new_aes_128_cm_sha1_80, srtp_aes_128_ecb_round, SrtpProfile};
 
+#[cfg(all(feature = "openssl", feature = "wincrypto"))]
+compile_error!("features `openssl` and `wincrypto` are mutually exclusive");
+#[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
+compile_error!("either `openssl` or `wincrypto` must be enabled");
+
 /// SHA1 HMAC as used for STUN and older SRTP.
 /// If sha1 feature is enabled, it uses `rust-crypto` crate.
 #[cfg(feature = "sha1")]
@@ -58,7 +63,7 @@ pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
     hash
 }
 
-/// If openssl is enabled and sha1 is not, it uses `openssl` crate.
+/// If wincrypto is enabled and sha1 is not, it uses `wincrypto` crate.
 #[cfg(all(feature = "wincrypto", not(feature = "sha1")))]
 pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
     wincrypto::sha1_hmac(key, payloads)
