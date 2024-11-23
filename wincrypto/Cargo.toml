@@ -1,0 +1,11 @@
+# Package to isolate unsafe APIs used for the Str0m Windows Cryptography feature.
+
+[package]
+name = "str0m_wincrypto"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = { version = "1.0.38" }
+tracing = "0.1.37"
+windows = { version = "0.58", features=["Win32_Security_Cryptography", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials",]}

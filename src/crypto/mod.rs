@@ -6,6 +6,9 @@ use thiserror::Error;
 #[cfg(feature = "openssl")]
 mod ossl;
 
+#[cfg(feature = "wincrypto")]
+pub mod wincrypto;
+
 mod dtls;
 pub use dtls::{DtlsCert, DtlsEvent, DtlsImpl};
 
@@ -55,6 +58,12 @@ pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
     hash
 }
 
+/// If openssl is enabled and sha1 is not, it uses `openssl` crate.
+#[cfg(all(feature = "wincrypto", not(feature = "sha1")))]
+pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
+    wincrypto::sha1_hmac(key, payloads)
+}
+
 /// Errors that can arise in DTLS.
 #[derive(Debug, Error)]
 pub enum CryptoError {
@@ -62,6 +71,11 @@ pub enum CryptoError {
     #[error("{0}")]
     #[cfg(feature = "openssl")]
     OpenSsl(#[from] openssl::error::ErrorStack),
+
+    /// Some error from OpenSSL layer (used for DTLS).
+    #[error("{0}")]
+    #[cfg(feature = "wincrypto")]
+    WinCrypto(#[from] wincrypto::WinCryptoError),
 
     /// Other IO errors.
     #[error("{0}")]
