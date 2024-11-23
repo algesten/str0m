@@ -32,7 +32,7 @@ vendored = ["openssl?/vendored"]
 sha1 = ["dep:sha1"]
 
 # Uses native Windows API to implement cryptographic features, use instead on openssl and sha1.
-wincrypto = ["dep:str0m_wincrypto", "rouille/rustls"]
+wincrypto = ["dep:str0m_wincrypto"]
 
 _internal_dont_use_log_stats = []
 _internal_test_exports = []
