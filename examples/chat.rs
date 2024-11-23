@@ -38,6 +38,7 @@ fn init_log() {
 
 pub fn main() {
     init_log();
+
     let certificate = include_bytes!("cer.pem").to_vec();
     let private_key = include_bytes!("key.pem").to_vec();
 
