@@ -71,11 +71,6 @@ impl WinCryptoCertificate {
         }
     }
 
-    pub fn cert_context(&self) -> *const CERT_CONTEXT {
-        // TODO(efer): This can probably be removed and use crate visible .0
-        self.0
-    }
-
     pub fn sha256_fingerprint(&self) -> Result<[u8; 32], WinCryptoError> {
         unsafe {
             // Determine the size of the scratch space needed to compute a SHA-256 Hash.
