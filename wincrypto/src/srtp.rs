@@ -195,13 +195,16 @@ pub fn wincrypto_srtp_aead_aes_128_gcm_decrypt(
         }
         let (cipher_text, tag) = cipher_text.split_at(cipher_text.len() - AEAD_AES_GCM_TAG_LEN);
 
-        // TODO(efer): Optimize this, we shouldn't need a vec, only need it when
-        // we have multiple aad slices, otherwise should just use aads[0].
-        let additional_auth_data = if additional_auth_data.len() == 1 {
-            &additional_auth_data[0].to_vec()
+        // If don't have exactly one auth_data, we need to flatten it. This will
+        // hold our reference to the data.
+        let flattened_auth_data = if additional_auth_data.len() != 1 {
+            Some(additional_auth_data.concat())
         } else {
-            &additional_auth_data.concat()
+            None
         };
+        let additional_auth_data = flattened_auth_data
+            .as_ref()
+            .map_or(additional_auth_data[0], |f| f.as_slice());
 
         let auth_cipher_mode_info = BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO {
             pbAuthData: additional_auth_data.as_ptr() as *mut u8,
