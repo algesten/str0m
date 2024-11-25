@@ -1,7 +1,7 @@
 # Package to isolate unsafe APIs used for the Str0m Windows Cryptography feature.
 
 [package]
-name = "str0m_wincrypto"
+name = "str0m-wincrypto"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"

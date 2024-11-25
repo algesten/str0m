@@ -938,7 +938,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
- "str0m_wincrypto",
+ "str0m-wincrypto",
  "systemstat",
  "thiserror",
  "time",
@@ -947,7 +947,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "str0m_wincrypto"
+name = "str0m-wincrypto"
 version = "0.1.0"
 dependencies = [
  "thiserror",

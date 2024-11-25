@@ -1,3 +1,4 @@
+use super::WinCryptoError;
 use windows::{
     core::{HSTRING, PSTR},
     Win32::Security::Cryptography::{
@@ -8,8 +9,6 @@ use windows::{
         HCRYPTPROV_OR_NCRYPT_KEY_HANDLE, X509_ASN_ENCODING,
     },
 };
-
-use super::WinCryptoError;
 
 #[derive(Debug)]
 pub struct WinCryptoCertificate(pub(crate) *const CERT_CONTEXT);

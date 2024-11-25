@@ -1,6 +1,5 @@
-use std::ptr::addr_of;
-
 use super::WinCryptoError;
+use std::ptr::addr_of;
 use windows::Win32::Security::Cryptography::{
     BCryptDecrypt, BCryptDestroyKey, BCryptEncrypt, BCryptGenerateSymmetricKey,
     BCRYPT_AES_ECB_ALG_HANDLE, BCRYPT_AES_GCM_ALG_HANDLE, BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO,

@@ -1,8 +1,9 @@
-use std::time::{Duration, Instant};
-
 use super::{WinCryptoCertificate, WinCryptoError};
-use std::collections::VecDeque;
-use std::sync::Arc;
+use std::{
+    collections::VecDeque,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use windows::Win32::{
     Foundation::{
         SEC_E_MESSAGE_ALTERED, SEC_E_OK, SEC_E_OUT_OF_SEQUENCE, SEC_I_CONTEXT_EXPIRED,
@@ -62,6 +63,7 @@ const DTLS_MTU_SECBUFFER: SecBuffer = SecBuffer {
     pvBuffer: &DTLS_MTU_BUFFER_INSTANCE as *const _ as *mut _,
 };
 
+// The label used for SRTP key derivation from: https://datatracker.ietf.org/doc/html/rfc5764#section-4.2
 const DTLS_KEY_LABEL: &[u8] = b"EXTRACTOR-dtls_srtp\0";
 const DATAGRAM_MTU: usize = 1150;
 

@@ -1117,7 +1117,7 @@ impl Rtc {
             }
             #[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
             {
-                panic!("No DTLS implementation. Enable openssl feature");
+                panic!("No DTLS implementation. Enable crypto feature");
             }
         };
 
