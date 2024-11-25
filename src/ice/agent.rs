@@ -42,6 +42,9 @@ pub struct IceAgent {
     // but the value MUST be configurable.
     max_candidate_pairs: Option<usize>,
 
+    /// Whether we have previously exceeded the `max_candidate_pairs` limit.
+    has_exceeded_max_candidate_pairs: bool,
+
     /// Credentials for this side. Set on init and ice-restart.
     local_credentials: IceCreds,
 
@@ -257,6 +260,7 @@ impl IceAgent {
             last_now: None,
             ice_lite: false,
             max_candidate_pairs: None,
+            has_exceeded_max_candidate_pairs: false,
             local_credentials,
             remote_credentials: None,
             controlling: false,
@@ -281,6 +285,7 @@ impl IceAgent {
     /// Any pairs above this limit will be dropped (worst priority first).
     pub fn set_max_candidate_pairs(&mut self, max: usize) {
         self.max_candidate_pairs = Some(max);
+        self.has_exceeded_max_candidate_pairs = false; // Reset the flag.
     }
 
     /// Whether ice_lite is enabled.
@@ -789,6 +794,13 @@ impl IceAgent {
         //
         // TODO: How does this work with trickle ice?
         let max = self.max_candidate_pairs.unwrap_or(100);
+
+        let num_pairs = self.candidate_pairs.len();
+        if num_pairs > max && !self.has_exceeded_max_candidate_pairs {
+            warn!(%max, %num_pairs, "Exceeded max number of candidate pairs");
+            self.has_exceeded_max_candidate_pairs = true;
+        }
+
         while self.candidate_pairs.len() > max {
             let pair = self.candidate_pairs.pop();
             debug!("Remove overflow pair {:?}", pair);
@@ -861,6 +873,7 @@ impl IceAgent {
         self.remote_credentials = None;
         self.remote_candidates.clear();
         self.candidate_pairs.clear();
+        self.has_exceeded_max_candidate_pairs = false;
         self.transmit.clear();
         self.events.clear();
         self.discovered_recv.clear();
