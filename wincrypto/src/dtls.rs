@@ -406,17 +406,20 @@ impl WinCryptoDtls {
 
     fn transition_to_completed(&mut self) -> Result<WinCryptoDtlsEvent, WinCryptoError> {
         let mut srtp_parameters = SecPkgContext_SrtpParameters::default();
+        let Some(security_ctx) = self.security_ctx.as_ref() else {
+            return Err(WinCryptoError("Security context missing".to_string()));
+        };
 
         unsafe {
             QueryContextAttributesW(
-                self.security_ctx.as_ref().unwrap() as *const _,
+                security_ctx as *const _,
                 SECPKG_ATTR_STREAM_SIZES,
                 &mut self.encrypt_message_input_sizes as *mut _ as *mut std::ffi::c_void,
             )
             .map_err(|e| WinCryptoError(format!("SECPKG_ATTR_STREAM_SIZES: {:?}", e)))?;
 
             QueryContextAttributesW(
-                self.security_ctx.as_ref().unwrap() as *const _,
+                security_ctx as *const _,
                 SECPKG_ATTR(SECPKG_ATTR_SRTP_PARAMETERS),
                 &mut srtp_parameters as *mut _ as *mut std::ffi::c_void,
             )
@@ -437,7 +440,7 @@ impl WinCryptoDtls {
 
         let srtp_keying_material = unsafe {
             SetContextAttributesW(
-                self.security_ctx.as_ref().unwrap() as *const _,
+                security_ctx as *const _,
                 SECPKG_ATTR_KEYING_MATERIAL_INFO,
                 &keying_material_info as *const _ as *const std::ffi::c_void,
                 std::mem::size_of::<SecPkgContext_KeyingMaterialInfo>() as u32,
@@ -447,7 +450,7 @@ impl WinCryptoDtls {
             })?;
 
             QueryContextAttributesExW(
-                self.security_ctx.as_ref().unwrap() as *const _,
+                security_ctx as *const _,
                 SECPKG_ATTR(SECPKG_ATTR_KEYING_MATERIAL),
                 &mut keying_material as *mut _ as *mut std::ffi::c_void,
                 std::mem::size_of::<SecPkgContext_KeyingMaterial>() as u32,
@@ -476,7 +479,7 @@ impl WinCryptoDtls {
         let peer_certificate: WinCryptoCertificate = unsafe {
             let mut peer_cert_context: *mut CERT_CONTEXT = std::ptr::null_mut();
             QueryContextAttributesW(
-                self.security_ctx.as_ref().unwrap() as *const _,
+                security_ctx as *const _,
                 SECPKG_ATTR_REMOTE_CERT_CONTEXT,
                 &mut peer_cert_context as *mut _ as *mut std::ffi::c_void,
             )
