@@ -276,27 +276,31 @@ impl WinCryptoDtls {
         })?;
         let mut new_ctx_handle = SecHandle::default();
 
+        let mut buffers = [
+            DTLS_MTU_SECBUFFER,
+            SRTP_PROTECTION_PROFILES_SECBUFFER,
+            SecBuffer {
+                cbBuffer: 0,
+                BufferType: SECBUFFER_TOKEN,
+                pvBuffer: std::ptr::null_mut(),
+            },
+            SecBuffer {
+                cbBuffer: 0,
+                BufferType: SECBUFFER_EMPTY,
+                pvBuffer: std::ptr::null_mut(),
+            },
+            SecBuffer {
+                cbBuffer: 0,
+                BufferType: SECBUFFER_EXTRA,
+                pvBuffer: std::ptr::null_mut(),
+            },
+        ];
+
         let in_buffer_desc = match datagram {
             Some(datagram) => {
-                let buffers = [
-                    DTLS_MTU_SECBUFFER,
-                    SRTP_PROTECTION_PROFILES_SECBUFFER,
-                    SecBuffer {
-                        cbBuffer: datagram.len() as u32,
-                        BufferType: SECBUFFER_TOKEN,
-                        pvBuffer: datagram.as_ptr() as *mut _,
-                    },
-                    SecBuffer {
-                        cbBuffer: 0,
-                        BufferType: SECBUFFER_EMPTY,
-                        pvBuffer: std::ptr::null_mut(),
-                    },
-                    SecBuffer {
-                        cbBuffer: 0,
-                        BufferType: SECBUFFER_EXTRA,
-                        pvBuffer: std::ptr::null_mut(),
-                    },
-                ];
+                buffers[2].cbBuffer = datagram.len() as u32;
+                buffers[2].pvBuffer = datagram.as_ptr() as *mut _;
+
                 SecBufferDesc {
                     ulVersion: SECBUFFER_VERSION,
                     cBuffers: buffers.len() as u32,
@@ -306,8 +310,7 @@ impl WinCryptoDtls {
             None => SecBufferDesc {
                 ulVersion: SECBUFFER_VERSION,
                 cBuffers: 2,
-                pBuffers: &[DTLS_MTU_SECBUFFER, SRTP_PROTECTION_PROFILES_SECBUFFER] as *const _
-                    as *mut _,
+                pBuffers: &buffers[0] as *const _ as *mut _,
             },
         };
 
