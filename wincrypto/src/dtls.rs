@@ -65,7 +65,10 @@ const DTLS_MTU_SECBUFFER: SecBuffer = SecBuffer {
 
 // The label used for SRTP key derivation from: https://datatracker.ietf.org/doc/html/rfc5764#section-4.2
 const DTLS_KEY_LABEL: &[u8] = b"EXTRACTOR-dtls_srtp\0";
-const DATAGRAM_MTU: usize = 1150;
+
+// This size includes the encaptulation overhead of DTLS. So it must be larger than the MTU Str0m
+// uses for SCTP.
+const DATAGRAM_MTU: usize = 1200;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum EstablishmentState {
