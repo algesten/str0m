@@ -1,11 +1,12 @@
 use super::WinCryptoError;
 use windows::Win32::Security::Cryptography::{
-    BCryptCreateHash, BCryptFinishHash, BCryptHashData, BCRYPT_HASH_HANDLE,
+    BCryptCreateHash, BCryptDestroyHash, BCryptFinishHash, BCryptHashData, BCRYPT_HASH_HANDLE,
     BCRYPT_HMAC_SHA1_ALG_HANDLE,
 };
 
 pub fn wincrypto_sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> Result<[u8; 20], WinCryptoError> {
     unsafe {
+        // Create hash.
         let mut hash_handle = BCRYPT_HASH_HANDLE::default();
         WinCryptoError::from_ntstatus(BCryptCreateHash(
             BCRYPT_HMAC_SHA1_ALG_HANDLE,
@@ -15,12 +16,18 @@ pub fn wincrypto_sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> Result<[u8; 20], W
             0,
         ))?;
 
+        // Update hash with data.
         for payload in payloads {
             WinCryptoError::from_ntstatus(BCryptHashData(hash_handle, payload, 0))?;
         }
 
+        // Get the hash result.
         let mut hash = [0u8; 20];
         WinCryptoError::from_ntstatus(BCryptFinishHash(hash_handle, &mut hash, 0))?;
+
+        // Free the hash.
+        WinCryptoError::from_ntstatus(BCryptDestroyHash(hash_handle))?;
+
         Ok(hash)
     }
 }

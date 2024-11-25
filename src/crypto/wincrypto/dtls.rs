@@ -22,7 +22,7 @@ impl WinCryptoDtlsImpl {
 
 impl DtlsInner for WinCryptoDtlsImpl {
     fn set_active(&mut self, active: bool) {
-        self.0.set_as_client(active);
+        self.0.set_as_client(active).expect("Set client failed");
     }
 
     fn is_active(&self) -> Option<bool> {
@@ -67,14 +67,14 @@ impl DtlsInner for WinCryptoDtlsImpl {
     }
 
     fn poll_datagram(&mut self) -> Option<crate::net::DatagramSend> {
-        let x: Option<crate::io::DatagramSend> = self.0.pull_datagram().map(|v| v.into());
-        if let Some(x) = &x {
-            if x.len() > DATAGRAM_MTU_WARN {
-                warn!("DTLS above MTU {}: {}", DATAGRAM_MTU_WARN, x.len());
+        let datagram: Option<crate::io::DatagramSend> = self.0.pull_datagram().map(|v| v.into());
+        if let Some(datagram) = &datagram {
+            if datagram.len() > DATAGRAM_MTU_WARN {
+                warn!("DTLS above MTU {}: {}", DATAGRAM_MTU_WARN, datagram.len());
             }
-            trace!("Poll datagram: {}", x.len());
+            trace!("Poll datagram: {}", datagram.len());
         }
-        x
+        datagram
     }
 
     fn poll_timeout(&mut self, now: Instant) -> Option<Instant> {

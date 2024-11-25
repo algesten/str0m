@@ -116,7 +116,7 @@ impl WinCryptoDtls {
         self.state == EstablishmentState::Established
     }
 
-    pub fn set_as_client(&mut self, active: bool) {
+    pub fn set_as_client(&mut self, active: bool) -> Result<(), WinCryptoError> {
         self.is_client = Some(active);
 
         let mut cert_contexts = [self.cert.0];
@@ -147,10 +147,10 @@ impl WinCryptoDtls {
             dwCredFormat: 0,
         };
 
+        // These are the outputs of AcquireCredentialsHandleA
+        let mut cred_handle = SecHandle::default();
+        let mut creds_expiry: i64 = 0;
         unsafe {
-            // These are the outputs of AcquireCredentialsHandleA
-            let mut cred_handle = SecHandle::default();
-            let mut creds_expiry: i64 = 0;
             AcquireCredentialsHandleW(
                 None,
                 UNISP_NAME_W,
@@ -165,13 +165,12 @@ impl WinCryptoDtls {
                 None,
                 &mut cred_handle,
                 Some(&mut creds_expiry),
-            )
-            .expect("Failed to generate creds");
-
-            self.cred_handle = Some(cred_handle);
+            )?;
         }
+        self.cred_handle = Some(cred_handle);
 
         self.state = EstablishmentState::Handshaking;
+        Ok(())
     }
 
     pub fn handle_receive(
@@ -216,56 +215,58 @@ impl WinCryptoDtls {
         if self.state != EstablishmentState::Established {
             return Ok(false);
         }
-        let ctx_handle = self.security_ctx.as_ref().expect("No ctx!?");
+        let Some(security_ctx) = self.security_ctx.as_ref() else {
+            return Err(WinCryptoError(
+                "Security Context not generated.".to_string(),
+            ));
+        };
 
-        unsafe {
-            let header_size = self.encrypt_message_input_sizes.cbHeader as usize;
-            let trailer_size = self.encrypt_message_input_sizes.cbTrailer as usize;
-            let message_size = data.len();
+        let header_size = self.encrypt_message_input_sizes.cbHeader as usize;
+        let trailer_size = self.encrypt_message_input_sizes.cbTrailer as usize;
+        let message_size = data.len();
 
-            let mut output = vec![0u8; header_size + trailer_size + message_size];
-            output[header_size..header_size + message_size].copy_from_slice(data);
+        let mut output = vec![0u8; header_size + trailer_size + message_size];
+        output[header_size..header_size + message_size].copy_from_slice(data);
 
-            let sec_buffers = [
-                SecBuffer {
-                    BufferType: SECBUFFER_STREAM_HEADER,
-                    cbBuffer: header_size as u32,
-                    pvBuffer: &output[0] as *const _ as *mut _,
-                },
-                SecBuffer {
-                    BufferType: SECBUFFER_DATA,
-                    cbBuffer: message_size as u32,
-                    pvBuffer: &output[header_size] as *const _ as *mut _,
-                },
-                SecBuffer {
-                    BufferType: SECBUFFER_STREAM_TRAILER,
-                    cbBuffer: trailer_size as u32,
-                    pvBuffer: &output[header_size + message_size] as *const _ as *mut _,
-                },
-                SecBuffer {
-                    cbBuffer: 0,
-                    BufferType: SECBUFFER_EMPTY,
-                    pvBuffer: std::ptr::null_mut(),
-                },
-            ];
-            let sec_buffer_desc = SecBufferDesc {
-                ulVersion: SECBUFFER_VERSION,
-                cBuffers: 4,
-                pBuffers: &sec_buffers[0] as *const _ as *mut _,
-            };
+        let sec_buffers = [
+            SecBuffer {
+                BufferType: SECBUFFER_STREAM_HEADER,
+                cbBuffer: header_size as u32,
+                pvBuffer: &output[0] as *const _ as *mut _,
+            },
+            SecBuffer {
+                BufferType: SECBUFFER_DATA,
+                cbBuffer: message_size as u32,
+                pvBuffer: &output[header_size] as *const _ as *mut _,
+            },
+            SecBuffer {
+                BufferType: SECBUFFER_STREAM_TRAILER,
+                cbBuffer: trailer_size as u32,
+                pvBuffer: &output[header_size + message_size] as *const _ as *mut _,
+            },
+            SecBuffer {
+                cbBuffer: 0,
+                BufferType: SECBUFFER_EMPTY,
+                pvBuffer: std::ptr::null_mut(),
+            },
+        ];
+        let sec_buffer_desc = SecBufferDesc {
+            ulVersion: SECBUFFER_VERSION,
+            cBuffers: 4,
+            pBuffers: &sec_buffers[0] as *const _ as *mut _,
+        };
 
-            let status = EncryptMessage(ctx_handle, 0, &sec_buffer_desc, 0);
-            match status {
-                SEC_E_OK => {
-                    self.output.push_back(output);
-                    Ok(true)
-                }
-                status => Err(WinCryptoError(format!(
-                    "EncryptMessage returned error, message dropped. Status: {}",
-                    status
-                ))
-                .into()),
+        let status = unsafe { EncryptMessage(security_ctx, 0, &sec_buffer_desc, 0) };
+        match status {
+            SEC_E_OK => {
+                self.output.push_back(output);
+                Ok(true)
             }
+            status => Err(WinCryptoError(format!(
+                "EncryptMessage returned error, message dropped. Status: {}",
+                status
+            ))
+            .into()),
         }
     }
 
@@ -330,9 +331,9 @@ impl WinCryptoDtls {
             ulVersion: SECBUFFER_VERSION,
         };
 
-        unsafe {
-            let mut attrs = 0;
-            let status = if is_client {
+        let mut attrs = 0;
+        let status = unsafe {
+            if is_client {
                 // Client
                 debug!("InitializeSecurityContextW {:?}", in_buffer_desc);
                 InitializeSecurityContextW(
@@ -372,38 +373,40 @@ impl WinCryptoDtls {
                     &mut attrs,
                     None,
                 )
-            };
-            debug!("DTLS Handshake status: {status}");
-            self.security_ctx = Some(new_ctx_handle);
-            if out_buffers[0].cbBuffer > 0 {
-                let len = out_buffers[0].cbBuffer;
-                self.output.push_back(token_buffer[..len as usize].to_vec());
             }
-            return match status {
-                SEC_E_OK => {
-                    // Move to Done
-                    self.transition_to_completed()
-                }
-                SEC_I_CONTINUE_NEEDED => {
-                    // Stay in handshake while we wait for the other side to respond.
-                    debug!("Wait for peer");
-                    Ok(WinCryptoDtlsEvent::None)
-                }
-                SEC_I_MESSAGE_FRAGMENT => {
-                    // Fragment was sent, we need to call again to send the next fragment.
-                    debug!("Sent handshake fragment");
-                    self.handshake(None)
-                }
-                e => {
-                    // Failed
-                    self.state = EstablishmentState::Failed;
-                    Err(WinCryptoError(format!("DTLS handshake failure: {:?}", e)).into())
-                }
-            };
+        };
+        debug!("DTLS Handshake status: {status}");
+        self.security_ctx = Some(new_ctx_handle);
+        if out_buffers[0].cbBuffer > 0 {
+            let len = out_buffers[0].cbBuffer;
+            self.output.push_back(token_buffer[..len as usize].to_vec());
         }
+        return match status {
+            SEC_E_OK => {
+                // Move to Done
+                self.transition_to_completed()
+            }
+            SEC_I_CONTINUE_NEEDED => {
+                // Stay in handshake while we wait for the other side to respond.
+                debug!("Wait for peer");
+                Ok(WinCryptoDtlsEvent::None)
+            }
+            SEC_I_MESSAGE_FRAGMENT => {
+                // Fragment was sent, we need to call again to send the next fragment.
+                debug!("Sent handshake fragment");
+                self.handshake(None)
+            }
+            e => {
+                // Failed
+                self.state = EstablishmentState::Failed;
+                Err(WinCryptoError(format!("DTLS handshake failure: {:?}", e)).into())
+            }
+        };
     }
 
     fn transition_to_completed(&mut self) -> Result<WinCryptoDtlsEvent, WinCryptoError> {
+        let mut srtp_parameters = SecPkgContext_SrtpParameters::default();
+
         unsafe {
             QueryContextAttributesW(
                 self.security_ctx.as_ref().unwrap() as *const _,
@@ -412,7 +415,6 @@ impl WinCryptoDtls {
             )
             .map_err(|e| WinCryptoError(format!("SECPKG_ATTR_STREAM_SIZES: {:?}", e)))?;
 
-            let mut srtp_parameters = SecPkgContext_SrtpParameters::default();
             QueryContextAttributesW(
                 self.security_ctx.as_ref().unwrap() as *const _,
                 SECPKG_ATTR(SECPKG_ATTR_SRTP_PARAMETERS),
@@ -421,16 +423,19 @@ impl WinCryptoDtls {
             .map_err(|e| {
                 WinCryptoError(format!("QueryContextAttributesW Keying Material: {:?}", e))
             })?;
+        }
 
-            let srtp_profile_id = u16::from_be(srtp_parameters.ProtectionProfile);
+        let srtp_profile_id = u16::from_be(srtp_parameters.ProtectionProfile);
+        let keying_material_info = SecPkgContext_KeyingMaterialInfo {
+            cbLabel: DTLS_KEY_LABEL.len() as u16,
+            pszLabel: windows::core::PSTR(DTLS_KEY_LABEL.as_ptr() as *mut u8),
+            cbKeyingMaterial: srtp_keying_material_len(srtp_profile_id)?,
+            cbContextValue: 0,
+            pbContextValue: std::ptr::null_mut(),
+        };
+        let mut keying_material = SecPkgContext_KeyingMaterial::default();
 
-            let keying_material_info = SecPkgContext_KeyingMaterialInfo {
-                cbLabel: DTLS_KEY_LABEL.len() as u16,
-                pszLabel: windows::core::PSTR(DTLS_KEY_LABEL.as_ptr() as *mut u8),
-                cbKeyingMaterial: srtp_keying_material_len(srtp_profile_id)?,
-                cbContextValue: 0,
-                pbContextValue: std::ptr::null_mut(),
-            };
+        let srtp_keying_material = unsafe {
             SetContextAttributesW(
                 self.security_ctx.as_ref().unwrap() as *const _,
                 SECPKG_ATTR_KEYING_MATERIAL_INFO,
@@ -441,7 +446,6 @@ impl WinCryptoDtls {
                 WinCryptoError(format!("SetContextAttributesA Keying Material: {:?}", e))
             })?;
 
-            let mut keying_material = SecPkgContext_KeyingMaterial::default();
             QueryContextAttributesExW(
                 self.security_ctx.as_ref().unwrap() as *const _,
                 SECPKG_ATTR(SECPKG_ATTR_KEYING_MATERIAL),
@@ -455,17 +459,21 @@ impl WinCryptoDtls {
                 ))
             })?;
 
-            let srtp_keying_material = std::slice::from_raw_parts(
+            std::slice::from_raw_parts(
                 keying_material.pbKeyingMaterial,
                 keying_material.cbKeyingMaterial as usize,
             )
-            .to_vec();
+            .to_vec()
+        };
 
+        unsafe {
             FreeContextBuffer(keying_material.pbKeyingMaterial as *mut _ as *mut std::ffi::c_void)
                 .map_err(|e| {
                     WinCryptoError(format!("FreeContextBuffer Keying Material: {:?}", e))
                 })?;
+        }
 
+        let peer_certificate: WinCryptoCertificate = unsafe {
             let mut peer_cert_context: *mut CERT_CONTEXT = std::ptr::null_mut();
             QueryContextAttributesW(
                 self.security_ctx.as_ref().unwrap() as *const _,
@@ -473,24 +481,27 @@ impl WinCryptoDtls {
                 &mut peer_cert_context as *mut _ as *mut std::ffi::c_void,
             )
             .map_err(|e| WinCryptoError(format!("QueryContextAttributesW: {:?}", e)))?;
-            let peer_certificate: WinCryptoCertificate =
-                (peer_cert_context as *const CERT_CONTEXT).into();
-            let peer_fingerprint = peer_certificate.sha256_fingerprint()?;
+            (peer_cert_context as *const CERT_CONTEXT).into()
+        };
+        let peer_fingerprint = peer_certificate.sha256_fingerprint()?;
 
-            self.state = EstablishmentState::Established;
-            Ok(WinCryptoDtlsEvent::Connected {
-                srtp_profile_id,
-                srtp_keying_material,
-                peer_fingerprint,
-            })
-        }
+        self.state = EstablishmentState::Established;
+        Ok(WinCryptoDtlsEvent::Connected {
+            srtp_profile_id,
+            srtp_keying_material,
+            peer_fingerprint,
+        })
     }
 
     fn process_packet(&mut self, datagram: &[u8]) -> Result<WinCryptoDtlsEvent, WinCryptoError> {
         if self.state != EstablishmentState::Established {
             return Ok(WinCryptoDtlsEvent::WouldBlock);
         }
-        let security_ctx = self.security_ctx.as_ref().expect("No ctx!?");
+        let Some(security_ctx) = self.security_ctx.as_ref() else {
+            return Err(WinCryptoError(
+                "Security Context not generated.".to_string(),
+            ));
+        };
 
         let header_size = self.encrypt_message_input_sizes.cbHeader as usize;
         let trailer_size = self.encrypt_message_input_sizes.cbTrailer as usize;
@@ -531,44 +542,42 @@ impl WinCryptoDtls {
             pBuffers: &sec_buffers[0] as *const _ as *mut _,
         };
 
-        unsafe {
-            let status = DecryptMessage(security_ctx, &sec_buffer_desc, 0, None);
-            match status {
-                SEC_E_OK => {
-                    let data = output[header_size..output.len() - trailer_size].to_vec();
-                    Ok(WinCryptoDtlsEvent::Data(data))
-                }
-                SEC_E_MESSAGE_ALTERED => {
-                    warn!("Packet alteration detected, packet dropped");
-                    Ok(WinCryptoDtlsEvent::None)
-                }
-                SEC_E_OUT_OF_SEQUENCE => {
-                    warn!("Received out of sequence packet");
-                    Ok(WinCryptoDtlsEvent::None)
-                }
-                SEC_I_CONTEXT_EXPIRED => {
-                    self.state = EstablishmentState::Failed;
-                    Err(WinCryptoError("Context expired".to_string()).into())
-                }
-                SEC_I_RENEGOTIATE => {
-                    // SChannel provides a token to feed into a new handshake
-                    if let Some(token_buffer) =
-                        sec_buffers.iter().find(|p| p.BufferType == SECBUFFER_EXTRA)
-                    {
-                        self.state = EstablishmentState::Handshaking;
-                        let data = token_buffer.pvBuffer as *mut u8;
-                        let len = token_buffer.cbBuffer as usize;
-                        self.handshake(Some(std::slice::from_raw_parts(data, len)))
-                    } else {
-                        Err(WinCryptoError("Renegotiate didn't include a token".to_string()).into())
-                    }
-                }
-                status => Err(WinCryptoError(format!(
-                    "DecryptMessage returned error, message dropped. Status: {}",
-                    status
-                ))
-                .into()),
+        let status = unsafe { DecryptMessage(security_ctx, &sec_buffer_desc, 0, None) };
+        match status {
+            SEC_E_OK => {
+                let data = output[header_size..output.len() - trailer_size].to_vec();
+                Ok(WinCryptoDtlsEvent::Data(data))
             }
+            SEC_E_MESSAGE_ALTERED => {
+                warn!("Packet alteration detected, packet dropped");
+                Ok(WinCryptoDtlsEvent::None)
+            }
+            SEC_E_OUT_OF_SEQUENCE => {
+                warn!("Received out of sequence packet");
+                Ok(WinCryptoDtlsEvent::None)
+            }
+            SEC_I_CONTEXT_EXPIRED => {
+                self.state = EstablishmentState::Failed;
+                Err(WinCryptoError("Context expired".to_string()).into())
+            }
+            SEC_I_RENEGOTIATE => {
+                // SChannel provides a token to feed into a new handshake
+                if let Some(token_buffer) =
+                    sec_buffers.iter().find(|p| p.BufferType == SECBUFFER_EXTRA)
+                {
+                    self.state = EstablishmentState::Handshaking;
+                    let data = token_buffer.pvBuffer as *mut u8;
+                    let len = token_buffer.cbBuffer as usize;
+                    self.handshake(Some(unsafe { std::slice::from_raw_parts(data, len) }))
+                } else {
+                    Err(WinCryptoError("Renegotiate didn't include a token".to_string()).into())
+                }
+            }
+            status => Err(WinCryptoError(format!(
+                "DecryptMessage returned error, message dropped. Status: {}",
+                status
+            ))
+            .into()),
         }
     }
 }

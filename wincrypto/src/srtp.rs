@@ -16,11 +16,13 @@ unsafe impl Send for WinCryptoSrtpKey {}
 unsafe impl Sync for WinCryptoSrtpKey {}
 
 impl WinCryptoSrtpKey {
+    /// Creates a key from the given data for operating AES in Counter (CTR/CM) mode.
     pub fn create_aes_ctr_key(key: &[u8]) -> Result<Self, WinCryptoError> {
         // CTR mode is build on top of ECB mode, so we use the same key.
         Self::create_aes_ecb_key(key)
     }
 
+    /// Creates a key from the given data for operating AES in ECB mode.
     pub fn create_aes_ecb_key(key: &[u8]) -> Result<Self, WinCryptoError> {
         let mut key_handle = BCRYPT_KEY_HANDLE::default();
         unsafe {
@@ -35,6 +37,7 @@ impl WinCryptoSrtpKey {
         Ok(Self(key_handle))
     }
 
+    /// Creates a key from the given data for operating AES in GCM mode.
     pub fn create_aes_gcm_key(key: &[u8]) -> Result<Self, WinCryptoError> {
         let mut key_handle = BCRYPT_KEY_HANDLE::default();
         unsafe {
@@ -60,13 +63,13 @@ impl Drop for WinCryptoSrtpKey {
     }
 }
 
+/// Run the given input through the AES-128-ECB using the given AES ECB key.
 pub fn wincrypto_srtp_aes_128_ecb_round(
     key: &WinCryptoSrtpKey,
     input: &[u8],
     output: &mut [u8],
 ) -> Result<usize, WinCryptoError> {
     unsafe {
-        // Run AES
         let mut count = 0;
         WinCryptoError::from_ntstatus(BCryptEncrypt(
             key.0,
@@ -81,59 +84,63 @@ pub fn wincrypto_srtp_aes_128_ecb_round(
     }
 }
 
+/// Run the given input through the AES-128-CM using the given AES CTR/CM key.
 pub fn wincrypto_srtp_aes_128_cm(
     key: &WinCryptoSrtpKey,
     iv: &[u8],
     input: &[u8],
     output: &mut [u8],
 ) -> Result<usize, WinCryptoError> {
-    unsafe {
-        // First, we'll make a copy of the IV with a countered as many times as needed into a new
-        // countered_iv.
-        let mut iv = iv.to_vec();
-        let mut countered_iv = [0u8; MAX_BUFFER_SIZE];
-        let mut offset = 0;
-        while offset <= input.len() {
-            let mut _count = 0;
-            let start = offset;
-            let end = offset + 16;
-            countered_iv[start..end].copy_from_slice(&iv);
-            offset += 16;
-            for idx in 0..16 {
-                let n = iv[15 - idx];
-                if n == 0xff {
-                    iv[15 - idx] = 0;
-                } else {
-                    iv[15 - idx] += 1;
-                    break;
-                }
+    // First, we'll make a copy of the IV with a countered as many times as needed into a new
+    // countered_iv.
+    let mut iv = iv.to_vec();
+    let mut countered_iv = [0u8; MAX_BUFFER_SIZE];
+    let mut offset = 0;
+    while offset <= input.len() {
+        let mut _count = 0;
+        let start = offset;
+        let end = offset + 16;
+        countered_iv[start..end].copy_from_slice(&iv);
+        offset += 16;
+        for idx in 0..16 {
+            let n = iv[15 - idx];
+            if n == 0xff {
+                iv[15 - idx] = 0;
+            } else {
+                iv[15 - idx] += 1;
+                break;
             }
         }
+    }
 
+    let mut count = 0;
+    unsafe {
         // Now, we'll encrypt the countered IV. CNG can do this in-place, so we'll need a separate
         // reference to the slice, but fool the borrow-checker, otherwise it won't like us passing
         // the immutable and mutable reference to BCryptEncrypt.
         let encrypted_countered_iv =
             std::slice::from_raw_parts_mut(countered_iv.as_mut_ptr(), countered_iv.len());
-        let mut _count = 0;
         WinCryptoError::from_ntstatus(BCryptEncrypt(
             key.0,
             Some(&countered_iv[..offset]),
             None,
             None,
             Some(&mut encrypted_countered_iv[..offset]),
-            &mut _count,
+            &mut count,
             BCRYPT_FLAGS(0),
         ))?;
-
-        // XOR the intermediate_output with the input
-        for i in 0..input.len() {
-            output[i] = input[i] ^ encrypted_countered_iv[i];
-        }
-        Ok(input.len())
     }
+
+    // XOR the intermediate_output with the input
+    for i in 0..input.len() {
+        output[i] = input[i] ^ countered_iv[i];
+    }
+
+    Ok(input.len() as usize)
 }
 
+/// Run the given plain_text through the AES-128-GCM alg with the given key and receive the
+/// cipher_text which will include the auth tag.
 pub fn wincrypto_srtp_aead_aes_128_gcm_encrypt(
     key: &WinCryptoSrtpKey,
     iv: &[u8],
@@ -141,31 +148,31 @@ pub fn wincrypto_srtp_aead_aes_128_gcm_encrypt(
     plain_text: &[u8],
     cipher_text: &mut [u8],
 ) -> Result<usize, WinCryptoError> {
+    if cipher_text.len() < plain_text.len() {
+        return Err(WinCryptoError(
+            "Cipher Text is to small to include TAG".to_string(),
+        ));
+    }
+
+    assert!(
+        additional_auth_data.len() >= 12,
+        "Associated data length MUST be at least 12 octets"
+    );
+
+    let auth_cipher_mode_info = BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO {
+        pbAuthData: additional_auth_data.as_ptr() as *mut u8,
+        cbAuthData: additional_auth_data.len() as u32,
+        dwInfoVersion: BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION,
+        cbSize: std::mem::size_of::<BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO>() as u32,
+        pbTag: cipher_text[plain_text.len()..].as_ptr() as *mut u8,
+        cbTag: AEAD_AES_GCM_TAG_LEN as u32,
+        pbNonce: iv.as_ptr() as *mut u8,
+        cbNonce: iv.len() as u32,
+        ..Default::default()
+    };
+
+    let mut count = 0;
     unsafe {
-        if cipher_text.len() < plain_text.len() {
-            return Err(WinCryptoError(
-                "Cipher Text is to small to include TAG".to_string(),
-            ));
-        }
-
-        assert!(
-            additional_auth_data.len() >= 12,
-            "Associated data length MUST be at least 12 octets"
-        );
-
-        let auth_cipher_mode_info = BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO {
-            pbAuthData: additional_auth_data.as_ptr() as *mut u8,
-            cbAuthData: additional_auth_data.len() as u32,
-            dwInfoVersion: BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION,
-            cbSize: std::mem::size_of::<BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO>() as u32,
-            pbTag: cipher_text[plain_text.len()..].as_ptr() as *mut u8,
-            cbTag: AEAD_AES_GCM_TAG_LEN as u32,
-            pbNonce: iv.as_ptr() as *mut u8,
-            cbNonce: iv.len() as u32,
-            ..Default::default()
-        };
-
-        let mut count = 0;
         WinCryptoError::from_ntstatus(BCryptEncrypt(
             key.0,
             Some(plain_text),
@@ -175,11 +182,12 @@ pub fn wincrypto_srtp_aead_aes_128_gcm_encrypt(
             &mut count,
             BCRYPT_FLAGS(0),
         ))?;
-
-        Ok(count as usize)
     }
+    Ok(count as usize)
 }
 
+/// Run the given tagged cipher_text through the AES-128-GCM alg with the given key and
+/// receive the decrypted plain_text.
 pub fn wincrypto_srtp_aead_aes_128_gcm_decrypt(
     key: &WinCryptoSrtpKey,
     iv: &[u8],
@@ -187,38 +195,38 @@ pub fn wincrypto_srtp_aead_aes_128_gcm_decrypt(
     cipher_text: &[u8],
     plain_text: &mut [u8],
 ) -> Result<usize, WinCryptoError> {
+    if cipher_text.len() < AEAD_AES_GCM_TAG_LEN {
+        return Err(WinCryptoError(
+            "Cipher Text too short to include tag".to_string(),
+        ));
+    }
+    let (cipher_text, tag) = cipher_text.split_at(cipher_text.len() - AEAD_AES_GCM_TAG_LEN);
+
+    // If don't have exactly one auth_data, we need to flatten it. This will
+    // hold our reference to the data.
+    let flattened_auth_data = if additional_auth_data.len() != 1 {
+        Some(additional_auth_data.concat())
+    } else {
+        None
+    };
+    let additional_auth_data = flattened_auth_data
+        .as_ref()
+        .map_or(additional_auth_data[0], |f| f.as_slice());
+
+    let auth_cipher_mode_info = BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO {
+        pbAuthData: additional_auth_data.as_ptr() as *mut u8,
+        cbAuthData: additional_auth_data.len() as u32,
+        dwInfoVersion: BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION,
+        cbSize: std::mem::size_of::<BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO>() as u32,
+        pbTag: tag.as_ptr() as *mut u8,
+        cbTag: tag.len() as u32,
+        pbNonce: iv.as_ptr() as *mut u8,
+        cbNonce: iv.len() as u32,
+        ..Default::default()
+    };
+
+    let mut count = 0;
     unsafe {
-        if cipher_text.len() < AEAD_AES_GCM_TAG_LEN {
-            return Err(WinCryptoError(
-                "Cipher Text too short to include tag".to_string(),
-            ));
-        }
-        let (cipher_text, tag) = cipher_text.split_at(cipher_text.len() - AEAD_AES_GCM_TAG_LEN);
-
-        // If don't have exactly one auth_data, we need to flatten it. This will
-        // hold our reference to the data.
-        let flattened_auth_data = if additional_auth_data.len() != 1 {
-            Some(additional_auth_data.concat())
-        } else {
-            None
-        };
-        let additional_auth_data = flattened_auth_data
-            .as_ref()
-            .map_or(additional_auth_data[0], |f| f.as_slice());
-
-        let auth_cipher_mode_info = BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO {
-            pbAuthData: additional_auth_data.as_ptr() as *mut u8,
-            cbAuthData: additional_auth_data.len() as u32,
-            dwInfoVersion: BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION,
-            cbSize: std::mem::size_of::<BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO>() as u32,
-            pbTag: tag.as_ptr() as *mut u8,
-            cbTag: tag.len() as u32,
-            pbNonce: iv.as_ptr() as *mut u8,
-            cbNonce: iv.len() as u32,
-            ..Default::default()
-        };
-
-        let mut count = 0;
         WinCryptoError::from_ntstatus(BCryptDecrypt(
             key.0,
             Some(cipher_text),
@@ -228,9 +236,8 @@ pub fn wincrypto_srtp_aead_aes_128_gcm_decrypt(
             &mut count,
             BCRYPT_FLAGS(0),
         ))?;
-
-        Ok(count as usize)
     }
+    Ok(count as usize)
 }
 
 #[cfg(test)]
