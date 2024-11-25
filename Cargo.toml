@@ -25,11 +25,14 @@ rust-version = "1.65"
 
 [features]
 default = ["openssl", "vendored", "sha1"]
-openssl = ["dep:openssl", "dep:openssl-sys", "dep:libc"]
+openssl = ["dep:openssl", "dep:openssl-sys", "dep:libc", "rouille/ssl"]
 vendored = ["openssl?/vendored"]
 
 # Without the sha1 feature, str0m uses the openssl sha1 impl which is slower.
 sha1 = ["dep:sha1"]
+
+# Uses native Windows API to implement cryptographic features, use instead on openssl and sha1.
+wincrypto = ["dep:str0m-wincrypto"]
 
 _internal_dont_use_log_stats = []
 _internal_test_exports = []
@@ -55,13 +58,15 @@ serde = { version = "1.0.152", features = ["derive"] }
 [target.'cfg(unix)'.dependencies]
 sha1 = { version = "0.10.6", features = ["asm"], optional = true }
 
+[target.'cfg(windows)'.dependencies]
 # The ASM feature is broken on windows. Unclear where in the rust-crypto project
 # we're supposed to check when it gets sorted out.
-[target.'cfg(windows)'.dependencies]
 sha1 = { version = "0.10.6", optional = true }
+# Windows Crypto (CNG + SChannel)
+str0m-wincrypto = { path = "wincrypto", optional = true }
 
 [dev-dependencies]
-rouille = { version = "3.5.0", features = ["ssl"] }
+rouille = { version = "3.5.0", features = [] }
 serde_json = "1.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }
 systemstat = "0.2.2"
