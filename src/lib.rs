@@ -546,7 +546,7 @@
 //! #### What are the build options for OpenSSL?
 //! When using OpenSSL, there are two alternatives:
 //! - Vendored: Downloads and builds OpenSSL from source. This ensures compatibility and avoids
-//! dependency on system-provided OpenSSL.
+//!   dependency on system-provided OpenSSL.
 //! - Non-vendored: Relies on the OpenSSL library provided by the system.
 //!
 //! #### What's the recommended build configuration?
@@ -562,6 +562,7 @@
 //! Yes! Contributions for a DTLS 1.2 implementation are welcome, but note:
 //! - It should be synchronous.
 //! - It should be implemented entirely in pure Rust.
+//!
 //! If you're interested in contributing, feel free to discuss with the str0m maintainers before starting.
 //!
 //! ### Can I deploy the chat example into production?
