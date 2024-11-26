@@ -24,7 +24,7 @@ rust-version = "1.65"
 # security patching than updating statically linked software.
 
 [features]
-default = ["openssl", "vendored", "sha1"]
+default = ["wincrypto"]#["openssl", "vendored", "sha1"]
 openssl = ["dep:openssl", "dep:openssl-sys", "dep:libc", "rouille/ssl"]
 vendored = ["openssl?/vendored"]
 

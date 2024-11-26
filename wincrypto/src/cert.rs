@@ -11,11 +11,11 @@ use windows::{
 };
 
 #[derive(Debug)]
-pub struct WinCryptoCertificate(pub(crate) *const CERT_CONTEXT);
-unsafe impl Send for WinCryptoCertificate {}
-unsafe impl Sync for WinCryptoCertificate {}
+pub struct Certificate(pub(crate) *const CERT_CONTEXT);
+unsafe impl Send for Certificate {}
+unsafe impl Sync for Certificate {}
 
-impl WinCryptoCertificate {
+impl Certificate {
     pub fn new_self_signed(subject: &str) -> Result<Self, WinCryptoError> {
         unsafe {
             let subject = HSTRING::from(subject);
@@ -112,13 +112,13 @@ impl WinCryptoCertificate {
     }
 }
 
-impl From<*const CERT_CONTEXT> for WinCryptoCertificate {
+impl From<*const CERT_CONTEXT> for Certificate {
     fn from(value: *const CERT_CONTEXT) -> Self {
         Self(value)
     }
 }
 
-impl Drop for WinCryptoCertificate {
+impl Drop for Certificate {
     fn drop(&mut self) {
         unsafe {
             _ = CertFreeCertificateContext(Some(self.0));
@@ -130,7 +130,7 @@ impl Drop for WinCryptoCertificate {
 mod tests {
     #[test]
     fn verify_self_signed() {
-        let cert = super::WinCryptoCertificate::new_self_signed("cn=WebRTC").unwrap();
+        let cert = super::Certificate::new_self_signed("cn=WebRTC").unwrap();
 
         // Verify it is self-signed.
         unsafe {
@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn verify_fingerprint() {
-        let cert = super::WinCryptoCertificate::new_self_signed("cn=WebRTC").unwrap();
+        let cert = super::Certificate::new_self_signed("cn=WebRTC").unwrap();
         let fingerprint = cert.sha256_fingerprint().unwrap();
         assert_eq!(fingerprint.len(), 32);
     }

@@ -1,4 +1,4 @@
-use super::{WinCryptoCertificate, WinCryptoError};
+use super::{Certificate, WinCryptoError};
 use std::{
     collections::VecDeque,
     sync::Arc,
@@ -78,7 +78,7 @@ enum EstablishmentState {
     Failed,
 }
 
-pub enum WinCryptoDtlsEvent {
+pub enum DtlsEvent {
     None,
     WouldBlock,
     Connected {
@@ -89,27 +89,27 @@ pub enum WinCryptoDtlsEvent {
     Data(Vec<u8>),
 }
 
-pub struct WinCryptoDtls {
-    cert: Arc<WinCryptoCertificate>,
+pub struct Dtls {
+    cert: Arc<Certificate>,
     is_client: Option<bool>,
     state: EstablishmentState,
     cred_handle: Option<SecHandle>,
     security_ctx: Option<SecHandle>,
     encrypt_message_input_sizes: SecPkgContext_StreamSizes,
 
-    output: VecDeque<Vec<u8>>,
+    output_datagrams: VecDeque<Vec<u8>>,
 }
 
-impl WinCryptoDtls {
-    pub fn new(cert: Arc<WinCryptoCertificate>) -> Result<Self, WinCryptoError> {
-        Ok(WinCryptoDtls {
+impl Dtls {
+    pub fn new(cert: Arc<Certificate>) -> Result<Self, WinCryptoError> {
+        Ok(Dtls {
             cert,
             is_client: None,
             state: EstablishmentState::Idle,
             cred_handle: None,
             security_ctx: None,
             encrypt_message_input_sizes: SecPkgContext_StreamSizes::default(),
-            output: VecDeque::default(),
+            output_datagrams: VecDeque::default(),
         })
     }
 
@@ -178,10 +178,7 @@ impl WinCryptoDtls {
         Ok(())
     }
 
-    pub fn handle_receive(
-        &mut self,
-        datagram: Option<&[u8]>,
-    ) -> Result<WinCryptoDtlsEvent, WinCryptoError> {
+    pub fn handle_receive(&mut self, datagram: Option<&[u8]>) -> Result<DtlsEvent, WinCryptoError> {
         let state = self.state;
         match state {
             EstablishmentState::Established => {
@@ -189,7 +186,7 @@ impl WinCryptoDtls {
                     self.process_packet(datagram)
                 } else {
                     warn!("Unexpectedly asked to process no message!");
-                    Ok(WinCryptoDtlsEvent::None)
+                    Ok(DtlsEvent::None)
                 }
             }
             EstablishmentState::Handshaking => self.handshake(datagram),
@@ -203,7 +200,7 @@ impl WinCryptoDtls {
     }
 
     pub fn pull_datagram(&mut self) -> Option<Vec<u8>> {
-        self.output.pop_front()
+        self.output_datagrams.pop_front()
     }
 
     pub fn next_timeout(&mut self, now: Instant) -> Option<Instant> {
@@ -264,7 +261,7 @@ impl WinCryptoDtls {
         let status = unsafe { EncryptMessage(security_ctx, 0, &sec_buffer_desc, 0) };
         match status {
             SEC_E_OK => {
-                self.output.push_back(output);
+                self.output_datagrams.push_back(output);
                 Ok(true)
             }
             status => Err(WinCryptoError(format!(
@@ -275,7 +272,7 @@ impl WinCryptoDtls {
         }
     }
 
-    fn handshake(&mut self, datagram: Option<&[u8]>) -> Result<WinCryptoDtlsEvent, WinCryptoError> {
+    fn handshake(&mut self, datagram: Option<&[u8]>) -> Result<DtlsEvent, WinCryptoError> {
         let is_client = self.is_client.ok_or_else(|| {
             WinCryptoError("handshake attempted without setting is_client".to_string())
         })?;
@@ -387,7 +384,8 @@ impl WinCryptoDtls {
         self.security_ctx = Some(new_ctx_handle);
         if out_buffers[0].cbBuffer > 0 {
             let len = out_buffers[0].cbBuffer;
-            self.output.push_back(token_buffer[..len as usize].to_vec());
+            self.output_datagrams
+                .push_back(token_buffer[..len as usize].to_vec());
         }
         return match status {
             SEC_E_OK => {
@@ -397,7 +395,7 @@ impl WinCryptoDtls {
             SEC_I_CONTINUE_NEEDED => {
                 // Stay in handshake while we wait for the other side to respond.
                 debug!("Wait for peer");
-                Ok(WinCryptoDtlsEvent::None)
+                Ok(DtlsEvent::None)
             }
             SEC_I_MESSAGE_FRAGMENT => {
                 // Fragment was sent, we need to call again to send the next fragment.
@@ -412,7 +410,7 @@ impl WinCryptoDtls {
         };
     }
 
-    fn transition_to_completed(&mut self) -> Result<WinCryptoDtlsEvent, WinCryptoError> {
+    fn transition_to_completed(&mut self) -> Result<DtlsEvent, WinCryptoError> {
         let mut srtp_parameters = SecPkgContext_SrtpParameters::default();
         let Some(security_ctx) = self.security_ctx.as_ref() else {
             return Err(WinCryptoError("Security context missing".to_string()));
@@ -484,7 +482,7 @@ impl WinCryptoDtls {
                 })?;
         }
 
-        let peer_certificate: WinCryptoCertificate = unsafe {
+        let peer_certificate: Certificate = unsafe {
             let mut peer_cert_context: *mut CERT_CONTEXT = std::ptr::null_mut();
             QueryContextAttributesW(
                 security_ctx as *const _,
@@ -497,16 +495,16 @@ impl WinCryptoDtls {
         let peer_fingerprint = peer_certificate.sha256_fingerprint()?;
 
         self.state = EstablishmentState::Established;
-        Ok(WinCryptoDtlsEvent::Connected {
+        Ok(DtlsEvent::Connected {
             srtp_profile_id,
             srtp_keying_material,
             peer_fingerprint,
         })
     }
 
-    fn process_packet(&mut self, datagram: &[u8]) -> Result<WinCryptoDtlsEvent, WinCryptoError> {
+    fn process_packet(&mut self, datagram: &[u8]) -> Result<DtlsEvent, WinCryptoError> {
         if self.state != EstablishmentState::Established {
-            return Ok(WinCryptoDtlsEvent::WouldBlock);
+            return Ok(DtlsEvent::WouldBlock);
         }
         let Some(security_ctx) = self.security_ctx.as_ref() else {
             return Err(WinCryptoError(
@@ -557,15 +555,15 @@ impl WinCryptoDtls {
         match status {
             SEC_E_OK => {
                 let data = output[header_size..output.len() - trailer_size].to_vec();
-                Ok(WinCryptoDtlsEvent::Data(data))
+                Ok(DtlsEvent::Data(data))
             }
             SEC_E_MESSAGE_ALTERED => {
                 warn!("Packet alteration detected, packet dropped");
-                Ok(WinCryptoDtlsEvent::None)
+                Ok(DtlsEvent::None)
             }
             SEC_E_OUT_OF_SEQUENCE => {
                 warn!("Received out of sequence packet");
-                Ok(WinCryptoDtlsEvent::None)
+                Ok(DtlsEvent::None)
             }
             SEC_I_CONTEXT_EXPIRED => {
                 self.state = EstablishmentState::Failed;
@@ -593,7 +591,7 @@ impl WinCryptoDtls {
     }
 }
 
-impl Drop for WinCryptoDtls {
+impl Drop for Dtls {
     fn drop(&mut self) {
         unsafe {
             if let Some(ctx_handle) = self.security_ctx {

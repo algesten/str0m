@@ -6,7 +6,7 @@ mod cert;
 pub use cert::WinCryptoDtlsCert;
 
 mod dtls;
-pub use dtls::WinCryptoDtlsImpl;
+pub use dtls::WinCryptoDtls;
 
 mod srtp;
 pub use srtp::WinCryptoSrtpCryptoImpl;

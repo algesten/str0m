@@ -4,7 +4,7 @@ use windows::Win32::Security::Cryptography::{
     BCRYPT_HMAC_SHA1_ALG_HANDLE,
 };
 
-pub fn wincrypto_sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> Result<[u8; 20], WinCryptoError> {
+pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> Result<[u8; 20], WinCryptoError> {
     unsafe {
         // Create hash.
         let mut hash_handle = BCRYPT_HASH_HANDLE::default();
@@ -39,7 +39,7 @@ mod test {
     #[test]
     fn test_rfc2022_test_case_1() {
         assert_eq!(
-            hash_to_hex(wincrypto_sha1_hmac(&[0x0b; 20], &["Hi There".as_bytes()])),
+            hash_to_hex(sha1_hmac(&[0x0b; 20], &["Hi There".as_bytes()])),
             "b617318655057264e28bc0b6fb378c8ef146be00"
         );
     }
@@ -47,7 +47,7 @@ mod test {
     #[test]
     fn test_rfc2022_test_case_2() {
         assert_eq!(
-            hash_to_hex(wincrypto_sha1_hmac(
+            hash_to_hex(sha1_hmac(
                 &"Jefe".as_bytes(),
                 &["what do ya want for nothing?".as_bytes()]
             )),
@@ -58,7 +58,7 @@ mod test {
     #[test]
     fn test_rfc2022_test_case_3() {
         assert_eq!(
-            hash_to_hex(wincrypto_sha1_hmac(&[0xaa; 20], &[[0xddu8; 50].as_slice()])),
+            hash_to_hex(sha1_hmac(&[0xaa; 20], &[[0xddu8; 50].as_slice()])),
             "125d7342b9ac11cd91a39af48aa17b4f63f175d3"
         );
     }
@@ -66,7 +66,7 @@ mod test {
     #[test]
     fn test_rfc2022_test_case_4() {
         assert_eq!(
-            hash_to_hex(wincrypto_sha1_hmac(
+            hash_to_hex(sha1_hmac(
                 &[
                     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
                     23, 24, 25
@@ -80,10 +80,7 @@ mod test {
     #[test]
     fn test_rfc2022_test_case_5() {
         assert_eq!(
-            hash_to_hex(wincrypto_sha1_hmac(
-                &[0x0c; 20],
-                &["Test With Truncation".as_bytes()]
-            )),
+            hash_to_hex(sha1_hmac(&[0x0c; 20], &["Test With Truncation".as_bytes()])),
             "4c1a03424b55e07fe7f27be1d58bb9324a9a5a04"
         );
     }
@@ -91,7 +88,7 @@ mod test {
     #[test]
     fn test_rfc2022_test_case_6() {
         assert_eq!(
-            hash_to_hex(wincrypto_sha1_hmac(
+            hash_to_hex(sha1_hmac(
                 &[0xaa; 80],
                 &["Test Using Larger Than Block-Size Key - Hash Key First".as_bytes()]
             )),
@@ -102,7 +99,7 @@ mod test {
     #[test]
     fn test_rfc2022_test_case_7() {
         assert_eq!(
-            hash_to_hex(wincrypto_sha1_hmac(
+            hash_to_hex(sha1_hmac(
                 &[0xaa; 80],
                 &[
                     "Test Using Larger Than Block-Size Key and Larger ".as_bytes(),

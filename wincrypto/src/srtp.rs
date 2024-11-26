@@ -10,11 +10,11 @@ use windows::Win32::Security::Cryptography::{
 const MAX_BUFFER_SIZE: usize = 2048;
 const AEAD_AES_GCM_TAG_LEN: usize = 16;
 
-pub struct WinCryptoSrtpKey(BCRYPT_KEY_HANDLE);
-unsafe impl Send for WinCryptoSrtpKey {}
-unsafe impl Sync for WinCryptoSrtpKey {}
+pub struct SrtpKey(BCRYPT_KEY_HANDLE);
+unsafe impl Send for SrtpKey {}
+unsafe impl Sync for SrtpKey {}
 
-impl WinCryptoSrtpKey {
+impl SrtpKey {
     /// Creates a key from the given data for operating AES in Counter (CTR/CM) mode.
     pub fn create_aes_ctr_key(key: &[u8]) -> Result<Self, WinCryptoError> {
         // CTR mode is build on top of ECB mode, so we use the same key.
@@ -52,7 +52,7 @@ impl WinCryptoSrtpKey {
     }
 }
 
-impl Drop for WinCryptoSrtpKey {
+impl Drop for SrtpKey {
     fn drop(&mut self) {
         unsafe {
             if let Err(e) = WinCryptoError::from_ntstatus(BCryptDestroyKey(self.0)) {
@@ -63,8 +63,8 @@ impl Drop for WinCryptoSrtpKey {
 }
 
 /// Run the given input through the AES-128-ECB using the given AES ECB key.
-pub fn wincrypto_srtp_aes_128_ecb_round(
-    key: &WinCryptoSrtpKey,
+pub fn srtp_aes_128_ecb_round(
+    key: &SrtpKey,
     input: &[u8],
     output: &mut [u8],
 ) -> Result<usize, WinCryptoError> {
@@ -84,8 +84,8 @@ pub fn wincrypto_srtp_aes_128_ecb_round(
 }
 
 /// Run the given input through the AES-128-CM using the given AES CTR/CM key.
-pub fn wincrypto_srtp_aes_128_cm(
-    key: &WinCryptoSrtpKey,
+pub fn srtp_aes_128_cm(
+    key: &SrtpKey,
     iv: &[u8],
     input: &[u8],
     output: &mut [u8],
@@ -140,8 +140,8 @@ pub fn wincrypto_srtp_aes_128_cm(
 
 /// Run the given plain_text through the AES-128-GCM alg with the given key and receive the
 /// cipher_text which will include the auth tag.
-pub fn wincrypto_srtp_aead_aes_128_gcm_encrypt(
-    key: &WinCryptoSrtpKey,
+pub fn srtp_aead_aes_128_gcm_encrypt(
+    key: &SrtpKey,
     iv: &[u8],
     additional_auth_data: &[u8],
     plain_text: &[u8],
@@ -187,8 +187,8 @@ pub fn wincrypto_srtp_aead_aes_128_gcm_encrypt(
 
 /// Run the given tagged cipher_text through the AES-128-GCM alg with the given key and
 /// receive the decrypted plain_text.
-pub fn wincrypto_srtp_aead_aes_128_gcm_decrypt(
-    key: &WinCryptoSrtpKey,
+pub fn srtp_aead_aes_128_gcm_decrypt(
+    key: &SrtpKey,
     iv: &[u8],
     additional_auth_data: &[&[u8]],
     cipher_text: &[u8],
@@ -246,10 +246,9 @@ mod test {
     #[test]
     fn test_srtp_aes_128_ecb_round_test_vec_1() {
         let key =
-            WinCryptoSrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c"))
-                .unwrap();
+            SrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
         let mut out = [0u8; 32];
-        wincrypto_srtp_aes_128_ecb_round(
+        srtp_aes_128_ecb_round(
             &key,
             &hex_to_vec("6bc1bee22e409f96e93d7e117393172a"),
             &mut out,
@@ -261,10 +260,9 @@ mod test {
     #[test]
     fn test_srtp_aes_128_ecb_round_test_vec_2() {
         let key =
-            WinCryptoSrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c"))
-                .unwrap();
+            SrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
         let mut out = [0u8; 32];
-        wincrypto_srtp_aes_128_ecb_round(
+        srtp_aes_128_ecb_round(
             &key,
             &hex_to_vec("ae2d8a571e03ac9c9eb76fac45af8e51"),
             &mut out,
@@ -276,10 +274,9 @@ mod test {
     #[test]
     fn test_srtp_aes_128_ecb_round_test_vec_3() {
         let key =
-            WinCryptoSrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c"))
-                .unwrap();
+            SrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
         let mut out = [0u8; 32];
-        wincrypto_srtp_aes_128_ecb_round(
+        srtp_aes_128_ecb_round(
             &key,
             &hex_to_vec("30c81c46a35ce411e5fbc1191a0a52ef"),
             &mut out,
@@ -291,10 +288,9 @@ mod test {
     #[test]
     fn test_srtp_aes_128_ecb_round_test_vec_4() {
         let key =
-            WinCryptoSrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c"))
-                .unwrap();
+            SrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
         let mut out = [0u8; 32];
-        wincrypto_srtp_aes_128_ecb_round(
+        srtp_aes_128_ecb_round(
             &key,
             &hex_to_vec("f69f2445df4f9b17ad2b417be66c3710"),
             &mut out,

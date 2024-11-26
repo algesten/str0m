@@ -2,8 +2,8 @@ use crate::crypto::srtp::SrtpCryptoImpl;
 use crate::crypto::srtp::{aead_aes_128_gcm, aes_128_cm_sha1_80};
 use crate::crypto::CryptoError;
 use str0m_wincrypto::{
-    wincrypto_srtp_aead_aes_128_gcm_decrypt, wincrypto_srtp_aead_aes_128_gcm_encrypt,
-    wincrypto_srtp_aes_128_cm, wincrypto_srtp_aes_128_ecb_round, WinCryptoSrtpKey,
+    srtp_aead_aes_128_gcm_decrypt, srtp_aead_aes_128_gcm_encrypt, srtp_aes_128_cm,
+    srtp_aes_128_ecb_round, SrtpKey,
 };
 
 pub struct WinCryptoSrtpCryptoImpl;
@@ -13,14 +13,14 @@ impl SrtpCryptoImpl for WinCryptoSrtpCryptoImpl {
     type AeadAes128Gcm = WinCryptoAeadAes128Gcm;
 
     fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
-        let key = WinCryptoSrtpKey::create_aes_ecb_key(key).expect("AES key");
-        let count = wincrypto_srtp_aes_128_ecb_round(&key, input, output).expect("AES encrypt");
+        let key = SrtpKey::create_aes_ecb_key(key).expect("AES key");
+        let count = srtp_aes_128_ecb_round(&key, input, output).expect("AES encrypt");
         assert_eq!(count, 16 + 16); // block size
     }
 }
 
 pub struct WinCryptoAes128CmSha1_80 {
-    key: WinCryptoSrtpKey,
+    key: SrtpKey,
 }
 
 impl aes_128_cm_sha1_80::CipherCtx for WinCryptoAes128CmSha1_80 {
@@ -33,7 +33,7 @@ impl aes_128_cm_sha1_80::CipherCtx for WinCryptoAes128CmSha1_80 {
         Self: Sized,
     {
         Self {
-            key: WinCryptoSrtpKey::create_aes_ctr_key(&key).expect("generate sym key"),
+            key: SrtpKey::create_aes_ctr_key(&key).expect("generate sym key"),
         }
     }
 
@@ -43,7 +43,7 @@ impl aes_128_cm_sha1_80::CipherCtx for WinCryptoAes128CmSha1_80 {
         plain_text: &[u8],
         cipher_text: &mut [u8],
     ) -> Result<(), CryptoError> {
-        wincrypto_srtp_aes_128_cm(&self.key, iv, plain_text, cipher_text)?;
+        srtp_aes_128_cm(&self.key, iv, plain_text, cipher_text)?;
         Ok(())
     }
 
@@ -53,13 +53,13 @@ impl aes_128_cm_sha1_80::CipherCtx for WinCryptoAes128CmSha1_80 {
         cipher_text: &[u8],
         plain_text: &mut [u8],
     ) -> Result<(), CryptoError> {
-        wincrypto_srtp_aes_128_cm(&self.key, iv, cipher_text, plain_text)?;
+        srtp_aes_128_cm(&self.key, iv, cipher_text, plain_text)?;
         Ok(())
     }
 }
 
 pub struct WinCryptoAeadAes128Gcm {
-    key: WinCryptoSrtpKey,
+    key: SrtpKey,
 }
 
 impl aead_aes_128_gcm::CipherCtx for WinCryptoAeadAes128Gcm {
@@ -72,7 +72,7 @@ impl aead_aes_128_gcm::CipherCtx for WinCryptoAeadAes128Gcm {
         Self: Sized,
     {
         Self {
-            key: WinCryptoSrtpKey::create_aes_gcm_key(&key).expect("generate sym key"),
+            key: SrtpKey::create_aes_gcm_key(&key).expect("generate sym key"),
         }
     }
 
@@ -83,7 +83,7 @@ impl aead_aes_128_gcm::CipherCtx for WinCryptoAeadAes128Gcm {
         plain_text: &[u8],
         cipher_text: &mut [u8],
     ) -> Result<(), CryptoError> {
-        wincrypto_srtp_aead_aes_128_gcm_encrypt(
+        srtp_aead_aes_128_gcm_encrypt(
             &self.key,
             iv,
             additional_auth_data,
@@ -100,7 +100,7 @@ impl aead_aes_128_gcm::CipherCtx for WinCryptoAeadAes128Gcm {
         cipher_text: &[u8],
         plain_text: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        Ok(wincrypto_srtp_aead_aes_128_gcm_decrypt(
+        Ok(srtp_aead_aes_128_gcm_decrypt(
             &self.key,
             iv,
             additional_auth_data,

@@ -81,7 +81,7 @@ impl DtlsCert {
             )?)),
             #[cfg(feature = "wincrypto")]
             DtlsCertInner::WinCrypto(c) => Ok(DtlsImpl::WinCrypto(
-                super::wincrypto::WinCryptoDtlsImpl::new(c.clone())?,
+                super::wincrypto::WinCryptoDtls::new(c.clone())?,
             )),
             _ => unreachable!(),
         }
@@ -133,7 +133,7 @@ pub enum DtlsImpl {
     #[cfg(feature = "openssl")]
     OpenSsl(super::ossl::OsslDtlsImpl),
     #[cfg(feature = "wincrypto")]
-    WinCrypto(super::wincrypto::WinCryptoDtlsImpl),
+    WinCrypto(super::wincrypto::WinCryptoDtls),
 }
 
 impl DtlsImpl {

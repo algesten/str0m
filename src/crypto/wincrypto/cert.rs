@@ -1,17 +1,17 @@
 use crate::crypto::dtls::DTLS_CERT_IDENTITY;
 use crate::crypto::Fingerprint;
 use std::sync::Arc;
-use str0m_wincrypto::{WinCryptoCertificate, WinCryptoError};
+use str0m_wincrypto::WinCryptoError;
 
 #[derive(Clone, Debug)]
 pub struct WinCryptoDtlsCert {
-    pub(crate) certificate: Arc<WinCryptoCertificate>,
+    pub(crate) certificate: Arc<str0m_wincrypto::Certificate>,
 }
 
 impl WinCryptoDtlsCert {
     pub fn new() -> Self {
         let certificate = Arc::new(
-            WinCryptoCertificate::new_self_signed(&format!("CN={}", DTLS_CERT_IDENTITY))
+            str0m_wincrypto::Certificate::new_self_signed(&format!("CN={}", DTLS_CERT_IDENTITY))
                 .expect("Failed to create self-signed certificate"),
         );
         Self { certificate }
@@ -23,7 +23,7 @@ impl WinCryptoDtlsCert {
 }
 
 pub(super) fn create_fingerprint(
-    certificate: &str0m_wincrypto::WinCryptoCertificate,
+    certificate: &str0m_wincrypto::Certificate,
 ) -> Result<Fingerprint, WinCryptoError> {
     certificate
         .sha256_fingerprint()

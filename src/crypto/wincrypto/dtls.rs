@@ -8,19 +8,18 @@ use crate::crypto::{KeyingMaterial, SrtpProfile};
 use crate::io::DATAGRAM_MTU_WARN;
 
 use super::cert::{create_sha256_fingerprint, WinCryptoDtlsCert};
-use str0m_wincrypto::{WinCryptoDtls, WinCryptoDtlsEvent};
 
-pub struct WinCryptoDtlsImpl(WinCryptoDtls);
+pub struct WinCryptoDtls(str0m_wincrypto::Dtls);
 
-impl WinCryptoDtlsImpl {
+impl WinCryptoDtls {
     pub fn new(cert: WinCryptoDtlsCert) -> Result<Self, super::CryptoError> {
-        Ok(WinCryptoDtlsImpl(WinCryptoDtls::new(
+        Ok(WinCryptoDtls(str0m_wincrypto::Dtls::new(
             cert.certificate.clone(),
         )?))
     }
 }
 
-impl DtlsInner for WinCryptoDtlsImpl {
+impl DtlsInner for WinCryptoDtls {
     fn set_active(&mut self, active: bool) {
         self.0.set_as_client(active).expect("Set client failed");
     }
@@ -90,11 +89,14 @@ fn srtp_profile_from_network_endian_id(srtp_profile_id: u16) -> SrtpProfile {
     }
 }
 
-fn transform_dtls_event(event: WinCryptoDtlsEvent, output_events: &mut VecDeque<DtlsEvent>) {
+fn transform_dtls_event(
+    event: str0m_wincrypto::DtlsEvent,
+    output_events: &mut VecDeque<DtlsEvent>,
+) {
     match event {
-        WinCryptoDtlsEvent::None => {}
-        WinCryptoDtlsEvent::WouldBlock => {}
-        WinCryptoDtlsEvent::Connected {
+        str0m_wincrypto::DtlsEvent::None => {}
+        str0m_wincrypto::DtlsEvent::WouldBlock => {}
+        str0m_wincrypto::DtlsEvent::Connected {
             srtp_profile_id,
             srtp_keying_material,
             peer_fingerprint,
@@ -108,6 +110,6 @@ fn transform_dtls_event(event: WinCryptoDtlsEvent, output_events: &mut VecDeque<
                 srtp_profile_from_network_endian_id(srtp_profile_id),
             ));
         }
-        WinCryptoDtlsEvent::Data(vec) => output_events.push_back(DtlsEvent::Data(vec)),
+        str0m_wincrypto::DtlsEvent::Data(vec) => output_events.push_back(DtlsEvent::Data(vec)),
     }
 }
