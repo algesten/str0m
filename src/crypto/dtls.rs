@@ -41,14 +41,23 @@ pub struct DtlsCert(DtlsCertInner);
 enum DtlsCertInner {
     #[cfg(feature = "openssl")]
     OpenSsl(super::ossl::OsslDtlsCert),
+    #[cfg(feature = "wincrypto")]
+    WinCrypto(super::wincrypto::WinCryptoDtlsCert),
 }
 
 impl DtlsCert {
-    /// Create a new OpenSSL variant of the certificate.
     #[cfg(feature = "openssl")]
+    /// Create a new OpenSSL variant of the certificate.
     pub fn new_openssl() -> Self {
         let cert = super::ossl::OsslDtlsCert::new();
         DtlsCert(DtlsCertInner::OpenSsl(cert))
+    }
+
+    #[cfg(feature = "wincrypto")]
+    /// Create a new Windows Crypto variant of the certificate.
+    pub fn new_wincrypto() -> Self {
+        let cert = super::wincrypto::WinCryptoDtlsCert::new();
+        DtlsCert(DtlsCertInner::WinCrypto(cert))
     }
 
     /// Creates a fingerprint for this certificate.
@@ -58,6 +67,8 @@ impl DtlsCert {
         match &self.0 {
             #[cfg(feature = "openssl")]
             DtlsCertInner::OpenSsl(v) => v.fingerprint(),
+            #[cfg(feature = "wincrypto")]
+            DtlsCertInner::WinCrypto(v) => v.fingerprint(),
             _ => unreachable!(),
         }
     }
@@ -68,6 +79,10 @@ impl DtlsCert {
             DtlsCertInner::OpenSsl(c) => Ok(DtlsImpl::OpenSsl(super::ossl::OsslDtlsImpl::new(
                 c.clone(),
             )?)),
+            #[cfg(feature = "wincrypto")]
+            DtlsCertInner::WinCrypto(c) => Ok(DtlsImpl::WinCrypto(
+                super::wincrypto::WinCryptoDtls::new(c.clone())?,
+            )),
             _ => unreachable!(),
         }
     }
@@ -78,6 +93,8 @@ impl fmt::Debug for DtlsCert {
         match &self.0 {
             #[cfg(feature = "openssl")]
             DtlsCertInner::OpenSsl(c) => c.fmt(f),
+            #[cfg(feature = "wincrypto")]
+            DtlsCertInner::WinCrypto(c) => c.fmt(f),
             _ => unreachable!(),
         }
     }
@@ -115,6 +132,8 @@ pub trait DtlsInner: Sized {
 pub enum DtlsImpl {
     #[cfg(feature = "openssl")]
     OpenSsl(super::ossl::OsslDtlsImpl),
+    #[cfg(feature = "wincrypto")]
+    WinCrypto(super::wincrypto::WinCryptoDtls),
 }
 
 impl DtlsImpl {
@@ -122,6 +141,8 @@ impl DtlsImpl {
         match self {
             #[cfg(feature = "openssl")]
             DtlsImpl::OpenSsl(i) => i.set_active(active),
+            #[cfg(feature = "wincrypto")]
+            DtlsImpl::WinCrypto(i) => i.set_active(active),
             _ => unreachable!(),
         }
     }
@@ -130,6 +151,8 @@ impl DtlsImpl {
         match self {
             #[cfg(feature = "openssl")]
             DtlsImpl::OpenSsl(i) => i.handle_handshake(o),
+            #[cfg(feature = "wincrypto")]
+            DtlsImpl::WinCrypto(i) => i.handle_handshake(o),
             _ => unreachable!(),
         }
     }
@@ -138,6 +161,8 @@ impl DtlsImpl {
         match self {
             #[cfg(feature = "openssl")]
             DtlsImpl::OpenSsl(i) => i.is_active(),
+            #[cfg(feature = "wincrypto")]
+            DtlsImpl::WinCrypto(i) => i.is_active(),
             _ => unreachable!(),
         }
     }
@@ -150,6 +175,8 @@ impl DtlsImpl {
         match self {
             #[cfg(feature = "openssl")]
             DtlsImpl::OpenSsl(i) => i.handle_receive(m, o),
+            #[cfg(feature = "wincrypto")]
+            DtlsImpl::WinCrypto(i) => i.handle_receive(m, o),
             _ => unreachable!(),
         }
     }
@@ -158,6 +185,8 @@ impl DtlsImpl {
         match self {
             #[cfg(feature = "openssl")]
             DtlsImpl::OpenSsl(i) => i.poll_datagram(),
+            #[cfg(feature = "wincrypto")]
+            DtlsImpl::WinCrypto(i) => i.poll_datagram(),
             _ => unreachable!(),
         }
     }
@@ -166,6 +195,8 @@ impl DtlsImpl {
         match self {
             #[cfg(feature = "openssl")]
             DtlsImpl::OpenSsl(i) => i.poll_timeout(now),
+            #[cfg(feature = "wincrypto")]
+            DtlsImpl::WinCrypto(i) => i.poll_timeout(now),
             _ => unreachable!(),
         }
     }
@@ -174,6 +205,8 @@ impl DtlsImpl {
         match self {
             #[cfg(feature = "openssl")]
             DtlsImpl::OpenSsl(i) => i.handle_input(data),
+            #[cfg(feature = "wincrypto")]
+            DtlsImpl::WinCrypto(i) => i.handle_input(data),
             _ => unreachable!(),
         }
     }
@@ -182,6 +215,8 @@ impl DtlsImpl {
         match self {
             #[cfg(feature = "openssl")]
             DtlsImpl::OpenSsl(i) => i.is_connected(),
+            #[cfg(feature = "wincrypto")]
+            DtlsImpl::WinCrypto(i) => i.is_connected(),
             _ => unreachable!(),
         }
     }
