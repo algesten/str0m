@@ -155,6 +155,10 @@ impl Dtls {
         // These are the outputs of AcquireCredentialsHandleA
         let mut cred_handle = SecHandle::default();
         let mut creds_expiry: i64 = 0;
+
+        // SAFETY: The references passed are all borrow checked, the exception to
+        // this is the pointer to the cert_context in schannel_cred, which
+        // is kept alive by the `self.cert`.
         unsafe {
             AcquireCredentialsHandleW(
                 None,
@@ -258,7 +262,12 @@ impl Dtls {
             pBuffers: &sec_buffers[0] as *const _ as *mut _,
         };
 
+        // SAFETY: The references passed are all borrow checked. However,
+        // it is important to note that `sec_buffer_desc` holds a pointer to
+        // a sequence of SecBuffers. Those SecBuffers must exist for the
+        // duration of the unsafe block.
         let status = unsafe { EncryptMessage(security_ctx, 0, &sec_buffer_desc, 0) };
+
         match status {
             SEC_E_OK => {
                 self.output_datagrams.push_back(output);
@@ -337,6 +346,11 @@ impl Dtls {
         };
 
         let mut attrs = 0;
+
+        // SAFETY: The references passed are all borrow checked. However,
+        // it is important to note that `in_buffer_desc` and `out_buffer_desc`
+        // hold pointers to sequence of SecBuffers. Those SecBuffers must exist
+        // for the duration of the unsafe block.
         let status = unsafe {
             if is_client {
                 // Client
@@ -380,6 +394,7 @@ impl Dtls {
                 )
             }
         };
+
         debug!("DTLS Handshake status: {status}");
         self.security_ctx = Some(new_ctx_handle);
         if out_buffers[0].cbBuffer > 0 {
@@ -416,6 +431,7 @@ impl Dtls {
             return Err(WinCryptoError("Security context missing".to_string()));
         };
 
+        // SAFETY: The references used in the unsafe block are all borrow checked.
         unsafe {
             QueryContextAttributesW(
                 security_ctx as *const _,
@@ -444,6 +460,8 @@ impl Dtls {
         };
         let mut keying_material = SecPkgContext_KeyingMaterial::default();
 
+        // SAFETY: The references used in the unsafe block are all borrow checked. The
+        // only pointers used in those structs are to statically defined values.
         let srtp_keying_material = unsafe {
             SetContextAttributesW(
                 security_ctx as *const _,
@@ -468,20 +486,24 @@ impl Dtls {
                 ))
             })?;
 
-            std::slice::from_raw_parts(
+            // Copy the returned keying material to a Vec.
+            let keying_material_vec = std::slice::from_raw_parts(
                 keying_material.pbKeyingMaterial,
                 keying_material.cbKeyingMaterial as usize,
             )
-            .to_vec()
-        };
+            .to_vec();
 
-        unsafe {
+            // Now that we copied the key to the Rust heap, we can free the buffer.
             FreeContextBuffer(keying_material.pbKeyingMaterial as *mut _ as *mut std::ffi::c_void)
                 .map_err(|e| {
                     WinCryptoError(format!("FreeContextBuffer Keying Material: {:?}", e))
                 })?;
-        }
 
+            keying_material_vec
+        };
+
+        // SAFETY: All the passed in values are borrow checked. The raw CERT_CONTEXT
+        // pointer does not escpae the block, to avoid leaking the unwrapped pointer.
         let peer_certificate: Certificate = unsafe {
             let mut peer_cert_context: *mut CERT_CONTEXT = std::ptr::null_mut();
             QueryContextAttributesW(
@@ -492,6 +514,7 @@ impl Dtls {
             .map_err(|e| WinCryptoError(format!("QueryContextAttributesW: {:?}", e)))?;
             (peer_cert_context as *const CERT_CONTEXT).into()
         };
+
         let peer_fingerprint = peer_certificate.sha256_fingerprint()?;
 
         self.state = EstablishmentState::Established;
@@ -551,6 +574,9 @@ impl Dtls {
             pBuffers: &sec_buffers[0] as *const _ as *mut _,
         };
 
+        // SAFETY: All the passed in values are borrow checked. The `sec_buffer_desc`
+        // however holds pointers to a SecBuffer list. It's important that those buffers
+        // exist through this unsafe block.
         let status = unsafe { DecryptMessage(security_ctx, &sec_buffer_desc, 0, None) };
         match status {
             SEC_E_OK => {
@@ -577,6 +603,11 @@ impl Dtls {
                     self.state = EstablishmentState::Handshaking;
                     let data = token_buffer.pvBuffer as *mut u8;
                     let len = token_buffer.cbBuffer as usize;
+
+                    // SAFETY: We don't want to copy the data, so we will create a slice
+                    // from the pointer and length, and pass it on. The pointer is required
+                    // to actually be part of all of the buffers passed in, so the slice
+                    // is valid so long as `sec_buffers` is.
                     self.handshake(Some(unsafe { std::slice::from_raw_parts(data, len) }))
                 } else {
                     Err(WinCryptoError("Renegotiate didn't include a token".to_string()).into())
@@ -593,6 +624,8 @@ impl Dtls {
 
 impl Drop for Dtls {
     fn drop(&mut self) {
+        // SAFETY: The handles here are no longer needed and cannot be accessed outside
+        // this struct, so it's safe to Delete/Free them here.
         unsafe {
             if let Some(ctx_handle) = self.security_ctx {
                 if let Err(e) = DeleteSecurityContext(&ctx_handle) {

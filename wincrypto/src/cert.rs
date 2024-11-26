@@ -10,51 +10,51 @@ use windows::{
     },
 };
 
+/// Certificate wraps the CERT_CONTEXT pointer, so that it can be destroyed
+/// when it is no longer used. Because it is tracked, it is important that
+/// Certificate does NOT implement Clone/Copy, otherwise we could destroy the
+/// Certificate too early. It is also why access to the certificate pointer
+/// should remain hidden.
 #[derive(Debug)]
 pub struct Certificate(pub(crate) *const CERT_CONTEXT);
+// SAFETY: CERT_CONTEXT pointers are safe to send between threads.
 unsafe impl Send for Certificate {}
+// SAFETY: CERT_CONTEXT pointers are safe to send between threads.
 unsafe impl Sync for Certificate {}
 
 impl Certificate {
     pub fn new_self_signed(subject: &str) -> Result<Self, WinCryptoError> {
+        let subject = HSTRING::from(subject);
+        let mut subject_blob_buffer = vec![0u8; 256];
+        let mut subject_blob = CRYPT_INTEGER_BLOB {
+            cbData: subject_blob_buffer.len() as u32,
+            pbData: subject_blob_buffer.as_mut_ptr(),
+        };
+
+        // Use RSA-SHA256 for the signature, since SHA1 is deprecated.
+        let signature_algorithm = CRYPT_ALGORITHM_IDENTIFIER {
+            pszObjId: PSTR::from_raw(szOID_RSA_SHA256RSA.as_ptr() as *mut u8),
+            Parameters: CRYPT_INTEGER_BLOB::default(),
+        };
+
+        // SAFETY: The Windows APIs accept references, so normal borrow checker
+        // behaviors work for those uses. The name_blob has a pointer to the buffer
+        // which must exist for the duration of the unsafe block.
         unsafe {
-            let subject = HSTRING::from(subject);
-            let mut name_blob = CRYPT_INTEGER_BLOB::default();
-
-            // Ask size needed to store Name Blob.
             CertStrToNameW(
                 X509_ASN_ENCODING,
                 &subject,
                 CERT_OID_NAME_STR,
                 None,
-                None,
-                &mut name_blob.cbData,
-                None,
-            )?;
-
-            // Create buffer for the name blob, and get it filled in.
-            let mut name_buffer = vec![0u8; name_blob.cbData as usize];
-            name_blob.pbData = name_buffer.as_mut_ptr();
-            CertStrToNameW(
-                X509_ASN_ENCODING,
-                &subject,
-                CERT_OID_NAME_STR,
-                None,
-                Some(name_blob.pbData),
-                &mut name_blob.cbData,
+                Some(subject_blob.pbData),
+                &mut subject_blob.cbData,
                 None,
             )?;
-
-            // Use RSA-SHA256 for the signature, since SHA1 is deprecated.
-            let signature_algorithm = CRYPT_ALGORITHM_IDENTIFIER {
-                pszObjId: PSTR::from_raw(szOID_RSA_SHA256RSA.as_ptr() as *mut u8),
-                Parameters: CRYPT_INTEGER_BLOB::default(),
-            };
 
             // Generate the self-signed cert.
             let cert_context = CertCreateSelfSignCertificate(
                 HCRYPTPROV_OR_NCRYPT_KEY_HANDLE(0),
-                &name_blob,
+                &subject_blob,
                 CERT_CREATE_SELFSIGN_FLAGS(0),
                 None,
                 Some(&signature_algorithm),
@@ -74,9 +74,13 @@ impl Certificate {
     }
 
     pub fn sha256_fingerprint(&self) -> Result<[u8; 32], WinCryptoError> {
+        let mut hash = [0u8; 32];
+        let mut hash_handle = BCRYPT_HASH_HANDLE::default();
+
+        // SAFETY: The Windows APIs accept references, so normal borrow checker
+        // behaviors work for those uses.
         unsafe {
             // Create the hash instance.
-            let mut hash_handle = BCRYPT_HASH_HANDLE::default();
             if let Err(e) = WinCryptoError::from_ntstatus(BCryptCreateHash(
                 BCRYPT_SHA256_ALG_HANDLE,
                 &mut hash_handle,
@@ -101,14 +105,12 @@ impl Certificate {
             }
 
             // Grab the result of the hash.
-            let mut hash = [0u8; 32];
             WinCryptoError::from_ntstatus(BCryptFinishHash(hash_handle, &mut hash, 0))?;
 
             // Destroy the allocated hash.
             WinCryptoError::from_ntstatus(BCryptDestroyHash(hash_handle))?;
-
-            Ok(hash)
         }
+        Ok(hash)
     }
 }
 
@@ -120,6 +122,8 @@ impl From<*const CERT_CONTEXT> for Certificate {
 
 impl Drop for Certificate {
     fn drop(&mut self) {
+        // SAFETY: The Certificate is no longer usable, so it's safe to pass the pointer
+        // to Windows for release.
         unsafe {
             _ = CertFreeCertificateContext(Some(self.0));
         }

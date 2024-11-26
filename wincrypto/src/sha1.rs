@@ -5,6 +5,8 @@ use windows::Win32::Security::Cryptography::{
 };
 
 pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> Result<[u8; 20], WinCryptoError> {
+    // SAFETY: The Windows APIs accept references, so normal borrow checker
+    // behaviors work for these uses.
     unsafe {
         // Create hash.
         let mut hash_handle = BCRYPT_HASH_HANDLE::default();

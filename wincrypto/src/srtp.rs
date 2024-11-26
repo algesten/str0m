@@ -10,8 +10,15 @@ use windows::Win32::Security::Cryptography::{
 const MAX_BUFFER_SIZE: usize = 2048;
 const AEAD_AES_GCM_TAG_LEN: usize = 16;
 
+/// SRTP Key wraps the CNG key, so that it can be destroyed when it is
+/// no longer used. Because it is tracked, it is important that StrpKey
+/// does NOT implement Clone/Copy, otherwise we could destroy the key
+/// too early. It is also why access to the key handle should remain
+/// hidden.
 pub struct SrtpKey(BCRYPT_KEY_HANDLE);
+// SAFETY: BCRYPT_KEY_HANDLEs are safe to send between threads.
 unsafe impl Send for SrtpKey {}
+// SAFETY: BCRYPT_KEY_HANDLEs are safe to send between threads.
 unsafe impl Sync for SrtpKey {}
 
 impl SrtpKey {
@@ -24,6 +31,7 @@ impl SrtpKey {
     /// Creates a key from the given data for operating AES in ECB mode.
     pub fn create_aes_ecb_key(key: &[u8]) -> Result<Self, WinCryptoError> {
         let mut key_handle = BCRYPT_KEY_HANDLE::default();
+        // SAFETY: The key and key_handle will exist before and after this call.
         unsafe {
             WinCryptoError::from_ntstatus(BCryptGenerateSymmetricKey(
                 BCRYPT_AES_ECB_ALG_HANDLE,
@@ -39,6 +47,7 @@ impl SrtpKey {
     /// Creates a key from the given data for operating AES in GCM mode.
     pub fn create_aes_gcm_key(key: &[u8]) -> Result<Self, WinCryptoError> {
         let mut key_handle = BCRYPT_KEY_HANDLE::default();
+        // SAFETY: The key and key_handle will exist before and after this call.
         unsafe {
             WinCryptoError::from_ntstatus(BCryptGenerateSymmetricKey(
                 BCRYPT_AES_GCM_ALG_HANDLE,
@@ -54,6 +63,8 @@ impl SrtpKey {
 
 impl Drop for SrtpKey {
     fn drop(&mut self) {
+        // SAFETY: The SrtpKey is being dropped it is safe to copy the handle
+        // because the handle will no longer be accessible after this.
         unsafe {
             if let Err(e) = WinCryptoError::from_ntstatus(BCryptDestroyKey(self.0)) {
                 error!("Failed to destory crypto key: {}", e);
@@ -68,8 +79,10 @@ pub fn srtp_aes_128_ecb_round(
     input: &[u8],
     output: &mut [u8],
 ) -> Result<usize, WinCryptoError> {
+    let mut count = 0;
+    // SAFETY: The Windows API accepts references, so normal borrow checker
+    // behaviors work.
     unsafe {
-        let mut count = 0;
         WinCryptoError::from_ntstatus(BCryptEncrypt(
             key.0,
             Some(input),
@@ -79,8 +92,8 @@ pub fn srtp_aes_128_ecb_round(
             &mut count,
             BCRYPT_BLOCK_PADDING,
         ))?;
-        Ok(count as usize)
     }
+    Ok(count as usize)
 }
 
 /// Run the given input through the AES-128-CM using the given AES CTR/CM key.
@@ -90,8 +103,8 @@ pub fn srtp_aes_128_cm(
     input: &[u8],
     output: &mut [u8],
 ) -> Result<usize, WinCryptoError> {
-    // First, we'll make a copy of the IV with a countered as many times as needed into a new
-    // countered_iv.
+    // First, we'll make a copy of the IV with a countered as many times as
+    // needed into a new countered_iv.
     let mut iv = iv.to_vec();
     let mut countered_iv = [0u8; MAX_BUFFER_SIZE];
     let mut offset = 0;
@@ -113,10 +126,14 @@ pub fn srtp_aes_128_cm(
     }
 
     let mut count = 0;
+    // SAFETY: The Windows API accepts references, so normal borrow checker
+    // behaviors work. The spare reference used to pass a mutable and immutable
+    // reference into the BCryptEncypt method relies on `countered_iv` which exists
+    // beyond the unsafe block.
     unsafe {
-        // Now, we'll encrypt the countered IV. CNG can do this in-place, so we'll need a separate
-        // reference to the slice, but fool the borrow-checker, otherwise it won't like us passing
-        // the immutable and mutable reference to BCryptEncrypt.
+        // Now, we'll encrypt the countered IV. CNG can do this in-place, so we'll need
+        // a separate reference to the slice, but fool the borrow-checker, otherwise it
+        // won't like us passing the immutable and mutable reference to BCryptEncrypt.
         let encrypted_countered_iv =
             std::slice::from_raw_parts_mut(countered_iv.as_mut_ptr(), countered_iv.len());
         WinCryptoError::from_ntstatus(BCryptEncrypt(
@@ -171,6 +188,10 @@ pub fn srtp_aead_aes_128_gcm_encrypt(
     };
 
     let mut count = 0;
+    // SAFETY: The Windows API accepts references, so normal borrow checker
+    // behaviors work for those. The `auth_cipher_mode_info` however, contains
+    // pointers. It is important that the data pointed to there (`additional_auth_data`,
+    // `cipher_text` and `iv`) exists for the duration of the unsafe block.
     unsafe {
         WinCryptoError::from_ntstatus(BCryptEncrypt(
             key.0,
@@ -225,6 +246,10 @@ pub fn srtp_aead_aes_128_gcm_decrypt(
     };
 
     let mut count = 0;
+    // SAFETY: The Windows API accepts references, so normal borrow checker
+    // behaviors work for those. The `auth_cipher_mode_info` however, contains
+    // pointers. It is important that the data pointed to there (`additional_auth_data`,
+    // `cipher_text` and `iv`) exists for the duration of the unsafe block.
     unsafe {
         WinCryptoError::from_ntstatus(BCryptDecrypt(
             key.0,
