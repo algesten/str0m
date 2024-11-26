@@ -79,3 +79,11 @@ _str0m_test = { path = "_str0m_test" }
 time = "=0.3.23"
 pcap-file = "2.0.0"
 url = "=2.5.0"
+
+[[example]]
+name = "chat"
+required-features = ["openssl"]
+
+[[example]]
+name = "http-post"
+required-features = ["openssl"]

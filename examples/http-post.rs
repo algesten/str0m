@@ -34,25 +34,14 @@ fn init_log() {
 pub fn main() {
     init_log();
 
+    let certificate = include_bytes!("cer.pem").to_vec();
+    let private_key = include_bytes!("key.pem").to_vec();
+
     // Figure out some public IP address, since Firefox will not accept 127.0.0.1 for WebRTC traffic.
     let host_addr = util::select_host_address();
 
-    let server = {
-        #[cfg(feature = "openssl")]
-        {
-            let certificate = include_bytes!("cer.pem").to_vec();
-            let private_key = include_bytes!("key.pem").to_vec();
-            Server::new_ssl("0.0.0.0:3000", web_request, certificate, private_key)
-        }
-        #[cfg(not(feature = "openssl"))]
-        {
-            // If SSL is not enabled, use HTTP, the browser this will only work
-            // on localhost, or if the browser is configured to treat the host as
-            // secure.
-            Server::new("0.0.0.0:3000", web_request)
-        }
-    }
-    .expect("starting the web server");
+    let server = Server::new_ssl("0.0.0.0:3000", web_request, certificate, private_key)
+        .expect("starting the web server");
 
     let port = server.server_addr().port();
     info!("Connect a browser to https://{:?}:{:?}", host_addr, port);
