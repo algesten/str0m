@@ -535,6 +535,35 @@
 //! Yes! str0m excels as a server component with support for both RTP API and Sample API. You can
 //! easily build that recording server or SFU you dreamt of in Rust!
 //!
+//! ### Crypto in str0m
+//!
+//! #### What cryptographic provider does str0m use?
+//! - On non-Windows platforms, str0m uses OpenSSL as the primary cryptographic provider.
+//! - On Windows, you can choose between:
+//!   - wincrypto: Uses Windows Crypto API (CNG).
+//!   - openssl: Uses OpenSSL as the cryptographic backend.
+//!
+//! #### What are the build options for OpenSSL?
+//! When using OpenSSL, there are two alternatives:
+//! - Vendored: Downloads and builds OpenSSL from source. This ensures compatibility and avoids
+//! dependency on system-provided OpenSSL.
+//! - Non-vendored: Relies on the OpenSSL library provided by the system.
+//!
+//! #### What's the recommended build configuration?
+//! For the easiest build experience:
+//! - On Windows: Use wincrypto.
+//! - On Non-Windows Platforms: Use openssl, vendored.
+//!
+//! #### Does str0m support a pure Rust DTLS implementation?
+//! Currently, str0m does not include a pure Rust implementation of DTLS. It relies on external
+//! cryptographic libraries like OpenSSL for DTLS functionality.
+//!
+//! #### Can I contribute a DTLS implementation?
+//! Yes! Contributions for a DTLS 1.2 implementation are welcome, but note:
+//! - It should be synchronous.
+//! - It should be implemented entirely in pure Rust.
+//! If you're interested in contributing, feel free to discuss with the str0m maintainers before starting.
+//!
 //! ### Can I deploy the chat example into production?
 //!
 //! While the chat example showcases how to use str0m's API, it's not intended for production use or
