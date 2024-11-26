@@ -228,8 +228,7 @@ pub fn progress_with_replay(
             }
             Output::Transmit(v) => {
                 let data = v.contents;
-                for n in 0..replay {
-                    println!("Replay {}", n);
+                for _ in 0..replay {
                     let input = Input::Receive(
                         f.last,
                         Receive {
