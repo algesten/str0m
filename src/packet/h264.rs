@@ -260,7 +260,9 @@ impl Depacketizer for H264Depacketizer {
                         ));
                     }
 
-                    let b0 = packet[curr_offset];
+                    let Some(b0) = packet.get(curr_offset) else {
+                        continue;
+                    };
                     let t = b0 & NALU_TYPE_BITMASK;
                     let is_keyframe = if let CodecExtra::H264(e) = extra {
                         (t == IDR_NALU_TYPE) | e.is_keyframe
@@ -749,6 +751,16 @@ mod test {
             186, 235, 174, 186, 235, 175, 227, 255, 240, 247, 021, 223, 125, 247, 223, 125, 247,
             223, 125, 247, 223, 125, 247, 223, 125, 248,
         ];
+
+        let mut pck = H264Depacketizer::default();
+        let mut extra = CodecExtra::None;
+        let mut out = vec![];
+        pck.depacketize(PACKET, &mut out, &mut extra).unwrap();
+    }
+
+    #[test]
+    fn test_out_of_bounds_access() {
+        const PACKET: &[u8] = &[STAPA_NALU_TYPE, 0x00, 0x00];
 
         let mut pck = H264Depacketizer::default();
         let mut extra = CodecExtra::None;
