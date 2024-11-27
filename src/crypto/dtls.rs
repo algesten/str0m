@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 use std::fmt;
+use std::panic::UnwindSafe;
 use std::time::Instant;
 
 use crate::net::DatagramSend;
@@ -15,8 +16,7 @@ pub(crate) trait DtlsIdentity: fmt::Debug {
     fn boxed_clone(&self) -> Box<dyn DtlsIdentity>;
 }
 
-// TODO(efer): Make more private
-pub trait DtlsContext: Send + Sync + core::panic::UnwindSafe {
+pub(crate) trait DtlsContext: UnwindSafe + Send + Sync {
     // Returns the crypto context.
     fn crypto_provider(&self) -> CryptoProvider;
 

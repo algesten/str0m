@@ -1,10 +1,10 @@
-use super::dtls::DtlsContextImpl;
-use crate::crypto::{
-    dtls::{DtlsContext, DtlsIdentity},
-    CryptoProvider, CryptoError, Fingerprint,
-};
 use std::sync::Arc;
 use str0m_wincrypto::WinCryptoError;
+
+use crate::crypto::dtls::{DtlsContext, DtlsIdentity};
+use crate::crypto::{CryptoError, CryptoProvider, Fingerprint};
+
+use super::dtls::DtlsContextImpl;
 
 pub(super) fn create_dtls_identity_impl(crypto_ctx: CryptoProvider) -> Box<dyn DtlsIdentity> {
     let certificate = Arc::new(

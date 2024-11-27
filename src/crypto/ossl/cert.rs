@@ -8,10 +8,8 @@ use openssl::pkey::{PKey, Private};
 use openssl::rsa::Rsa;
 use openssl::x509::{X509Name, X509};
 
-use crate::crypto::{
-    dtls::{DtlsContext, DtlsIdentity},
-    CryptoProvider, Fingerprint,
-};
+use crate::crypto::dtls::{DtlsContext, DtlsIdentity};
+use crate::crypto::{CryptoProvider, Fingerprint};
 
 use super::dtls::DtlsContextImpl;
 use super::CryptoError;

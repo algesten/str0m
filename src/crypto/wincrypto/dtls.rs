@@ -1,10 +1,12 @@
-use super::cert::{create_sha256_fingerprint, DtlsIdentityImpl};
+use std::{collections::VecDeque, time::Instant};
+
+use crate::crypto::dtls::{DtlsContext, DtlsIdentity};
 use crate::crypto::{
-    dtls::{DtlsContext, DtlsIdentity},
-    CryptoProvider, CryptoError, DtlsEvent, Fingerprint, KeyingMaterial, SrtpProfile,
+    CryptoError, CryptoProvider, DtlsEvent, Fingerprint, KeyingMaterial, SrtpProfile,
 };
 use crate::io::DATAGRAM_MTU_WARN;
-use std::{collections::VecDeque, time::Instant};
+
+use super::cert::{create_sha256_fingerprint, DtlsIdentityImpl};
 
 pub(super) struct DtlsContextImpl {
     crypto_provider: CryptoProvider,
