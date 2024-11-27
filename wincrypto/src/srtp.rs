@@ -23,13 +23,13 @@ unsafe impl Sync for SrtpKey {}
 
 impl SrtpKey {
     /// Creates a key from the given data for operating AES in Counter (CTR/CM) mode.
-    pub fn create_aes_ctr_key(key: &[u8]) -> Result<Self, WinCryptoError> {
+    pub fn new_aes_ctr_key(key: &[u8]) -> Result<Self, WinCryptoError> {
         // CTR mode is build on top of ECB mode, so we use the same key.
-        Self::create_aes_ecb_key(key)
+        Self::new_aes_ecb_key(key)
     }
 
     /// Creates a key from the given data for operating AES in ECB mode.
-    pub fn create_aes_ecb_key(key: &[u8]) -> Result<Self, WinCryptoError> {
+    pub fn new_aes_ecb_key(key: &[u8]) -> Result<Self, WinCryptoError> {
         let mut key_handle = BCRYPT_KEY_HANDLE::default();
         // SAFETY: The key and key_handle will exist before and after this call.
         unsafe {
@@ -45,7 +45,7 @@ impl SrtpKey {
     }
 
     /// Creates a key from the given data for operating AES in GCM mode.
-    pub fn create_aes_gcm_key(key: &[u8]) -> Result<Self, WinCryptoError> {
+    pub fn new_aes_gcm_key(key: &[u8]) -> Result<Self, WinCryptoError> {
         let mut key_handle = BCRYPT_KEY_HANDLE::default();
         // SAFETY: The key and key_handle will exist before and after this call.
         unsafe {
@@ -271,7 +271,7 @@ mod test {
     #[test]
     fn test_srtp_aes_128_ecb_round_test_vec_1() {
         let key =
-            SrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
+            SrtpKey::new_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
         let mut out = [0u8; 32];
         srtp_aes_128_ecb_round(
             &key,
@@ -285,7 +285,7 @@ mod test {
     #[test]
     fn test_srtp_aes_128_ecb_round_test_vec_2() {
         let key =
-            SrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
+            SrtpKey::new_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
         let mut out = [0u8; 32];
         srtp_aes_128_ecb_round(
             &key,
@@ -299,7 +299,7 @@ mod test {
     #[test]
     fn test_srtp_aes_128_ecb_round_test_vec_3() {
         let key =
-            SrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
+            SrtpKey::new_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
         let mut out = [0u8; 32];
         srtp_aes_128_ecb_round(
             &key,
@@ -313,7 +313,7 @@ mod test {
     #[test]
     fn test_srtp_aes_128_ecb_round_test_vec_4() {
         let key =
-            SrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
+            SrtpKey::new_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
         let mut out = [0u8; 32];
         srtp_aes_128_ecb_round(
             &key,

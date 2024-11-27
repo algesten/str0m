@@ -6,11 +6,11 @@ use openssl::ec::EcKey;
 use openssl::nid::Nid;
 use openssl::ssl::{Ssl, SslContext, SslContextBuilder, SslMethod, SslOptions, SslVerifyMode};
 
-use crate::crypto::dtls::DtlsInner;
+use crate::crypto::dtls::{DtlsContext, DtlsIdentity};
 use crate::crypto::{DtlsEvent, SrtpProfile};
 use crate::io::{DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 
-use super::cert::OsslDtlsCert;
+use super::cert::DtlsIdentityImpl;
 use super::io_buf::IoBuffer;
 use super::stream::TlsStream;
 use super::CryptoError;
@@ -18,9 +18,9 @@ use super::CryptoError;
 const DTLS_CIPHERS: &str = "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
 const DTLS_EC_CURVE: Nid = Nid::X9_62_PRIME256V1;
 
-pub struct OsslDtlsImpl {
+pub struct DtlsContextImpl {
     /// Certificate for the DTLS session.
-    _cert: OsslDtlsCert,
+    cert: DtlsIdentityImpl,
 
     /// Context belongs together with Fingerprint.
     ///
@@ -32,19 +32,27 @@ pub struct OsslDtlsImpl {
     tls: TlsStream<IoBuffer>,
 }
 
-impl OsslDtlsImpl {
-    pub fn new(cert: OsslDtlsCert) -> Result<Self, super::CryptoError> {
+impl DtlsContextImpl {
+    pub fn new(cert: DtlsIdentityImpl) -> Result<Self, super::CryptoError> {
         let context = dtls_create_ctx(&cert)?;
         let ssl = dtls_ssl_create(&context)?;
-        Ok(OsslDtlsImpl {
-            _cert: cert,
+        Ok(DtlsContextImpl {
+            cert,
             _context: context,
             tls: TlsStream::new(ssl, IoBuffer::default()),
         })
     }
 }
 
-impl DtlsInner for OsslDtlsImpl {
+impl DtlsContext for DtlsContextImpl {
+    fn crypto_context(&self) -> crate::crypto::CryptoContext {
+        self.cert.crypto_context()
+    }
+
+    fn local_fingerprint(&self) -> crate::crypto::Fingerprint {
+        self.cert.fingerprint()
+    }
+
     fn set_active(&mut self, active: bool) {
         self.tls.set_active(active);
     }
@@ -129,7 +137,7 @@ impl DtlsInner for OsslDtlsImpl {
     }
 }
 
-pub fn dtls_create_ctx(cert: &OsslDtlsCert) -> Result<SslContext, CryptoError> {
+pub fn dtls_create_ctx(cert: &DtlsIdentityImpl) -> Result<SslContext, CryptoError> {
     // TODO: Technically we want to disallow DTLS < 1.2, but that requires
     // us to use this commented out unsafe. We depend on browsers disallowing
     // it instead.

@@ -4,6 +4,7 @@ use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use crate::crypto::CryptoContext;
 use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -268,9 +269,9 @@ impl<'a> StunMessage<'a> {
 
     /// Verify the integrity of this message against the provided password.
     #[must_use]
-    pub(crate) fn check_integrity(&self, password: &str) -> bool {
+    pub(crate) fn check_integrity(&self, ctx: &CryptoContext, password: &str) -> bool {
         if let Some(integ) = self.attrs.message_integrity {
-            let comp = crate::crypto::sha1_hmac(
+            let comp = ctx.sha1_hmac(
                 password.as_bytes(),
                 &[
                     &self.integrity[..2],
@@ -288,7 +289,12 @@ impl<'a> StunMessage<'a> {
     /// Serialize this message into the provided buffer, returning the final length of the message.
     ///
     /// The provided password is used to authenticate the message.
-    pub(crate) fn to_bytes(self, password: &str, buf: &mut [u8]) -> Result<usize, StunError> {
+    pub(crate) fn to_bytes(
+        self,
+        ctx: &CryptoContext,
+        password: &str,
+        buf: &mut [u8],
+    ) -> Result<usize, StunError> {
         const MSG_HEADER_LEN: usize = 20;
         const MSG_INTEGRITY_LEN: usize = 20;
         const FPRINT_LEN: usize = 4;
@@ -331,7 +337,7 @@ impl<'a> StunMessage<'a> {
         let buf = buf.into_inner();
 
         // Compute and fill in message integrity
-        let hmac = crate::crypto::sha1_hmac(
+        let hmac = ctx.sha1_hmac(
             password.as_bytes(),
             &[&buf[0..(integrity_value_offset - ATTR_TLV_LENGTH)]],
         );
@@ -817,6 +823,8 @@ impl<'a> fmt::Debug for StunMessage<'a> {
 
 #[cfg(test)]
 mod test {
+    use crate::CryptoProvider;
+
     use super::*;
     use std::net::SocketAddrV4;
     use systemstat::Ipv4Addr;
@@ -833,10 +841,11 @@ mod test {
             0xaa, 0xf9, 0x83, 0x9c, 0xa0, 0x76, 0xc6, 0xd5, 0x80, 0x28, 0x00, 0x04, 0x36, 0x0e,
             0x21, 0x9f,
         ];
+        let crypto_context = CryptoProvider::default().into();
 
         let packet = PACKET.to_vec();
         let message = StunMessage::parse(&packet).unwrap();
-        assert!(message.check_integrity("xJcE9AQAR7kczUDVOXRUCl"));
+        assert!(message.check_integrity(&crypto_context, "xJcE9AQAR7kczUDVOXRUCl"));
     }
 
     #[test]

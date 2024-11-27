@@ -8,29 +8,43 @@ use openssl::pkey::{PKey, Private};
 use openssl::rsa::Rsa;
 use openssl::x509::{X509Name, X509};
 
-use crate::crypto::dtls::DTLS_CERT_IDENTITY;
-use crate::crypto::Fingerprint;
+use crate::crypto::{
+    dtls::{DtlsContext, DtlsIdentity},
+    CryptoContext, Fingerprint,
+};
 
+use super::dtls::DtlsContextImpl;
 use super::CryptoError;
 
 const RSA_F4: u32 = 0x10001;
 
+// libWebRTC says "WebRTC" here when doing OpenSSL, for BoringSSL they seem
+// to generate a random 8 characters.
+// https://webrtc.googlesource.com/src/+/1568f1b1330f94494197696fe235094e6293b258/rtc_base/rtc_certificate_generator.cc#27
+//
+// Pion also sets this to "WebRTC", maybe for compatibility reasons.
+// https://github.com/pion/webrtc/blob/eed2bb2d3b9f204f9de1cd7e1046ca5d652778d2/constants.go#L31
+pub const DTLS_CERT_IDENTITY: &str = "WebRTC";
+
+pub(super) fn create_dtls_identity_impl(crypto_ctx: CryptoContext) -> Box<dyn DtlsIdentity> {
+    let identity =
+        DtlsIdentityImpl::create_self_signed(crypto_ctx).expect("self-signed cert expected");
+    Box::new(identity)
+}
+
 /// Certificate used for DTLS.
 #[derive(Debug, Clone)]
-pub struct OsslDtlsCert {
+pub struct DtlsIdentityImpl {
+    crypto_context: CryptoContext,
     pub(crate) pkey: PKey<Private>,
     pub(crate) x509: X509,
 }
 
-impl OsslDtlsCert {
+impl DtlsIdentityImpl {
     /// Creates a new (self signed) DTLS certificate.
-    pub fn new() -> Self {
-        Self::self_signed().expect("create dtls cert")
-    }
-
     // The libWebRTC code we try to match is at:
     // https://webrtc.googlesource.com/src/+/1568f1b1330f94494197696fe235094e6293b258/rtc_base/openssl_certificate.cc#58
-    fn self_signed() -> Result<Self, CryptoError> {
+    fn create_self_signed(crypto_context: CryptoContext) -> Result<Self, CryptoError> {
         let f4 = BigNum::from_u32(RSA_F4).unwrap();
         let key = Rsa::generate_with_e(2048, &f4)?;
         let pkey = PKey::from_rsa(key)?;
@@ -75,14 +89,20 @@ impl OsslDtlsCert {
         x509b.sign(&pkey, MessageDigest::sha1())?;
         let x509 = x509b.build();
 
-        Ok(OsslDtlsCert { pkey, x509 })
+        Ok(DtlsIdentityImpl {
+            crypto_context,
+            pkey,
+            x509,
+        })
     }
+}
 
+impl DtlsIdentity for DtlsIdentityImpl {
     /// Produce a (public) fingerprint of the cert.
     ///
     /// This is sent via SDP to the other peer to lock down the DTLS
     /// to this specific certificate.
-    pub fn fingerprint(&self) -> Fingerprint {
+    fn fingerprint(&self) -> Fingerprint {
         let digest: &[u8] = &self
             .x509
             .digest(MessageDigest::sha256())
@@ -92,6 +112,18 @@ impl OsslDtlsCert {
             hash_func: "sha-256".into(),
             bytes: digest.to_vec(),
         }
+    }
+
+    fn create_context(&self) -> Result<Box<dyn DtlsContext>, CryptoError> {
+        Ok(Box::new(DtlsContextImpl::new(self.clone())?))
+    }
+
+    fn boxed_clone(&self) -> Box<dyn DtlsIdentity> {
+        Box::new(self.clone())
+    }
+
+    fn crypto_context(&self) -> CryptoContext {
+        self.crypto_context
     }
 }
 

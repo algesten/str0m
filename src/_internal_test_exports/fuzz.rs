@@ -4,6 +4,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::change::{SdpAnswer, SdpOffer};
+use crate::crypto::CryptoProvider;
 use crate::crypto::KeyingMaterial;
 use crate::crypto::SrtpProfile;
 use crate::format::Codec;
@@ -49,12 +50,14 @@ pub fn rtp_header(data: &[u8]) -> Option<()> {
 #[cfg(feature = "_internal_test_exports")]
 pub fn rtp_packet(data: &[u8]) -> Option<()> {
     use crate::Session;
+    let crypto_context = CryptoProvider::default().into();
     let mut rng = Rng::new(data);
 
     let config = random_config(&mut rng)?;
 
     let mut session = Session::new(&config);
     session.set_keying_material(
+        crypto_context,
         KeyingMaterial::new(rng.slice(16)?.to_vec()),
         SrtpProfile::PassThrough,
         rng.bool()?,

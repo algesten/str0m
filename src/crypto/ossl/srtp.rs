@@ -2,35 +2,27 @@ use openssl::cipher;
 use openssl::cipher_ctx::CipherCtx;
 use openssl::symm::{Cipher, Crypter, Mode};
 
-use crate::crypto::srtp::SrtpCryptoImpl;
 use crate::crypto::srtp::{aead_aes_128_gcm, aes_128_cm_sha1_80};
 use crate::crypto::CryptoError;
 
-pub struct OsslSrtpCryptoImpl;
+pub(super) fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
+    let mut aes =
+        Crypter::new(Cipher::aes_128_ecb(), Mode::Encrypt, key, None).expect("AES deriver");
 
-impl SrtpCryptoImpl for OsslSrtpCryptoImpl {
-    type Aes128CmSha1_80 = OsslAes128CmSha1_80;
-    type AeadAes128Gcm = OsslAeadAes128Gcm;
+    // Run AES
+    let count = aes.update(input, output).expect("AES update");
+    let rest = aes.finalize(&mut output[count..]).expect("AES finalize");
 
-    fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
-        let mut aes =
-            Crypter::new(Cipher::aes_128_ecb(), Mode::Encrypt, key, None).expect("AES deriver");
-
-        // Run AES
-        let count = aes.update(input, output).expect("AES update");
-        let rest = aes.finalize(&mut output[count..]).expect("AES finalize");
-
-        assert_eq!(count + rest, 16 + 16); // input len + block size
-    }
+    assert_eq!(count + rest, 16 + 16); // input len + block size
 }
 
-pub struct OsslAes128CmSha1_80(CipherCtx);
+pub(super) struct Aes128CmSha1_80Impl(CipherCtx);
 
-impl aes_128_cm_sha1_80::CipherCtx for OsslAes128CmSha1_80 {
-    fn new(key: aes_128_cm_sha1_80::AesKey, encrypt: bool) -> Self
-    where
-        Self: Sized,
-    {
+impl Aes128CmSha1_80Impl {
+    pub(super) fn new(
+        key: &aes_128_cm_sha1_80::AesKey,
+        encrypt: bool,
+    ) -> Box<dyn aes_128_cm_sha1_80::CipherCtx> {
         let t = cipher::Cipher::aes_128_ctr();
         let mut ctx = CipherCtx::new().expect("a reusable cipher context");
 
@@ -42,9 +34,11 @@ impl aes_128_cm_sha1_80::CipherCtx for OsslAes128CmSha1_80 {
                 .expect("enc init");
         }
 
-        OsslAes128CmSha1_80(ctx)
+        Box::new(Aes128CmSha1_80Impl(ctx))
     }
+}
 
+impl aes_128_cm_sha1_80::CipherCtx for Aes128CmSha1_80Impl {
     fn encrypt(
         &mut self,
         iv: &aes_128_cm_sha1_80::RtpIv,
@@ -70,10 +64,13 @@ impl aes_128_cm_sha1_80::CipherCtx for OsslAes128CmSha1_80 {
     }
 }
 
-pub struct OsslAeadAes128Gcm(CipherCtx);
+pub(super) struct AeadAes128GcmImpl(CipherCtx);
 
-impl aead_aes_128_gcm::CipherCtx for OsslAeadAes128Gcm {
-    fn new(key: aead_aes_128_gcm::AeadKey, encrypt: bool) -> Self
+impl AeadAes128GcmImpl {
+    pub(super) fn new(
+        key: &aead_aes_128_gcm::AeadKey,
+        encrypt: bool,
+    ) -> Box<dyn aead_aes_128_gcm::CipherCtx>
     where
         Self: Sized,
     {
@@ -81,19 +78,21 @@ impl aead_aes_128_gcm::CipherCtx for OsslAeadAes128Gcm {
         let mut ctx = CipherCtx::new().expect("a reusable cipher context");
 
         if encrypt {
-            ctx.encrypt_init(Some(t), Some(&key), None)
+            ctx.encrypt_init(Some(t), Some(key), None)
                 .expect("enc init");
             ctx.set_iv_length(aead_aes_128_gcm::IV_LEN)
                 .expect("IV length");
             ctx.set_padding(false);
         } else {
-            ctx.decrypt_init(Some(t), Some(&key), None)
+            ctx.decrypt_init(Some(t), Some(key), None)
                 .expect("dec init");
         }
 
-        OsslAeadAes128Gcm(ctx)
+        Box::new(AeadAes128GcmImpl(ctx))
     }
+}
 
+impl aead_aes_128_gcm::CipherCtx for AeadAes128GcmImpl {
     fn encrypt(
         &mut self,
         iv: &[u8; aead_aes_128_gcm::IV_LEN],

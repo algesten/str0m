@@ -82,8 +82,8 @@ url = "=2.5.0"
 
 [[example]]
 name = "chat"
-required-features = ["openssl"]
+required-features = ["1openssl"]
 
 [[example]]
 name = "http-post"
-required-features = ["openssl"]
+required-features = ["1openssl"]

@@ -1,7 +1,7 @@
 use std::fmt;
 
-use crate::crypto::{self, new_aead_aes_128_gcm, new_aes_128_cm_sha1_80, KeyingMaterial};
 use crate::crypto::{aead_aes_128_gcm, aes_128_cm_sha1_80, SrtpProfile};
+use crate::crypto::{CryptoContext, KeyingMaterial};
 
 use super::header::RtpHeader;
 
@@ -30,10 +30,16 @@ pub const SRTP_OVERHEAD: usize = MAX_TAG_LEN;
 
 impl SrtpContext {
     /// Create an SRTP context for the relevant profile using the provided keying material.
-    pub fn new(profile: SrtpProfile, mat: &KeyingMaterial, left: bool) -> Self {
+    pub fn new(
+        crypto_context: CryptoContext,
+        profile: SrtpProfile,
+        mat: &KeyingMaterial,
+        left: bool,
+    ) -> Self {
         match profile {
             #[cfg(feature = "_internal_test_exports")]
             SrtpProfile::PassThrough => SrtpContext {
+                crypto_context,
                 rtp: Derived::PassThrough,
                 rtcp: Derived::PassThrough,
                 srtcp_index: 0,
@@ -41,11 +47,12 @@ impl SrtpContext {
             SrtpProfile::Aes128CmSha1_80 => {
                 use aes_128_cm_sha1_80::{KEY_LEN, SALT_LEN};
 
-                let key = SrtpKey::<KEY_LEN, SALT_LEN>::new(mat, left);
+                let key = SrtpKey::<KEY_LEN, SALT_LEN>::new(crypto_context, mat, left);
 
-                let (rtp, rtcp) = Derived::aes_128_cm_sha1_80(&key);
+                let (rtp, rtcp) = Derived::aes_128_cm_sha1_80(&crypto_context, &key);
 
                 SrtpContext {
+                    crypto_context,
                     rtp,
                     rtcp,
                     srtcp_index: 0,
@@ -54,11 +61,12 @@ impl SrtpContext {
             SrtpProfile::AeadAes128Gcm => {
                 use aead_aes_128_gcm::{KEY_LEN, SALT_LEN};
 
-                let key = SrtpKey::<KEY_LEN, SALT_LEN>::new(mat, left);
+                let key = SrtpKey::<KEY_LEN, SALT_LEN>::new(crypto_context, mat, left);
 
-                let (rtp, rtcp) = Derived::aead_aes_128_gcm(&key);
+                let (rtp, rtcp) = Derived::aead_aes_128_gcm(&crypto_context, &key);
 
                 SrtpContext {
+                    crypto_context,
                     rtp,
                     rtcp,
                     srtcp_index: 0,
@@ -69,6 +77,7 @@ impl SrtpContext {
 
     #[cfg(test)]
     fn new_aead_aes_128_gcm(
+        crypto_context: CryptoContext,
         rtp_key: [u8; aead_aes_128_gcm::KEY_LEN],
         rtp_salt: [u8; aead_aes_128_gcm::SALT_LEN],
         rtcp_key: [u8; aead_aes_128_gcm::KEY_LEN],
@@ -76,15 +85,16 @@ impl SrtpContext {
         srtcp_index: u32,
     ) -> Self {
         Self {
+            crypto_context,
             rtp: Derived::AeadAes128Gcm {
                 salt: rtp_salt,
-                enc: new_aead_aes_128_gcm(rtp_key, true),
-                dec: new_aead_aes_128_gcm(rtp_key, false),
+                enc: crypto_context.create_aead_aes_128_gcm_cipher(&rtp_key, true),
+                dec: crypto_context.create_aead_aes_128_gcm_cipher(&rtp_key, false),
             },
             rtcp: Derived::AeadAes128Gcm {
                 salt: rtcp_salt,
-                enc: new_aead_aes_128_gcm(rtcp_key, true),
-                dec: new_aead_aes_128_gcm(rtcp_key, false),
+                enc: crypto_context.create_aead_aes_128_gcm_cipher(&rtcp_key, true),
+                dec: crypto_context.create_aead_aes_128_gcm_cipher(&rtcp_key, false),
             },
             srtcp_index,
         }
@@ -93,6 +103,8 @@ impl SrtpContext {
 
 #[derive(Debug)]
 pub struct SrtpContext {
+    /// Crypto context from where we call ciphers.
+    crypto_context: CryptoContext,
     /// Encryption/decryption derived from srtp_key for RTP.
     rtp: Derived,
     /// Encryption/decryption derived from srtp_key for RTCP.
@@ -157,7 +169,13 @@ impl SrtpContext {
                 output[..hlen].copy_from_slice(&buf[..hlen]);
 
                 let hmac_start = buf.len();
-                aes_128_cm_sha1_80::rtp_hmac(key, &mut output, srtp_index, hmac_start);
+                aes_128_cm_sha1_80::rtp_hmac(
+                    &self.crypto_context,
+                    key,
+                    &mut output,
+                    srtp_index,
+                    hmac_start,
+                );
 
                 output
             }
@@ -199,6 +217,7 @@ impl SrtpContext {
                 let hmac_start = buf.len() - HMAC_TAG_LEN;
 
                 if !aes_128_cm_sha1_80::rtp_verify(
+                    &self.crypto_context,
                     key,
                     &buf[..hmac_start],
                     srtp_index,
@@ -295,7 +314,7 @@ impl SrtpContext {
                 to[0..4].copy_from_slice(&e_and_si.to_be_bytes());
 
                 let hmac_index = output.len() - HMAC_TAG_LEN;
-                aes_128_cm_sha1_80::rtcp_hmac(key, &mut output, hmac_index);
+                aes_128_cm_sha1_80::rtcp_hmac(&self.crypto_context, key, &mut output, hmac_index);
 
                 output
             }
@@ -346,7 +365,12 @@ impl SrtpContext {
 
                 let hmac_start = buf.len() - HMAC_TAG_LEN;
 
-                if !aes_128_cm_sha1_80::rtcp_verify(key, &buf[..hmac_start], &buf[hmac_start..]) {
+                if !aes_128_cm_sha1_80::rtcp_verify(
+                    &self.crypto_context,
+                    key,
+                    &buf[..hmac_start],
+                    &buf[hmac_start..],
+                ) {
                     trace!("unprotect_rtcp hmac verify fail");
                     return None;
                 }
@@ -470,12 +494,13 @@ impl SrtpContext {
 /// SrtpKeys created from DTLS SrtpKeyMaterial.
 #[derive(Debug)]
 struct SrtpKey<const ML: usize, const SL: usize> {
+    crypto_context: CryptoContext,
     master: [u8; ML],
     salt: [u8; SL],
 }
 
 impl<const ML: usize, const SL: usize> SrtpKey<ML, SL> {
-    pub fn new(mat: &KeyingMaterial, left: bool) -> Self {
+    pub fn new(crypto_context: CryptoContext, mat: &KeyingMaterial, left: bool) -> Self {
         // layout in SrtpKeyMaterial is [key_input, key_output, salt_input, salt_output]
 
         // Invariant
@@ -493,7 +518,11 @@ impl<const ML: usize, const SL: usize> SrtpKey<ML, SL> {
         master[0..ML].copy_from_slice(&mat[o0..(o0 + ML)]);
         salt[0..SL].copy_from_slice(&mat[(ML + ML + o1)..(ML + ML + o1 + SL)]);
 
-        SrtpKey { master, salt }
+        SrtpKey {
+            crypto_context,
+            master,
+            salt,
+        }
     }
 
     fn derive(&self, label: u8, out: &mut [u8]) {
@@ -521,7 +550,8 @@ impl<const ML: usize, const SL: usize> SrtpKey<ML, SL> {
             input[14..].copy_from_slice(&round.to_be_bytes()[..]);
 
             // default key derivation function, which uses AES-128 in Counter Mode
-            crypto::srtp_aes_128_ecb_round(&self.master, &input[..], &mut buf[..]);
+            self.crypto_context
+                .srtp_aes_128_ecb_round(&self.master, &input[..], &mut buf[..]);
 
             // Copy to output. Even if we get 32 bytes of output with AES 128 ECB, we
             // only use the first 16. That matches the tests in the RFC.
@@ -557,6 +587,7 @@ enum Derived {
 
 impl Derived {
     fn aes_128_cm_sha1_80(
+        ctx: &CryptoContext,
         srtp_key: &SrtpKey<{ aes_128_cm_sha1_80::KEY_LEN }, { aes_128_cm_sha1_80::SALT_LEN }>,
     ) -> (Self, Self) {
         use aes_128_cm_sha1_80::*;
@@ -594,21 +625,22 @@ impl Derived {
         let rtp = Derived::Aes128CmSha1_80 {
             key: rtp_hmac,
             salt: rtp_salt,
-            enc: new_aes_128_cm_sha1_80(rtp_aes, true),
-            dec: new_aes_128_cm_sha1_80(rtp_aes, false),
+            enc: ctx.create_aes_128_cm_sha1_80_cipher(&rtp_aes, true),
+            dec: ctx.create_aes_128_cm_sha1_80_cipher(&rtp_aes, false),
         };
 
         let rtcp = Derived::Aes128CmSha1_80 {
             key: rtcp_hmac,
             salt: rtcp_salt,
-            enc: new_aes_128_cm_sha1_80(rtcp_aes, true),
-            dec: new_aes_128_cm_sha1_80(rtcp_aes, false),
+            enc: ctx.create_aes_128_cm_sha1_80_cipher(&rtcp_aes, true),
+            dec: ctx.create_aes_128_cm_sha1_80_cipher(&rtcp_aes, false),
         };
 
         (rtp, rtcp)
     }
 
     fn aead_aes_128_gcm(
+        crypto_context: &CryptoContext,
         srtp_key: &SrtpKey<{ aead_aes_128_gcm::KEY_LEN }, { aead_aes_128_gcm::SALT_LEN }>,
     ) -> (Derived, Derived) {
         use aead_aes_128_gcm::*;
@@ -631,14 +663,14 @@ impl Derived {
 
         let rtp = Derived::AeadAes128Gcm {
             salt: rtp_salt,
-            enc: new_aead_aes_128_gcm(rtp_aes, true),
-            dec: new_aead_aes_128_gcm(rtp_aes, false),
+            enc: crypto_context.create_aead_aes_128_gcm_cipher(&rtp_aes, true),
+            dec: crypto_context.create_aead_aes_128_gcm_cipher(&rtp_aes, false),
         };
 
         let rtcp = Derived::AeadAes128Gcm {
             salt: rtcp_salt,
-            enc: new_aead_aes_128_gcm(rtcp_aes, true),
-            dec: new_aead_aes_128_gcm(rtcp_aes, false),
+            enc: crypto_context.create_aead_aes_128_gcm_cipher(&rtcp_aes, true),
+            dec: crypto_context.create_aead_aes_128_gcm_cipher(&rtcp_aes, false),
         };
 
         (rtp, rtcp)
@@ -679,6 +711,8 @@ mod test {
 
     #[test]
     fn derive_key() {
+        let crypto_context = CryptoContext::default();
+
         // https://tools.ietf.org/html/rfc3711#appendix-B.3
         //
         // Key Derivation Test Vectors.
@@ -693,7 +727,11 @@ mod test {
             0xEB, 0xB6, 0x96, 0x0B, 0x3A, 0xAB, 0xE6,
         ];
 
-        let sk = SrtpKey { master, salt };
+        let sk = SrtpKey {
+            crypto_context,
+            master,
+            salt,
+        };
 
         // aes crypto key
         let mut out = [0_u8; 16];
@@ -770,8 +808,10 @@ mod test {
 
         #[test]
         fn unprotect_rtcp() {
+            let crypto_context = CryptoContext::default();
             let key_mat = KeyingMaterial::new(MAT.to_vec());
-            let mut ctx_rx = SrtpContext::new(SrtpProfile::Aes128CmSha1_80, &key_mat, true);
+            let mut ctx_rx =
+                SrtpContext::new(crypto_context, SrtpProfile::Aes128CmSha1_80, &key_mat, true);
             ctx_rx.srtcp_index = 1;
 
             let decrypted = ctx_rx.unprotect_rtcp(SRTCP).unwrap();
@@ -989,6 +1029,7 @@ mod test {
 
         fn make_rtp_context() -> SrtpContext {
             SrtpContext::new_aead_aes_128_gcm(
+                CryptoContext::default(),
                 rfc7714::KEY,
                 rfc7714::SALT,
                 rfc7714::KEY,
@@ -999,6 +1040,7 @@ mod test {
 
         fn make_rtcp_context() -> SrtpContext {
             SrtpContext::new_aead_aes_128_gcm(
+                CryptoContext::default(),
                 rfc7714::KEY,
                 rfc7714::SALT,
                 rfc7714::KEY,

@@ -3,7 +3,7 @@ use std::time::Instant;
 use std::{fmt, io};
 use thiserror::Error;
 
-use crate::crypto::{CryptoError, DtlsImpl, Fingerprint};
+use crate::crypto::{CryptoError, DtlsContext, Fingerprint};
 
 pub use crate::crypto::{DtlsCert, DtlsEvent};
 use crate::net::DatagramSend;
@@ -51,7 +51,7 @@ impl From<CryptoError> for DtlsError {
 
 /// Encapsulation of DTLS.
 pub struct Dtls {
-    dtls_impl: DtlsImpl,
+    dtls_ctx: Box<dyn DtlsContext>,
 
     /// The fingerprint of the certificate.
     fingerprint: Fingerprint,
@@ -69,11 +69,11 @@ impl Dtls {
     /// `active` indicates whether this side should initiate the handshake or not.
     /// This in turn is governed by the `a=setup` SDP attribute.
     pub fn new(cert: DtlsCert) -> Result<Self, DtlsError> {
-        let dtls_impl = cert.create_dtls_impl()?;
+        let dtls_impl = cert.create_context()?;
         let fingerprint = cert.fingerprint();
 
         Ok(Self {
-            dtls_impl,
+            dtls_ctx: dtls_impl,
             fingerprint,
             remote_fingerprint: None,
             events: VecDeque::new(),
@@ -92,12 +92,12 @@ impl Dtls {
     /// i.e. initiating the client hello or not. This must be called
     /// exactly once before starting to handshake (I/O).
     pub fn set_active(&mut self, active: bool) {
-        self.dtls_impl.set_active(active)
+        self.dtls_ctx.set_active(active)
     }
 
     /// If set_active, returns what was set.
     pub fn is_active(&self) -> Option<bool> {
-        self.dtls_impl.is_active()
+        self.dtls_ctx.is_active()
     }
 
     /// The local fingerprint.
@@ -114,12 +114,12 @@ impl Dtls {
 
     /// Poll for the next datagram to send.
     pub fn poll_datagram(&mut self) -> Option<DatagramSend> {
-        self.dtls_impl.poll_datagram()
+        self.dtls_ctx.poll_datagram()
     }
 
     /// Poll for a timeout.
     pub fn poll_timeout(&mut self, now: Instant) -> Option<Instant> {
-        self.dtls_impl.poll_timeout(now)
+        self.dtls_ctx.poll_timeout(now)
     }
 
     /// Poll for an event.
@@ -133,17 +133,17 @@ impl Dtls {
 
     /// Handling incoming data to be sent as DTLS datagrams.
     pub fn handle_input(&mut self, data: &[u8]) -> Result<(), DtlsError> {
-        Ok(self.dtls_impl.handle_input(data)?)
+        Ok(self.dtls_ctx.handle_input(data)?)
     }
 
     /// Handles an incoming DTLS datagrams.
     pub fn handle_receive(&mut self, message: &[u8]) -> Result<(), DtlsError> {
-        if self.dtls_impl.is_active().is_none() {
+        if self.dtls_ctx.is_active().is_none() {
             debug!("Ignoring DTLS datagram prior to DTLS start");
             return Ok(());
         }
 
-        Ok(self.dtls_impl.handle_receive(message, &mut self.events)?)
+        Ok(self.dtls_ctx.handle_receive(message, &mut self.events)?)
     }
 
     /// Handle handshaking.
@@ -151,7 +151,7 @@ impl Dtls {
     /// Once handshaken, this becomes a noop.
     pub fn handle_handshake(&mut self) -> Result<bool, DtlsError> {
         let len_before = self.events.len();
-        let result = self.dtls_impl.handle_handshake(&mut self.events)?;
+        let result = self.dtls_ctx.handle_handshake(&mut self.events)?;
 
         if self.remote_fingerprint.is_none() && self.events.len() > len_before {
             for ev in &self.events {
@@ -165,7 +165,7 @@ impl Dtls {
     }
 
     pub(crate) fn is_connected(&self) -> bool {
-        self.dtls_impl.is_connected()
+        self.dtls_ctx.is_connected()
     }
 }
 

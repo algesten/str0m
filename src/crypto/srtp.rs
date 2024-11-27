@@ -1,8 +1,5 @@
 use std::fmt;
 
-use self::aead_aes_128_gcm::AeadKey;
-use self::aes_128_cm_sha1_80::AesKey;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SrtpProfile {
     #[cfg(feature = "_internal_test_exports")]
@@ -32,95 +29,10 @@ impl SrtpProfile {
     }
 }
 
-// TODO: Can we avoice dynamic dispatch in this signature? The parameters are:
-//       1. As few "touch points" beteen rtp/srtp.rs and here as possible.
-//       2. Clear contract towards the actual impl.
-//       3. Choice of impl passed all the way from RtcConfig.
-#[allow(unused)]
-pub fn new_aes_128_cm_sha1_80(
-    key: AesKey,
-    encrypt: bool,
-) -> Box<dyn aes_128_cm_sha1_80::CipherCtx> {
-    #[cfg(feature = "openssl")]
-    {
-        let ctx = super::ossl::OsslSrtpCryptoImpl::new_aes_128_cm_sha1_80(key, encrypt);
-        Box::new(ctx)
-    }
-    #[cfg(feature = "wincrypto")]
-    {
-        let ctx = super::wincrypto::WinCryptoSrtpCryptoImpl::new_aes_128_cm_sha1_80(key, encrypt);
-        Box::new(ctx)
-    }
-    #[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
-    {
-        panic!("No SRTP implementation. Enable openssl feature");
-    }
-}
-
-// TODO: Can we avoice dynamic dispatch in this signature? The parameters are:
-//       1. As few "touch points" beteen rtp/srtp.rs and here as possible.
-//       2. Clear contract towards the actual impl.
-//       3. Choice of impl passed all the way from RtcConfig.
-#[allow(unused)]
-pub fn new_aead_aes_128_gcm(key: AeadKey, encrypt: bool) -> Box<dyn aead_aes_128_gcm::CipherCtx> {
-    /// TODO: The exact mechanism for passing which crypto to use from
-    ///       RtcConfig to here. We're not going to instantiate openssl
-    ///       automatically.
-    #[cfg(feature = "openssl")]
-    {
-        let ctx = super::ossl::OsslSrtpCryptoImpl::new_aead_aes_128_gcm(key, encrypt);
-        Box::new(ctx)
-    }
-    #[cfg(feature = "wincrypto")]
-    {
-        let ctx = super::wincrypto::WinCryptoSrtpCryptoImpl::new_aead_aes_128_gcm(key, encrypt);
-        Box::new(ctx)
-    }
-    #[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
-    {
-        panic!("No SRTP implementation. Enable openssl feature");
-    }
-}
-
-#[allow(unused)]
-
-pub fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
-    /// TODO: The exact mechanism for passing which crypto to use from
-    ///       RtcConfig to here. We're not going to instantiate openssl
-    ///       automatically.
-    #[cfg(feature = "openssl")]
-    {
-        super::ossl::OsslSrtpCryptoImpl::srtp_aes_128_ecb_round(key, input, output)
-    }
-    #[cfg(feature = "wincrypto")]
-    {
-        super::wincrypto::WinCryptoSrtpCryptoImpl::srtp_aes_128_ecb_round(key, input, output)
-    }
-    #[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
-    {
-        panic!("No SRTP implementation. Enable openssl feature");
-    }
-}
-
-pub trait SrtpCryptoImpl {
-    type Aes128CmSha1_80: aes_128_cm_sha1_80::CipherCtx;
-    type AeadAes128Gcm: aead_aes_128_gcm::CipherCtx;
-
-    fn new_aes_128_cm_sha1_80(key: AesKey, encrypt: bool) -> Self::Aes128CmSha1_80 {
-        <Self::Aes128CmSha1_80 as aes_128_cm_sha1_80::CipherCtx>::new(key, encrypt)
-    }
-
-    fn new_aead_aes_128_gcm(key: AeadKey, encrypt: bool) -> Self::AeadAes128Gcm {
-        <Self::AeadAes128Gcm as aead_aes_128_gcm::CipherCtx>::new(key, encrypt)
-    }
-
-    fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]);
-}
-
 pub mod aes_128_cm_sha1_80 {
     use std::panic::UnwindSafe;
 
-    use crate::crypto::CryptoError;
+    use crate::crypto::{CryptoContext, CryptoError};
 
     pub const KEY_LEN: usize = 16;
     pub const SALT_LEN: usize = 14;
@@ -131,10 +43,6 @@ pub mod aes_128_cm_sha1_80 {
     pub type RtpIv = [u8; 16];
 
     pub trait CipherCtx: UnwindSafe + Send + Sync {
-        fn new(key: AesKey, encrypt: bool) -> Self
-        where
-            Self: Sized;
-
         fn encrypt(
             &mut self,
             iv: &RtpIv,
@@ -150,15 +58,27 @@ pub mod aes_128_cm_sha1_80 {
         ) -> Result<(), CryptoError>;
     }
 
-    pub fn rtp_hmac(key: &[u8], buf: &mut [u8], srtp_index: u64, hmac_start: usize) {
+    pub fn rtp_hmac(
+        ctx: &CryptoContext,
+        key: &[u8],
+        buf: &mut [u8],
+        srtp_index: u64,
+        hmac_start: usize,
+    ) {
         let roc = (srtp_index >> 16) as u32;
-        let tag = crate::crypto::sha1_hmac(key, &[&buf[..hmac_start], &roc.to_be_bytes()]);
+        let tag = ctx.sha1_hmac(key, &[&buf[..hmac_start], &roc.to_be_bytes()]);
         buf[hmac_start..(hmac_start + HMAC_TAG_LEN)].copy_from_slice(&tag[0..HMAC_TAG_LEN]);
     }
 
-    pub fn rtp_verify(key: &[u8], buf: &[u8], srtp_index: u64, cmp: &[u8]) -> bool {
+    pub fn rtp_verify(
+        ctx: &CryptoContext,
+        key: &[u8],
+        buf: &[u8],
+        srtp_index: u64,
+        cmp: &[u8],
+    ) -> bool {
         let roc = (srtp_index >> 16) as u32;
-        let tag = crate::crypto::sha1_hmac(key, &[buf, &roc.to_be_bytes()]);
+        let tag = ctx.sha1_hmac(key, &[buf, &roc.to_be_bytes()]);
         &tag[0..HMAC_TAG_LEN] == cmp
     }
 
@@ -176,14 +96,14 @@ pub mod aes_128_cm_sha1_80 {
         iv
     }
 
-    pub fn rtcp_hmac(key: &[u8], buf: &mut [u8], hmac_index: usize) {
-        let tag = crate::crypto::sha1_hmac(key, &[&buf[0..hmac_index]]);
+    pub fn rtcp_hmac(ctx: &CryptoContext, key: &[u8], buf: &mut [u8], hmac_index: usize) {
+        let tag = ctx.sha1_hmac(key, &[&buf[0..hmac_index]]);
 
         buf[hmac_index..(hmac_index + HMAC_TAG_LEN)].copy_from_slice(&tag[0..HMAC_TAG_LEN]);
     }
 
-    pub fn rtcp_verify(key: &[u8], buf: &[u8], cmp: &[u8]) -> bool {
-        let tag = crate::crypto::sha1_hmac(key, &[buf]);
+    pub fn rtcp_verify(ctx: &CryptoContext, key: &[u8], buf: &[u8], cmp: &[u8]) -> bool {
+        let tag = ctx.sha1_hmac(key, &[buf]);
 
         &tag[0..HMAC_TAG_LEN] == cmp
     }
@@ -204,10 +124,6 @@ pub mod aead_aes_128_gcm {
     pub type RtpIv = [u8; SALT_LEN];
 
     pub trait CipherCtx: UnwindSafe + Send + Sync {
-        fn new(key: AeadKey, encrypt: bool) -> Self
-        where
-            Self: Sized;
-
         fn encrypt(
             &mut self,
             iv: &[u8; IV_LEN],
