@@ -46,7 +46,7 @@ pub enum RtpError {
     /// Some error from Windows Crypto layer (used for SRTP).
     #[error("{0}")]
     #[cfg(feature = "wincrypto")]
-    WinCrypto(#[from] crate::crypto::wincrypto::WinCryptoError),
+    WinCrypto(#[from] str0m_wincrypto::WinCryptoError),
 
     /// Other IO errors.
     #[error("{0}")]
