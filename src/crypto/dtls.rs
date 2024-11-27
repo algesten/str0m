@@ -16,7 +16,7 @@ pub(crate) trait DtlsIdentity: fmt::Debug {
 }
 
 // TODO(efer): Make more private
-pub trait DtlsContext {
+pub trait DtlsContext: Send + Sync + core::panic::UnwindSafe {
     // Returns the crypto context.
     fn crypto_context(&self) -> CryptoContext;
 

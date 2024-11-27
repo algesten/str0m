@@ -2390,14 +2390,14 @@ mod test {
     fn rtc_is_send() {
         fn is_send<T: Send>(_t: T) {}
         fn is_sync<T: Sync>(_t: T) {}
-        //is_send(Rtc::new());
-        // is_sync(Rtc::new());
+        is_send(Rtc::new());
+        is_sync(Rtc::new());
     }
 
     #[test]
     fn rtc_is_unwind_safe() {
         fn is_unwind_safe<T: UnwindSafe>(_t: T) {}
-        //is_unwind_safe(Rtc::new());
+        is_unwind_safe(Rtc::new());
     }
 
     #[test]
