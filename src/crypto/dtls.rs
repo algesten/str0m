@@ -7,7 +7,9 @@ use std::time::Instant;
 
 use crate::net::DatagramSend;
 
-use super::{CryptoError, CryptoProvider, Fingerprint, KeyingMaterial, SrtpProfile};
+use super::{
+    CryptoError, CryptoProvider, CryptoProviderId, Fingerprint, KeyingMaterial, SrtpProfile,
+};
 
 pub(crate) trait DtlsIdentity: fmt::Debug {
     fn fingerprint(&self) -> Fingerprint;
@@ -69,14 +71,15 @@ impl Clone for DtlsCert {
 
 impl DtlsCert {
     /// Create a new DtlsCert using the given provider.
-    pub fn new(crypto_provider: CryptoProvider) -> Self {
+    pub fn new(crypto_provider_id: CryptoProviderId) -> Self {
+        let crypto_provider: CryptoProvider = crypto_provider_id.into();
         DtlsCert(crypto_provider.create_dtls_identity())
     }
 
     #[cfg(feature = "openssl")]
     /// Create a new OpenSSL variant of the certificate.
     pub fn new_openssl() -> Self {
-        Self::new(super::CryptoProviderId::default().into())
+        Self::new(super::CryptoProviderId::default())
     }
 
     /// Creates a fingerprint for this certificate.

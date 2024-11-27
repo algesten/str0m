@@ -1099,14 +1099,18 @@ impl Rtc {
     pub(crate) fn new_from_config(config: RtcConfig) -> Self {
         let session = Session::new(&config);
 
-        let dtls_cert = if let Some(c) = config.dtls_cert {
-            c
-        } else if cfg!(feature = "openssl") {
-            DtlsCert::new(CryptoProviderId::default().into())
-        } else {
-            panic!("Certificate must be provided")
+        let (crypto_provider, dtls_cert) = match config.crypto_config {
+            RtcCryptoConfig::None => {
+                panic!("Crypto provider must be set in RtcConfig");
+            }
+            RtcCryptoConfig::CryptoProvider(crypto_provider) => (
+                crypto_provider,
+                DtlsCert::new(crypto_provider.crypto_provider_id),
+            ),
+            RtcCryptoConfig::DtlsCert(ref dtls_cert) => {
+                (dtls_cert.crypto_provider(), dtls_cert.clone())
+            }
         };
-        let crypto_provider = dtls_cert.crypto_provider();
 
         let local_creds = config.local_ice_credentials.unwrap_or_else(IceCreds::new);
         let mut ice = IceAgent::with_local_credentials(crypto_provider, local_creds);
@@ -1812,6 +1816,25 @@ impl Rtc {
     }
 }
 
+#[derive(Debug, Clone)]
+enum RtcCryptoConfig {
+    None,
+    CryptoProvider(CryptoProvider),
+    DtlsCert(DtlsCert),
+}
+
+impl Default for RtcCryptoConfig {
+    fn default() -> Self {
+        if cfg!(feature = "openssl") {
+            // When OpenSSL is enabled, we default to OpenSSL, this is for legacy
+            // compatibility.
+            RtcCryptoConfig::CryptoProvider(CryptoProviderId::default().into())
+        } else {
+            RtcCryptoConfig::None
+        }
+    }
+}
+
 /// Customized config for creating an [`Rtc`] instance.
 ///
 /// ```
@@ -1826,7 +1849,7 @@ impl Rtc {
 #[derive(Debug, Clone)]
 pub struct RtcConfig {
     local_ice_credentials: Option<IceCreds>,
-    dtls_cert: Option<DtlsCert>,
+    crypto_config: RtcCryptoConfig,
     fingerprint_verification: bool,
     ice_lite: bool,
     codec_config: CodecConfig,
@@ -1868,6 +1891,32 @@ impl RtcConfig {
         self
     }
 
+    /// Get the ID of the configured Crypto Provider, if set.
+    ///
+    /// Returns [`None`] if no DTLS certificate is set. In such cases,
+    /// the certificate will be created on build and you can use the
+    /// direct API on an [`Rtc`] instance to obtain the local
+    /// DTLS fingerprint.
+    ///
+    /// ```
+    /// # use str0m::RtcConfig;
+    /// let fingerprint = RtcConfig::default()
+    ///     .build()
+    ///     .direct_api()
+    ///     .local_dtls_fingerprint();
+    /// ```
+    pub fn crypto_provider_id(&self) -> Option<CryptoProviderId> {
+        match self.crypto_config {
+            RtcCryptoConfig::None => None,
+            RtcCryptoConfig::CryptoProvider(ref crypto_provider) => {
+                Some(crypto_provider.crypto_provider_id)
+            }
+            RtcCryptoConfig::DtlsCert(ref dtls_cert) => {
+                Some(dtls_cert.crypto_provider().crypto_provider_id)
+            }
+        }
+    }
+
     /// Get the configured DTLS certificate, if set.
     ///
     /// Returns [`None`] if no DTLS certificate is set. In such cases,
@@ -1883,7 +1932,20 @@ impl RtcConfig {
     ///     .local_dtls_fingerprint();
     /// ```
     pub fn dtls_cert(&self) -> Option<&DtlsCert> {
-        self.dtls_cert.as_ref()
+        if let RtcCryptoConfig::DtlsCert(ref cert) = self.crypto_config {
+            Some(cert)
+        } else {
+            None
+        }
+    }
+
+    /// Set the Crypto Provider to use.
+    ///
+    /// Either this, or the DTLS certificate should be set but not both, as the DTLS
+    /// certificate implies a provider.
+    pub fn set_crypto_provider_id(mut self, crypto_provider_id: CryptoProviderId) -> Self {
+        self.crypto_config = RtcCryptoConfig::CryptoProvider(crypto_provider_id.into());
+        self
     }
 
     /// Set the DTLS certificate for secure communication.
@@ -1898,8 +1960,11 @@ impl RtcConfig {
     ///
     /// let rtc_config = RtcConfig::default()
     ///     .set_dtls_cert(dtls_cert);
+    ///
+    /// Either this, or the DTLS certificate should be set but not both, as the DTLS
+    /// certificate implies a provider.
     pub fn set_dtls_cert(mut self, dtls_cert: DtlsCert) -> Self {
-        self.dtls_cert = Some(dtls_cert);
+        self.crypto_config = RtcCryptoConfig::DtlsCert(dtls_cert);
         self
     }
 
@@ -2304,7 +2369,7 @@ impl Default for RtcConfig {
     fn default() -> Self {
         Self {
             local_ice_credentials: None,
-            dtls_cert: None,
+            crypto_config: RtcCryptoConfig::default(),
             fingerprint_verification: true,
             ice_lite: false,
             codec_config: CodecConfig::new_with_defaults(),

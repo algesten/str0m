@@ -43,6 +43,7 @@ pub enum CryptoError {
     Io(#[from] io::Error),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CryptoProviderId {
     #[cfg(feature = "openssl")]
     OpenSsl,
@@ -77,8 +78,9 @@ impl From<CryptoProviderId> for CryptoProvider {
 }
 
 /// RTP/SRTP ciphers and hashes
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CryptoProvider {
+    pub(crate) crypto_provider_id: CryptoProviderId,
     pub(super) create_dtls_identity_impl: fn(CryptoProvider) -> Box<dyn DtlsIdentity>,
     pub(super) create_aes_128_cm_sha1_80_cipher_impl:
         fn(&aes_128_cm_sha1_80::AesKey, bool) -> Box<dyn aes_128_cm_sha1_80::CipherCtx>,
@@ -93,7 +95,7 @@ impl CryptoProvider {
         (self.create_dtls_identity_impl)(*self)
     }
 
-    pub fn create_aes_128_cm_sha1_80_cipher(
+    pub(crate) fn create_aes_128_cm_sha1_80_cipher(
         &self,
         key: &aes_128_cm_sha1_80::AesKey,
         encrypt: bool,
@@ -101,7 +103,7 @@ impl CryptoProvider {
         (self.create_aes_128_cm_sha1_80_cipher_impl)(key, encrypt)
     }
 
-    pub fn create_aead_aes_128_gcm_cipher(
+    pub(crate) fn create_aead_aes_128_gcm_cipher(
         &self,
         key: &aead_aes_128_gcm::AeadKey,
         encrypt: bool,
@@ -109,11 +111,11 @@ impl CryptoProvider {
         (self.create_aead_aes_128_gcm_cipher_impl)(key, encrypt)
     }
 
-    pub fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
+    pub(crate) fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
         (self.srtp_aes_128_ecb_round_impl)(key, input, output)
     }
 
-    pub fn sha1_hmac(&self, key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
+    pub(crate) fn sha1_hmac(&self, key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
         (self.sha1_hmac_impl)(key, payloads)
     }
 }
