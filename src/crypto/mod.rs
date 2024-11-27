@@ -43,24 +43,28 @@ pub enum CryptoError {
     Io(#[from] io::Error),
 }
 
+/// An ID specifying which Crypto implementation to use.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CryptoProviderId {
     #[cfg(feature = "openssl")]
+    /// Use OpenSSL
     OpenSsl,
     #[cfg(all(feature = "openssl", feature = "sha1"))]
+    /// Use OpenSSL for most ciphers, but use sha1 crate for SHA1 hashes.
     OpenSslWithSha1Crate,
     #[cfg(feature = "wincrypto")]
+    /// Use Windows Cryptography APIs
     WinCrypto,
 }
 
-#[cfg(feature = "openssl")]
 impl Default for CryptoProviderId {
+    #[allow(unreachable_code)]
     fn default() -> Self {
-        if cfg!(feature = "sha1") {
-            CryptoProviderId::OpenSslWithSha1Crate
-        } else {
-            CryptoProviderId::OpenSsl
-        }
+        #[cfg(all(feature = "openssl", feature = "sha1"))]
+        return CryptoProviderId::OpenSslWithSha1Crate;
+        #[cfg(feature = "openssl")]
+        return CryptoProviderId::OpenSsl;
+        panic!("No default for CryptoProviderId!")
     }
 }
 

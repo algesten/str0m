@@ -596,7 +596,8 @@ use thiserror::Error;
 use util::InstantExt;
 
 mod crypto;
-use crypto::{CryptoProvider, CryptoProviderId, Fingerprint};
+pub use crypto::CryptoProviderId;
+use crypto::{CryptoProvider, Fingerprint};
 
 mod dtls;
 use dtls::DtlsCert;
