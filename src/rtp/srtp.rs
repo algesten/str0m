@@ -1,7 +1,8 @@
 use std::fmt;
 
-use crate::crypto::{aead_aes_128_gcm, aes_128_cm_sha1_80, SrtpProfile};
-use crate::crypto::{CryptoProvider, KeyingMaterial};
+use crate::crypto::{
+    aead_aes_128_gcm, aes_128_cm_sha1_80, CryptoProvider, KeyingMaterial, SrtpProfile,
+};
 
 use super::header::RtpHeader;
 
@@ -708,10 +709,11 @@ fn error_details(header: &RtpHeader, srtp_index: u64) -> String {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::crypto::CryptoProviderId;
 
     #[test]
     fn derive_key() {
-        let crypto_provider = CryptoProvider::default();
+        let crypto_provider = CryptoProviderId::default().into();
 
         // https://tools.ietf.org/html/rfc3711#appendix-B.3
         //
@@ -808,10 +810,14 @@ mod test {
 
         #[test]
         fn unprotect_rtcp() {
-            let crypto_provider = CryptoProvider::default();
+            let crypto_provider = CryptoProviderId::default().into();
             let key_mat = KeyingMaterial::new(MAT.to_vec());
-            let mut ctx_rx =
-                SrtpContext::new(crypto_provider, SrtpProfile::Aes128CmSha1_80, &key_mat, true);
+            let mut ctx_rx = SrtpContext::new(
+                crypto_provider,
+                SrtpProfile::Aes128CmSha1_80,
+                &key_mat,
+                true,
+            );
             ctx_rx.srtcp_index = 1;
 
             let decrypted = ctx_rx.unprotect_rtcp(SRTCP).unwrap();
@@ -1029,7 +1035,7 @@ mod test {
 
         fn make_rtp_context() -> SrtpContext {
             SrtpContext::new_aead_aes_128_gcm(
-                CryptoProvider::default(),
+                CryptoProviderId::default().into(),
                 rfc7714::KEY,
                 rfc7714::SALT,
                 rfc7714::KEY,
@@ -1040,7 +1046,7 @@ mod test {
 
         fn make_rtcp_context() -> SrtpContext {
             SrtpContext::new_aead_aes_128_gcm(
-                CryptoProvider::default(),
+                CryptoProviderId::default().into(),
                 rfc7714::KEY,
                 rfc7714::SALT,
                 rfc7714::KEY,

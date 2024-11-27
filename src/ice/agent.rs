@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::CryptoProvider;
+use crate::crypto::{CryptoProvider, CryptoProviderId};
 use crate::io::{Id, StunClass, StunMethod, StunTiming, DATAGRAM_MTU_WARN};
 use crate::io::{Protocol, StunPacket};
 use crate::io::{StunMessage, TransId};
@@ -254,7 +254,7 @@ impl IceAgent {
     /// Create a new [`IceAgent`] with randomly generated credentials.
     #[allow(unused)]
     pub fn new() -> Self {
-        Self::with_local_credentials(CryptoProvider::default(), IceCreds::new())
+        Self::with_local_credentials(CryptoProviderId::default().into(), IceCreds::new())
     }
 
     /// Create a new [`IceAgent`] with a specific set of credentials.
