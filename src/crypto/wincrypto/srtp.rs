@@ -11,11 +11,11 @@ pub(super) fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]
     assert_eq!(count, 16 + 16); // block size
 }
 
-pub(super) struct WinCryptoAes128CmSha1_80 {
+pub(super) struct Aes128CmSha1_80Impl {
     key: SrtpKey,
 }
 
-impl WinCryptoAes128CmSha1_80 {
+impl Aes128CmSha1_80Impl {
     /// Create a new context for AES-128-CM-SHA1-80 encryption/decryption.
     ///
     /// The encrypt flag is ignored, since the same operation is used for both encryption and
@@ -30,7 +30,7 @@ impl WinCryptoAes128CmSha1_80 {
     }
 }
 
-impl aes_128_cm_sha1_80::CipherCtx for WinCryptoAes128CmSha1_80 {
+impl aes_128_cm_sha1_80::CipherCtx for Aes128CmSha1_80Impl {
     fn encrypt(
         &mut self,
         iv: &aes_128_cm_sha1_80::RtpIv,
@@ -52,11 +52,11 @@ impl aes_128_cm_sha1_80::CipherCtx for WinCryptoAes128CmSha1_80 {
     }
 }
 
-pub(super) struct WinCryptoAeadAes128Gcm {
+pub(super) struct AeadAes128GcmImpl {
     key: SrtpKey,
 }
 
-impl WinCryptoAeadAes128Gcm {
+impl AeadAes128GcmImpl {
     /// Create a new context for AES-128-GCM encryption/decryption.
     ///
     /// The encrypt flag is ignored, since it is not needed and the same
@@ -71,7 +71,7 @@ impl WinCryptoAeadAes128Gcm {
     }
 }
 
-impl aead_aes_128_gcm::CipherCtx for WinCryptoAeadAes128Gcm {
+impl aead_aes_128_gcm::CipherCtx for AeadAes128GcmImpl {
     fn encrypt(
         &mut self,
         iv: &[u8; aead_aes_128_gcm::IV_LEN],
