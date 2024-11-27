@@ -4,7 +4,7 @@ use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use crate::crypto::CryptoContext;
+use crate::crypto::CryptoProvider;
 use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -269,7 +269,7 @@ impl<'a> StunMessage<'a> {
 
     /// Verify the integrity of this message against the provided password.
     #[must_use]
-    pub(crate) fn check_integrity(&self, ctx: &CryptoContext, password: &str) -> bool {
+    pub(crate) fn check_integrity(&self, ctx: &CryptoProvider, password: &str) -> bool {
         if let Some(integ) = self.attrs.message_integrity {
             let comp = ctx.sha1_hmac(
                 password.as_bytes(),
@@ -291,7 +291,7 @@ impl<'a> StunMessage<'a> {
     /// The provided password is used to authenticate the message.
     pub(crate) fn to_bytes(
         self,
-        ctx: &CryptoContext,
+        ctx: &CryptoProvider,
         password: &str,
         buf: &mut [u8],
     ) -> Result<usize, StunError> {
@@ -823,7 +823,7 @@ impl<'a> fmt::Debug for StunMessage<'a> {
 
 #[cfg(test)]
 mod test {
-    use crate::CryptoProvider;
+    use crate::CryptoProviderId;
 
     use super::*;
     use std::net::SocketAddrV4;
@@ -841,11 +841,11 @@ mod test {
             0xaa, 0xf9, 0x83, 0x9c, 0xa0, 0x76, 0xc6, 0xd5, 0x80, 0x28, 0x00, 0x04, 0x36, 0x0e,
             0x21, 0x9f,
         ];
-        let crypto_context = CryptoProvider::default().into();
+        let crypto_provider = CryptoProviderId::default().into();
 
         let packet = PACKET.to_vec();
         let message = StunMessage::parse(&packet).unwrap();
-        assert!(message.check_integrity(&crypto_context, "xJcE9AQAR7kczUDVOXRUCl"));
+        assert!(message.check_integrity(&crypto_provider, "xJcE9AQAR7kczUDVOXRUCl"));
     }
 
     #[test]

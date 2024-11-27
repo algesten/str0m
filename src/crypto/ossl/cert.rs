@@ -10,7 +10,7 @@ use openssl::x509::{X509Name, X509};
 
 use crate::crypto::{
     dtls::{DtlsContext, DtlsIdentity},
-    CryptoContext, Fingerprint,
+    CryptoProvider, Fingerprint,
 };
 
 use super::dtls::DtlsContextImpl;
@@ -26,7 +26,7 @@ const RSA_F4: u32 = 0x10001;
 // https://github.com/pion/webrtc/blob/eed2bb2d3b9f204f9de1cd7e1046ca5d652778d2/constants.go#L31
 pub const DTLS_CERT_IDENTITY: &str = "WebRTC";
 
-pub(super) fn create_dtls_identity_impl(crypto_ctx: CryptoContext) -> Box<dyn DtlsIdentity> {
+pub(super) fn create_dtls_identity_impl(crypto_ctx: CryptoProvider) -> Box<dyn DtlsIdentity> {
     let identity =
         DtlsIdentityImpl::create_self_signed(crypto_ctx).expect("self-signed cert expected");
     Box::new(identity)
@@ -35,7 +35,7 @@ pub(super) fn create_dtls_identity_impl(crypto_ctx: CryptoContext) -> Box<dyn Dt
 /// Certificate used for DTLS.
 #[derive(Debug, Clone)]
 pub struct DtlsIdentityImpl {
-    crypto_context: CryptoContext,
+    crypto_provider: CryptoProvider,
     pub(crate) pkey: PKey<Private>,
     pub(crate) x509: X509,
 }
@@ -44,7 +44,7 @@ impl DtlsIdentityImpl {
     /// Creates a new (self signed) DTLS certificate.
     // The libWebRTC code we try to match is at:
     // https://webrtc.googlesource.com/src/+/1568f1b1330f94494197696fe235094e6293b258/rtc_base/openssl_certificate.cc#58
-    fn create_self_signed(crypto_context: CryptoContext) -> Result<Self, CryptoError> {
+    fn create_self_signed(crypto_provider: CryptoProvider) -> Result<Self, CryptoError> {
         let f4 = BigNum::from_u32(RSA_F4).unwrap();
         let key = Rsa::generate_with_e(2048, &f4)?;
         let pkey = PKey::from_rsa(key)?;
@@ -90,7 +90,7 @@ impl DtlsIdentityImpl {
         let x509 = x509b.build();
 
         Ok(DtlsIdentityImpl {
-            crypto_context,
+            crypto_provider,
             pkey,
             x509,
         })
@@ -122,8 +122,8 @@ impl DtlsIdentity for DtlsIdentityImpl {
         Box::new(self.clone())
     }
 
-    fn crypto_context(&self) -> CryptoContext {
-        self.crypto_context
+    fn crypto_provider(&self) -> CryptoProvider {
+        self.crypto_provider
     }
 }
 

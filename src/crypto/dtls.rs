@@ -6,19 +6,19 @@ use std::time::Instant;
 
 use crate::net::DatagramSend;
 
-use super::{CryptoContext, CryptoError, Fingerprint, KeyingMaterial, SrtpProfile};
+use super::{CryptoError, CryptoProvider, Fingerprint, KeyingMaterial, SrtpProfile};
 
 pub(crate) trait DtlsIdentity: fmt::Debug {
     fn fingerprint(&self) -> Fingerprint;
     fn create_context(&self) -> Result<Box<dyn DtlsContext>, CryptoError>;
-    fn crypto_context(&self) -> CryptoContext;
+    fn crypto_provider(&self) -> CryptoProvider;
     fn boxed_clone(&self) -> Box<dyn DtlsIdentity>;
 }
 
 // TODO(efer): Make more private
 pub trait DtlsContext: Send + Sync + core::panic::UnwindSafe {
     // Returns the crypto context.
-    fn crypto_context(&self) -> CryptoContext;
+    fn crypto_provider(&self) -> CryptoProvider;
 
     // Returns the local certificate fingerprint.
     fn local_fingerprint(&self) -> Fingerprint;
@@ -69,14 +69,14 @@ impl Clone for DtlsCert {
 
 impl DtlsCert {
     /// Create a new DtlsCert using the given provider.
-    pub fn new(crypto_context: CryptoContext) -> Self {
-        DtlsCert(crypto_context.create_dtls_identity())
+    pub fn new(crypto_provider: CryptoProvider) -> Self {
+        DtlsCert(crypto_provider.create_dtls_identity())
     }
 
     #[cfg(feature = "openssl")]
     /// Create a new OpenSSL variant of the certificate.
     pub fn new_openssl() -> Self {
-        Self::new(super::CryptoProvider::default().into())
+        Self::new(super::CryptoProviderId::default().into())
     }
 
     /// Creates a fingerprint for this certificate.
@@ -93,9 +93,9 @@ impl DtlsCert {
         self.0.create_context()
     }
 
-    /// Obtains the CryptoContext that this Cert was built with.
-    pub(crate) fn crypto_context(&self) -> CryptoContext {
-        self.0.crypto_context()
+    /// Obtains the CryptoProvider that this Cert was built with.
+    pub(crate) fn crypto_provider(&self) -> CryptoProvider {
+        self.0.crypto_provider()
     }
 }
 

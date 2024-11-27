@@ -45,8 +45,8 @@ impl DtlsContextImpl {
 }
 
 impl DtlsContext for DtlsContextImpl {
-    fn crypto_context(&self) -> crate::crypto::CryptoContext {
-        self.cert.crypto_context()
+    fn crypto_provider(&self) -> crate::crypto::CryptoProvider {
+        self.cert.crypto_provider()
     }
 
     fn local_fingerprint(&self) -> crate::crypto::Fingerprint {

@@ -32,7 +32,7 @@ impl SrtpProfile {
 pub mod aes_128_cm_sha1_80 {
     use std::panic::UnwindSafe;
 
-    use crate::crypto::{CryptoContext, CryptoError};
+    use crate::crypto::{CryptoError, CryptoProvider};
 
     pub const KEY_LEN: usize = 16;
     pub const SALT_LEN: usize = 14;
@@ -59,7 +59,7 @@ pub mod aes_128_cm_sha1_80 {
     }
 
     pub fn rtp_hmac(
-        ctx: &CryptoContext,
+        ctx: &CryptoProvider,
         key: &[u8],
         buf: &mut [u8],
         srtp_index: u64,
@@ -71,7 +71,7 @@ pub mod aes_128_cm_sha1_80 {
     }
 
     pub fn rtp_verify(
-        ctx: &CryptoContext,
+        ctx: &CryptoProvider,
         key: &[u8],
         buf: &[u8],
         srtp_index: u64,
@@ -96,13 +96,13 @@ pub mod aes_128_cm_sha1_80 {
         iv
     }
 
-    pub fn rtcp_hmac(ctx: &CryptoContext, key: &[u8], buf: &mut [u8], hmac_index: usize) {
+    pub fn rtcp_hmac(ctx: &CryptoProvider, key: &[u8], buf: &mut [u8], hmac_index: usize) {
         let tag = ctx.sha1_hmac(key, &[&buf[0..hmac_index]]);
 
         buf[hmac_index..(hmac_index + HMAC_TAG_LEN)].copy_from_slice(&tag[0..HMAC_TAG_LEN]);
     }
 
-    pub fn rtcp_verify(ctx: &CryptoContext, key: &[u8], buf: &[u8], cmp: &[u8]) -> bool {
+    pub fn rtcp_verify(ctx: &CryptoProvider, key: &[u8], buf: &[u8], cmp: &[u8]) -> bool {
         let tag = ctx.sha1_hmac(key, &[buf]);
 
         &tag[0..HMAC_TAG_LEN] == cmp

@@ -1,12 +1,12 @@
 use super::dtls::DtlsContextImpl;
 use crate::crypto::{
     dtls::{DtlsContext, DtlsIdentity},
-    CryptoContext, CryptoError, Fingerprint,
+    CryptoProvider, CryptoError, Fingerprint,
 };
 use std::sync::Arc;
 use str0m_wincrypto::WinCryptoError;
 
-pub(super) fn create_dtls_identity_impl(crypto_ctx: CryptoContext) -> Box<dyn DtlsIdentity> {
+pub(super) fn create_dtls_identity_impl(crypto_ctx: CryptoProvider) -> Box<dyn DtlsIdentity> {
     let certificate = Arc::new(
         str0m_wincrypto::Certificate::new_self_signed("CN=WebRTC")
             .expect("Failed to create self-signed certificate"),
@@ -19,7 +19,7 @@ pub(super) fn create_dtls_identity_impl(crypto_ctx: CryptoContext) -> Box<dyn Dt
 
 #[derive(Clone, Debug)]
 pub(super) struct DtlsIdentityImpl {
-    crypto_ctx: CryptoContext,
+    crypto_ctx: CryptoProvider,
     pub(super) certificate: Arc<str0m_wincrypto::Certificate>,
 }
 
@@ -36,7 +36,7 @@ impl DtlsIdentity for DtlsIdentityImpl {
         Box::new(self.clone())
     }
 
-    fn crypto_context(&self) -> CryptoContext {
+    fn crypto_provider(&self) -> CryptoProvider {
         self.crypto_ctx
     }
 }

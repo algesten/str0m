@@ -1,6 +1,6 @@
 //! OpenSSL implementation of cryptographic functions.
 
-use super::{CryptoContext, CryptoError, SrtpProfile};
+use super::{CryptoError, CryptoProvider, SrtpProfile};
 
 mod cert;
 mod dtls;
@@ -21,8 +21,8 @@ impl SrtpProfile {
     }
 }
 
-pub(crate) fn create_crypto_context() -> CryptoContext {
-    CryptoContext {
+pub(crate) fn create_crypto_provider() -> CryptoProvider {
+    CryptoProvider {
         create_dtls_identity_impl: cert::create_dtls_identity_impl,
         create_aes_128_cm_sha1_80_cipher_impl: srtp::Aes128CmSha1_80Impl::new,
         create_aead_aes_128_gcm_cipher_impl: srtp::AeadAes128GcmImpl::new,
@@ -33,7 +33,7 @@ pub(crate) fn create_crypto_context() -> CryptoContext {
 
 #[cfg(feature = "sha1")]
 pub(super) mod sha1_crate {
-    use super::{cert, srtp, CryptoContext};
+    use super::{cert, srtp, CryptoProvider};
     use hmac::Hmac;
     use hmac::Mac;
     use sha1::Sha1;
@@ -48,8 +48,8 @@ pub(super) mod sha1_crate {
         hmac.finalize().into_bytes().into()
     }
 
-    pub(crate) fn create_crypto_context() -> CryptoContext {
-        CryptoContext {
+    pub(crate) fn create_crypto_provider() -> CryptoProvider {
+        CryptoProvider {
             create_dtls_identity_impl: cert::create_dtls_identity_impl,
             create_aes_128_cm_sha1_80_cipher_impl: srtp::Aes128CmSha1_80Impl::new,
             create_aead_aes_128_gcm_cipher_impl: srtp::AeadAes128GcmImpl::new,

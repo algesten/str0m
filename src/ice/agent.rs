@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::crypto::CryptoContext;
+use crate::crypto::CryptoProvider;
 use crate::io::{Id, StunClass, StunMethod, StunTiming, DATAGRAM_MTU_WARN};
 use crate::io::{Protocol, StunPacket};
 use crate::io::{StunMessage, TransId};
@@ -21,7 +21,7 @@ use super::pair::{CandidatePair, CheckState, PairId};
 /// each one.
 #[derive(Debug)]
 pub struct IceAgent {
-    crypto_context: CryptoContext,
+    crypto_provider: CryptoProvider,
 
     /// Last time handle_timeout run (paced by timing_advance).
     ///
@@ -254,16 +254,16 @@ impl IceAgent {
     /// Create a new [`IceAgent`] with randomly generated credentials.
     #[allow(unused)]
     pub fn new() -> Self {
-        Self::with_local_credentials(CryptoContext::default(), IceCreds::new())
+        Self::with_local_credentials(CryptoProvider::default(), IceCreds::new())
     }
 
     /// Create a new [`IceAgent`] with a specific set of credentials.
     pub fn with_local_credentials(
-        crypto_context: CryptoContext,
+        crypto_provider: CryptoProvider,
         local_credentials: IceCreds,
     ) -> Self {
         IceAgent {
-            crypto_context,
+            crypto_provider,
             last_now: None,
             ice_lite: false,
             max_candidate_pairs: None,
@@ -924,7 +924,7 @@ impl IceAgent {
 
         let do_integrity_check = |is_request: bool| -> bool {
             let (_, password) = self.stun_credentials(is_request);
-            let integrity_passed = message.check_integrity(&self.crypto_context, &password);
+            let integrity_passed = message.check_integrity(&self.crypto_provider, &password);
 
             // The integrity is always the last thing we check
             if integrity_passed {
@@ -1443,7 +1443,7 @@ impl IceAgent {
         let mut buf = vec![0_u8; DATAGRAM_MTU];
 
         let n = reply
-            .to_bytes(&self.crypto_context, &password, &mut buf)
+            .to_bytes(&self.crypto_provider, &password, &mut buf)
             .expect("IO error writing STUN reply");
         buf.truncate(n);
 
@@ -1490,7 +1490,7 @@ impl IceAgent {
         let mut buf = vec![0_u8; DATAGRAM_MTU];
 
         let n = binding
-            .to_bytes(&self.crypto_context, &password, &mut buf)
+            .to_bytes(&self.crypto_provider, &password, &mut buf)
             .expect("IO error writing STUN reply");
         buf.truncate(n);
 
@@ -2069,13 +2069,13 @@ mod test {
         let stun_message = StunMessage::parse(&payload).unwrap();
 
         let valid_reply = make_authenticated_stun_reply(
-            &agent.crypto_context,
+            &agent.crypto_provider,
             stun_message.trans_id(),
             ipv4_4(),
             &remote_creds.pass,
         );
         let fake_reply = make_authenticated_stun_reply(
-            &agent.crypto_context,
+            &agent.crypto_provider,
             TransId::new(),
             ipv4_4(),
             &remote_creds.pass,
@@ -2097,7 +2097,7 @@ mod test {
         agent.add_remote_candidate(remote_candidate);
 
         let serialized_req = make_serialized_binding_request(
-            &agent.crypto_context,
+            &agent.crypto_provider,
             &agent.local_credentials,
             &remote_creds,
             !agent.controlling(),
@@ -2137,7 +2137,7 @@ mod test {
         agent.set_remote_credentials(remote_creds.clone());
 
         let request = make_serialized_binding_request(
-            &agent.crypto_context,
+            &agent.crypto_provider,
             &agent.local_credentials,
             &remote_creds,
             false,
@@ -2158,7 +2158,7 @@ mod test {
     }
 
     fn make_serialized_binding_request(
-        crypto_context: &CryptoContext,
+        crypto_provider: &CryptoProvider,
         local_creds: &IceCreds,
         remote_creds: &IceCreds,
         controlling: bool,
@@ -2167,30 +2167,30 @@ mod test {
         let username = format!("{}:{}", local_creds.ufrag, remote_creds.ufrag);
         let binding_req =
             StunMessage::binding_request(&username, TransId::new(), controlling, 0, prio, false);
-        serialize_stun_msg(crypto_context, binding_req, &local_creds.pass)
+        serialize_stun_msg(crypto_provider, binding_req, &local_creds.pass)
     }
 
     fn make_authenticated_stun_reply(
-        crypto_context: &CryptoContext,
+        crypto_provider: &CryptoProvider,
         tx_id: TransId,
         addr: SocketAddr,
         password: &str,
     ) -> Vec<u8> {
         let reply = StunMessage::reply(tx_id, addr);
-        serialize_stun_msg(crypto_context, reply, password)
+        serialize_stun_msg(crypto_provider, reply, password)
     }
 
     /// Serializing will calculate a message integrity for it. You can then re-parse to get a message
     /// that contains that correct integrity value.
     fn serialize_stun_msg(
-        crypto_context: &CryptoContext,
+        crypto_provider: &CryptoProvider,
         msg: StunMessage<'_>,
         password: &str,
     ) -> Vec<u8> {
         let mut buf = vec![0_u8; DATAGRAM_MTU];
 
         let n = msg
-            .to_bytes(crypto_context, password, &mut buf)
+            .to_bytes(crypto_provider, password, &mut buf)
             .expect("IO error writing STUN message");
         buf.truncate(n);
 

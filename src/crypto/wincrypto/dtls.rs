@@ -1,13 +1,13 @@
 use super::cert::{create_sha256_fingerprint, DtlsIdentityImpl};
 use crate::crypto::{
     dtls::{DtlsContext, DtlsIdentity},
-    CryptoContext, CryptoError, DtlsEvent, Fingerprint, KeyingMaterial, SrtpProfile,
+    CryptoProvider, CryptoError, DtlsEvent, Fingerprint, KeyingMaterial, SrtpProfile,
 };
 use crate::io::DATAGRAM_MTU_WARN;
 use std::{collections::VecDeque, time::Instant};
 
 pub(super) struct DtlsContextImpl {
-    crypto_context: CryptoContext,
+    crypto_provider: CryptoProvider,
     dtls: str0m_wincrypto::Dtls,
     fingerprint: Fingerprint,
 }
@@ -16,7 +16,7 @@ impl DtlsContextImpl {
     pub(super) fn new(cert: &DtlsIdentityImpl) -> Result<Box<dyn DtlsContext>, super::CryptoError> {
         let fingerprint = cert.fingerprint();
         Ok(Box::new(DtlsContextImpl {
-            crypto_context: cert.crypto_context(),
+            crypto_provider: cert.crypto_provider(),
             dtls: str0m_wincrypto::Dtls::new(cert.certificate.clone())?,
             fingerprint,
         }))
@@ -24,8 +24,8 @@ impl DtlsContextImpl {
 }
 
 impl DtlsContext for DtlsContextImpl {
-    fn crypto_context(&self) -> CryptoContext {
-        self.crypto_context
+    fn crypto_provider(&self) -> CryptoProvider {
+        self.crypto_provider
     }
 
     fn local_fingerprint(&self) -> Fingerprint {

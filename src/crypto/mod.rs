@@ -43,7 +43,7 @@ pub enum CryptoError {
     Io(#[from] io::Error),
 }
 
-pub enum CryptoProvider {
+pub enum CryptoProviderId {
     #[cfg(feature = "openssl")]
     OpenSsl,
     #[cfg(all(feature = "openssl", feature = "sha1"))]
@@ -53,33 +53,33 @@ pub enum CryptoProvider {
 }
 
 #[cfg(feature = "openssl")]
-impl Default for CryptoProvider {
+impl Default for CryptoProviderId {
     fn default() -> Self {
         if cfg!(feature = "sha1") {
-            CryptoProvider::OpenSslWithSha1Crate
+            CryptoProviderId::OpenSslWithSha1Crate
         } else {
-            CryptoProvider::OpenSsl
+            CryptoProviderId::OpenSsl
         }
     }
 }
 
-impl From<CryptoProvider> for CryptoContext {
-    fn from(value: CryptoProvider) -> Self {
+impl From<CryptoProviderId> for CryptoProvider {
+    fn from(value: CryptoProviderId) -> Self {
         match value {
             #[cfg(feature = "openssl")]
-            CryptoProvider::OpenSsl => ossl::create_crypto_context(),
+            CryptoProviderId::OpenSsl => ossl::create_crypto_provider(),
             #[cfg(all(feature = "openssl", feature = "sha1"))]
-            CryptoProvider::OpenSslWithSha1Crate => ossl::sha1_crate::create_crypto_context(),
+            CryptoProviderId::OpenSslWithSha1Crate => ossl::sha1_crate::create_crypto_provider(),
             #[cfg(feature = "wincrypto")]
-            CryptoProvider::WinCrypto => wincrypto::create_crypto_context(),
+            CryptoProviderId::WinCrypto => wincrypto::create_crypto_provider(),
         }
     }
 }
 
 /// RTP/SRTP ciphers and hashes
 #[derive(Clone, Copy, Debug)]
-pub struct CryptoContext {
-    pub(super) create_dtls_identity_impl: fn(CryptoContext) -> Box<dyn DtlsIdentity>,
+pub struct CryptoProvider {
+    pub(super) create_dtls_identity_impl: fn(CryptoProvider) -> Box<dyn DtlsIdentity>,
     pub(super) create_aes_128_cm_sha1_80_cipher_impl:
         fn(&aes_128_cm_sha1_80::AesKey, bool) -> Box<dyn aes_128_cm_sha1_80::CipherCtx>,
     pub(super) create_aead_aes_128_gcm_cipher_impl:
@@ -88,7 +88,7 @@ pub struct CryptoContext {
     pub(super) sha1_hmac_impl: fn(&[u8], &[&[u8]]) -> [u8; 20],
 }
 
-impl CryptoContext {
+impl CryptoProvider {
     pub(super) fn create_dtls_identity(&self) -> Box<dyn DtlsIdentity> {
         (self.create_dtls_identity_impl)(*self)
     }
@@ -115,12 +115,5 @@ impl CryptoContext {
 
     pub fn sha1_hmac(&self, key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
         (self.sha1_hmac_impl)(key, payloads)
-    }
-}
-
-impl Default for CryptoContext {
-    fn default() -> Self {
-        // TODO(efer): Figure this out.
-        ossl::create_crypto_context()
     }
 }

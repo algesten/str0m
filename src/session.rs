@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use crate::bwe::BweKind;
 use crate::crypto::SrtpProfile;
-use crate::crypto::{CryptoContext, KeyingMaterial};
+use crate::crypto::{CryptoProvider, KeyingMaterial};
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
@@ -191,7 +191,7 @@ impl Session {
 
     pub fn set_keying_material(
         &mut self,
-        crypto_context: CryptoContext,
+        crypto_provider: CryptoProvider,
         mat: KeyingMaterial,
         srtp_profile: SrtpProfile,
         active: bool,
@@ -201,8 +201,8 @@ impl Session {
         // hand side of the key material to derive input/output.
         let left = active;
 
-        self.srtp_rx = Some(SrtpContext::new(crypto_context, srtp_profile, &mat, !left));
-        self.srtp_tx = Some(SrtpContext::new(crypto_context, srtp_profile, &mat, left));
+        self.srtp_rx = Some(SrtpContext::new(crypto_provider, srtp_profile, &mat, !left));
+        self.srtp_tx = Some(SrtpContext::new(crypto_provider, srtp_profile, &mat, left));
     }
 
     pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {

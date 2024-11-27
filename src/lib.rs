@@ -596,7 +596,7 @@ use thiserror::Error;
 use util::InstantExt;
 
 mod crypto;
-use crypto::{CryptoContext, CryptoProvider, Fingerprint};
+use crypto::{CryptoProvider, CryptoProviderId, Fingerprint};
 
 mod dtls;
 use dtls::DtlsCert;
@@ -838,7 +838,7 @@ pub enum RtcError {
 /// ```
 pub struct Rtc {
     alive: bool,
-    crypto_context: CryptoContext,
+    crypto_provider: CryptoProvider,
     ice: IceAgent,
     dtls: Dtls,
     sctp: RtcSctp,
@@ -1102,21 +1102,21 @@ impl Rtc {
         let dtls_cert = if let Some(c) = config.dtls_cert {
             c
         } else if cfg!(feature = "openssl") {
-            DtlsCert::new(CryptoProvider::default().into())
+            DtlsCert::new(CryptoProviderId::default().into())
         } else {
             panic!("Certificate must be provided")
         };
-        let crypto_context = dtls_cert.crypto_context();
+        let crypto_provider = dtls_cert.crypto_provider();
 
         let local_creds = config.local_ice_credentials.unwrap_or_else(IceCreds::new);
-        let mut ice = IceAgent::with_local_credentials(crypto_context, local_creds);
+        let mut ice = IceAgent::with_local_credentials(crypto_provider, local_creds);
         if config.ice_lite {
             ice.set_ice_lite(config.ice_lite);
         }
 
         Rtc {
             alive: true,
-            crypto_context,
+            crypto_provider,
             ice,
             dtls: Dtls::new(dtls_cert).expect("DTLS to init without problem"),
             session,
@@ -1430,7 +1430,7 @@ impl Rtc {
                     );
                     let active = self.dtls.is_active().expect("DTLS must be inited by now");
                     self.session.set_keying_material(
-                        self.crypto_context,
+                        self.crypto_provider,
                         mat,
                         srtp_profile,
                         active,
