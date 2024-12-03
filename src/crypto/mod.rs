@@ -4,9 +4,22 @@ use std::fmt;
 use std::io;
 use thiserror::Error;
 
+/// Crypto provider setting.
+///
+/// The provider implementations will need turning on using the feature flags:
+///
+/// * **openssl** (defaults to on) for crypto backed by OpenSSL.
+/// * **wincrypto** for crypto backed by windows crypto.
+///
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CryptoProvider {
+    /// OpenSSL (the default)
+    ///
+    /// Requires feature flag **openssl**.
     OpenSsl,
+    /// Windows SChannel + CNG implementation of cryptographic functions.
+    ///
+    /// Requires feature flag **wincrypto**.
     WinCrypto,
 }
 

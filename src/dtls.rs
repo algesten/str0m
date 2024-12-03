@@ -5,7 +5,8 @@ use thiserror::Error;
 
 use crate::crypto::{CryptoError, DtlsImpl, Fingerprint};
 
-pub use crate::crypto::{DtlsCert, DtlsEvent};
+pub use crate::crypto::DtlsCert;
+pub(crate) use crate::crypto::DtlsEvent;
 use crate::net::DatagramSend;
 
 /// Errors that can arise in DTLS.
