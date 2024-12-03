@@ -596,6 +596,7 @@ use thiserror::Error;
 use util::InstantExt;
 
 mod crypto;
+use crypto::CryptoProvider;
 use crypto::Fingerprint;
 
 mod dtls;
@@ -607,6 +608,11 @@ mod ice_;
 use ice_::IceAgent;
 use ice_::IceAgentEvent;
 pub use ice_::{Candidate, CandidateKind, IceConnectionState, IceCreds};
+
+/// Additional configuration.
+pub mod config {
+    pub use super::crypto::{CryptoProvider, DtlsCert, Fingerprint};
+}
 
 /// Low level ICE access.
 // The ICE API is not necessary to interact with directly for "regular"
@@ -1107,18 +1113,7 @@ impl Rtc {
         let dtls_cert = if let Some(c) = config.dtls_cert {
             c
         } else {
-            #[cfg(feature = "openssl")]
-            {
-                DtlsCert::new_openssl()
-            }
-            #[cfg(feature = "wincrypto")]
-            {
-                DtlsCert::new_wincrypto()
-            }
-            #[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
-            {
-                panic!("No DTLS implementation. Enable crypto feature");
-            }
+            DtlsCert::new(config.crypto_provider)
         };
 
         Rtc {
@@ -1827,6 +1822,7 @@ impl Rtc {
 #[derive(Debug, Clone)]
 pub struct RtcConfig {
     local_ice_credentials: Option<IceCreds>,
+    crypto_provider: CryptoProvider,
     dtls_cert: Option<DtlsCert>,
     fingerprint_verification: bool,
     ice_lite: bool,
@@ -1869,6 +1865,27 @@ impl RtcConfig {
         self
     }
 
+    /// Set the crypto provider.
+    ///
+    /// This happens implicitly if you use [`RtcConfig::set_dtls_cert()`].
+    ///
+    /// Panics: If you `set_dtls_cert()` followed by a different [`CryptoProvider`].
+    pub fn set_crypto_provider(mut self, p: CryptoProvider) -> Self {
+        if let Some(c) = &self.dtls_cert {
+            if p != c.crypto_provider() {
+                panic!("set_dtls_cert() locked crypto provider to: {}", p);
+            }
+        } else {
+            self.crypto_provider = p;
+        }
+        self
+    }
+
+    /// The configured crypto provider.
+    pub fn crypto_provider(&self) -> CryptoProvider {
+        self.crypto_provider
+    }
+
     /// Get the configured DTLS certificate, if set.
     ///
     /// Returns [`None`] if no DTLS certificate is set. In such cases,
@@ -1892,14 +1909,20 @@ impl RtcConfig {
     /// Generating a certificate can be a time-consuming process.
     /// Use this API to reuse a previously created [`DtlsCert`] if available.
     ///
+    /// Setting this locks the `crypto_provider()` setting to the [`CryptoProvider`],
+    /// for the DTLS certificate.
+    ///
+    /// ```
     /// # use str0m::RtcConfig;
-    /// # use str0m::change::DtlsCert;
-    /// ![cfg(feature = 'openssl')]
-    /// let dtls_cert = DtlsCert::new_openssl();
+    /// # use str0m::config::{DtlsCert, CryptoProvider};
+    ///
+    /// let dtls_cert = DtlsCert::new(CryptoProvider::OpenSsl);
     ///
     /// let rtc_config = RtcConfig::default()
     ///     .set_dtls_cert(dtls_cert);
+    /// ```
     pub fn set_dtls_cert(mut self, dtls_cert: DtlsCert) -> Self {
+        self.crypto_provider = dtls_cert.crypto_provider();
         self.dtls_cert = Some(dtls_cert);
         self
     }
@@ -2305,6 +2328,7 @@ impl Default for RtcConfig {
     fn default() -> Self {
         Self {
             local_ice_credentials: None,
+            crypto_provider: CryptoProvider::OpenSsl,
             dtls_cert: None,
             fingerprint_verification: true,
             ice_lite: false,

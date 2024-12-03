@@ -5,8 +5,7 @@ use openssl::hash::MessageDigest;
 use openssl::srtp::SrtpProfileId;
 use openssl::ssl::{HandshakeError, MidHandshakeSslStream, Ssl, SslStream};
 
-use crate::change::Fingerprint;
-use crate::crypto::{KeyingMaterial, SrtpProfile};
+use crate::crypto::{Fingerprint, KeyingMaterial, SrtpProfile};
 
 use super::CryptoError;
 
