@@ -193,6 +193,7 @@ impl<'a> SdpApi<'a> {
     /// If changes have been made, nothing happens until we call [`SdpApi::apply()`].
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::{Rtc, media::MediaKind, media::Direction};
     /// let mut rtc = Rtc::new();
     ///
@@ -201,6 +202,7 @@ impl<'a> SdpApi<'a> {
     ///
     /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
     /// assert!(changes.has_changes());
+    /// # }
     /// ```
     pub fn has_changes(&self) -> bool {
         !self.changes.0.is_empty()
@@ -218,12 +220,14 @@ impl<'a> SdpApi<'a> {
     ///   CNAME in the RTP SDES.
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::{Rtc, media::MediaKind, media::Direction};
     /// let mut rtc = Rtc::new();
     ///
     /// let mut changes = rtc.sdp_api();
     ///
     /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
+    /// # }
     /// ```
     pub fn add_media(
         &mut self,
@@ -322,12 +326,14 @@ impl<'a> SdpApi<'a> {
     /// useful when multiple channels are in use at the same time.
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::Rtc;
     /// let mut rtc = Rtc::new();
     ///
     /// let mut changes = rtc.sdp_api();
     ///
     /// let cid = changes.add_channel("my special channel".to_string());
+    /// # }
     /// ```
     pub fn add_channel(&mut self, label: String) -> ChannelId {
         self.add_channel_with_config(ChannelConfig {
@@ -341,6 +347,7 @@ impl<'a> SdpApi<'a> {
     /// Refer to `add_channel` for more details.
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::{channel::{ChannelConfig, Reliability}, Rtc};
     /// let mut rtc = Rtc::new();
     ///
@@ -352,6 +359,7 @@ impl<'a> SdpApi<'a> {
     ///     ordered: false,
     ///     ..Default::default()
     /// });
+    /// # }
     /// ```
     pub fn add_channel_with_config(&mut self, config: ChannelConfig) -> ChannelId {
         let has_media = self.rtc.session.app().is_some();
@@ -405,11 +413,13 @@ impl<'a> SdpApi<'a> {
     /// the current [`SdpPendingOffer`].
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::Rtc;
     /// let mut rtc = Rtc::new();
     ///
     /// let changes = rtc.sdp_api();
     /// assert!(changes.apply().is_none());
+    /// # }
     /// ```
     pub fn apply(self) -> Option<(SdpOffer, SdpPendingOffer)> {
         if self.changes.is_empty() {
@@ -1558,6 +1568,8 @@ mod test {
 
     #[test]
     fn test_out_of_order_error() {
+        crate::init_crypto_default();
+
         let mut rtc1 = Rtc::new();
         let mut rtc2 = Rtc::new();
 
@@ -1580,6 +1592,8 @@ mod test {
 
     #[test]
     fn sdp_api_merge_works() {
+        crate::init_crypto_default();
+
         let mut rtc = Rtc::new();
         let mut changes = rtc.sdp_api();
         changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
@@ -1596,6 +1610,8 @@ mod test {
 
     #[test]
     fn test_rtp_payload_priority() {
+        crate::init_crypto_default();
+
         let mut rtc1 = Rtc::builder()
             .clear_codecs()
             .enable_h264(true)

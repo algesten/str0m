@@ -297,6 +297,29 @@
 //! strategy weighing in all possible time sources to get a good estimate
 //! of the remote wallclock for a packet.
 //!
+//! # Crypto backends
+//!
+//! str0m has two crypto backends, `openssl` and `wincrypto`. The default is
+//! `openssl` which works on all platforms (also Windows). Ideally we want a
+//! pure rust version of the crypto code, but WebRTC currently requires
+//! DTLS 1.2 (not the latest version 1.3), and that leaves us only with a
+//! few possible options.
+//!
+//! When compiling for Windows, the `openssl` feature can be removed and
+//! only rely on `wincrypto`. However notice that `str0m` never picks up a
+//! default automatically, you must explicitly configure the crypto backend,
+//! also when removing the `openssl` feature.
+//!
+//! If you are building an application, the easiest is to set the default
+//! for the entire process.
+//!
+//! ```no_run
+//! use str0m::config::CryptoProvider;
+//!
+//! // Will panic if run twice
+//! CryptoProvider::WinCrypto.install_process_default();
+//! ```
+//!
 //! # Project status
 //!
 //! Str0m was originally developed by Martin Algesten of
@@ -366,12 +389,14 @@
 //! To enable RTP mode
 //!
 //! ```
+//! # #[cfg(feature = "openssl")] {
 //! # use str0m::Rtc;
 //! let rtc = Rtc::builder()
 //!     // Enable RTP mode for this Rtc instance.
 //!     // This disables `MediaEvent` and the `Writer::write` API.
 //!     .set_rtp_mode(true)
 //!     .build();
+//! # }
 //! ```
 //!
 //! RTP mode gives us some new API points.
@@ -597,6 +622,7 @@ use thiserror::Error;
 use util::InstantExt;
 
 mod crypto;
+use crypto::CryptoProvider;
 use crypto::Fingerprint;
 
 mod dtls;
@@ -608,6 +634,11 @@ mod ice_;
 use ice_::IceAgent;
 use ice_::IceAgentEvent;
 pub use ice_::{Candidate, CandidateKind, IceConnectionState, IceCreds};
+
+/// Additional configuration.
+pub mod config {
+    pub use super::crypto::{CryptoProvider, DtlsCert, Fingerprint};
+}
 
 /// Low level ICE access.
 // The ICE API is not necessary to interact with directly for "regular"
@@ -854,6 +885,7 @@ pub struct Rtc {
     peer_bytes_tx: u64,
     change_counter: usize,
     last_timeout_reason: Reason,
+    crypto_provider: CryptoProvider,
 }
 
 struct SendAddr {
@@ -1075,9 +1107,11 @@ impl Rtc {
     /// To configure the instance, use [`RtcConfig`].
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// use str0m::Rtc;
     ///
     /// let rtc = Rtc::new();
+    /// # }
     /// ```
     pub fn new() -> Self {
         let config = RtcConfig::default();
@@ -1087,10 +1121,12 @@ impl Rtc {
     /// Creates a config builder that configures an [`Rtc`] instance.
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::Rtc;
     /// let rtc = Rtc::builder()
     ///     .set_ice_lite(true)
     ///     .build();
+    /// # }
     /// ```
     pub fn builder() -> RtcConfig {
         RtcConfig::new()
@@ -1108,19 +1144,10 @@ impl Rtc {
         let dtls_cert = if let Some(c) = config.dtls_cert {
             c
         } else {
-            #[cfg(feature = "openssl")]
-            {
-                DtlsCert::new_openssl()
-            }
-            #[cfg(feature = "wincrypto")]
-            {
-                DtlsCert::new_wincrypto()
-            }
-            #[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
-            {
-                panic!("No DTLS implementation. Enable crypto feature");
-            }
+            DtlsCert::new(config.crypto_provider)
         };
+
+        let crypto_provider = dtls_cert.crypto_provider();
 
         Rtc {
             alive: true,
@@ -1139,6 +1166,7 @@ impl Rtc {
             peer_bytes_tx: 0,
             change_counter: 0,
             last_timeout_reason: Reason::NotHappening,
+            crypto_provider,
         }
     }
 
@@ -1151,6 +1179,7 @@ impl Rtc {
     /// The instance can be manually disconnected using [`Rtc::disconnect()`].
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::Rtc;
     /// let mut rtc = Rtc::new();
     ///
@@ -1158,6 +1187,7 @@ impl Rtc {
     ///
     /// rtc.disconnect();
     /// assert!(!rtc.is_alive());
+    /// # }
     /// ```
     pub fn is_alive(&self) -> bool {
         self.alive
@@ -1169,11 +1199,13 @@ impl Rtc {
     /// produce anymore network output or events.
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::Rtc;
     /// let mut rtc = Rtc::new();
     ///
     /// rtc.disconnect();
     /// assert!(!rtc.is_alive());
+    /// # }
     /// ```
     pub fn disconnect(&mut self) {
         if self.alive {
@@ -1193,6 +1225,7 @@ impl Rtc {
     /// however advisable to add at least one local candidate before starting the instance.
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::{Rtc, Candidate};
     /// let mut rtc = Rtc::new();
     ///
@@ -1200,6 +1233,7 @@ impl Rtc {
     /// let c = Candidate::host(a, "udp").unwrap();
     ///
     /// rtc.add_local_candidate(c);
+    /// # }
     /// ```
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
@@ -1216,6 +1250,7 @@ impl Rtc {
     /// that are "trickled" from the other side.
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::{Rtc, Candidate};
     /// let mut rtc = Rtc::new();
     ///
@@ -1223,6 +1258,7 @@ impl Rtc {
     /// let c = Candidate::host(a, "udp").unwrap();
     ///
     /// rtc.add_remote_candidate(c);
+    /// }
     /// ```
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
@@ -1436,7 +1472,9 @@ impl Rtc {
                         srtp_profile
                     );
                     let active = self.dtls.is_active().expect("DTLS must be inited by now");
-                    self.session.set_keying_material(mat, srtp_profile, active);
+                    let srtp_crypto = self.crypto_provider.srtp_crypto();
+                    self.session
+                        .set_keying_material(mat, &srtp_crypto, srtp_profile, active);
                 }
                 DtlsEvent::RemoteFingerprint(v1) => {
                     debug!("DTLS verify remote fingerprint");
@@ -1576,6 +1614,7 @@ impl Rtc {
     /// is a timeout.
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::{Rtc, Input, Output, Reason};
     /// let mut rtc = Rtc::new();
     ///
@@ -1587,6 +1626,7 @@ impl Rtc {
     /// // If there are no timeouts scheduled, we get NotHappening. The timeout
     /// // value itself will be in the distant future.
     /// assert_eq!(rtc.last_timeout_reason(), Reason::DTLS);
+    /// # }
     /// ```
     pub fn last_timeout_reason(&self) -> Reason {
         self.last_timeout_reason
@@ -1817,17 +1857,20 @@ impl Rtc {
 /// Customized config for creating an [`Rtc`] instance.
 ///
 /// ```
+/// # #[cfg(feature = "openssl")] {
 /// use str0m::RtcConfig;
 ///
 /// let rtc = RtcConfig::new()
 ///     .set_ice_lite(true)
 ///     .build();
+/// # }
 /// ```
 ///
 /// Configs implement [`Clone`] to help create multiple `Rtc` instances.
 #[derive(Debug, Clone)]
 pub struct RtcConfig {
     local_ice_credentials: Option<IceCreds>,
+    crypto_provider: CryptoProvider,
     dtls_cert: Option<DtlsCert>,
     fingerprint_verification: bool,
     ice_lite: bool,
@@ -1870,6 +1913,32 @@ impl RtcConfig {
         self
     }
 
+    /// Set the crypto provider.
+    ///
+    /// This happens implicitly if you use [`RtcConfig::set_dtls_cert()`].
+    ///
+    /// Panics: If you `set_dtls_cert()` followed by a different [`CryptoProvider`].
+    ///
+    /// This overrides what is set in [`CryptoProvider::install_process_default()`].
+    pub fn set_crypto_provider(mut self, p: CryptoProvider) -> Self {
+        if let Some(c) = &self.dtls_cert {
+            if p != c.crypto_provider() {
+                panic!("set_dtls_cert() locked crypto provider to: {}", p);
+            }
+        } else {
+            self.crypto_provider = p;
+        }
+        self
+    }
+
+    /// The configured crypto provider.
+    ///
+    /// Defaults to what's set in [`CryptoProvider::install_process_default()`] followed
+    /// by a fallback to [`CryptoProvider::OpenSsl`].
+    pub fn crypto_provider(&self) -> CryptoProvider {
+        self.crypto_provider
+    }
+
     /// Get the configured DTLS certificate, if set.
     ///
     /// Returns [`None`] if no DTLS certificate is set. In such cases,
@@ -1878,11 +1947,13 @@ impl RtcConfig {
     /// DTLS fingerprint.
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::RtcConfig;
     /// let fingerprint = RtcConfig::default()
     ///     .build()
     ///     .direct_api()
     ///     .local_dtls_fingerprint();
+    /// # }
     /// ```
     pub fn dtls_cert(&self) -> Option<&DtlsCert> {
         self.dtls_cert.as_ref()
@@ -1893,14 +1964,20 @@ impl RtcConfig {
     /// Generating a certificate can be a time-consuming process.
     /// Use this API to reuse a previously created [`DtlsCert`] if available.
     ///
+    /// Setting this locks the `crypto_provider()` setting to the [`CryptoProvider`],
+    /// for the DTLS certificate.
+    ///
+    /// ```
     /// # use str0m::RtcConfig;
-    /// # use str0m::change::DtlsCert;
-    /// ![cfg(feature = 'openssl')]
-    /// let dtls_cert = DtlsCert::new_openssl();
+    /// # use str0m::config::{DtlsCert, CryptoProvider};
+    ///
+    /// let dtls_cert = DtlsCert::new(CryptoProvider::OpenSsl);
     ///
     /// let rtc_config = RtcConfig::default()
     ///     .set_dtls_cert(dtls_cert);
+    /// ```
     pub fn set_dtls_cert(mut self, dtls_cert: DtlsCert) -> Self {
+        self.crypto_provider = dtls_cert.crypto_provider();
         self.dtls_cert = Some(dtls_cert);
         self
     }
@@ -1941,11 +2018,13 @@ impl RtcConfig {
     /// Tells whether ice lite is enabled.
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::Rtc;
     /// let config = Rtc::builder();
     ///
     /// // Defaults to false.
     /// assert_eq!(config.ice_lite(), false);
+    /// # }
     /// ```
     pub fn ice_lite(&self) -> bool {
         self.ice_lite
@@ -1959,6 +2038,7 @@ impl RtcConfig {
     /// Clear all configured codecs.
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::RtcConfig;
     /// // For the session to use only OPUS and VP8.
     /// let mut rtc = RtcConfig::default()
@@ -1966,6 +2046,7 @@ impl RtcConfig {
     ///     .enable_opus(true)
     ///     .enable_vp8(true)
     ///     .build();
+    /// # }
     /// ```
     pub fn clear_codecs(mut self) -> Self {
         self.codec_config.clear();
@@ -2306,6 +2387,7 @@ impl Default for RtcConfig {
     fn default() -> Self {
         Self {
             local_ice_credentials: None,
+            crypto_provider: CryptoProvider::process_default().unwrap_or(CryptoProvider::OpenSsl),
             dtls_cert: None,
             fingerprint_verification: true,
             ice_lite: false,
@@ -2381,6 +2463,12 @@ macro_rules! log_stat {
     };
 }
 pub(crate) use log_stat;
+
+#[cfg(test)]
+#[doc(hidden)]
+pub fn init_crypto_default() {
+    crate::config::CryptoProvider::from_feature_flags().__test_install_process_default();
+}
 
 #[cfg(test)]
 mod test {

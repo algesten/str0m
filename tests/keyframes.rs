@@ -7,12 +7,13 @@ use str0m::{Candidate, Event, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{h264_data, vp8_data, vp9_data};
+use common::{h264_data, init_crypto_default, vp8_data, vp9_data};
 use common::{init_log, progress, TestRtc};
 
 #[test]
 pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
     init_log();
+    init_crypto_default();
 
     let mut l = TestRtc::new(info_span!("L"));
     let mut r = TestRtc::new(info_span!("R"));
@@ -104,6 +105,7 @@ pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
 #[test]
 pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
     init_log();
+    init_crypto_default();
 
     let mut l = TestRtc::new(info_span!("L"));
     let mut r = TestRtc::new(info_span!("R"));
@@ -196,6 +198,7 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
 #[test]
 pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
     init_log();
+    init_crypto_default();
 
     let mut l = TestRtc::new(info_span!("L"));
     let mut r = TestRtc::new(info_span!("R"));

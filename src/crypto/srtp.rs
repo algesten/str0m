@@ -3,6 +3,8 @@ use std::fmt;
 use self::aead_aes_128_gcm::AeadKey;
 use self::aes_128_cm_sha1_80::AesKey;
 
+use super::CryptoProvider;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SrtpProfile {
     #[cfg(feature = "_internal_test_exports")]
@@ -32,72 +34,70 @@ impl SrtpProfile {
     }
 }
 
-// TODO: Can we avoice dynamic dispatch in this signature? The parameters are:
-//       1. As few "touch points" beteen rtp/srtp.rs and here as possible.
-//       2. Clear contract towards the actual impl.
-//       3. Choice of impl passed all the way from RtcConfig.
-#[allow(unused)]
-pub fn new_aes_128_cm_sha1_80(
-    key: AesKey,
-    encrypt: bool,
-) -> Box<dyn aes_128_cm_sha1_80::CipherCtx> {
+pub enum SrtpCrypto {
     #[cfg(feature = "openssl")]
-    {
-        let ctx = super::ossl::OsslSrtpCryptoImpl::new_aes_128_cm_sha1_80(key, encrypt);
-        Box::new(ctx)
-    }
-    #[cfg(feature = "wincrypto")]
-    {
-        let ctx = super::wincrypto::WinCryptoSrtpCryptoImpl::new_aes_128_cm_sha1_80(key, encrypt);
-        Box::new(ctx)
-    }
-    #[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
-    {
-        panic!("No SRTP implementation. Enable openssl feature");
-    }
+    OpenSsl(super::ossl::OsslSrtpCryptoImpl),
+    #[cfg(not(feature = "openssl"))]
+    OpenSsl(DummySrtpCryptoImpl),
+    #[cfg(all(feature = "wincrypto", target_os = "windows"))]
+    WinCrypto(super::wincrypto::WinCryptoSrtpCryptoImpl),
+    #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]
+    WinCrypto(DummySrtpCryptoImpl),
 }
 
-// TODO: Can we avoice dynamic dispatch in this signature? The parameters are:
-//       1. As few "touch points" beteen rtp/srtp.rs and here as possible.
-//       2. Clear contract towards the actual impl.
-//       3. Choice of impl passed all the way from RtcConfig.
-#[allow(unused)]
-pub fn new_aead_aes_128_gcm(key: AeadKey, encrypt: bool) -> Box<dyn aead_aes_128_gcm::CipherCtx> {
-    /// TODO: The exact mechanism for passing which crypto to use from
-    ///       RtcConfig to here. We're not going to instantiate openssl
-    ///       automatically.
+#[allow(clippy::unit_arg)]
+impl SrtpCrypto {
     #[cfg(feature = "openssl")]
-    {
-        let ctx = super::ossl::OsslSrtpCryptoImpl::new_aead_aes_128_gcm(key, encrypt);
-        Box::new(ctx)
+    pub fn new_openssl() -> SrtpCrypto {
+        Self::OpenSsl(super::ossl::OsslSrtpCryptoImpl)
     }
-    #[cfg(feature = "wincrypto")]
-    {
-        let ctx = super::wincrypto::WinCryptoSrtpCryptoImpl::new_aead_aes_128_gcm(key, encrypt);
-        Box::new(ctx)
-    }
-    #[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
-    {
-        panic!("No SRTP implementation. Enable openssl feature");
-    }
-}
 
-#[allow(unused)]
-pub fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
-    /// TODO: The exact mechanism for passing which crypto to use from
-    ///       RtcConfig to here. We're not going to instantiate openssl
-    ///       automatically.
-    #[cfg(feature = "openssl")]
-    {
-        super::ossl::OsslSrtpCryptoImpl::srtp_aes_128_ecb_round(key, input, output)
+    #[cfg(not(feature = "openssl"))]
+    pub fn new_openssl() -> SrtpCrypto {
+        Self::OpenSsl(DummySrtpCryptoImpl(CryptoProvider::OpenSsl))
     }
-    #[cfg(feature = "wincrypto")]
-    {
-        super::wincrypto::WinCryptoSrtpCryptoImpl::srtp_aes_128_ecb_round(key, input, output)
+
+    #[cfg(all(feature = "wincrypto", target_os = "windows"))]
+    pub fn new_wincrypto() -> SrtpCrypto {
+        Self::WinCrypto(super::wincrypto::WinCryptoSrtpCryptoImpl)
     }
-    #[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
-    {
-        panic!("No SRTP implementation. Enable openssl feature");
+
+    #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]
+    pub fn new_wincrypto() -> SrtpCrypto {
+        Self::WinCrypto(DummySrtpCryptoImpl(CryptoProvider::WinCrypto))
+    }
+
+    // TODO: Can we avoice dynamic dispatch in this signature? The parameters are:
+    //       1. As few "touch points" beteen rtp/srtp.rs and here as possible.
+    //       2. Clear contract towards the actual impl.
+    //       3. Choice of impl passed all the way from RtcConfig.
+    pub fn new_aes_128_cm_sha1_80(
+        &self,
+        key: AesKey,
+        encrypt: bool,
+    ) -> Box<dyn aes_128_cm_sha1_80::CipherCtx> {
+        match self {
+            SrtpCrypto::OpenSsl(v) => Box::new(v.new_aes_128_cm_sha1_80(key, encrypt)),
+            SrtpCrypto::WinCrypto(v) => Box::new(v.new_aes_128_cm_sha1_80(key, encrypt)),
+        }
+    }
+
+    pub fn new_aead_aes_128_gcm(
+        &self,
+        key: AeadKey,
+        encrypt: bool,
+    ) -> Box<dyn aead_aes_128_gcm::CipherCtx> {
+        match self {
+            SrtpCrypto::OpenSsl(v) => Box::new(v.new_aead_aes_128_gcm(key, encrypt)),
+            SrtpCrypto::WinCrypto(v) => Box::new(v.new_aead_aes_128_gcm(key, encrypt)),
+        }
+    }
+
+    pub fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
+        match self {
+            SrtpCrypto::OpenSsl(v) => v.srtp_aes_128_ecb_round(key, input, output),
+            SrtpCrypto::WinCrypto(v) => v.srtp_aes_128_ecb_round(key, input, output),
+        }
     }
 }
 
@@ -105,15 +105,15 @@ pub trait SrtpCryptoImpl {
     type Aes128CmSha1_80: aes_128_cm_sha1_80::CipherCtx;
     type AeadAes128Gcm: aead_aes_128_gcm::CipherCtx;
 
-    fn new_aes_128_cm_sha1_80(key: AesKey, encrypt: bool) -> Self::Aes128CmSha1_80 {
+    fn new_aes_128_cm_sha1_80(&self, key: AesKey, encrypt: bool) -> Self::Aes128CmSha1_80 {
         <Self::Aes128CmSha1_80 as aes_128_cm_sha1_80::CipherCtx>::new(key, encrypt)
     }
 
-    fn new_aead_aes_128_gcm(key: AeadKey, encrypt: bool) -> Self::AeadAes128Gcm {
+    fn new_aead_aes_128_gcm(&self, key: AeadKey, encrypt: bool) -> Self::AeadAes128Gcm {
         <Self::AeadAes128Gcm as aead_aes_128_gcm::CipherCtx>::new(key, encrypt)
     }
 
-    fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]);
+    fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]);
 }
 
 pub mod aes_128_cm_sha1_80 {
@@ -265,6 +265,7 @@ pub mod aead_aes_128_gcm {
         iv
     }
 }
+
 impl fmt::Display for SrtpProfile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -273,5 +274,80 @@ impl fmt::Display for SrtpProfile {
             SrtpProfile::Aes128CmSha1_80 => write!(f, "SRTP_AES128_CM_SHA1_80"),
             SrtpProfile::AeadAes128Gcm => write!(f, "SRTP_AEAD_AES_128_GCM"),
         }
+    }
+}
+
+pub struct DummySrtpCryptoImpl(CryptoProvider);
+
+impl SrtpCryptoImpl for DummySrtpCryptoImpl {
+    type Aes128CmSha1_80 = ();
+    type AeadAes128Gcm = ();
+
+    fn new_aes_128_cm_sha1_80(&self, _: AesKey, _: bool) -> Self::Aes128CmSha1_80 {
+        panic!("Must enable feature: {}", self.0)
+    }
+
+    fn new_aead_aes_128_gcm(&self, _: AeadKey, _: bool) -> Self::AeadAes128Gcm {
+        panic!("Must enable feature: {}", self.0)
+    }
+
+    fn srtp_aes_128_ecb_round(&self, _: &[u8], _: &[u8], _: &mut [u8]) {
+        panic!("Must enable feature: {}", self.0)
+    }
+}
+
+impl aes_128_cm_sha1_80::CipherCtx for () {
+    fn new(_: AesKey, _: bool) -> Self
+    where
+        Self: Sized,
+    {
+        unreachable!()
+    }
+
+    fn encrypt(
+        &mut self,
+        _: &aes_128_cm_sha1_80::RtpIv,
+        _: &[u8],
+        _: &mut [u8],
+    ) -> Result<(), super::CryptoError> {
+        unreachable!()
+    }
+
+    fn decrypt(
+        &mut self,
+        _: &aes_128_cm_sha1_80::RtpIv,
+        _: &[u8],
+        _: &mut [u8],
+    ) -> Result<(), super::CryptoError> {
+        unreachable!()
+    }
+}
+
+impl aead_aes_128_gcm::CipherCtx for () {
+    fn new(_: AeadKey, _: bool) -> Self
+    where
+        Self: Sized,
+    {
+        unreachable!()
+    }
+
+    fn encrypt(
+        &mut self,
+        _: &[u8; aead_aes_128_gcm::IV_LEN],
+        _: &[u8],
+        _: &[u8],
+        _: &mut [u8],
+    ) -> Result<(), super::CryptoError> {
+        unreachable!()
+    }
+
+    fn decrypt(
+        &mut self,
+        _: &[u8; aead_aes_128_gcm::IV_LEN],
+        _: &[&[u8]],
+        _: &[u8],
+        _: &mut [u8],
+    ) -> Result<usize, super::CryptoError> {
+        unreachable!()
     }
 }

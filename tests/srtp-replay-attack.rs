@@ -7,7 +7,7 @@ use str0m::rtp::{ExtensionValues, RawPacket, SeqNo, Ssrc};
 use str0m::{Event, Input, Output, Rtc, RtcError};
 
 mod common;
-use common::{connect_l_r, connect_l_r_with_rtc, init_log, TestRtc};
+use common::{connect_l_r, connect_l_r_with_rtc, init_crypto_default, init_log, TestRtc};
 
 const EXPECTED_PACKETS: usize = 50;
 const REPLAY_PER_PACKET: usize = 5;
@@ -15,6 +15,7 @@ const REPLAY_PER_PACKET: usize = 5;
 #[test]
 pub fn srtp_replay_attack_rtp_mode() -> Result<(), RtcError> {
     init_log();
+    init_crypto_default();
 
     let (mut l, mut r) = connect_l_r();
     let mid = "aud".into();
@@ -108,6 +109,7 @@ pub fn srtp_replay_attack_rtp_mode() -> Result<(), RtcError> {
 #[test]
 pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
     init_log();
+    init_crypto_default();
 
     let rtc1 = Rtc::builder()
         .set_rtp_mode(true)
