@@ -12,7 +12,7 @@ impl SrtpCryptoImpl for WinCryptoSrtpCryptoImpl {
     type Aes128CmSha1_80 = WinCryptoAes128CmSha1_80;
     type AeadAes128Gcm = WinCryptoAeadAes128Gcm;
 
-    fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
+    fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
         let key = SrtpKey::create_aes_ecb_key(key).expect("AES key");
         let count = srtp_aes_128_ecb_round(&key, input, output).expect("AES encrypt");
         assert_eq!(count, 16 + 16); // block size
