@@ -1,16 +1,24 @@
 #![allow(unreachable_patterns)]
 
+use std::fmt;
 use std::io;
 use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CryptoProvider {
+    OpenSsl,
+    WinCrypto,
+}
 
 #[cfg(feature = "openssl")]
 mod ossl;
 
 #[cfg(feature = "wincrypto")]
-pub mod wincrypto;
+mod wincrypto;
 
 mod dtls;
-pub use dtls::{DtlsCert, DtlsEvent, DtlsImpl};
+pub use dtls::DtlsCert;
+pub(crate) use dtls::{DtlsEvent, DtlsImpl};
 
 mod finger;
 pub use finger::Fingerprint;
@@ -21,11 +29,6 @@ pub use keying::KeyingMaterial;
 mod srtp;
 pub use srtp::{aead_aes_128_gcm, aes_128_cm_sha1_80, new_aead_aes_128_gcm};
 pub use srtp::{new_aes_128_cm_sha1_80, srtp_aes_128_ecb_round, SrtpProfile};
-
-#[cfg(all(feature = "openssl", feature = "wincrypto"))]
-compile_error!("features `openssl` and `wincrypto` are mutually exclusive");
-#[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
-compile_error!("either `openssl` or `wincrypto` must be enabled");
 
 /// SHA1 HMAC as used for STUN and older SRTP.
 /// If sha1 feature is enabled, it uses `rust-crypto` crate.
@@ -85,4 +88,13 @@ pub enum CryptoError {
     /// Other IO errors.
     #[error("{0}")]
     Io(#[from] io::Error),
+}
+
+impl fmt::Display for CryptoProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CryptoProvider::OpenSsl => write!(f, "openssl"),
+            CryptoProvider::WinCrypto => write!(f, "wincrypto"),
+        }
+    }
 }

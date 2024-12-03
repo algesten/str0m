@@ -12,6 +12,7 @@ use crate::crypto::dtls::DTLS_CERT_IDENTITY;
 use crate::crypto::Fingerprint;
 
 use super::CryptoError;
+use super::OsslDtlsImpl;
 
 const RSA_F4: u32 = 0x10001;
 
@@ -92,6 +93,10 @@ impl OsslDtlsCert {
             hash_func: "sha-256".into(),
             bytes: digest.to_vec(),
         }
+    }
+
+    pub(crate) fn new_dtls_impl(&self) -> Result<OsslDtlsImpl, CryptoError> {
+        OsslDtlsImpl::new(self.clone())
     }
 }
 
