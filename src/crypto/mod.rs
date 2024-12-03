@@ -23,6 +23,15 @@ pub enum CryptoProvider {
     WinCrypto,
 }
 
+impl CryptoProvider {
+    pub(crate) fn srtp_crypto(&self) -> SrtpCrypto {
+        match self {
+            CryptoProvider::OpenSsl => SrtpCrypto::new_openssl(),
+            CryptoProvider::WinCrypto => SrtpCrypto::new_wincrypto(),
+        }
+    }
+}
+
 #[cfg(feature = "openssl")]
 mod ossl;
 
@@ -40,8 +49,7 @@ mod keying;
 pub use keying::KeyingMaterial;
 
 mod srtp;
-pub use srtp::{aead_aes_128_gcm, aes_128_cm_sha1_80, new_aead_aes_128_gcm};
-pub use srtp::{new_aes_128_cm_sha1_80, srtp_aes_128_ecb_round, SrtpProfile};
+pub use srtp::{aead_aes_128_gcm, aes_128_cm_sha1_80, SrtpCrypto, SrtpProfile};
 
 /// SHA1 HMAC as used for STUN and older SRTP.
 /// If sha1 feature is enabled, it uses `rust-crypto` crate.
