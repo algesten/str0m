@@ -56,6 +56,7 @@ pub fn rtp_packet(data: &[u8]) -> Option<()> {
     let mut session = Session::new(&config);
     session.set_keying_material(
         KeyingMaterial::new(rng.slice(16)?.to_vec()),
+        &crate::crypto::SrtpCrypto::new_openssl(),
         SrtpProfile::PassThrough,
         rng.bool()?,
     );

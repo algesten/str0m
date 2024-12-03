@@ -860,6 +860,7 @@ pub struct Rtc {
     peer_bytes_tx: u64,
     change_counter: usize,
     last_timeout_reason: Reason,
+    crypto_provider: CryptoProvider,
 }
 
 struct SendAddr {
@@ -1117,6 +1118,8 @@ impl Rtc {
             DtlsCert::new(config.crypto_provider)
         };
 
+        let crypto_provider = dtls_cert.crypto_provider();
+
         Rtc {
             alive: true,
             ice,
@@ -1134,6 +1137,7 @@ impl Rtc {
             peer_bytes_tx: 0,
             change_counter: 0,
             last_timeout_reason: Reason::NotHappening,
+            crypto_provider,
         }
     }
 
@@ -1431,7 +1435,9 @@ impl Rtc {
                         srtp_profile
                     );
                     let active = self.dtls.is_active().expect("DTLS must be inited by now");
-                    self.session.set_keying_material(mat, srtp_profile, active);
+                    let srtp_crypto = self.crypto_provider.srtp_crypto();
+                    self.session
+                        .set_keying_material(mat, &srtp_crypto, srtp_profile, active);
                 }
                 DtlsEvent::RemoteFingerprint(v1) => {
                     debug!("DTLS verify remote fingerprint");

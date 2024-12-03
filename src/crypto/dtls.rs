@@ -159,12 +159,10 @@ pub(crate) enum DtlsImpl {
     #[cfg(feature = "openssl")]
     OpenSsl(super::ossl::OsslDtlsImpl),
     #[cfg(not(feature = "openssl"))]
-    #[allow(private_interfaces)]
     OpenSsl(DummyDtlsImpl),
     #[cfg(feature = "wincrypto")]
     WinCrypto(super::wincrypto::WinCryptoDtls),
     #[cfg(not(feature = "wincrypto"))]
-    #[allow(private_interfaces)]
     WinCrypto(DummyDtlsImpl),
 }
 
@@ -243,7 +241,7 @@ impl DummyCert {
     }
 }
 
-struct DummyDtlsImpl(CryptoProvider);
+pub struct DummyDtlsImpl(CryptoProvider);
 
 impl DummyDtlsImpl {
     fn set_active(&self, active: bool) {
