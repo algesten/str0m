@@ -20,6 +20,10 @@ impl WinCryptoDtlsCert {
     pub fn fingerprint(&self) -> Fingerprint {
         create_fingerprint(&self.certificate).expect("Failed to calculate fingerprint")
     }
+
+    pub(crate) fn new_dtls_impl(&self) -> Result<OsslDtlsImpl, CryptoError> {
+        OsslDtlsImpl::new(self.clone())
+    }
 }
 
 pub(super) fn create_fingerprint(
