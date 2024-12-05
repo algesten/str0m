@@ -579,6 +579,7 @@
 #![allow(clippy::assertions_on_constants)]
 #![allow(clippy::manual_range_contains)]
 #![allow(clippy::get_first)]
+#![allow(clippy::needless_lifetimes)]
 #![deny(missing_docs)]
 
 #[macro_use]
