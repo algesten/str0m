@@ -242,7 +242,7 @@ fn read_socket_input<'a>(socket: &UdpSocket, buf: &'a mut Vec<u8>) -> Option<Inp
                 return None;
             };
 
-            return Some(Input::Receive(
+            Some(Input::Receive(
                 Instant::now(),
                 Receive {
                     proto: Protocol::Udp,
@@ -250,7 +250,7 @@ fn read_socket_input<'a>(socket: &UdpSocket, buf: &'a mut Vec<u8>) -> Option<Inp
                     destination: socket.local_addr().unwrap(),
                     contents,
                 },
-            ));
+            ))
         }
 
         Err(e) => match e.kind() {
@@ -647,7 +647,6 @@ impl Client {
 
 /// Events propagated between client.
 #[allow(clippy::large_enum_variant)]
-
 enum Propagated {
     /// When we have nothing to propagate.
     Noop,

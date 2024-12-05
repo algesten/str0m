@@ -83,7 +83,6 @@ pub fn new_aead_aes_128_gcm(key: AeadKey, encrypt: bool) -> Box<dyn aead_aes_128
 }
 
 #[allow(unused)]
-
 pub fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
     /// TODO: The exact mechanism for passing which crypto to use from
     ///       RtcConfig to here. We're not going to instantiate openssl

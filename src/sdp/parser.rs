@@ -27,7 +27,7 @@ where
     })
 }
 
-/// /////////////////////////////////////////////////// Session description
+// /////////////////////////////////////////////////// Session description
 
 /// 1. First line must be v=0
 /// 2. The second SDP line MUST be an "o=" line The sess-id MUST be representable by a 64-bit signed
@@ -354,7 +354,7 @@ where
     line(ignored, any_value()).map(|_| ())
 }
 
-/// /////////////////////////////////////////////////// Media description
+// /////////////////////////////////////////////////// Media description
 
 /// A m= section with attributes, until next m= or EOF
 fn media_parser<Input>() -> impl Parser<Input, Output = MediaLine>
@@ -782,7 +782,8 @@ where
         unused,
     ))
 }
-/// /////////////////////////////////////////////////// Generic things below
+
+// /////////////////////////////////////////////////// Generic things below
 
 /// A specific line
 fn typed_line<Input, Pval, Out>(expected: char, val: Pval) -> impl Parser<Input, Output = Out>
