@@ -1,9 +1,9 @@
 use std::net::Ipv4Addr;
+use std::time::Duration;
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaData, MediaKind};
 use str0m::Rtc;
 use str0m::{Candidate, Event, RtcError};
-use time::Duration;
 use tracing::info_span;
 
 mod common;
@@ -14,7 +14,7 @@ pub fn contiguous_all_the_way() -> Result<(), RtcError> {
     init_log();
 
     let output = Server::with_vp8_input()
-        .timeout(Duration::seconds(5))
+        .timeout(Duration::from_secs(5))
         .get_output()?;
     let mut count = 0;
 
@@ -38,7 +38,7 @@ pub fn not_contiguous() -> Result<(), RtcError> {
 
     let output = Server::with_vp8_input()
         .skip_packet(14337)
-        .timeout(Duration::seconds(5))
+        .timeout(Duration::from_secs(5))
         .get_output()?;
     let mut count = 0;
 

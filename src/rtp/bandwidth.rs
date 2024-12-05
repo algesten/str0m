@@ -278,8 +278,7 @@ impl Sum<DataSize> for DataSize {
 impl fmt::Display for DataSize {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let size = self.0 as f64;
-        // TODO: Use ilog10 when MSRV policy allows Rust 1.67.0
-        let log = size.log10().floor() as u64;
+        let log = (size as u64).ilog10();
 
         match log {
             0..=2 => write!(f, "{size}B"),
