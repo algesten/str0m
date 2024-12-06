@@ -37,13 +37,8 @@ impl SrtpProfile {
 //       2. Clear contract towards the actual impl.
 //       3. Choice of impl passed all the way from RtcConfig.
 #[allow(unused)]
-pub fn new_aes_128_cm_sha1_80(
-    key: AesKey,
-    encrypt: bool,
-) -> Box<dyn aes_128_cm_sha1_80::CipherCtx> {
-    Box::new(super::_impl::SrtpCrypto::new_aes_128_cm_sha1_80(
-        key, encrypt,
-    ))
+pub fn new_aes_128_cm_sha1_80(key: AesKey, encrypt: bool) -> super::_impl::Aes128CmSha1_80 {
+    super::_impl::Aes128CmSha1_80::new(key, encrypt)
 }
 
 // TODO: Can we avoice dynamic dispatch in this signature? The parameters are:
@@ -51,11 +46,11 @@ pub fn new_aes_128_cm_sha1_80(
 //       2. Clear contract towards the actual impl.
 //       3. Choice of impl passed all the way from RtcConfig.
 #[allow(unused)]
-pub fn new_aead_aes_128_gcm(key: AeadKey, encrypt: bool) -> Box<dyn aead_aes_128_gcm::CipherCtx> {
+pub fn new_aead_aes_128_gcm(key: AeadKey, encrypt: bool) -> super::_impl::AeadAes128Gcm {
     /// TODO: The exact mechanism for passing which crypto to use from
     ///       RtcConfig to here. We're not going to instantiate openssl
     ///       automatically.
-    Box::new(super::_impl::SrtpCrypto::new_aead_aes_128_gcm(key, encrypt))
+    super::_impl::AeadAes128Gcm::new(key, encrypt)
 }
 
 #[allow(unused)]
@@ -63,29 +58,10 @@ pub fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
     /// TODO: The exact mechanism for passing which crypto to use from
     ///       RtcConfig to here. We're not going to instantiate openssl
     ///       automatically.
-    super::_impl::SrtpCrypto::srtp_aes_128_ecb_round(key, input, output);
-}
-
-pub trait SrtpCryptoImpl {
-    type Aes128CmSha1_80: aes_128_cm_sha1_80::CipherCtx;
-    type AeadAes128Gcm: aead_aes_128_gcm::CipherCtx;
-
-    fn new_aes_128_cm_sha1_80(key: AesKey, encrypt: bool) -> Self::Aes128CmSha1_80 {
-        <Self::Aes128CmSha1_80 as aes_128_cm_sha1_80::CipherCtx>::new(key, encrypt)
-    }
-
-    fn new_aead_aes_128_gcm(key: AeadKey, encrypt: bool) -> Self::AeadAes128Gcm {
-        <Self::AeadAes128Gcm as aead_aes_128_gcm::CipherCtx>::new(key, encrypt)
-    }
-
-    fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]);
+    super::_impl::srtp_aes_128_ecb_round(key, input, output);
 }
 
 pub mod aes_128_cm_sha1_80 {
-    use std::panic::UnwindSafe;
-
-    use crate::crypto::CryptoError;
-
     pub const KEY_LEN: usize = 16;
     pub const SALT_LEN: usize = 14;
     pub const HMAC_KEY_LEN: usize = 20;
@@ -93,26 +69,6 @@ pub mod aes_128_cm_sha1_80 {
     pub type AesKey = [u8; 16];
     pub type RtpSalt = [u8; 14];
     pub type RtpIv = [u8; 16];
-
-    pub trait CipherCtx: UnwindSafe + Send + Sync {
-        fn new(key: AesKey, encrypt: bool) -> Self
-        where
-            Self: Sized;
-
-        fn encrypt(
-            &mut self,
-            iv: &RtpIv,
-            input: &[u8],
-            output: &mut [u8],
-        ) -> Result<(), CryptoError>;
-
-        fn decrypt(
-            &mut self,
-            iv: &RtpIv,
-            input: &[u8],
-            output: &mut [u8],
-        ) -> Result<(), CryptoError>;
-    }
 
     pub fn rtp_hmac(key: &[u8], buf: &mut [u8], srtp_index: u64, hmac_start: usize) {
         let roc = (srtp_index >> 16) as u32;
@@ -154,10 +110,6 @@ pub mod aes_128_cm_sha1_80 {
 }
 
 pub mod aead_aes_128_gcm {
-    use std::panic::UnwindSafe;
-
-    use crate::crypto::CryptoError;
-
     pub const KEY_LEN: usize = 16;
     pub const SALT_LEN: usize = 12;
     pub const RTCP_AAD_LEN: usize = 12;
@@ -166,28 +118,6 @@ pub mod aead_aes_128_gcm {
     pub type AeadKey = [u8; KEY_LEN];
     pub type RtpSalt = [u8; SALT_LEN];
     pub type RtpIv = [u8; SALT_LEN];
-
-    pub trait CipherCtx: UnwindSafe + Send + Sync {
-        fn new(key: AeadKey, encrypt: bool) -> Self
-        where
-            Self: Sized;
-
-        fn encrypt(
-            &mut self,
-            iv: &[u8; IV_LEN],
-            aad: &[u8],
-            input: &[u8],
-            output: &mut [u8],
-        ) -> Result<(), CryptoError>;
-
-        fn decrypt(
-            &mut self,
-            iv: &[u8; IV_LEN],
-            aads: &[&[u8]],
-            input: &[u8],
-            output: &mut [u8],
-        ) -> Result<usize, CryptoError>;
-    }
 
     pub fn rtp_iv(salt: RtpSalt, ssrc: u32, roc: u32, seq: u16) -> RtpIv {
         // See: https://www.rfc-editor.org/rfc/rfc7714#section-8.1

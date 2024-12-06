@@ -21,6 +21,7 @@ mod keying;
 pub use keying::KeyingMaterial;
 
 mod srtp;
+pub use _impl::{AeadAes128Gcm, Aes128CmSha1_80};
 pub use srtp::{aead_aes_128_gcm, aes_128_cm_sha1_80, new_aead_aes_128_gcm};
 pub use srtp::{new_aes_128_cm_sha1_80, srtp_aes_128_ecb_round, SrtpProfile};
 

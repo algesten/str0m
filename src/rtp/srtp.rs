@@ -545,13 +545,13 @@ enum Derived {
     Aes128CmSha1_80 {
         key: [u8; 20],
         salt: aes_128_cm_sha1_80::RtpSalt,
-        enc: Box<dyn aes_128_cm_sha1_80::CipherCtx>,
-        dec: Box<dyn aes_128_cm_sha1_80::CipherCtx>,
+        enc: crate::crypto::Aes128CmSha1_80,
+        dec: crate::crypto::Aes128CmSha1_80,
     },
     AeadAes128Gcm {
         salt: aead_aes_128_gcm::RtpSalt,
-        enc: Box<dyn aead_aes_128_gcm::CipherCtx>,
-        dec: Box<dyn aead_aes_128_gcm::CipherCtx>,
+        enc: crate::crypto::AeadAes128Gcm,
+        dec: crate::crypto::AeadAes128Gcm,
     },
 }
 

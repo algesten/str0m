@@ -6,29 +6,26 @@ use str0m_wincrypto::{
     srtp_aes_128_ecb_round, SrtpKey,
 };
 
-pub struct WinCryptoSrtpCryptoImpl;
-
-impl SrtpCryptoImpl for WinCryptoSrtpCryptoImpl {
-    type Aes128CmSha1_80 = WinCryptoAes128CmSha1_80;
-    type AeadAes128Gcm = WinCryptoAeadAes128Gcm;
-
-    fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
-        let key = SrtpKey::create_aes_ecb_key(key).expect("AES key");
-        let count = srtp_aes_128_ecb_round(&key, input, output).expect("AES encrypt");
-        assert_eq!(count, 16 + 16); // block size
-    }
+pub fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
+    let key = SrtpKey::create_aes_ecb_key(key).expect("AES key");
+    let count = srtp_aes_128_ecb_round(&key, input, output).expect("AES encrypt");
+    assert_eq!(count, 16 + 16); // block size
 }
 
 pub struct WinCryptoAes128CmSha1_80 {
     key: SrtpKey,
 }
 
-impl aes_128_cm_sha1_80::CipherCtx for WinCryptoAes128CmSha1_80 {
+pub struct WinCryptoAeadAes128Gcm {
+    key: SrtpKey,
+}
+
+impl WinCryptoAes128CmSha1_80 {
     /// Create a new context for AES-128-CM-SHA1-80 encryption/decryption.
     ///
     /// The encrypt flag is ignored, since the same operation is used for both encryption and
     /// decryption.
-    fn new(key: aes_128_cm_sha1_80::AesKey, _encrypt: bool) -> Self
+    pub(crate) fn new(key: aes_128_cm_sha1_80::AesKey, _encrypt: bool) -> Self
     where
         Self: Sized,
     {
@@ -37,7 +34,7 @@ impl aes_128_cm_sha1_80::CipherCtx for WinCryptoAes128CmSha1_80 {
         }
     }
 
-    fn encrypt(
+    pub(crate) fn encrypt(
         &mut self,
         iv: &aes_128_cm_sha1_80::RtpIv,
         plain_text: &[u8],
@@ -47,7 +44,7 @@ impl aes_128_cm_sha1_80::CipherCtx for WinCryptoAes128CmSha1_80 {
         Ok(())
     }
 
-    fn decrypt(
+    pub(crate) fn decrypt(
         &mut self,
         iv: &aes_128_cm_sha1_80::RtpIv,
         cipher_text: &[u8],
@@ -58,16 +55,12 @@ impl aes_128_cm_sha1_80::CipherCtx for WinCryptoAes128CmSha1_80 {
     }
 }
 
-pub struct WinCryptoAeadAes128Gcm {
-    key: SrtpKey,
-}
-
-impl aead_aes_128_gcm::CipherCtx for WinCryptoAeadAes128Gcm {
+impl WinCryptoAeadAes128Gcm {
     /// Create a new context for AES-128-GCM encryption/decryption.
     ///
     /// The encrypt flag is ignored, since it is not needed and the same
     /// key can be used for both encryption and decryption.
-    fn new(key: aead_aes_128_gcm::AeadKey, _encrypt: bool) -> Self
+    pub(crate) fn new(key: aead_aes_128_gcm::AeadKey, _encrypt: bool) -> Self
     where
         Self: Sized,
     {
@@ -76,7 +69,7 @@ impl aead_aes_128_gcm::CipherCtx for WinCryptoAeadAes128Gcm {
         }
     }
 
-    fn encrypt(
+    pub(crate) fn encrypt(
         &mut self,
         iv: &[u8; aead_aes_128_gcm::IV_LEN],
         additional_auth_data: &[u8],
@@ -93,7 +86,7 @@ impl aead_aes_128_gcm::CipherCtx for WinCryptoAeadAes128Gcm {
         Ok(())
     }
 
-    fn decrypt(
+    pub(crate) fn decrypt(
         &mut self,
         iv: &[u8; aead_aes_128_gcm::IV_LEN],
         additional_auth_data: &[&[u8]],

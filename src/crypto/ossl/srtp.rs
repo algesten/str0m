@@ -2,32 +2,26 @@ use openssl::cipher;
 use openssl::cipher_ctx::CipherCtx;
 use openssl::symm::{Cipher, Crypter, Mode};
 
-use crate::crypto::srtp::SrtpCryptoImpl;
 use crate::crypto::srtp::{aead_aes_128_gcm, aes_128_cm_sha1_80};
 use crate::crypto::CryptoError;
 
-pub struct OsslSrtpCryptoImpl;
-
-impl SrtpCryptoImpl for OsslSrtpCryptoImpl {
-    type Aes128CmSha1_80 = OsslAes128CmSha1_80;
-    type AeadAes128Gcm = OsslAeadAes128Gcm;
-
-    fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
-        let mut aes =
-            Crypter::new(Cipher::aes_128_ecb(), Mode::Encrypt, key, None).expect("AES deriver");
-
-        // Run AES
-        let count = aes.update(input, output).expect("AES update");
-        let rest = aes.finalize(&mut output[count..]).expect("AES finalize");
-
-        assert_eq!(count + rest, 16 + 16); // input len + block size
-    }
-}
-
 pub struct OsslAes128CmSha1_80(CipherCtx);
 
-impl aes_128_cm_sha1_80::CipherCtx for OsslAes128CmSha1_80 {
-    fn new(key: aes_128_cm_sha1_80::AesKey, encrypt: bool) -> Self
+pub struct OsslAeadAes128Gcm(CipherCtx);
+
+pub fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
+    let mut aes =
+        Crypter::new(Cipher::aes_128_ecb(), Mode::Encrypt, key, None).expect("AES deriver");
+
+    // Run AES
+    let count = aes.update(input, output).expect("AES update");
+    let rest = aes.finalize(&mut output[count..]).expect("AES finalize");
+
+    assert_eq!(count + rest, 16 + 16); // input len + block size
+}
+
+impl OsslAes128CmSha1_80 {
+    pub(crate) fn new(key: aes_128_cm_sha1_80::AesKey, encrypt: bool) -> Self
     where
         Self: Sized,
     {
@@ -45,7 +39,7 @@ impl aes_128_cm_sha1_80::CipherCtx for OsslAes128CmSha1_80 {
         OsslAes128CmSha1_80(ctx)
     }
 
-    fn encrypt(
+    pub(crate) fn encrypt(
         &mut self,
         iv: &aes_128_cm_sha1_80::RtpIv,
         input: &[u8],
@@ -57,7 +51,7 @@ impl aes_128_cm_sha1_80::CipherCtx for OsslAes128CmSha1_80 {
         Ok(())
     }
 
-    fn decrypt(
+    pub(crate) fn decrypt(
         &mut self,
         iv: &aes_128_cm_sha1_80::RtpIv,
         input: &[u8],
@@ -70,10 +64,8 @@ impl aes_128_cm_sha1_80::CipherCtx for OsslAes128CmSha1_80 {
     }
 }
 
-pub struct OsslAeadAes128Gcm(CipherCtx);
-
-impl aead_aes_128_gcm::CipherCtx for OsslAeadAes128Gcm {
-    fn new(key: aead_aes_128_gcm::AeadKey, encrypt: bool) -> Self
+impl OsslAeadAes128Gcm {
+    pub(crate) fn new(key: aead_aes_128_gcm::AeadKey, encrypt: bool) -> Self
     where
         Self: Sized,
     {
@@ -94,7 +86,7 @@ impl aead_aes_128_gcm::CipherCtx for OsslAeadAes128Gcm {
         OsslAeadAes128Gcm(ctx)
     }
 
-    fn encrypt(
+    pub(crate) fn encrypt(
         &mut self,
         iv: &[u8; aead_aes_128_gcm::IV_LEN],
         aad: &[u8],
@@ -126,7 +118,7 @@ impl aead_aes_128_gcm::CipherCtx for OsslAeadAes128Gcm {
         Ok(())
     }
 
-    fn decrypt(
+    pub(crate) fn decrypt(
         &mut self,
         iv: &[u8; aead_aes_128_gcm::IV_LEN],
         aads: &[&[u8]],

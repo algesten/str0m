@@ -11,7 +11,9 @@ mod stream;
 pub use cert::OsslDtlsCert as Cert;
 pub use dtls::OsslDtlsImpl as Dtls;
 pub use openssl::error::ErrorStack as Error;
-pub use srtp::OsslSrtpCryptoImpl as SrtpCrypto;
+pub use srtp::srtp_aes_128_ecb_round;
+pub use srtp::OsslAeadAes128Gcm as AeadAes128Gcm;
+pub use srtp::OsslAes128CmSha1_80 as Aes128CmSha1_80;
 
 impl SrtpProfile {
     /// What this profile is called in OpenSSL parlance.
