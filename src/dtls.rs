@@ -21,11 +21,12 @@ pub enum DtlsError {
 
 impl DtlsError {
     pub(crate) fn is_would_block(&self) -> bool {
-        #[allow(irrefutable_let_patterns)]
-        let DtlsError::Io(e) = self
-        else {
-            return false;
+        let e = match self {
+            DtlsError::Crypto(CryptoError::Io(io)) => io,
+            DtlsError::Io(io) => io,
+            DtlsError::Crypto(_) => return false,
         };
+
         e.kind() == io::ErrorKind::WouldBlock
     }
 }
