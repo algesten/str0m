@@ -63,35 +63,6 @@ impl fmt::Debug for DtlsCert {
     }
 }
 
-pub trait DtlsInner: Sized {
-    /// Set whether this instance is active or passive.
-    ///
-    /// i.e. initiating the client hello or not. This must be called
-    /// exactly once before starting to handshake (I/O).
-    fn set_active(&mut self, active: bool);
-
-    /// Handle the handshake. Once this succeeds, it becomes a no-op.
-    fn handle_handshake(&mut self, o: &mut VecDeque<DtlsEvent>) -> Result<bool, CryptoError>;
-
-    /// If set_active, returns what was set.
-    fn is_active(&self) -> Option<bool>;
-
-    /// Handles an incoming DTLS datagrams.
-    fn handle_receive(&mut self, m: &[u8], o: &mut VecDeque<DtlsEvent>) -> Result<(), CryptoError>;
-
-    /// Poll for the next datagram to send.
-    fn poll_datagram(&mut self) -> Option<DatagramSend>;
-
-    /// Poll for next timeout. This is only used during DTLS handshake.
-    fn poll_timeout(&mut self, now: Instant) -> Option<Instant>;
-
-    /// Handling incoming data to be sent as DTLS datagrams.
-    fn handle_input(&mut self, data: &[u8]) -> Result<(), CryptoError>;
-
-    /// Whether the DTLS connection is established.
-    fn is_connected(&self) -> bool;
-}
-
 pub struct DtlsImpl(super::_impl::Dtls);
 
 impl DtlsImpl {

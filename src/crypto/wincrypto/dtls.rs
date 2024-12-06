@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
-use crate::crypto::dtls::DtlsInner;
 use crate::crypto::CryptoError;
 use crate::crypto::DtlsEvent;
 use crate::crypto::{KeyingMaterial, SrtpProfile};
@@ -17,22 +16,20 @@ impl WinCryptoDtls {
             cert.certificate.clone(),
         )?))
     }
-}
 
-impl DtlsInner for WinCryptoDtls {
-    fn set_active(&mut self, active: bool) {
+    pub fn set_active(&mut self, active: bool) {
         self.0.set_as_client(active).expect("Set client failed");
     }
 
-    fn is_active(&self) -> Option<bool> {
+    pub fn is_active(&self) -> Option<bool> {
         self.0.is_client()
     }
 
-    fn is_connected(&self) -> bool {
+    pub fn is_connected(&self) -> bool {
         self.0.is_connected()
     }
 
-    fn handle_receive(
+    pub fn handle_receive(
         &mut self,
         datagram: &[u8],
         output_events: &mut VecDeque<DtlsEvent>,
@@ -41,7 +38,7 @@ impl DtlsInner for WinCryptoDtls {
         Ok(())
     }
 
-    fn handle_handshake(
+    pub fn handle_handshake(
         &mut self,
         output_events: &mut VecDeque<DtlsEvent>,
     ) -> Result<bool, CryptoError> {
@@ -53,7 +50,7 @@ impl DtlsInner for WinCryptoDtls {
     }
 
     // This is DATA sent from client over SCTP/DTLS
-    fn handle_input(&mut self, data: &[u8]) -> Result<(), CryptoError> {
+    pub fn handle_input(&mut self, data: &[u8]) -> Result<(), CryptoError> {
         match self.0.send_data(data) {
             Ok(true) => Ok(()),
             Ok(false) => Err(std::io::Error::new(
@@ -65,7 +62,7 @@ impl DtlsInner for WinCryptoDtls {
         }
     }
 
-    fn poll_datagram(&mut self) -> Option<crate::net::DatagramSend> {
+    pub fn poll_datagram(&mut self) -> Option<crate::net::DatagramSend> {
         let datagram: Option<crate::io::DatagramSend> = self.0.pull_datagram().map(|v| v.into());
         if let Some(datagram) = &datagram {
             if datagram.len() > DATAGRAM_MTU_WARN {
@@ -76,7 +73,7 @@ impl DtlsInner for WinCryptoDtls {
         datagram
     }
 
-    fn poll_timeout(&mut self, now: Instant) -> Option<Instant> {
+    pub fn poll_timeout(&mut self, now: Instant) -> Option<Instant> {
         self.0.next_timeout(now)
     }
 }
