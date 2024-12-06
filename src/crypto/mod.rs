@@ -11,6 +11,13 @@ mod _impl;
 #[path = "wincrypt/mod.rs"]
 mod _impl;
 
+#[cfg(any(
+    all(target_family = "windows", not(feature = "wincrypto")),
+    all(not(target_family = "windows"), not(feature = "openssl"))
+))]
+#[path = "dummy.rs"]
+mod _impl;
+
 mod dtls;
 pub use dtls::{DtlsCert, DtlsEvent, DtlsImpl};
 
