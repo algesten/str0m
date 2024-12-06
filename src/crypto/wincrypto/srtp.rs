@@ -1,14 +1,12 @@
-use crate::crypto::srtp::SrtpCryptoImpl;
 use crate::crypto::srtp::{aead_aes_128_gcm, aes_128_cm_sha1_80};
 use crate::crypto::CryptoError;
 use str0m_wincrypto::{
-    srtp_aead_aes_128_gcm_decrypt, srtp_aead_aes_128_gcm_encrypt, srtp_aes_128_cm,
-    srtp_aes_128_ecb_round, SrtpKey,
+    srtp_aead_aes_128_gcm_decrypt, srtp_aead_aes_128_gcm_encrypt, srtp_aes_128_cm, SrtpKey,
 };
 
 pub fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
     let key = SrtpKey::create_aes_ecb_key(key).expect("AES key");
-    let count = srtp_aes_128_ecb_round(&key, input, output).expect("AES encrypt");
+    let count = str0m_wincrypto::srtp_aes_128_ecb_round(&key, input, output).expect("AES encrypt");
     assert_eq!(count, 16 + 16); // block size
 }
 
