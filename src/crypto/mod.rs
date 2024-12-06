@@ -3,11 +3,11 @@
 use std::io;
 use thiserror::Error;
 
-#[cfg(all(not(windows), feature = "openssl"))]
+#[cfg(all(not(target_family = "windows"), feature = "openssl"))]
 #[path = "ossl/mod.rs"]
 mod _impl;
 
-#[cfg(all(windows, feature = "wincrypto"))]
+#[cfg(all(target_family = "windows", feature = "wincrypto"))]
 #[path = "wincrypt/mod.rs"]
 mod _impl;
 
