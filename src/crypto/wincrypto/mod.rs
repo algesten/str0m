@@ -3,16 +3,14 @@
 use super::CryptoError;
 
 mod cert;
-pub use cert::WinCryptoDtlsCert;
-
 mod dtls;
-pub use dtls::WinCryptoDtls;
-
-mod srtp;
-pub use srtp::WinCryptoSrtpCryptoImpl;
-
 mod sha1;
+mod srtp;
+
+pub use cert::WinCryptoDtlsCert as Cert;
+pub use dtls::WinCryptoDtls as Dtls;
+pub use srtp::WinCryptoSrtpCryptoImpl as SrtpCrypto;
+pub use str0m_wincrypto::WinCryptoError as Error;
+
 #[allow(unused_imports)] // If 'sha1' feature is enabled this is not used.
 pub use sha1::sha1_hmac;
-
-pub use str0m_wincrypto::WinCryptoError;

@@ -3,11 +3,13 @@
 use std::io;
 use thiserror::Error;
 
-#[cfg(feature = "openssl")]
-mod ossl;
+#[cfg(all(not(windows), feature = "openssl"))]
+#[path = "ossl/mod.rs"]
+mod _impl;
 
-#[cfg(feature = "wincrypto")]
-pub mod wincrypto;
+#[cfg(all(windows, feature = "wincrypto"))]
+#[path = "wincrypt/mod.rs"]
+mod _impl;
 
 mod dtls;
 pub use dtls::{DtlsCert, DtlsEvent, DtlsImpl};
@@ -21,11 +23,6 @@ pub use keying::KeyingMaterial;
 mod srtp;
 pub use srtp::{aead_aes_128_gcm, aes_128_cm_sha1_80, new_aead_aes_128_gcm};
 pub use srtp::{new_aes_128_cm_sha1_80, srtp_aes_128_ecb_round, SrtpProfile};
-
-#[cfg(all(feature = "openssl", feature = "wincrypto"))]
-compile_error!("features `openssl` and `wincrypto` are mutually exclusive");
-#[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
-compile_error!("either `openssl` or `wincrypto` must be enabled");
 
 /// SHA1 HMAC as used for STUN and older SRTP.
 /// If sha1 feature is enabled, it uses `rust-crypto` crate.
@@ -72,15 +69,9 @@ pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
 /// Errors that can arise in DTLS.
 #[derive(Debug, Error)]
 pub enum CryptoError {
-    /// Some error from OpenSSL layer (used for DTLS).
+    /// Some error from crypto layer (used for DTLS).
     #[error("{0}")]
-    #[cfg(feature = "openssl")]
-    OpenSsl(#[from] openssl::error::ErrorStack),
-
-    /// Some error from OpenSSL layer (used for DTLS).
-    #[error("{0}")]
-    #[cfg(feature = "wincrypto")]
-    WinCrypto(#[from] wincrypto::WinCryptoError),
+    Impl(#[from] _impl::Error),
 
     /// Other IO errors.
     #[error("{0}")]

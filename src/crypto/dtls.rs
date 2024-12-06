@@ -35,68 +35,31 @@ pub enum DtlsEvent {
 
 /// Certificate used for DTLS.
 #[derive(Clone)]
-pub struct DtlsCert(DtlsCertInner);
-
-#[derive(Debug, Clone)]
-enum DtlsCertInner {
-    #[cfg(feature = "openssl")]
-    OpenSsl(super::ossl::OsslDtlsCert),
-    #[cfg(feature = "wincrypto")]
-    WinCrypto(super::wincrypto::WinCryptoDtlsCert),
-}
+pub struct DtlsCert(super::_impl::Cert);
 
 impl DtlsCert {
-    #[cfg(feature = "openssl")]
-    /// Create a new OpenSSL variant of the certificate.
-    pub fn new_openssl() -> Self {
-        let cert = super::ossl::OsslDtlsCert::new();
-        DtlsCert(DtlsCertInner::OpenSsl(cert))
-    }
-
-    #[cfg(feature = "wincrypto")]
-    /// Create a new Windows Crypto variant of the certificate.
-    pub fn new_wincrypto() -> Self {
-        let cert = super::wincrypto::WinCryptoDtlsCert::new();
-        DtlsCert(DtlsCertInner::WinCrypto(cert))
+    /// Creates a new Dtls certificate.
+    pub fn new() -> Self {
+        DtlsCert(super::_impl::Cert::new())
     }
 
     /// Creates a fingerprint for this certificate.
     ///
     /// Fingerprints are used to verify a remote peer's certificate.
     pub fn fingerprint(&self) -> Fingerprint {
-        match &self.0 {
-            #[cfg(feature = "openssl")]
-            DtlsCertInner::OpenSsl(v) => v.fingerprint(),
-            #[cfg(feature = "wincrypto")]
-            DtlsCertInner::WinCrypto(v) => v.fingerprint(),
-            _ => unreachable!(),
-        }
+        self.0.fingerprint()
     }
 
     pub(crate) fn create_dtls_impl(&self) -> Result<DtlsImpl, CryptoError> {
-        match &self.0 {
-            #[cfg(feature = "openssl")]
-            DtlsCertInner::OpenSsl(c) => Ok(DtlsImpl::OpenSsl(super::ossl::OsslDtlsImpl::new(
-                c.clone(),
-            )?)),
-            #[cfg(feature = "wincrypto")]
-            DtlsCertInner::WinCrypto(c) => Ok(DtlsImpl::WinCrypto(
-                super::wincrypto::WinCryptoDtls::new(c.clone())?,
-            )),
-            _ => unreachable!(),
-        }
+        let dtls = super::_impl::Dtls::new(self.0.clone())?;
+
+        Ok(DtlsImpl(dtls))
     }
 }
 
 impl fmt::Debug for DtlsCert {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.0 {
-            #[cfg(feature = "openssl")]
-            DtlsCertInner::OpenSsl(c) => c.fmt(f),
-            #[cfg(feature = "wincrypto")]
-            DtlsCertInner::WinCrypto(c) => c.fmt(f),
-            _ => unreachable!(),
-        }
+        self.0.fmt(f)
     }
 }
 
@@ -129,42 +92,19 @@ pub trait DtlsInner: Sized {
     fn is_connected(&self) -> bool;
 }
 
-pub enum DtlsImpl {
-    #[cfg(feature = "openssl")]
-    OpenSsl(super::ossl::OsslDtlsImpl),
-    #[cfg(feature = "wincrypto")]
-    WinCrypto(super::wincrypto::WinCryptoDtls),
-}
+pub struct DtlsImpl(super::_impl::Dtls);
 
 impl DtlsImpl {
     pub fn set_active(&mut self, active: bool) {
-        match self {
-            #[cfg(feature = "openssl")]
-            DtlsImpl::OpenSsl(i) => i.set_active(active),
-            #[cfg(feature = "wincrypto")]
-            DtlsImpl::WinCrypto(i) => i.set_active(active),
-            _ => unreachable!(),
-        }
+        self.0.set_active(active);
     }
 
     pub fn handle_handshake(&mut self, o: &mut VecDeque<DtlsEvent>) -> Result<bool, CryptoError> {
-        match self {
-            #[cfg(feature = "openssl")]
-            DtlsImpl::OpenSsl(i) => i.handle_handshake(o),
-            #[cfg(feature = "wincrypto")]
-            DtlsImpl::WinCrypto(i) => i.handle_handshake(o),
-            _ => unreachable!(),
-        }
+        self.0.handle_handshake(o)
     }
 
     pub fn is_active(&self) -> Option<bool> {
-        match self {
-            #[cfg(feature = "openssl")]
-            DtlsImpl::OpenSsl(i) => i.is_active(),
-            #[cfg(feature = "wincrypto")]
-            DtlsImpl::WinCrypto(i) => i.is_active(),
-            _ => unreachable!(),
-        }
+        self.0.is_active()
     }
 
     pub fn handle_receive(
@@ -172,52 +112,22 @@ impl DtlsImpl {
         m: &[u8],
         o: &mut VecDeque<DtlsEvent>,
     ) -> Result<(), CryptoError> {
-        match self {
-            #[cfg(feature = "openssl")]
-            DtlsImpl::OpenSsl(i) => i.handle_receive(m, o),
-            #[cfg(feature = "wincrypto")]
-            DtlsImpl::WinCrypto(i) => i.handle_receive(m, o),
-            _ => unreachable!(),
-        }
+        self.0.handle_receive(m, o)
     }
 
     pub fn poll_datagram(&mut self) -> Option<DatagramSend> {
-        match self {
-            #[cfg(feature = "openssl")]
-            DtlsImpl::OpenSsl(i) => i.poll_datagram(),
-            #[cfg(feature = "wincrypto")]
-            DtlsImpl::WinCrypto(i) => i.poll_datagram(),
-            _ => unreachable!(),
-        }
+        self.0.poll_datagram()
     }
 
     pub fn poll_timeout(&mut self, now: Instant) -> Option<Instant> {
-        match self {
-            #[cfg(feature = "openssl")]
-            DtlsImpl::OpenSsl(i) => i.poll_timeout(now),
-            #[cfg(feature = "wincrypto")]
-            DtlsImpl::WinCrypto(i) => i.poll_timeout(now),
-            _ => unreachable!(),
-        }
+        self.0.poll_timeout(now)
     }
 
     pub fn handle_input(&mut self, data: &[u8]) -> Result<(), CryptoError> {
-        match self {
-            #[cfg(feature = "openssl")]
-            DtlsImpl::OpenSsl(i) => i.handle_input(data),
-            #[cfg(feature = "wincrypto")]
-            DtlsImpl::WinCrypto(i) => i.handle_input(data),
-            _ => unreachable!(),
-        }
+        self.0.handle_input(data)
     }
 
     pub fn is_connected(&self) -> bool {
-        match self {
-            #[cfg(feature = "openssl")]
-            DtlsImpl::OpenSsl(i) => i.is_connected(),
-            #[cfg(feature = "wincrypto")]
-            DtlsImpl::WinCrypto(i) => i.is_connected(),
-            _ => unreachable!(),
-        }
+        self.0.is_connected()
     }
 }

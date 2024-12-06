@@ -30,23 +30,15 @@ pub use rtcp::*;
 mod bandwidth;
 pub use bandwidth::{Bitrate, DataSize};
 
-use crate::crypto::CryptoError;
-
 // Max in the RFC 3550 is 255 bytes, we limit it to be modulus 16 for SRTP and to match libWebRTC
 pub const MAX_BLANK_PADDING_PAYLOAD_SIZE: usize = 240;
 
 /// Errors that can arise in RTP.
 #[derive(Debug, Error)]
 pub enum RtpError {
-    /// Some error from OpenSSL layer (used for SRTP).
+    /// Some error from Crypto layer (used for SRTP).
     #[error("{0}")]
-    #[cfg(feature = "openssl")]
-    OpenSsl(#[from] openssl::error::ErrorStack),
-
-    /// Some error from Windows Crypto layer (used for SRTP).
-    #[error("{0}")]
-    #[cfg(feature = "wincrypto")]
-    WinCrypto(#[from] crate::crypto::wincrypto::WinCryptoError),
+    Crypto(#[from] crate::crypto::CryptoError),
 
     /// Other IO errors.
     #[error("{0}")]
@@ -55,16 +47,4 @@ pub enum RtpError {
     /// Failed to parse RTP header.
     #[error("Failed to parse RTP header")]
     ParseHeader,
-}
-
-impl From<CryptoError> for RtpError {
-    fn from(value: CryptoError) -> Self {
-        match value {
-            #[cfg(feature = "openssl")]
-            CryptoError::OpenSsl(e) => RtpError::OpenSsl(e),
-            #[cfg(feature = "wincrypto")]
-            CryptoError::WinCrypto(e) => RtpError::WinCrypto(e),
-            CryptoError::Io(e) => RtpError::Io(e),
-        }
-    }
 }

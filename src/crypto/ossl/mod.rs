@@ -3,16 +3,15 @@
 use super::{CryptoError, SrtpProfile};
 
 mod cert;
-pub use cert::OsslDtlsCert;
-
+mod dtls;
 mod io_buf;
+mod srtp;
 mod stream;
 
-mod dtls;
-pub use dtls::OsslDtlsImpl;
-
-mod srtp;
-pub use srtp::OsslSrtpCryptoImpl;
+pub use cert::OsslDtlsCert as Cert;
+pub use dtls::OsslDtlsImpl as Dtls;
+pub use openssl::error::ErrorStack as Error;
+pub use srtp::OsslSrtpCryptoImpl as SrtpCrypto;
 
 impl SrtpProfile {
     /// What this profile is called in OpenSSL parlance.
