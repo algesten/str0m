@@ -8,7 +8,7 @@ use thiserror::Error;
 mod _impl;
 
 #[cfg(all(target_family = "windows", feature = "wincrypto"))]
-#[path = "wincrypt/mod.rs"]
+#[path = "wincrypto/mod.rs"]
 mod _impl;
 
 #[cfg(any(
