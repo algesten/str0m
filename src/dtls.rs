@@ -11,16 +11,9 @@ use crate::net::DatagramSend;
 /// Errors that can arise in DTLS.
 #[derive(Debug, Error)]
 pub enum DtlsError {
-    /// Some error from OpenSSL layer (used for DTLS).
+    /// Some error from crypto layer (used for DTLS).
     #[error("{0}")]
-    #[cfg(feature = "openssl")]
-    OpenSsl(#[from] openssl::error::ErrorStack),
-
-    /// Some error from Windows Crypto layer (used for DTLS).
-    #[error("{0}")]
-    #[cfg(feature = "wincrypto")]
-    WinCrypto(#[from] crate::crypto::wincrypto::WinCryptoError),
-
+    Crypto(#[from] CryptoError),
     /// Other IO errors.
     #[error("{0}")]
     Io(#[from] io::Error),
@@ -28,24 +21,13 @@ pub enum DtlsError {
 
 impl DtlsError {
     pub(crate) fn is_would_block(&self) -> bool {
-        #[allow(irrefutable_let_patterns)]
-        let DtlsError::Io(e) = self
-        else {
-            return false;
+        let e = match self {
+            DtlsError::Crypto(CryptoError::Io(io)) => io,
+            DtlsError::Io(io) => io,
+            DtlsError::Crypto(_) => return false,
         };
-        e.kind() == io::ErrorKind::WouldBlock
-    }
-}
 
-impl From<CryptoError> for DtlsError {
-    fn from(value: CryptoError) -> Self {
-        match value {
-            #[cfg(feature = "openssl")]
-            CryptoError::OpenSsl(e) => DtlsError::OpenSsl(e),
-            #[cfg(feature = "wincrypto")]
-            CryptoError::WinCrypto(e) => DtlsError::WinCrypto(e),
-            CryptoError::Io(e) => DtlsError::Io(e),
-        }
+        e.kind() == io::ErrorKind::WouldBlock
     }
 }
 

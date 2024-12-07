@@ -6,7 +6,6 @@ use openssl::ec::EcKey;
 use openssl::nid::Nid;
 use openssl::ssl::{Ssl, SslContext, SslContextBuilder, SslMethod, SslOptions, SslVerifyMode};
 
-use crate::crypto::dtls::DtlsInner;
 use crate::crypto::{DtlsEvent, SrtpProfile};
 use crate::io::{DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 
@@ -42,18 +41,20 @@ impl OsslDtlsImpl {
             tls: TlsStream::new(ssl, IoBuffer::default()),
         })
     }
-}
 
-impl DtlsInner for OsslDtlsImpl {
-    fn set_active(&mut self, active: bool) {
+    pub fn set_active(&mut self, active: bool) {
         self.tls.set_active(active);
     }
 
-    fn is_active(&self) -> Option<bool> {
+    pub fn is_active(&self) -> Option<bool> {
         self.tls.is_active()
     }
 
-    fn handle_receive(&mut self, m: &[u8], o: &mut VecDeque<DtlsEvent>) -> Result<(), CryptoError> {
+    pub fn handle_receive(
+        &mut self,
+        m: &[u8],
+        o: &mut VecDeque<DtlsEvent>,
+    ) -> Result<(), CryptoError> {
         self.tls.inner_mut().set_incoming(m);
 
         if self.handle_handshake(o)? {
@@ -76,7 +77,7 @@ impl DtlsInner for OsslDtlsImpl {
         Ok(())
     }
 
-    fn poll_datagram(&mut self) -> Option<crate::net::DatagramSend> {
+    pub fn poll_datagram(&mut self) -> Option<crate::net::DatagramSend> {
         let x = self.tls.inner_mut().pop_outgoing();
         if let Some(x) = &x {
             if x.len() > DATAGRAM_MTU_WARN {
@@ -87,7 +88,7 @@ impl DtlsInner for OsslDtlsImpl {
         x
     }
 
-    fn poll_timeout(&mut self, now: Instant) -> Option<Instant> {
+    pub fn poll_timeout(&mut self, now: Instant) -> Option<Instant> {
         // OpenSSL has a built-in timeout of 1 second that is doubled for
         // each retry. There is a way to get direct control over the
         // timeout (using DTLS_set_timer_cb), but that function doesn't
@@ -99,15 +100,18 @@ impl DtlsInner for OsslDtlsImpl {
             .then(|| now + Duration::from_millis(500))
     }
 
-    fn handle_input(&mut self, data: &[u8]) -> Result<(), CryptoError> {
+    pub fn handle_input(&mut self, data: &[u8]) -> Result<(), CryptoError> {
         Ok(self.tls.write_all(data)?)
     }
 
-    fn is_connected(&self) -> bool {
+    pub fn is_connected(&self) -> bool {
         self.tls.is_connected()
     }
 
-    fn handle_handshake(&mut self, output: &mut VecDeque<DtlsEvent>) -> Result<bool, CryptoError> {
+    pub fn handle_handshake(
+        &mut self,
+        output: &mut VecDeque<DtlsEvent>,
+    ) -> Result<bool, CryptoError> {
         if self.tls.is_connected() {
             // Nice. Nothing to do.
             Ok(false)

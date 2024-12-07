@@ -1108,18 +1108,7 @@ impl Rtc {
         let dtls_cert = if let Some(c) = config.dtls_cert {
             c
         } else {
-            #[cfg(feature = "openssl")]
-            {
-                DtlsCert::new_openssl()
-            }
-            #[cfg(feature = "wincrypto")]
-            {
-                DtlsCert::new_wincrypto()
-            }
-            #[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
-            {
-                panic!("No DTLS implementation. Enable crypto feature");
-            }
+            DtlsCert::new()
         };
 
         Rtc {
