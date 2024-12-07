@@ -50,7 +50,7 @@ pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
 }
 
 /// if sha1 is not enabled, delegate to the crypto impl.
-#[cfg(all(feature = "wincrypto", not(feature = "sha1")))]
+#[cfg(not(feature = "sha1"))]
 pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
     _impl::sha1_hmac(key, payloads)
 }
