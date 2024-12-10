@@ -37,6 +37,8 @@ mod ossl;
 
 #[cfg(all(feature = "wincrypto", target_os = "windows"))]
 mod wincrypto;
+#[cfg(all(feature = "wincrypto", target_os = "windows"))]
+pub(crate) use wincrypto::WinCryptoError;
 
 mod dtls;
 pub use dtls::DtlsCert;

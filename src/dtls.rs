@@ -20,7 +20,7 @@ pub enum DtlsError {
     /// Some error from Windows Crypto layer (used for DTLS).
     #[error("{0}")]
     #[cfg(all(feature = "wincrypto", target_os = "windows"))]
-    WinCrypto(#[from] crate::crypto::wincrypto::WinCryptoError),
+    WinCrypto(#[from] crate::crypto::WinCryptoError),
 
     /// Other IO errors.
     #[error("{0}")]

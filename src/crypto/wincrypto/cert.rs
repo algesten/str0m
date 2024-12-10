@@ -2,6 +2,7 @@ use crate::crypto::dtls::DTLS_CERT_IDENTITY;
 use crate::crypto::Fingerprint;
 use std::sync::Arc;
 use str0m_wincrypto::WinCryptoError;
+use super::WinCryptoDtls;
 
 #[derive(Clone, Debug)]
 pub struct WinCryptoDtlsCert {
@@ -21,8 +22,8 @@ impl WinCryptoDtlsCert {
         create_fingerprint(&self.certificate).expect("Failed to calculate fingerprint")
     }
 
-    pub(crate) fn new_dtls_impl(&self) -> Result<OsslDtlsImpl, CryptoError> {
-        OsslDtlsImpl::new(self.clone())
+    pub(crate) fn new_dtls_impl(&self) -> Result<WinCryptoDtls, WinCryptoError> {
+        WinCryptoDtls::new(self.clone())
     }
 }
 
