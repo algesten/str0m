@@ -35,7 +35,7 @@ impl CryptoProvider {
 #[cfg(feature = "openssl")]
 mod ossl;
 
-#[cfg(feature = "wincrypto")]
+#[cfg(all(feature = "wincrypto", target_os = "windows"))]
 mod wincrypto;
 
 mod dtls;
@@ -103,7 +103,7 @@ pub enum CryptoError {
 
     /// Some error from OpenSSL layer (used for DTLS).
     #[error("{0}")]
-    #[cfg(feature = "wincrypto")]
+    #[cfg(all(feature = "wincrypto", target_os = "windows"))]
     WinCrypto(#[from] wincrypto::WinCryptoError),
 
     /// Other IO errors.

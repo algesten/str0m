@@ -19,7 +19,7 @@ pub enum DtlsError {
 
     /// Some error from Windows Crypto layer (used for DTLS).
     #[error("{0}")]
-    #[cfg(feature = "wincrypto")]
+    #[cfg(all(feature = "wincrypto", target_os = "windows"))]
     WinCrypto(#[from] crate::crypto::wincrypto::WinCryptoError),
 
     /// Other IO errors.
@@ -43,7 +43,7 @@ impl From<CryptoError> for DtlsError {
         match value {
             #[cfg(feature = "openssl")]
             CryptoError::OpenSsl(e) => DtlsError::OpenSsl(e),
-            #[cfg(feature = "wincrypto")]
+            #[cfg(all(feature = "wincrypto", target_os = "windows"))]
             CryptoError::WinCrypto(e) => DtlsError::WinCrypto(e),
             CryptoError::Io(e) => DtlsError::Io(e),
         }

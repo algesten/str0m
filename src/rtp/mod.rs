@@ -45,7 +45,7 @@ pub enum RtpError {
 
     /// Some error from Windows Crypto layer (used for SRTP).
     #[error("{0}")]
-    #[cfg(feature = "wincrypto")]
+    #[cfg(all(feature = "wincrypto", target_os = "windows"))]
     WinCrypto(#[from] crate::crypto::wincrypto::WinCryptoError),
 
     /// Other IO errors.
@@ -62,7 +62,7 @@ impl From<CryptoError> for RtpError {
         match value {
             #[cfg(feature = "openssl")]
             CryptoError::OpenSsl(e) => RtpError::OpenSsl(e),
-            #[cfg(feature = "wincrypto")]
+            #[cfg(all(feature = "wincrypto", target_os = "windows"))]
             CryptoError::WinCrypto(e) => RtpError::WinCrypto(e),
             CryptoError::Io(e) => RtpError::Io(e),
         }

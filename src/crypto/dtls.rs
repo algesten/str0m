@@ -44,9 +44,9 @@ enum DtlsCertInner {
     OpenSsl(super::ossl::OsslDtlsCert),
     #[cfg(not(feature = "openssl"))]
     OpenSsl(DummyCert),
-    #[cfg(feature = "wincrypto")]
+    #[cfg(all(feature = "wincrypto", target_os = "windows"))]
     WinCrypto(super::wincrypto::WinCryptoDtlsCert),
-    #[cfg(not(feature = "wincrypto"))]
+    #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]
     WinCrypto(DummyCert),
 }
 
@@ -73,12 +73,12 @@ impl DtlsCert {
                 }
             }
             CryptoProvider::WinCrypto => {
-                #[cfg(feature = "wincrypto")]
+                #[cfg(all(feature = "wincrypto", target_os = "windows"))]
                 {
                     let cert = super::wincrypto::WinCryptoDtlsCert::new();
                     DtlsCertInner::WinCrypto(cert)
                 }
-                #[cfg(not(feature = "wincrypto"))]
+                #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]
                 {
                     DtlsCertInner::WinCrypto(DummyCert(p))
                 }
@@ -160,9 +160,9 @@ pub(crate) enum DtlsImpl {
     OpenSsl(super::ossl::OsslDtlsImpl),
     #[cfg(not(feature = "openssl"))]
     OpenSsl(DummyDtlsImpl),
-    #[cfg(feature = "wincrypto")]
+    #[cfg(all(feature = "wincrypto", target_os = "windows"))]
     WinCrypto(super::wincrypto::WinCryptoDtls),
-    #[cfg(not(feature = "wincrypto"))]
+    #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]
     WinCrypto(DummyDtlsImpl),
 }
 

@@ -39,9 +39,9 @@ pub enum SrtpCrypto {
     OpenSsl(super::ossl::OsslSrtpCryptoImpl),
     #[cfg(not(feature = "openssl"))]
     OpenSsl(DummySrtpCryptoImpl),
-    #[cfg(feature = "wincrypto")]
+    #[cfg(all(feature = "wincrypto", target_os = "windows"))]
     WinCrypto(super::wincrypto::WinCryptoSrtpCryptoImpl),
-    #[cfg(not(feature = "wincrypto"))]
+    #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]
     WinCrypto(DummySrtpCryptoImpl),
 }
 
@@ -57,12 +57,12 @@ impl SrtpCrypto {
         Self::OpenSsl(DummySrtpCryptoImpl(CryptoProvider::OpenSsl))
     }
 
-    #[cfg(feature = "wincrypto")]
+    #[cfg(all(feature = "wincrypto", target_os = "windows"))]
     pub fn new_wincrypto() -> SrtpCrypto {
         Self::WinCrypto(super::wincrypto::WinCryptoSrtpCryptoImpl)
     }
 
-    #[cfg(not(feature = "wincrypto"))]
+    #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]
     pub fn new_wincrypto() -> SrtpCrypto {
         Self::WinCrypto(DummySrtpCryptoImpl(CryptoProvider::WinCrypto))
     }
