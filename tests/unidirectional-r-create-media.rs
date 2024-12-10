@@ -8,11 +8,12 @@ use str0m::{Candidate, Event, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_log, progress, TestRtc};
+use common::{init_crypto_default, init_log, progress, TestRtc};
 
 #[test]
 pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
     init_log();
+    init_crypto_default();
 
     let mut l = TestRtc::new(info_span!("L"));
     let mut r = TestRtc::new(info_span!("R"));

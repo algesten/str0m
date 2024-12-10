@@ -8,11 +8,12 @@ use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{connect_l_r, init_log, progress};
+use common::{connect_l_r, init_crypto_default, init_log, progress};
 
 #[test]
 pub fn rtp_direct_with_roc() -> Result<(), RtcError> {
     init_log();
+    init_crypto_default();
 
     let (mut l, mut r) = connect_l_r();
 

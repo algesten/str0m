@@ -8,13 +8,14 @@ use str0m::rtp::{ExtensionValues, RawPacket, SeqNo, Ssrc};
 use str0m::RtcError;
 
 mod common;
-use common::{connect_l_r, init_log, progress};
+use common::{connect_l_r, init_crypto_default, init_log, progress};
 
 use crate::common::progress_with_loss;
 
 #[test]
 pub fn loss_recovery() -> Result<(), RtcError> {
     init_log();
+    init_crypto_default();
 
     let (mut l, mut r) = connect_l_r();
 
@@ -171,6 +172,7 @@ pub fn loss_recovery() -> Result<(), RtcError> {
 #[test]
 pub fn nack_delay() -> Result<(), RtcError> {
     init_log();
+    init_crypto_default();
 
     let (mut l, mut r) = connect_l_r();
 

@@ -7,11 +7,12 @@ use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, Rtc, RtcError};
 
 mod common;
-use common::{connect_l_r_with_rtc, init_log, progress};
+use common::{connect_l_r_with_rtc, init_crypto_default, init_log, progress};
 
 #[test]
 pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
     init_log();
+    init_crypto_default();
 
     let rtc1 = Rtc::builder().set_rtp_mode(true).build();
     let rtc2 = Rtc::builder().set_reordering_size_audio(0).build();

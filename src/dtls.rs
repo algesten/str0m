@@ -5,21 +5,16 @@ use thiserror::Error;
 
 use crate::crypto::{CryptoError, DtlsImpl, Fingerprint};
 
-pub use crate::crypto::{DtlsCert, DtlsEvent};
+pub use crate::crypto::DtlsCert;
+pub(crate) use crate::crypto::DtlsEvent;
 use crate::net::DatagramSend;
 
 /// Errors that can arise in DTLS.
 #[derive(Debug, Error)]
 pub enum DtlsError {
-    /// Some error from OpenSSL layer (used for DTLS).
+    /// Error arising in the crypto
     #[error("{0}")]
-    #[cfg(feature = "openssl")]
-    OpenSsl(#[from] openssl::error::ErrorStack),
-
-    /// Some error from Windows Crypto layer (used for DTLS).
-    #[error("{0}")]
-    #[cfg(feature = "wincrypto")]
-    WinCrypto(#[from] crate::crypto::wincrypto::WinCryptoError),
+    CryptoError(CryptoError),
 
     /// Other IO errors.
     #[error("{0}")]
@@ -34,18 +29,6 @@ impl DtlsError {
             return false;
         };
         e.kind() == io::ErrorKind::WouldBlock
-    }
-}
-
-impl From<CryptoError> for DtlsError {
-    fn from(value: CryptoError) -> Self {
-        match value {
-            #[cfg(feature = "openssl")]
-            CryptoError::OpenSsl(e) => DtlsError::OpenSsl(e),
-            #[cfg(feature = "wincrypto")]
-            CryptoError::WinCrypto(e) => DtlsError::WinCrypto(e),
-            CryptoError::Io(e) => DtlsError::Io(e),
-        }
     }
 }
 
@@ -182,6 +165,15 @@ impl fmt::Debug for DtlsEvent {
                 f.debug_tuple("RemoteFingerprint").field(arg0).finish()
             }
             Self::Data(arg0) => f.debug_tuple("Data").field(&arg0.len()).finish(),
+        }
+    }
+}
+
+impl From<CryptoError> for DtlsError {
+    fn from(value: CryptoError) -> Self {
+        match value {
+            CryptoError::Io(error) => DtlsError::Io(error),
+            x => DtlsError::CryptoError(x),
         }
     }
 }

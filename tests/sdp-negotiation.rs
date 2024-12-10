@@ -1,4 +1,5 @@
 mod common;
+use common::init_crypto_default;
 use common::init_log;
 use common::negotiate;
 use common::TestRtc;
@@ -18,6 +19,7 @@ use tracing::Span;
 #[test]
 pub fn change_default_pt() {
     init_log();
+    init_crypto_default();
 
     // First proposed PT is 100, R side adjusts its default from 102 -> 100
     let (l, r) = with_params(

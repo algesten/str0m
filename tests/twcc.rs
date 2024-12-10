@@ -8,11 +8,13 @@ use str0m::{Candidate, Rtc, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_log, negotiate, progress, TestRtc};
+use common::{init_crypto_default, init_log, negotiate, progress, TestRtc};
 
 #[test]
 pub fn twcc() -> Result<(), RtcError> {
     init_log();
+    init_crypto_default();
+
     let l_rtc = Rtc::builder().enable_raw_packets(true).build();
     let r_rtc = Rtc::builder().enable_raw_packets(true).build();
 
