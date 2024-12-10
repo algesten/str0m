@@ -1,3 +1,4 @@
+use super::CryptoError;
 use super::WinCryptoDtls;
 use crate::crypto::dtls::DTLS_CERT_IDENTITY;
 use crate::crypto::Fingerprint;
