@@ -1,5 +1,6 @@
 #![allow(unreachable_patterns)]
 
+use once_cell::sync::OnceCell;
 use std::fmt;
 use std::io;
 use thiserror::Error;
@@ -23,12 +24,48 @@ pub enum CryptoProvider {
     WinCrypto,
 }
 
+static PROCESS_DEFAULT: OnceCell<CryptoProvider> = OnceCell::new();
+
 impl CryptoProvider {
     pub(crate) fn srtp_crypto(&self) -> SrtpCrypto {
         match self {
             CryptoProvider::OpenSsl => SrtpCrypto::new_openssl(),
             CryptoProvider::WinCrypto => SrtpCrypto::new_wincrypto(),
         }
+    }
+
+    /// Install the selected crypto provider as default for the process.
+    ///
+    /// This makes any new instance of [`Rtc`][crate::Rtc] pick up this default automatically.
+    ///
+    /// The process default can only be installed once, the second time will panic. Libraries
+    /// should never install a process default.
+    pub fn install_process_default(&self) {
+        PROCESS_DEFAULT
+            .set(*self)
+            .expect("CryptoProvider::install_process_default() called once");
+    }
+
+    /// Can be repeated in the same process.
+    #[doc(hidden)]
+    pub fn __test_install_process_default(&self) {
+        let _ = PROCESS_DEFAULT.set(*self);
+    }
+
+    /// Get a possible crypto backend using feature flags.
+    ///
+    /// Favors **openssl** if enabled. Panics if no crypto backend is available.
+    pub fn from_feature_flags() -> CryptoProvider {
+        if cfg!(feature = "openssl") {
+            return CryptoProvider::OpenSsl;
+        } else if cfg!(all(feature = "wincrypto", target_os = "windows")) {
+            return CryptoProvider::WinCrypto;
+        }
+        panic!("No crypto backend enabled");
+    }
+
+    pub(crate) fn process_default() -> Option<CryptoProvider> {
+        PROCESS_DEFAULT.get().cloned()
     }
 }
 

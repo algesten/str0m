@@ -7,11 +7,13 @@ use str0m::{Candidate, Event, Rtc, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_log, negotiate, progress, TestRtc};
+use common::{init_crypto_default, init_log, negotiate, progress, TestRtc};
 
 #[test]
 pub fn remb() -> Result<(), RtcError> {
     init_log();
+    init_crypto_default();
+
     let l_rtc = Rtc::builder().build();
     let r_rtc = Rtc::builder().build();
 

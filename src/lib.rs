@@ -1877,6 +1877,8 @@ impl RtcConfig {
     /// This happens implicitly if you use [`RtcConfig::set_dtls_cert()`].
     ///
     /// Panics: If you `set_dtls_cert()` followed by a different [`CryptoProvider`].
+    ///
+    /// This overrides what is set in [`CryptoProvider::install_process_default()`].
     pub fn set_crypto_provider(mut self, p: CryptoProvider) -> Self {
         if let Some(c) = &self.dtls_cert {
             if p != c.crypto_provider() {
@@ -1889,6 +1891,9 @@ impl RtcConfig {
     }
 
     /// The configured crypto provider.
+    ///
+    /// Defaults to what's set in [`CryptoProvider::install_process_default()`] followed
+    /// by a fallback to [`CryptoProvider::OpenSsl`].
     pub fn crypto_provider(&self) -> CryptoProvider {
         self.crypto_provider
     }
@@ -2335,7 +2340,7 @@ impl Default for RtcConfig {
     fn default() -> Self {
         Self {
             local_ice_credentials: None,
-            crypto_provider: CryptoProvider::OpenSsl,
+            crypto_provider: CryptoProvider::process_default().unwrap_or(CryptoProvider::OpenSsl),
             dtls_cert: None,
             fingerprint_verification: true,
             ice_lite: false,
