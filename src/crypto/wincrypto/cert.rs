@@ -1,8 +1,8 @@
+use super::WinCryptoDtls;
 use crate::crypto::dtls::DTLS_CERT_IDENTITY;
 use crate::crypto::Fingerprint;
 use std::sync::Arc;
 use str0m_wincrypto::WinCryptoError;
-use super::WinCryptoDtls;
 
 #[derive(Clone, Debug)]
 pub struct WinCryptoDtlsCert {
