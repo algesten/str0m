@@ -38,33 +38,15 @@ pub const MAX_BLANK_PADDING_PAYLOAD_SIZE: usize = 240;
 /// Errors that can arise in RTP.
 #[derive(Debug, Error)]
 pub enum RtpError {
-    /// Some error from OpenSSL layer (used for SRTP).
+    /// Error arising in the crypto
     #[error("{0}")]
-    #[cfg(feature = "openssl")]
-    OpenSsl(#[from] openssl::error::ErrorStack),
+    CryptoError(#[from] CryptoError),
 
-    /// Some error from Windows Crypto layer (used for SRTP).
-    #[error("{0}")]
-    #[cfg(all(feature = "wincrypto", target_os = "windows"))]
-    WinCrypto(#[from] crate::crypto::wincrypto::WinCryptoError),
-
-    /// Other IO errors.
+    /// Other io error
     #[error("{0}")]
     Io(#[from] io::Error),
 
     /// Failed to parse RTP header.
     #[error("Failed to parse RTP header")]
     ParseHeader,
-}
-
-impl From<CryptoError> for RtpError {
-    fn from(value: CryptoError) -> Self {
-        match value {
-            #[cfg(feature = "openssl")]
-            CryptoError::OpenSsl(e) => RtpError::OpenSsl(e),
-            #[cfg(all(feature = "wincrypto", target_os = "windows"))]
-            CryptoError::WinCrypto(e) => RtpError::WinCrypto(e),
-            CryptoError::Io(e) => RtpError::Io(e),
-        }
-    }
 }
