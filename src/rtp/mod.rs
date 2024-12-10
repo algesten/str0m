@@ -40,7 +40,7 @@ pub const MAX_BLANK_PADDING_PAYLOAD_SIZE: usize = 240;
 pub enum RtpError {
     /// Error arising in the crypto
     #[error("{0}")]
-    CryptoError(#[from] CryptoError),
+    CryptoError(CryptoError),
 
     /// Other io error
     #[error("{0}")]
@@ -49,4 +49,13 @@ pub enum RtpError {
     /// Failed to parse RTP header.
     #[error("Failed to parse RTP header")]
     ParseHeader,
+}
+
+impl From<CryptoError> for RtpError {
+    fn from(value: CryptoError) -> Self {
+        match value {
+            CryptoError::Io(error) => RtpError::Io(error),
+            x => RtpError::CryptoError(x),
+        }
+    }
 }

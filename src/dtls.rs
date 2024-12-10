@@ -14,7 +14,7 @@ use crate::net::DatagramSend;
 pub enum DtlsError {
     /// Error arising in the crypto
     #[error("{0}")]
-    CryptoError(#[from] CryptoError),
+    CryptoError(CryptoError),
 
     /// Other IO errors.
     #[error("{0}")]
@@ -165,6 +165,15 @@ impl fmt::Debug for DtlsEvent {
                 f.debug_tuple("RemoteFingerprint").field(arg0).finish()
             }
             Self::Data(arg0) => f.debug_tuple("Data").field(&arg0.len()).finish(),
+        }
+    }
+}
+
+impl From<CryptoError> for DtlsError {
+    fn from(value: CryptoError) -> Self {
+        match value {
+            CryptoError::Io(error) => DtlsError::Io(error),
+            x => DtlsError::CryptoError(x),
         }
     }
 }
