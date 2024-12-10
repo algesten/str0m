@@ -100,62 +100,6 @@ impl SrtpCrypto {
     }
 }
 
-// #[allow(unused)]
-// pub fn new_aes_128_cm_sha1_80(
-//     key: AesKey,
-//     encrypt: bool,
-// ) -> Box<dyn aes_128_cm_sha1_80::CipherCtx> {
-//     #[cfg(feature = "openssl")]
-//     {
-//         let ctx = super::ossl::OsslSrtpCryptoImpl.new_aes_128_cm_sha1_80(key, encrypt);
-//         Box::new(ctx)
-//     }
-//     #[cfg(feature = "wincrypto")]
-//     {
-//         let ctx = super::wincrypto::WinCryptoSrtpCryptoImpl::new_aes_128_cm_sha1_80(key, encrypt);
-//         Box::new(ctx)
-//     }
-//     #[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
-//     {
-//         panic!("No SRTP implementation. Enable openssl feature");
-//     }
-// }
-
-// #[allow(unused)]
-// pub fn new_aead_aes_128_gcm(key: AeadKey, encrypt: bool) -> Box<dyn aead_aes_128_gcm::CipherCtx> {
-//     #[cfg(feature = "openssl")]
-//     {
-//         let ctx = super::ossl::OsslSrtpCryptoImpl.new_aead_aes_128_gcm(key, encrypt);
-//         Box::new(ctx)
-//     }
-//     #[cfg(feature = "wincrypto")]
-//     {
-//         let ctx = super::wincrypto::WinCryptoSrtpCryptoImpl::new_aead_aes_128_gcm(key, encrypt);
-//         Box::new(ctx)
-//     }
-//     #[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
-//     {
-//         panic!("No SRTP implementation. Enable openssl feature");
-//     }
-// }
-
-// #[allow(unused)]
-
-// pub fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
-//     #[cfg(feature = "openssl")]
-//     {
-//         super::ossl::OsslSrtpCryptoImpl.srtp_aes_128_ecb_round(key, input, output)
-//     }
-//     #[cfg(feature = "wincrypto")]
-//     {
-//         super::wincrypto::WinCryptoSrtpCryptoImpl::srtp_aes_128_ecb_round(key, input, output)
-//     }
-//     #[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
-//     {
-//         panic!("No SRTP implementation. Enable openssl feature");
-//     }
-// }
-
 pub trait SrtpCryptoImpl {
     type Aes128CmSha1_80: aes_128_cm_sha1_80::CipherCtx;
     type AeadAes128Gcm: aead_aes_128_gcm::CipherCtx;
