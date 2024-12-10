@@ -45,6 +45,7 @@ pub enum SrtpCrypto {
     WinCrypto(DummySrtpCryptoImpl),
 }
 
+#[allow(clippy::unit_arg)]
 impl SrtpCrypto {
     #[cfg(feature = "openssl")]
     pub fn new_openssl() -> SrtpCrypto {
