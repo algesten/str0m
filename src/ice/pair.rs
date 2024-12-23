@@ -327,7 +327,7 @@ impl CandidatePair {
 
         let next = if matches!(self.nomination_state, NominationState::Nominated) {
             // Cheating a bit to make the nomination "skip the queue".
-            now.checked_sub(Duration::from_secs(60)).unwrap()
+            now.checked_sub(Duration::from_secs(60)).unwrap_or(now) // Must handle underflow gracefully, machine may be running for < 60s.
         } else if let Some(last) = self.last_attempt_time() {
             // When we have unanswered for longer than STUN_MAX_RTO_MILLIS / 2, start
             // checking more often.
