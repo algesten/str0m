@@ -39,7 +39,7 @@ pub struct SendSideBandwithEstimator {
     loss_controller: Option<LossController>,
     acked_bitrate_estimator: AckedBitrateEstimator,
     started_at: Option<Instant>,
-    acked_packets_deduper: HandledPacketsTracker<256>
+    acked_packets_deduper: HandledPacketsTracker<256>,
 }
 
 impl SendSideBandwithEstimator {
@@ -69,10 +69,12 @@ impl SendSideBandwithEstimator {
     ) {
         let _ = self.started_at.get_or_insert(now);
 
-        let send_records: Vec<_> = records.filter(|r| {
-            // Skip acked packets that have already been processed before.
-            !self.acked_packets_deduper.contains(r.seq())
-        }).collect();
+        let send_records: Vec<_> = records
+            .filter(|r| {
+                // Skip acked packets that have already been processed before.
+                !self.acked_packets_deduper.contains(r.seq())
+            })
+            .collect();
         let mut acked_packets = Vec::with_capacity(send_records.len());
 
         let mut max_rtt = None;
@@ -272,7 +274,7 @@ impl<const SIZE: usize> HandledPacketsTracker<SIZE> {
     }
 
     /// Checks if provided [`SeqNo`] has been seen in the window.
-    fn contains(&self, mut seq: SeqNo) -> bool {
+    fn contains(&self, seq: SeqNo) -> bool {
         let seq = seq.as_u16();
         let history_idx = seq as usize % SIZE;
 
@@ -329,18 +331,28 @@ mod test {
         twcc_handler.register_seq(4.into(), now + Duration::from_millis(41013484), 0);
 
         {
-            let range = twcc_handler.apply_report(
-                {
-                    twcc_gen.update_seq(1.into(), now + Duration::from_millis(41013423));
-                    twcc_gen.update_seq(2.into(), now + Duration::from_millis(41013568));
-                    twcc_gen.update_seq(4.into(), now + Duration::from_millis(41013608));
-                    twcc_gen.build_report(10_000).unwrap()
-                },
-                now + Duration::from_micros(41013500160)).unwrap();
+            let range = twcc_handler
+                .apply_report(
+                    {
+                        twcc_gen.update_seq(1.into(), now + Duration::from_millis(41013423));
+                        twcc_gen.update_seq(2.into(), now + Duration::from_millis(41013568));
+                        twcc_gen.update_seq(4.into(), now + Duration::from_millis(41013608));
+                        twcc_gen.build_report(10_000).unwrap()
+                    },
+                    now + Duration::from_micros(41013500160),
+                )
+                .unwrap();
 
-            let mut acked_packets = twcc_handler.send_records(range).unwrap().filter_map(|r|AckedPacket::try_from(r).ok()).collect::<Vec<_>>();
+            let mut acked_packets = twcc_handler
+                .send_records(range)
+                .unwrap()
+                .filter_map(|r| AckedPacket::try_from(r).ok())
+                .collect::<Vec<_>>();
             acked_packets.sort_by(AckedPacket::order_by_receive_time);
-            let acked_packets: Vec<_> = acked_packets.into_iter().map(|p|p.seq_no.as_u16()).collect();
+            let acked_packets: Vec<_> = acked_packets
+                .into_iter()
+                .map(|p| p.seq_no.as_u16())
+                .collect();
             assert_eq!(acked_packets, [1, 2, 4]);
         }
 
@@ -349,19 +361,28 @@ mod test {
         twcc_handler.register_seq(7.into(), now + Duration::from_millis(41013544), 0);
 
         {
-            let range = twcc_handler.apply_report(
-                {
-                    twcc_gen.update_seq(3.into(), now + Duration::from_millis(41013638));
-                    twcc_gen.update_seq(7.into(), now + Duration::from_millis(41013669));
-                    twcc_gen.build_report(10_000).unwrap()
-                },
-                now + Duration::from_micros(41013562660)).unwrap();
+            let range = twcc_handler
+                .apply_report(
+                    {
+                        twcc_gen.update_seq(3.into(), now + Duration::from_millis(41013638));
+                        twcc_gen.update_seq(7.into(), now + Duration::from_millis(41013669));
+                        twcc_gen.build_report(10_000).unwrap()
+                    },
+                    now + Duration::from_micros(41013562660),
+                )
+                .unwrap();
 
-            let mut acked_packets = twcc_handler.send_records(range).unwrap().filter_map(|r|AckedPacket::try_from(r).ok()).collect::<Vec<_>>();
+            let mut acked_packets = twcc_handler
+                .send_records(range)
+                .unwrap()
+                .filter_map(|r| AckedPacket::try_from(r).ok())
+                .collect::<Vec<_>>();
             acked_packets.sort_by(AckedPacket::order_by_receive_time);
-            let acked_packets: Vec<_> = acked_packets.into_iter().map(|p|p.seq_no.as_u16()).collect();
+            let acked_packets: Vec<_> = acked_packets
+                .into_iter()
+                .map(|p| p.seq_no.as_u16())
+                .collect();
             assert_eq!(acked_packets, [3, 7]);
         }
     }
 }
-
