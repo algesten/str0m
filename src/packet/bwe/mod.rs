@@ -5,6 +5,7 @@
 //! not been ported, only a smaller part that corresponds roughly to the IETF draft is implemented.
 
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -38,6 +39,7 @@ pub struct SendSideBandwithEstimator {
     loss_controller: Option<LossController>,
     acked_bitrate_estimator: AckedBitrateEstimator,
     started_at: Option<Instant>,
+    acked_packets_deduper: HandledPacketsTracker<256>
 }
 
 impl SendSideBandwithEstimator {
@@ -55,6 +57,7 @@ impl SendSideBandwithEstimator {
                 BITRATE_WINDOW,
             ),
             started_at: None,
+            acked_packets_deduper: HandledPacketsTracker::default(),
         }
     }
 
@@ -66,19 +69,23 @@ impl SendSideBandwithEstimator {
     ) {
         let _ = self.started_at.get_or_insert(now);
 
-        let send_records: Vec<_> = records.collect();
-        let mut acked_packets = vec![];
+        let send_records: Vec<_> = records.filter(|r| {
+            // Skip acked packets that have already been processed before.
+            !self.acked_packets_deduper.contains(r.seq())
+        }).collect();
+        let mut acked_packets = Vec::with_capacity(send_records.len());
 
         let mut max_rtt = None;
         let mut count = 0;
         let mut lost = 0;
         for record in send_records.iter() {
             count += 1;
-            let Ok(acked_packet) = (*record).try_into() else {
+            let Ok(acked_packet) = AckedPacket::try_from(*record) else {
                 lost += 1;
                 continue;
             };
             acked_packets.push(acked_packet);
+            self.acked_packets_deduper.add(acked_packet.seq_no);
             max_rtt = max_rtt.max(record.rtt());
         }
         acked_packets.sort_by(AckedPacket::order_by_receive_time);
@@ -231,3 +238,130 @@ impl fmt::Display for BandwidthUsage {
         }
     }
 }
+
+/// Sliding window [`SeqNo`]s storage.
+///
+/// Only remembers the last [`SIZE`] packets added.
+#[derive(Debug)]
+struct HandledPacketsTracker<const SIZE: usize> {
+    /// Recently added packets.
+    history: [Option<u16>; SIZE],
+
+    /// Queue that tracks added packets order so older packets are removed.
+    queue: VecDeque<u16>,
+}
+
+impl<const SIZE: usize> HandledPacketsTracker<SIZE> {
+    /// Remembers the give [`SeqNo`].
+    ///
+    /// Expects somewhat sequential data with reordering no more than configured
+    /// [`SIZE`].
+    fn add(&mut self, seq: SeqNo) {
+        let seq = seq.as_u16();
+        let history_idx = seq as usize % SIZE;
+
+        self.queue.push_back(seq);
+        if self.queue.len() == SIZE {
+            let to_remove = self.queue.pop_front().unwrap();
+            let remove_idx = to_remove as usize % SIZE;
+            if self.history[remove_idx] == Some(seq) {
+                self.history[remove_idx] = None;
+            }
+        }
+        self.history[history_idx] = Some(seq);
+    }
+
+    /// Checks if provided [`SeqNo`] has been seen in the window.
+    fn contains(&self, mut seq: SeqNo) -> bool {
+        let seq = seq.as_u16();
+        let history_idx = seq as usize % SIZE;
+
+        self.history[history_idx] == Some(seq)
+    }
+}
+
+impl<const SIZE: usize> Default for HandledPacketsTracker<SIZE> {
+    fn default() -> Self {
+        Self {
+            history: [None; SIZE],
+            queue: VecDeque::with_capacity(SIZE),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::time::{Duration, Instant};
+
+    use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
+
+    use super::AckedPacket;
+
+    #[test]
+    fn libwebrtc_captured() {
+        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 1, send_time_ms = 41013423
+        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 2, send_time_ms = 41013443
+        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 3, send_time_ms = 41013464
+        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 4, send_time_ms = 41013484
+        // (rtp_transport_controller_send.cc:652): RtpTransportControllerSend::OnTransportFeedback: new TWCC received: base_seq = 1, status_count = 4, feedback_seq = 0, received_packets = [1, 2, 4], receive_time = 41013500160
+        // (acknowledged_bitrate_estimator.cc:69): AcknowledgedBitrateEstimator::IncomingPacketFeedbackVector: received_packets = [{ seq = 1, recv_time = 41013547, send_time = 41013423}, { seq = 2, recv_time = 41013568, send_time = 41013443}, { seq = 4, recv_time = 41013608, send_time = 41013484}]
+
+        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 5, send_time_ms = 41013504
+        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 6, send_time_ms = 41013524
+        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 7, send_time_ms = 41013544
+        // (rtp_transport_controller_send.cc:652): RtpTransportControllerSend::OnTransportFeedback: new TWCC received: base_seq = 3, status_count = 5, feedback_seq = 1, received_packets = [3, 4, 7], receive_time = 41013562660
+        // (acknowledged_bitrate_estimator.cc:69): AcknowledgedBitrateEstimator::IncomingPacketFeedbackVector: received_packets = [{ seq = 3, recv_time = 41013638, send_time = 41013464}, { seq = 7, recv_time = 41013669, send_time = 41013544}]
+
+        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 8, send_time_ms = 41013565
+        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 9, send_time_ms = 41013585
+        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 10, send_time_ms = 41013605
+        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 11, send_time_ms = 41013625
+        // (rtp_transport_controller_send.cc:652): RtpTransportControllerSend::OnTransportFeedback: new TWCC received: base_seq = 5, status_count = 6, feedback_seq = 2, received_packets = [5, 6, 7, 8, 9, 10], receive_time = 41013639138
+        // (acknowledged_bitrate_estimator.cc:69): AcknowledgedBitrateEstimator::IncomingPacketFeedbackVector: received_packets = [{ seq = 5, recv_time = 41013705, send_time = 41013504}, { seq = 9, recv_time = 41013716, send_time = 41013585}, { seq = 6, recv_time = 41013722, send_time = 41013524}, { seq = 8, recv_time = 41013729, send_time = 41013565}, { seq = 10, recv_time = 41013729, send_time = 41013605}]
+
+        let now = Instant::now();
+        let mut twcc_gen = TwccRecvRegister::new(1000);
+        let mut twcc_handler = TwccSendRegister::new(1000);
+
+        twcc_handler.register_seq(1.into(), now + Duration::from_millis(41013423), 0);
+        twcc_handler.register_seq(2.into(), now + Duration::from_millis(41013443), 0);
+        twcc_handler.register_seq(3.into(), now + Duration::from_millis(41013464), 0);
+        twcc_handler.register_seq(4.into(), now + Duration::from_millis(41013484), 0);
+
+        {
+            let range = twcc_handler.apply_report(
+                {
+                    twcc_gen.update_seq(1.into(), now + Duration::from_millis(41013423));
+                    twcc_gen.update_seq(2.into(), now + Duration::from_millis(41013568));
+                    twcc_gen.update_seq(4.into(), now + Duration::from_millis(41013608));
+                    twcc_gen.build_report(10_000).unwrap()
+                },
+                now + Duration::from_micros(41013500160)).unwrap();
+
+            let mut acked_packets = twcc_handler.send_records(range).unwrap().filter_map(|r|AckedPacket::try_from(r).ok()).collect::<Vec<_>>();
+            acked_packets.sort_by(AckedPacket::order_by_receive_time);
+            let acked_packets: Vec<_> = acked_packets.into_iter().map(|p|p.seq_no.as_u16()).collect();
+            assert_eq!(acked_packets, [1, 2, 4]);
+        }
+
+        twcc_handler.register_seq(5.into(), now + Duration::from_millis(41013504), 0);
+        twcc_handler.register_seq(6.into(), now + Duration::from_millis(41013524), 0);
+        twcc_handler.register_seq(7.into(), now + Duration::from_millis(41013544), 0);
+
+        {
+            let range = twcc_handler.apply_report(
+                {
+                    twcc_gen.update_seq(3.into(), now + Duration::from_millis(41013638));
+                    twcc_gen.update_seq(7.into(), now + Duration::from_millis(41013669));
+                    twcc_gen.build_report(10_000).unwrap()
+                },
+                now + Duration::from_micros(41013562660)).unwrap();
+
+            let mut acked_packets = twcc_handler.send_records(range).unwrap().filter_map(|r|AckedPacket::try_from(r).ok()).collect::<Vec<_>>();
+            acked_packets.sort_by(AckedPacket::order_by_receive_time);
+            let acked_packets: Vec<_> = acked_packets.into_iter().map(|p|p.seq_no.as_u16()).collect();
+            assert_eq!(acked_packets, [3, 7]);
+        }
+    }
+}
+
