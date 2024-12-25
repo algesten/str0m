@@ -261,6 +261,34 @@ mod test {
         );
     }
 
+    // str0m performs calculations on `now` internally
+    // To ensure that these never panic, we run a happy-path of `host-host` that uses a very early `Instant`.
+    #[test]
+    pub fn happy_path_very_early_timestamp() {
+        let early_now = find_earliest_now();
+
+        let mut a1 = TestAgent::new(info_span!("L"));
+        a1.time = early_now;
+        let mut a2 = TestAgent::new(info_span!("R"));
+        a2.time = early_now;
+
+        let c1 = host("1.1.1.1:1000", "udp");
+        a1.add_local_candidate(c1.clone());
+        a2.add_remote_candidate(c1);
+        let c2 = host("2.2.2.2:1000", "udp");
+        a2.add_local_candidate(c2.clone());
+        a1.add_remote_candidate(c2);
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+    }
+
     #[test]
     pub fn no_respond_to_stun_request_on_invalidated_candidate() {
         let mut a1 = TestAgent::new(info_span!("L"));
@@ -873,5 +901,27 @@ mod test {
         fn deref_mut(&mut self) -> &mut Self::Target {
             &mut self.agent
         }
+    }
+
+    /// Performs a binary search for the earliest possible `Instant`.
+    fn find_earliest_now() -> Instant {
+        const ONE_YEAR: Duration = Duration::from_secs(60 * 60 * 24 * 365);
+
+        let mut now = Instant::now();
+        let mut step = ONE_YEAR;
+
+        while step > Duration::from_secs(1) {
+            match now.checked_sub(step) {
+                Some(earlier) => {
+                    now = earlier;
+                    step *= 2; // Increase step-count to accelerate finding the earliest possible `Instant`.
+                }
+                None => {
+                    step /= 2; // Decrease step-count to narrow down on the earliest possible `Instant`.
+                }
+            }
+        }
+
+        now
     }
 }
