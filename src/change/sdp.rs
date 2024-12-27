@@ -10,6 +10,7 @@ use crate::format::PayloadParams;
 use crate::io::Id;
 use crate::media::Media;
 use crate::packet::MediaKind;
+use crate::rtp_::MidRid;
 use crate::rtp_::Rid;
 use crate::rtp_::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
@@ -843,11 +844,10 @@ fn ensure_stream_tx(session: &mut Session) {
             .any(|p| p.resend().is_some());
 
         for rid in rids {
+            let midrid = MidRid(media.mid(), rid);
+
             // If we already have the stream, we don't make any new one.
-            let has_stream = session
-                .streams
-                .stream_tx_by_mid_rid(media.mid(), rid)
-                .is_some();
+            let has_stream = session.streams.stream_tx_by_midrid(midrid).is_some();
 
             if has_stream {
                 continue;
@@ -861,9 +861,7 @@ fn ensure_stream_tx(session: &mut Session) {
                 (ssrc, None)
             };
 
-            let stream = session
-                .streams
-                .declare_stream_tx(ssrc, rtx, media.mid(), rid);
+            let stream = session.streams.declare_stream_tx(ssrc, rtx, midrid);
 
             // Configure cache size
             let size = if media.kind().is_audio() {
@@ -898,9 +896,9 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
 
         for (ssrc, rtx) in add_media.ssrcs {
             // TODO: When we allow sending RID, we need to add that here.
-            let stream = session
-                .streams
-                .declare_stream_tx(ssrc, rtx, add_media.mid, None);
+            let midrid = MidRid(add_media.mid, None);
+
+            let stream = session.streams.declare_stream_tx(ssrc, rtx, midrid);
 
             let size = if media.kind().is_audio() {
                 session.send_buffer_audio
@@ -1126,8 +1124,9 @@ fn update_media(
                     .map(|r| r.ssrc);
 
                 // If remote communicated a main a=ssrc, but no RTX, we will not send nacks.
+                let midrid = MidRid(media.mid(), None);
                 let suppress_nack = repair_ssrc.is_none();
-                streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), None, suppress_nack);
+                streams.expect_stream_rx(i.ssrc, repair_ssrc, midrid, suppress_nack);
             }
         }
 

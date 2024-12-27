@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::rtp_::MidRid;
 use crate::rtp_::{Mid, Rid};
 use crate::Bitrate;
 
@@ -21,8 +22,8 @@ pub(crate) struct StatsSnapshot {
     pub rx: u64,
     pub egress_loss_fraction: Option<f32>,
     pub ingress_loss_fraction: Option<f32>,
-    pub ingress: HashMap<(Mid, Option<Rid>), MediaIngressStats>,
-    pub egress: HashMap<(Mid, Option<Rid>), MediaEgressStats>,
+    pub ingress: HashMap<MidRid, MediaIngressStats>,
+    pub egress: HashMap<MidRid, MediaEgressStats>,
     pub bwe_tx: Option<Bitrate>,
     timestamp: Instant,
 }

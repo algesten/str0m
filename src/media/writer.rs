@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use crate::format::PayloadParams;
+use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
 use crate::session::Session;
 use crate::RtcError;
@@ -204,10 +205,12 @@ impl<'a> Writer<'a> {
             return Err(RtcError::NotReceivingDirection);
         }
 
+        let midrid = MidRid(self.mid, rid);
+
         let stream = self
             .session
             .streams
-            .stream_rx_by_mid_rid(self.mid, rid)
+            .stream_rx_by_midrid(midrid)
             .ok_or_else(|| RtcError::NoReceiverSource(rid))?;
 
         stream.request_keyframe(kind);

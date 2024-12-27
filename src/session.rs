@@ -14,6 +14,7 @@ use crate::packet::SendSideBandwithEstimator;
 use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
 use crate::rtp::{Extension, RawPacket};
 use crate::rtp_::Direction;
+use crate::rtp_::MidRid;
 use crate::rtp_::Pt;
 use crate::rtp_::SeqNo;
 use crate::rtp_::SRTCP_OVERHEAD;
@@ -248,9 +249,11 @@ impl Session {
             return;
         };
 
+        let midrid = MidRid(padding_request.mid, None);
+
         let stream = self
             .streams
-            .stream_tx_by_mid_rid(padding_request.mid, None)
+            .stream_tx_by_midrid(midrid)
             .expect("pacer to use an existing stream");
 
         stream.generate_padding(padding_request.padding);
@@ -335,14 +338,18 @@ impl Session {
             // Case A - use the rid_repair header to identify RTX.
             let is_main = header.ext_vals.rid.is_some();
 
+            let midrid = MidRid(mid, Some(rid));
+
             self.streams
-                .map_dynamic_by_rid(header.ssrc, mid, rid, media, *payload, is_main);
+                .map_dynamic_by_rid(header.ssrc, midrid, media, *payload, is_main);
         } else {
             // Case B - the payload type identifies RTX.
             let is_main = payload.pt() == header.payload_type;
 
+            let midrid = MidRid(mid, None);
+
             self.streams
-                .map_dynamic_by_pt(header.ssrc, mid, media, *payload, is_main);
+                .map_dynamic_by_pt(header.ssrc, midrid, media, *payload, is_main);
         }
     }
 
@@ -703,8 +710,7 @@ impl Session {
         let buf = &mut self.poll_packet_buf;
         let twcc_seq = self.twcc;
 
-        // TODO: allow for sending simulcast
-        let stream = self.streams.stream_tx_by_mid_rid(media.mid(), None)?;
+        let stream = self.streams.stream_tx_by_midrid(MidRid(mid, None))?;
 
         let params = &self.codec_config;
         let exts = media.remote_extmap();
