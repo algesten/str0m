@@ -193,7 +193,7 @@ impl Streams {
             .expect("map_dynamic_by_rid to be called with Rid");
 
         // Check if the mid/rid combo is not expected
-        if !media.rids_rx().expects(rid) {
+        if !media.rids_rx().contains(rid) {
             trace!("Mid does not expect rid: {} {}", midrid.mid(), rid);
             return;
         }

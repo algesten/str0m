@@ -96,7 +96,7 @@
 //! let mut change = rtc.sdp_api();
 //!
 //! // Do some change. A valid OFFER needs at least one "m-line" (media).
-//! let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
+//! let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
 //!
 //! // Get the offer.
 //! let (offer, pending) = change.apply().unwrap();
@@ -1281,8 +1281,8 @@ impl Rtc {
     /// let mut rtc = Rtc::new();
     ///
     /// let mut changes = rtc.sdp_api();
-    /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
-    /// let mid_video = changes.add_media(MediaKind::Video, Direction::SendOnly, None, None);
+    /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
+    /// let mid_video = changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
     ///
     /// let (offer, pending) = changes.apply().unwrap();
     /// let json = serde_json::to_vec(&offer).unwrap();
@@ -1335,6 +1335,8 @@ impl Rtc {
             panic!("In rtp_mode use direct_api().stream_tx().write_rtp()");
         }
 
+        // This does not catch potential RIDs required to send simulcast, but
+        // it's a good start. An error might arise later on RID mismatch.
         self.session.media_by_mid_mut(mid)?;
 
         Some(Writer::new(&mut self.session, mid))

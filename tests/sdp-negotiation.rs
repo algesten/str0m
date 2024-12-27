@@ -172,7 +172,7 @@ pub fn answer_different_pt_to_offer() {
     assert_eq!(&[vp8(96)], &**r.codec_config());
 
     let mut change = r.sdp_api();
-    change.add_media(MediaKind::Video, Direction::SendOnly, None, None);
+    change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
     let (offer, _pending) = change.apply().unwrap();
 
     let sdp = offer.to_sdp_string();
@@ -332,7 +332,7 @@ fn non_media_creator_cannot_change_inactive_to_recvonly() {
     );
 
     negotiate(&mut l, &mut r, |change| {
-        change.add_media(MediaKind::Video, Direction::Inactive, None, None);
+        change.add_media(MediaKind::Video, Direction::Inactive, None, None, None);
     });
     let mid = r._mids()[0];
     let m_r = r.media(mid).unwrap();
@@ -367,7 +367,7 @@ fn media_creator_can_change_inactive_to_recvonly() {
     );
 
     negotiate(&mut l, &mut r, |change| {
-        change.add_media(MediaKind::Video, Direction::Inactive, None, None);
+        change.add_media(MediaKind::Video, Direction::Inactive, None, None, None);
     });
     let mid = r._mids()[0];
     let m_r = r.media(mid).unwrap();
@@ -400,7 +400,7 @@ fn with_params(
         .unwrap_or(MediaKind::Audio);
 
     negotiate(&mut l, &mut r, |change| {
-        change.add_media(kind, Direction::SendRecv, None, None);
+        change.add_media(kind, Direction::SendRecv, None, None, None);
     });
 
     (l, r)
@@ -411,7 +411,7 @@ fn with_exts(exts_l: ExtensionMap, exts_r: ExtensionMap) -> (TestRtc, TestRtc) {
     let mut r = build_exts(info_span!("R"), exts_r);
 
     negotiate(&mut l, &mut r, |change| {
-        change.add_media(MediaKind::Video, Direction::SendRecv, None, None);
+        change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
     });
 
     (l, r)
