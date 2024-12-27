@@ -211,10 +211,151 @@ impl VideoLayersAllocation {
 pub struct Serializer;
 
 impl ExtensionSerializer for Serializer {
-    fn write_to(&self, _buf: &mut [u8], ev: &ExtensionValues) -> usize {
-        if ev.user_values.get::<VideoLayersAllocation>().is_some() {
-            // Writing the VLA header extension is currently not supported.
-            todo!();
+    //                           +-+-+-+-+-+-+-+-+
+    //                           |RID| NS| sl_bm |
+    //                           +-+-+-+-+-+-+-+-+
+    // Spatial layer bitmask     |sl0_bm |sl1_bm |
+    //   up to 2 bytes           |---------------|
+    //   when sl_bm == 0         |sl2_bm |sl3_bm |
+    //                           +-+-+-+-+-+-+-+-+
+    // Number of temporal layers |#tl|#tl|#tl|#tl|
+    // per spatial layer         |   |   |   |   |
+    //                           +-+-+-+-+-+-+-+-+
+    //  Target bitrate in kpbs   |               |
+    //   per temporal layer      :      ...      :
+    //    leb128 encoded         |               |
+    //                           +-+-+-+-+-+-+-+-+
+    // Resolution and framerate  |               |
+    // 5 bytes per spatial layer + width-1 for   +
+    //      (optional)           | rid=0, sid=0  |
+    //                           +---------------+
+    //                           |               |
+    //                           + height-1 for  +
+    //                           | rid=0, sid=0  |
+    //                           +---------------+
+    //                           | max framerate |
+    //                           +-+-+-+-+-+-+-+-+
+    //                           :      ...      :
+    //                           +-+-+-+-+-+-+-+-+
+
+    fn write_to(&self, buf: &mut [u8], ev: &ExtensionValues) -> usize {
+        if let Some(vla) = ev.user_values.get::<VideoLayersAllocation>() {
+            let mut index = 0;
+
+            buf[index] = 0;
+
+            if vla.current_simulcast_stream_index == 0 && vla.simulcast_streams.is_empty() {
+                return index + 1;
+            }
+
+            // RID: RTP stream index this allocation is sent on, numbered from 0. 2 bits.
+            buf[index] |= (vla.current_simulcast_stream_index & 0b11) << 6;
+            // NS: Number of RTP streams minus one. 2 bits, thus allowing up-to 4 RTP streams.
+            buf[index] |= ((vla.simulcast_streams.len() - 1) as u8 & 0b11) << 4;
+
+            // sl_bm: BitMask of the active Spatial Layers when same for all RTP streams or 0 otherwise.
+            // 4 bits, thus allows up to 4 spatial layers per RTP streams.
+            let total_spatial_layers = vla.simulcast_streams.len();
+            let spatial_layers = vla.simulcast_streams.iter().enumerate().fold(
+                [0u8; 4],
+                |mut spatial_layers, (stream_index, stream)| {
+                    let sl_bm = stream.spatial_layers.iter().enumerate().fold(
+                        0u8,
+                        |is_active, (layer_id, l)| {
+                            is_active | if l.temporal_layers.is_empty() { 0 } else { 1 } << layer_id
+                        },
+                    );
+
+                    spatial_layers[stream_index] = sl_bm;
+                    spatial_layers
+                },
+            );
+
+            let shared_spatial_layer_bitmask = spatial_layers[..total_spatial_layers]
+                .iter()
+                .all(|i| *i == spatial_layers[0]);
+
+            if shared_spatial_layer_bitmask {
+                buf[index] |= spatial_layers[0] & 0b1111;
+            } else {
+                // slX_bm: BitMask of the active Spatial Layers for RTP stream with index=X.
+                // When NS < 2, takes one byte, otherwise uses two bytes. Zero-padded to byte alignment.
+                for (stream_index, sl_bm) in
+                    spatial_layers[..total_spatial_layers].iter().enumerate()
+                {
+                    let shift = if stream_index % 2 == 0 { 4 } else { 0 };
+                    if shift == 4 {
+                        index += 1;
+                        buf[index] = 0;
+                    }
+                    buf[index + (stream_index / 2)] |= (sl_bm & 0b1111) << shift;
+                }
+
+                // When writing 1 or 3 entries, skip the remaining nibble to be byte aligned
+                if total_spatial_layers % 2 != 0 {
+                    buf[index] |= 0b1111;
+                }
+            }
+
+            index += 1;
+
+            // #tl: 2-bit value of number of temporal layers-1, thus allowing up-to 4 temporal layers.
+            // Values are stored in ascending order of spatial id. Zero-padded to byte alignment.
+            let mut tl_index = 0;
+            let mut wrote_temporal_layer_count = false;
+            for s in &vla.simulcast_streams {
+                for spatial in &s.spatial_layers {
+                    if !spatial.temporal_layers.is_empty() {
+                        wrote_temporal_layer_count = true;
+                        let temporal_layer_count_minus_one =
+                            (spatial.temporal_layers.len() - 1) as u8;
+                        if tl_index % 4 == 0 {
+                            tl_index = 0;
+                            buf[index] = 0;
+                        }
+
+                        buf[index] |= temporal_layer_count_minus_one << (8 - ((tl_index + 1) * 2));
+                        tl_index += 1;
+                    }
+                }
+            }
+
+            if wrote_temporal_layer_count {
+                // Ensure byte aligned
+                if tl_index % 4 != 0 {
+                    index += 1;
+                }
+            } else {
+                buf[index] = 0;
+                index += 1;
+                return index;
+            }
+
+            for s in &vla.simulcast_streams {
+                for spatial in &s.spatial_layers {
+                    for temporal in &spatial.temporal_layers {
+                        index += encode_leb_u63(temporal.cumulative_kbps, &mut buf[index..]);
+                    }
+                }
+            }
+
+            for s in &vla.simulcast_streams {
+                for spatial in &s.spatial_layers {
+                    if let Some(r) = &spatial.resolution_and_framerate {
+                        let width = (r.width - 1).to_be_bytes();
+                        let height = (r.height - 1).to_be_bytes();
+                        let framerate = r.framerate;
+                        buf[index..index + 2].copy_from_slice(&width[..]);
+                        index += 2;
+                        buf[index..index + 2].copy_from_slice(&height[..]);
+                        index += 2;
+                        buf[index] = framerate;
+                        index += 1;
+                    }
+                }
+            }
+
+            return index;
         }
         0
     }
@@ -236,8 +377,7 @@ impl ExtensionSerializer for Serializer {
     }
 
     fn requires_two_byte_form(&self, _ev: &ExtensionValues) -> bool {
-        // Writing isn't implemented yet
-        false
+        true
     }
 }
 
@@ -259,6 +399,24 @@ fn parse_leb_u63(bytes: &[u8]) -> (u64, &[u8]) {
         }
     }
     (0, bytes)
+}
+
+/// Encodes leb128
+pub fn encode_leb_u63(mut value: u64, buf: &mut [u8]) -> usize {
+    let mut index = 0;
+    loop {
+        if value < 0x80 {
+            buf[index] = value as u8;
+            index += 1;
+            break;
+        } else {
+            buf[index] = ((value & 0x7f) | 0x80) as u8;
+            value >>= 7;
+            index += 1;
+        }
+    }
+
+    index
 }
 
 // If successful, the size of the left will be mid,
@@ -328,6 +486,25 @@ fn read_bits(bits: u8, range: std::ops::Range<u8>) -> u8 {
 mod test {
     use super::*;
 
+    fn serialize(vla: Option<&VideoLayersAllocation>) -> Vec<u8> {
+        let Some(vla) = vla else { return Vec::new() };
+        let mut buf: [u8; 100] = [0u8; 100];
+        let mut ext_values: ExtensionValues = Default::default();
+        ext_values.user_values.set(vla.clone());
+
+        let actual_size = Serializer {}.write_to(&mut buf, &ext_values);
+
+        buf[..actual_size].to_vec()
+    }
+
+    fn assert_ser_deser(bytes: &[u8], vla: Option<VideoLayersAllocation>) {
+        let vla_deserialized = VideoLayersAllocation::parse(bytes);
+        let vla_serialized = serialize(vla.as_ref());
+
+        assert_eq!(vla, vla_deserialized);
+        assert_eq!(bytes, vla_serialized);
+    }
+
     #[test]
     fn test_read_bits() {
         assert_eq!(read_bits(0b1100_0000, 0..2), 0b0000_0011);
@@ -396,18 +573,26 @@ mod test {
 
     #[test]
     fn test_parse_vla_empty_buffer() {
-        assert_eq!(VideoLayersAllocation::parse(&[]), None);
+        assert_ser_deser(&[], None);
     }
 
     #[test]
     fn test_parse_vla_empty() {
-        assert_eq!(
-            VideoLayersAllocation::parse(&[0b0000_0000]),
+        assert_ser_deser(
+            &[0b0000_0000],
             Some(VideoLayersAllocation {
                 current_simulcast_stream_index: 0,
                 simulcast_streams: vec![],
-            })
+            }),
         );
+    }
+
+    #[test]
+    fn test_res() {
+        let vla = VideoLayersAllocation::parse(&[
+            17, 111, 7, 0, 15, 92, 4, 255, 2, 207, 30, 7, 127, 4, 55, 30,
+        ]);
+        assert!(vla.is_some())
     }
 
     #[test]
@@ -417,18 +602,18 @@ mod test {
 
     #[test]
     fn test_parse_vla_1_simulcast_stream_with_no_active_layers() {
-        assert_eq!(
-            VideoLayersAllocation::parse(&[
+        assert_ser_deser(
+            &[
                 0b0100_0000,
                 // 1 bitmask
                 0b0000_0000,
-            ]),
+            ],
             Some(VideoLayersAllocation {
                 current_simulcast_stream_index: 1,
                 simulcast_streams: vec![SimulcastStreamAllocation {
                     spatial_layers: vec![],
                 }],
-            })
+            }),
         );
     }
 
@@ -452,16 +637,16 @@ mod test {
                     },
                     SimulcastStreamAllocation {
                         spatial_layers: vec![],
-                    }
+                    },
                 ],
-            })
+            }),
         );
     }
 
     #[test]
     fn test_parse_vla_3_simulcast_streams_with_1_active_spatial_layers_and_2_temporal_layers() {
-        assert_eq!(
-            VideoLayersAllocation::parse(&[
+        assert_ser_deser(
+            &[
                 0b0110_0001,
                 // 3 temporal layer counts (minus 1), 2 bits each
                 0b0101_0100,
@@ -472,7 +657,7 @@ mod test {
                 0b0000_1000,
                 0b0001_0000,
                 0b0010_0000,
-            ]),
+            ],
             Some(VideoLayersAllocation {
                 current_simulcast_stream_index: 1,
                 simulcast_streams: vec![
@@ -480,7 +665,7 @@ mod test {
                         spatial_layers: vec![SpatialLayerAllocation {
                             temporal_layers: vec![
                                 TemporalLayerAllocation { cumulative_kbps: 1 },
-                                TemporalLayerAllocation { cumulative_kbps: 2 }
+                                TemporalLayerAllocation { cumulative_kbps: 2 },
                             ],
                             resolution_and_framerate: None,
                         }],
@@ -489,7 +674,7 @@ mod test {
                         spatial_layers: vec![SpatialLayerAllocation {
                             temporal_layers: vec![
                                 TemporalLayerAllocation { cumulative_kbps: 4 },
-                                TemporalLayerAllocation { cumulative_kbps: 8 }
+                                TemporalLayerAllocation { cumulative_kbps: 8 },
                             ],
                             resolution_and_framerate: None,
                         }],
@@ -498,25 +683,25 @@ mod test {
                         spatial_layers: vec![SpatialLayerAllocation {
                             temporal_layers: vec![
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 16
+                                    cumulative_kbps: 16,
                                 },
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 32
-                                }
+                                    cumulative_kbps: 32,
+                                },
                             ],
                             resolution_and_framerate: None,
                         }],
-                    }
+                    },
                 ],
-            })
+            }),
         );
     }
 
     #[test]
     fn test_parse_vla_3_simulcast_streams_with_1_active_spatial_layers_and_2_temporal_layers_with_resolutions(
     ) {
-        assert_eq!(
-            VideoLayersAllocation::parse(&[
+        assert_ser_deser(
+            &[
                 0b0110_0001,
                 // 3 temporal layer counts (minus 1), 2 bits each
                 0b0101_0100,
@@ -546,7 +731,7 @@ mod test {
                 2,
                 207,
                 60,
-            ]),
+            ],
             Some(VideoLayersAllocation {
                 current_simulcast_stream_index: 1,
                 simulcast_streams: vec![
@@ -554,11 +739,11 @@ mod test {
                         spatial_layers: vec![SpatialLayerAllocation {
                             temporal_layers: vec![
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 100
+                                    cumulative_kbps: 100,
                                 },
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 101
-                                }
+                                    cumulative_kbps: 101,
+                                },
                             ],
                             resolution_and_framerate: Some(ResolutionAndFramerate {
                                 width: 320,
@@ -571,11 +756,11 @@ mod test {
                         spatial_layers: vec![SpatialLayerAllocation {
                             temporal_layers: vec![
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 110
+                                    cumulative_kbps: 110,
                                 },
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 111
-                                }
+                                    cumulative_kbps: 111,
+                                },
                             ],
                             resolution_and_framerate: Some(ResolutionAndFramerate {
                                 width: 640,
@@ -588,11 +773,11 @@ mod test {
                         spatial_layers: vec![SpatialLayerAllocation {
                             temporal_layers: vec![
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 120
+                                    cumulative_kbps: 120,
                                 },
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 121
-                                }
+                                    cumulative_kbps: 121,
+                                },
                             ],
                             resolution_and_framerate: Some(ResolutionAndFramerate {
                                 width: 1280,
@@ -600,16 +785,16 @@ mod test {
                                 framerate: 60,
                             }),
                         }],
-                    }
+                    },
                 ],
-            })
+            }),
         );
     }
 
     #[test]
     fn test_parse_vla_3_simulcast_streams_with_differing_active_spatial_layers_with_resolutions() {
-        assert_eq!(
-            VideoLayersAllocation::parse(&[
+        assert_ser_deser(
+            &[
                 0b0010_0000,
                 // 3 active spatial layer bitmasks, 4 bits each; only the base layer is active
                 0b0001_0000,
@@ -626,7 +811,7 @@ mod test {
                 0,
                 179,
                 15,
-            ]),
+            ],
             Some(VideoLayersAllocation {
                 current_simulcast_stream_index: 0,
                 simulcast_streams: vec![
@@ -634,11 +819,11 @@ mod test {
                         spatial_layers: vec![SpatialLayerAllocation {
                             temporal_layers: vec![
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 100
+                                    cumulative_kbps: 100,
                                 },
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 101
-                                }
+                                    cumulative_kbps: 101,
+                                },
                             ],
                             resolution_and_framerate: Some(ResolutionAndFramerate {
                                 width: 320,
@@ -652,16 +837,16 @@ mod test {
                     },
                     SimulcastStreamAllocation {
                         spatial_layers: vec![],
-                    }
+                    },
                 ],
-            })
+            }),
         );
     }
 
     #[test]
     fn test_parse_vla_1_simulcast_streams_with_3_spatial_layers() {
-        assert_eq!(
-            VideoLayersAllocation::parse(&[
+        assert_ser_deser(
+            &[
                 0b0000_0111,
                 // 3 temporal layer counts (minus 1), 2 bits each
                 0b0101_0100,
@@ -672,7 +857,7 @@ mod test {
                 111,
                 120,
                 121,
-            ]),
+            ],
             Some(VideoLayersAllocation {
                 current_simulcast_stream_index: 0,
                 simulcast_streams: vec![SimulcastStreamAllocation {
@@ -680,46 +865,46 @@ mod test {
                         SpatialLayerAllocation {
                             temporal_layers: vec![
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 100
+                                    cumulative_kbps: 100,
                                 },
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 101
-                                }
+                                    cumulative_kbps: 101,
+                                },
                             ],
                             resolution_and_framerate: None,
                         },
                         SpatialLayerAllocation {
                             temporal_layers: vec![
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 110
+                                    cumulative_kbps: 110,
                                 },
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 111
-                                }
+                                    cumulative_kbps: 111,
+                                },
                             ],
                             resolution_and_framerate: None,
                         },
                         SpatialLayerAllocation {
                             temporal_layers: vec![
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 120
+                                    cumulative_kbps: 120,
                                 },
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 121
-                                }
+                                    cumulative_kbps: 121,
+                                },
                             ],
                             resolution_and_framerate: None,
-                        }
+                        },
                     ],
-                },],
-            })
+                }],
+            }),
         );
     }
 
     #[test]
     fn test_parse_vla_1_simulcast_streams_with_4_spatial_layers_1_inactive() {
-        assert_eq!(
-            VideoLayersAllocation::parse(&[
+        assert_ser_deser(
+            &[
                 0b0000_1011,
                 // 3 temporal layer counts (minus 1), 2 bits each
                 0b0101_0100,
@@ -730,7 +915,7 @@ mod test {
                 111,
                 120,
                 121,
-            ]),
+            ],
             Some(VideoLayersAllocation {
                 current_simulcast_stream_index: 0,
                 simulcast_streams: vec![SimulcastStreamAllocation {
@@ -738,22 +923,22 @@ mod test {
                         SpatialLayerAllocation {
                             temporal_layers: vec![
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 100
+                                    cumulative_kbps: 100,
                                 },
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 101
-                                }
+                                    cumulative_kbps: 101,
+                                },
                             ],
                             resolution_and_framerate: None,
                         },
                         SpatialLayerAllocation {
                             temporal_layers: vec![
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 110
+                                    cumulative_kbps: 110,
                                 },
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 111
-                                }
+                                    cumulative_kbps: 111,
+                                },
                             ],
                             resolution_and_framerate: None,
                         },
@@ -764,17 +949,17 @@ mod test {
                         SpatialLayerAllocation {
                             temporal_layers: vec![
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 120
+                                    cumulative_kbps: 120,
                                 },
                                 TemporalLayerAllocation {
-                                    cumulative_kbps: 121
-                                }
+                                    cumulative_kbps: 121,
+                                },
                             ],
                             resolution_and_framerate: None,
-                        }
+                        },
                     ],
-                },],
-            })
+                }],
+            }),
         );
     }
 }
