@@ -3,6 +3,7 @@ use std::io;
 use thiserror::Error;
 
 mod id;
+pub(crate) use id::MidRid;
 pub use id::{Mid, Pt, Rid, SeqNo, SessionId, Ssrc};
 
 mod ext;

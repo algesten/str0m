@@ -6,6 +6,7 @@ use std::time::Instant;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::media::{KeyframeRequest, Media};
+use crate::rtp_::MidRid;
 use crate::rtp_::Ssrc;
 use crate::rtp_::{Bitrate, Pt};
 use crate::rtp_::{MediaTime, SenderInfo};
@@ -181,19 +182,23 @@ impl Streams {
     pub(crate) fn map_dynamic_by_rid(
         &mut self,
         ssrc: Ssrc,
-        mid: Mid,
-        rid: Rid,
+        midrid: MidRid,
         media: &mut Media,
         payload: PayloadParams,
         is_main: bool,
     ) {
+        // This is the point of the function.
+        let rid = midrid
+            .rid()
+            .expect("map_dynamic_by_rid to be called with Rid");
+
         // Check if the mid/rid combo is not expected
         if !media.rids_rx().expects(rid) {
-            trace!("Mid does not expect rid: {} {}", mid, rid);
+            trace!("Mid does not expect rid: {} {}", midrid.mid(), rid);
             return;
         }
 
-        let maybe_stream = self.stream_rx_by_mid_rid(mid, Some(rid));
+        let maybe_stream = self.stream_rx_by_midrid(midrid);
 
         let (ssrc_main, rtx) = if is_main {
             let maybe_rtx = maybe_stream.and_then(|s| s.rtx());
@@ -206,13 +211,13 @@ impl Streams {
             (stream.ssrc(), Some(ssrc))
         };
 
-        self.map_dynamic_finish(mid, Some(rid), ssrc_main, rtx, media, payload);
+        self.map_dynamic_finish(midrid, ssrc_main, rtx, media, payload);
     }
 
     pub(crate) fn map_dynamic_by_pt(
         &mut self,
         ssrc: Ssrc,
-        mid: Mid,
+        midrid: MidRid,
         media: &mut Media,
         payload: PayloadParams,
         is_main: bool,
@@ -225,7 +230,7 @@ impl Streams {
             return;
         }
 
-        let maybe_stream = self.stream_rx_by_mid_rid(mid, None);
+        let maybe_stream = self.stream_rx_by_midrid(midrid);
 
         let (ssrc_main, rtx) = if is_main {
             let maybe_rtx = maybe_stream.and_then(|s| s.rtx());
@@ -240,20 +245,19 @@ impl Streams {
             (ssrc_main, Some(ssrc))
         };
 
-        self.map_dynamic_finish(mid, None, ssrc_main, rtx, media, payload);
+        self.map_dynamic_finish(midrid, ssrc_main, rtx, media, payload);
     }
 
     #[allow(clippy::too_many_arguments)]
     fn map_dynamic_finish(
         &mut self,
-        mid: Mid,
-        rid: Option<Rid>,
+        midrid: MidRid,
         ssrc_main: Ssrc,
         rtx: Option<Ssrc>,
         media: &mut Media,
         payload: PayloadParams,
     ) {
-        let maybe_stream = self.stream_rx_by_mid_rid(mid, rid);
+        let maybe_stream = self.stream_rx_by_midrid(midrid);
 
         if let Some(stream) = maybe_stream {
             let ssrc_from = stream.ssrc();
@@ -267,7 +271,7 @@ impl Streams {
                 // When the SSRCs changes the sequence number typically also does, the
                 // depayloader(if in use) relies on sequence numbers and will not handle a
                 // large jump corretly, reset it.
-                media.reset_depayloader(payload.pt(), rid);
+                media.reset_depayloader(payload.pt(), midrid.rid());
             }
 
             // Handle changes in RTX
@@ -282,15 +286,14 @@ impl Streams {
         let suppress_nack = payload.resend.is_none();
 
         // If stream already exists, this might only "fill in" the RTX.
-        self.expect_stream_rx(ssrc_main, rtx, mid, rid, suppress_nack);
+        self.expect_stream_rx(ssrc_main, rtx, midrid, suppress_nack);
     }
 
     pub fn expect_stream_rx(
         &mut self,
         ssrc: Ssrc,
         rtx: Option<Ssrc>,
-        mid: Mid,
-        rid: Option<Rid>,
+        midrid: MidRid,
         suppress_nack: bool,
     ) -> &mut StreamRx {
         // New stream might have enabled nacks.
@@ -299,7 +302,7 @@ impl Streams {
         let stream = self
             .streams_rx
             .entry(ssrc)
-            .or_insert_with(|| StreamRx::new(ssrc, mid, rid, suppress_nack));
+            .or_insert_with(|| StreamRx::new(ssrc, midrid, suppress_nack));
 
         if let Some(rtx) = rtx {
             stream.maybe_reset_rtx(rtx);
@@ -321,12 +324,11 @@ impl Streams {
         &mut self,
         ssrc: Ssrc,
         rtx: Option<Ssrc>,
-        mid: Mid,
-        rid: Option<Rid>,
+        midrid: MidRid,
     ) -> &mut StreamTx {
         self.streams_tx
             .entry(ssrc)
-            .or_insert_with(|| StreamTx::new(ssrc, rtx, mid, rid))
+            .or_insert_with(|| StreamTx::new(ssrc, rtx, midrid))
     }
 
     pub fn remove_stream_tx(&mut self, ssrc: Ssrc) -> bool {
@@ -560,28 +562,16 @@ impl Streams {
         }
     }
 
-    pub(crate) fn stream_tx_by_mid_rid(
-        &mut self,
-        mid: Mid,
-        rid: Option<Rid>,
-    ) -> Option<&mut StreamTx> {
-        self.streams_tx
-            .values_mut()
-            .find(|s| s.mid() == mid && (rid.is_none() || s.rid() == rid))
+    pub(crate) fn stream_tx_by_midrid(&mut self, midrid: MidRid) -> Option<&mut StreamTx> {
+        self.streams_tx.values_mut().find(|s| s.is_midrid(midrid))
     }
 
-    pub(crate) fn stream_rx_by_mid_rid(
-        &mut self,
-        mid: Mid,
-        rid: Option<Rid>,
-    ) -> Option<&mut StreamRx> {
+    pub(crate) fn stream_rx_by_midrid(&mut self, midrid: MidRid) -> Option<&mut StreamRx> {
         // Invalidate nack_active since it's possible to manipulate the
         // nack setting on the returned StreamRx.
         self.any_nack_active = None;
 
-        self.streams_rx
-            .values_mut()
-            .find(|s| s.mid() == mid && (rid.is_none() || s.rid() == rid))
+        self.streams_rx.values_mut().find(|s| s.is_midrid(midrid))
     }
 
     pub(crate) fn remove_streams_by_mid(&mut self, mid: Mid) {

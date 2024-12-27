@@ -14,6 +14,7 @@ use crate::media::MediaKind;
 use crate::packet::QueuePriority;
 use crate::packet::QueueSnapshot;
 use crate::packet::QueueState;
+use crate::rtp_::MidRid;
 use crate::rtp_::{extend_u16, Descriptions, ReportList, Rtcp};
 use crate::rtp_::{Bitrate, Extension};
 use crate::rtp_::{ExtensionMap, ReceptionReport, RtpHeader};
@@ -53,11 +54,8 @@ pub struct StreamTx {
     /// Identifier of a resend (RTX) stream. If we are doing resends.
     rtx: Option<Ssrc>,
 
-    /// The Media mid this stream belongs to.
-    mid: Mid,
-
-    /// The rid that might be used for this stream.
-    rid: Option<Rid>,
+    /// The Media mid and rid this stream belongs to.
+    midrid: MidRid,
 
     /// Set on first handle_timeout.
     kind: Option<MediaKind>,
@@ -178,14 +176,13 @@ impl Default for StreamTxStats {
 }
 
 impl StreamTx {
-    pub(crate) fn new(ssrc: Ssrc, rtx: Option<Ssrc>, mid: Mid, rid: Option<Rid>) -> Self {
+    pub(crate) fn new(ssrc: Ssrc, rtx: Option<Ssrc>, midrid: MidRid) -> Self {
         debug!("Create StreamTx for SSRC: {}", ssrc);
 
         StreamTx {
             ssrc,
             rtx,
-            mid,
-            rid,
+            midrid,
             kind: None,
             cname: None,
             clock_rate: None,
@@ -223,14 +220,14 @@ impl StreamTx {
     ///
     /// In SDP this corresponds to m-line and "Media".
     pub fn mid(&self) -> Mid {
-        self.mid
+        self.midrid.mid()
     }
 
     /// Rid for this stream.
     ///
     /// This is used to separate streams with the same [`Mid`] when using simulcast.
     pub fn rid(&self) -> Option<Rid> {
-        self.rid
+        self.midrid.rid()
     }
 
     /// Configure the RTX (resend) cache.
@@ -365,8 +362,8 @@ impl StreamTx {
         params: &[PayloadParams],
         buf: &mut Vec<u8>,
     ) -> Option<PacketReceipt> {
-        let mid = self.mid;
-        let rid = self.rid;
+        let mid = self.midrid.mid();
+        let rid = self.midrid.rid();
         let ssrc_rtx = self.rtx;
 
         let (next, is_padding) = if let Some(next) = self.poll_packet_resend(now) {
@@ -902,7 +899,7 @@ impl StreamTx {
     }
 
     pub(crate) fn visit_stats(&mut self, snapshot: &mut StatsSnapshot, now: Instant) {
-        self.stats.fill(snapshot, self.mid, self.rid, now);
+        self.stats.fill(snapshot, self.midrid, now);
     }
 
     pub(crate) fn queue_state(&mut self, now: Instant) -> QueueState {
@@ -926,7 +923,7 @@ impl StreamTx {
         }
 
         QueueState {
-            mid: self.mid,
+            mid: self.midrid.mid(),
             unpaced,
             use_for_padding,
             snapshot,
@@ -1024,8 +1021,8 @@ impl StreamTx {
         if self.rtx.is_some() && self.pt_for_padding.is_none() {
             if let Some(pt) = media.first_pt_with_rtx(config) {
                 trace!(
-                    "StreamTx Mid {} PT {} before first regular packet",
-                    self.mid,
+                    "StreamTx {:?} PT {} before first regular packet",
+                    self.midrid,
                     pt
                 );
                 self.pt_for_padding = Some(pt);
@@ -1041,6 +1038,10 @@ impl StreamTx {
         self.rtx_cache.clear();
         self.resends.clear();
         self.padding = 0;
+    }
+
+    pub(crate) fn is_midrid(&self, midrid: MidRid) -> bool {
+        midrid.special_equals(&self.midrid)
     }
 }
 
@@ -1081,18 +1082,10 @@ impl StreamTxStats {
             .push((ext_seq, r.fraction_lost as f32 / u8::MAX as f32));
     }
 
-    pub(crate) fn fill(
-        &mut self,
-        snapshot: &mut StatsSnapshot,
-        mid: Mid,
-        rid: Option<Rid>,
-        now: Instant,
-    ) {
+    pub(crate) fn fill(&mut self, snapshot: &mut StatsSnapshot, midrid: MidRid, now: Instant) {
         if self.bytes == 0 {
             return;
         }
-
-        let key = (mid, rid);
 
         let loss = {
             let mut value = 0_f32;
@@ -1116,10 +1109,10 @@ impl StreamTxStats {
         self.losses.drain(..self.losses.len().saturating_sub(1));
 
         snapshot.egress.insert(
-            key,
+            midrid,
             MediaEgressStats {
-                mid,
-                rid,
+                mid: midrid.mid(),
+                rid: midrid.rid(),
                 bytes: self.bytes,
                 packets: self.packets,
                 firs: self.firs,

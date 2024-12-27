@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crate::media::KeyframeRequestKind;
+use crate::rtp_::MidRid;
 use crate::rtp_::{
     extend_u32, Bitrate, DlrrItem, ExtendedReport, Fir, FirEntry, Frequency, MediaTime, Remb,
 };
@@ -35,11 +36,8 @@ pub struct StreamRx {
     /// of changing SSRC (for FF).
     previous_ssrc: Option<Ssrc>,
 
-    /// The Media mid this stream belongs to.
-    mid: Mid,
-
-    /// The rid that might be used for this stream.
-    rid: Option<Rid>,
+    /// The Media mid/rid this stream belongs to.
+    midrid: MidRid,
 
     /// Incoming CNAME in Sdes reports.
     cname: Option<String>,
@@ -130,15 +128,14 @@ pub(crate) struct StreamRxStats {
 }
 
 impl StreamRx {
-    pub(crate) fn new(ssrc: Ssrc, mid: Mid, rid: Option<Rid>, suppress_nack: bool) -> Self {
+    pub(crate) fn new(ssrc: Ssrc, midrid: MidRid, suppress_nack: bool) -> Self {
         debug!("Create StreamRx for SSRC: {}", ssrc);
 
         StreamRx {
             ssrc,
             rtx: None,
             previous_ssrc: None,
-            mid,
-            rid,
+            midrid,
             cname: None,
             suppress_nack,
             last_used: already_happened(),
@@ -174,14 +171,14 @@ impl StreamRx {
     ///
     /// In SDP this corresponds to m-line and "Media".
     pub fn mid(&self) -> Mid {
-        self.mid
+        self.midrid.mid()
     }
 
     /// Rid for this stream.
     ///
     /// This is used to separate streams with the same [`Mid`] when using simulcast.
     pub fn rid(&self) -> Option<Rid> {
-        self.rid
+        self.midrid.rid()
     }
 
     /// CNAME as sent by remote peer in a Sdes.
@@ -528,9 +525,8 @@ impl StreamRx {
         let xr = self.create_extended_receiver_report(now);
 
         trace!(
-            "Created feedback RR/XR ({:?}/{:?}): {:?} {:?}",
-            self.mid,
-            self.rid,
+            "Created feedback RR/XR ({:?}): {:?} {:?}",
+            self.midrid,
             rr,
             xr
         );
@@ -620,7 +616,7 @@ impl StreamRx {
     }
 
     pub(crate) fn visit_stats(&mut self, snapshot: &mut StatsSnapshot, now: Instant) {
-        self.stats.fill(snapshot, self.mid, self.rid, now);
+        self.stats.fill(snapshot, self.midrid, now);
     }
 
     pub(crate) fn poll_paused(&mut self) -> Option<StreamPaused> {
@@ -631,17 +627,16 @@ impl StreamRx {
         self.need_paused_event = false;
 
         info!(
-            "{} StreamRx with mid: {} rid: {:?} and SSRC: {}",
+            "{} StreamRx with {:?} and SSRC: {}",
             if self.paused { "Paused" } else { "Unpaused" },
-            self.mid,
-            self.rid,
+            self.midrid,
             self.ssrc
         );
 
         Some(StreamPaused {
             ssrc: self.ssrc,
-            mid: self.mid,
-            rid: self.rid,
+            mid: self.midrid.mid(),
+            rid: self.midrid.rid(),
             paused: self.paused,
         })
     }
@@ -665,8 +660,8 @@ impl StreamRx {
         }
 
         info!(
-            "Change main SSRC: {} -> {} mid: {} rid: {:?}",
-            self.ssrc, ssrc, self.mid, self.rid
+            "Change main SSRC: {} -> {} {:?}",
+            self.ssrc, ssrc, self.midrid
         );
 
         // Remember which was the previous in case a stray packet turns up
@@ -685,8 +680,8 @@ impl StreamRx {
             }
 
             info!(
-                "Change RTX SSRC {} -> {} for main SSRC: {} mid: {} rid: {:?}",
-                current, rtx, self.ssrc, self.mid, self.rid
+                "Change RTX SSRC {} -> {} for main SSRC: {} {:?}",
+                current, rtx, self.ssrc, self.midrid
             );
         } else {
             debug!("SSRC {} associated with RTX: {}", self.ssrc, rtx);
@@ -714,6 +709,10 @@ impl StreamRx {
         self.register_rtx = None;
         self.reset_roc = Some(roc);
     }
+
+    pub(crate) fn is_midrid(&self, midrid: MidRid) -> bool {
+        midrid.special_equals(&self.midrid)
+    }
 }
 
 impl StreamRxStats {
@@ -721,21 +720,14 @@ impl StreamRxStats {
         self.loss = Some(fraction_lost as f32 / u8::MAX as f32)
     }
 
-    pub(crate) fn fill(
-        &mut self,
-        snapshot: &mut StatsSnapshot,
-        mid: Mid,
-        rid: Option<Rid>,
-        now: Instant,
-    ) {
+    pub(crate) fn fill(&mut self, snapshot: &mut StatsSnapshot, midrid: MidRid, now: Instant) {
         if self.bytes == 0 {
             return;
         }
 
-        let key = (mid, rid);
         let stats = MediaIngressStats {
-            mid,
-            rid,
+            mid: midrid.mid(),
+            rid: midrid.rid(),
             bytes: self.bytes,
             packets: self.packets,
             firs: self.firs,
@@ -752,7 +744,7 @@ impl StreamRxStats {
         // the SSRCs that have been used.
         snapshot
             .ingress
-            .entry(key)
+            .entry(midrid)
             .and_modify(|s| s.merge_by_mid_rid(&stats))
             .or_insert(stats);
     }
