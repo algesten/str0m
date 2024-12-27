@@ -29,7 +29,7 @@ pub fn rtp_direct_mid_rid() -> Result<(), RtcError> {
 
     r.direct_api()
         .declare_media(mid, MediaKind::Audio)
-        .expect_rid(rid);
+        .expect_rid_rx(rid);
 
     let max = l.last.max(r.last);
     l.last = max;

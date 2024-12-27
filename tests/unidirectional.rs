@@ -24,7 +24,7 @@ pub fn unidirectional() -> Result<(), RtcError> {
 
     // The change is on the L (sending side) with Direction::SendRecv.
     let mut change = l.sdp_api();
-    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
+    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
     let (offer, pending) = change.apply().unwrap();
 
     let answer = r.rtc.sdp_api().accept_offer(offer)?;

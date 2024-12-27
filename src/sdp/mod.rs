@@ -8,7 +8,7 @@ use thiserror::Error;
 mod data;
 pub(crate) use data::{FormatParam, Sdp, Session, SessionAttribute, Setup};
 pub(crate) use data::{MediaAttribute, MediaLine, MediaType, Msid, Proto};
-pub(crate) use data::{Simulcast, SimulcastGroups};
+pub(crate) use data::{RestrictionId, Simulcast, SimulcastGroups};
 pub(crate) use parser::parse_candidate;
 
 #[cfg(test)]
@@ -41,6 +41,11 @@ impl SdpOffer {
     /// Turns this offer into an SDP string, without any JSON wrapping.
     pub fn to_sdp_string(&self) -> String {
         self.0.to_string()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn into_inner(self) -> Sdp {
+        self.0
     }
 }
 

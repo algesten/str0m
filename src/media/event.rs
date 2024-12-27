@@ -59,12 +59,32 @@ pub struct MediaChanged {
 /// The [full spec][1] covers many cases that are not used by simple simulcast.
 ///
 /// [1]: https://datatracker.ietf.org/doc/html/draft-ietf-mmusic-sdp-simulcast-14
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Simulcast {
     /// The RID used for sending simulcast.
     pub send: Vec<Rid>,
     /// The RID used for receiving simulcast.
     pub recv: Vec<Rid>,
+}
+
+impl Simulcast {
+    pub(crate) fn into_sdp(self) -> SdpSimulcast {
+        SdpSimulcast {
+            send: crate::sdp::SimulcastGroups(
+                self.send
+                    .into_iter()
+                    .map(|r| crate::sdp::RestrictionId::new_active(r.to_string()))
+                    .collect(),
+            ),
+            recv: crate::sdp::SimulcastGroups(
+                self.recv
+                    .into_iter()
+                    .map(|r| crate::sdp::RestrictionId::new_active(r.to_string()))
+                    .collect(),
+            ),
+            is_munged: false,
+        }
+    }
 }
 
 /// Video or audio data from the remote peer.

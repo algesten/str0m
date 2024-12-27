@@ -27,7 +27,7 @@ pub fn stats() -> Result<(), RtcError> {
     r.add_local_candidate(host2);
 
     let mut change = l.sdp_api();
-    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
+    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
     let (offer, pending) = change.apply().unwrap();
 
     let answer = r.rtc.sdp_api().accept_offer(offer)?;

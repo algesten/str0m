@@ -232,13 +232,18 @@ impl<'a> DirectApi<'a> {
         mid: Mid,
         rid: Option<Rid>,
     ) -> &mut StreamTx {
-        let Some(media) = self.rtc.session.media_by_mid(mid) else {
+        let Some(media) = self.rtc.session.media_by_mid_mut(mid) else {
             panic!("No media declared for mid: {}", mid);
         };
 
         let is_audio = media.kind().is_audio();
 
         let midrid = MidRid(mid, rid);
+
+        // If there is a RID tx, declare it so we an use it in Writer API
+        if let Some(rid) = rid {
+            media.add_to_rid_tx(rid);
+        }
 
         let stream = self
             .rtc

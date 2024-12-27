@@ -123,6 +123,11 @@ pub struct StreamTx {
     // The _main_ PT to use for padding. This is main PT, since the poll_packet() loop
     // figures out the param.resend() RTX PT using main.
     pt_for_padding: Option<Pt>,
+
+    /// Whether a receiver report has been received for this SSRC, thus acknowledging
+    /// that the receiver has bound the Mid/Rid tuple to the SSRC and no longer
+    /// needs to be sent on every packet
+    remote_acked_ssrc: bool,
 }
 
 /// Holder of stats.
@@ -203,6 +208,7 @@ impl StreamTx {
             stats: StreamTxStats::default(),
             rtx_ratio: (0.0, already_happened()),
             pt_for_padding: None,
+            remote_acked_ssrc: false,
         }
     }
 
@@ -365,6 +371,7 @@ impl StreamTx {
         let mid = self.midrid.mid();
         let rid = self.midrid.rid();
         let ssrc_rtx = self.rtx;
+        let remote_acked_ssrc = self.remote_acked_ssrc;
 
         let (next, is_padding) = if let Some(next) = self.poll_packet_resend(now) {
             (next, false)
@@ -382,8 +389,23 @@ impl StreamTx {
         // TODO: Can we remove this?
         let header_ref = &mut next.pkt.header;
 
+        // <https://webrtc.googlesource.com/src/+/refs/heads/main/modules/rtp_rtcp/source/rtp_sender.cc#537>
+        // BUNDLE requires that the receiver "bind" the received SSRC to the values
+        // in the MID and/or (R)RID header extensions if present. Therefore, the
+        // sender can reduce overhead by omitting these header extensions once it
+        // knows that the receiver has "bound" the SSRC.
+        // <snip>
+        // The algorithm here is fairly simple: Always attach a MID and/or RID (if
+        // configured) to the outgoing packets until an RTCP receiver report comes
+        // back for this SSRC. That feedback indicates the receiver must have
+        // received a packet with the SSRC and header extension(s), so the sender
+        // then stops attaching the MID and RID.
+
         // This is true also for RTX.
-        header_ref.ext_vals.mid = Some(mid);
+        if !remote_acked_ssrc {
+            header_ref.ext_vals.mid = Some(mid);
+            header_ref.ext_vals.rid = rid;
+        }
 
         let pt_main = header_ref.payload_type;
 
@@ -431,7 +453,6 @@ impl StreamTx {
                 next.pkt.time = time;
 
                 // Modify the original (and also cached) header value.
-                header_ref.ext_vals.rid = rid;
                 header_ref.ext_vals.rid_repair = None;
 
                 header_ref.clone()
@@ -759,7 +780,11 @@ impl StreamTx {
     pub(crate) fn handle_rtcp(&mut self, now: Instant, fb: RtcpFb) {
         use RtcpFb::*;
         match fb {
-            ReceptionReport(r) => self.stats.update_with_rr(now, r),
+            ReceptionReport(r) => {
+                // Receiver has bound MidRid to SSRC
+                self.remote_acked_ssrc = true;
+                self.stats.update_with_rr(now, r)
+            }
             Nack(_, list) => {
                 self.stats.increase_nacks();
                 let entries = list.into_iter();
@@ -923,7 +948,7 @@ impl StreamTx {
         }
 
         QueueState {
-            mid: self.midrid.mid(),
+            midrid: self.midrid,
             unpaced,
             use_for_padding,
             snapshot,

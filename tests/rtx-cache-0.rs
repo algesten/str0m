@@ -32,7 +32,7 @@ pub fn rtx_cache_0() -> Result<(), RtcError> {
 
     r.direct_api()
         .declare_media(mid, MediaKind::Audio)
-        .expect_rid(rid);
+        .expect_rid_rx(rid);
 
     let max = l.last.max(r.last);
     l.last = max;
