@@ -495,8 +495,13 @@ impl Client {
             if let TrackOutState::ToOpen = track.state {
                 if let Some(track_in) = track.track_in.upgrade() {
                     let stream_id = track_in.origin.to_string();
-                    let mid =
-                        change.add_media(track_in.kind, Direction::SendOnly, Some(stream_id), None);
+                    let mid = change.add_media(
+                        track_in.kind,
+                        Direction::SendOnly,
+                        Some(stream_id),
+                        None,
+                        None,
+                    );
                     track.state = TrackOutState::Negotiating(mid);
                 }
             }

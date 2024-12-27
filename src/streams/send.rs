@@ -923,7 +923,7 @@ impl StreamTx {
         }
 
         QueueState {
-            mid: self.midrid.mid(),
+            midrid: self.midrid,
             unpaced,
             use_for_padding,
             snapshot,

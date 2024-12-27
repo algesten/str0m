@@ -528,6 +528,7 @@ impl Media {
             remote_pts: a.pts,
             remote_exts: a.exts,
             remote_created: false,
+            simulcast: a.simulcast.map(|s| s.into_sdp()),
             ..Default::default()
         }
     }

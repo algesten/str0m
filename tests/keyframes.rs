@@ -25,7 +25,7 @@ pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
 
     // The change is on the L (sending side) with Direction::SendRecv.
     let mut change = l.sdp_api();
-    let mid = change.add_media(MediaKind::Video, Direction::SendOnly, None, None);
+    let mid = change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
     let (offer, pending) = change.apply().unwrap();
 
     let answer = r.rtc.sdp_api().accept_offer(offer)?;
@@ -117,7 +117,7 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
 
     // The change is on the L (sending side) with Direction::SendRecv.
     let mut change = l.sdp_api();
-    let mid = change.add_media(MediaKind::Video, Direction::SendOnly, None, None);
+    let mid = change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
     let (offer, pending) = change.apply().unwrap();
 
     let answer = r.rtc.sdp_api().accept_offer(offer)?;
@@ -210,7 +210,7 @@ pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
 
     // The change is on the L (sending side) with Direction::SendRecv.
     let mut change = l.sdp_api();
-    let mid = change.add_media(MediaKind::Video, Direction::SendOnly, None, None);
+    let mid = change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
     let (offer, pending) = change.apply().unwrap();
 
     let answer = r.rtc.sdp_api().accept_offer(offer)?;
