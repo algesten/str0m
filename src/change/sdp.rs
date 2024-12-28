@@ -128,7 +128,7 @@ impl<'a> SdpApi<'a> {
     /// let mut rtc = Rtc::new();
     ///
     /// let mut changes = rtc.sdp_api();
-    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
+    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
     /// let (offer, pending) = changes.apply().unwrap();
     ///
     /// // send offer to remote peer, receive answer back
@@ -201,7 +201,7 @@ impl<'a> SdpApi<'a> {
     /// let mut changes = rtc.sdp_api();
     /// assert!(!changes.has_changes());
     ///
-    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
+    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
     /// assert!(changes.has_changes());
     /// # }
     /// ```
@@ -227,7 +227,7 @@ impl<'a> SdpApi<'a> {
     ///
     /// let mut changes = rtc.sdp_api();
     ///
-    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
+    /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
     /// # }
     /// ```
     pub fn add_media(
@@ -236,6 +236,7 @@ impl<'a> SdpApi<'a> {
         dir: Direction,
         stream_id: Option<String>,
         track_id: Option<String>,
+        simulcast: Option<crate::media::Simulcast>,
     ) -> Mid {
         let mid = self.rtc.new_mid();
 
@@ -266,8 +267,11 @@ impl<'a> SdpApi<'a> {
             Id::<20>::random().to_string()
         };
 
-        let rtx = kind.is_video().then(|| self.rtc.session.streams.new_ssrc());
-        let ssrcs = vec![(self.rtc.session.streams.new_ssrc(), rtx)];
+        let mut ssrcs = Vec::new();
+        if simulcast.is_none() {
+            let rtx = kind.is_video().then(|| self.rtc.session.streams.new_ssrc());
+            ssrcs.push((self.rtc.session.streams.new_ssrc(), rtx));
+        }
 
         // TODO: let user configure stream/track name.
         let msid = Msid {
@@ -282,6 +286,7 @@ impl<'a> SdpApi<'a> {
             kind,
             dir,
             ssrcs,
+            simulcast,
 
             // Added later
             pts: vec![],
@@ -459,11 +464,11 @@ impl<'a> SdpApi<'a> {
     /// # use str0m::Rtc;
     /// let mut rtc = Rtc::new();
     /// let mut changes = rtc.sdp_api();
-    /// changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
+    /// changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
     /// let (_offer, pending) = changes.apply().unwrap();
     ///
     /// let mut changes = rtc.sdp_api();
-    /// changes.add_media(MediaKind::Video, Direction::SendOnly, None, None);
+    /// changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
     /// changes.merge(pending);
     ///
     /// // This `SdpOffer` will have changes from the first `SdpPendingChanges`
@@ -489,7 +494,7 @@ impl<'a> SdpApi<'a> {
 /// let mut rtc = Rtc::new();
 ///
 /// let mut changes = rtc.sdp_api();
-/// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
+/// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
 /// let (offer, pending) = changes.apply().unwrap();
 ///
 /// // send offer to remote peer, receive answer back
@@ -561,6 +566,7 @@ pub(crate) struct AddMedia {
     pub kind: MediaKind,
     pub dir: Direction,
     pub ssrcs: Vec<(Ssrc, Option<Ssrc>)>,
+    pub simulcast: Option<crate::media::Simulcast>,
 
     // pts and index are filled in when creating the SDP OFFER.
     // The default PT order is set by the Session (BUNDLE).
@@ -893,6 +899,11 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
         // it the same once the m-line is created.
         media.set_cname(add_media.cname);
         media.set_msid(add_media.msid);
+
+        // @jocbrad: How should we signal this down to here active/inactive?
+        if let Some(simulcast) = add_media.simulcast {
+            media.set_simulcast(simulcast.into_sdp());
+        }
 
         for (ssrc, rtx) in add_media.ssrcs {
             // TODO: When we allow sending RID, we need to add that here.
@@ -1595,11 +1606,11 @@ mod test {
 
         let mut rtc = Rtc::new();
         let mut changes = rtc.sdp_api();
-        changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
+        changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
         let (offer, pending) = changes.apply().unwrap();
 
         let mut changes = rtc.sdp_api();
-        changes.add_media(MediaKind::Video, Direction::SendOnly, None, None);
+        changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
         changes.merge(pending);
         let (new_offer, _) = changes.apply().unwrap();
 
@@ -1624,7 +1635,7 @@ mod test {
             .build();
 
         let mut change1 = rtc1.sdp_api();
-        change1.add_media(MediaKind::Video, Direction::SendOnly, None, None);
+        change1.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
         let (offer1, _) = change1.apply().unwrap();
 
         let answer = rtc2.sdp_api().accept_offer(offer1).unwrap();

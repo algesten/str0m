@@ -25,7 +25,7 @@ pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
 
     // The change is on the R (not sending side) with Direction::RecvOnly.
     let mut change = r.sdp_api();
-    let mid = change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None);
+    let mid = change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
     let (offer, pending) = change.apply().unwrap();
 
     // str0m always produces a=ssrc lines, also for RecvOnly (since direction can change).

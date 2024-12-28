@@ -26,7 +26,7 @@ pub fn remb() -> Result<(), RtcError> {
     r.add_local_candidate(host2);
 
     let mid = negotiate(&mut l, &mut r, |change| {
-        change.add_media(MediaKind::Video, Direction::SendOnly, None, None)
+        change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None)
     });
 
     loop {

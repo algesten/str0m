@@ -89,7 +89,7 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
 
     // The change is on the L (sending side) with Direction::SendRecv.
     let mut change = l.sdp_api();
-    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
+    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
     let (offer, pending) = change.apply().unwrap();
     let offer_str = offer.to_sdp_string();
     let offer_parsed =
@@ -232,7 +232,7 @@ pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
 
     // The change is on the L (sending side) with Direction::SendRecv.
     let mut change = l.sdp_api();
-    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
+    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
     let (offer, pending) = change.apply().unwrap();
 
     let answer = r.rtc.sdp_api().accept_offer(offer)?;
