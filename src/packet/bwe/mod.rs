@@ -5,8 +5,8 @@
 //! not been ported, only a smaller part that corresponds roughly to the IETF draft is implemented.
 
 use std::cmp::Ordering;
-use std::collections::VecDeque;
 use std::fmt;
+use std::ops::{Deref, RangeInclusive};
 use std::time::{Duration, Instant};
 
 use crate::rtp_::{Bitrate, DataSize, SeqNo, TwccSendRecord};
@@ -39,7 +39,7 @@ pub struct SendSideBandwithEstimator {
     loss_controller: Option<LossController>,
     acked_bitrate_estimator: AckedBitrateEstimator,
     started_at: Option<Instant>,
-    acked_packets_deduper: HandledPacketsTracker<256>,
+    acked_packets_deduper: HandledPacketsTracker<64>,
 }
 
 impl SendSideBandwithEstimator {
@@ -241,52 +241,71 @@ impl fmt::Display for BandwidthUsage {
     }
 }
 
-/// Sliding window [`SeqNo`]s storage.
+/// Sliding window [`SeqNo`]s tracker.
 ///
-/// Only remembers the last [`SIZE`] packets added.
-#[derive(Debug)]
+/// [`SIZE`] is the number of bytes in underling bitvector, so the actual window
+/// size is [`SIZE`] * 8.
 struct HandledPacketsTracker<const SIZE: usize> {
-    /// Recently added packets.
-    history: [Option<u16>; SIZE],
+    /// Range of currently tracked [`SeqNo`]s.
+    window: RangeInclusive<SeqNo>,
 
-    /// Queue that tracks added packets order so older packets are removed.
-    queue: VecDeque<u16>,
+    /// Bit vector of recently added packets.
+    history: [u8; SIZE],
 }
 
 impl<const SIZE: usize> HandledPacketsTracker<SIZE> {
+    /// Tracked [`SeqNo`]s window size.
+    const WINDOW_SIZE: usize = SIZE * 8;
+
     /// Remembers the give [`SeqNo`].
     ///
-    /// Expects somewhat sequential data with reordering no more than configured
-    /// [`SIZE`].
-    fn add(&mut self, seq: SeqNo) {
-        let seq = seq.as_u16();
-        let history_idx = seq as usize % SIZE;
+    /// Expects somewhat sequential data since window always advances to hold
+    /// latest added value forgetting older ones.
+    pub fn add(&mut self, seq: SeqNo) {
+        self.maybe_advance_window(seq);
 
-        self.queue.push_back(seq);
-        if self.queue.len() == SIZE {
-            let to_remove = self.queue.pop_front().unwrap();
-            let remove_idx = to_remove as usize % SIZE;
-            if self.history[remove_idx] == Some(seq) {
-                self.history[remove_idx] = None;
-            }
-        }
-        self.history[history_idx] = Some(seq);
+        let (byte_idx, bit_idx) = self.pos_of_seq(seq);
+        self.history[byte_idx] |= 1 << bit_idx;
     }
 
-    /// Checks if provided [`SeqNo`] has been seen in the window.
-    fn contains(&self, seq: SeqNo) -> bool {
-        let seq = seq.as_u16();
-        let history_idx = seq as usize % SIZE;
+    /// Checks if the provided [`SeqNo`] has been seen in the window.
+    pub fn contains(&self, seq: SeqNo) -> bool {
+        if self.window.contains(&seq) {
+            let (byte_idx, bit_idx) = self.pos_of_seq(seq);
+            (self.history[byte_idx] & (1 << bit_idx)) != 0
+        } else {
+            false
+        }
+    }
 
-        self.history[history_idx] == Some(seq)
+    /// Advances the window to include the given [`SeqNo`].
+    fn maybe_advance_window(&mut self, new_max_seq: SeqNo) {
+        if new_max_seq <= *self.window.end() {
+            return;
+        }
+        // Clear newly included bits
+        for i in **self.window.end() + 1..*new_max_seq {
+            let (byte_idx, bit_idx) = self.pos_of_seq(&i);
+            self.history[byte_idx] &= !(1 << bit_idx);
+        }
+        let new_start = new_max_seq.saturating_sub(Self::WINDOW_SIZE as u64);
+        self.window = RangeInclusive::new(SeqNo::from(new_start), new_max_seq);
+    }
+
+    /// Maps a given sequence number to its position in the bit vector.
+    fn pos_of_seq(&self, seq: impl Deref<Target = u64>) -> (usize, u8) {
+        let byte_idx = (*seq / 8) as usize % self.history.len();
+        let bit_idx = (*seq % 8) as u8;
+
+        (byte_idx, bit_idx)
     }
 }
 
 impl<const SIZE: usize> Default for HandledPacketsTracker<SIZE> {
     fn default() -> Self {
         Self {
-            history: [None; SIZE],
-            queue: VecDeque::with_capacity(SIZE),
+            window: RangeInclusive::new(SeqNo::from(0), SeqNo::from(Self::WINDOW_SIZE as u64)),
+            history: [0; SIZE],
         }
     }
 }
