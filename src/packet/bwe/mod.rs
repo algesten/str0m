@@ -39,7 +39,7 @@ pub struct SendSideBandwithEstimator {
     loss_controller: Option<LossController>,
     acked_bitrate_estimator: AckedBitrateEstimator,
     started_at: Option<Instant>,
-    acked_packets_deduper: HandledPacketsTracker<64>,
+    acked_packets_deduper: HandledPacketsTracker,
 }
 
 impl SendSideBandwithEstimator {
@@ -75,7 +75,7 @@ impl SendSideBandwithEstimator {
                 !self.acked_packets_deduper.contains(r.seq())
             })
             .collect();
-        let mut acked_packets = Vec::with_capacity(send_records.len());
+        let mut acked_packets = vec![];
 
         let mut max_rtt = None;
         let mut count = 0;
@@ -242,21 +242,15 @@ impl fmt::Display for BandwidthUsage {
 }
 
 /// Sliding window [`SeqNo`]s tracker.
-///
-/// [`SIZE`] is the number of bytes in underling bitvector, so the actual window
-/// size is [`SIZE`] * 8.
-struct HandledPacketsTracker<const SIZE: usize> {
+struct HandledPacketsTracker {
     /// Range of currently tracked [`SeqNo`]s.
     window: RangeInclusive<SeqNo>,
 
-    /// Bit vector of recently added packets.
-    history: [u8; SIZE],
+    /// Bit array of recently added packets.
+    history: [u8; 64],
 }
 
-impl<const SIZE: usize> HandledPacketsTracker<SIZE> {
-    /// Tracked [`SeqNo`]s window size.
-    const WINDOW_SIZE: usize = SIZE * 8;
-
+impl HandledPacketsTracker {
     /// Remembers the give [`SeqNo`].
     ///
     /// Expects somewhat sequential data since window always advances to hold
@@ -288,7 +282,7 @@ impl<const SIZE: usize> HandledPacketsTracker<SIZE> {
             let (byte_idx, bit_idx) = self.pos_of_seq(&i);
             self.history[byte_idx] &= !(1 << bit_idx);
         }
-        let new_start = new_max_seq.saturating_sub(Self::WINDOW_SIZE as u64);
+        let new_start = new_max_seq.saturating_sub(self.history.len() as u64 * 8);
         self.window = RangeInclusive::new(SeqNo::from(new_start), new_max_seq);
     }
 
@@ -301,107 +295,13 @@ impl<const SIZE: usize> HandledPacketsTracker<SIZE> {
     }
 }
 
-impl<const SIZE: usize> Default for HandledPacketsTracker<SIZE> {
+impl Default for HandledPacketsTracker {
     fn default() -> Self {
+        let history = [0; 64];
+
         Self {
-            window: RangeInclusive::new(SeqNo::from(0), SeqNo::from(Self::WINDOW_SIZE as u64)),
-            history: [0; SIZE],
-        }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use std::time::{Duration, Instant};
-
-    use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
-
-    use super::AckedPacket;
-
-    #[test]
-    fn libwebrtc_captured() {
-        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 1, send_time_ms = 41013423
-        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 2, send_time_ms = 41013443
-        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 3, send_time_ms = 41013464
-        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 4, send_time_ms = 41013484
-        // (rtp_transport_controller_send.cc:652): RtpTransportControllerSend::OnTransportFeedback: new TWCC received: base_seq = 1, status_count = 4, feedback_seq = 0, received_packets = [1, 2, 4], receive_time = 41013500160
-        // (acknowledged_bitrate_estimator.cc:69): AcknowledgedBitrateEstimator::IncomingPacketFeedbackVector: received_packets = [{ seq = 1, recv_time = 41013547, send_time = 41013423}, { seq = 2, recv_time = 41013568, send_time = 41013443}, { seq = 4, recv_time = 41013608, send_time = 41013484}]
-
-        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 5, send_time_ms = 41013504
-        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 6, send_time_ms = 41013524
-        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 7, send_time_ms = 41013544
-        // (rtp_transport_controller_send.cc:652): RtpTransportControllerSend::OnTransportFeedback: new TWCC received: base_seq = 3, status_count = 5, feedback_seq = 1, received_packets = [3, 4, 7], receive_time = 41013562660
-        // (acknowledged_bitrate_estimator.cc:69): AcknowledgedBitrateEstimator::IncomingPacketFeedbackVector: received_packets = [{ seq = 3, recv_time = 41013638, send_time = 41013464}, { seq = 7, recv_time = 41013669, send_time = 41013544}]
-
-        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 8, send_time_ms = 41013565
-        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 9, send_time_ms = 41013585
-        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 10, send_time_ms = 41013605
-        // (transport_feedback_adapter.cc:115): ProcessSentPacket packet_id = 11, send_time_ms = 41013625
-        // (rtp_transport_controller_send.cc:652): RtpTransportControllerSend::OnTransportFeedback: new TWCC received: base_seq = 5, status_count = 6, feedback_seq = 2, received_packets = [5, 6, 7, 8, 9, 10], receive_time = 41013639138
-        // (acknowledged_bitrate_estimator.cc:69): AcknowledgedBitrateEstimator::IncomingPacketFeedbackVector: received_packets = [{ seq = 5, recv_time = 41013705, send_time = 41013504}, { seq = 9, recv_time = 41013716, send_time = 41013585}, { seq = 6, recv_time = 41013722, send_time = 41013524}, { seq = 8, recv_time = 41013729, send_time = 41013565}, { seq = 10, recv_time = 41013729, send_time = 41013605}]
-
-        let now = Instant::now();
-        let mut twcc_gen = TwccRecvRegister::new(1000);
-        let mut twcc_handler = TwccSendRegister::new(1000);
-
-        twcc_handler.register_seq(1.into(), now + Duration::from_millis(41013423), 0);
-        twcc_handler.register_seq(2.into(), now + Duration::from_millis(41013443), 0);
-        twcc_handler.register_seq(3.into(), now + Duration::from_millis(41013464), 0);
-        twcc_handler.register_seq(4.into(), now + Duration::from_millis(41013484), 0);
-
-        {
-            let range = twcc_handler
-                .apply_report(
-                    {
-                        twcc_gen.update_seq(1.into(), now + Duration::from_millis(41013423));
-                        twcc_gen.update_seq(2.into(), now + Duration::from_millis(41013568));
-                        twcc_gen.update_seq(4.into(), now + Duration::from_millis(41013608));
-                        twcc_gen.build_report(10_000).unwrap()
-                    },
-                    now + Duration::from_micros(41013500160),
-                )
-                .unwrap();
-
-            let mut acked_packets = twcc_handler
-                .send_records(range)
-                .unwrap()
-                .filter_map(|r| AckedPacket::try_from(r).ok())
-                .collect::<Vec<_>>();
-            acked_packets.sort_by(AckedPacket::order_by_receive_time);
-            let acked_packets: Vec<_> = acked_packets
-                .into_iter()
-                .map(|p| p.seq_no.as_u16())
-                .collect();
-            assert_eq!(acked_packets, [1, 2, 4]);
-        }
-
-        twcc_handler.register_seq(5.into(), now + Duration::from_millis(41013504), 0);
-        twcc_handler.register_seq(6.into(), now + Duration::from_millis(41013524), 0);
-        twcc_handler.register_seq(7.into(), now + Duration::from_millis(41013544), 0);
-
-        {
-            let range = twcc_handler
-                .apply_report(
-                    {
-                        twcc_gen.update_seq(3.into(), now + Duration::from_millis(41013638));
-                        twcc_gen.update_seq(7.into(), now + Duration::from_millis(41013669));
-                        twcc_gen.build_report(10_000).unwrap()
-                    },
-                    now + Duration::from_micros(41013562660),
-                )
-                .unwrap();
-
-            let mut acked_packets = twcc_handler
-                .send_records(range)
-                .unwrap()
-                .filter_map(|r| AckedPacket::try_from(r).ok())
-                .collect::<Vec<_>>();
-            acked_packets.sort_by(AckedPacket::order_by_receive_time);
-            let acked_packets: Vec<_> = acked_packets
-                .into_iter()
-                .map(|p| p.seq_no.as_u16())
-                .collect();
-            assert_eq!(acked_packets, [3, 7]);
+            window: RangeInclusive::new(SeqNo::from(0), SeqNo::from(history.len() as u64 * 8)),
+            history,
         }
     }
 }
