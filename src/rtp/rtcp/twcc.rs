@@ -1005,6 +1005,10 @@ pub struct TwccSendRegister {
     /// 0 offset for remote time in Twcc structs.
     time_zero: Option<Instant>,
 
+    /// Counter of invocations of apply_report. Used to identify
+    /// which TwccSendRecord resulted from each invocation.
+    apply_report_counter: u64,
+
     /// Last registered Twcc number.
     last_registered: SeqNo,
 }
@@ -1072,6 +1076,9 @@ pub struct TwccRecvReport {
 
     /// The remote time the other side received the seq.
     remote_recv_time: Option<Instant>,
+
+    /// The invocation count of apply_report(). Used for filtering.
+    apply_report_counter: u64,
 }
 
 impl TwccSendRegister {
@@ -1080,6 +1087,7 @@ impl TwccSendRegister {
             keep,
             queue: VecDeque::new(),
             time_zero: None,
+            apply_report_counter: 0,
             last_registered: 0.into(),
         }
     }
@@ -1104,10 +1112,17 @@ impl TwccSendRegister {
     ///
     /// Returns a range of the sequence numbers for the applied packets if the report was
     /// successfully applied.
-    pub fn apply_report(&mut self, twcc: Twcc, now: Instant) -> Option<RangeInclusive<SeqNo>> {
+    pub fn apply_report(
+        &mut self,
+        twcc: Twcc,
+        now: Instant,
+    ) -> Option<impl Iterator<Item = &TwccSendRecord>> {
         if self.time_zero.is_none() {
             self.time_zero = Some(now);
         }
+
+        self.apply_report_counter += 1;
+        let apply_report_counter = self.apply_report_counter;
 
         let time_zero = self.time_zero.unwrap();
         let head_seq = self.queue.front().map(|r| r.seq)?;
@@ -1125,6 +1140,7 @@ impl TwccSendRegister {
             r: &mut TwccSendRecord,
             seq: SeqNo,
             instant: Option<Instant>,
+            apply_report_counter: u64,
         ) -> bool {
             if r.seq != seq {
                 return false;
@@ -1132,6 +1148,7 @@ impl TwccSendRegister {
             let recv_report = TwccRecvReport {
                 local_recv_time: now,
                 remote_recv_time: instant,
+                apply_report_counter,
             };
             r.recv_report = Some(recv_report);
 
@@ -1145,7 +1162,13 @@ impl TwccSendRegister {
 
         let mut problematic_seq = None;
 
-        if !update(now, first_record, first_seq_no, first_instant) {
+        if !update(
+            now,
+            first_record,
+            first_seq_no,
+            first_instant,
+            apply_report_counter,
+        ) {
             problematic_seq = Some((first_record.seq, first_seq_no));
         }
 
@@ -1155,7 +1178,14 @@ impl TwccSendRegister {
                 break;
             }
 
-            if !update(now, record, seq, instant) {
+            if !update(
+                //
+                now,
+                record,
+                seq,
+                instant,
+                apply_report_counter,
+            ) {
                 problematic_seq = Some((record.seq, seq));
             }
             last_seq_no = seq;
@@ -1170,13 +1200,29 @@ impl TwccSendRegister {
             );
         }
 
-        Some(first_seq_no..=last_seq_no)
-    }
+        let first_index = self
+            .queue
+            .binary_search_by_key(&first_seq_no, |r| r.seq)
+            .expect("first_seq_no to be registered");
 
-    pub fn send_record(&self, seq: SeqNo) -> Option<&TwccSendRecord> {
-        let index = self.queue.binary_search_by_key(&seq, |r| r.seq).ok()?;
+        let range = first_seq_no..=last_seq_no;
 
-        Some(&self.queue[index])
+        Some(
+            TwccSendRecordsIter {
+                range,
+                index: first_index,
+                current: first_seq_no,
+                queue: &self.queue,
+            }
+            // We only want the records that were registered in this invocation of
+            // apply_report_counter(). This is to not double count in the BWE,
+            // which is the consumer of this returned iterator.
+            .filter(move |s| {
+                s.recv_report
+                    .map(|r| r.apply_report_counter == apply_report_counter)
+                    .unwrap_or_default()
+            }),
+        )
     }
 
     /// Calculate the egress loss for given time window.
@@ -1213,26 +1259,6 @@ impl TwccSendRegister {
         }
 
         Some((lost as f32) / (total as f32))
-    }
-
-    /// Get all send records in a range.
-    pub fn send_records(
-        &self,
-        range: RangeInclusive<SeqNo>,
-    ) -> Option<impl Iterator<Item = &TwccSendRecord>> {
-        let first_index = self
-            .queue
-            .binary_search_by_key(range.start(), |r| r.seq)
-            .ok()?;
-
-        let current = *range.start();
-
-        Some(TwccSendRecordsIter {
-            range,
-            index: first_index,
-            current,
-            queue: &self.queue,
-        })
     }
 }
 
@@ -1806,7 +1832,7 @@ mod test {
         );
         now = now + Duration::from_millis(35);
 
-        reg.apply_report(
+        let iter = reg.apply_report(
             Twcc {
                 sender_ssrc: Ssrc::new(),
                 ssrc: Ssrc::new(),
@@ -1829,15 +1855,12 @@ mod test {
             },
             now,
         );
+        let iter = iter.unwrap();
 
-        for seq in 25..=27 {
-            let record = reg
-                .send_record(seq.into())
-                .unwrap_or_else(|| panic!("Should have send record for seq {seq}"));
-
+        for record in iter {
             assert!(
                 record.recv_report.is_some(),
-                "Report should have recorded recv_report for {seq}"
+                "Report should have recorded recv_report"
             );
         }
     }
@@ -1962,7 +1985,7 @@ mod test {
             now = now + Duration::from_micros(15);
         }
 
-        let range = reg
+        let iter = reg
             .apply_report(
                 Twcc {
                     sender_ssrc: Ssrc::new(),
@@ -1988,11 +2011,6 @@ mod test {
             )
             .expect("apply_report to return Some(_)");
 
-        assert_eq!(range, 0.into()..=7.into());
-
-        let iter = reg
-            .send_records(range)
-            .expect("send_records to return Some(_)");
         assert_eq!(
             iter.map(|r| *r.seq).collect::<Vec<_>>(),
             vec![0, 1, 2, 3, 4, 5, 6, 7]
@@ -2009,6 +2027,7 @@ mod test {
         }
 
         now = now + Duration::from_millis(5);
+        #[allow(unused_must_use)]
         reg.apply_report(
             Twcc {
                 sender_ssrc: Ssrc::new(),
