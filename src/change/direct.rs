@@ -1,6 +1,7 @@
 use crate::channel::ChannelId;
 use crate::crypto::Fingerprint;
 use crate::media::{Media, MediaKind};
+use crate::rtp_::MidRid;
 use crate::rtp_::{Mid, Rid, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::streams::{StreamRx, StreamTx, DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP};
@@ -187,10 +188,12 @@ impl<'a> DirectApi<'a> {
         // By default we do not suppress nacks, this has to be called explicitly by the user of direct API.
         let suppress_nack = false;
 
+        let midrid = MidRid(mid, rid);
+
         self.rtc
             .session
             .streams
-            .expect_stream_rx(ssrc, rtx, mid, rid, suppress_nack)
+            .expect_stream_rx(ssrc, rtx, midrid, suppress_nack)
     }
 
     /// Remove the receive stream for the given SSRC.
@@ -211,7 +214,8 @@ impl<'a> DirectApi<'a> {
 
     /// Obtain a recv stream by looking it up via mid/rid.
     pub fn stream_rx_by_mid(&mut self, mid: Mid, rid: Option<Rid>) -> Option<&mut StreamRx> {
-        self.rtc.session.streams.stream_rx_by_mid_rid(mid, rid)
+        let midrid = MidRid(mid, rid);
+        self.rtc.session.streams.stream_rx_by_midrid(midrid)
     }
 
     /// Declare the intention to send data using the given SSRC.
@@ -234,11 +238,13 @@ impl<'a> DirectApi<'a> {
 
         let is_audio = media.kind().is_audio();
 
+        let midrid = MidRid(mid, rid);
+
         let stream = self
             .rtc
             .session
             .streams
-            .declare_stream_tx(ssrc, rtx, mid, rid);
+            .declare_stream_tx(ssrc, rtx, midrid);
 
         let size = if is_audio {
             self.rtc.session.send_buffer_audio
@@ -267,6 +273,7 @@ impl<'a> DirectApi<'a> {
 
     /// Obtain a send stream by looking it up via mid/rid.
     pub fn stream_tx_by_mid(&mut self, mid: Mid, rid: Option<Rid>) -> Option<&mut StreamTx> {
-        self.rtc.session.streams.stream_tx_by_mid_rid(mid, rid)
+        let midrid = MidRid(mid, rid);
+        self.rtc.session.streams.stream_tx_by_midrid(midrid)
     }
 }

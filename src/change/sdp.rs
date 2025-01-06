@@ -10,6 +10,7 @@ use crate::format::PayloadParams;
 use crate::io::Id;
 use crate::media::Media;
 use crate::packet::MediaKind;
+use crate::rtp_::MidRid;
 use crate::rtp_::Rid;
 use crate::rtp_::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
@@ -193,6 +194,7 @@ impl<'a> SdpApi<'a> {
     /// If changes have been made, nothing happens until we call [`SdpApi::apply()`].
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::{Rtc, media::MediaKind, media::Direction};
     /// let mut rtc = Rtc::new();
     ///
@@ -201,6 +203,7 @@ impl<'a> SdpApi<'a> {
     ///
     /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
     /// assert!(changes.has_changes());
+    /// # }
     /// ```
     pub fn has_changes(&self) -> bool {
         !self.changes.0.is_empty()
@@ -218,12 +221,14 @@ impl<'a> SdpApi<'a> {
     ///   CNAME in the RTP SDES.
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::{Rtc, media::MediaKind, media::Direction};
     /// let mut rtc = Rtc::new();
     ///
     /// let mut changes = rtc.sdp_api();
     ///
     /// let mid = changes.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
+    /// # }
     /// ```
     pub fn add_media(
         &mut self,
@@ -322,12 +327,14 @@ impl<'a> SdpApi<'a> {
     /// useful when multiple channels are in use at the same time.
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::Rtc;
     /// let mut rtc = Rtc::new();
     ///
     /// let mut changes = rtc.sdp_api();
     ///
     /// let cid = changes.add_channel("my special channel".to_string());
+    /// # }
     /// ```
     pub fn add_channel(&mut self, label: String) -> ChannelId {
         self.add_channel_with_config(ChannelConfig {
@@ -341,6 +348,7 @@ impl<'a> SdpApi<'a> {
     /// Refer to `add_channel` for more details.
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::{channel::{ChannelConfig, Reliability}, Rtc};
     /// let mut rtc = Rtc::new();
     ///
@@ -352,6 +360,7 @@ impl<'a> SdpApi<'a> {
     ///     ordered: false,
     ///     ..Default::default()
     /// });
+    /// # }
     /// ```
     pub fn add_channel_with_config(&mut self, config: ChannelConfig) -> ChannelId {
         let has_media = self.rtc.session.app().is_some();
@@ -405,11 +414,13 @@ impl<'a> SdpApi<'a> {
     /// the current [`SdpPendingOffer`].
     ///
     /// ```
+    /// # #[cfg(feature = "openssl")] {
     /// # use str0m::Rtc;
     /// let mut rtc = Rtc::new();
     ///
     /// let changes = rtc.sdp_api();
     /// assert!(changes.apply().is_none());
+    /// # }
     /// ```
     pub fn apply(self) -> Option<(SdpOffer, SdpPendingOffer)> {
         if self.changes.is_empty() {
@@ -833,11 +844,10 @@ fn ensure_stream_tx(session: &mut Session) {
             .any(|p| p.resend().is_some());
 
         for rid in rids {
+            let midrid = MidRid(media.mid(), rid);
+
             // If we already have the stream, we don't make any new one.
-            let has_stream = session
-                .streams
-                .stream_tx_by_mid_rid(media.mid(), rid)
-                .is_some();
+            let has_stream = session.streams.stream_tx_by_midrid(midrid).is_some();
 
             if has_stream {
                 continue;
@@ -851,9 +861,7 @@ fn ensure_stream_tx(session: &mut Session) {
                 (ssrc, None)
             };
 
-            let stream = session
-                .streams
-                .declare_stream_tx(ssrc, rtx, media.mid(), rid);
+            let stream = session.streams.declare_stream_tx(ssrc, rtx, midrid);
 
             // Configure cache size
             let size = if media.kind().is_audio() {
@@ -888,9 +896,9 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
 
         for (ssrc, rtx) in add_media.ssrcs {
             // TODO: When we allow sending RID, we need to add that here.
-            let stream = session
-                .streams
-                .declare_stream_tx(ssrc, rtx, add_media.mid, None);
+            let midrid = MidRid(add_media.mid, None);
+
+            let stream = session.streams.declare_stream_tx(ssrc, rtx, midrid);
 
             let size = if media.kind().is_audio() {
                 session.send_buffer_audio
@@ -1116,8 +1124,9 @@ fn update_media(
                     .map(|r| r.ssrc);
 
                 // If remote communicated a main a=ssrc, but no RTX, we will not send nacks.
+                let midrid = MidRid(media.mid(), None);
                 let suppress_nack = repair_ssrc.is_none();
-                streams.expect_stream_rx(i.ssrc, repair_ssrc, media.mid(), None, suppress_nack);
+                streams.expect_stream_rx(i.ssrc, repair_ssrc, midrid, suppress_nack);
             }
         }
 
@@ -1558,6 +1567,8 @@ mod test {
 
     #[test]
     fn test_out_of_order_error() {
+        crate::init_crypto_default();
+
         let mut rtc1 = Rtc::new();
         let mut rtc2 = Rtc::new();
 
@@ -1580,6 +1591,8 @@ mod test {
 
     #[test]
     fn sdp_api_merge_works() {
+        crate::init_crypto_default();
+
         let mut rtc = Rtc::new();
         let mut changes = rtc.sdp_api();
         changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None);
@@ -1596,6 +1609,8 @@ mod test {
 
     #[test]
     fn test_rtp_payload_priority() {
+        crate::init_crypto_default();
+
         let mut rtc1 = Rtc::builder()
             .clear_codecs()
             .enable_h264(true)

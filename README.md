@@ -287,6 +287,29 @@ A production worthy SFU probably needs an even more sophisticated
 strategy weighing in all possible time sources to get a good estimate
 of the remote wallclock for a packet.
 
+## Crypto backends
+
+str0m has two crypto backends, `openssl` and `wincrypto`. The default is
+`openssl` which works on all platforms (also Windows). Ideally we want a
+pure rust version of the crypto code, but WebRTC currently requires
+DTLS 1.2 (not the latest version 1.3), and that leaves us only with a
+few possible options.
+
+When compiling for Windows, the `openssl` feature can be removed and
+only rely on `wincrypto`. However notice that `str0m` never picks up a
+default automatically, you must explicitly configure the crypto backend,
+also when removing the `openssl` feature.
+
+If you are building an application, the easiest is to set the default
+for the entire process.
+
+```rust
+use str0m::config::CryptoProvider;
+
+// Will panic if run twice
+CryptoProvider::WinCrypto.install_process_default();
+```
+
 ## Project status
 
 Str0m was originally developed by Martin Algesten of

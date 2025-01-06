@@ -262,3 +262,25 @@ impl Pt {
         Pt(v)
     }
 }
+
+/// A combination of Mid/Rid
+///
+/// In many cases they go hand-in-hand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct MidRid(pub Mid, pub Option<Rid>);
+
+impl MidRid {
+    #[inline(always)]
+    pub fn mid(&self) -> Mid {
+        self.0
+    }
+
+    #[inline(always)]
+    pub fn rid(&self) -> Option<Rid> {
+        self.1
+    }
+
+    pub fn special_equals(&self, other: &MidRid) -> bool {
+        self.0 == other.0 && (self.1.is_none() || self.1 == other.1)
+    }
+}

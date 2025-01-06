@@ -1,7 +1,7 @@
 use std::fmt;
 
-use crate::crypto::{self, new_aead_aes_128_gcm, new_aes_128_cm_sha1_80, KeyingMaterial};
 use crate::crypto::{aead_aes_128_gcm, aes_128_cm_sha1_80, SrtpProfile};
+use crate::crypto::{KeyingMaterial, SrtpCrypto};
 
 use super::header::RtpHeader;
 
@@ -30,7 +30,12 @@ pub const SRTP_OVERHEAD: usize = MAX_TAG_LEN;
 
 impl SrtpContext {
     /// Create an SRTP context for the relevant profile using the provided keying material.
-    pub fn new(profile: SrtpProfile, mat: &KeyingMaterial, left: bool) -> Self {
+    pub fn new(
+        crypto: &SrtpCrypto,
+        profile: SrtpProfile,
+        mat: &KeyingMaterial,
+        left: bool,
+    ) -> Self {
         match profile {
             #[cfg(feature = "_internal_test_exports")]
             SrtpProfile::PassThrough => SrtpContext {
@@ -43,7 +48,7 @@ impl SrtpContext {
 
                 let key = SrtpKey::<KEY_LEN, SALT_LEN>::new(mat, left);
 
-                let (rtp, rtcp) = Derived::aes_128_cm_sha1_80(&key);
+                let (rtp, rtcp) = Derived::aes_128_cm_sha1_80(crypto, &key);
 
                 SrtpContext {
                     rtp,
@@ -56,7 +61,7 @@ impl SrtpContext {
 
                 let key = SrtpKey::<KEY_LEN, SALT_LEN>::new(mat, left);
 
-                let (rtp, rtcp) = Derived::aead_aes_128_gcm(&key);
+                let (rtp, rtcp) = Derived::aead_aes_128_gcm(crypto, &key);
 
                 SrtpContext {
                     rtp,
@@ -75,16 +80,18 @@ impl SrtpContext {
         rtcp_salt: [u8; aead_aes_128_gcm::SALT_LEN],
         srtcp_index: u32,
     ) -> Self {
+        let crypto = crate::CryptoProvider::from_feature_flags().srtp_crypto();
+
         Self {
             rtp: Derived::AeadAes128Gcm {
                 salt: rtp_salt,
-                enc: new_aead_aes_128_gcm(rtp_key, true),
-                dec: new_aead_aes_128_gcm(rtp_key, false),
+                enc: crypto.new_aead_aes_128_gcm(rtp_key, true),
+                dec: crypto.new_aead_aes_128_gcm(rtp_key, false),
             },
             rtcp: Derived::AeadAes128Gcm {
                 salt: rtcp_salt,
-                enc: new_aead_aes_128_gcm(rtcp_key, true),
-                dec: new_aead_aes_128_gcm(rtcp_key, false),
+                enc: crypto.new_aead_aes_128_gcm(rtcp_key, true),
+                dec: crypto.new_aead_aes_128_gcm(rtcp_key, false),
             },
             srtcp_index,
         }
@@ -496,7 +503,7 @@ impl<const ML: usize, const SL: usize> SrtpKey<ML, SL> {
         SrtpKey { master, salt }
     }
 
-    fn derive(&self, label: u8, out: &mut [u8]) {
+    fn derive(&self, crypto: &SrtpCrypto, label: u8, out: &mut [u8]) {
         // AEC-CM (128 bits) defined in RFC3711
         assert!(ML == 16, "Only valid for 128 bit master keys");
         assert!(SL <= 14, "Only valid for 128 bit master keys");
@@ -521,7 +528,7 @@ impl<const ML: usize, const SL: usize> SrtpKey<ML, SL> {
             input[14..].copy_from_slice(&round.to_be_bytes()[..]);
 
             // default key derivation function, which uses AES-128 in Counter Mode
-            crypto::srtp_aes_128_ecb_round(&self.master, &input[..], &mut buf[..]);
+            crypto.srtp_aes_128_ecb_round(&self.master, &input[..], &mut buf[..]);
 
             // Copy to output. Even if we get 32 bytes of output with AES 128 ECB, we
             // only use the first 16. That matches the tests in the RFC.
@@ -557,88 +564,90 @@ enum Derived {
 
 impl Derived {
     fn aes_128_cm_sha1_80(
+        crypto: &SrtpCrypto,
         srtp_key: &SrtpKey<{ aes_128_cm_sha1_80::KEY_LEN }, { aes_128_cm_sha1_80::SALT_LEN }>,
     ) -> (Self, Self) {
         use aes_128_cm_sha1_80::*;
 
         // RTP AES Counter
         let mut rtp_aes = [0; KEY_LEN];
-        srtp_key.derive(LABEL_RTP_AES, &mut rtp_aes[..]);
+        srtp_key.derive(crypto, LABEL_RTP_AES, &mut rtp_aes[..]);
 
         // RTP SHA1 HMAC
         let rtp_hmac = {
             let mut hmac = [0; HMAC_KEY_LEN];
-            srtp_key.derive(LABEL_RTP_AUTHENTICATION_KEY, &mut hmac[..]);
+            srtp_key.derive(crypto, LABEL_RTP_AUTHENTICATION_KEY, &mut hmac[..]);
             hmac
         };
 
         // RTP IV SALT
         let mut rtp_salt = [0; SALT_LEN];
-        srtp_key.derive(LABEL_RTP_SALT, &mut rtp_salt[..]);
+        srtp_key.derive(crypto, LABEL_RTP_SALT, &mut rtp_salt[..]);
 
         // RTCP AES Counter
         let mut rtcp_aes = [0; KEY_LEN];
-        srtp_key.derive(LABEL_RTCP_AES, &mut rtcp_aes[..]);
+        srtp_key.derive(crypto, LABEL_RTCP_AES, &mut rtcp_aes[..]);
 
         // RTCP SHA1 HMAC
         let rtcp_hmac = {
             let mut hmac = [0; HMAC_KEY_LEN];
-            srtp_key.derive(LABEL_RTCP_AUTHENTICATION_KEY, &mut hmac[..]);
+            srtp_key.derive(crypto, LABEL_RTCP_AUTHENTICATION_KEY, &mut hmac[..]);
             hmac
         };
 
         // RTCP IV SALT
         let mut rtcp_salt = [0; SALT_LEN];
-        srtp_key.derive(LABEL_RTCP_SALT, &mut rtcp_salt[..]);
+        srtp_key.derive(crypto, LABEL_RTCP_SALT, &mut rtcp_salt[..]);
 
         let rtp = Derived::Aes128CmSha1_80 {
             key: rtp_hmac,
             salt: rtp_salt,
-            enc: new_aes_128_cm_sha1_80(rtp_aes, true),
-            dec: new_aes_128_cm_sha1_80(rtp_aes, false),
+            enc: crypto.new_aes_128_cm_sha1_80(rtp_aes, true),
+            dec: crypto.new_aes_128_cm_sha1_80(rtp_aes, false),
         };
 
         let rtcp = Derived::Aes128CmSha1_80 {
             key: rtcp_hmac,
             salt: rtcp_salt,
-            enc: new_aes_128_cm_sha1_80(rtcp_aes, true),
-            dec: new_aes_128_cm_sha1_80(rtcp_aes, false),
+            enc: crypto.new_aes_128_cm_sha1_80(rtcp_aes, true),
+            dec: crypto.new_aes_128_cm_sha1_80(rtcp_aes, false),
         };
 
         (rtp, rtcp)
     }
 
     fn aead_aes_128_gcm(
+        crypto: &SrtpCrypto,
         srtp_key: &SrtpKey<{ aead_aes_128_gcm::KEY_LEN }, { aead_aes_128_gcm::SALT_LEN }>,
     ) -> (Derived, Derived) {
         use aead_aes_128_gcm::*;
 
         // RTP session key
         let mut rtp_aes = [0; KEY_LEN];
-        srtp_key.derive(LABEL_RTP_AES, &mut rtp_aes[..]);
+        srtp_key.derive(crypto, LABEL_RTP_AES, &mut rtp_aes[..]);
 
         // RTP session salt
         let mut rtp_salt = [0; SALT_LEN];
-        srtp_key.derive(LABEL_RTP_SALT, &mut rtp_salt[..]);
+        srtp_key.derive(crypto, LABEL_RTP_SALT, &mut rtp_salt[..]);
 
         // RTCP session key
         let mut rtcp_aes = [0; KEY_LEN];
-        srtp_key.derive(LABEL_RTCP_AES, &mut rtcp_aes[..]);
+        srtp_key.derive(crypto, LABEL_RTCP_AES, &mut rtcp_aes[..]);
 
         // RTCP session salt
         let mut rtcp_salt = [0; SALT_LEN];
-        srtp_key.derive(LABEL_RTCP_SALT, &mut rtcp_salt[..]);
+        srtp_key.derive(crypto, LABEL_RTCP_SALT, &mut rtcp_salt[..]);
 
         let rtp = Derived::AeadAes128Gcm {
             salt: rtp_salt,
-            enc: new_aead_aes_128_gcm(rtp_aes, true),
-            dec: new_aead_aes_128_gcm(rtp_aes, false),
+            enc: crypto.new_aead_aes_128_gcm(rtp_aes, true),
+            dec: crypto.new_aead_aes_128_gcm(rtp_aes, false),
         };
 
         let rtcp = Derived::AeadAes128Gcm {
             salt: rtcp_salt,
-            enc: new_aead_aes_128_gcm(rtcp_aes, true),
-            dec: new_aead_aes_128_gcm(rtcp_aes, false),
+            enc: crypto.new_aead_aes_128_gcm(rtcp_aes, true),
+            dec: crypto.new_aead_aes_128_gcm(rtcp_aes, false),
         };
 
         (rtp, rtcp)
@@ -679,6 +688,9 @@ mod test {
 
     #[test]
     fn derive_key() {
+        crate::init_crypto_default();
+        let crypto = crate::CryptoProvider::from_feature_flags().srtp_crypto();
+
         // https://tools.ietf.org/html/rfc3711#appendix-B.3
         //
         // Key Derivation Test Vectors.
@@ -697,7 +709,7 @@ mod test {
 
         // aes crypto key
         let mut out = [0_u8; 16];
-        sk.derive(0, &mut out[..]);
+        sk.derive(&crypto, 0, &mut out[..]);
 
         assert_eq!(
             out,
@@ -709,7 +721,7 @@ mod test {
 
         // hmac
         let mut out = [0_u8; 20];
-        sk.derive(1, &mut out[..]);
+        sk.derive(&crypto, 1, &mut out[..]);
 
         assert_eq!(
             out,
@@ -722,7 +734,7 @@ mod test {
 
         // salt
         let mut out = [0_u8; 14];
-        sk.derive(2, &mut out[..]);
+        sk.derive(&crypto, 2, &mut out[..]);
 
         assert_eq!(
             out,
@@ -771,7 +783,9 @@ mod test {
         #[test]
         fn unprotect_rtcp() {
             let key_mat = KeyingMaterial::new(MAT.to_vec());
-            let mut ctx_rx = SrtpContext::new(SrtpProfile::Aes128CmSha1_80, &key_mat, true);
+            let crypto = crate::CryptoProvider::from_feature_flags().srtp_crypto();
+            let mut ctx_rx =
+                SrtpContext::new(&crypto, SrtpProfile::Aes128CmSha1_80, &key_mat, true);
             ctx_rx.srtcp_index = 1;
 
             let decrypted = ctx_rx.unprotect_rtcp(SRTCP).unwrap();
@@ -988,6 +1002,7 @@ mod test {
         }
 
         fn make_rtp_context() -> SrtpContext {
+            crate::init_crypto_default();
             SrtpContext::new_aead_aes_128_gcm(
                 rfc7714::KEY,
                 rfc7714::SALT,
@@ -998,6 +1013,7 @@ mod test {
         }
 
         fn make_rtcp_context() -> SrtpContext {
+            crate::init_crypto_default();
             SrtpContext::new_aead_aes_128_gcm(
                 rfc7714::KEY,
                 rfc7714::SALT,

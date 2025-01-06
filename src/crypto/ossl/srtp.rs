@@ -12,7 +12,7 @@ impl SrtpCryptoImpl for OsslSrtpCryptoImpl {
     type Aes128CmSha1_80 = OsslAes128CmSha1_80;
     type AeadAes128Gcm = OsslAeadAes128Gcm;
 
-    fn srtp_aes_128_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) {
+    fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
         let mut aes =
             Crypter::new(Cipher::aes_128_ecb(), Mode::Encrypt, key, None).expect("AES deriver");
 

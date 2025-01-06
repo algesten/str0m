@@ -8,6 +8,7 @@ use crate::format::CodecConfig;
 use crate::io::{Id, DATAGRAM_MTU};
 use crate::packet::{DepacketizingBuffer, Payloader, RtpMeta};
 use crate::rtp_::ExtensionMap;
+use crate::rtp_::MidRid;
 use crate::rtp_::SRTP_BLOCK_SIZE;
 use crate::rtp_::SRTP_OVERHEAD;
 use crate::RtcError;
@@ -390,7 +391,9 @@ impl Media {
 
         let is_audio = self.kind.is_audio();
 
-        let stream = streams.stream_tx_by_mid_rid(self.mid, *rid);
+        let midrid = MidRid(self.mid, *rid);
+
+        let stream = streams.stream_tx_by_midrid(midrid);
 
         let Some(stream) = stream else {
             return Err(RtcError::NoSenderSource);

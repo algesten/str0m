@@ -1,16 +1,83 @@
 #![allow(unreachable_patterns)]
 
+use once_cell::sync::OnceCell;
+use std::fmt;
 use std::io;
 use thiserror::Error;
+
+/// Crypto provider setting.
+///
+/// The provider implementations will need turning on using the feature flags:
+///
+/// * **openssl** (defaults to on) for crypto backed by OpenSSL.
+/// * **wincrypto** for crypto backed by windows crypto.
+///
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CryptoProvider {
+    /// OpenSSL (the default)
+    ///
+    /// Requires feature flag **openssl**.
+    OpenSsl,
+    /// Windows SChannel + CNG implementation of cryptographic functions.
+    ///
+    /// Requires feature flag **wincrypto**.
+    WinCrypto,
+}
+
+static PROCESS_DEFAULT: OnceCell<CryptoProvider> = OnceCell::new();
+
+impl CryptoProvider {
+    pub(crate) fn srtp_crypto(&self) -> SrtpCrypto {
+        match self {
+            CryptoProvider::OpenSsl => SrtpCrypto::new_openssl(),
+            CryptoProvider::WinCrypto => SrtpCrypto::new_wincrypto(),
+        }
+    }
+
+    /// Install the selected crypto provider as default for the process.
+    ///
+    /// This makes any new instance of [`Rtc`][crate::Rtc] pick up this default automatically.
+    ///
+    /// The process default can only be installed once, the second time will panic. Libraries
+    /// should never install a process default.
+    pub fn install_process_default(&self) {
+        PROCESS_DEFAULT
+            .set(*self)
+            .expect("CryptoProvider::install_process_default() called once");
+    }
+
+    /// Can be repeated in the same process.
+    #[doc(hidden)]
+    pub fn __test_install_process_default(&self) {
+        let _ = PROCESS_DEFAULT.set(*self);
+    }
+
+    /// Get a possible crypto backend using feature flags.
+    ///
+    /// Favors **openssl** if enabled. Panics if no crypto backend is available.
+    pub fn from_feature_flags() -> CryptoProvider {
+        if cfg!(feature = "openssl") {
+            return CryptoProvider::OpenSsl;
+        } else if cfg!(all(feature = "wincrypto", target_os = "windows")) {
+            return CryptoProvider::WinCrypto;
+        }
+        panic!("No crypto backend enabled");
+    }
+
+    pub(crate) fn process_default() -> Option<CryptoProvider> {
+        PROCESS_DEFAULT.get().cloned()
+    }
+}
 
 #[cfg(feature = "openssl")]
 mod ossl;
 
-#[cfg(feature = "wincrypto")]
-pub mod wincrypto;
+#[cfg(all(feature = "wincrypto", target_os = "windows"))]
+mod wincrypto;
 
 mod dtls;
-pub use dtls::{DtlsCert, DtlsEvent, DtlsImpl};
+pub use dtls::DtlsCert;
+pub(crate) use dtls::{DtlsEvent, DtlsImpl};
 
 mod finger;
 pub use finger::Fingerprint;
@@ -19,13 +86,7 @@ mod keying;
 pub use keying::KeyingMaterial;
 
 mod srtp;
-pub use srtp::{aead_aes_128_gcm, aes_128_cm_sha1_80, new_aead_aes_128_gcm};
-pub use srtp::{new_aes_128_cm_sha1_80, srtp_aes_128_ecb_round, SrtpProfile};
-
-#[cfg(all(feature = "openssl", feature = "wincrypto"))]
-compile_error!("features `openssl` and `wincrypto` are mutually exclusive");
-#[cfg(not(any(feature = "openssl", feature = "wincrypto")))]
-compile_error!("either `openssl` or `wincrypto` must be enabled");
+pub use srtp::{aead_aes_128_gcm, aes_128_cm_sha1_80, SrtpCrypto, SrtpProfile};
 
 /// SHA1 HMAC as used for STUN and older SRTP.
 /// If sha1 feature is enabled, it uses `rust-crypto` crate.
@@ -79,10 +140,19 @@ pub enum CryptoError {
 
     /// Some error from OpenSSL layer (used for DTLS).
     #[error("{0}")]
-    #[cfg(feature = "wincrypto")]
+    #[cfg(all(feature = "wincrypto", target_os = "windows"))]
     WinCrypto(#[from] wincrypto::WinCryptoError),
 
     /// Other IO errors.
     #[error("{0}")]
     Io(#[from] io::Error),
+}
+
+impl fmt::Display for CryptoProvider {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CryptoProvider::OpenSsl => write!(f, "openssl"),
+            CryptoProvider::WinCrypto => write!(f, "wincrypto"),
+        }
+    }
 }
