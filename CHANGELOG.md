@@ -21,6 +21,7 @@
   * Make start of talkspurt information available for sample api #559
   * Do not disconnect whilst we still check new candidates #489
   * Ensure lexical ordering of SDP-formatted candidates follows priority #557
+  * Limit TWCC iteration with packet status count #606
 
 # 0.6.2
 

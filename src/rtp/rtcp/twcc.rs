@@ -44,8 +44,11 @@ impl Twcc {
         let millis = self.reference_time as u64 * 64;
         let time_base = time_zero + Duration::from_millis(millis);
         let base_seq = extend_u16(Some(*extend_from), self.base_seq);
+        let last_seq = base_seq + self.status_count as u64;
+
         TwccIter {
             base_seq,
+            last_seq,
             time_base,
             index: 0,
             twcc: self,
@@ -55,6 +58,7 @@ impl Twcc {
 
 pub struct TwccIter {
     base_seq: u64,
+    last_seq: u64,
     time_base: Instant,
     index: usize,
     twcc: Twcc,
@@ -64,6 +68,12 @@ impl Iterator for TwccIter {
     type Item = (SeqNo, PacketStatus, Option<Instant>);
 
     fn next(&mut self) -> Option<Self::Item> {
+        let seq: SeqNo = (self.base_seq + self.index as u64).into();
+
+        if *seq == self.last_seq {
+            return None;
+        }
+
         let head = self.twcc.chunks.front()?;
 
         let (status, amount) = match head {
@@ -114,7 +124,6 @@ impl Iterator for TwccIter {
         if let Some(new_timebase) = instant {
             self.time_base = new_timebase;
         }
-        let seq: SeqNo = (self.base_seq + self.index as u64).into();
 
         self.index += 1;
         if self.index == amount as usize {
@@ -1921,6 +1930,25 @@ mod test {
         let result: Vec<_> = twcc.into_iter(now, 1.into()).collect();
 
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_twcc_iter_limited_with_status_count() {
+        let status_count = 3;
+
+        // [(1, NotReceived), (2, ReceivedSmallDelta), (3, ReceivedSmallDelta)]
+        let n_reported = Twcc {
+            sender_ssrc: 1.into(),
+            ssrc: 2.into(),
+            base_seq: 1,
+            status_count,
+            reference_time: 406753,
+            feedback_count: 1,
+            chunks: VecDeque::from(vec![VectorDouble(0b00_00_01_01_00_00_00_00, 7)]),
+            delta: VecDeque::from(vec![Small(236), Small(1)]),
+        }.into_iter(Instant::now(), 1.into()).collect::<Vec<_>>().len();
+
+        assert_eq!(n_reported, status_count as usize);
     }
 
     #[test]
