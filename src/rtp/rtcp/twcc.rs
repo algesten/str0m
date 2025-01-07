@@ -1937,7 +1937,7 @@ mod test {
         let status_count = 3;
 
         // [(1, NotReceived), (2, ReceivedSmallDelta), (3, ReceivedSmallDelta)]
-        let n_reported = Twcc {
+        let twcc_iter_count = Twcc {
             sender_ssrc: 1.into(),
             ssrc: 2.into(),
             base_seq: 1,
@@ -1946,9 +1946,11 @@ mod test {
             feedback_count: 1,
             chunks: VecDeque::from(vec![VectorDouble(0b00_00_01_01_00_00_00_00, 7)]),
             delta: VecDeque::from(vec![Small(236), Small(1)]),
-        }.into_iter(Instant::now(), 1.into()).collect::<Vec<_>>().len();
+        }
+        .into_iter(Instant::now(), 1.into())
+        .count();
 
-        assert_eq!(n_reported, status_count as usize);
+        assert_eq!(twcc_iter_count, status_count as usize);
     }
 
     #[test]
