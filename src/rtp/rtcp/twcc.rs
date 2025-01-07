@@ -1145,6 +1145,12 @@ impl TwccSendRegister {
             if r.seq != seq {
                 return false;
             }
+
+            // Reports can double count. We are only interested in the first ever report.
+            if r.recv_report.is_some() {
+                return true;
+            }
+
             let recv_report = TwccRecvReport {
                 local_recv_time: now,
                 remote_recv_time: instant,
