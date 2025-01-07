@@ -227,7 +227,7 @@ pub struct TwccRecvRegister {
     ///
     /// Once the queue has some content, we will always keep at least one entry to "remember" for the
     /// next report.
-    queue: VecDeque<Receiption>,
+    queue: VecDeque<Receipt>,
 
     /// Index into queue from where we start reporting on next build_report().
     report_from: usize,
@@ -252,7 +252,7 @@ pub struct TwccRecvRegister {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Receiption {
+struct Receipt {
     seq: SeqNo,
     time: Instant,
 }
@@ -294,7 +294,7 @@ impl TwccRecvRegister {
                     }
                 }
 
-                self.queue.insert(idx, Receiption { seq, time });
+                self.queue.insert(idx, Receipt { seq, time });
 
                 if idx < self.report_from {
                     self.report_from = idx;
@@ -500,7 +500,7 @@ impl TwccRecvRegister {
 /// Interims are deltas between `Receiption` which is an intermediary format before
 /// we populate the Twcc report.
 fn build_interims(
-    queue: &VecDeque<Receiption>,
+    queue: &VecDeque<Receipt>,
     report_from: usize,
     base_seq: SeqNo,
     base_time: Instant,
