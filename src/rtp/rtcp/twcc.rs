@@ -833,6 +833,15 @@ pub enum PacketStatus {
     Unknown = 0b11,
 }
 
+impl PacketStatus {
+    fn is_received(&self) -> bool {
+        matches!(
+            self,
+            PacketStatus::ReceivedSmallDelta | PacketStatus::ReceivedLargeOrNegativeDelta
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delta {
     Small(u8),
@@ -1130,7 +1139,7 @@ impl TwccSendRegister {
         let mut iter = twcc
             .into_iter(time_zero, self.last_registered)
             .skip_while(|(seq, _, _)| seq < &head_seq);
-        let (first_seq_no, _, first_instant) = iter.next()?;
+        let (first_seq_no, first_status, first_instant) = iter.next()?;
 
         let mut iter2 = self.queue.iter_mut().skip_while(|r| *r.seq < *first_seq_no);
         let first_record = iter2.next()?;
@@ -1168,20 +1177,26 @@ impl TwccSendRegister {
 
         let mut problematic_seq = None;
 
-        if !update(
-            now,
-            first_record,
-            first_seq_no,
-            first_instant,
-            apply_report_counter,
-        ) {
+        if first_status.is_received()
+            && !update(
+                now,
+                first_record,
+                first_seq_no,
+                first_instant,
+                apply_report_counter,
+            )
+        {
             problematic_seq = Some((first_record.seq, first_seq_no));
         }
 
         let mut last_seq_no = first_seq_no;
-        for ((seq, _, instant), record) in iter.zip(iter2) {
+        for ((seq, status, instant), record) in iter.zip(iter2) {
             if problematic_seq.is_some() {
                 break;
+            }
+
+            if !status.is_received() {
+                continue;
             }
 
             if !update(
@@ -2101,5 +2116,59 @@ mod test {
         }
 
         assert_eq!(reg.loss(), Some(4.0 / 10.0));
+    }
+
+    #[test]
+    fn no_duplicates_when_reordered() {
+        let now = Instant::now();
+        let mut twcc_gen = TwccRecvRegister::new(1000);
+        let mut twcc_handler = TwccSendRegister::new(1000);
+
+        twcc_handler.register_seq(1.into(), now + Duration::from_millis(1), 0);
+        twcc_handler.register_seq(2.into(), now + Duration::from_millis(2), 0);
+        twcc_handler.register_seq(3.into(), now + Duration::from_millis(3), 0);
+        twcc_handler.register_seq(4.into(), now + Duration::from_millis(4), 0);
+
+        {
+            let acked_packets = twcc_handler
+                .apply_report(
+                    {
+                        // 3rd packet is delayed
+                        twcc_gen.update_seq(1.into(), now + Duration::from_millis(5));
+                        twcc_gen.update_seq(2.into(), now + Duration::from_millis(6));
+                        twcc_gen.update_seq(4.into(), now + Duration::from_millis(7));
+                        twcc_gen.build_report(10_000).unwrap()
+                    },
+                    now + Duration::from_millis(8),
+                )
+                .unwrap()
+                .filter_map(|sr| sr.remote_recv_time().map(|_| sr.seq.as_u16()))
+                .collect::<Vec<_>>();
+
+            assert_eq!(acked_packets, [1, 2, 4]);
+        }
+
+        twcc_handler.register_seq(5.into(), now + Duration::from_millis(9), 0);
+        twcc_handler.register_seq(6.into(), now + Duration::from_millis(10), 0);
+        twcc_handler.register_seq(7.into(), now + Duration::from_millis(11), 0);
+
+        {
+            let acked_packets = twcc_handler
+                .apply_report(
+                    {
+                        // So the receipt order is 1, 2, 4, 3, 7
+                        twcc_gen.update_seq(3.into(), now + Duration::from_millis(12));
+                        twcc_gen.update_seq(7.into(), now + Duration::from_millis(13));
+                        twcc_gen.build_report(10_000).unwrap()
+                    },
+                    now + Duration::from_millis(14),
+                )
+                .unwrap()
+                .filter_map(|sr| sr.remote_recv_time().map(|_| sr.seq.as_u16()))
+                .collect::<Vec<_>>();
+
+            // 4 was already returned previously and [5, 6] are not received atm
+            assert_eq!(acked_packets, [3, 7]);
+        }
     }
 }
