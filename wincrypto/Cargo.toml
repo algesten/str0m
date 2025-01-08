@@ -9,4 +9,4 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 thiserror = { version = "1.0.38" }
 tracing = "0.1.37"
-windows = { version = "0.58", features=["Win32_Security_Cryptography", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials",]}
+windows = { version = "0.58", features=["Win32_Security_Cryptography", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_System_Rpc",]}

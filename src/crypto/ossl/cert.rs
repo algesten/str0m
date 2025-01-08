@@ -2,13 +2,14 @@ use std::time::SystemTime;
 
 use openssl::asn1::{Asn1Integer, Asn1Time, Asn1Type};
 use openssl::bn::BigNum;
+use openssl::ec::{EcGroup, EcKey};
 use openssl::hash::MessageDigest;
 use openssl::nid::Nid;
 use openssl::pkey::{PKey, Private};
 use openssl::rsa::Rsa;
 use openssl::x509::{X509Name, X509};
 
-use crate::crypto::dtls::DTLS_CERT_IDENTITY;
+use crate::crypto::dtls::{DtlsCertOptions, DtlsPKeyType};
 use crate::crypto::Fingerprint;
 
 use super::CryptoError;
@@ -25,16 +26,26 @@ pub struct OsslDtlsCert {
 
 impl OsslDtlsCert {
     /// Creates a new (self signed) DTLS certificate.
-    pub fn new() -> Self {
-        Self::self_signed().expect("create dtls cert")
+    pub fn new(options: DtlsCertOptions) -> Self {
+        Self::self_signed(options).expect("create dtls cert")
     }
 
     // The libWebRTC code we try to match is at:
     // https://webrtc.googlesource.com/src/+/1568f1b1330f94494197696fe235094e6293b258/rtc_base/openssl_certificate.cc#58
-    fn self_signed() -> Result<Self, CryptoError> {
+    fn self_signed(options: DtlsCertOptions) -> Result<Self, CryptoError> {
         let f4 = BigNum::from_u32(RSA_F4).unwrap();
-        let key = Rsa::generate_with_e(2048, &f4)?;
-        let pkey = PKey::from_rsa(key)?;
+        let pkey = match options.pkey_type {
+            DtlsPKeyType::Rsa => {
+                let key = Rsa::generate_with_e(2048, &f4)?;
+                PKey::from_rsa(key)?
+            }
+            DtlsPKeyType::EcDsa => {
+                let nid = Nid::X9_62_PRIME256V1; // NIST P-256 curve
+                let group = EcGroup::from_curve_name(nid)?;
+                let key = EcKey::generate(&group)?;
+                PKey::from_ec_key(key)?
+            }
+        };
 
         let mut x509b = X509::builder()?;
         x509b.set_version(2)?; // X509.V3 (zero indexed)
@@ -64,7 +75,7 @@ impl OsslDtlsCert {
         let mut nameb = X509Name::builder()?;
         nameb.append_entry_by_nid_with_type(
             Nid::COMMONNAME,
-            DTLS_CERT_IDENTITY,
+            options.common_name.as_str(),
             Asn1Type::UTF8STRING,
         )?;
 
@@ -73,7 +84,7 @@ impl OsslDtlsCert {
         x509b.set_subject_name(&name)?;
         x509b.set_issuer_name(&name)?;
 
-        x509b.sign(&pkey, MessageDigest::sha1())?;
+        x509b.sign(&pkey, MessageDigest::sha256())?;
         let x509 = x509b.build();
 
         Ok(OsslDtlsCert { pkey, x509 })

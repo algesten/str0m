@@ -1,6 +1,6 @@
 use super::CryptoError;
 use super::WinCryptoDtls;
-use crate::crypto::dtls::DTLS_CERT_IDENTITY;
+use crate::crypto::dtls::{DtlsCertOptions, DtlsPKeyType};
 use crate::crypto::Fingerprint;
 use std::sync::Arc;
 use str0m_wincrypto::WinCryptoError;
@@ -11,10 +11,18 @@ pub struct WinCryptoDtlsCert {
 }
 
 impl WinCryptoDtlsCert {
-    pub fn new() -> Self {
+    pub fn new(options: DtlsCertOptions) -> Self {
+        let use_ec_dsa_keys = match options.pkey_type {
+            DtlsPKeyType::Rsa => false,
+            DtlsPKeyType::EcDsa => true,
+        };
+
         let certificate = Arc::new(
-            str0m_wincrypto::Certificate::new_self_signed(&format!("CN={}", DTLS_CERT_IDENTITY))
-                .expect("Failed to create self-signed certificate"),
+            str0m_wincrypto::Certificate::new_self_signed(
+                use_ec_dsa_keys,
+                &format!("CN={}", options.common_name),
+            )
+            .expect("Failed to create self-signed certificate"),
         );
         Self { certificate }
     }

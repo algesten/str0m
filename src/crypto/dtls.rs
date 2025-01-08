@@ -15,7 +15,7 @@ use super::{CryptoError, Fingerprint, KeyingMaterial, SrtpProfile};
 //
 // Pion also sets this to "WebRTC", maybe for compatibility reasons.
 // https://github.com/pion/webrtc/blob/eed2bb2d3b9f204f9de1cd7e1046ca5d652778d2/constants.go#L31
-pub const DTLS_CERT_IDENTITY: &str = "WebRTC";
+const DTLS_CERT_IDENTITY: &str = "WebRTC";
 
 /// Events arising from a [`Dtls`] instance.
 pub enum DtlsEvent {
@@ -32,6 +32,36 @@ pub enum DtlsEvent {
 
     /// Decrypted data from incoming DTLS traffic.
     Data(Vec<u8>),
+}
+
+/// Defines the type of key pair to generate for the DTLS certificate.
+#[derive(Clone, Debug, Default)]
+pub enum DtlsPKeyType {
+    /// Generate an RSA key pair
+    /// TODO: Consider changing the default to EC-DSA which is the behavior in WebRTC since 2016.
+    /// See <https://developer.chrome.com/blog/webrtc-ecdsa/> for detailed rationale.
+    #[default]
+    Rsa,
+    /// Generate an EC-DSA key pair using the NIST P-256 curve
+    EcDsa,
+}
+
+/// Controls certificate generation options.
+#[derive(Clone, Debug)]
+pub struct DtlsCertOptions {
+    /// The common name for the certificate.
+    pub common_name: String,
+    /// The type of key to generate.
+    pub pkey_type: DtlsPKeyType,
+}
+
+impl Default for DtlsCertOptions {
+    fn default() -> Self {
+        Self {
+            common_name: DTLS_CERT_IDENTITY.into(),
+            pkey_type: Default::default(),
+        }
+    }
 }
 
 /// Certificate used for DTLS.
@@ -59,12 +89,12 @@ impl DtlsCert {
     ///
     /// * **openssl** (defaults to on) for crypto backed by OpenSSL.
     /// * **wincrypto** for crypto backed by windows crypto.
-    pub fn new(p: CryptoProvider) -> Self {
+    pub fn new(p: CryptoProvider, dtls_cert_options: DtlsCertOptions) -> Self {
         let inner = match p {
             CryptoProvider::OpenSsl => {
                 #[cfg(feature = "openssl")]
                 {
-                    let cert = super::ossl::OsslDtlsCert::new();
+                    let cert = super::ossl::OsslDtlsCert::new(dtls_cert_options);
                     DtlsCertInner::OpenSsl(cert)
                 }
                 #[cfg(not(feature = "openssl"))]
@@ -75,7 +105,7 @@ impl DtlsCert {
             CryptoProvider::WinCrypto => {
                 #[cfg(all(feature = "wincrypto", target_os = "windows"))]
                 {
-                    let cert = super::wincrypto::WinCryptoDtlsCert::new();
+                    let cert = super::wincrypto::WinCryptoDtlsCert::new(dtls_cert_options);
                     DtlsCertInner::WinCrypto(cert)
                 }
                 #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]
