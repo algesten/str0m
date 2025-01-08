@@ -517,14 +517,10 @@ impl Session {
         for fb in RtcpFb::from_rtcp(self.feedback_rx.drain(..)) {
             if let RtcpFb::Twcc(twcc) = fb {
                 trace!("Handle TWCC: {:?}", twcc);
-                let range = self.twcc_tx_register.apply_report(twcc, now);
+                let maybe_records = self.twcc_tx_register.apply_report(twcc, now);
 
-                if let Some(bwe) = &mut self.bwe {
-                    let records = range.and_then(|range| self.twcc_tx_register.send_records(range));
-
-                    if let Some(records) = records {
-                        bwe.update(records, now);
-                    }
+                if let (Some(maybe_records), Some(bwe)) = (maybe_records, &mut self.bwe) {
+                    bwe.update(maybe_records, now);
                 }
                 need_configure_pacer = true;
 
