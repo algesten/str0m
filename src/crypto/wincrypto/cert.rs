@@ -13,8 +13,8 @@ pub struct WinCryptoDtlsCert {
 impl WinCryptoDtlsCert {
     pub fn new(options: DtlsCertOptions) -> Self {
         let use_ec_dsa_keys = match options.pkey_type {
-            DtlsPKeyType::Rsa => false,
-            DtlsPKeyType::EcDsa => true,
+            DtlsPKeyType::Rsa2048 => false,
+            DtlsPKeyType::EcDsaP256 => true,
         };
 
         let certificate = Arc::new(

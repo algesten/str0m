@@ -626,8 +626,7 @@ use crypto::CryptoProvider;
 use crypto::Fingerprint;
 
 mod dtls;
-use dtls::{Dtls, DtlsCert, DtlsEvent};
-pub use dtls::{DtlsCertOptions, DtlsPKeyType};
+use dtls::{Dtls, DtlsCert, DtlsCertOptions, DtlsEvent};
 
 #[path = "ice/mod.rs"]
 mod ice_;
@@ -637,7 +636,7 @@ pub use ice_::{Candidate, CandidateKind, IceConnectionState, IceCreds};
 
 /// Additional configuration.
 pub mod config {
-    pub use super::crypto::{CryptoProvider, DtlsCert, DtlsCertOptions, Fingerprint};
+    pub use super::crypto::{CryptoProvider, DtlsCert, DtlsCertOptions, DtlsPKeyType, Fingerprint};
 }
 
 /// Low level ICE access.
@@ -1958,60 +1957,47 @@ impl RtcConfig {
     }
 
     /// Returns the configured DTLS certificate configuration.
+    ///
+    /// Defaults to a configuration similar to libwebrtc:
+    /// ```
+    /// # use str0m::DtlsCertConfig;
+    /// # use str0m::config::{DtlsCertOptions, DtlsPKeyType};
+    ///
+    /// DtlsCertConfig::Options(DtlsCertOptions {
+    ///     common_name: "WebRTC".into(),
+    ///     pkey_type: DtlsPKeyType::EcDsaP256,
+    /// });
+    /// ```
     pub fn dtls_cert_config(&self) -> &DtlsCertConfig {
         &self.dtls_cert_config
     }
 
     /// Set the DTLS certificate configuration for certificate generation.
-    pub fn set_dtls_cert_config(mut self, dtls_cert_config: DtlsCertConfig) -> Self {
-        self.dtls_cert_config = dtls_cert_config;
-        self
-    }
-
-    /// Get the configured DTLS certificate, if set.
     ///
-    /// Returns [`None`] if no DTLS certificate is set. In such cases,
-    /// the certificate will be created on build and you can use the
-    /// direct API on an [`Rtc`] instance to obtain the local
-    /// DTLS fingerprint.
+    /// Setting this permits you to assign a Pregenerated certificate, or
+    /// options for certificate generation, such as signing key type, and
+    /// subject name.
+    ///
+    /// If a Pregenerated certificate is set, this locks the `crypto_provider()`
+    /// setting to the [`CryptoProvider`], for the DTLS certificate.
     ///
     /// ```
-    /// # #[cfg(feature = "openssl")] {
-    /// # use str0m::RtcConfig;
-    /// let fingerprint = RtcConfig::default()
-    ///     .build()
-    ///     .direct_api()
-    ///     .local_dtls_fingerprint();
-    /// # }
-    /// ```
-    pub fn dtls_cert(&self) -> Option<&DtlsCert> {
-        if let DtlsCertConfig::PregeneratedCert(ref cert) = self.dtls_cert_config {
-            Some(cert)
-        } else {
-            None
-        }
-    }
-
-    /// Set the DTLS certificate for secure communication.
+    /// # use str0m::{DtlsCertConfig, RtcConfig};
+    /// # use str0m::config::{DtlsCertOptions, DtlsPKeyType};
     ///
-    /// Generating a certificate can be a time-consuming process.
-    /// Use this API to reuse a previously created [`DtlsCert`] if available.
-    ///
-    /// Setting this locks the `crypto_provider()` setting to the [`CryptoProvider`],
-    /// for the DTLS certificate.
-    ///
-    /// ```
-    /// # use str0m::RtcConfig;
-    /// # use str0m::config::{DtlsCert, DtlsCertOptions, CryptoProvider};
-    ///
-    /// let dtls_cert = DtlsCert::new(CryptoProvider::OpenSsl, DtlsCertOptions::default());
+    /// let dtls_cert_config = DtlsCertConfig::Options(DtlsCertOptions {
+    ///     common_name: "Clark Kent".into(),
+    ///     pkey_type: DtlsPKeyType::EcDsaP256,
+    /// });
     ///
     /// let rtc_config = RtcConfig::default()
-    ///     .set_dtls_cert(dtls_cert);
+    ///     .set_dtls_cert_config(dtls_cert_config);
     /// ```
-    pub fn set_dtls_cert(mut self, dtls_cert: DtlsCert) -> Self {
-        self.crypto_provider = dtls_cert.crypto_provider();
-        self.dtls_cert_config = DtlsCertConfig::PregeneratedCert(dtls_cert);
+    pub fn set_dtls_cert_config(mut self, dtls_cert_config: DtlsCertConfig) -> Self {
+        if let DtlsCertConfig::PregeneratedCert(ref cert) = dtls_cert_config {
+            self.crypto_provider = cert.crypto_provider();
+        }
+        self.dtls_cert_config = dtls_cert_config;
         self
     }
 

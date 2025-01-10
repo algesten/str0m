@@ -38,12 +38,10 @@ pub enum DtlsEvent {
 #[derive(Clone, Debug, Default)]
 pub enum DtlsPKeyType {
     /// Generate an RSA key pair
-    /// TODO: Consider changing the default to EC-DSA which is the behavior in WebRTC since 2016.
-    /// See <https://developer.chrome.com/blog/webrtc-ecdsa/> for detailed rationale.
-    #[default]
-    Rsa,
+    Rsa2048,
     /// Generate an EC-DSA key pair using the NIST P-256 curve
-    EcDsa,
+    #[default]
+    EcDsaP256,
 }
 
 /// Controls certificate generation options.
@@ -89,12 +87,12 @@ impl DtlsCert {
     ///
     /// * **openssl** (defaults to on) for crypto backed by OpenSSL.
     /// * **wincrypto** for crypto backed by windows crypto.
-    pub fn new(p: CryptoProvider, dtls_cert_options: DtlsCertOptions) -> Self {
+    pub fn new(p: CryptoProvider, opts: DtlsCertOptions) -> Self {
         let inner = match p {
             CryptoProvider::OpenSsl => {
                 #[cfg(feature = "openssl")]
                 {
-                    let cert = super::ossl::OsslDtlsCert::new(dtls_cert_options);
+                    let cert = super::ossl::OsslDtlsCert::new(opts);
                     DtlsCertInner::OpenSsl(cert)
                 }
                 #[cfg(not(feature = "openssl"))]
@@ -105,7 +103,7 @@ impl DtlsCert {
             CryptoProvider::WinCrypto => {
                 #[cfg(all(feature = "wincrypto", target_os = "windows"))]
                 {
-                    let cert = super::wincrypto::WinCryptoDtlsCert::new(dtls_cert_options);
+                    let cert = super::wincrypto::WinCryptoDtlsCert::new(opts);
                     DtlsCertInner::WinCrypto(cert)
                 }
                 #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]

@@ -35,11 +35,11 @@ impl OsslDtlsCert {
     fn self_signed(options: DtlsCertOptions) -> Result<Self, CryptoError> {
         let f4 = BigNum::from_u32(RSA_F4).unwrap();
         let pkey = match options.pkey_type {
-            DtlsPKeyType::Rsa => {
+            DtlsPKeyType::Rsa2048 => {
                 let key = Rsa::generate_with_e(2048, &f4)?;
                 PKey::from_rsa(key)?
             }
-            DtlsPKeyType::EcDsa => {
+            DtlsPKeyType::EcDsaP256 => {
                 let nid = Nid::X9_62_PRIME256V1; // NIST P-256 curve
                 let group = EcGroup::from_curve_name(nid)?;
                 let key = EcKey::generate(&group)?;

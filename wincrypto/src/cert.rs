@@ -216,8 +216,7 @@ impl Drop for Certificate {
 mod tests {
     use std::ffi::CStr;
     use windows::Win32::Security::Cryptography::{
-        szOID_ECC_PUBLIC_KEY, szOID_RSA_RSA, CertNameToStrA, CERT_NAME_ISSUER_FLAG,
-        CERT_NAME_SIMPLE_DISPLAY_TYPE, CERT_X500_NAME_STR, X509_ASN_ENCODING,
+        szOID_ECC_PUBLIC_KEY, szOID_RSA_RSA, CertNameToStrA, CERT_X500_NAME_STR, X509_ASN_ENCODING,
     };
 
     #[test]
