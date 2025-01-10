@@ -124,8 +124,7 @@ impl Dtls {
     pub fn set_as_client(&mut self, active: bool) -> Result<(), WinCryptoError> {
         self.is_client = Some(active);
 
-        let mut cert_contexts = [self.cert.0];
-
+        let mut cert_contexts = [self.cert.context()];
         let schannel_cred = SCHANNEL_CRED {
             dwVersion: SCHANNEL_CRED_VERSION,
             hRootStore: windows::Win32::Security::Cryptography::HCERTSTORE(std::ptr::null_mut()),
@@ -234,21 +233,21 @@ impl Dtls {
         let mut output = vec![0u8; header_size + trailer_size + message_size];
         output[header_size..header_size + message_size].copy_from_slice(data);
 
-        let sec_buffers = [
+        let mut sec_buffers = [
             SecBuffer {
                 BufferType: SECBUFFER_STREAM_HEADER,
                 cbBuffer: header_size as u32,
-                pvBuffer: &output[0] as *const _ as *mut _,
+                pvBuffer: output[0..].as_mut_ptr() as *mut _,
             },
             SecBuffer {
                 BufferType: SECBUFFER_DATA,
                 cbBuffer: message_size as u32,
-                pvBuffer: &output[header_size] as *const _ as *mut _,
+                pvBuffer: output[header_size..].as_mut_ptr() as *mut _,
             },
             SecBuffer {
                 BufferType: SECBUFFER_STREAM_TRAILER,
                 cbBuffer: trailer_size as u32,
-                pvBuffer: &output[header_size + message_size] as *const _ as *mut _,
+                pvBuffer: output[header_size + message_size..].as_mut_ptr() as *mut _,
             },
             SecBuffer {
                 cbBuffer: 0,
@@ -259,7 +258,7 @@ impl Dtls {
         let sec_buffer_desc = SecBufferDesc {
             ulVersion: SECBUFFER_VERSION,
             cBuffers: 4,
-            pBuffers: &sec_buffers[0] as *const _ as *mut _,
+            pBuffers: sec_buffers.as_mut_ptr() as *mut _,
         };
 
         // SAFETY: The references passed are all borrow checked. However,
@@ -310,38 +309,38 @@ impl Dtls {
         let in_buffer_desc = match datagram {
             Some(datagram) => {
                 buffers[2].cbBuffer = datagram.len() as u32;
-                buffers[2].pvBuffer = datagram.as_ptr() as *mut _;
+                buffers[2].pvBuffer = datagram as *const _ as *mut _;
 
                 SecBufferDesc {
                     ulVersion: SECBUFFER_VERSION,
                     cBuffers: buffers.len() as u32,
-                    pBuffers: &buffers[0] as *const _ as *mut _,
+                    pBuffers: buffers.as_mut_ptr() as *mut _,
                 }
             }
             None => SecBufferDesc {
                 ulVersion: SECBUFFER_VERSION,
                 cBuffers: 2,
-                pBuffers: &buffers[0] as *const _ as *mut _,
+                pBuffers: buffers.as_mut_ptr() as *mut _,
             },
         };
 
-        let token_buffer = [0u8; DATAGRAM_MTU];
-        let alert_buffer = [0u8; DATAGRAM_MTU];
-        let out_buffers = [
+        let mut token_buffer = [0u8; DATAGRAM_MTU];
+        let mut alert_buffer = [0u8; DATAGRAM_MTU];
+        let mut out_buffers = [
             SecBuffer {
                 cbBuffer: token_buffer.len() as u32,
                 BufferType: SECBUFFER_TOKEN,
-                pvBuffer: &token_buffer as *const _ as *mut _,
+                pvBuffer: token_buffer.as_mut_ptr() as *mut _,
             },
             SecBuffer {
                 cbBuffer: alert_buffer.len() as u32,
                 BufferType: SECBUFFER_ALERT,
-                pvBuffer: &alert_buffer as *const _ as *mut _,
+                pvBuffer: alert_buffer.as_mut_ptr() as *mut _,
             },
         ];
         let mut out_buffer_desc = SecBufferDesc {
             cBuffers: out_buffers.len() as u32,
-            pBuffers: &out_buffers[0] as *const _ as *mut _,
+            pBuffers: out_buffers.as_mut_ptr() as *mut _,
             ulVersion: SECBUFFER_VERSION,
         };
 
@@ -376,7 +375,10 @@ impl Dtls {
                 )
             } else {
                 // Server
-                debug!("AcceptSecurityContext {:?}", in_buffer_desc);
+                debug!(
+                    "AcceptSecurityContext {:?} {:?}",
+                    in_buffer_desc, out_buffer_desc
+                );
                 AcceptSecurityContext(
                     self.cred_handle.as_ref().map(|r| r as *const _),
                     self.security_ctx.as_ref().map(|r| r as *const _),
@@ -538,14 +540,14 @@ impl Dtls {
         let header_size = self.encrypt_message_input_sizes.cbHeader as usize;
         let trailer_size = self.encrypt_message_input_sizes.cbTrailer as usize;
 
-        let output = datagram.to_vec();
-        let alert = [0u8; 512];
+        let mut output = datagram.to_vec();
+        let mut alert = [0u8; 512];
 
-        let sec_buffers = [
+        let mut sec_buffers = [
             SecBuffer {
                 BufferType: SECBUFFER_DATA,
                 cbBuffer: output.len() as u32,
-                pvBuffer: &output[0] as *const _ as *mut _,
+                pvBuffer: output.as_mut_ptr() as *mut _,
             },
             SecBuffer {
                 cbBuffer: 0,
@@ -565,13 +567,13 @@ impl Dtls {
             SecBuffer {
                 BufferType: SECBUFFER_ALERT,
                 cbBuffer: alert.len() as u32,
-                pvBuffer: &alert[0] as *const _ as *mut _,
+                pvBuffer: alert.as_mut_ptr() as *mut _,
             },
         ];
         let sec_buffer_desc = SecBufferDesc {
             ulVersion: SECBUFFER_VERSION,
             cBuffers: 4,
-            pBuffers: &sec_buffers[0] as *const _ as *mut _,
+            pBuffers: sec_buffers.as_mut_ptr() as *mut _,
         };
 
         // SAFETY: All the passed in values are borrow checked. The `sec_buffer_desc`

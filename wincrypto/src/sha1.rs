@@ -1,7 +1,10 @@
 use super::WinCryptoError;
-use windows::Win32::Security::Cryptography::{
-    BCryptCreateHash, BCryptDestroyHash, BCryptFinishHash, BCryptHashData, BCRYPT_HASH_HANDLE,
-    BCRYPT_HMAC_SHA1_ALG_HANDLE,
+use windows::{
+    core::Owned,
+    Win32::Security::Cryptography::{
+        BCryptCreateHash, BCryptFinishHash, BCryptHashData, BCRYPT_HASH_HANDLE,
+        BCRYPT_HMAC_SHA1_ALG_HANDLE,
+    },
 };
 
 pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> Result<[u8; 20], WinCryptoError> {
@@ -9,10 +12,10 @@ pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> Result<[u8; 20], WinCryptoEr
     // behaviors work for these uses.
     unsafe {
         // Create hash.
-        let mut hash_handle = BCRYPT_HASH_HANDLE::default();
+        let mut hash_handle = Owned::new(BCRYPT_HASH_HANDLE::default());
         WinCryptoError::from_ntstatus(BCryptCreateHash(
             BCRYPT_HMAC_SHA1_ALG_HANDLE,
-            &mut hash_handle,
+            &mut *hash_handle,
             None,
             Some(key),
             0,
@@ -20,15 +23,12 @@ pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> Result<[u8; 20], WinCryptoEr
 
         // Update hash with data.
         for payload in payloads {
-            WinCryptoError::from_ntstatus(BCryptHashData(hash_handle, payload, 0))?;
+            WinCryptoError::from_ntstatus(BCryptHashData(*hash_handle, payload, 0))?;
         }
 
         // Get the hash result.
         let mut hash = [0u8; 20];
-        WinCryptoError::from_ntstatus(BCryptFinishHash(hash_handle, &mut hash, 0))?;
-
-        // Free the hash.
-        WinCryptoError::from_ntstatus(BCryptDestroyHash(hash_handle))?;
+        WinCryptoError::from_ntstatus(BCryptFinishHash(*hash_handle, &mut hash, 0))?;
 
         Ok(hash)
     }
