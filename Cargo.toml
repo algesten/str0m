@@ -38,6 +38,7 @@ _internal_dont_use_log_stats = []
 _internal_test_exports = []
 
 [dependencies]
+cxx = "=1.0.130"
 thiserror = "1.0.69"
 tracing = "0.1.37"
 fastrand = "2.0.1"
@@ -82,3 +83,8 @@ required-features = ["openssl"]
 [[example]]
 name = "http-post"
 required-features = ["openssl"]
+
+
+[build-dependencies]
+cxx-build = "=1.0.130"
+walkdir = "2.5"
