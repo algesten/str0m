@@ -36,6 +36,9 @@ bool InterArrivalDelta::ComputeDeltas(Timestamp send_time,
                                       TimeDelta* send_time_delta,
                                       TimeDelta* arrival_time_delta,
                                       int* packet_size_delta) {
+//  std::cout << "CPP -------------------------------" << std::endl << std::flush;;
+
+
   bool calculated_deltas = false;
   if (current_timestamp_group_.IsFirstPacket()) {
     // We don't have enough data to update the filter, so we store it until we
@@ -118,6 +121,9 @@ bool InterArrivalDelta::BelongsToBurst(Timestamp arrival_time,
       return true;
   }
   TimeDelta propagation_delta = arrival_time_delta - send_time_delta;
+
+//  std::cout << "inter_arrival_time = " << arrival_time_delta.us() << ", last_send_delta = " << send_time_delta.us() << ", inter_group_delay_delta = " << propagation_delta.us() << ", packet.remote_recv_time - first_remote_recv_time = " << (arrival_time - current_timestamp_group_.first_arrival).us() << std::endl << std::flush;;
+
   if (propagation_delta < TimeDelta::Zero() &&
       arrival_time_delta <= kBurstDeltaThreshold &&
       arrival_time - current_timestamp_group_.first_arrival < kMaxBurstDuration) {
