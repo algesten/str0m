@@ -683,19 +683,19 @@ impl Extension {
             }
             RtpStreamId => {
                 let v = ev.rid?;
-                let l = v.as_bytes().len();
+                let l = v.len();
                 buf[..l].copy_from_slice(v.as_bytes());
                 Some(l)
             }
             RepairedRtpStreamId => {
                 let v = ev.rid_repair?;
-                let l = v.as_bytes().len();
+                let l = v.len();
                 buf[..l].copy_from_slice(v.as_bytes());
                 Some(l)
             }
             RtpMid => {
                 let v = ev.mid?;
-                let l = v.as_bytes().len();
+                let l = v.len();
                 buf[..l].copy_from_slice(v.as_bytes());
                 Some(l)
             }

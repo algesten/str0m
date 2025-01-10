@@ -126,7 +126,7 @@ impl WordSized for Sdes {
             .values
             .iter()
             // 2 here for 2 byte encoding of type + length
-            .map(|(_, s)| 2 + s.as_bytes().len())
+            .map(|(_, s)| 2 + s.len())
             .sum::<usize>();
 
         let padded = pad_bytes_to_word(byte_size);
