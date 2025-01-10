@@ -598,11 +598,14 @@
 //! [reqkey2]:    https://docs.rs/str0m/*/str0m/rtp/struct.StreamRx.html#method.request_keyframe
 //! [bitwhip]:    https://github.com/bitwhip/bitwhip
 
+#![forbid(unsafe_code)]
 #![allow(clippy::new_without_default)]
 #![allow(clippy::bool_to_int_with_if)]
 #![allow(clippy::assertions_on_constants)]
 #![allow(clippy::manual_range_contains)]
 #![allow(clippy::get_first)]
+#![allow(clippy::needless_lifetimes)]
+#![deny(missing_docs)]
 
 #[macro_use]
 extern crate tracing;
@@ -2516,4 +2519,3 @@ mod test {
 #[cfg(feature = "_internal_test_exports")]
 #[allow(missing_docs)]
 pub mod _internal_test_exports;
-mod bridge;

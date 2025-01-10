@@ -23,6 +23,7 @@
   * Ensure lexical ordering of SDP-formatted candidates follows priority #557
   * Limit TWCC iteration with packet status count #606
   * Dedupe acked packets from `TwccSendRegister::apply_report()` #601, #605
+  * Align BWE ArrivalGroup calculation with libwebrtc implementation #608
 
 # 0.6.2
 
