@@ -1932,15 +1932,15 @@ impl RtcConfig {
 
     /// Set the crypto provider.
     ///
-    /// This happens implicitly if you use [`RtcConfig::set_dtls_cert()`].
+    /// This happens implicitly if you use [`RtcConfig::set_dtls_cert_config()`].
     ///
-    /// Panics: If you `set_dtls_cert()` followed by a different [`CryptoProvider`].
+    /// Panics: If you `set_dtls_cert_config()` followed by a different [`CryptoProvider`].
     ///
     /// This overrides what is set in [`CryptoProvider::install_process_default()`].
     pub fn set_crypto_provider(mut self, p: CryptoProvider) -> Self {
         if let DtlsCertConfig::PregeneratedCert(c) = &self.dtls_cert_config {
             if p != c.crypto_provider() {
-                panic!("set_dtls_cert() locked crypto provider to: {}", p);
+                panic!("set_dtls_cert_config() locked crypto provider to: {}", p);
             }
         } else {
             self.crypto_provider = p;
