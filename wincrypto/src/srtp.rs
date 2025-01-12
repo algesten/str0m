@@ -1,10 +1,13 @@
 use super::WinCryptoError;
 use std::ptr::addr_of;
-use windows::Win32::Security::Cryptography::{
-    BCryptDecrypt, BCryptDestroyKey, BCryptEncrypt, BCryptGenerateSymmetricKey,
-    BCRYPT_AES_ECB_ALG_HANDLE, BCRYPT_AES_GCM_ALG_HANDLE, BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO,
-    BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION, BCRYPT_BLOCK_PADDING, BCRYPT_FLAGS,
-    BCRYPT_KEY_HANDLE,
+use windows::{
+    core::Owned,
+    Win32::Security::Cryptography::{
+        BCryptDecrypt, BCryptEncrypt, BCryptGenerateSymmetricKey, BCRYPT_AES_ECB_ALG_HANDLE,
+        BCRYPT_AES_GCM_ALG_HANDLE, BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO,
+        BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION, BCRYPT_BLOCK_PADDING, BCRYPT_FLAGS,
+        BCRYPT_KEY_HANDLE,
+    },
 };
 
 const MAX_BUFFER_SIZE: usize = 2048;
@@ -15,7 +18,7 @@ const AEAD_AES_GCM_TAG_LEN: usize = 16;
 /// does NOT implement Clone/Copy, otherwise we could destroy the key
 /// too early. It is also why access to the key handle should remain
 /// hidden.
-pub struct SrtpKey(BCRYPT_KEY_HANDLE);
+pub struct SrtpKey(Owned<BCRYPT_KEY_HANDLE>);
 // SAFETY: BCRYPT_KEY_HANDLEs are safe to send between threads.
 unsafe impl Send for SrtpKey {}
 // SAFETY: BCRYPT_KEY_HANDLEs are safe to send between threads.
@@ -30,45 +33,33 @@ impl SrtpKey {
 
     /// Creates a key from the given data for operating AES in ECB mode.
     pub fn create_aes_ecb_key(key: &[u8]) -> Result<Self, WinCryptoError> {
-        let mut key_handle = BCRYPT_KEY_HANDLE::default();
         // SAFETY: The key and key_handle will exist before and after this call.
         unsafe {
+            let mut key_handle = Owned::new(BCRYPT_KEY_HANDLE::default());
             WinCryptoError::from_ntstatus(BCryptGenerateSymmetricKey(
                 BCRYPT_AES_ECB_ALG_HANDLE,
-                &mut key_handle,
+                &mut *key_handle,
                 None,
                 &key,
                 0,
             ))?;
+            Ok(Self(key_handle))
         }
-        Ok(Self(key_handle))
     }
 
     /// Creates a key from the given data for operating AES in GCM mode.
     pub fn create_aes_gcm_key(key: &[u8]) -> Result<Self, WinCryptoError> {
-        let mut key_handle = BCRYPT_KEY_HANDLE::default();
         // SAFETY: The key and key_handle will exist before and after this call.
         unsafe {
+            let mut key_handle = Owned::new(BCRYPT_KEY_HANDLE::default());
             WinCryptoError::from_ntstatus(BCryptGenerateSymmetricKey(
                 BCRYPT_AES_GCM_ALG_HANDLE,
-                &mut key_handle,
+                &mut *key_handle,
                 None,
                 &key,
                 0,
             ))?;
-        }
-        Ok(Self(key_handle))
-    }
-}
-
-impl Drop for SrtpKey {
-    fn drop(&mut self) {
-        // SAFETY: The SrtpKey is being dropped it is safe to copy the handle
-        // because the handle will no longer be accessible after this.
-        unsafe {
-            if let Err(e) = WinCryptoError::from_ntstatus(BCryptDestroyKey(self.0)) {
-                error!("Failed to destory crypto key: {}", e);
-            }
+            Ok(Self(key_handle))
         }
     }
 }
@@ -84,7 +75,7 @@ pub fn srtp_aes_128_ecb_round(
     // behaviors work.
     unsafe {
         WinCryptoError::from_ntstatus(BCryptEncrypt(
-            key.0,
+            *key.0,
             Some(input),
             None,
             None,
@@ -137,7 +128,7 @@ pub fn srtp_aes_128_cm(
         let encrypted_countered_iv =
             std::slice::from_raw_parts_mut(countered_iv.as_mut_ptr(), countered_iv.len());
         WinCryptoError::from_ntstatus(BCryptEncrypt(
-            key.0,
+            *key.0,
             Some(&countered_iv[..offset]),
             None,
             None,
@@ -194,7 +185,7 @@ pub fn srtp_aead_aes_128_gcm_encrypt(
     // `cipher_text` and `iv`) exists for the duration of the unsafe block.
     unsafe {
         WinCryptoError::from_ntstatus(BCryptEncrypt(
-            key.0,
+            *key.0,
             Some(plain_text),
             Some(addr_of!(auth_cipher_mode_info) as *const std::ffi::c_void),
             None,
@@ -252,7 +243,7 @@ pub fn srtp_aead_aes_128_gcm_decrypt(
     // `cipher_text` and `iv`) exists for the duration of the unsafe block.
     unsafe {
         WinCryptoError::from_ntstatus(BCryptDecrypt(
-            key.0,
+            *key.0,
             Some(cipher_text),
             Some(addr_of!(auth_cipher_mode_info) as *const std::ffi::c_void),
             None,

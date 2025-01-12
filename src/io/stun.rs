@@ -525,7 +525,7 @@ impl<'a> Attributes<'a> {
         let username = self
             .username
             .map(|v| {
-                let pad = 4 - (v.as_bytes().len() % 4) % 4;
+                let pad = 4 - (v.len() % 4) % 4;
                 ATTR_TLV_LENGTH + v.len() + pad
             })
             .unwrap_or_default();
@@ -557,9 +557,9 @@ impl<'a> Attributes<'a> {
     fn to_bytes(self, vec: &mut dyn Write, trans_id: &[u8]) -> io::Result<()> {
         if let Some(v) = self.username {
             vec.write_all(&Self::USERNAME.to_be_bytes())?;
-            vec.write_all(&(v.as_bytes().len() as u16).to_be_bytes())?;
+            vec.write_all(&(v.len() as u16).to_be_bytes())?;
             vec.write_all(v.as_bytes())?;
-            let pad = 4 - (v.as_bytes().len() % 4) % 4;
+            let pad = 4 - (v.len() % 4) % 4;
             for _ in 0..pad {
                 vec.write_all(&[0])?;
             }
