@@ -356,7 +356,7 @@ mod test {
             packets.push(AckedPacket {
                 seq_no: 4.into(),
                 size: DataSize::ZERO,
-                local_send_time: now + duration_us(5001),
+                local_send_time: now - duration_us(100),
                 remote_recv_time: now + duration_us(5000),
                 local_recv_time: now + duration_us(5050),
             });
@@ -382,7 +382,7 @@ mod test {
             }
         }
 
-        assert_eq!(group.size, 5, "Expected group to contain 5 packets");
+        assert_eq!(group.size, 4, "Expected group to contain 4 packets");
     }
 
     #[test]
