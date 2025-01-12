@@ -6,7 +6,7 @@ use crate::rtp_::SeqNo;
 
 use super::AckedPacket;
 
-const BURST_TIME_INTERVAL: f64 = Duration::from_millis(5).as_secs_f64();
+const BURST_TIME_INTERVAL: f64 = 0.005; // 5ms
 const SEND_TIME_GROUP_LENGTH: Duration = Duration::from_millis(5);
 const MAX_BURST_DURATION: Duration = Duration::from_millis(100);
 
