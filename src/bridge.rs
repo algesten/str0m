@@ -1,5 +1,6 @@
 pub use self::ffi::*;
 
+#[allow(clippy::too_many_arguments, dead_code)]
 #[cxx::bridge(namespace = "webrtc")]
 pub mod ffi {
     #[derive(Debug, Eq, Hash, PartialEq)]

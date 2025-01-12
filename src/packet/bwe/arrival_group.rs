@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::mem;
 use std::time::{Duration, Instant};
 
@@ -74,12 +75,12 @@ impl ArrivalGroup {
         let last_send_delta = {
             let last_send_time = self.local_send_time();
 
-            if packet.local_send_time == last_send_time {
-                return Belongs::Yes;
-            } else if packet.local_send_time > last_send_time {
-                (packet.local_send_time - last_send_time).as_secs_f64()
-            } else {
-                (last_send_time - packet.local_send_time).as_secs_f64() * -1.0
+            match packet.local_send_time.cmp(&last_send_time) {
+                Ordering::Equal => {
+                    return Belongs::Yes;
+                }
+                Ordering::Greater => (packet.local_send_time - last_send_time).as_secs_f64(),
+                Ordering::Less => (last_send_time - packet.local_send_time).as_secs_f64() * -1.0,
             }
         };
 
@@ -444,6 +445,7 @@ mod test {
         Duration::from_micros(us)
     }
 
+    #[rustfmt::skip]
     fn data1() -> Vec<((Duration, Duration), (i64, i64, i64))> {
         // ComputeDeltas(send_time = 69737459 ms, arrival_time = 69737548294 us) -> (send_delta = 0 us, recv_delta = 0 us, calculated_deltas = 0);
         vec![
@@ -1746,6 +1748,7 @@ mod test {
         ]
     }
 
+    #[rustfmt::skip]
     fn data2() -> Vec<((Duration, Duration), (i64, i64, i64))> {
         vec![
             ((Duration::from_micros(40739648000), Duration::from_micros(40739798641)), (0, 0, 0)),
@@ -4454,6 +4457,7 @@ mod test {
         ]
     }
 
+    #[rustfmt::skip]
     fn data3() -> Vec<((Duration, Duration), (i64, i64, i64))> {
         vec![
             ((Duration::from_micros(12228618000), Duration::from_micros(12228620516)), (0, 0, 0)),
@@ -5931,17 +5935,20 @@ mod test {
     #[test]
     fn test_libwebrtc_captured() {
         let zero_time: Instant = unsafe { std::mem::transmute(0u128) };
-        let tests = vec![
-            data1(),
-            data2(),
-            data3()
-        ];
+        let tests = vec![data1(), data2(), data3()];
 
         for test in tests {
             let mut cpp_aga = crate::bridge::new_inter_arrival_delta();
             let mut aga = ArrivalGroupAccumulator::default();
 
-            for (i, ((local_send_time, remote_recv_time), (expected_send_delta, expected_recv_delta, expected_calculated_deltas))) in test.into_iter().enumerate() {
+            for (
+                i,
+                (
+                    (local_send_time, remote_recv_time),
+                    (expected_send_delta, expected_recv_delta, expected_calculated_deltas),
+                ),
+            ) in test.into_iter().enumerate()
+            {
                 let expected_calculated_deltas = expected_calculated_deltas > 0;
 
                 {
@@ -5950,9 +5957,7 @@ mod test {
                     let mut recv_delta_us = 0i64;
                     let mut packet_size_delta = 0u64;
                     let calculated_deltas = crate::bridge::ComputeDeltas(
-                        cpp_aga
-                            .as_mut()
-                            .unwrap(),
+                        cpp_aga.as_mut().unwrap(),
                         local_send_time.as_micros() as u64,
                         remote_recv_time.as_micros() as u64,
                         0,
@@ -5969,25 +5974,21 @@ mod test {
 
                 {
                     // fixed str0m impl
-                    let dv = aga.accumulate_packet(
-                        &AckedPacket {
-                            seq_no: (i as u64).into(),
-                            size: DataSize::ZERO,
-                            local_send_time: zero_time + local_send_time,
-                            remote_recv_time: zero_time + remote_recv_time,
-                            local_recv_time: crate::not_happening() // does not matter,
-                        },
-                    );
+                    let dv = aga.accumulate_packet(&AckedPacket {
+                        seq_no: (i as u64).into(),
+                        size: DataSize::ZERO,
+                        local_send_time: zero_time + local_send_time,
+                        remote_recv_time: zero_time + remote_recv_time,
+                        local_recv_time: crate::not_happening(), // does not matter,
+                    });
                     let (calculated_deltas, send_delta, recv_delta) = match dv {
                         Some(dv) => {
                             let send_delta_us = i64::try_from(dv.send_delta.as_micros()).unwrap();
                             let recv_delta = send_delta_us + (dv.delay_delta * 1000.0) as i64;
 
                             (true, send_delta_us, recv_delta)
-                        },
-                        None => {
-                            (false, 0, 0)
                         }
+                        None => (false, 0, 0),
                     };
 
                     assert_eq!(expected_calculated_deltas, calculated_deltas, "iter #{i}");
