@@ -6,7 +6,7 @@ use crate::rtp_::SeqNo;
 
 use super::AckedPacket;
 
-const BURST_TIME_INTERVAL: f64 = 0.005; // 5ms
+const BURST_TIME_INTERVAL: Duration = Duration::from_millis(5);
 const SEND_TIME_GROUP_LENGTH: Duration = Duration::from_millis(5);
 const MAX_BURST_DURATION: Duration = Duration::from_millis(100);
 
@@ -87,7 +87,7 @@ impl ArrivalGroup {
         let inter_group_delay_delta = inter_arrival_time - last_send_delta;
 
         if inter_group_delay_delta < 0.0
-            && inter_arrival_time <= BURST_TIME_INTERVAL
+            && inter_arrival_time <= BURST_TIME_INTERVAL.as_secs_f64()
             && packet.remote_recv_time - first_remote_recv_time < MAX_BURST_DURATION
         {
             Belongs::Yes
