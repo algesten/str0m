@@ -131,7 +131,7 @@ impl Session {
         Session {
             id,
             medias: vec![],
-            streams: Streams::default(),
+            streams: Streams::new(config.stats_interval.is_some()),
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,

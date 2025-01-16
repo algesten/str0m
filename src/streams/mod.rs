@@ -149,6 +149,10 @@ pub(crate) struct Streams {
     /// Whether nack reports are enabled. This is an optimization to avoid too frequent
     /// Session::nack_at() when we don't need to send nacks.
     any_nack_active: Option<bool>,
+
+    /// Whether periodic statistics reports are expected to be generated. This informs us on
+    /// whether we should be holding onto data needed for those reports or not.
+    needs_stat_reports: bool,
 }
 
 /// Delay between cleaning up the RxLookup.
@@ -164,8 +168,8 @@ struct RxLookup {
     last_used: Instant,
 }
 
-impl Default for Streams {
-    fn default() -> Self {
+impl Streams {
+    pub(crate) fn new(needs_stat_reports: bool) -> Self {
         Self {
             streams_rx: Default::default(),
             rx_lookup: Default::default(),
@@ -174,11 +178,10 @@ impl Default for Streams {
             default_ssrc_tx: 0.into(), // this will be changed
             mids_to_report: Vec::with_capacity(10),
             any_nack_active: None,
+            needs_stat_reports,
         }
     }
-}
 
-impl Streams {
     pub(crate) fn map_dynamic_by_rid(
         &mut self,
         ssrc: Ssrc,
@@ -328,7 +331,7 @@ impl Streams {
     ) -> &mut StreamTx {
         self.streams_tx
             .entry(ssrc)
-            .or_insert_with(|| StreamTx::new(ssrc, rtx, midrid))
+            .or_insert_with(|| StreamTx::new(ssrc, rtx, midrid, self.needs_stat_reports))
     }
 
     pub fn remove_stream_tx(&mut self, ssrc: Ssrc) -> bool {

@@ -153,7 +153,7 @@ pub(crate) struct StreamTxStats {
     /// Can be null in case of missing or bad reports
     rtt: Option<f32>,
     /// losses collecter from RR (known packets, lost ratio)
-    losses: Vec<(u64, f32)>,
+    losses: Option<Vec<(u64, f32)>>,
 
     /// `None` if `rtx_ratio_cap` is `None`.
     bytes_transmitted: Option<ValueHistory<u64>>,
@@ -162,26 +162,13 @@ pub(crate) struct StreamTxStats {
     bytes_retransmitted: Option<ValueHistory<u64>>,
 }
 
-impl Default for StreamTxStats {
-    fn default() -> Self {
-        Self {
-            bytes: 0,
-            bytes_resent: 0,
-            packets: 0,
-            packets_resent: 0,
-            firs: 0,
-            plis: 0,
-            nacks: 0,
-            rtt: None,
-            losses: Vec::default(),
-            bytes_transmitted: Some(Default::default()),
-            bytes_retransmitted: Some(Default::default()),
-        }
-    }
-}
-
 impl StreamTx {
-    pub(crate) fn new(ssrc: Ssrc, rtx: Option<Ssrc>, midrid: MidRid) -> Self {
+    pub(crate) fn new(
+        ssrc: Ssrc,
+        rtx: Option<Ssrc>,
+        midrid: MidRid,
+        needs_stat_reports: bool,
+    ) -> Self {
         debug!("Create StreamTx for SSRC: {}", ssrc);
 
         StreamTx {
@@ -205,7 +192,7 @@ impl StreamTx {
             last_sender_report: already_happened(),
             pending_request_keyframe: None,
             pending_request_remb: None,
-            stats: StreamTxStats::default(),
+            stats: StreamTxStats::new(needs_stat_reports),
             rtx_ratio: (0.0, already_happened()),
             pt_for_padding: None,
             remote_acked_ssrc: false,
@@ -1071,6 +1058,25 @@ impl StreamTx {
 }
 
 impl StreamTxStats {
+    fn new(needs_stat_reports: bool) -> Self {
+        Self {
+            bytes: 0,
+            bytes_resent: 0,
+            packets: 0,
+            packets_resent: 0,
+            firs: 0,
+            plis: 0,
+            nacks: 0,
+            rtt: None,
+
+            // This Vec is unbounded, don't collect if we're never going to drain it
+            losses: needs_stat_reports.then_some(Vec::default()),
+
+            bytes_transmitted: Some(Default::default()),
+            bytes_retransmitted: Some(Default::default()),
+        }
+    }
+
     fn update_packet_counts(&mut self, bytes: u64, is_resend: bool) {
         self.packets += 1;
         self.bytes += bytes;
@@ -1097,14 +1103,15 @@ impl StreamTxStats {
         let rtt = calculate_rtt_ms(ntp_time, r.last_sr_delay, r.last_sr_time);
         self.rtt = rtt;
 
-        let ext_seq = {
-            let prev = self.losses.last().map(|s| s.0).unwrap_or(r.max_seq as u64);
-            let next = (r.max_seq & 0xffff) as u16;
-            extend_u16(Some(prev), next)
-        };
+        if let Some(losses) = self.losses.as_mut() {
+            let ext_seq = {
+                let prev = losses.last().map(|s| s.0).unwrap_or(r.max_seq as u64);
+                let next = (r.max_seq & 0xffff) as u16;
+                extend_u16(Some(prev), next)
+            };
 
-        self.losses
-            .push((ext_seq, r.fraction_lost as f32 / u8::MAX as f32));
+            losses.push((ext_seq, r.fraction_lost as f32 / u8::MAX as f32));
+        }
     }
 
     pub(crate) fn fill(&mut self, snapshot: &mut StatsSnapshot, midrid: MidRid, now: Instant) {
@@ -1112,26 +1119,26 @@ impl StreamTxStats {
             return;
         }
 
-        let loss = {
+        let loss = self.losses.as_mut().and_then(|losses| {
             let mut value = 0_f32;
             let mut total_weight = 0_u64;
 
             // just in case we received RRs out of order
-            self.losses.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+            losses.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
 
             // average known RR losses weighted by their number of packets
-            for it in self.losses.windows(2) {
+            for it in losses.windows(2) {
                 let [prev, next] = it else { continue };
                 let weight = next.0.saturating_sub(prev.0);
                 value += next.1 * weight as f32;
                 total_weight += weight;
             }
 
+            losses.drain(..losses.len().saturating_sub(1));
+
             let result = value / total_weight as f32;
             result.is_finite().then_some(result)
-        };
-
-        self.losses.drain(..self.losses.len().saturating_sub(1));
+        });
 
         snapshot.egress.insert(
             midrid,
