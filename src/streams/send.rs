@@ -115,6 +115,8 @@ pub struct StreamTx {
     pending_request_remb: Option<Bitrate>,
 
     /// Statistics of outgoing data.
+    ///
+    /// Stats are use to calculate the rtx ratio also when statistics events are disabled.
     stats: StreamTxStats,
 
     // downsampled rtx ratio (value, last calculation)
@@ -153,7 +155,7 @@ pub(crate) struct StreamTxStats {
     /// Can be null in case of missing or bad reports
     rtt: Option<f32>,
     /// losses collecter from RR (known packets, lost ratio)
-    losses: Vec<(u64, f32)>,
+    losses: Losses,
 
     /// `None` if `rtx_ratio_cap` is `None`.
     bytes_transmitted: Option<ValueHistory<u64>>,
@@ -162,26 +164,8 @@ pub(crate) struct StreamTxStats {
     bytes_retransmitted: Option<ValueHistory<u64>>,
 }
 
-impl Default for StreamTxStats {
-    fn default() -> Self {
-        Self {
-            bytes: 0,
-            bytes_resent: 0,
-            packets: 0,
-            packets_resent: 0,
-            firs: 0,
-            plis: 0,
-            nacks: 0,
-            rtt: None,
-            losses: Vec::default(),
-            bytes_transmitted: Some(Default::default()),
-            bytes_retransmitted: Some(Default::default()),
-        }
-    }
-}
-
 impl StreamTx {
-    pub(crate) fn new(ssrc: Ssrc, rtx: Option<Ssrc>, midrid: MidRid) -> Self {
+    pub(crate) fn new(ssrc: Ssrc, rtx: Option<Ssrc>, midrid: MidRid, enable_stats: bool) -> Self {
         debug!("Create StreamTx for SSRC: {}", ssrc);
 
         StreamTx {
@@ -205,7 +189,7 @@ impl StreamTx {
             last_sender_report: already_happened(),
             pending_request_keyframe: None,
             pending_request_remb: None,
-            stats: StreamTxStats::default(),
+            stats: StreamTxStats::new(enable_stats),
             rtx_ratio: (0.0, already_happened()),
             pt_for_padding: None,
             remote_acked_ssrc: false,
@@ -1071,6 +1055,22 @@ impl StreamTx {
 }
 
 impl StreamTxStats {
+    fn new(enable_stats: bool) -> Self {
+        Self {
+            bytes: 0,
+            bytes_resent: 0,
+            packets: 0,
+            packets_resent: 0,
+            firs: 0,
+            plis: 0,
+            nacks: 0,
+            rtt: None,
+            losses: Losses::new(enable_stats),
+            bytes_transmitted: Some(Default::default()),
+            bytes_retransmitted: Some(Default::default()),
+        }
+    }
+
     fn update_packet_counts(&mut self, bytes: u64, is_resend: bool) {
         self.packets += 1;
         self.bytes += bytes;
@@ -1116,11 +1116,8 @@ impl StreamTxStats {
             let mut value = 0_f32;
             let mut total_weight = 0_u64;
 
-            // just in case we received RRs out of order
-            self.losses.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-
             // average known RR losses weighted by their number of packets
-            for it in self.losses.windows(2) {
+            for it in self.losses.iterator() {
                 let [prev, next] = it else { continue };
                 let weight = next.0.saturating_sub(prev.0);
                 value += next.1 * weight as f32;
@@ -1131,7 +1128,7 @@ impl StreamTxStats {
             result.is_finite().then_some(result)
         };
 
-        self.losses.drain(..self.losses.len().saturating_sub(1));
+        self.losses.clear_all_but_last();
 
         snapshot.egress.insert(
             midrid,
@@ -1169,4 +1166,53 @@ struct Resend {
     seq_no: SeqNo,
     queued_at: Instant,
     payload_size: usize,
+}
+
+/// Helper to avoid an unbounded vec if we are not enabling stats
+#[derive(Debug)]
+enum Losses {
+    Disabled,
+    Enabled(Vec<(u64, f32)>),
+}
+
+impl Losses {
+    fn new(enabled: bool) -> Self {
+        if enabled {
+            Self::Enabled(vec![])
+        } else {
+            Self::Disabled
+        }
+    }
+
+    fn last(&self) -> Option<&(u64, f32)> {
+        let Self::Enabled(losses) = self else {
+            return None;
+        };
+        losses.last()
+    }
+
+    fn push(&mut self, value: (u64, f32)) {
+        let Self::Enabled(losses) = self else {
+            return;
+        };
+        losses.push(value);
+    }
+
+    fn iterator(&mut self) -> impl Iterator<Item = &[(u64, f32)]> {
+        let Self::Enabled(losses) = self else {
+            return [].windows(2);
+        };
+
+        // just in case we received RRs out of order
+        losses.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+        losses.windows(2)
+    }
+
+    fn clear_all_but_last(&mut self) {
+        let Self::Enabled(losses) = self else {
+            return;
+        };
+        losses.drain(..losses.len().saturating_sub(1));
+    }
 }
