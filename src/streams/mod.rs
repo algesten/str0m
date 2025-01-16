@@ -24,6 +24,7 @@ mod rtx_cache;
 pub(crate) mod rtx_cache_buf;
 mod send;
 mod send_queue;
+mod send_stats;
 
 pub(crate) use send::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP};
 
