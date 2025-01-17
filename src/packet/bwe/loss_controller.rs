@@ -8,7 +8,7 @@ use crate::packet::bwe::macros::log_loss_bw_limit_in_window;
 use crate::rtp_::TwccSendRecord;
 use crate::{Bitrate, DataSize};
 
-use super::super_instant::SuperInstant;
+use super::time::{SuperInstant, TimeDelta};
 
 /// Loss controller based loosely on libWebRTC's `LossBasedBweV2`(commit `14e2779a6ccdc67038ed2069a5732dd41617c6f0`)
 /// We don't implement ALR, link capacity estimates or probing(although we use constant padding
@@ -315,21 +315,17 @@ impl LossController {
             return false;
         };
 
-        let last_send_time = summary.last_send_time;
+        let last_send_time = SuperInstant::from(summary.last_send_time);
 
         self.partial_observation.update(summary);
 
         if !self.last_send_time_most_recent_observation.is_finite() {
-            self.last_send_time_most_recent_observation = last_send_time.into();
+            self.last_send_time_most_recent_observation = last_send_time;
         }
 
-        let observation_duration = last_send_time
-            - self
-                .last_send_time_most_recent_observation
-                .as_instant()
-                .expect("instant is not finite");
+        let observation_duration = last_send_time - self.last_send_time_most_recent_observation;
 
-        if observation_duration <= Duration::ZERO {
+        if observation_duration <= TimeDelta::ZERO {
             return false;
         }
 
@@ -338,7 +334,7 @@ impl LossController {
             return false;
         }
 
-        self.last_send_time_most_recent_observation = last_send_time.into();
+        self.last_send_time_most_recent_observation = last_send_time;
 
         let observation = {
             let id = self.num_observations;
@@ -585,24 +581,24 @@ impl LossController {
             return upper_bound;
         }
 
-        if self.config.rampup_acceleration_max_factor > Duration::ZERO {
-            if let (Some(most_recent), Some(reduced)) = (
-                self.last_send_time_most_recent_observation.as_instant(),
-                self.last_time_estimate_reduced.as_instant(),
-            ) {
-                let delta = most_recent - reduced;
-                let time_since_bw_reduced = self
-                    .config
-                    .rampup_acceleration_maxout_time
-                    .min(delta.max(Duration::ZERO))
-                    .as_secs_f64();
+        if self.config.rampup_acceleration_max_factor > Duration::ZERO
+            && self.last_send_time_most_recent_observation.is_finite()
+            && self.last_time_estimate_reduced.is_finite()
+        {
+            let delta = (self.last_send_time_most_recent_observation
+                - self.last_time_estimate_reduced)
+                .max(TimeDelta::ZERO);
+            let time_since_bw_reduced = self
+                .config
+                .rampup_acceleration_maxout_time
+                .min(delta)
+                .as_secs_f64();
 
-                let rampup_acceleration = self.config.rampup_acceleration_max_factor.as_secs_f64()
-                    * time_since_bw_reduced
-                    / self.config.rampup_acceleration_maxout_time.as_secs_f64();
+            let rampup_acceleration = self.config.rampup_acceleration_max_factor.as_secs_f64()
+                * time_since_bw_reduced
+                / self.config.rampup_acceleration_maxout_time.as_secs_f64();
 
-                upper_bound = upper_bound + (self.acknowledged_bitrate * rampup_acceleration);
-            }
+            upper_bound = upper_bound + (self.acknowledged_bitrate * rampup_acceleration);
         }
 
         upper_bound
@@ -727,7 +723,7 @@ impl LossController {
 
 struct Config {
     observation_window_size: usize, // minimum is 2
-    observation_duration_lower_bound: Duration,
+    observation_duration_lower_bound: TimeDelta,
     trendline_integration_enabled: bool,
     temporal_weight_factor: f64,
     instant_upper_bound_temporal_weight_factor: f64,
@@ -743,13 +739,13 @@ struct Config {
     newton_iterations: usize,
     newton_step_size: f64,
     not_increase_if_inherent_loss_less_than_average_loss: bool,
-    delayed_increase_window: Duration,
+    delayed_increase_window: TimeDelta,
     bandwidth_rampup_upper_bound_factor: f64,
     candidate_factor: [f64; 3],
     append_acknowledged_rate_candidate: bool,
     append_delay_based_estimate_candidate: bool,
     bandwidth_backoff_lower_bound_factor: f64,
-    rampup_acceleration_maxout_time: Duration,
+    rampup_acceleration_maxout_time: TimeDelta,
     rampup_acceleration_max_factor: Duration,
     higher_bandwidth_bias_factor: f64,
     higher_log_bandwidth_bias_factor: f64,
@@ -896,7 +892,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             observation_window_size: 20, // minimum is 2
-            observation_duration_lower_bound: Duration::from_millis(250),
+            observation_duration_lower_bound: TimeDelta::from_millis(250),
             trendline_integration_enabled: false,
             temporal_weight_factor: 0.9,
             instant_upper_bound_temporal_weight_factor: 0.9,
@@ -912,13 +908,13 @@ impl Default for Config {
             newton_iterations: 1,
             newton_step_size: 0.75,
             not_increase_if_inherent_loss_less_than_average_loss: true,
-            delayed_increase_window: Duration::from_millis(1000),
+            delayed_increase_window: TimeDelta::from_millis(1000),
             bandwidth_rampup_upper_bound_factor: 1_000_000.0,
             candidate_factor: [1.02, 1.0, 0.95],
             append_acknowledged_rate_candidate: true,
             append_delay_based_estimate_candidate: true,
             bandwidth_backoff_lower_bound_factor: 1.0,
-            rampup_acceleration_maxout_time: Duration::from_secs(60),
+            rampup_acceleration_maxout_time: TimeDelta::from_secs(60),
             rampup_acceleration_max_factor: Duration::from_secs(60),
             higher_bandwidth_bias_factor: 0.0002,
             higher_log_bandwidth_bias_factor: 0.02,
