@@ -163,12 +163,6 @@ impl Rids {
     }
 }
 
-impl<I: AsRef<[Rid]>> From<I> for Rids {
-    fn from(value: I) -> Self {
-        Rids::Specific(value.as_ref().to_vec())
-    }
-}
-
 #[derive(Debug)]
 pub(crate) struct ToPayload {
     pub pt: Pt,

@@ -8,7 +8,7 @@ use crate::crypto::Fingerprint;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::Id;
-use crate::media::{Media, Simulcast};
+use crate::media::{Media, Rids, Simulcast};
 use crate::packet::MediaKind;
 use crate::rtp_::MidRid;
 use crate::rtp_::Rid;
@@ -1084,11 +1084,23 @@ fn update_media(
     if new_dir.is_sending() {
         // The other side has declared how it EXPECTING to receive. We must only send
         // the RIDs declared in the answer.
-        media.set_rid_tx(m.rids().into());
+        let rids = m.rids();
+        let rid_tx = if rids.is_empty() {
+            Rids::None
+        } else {
+            Rids::Specific(rids)
+        };
+        media.set_rid_tx(rid_tx);
     }
     if new_dir.is_receiving() {
         // The other side has declared what it proposes to send. We are accepting it.
-        media.set_rid_rx(m.rids().into());
+        let rids = m.rids();
+        let rid_rx = if rids.is_empty() {
+            Rids::Any
+        } else {
+            Rids::Specific(rids)
+        };
+        media.set_rid_rx(rid_rx);
     }
 
     // Narrowing/ordering of of PT
@@ -1671,6 +1683,44 @@ mod test {
             !vp9_unsupported,
             "VP9 was not offered, so it should not be present in the answer"
         );
+    }
+
+    #[test]
+    fn non_simulcast_rids() {
+        crate::init_crypto_default();
+
+        let mut rtc1 = Rtc::new();
+        let mut rtc2 = Rtc::new();
+
+        // Test initial media creation
+        let mid = {
+            let mut changes = rtc1.sdp_api();
+            let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
+            let (offer, pending) = changes.apply().unwrap();
+            let answer = rtc2.sdp_api().accept_offer(offer).unwrap();
+            rtc1.sdp_api().accept_answer(pending, answer).unwrap();
+
+            assert!(matches!(rtc1.media(mid).unwrap().rids_rx(), Rids::Any));
+            assert!(matches!(rtc1.media(mid).unwrap().rids_tx(), Rids::None));
+            assert!(matches!(rtc2.media(mid).unwrap().rids_rx(), Rids::Any));
+            assert!(matches!(rtc2.media(mid).unwrap().rids_tx(), Rids::None));
+
+            mid
+        };
+
+        // Test later updates to that media
+        {
+            let mut changes = rtc1.sdp_api();
+            changes.set_direction(mid, Direction::Inactive);
+            let (offer, pending) = changes.apply().unwrap();
+            let answer = rtc2.sdp_api().accept_offer(offer).unwrap();
+            rtc1.sdp_api().accept_answer(pending, answer).unwrap();
+
+            assert!(matches!(rtc1.media(mid).unwrap().rids_rx(), Rids::Any));
+            assert!(matches!(rtc1.media(mid).unwrap().rids_tx(), Rids::None));
+            assert!(matches!(rtc2.media(mid).unwrap().rids_rx(), Rids::Any));
+            assert!(matches!(rtc2.media(mid).unwrap().rids_tx(), Rids::None));
+        }
     }
 
     #[test]

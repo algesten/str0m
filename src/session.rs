@@ -128,10 +128,12 @@ impl Session {
             (PacerImpl::Null(NullPacer::default()), None)
         };
 
+        let enable_stats = config.stats_interval.is_some();
+
         Session {
             id,
             medias: vec![],
-            streams: Streams::default(),
+            streams: Streams::new(enable_stats),
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
