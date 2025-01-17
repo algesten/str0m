@@ -18,7 +18,7 @@ pub(crate) enum SuperInstant {
     DistantFuture,
 }
 
-/// Wrapper for [`Duration`] that provides a duration to a distant future
+/// Wrapper for [`Duration`] that provides a duration to a distant future or past.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TimeDelta {
     /// Time delta to some event in distant past that already happened.
