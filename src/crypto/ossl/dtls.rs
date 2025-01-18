@@ -2,8 +2,6 @@ use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::time::{Duration, Instant};
 
-use openssl::ec::EcKey;
-use openssl::nid::Nid;
 use openssl::ssl::{Ssl, SslContext, SslContextBuilder, SslMethod, SslOptions, SslVerifyMode};
 
 use crate::crypto::dtls::DtlsInner;
@@ -15,8 +13,7 @@ use super::io_buf::IoBuffer;
 use super::stream::TlsStream;
 use super::CryptoError;
 
-const DTLS_CIPHERS: &str = "EECDH+AESGCM:EDH+AESGCM:AES256+EECDH:AES256+EDH";
-const DTLS_EC_CURVE: Nid = Nid::X9_62_PRIME256V1;
+const DTLS_CIPHERS: &str = "ECDHE+AESGCM:DHE+AESGCM:ECDHE+AES256:DHE+AES256";
 
 pub struct OsslDtlsImpl {
     /// Certificate for the DTLS session.
@@ -170,9 +167,5 @@ pub fn dtls_create_ctx(cert: &OsslDtlsCert) -> Result<SslContext, CryptoError> {
 pub fn dtls_ssl_create(ctx: &SslContext) -> Result<Ssl, CryptoError> {
     let mut ssl = Ssl::new(ctx)?;
     ssl.set_mtu(DATAGRAM_MTU as u32)?;
-
-    let eckey = EcKey::from_curve_name(DTLS_EC_CURVE)?;
-    ssl.set_tmp_ecdh(&eckey)?;
-
     Ok(ssl)
 }
