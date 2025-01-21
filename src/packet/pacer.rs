@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::rtp_::{Bitrate, DataSize, Mid};
+use crate::rtp_::{Bitrate, DataSize, MidRid};
 use crate::util::already_happened;
 use crate::util::not_happening;
 use crate::util::Soonest;
@@ -49,14 +49,14 @@ impl Pacer for PacerImpl {
         }
     }
 
-    fn poll_queue(&mut self) -> Option<Mid> {
+    fn poll_queue(&mut self) -> Option<MidRid> {
         match self {
             PacerImpl::Null(v) => v.poll_queue(),
             PacerImpl::LeakyBucket(v) => v.poll_queue(),
         }
     }
 
-    fn register_send(&mut self, now: Instant, packet_size: DataSize, from: Mid) {
+    fn register_send(&mut self, now: Instant, packet_size: DataSize, from: MidRid) {
         match self {
             PacerImpl::Null(v) => v.register_send(now, packet_size, from),
             PacerImpl::LeakyBucket(v) => v.register_send(now, packet_size, from),
@@ -68,7 +68,7 @@ impl Pacer for PacerImpl {
 ///
 /// The pacer is responsible for ensuring correct pacing of packets onto the network at a given
 /// bitrate.
-pub trait Pacer {
+pub(crate) trait Pacer {
     /// Set the pacing bitrate. The pacing rate can be exceeded if required to drain excessively
     /// long packet queues.
     fn set_pacing_rate(&mut self, pacing_bitrate: Bitrate);
@@ -87,12 +87,12 @@ pub trait Pacer {
     ) -> Option<PaddingRequest>;
 
     /// Determines which mid to poll, if any.
-    fn poll_queue(&mut self) -> Option<Mid>;
+    fn poll_queue(&mut self) -> Option<MidRid>;
 
     /// Register a packet having been sent.
     ///
     /// **MUST** be called each time [`Pacer::poll_queue`] produces a mid.
-    fn register_send(&mut self, now: Instant, packet_size: DataSize, from: Mid);
+    fn register_send(&mut self, now: Instant, packet_size: DataSize, from: MidRid);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,8 +167,8 @@ impl Default for QueueSnapshot {
 /// The state of a single upstream queue.
 /// The pacer manages packets across several upstream queues.
 #[derive(Debug, Clone, Copy)]
-pub struct QueueState {
-    pub mid: Mid,
+pub(crate) struct QueueState {
+    pub midrid: MidRid,
     pub unpaced: bool,
     pub use_for_padding: bool,
     pub snapshot: QueueSnapshot,
@@ -176,9 +176,9 @@ pub struct QueueState {
 
 /// A request to generate a specific amount of padding.
 #[derive(Debug, Clone, Copy)]
-pub struct PaddingRequest {
+pub(crate) struct PaddingRequest {
     /// The Mid that should generate and queue the padding.
-    pub mid: Mid,
+    pub midrid: MidRid,
     /// The amount of padding in bytes to generate.
     pub padding: usize,
 }
@@ -186,7 +186,7 @@ pub struct PaddingRequest {
 /// A null pacer that doesn't pace.
 #[derive(Debug, Default)]
 pub struct NullPacer {
-    last_sends: HashMap<Mid, Instant>,
+    last_sends: HashMap<MidRid, Instant>,
     queue_states: Vec<QueueState>,
     need_immediate_timeout: bool,
 }
@@ -219,15 +219,15 @@ impl Pacer for NullPacer {
         None
     }
 
-    fn poll_queue(&mut self) -> Option<Mid> {
+    fn poll_queue(&mut self) -> Option<MidRid> {
         let non_empty_queues = self
             .queue_states
             .iter()
             .filter(|q| q.snapshot.packet_count > 0);
         // Pick a queue using round robin, prioritize the least recently sent on queue.
-        let to_send_on = non_empty_queues.min_by_key(|q| self.last_sends.get(&q.mid));
+        let to_send_on = non_empty_queues.min_by_key(|q| self.last_sends.get(&q.midrid));
 
-        let result = to_send_on.map(|q| q.mid);
+        let result = to_send_on.map(|q| q.midrid);
 
         if result.is_some() {
             self.need_immediate_timeout = true;
@@ -236,7 +236,7 @@ impl Pacer for NullPacer {
         result
     }
 
-    fn register_send(&mut self, now: Instant, _packet_size: DataSize, from: Mid) {
+    fn register_send(&mut self, now: Instant, _packet_size: DataSize, from: MidRid) {
         let e = self.last_sends.entry(from).or_insert(now);
         *e = now;
     }
@@ -265,7 +265,7 @@ pub struct LeakyBucketPacer {
     /// The queue states given by last handle_timeout.
     queue_states: Vec<QueueState>,
     /// The next return value for `poll_queue``
-    next_poll_queue: Option<Mid>,
+    next_poll_queue: Option<MidRid>,
 }
 
 impl Pacer for LeakyBucketPacer {
@@ -305,7 +305,7 @@ impl Pacer for LeakyBucketPacer {
         self.maybe_update_adjusted_bitrate(now);
 
         if let Some(request) = self.maybe_create_padding_request() {
-            self.next_poll_queue = Some(request.mid);
+            self.next_poll_queue = Some(request.midrid);
             return Some(request);
         }
 
@@ -332,21 +332,21 @@ impl Pacer for LeakyBucketPacer {
             self.next_poll_queue = None;
             self.next_poll_time = Some(next_poll_time);
         } else {
-            self.next_poll_queue = queue.map(|q| q.mid);
+            self.next_poll_queue = queue.map(|q| q.midrid);
             self.next_poll_time = Some(next_poll_time);
         }
 
         None
     }
 
-    fn poll_queue(&mut self) -> Option<Mid> {
+    fn poll_queue(&mut self) -> Option<MidRid> {
         let next = self.next_poll_queue.take()?;
         self.request_immediate_timeout();
 
         Some(next)
     }
 
-    fn register_send(&mut self, now: Instant, packet_size: DataSize, _from: Mid) {
+    fn register_send(&mut self, now: Instant, packet_size: DataSize, _from: MidRid) {
         self.last_emitted = Some(now);
 
         self.media_debt += packet_size;
@@ -560,7 +560,7 @@ impl LeakyBucketPacer {
         let padding = (self.padding_bitrate * PADDING_BURST_INTERVAL).as_bytes_usize();
 
         Some(PaddingRequest {
-            mid: queue.mid,
+            midrid: queue.midrid,
             padding,
         })
     }
@@ -987,7 +987,7 @@ mod test {
         let now = Instant::now();
 
         let mut state = QueueState {
-            mid: Mid::from("001"),
+            midrid: MidRid(Mid::from("001"), None),
             unpaced: false,
             use_for_padding: true,
             snapshot: QueueSnapshot {
@@ -1002,7 +1002,7 @@ mod test {
         };
 
         let other = QueueState {
-            mid: Mid::from("002"),
+            midrid: MidRid(Mid::from("002"), None),
             unpaced: false,
             use_for_padding: false,
             snapshot: QueueSnapshot {
@@ -1018,7 +1018,7 @@ mod test {
 
         state.snapshot.merge(&other.snapshot);
 
-        assert_eq!(state.mid, Mid::from("001"));
+        assert_eq!(state.midrid.mid(), Mid::from("001"));
         assert_eq!(state.snapshot.size, 40_usize);
         assert_eq!(state.snapshot.packet_count, 1337);
         assert_eq!(state.snapshot.total_queue_time_origin, duration_ms(1337));
@@ -1174,16 +1174,16 @@ mod test {
             }
 
             let timeout = {
-                if let Some(mid) = pacer.poll_queue() {
+                if let Some(midrid) = pacer.poll_queue() {
                     let packet = queue
                         .next_packet()
-                        .unwrap_or_else(|| panic!("Should have a packet for mid {mid}"));
-                    queue.register_send(mid, base + elapsed);
+                        .unwrap_or_else(|| panic!("Should have a packet for {:?}", midrid));
+                    queue.register_send(midrid, base + elapsed);
                     queue.update_average_queue_time(base + elapsed);
                     pacer.register_send(
                         base + elapsed,
                         DataSize::bytes(packet.payload_len as u64),
-                        mid,
+                        midrid,
                     );
                     if packet.kind == PacketKind::Padding {
                         padding_sent += packet.payload_len.into();
@@ -1313,15 +1313,18 @@ mod test {
                 .into_iter()
             }
 
-            pub(super) fn register_send(&mut self, mid: Mid, now: Instant) {
-                if self.video_queue.mid == mid {
+            pub(super) fn register_send(&mut self, midrid: MidRid, now: Instant) {
+                if self.video_queue.midrid == midrid {
                     self.video_queue.last_emitted = Some(now);
-                } else if self.audio_queue.mid == mid {
+                } else if self.audio_queue.midrid == midrid {
                     self.audio_queue.last_emitted = Some(now);
-                } else if self.padding_queue.mid == mid {
+                } else if self.padding_queue.midrid == midrid {
                     self.padding_queue.last_emitted = Some(now);
                 } else {
-                    panic!("Attempted to register send on unknown queue with id {mid:?}");
+                    panic!(
+                        "Attempted to register send on unknown queue with id {:?}",
+                        midrid
+                    );
                 }
             }
 
@@ -1355,9 +1358,21 @@ mod test {
         impl Default for Queue {
             fn default() -> Self {
                 Self {
-                    audio_queue: Inner::new(Mid::from("001"), true, QueuePriority::Media),
-                    video_queue: Inner::new(Mid::from("002"), false, QueuePriority::Media),
-                    padding_queue: Inner::new(Mid::from("003"), false, QueuePriority::Padding),
+                    audio_queue: Inner::new(
+                        MidRid(Mid::from("001"), None),
+                        true,
+                        QueuePriority::Media,
+                    ),
+                    video_queue: Inner::new(
+                        MidRid(Mid::from("002"), None),
+                        false,
+                        QueuePriority::Media,
+                    ),
+                    padding_queue: Inner::new(
+                        MidRid(Mid::from("003"), None),
+                        false,
+                        QueuePriority::Padding,
+                    ),
                 }
             }
         }
@@ -1369,7 +1384,7 @@ mod test {
         }
 
         struct Inner {
-            mid: Mid,
+            midrid: MidRid,
             last_emitted: Option<Instant>,
             queue: VecDeque<QueuedPacket>,
             packet_count: u32,
@@ -1380,9 +1395,9 @@ mod test {
         }
 
         impl Inner {
-            fn new(mid: Mid, is_audio: bool, priority: QueuePriority) -> Self {
+            fn new(midrid: MidRid, is_audio: bool, priority: QueuePriority) -> Self {
                 Self {
-                    mid,
+                    midrid,
                     last_emitted: None,
                     queue: VecDeque::default(),
                     packet_count: 0,
@@ -1430,7 +1445,7 @@ mod test {
 
             fn queue_state(&self, now: Instant) -> QueueState {
                 QueueState {
-                    mid: self.mid,
+                    midrid: self.midrid,
                     unpaced: self.is_audio,
                     use_for_padding: !self.is_audio && self.last_emitted.is_some(),
                     snapshot: QueueSnapshot {

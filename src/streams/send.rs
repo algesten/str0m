@@ -15,22 +15,21 @@ use crate::packet::QueuePriority;
 use crate::packet::QueueSnapshot;
 use crate::packet::QueueState;
 use crate::rtp_::MidRid;
-use crate::rtp_::{extend_u16, Descriptions, ReportList, Rtcp};
 use crate::rtp_::{Bitrate, Extension};
-use crate::rtp_::{ExtensionMap, ReceptionReport, RtpHeader};
+use crate::rtp_::{Descriptions, ReportList, Rtcp};
+use crate::rtp_::{ExtensionMap, RtpHeader};
 use crate::rtp_::{ExtensionValues, Frequency, MediaTime, Mid, NackEntry};
 use crate::rtp_::{Pt, Rid, RtcpFb, SenderInfo, SenderReport, Ssrc};
 use crate::rtp_::{Sdes, SdesType, MAX_BLANK_PADDING_PAYLOAD_SIZE};
 use crate::rtp_::{SeqNo, SRTP_BLOCK_SIZE};
 use crate::session::PacketReceipt;
-use crate::stats::MediaEgressStats;
 use crate::stats::StatsSnapshot;
 use crate::util::value_history::ValueHistory;
-use crate::util::InstantExt;
-use crate::util::{already_happened, calculate_rtt_ms, not_happening};
+use crate::util::{already_happened, not_happening};
 
 use super::rtx_cache::RtxCache;
 use super::send_queue::SendQueue;
+use super::send_stats::StreamTxStats;
 use super::{rr_interval, RtpPacket};
 
 /// The smallest size of padding for which we attempt to use a spurious resend. For padding
@@ -115,6 +114,8 @@ pub struct StreamTx {
     pending_request_remb: Option<Bitrate>,
 
     /// Statistics of outgoing data.
+    ///
+    /// Stats are use to calculate the rtx ratio also when statistics events are disabled.
     stats: StreamTxStats,
 
     // downsampled rtx ratio (value, last calculation)
@@ -123,60 +124,15 @@ pub struct StreamTx {
     // The _main_ PT to use for padding. This is main PT, since the poll_packet() loop
     // figures out the param.resend() RTX PT using main.
     pt_for_padding: Option<Pt>,
-}
 
-/// Holder of stats.
-#[derive(Debug)]
-pub(crate) struct StreamTxStats {
-    /// count of bytes sent, including retransmissions
-    /// <https://www.w3.org/TR/webrtc-stats/#dom-rtcsentrtpstreamstats-bytessent>
-    bytes: u64,
-    /// count of retransmitted bytes alone
-    bytes_resent: u64,
-    /// count of packets sent, including retransmissions
-    /// <https://www.w3.org/TR/webrtc-stats/#summary>
-    packets: u64,
-    /// count of retransmitted packets alone
-    packets_resent: u64,
-    /// count of FIR requests received
-    firs: u64,
-    /// count of PLI requests received
-    plis: u64,
-    /// count of NACKs received
-    nacks: u64,
-    /// round trip time (ms)
-    /// Can be null in case of missing or bad reports
-    rtt: Option<f32>,
-    /// losses collecter from RR (known packets, lost ratio)
-    losses: Vec<(u64, f32)>,
-
-    /// `None` if `rtx_ratio_cap` is `None`.
-    bytes_transmitted: Option<ValueHistory<u64>>,
-
-    /// `None` if `rtx_ratio_cap` is `None`.
-    bytes_retransmitted: Option<ValueHistory<u64>>,
-}
-
-impl Default for StreamTxStats {
-    fn default() -> Self {
-        Self {
-            bytes: 0,
-            bytes_resent: 0,
-            packets: 0,
-            packets_resent: 0,
-            firs: 0,
-            plis: 0,
-            nacks: 0,
-            rtt: None,
-            losses: Vec::default(),
-            bytes_transmitted: Some(Default::default()),
-            bytes_retransmitted: Some(Default::default()),
-        }
-    }
+    /// Whether a receiver report has been received for this SSRC, thus acknowledging
+    /// that the receiver has bound the Mid/Rid tuple to the SSRC and no longer
+    /// needs to be sent on every packet
+    remote_acked_ssrc: bool,
 }
 
 impl StreamTx {
-    pub(crate) fn new(ssrc: Ssrc, rtx: Option<Ssrc>, midrid: MidRid) -> Self {
+    pub(crate) fn new(ssrc: Ssrc, rtx: Option<Ssrc>, midrid: MidRid, enable_stats: bool) -> Self {
         debug!("Create StreamTx for SSRC: {}", ssrc);
 
         StreamTx {
@@ -200,9 +156,10 @@ impl StreamTx {
             last_sender_report: already_happened(),
             pending_request_keyframe: None,
             pending_request_remb: None,
-            stats: StreamTxStats::default(),
+            stats: StreamTxStats::new(enable_stats),
             rtx_ratio: (0.0, already_happened()),
             pt_for_padding: None,
+            remote_acked_ssrc: false,
         }
     }
 
@@ -365,6 +322,7 @@ impl StreamTx {
         let mid = self.midrid.mid();
         let rid = self.midrid.rid();
         let ssrc_rtx = self.rtx;
+        let remote_acked_ssrc = self.remote_acked_ssrc;
 
         let (next, is_padding) = if let Some(next) = self.poll_packet_resend(now) {
             (next, false)
@@ -382,8 +340,23 @@ impl StreamTx {
         // TODO: Can we remove this?
         let header_ref = &mut next.pkt.header;
 
+        // <https://webrtc.googlesource.com/src/+/refs/heads/main/modules/rtp_rtcp/source/rtp_sender.cc#537>
+        // BUNDLE requires that the receiver "bind" the received SSRC to the values
+        // in the MID and/or (R)RID header extensions if present. Therefore, the
+        // sender can reduce overhead by omitting these header extensions once it
+        // knows that the receiver has "bound" the SSRC.
+        // <snip>
+        // The algorithm here is fairly simple: Always attach a MID and/or RID (if
+        // configured) to the outgoing packets until an RTCP receiver report comes
+        // back for this SSRC. That feedback indicates the receiver must have
+        // received a packet with the SSRC and header extension(s), so the sender
+        // then stops attaching the MID and RID.
+
         // This is true also for RTX.
-        header_ref.ext_vals.mid = Some(mid);
+        if !remote_acked_ssrc {
+            header_ref.ext_vals.mid = Some(mid);
+            header_ref.ext_vals.rid = rid;
+        }
 
         let pt_main = header_ref.payload_type;
 
@@ -431,7 +404,6 @@ impl StreamTx {
                 next.pkt.time = time;
 
                 // Modify the original (and also cached) header value.
-                header_ref.ext_vals.rid = rid;
                 header_ref.ext_vals.rid_repair = None;
 
                 header_ref.clone()
@@ -759,7 +731,11 @@ impl StreamTx {
     pub(crate) fn handle_rtcp(&mut self, now: Instant, fb: RtcpFb) {
         use RtcpFb::*;
         match fb {
-            ReceptionReport(r) => self.stats.update_with_rr(now, r),
+            ReceptionReport(r) => {
+                // Receiver has bound MidRid to SSRC
+                self.remote_acked_ssrc = true;
+                self.stats.update_with_rr(now, r)
+            }
             Nack(_, list) => {
                 self.stats.increase_nacks();
                 let entries = list.into_iter();
@@ -923,7 +899,7 @@ impl StreamTx {
         }
 
         QueueState {
-            mid: self.midrid.mid(),
+            midrid: self.midrid,
             unpaced,
             use_for_padding,
             snapshot,
@@ -1042,87 +1018,6 @@ impl StreamTx {
 
     pub(crate) fn is_midrid(&self, midrid: MidRid) -> bool {
         midrid.special_equals(&self.midrid)
-    }
-}
-
-impl StreamTxStats {
-    fn update_packet_counts(&mut self, bytes: u64, is_resend: bool) {
-        self.packets += 1;
-        self.bytes += bytes;
-        if is_resend {
-            self.bytes_resent += bytes;
-            self.packets_resent += 1;
-        }
-    }
-
-    fn increase_nacks(&mut self) {
-        self.nacks += 1;
-    }
-
-    fn increase_plis(&mut self) {
-        self.plis += 1;
-    }
-
-    fn increase_firs(&mut self) {
-        self.firs += 1;
-    }
-
-    fn update_with_rr(&mut self, now: Instant, r: ReceptionReport) {
-        let ntp_time = now.to_ntp_duration();
-        let rtt = calculate_rtt_ms(ntp_time, r.last_sr_delay, r.last_sr_time);
-        self.rtt = rtt;
-
-        let ext_seq = {
-            let prev = self.losses.last().map(|s| s.0).unwrap_or(r.max_seq as u64);
-            let next = (r.max_seq & 0xffff) as u16;
-            extend_u16(Some(prev), next)
-        };
-
-        self.losses
-            .push((ext_seq, r.fraction_lost as f32 / u8::MAX as f32));
-    }
-
-    pub(crate) fn fill(&mut self, snapshot: &mut StatsSnapshot, midrid: MidRid, now: Instant) {
-        if self.bytes == 0 {
-            return;
-        }
-
-        let loss = {
-            let mut value = 0_f32;
-            let mut total_weight = 0_u64;
-
-            // just in case we received RRs out of order
-            self.losses.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
-
-            // average known RR losses weighted by their number of packets
-            for it in self.losses.windows(2) {
-                let [prev, next] = it else { continue };
-                let weight = next.0.saturating_sub(prev.0);
-                value += next.1 * weight as f32;
-                total_weight += weight;
-            }
-
-            let result = value / total_weight as f32;
-            result.is_finite().then_some(result)
-        };
-
-        self.losses.drain(..self.losses.len().saturating_sub(1));
-
-        snapshot.egress.insert(
-            midrid,
-            MediaEgressStats {
-                mid: midrid.mid(),
-                rid: midrid.rid(),
-                bytes: self.bytes,
-                packets: self.packets,
-                firs: self.firs,
-                plis: self.plis,
-                nacks: self.nacks,
-                rtt: self.rtt,
-                loss,
-                timestamp: now,
-            },
-        );
     }
 }
 

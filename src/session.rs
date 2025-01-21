@@ -128,10 +128,12 @@ impl Session {
             (PacerImpl::Null(NullPacer::default()), None)
         };
 
+        let enable_stats = config.stats_interval.is_some();
+
         Session {
             id,
             medias: vec![],
-            streams: Streams::default(),
+            streams: Streams::new(enable_stats),
             app: None,
             reordering_size_audio: config.reordering_size_audio,
             reordering_size_video: config.reordering_size_video,
@@ -249,11 +251,9 @@ impl Session {
             return;
         };
 
-        let midrid = MidRid(padding_request.mid, None);
-
         let stream = self
             .streams
-            .stream_tx_by_midrid(midrid)
+            .stream_tx_by_midrid(padding_request.midrid)
             .expect("pacer to use an existing stream");
 
         stream.generate_padding(padding_request.padding);
@@ -696,17 +696,17 @@ impl Session {
         let srtp_tx = self.srtp_tx.as_mut()?;
 
         // Figure out which, if any, queue to poll
-        let mid = self.pacer.poll_queue()?;
+        let midrid = self.pacer.poll_queue()?;
         let media = self
             .medias
             .iter()
-            .find(|m| m.mid() == mid)
+            .find(|m| m.mid() == midrid.mid())
             .expect("index is media");
 
         let buf = &mut self.poll_packet_buf;
         let twcc_seq = self.twcc;
 
-        let stream = self.streams.stream_tx_by_midrid(MidRid(mid, None))?;
+        let stream = self.streams.stream_tx_by_midrid(midrid)?;
 
         let params = &self.codec_config;
         let exts = media.remote_extmap();
@@ -734,7 +734,7 @@ impl Session {
             crate::log_stat!("PACKET_SENT", header.ssrc, payload_size, kind);
         }
 
-        self.pacer.register_send(now, payload_size.into(), mid);
+        self.pacer.register_send(now, payload_size.into(), midrid);
 
         if let Some(raw_packets) = &mut self.raw_packets {
             raw_packets.push_back(Box::new(RawPacket::RtpTx(header.clone(), buf.clone())));

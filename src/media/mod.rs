@@ -49,6 +49,11 @@ pub struct Media {
     /// RTP level.
     rids_rx: Rids,
 
+    /// Rid that we can send using the [`Writer`].
+    ///
+    /// RTP level.
+    rids_tx: Rids,
+
     // ========================================= SDP level =========================================
     //
     /// The index of this media line in the Session::media Vec.
@@ -120,8 +125,10 @@ pub struct Media {
 }
 
 #[derive(Debug)]
-/// Config value for [`Media::rids_rx()`]
+/// Config value for [`Media::rids_rx()`] and [`Media::rids_tx()`]
 pub enum Rids {
+    /// No rid is allowed.
+    None,
     /// Any Rid is allowed.
     ///
     /// This is the default value for direct API.
@@ -133,8 +140,9 @@ pub enum Rids {
 }
 
 impl Rids {
-    pub(crate) fn expects(&self, rid: Rid) -> bool {
+    pub(crate) fn contains(&self, rid: Rid) -> bool {
         match self {
+            Rids::None => false,
             Rids::Any => true,
             Rids::Specific(v) => v.contains(&rid),
         }
@@ -142,6 +150,16 @@ impl Rids {
 
     pub(crate) fn is_specific(&self) -> bool {
         matches!(self, Rids::Specific(_))
+    }
+
+    fn add(&mut self, rid: Rid) {
+        match self {
+            Rids::None | Rids::Any => {
+                *self = Rids::Specific(vec![rid]);
+            }
+            Rids::Specific(vec) if !vec.contains(&rid) => vec.push(rid),
+            Rids::Specific(_) => {}
+        }
     }
 }
 
@@ -180,14 +198,8 @@ impl Media {
     /// a mid/rid combination in the RTP header extensions.
     ///
     /// RTP level.
-    pub fn expect_rid(&mut self, rid: Rid) {
-        match &mut self.rids_rx {
-            rids @ Rids::Any => {
-                *rids = Rids::Specific(vec![rid]);
-            }
-            Rids::Specific(v) if !v.contains(&rid) => v.push(rid),
-            _ => {}
-        }
+    pub fn expect_rid_rx(&mut self, rid: Rid) {
+        self.rids_rx.add(rid);
     }
 
     /// Rids we are expecting to see on incoming RTP packets that map to this mid.
@@ -198,6 +210,16 @@ impl Media {
     /// RTP level.
     pub fn rids_rx(&self) -> &Rids {
         &self.rids_rx
+    }
+
+    /// Rids we are can send via the [`Writer`].
+    ///
+    /// By default this is set to [`Rids::None`], which changes to [`Rids::Specific`] via SDP negotiation
+    /// that configures Simulcast where specific rids are expected.
+    ///
+    /// RTP level.
+    pub fn rids_tx(&self) -> &Rids {
+        &self.rids_tx
     }
 
     pub(crate) fn index(&self) -> usize {
@@ -467,6 +489,18 @@ impl Media {
         // Simply remove the depayloader, it will be re-created on the next RTP packet.
         self.depayloaders.remove(&(payload_type, rid));
     }
+
+    pub(crate) fn set_rid_rx(&mut self, rids: Rids) {
+        self.rids_rx = rids;
+    }
+
+    pub(crate) fn set_rid_tx(&mut self, rids: Rids) {
+        self.rids_tx = rids;
+    }
+
+    pub(crate) fn add_to_rid_tx(&mut self, rid: Rid) {
+        self.rids_tx.add(rid)
+    }
 }
 
 impl Default for Media {
@@ -484,6 +518,7 @@ impl Default for Media {
             dir: Direction::SendRecv,
             simulcast: None,
             rids_rx: Rids::Any,
+            rids_tx: Rids::None,
             payloaders: HashMap::new(),
             depayloaders: HashMap::new(),
             to_payload: VecDeque::default(),
@@ -528,6 +563,7 @@ impl Media {
             remote_pts: a.pts,
             remote_exts: a.exts,
             remote_created: false,
+            simulcast: a.simulcast.map(|s| s.into_sdp()),
             ..Default::default()
         }
     }

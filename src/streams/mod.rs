@@ -24,6 +24,7 @@ mod rtx_cache;
 pub(crate) mod rtx_cache_buf;
 mod send;
 mod send_queue;
+mod send_stats;
 
 pub(crate) use send::{DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP};
 
@@ -149,6 +150,10 @@ pub(crate) struct Streams {
     /// Whether nack reports are enabled. This is an optimization to avoid too frequent
     /// Session::nack_at() when we don't need to send nacks.
     any_nack_active: Option<bool>,
+
+    /// Whether periodic statistics reports are expected to be generated. This informs us on
+    /// whether we should be holding onto data needed for those reports or not.
+    enable_stats: bool,
 }
 
 /// Delay between cleaning up the RxLookup.
@@ -164,8 +169,8 @@ struct RxLookup {
     last_used: Instant,
 }
 
-impl Default for Streams {
-    fn default() -> Self {
+impl Streams {
+    pub(crate) fn new(enable_stats: bool) -> Self {
         Self {
             streams_rx: Default::default(),
             rx_lookup: Default::default(),
@@ -174,11 +179,10 @@ impl Default for Streams {
             default_ssrc_tx: 0.into(), // this will be changed
             mids_to_report: Vec::with_capacity(10),
             any_nack_active: None,
+            enable_stats,
         }
     }
-}
 
-impl Streams {
     pub(crate) fn map_dynamic_by_rid(
         &mut self,
         ssrc: Ssrc,
@@ -193,7 +197,7 @@ impl Streams {
             .expect("map_dynamic_by_rid to be called with Rid");
 
         // Check if the mid/rid combo is not expected
-        if !media.rids_rx().expects(rid) {
+        if !media.rids_rx().contains(rid) {
             trace!("Mid does not expect rid: {} {}", midrid.mid(), rid);
             return;
         }
@@ -328,7 +332,7 @@ impl Streams {
     ) -> &mut StreamTx {
         self.streams_tx
             .entry(ssrc)
-            .or_insert_with(|| StreamTx::new(ssrc, rtx, midrid))
+            .or_insert_with(|| StreamTx::new(ssrc, rtx, midrid, self.enable_stats))
     }
 
     pub fn remove_stream_tx(&mut self, ssrc: Ssrc) -> bool {

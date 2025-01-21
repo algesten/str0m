@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::mem;
 use std::time::{Duration, Instant};
 
@@ -6,6 +7,8 @@ use crate::rtp_::SeqNo;
 use super::AckedPacket;
 
 const BURST_TIME_INTERVAL: Duration = Duration::from_millis(5);
+const SEND_TIME_GROUP_LENGTH: Duration = Duration::from_millis(5);
+const MAX_BURST_DURATION: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Default)]
 pub struct ArrivalGroup {
@@ -51,7 +54,7 @@ impl ArrivalGroup {
             return Belongs::Yes;
         };
 
-        let Some(send_diff) = packet
+        let Some(first_send_delta) = packet
             .local_send_time
             .checked_duration_since(first_local_send_time)
         else {
@@ -59,30 +62,39 @@ impl ArrivalGroup {
             return Belongs::Skipped;
         };
 
-        if send_diff < BURST_TIME_INTERVAL {
-            // Sent within the same burst interval
-            return Belongs::Yes;
-        }
+        let inter_arrival_time = {
+            let last_remote_recv_time = self.remote_recv_time();
 
-        let inter_arrival_time = packet
-            .remote_recv_time
-            .checked_duration_since(self.remote_recv_time());
-
-        let Some(inter_arrival_time) = inter_arrival_time else {
-            info!("TWCC: Out of order arrival");
-            return Belongs::Skipped;
+            if packet.remote_recv_time >= last_remote_recv_time {
+                (packet.remote_recv_time - last_remote_recv_time).as_secs_f64()
+            } else {
+                (last_remote_recv_time - packet.remote_recv_time).as_secs_f64() * -1.0
+            }
         };
 
-        let inter_group_delay_delta = inter_arrival_time.as_secs_f64()
-            - (packet.local_send_time - self.local_send_time()).as_secs_f64();
+        let last_send_delta = {
+            let last_send_time = self.local_send_time();
+
+            match packet.local_send_time.cmp(&last_send_time) {
+                Ordering::Equal => {
+                    return Belongs::Yes;
+                }
+                Ordering::Greater => (packet.local_send_time - last_send_time).as_secs_f64(),
+                Ordering::Less => (last_send_time - packet.local_send_time).as_secs_f64() * -1.0,
+            }
+        };
+
+        let inter_group_delay_delta = inter_arrival_time - last_send_delta;
 
         if inter_group_delay_delta < 0.0
-            && inter_arrival_time < BURST_TIME_INTERVAL
-            && packet.remote_recv_time - first_remote_recv_time < Duration::from_millis(100)
+            && inter_arrival_time <= BURST_TIME_INTERVAL.as_secs_f64()
+            && packet.remote_recv_time - first_remote_recv_time < MAX_BURST_DURATION
         {
             Belongs::Yes
-        } else {
+        } else if first_send_delta > SEND_TIME_GROUP_LENGTH {
             Belongs::NewGroup
+        } else {
+            Belongs::Yes
         }
     }
 
@@ -344,7 +356,7 @@ mod test {
             packets.push(AckedPacket {
                 seq_no: 4.into(),
                 size: DataSize::ZERO,
-                local_send_time: now + duration_us(5001),
+                local_send_time: now - duration_us(100),
                 remote_recv_time: now + duration_us(5000),
                 local_recv_time: now + duration_us(5050),
             });
