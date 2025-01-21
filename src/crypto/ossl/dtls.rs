@@ -13,6 +13,8 @@ use super::io_buf::IoBuffer;
 use super::stream::TlsStream;
 use super::CryptoError;
 
+// We restrict cipher suites to those that include ephermeral Diffie-Hellman or ephemeral
+// Elliptical Curve Diffie-Hellman AND AES-256 or AES-GCM.
 const DTLS_CIPHERS: &str = "ECDHE+AESGCM:DHE+AESGCM:ECDHE+AES256:DHE+AES256";
 
 pub struct OsslDtlsImpl {
