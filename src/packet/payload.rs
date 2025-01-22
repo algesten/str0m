@@ -54,7 +54,7 @@ impl Payloader {
                 pt,
                 seq_no,
                 rtp_time.rebase(self.clock_rate).numer() as u32,
-                wallclock,
+                wallclock.as_std(),
                 marker,
                 ext_vals.clone(),
                 nackable,

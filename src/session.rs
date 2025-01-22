@@ -1,5 +1,4 @@
 use std::collections::{HashMap, VecDeque};
-use std::time::{Duration, Instant};
 
 use crate::bwe::BweKind;
 use crate::crypto::SrtpProfile;
@@ -23,7 +22,7 @@ use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, Streams};
-use crate::util::{already_happened, not_happening, Soonest};
+use crate::util::{Duration, Instant, Soonest};
 use crate::Event;
 use crate::{net, Reason};
 use crate::{RtcConfig, RtcError};
@@ -147,8 +146,8 @@ impl Session {
 
             srtp_rx: None,
             srtp_tx: None,
-            last_nack: already_happened(),
-            last_twcc: already_happened(),
+            last_nack: Instant::DistantPast,
+            last_twcc: Instant::DistantPast,
             twcc: 0,
             twcc_rx_register: TwccRecvRegister::new(100),
             twcc_tx_register: TwccSendRegister::new(1000),
@@ -214,7 +213,7 @@ impl Session {
 
         let sender_ssrc = self.streams.first_ssrc_local();
 
-        let do_nack = now >= self.nack_at().unwrap_or(not_happening());
+        let do_nack = now >= self.nack_at().unwrap_or(Instant::DistantFuture);
 
         self.streams.handle_timeout(
             now,
@@ -635,7 +634,7 @@ impl Session {
 
     pub fn poll_datagram(&mut self, now: Instant) -> Option<net::DatagramSend> {
         // Time must have progressed forward from start value.
-        if now == already_happened() {
+        if now == Instant::DistantPast {
             return None;
         }
 

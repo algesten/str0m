@@ -1,11 +1,11 @@
 use std::collections::VecDeque;
-use std::time::Instant;
 
 use crate::crypto::dtls::DtlsInner;
 use crate::crypto::CryptoError;
 use crate::crypto::DtlsEvent;
 use crate::crypto::{KeyingMaterial, SrtpProfile};
 use crate::io::DATAGRAM_MTU_WARN;
+use crate::util::{Duration, Instant};
 
 use super::cert::{create_sha256_fingerprint, WinCryptoDtlsCert};
 

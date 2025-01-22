@@ -880,7 +880,11 @@ fn ensure_stream_tx(session: &mut Session) {
                 session.send_buffer_video
             };
 
-            stream.set_rtx_cache(size, DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP);
+            stream.set_rtx_cache(
+                size,
+                DEFAULT_RTX_CACHE_DURATION.as_std().unwrap(),
+                DEFAULT_RTX_RATIO_CAP,
+            );
         }
     }
 }
@@ -919,7 +923,11 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
                 session.send_buffer_video
             };
 
-            stream.set_rtx_cache(size, DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP);
+            stream.set_rtx_cache(
+                size,
+                DEFAULT_RTX_CACHE_DURATION.as_std().unwrap(),
+                DEFAULT_RTX_RATIO_CAP,
+            );
         }
     }
 }

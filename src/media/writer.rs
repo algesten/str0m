@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time as std_time;
 
 use crate::format::PayloadParams;
 use crate::rtp_::MidRid;
@@ -117,7 +117,7 @@ impl<'a> Writer<'a> {
     pub fn write(
         self,
         pt: Pt,
-        wallclock: Instant,
+        wallclock: std_time::Instant,
         rtp_time: MediaTime,
         data: impl Into<Vec<u8>>,
     ) -> Result<(), RtcError> {
@@ -148,7 +148,7 @@ impl<'a> Writer<'a> {
         let to_payload = ToPayload {
             pt,
             rid: self.rid,
-            wallclock,
+            wallclock: wallclock.into(),
             rtp_time,
             data,
             ext_vals: self.ext_vals,

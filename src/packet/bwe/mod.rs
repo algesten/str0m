@@ -6,9 +6,9 @@
 
 use std::cmp::Ordering;
 use std::fmt;
-use std::time::{Duration, Instant};
 
 use crate::rtp_::{Bitrate, DataSize, SeqNo, TwccSendRecord};
+use crate::util::{Duration, Instant};
 
 mod acked_bitrate_estimator;
 mod arrival_group;
@@ -16,7 +16,6 @@ mod delay_controller;
 mod loss_controller;
 pub(crate) mod macros;
 mod rate_control;
-mod super_instant;
 mod trendline_estimator;
 
 use acked_bitrate_estimator::AckedBitrateEstimator;
@@ -190,7 +189,7 @@ impl AckedPacket {
 // NB: Extracted for lifetime reasons
 fn in_startup_phase(started_at: Option<Instant>, now: Instant) -> bool {
     started_at
-        .map(|s| now.duration_since(s) <= STARTUP_PAHSE)
+        .map(|s| now.saturating_duration_since(s) <= STARTUP_PAHSE)
         .unwrap_or(false)
 }
 

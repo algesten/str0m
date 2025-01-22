@@ -1,7 +1,9 @@
 use std::fmt;
 use std::iter::Sum;
 use std::ops::{Add, AddAssign, Div, Mul, Sub, SubAssign};
-use std::time::Duration;
+use std::time as std_time;
+
+use crate::util::Duration;
 
 /// A data rate expressed as bits per second(bps).
 ///
@@ -202,19 +204,19 @@ impl Div<Duration> for DataSize {
 }
 
 impl Div<Bitrate> for DataSize {
-    type Output = Duration;
+    type Output = std_time::Duration;
 
     fn div(self, rhs: Bitrate) -> Self::Output {
         let bits = self.as_bytes_f64() * 8.0;
         let rhs = rhs.as_f64();
 
         if rhs == 0.0 {
-            return Duration::ZERO;
+            return std_time::Duration::ZERO;
         }
 
         let seconds = bits / rhs;
 
-        Duration::from_secs_f64(seconds)
+        std_time::Duration::from_secs_f64(seconds)
     }
 }
 
@@ -292,9 +294,7 @@ impl fmt::Display for DataSize {
 
 #[cfg(test)]
 mod test {
-    use std::time::Duration;
-
-    use super::{Bitrate, DataSize};
+    use super::*;
 
     #[test]
     fn test_bitrate_display() {

@@ -1,8 +1,7 @@
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
 
 use crate::rtp_::Bitrate;
-use crate::util::already_happened;
+use crate::util::{Duration, Instant};
 
 use super::arrival_group::ArrivalGroupAccumulator;
 use super::rate_control::RateControl;
@@ -46,8 +45,8 @@ impl DelayController {
             last_estimate: None,
             max_rtt_history: VecDeque::default(),
             mean_max_rtt: None,
-            next_timeout: already_happened(),
-            last_twcc_report: already_happened(),
+            next_timeout: Instant::DistantPast,
+            last_twcc_report: Instant::DistantPast,
         }
     }
 
@@ -156,7 +155,7 @@ impl DelayController {
 
     /// Whether the current trendline hypothesis is valid i.e. not too old.
     fn trendline_hypothesis_valid(&self, now: Instant) -> bool {
-        now.duration_since(self.last_twcc_report)
+        now.saturating_duration_since(self.last_twcc_report)
             <= self
                 .mean_max_rtt
                 .map(|rtt| rtt * 2)

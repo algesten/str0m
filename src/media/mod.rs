@@ -1,7 +1,6 @@
 //! Media (audio/video) related content.
 
 use std::collections::{HashMap, VecDeque};
-use std::time::Instant;
 
 use crate::change::AddMedia;
 use crate::format::CodecConfig;
@@ -17,7 +16,7 @@ use crate::format::PayloadParams;
 use crate::sdp::Simulcast as SdpSimulcast;
 use crate::sdp::{MediaLine, Msid};
 use crate::streams::{RtpPacket, Streams};
-use crate::util::already_happened;
+use crate::util::Instant;
 
 mod event;
 pub use event::*;
@@ -285,7 +284,7 @@ impl Media {
                     rid: *rid,
                     params: *codec,
                     time: dep.time,
-                    network_time: dep.first_network_time(),
+                    network_time: dep.first_network_time().as_std(),
                     seq_range: dep.seq_range(),
                     contiguous: dep.contiguous,
                     ext_vals: dep.ext_vals().clone(),
@@ -341,7 +340,7 @@ impl Media {
         let buffer = self.depayloaders.get_mut(&key).unwrap();
 
         let meta = RtpMeta {
-            received: packet.timestamp,
+            received: packet.timestamp.into(),
             time: packet.time,
             seq_no: packet.seq_no,
             header: packet.header.clone(),
@@ -394,7 +393,7 @@ impl Media {
 
     pub(crate) fn poll_timeout(&self) -> Option<Instant> {
         if !self.to_payload.is_empty() {
-            Some(already_happened())
+            Some(Instant::DistantPast)
         } else {
             None
         }

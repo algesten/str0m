@@ -2,9 +2,9 @@
 
 use std::collections::VecDeque;
 use std::fmt;
-use std::time::Instant;
 
 use crate::net::DatagramSend;
+use crate::util::Instant;
 
 use super::CryptoProvider;
 use super::{CryptoError, Fingerprint, KeyingMaterial, SrtpProfile};

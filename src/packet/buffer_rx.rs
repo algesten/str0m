@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::ops::{Range, RangeInclusive};
-use std::time::Instant;
 
 use crate::rtp_::{ExtensionValues, MediaTime, RtpHeader, SenderInfo, SeqNo};
+use crate::util::Instant;
 
 use super::contiguity::Contiguity;
 use super::contiguity_vp8::Vp8Contiguity;

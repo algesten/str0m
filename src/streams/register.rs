@@ -1,6 +1,6 @@
-use std::time::Instant;
-
 use crate::rtp_::{Nack, ReceptionReport, SeqNo};
+
+use crate::util::Instant;
 
 use super::register_nack::NackRegister;
 
@@ -253,9 +253,9 @@ fn expected(first: SeqNo, last: SeqNo) -> i64 {
 
 #[cfg(test)]
 mod test {
-    use std::time::{Duration, Instant};
+    use super::*;
 
-    use crate::streams::register::{expected, packets_lost, ReceiverRegister};
+    use crate::util::Duration;
 
     #[test]
     fn jitter_at_0() {
@@ -287,7 +287,7 @@ mod test {
 
         for i in 4..1000 {
             let arrival = if i % 2 == 0 {
-                start + (i * dur).checked_sub(off).unwrap()
+                start + ((i * dur) - off)
             } else {
                 start + i * dur + off
             };

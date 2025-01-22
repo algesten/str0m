@@ -1,6 +1,6 @@
 use std::fmt;
 use std::ops::RangeInclusive;
-use std::time::Instant;
+use std::time as std_time;
 
 use crate::packet::MediaKind;
 use crate::rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, SenderInfo, SeqNo};
@@ -120,7 +120,7 @@ pub struct MediaData {
     /// The time of the [`Input::Receive`][crate::Input::Receive] of the first packet that caused this MediaData.
     ///
     /// In simple SFU setups this can be used as wallclock for [`Writer::write`][crate::media::Writer].
-    pub network_time: Instant,
+    pub network_time: std_time::Instant,
 
     /// The (RTP) sequence numbers that made up this data.
     pub seq_range: RangeInclusive<SeqNo>,

@@ -1,10 +1,7 @@
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 
 use crate::rtp_::{Bitrate, DataSize, MidRid};
-use crate::util::already_happened;
-use crate::util::not_happening;
-use crate::util::Soonest;
+use crate::util::{Duration, Instant, Soonest};
 
 const MAX_BITRATE: Bitrate = Bitrate::gbps(10);
 const MAX_DEBT_IN_TIME: Duration = Duration::from_millis(500);
@@ -153,7 +150,7 @@ impl QueueSnapshot {
 impl Default for QueueSnapshot {
     fn default() -> Self {
         Self {
-            created_at: not_happening(),
+            created_at: Instant::DistantFuture,
             size: Default::default(),
             packet_count: Default::default(),
             total_queue_time_origin: Default::default(),
@@ -439,7 +436,8 @@ impl LeakyBucketPacer {
             if self.adjusted_bitrate > Bitrate::ZERO {
                 // If we have a non-empty queue, send on it as soon as possible, possibly waiting
                 // for the next pacing interval.
-                let drain_debt_time = self.media_debt / self.adjusted_bitrate;
+                let drain_debt_time: Duration =
+                    Duration::from(self.media_debt / self.adjusted_bitrate);
                 let next_send_offset = if drain_debt_time > PACING {
                     // If we have incurred too much debt we need to wait to let it clear out before sending
                     // again.
@@ -466,8 +464,9 @@ impl LeakyBucketPacer {
 
         // If all queues are empty and we have a padding rate, wait until we have drained
         // both the media debt and padding debt to send some padding.
-        let mut drain_debt_time =
-            (self.media_debt / self.adjusted_bitrate).max(self.padding_debt / self.padding_bitrate);
+        let mut drain_debt_time: Duration = (self.media_debt / self.adjusted_bitrate)
+            .max(self.padding_debt / self.padding_bitrate)
+            .into();
         if drain_debt_time.is_zero() {
             // Give the main loop some time to do something else e.g. queue media.
             drain_debt_time = Duration::from_micros(1);
@@ -566,7 +565,7 @@ impl LeakyBucketPacer {
     }
 
     fn request_immediate_timeout(&mut self) {
-        self.next_poll_time = Some(already_happened());
+        self.next_poll_time = Some(Instant::DistantPast);
     }
 }
 
@@ -594,8 +593,6 @@ impl QueueSnapshot {
 
 #[cfg(test)]
 mod test {
-    use std::time::{Duration, Instant};
-
     use crate::rtp_::{DataSize, Mid, RtpHeader};
 
     use super::*;
@@ -1249,7 +1246,6 @@ mod test {
     /// A packet queue for use in tests of the pacer.
     mod queue {
         use std::collections::VecDeque;
-        use std::time::{Duration, Instant};
 
         use crate::rtp_::{DataSize, RtpHeader};
 

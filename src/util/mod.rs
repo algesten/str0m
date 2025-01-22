@@ -1,13 +1,12 @@
-use std::time::{Duration, Instant};
-
 mod bit_pattern;
 
 pub(crate) use bit_pattern::BitPattern;
 
 pub(crate) mod value_history;
 
-mod time_tricks;
-pub(crate) use time_tricks::{already_happened, epoch_to_beginning, not_happening, InstantExt};
+mod time;
+
+pub(crate) use time::{epoch_to_beginning, Duration, Instant};
 
 pub(crate) trait Soonest {
     fn soonest(self, other: Self) -> Self;

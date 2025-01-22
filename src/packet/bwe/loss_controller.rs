@@ -1,14 +1,12 @@
 use std::cmp::max;
 use std::cmp::min;
-use std::time::{Duration, Instant};
 
 use crate::packet::bwe::macros::log_inherent_loss;
 use crate::packet::bwe::macros::log_loss_based_bitrate_estimate;
 use crate::packet::bwe::macros::log_loss_bw_limit_in_window;
 use crate::rtp_::TwccSendRecord;
+use crate::util::{Duration, Instant};
 use crate::{Bitrate, DataSize};
-
-use super::super_instant::SuperInstant;
 
 /// Loss controller based loosely on libWebRTC's `LossBasedBweV2`(commit `14e2779a6ccdc67038ed2069a5732dd41617c6f0`)
 /// We don't implement ALR, link capacity estimates or probing(although we use constant padding
@@ -38,7 +36,7 @@ pub struct LossController {
     partial_observation: PartialObservation,
 
     /// The last packet sent in the most recent observation.
-    last_send_time_most_recent_observation: SuperInstant,
+    last_send_time_most_recent_observation: Instant,
 
     // Observation window
     /// Forever growing counter of observations. Observation::id derives from this.
@@ -53,11 +51,11 @@ pub struct LossController {
     /// Precomputed instantaneous upper bound on bandwidth estimate.
     cached_instant_upper_bound: Option<Bitrate>,
     /// Last time we reduced the estimate.
-    last_time_estimate_reduced: SuperInstant,
+    last_time_estimate_reduced: Instant,
 
     /// When we started recovering after being loss limited last time.
     /// While in this window the bandwidth estimate is bounded by `bandwidth_limit_in_current_window`.
-    recovering_after_loss_timestamp: SuperInstant,
+    recovering_after_loss_timestamp: Instant,
     /// Upper bound on estimate while in recovery window.
     bandwidth_limit_in_current_window: Bitrate,
 
@@ -105,7 +103,7 @@ impl LossController {
         let mut controller = LossController {
             state: LossControllerState::DelayBased,
             partial_observation: PartialObservation::new(),
-            last_send_time_most_recent_observation: SuperInstant::DistantFuture,
+            last_send_time_most_recent_observation: Instant::DistantFuture,
             observations: vec![Observation::DUMMY; config.observation_window_size]
                 .into_boxed_slice(),
             num_observations: 0,
@@ -113,8 +111,8 @@ impl LossController {
             instant_upper_bound_temporal_weights: vec![0_f64; config.observation_window_size]
                 .into_boxed_slice(),
             cached_instant_upper_bound: None,
-            last_time_estimate_reduced: SuperInstant::DistantPast,
-            recovering_after_loss_timestamp: SuperInstant::DistantPast,
+            last_time_estimate_reduced: Instant::DistantPast,
+            recovering_after_loss_timestamp: Instant::DistantPast,
             bandwidth_limit_in_current_window: Bitrate::MAX,
 
             current_estimate: ChannelParameters::new(config.initial_inherent_loss_estimate),
@@ -320,14 +318,10 @@ impl LossController {
         self.partial_observation.update(summary);
 
         if !self.last_send_time_most_recent_observation.is_finite() {
-            self.last_send_time_most_recent_observation = last_send_time.into();
+            self.last_send_time_most_recent_observation = last_send_time;
         }
 
-        let observation_duration = last_send_time
-            - self
-                .last_send_time_most_recent_observation
-                .as_instant()
-                .expect("instant is not finite");
+        let observation_duration = last_send_time - self.last_send_time_most_recent_observation;
 
         if observation_duration <= Duration::ZERO {
             return false;
@@ -338,7 +332,7 @@ impl LossController {
             return false;
         }
 
-        self.last_send_time_most_recent_observation = last_send_time.into();
+        self.last_send_time_most_recent_observation = last_send_time;
 
         let observation = {
             let id = self.num_observations;
@@ -585,24 +579,24 @@ impl LossController {
             return upper_bound;
         }
 
-        if self.config.rampup_acceleration_max_factor > Duration::ZERO {
-            if let (Some(most_recent), Some(reduced)) = (
-                self.last_send_time_most_recent_observation.as_instant(),
-                self.last_time_estimate_reduced.as_instant(),
-            ) {
-                let delta = most_recent - reduced;
-                let time_since_bw_reduced = self
-                    .config
-                    .rampup_acceleration_maxout_time
-                    .min(delta.max(Duration::ZERO))
-                    .as_secs_f64();
+        if self.config.rampup_acceleration_max_factor > Duration::ZERO
+            && self.last_send_time_most_recent_observation.is_finite()
+            && self.last_time_estimate_reduced.is_finite()
+        {
+            let delta = (self.last_send_time_most_recent_observation
+                - self.last_time_estimate_reduced)
+                .max(Duration::ZERO);
+            let time_since_bw_reduced = self
+                .config
+                .rampup_acceleration_maxout_time
+                .min(delta)
+                .as_secs_f64();
 
-                let rampup_acceleration = self.config.rampup_acceleration_max_factor.as_secs_f64()
-                    * time_since_bw_reduced
-                    / self.config.rampup_acceleration_maxout_time.as_secs_f64();
+            let rampup_acceleration = self.config.rampup_acceleration_max_factor.as_secs_f64()
+                * time_since_bw_reduced
+                / self.config.rampup_acceleration_maxout_time.as_secs_f64();
 
-                upper_bound = upper_bound + (self.acknowledged_bitrate * rampup_acceleration);
-            }
+            upper_bound = upper_bound + (self.acknowledged_bitrate * rampup_acceleration);
         }
 
         upper_bound
@@ -945,10 +939,9 @@ impl PacketResult for &TwccSendRecord {
 
 #[cfg(test)]
 mod test {
-    use std::time::Instant;
+    use super::*;
 
     use fastrand::Rng;
-    use systemstat::Duration;
 
     use super::{Bitrate, DataSize, LossBasedBweResult, LossController, LossControllerState};
     struct PacketResult {

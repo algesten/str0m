@@ -3,10 +3,11 @@ use std::fmt::Display;
 use std::num::NonZeroU32;
 use std::ops::{Add, AddAssign, Sub, SubAssign};
 use std::str::FromStr;
-use std::time::Duration;
-use std::time::Instant;
+use std::time as std_time;
 
 use serde::{Deserialize, Serialize};
+
+use crate::util::{Duration, Instant};
 
 /// Media timeline frequency as represented by a non-zero unsigned integer.
 ///
@@ -410,6 +411,18 @@ impl From<MediaTime> for Duration {
 impl From<Duration> for MediaTime {
     fn from(v: Duration) -> Self {
         MediaTime::new(v.as_micros() as u64, Frequency::MICROS)
+    }
+}
+
+impl From<MediaTime> for std_time::Duration {
+    fn from(value: MediaTime) -> Self {
+        Duration::from(value).as_std().unwrap()
+    }
+}
+
+impl From<std_time::Duration> for MediaTime {
+    fn from(v: std_time::Duration) -> Self {
+        MediaTime::from(Duration::from(v))
     }
 }
 

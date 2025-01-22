@@ -1,9 +1,9 @@
 use std::collections::VecDeque;
-use std::time::Instant;
 use std::{fmt, io};
 use thiserror::Error;
 
 use crate::crypto::{CryptoError, DtlsImpl, Fingerprint};
+use crate::util::Instant;
 
 pub use crate::crypto::{DtlsCert, DtlsCertOptions, DtlsEvent};
 use crate::net::DatagramSend;

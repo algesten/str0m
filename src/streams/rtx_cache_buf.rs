@@ -1,9 +1,8 @@
 #![allow(missing_docs)]
 
 use std::mem;
-use std::time::{Duration, Instant};
 
-use crate::util::already_happened;
+use crate::util::{Duration, Instant};
 
 /// Fixed size buffer that evicts the oldest entries based on time.
 ///
@@ -58,7 +57,7 @@ impl<T> EvictingBuffer<T> {
             max_size,
             last_position: None,
             next_evict: None,
-            last_timeout: already_happened(),
+            last_timeout: Instant::DistantPast,
         }
     }
 
@@ -259,7 +258,7 @@ impl<T> EvictingBuffer<T> {
         }
         self.last_position = None;
         self.next_evict = None;
-        self.last_timeout = already_happened();
+        self.last_timeout = Instant::DistantPast;
     }
 }
 

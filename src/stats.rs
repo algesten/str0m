@@ -1,12 +1,11 @@
 //! Statistics events.
 
-use std::{
-    collections::{HashMap, VecDeque},
-    time::{Duration, Instant},
-};
+use std::collections::{HashMap, VecDeque};
+use std::time as std_time;
 
 use crate::rtp_::MidRid;
 use crate::rtp_::{Mid, Rid};
+use crate::util::{Duration, Instant};
 use crate::Bitrate;
 
 pub(crate) struct Stats {
@@ -68,7 +67,7 @@ pub struct PeerStats {
     /// Total bytes received, only counting media traffic (rtp payload).
     pub bytes_tx: u64,
     /// Timestamp when this event was generated.
-    pub timestamp: Instant,
+    pub timestamp: std_time::Instant,
     /// The last egress bandwidth estimate from the BWE subsystem, if enabled.
     pub bwe_tx: Option<Bitrate>,
     /// The egress loss over the last second.
@@ -110,7 +109,7 @@ pub struct MediaEgressStats {
     /// `None` if no reports have been received since the last event
     pub loss: Option<f32>,
     /// Timestamp when this event was generated
-    pub timestamp: Instant,
+    pub timestamp: std_time::Instant,
     // TODO
     // pub remote: RemoteIngressStats,
 }
@@ -146,7 +145,7 @@ pub struct MediaIngressStats {
     /// Fraction of packets lost extracted from the last RTCP receiver report.
     pub loss: Option<f32>,
     /// Timestamp when this event was generated.
-    pub timestamp: Instant,
+    pub timestamp: std_time::Instant,
     // TODO
     // pub remote: RemoteEgressStats,
 }
@@ -229,7 +228,7 @@ impl Stats {
             peer_bytes_tx: snapshot.peer_tx,
             bytes_rx: snapshot.rx,
             bytes_tx: snapshot.tx,
-            timestamp: snapshot.timestamp,
+            timestamp: snapshot.timestamp.as_std(),
             bwe_tx: snapshot.bwe_tx,
             egress_loss_fraction: snapshot.egress_loss_fraction,
             ingress_loss_fraction: snapshot.ingress_loss_fraction,

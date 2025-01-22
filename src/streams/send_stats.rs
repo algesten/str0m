@@ -1,9 +1,8 @@
-use std::time::Instant;
-
 use crate::rtp_::{extend_u16, ReceptionReport};
 use crate::stats::{MediaEgressStats, StatsSnapshot};
+use crate::util::calculate_rtt_ms;
 use crate::util::value_history::ValueHistory;
-use crate::util::{calculate_rtt_ms, InstantExt};
+use crate::util::Instant;
 
 use super::MidRid;
 
@@ -127,7 +126,7 @@ impl StreamTxStats {
                 nacks: self.nacks,
                 rtt: self.rtt,
                 loss,
-                timestamp: now,
+                timestamp: now.as_std(),
             },
         );
     }

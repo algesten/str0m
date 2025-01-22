@@ -1,7 +1,7 @@
-use std::time::Instant;
+use std::time as std_time;
 
 use crate::rtp_::MediaTime;
-use crate::util::InstantExt;
+use crate::util::Instant;
 
 use super::{FeedbackMessageType, RtcpType, Ssrc};
 use super::{ReceptionReport, ReportList, RtcpHeader, RtcpPacket};
@@ -26,7 +26,7 @@ pub struct SenderInfo {
     /// The SSRC of the SR originator.
     pub ssrc: Ssrc,
     /// The 64 bit NTP timestamp converted to an [`Instant`].
-    pub ntp_time: Instant,
+    pub ntp_time: std_time::Instant,
     /// The RTP timestamp that corresponds to the same point in time as the NTP timestamp above.
     pub rtp_time: MediaTime,
     /// The total number of packets the sender had sent when this information was generated.
@@ -72,7 +72,7 @@ impl SenderInfo {
         // pub sender_octet_count: u32,
         buf[..4].copy_from_slice(&self.ssrc.to_be_bytes());
 
-        let mt = self.ntp_time.as_ntp_64();
+        let mt = Instant::from(self.ntp_time).as_ntp_64();
         buf[4..12].copy_from_slice(&mt.to_be_bytes());
 
         buf[12..16].copy_from_slice(&(self.rtp_time.numer() as u32).to_be_bytes());
@@ -141,7 +141,7 @@ impl<'a> TryFrom<&'a [u8]> for SenderInfo {
 
         Ok(SenderInfo {
             ssrc,
-            ntp_time,
+            ntp_time: ntp_time.as_std(),
             rtp_time,
             sender_packet_count,
             sender_octet_count,

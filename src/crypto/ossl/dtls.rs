@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
-use std::time::{Duration, Instant};
 
 use openssl::ec::EcKey;
 use openssl::nid::Nid;
@@ -9,6 +8,7 @@ use openssl::ssl::{Ssl, SslContext, SslContextBuilder, SslMethod, SslOptions, Ss
 use crate::crypto::dtls::DtlsInner;
 use crate::crypto::{DtlsEvent, SrtpProfile};
 use crate::io::{DATAGRAM_MTU, DATAGRAM_MTU_WARN};
+use crate::util::{Duration, Instant};
 
 use super::cert::OsslDtlsCert;
 use super::io_buf::IoBuffer;

@@ -5,7 +5,6 @@ use std::fmt;
 use std::net::SocketAddr;
 use std::panic::UnwindSafe;
 use std::sync::Arc;
-use std::time::Instant;
 
 use sctp_proto::{Association, AssociationHandle, ClientConfig, DatagramEvent};
 use sctp_proto::{Endpoint, EndpointConfig, Stream, StreamEvent, Transmit};
@@ -19,6 +18,8 @@ mod dcep;
 use dcep::DcepOpen;
 
 use dcep::DcepAck;
+
+use crate::util::Instant;
 
 /// Errors from the SCTP subsystem.
 #[derive(Debug, Error, Eq, Clone, PartialEq)]
@@ -374,7 +375,10 @@ impl RtcSctp {
 
         // TODO, remove Bytes in sctp and just use &[u8].
         let data = data.to_vec().into();
-        let r = self.endpoint.handle(now, self.fake_addr, None, None, data);
+
+        let r = self
+            .endpoint
+            .handle(now.as_std(), self.fake_addr, None, None, data);
 
         let Some((handle, event)) = r else {
             return;
@@ -414,7 +418,7 @@ impl RtcSctp {
             return;
         };
 
-        assoc.handle_timeout(now);
+        assoc.handle_timeout(now.as_std());
 
         // propagate events between endpoint and association.
         while let Some(e) = assoc.poll_endpoint_event() {
@@ -672,7 +676,10 @@ impl RtcSctp {
     }
 
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        self.assoc.as_mut().and_then(|a| a.poll_timeout())
+        self.assoc
+            .as_mut()
+            .and_then(|a| a.poll_timeout())
+            .map(Into::into)
     }
 
     pub fn push_back_transmit(&mut self, data: VecDeque<Vec<u8>>) {
@@ -686,7 +693,7 @@ impl RtcSctp {
             return Some(t);
         }
 
-        if let Some(t) = self.assoc.as_mut()?.poll_transmit(self.last_now) {
+        if let Some(t) = self.assoc.as_mut()?.poll_transmit(self.last_now.as_std()) {
             return Some(t);
         }
 

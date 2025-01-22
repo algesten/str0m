@@ -1,8 +1,7 @@
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
 
 use crate::packet::{QueuePriority, QueueSnapshot};
-use crate::util::not_happening;
+use crate::util::{Duration, Instant};
 
 use super::RtpPacket;
 
@@ -25,30 +24,32 @@ impl SendQueue {
     pub fn push(&mut self, mut packet: RtpPacket) {
         // Every incoming packet must be timestamped withe a handle_timeout.
         // This sentinel value indicates it is needed.
-        packet.timestamp = not_happening();
+        packet.timestamp = Instant::DistantFuture.as_std();
 
         self.queue.push_back(packet);
     }
 
     pub fn handle_timeout(&mut self, now: Instant) {
         for pkt in self.queue.iter_mut().rev() {
-            if pkt.timestamp != not_happening() {
+            if pkt.timestamp != Instant::DistantFuture.as_std() {
                 // all enqueued packets are timestamped.
                 break;
             } else {
-                pkt.timestamp = now;
+                pkt.timestamp = now.as_std();
                 self.total.increase(now, pkt.payload.len());
             }
         }
     }
 
     pub fn need_timeout(&self) -> bool {
-        self.queue.iter().any(|p| p.timestamp == not_happening())
+        self.queue
+            .iter()
+            .any(|p| p.timestamp == Instant::DistantFuture.as_std())
     }
 
     pub fn peek(&mut self) -> Option<&mut RtpPacket> {
         let peeked = self.queue.front_mut()?;
-        if peeked.timestamp == not_happening() {
+        if peeked.timestamp == Instant::DistantFuture.as_std() {
             None
         } else {
             Some(peeked)
@@ -64,7 +65,7 @@ impl SendQueue {
         let packet = self.queue.pop_front().unwrap();
 
         // Must be timestamped
-        assert!(packet.timestamp != not_happening());
+        assert!(packet.timestamp != Instant::DistantFuture.as_std());
 
         let queue_time = now - packet.timestamp;
         self.total.decrease(now, packet.payload.len(), queue_time);
@@ -93,8 +94,8 @@ impl SendQueue {
             first_unsent: self
                 .queue
                 .iter()
-                .find(|p| p.timestamp != not_happening())
-                .map(|p| p.timestamp),
+                .find(|p| p.timestamp != Instant::DistantFuture.as_std())
+                .map(|p| Instant::from(p.timestamp)),
             priority: if self.total.unsent_count > 0 {
                 QueuePriority::Media
             } else {
@@ -212,7 +213,7 @@ mod test {
             time: MediaTime::from_90khz(10),
             header: RtpHeader::default(),
             payload: vec![],
-            timestamp: Instant::now(),
+            timestamp: Instant::now().as_std(),
             last_sender_info: None,
             nackable: true,
         });
@@ -247,7 +248,7 @@ mod test {
             time: MediaTime::from_90khz(10),
             header: RtpHeader::default(),
             payload: vec![42, 42],
-            timestamp: start,
+            timestamp: start.as_std(),
             last_sender_info: None,
             nackable: true,
         });

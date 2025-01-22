@@ -8,11 +8,9 @@ use std::hash::Hasher;
 use std::panic::UnwindSafe;
 use std::str::from_utf8;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time as std_time;
 
-use crate::util::already_happened;
-use crate::util::epoch_to_beginning;
-use crate::util::InstantExt;
+use crate::util::{epoch_to_beginning, Duration, Instant};
 
 use crate::rtp_::Frequency;
 
@@ -620,7 +618,7 @@ impl Extension {
                 // wraps around at 64 seconds.
 
                 // We assume the Instant is absolute.
-                let time_abs = ev.abs_send_time?;
+                let time_abs = Instant::from(ev.abs_send_time?);
 
                 // This should be a 64 second offset from unix epoch.
                 let dur = time_abs.to_unix_duration();
@@ -742,8 +740,8 @@ impl Extension {
                 // fix the correct value when we have the exact Instant::now() to relate it to.
                 let time_dur = Duration::from_micros(time_micros);
 
-                let time_tmp = already_happened() + time_dur;
-                ev.abs_send_time = Some(time_tmp);
+                let time_tmp = Instant::DistantPast.as_exact() + time_dur;
+                ev.abs_send_time = Some(time_tmp.as_std());
             }
             // 1
             AudioLevel => {
@@ -861,7 +859,7 @@ pub struct ExtensionValues {
     #[doc(hidden)]
     pub tx_time_offs: Option<u32>,
     #[doc(hidden)]
-    pub abs_send_time: Option<Instant>,
+    pub abs_send_time: Option<std_time::Instant>,
     #[doc(hidden)]
     pub transport_cc: Option<u16>, // (buf[0] << 8) | buf[1];
     #[doc(hidden)]
@@ -885,12 +883,12 @@ pub struct ExtensionValues {
 }
 impl ExtensionValues {
     pub(crate) fn update_absolute_send_time(&mut self, now: Instant) {
-        let Some(v) = self.abs_send_time else {
+        let Some(v) = self.abs_send_time.map(Instant::from) else {
             return;
         };
 
         // This should be 0-64 seconds, or we are not working with a newly parsed value.
-        let relative_64_secs = v - already_happened();
+        let relative_64_secs = v - Instant::DistantPast.as_exact();
         assert!(relative_64_secs <= Duration::from_secs(64));
 
         let now_since_epoch = now.to_unix_duration();
@@ -901,13 +899,13 @@ impl ExtensionValues {
 
         let since_beginning = closest_64.saturating_sub(epoch_to_beginning());
 
-        let mut offset = already_happened() + since_beginning;
+        let mut offset = Instant::DistantPast.as_exact() + since_beginning;
 
         if offset + relative_64_secs > now {
             offset -= Duration::from_secs(64);
         }
 
-        self.abs_send_time = Some(offset + relative_64_secs);
+        self.abs_send_time = Some((offset + relative_64_secs).as_std());
     }
 }
 
@@ -1197,7 +1195,7 @@ mod test {
         let mut exts = ExtensionMap::empty();
         exts.set(4, Extension::AbsoluteSendTime);
         let ev = ExtensionValues {
-            abs_send_time: Some(now),
+            abs_send_time: Some(now.as_std()),
             ..Default::default()
         };
 
@@ -1210,7 +1208,7 @@ mod test {
         // Let's pretend a 50 millisecond network latency.
         ev2.update_absolute_send_time(now + Duration::from_millis(50));
 
-        let now2 = ev2.abs_send_time.unwrap();
+        let now2 = Instant::from(ev2.abs_send_time.unwrap());
 
         let abs = if now > now2 { now - now2 } else { now2 - now };
 
@@ -1224,7 +1222,7 @@ mod test {
         let mut exts = ExtensionMap::empty();
         exts.set(16, Extension::AbsoluteSendTime);
         let ev = ExtensionValues {
-            abs_send_time: Some(now),
+            abs_send_time: Some(now.as_std()),
             ..Default::default()
         };
 
@@ -1238,7 +1236,7 @@ mod test {
         // Let's pretend a 50 millisecond network latency.
         ev2.update_absolute_send_time(now + Duration::from_millis(50));
 
-        let now2 = ev2.abs_send_time.unwrap();
+        let now2 = Instant::from(ev2.abs_send_time.unwrap());
 
         let abs = if now > now2 { now - now2 } else { now2 - now };
 

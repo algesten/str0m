@@ -1,9 +1,9 @@
 //! Data channel related types.
 
-use std::{fmt, str, time::Instant};
+use std::{fmt, str};
 
 use crate::sctp::RtcSctp;
-use crate::util::already_happened;
+use crate::util::Instant;
 use crate::{Rtc, RtcError};
 
 pub use crate::sctp::ChannelConfig;
@@ -251,7 +251,7 @@ impl ChannelHandler {
 
     pub fn poll_timeout(&self, sctp: &RtcSctp) -> Option<Instant> {
         if sctp.is_inited() && (self.need_allocation() || self.need_open()) {
-            Some(already_happened())
+            Some(Instant::DistantPast)
         } else {
             None
         }

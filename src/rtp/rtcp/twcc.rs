@@ -2,10 +2,11 @@ use std::collections::vec_deque;
 use std::collections::VecDeque;
 use std::fmt;
 use std::ops::RangeInclusive;
-use std::time::{Duration, Instant};
+use std::time as std_time;
 
 use super::{extend_u16, FeedbackMessageType, RtcpHeader, RtcpPacket};
 use super::{RtcpType, SeqNo, Ssrc, TransportType};
+use crate::util::{Duration, Instant};
 
 /// Transport Wide Congestion Control.
 ///
@@ -40,9 +41,9 @@ impl Twcc {
     }
 
     /// Iterate over the reported sequences.
-    pub fn into_iter(self, time_zero: Instant, extend_from: SeqNo) -> TwccIter {
+    pub fn into_iter(self, time_zero: std_time::Instant, extend_from: SeqNo) -> TwccIter {
         let millis = self.reference_time as u64 * 64;
-        let time_base = time_zero + Duration::from_millis(millis);
+        let time_base = time_zero + std_time::Duration::from_millis(millis);
         let base_seq = extend_u16(Some(*extend_from), self.base_seq);
         let last_seq = base_seq + self.status_count as u64;
 
@@ -59,13 +60,13 @@ impl Twcc {
 pub struct TwccIter {
     base_seq: u64,
     last_seq: u64,
-    time_base: Instant,
+    time_base: std_time::Instant,
     index: usize,
     twcc: Twcc,
 }
 
 impl Iterator for TwccIter {
-    type Item = (SeqNo, PacketStatus, Option<Instant>);
+    type Item = (SeqNo, PacketStatus, Option<std_time::Instant>);
 
     fn next(&mut self) -> Option<Self::Item> {
         let seq: SeqNo = (self.base_seq + self.index as u64).into();
@@ -104,13 +105,15 @@ impl Iterator for TwccIter {
         let instant = match status {
             PacketStatus::NotReceived => None,
             PacketStatus::ReceivedSmallDelta => match self.twcc.delta.pop_front()? {
-                Delta::Small(v) => Some(self.time_base + Duration::from_micros(250 * v as u64)),
+                Delta::Small(v) => {
+                    Some(self.time_base + std_time::Duration::from_micros(250 * v as u64))
+                }
                 Delta::Large(_) => panic!("Incorrect large delta size"),
             },
             PacketStatus::ReceivedLargeOrNegativeDelta => match self.twcc.delta.pop_front()? {
                 Delta::Small(_) => panic!("Incorrect small delta size"),
                 Delta::Large(v) => {
-                    let dur = Duration::from_micros(250 * v.unsigned_abs() as u64);
+                    let dur = std_time::Duration::from_micros(250 * v.unsigned_abs() as u64);
                     Some(if v < 0 {
                         self.time_base.checked_sub(dur).unwrap()
                     } else {
@@ -217,7 +220,7 @@ impl RtcpPacket for Twcc {
 }
 
 #[derive(Debug)]
-pub struct TwccRecvRegister {
+pub(crate) struct TwccRecvRegister {
     // How many packets to keep when they are reported. This is to handle packets arriving out
     // of order and where two consecutive calls to `build_report` needs to go "backwards" in
     // base_seq.
@@ -322,7 +325,7 @@ impl TwccRecvRegister {
         let time_start = self.time_start.expect("a start time");
 
         // The difference between our Twcc reference time and the first ever report start time.
-        let first_time_rel = first_time - time_start;
+        let first_time_rel = first_time.saturating_duration_since(time_start);
 
         // The value is to be interpreted in multiples of 64ms.
         let reference_time = (first_time_rel.as_micros() as u64 / 64_000) as u32;
@@ -995,7 +998,7 @@ impl<'a> TryFrom<&'a [u8]> for PacketChunk {
 }
 
 #[derive(Debug)]
-pub struct TwccSendRegister {
+pub(crate) struct TwccSendRegister {
     /// How many send records to keep.
     keep: usize,
 
@@ -1024,7 +1027,7 @@ impl<'a> IntoIterator for &'a TwccSendRegister {
 
 /// Record for a send entry in twcc.
 #[derive(Debug)]
-pub struct TwccSendRecord {
+pub(crate) struct TwccSendRecord {
     /// Twcc sequence number for a packet we sent.
     seq: SeqNo,
 
@@ -1128,9 +1131,10 @@ impl TwccSendRegister {
         let head_seq = self.queue.front().map(|r| r.seq)?;
 
         let mut iter = twcc
-            .into_iter(time_zero, self.last_registered)
+            .into_iter(time_zero.as_std(), self.last_registered)
             .skip_while(|(seq, _, _)| seq < &head_seq);
-        let (first_seq_no, _, first_instant) = iter.next()?;
+        let (first_seq_no, first_instant) =
+            iter.next().map(|(seq, _, i)| (seq, i.map(Instant::from)))?;
 
         let mut iter2 = self.queue.iter_mut().skip_while(|r| *r.seq < *first_seq_no);
         let first_record = iter2.next()?;
@@ -1192,7 +1196,13 @@ impl TwccSendRegister {
                 break;
             }
 
-            if !update(now, record, seq, instant, apply_report_counter) {
+            if !update(
+                now,
+                record,
+                seq,
+                instant.map(Instant::from),
+                apply_report_counter,
+            ) {
                 problematic_seq = Some((record.seq, seq));
             }
             last_seq_no = seq;
@@ -1395,8 +1405,6 @@ impl fmt::Debug for Twcc {
 #[allow(clippy::assign_op_pattern)]
 #[cfg(test)]
 mod test {
-    use std::time::Duration;
-
     use super::*;
 
     use Delta::*;
@@ -1705,13 +1713,13 @@ mod test {
 
         let base = reg.time_start.unwrap();
 
-        let mut iter = report.into_iter(base, 10.into());
+        let mut iter = report.into_iter(base.as_std(), 10.into());
         assert_eq!(
             iter.next(),
             Some((
                 10.into(),
                 PacketStatus::ReceivedSmallDelta,
-                Some(base + Duration::from_millis(0))
+                Some((base + Duration::from_millis(0)).as_std())
             ))
         );
         assert_eq!(
@@ -1719,7 +1727,7 @@ mod test {
             Some((
                 11.into(),
                 PacketStatus::ReceivedLargeOrNegativeDelta,
-                Some(base.checked_sub(Duration::from_millis(12)).unwrap())
+                Some((base - Duration::from_millis(12)).as_std())
             ))
         );
         assert_eq!(
@@ -1727,7 +1735,7 @@ mod test {
             Some((
                 12.into(),
                 PacketStatus::ReceivedSmallDelta,
-                Some(base + Duration::from_millis(11))
+                Some((base + Duration::from_millis(11)).as_std())
             ))
         );
     }
@@ -1957,7 +1965,10 @@ mod test {
             ),
         ];
 
-        let result: Vec<_> = twcc.into_iter(now, 1.into()).collect();
+        let result: Vec<_> = twcc
+            .into_iter(now.as_std(), 1.into())
+            .map(|(seq, ps, i)| (seq, ps, i.map(Instant::from)))
+            .collect();
 
         assert_eq!(result, expected);
     }
@@ -1977,7 +1988,7 @@ mod test {
             chunks: VecDeque::from(vec![VectorDouble(0b00_00_01_01_00_00_00_00, 7)]),
             delta: VecDeque::from(vec![Small(236), Small(1)]),
         }
-        .into_iter(Instant::now(), 1.into())
+        .into_iter(Instant::now().as_std(), 1.into())
         .count();
 
         assert_eq!(twcc_iter_count, status_count as usize);

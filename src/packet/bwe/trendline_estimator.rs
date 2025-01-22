@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::ops::RangeInclusive;
-use std::time::{Duration, Instant};
+
+use crate::util::{Duration, Instant};
 
 use super::{BandwidthUsage, InterGroupDelayDelta};
 
@@ -291,11 +292,9 @@ struct Overuse {
 
 #[cfg(test)]
 mod test {
-    use std::time::{Duration, Instant};
-
     use crate::packet::bwe::BandwidthUsage;
 
-    use super::{InterGroupDelayDelta, TrendlineEstimator};
+    use super::*;
 
     #[test]
     fn test_window_size_limit() {

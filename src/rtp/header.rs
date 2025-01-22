@@ -330,11 +330,9 @@ impl Default for RtpHeader {
 
 #[cfg(test)]
 mod test {
-    use crate::util::already_happened;
-    use crate::{io::DATAGRAM_MAX_PACKET_SIZE, rtp_::Extension};
-    use std::time::Duration;
-
     use super::*;
+    use crate::util::{Duration, Instant};
+    use crate::{io::DATAGRAM_MAX_PACKET_SIZE, rtp_::Extension};
 
     #[test]
     fn extend_u16_wrap_around() {
@@ -553,7 +551,7 @@ mod test {
         ];
 
         let h1 = RtpHeader::parse(&hb1, &exts).unwrap();
-        let abs1 = already_happened() + Duration::from_micros(63531654);
+        let abs1 = Instant::DistantPast.as_exact() + Duration::from_micros(63531654);
 
         assert_eq!(
             h1,
@@ -568,7 +566,7 @@ mod test {
                 ssrc: 777459193.into(),
                 ext_vals: ExtensionValues {
                     mid: Some("xYj".into()),
-                    abs_send_time: Some(abs1),
+                    abs_send_time: Some(abs1.as_std()),
                     voice_activity: Some(true),
                     audio_level: Some(-42),
                     transport_cc: Some(0),
@@ -579,7 +577,7 @@ mod test {
         );
 
         let h2 = RtpHeader::parse(&hb2, &exts).unwrap();
-        let abs2 = already_happened() + Duration::from_micros(63631652);
+        let abs2 = Instant::DistantPast.as_exact() + Duration::from_micros(63631652);
 
         assert_eq!(
             h2,
@@ -594,7 +592,7 @@ mod test {
                 ssrc: 777459193.into(),
                 ext_vals: ExtensionValues {
                     mid: Some("xYj".into()),
-                    abs_send_time: Some(abs2),
+                    abs_send_time: Some(abs2.as_std()),
                     voice_activity: Some(true),
                     audio_level: Some(-43),
                     transport_cc: Some(2),
@@ -605,7 +603,7 @@ mod test {
         );
 
         let h3 = RtpHeader::parse(&hb3, &exts).unwrap();
-        let abs3 = already_happened() + Duration::from_micros(63531654);
+        let abs3 = Instant::DistantPast.as_exact() + Duration::from_micros(63531654);
 
         assert_eq!(
             h3,
@@ -620,7 +618,7 @@ mod test {
                 ssrc: 777459193.into(),
                 ext_vals: ExtensionValues {
                     mid: Some("xYj".into()),
-                    abs_send_time: Some(abs3),
+                    abs_send_time: Some(abs3.as_std()),
                     voice_activity: Some(true),
                     audio_level: Some(-44),
                     transport_cc: Some(1),
@@ -653,7 +651,7 @@ mod test {
         ];
 
         let h1 = RtpHeader::parse(&hb1, &exts).unwrap();
-        let abs1 = already_happened() + Duration::from_micros(63531654);
+        let abs1 = Instant::DistantPast.as_exact() + Duration::from_micros(63531654);
 
         assert_eq!(
             h1,
@@ -668,7 +666,7 @@ mod test {
                 ssrc: 777459193.into(),
                 ext_vals: ExtensionValues {
                     mid: Some("xYj".into()),
-                    abs_send_time: Some(abs1),
+                    abs_send_time: Some(abs1.as_std()),
                     voice_activity: Some(true),
                     audio_level: Some(-42),
                     transport_cc: Some(0),
@@ -679,7 +677,7 @@ mod test {
         );
 
         let h2 = RtpHeader::parse(&hb2, &exts).unwrap();
-        let abs2 = already_happened() + Duration::from_micros(63631652);
+        let abs2 = Instant::DistantPast.as_exact() + Duration::from_micros(63631652);
 
         assert_eq!(
             h2,
@@ -694,7 +692,7 @@ mod test {
                 ssrc: 777459193.into(),
                 ext_vals: ExtensionValues {
                     mid: Some("xYj".into()),
-                    abs_send_time: Some(abs2),
+                    abs_send_time: Some(abs2.as_std()),
                     voice_activity: Some(true),
                     audio_level: Some(-43),
                     transport_cc: Some(2),
@@ -705,7 +703,7 @@ mod test {
         );
 
         let h3 = RtpHeader::parse(&hb3, &exts).unwrap();
-        let abs3 = already_happened() + Duration::from_micros(63531654);
+        let abs3 = Instant::DistantPast.as_exact() + Duration::from_micros(63531654);
 
         assert_eq!(
             h3,
@@ -720,7 +718,7 @@ mod test {
                 ssrc: 777459193.into(),
                 ext_vals: ExtensionValues {
                     mid: Some("xYj".into()),
-                    abs_send_time: Some(abs3),
+                    abs_send_time: Some(abs3.as_std()),
                     voice_activity: Some(true),
                     audio_level: Some(-44),
                     transport_cc: Some(1),

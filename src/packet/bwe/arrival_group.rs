@@ -1,8 +1,8 @@
 use std::cmp::Ordering;
 use std::mem;
-use std::time::{Duration, Instant};
 
 use crate::rtp_::SeqNo;
+use crate::util::{Duration, Instant};
 
 use super::AckedPacket;
 
@@ -226,11 +226,9 @@ pub(super) struct InterGroupDelayDelta {
 
 #[cfg(test)]
 mod test {
-    use std::time::{Duration, Instant};
+    use super::*;
 
     use crate::rtp_::DataSize;
-
-    use super::{AckedPacket, ArrivalGroup, Belongs};
 
     #[test]
     fn test_arrival_group_all_packets_belong_to_empty_group() {

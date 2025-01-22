@@ -1,7 +1,7 @@
 use std::fmt;
-use std::time::{Duration, Instant};
 
 use crate::rtp_::Bitrate;
+use crate::util::{Duration, Instant};
 
 use super::BandwidthUsage;
 
@@ -351,12 +351,10 @@ impl MovingAverage {
 
 #[cfg(test)]
 mod test {
-    use std::time::Duration;
-
-    use super::{RateControl, Signal, State};
+    use super::*;
 
     mod state {
-        use super::{Signal, State};
+        use super::*;
 
         #[test]
         fn test_state_transitions() {
@@ -383,9 +381,7 @@ mod test {
     }
 
     mod rate_controller {
-        use std::time::Instant;
-
-        use super::{duration_ms, RateControl, Signal};
+        use super::*;
 
         fn make_control(estimated_bitrate: u64) -> RateControl {
             RateControl::new(estimated_bitrate.into(), 10_000.into(), 50_000_000.into())

@@ -615,11 +615,11 @@ use change::{DirectApi, SdpApi};
 use rtp::RawPacket;
 use std::fmt;
 use std::net::SocketAddr;
-use std::time::{Duration, Instant};
+use std::time as std_time;
 use streams::RtpPacket;
 use streams::StreamPaused;
 use thiserror::Error;
-use util::InstantExt;
+use util::{Duration, Instant};
 
 mod crypto;
 use crypto::CryptoProvider;
@@ -719,7 +719,7 @@ use media::{MediaAdded, MediaChanged, MediaData};
 pub mod change;
 
 mod util;
-use util::{already_happened, not_happening, Soonest};
+use util::Soonest;
 
 mod session;
 use session::Session;
@@ -999,9 +999,9 @@ impl Event {
 #[allow(clippy::large_enum_variant)] // We purposely don't want to allocate.
 pub enum Input<'a> {
     /// A timeout without any network input.
-    Timeout(Instant),
+    Timeout(std_time::Instant),
     /// Network input.
-    Receive(Instant, net::Receive<'a>),
+    Receive(std_time::Instant, net::Receive<'a>),
 }
 
 /// Output produced by [`Rtc::poll_output()`]
@@ -1009,7 +1009,7 @@ pub enum Input<'a> {
 #[derive(Debug)]
 pub enum Output {
     /// When the [`Rtc`] instance expects an [`Input::Timeout`].
-    Timeout(Instant),
+    Timeout(std_time::Instant),
 
     /// Network data that is to be sent.
     Transmit(net::Transmit),
@@ -1159,7 +1159,7 @@ impl Rtc {
             remote_addrs: vec![],
             send_addr: None,
             need_init_time: true,
-            last_now: already_happened(),
+            last_now: Instant::DistantPast,
             peer_bytes_rx: 0,
             peer_bytes_tx: 0,
             change_counter: 0,
@@ -1422,7 +1422,7 @@ impl Rtc {
     fn do_poll_output(&mut self) -> Result<Output, RtcError> {
         if !self.alive {
             self.last_timeout_reason = Reason::NotHappening;
-            return Ok(Output::Timeout(not_happening()));
+            return Ok(Output::Timeout(Instant::DistantFuture.as_std()));
         }
 
         while let Some(e) = self.ice.poll_event() {
@@ -1585,15 +1585,16 @@ impl Rtc {
 
         let time_and_reason = (None, Reason::NotHappening)
             .soonest((self.dtls.poll_timeout(self.last_now), Reason::DTLS))
-            .soonest((self.ice.poll_timeout(), Reason::Ice))
+            .soonest((self.ice.poll_timeout().map(Instant::from), Reason::Ice))
             .soonest(self.session.poll_timeout())
             .soonest((self.sctp.poll_timeout(), Reason::Sctp))
             .soonest((self.chan.poll_timeout(&self.sctp), Reason::Channel))
             .soonest((stats.and_then(|s| s.poll_timeout()), Reason::Stats));
 
+        // TODO: uncomment or remove?
         // trace!("poll_output timeout reason: {}", time_and_reason.1);
 
-        let time = time_and_reason.0.unwrap_or_else(not_happening);
+        let time = time_and_reason.0.unwrap_or(Instant::DistantFuture);
         let reason = time_and_reason.1;
 
         // We want to guarantee time doesn't go backwards.
@@ -1605,7 +1606,7 @@ impl Rtc {
 
         self.last_timeout_reason = reason;
 
-        Ok(Output::Timeout(next))
+        Ok(Output::Timeout(next.as_std()))
     }
 
     /// The reason for the last [`Output::Timeout`]
@@ -1722,10 +1723,10 @@ impl Rtc {
         }
 
         match input {
-            Input::Timeout(now) => self.do_handle_timeout(now)?,
+            Input::Timeout(now) => self.do_handle_timeout(now.into())?,
             Input::Receive(now, r) => {
-                self.do_handle_receive(now, r)?;
-                self.do_handle_timeout(now)?;
+                self.do_handle_receive(now.into(), r)?;
+                self.do_handle_timeout(now.into())?;
             }
         }
         Ok(())
@@ -1748,7 +1749,7 @@ impl Rtc {
         self.init_time(now);
 
         self.last_now = now;
-        self.ice.handle_timeout(now);
+        self.ice.handle_timeout(now.as_std());
         self.sctp.handle_timeout(now);
         self.chan.handle_timeout(now, &mut self.sctp);
         self.session.handle_timeout(now)?;
@@ -1789,7 +1790,7 @@ impl Rtc {
                     destination: r.destination,
                     message: stun,
                 };
-                self.ice.handle_packet(now, packet);
+                self.ice.handle_packet(now.as_std(), packet);
             }
             Dtls(dtls) => self.dtls.handle_receive(dtls)?,
             Rtp(rtp) => self.session.handle_rtp_receive(now, rtp),
@@ -2164,8 +2165,8 @@ impl RtcConfig {
     /// None turns off the stats events.
     ///
     /// This includes [`MediaEgressStats`], [`MediaIngressStats`], [`MediaEgressStats`]
-    pub fn set_stats_interval(mut self, interval: Option<Duration>) -> Self {
-        self.stats_interval = interval;
+    pub fn set_stats_interval(mut self, interval: Option<std_time::Duration>) -> Self {
+        self.stats_interval = interval.map(Into::into);
         self
     }
 
@@ -2181,8 +2182,10 @@ impl RtcConfig {
     /// // Defaults to None.
     /// assert_eq!(config.stats_interval(), None);
     /// ```
-    pub fn stats_interval(&self) -> Option<Duration> {
+    pub fn stats_interval(&self) -> Option<std_time::Duration> {
+        // Stats interval is set externally so its always safe to convert to std Duration
         self.stats_interval
+            .map(|i| i.as_std().expect("invalid stats interval"))
     }
 
     /// Enables estimation of available bandwidth (BWE).

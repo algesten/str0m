@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::time::{Duration, Instant};
+use std::time as std_time;
 
 use crate::media::KeyframeRequestKind;
 use crate::rtp_::MidRid;
@@ -10,8 +10,8 @@ use crate::rtp_::{Mid, Pli, Pt, ReceiverReport};
 use crate::rtp_::{ReportBlock, ReportList, Rid, Rrtr, Rtcp, RtcpFb, RtpHeader, SenderInfo, SeqNo};
 use crate::rtp_::{SdesType, Ssrc};
 use crate::stats::{MediaIngressStats, StatsSnapshot};
-use crate::util::InstantExt;
-use crate::util::{already_happened, calculate_rtt_ms};
+use crate::util::calculate_rtt_ms;
+use crate::util::{Duration, Instant};
 
 use super::register::ReceiverRegister;
 use super::StreamPaused;
@@ -138,7 +138,7 @@ impl StreamRx {
             midrid,
             cname: None,
             suppress_nack,
-            last_used: already_happened(),
+            last_used: Instant::DistantPast,
             last_clock_rate: None,
             sender_info: None,
             reset_roc: None,
@@ -148,7 +148,7 @@ impl StreamRx {
             pending_request_keyframe: None,
             pending_request_remb: None,
             fir_seq_no: 0,
-            last_receiver_report: already_happened(),
+            last_receiver_report: Instant::DistantPast,
             stats: StreamRxStats::default(),
             check_paused_at: None,
             paused: true,
@@ -191,8 +191,8 @@ impl StreamRx {
     /// Set threshold duration for emitting the paused event.
     ///
     /// This event is emitted when no packet have received for this duration.
-    pub fn set_pause_threshold(&mut self, t: Duration) {
-        self.pause_threshold = t;
+    pub fn set_pause_threshold(&mut self, t: std_time::Duration) {
+        self.pause_threshold = t.into();
     }
 
     /// Request a keyframe for an incoming encoded stream.
@@ -423,7 +423,7 @@ impl StreamRx {
             payload: data,
             nackable: false,
             last_sender_info: self.sender_info.map(|(_, s)| s),
-            timestamp: now,
+            timestamp: now.as_std(),
         };
 
         self.stats.bytes += packet.payload.len() as u64;
@@ -552,8 +552,8 @@ impl StreamRx {
         report.last_sr_time = {
             let t = self
                 .sender_info
-                .map(|(_, s)| s.ntp_time)
-                .unwrap_or(already_happened());
+                .map(|(_, s)| Instant::from(s.ntp_time))
+                .unwrap_or(Instant::DistantPast);
 
             let t64 = t.as_ntp_64();
             (t64 >> 16) as u32
@@ -579,7 +579,9 @@ impl StreamRx {
     fn create_extended_receiver_report(&self, now: Instant) -> ExtendedReport {
         // we only want to report our time to measure RTT,
         // the source will answer with Dlrr feedback, allowing us to calculate RTT
-        let block = ReportBlock::Rrtr(Rrtr { ntp_time: now });
+        let block = ReportBlock::Rrtr(Rrtr {
+            ntp_time: now.as_std(),
+        });
         ExtendedReport {
             ssrc: self.ssrc,
             blocks: vec![block],
@@ -735,7 +737,7 @@ impl StreamRxStats {
             nacks: self.nacks,
             rtt: self.rtt,
             loss: self.loss,
-            timestamp: now,
+            timestamp: now.as_std(),
         };
 
         // Several SSRCs can back a given (mid, rid) tuple. For example, Firefox creates new SSRCs

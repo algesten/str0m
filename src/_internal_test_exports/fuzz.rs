@@ -23,17 +23,17 @@ pub fn rtx_buffer(data: &[u8]) {
     let buf_size = u16::from_be_bytes([data[0], data[1]]);
     let max_age = data[2] as u64;
     let max_size = data[3] as usize;
-    let mut buf = EvictingBuffer::new(buf_size as usize, Duration::from_secs(max_age), max_size);
+    let mut buf = EvictingBuffer::new(buf_size as usize, Duration::from_secs(max_age).into(), max_size);
     let mut now = Instant::now();
     let mut pos = 0;
 
     for d in &data[4..] {
         now += Duration::from_millis(*d as u64);
         if d % 2 == 0 {
-            buf.maybe_evict(now)
+            buf.maybe_evict(now.into())
         } else {
             pos += *d as u64;
-            buf.push(pos, now, d);
+            buf.push(pos, now.into(), d);
         }
     }
 }
@@ -69,7 +69,7 @@ pub fn rtp_packet(data: &[u8]) -> Option<()> {
         let header = RtpHeader::_parse(rng.slice(len)?, &session.exts)?;
         let pkt_len = rng.usize(1500)?;
         let data = rng.slice(pkt_len)?;
-        session.handle_rtp(now, header, data);
+        session.handle_rtp(now.into(), header, data);
     }
 }
 
@@ -110,7 +110,7 @@ pub fn depack(data: &[u8]) -> Option<()> {
             let hlen = rng.usize(76)?;
             let header = RtpHeader::_parse(rng.slice(hlen)?, &exts)?;
             let meta = RtpMeta {
-                received: start + Duration::from_millis(rng.u64(10000)?),
+                received: (start + Duration::from_millis(rng.u64(10000)?)).into(),
                 time: MediaTime::new(rng.u64(u64::MAX)?, Frequency::MICROS),
                 seq_no: rng.u64(u64::MAX)?.into(),
                 header,
@@ -136,7 +136,7 @@ pub fn receive_register(data: &[u8]) -> Option<()> {
                 let arrival = start + Duration::from_micros(rng.u64(u64::MAX / 100)?);
                 let rtp_time = rng.u32(u32::MAX / 2)?;
                 let clock_rate = rng.u32(u32::MAX / 2)?;
-                rr.update(seq.into(), arrival, rtp_time, clock_rate);
+                rr.update(seq.into(), arrival.into(), rtp_time, clock_rate);
             }
             1 => {
                 rr.nack_report();

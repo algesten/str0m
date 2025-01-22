@@ -1,7 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{self};
-use std::time::Duration;
-use std::time::Instant;
+use std::time as std_time;
 
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
@@ -12,7 +11,8 @@ use crate::rtp_::{Bitrate, Pt};
 use crate::rtp_::{MediaTime, SenderInfo};
 use crate::rtp_::{Mid, Rid, SeqNo};
 use crate::rtp_::{Rtcp, RtpHeader};
-use crate::util::{already_happened, NonCryptographicRng};
+use crate::util::NonCryptographicRng;
+use crate::util::{Duration, Instant};
 
 pub use self::receive::StreamRx;
 pub use self::send::StreamTx;
@@ -68,7 +68,7 @@ pub struct RtpPacket {
     /// This timestamp has nothing to do with RTP itself. For outgoing packets, this is when
     /// the packet was first handed over to str0m and enqueued in the outgoing send buffers.
     /// For incoming packets it's the time we received the network packet.
-    pub timestamp: Instant,
+    pub timestamp: std_time::Instant,
 
     /// Sender information from the most recent Sender Report(SR).
     ///
@@ -115,7 +115,7 @@ impl RtpPacket {
             payload: vec![], // This payload is never used. See RtpHeader::create_padding_packet
             nackable: false,
             last_sender_info: None,
-            timestamp: already_happened(),
+            timestamp: Instant::DistantPast.as_std(),
         }
     }
 }
@@ -174,7 +174,7 @@ impl Streams {
         Self {
             streams_rx: Default::default(),
             rx_lookup: Default::default(),
-            last_rx_lookup_cleanup: already_happened(),
+            last_rx_lookup_cleanup: Instant::DistantPast,
             streams_tx: Default::default(),
             default_ssrc_tx: 0.into(), // this will be changed
             mids_to_report: Vec::with_capacity(10),
@@ -392,7 +392,7 @@ impl Streams {
 
     pub(crate) fn send_stream(&self) -> Option<Instant> {
         if self.streams_tx.values().any(|s| s.need_timeout()) {
-            Some(already_happened())
+            Some(Instant::DistantPast)
         } else {
             None
         }

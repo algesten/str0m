@@ -1,8 +1,6 @@
-use std::time::Duration;
-use std::time::Instant;
-
 use crate::io::DATAGRAM_MAX_PACKET_SIZE;
 use crate::rtp_::SeqNo;
+use crate::util::{Duration, Instant};
 
 use super::rtx_cache_buf::EvictingBuffer;
 use super::RtpPacket;
@@ -90,7 +88,7 @@ mod test {
             seq_no: seq_no.into(),
             time: MediaTime::from_90khz(0),
             payload: millis.to_be_bytes().to_vec(),
-            timestamp: after(now, millis),
+            timestamp: after(now, millis).as_std(),
             last_sender_info: None,
             nackable: true,
         }

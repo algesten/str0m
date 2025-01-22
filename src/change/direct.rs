@@ -257,7 +257,11 @@ impl<'a> DirectApi<'a> {
             self.rtc.session.send_buffer_video
         };
 
-        stream.set_rtx_cache(size, DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP);
+        stream.set_rtx_cache(
+            size,
+            DEFAULT_RTX_CACHE_DURATION.as_std().unwrap(),
+            DEFAULT_RTX_RATIO_CAP,
+        );
 
         stream
     }

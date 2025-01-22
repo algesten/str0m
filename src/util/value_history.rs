@@ -2,8 +2,9 @@ use std::{
     collections::VecDeque,
     iter::Sum,
     ops::{AddAssign, SubAssign},
-    time::{Duration, Instant},
 };
+
+use crate::util::time::{Duration, Instant};
 
 /// Holds a history values of type T for up to a certain Duration, as well as the
 /// cumulated (total) value.
@@ -49,7 +50,7 @@ where
             let Some(front_t) = self.history.front().map(|v| v.0) else {
                 return;
             };
-            now.duration_since(front_t) > self.max_time
+            now.saturating_duration_since(front_t) > self.max_time
         } {
             if let Some((_, v)) = self.history.pop_front() {
                 self.value -= v;
@@ -61,9 +62,7 @@ where
 #[allow(clippy::unchecked_duration_subtraction)]
 #[cfg(test)]
 mod test {
-    use std::time::{Duration, Instant};
-
-    use super::ValueHistory;
+    use super::*;
 
     #[test]
     fn with_value_test() {

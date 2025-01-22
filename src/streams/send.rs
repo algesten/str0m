@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
-use std::time::Duration;
-use std::time::Instant;
+use std::time as std_time;
 
 use crate::error::PacketError;
 use crate::format::CodecConfig;
@@ -25,7 +24,7 @@ use crate::rtp_::{SeqNo, SRTP_BLOCK_SIZE};
 use crate::session::PacketReceipt;
 use crate::stats::StatsSnapshot;
 use crate::util::value_history::ValueHistory;
-use crate::util::{already_happened, not_happening};
+use crate::util::{Duration, Instant};
 
 use super::rtx_cache::RtxCache;
 use super::send_queue::SendQueue;
@@ -144,7 +143,7 @@ impl StreamTx {
             clock_rate: None,
             seq_no: SeqNo::default(),
             seq_no_rtx: SeqNo::default(),
-            last_used: already_happened(),
+            last_used: Instant::DistantPast,
             rtp_and_wallclock: None,
             send_queue: SendQueue::new(),
             unpaced: None,
@@ -153,11 +152,11 @@ impl StreamTx {
             blank_packet: RtpPacket::blank(),
             rtx_cache: RtxCache::new(2000, DEFAULT_RTX_CACHE_DURATION),
             rtx_ratio_cap: DEFAULT_RTX_RATIO_CAP,
-            last_sender_report: already_happened(),
+            last_sender_report: Instant::DistantPast,
             pending_request_keyframe: None,
             pending_request_remb: None,
             stats: StreamTxStats::new(enable_stats),
-            rtx_ratio: (0.0, already_happened()),
+            rtx_ratio: (0.0, Instant::DistantPast),
             pt_for_padding: None,
             remote_acked_ssrc: false,
         }
@@ -199,11 +198,11 @@ impl StreamTx {
     pub fn set_rtx_cache(
         &mut self,
         max_packets: usize,
-        max_age: Duration,
+        max_age: std_time::Duration,
         rtx_ratio_cap: Option<f32>,
     ) {
         // Dump old cache to avoid having to deal with resizing logic inside the cache impl.
-        self.rtx_cache = RtxCache::new(max_packets, max_age);
+        self.rtx_cache = RtxCache::new(max_packets, max_age.into());
         if rtx_ratio_cap.is_some() {
             self.stats
                 .bytes_transmitted
@@ -256,7 +255,7 @@ impl StreamTx {
         pt: Pt,
         seq_no: SeqNo,
         time: u32,
-        wallclock: Instant,
+        wallclock: std_time::Instant,
         marker: bool,
         ext_vals: ExtensionValues,
         nackable: bool,
@@ -271,7 +270,7 @@ impl StreamTx {
 
         // This 1 in clock frequency will be fixed in poll_output.
         let media_time = MediaTime::from_secs(time as u64);
-        self.rtp_and_wallclock = Some((time, wallclock));
+        self.rtp_and_wallclock = Some((time, wallclock.into()));
 
         let header = RtpHeader {
             sequence_number: *seq_no as u16,
@@ -296,7 +295,7 @@ impl StreamTx {
             // Instead we set a future timestamp here. When time moves forward in the "regular way",
             // in handle_timeout() we delegate to self.send_queue.handle_timeout() to mark the enqueued
             // timestamp of all packets that are about to be sent.
-            timestamp: not_happening(),
+            timestamp: Instant::DistantFuture.as_std(),
 
             // This is only relevant for incoming RTP packets.
             last_sender_info: None,
@@ -437,7 +436,7 @@ impl StreamTx {
 
         // Absolute Send Time might not be enabled for this m-line.
         if exts.id_of(Extension::AbsoluteSendTime).is_some() {
-            header.ext_vals.abs_send_time = Some(now);
+            header.ext_vals.abs_send_time = Some(now.as_std());
         }
 
         // TWCC might not be enabled for this m-line.
@@ -639,7 +638,7 @@ impl StreamTx {
         // finish poll_packet, at which point we move it to the cache.
         let pkt = self.send_queue.peek()?;
 
-        pkt.timestamp = now;
+        pkt.timestamp = now.as_std();
 
         let len = pkt.payload.len() as u64;
         self.stats.update_packet_counts(len, false);
@@ -715,7 +714,7 @@ impl StreamTx {
     pub(crate) fn sender_report_at(&self) -> Instant {
         let Some(kind) = self.kind else {
             // First handle_timeout sets the kind. No sender report until then.
-            return not_happening();
+            return Instant::DistantFuture;
         };
         self.last_sender_report + rr_interval(kind.is_audio())
     }
@@ -832,7 +831,7 @@ impl StreamTx {
 
         SenderInfo {
             ssrc: self.ssrc,
-            ntp_time: now,
+            ntp_time: now.as_std(),
             rtp_time,
             sender_packet_count: self.stats.packets as u32,
             sender_octet_count: self.stats.bytes as u32,
