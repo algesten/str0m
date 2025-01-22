@@ -154,7 +154,7 @@ impl fmt::Debug for DtlsCert {
     }
 }
 
-pub trait DtlsInner: Sized {
+pub(crate) trait DtlsInner: Sized {
     /// Set whether this instance is active or passive.
     ///
     /// i.e. initiating the client hello or not. This must be called

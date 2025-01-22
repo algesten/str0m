@@ -23,7 +23,11 @@ pub fn rtx_buffer(data: &[u8]) {
     let buf_size = u16::from_be_bytes([data[0], data[1]]);
     let max_age = data[2] as u64;
     let max_size = data[3] as usize;
-    let mut buf = EvictingBuffer::new(buf_size as usize, Duration::from_secs(max_age).into(), max_size);
+    let mut buf = EvictingBuffer::new(
+        buf_size as usize,
+        Duration::from_secs(max_age).into(),
+        max_size,
+    );
     let mut now = Instant::now();
     let mut pos = 0;
 

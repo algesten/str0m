@@ -35,9 +35,9 @@ use super::{rr_interval, RtpPacket};
 /// requests smaller than this we use blank packets instead.
 const MIN_SPURIOUS_PADDING_SIZE: usize = 50;
 
-pub const DEFAULT_RTX_CACHE_DURATION: Duration = Duration::from_secs(3);
+pub(crate) const DEFAULT_RTX_CACHE_DURATION: Duration = Duration::from_secs(3);
 
-pub const DEFAULT_RTX_RATIO_CAP: Option<f32> = Some(0.15f32);
+pub(crate) const DEFAULT_RTX_RATIO_CAP: Option<f32> = Some(0.15f32);
 
 /// Outgoing encoded stream.
 ///

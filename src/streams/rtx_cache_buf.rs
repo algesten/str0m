@@ -12,7 +12,7 @@ use crate::util::{Duration, Instant};
 /// The buffer evicts values based on time. If the size of the buffer is too small and would
 /// overwrite an entry that has not been evicted due to age, the buffer grows.
 #[derive(Debug)]
-pub struct EvictingBuffer<T> {
+pub(crate) struct EvictingBuffer<T> {
     buf: Vec<Option<Entry<T>>>,
     /// How long to keep entries for.
     max_age: Duration,

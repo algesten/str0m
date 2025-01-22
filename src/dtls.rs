@@ -32,7 +32,7 @@ impl DtlsError {
 }
 
 /// Encapsulation of DTLS.
-pub struct Dtls {
+pub(crate) struct Dtls {
     dtls_impl: DtlsImpl,
 
     /// The fingerprint of the certificate.

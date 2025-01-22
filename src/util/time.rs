@@ -51,7 +51,7 @@ static BEGINNING_OF_TIME: Lazy<(std_time::Instant, SystemTime)> = Lazy::new(|| {
     (beginning_of_time, beginning_of_time_sys)
 });
 
-pub fn epoch_to_beginning() -> Duration {
+pub(crate) fn epoch_to_beginning() -> Duration {
     BEGINNING_OF_TIME
         .1
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -174,16 +174,14 @@ impl Duration {
 #[cfg(test)]
 impl Duration {
     pub(crate) fn from_secs_f64(secs: f64) -> Duration {
-        match secs {
-            f64::INFINITY => Duration::PlusInf,
-            f64::NEG_INFINITY => Duration::MinusInf,
-            secs => {
-                if secs >= 0.0 {
-                    Duration::Positive(std_time::Duration::from_secs_f64(secs))
-                } else {
-                    Duration::Negative(std_time::Duration::from_secs_f64(-secs))
-                }
-            }
+        if secs == f64::INFINITY {
+            Duration::PlusInf
+        } else if secs == f64::NEG_INFINITY {
+            Duration::MinusInf
+        } else if secs >= 0.0 {
+            Duration::Positive(std_time::Duration::from_secs_f64(secs))
+        } else {
+            Duration::Negative(std_time::Duration::from_secs_f64(-secs))
         }
     }
 }

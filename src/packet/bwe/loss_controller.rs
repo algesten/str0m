@@ -25,7 +25,7 @@ use crate::{Bitrate, DataSize};
 /// Ref:
 /// * https://webrtc.googlesource.com/src/+/14e2779a6ccdc67038ed2069a5732dd41617c6f0/modules/congestion_controller/goog_cc/loss_based_bwe_v2.cc
 /// * https://webrtc.googlesource.com/src/+/14e2779a6ccdc67038ed2069a5732dd41617c6f0/modules/congestion_controller/goog_cc/loss_based_bwe_v2.h
-pub struct LossController {
+pub(crate) struct LossController {
     /// Configuration for the controller.
     config: Config,
 
@@ -86,7 +86,7 @@ pub enum LossControllerState {
     DelayBased,
 }
 
-pub trait PacketResult {
+pub(crate) trait PacketResult {
     /// When the packet was sent
     fn local_send_time(&self) -> Instant;
     /// Size of the packet payload

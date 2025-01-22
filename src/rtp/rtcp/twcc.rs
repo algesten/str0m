@@ -2045,34 +2045,34 @@ mod test {
         }
 
         now = now + Duration::from_millis(5);
-        #[allow(unused_must_use)]
-        reg.apply_report(
-            Twcc {
-                sender_ssrc: Ssrc::new(),
-                ssrc: Ssrc::new(),
-                base_seq: 0,
-                status_count: 9,
-                reference_time: 35,
-                feedback_count: 0,
-                chunks: [
-                    PacketChunk::VectorDouble(0b11_01_01_01_00_01_00_01, 7),
-                    PacketChunk::Run(PacketStatus::ReceivedSmallDelta, 2),
-                ]
-                .into(),
-                delta: [
-                    Delta::Small(10),
-                    Delta::Small(10),
-                    Delta::Small(10),
-                    Delta::Small(10),
-                    Delta::Small(10),
-                    Delta::Small(10),
-                    Delta::Small(10),
-                ]
-                .into(),
-            },
-            now,
-        )
-        .expect("apply_report to return Some(_)");
+        let _ = reg
+            .apply_report(
+                Twcc {
+                    sender_ssrc: Ssrc::new(),
+                    ssrc: Ssrc::new(),
+                    base_seq: 0,
+                    status_count: 9,
+                    reference_time: 35,
+                    feedback_count: 0,
+                    chunks: [
+                        PacketChunk::VectorDouble(0b11_01_01_01_00_01_00_01, 7),
+                        PacketChunk::Run(PacketStatus::ReceivedSmallDelta, 2),
+                    ]
+                    .into(),
+                    delta: [
+                        Delta::Small(10),
+                        Delta::Small(10),
+                        Delta::Small(10),
+                        Delta::Small(10),
+                        Delta::Small(10),
+                        Delta::Small(10),
+                        Delta::Small(10),
+                    ]
+                    .into(),
+                },
+                now,
+            )
+            .expect("apply_report to return Some(_)");
 
         now = now + Duration::from_millis(20);
         let loss = reg

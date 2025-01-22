@@ -12,7 +12,7 @@ use super::{CodecDepacketizer, CodecExtra, Depacketizer, PacketError};
 
 #[derive(Clone, PartialEq, Eq)]
 /// Holds metadata incoming RTP data.
-pub struct RtpMeta {
+pub(crate) struct RtpMeta {
     /// When this RTP packet was received.
     pub received: Instant,
     /// Media time translated from the RtpHeader time.
@@ -28,7 +28,7 @@ pub struct RtpMeta {
 }
 
 #[derive(Clone)]
-pub struct Depacketized {
+pub(crate) struct Depacketized {
     pub time: MediaTime,
     pub contiguous: bool,
     pub meta: Vec<RtpMeta>,
@@ -96,7 +96,7 @@ struct Entry {
 }
 
 #[derive(Debug)]
-pub struct DepacketizingBuffer {
+pub(crate) struct DepacketizingBuffer {
     hold_back: usize,
     depack: CodecDepacketizer,
     queue: VecDeque<Entry>,

@@ -93,7 +93,7 @@ pub(crate) trait Pacer {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct QueueSnapshot {
+pub(crate) struct QueueSnapshot {
     /// Time this snapshot was made
     pub created_at: Instant,
     /// The total byte size of the snapshot.

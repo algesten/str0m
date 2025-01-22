@@ -5,7 +5,7 @@ use crate::util::Instant;
 use super::register_nack::NackRegister;
 
 #[derive(Debug)]
-pub struct ReceiverRegister {
+pub(crate) struct ReceiverRegister {
     nack: NackRegister,
 
     /// First sequence number received
