@@ -16,7 +16,7 @@ mod delay_controller;
 mod loss_controller;
 pub(crate) mod macros;
 mod rate_control;
-mod super_instant;
+mod time;
 mod trendline_estimator;
 
 use acked_bitrate_estimator::AckedBitrateEstimator;

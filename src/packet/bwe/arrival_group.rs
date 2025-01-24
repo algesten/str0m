@@ -1,10 +1,12 @@
-use std::cmp::Ordering;
 use std::mem;
 use std::time::{Duration, Instant};
 
 use crate::rtp_::SeqNo;
 
-use super::AckedPacket;
+use super::{
+    time::{TimeDelta, Timestamp},
+    AckedPacket,
+};
 
 const BURST_TIME_INTERVAL: Duration = Duration::from_millis(5);
 const SEND_TIME_GROUP_LENGTH: Duration = Duration::from_millis(5);
@@ -62,32 +64,15 @@ impl ArrivalGroup {
             return Belongs::Skipped;
         };
 
-        let inter_arrival_time = {
-            let last_remote_recv_time = self.remote_recv_time();
+        let send_time_delta = Timestamp::from(packet.local_send_time) - self.local_send_time();
+        if send_time_delta == TimeDelta::ZERO {
+            return Belongs::Yes;
+        }
+        let arrival_time_delta = Timestamp::from(packet.remote_recv_time) - self.remote_recv_time();
 
-            if packet.remote_recv_time >= last_remote_recv_time {
-                (packet.remote_recv_time - last_remote_recv_time).as_secs_f64()
-            } else {
-                (last_remote_recv_time - packet.remote_recv_time).as_secs_f64() * -1.0
-            }
-        };
-
-        let last_send_delta = {
-            let last_send_time = self.local_send_time();
-
-            match packet.local_send_time.cmp(&last_send_time) {
-                Ordering::Equal => {
-                    return Belongs::Yes;
-                }
-                Ordering::Greater => (packet.local_send_time - last_send_time).as_secs_f64(),
-                Ordering::Less => (last_send_time - packet.local_send_time).as_secs_f64() * -1.0,
-            }
-        };
-
-        let inter_group_delay_delta = inter_arrival_time - last_send_delta;
-
-        if inter_group_delay_delta < 0.0
-            && inter_arrival_time <= BURST_TIME_INTERVAL.as_secs_f64()
+        let propagation_delta = arrival_time_delta - send_time_delta;
+        if propagation_delta < TimeDelta::ZERO
+            && arrival_time_delta <= BURST_TIME_INTERVAL
             && packet.remote_recv_time - first_remote_recv_time < MAX_BURST_DURATION
         {
             Belongs::Yes
@@ -98,32 +83,14 @@ impl ArrivalGroup {
         }
     }
 
-    /// Calculate the inter group delay delta between self and a subsequent group.
-    pub(super) fn inter_group_delay_delta(&self, other: &Self) -> Option<f64> {
-        let first_seq_no = self.first.map(|(s, _, _)| s)?;
-        let last_seq_no = self.last_seq_no?;
-
-        let arrival_delta = self.arrival_delta(other)?.as_secs_f64() * 1000.0;
-        let departure_delta = self.departure_delta(other)?.as_secs_f64() * 1000.0;
-
-        assert!(arrival_delta >= 0.0);
-
-        let result = arrival_delta - departure_delta;
-        trace!("Delay delta for group({first_seq_no}..={last_seq_no}. {result:?} = {arrival_delta:?} - {departure_delta:?}");
-
-        Some(result)
+    /// Calculate the send time delta between self and a subsequent group.
+    fn departure_delta(&self, other: &Self) -> TimeDelta {
+        Timestamp::from(other.local_send_time()) - self.local_send_time()
     }
 
-    pub(super) fn departure_delta(&self, other: &Self) -> Option<Duration> {
-        other
-            .local_send_time()
-            .checked_duration_since(self.local_send_time())
-    }
-
-    fn arrival_delta(&self, other: &Self) -> Option<Duration> {
-        other
-            .remote_recv_time()
-            .checked_duration_since(self.remote_recv_time())
+    /// Calculate the remote receive time delta between self and a subsequent group.
+    fn arrival_delta(&self, other: &Self) -> TimeDelta {
+        Timestamp::from(other.remote_recv_time()) - self.remote_recv_time()
     }
 
     /// The local send time i.e. departure time, for the group.
@@ -183,7 +150,7 @@ impl ArrivalGroupAccumulator {
         }
 
         // Variation between previous group and current.
-        let delay_delta = self.inter_group_delay_delta();
+        let arrival_delta = self.arrival_delta();
         let send_delta = self.send_delta();
         let last_remote_recv_time = self.current_group.remote_recv_time();
 
@@ -194,32 +161,32 @@ impl ArrivalGroupAccumulator {
 
         Some(InterGroupDelayDelta {
             send_delta: send_delta?,
-            delay_delta: delay_delta?,
+            arrival_delta: arrival_delta?,
             last_remote_recv_time,
         })
     }
 
-    fn inter_group_delay_delta(&self) -> Option<f64> {
+    fn arrival_delta(&self) -> Option<TimeDelta> {
         self.previous_group
             .as_ref()
-            .and_then(|prev| prev.inter_group_delay_delta(&self.current_group))
+            .map(|prev| prev.arrival_delta(&self.current_group))
     }
 
-    fn send_delta(&self) -> Option<Duration> {
+    fn send_delta(&self) -> Option<TimeDelta> {
         self.previous_group
             .as_ref()
-            .and_then(|prev| prev.departure_delta(&self.current_group))
+            .map(|prev| prev.departure_delta(&self.current_group))
     }
 }
 
 /// The calculate delay delta between two groups of packets.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct InterGroupDelayDelta {
     /// The delta between the send times of the two groups i.e. delta between the last packet sent
     /// in each group.
-    pub(super) send_delta: Duration,
-    /// The delay delta between the two groups.
-    pub(super) delay_delta: f64,
+    pub(super) send_delta: TimeDelta,
+    /// The delta between the remote arrival times of the two groups.
+    pub(super) arrival_delta: TimeDelta,
     /// The reported receive time for the last packet in the first arrival group.
     pub(super) last_remote_recv_time: Instant,
 }
@@ -230,7 +197,7 @@ mod test {
 
     use crate::rtp_::DataSize;
 
-    use super::{AckedPacket, ArrivalGroup, Belongs};
+    use super::{AckedPacket, ArrivalGroup, ArrivalGroupAccumulator, Belongs, TimeDelta};
 
     #[test]
     fn test_arrival_group_all_packets_belong_to_empty_group() {
@@ -439,6 +406,34 @@ mod test {
         }
 
         assert_eq!(group.size, 3, "Expected group to contain 4 packets");
+    }
+
+    #[test]
+    fn group_reorder() {
+        let data = vec![
+            ((Duration::from_millis(0), Duration::from_millis(0)), None),
+            ((Duration::from_millis(60), Duration::from_millis(5)), None),
+            ((Duration::from_millis(40), Duration::from_millis(10)), None),
+            (
+                (Duration::from_millis(70), Duration::from_millis(20)),
+                Some((TimeDelta::from_millis(-20), TimeDelta::from_millis(5))),
+            ),
+        ];
+
+        let now = Instant::now();
+        let mut aga = ArrivalGroupAccumulator::default();
+
+        for ((local_send_time, remote_recv_time), deltas) in data {
+            let group_delta = aga.accumulate_packet(&AckedPacket {
+                seq_no: Default::default(),
+                size: Default::default(),
+                local_send_time: now + local_send_time,
+                remote_recv_time: now + remote_recv_time,
+                local_recv_time: Instant::now(), // does not matter
+            });
+
+            assert_eq!(group_delta.map(|d| (d.send_delta, d.arrival_delta)), deltas);
+        }
     }
 
     fn duration_us(us: u64) -> Duration {
