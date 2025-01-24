@@ -325,7 +325,7 @@ impl LossController {
 
         let observation_duration = last_send_time - self.last_send_time_most_recent_observation;
 
-        if observation_duration <= TimeDelta::ZERO {
+        if observation_duration <= Duration::ZERO {
             return false;
         }
 
@@ -591,8 +591,8 @@ impl LossController {
             let time_since_bw_reduced = self
                 .config
                 .rampup_acceleration_maxout_time
-                .min(delta)
-                .as_secs_f64();
+                .as_secs_f64()
+                .min(delta.as_secs_f64());
 
             let rampup_acceleration = self.config.rampup_acceleration_max_factor.as_secs_f64()
                 * time_since_bw_reduced
@@ -723,7 +723,7 @@ impl LossController {
 
 struct Config {
     observation_window_size: usize, // minimum is 2
-    observation_duration_lower_bound: TimeDelta,
+    observation_duration_lower_bound: Duration,
     trendline_integration_enabled: bool,
     temporal_weight_factor: f64,
     instant_upper_bound_temporal_weight_factor: f64,
@@ -739,13 +739,13 @@ struct Config {
     newton_iterations: usize,
     newton_step_size: f64,
     not_increase_if_inherent_loss_less_than_average_loss: bool,
-    delayed_increase_window: TimeDelta,
+    delayed_increase_window: Duration,
     bandwidth_rampup_upper_bound_factor: f64,
     candidate_factor: [f64; 3],
     append_acknowledged_rate_candidate: bool,
     append_delay_based_estimate_candidate: bool,
     bandwidth_backoff_lower_bound_factor: f64,
-    rampup_acceleration_maxout_time: TimeDelta,
+    rampup_acceleration_maxout_time: Duration,
     rampup_acceleration_max_factor: Duration,
     higher_bandwidth_bias_factor: f64,
     higher_log_bandwidth_bias_factor: f64,
@@ -892,7 +892,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             observation_window_size: 20, // minimum is 2
-            observation_duration_lower_bound: TimeDelta::from_millis(250),
+            observation_duration_lower_bound: Duration::from_millis(250),
             trendline_integration_enabled: false,
             temporal_weight_factor: 0.9,
             instant_upper_bound_temporal_weight_factor: 0.9,
@@ -908,13 +908,13 @@ impl Default for Config {
             newton_iterations: 1,
             newton_step_size: 0.75,
             not_increase_if_inherent_loss_less_than_average_loss: true,
-            delayed_increase_window: TimeDelta::from_millis(1000),
+            delayed_increase_window: Duration::from_millis(1000),
             bandwidth_rampup_upper_bound_factor: 1_000_000.0,
             candidate_factor: [1.02, 1.0, 0.95],
             append_acknowledged_rate_candidate: true,
             append_delay_based_estimate_candidate: true,
             bandwidth_backoff_lower_bound_factor: 1.0,
-            rampup_acceleration_maxout_time: TimeDelta::from_secs(60),
+            rampup_acceleration_maxout_time: Duration::from_secs(60),
             rampup_acceleration_max_factor: Duration::from_secs(60),
             higher_bandwidth_bias_factor: 0.0002,
             higher_log_bandwidth_bias_factor: 0.02,

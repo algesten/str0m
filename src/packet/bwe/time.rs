@@ -7,7 +7,7 @@ use crate::rtp_::DataSize;
 
 /// Wrapper for [`Instant`] that provides additional time points in the past or future.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SuperInstant {
+pub(super) enum SuperInstant {
     /// A time in the past that already happened.
     DistantPast,
 
@@ -18,16 +18,17 @@ pub(crate) enum SuperInstant {
     DistantFuture,
 }
 
-/// Wrapper for [`Duration`] that provides a duration to a distant future or past.
+/// Wrapper for [`Duration`] that can be negative and provides a duration to a
+/// distant future or past.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TimeDelta {
+pub(super) enum TimeDelta {
     /// Time delta to some event in distant past that already happened.
     MinusInf,
 
-    /// An exact duration.
+    /// An exact negative duration.
     Negative(Duration),
 
-    /// An exact duration.
+    /// An exact positive duration.
     Positive(Duration),
 
     /// Time delta to some event in distant future that will never happen.
@@ -35,28 +36,10 @@ pub(crate) enum TimeDelta {
 }
 
 impl TimeDelta {
-    pub(crate) const ZERO: Self = Self::Positive(Duration::ZERO);
-
-    /// Creates a [`TimeDelta`] from seconds.
-    pub(crate) const fn from_secs(secs: i64) -> TimeDelta {
-        if secs >= 0 {
-            Self::Positive(Duration::from_secs(secs as u64))
-        } else {
-            Self::Negative(Duration::from_secs(-secs as u64))
-        }
-    }
-
-    /// Creates a [`TimeDelta`] from milliseconds.
-    pub(crate) const fn from_millis(millis: i64) -> Self {
-        if millis >= 0 {
-            Self::Positive(Duration::from_millis(millis as u64))
-        } else {
-            Self::Negative(Duration::from_millis(-millis as u64))
-        }
-    }
+    pub(super) const ZERO: Self = Self::Positive(Duration::ZERO);
 
     /// Returns the number of seconds contained by this [`TimeDelta`] as `f64`.
-    pub(crate) fn as_secs_f64(&self) -> f64 {
+    pub fn as_secs_f64(&self) -> f64 {
         match self {
             Self::Negative(d) => d.as_secs_f64().neg(),
             Self::Positive(d) => d.as_secs_f64(),
@@ -66,12 +49,36 @@ impl TimeDelta {
     }
 }
 
+#[cfg(test)]
+impl TimeDelta {
+    /// Creates a [`TimeDelta`] from seconds.
+    pub const fn from_secs(secs: i64) -> TimeDelta {
+        if secs >= 0 {
+            Self::Positive(Duration::from_secs(secs as u64))
+        } else {
+            Self::Negative(Duration::from_secs(-secs as u64))
+        }
+    }
+
+    /// Creates a [`TimeDelta`] from milliseconds.
+    pub const fn from_millis(millis: i64) -> Self {
+        if millis >= 0 {
+            Self::Positive(Duration::from_millis(millis as u64))
+        } else {
+            Self::Negative(Duration::from_millis(-millis as u64))
+        }
+    }
+}
+
 impl SuperInstant {
-    pub(crate) const fn is_finite(&self) -> bool {
+    /// Indicates whether this [`SuperInstant`] is [`SuperInstant::Exact`].
+    pub const fn is_finite(&self) -> bool {
         matches!(self, Self::Exact(_))
     }
 
-    pub(crate) const fn is_not_finite(&self) -> bool {
+    /// Indicates whether this [`SuperInstant`] is [`SuperInstant::DistantPast`]
+    /// or [`SuperInstant::DistantFuture`].
+    pub const fn is_not_finite(&self) -> bool {
         !self.is_finite()
     }
 }
@@ -118,6 +125,22 @@ impl Sub<Self> for SuperInstant {
     }
 }
 
+impl Add<Duration> for SuperInstant {
+    type Output = Self;
+
+    fn add(self, rhs: Duration) -> Self::Output {
+        self + TimeDelta::from(rhs)
+    }
+}
+
+impl Sub<Duration> for SuperInstant {
+    type Output = Self;
+
+    fn sub(self, rhs: Duration) -> Self::Output {
+        self - TimeDelta::from(rhs)
+    }
+}
+
 impl Sub<Instant> for SuperInstant {
     type Output = TimeDelta;
 
@@ -134,6 +157,18 @@ impl SubAssign<TimeDelta> for SuperInstant {
 
 impl AddAssign<TimeDelta> for SuperInstant {
     fn add_assign(&mut self, rhs: TimeDelta) {
+        *self = *self + rhs;
+    }
+}
+
+impl SubAssign<Duration> for SuperInstant {
+    fn sub_assign(&mut self, rhs: Duration) {
+        *self = *self - rhs;
+    }
+}
+
+impl AddAssign<Duration> for SuperInstant {
+    fn add_assign(&mut self, rhs: Duration) {
         *self = *self + rhs;
     }
 }
@@ -233,6 +268,18 @@ impl Ord for TimeDelta {
     }
 }
 
+impl PartialEq<Duration> for TimeDelta {
+    fn eq(&self, other: &Duration) -> bool {
+        *self == Self::from(*other)
+    }
+}
+
+impl PartialOrd<Duration> for TimeDelta {
+    fn partial_cmp(&self, other: &Duration) -> Option<Ordering> {
+        Some(Self::cmp(self, &Self::from(*other)))
+    }
+}
+
 impl SubAssign<Self> for TimeDelta {
     fn sub_assign(&mut self, rhs: Self) {
         *self = *self - rhs;
@@ -284,17 +331,6 @@ impl Div<TimeDelta> for DataSize {
 #[cfg(test)]
 mod test {
     use super::*;
-
-    impl TimeDelta {
-        pub fn as_micros(&self) -> i128 {
-            match self {
-                TimeDelta::Negative(d) => i128::try_from(d.as_micros()).unwrap().neg(),
-                TimeDelta::Positive(d) => d.as_micros().try_into().unwrap(),
-                TimeDelta::PlusInf => i128::MAX,
-                TimeDelta::MinusInf => i128::MIN,
-            }
-        }
-    }
 
     #[test]
     fn instant_add_duration() {
@@ -511,6 +547,15 @@ mod test {
         assert!(TimeDelta::from_secs(-1) > TimeDelta::MinusInf);
 
         assert!(TimeDelta::from_secs(-2) > TimeDelta::MinusInf);
+
+        assert_eq!(TimeDelta::from_secs(1), Duration::from_secs(1));
+        assert!(TimeDelta::from_secs(2) > Duration::from_secs(1));
+        assert!(TimeDelta::from_secs(1) < Duration::from_secs(2));
+        assert!(TimeDelta::from_secs(-1) < Duration::ZERO);
+        assert!(TimeDelta::from_secs(-1) < Duration::from_secs(1));
+        assert!(TimeDelta::PlusInf > Duration::from_secs(2));
+        assert!(TimeDelta::MinusInf < Duration::from_secs(1));
+        assert!(TimeDelta::MinusInf < Duration::ZERO);
     }
 
     #[test]
@@ -678,17 +723,17 @@ mod test {
         assert!(now != future);
         assert!(future != past);
 
-        assert!(past - TimeDelta::from_secs(1) == past);
-        past -= TimeDelta::from_secs(1);
+        assert!(past - Duration::from_secs(1) == past);
+        past -= Duration::from_secs(1);
         assert!(past == past);
-        past += TimeDelta::from_secs(1);
+        past += Duration::from_secs(1);
         assert!(past == past);
 
-        assert!(future + TimeDelta::from_secs(1) == future);
-        assert!(future - TimeDelta::from_secs(1) == future);
-        future -= TimeDelta::from_secs(1);
+        assert!(future + Duration::from_secs(1) == future);
+        assert!(future - Duration::from_secs(1) == future);
+        future -= Duration::from_secs(1);
         assert!(future == future);
-        future += TimeDelta::from_secs(1);
+        future += Duration::from_secs(1);
         assert!(future == future);
     }
 }

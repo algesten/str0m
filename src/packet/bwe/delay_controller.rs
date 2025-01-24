@@ -66,7 +66,7 @@ impl DelayController {
                 .arrival_group_accumulator
                 .accumulate_packet(acked_packet)
             {
-                crate::packet::bwe::macros::log_delay_variation!(delay_variation.recv_delta);
+                crate::packet::bwe::macros::log_delay_variation!(delay_variation.arrival_delta);
 
                 // Got a new delay variation, add it to the trendline
                 self.trendline_estimator

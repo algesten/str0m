@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::ops::RangeInclusive;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::{
     time::{SuperInstant, TimeDelta},
@@ -9,7 +9,7 @@ use super::{
 
 const SMOOTHING_COEF: f64 = 0.9;
 const OVER_USE_THRESHOLD_DEFAULT_MS: f64 = 12.5;
-const OVER_USE_TIME_THRESHOLD: TimeDelta = TimeDelta::from_millis(10);
+const OVER_USE_TIME_THRESHOLD: Duration = Duration::from_millis(10);
 const MAX_ADOPT_OFFSET_MS: f64 = 15.0;
 const THRESHOLD_GAIN: f64 = 4.0;
 
@@ -109,7 +109,7 @@ impl TrendlineEstimator {
 
         let zero_time = *self.zero_time.get_or_insert(last_remote_recv_time);
 
-        let delay_delta = variation.recv_delta.as_secs_f64() * 1000.0
+        let delay_delta = variation.arrival_delta.as_secs_f64() * 1000.0
             - variation.send_delta.as_secs_f64() * 1000.0;
 
         self.num_delay_variations += 1;
@@ -404,7 +404,7 @@ mod test {
     ) -> InterGroupDelayDelta {
         InterGroupDelayDelta {
             send_delta: send_delta.into(),
-            recv_delta: recv_delta.into(),
+            arrival_delta: recv_delta.into(),
             last_remote_recv_time,
         }
     }
