@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use crate::rtp_::SeqNo;
 
 use super::{
-    time::{SuperInstant, TimeDelta},
+    time::{TimeDelta, Timestamp},
     AckedPacket,
 };
 
@@ -64,12 +64,11 @@ impl ArrivalGroup {
             return Belongs::Skipped;
         };
 
-        let send_time_delta = SuperInstant::from(packet.local_send_time) - self.local_send_time();
+        let send_time_delta = Timestamp::from(packet.local_send_time) - self.local_send_time();
         if send_time_delta == TimeDelta::ZERO {
             return Belongs::Yes;
         }
-        let arrival_time_delta =
-            SuperInstant::from(packet.remote_recv_time) - self.remote_recv_time();
+        let arrival_time_delta = Timestamp::from(packet.remote_recv_time) - self.remote_recv_time();
 
         let propagation_delta = arrival_time_delta - send_time_delta;
         if propagation_delta < TimeDelta::ZERO
@@ -86,12 +85,12 @@ impl ArrivalGroup {
 
     /// Calculate the send time delta between self and a subsequent group.
     fn departure_delta(&self, other: &Self) -> TimeDelta {
-        SuperInstant::from(other.local_send_time()) - self.local_send_time()
+        Timestamp::from(other.local_send_time()) - self.local_send_time()
     }
 
     /// Calculate the remote receive time delta between self and a subsequent group.
     fn arrival_delta(&self, other: &Self) -> TimeDelta {
-        SuperInstant::from(other.remote_recv_time()) - self.remote_recv_time()
+        Timestamp::from(other.remote_recv_time()) - self.remote_recv_time()
     }
 
     /// The local send time i.e. departure time, for the group.

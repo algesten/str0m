@@ -7,7 +7,7 @@ use crate::rtp_::DataSize;
 
 /// Wrapper for [`Instant`] that provides additional time points in the past or future.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SuperInstant {
+pub(super) enum Timestamp {
     /// A time in the past that already happened.
     DistantPast,
 
@@ -23,7 +23,7 @@ pub(super) enum SuperInstant {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TimeDelta {
     /// Time delta to some event in distant past that already happened.
-    MinusInf,
+    NegativeInfinity,
 
     /// An exact negative duration.
     Negative(Duration),
@@ -32,7 +32,7 @@ pub(super) enum TimeDelta {
     Positive(Duration),
 
     /// Time delta to some event in distant future that will never happen.
-    PlusInf,
+    PositiveInfinity,
 }
 
 impl TimeDelta {
@@ -41,10 +41,10 @@ impl TimeDelta {
     /// Returns the number of seconds contained by this [`TimeDelta`] as `f64`.
     pub fn as_secs_f64(&self) -> f64 {
         match self {
+            Self::NegativeInfinity => f64::NEG_INFINITY,
             Self::Negative(d) => d.as_secs_f64().neg(),
             Self::Positive(d) => d.as_secs_f64(),
-            Self::PlusInf => f64::INFINITY,
-            Self::MinusInf => f64::NEG_INFINITY,
+            Self::PositiveInfinity => f64::INFINITY,
         }
     }
 }
@@ -70,52 +70,46 @@ impl TimeDelta {
     }
 }
 
-impl SuperInstant {
-    /// Indicates whether this [`SuperInstant`] is [`SuperInstant::Exact`].
-    pub const fn is_finite(&self) -> bool {
+impl Timestamp {
+    /// Indicates whether this [`Timestamp`] is [`Timestamp::Exact`].
+    pub const fn is_exact(&self) -> bool {
         matches!(self, Self::Exact(_))
-    }
-
-    /// Indicates whether this [`SuperInstant`] is [`SuperInstant::DistantPast`]
-    /// or [`SuperInstant::DistantFuture`].
-    pub const fn is_not_finite(&self) -> bool {
-        !self.is_finite()
     }
 }
 
-impl Add<TimeDelta> for SuperInstant {
+impl Add<TimeDelta> for Timestamp {
     type Output = Self;
 
     fn add(self, rhs: TimeDelta) -> Self::Output {
         match (self, rhs) {
-            (Self::DistantFuture, _) | (_, TimeDelta::PlusInf) => Self::DistantFuture,
-            (Self::DistantPast, _) | (_, TimeDelta::MinusInf) => Self::DistantPast,
+            (Self::DistantFuture, _) | (_, TimeDelta::PositiveInfinity) => Self::DistantFuture,
+            (Self::DistantPast, _) | (_, TimeDelta::NegativeInfinity) => Self::DistantPast,
             (Self::Exact(i), TimeDelta::Negative(d)) => Self::Exact(i - d),
             (Self::Exact(i), TimeDelta::Positive(d)) => Self::Exact(i + d),
         }
     }
 }
 
-impl Sub<TimeDelta> for SuperInstant {
+impl Sub<TimeDelta> for Timestamp {
     type Output = Self;
 
     fn sub(self, rhs: TimeDelta) -> Self::Output {
         match (self, rhs) {
-            (Self::DistantFuture, _) | (_, TimeDelta::MinusInf) => Self::DistantFuture,
-            (Self::DistantPast, _) | (_, TimeDelta::PlusInf) => Self::DistantPast,
+            (Self::DistantFuture, _) | (_, TimeDelta::NegativeInfinity) => Self::DistantFuture,
+            (Self::DistantPast, _) | (_, TimeDelta::PositiveInfinity) => Self::DistantPast,
             (Self::Exact(i), TimeDelta::Negative(d)) => Self::Exact(i + d),
             (Self::Exact(i), TimeDelta::Positive(d)) => Self::Exact(i - d),
         }
     }
 }
 
-impl Sub<Self> for SuperInstant {
+impl Sub<Self> for Timestamp {
     type Output = TimeDelta;
 
     fn sub(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Self::DistantFuture, _) | (_, Self::DistantPast) => TimeDelta::PlusInf,
-            (Self::DistantPast, _) | (_, Self::DistantFuture) => TimeDelta::MinusInf,
+            (Self::DistantFuture, _) | (_, Self::DistantPast) => TimeDelta::PositiveInfinity,
+            (Self::DistantPast, _) | (_, Self::DistantFuture) => TimeDelta::NegativeInfinity,
             (Self::Exact(this), Self::Exact(that)) => match this.cmp(&that) {
                 Ordering::Less => TimeDelta::Negative(that - this),
                 Ordering::Equal => TimeDelta::ZERO,
@@ -125,7 +119,7 @@ impl Sub<Self> for SuperInstant {
     }
 }
 
-impl Add<Duration> for SuperInstant {
+impl Add<Duration> for Timestamp {
     type Output = Self;
 
     fn add(self, rhs: Duration) -> Self::Output {
@@ -133,7 +127,7 @@ impl Add<Duration> for SuperInstant {
     }
 }
 
-impl Sub<Duration> for SuperInstant {
+impl Sub<Duration> for Timestamp {
     type Output = Self;
 
     fn sub(self, rhs: Duration) -> Self::Output {
@@ -141,7 +135,7 @@ impl Sub<Duration> for SuperInstant {
     }
 }
 
-impl Sub<Instant> for SuperInstant {
+impl Sub<Instant> for Timestamp {
     type Output = TimeDelta;
 
     fn sub(self, rhs: Instant) -> Self::Output {
@@ -149,37 +143,37 @@ impl Sub<Instant> for SuperInstant {
     }
 }
 
-impl SubAssign<TimeDelta> for SuperInstant {
+impl SubAssign<TimeDelta> for Timestamp {
     fn sub_assign(&mut self, rhs: TimeDelta) {
         *self = *self - rhs;
     }
 }
 
-impl AddAssign<TimeDelta> for SuperInstant {
+impl AddAssign<TimeDelta> for Timestamp {
     fn add_assign(&mut self, rhs: TimeDelta) {
         *self = *self + rhs;
     }
 }
 
-impl SubAssign<Duration> for SuperInstant {
+impl SubAssign<Duration> for Timestamp {
     fn sub_assign(&mut self, rhs: Duration) {
         *self = *self - rhs;
     }
 }
 
-impl AddAssign<Duration> for SuperInstant {
+impl AddAssign<Duration> for Timestamp {
     fn add_assign(&mut self, rhs: Duration) {
         *self = *self + rhs;
     }
 }
 
-impl PartialOrd for SuperInstant {
+impl PartialOrd for Timestamp {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(Self::cmp(self, other))
     }
 }
 
-impl Ord for SuperInstant {
+impl Ord for Timestamp {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
             (Self::DistantPast, Self::DistantPast) => Ordering::Equal,
@@ -193,7 +187,7 @@ impl Ord for SuperInstant {
     }
 }
 
-impl From<Instant> for SuperInstant {
+impl From<Instant> for Timestamp {
     fn from(value: Instant) -> Self {
         Self::Exact(value)
     }
@@ -204,8 +198,8 @@ impl Add<Self> for TimeDelta {
 
     fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Self::PlusInf, _) | (_, Self::PlusInf) => Self::PlusInf,
-            (Self::MinusInf, _) | (_, Self::MinusInf) => Self::MinusInf,
+            (Self::PositiveInfinity, _) | (_, Self::PositiveInfinity) => Self::PositiveInfinity,
+            (Self::NegativeInfinity, _) | (_, Self::NegativeInfinity) => Self::NegativeInfinity,
             (Self::Negative(this), Self::Negative(that)) => Self::Negative(this + that),
             (Self::Positive(this), Self::Positive(that)) => Self::Positive(this + that),
             (Self::Positive(this), Self::Negative(that)) => match this.cmp(&that) {
@@ -227,8 +221,8 @@ impl Sub<Self> for TimeDelta {
 
     fn sub(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Self::PlusInf, _) | (_, Self::MinusInf) => Self::PlusInf,
-            (Self::MinusInf, _) | (_, Self::PlusInf) => Self::MinusInf,
+            (Self::PositiveInfinity, _) | (_, Self::NegativeInfinity) => Self::PositiveInfinity,
+            (Self::NegativeInfinity, _) | (_, Self::PositiveInfinity) => Self::NegativeInfinity,
             (Self::Positive(this), Self::Negative(that)) => Self::Positive(this + that),
             (Self::Negative(this), Self::Positive(that)) => Self::Negative(this + that),
             (Self::Positive(this), Self::Positive(that)) => match this.cmp(&that) {
@@ -254,12 +248,12 @@ impl PartialOrd for TimeDelta {
 impl Ord for TimeDelta {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self, other) {
-            (Self::MinusInf, Self::MinusInf) => Ordering::Equal,
-            (Self::MinusInf, _) => Ordering::Less,
-            (_, Self::MinusInf) => Ordering::Greater,
-            (Self::PlusInf, Self::PlusInf) => Ordering::Equal,
-            (Self::PlusInf, _) => Ordering::Greater,
-            (_, Self::PlusInf) => Ordering::Less,
+            (Self::NegativeInfinity, Self::NegativeInfinity) => Ordering::Equal,
+            (Self::NegativeInfinity, _) => Ordering::Less,
+            (_, Self::NegativeInfinity) => Ordering::Greater,
+            (Self::PositiveInfinity, Self::PositiveInfinity) => Ordering::Equal,
+            (Self::PositiveInfinity, _) => Ordering::Greater,
+            (_, Self::PositiveInfinity) => Ordering::Less,
             (Self::Negative(_), Self::Positive(_)) => Ordering::Less,
             (Self::Positive(_), Self::Negative(_)) => Ordering::Greater,
             (Self::Positive(this), Self::Positive(that)) => this.cmp(that),
@@ -298,9 +292,9 @@ impl Div<u32> for TimeDelta {
     #[inline]
     fn div(self, rhs: u32) -> Self {
         match self {
+            Self::NegativeInfinity | Self::PositiveInfinity => self,
             Self::Negative(duration) => Self::Negative(duration / rhs),
             Self::Positive(duration) => Self::Positive(duration / rhs),
-            Self::MinusInf | Self::PlusInf => self,
         }
     }
 }
@@ -337,54 +331,54 @@ mod test {
         let now = Instant::now();
 
         assert_eq!(
-            SuperInstant::Exact(now) + TimeDelta::from_secs(5),
-            SuperInstant::from(now + Duration::from_secs(5))
+            Timestamp::Exact(now) + TimeDelta::from_secs(5),
+            Timestamp::from(now + Duration::from_secs(5))
         );
         assert_eq!(
-            SuperInstant::Exact(now) + TimeDelta::from_secs(-5),
-            SuperInstant::from(now - Duration::from_secs(5))
+            Timestamp::Exact(now) + TimeDelta::from_secs(-5),
+            Timestamp::from(now - Duration::from_secs(5))
         );
         assert_eq!(
-            SuperInstant::Exact(now) + TimeDelta::MinusInf,
-            SuperInstant::DistantPast
+            Timestamp::Exact(now) + TimeDelta::NegativeInfinity,
+            Timestamp::DistantPast
         );
         assert_eq!(
-            SuperInstant::Exact(now) + TimeDelta::PlusInf,
-            SuperInstant::DistantFuture
-        );
-
-        assert_eq!(
-            SuperInstant::DistantPast + TimeDelta::from_secs(5),
-            SuperInstant::DistantPast
-        );
-        assert_eq!(
-            SuperInstant::DistantPast + TimeDelta::from_secs(-5),
-            SuperInstant::DistantPast
-        );
-        assert_eq!(
-            SuperInstant::DistantPast + TimeDelta::MinusInf,
-            SuperInstant::DistantPast
-        );
-        assert_eq!(
-            SuperInstant::DistantPast + TimeDelta::PlusInf,
-            SuperInstant::DistantFuture
+            Timestamp::Exact(now) + TimeDelta::PositiveInfinity,
+            Timestamp::DistantFuture
         );
 
         assert_eq!(
-            SuperInstant::DistantFuture + TimeDelta::from_secs(5),
-            SuperInstant::DistantFuture
+            Timestamp::DistantPast + TimeDelta::from_secs(5),
+            Timestamp::DistantPast
         );
         assert_eq!(
-            SuperInstant::DistantFuture + TimeDelta::from_secs(-5),
-            SuperInstant::DistantFuture
+            Timestamp::DistantPast + TimeDelta::from_secs(-5),
+            Timestamp::DistantPast
         );
         assert_eq!(
-            SuperInstant::DistantFuture + TimeDelta::MinusInf,
-            SuperInstant::DistantFuture
+            Timestamp::DistantPast + TimeDelta::NegativeInfinity,
+            Timestamp::DistantPast
         );
         assert_eq!(
-            SuperInstant::DistantFuture + TimeDelta::PlusInf,
-            SuperInstant::DistantFuture
+            Timestamp::DistantPast + TimeDelta::PositiveInfinity,
+            Timestamp::DistantFuture
+        );
+
+        assert_eq!(
+            Timestamp::DistantFuture + TimeDelta::from_secs(5),
+            Timestamp::DistantFuture
+        );
+        assert_eq!(
+            Timestamp::DistantFuture + TimeDelta::from_secs(-5),
+            Timestamp::DistantFuture
+        );
+        assert_eq!(
+            Timestamp::DistantFuture + TimeDelta::NegativeInfinity,
+            Timestamp::DistantFuture
+        );
+        assert_eq!(
+            Timestamp::DistantFuture + TimeDelta::PositiveInfinity,
+            Timestamp::DistantFuture
         );
     }
 
@@ -393,54 +387,54 @@ mod test {
         let now = Instant::now();
 
         assert_eq!(
-            SuperInstant::Exact(now) - TimeDelta::from_secs(5),
-            SuperInstant::from(now - Duration::from_secs(5))
+            Timestamp::Exact(now) - TimeDelta::from_secs(5),
+            Timestamp::from(now - Duration::from_secs(5))
         );
         assert_eq!(
-            SuperInstant::Exact(now) - TimeDelta::from_secs(-5),
-            SuperInstant::from(now + Duration::from_secs(5))
+            Timestamp::Exact(now) - TimeDelta::from_secs(-5),
+            Timestamp::from(now + Duration::from_secs(5))
         );
         assert_eq!(
-            SuperInstant::Exact(now) - TimeDelta::MinusInf,
-            SuperInstant::DistantFuture
+            Timestamp::Exact(now) - TimeDelta::NegativeInfinity,
+            Timestamp::DistantFuture
         );
         assert_eq!(
-            SuperInstant::Exact(now) - TimeDelta::PlusInf,
-            SuperInstant::DistantPast
-        );
-
-        assert_eq!(
-            SuperInstant::DistantPast - TimeDelta::from_secs(5),
-            SuperInstant::DistantPast
-        );
-        assert_eq!(
-            SuperInstant::DistantPast - TimeDelta::from_secs(-5),
-            SuperInstant::DistantPast
-        );
-        assert_eq!(
-            SuperInstant::DistantPast - TimeDelta::MinusInf,
-            SuperInstant::DistantFuture
-        );
-        assert_eq!(
-            SuperInstant::DistantPast - TimeDelta::PlusInf,
-            SuperInstant::DistantPast
+            Timestamp::Exact(now) - TimeDelta::PositiveInfinity,
+            Timestamp::DistantPast
         );
 
         assert_eq!(
-            SuperInstant::DistantFuture - TimeDelta::from_secs(5),
-            SuperInstant::DistantFuture
+            Timestamp::DistantPast - TimeDelta::from_secs(5),
+            Timestamp::DistantPast
         );
         assert_eq!(
-            SuperInstant::DistantFuture - TimeDelta::from_secs(-5),
-            SuperInstant::DistantFuture
+            Timestamp::DistantPast - TimeDelta::from_secs(-5),
+            Timestamp::DistantPast
         );
         assert_eq!(
-            SuperInstant::DistantFuture - TimeDelta::MinusInf,
-            SuperInstant::DistantFuture
+            Timestamp::DistantPast - TimeDelta::NegativeInfinity,
+            Timestamp::DistantFuture
         );
         assert_eq!(
-            SuperInstant::DistantFuture - TimeDelta::PlusInf,
-            SuperInstant::DistantFuture
+            Timestamp::DistantPast - TimeDelta::PositiveInfinity,
+            Timestamp::DistantPast
+        );
+
+        assert_eq!(
+            Timestamp::DistantFuture - TimeDelta::from_secs(5),
+            Timestamp::DistantFuture
+        );
+        assert_eq!(
+            Timestamp::DistantFuture - TimeDelta::from_secs(-5),
+            Timestamp::DistantFuture
+        );
+        assert_eq!(
+            Timestamp::DistantFuture - TimeDelta::NegativeInfinity,
+            Timestamp::DistantFuture
+        );
+        assert_eq!(
+            Timestamp::DistantFuture - TimeDelta::PositiveInfinity,
+            Timestamp::DistantFuture
         );
     }
 
@@ -449,149 +443,158 @@ mod test {
         let now = Instant::now();
 
         assert_eq!(
-            SuperInstant::Exact(now) - SuperInstant::Exact(now),
+            Timestamp::Exact(now) - Timestamp::Exact(now),
             TimeDelta::ZERO
         );
         assert_eq!(
-            SuperInstant::Exact(now) - SuperInstant::Exact(now - Duration::from_secs(5)),
+            Timestamp::Exact(now) - Timestamp::Exact(now - Duration::from_secs(5)),
             TimeDelta::from_secs(5)
         );
         assert_eq!(
-            SuperInstant::Exact(now) - SuperInstant::Exact(now + Duration::from_secs(5)),
+            Timestamp::Exact(now) - Timestamp::Exact(now + Duration::from_secs(5)),
             TimeDelta::from_secs(-5)
         );
         assert_eq!(
-            SuperInstant::Exact(now) - SuperInstant::DistantPast,
-            TimeDelta::PlusInf
+            Timestamp::Exact(now) - Timestamp::DistantPast,
+            TimeDelta::PositiveInfinity
         );
         assert_eq!(
-            SuperInstant::Exact(now) - SuperInstant::DistantFuture,
-            TimeDelta::MinusInf
-        );
-
-        assert_eq!(
-            SuperInstant::DistantPast - SuperInstant::Exact(now),
-            TimeDelta::MinusInf
-        );
-        assert_eq!(
-            SuperInstant::DistantPast - SuperInstant::Exact(now - Duration::from_secs(5)),
-            TimeDelta::MinusInf
-        );
-        assert_eq!(
-            SuperInstant::DistantPast - SuperInstant::Exact(now + Duration::from_secs(5)),
-            TimeDelta::MinusInf
-        );
-        assert_eq!(
-            SuperInstant::DistantPast - SuperInstant::DistantPast,
-            TimeDelta::PlusInf
-        );
-        assert_eq!(
-            SuperInstant::DistantPast - SuperInstant::DistantFuture,
-            TimeDelta::MinusInf
+            Timestamp::Exact(now) - Timestamp::DistantFuture,
+            TimeDelta::NegativeInfinity
         );
 
         assert_eq!(
-            SuperInstant::DistantFuture - SuperInstant::Exact(now),
-            TimeDelta::PlusInf
+            Timestamp::DistantPast - Timestamp::Exact(now),
+            TimeDelta::NegativeInfinity
         );
         assert_eq!(
-            SuperInstant::DistantFuture - SuperInstant::Exact(now - Duration::from_secs(5)),
-            TimeDelta::PlusInf
+            Timestamp::DistantPast - Timestamp::Exact(now - Duration::from_secs(5)),
+            TimeDelta::NegativeInfinity
         );
         assert_eq!(
-            SuperInstant::DistantFuture - SuperInstant::Exact(now + Duration::from_secs(5)),
-            TimeDelta::PlusInf
+            Timestamp::DistantPast - Timestamp::Exact(now + Duration::from_secs(5)),
+            TimeDelta::NegativeInfinity
         );
         assert_eq!(
-            SuperInstant::DistantFuture - SuperInstant::DistantPast,
-            TimeDelta::PlusInf
+            Timestamp::DistantPast - Timestamp::DistantPast,
+            TimeDelta::PositiveInfinity
         );
         assert_eq!(
-            SuperInstant::DistantFuture - SuperInstant::DistantFuture,
-            TimeDelta::PlusInf
+            Timestamp::DistantPast - Timestamp::DistantFuture,
+            TimeDelta::NegativeInfinity
+        );
+
+        assert_eq!(
+            Timestamp::DistantFuture - Timestamp::Exact(now),
+            TimeDelta::PositiveInfinity
+        );
+        assert_eq!(
+            Timestamp::DistantFuture - Timestamp::Exact(now - Duration::from_secs(5)),
+            TimeDelta::PositiveInfinity
+        );
+        assert_eq!(
+            Timestamp::DistantFuture - Timestamp::Exact(now + Duration::from_secs(5)),
+            TimeDelta::PositiveInfinity
+        );
+        assert_eq!(
+            Timestamp::DistantFuture - Timestamp::DistantPast,
+            TimeDelta::PositiveInfinity
+        );
+        assert_eq!(
+            Timestamp::DistantFuture - Timestamp::DistantFuture,
+            TimeDelta::PositiveInfinity
         );
     }
 
     #[test]
     fn instant_ord() {
-        let now = SuperInstant::Exact(Instant::now());
+        let now = Timestamp::Exact(Instant::now());
         let now_minus_1 = now - TimeDelta::from_secs(1);
         let now_plus_1 = now + TimeDelta::from_secs(1);
 
-        assert!(SuperInstant::DistantFuture > now_plus_1);
-        assert!(SuperInstant::DistantFuture > now_minus_1);
-        assert!(SuperInstant::DistantFuture > SuperInstant::DistantPast);
+        assert!(Timestamp::DistantFuture > now_plus_1);
+        assert!(Timestamp::DistantFuture > now_minus_1);
+        assert!(Timestamp::DistantFuture > Timestamp::DistantPast);
 
         assert!(now_plus_1 > now_minus_1);
-        assert!(now_plus_1 > SuperInstant::DistantPast);
+        assert!(now_plus_1 > Timestamp::DistantPast);
 
-        assert!(now_minus_1 > SuperInstant::DistantPast);
+        assert!(now_minus_1 > Timestamp::DistantPast);
     }
 
     #[test]
     fn duration_ord() {
-        assert!(TimeDelta::PlusInf > TimeDelta::from_secs(-2));
-        assert!(TimeDelta::PlusInf > TimeDelta::from_secs(2));
-        assert!(TimeDelta::PlusInf > TimeDelta::MinusInf);
+        assert!(TimeDelta::PositiveInfinity > TimeDelta::from_secs(-2));
+        assert!(TimeDelta::PositiveInfinity > TimeDelta::from_secs(2));
+        assert!(TimeDelta::PositiveInfinity > TimeDelta::NegativeInfinity);
 
         assert!(TimeDelta::from_secs(2) > TimeDelta::from_secs(1));
         assert!(TimeDelta::from_secs(2) > TimeDelta::from_secs(-1));
         assert!(TimeDelta::from_secs(2) > TimeDelta::from_secs(-2));
-        assert!(TimeDelta::from_secs(2) > TimeDelta::MinusInf);
+        assert!(TimeDelta::from_secs(2) > TimeDelta::NegativeInfinity);
 
         assert!(TimeDelta::from_secs(1) > TimeDelta::from_secs(-1));
         assert!(TimeDelta::from_secs(1) > TimeDelta::from_secs(-2));
-        assert!(TimeDelta::from_secs(1) > TimeDelta::MinusInf);
+        assert!(TimeDelta::from_secs(1) > TimeDelta::NegativeInfinity);
 
         assert!(TimeDelta::from_secs(-1) > TimeDelta::from_secs(-2));
-        assert!(TimeDelta::from_secs(-1) > TimeDelta::MinusInf);
+        assert!(TimeDelta::from_secs(-1) > TimeDelta::NegativeInfinity);
 
-        assert!(TimeDelta::from_secs(-2) > TimeDelta::MinusInf);
+        assert!(TimeDelta::from_secs(-2) > TimeDelta::NegativeInfinity);
 
         assert_eq!(TimeDelta::from_secs(1), Duration::from_secs(1));
         assert!(TimeDelta::from_secs(2) > Duration::from_secs(1));
         assert!(TimeDelta::from_secs(1) < Duration::from_secs(2));
         assert!(TimeDelta::from_secs(-1) < Duration::ZERO);
         assert!(TimeDelta::from_secs(-1) < Duration::from_secs(1));
-        assert!(TimeDelta::PlusInf > Duration::from_secs(2));
-        assert!(TimeDelta::MinusInf < Duration::from_secs(1));
-        assert!(TimeDelta::MinusInf < Duration::ZERO);
+        assert!(TimeDelta::PositiveInfinity > Duration::from_secs(2));
+        assert!(TimeDelta::NegativeInfinity < Duration::from_secs(1));
+        assert!(TimeDelta::NegativeInfinity < Duration::ZERO);
     }
 
     #[test]
     fn duration_add() {
-        assert_eq!(TimeDelta::PlusInf + TimeDelta::PlusInf, TimeDelta::PlusInf);
-        assert_eq!(TimeDelta::PlusInf + TimeDelta::MinusInf, TimeDelta::PlusInf);
         assert_eq!(
-            TimeDelta::PlusInf + TimeDelta::from_secs(-2),
-            TimeDelta::PlusInf
+            TimeDelta::PositiveInfinity + TimeDelta::PositiveInfinity,
+            TimeDelta::PositiveInfinity
         );
         assert_eq!(
-            TimeDelta::PlusInf + TimeDelta::from_secs(2),
-            TimeDelta::PlusInf
-        );
-
-        assert_eq!(TimeDelta::MinusInf + TimeDelta::PlusInf, TimeDelta::PlusInf);
-        assert_eq!(
-            TimeDelta::MinusInf + TimeDelta::MinusInf,
-            TimeDelta::MinusInf
+            TimeDelta::PositiveInfinity + TimeDelta::NegativeInfinity,
+            TimeDelta::PositiveInfinity
         );
         assert_eq!(
-            TimeDelta::MinusInf + TimeDelta::from_secs(-2),
-            TimeDelta::MinusInf
+            TimeDelta::PositiveInfinity + TimeDelta::from_secs(-2),
+            TimeDelta::PositiveInfinity
         );
         assert_eq!(
-            TimeDelta::MinusInf + TimeDelta::from_secs(2),
-            TimeDelta::MinusInf
+            TimeDelta::PositiveInfinity + TimeDelta::from_secs(2),
+            TimeDelta::PositiveInfinity
         );
 
         assert_eq!(
-            TimeDelta::from_secs(1) + TimeDelta::PlusInf,
-            TimeDelta::PlusInf
+            TimeDelta::NegativeInfinity + TimeDelta::PositiveInfinity,
+            TimeDelta::PositiveInfinity
         );
         assert_eq!(
-            TimeDelta::from_secs(1) + TimeDelta::MinusInf,
-            TimeDelta::MinusInf
+            TimeDelta::NegativeInfinity + TimeDelta::NegativeInfinity,
+            TimeDelta::NegativeInfinity
+        );
+        assert_eq!(
+            TimeDelta::NegativeInfinity + TimeDelta::from_secs(-2),
+            TimeDelta::NegativeInfinity
+        );
+        assert_eq!(
+            TimeDelta::NegativeInfinity + TimeDelta::from_secs(2),
+            TimeDelta::NegativeInfinity
+        );
+
+        assert_eq!(
+            TimeDelta::from_secs(1) + TimeDelta::PositiveInfinity,
+            TimeDelta::PositiveInfinity
+        );
+        assert_eq!(
+            TimeDelta::from_secs(1) + TimeDelta::NegativeInfinity,
+            TimeDelta::NegativeInfinity
         );
         assert_eq!(
             TimeDelta::from_secs(1) + TimeDelta::from_secs(-1),
@@ -607,12 +610,12 @@ mod test {
         );
 
         assert_eq!(
-            TimeDelta::from_secs(-1) + TimeDelta::PlusInf,
-            TimeDelta::PlusInf
+            TimeDelta::from_secs(-1) + TimeDelta::PositiveInfinity,
+            TimeDelta::PositiveInfinity
         );
         assert_eq!(
-            TimeDelta::from_secs(-1) + TimeDelta::MinusInf,
-            TimeDelta::MinusInf
+            TimeDelta::from_secs(-1) + TimeDelta::NegativeInfinity,
+            TimeDelta::NegativeInfinity
         );
         assert_eq!(
             TimeDelta::from_secs(-1) + TimeDelta::from_secs(1),
@@ -630,41 +633,47 @@ mod test {
 
     #[test]
     fn duration_sub() {
-        assert_eq!(TimeDelta::PlusInf - TimeDelta::PlusInf, TimeDelta::PlusInf);
-        assert_eq!(TimeDelta::PlusInf - TimeDelta::MinusInf, TimeDelta::PlusInf);
         assert_eq!(
-            TimeDelta::PlusInf - TimeDelta::from_secs(-2),
-            TimeDelta::PlusInf
+            TimeDelta::PositiveInfinity - TimeDelta::PositiveInfinity,
+            TimeDelta::PositiveInfinity
         );
         assert_eq!(
-            TimeDelta::PlusInf - TimeDelta::from_secs(2),
-            TimeDelta::PlusInf
-        );
-
-        assert_eq!(
-            TimeDelta::MinusInf - TimeDelta::MinusInf,
-            TimeDelta::PlusInf
+            TimeDelta::PositiveInfinity - TimeDelta::NegativeInfinity,
+            TimeDelta::PositiveInfinity
         );
         assert_eq!(
-            TimeDelta::MinusInf - TimeDelta::PlusInf,
-            TimeDelta::MinusInf
+            TimeDelta::PositiveInfinity - TimeDelta::from_secs(-2),
+            TimeDelta::PositiveInfinity
         );
         assert_eq!(
-            TimeDelta::MinusInf - TimeDelta::from_secs(-2),
-            TimeDelta::MinusInf
-        );
-        assert_eq!(
-            TimeDelta::MinusInf - TimeDelta::from_secs(2),
-            TimeDelta::MinusInf
+            TimeDelta::PositiveInfinity - TimeDelta::from_secs(2),
+            TimeDelta::PositiveInfinity
         );
 
         assert_eq!(
-            TimeDelta::from_secs(1) - TimeDelta::MinusInf,
-            TimeDelta::PlusInf
+            TimeDelta::NegativeInfinity - TimeDelta::NegativeInfinity,
+            TimeDelta::PositiveInfinity
         );
         assert_eq!(
-            TimeDelta::from_secs(1) - TimeDelta::PlusInf,
-            TimeDelta::MinusInf
+            TimeDelta::NegativeInfinity - TimeDelta::PositiveInfinity,
+            TimeDelta::NegativeInfinity
+        );
+        assert_eq!(
+            TimeDelta::NegativeInfinity - TimeDelta::from_secs(-2),
+            TimeDelta::NegativeInfinity
+        );
+        assert_eq!(
+            TimeDelta::NegativeInfinity - TimeDelta::from_secs(2),
+            TimeDelta::NegativeInfinity
+        );
+
+        assert_eq!(
+            TimeDelta::from_secs(1) - TimeDelta::NegativeInfinity,
+            TimeDelta::PositiveInfinity
+        );
+        assert_eq!(
+            TimeDelta::from_secs(1) - TimeDelta::PositiveInfinity,
+            TimeDelta::NegativeInfinity
         );
         assert_eq!(
             TimeDelta::from_secs(1) - TimeDelta::from_secs(1),
@@ -680,12 +689,12 @@ mod test {
         );
 
         assert_eq!(
-            TimeDelta::from_secs(-1) - TimeDelta::MinusInf,
-            TimeDelta::PlusInf
+            TimeDelta::from_secs(-1) - TimeDelta::NegativeInfinity,
+            TimeDelta::PositiveInfinity
         );
         assert_eq!(
-            TimeDelta::from_secs(-1) - TimeDelta::PlusInf,
-            TimeDelta::MinusInf
+            TimeDelta::from_secs(-1) - TimeDelta::PositiveInfinity,
+            TimeDelta::NegativeInfinity
         );
         assert_eq!(
             TimeDelta::from_secs(-1) - TimeDelta::from_secs(-1),
@@ -703,9 +712,9 @@ mod test {
 
     #[test]
     fn super_instant_test() {
-        let mut past = SuperInstant::DistantPast;
-        let mut future = SuperInstant::DistantFuture;
-        let now = SuperInstant::Exact(Instant::now());
+        let mut past = Timestamp::DistantPast;
+        let mut future = Timestamp::DistantFuture;
+        let now = Timestamp::Exact(Instant::now());
         assert!(past < now);
         assert!(now > past);
 

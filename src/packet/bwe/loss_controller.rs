@@ -8,7 +8,7 @@ use crate::packet::bwe::macros::log_loss_bw_limit_in_window;
 use crate::rtp_::TwccSendRecord;
 use crate::{Bitrate, DataSize};
 
-use super::time::{SuperInstant, TimeDelta};
+use super::time::{TimeDelta, Timestamp};
 
 /// Loss controller based loosely on libWebRTC's `LossBasedBweV2`(commit `14e2779a6ccdc67038ed2069a5732dd41617c6f0`)
 /// We don't implement ALR, link capacity estimates or probing(although we use constant padding
@@ -38,7 +38,7 @@ pub struct LossController {
     partial_observation: PartialObservation,
 
     /// The last packet sent in the most recent observation.
-    last_send_time_most_recent_observation: SuperInstant,
+    last_send_time_most_recent_observation: Timestamp,
 
     // Observation window
     /// Forever growing counter of observations. Observation::id derives from this.
@@ -53,11 +53,11 @@ pub struct LossController {
     /// Precomputed instantaneous upper bound on bandwidth estimate.
     cached_instant_upper_bound: Option<Bitrate>,
     /// Last time we reduced the estimate.
-    last_time_estimate_reduced: SuperInstant,
+    last_time_estimate_reduced: Timestamp,
 
     /// When we started recovering after being loss limited last time.
     /// While in this window the bandwidth estimate is bounded by `bandwidth_limit_in_current_window`.
-    recovering_after_loss_timestamp: SuperInstant,
+    recovering_after_loss_timestamp: Timestamp,
     /// Upper bound on estimate while in recovery window.
     bandwidth_limit_in_current_window: Bitrate,
 
@@ -105,7 +105,7 @@ impl LossController {
         let mut controller = LossController {
             state: LossControllerState::DelayBased,
             partial_observation: PartialObservation::new(),
-            last_send_time_most_recent_observation: SuperInstant::DistantFuture,
+            last_send_time_most_recent_observation: Timestamp::DistantFuture,
             observations: vec![Observation::DUMMY; config.observation_window_size]
                 .into_boxed_slice(),
             num_observations: 0,
@@ -113,8 +113,8 @@ impl LossController {
             instant_upper_bound_temporal_weights: vec![0_f64; config.observation_window_size]
                 .into_boxed_slice(),
             cached_instant_upper_bound: None,
-            last_time_estimate_reduced: SuperInstant::DistantPast,
-            recovering_after_loss_timestamp: SuperInstant::DistantPast,
+            last_time_estimate_reduced: Timestamp::DistantPast,
+            recovering_after_loss_timestamp: Timestamp::DistantPast,
             bandwidth_limit_in_current_window: Bitrate::MAX,
 
             current_estimate: ChannelParameters::new(config.initial_inherent_loss_estimate),
@@ -212,7 +212,7 @@ impl LossController {
             // `delayed_increase_window` ago, and
             // 2. The best candidate is greater than bandwidth_limit_in_current_window.
 
-            if self.recovering_after_loss_timestamp.is_finite()
+            if self.recovering_after_loss_timestamp.is_exact()
                 && self.recovering_after_loss_timestamp + self.config.delayed_increase_window
                     > self.last_send_time_most_recent_observation
                 && best_candidate.loss_limited_bandwidth > self.bandwidth_limit_in_current_window
@@ -258,7 +258,7 @@ impl LossController {
         const CONF_MAX_INCREASE_FACTOR: f64 = 1.3;
 
         if self.is_bandwidth_limited_due_to_loss()
-            && (self.recovering_after_loss_timestamp.is_not_finite()
+            && (!self.recovering_after_loss_timestamp.is_exact()
                 || self.recovering_after_loss_timestamp + self.config.delayed_increase_window
                     < self.last_send_time_most_recent_observation)
         {
@@ -315,11 +315,11 @@ impl LossController {
             return false;
         };
 
-        let last_send_time = SuperInstant::from(summary.last_send_time);
+        let last_send_time = Timestamp::from(summary.last_send_time);
 
         self.partial_observation.update(summary);
 
-        if !self.last_send_time_most_recent_observation.is_finite() {
+        if !self.last_send_time_most_recent_observation.is_exact() {
             self.last_send_time_most_recent_observation = last_send_time;
         }
 
@@ -582,8 +582,8 @@ impl LossController {
         }
 
         if self.config.rampup_acceleration_max_factor > Duration::ZERO
-            && self.last_send_time_most_recent_observation.is_finite()
-            && self.last_time_estimate_reduced.is_finite()
+            && self.last_send_time_most_recent_observation.is_exact()
+            && self.last_time_estimate_reduced.is_exact()
         {
             let delta = (self.last_send_time_most_recent_observation
                 - self.last_time_estimate_reduced)

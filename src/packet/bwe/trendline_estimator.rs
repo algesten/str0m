@@ -3,7 +3,7 @@ use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
 use super::{
-    time::{SuperInstant, TimeDelta},
+    time::{TimeDelta, Timestamp},
     BandwidthUsage, InterGroupDelayDelta,
 };
 
@@ -23,7 +23,7 @@ pub(super) struct TrendlineEstimator {
     window_size: usize,
 
     /// The first instant we saw, used as zero point.
-    zero_time: Option<SuperInstant>,
+    zero_time: Option<Timestamp>,
 
     /// The history of observed delay variations.
     history: VecDeque<Timing>,
@@ -105,7 +105,7 @@ impl TrendlineEstimator {
     }
 
     fn do_add_to_history(&mut self, variation: InterGroupDelayDelta, now: Instant) {
-        let last_remote_recv_time = SuperInstant::from(variation.last_remote_recv_time);
+        let last_remote_recv_time = Timestamp::from(variation.last_remote_recv_time);
 
         let zero_time = *self.zero_time.get_or_insert(last_remote_recv_time);
 
