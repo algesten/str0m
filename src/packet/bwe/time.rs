@@ -1,4 +1,5 @@
 use std::cmp::Ordering;
+use std::fmt;
 use std::ops::{Add, AddAssign, Div, Neg as _, Sub, SubAssign};
 use std::time::{Duration, Instant};
 
@@ -319,6 +320,17 @@ impl Div<TimeDelta> for DataSize {
         let bps = (bytes * 8.0) / s;
 
         bps.into()
+    }
+}
+
+impl fmt::Display for TimeDelta {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TimeDelta::NegativeInfinity => write!(f, "-Inf"),
+            TimeDelta::Negative(v) => write!(f, "-{:.03}", v.as_secs_f32()),
+            TimeDelta::Positive(v) => write!(f, "{:.03}", v.as_secs_f32()),
+            TimeDelta::PositiveInfinity => write!(f, "+Inf"),
+        }
     }
 }
 
