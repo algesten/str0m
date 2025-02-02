@@ -918,6 +918,15 @@ pub enum FormatParam {
     /// VP9 profile id
     ProfileId(u32),
 
+    /// AV1 profile
+    Profile(u8),
+
+    /// AV1 level-idx
+    LevelIdx(u8),
+
+    /// AV1 tier
+    Tier(u8),
+
     /// RTX (resend) codecs, which PT it concerns.
     Apt(Pt),
 
@@ -929,51 +938,26 @@ impl FormatParam {
     pub fn parse(k: &str, v: &str) -> Self {
         use FormatParam::*;
         match k {
-            "minptime" => {
-                if let Ok(v) = v.parse() {
-                    MinPTime(v)
-                } else {
-                    trace!("Failed to parse: {}", k);
-                    Unknown
-                }
-            }
-            "useinbandfec" => UseInbandFec(v == "1"),
-            "usedtx" => UseDtx(v == "1"),
-            "level-asymmetry-allowed" => LevelAsymmetryAllowed(v == "1"),
-            "packetization-mode" => {
-                if let Ok(v) = v.parse() {
-                    PacketizationMode(v)
-                } else {
-                    trace!("Failed to parse: {}", k);
-                    Unknown
-                }
-            }
-            "profile-level-id" => {
-                if let Ok(v) = u32::from_str_radix(v, 16).or_else(|_| v.parse()) {
-                    ProfileLevelId(v)
-                } else {
-                    trace!("Failed to parse: {}", k);
-                    Unknown
-                }
-            }
-            "profile-id" => {
-                if let Ok(v) = v.parse() {
-                    ProfileId(v)
-                } else {
-                    trace!("Failed to parse: {}", k);
-                    Unknown
-                }
-            }
-            "apt" => {
-                if let Ok(v) = v.parse::<u8>() {
-                    Apt(v.into())
-                } else {
-                    trace!("Failed to parse: {}", k);
-                    Unknown
-                }
-            }
-            _ => Unknown,
+            "minptime" => v.parse().map(MinPTime).ok(),
+            "useinbandfec" => Some(UseInbandFec(v == "1")),
+            "usedtx" => Some(UseDtx(v == "1")),
+            "level-asymmetry-allowed" => Some(LevelAsymmetryAllowed(v == "1")),
+            "packetization-mode" => v.parse().map(PacketizationMode).ok(),
+            "profile-level-id" => u32::from_str_radix(v, 16)
+                .or_else(|_| v.parse())
+                .map(ProfileLevelId)
+                .ok(),
+            "profile-id" => v.parse().map(ProfileId).ok(),
+            "profile" => v.parse().map(Profile).ok(),
+            "level-idx" => v.parse().map(LevelIdx).ok(),
+            "tier" => v.parse().map(Tier).ok(),
+            "apt" => v.parse::<u8>().map(|v| Apt(Pt::from(v))).ok(),
+            _ => None,
         }
+        .unwrap_or_else(|| {
+            trace!("Failed to parse FormatParam: {k}={v}");
+            Unknown
+        })
     }
 }
 
@@ -990,6 +974,9 @@ impl fmt::Display for FormatParam {
             PacketizationMode(v) => write!(f, "packetization-mode={}", *v),
             ProfileLevelId(v) => write!(f, "profile-level-id={:06x}", *v),
             ProfileId(v) => write!(f, "profile-id={}", *v),
+            Profile(v) => write!(f, "profile={}", v),
+            LevelIdx(v) => write!(f, "level-idx={}", *v),
+            Tier(v) => write!(f, "tier={}", v),
             Apt(v) => write!(f, "apt={v}"),
             Unknown => Ok(()),
         }
@@ -1483,27 +1470,14 @@ mod test {
                     ),
                 ],
             },
-            media_lines: vec![MediaLine {
-                typ: MediaType::Audio,
-                disabled: false,
-                proto: Proto::Srtp,
-                pts: vec![
-                    111.into(),
-                    103.into(),
-                    104.into(),
-                    9.into(),
-                    0.into(),
-                    8.into(),
-                    106.into(),
-                    105.into(),
-                    13.into(),
-                    110.into(),
-                    112.into(),
-                    113.into(),
-                    126.into(),
-                ],
-                bw: None,
-                attrs: vec![
+            media_lines: vec![
+                MediaLine {
+                    typ: MediaType::Audio,
+                    disabled: false,
+                    proto: Proto::Srtp,
+                    pts: vec![111, 103, 104, 9, 0, 8, 106, 105, 13, 110, 112, 113, 126].into_iter().map(Pt::from).collect(),
+                    bw: None,
+                    attrs: vec![
                         MediaAttribute::Rtcp("9 IN IP4 0.0.0.0".into()),
                         MediaAttribute::IceUfrag("S5hk".into()),
                         MediaAttribute::IcePwd("0zV/Yu3y8aDzbHgqWhnVQhqP".into()),
@@ -1527,7 +1501,48 @@ mod test {
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "msid".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1".into() },
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "mslabel".into(), value: "5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK".into() },
                         MediaAttribute::Ssrc { ssrc: 3_948_621_874.into(), attr: "label".into(), value: "f78dde68-7055-4e20-bb37-433803dd1ed1".into() }],
-            }],
+                },
+                MediaLine {
+                    typ: MediaType::Video,
+                    disabled: false,
+                    proto: Proto::Srtp,
+                    pts: vec![45.into(), 46.into()],
+                    bw: None,
+                    attrs: vec![
+                        MediaAttribute::Rtcp("9 IN IP4 0.0.0.0".into()),
+                        MediaAttribute::IceUfrag("S5hk".into()),
+                        MediaAttribute::IcePwd("0zV/Yu3y8aDzbHgqWhnVQhqP".into()),
+                        MediaAttribute::IceOptions("trickle".into()),
+                        MediaAttribute::Fingerprint(Fingerprint { hash_func: "sha-256".into(), bytes: vec![140, 100, 237, 3, 118, 208, 61, 180, 136, 8, 145, 100, 8, 128, 168, 198, 90, 191, 139, 78, 56, 39, 150, 202, 8, 73, 37, 115, 70, 96, 32, 220] }),
+                        MediaAttribute::Setup(Setup::ActPass),
+                        MediaAttribute::Mid("1".into()),
+                        MediaAttribute::ExtMap{ id: 14, ext: Extension::TransmissionTimeOffset },
+                        MediaAttribute::ExtMap{ id: 2, ext: Extension::AbsoluteSendTime },
+                        MediaAttribute::ExtMap{ id: 13, ext: Extension::VideoOrientation },
+                        MediaAttribute::ExtMap{ id: 3, ext: Extension::TransportSequenceNumber },
+                        MediaAttribute::ExtMap{ id: 5, ext: Extension::PlayoutDelay },
+                        MediaAttribute::ExtMap{ id: 6, ext: Extension::VideoContentType },
+                        MediaAttribute::ExtMap{ id: 7, ext: Extension::VideoTiming },
+                        MediaAttribute::ExtMap{ id: 8, ext: Extension::ColorSpace },
+                        MediaAttribute::ExtMap{ id: 4, ext: Extension::RtpMid },
+                        MediaAttribute::ExtMap{ id: 10, ext: Extension::RtpStreamId },
+                        MediaAttribute::ExtMap{ id: 11, ext: Extension::RepairedRtpStreamId },
+                        MediaAttribute::SendRecv,
+                        MediaAttribute::Msid(Msid { stream_id: "-".into(), track_id: "4018fd65-ac50-4861-89a4-1f2cc35bbb5e".into() }),
+                        MediaAttribute::RtcpMux,
+                        MediaAttribute::RtcpRsize,
+                        MediaAttribute::RtpMap { pt: 45.into(), value: RtpMap {  codec: Codec::Av1, clock_rate: Frequency::NINETY_KHZ, channels: None }},
+                        MediaAttribute::RtcpFb { pt: 45.into(), value: "goog-remb".into() },
+                        MediaAttribute::RtcpFb { pt: 45.into(), value: "transport-cc".into() },
+                        MediaAttribute::RtcpFb { pt: 45.into(), value: "ccm fir".into() },
+                        MediaAttribute::RtcpFb { pt: 45.into(), value: "nack".into() },
+                        MediaAttribute::RtcpFb { pt: 45.into(), value: "nack pli".into() },
+                        MediaAttribute::Fmtp { pt: 45.into(), values: vec![FormatParam::LevelIdx(5), FormatParam::Profile(0), FormatParam::Tier(0)] },
+                        MediaAttribute::RtpMap { pt: 46.into(), value: RtpMap {  codec: Codec::Rtx, clock_rate: Frequency::NINETY_KHZ, channels: None } },
+                        MediaAttribute::Fmtp { pt: 46.into(), values: vec![FormatParam::Apt(45.into())] }
+                    ],
+                }
+            ],
         };
         assert_eq!(&format!("{sdp}"), &format!("v=0\r\n\
             o=str0m-{VERSION} 5058682828002148772 2 IN IP4 0.0.0.0\r\n\
@@ -1560,6 +1575,39 @@ mod test {
             a=ssrc:3948621874 msid:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
             a=ssrc:3948621874 mslabel:5UUdwiuY7OML2EkQtF38pJtNP5v7In1LhjEK\r\n\
             a=ssrc:3948621874 label:f78dde68-7055-4e20-bb37-433803dd1ed1\r\n\
+            m=video 9 UDP/TLS/RTP/SAVPF 45 46\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=rtcp:9 IN IP4 0.0.0.0\r\n\
+            a=ice-ufrag:S5hk\r\n\
+            a=ice-pwd:0zV/Yu3y8aDzbHgqWhnVQhqP\r\n\
+            a=ice-options:trickle\r\n\
+            a=fingerprint:sha-256 8C:64:ED:03:76:D0:3D:B4:88:08:91:64:08:80:A8:C6:5A:BF:8B:4E:38:27:96:CA:08:49:25:73:46:60:20:DC\r\n\
+            a=setup:actpass\r\n\
+            a=mid:1\r\n\
+            a=extmap:14 urn:ietf:params:rtp-hdrext:toffset\r\n\
+            a=extmap:2 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time\r\n\
+            a=extmap:13 urn:3gpp:video-orientation\r\n\
+            a=extmap:3 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01\r\n\
+            a=extmap:5 http://www.webrtc.org/experiments/rtp-hdrext/playout-delay\r\n\
+            a=extmap:6 http://www.webrtc.org/experiments/rtp-hdrext/video-content-type\r\n\
+            a=extmap:7 http://www.webrtc.org/experiments/rtp-hdrext/video-timing\r\n\
+            a=extmap:8 http://www.webrtc.org/experiments/rtp-hdrext/color-space\r\n\
+            a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid\r\n\
+            a=extmap:10 urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id\r\n\
+            a=extmap:11 urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id\r\n\
+            a=sendrecv\r\n\
+            a=msid:- 4018fd65-ac50-4861-89a4-1f2cc35bbb5e\r\n\
+            a=rtcp-mux\r\n\
+            a=rtcp-rsize\r\n\
+            a=rtpmap:45 AV1/90000\r\n\
+            a=rtcp-fb:45 goog-remb\r\n\
+            a=rtcp-fb:45 transport-cc\r\n\
+            a=rtcp-fb:45 ccm fir\r\n\
+            a=rtcp-fb:45 nack\r\n\
+            a=rtcp-fb:45 nack pli\r\n\
+            a=fmtp:45 level-idx=5;profile=0;tier=0\r\n\
+            a=rtpmap:46 rtx/90000\r\n\
+            a=fmtp:46 apt=45\r\n\
             "));
     }
 }

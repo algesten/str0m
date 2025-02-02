@@ -164,6 +164,35 @@ pub struct FormatParams {
 
     /// VP9 profile id.
     pub profile_id: Option<u32>,
+
+    /// AV1 profile.
+    ///
+    /// Indicates the highest AV1 profile that may have been used to generate
+    /// the bitstream or that the receiver supports. The range of possible values
+    /// is identical to the seq_profile syntax element specified in AV1. If the
+    /// parameter is not present, it MUST be inferred to be 0 (“Main” profile).
+    ///
+    /// 0  8-bit or 10-bit 4:2:0
+    /// 1  8-bit or 10-bit 4:4:4
+    /// 2  8-bit or 10-bit 4:2:2
+    /// 2  12-bit          4:2:0, 4:2:2, 4:4:4
+    pub profile: Option<u8>,
+
+    /// AV1 level-idx.
+    ///
+    /// Indicates the highest AV1 level that may have been used to generate the
+    /// bitstream or that the receiver supports. The range of possible values
+    /// is identical to the seq_level_idx syntax element specified in AV1. If
+    /// the parameter is not present, it MUST be inferred to be 5 (level 3.1).
+    pub level_idx: Option<u8>,
+
+    /// AV1 tier.
+    ///
+    /// Indicates the highest tier that may have been used to generate the  bitstream
+    /// or that the receiver supports. The range of possible values is identical
+    /// to the seq_tier syntax element specified in AV1. If the parameter is not
+    /// present, the tier MUST be inferred to be 0.
+    pub tier: Option<u8>,
 }
 
 impl PayloadParams {
@@ -298,6 +327,10 @@ impl PayloadParams {
             return Self::match_vp9_score(c0, c1);
         }
 
+        if c0.codec == Codec::Av1 {
+            return Self::match_av1_score(c0, c1);
+        }
+
         // TODO: Fuzzy matching for any other audio codecs
         // TODO: Fuzzy matching for video
 
@@ -339,6 +372,37 @@ impl PayloadParams {
         let c1_profile_id = c1.format.profile_id.unwrap_or(0);
 
         if c0_profile_id != c1_profile_id {
+            return None;
+        }
+
+        Some(100)
+    }
+
+    fn match_av1_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
+        // TODO: consider media direction for a proper less or equal matching
+        // The AV1 stream sent by either the offerer or the answerer MUST be
+        // encoded with a profile, level and tier, lesser or equal to the values
+        // of the level-idx, profile and tier declared in the SDP by the receiving
+        // agent.
+        // https://aomediacodec.github.io/av1-rtp-spec/#723-usage-with-the-sdp-offeranswer-model
+
+        // Default values: profile = 0, level-idx = 5, tier = 0
+        // https://aomediacodec.github.io/av1-rtp-spec/#72-sdp-parameters
+        let c0_profile = c0.format.profile.unwrap_or(0);
+        let c1_profile = c1.format.profile.unwrap_or(0);
+        if c0_profile != c1_profile {
+            return None;
+        }
+
+        let c0_level_idx = c0.format.level_idx.unwrap_or(5);
+        let c1_level_idx = c1.format.level_idx.unwrap_or(5);
+        if c0_level_idx != c1_level_idx {
+            return None;
+        }
+
+        let c0_tier = c0.format.tier.unwrap_or(0);
+        let c1_tier = c1.format.tier.unwrap_or(0);
+        if c0_tier != c1_tier {
             return None;
         }
 
@@ -812,6 +876,9 @@ impl FormatParams {
             PacketizationMode(v) => self.packetization_mode = Some(*v),
             ProfileLevelId(v) => self.profile_level_id = Some(*v),
             ProfileId(v) => self.profile_id = Some(*v),
+            Profile(v) => self.profile = Some(*v),
+            LevelIdx(v) => self.level_idx = Some(*v),
+            Tier(v) => self.tier = Some(*v),
             Apt(_) => {}
             Unknown => {}
         }
@@ -841,6 +908,15 @@ impl FormatParams {
         }
         if let Some(v) = self.profile_id {
             r.push(ProfileId(v));
+        }
+        if let Some(v) = self.profile {
+            r.push(Profile(v));
+        }
+        if let Some(v) = self.level_idx {
+            r.push(LevelIdx(v));
+        }
+        if let Some(v) = self.tier {
+            r.push(Tier(v));
         }
 
         r
@@ -944,13 +1020,10 @@ mod test {
             clock_rate: Frequency::NINETY_KHZ,
             channels: None,
             format: FormatParams {
-                min_p_time: None,
-                use_inband_fec: None,
-                use_dtx: None,
                 level_asymmetry_allowed,
                 packetization_mode,
                 profile_level_id,
-                profile_id: None, // VP8
+                ..Default::default()
             },
         }
     }
