@@ -24,6 +24,7 @@
   * Limit TWCC iteration with packet status count #606
   * Dedupe acked packets from `TwccSendRegister::apply_report()` #601, #605
   * Align BWE ArrivalGroup calculation with libwebrtc implementation #608, #615
+  * Support AV1-specific media format parameters #619
 
 # 0.6.2
 
