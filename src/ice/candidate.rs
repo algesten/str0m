@@ -56,9 +56,10 @@ pub struct Candidate {
     /// Type of candidate.
     kind: CandidateKind, // host/srflx/prflx/relay
 
-    /// Relay address.
+    /// Related address.
     ///
-    /// For server reflexive candidates, this is the address/port of the server.
+    /// For server-reflexive candidates, this is the internal IP/port the candidate corresponds to (the one behind the
+    /// NAT, usually). For relay candidates, this is the mapped address selected by the TURN server.
     raddr: Option<SocketAddr>, // ip/port
 
     /// Ufrag.
@@ -195,7 +196,7 @@ impl Candidate {
             addr,
             Some(base),
             CandidateKind::ServerReflexive,
-            None,
+            Some(Self::arbitrary_raddr(addr)),
             None,
         ))
     }
@@ -217,7 +218,7 @@ impl Candidate {
             addr,
             Some(addr),
             CandidateKind::Relayed,
-            None,
+            Some(Self::arbitrary_raddr(addr)),
             None,
         ))
     }
@@ -251,6 +252,23 @@ impl Candidate {
             None,
             Some(ufrag),
         )
+    }
+
+    /// Create an arbitrary socket address, matching the format of the input address, for placement in the `raddr`
+    /// field.
+    ///
+    /// For non-host candidates, Firefox (and perhaps others) require the SDP string to contain `raddr` and
+    /// `rport` to correctly parse. While we could put honest values here, those honest values are likely private
+    /// IP addresses that we would rather not expose to the world. Instead, browsers often spoof values to go here
+    /// instead, and we do the same.
+    ///
+    /// Note that `raddr` and `rport` are only for diagnostic purposes, and have no bearing on ICE connectivity checks.
+    fn arbitrary_raddr(s: SocketAddr) -> SocketAddr {
+        use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
+        match s {
+            SocketAddr::V4(_) => SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)),
+            SocketAddr::V6(_) => SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0)),
+        }
     }
 
     #[cfg(test)]
@@ -623,7 +641,7 @@ mod tests {
         let candidate = Candidate::relayed(socket_addr, Protocol::SslTcp).unwrap();
         assert_eq!(
             no_hash(candidate.to_string()),
-            "candidate:--- 1 ssltcp 16776959 1.2.3.4 9876 typ relay"
+            "candidate:--- 1 ssltcp 16776959 1.2.3.4 9876 typ relay raddr 0.0.0.0 rport 0"
         );
     }
 
@@ -636,6 +654,31 @@ mod tests {
 
         assert_eq!(candidate.ufrag(), Some("myuserfrag"));
         assert_eq!(candidate.addr().to_string(), "1.2.3.4:9876");
+    }
+
+    #[test]
+    fn spoofed_raddr() {
+        let socket_addr = "1.2.3.4:9876".parse().unwrap();
+        let base_addr = "5.6.7.8:4321".parse().unwrap();
+
+        let host = Candidate::host(socket_addr, Protocol::Udp).unwrap();
+        assert!(host.raddr().is_none());
+
+        // We're not picky on the exact choice, but it must not be the private base
+        let relay = Candidate::relayed(socket_addr, Protocol::Udp).unwrap();
+        assert!(relay.raddr().is_some());
+        let srflx = Candidate::server_reflexive(socket_addr, base_addr, Protocol::Udp).unwrap();
+        assert!(srflx.raddr().is_some_and(|raddr| raddr != base_addr));
+
+        let prflx = Candidate::peer_reflexive(
+            Protocol::Udp,
+            socket_addr,
+            base_addr,
+            1000,
+            None,
+            "ufrag".into(),
+        );
+        assert!(prflx.raddr().is_none());
     }
 
     #[test]
