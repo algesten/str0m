@@ -46,7 +46,7 @@ sctp-proto = "0.3.0"
 combine = "4.6.6"
 
 # Sadly no DTLS support in rustls.
-openssl = { version = "0.10.66", optional = true }
+openssl = { version = "0.10.70", optional = true }
 openssl-sys = { version = "0.9.80", optional = true }
 libc = { version = "0.2", optional = true }
 
