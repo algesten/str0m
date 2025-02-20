@@ -1,5 +1,20 @@
 # Unreleased
 
+# 0.7.0
+
+  * Spoof raddr in srflx relay candidate #621
+  * Support AV1-specific media format parameters #619
+  * Support negative time deltas in BWE #615
+  * Remove restriction on EC to use on ECDH exchange #616
+  * Don't retain Receiver Report loss info when stats are disabled #614
+  * Fix RIDs bug on updating non-simulcast media #612
+  * Support writing VLA #603
+  * Ensure BWE calculation exactly follows libWebRTC #608
+  * Add EC-DSA custom certificate common names #607
+  * Fix multiple bugs in TWCC #605 #606 #601
+  * Support sending simulcast (breaking) #603
+  * Wincrypto support #589
+
 # 0.6.3
 
   * Add warning log when exceeding max number of pairs #587
