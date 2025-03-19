@@ -381,8 +381,30 @@ impl StreamRx {
 
         let is_new_packet = register.update(seq_no, now, header.timestamp, clock_rate.get());
 
+        // Get the previous time for comparison
         let previous_time = self.last_time.map(|t| t.numer());
-        let time_u32 = extend_u32(previous_time, header.timestamp);
+
+        // Calculate the extended timestamp
+        let mut time_u32 = extend_u32(previous_time, header.timestamp);
+
+        if self.paused && previous_time.is_some() && time_u32 < previous_time.unwrap() {
+            // In 32-bit RTP timestamps, adding 2^31 (MAX/2) flips to the other half of timestamp space
+            // This forces extend_u32 to produce a value in the next cycle
+            const HALF_CYCLE: u32 = 1u32 << 31;
+            let adjusted_ts = header.timestamp.wrapping_add(HALF_CYCLE);
+
+            // Recalculate extended timestamp with adjusted value
+            let adjusted_time_u32 = extend_u32(previous_time, adjusted_ts);
+
+            // If this adjusted timestamp moves time forward, use it
+            if adjusted_time_u32 > previous_time.unwrap() {
+                time_u32 = adjusted_time_u32;
+            } else {
+                // Fallback
+                time_u32 = header.timestamp as u64;
+            }
+        }
+
         let time = MediaTime::new(time_u32, clock_rate);
 
         if !is_repair {
