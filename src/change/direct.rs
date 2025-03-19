@@ -281,4 +281,46 @@ impl<'a> DirectApi<'a> {
         let midrid = MidRid(mid, rid);
         self.rtc.session.streams.stream_tx_by_midrid(midrid)
     }
+
+    /// Reset a transmit stream to use a new SSRC and optionally a new RTX SSRC.
+    ///
+    /// This changes the SSRC of an existing stream and resets all relevant state.
+    /// Use this when you need to change the SSRC of an existing stream without creating a new one.
+    ///
+    /// If the stream has an RTX SSRC, `new_rtx` must be provided. If the stream doesn't
+    /// have an RTX SSRC, `new_rtx` is ignored.
+    ///
+    /// Returns a reference to the updated stream or None if:
+    /// - No stream was found for the given mid/rid
+    /// - The new SSRC is the same as the current one (no change needed)
+    /// - The new RTX SSRC is the same as the current one (no change needed)
+    pub fn reset_stream_tx(
+        &mut self,
+        mid: Mid,
+        rid: Option<Rid>,
+        new_ssrc: Ssrc,
+        new_rtx: Option<Ssrc>,
+    ) -> Option<&mut StreamTx> {
+        let midrid = MidRid(mid, rid);
+
+        // Find the stream by mid/rid
+        let stream = self.rtc.session.streams.stream_tx_by_midrid(midrid)?;
+
+        // Don't change to the same SSRC
+        if stream.ssrc() == new_ssrc {
+            return None;
+        }
+
+        // If the stream has an RTX SSRC, New RTX must be provided and differ.
+        // But it is allowed to start or turn off RTX.
+        if stream.rtx().is_some() && stream.rtx() == new_rtx {
+            return None;
+        }
+
+        // Reset the stream with the new SSRC and RTX
+        stream.reset_ssrc(new_ssrc, new_rtx);
+
+        // Return a reference to the updated stream
+        Some(stream)
+    }
 }
