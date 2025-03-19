@@ -605,6 +605,7 @@
 #![allow(clippy::manual_range_contains)]
 #![allow(clippy::get_first)]
 #![allow(clippy::needless_lifetimes)]
+#![allow(clippy::precedence)]
 #![deny(missing_docs)]
 
 #[macro_use]
