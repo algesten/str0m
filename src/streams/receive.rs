@@ -195,6 +195,13 @@ impl StreamRx {
         self.pause_threshold = t;
     }
 
+    /// The last time we received a packet.
+    ///
+    /// Resets if the SSRC changes.
+    pub fn last_time(&self) -> Option<MediaTime> {
+        self.last_time
+    }
+
     /// Request a keyframe for an incoming encoded stream.
     ///
     /// * SSRC the identifier of the remote encoded stream to request a keyframe for.
@@ -690,7 +697,20 @@ impl StreamRx {
         // so do we don't go "backwards".
         self.previous_ssrc = Some(self.ssrc);
         self.ssrc = ssrc;
+
+        // Reset all SSRC-specific state
         self.register = None;
+        self.last_time = None;
+        self.last_clock_rate = None;
+        self.sender_info = None;
+        self.last_receiver_report = already_happened();
+        self.fir_seq_no = 0;
+        self.pending_request_keyframe = None;
+        self.pending_request_remb = None;
+        self.reset_roc = None;
+
+        // Note: We don't reset the RTX register here, as the RTX SSRC is managed separately
+        // via maybe_reset_rtx() and is not directly tied to the main SSRC change.
 
         true
     }
