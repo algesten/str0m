@@ -1016,6 +1016,40 @@ impl StreamTx {
         self.padding = 0;
     }
 
+    /// Reset this stream to use a new SSRC and optionally a new RTX SSRC.
+    ///
+    /// This updates the SSRCs and resets all relevant internal fields.
+    pub(crate) fn reset_ssrc(&mut self, new_ssrc: Ssrc, new_rtx: Option<Ssrc>) {
+        // Update the SSRC and RTX
+        self.ssrc = new_ssrc;
+        self.rtx = new_rtx;
+
+        // Reset sequence numbers
+        self.seq_no = SeqNo::default();
+        self.seq_no_rtx = SeqNo::default();
+
+        // Reset timing related fields
+        self.last_used = already_happened();
+        self.rtp_and_wallclock = None;
+        self.last_sender_report = already_happened();
+
+        // Reset blank packet's SSRC
+        self.blank_packet.header.ssrc = new_ssrc;
+
+        // Clear any pending requests
+        self.pending_request_keyframe = None;
+        self.pending_request_remb = None;
+
+        // Reset all statistics - preserve whether stats tracking is enabled
+        let stats_enabled = self.stats.bytes_transmitted.is_some();
+        self.stats = StreamTxStats::new(stats_enabled);
+        self.rtx_ratio = (0.0, already_happened());
+        self.remote_acked_ssrc = false;
+
+        // Clear all buffers
+        self.reset_buffers();
+    }
+
     pub(crate) fn is_midrid(&self, midrid: MidRid) -> bool {
         midrid.special_equals(&self.midrid)
     }
