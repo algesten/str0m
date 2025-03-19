@@ -206,7 +206,7 @@ pub fn init_log() {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", "str0m=debug");
+        env::set_var("RUST_LOG", "debug");
     }
 
     static START: Once = Once::new();
