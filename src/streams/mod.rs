@@ -270,12 +270,14 @@ impl Streams {
             // Handle changes in SSRC.
             if ssrc_from != ssrc_main {
                 // We got a change in main SSRC for this stream.
-                self.change_stream_rx_ssrc(ssrc_from, ssrc_main);
+                let did_change = self.change_stream_rx_ssrc(ssrc_from, ssrc_main);
 
                 // When the SSRCs changes the sequence number typically also does, the
-                // depayloader(if in use) relies on sequence numbers and will not handle a
-                // large jump corretly, reset it.
-                media.reset_depayloader(payload.pt(), midrid.rid());
+                // depayloader (if in use) relies on sequence numbers and will not handle a
+                // large jump correctly, reset it.
+                if did_change {
+                    media.reset_depayloader(payload.pt(), midrid.rid());
+                }
             }
 
             // Handle changes in RTX
@@ -610,7 +612,7 @@ impl Streams {
         }
     }
 
-    pub(crate) fn change_stream_rx_ssrc(&mut self, ssrc_from: Ssrc, ssrc_to: Ssrc) {
+    pub(crate) fn change_stream_rx_ssrc(&mut self, ssrc_from: Ssrc, ssrc_to: Ssrc) -> bool {
         // This unwrap is OK, because we can't call change_stream_rx_ssrc without first
         // knowing there is such a StreamRx.
         let maybe_change = self.streams_rx.get_mut(&ssrc_from).unwrap();
@@ -631,6 +633,8 @@ impl Streams {
             self.rx_lookup
                 .retain(|k, l| *k != ssrc_from && l.main != ssrc_from);
         }
+
+        did_change
     }
 
     fn change_stream_rx_rtx(&mut self, rtx_from: Ssrc, rtx_to: Ssrc) {
