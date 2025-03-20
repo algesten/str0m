@@ -215,7 +215,7 @@ impl<'a> DirectApi<'a> {
     /// Obtain a recv stream by looking it up via mid/rid.
     pub fn stream_rx_by_mid(&mut self, mid: Mid, rid: Option<Rid>) -> Option<&mut StreamRx> {
         let midrid = MidRid(mid, rid);
-        self.rtc.session.streams.stream_rx_by_midrid(midrid)
+        self.rtc.session.streams.stream_rx_by_midrid(midrid, true)
     }
 
     /// Declare the intention to send data using the given SSRC.

@@ -202,7 +202,7 @@ impl Streams {
             return;
         }
 
-        let maybe_stream = self.stream_rx_by_midrid(midrid);
+        let maybe_stream = self.stream_rx_by_midrid(midrid, false);
 
         let (ssrc_main, rtx) = if is_main {
             let maybe_rtx = maybe_stream.and_then(|s| s.rtx());
@@ -234,7 +234,7 @@ impl Streams {
             return;
         }
 
-        let maybe_stream = self.stream_rx_by_midrid(midrid);
+        let maybe_stream = self.stream_rx_by_midrid(midrid, false);
 
         let (ssrc_main, rtx) = if is_main {
             let maybe_rtx = maybe_stream.and_then(|s| s.rtx());
@@ -261,7 +261,7 @@ impl Streams {
         media: &mut Media,
         payload: PayloadParams,
     ) {
-        let maybe_stream = self.stream_rx_by_midrid(midrid);
+        let maybe_stream = self.stream_rx_by_midrid(midrid, false);
 
         if let Some(stream) = maybe_stream {
             let ssrc_from = stream.ssrc();
@@ -572,10 +572,16 @@ impl Streams {
         self.streams_tx.values_mut().find(|s| s.is_midrid(midrid))
     }
 
-    pub(crate) fn stream_rx_by_midrid(&mut self, midrid: MidRid) -> Option<&mut StreamRx> {
-        // Invalidate nack_active since it's possible to manipulate the
-        // nack setting on the returned StreamRx.
-        self.any_nack_active = None;
+    pub(crate) fn stream_rx_by_midrid(
+        &mut self,
+        midrid: MidRid,
+        reset_cached_nack_flag: bool,
+    ) -> Option<&mut StreamRx> {
+        if reset_cached_nack_flag {
+            // Invalidate nack_active since it's possible to manipulate the
+            // nack setting on the returned StreamRx.
+            self.any_nack_active = None;
+        }
 
         self.streams_rx.values_mut().find(|s| s.is_midrid(midrid))
     }
