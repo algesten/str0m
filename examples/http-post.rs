@@ -18,16 +18,14 @@ use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcError};
 mod util;
 
 fn init_log() {
-    use std::env;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", "http_post=debug,str0m=debug");
-    }
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("http_post=debug,str0m=debug"));
 
     tracing_subscriber::registry()
         .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
+        .with(env_filter)
         .init();
 }
 
@@ -65,7 +63,7 @@ fn web_request(request: &Request) -> Response {
 
     // Spin up a UDP socket for the RTC
     let socket = UdpSocket::bind(format!("{addr}:0")).expect("binding a random UDP port");
-    let addr = socket.local_addr().expect("a local socket adddress");
+    let addr = socket.local_addr().expect("a local socket address");
     let candidate = Candidate::host(addr, "udp").expect("a host candidate");
     rtc.add_local_candidate(candidate);
 
