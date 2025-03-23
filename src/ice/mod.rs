@@ -576,12 +576,10 @@ mod test {
     }
 
     // pub fn init_log() {
-    //     use std::env;
     //     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    //     if env::var("RUST_LOG").is_err() {
-    //         env::set_var("RUST_LOG", "trace");
-    //     }
+    //     let env_filter =
+    //         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("trace"));
 
     //     tracing_subscriber::registry()
     //         .with(fmt::layer())

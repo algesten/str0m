@@ -23,16 +23,14 @@ use str0m::{net::Receive, Candidate, Event, IceConnectionState, Input, Output, R
 mod util;
 
 fn init_log() {
-    use std::env;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", "chat=info,str0m=info");
-    }
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("chat=info,str0m=info"));
 
     tracing_subscriber::registry()
         .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
+        .with(env_filter)
         .init();
 }
 
@@ -50,7 +48,7 @@ pub fn main() {
     // Spin up a UDP socket for the RTC. All WebRTC traffic is going to be multiplexed over this single
     // server socket. Clients are identified via their respective remote (UDP) socket address.
     let socket = UdpSocket::bind(format!("{host_addr}:0")).expect("binding a random UDP port");
-    let addr = socket.local_addr().expect("a local socket adddress");
+    let addr = socket.local_addr().expect("a local socket address");
     info!("Bound UDP port: {}", addr);
 
     // The run loop is on a separate thread to the web server.

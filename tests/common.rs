@@ -202,19 +202,16 @@ impl DerefMut for TestRtc {
 }
 
 pub fn init_log() {
-    use std::env;
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    if env::var("RUST_LOG").is_err() {
-        env::set_var("RUST_LOG", "debug");
-    }
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
 
     static START: Once = Once::new();
 
     START.call_once(|| {
         tracing_subscriber::registry()
             .with(fmt::layer())
-            .with(EnvFilter::from_default_env())
+            .with(env_filter)
             .init();
     });
 }
