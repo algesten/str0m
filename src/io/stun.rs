@@ -503,21 +503,23 @@ use crate::util::NonCryptographicRng;
 
 impl<'a> Attributes<'a> {
     const ALTERNATE_SERVER: u16 = 0x8023;
-    const ERROR_CODE: u16 = 0x0009;
     const FINGERPRINT: u16 = 0x8028;
     const ICE_CONTROLLED: u16 = 0x8029;
     const ICE_CONTROLLING: u16 = 0x802a;
+
     const MAPPED_ADDRESS: u16 = 0x0001;
-    const MESSAGE_INTEGRITY: u16 = 0x0008;
-    const NETWORK_COST: u16 = 0xc057;
-    const NONCE: u16 = 0x0015;
-    const PRIORITY: u16 = 0x0024;
-    const REALM: u16 = 0x0014;
-    const SOFTWARE: u16 = 0x0022;
-    const UNKNOWN_ATTRIBUTES: u16 = 0x000a;
-    const USE_CANDIDATE: u16 = 0x0025;
     const USERNAME: u16 = 0x0006;
+    const MESSAGE_INTEGRITY: u16 = 0x0008;
+    const ERROR_CODE: u16 = 0x0009;
+    const UNKNOWN_ATTRIBUTES: u16 = 0x000a;
+    const REALM: u16 = 0x0014;
+    const NONCE: u16 = 0x0015;
     const XOR_MAPPED_ADDRESS: u16 = 0x0020;
+    const SOFTWARE: u16 = 0x0022;
+    const PRIORITY: u16 = 0x0024;
+    const USE_CANDIDATE: u16 = 0x0025;
+
+    const NETWORK_COST: u16 = 0xc057;
 
     fn padded_len(&self) -> usize {
         const ATTR_TLV_LENGTH: usize = 4;
