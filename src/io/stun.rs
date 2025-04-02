@@ -738,36 +738,36 @@ impl<'a> Attributes<'a> {
             + nonce
     }
 
-    fn to_bytes(self, vec: &mut dyn Write, trans_id: &[u8]) -> io::Result<()> {
+    fn to_bytes(self, out: &mut dyn Write, trans_id: &[u8]) -> io::Result<()> {
         if let Some(v) = self.username {
-            vec.write_all(&Self::USERNAME.to_be_bytes())?;
-            encode_str(Self::USERNAME, v, vec)?;
+            out.write_all(&Self::USERNAME.to_be_bytes())?;
+            encode_str(Self::USERNAME, v, out)?;
         }
         if let Some(v) = self.ice_controlled {
-            vec.write_all(&Self::ICE_CONTROLLED.to_be_bytes())?;
-            vec.write_all(&8_u16.to_be_bytes())?;
-            vec.write_all(&v.to_be_bytes())?;
+            out.write_all(&Self::ICE_CONTROLLED.to_be_bytes())?;
+            out.write_all(&8_u16.to_be_bytes())?;
+            out.write_all(&v.to_be_bytes())?;
         }
         if let Some(v) = self.ice_controlling {
-            vec.write_all(&Self::ICE_CONTROLLING.to_be_bytes())?;
-            vec.write_all(&8_u16.to_be_bytes())?;
-            vec.write_all(&v.to_be_bytes())?;
+            out.write_all(&Self::ICE_CONTROLLING.to_be_bytes())?;
+            out.write_all(&8_u16.to_be_bytes())?;
+            out.write_all(&v.to_be_bytes())?;
         }
         if let Some(v) = self.priority {
-            vec.write_all(&Self::PRIORITY.to_be_bytes())?;
-            vec.write_all(&4_u16.to_be_bytes())?;
-            vec.write_all(&v.to_be_bytes())?;
+            out.write_all(&Self::PRIORITY.to_be_bytes())?;
+            out.write_all(&4_u16.to_be_bytes())?;
+            out.write_all(&v.to_be_bytes())?;
         }
         if let Some(v) = self.xor_mapped_address {
             let mut buf = [0_u8; 20];
             let len = encode_xor(v, &mut buf, trans_id);
-            vec.write_all(&Self::XOR_MAPPED_ADDRESS.to_be_bytes())?;
-            vec.write_all(&((len as u16).to_be_bytes()))?;
-            vec.write_all(&buf[0..len])?;
+            out.write_all(&Self::XOR_MAPPED_ADDRESS.to_be_bytes())?;
+            out.write_all(&((len as u16).to_be_bytes()))?;
+            out.write_all(&buf[0..len])?;
         }
         if self.use_candidate {
-            vec.write_all(&Self::USE_CANDIDATE.to_be_bytes())?;
-            vec.write_all(&0_u16.to_be_bytes())?;
+            out.write_all(&Self::USE_CANDIDATE.to_be_bytes())?;
+            out.write_all(&0_u16.to_be_bytes())?;
         }
         if let Some(d) = self.data {
             if d.len() > u16::MAX as usize {
@@ -777,47 +777,47 @@ impl<'a> Attributes<'a> {
                 ));
             }
 
-            vec.write_all(&Self::DATA.to_be_bytes())?;
-            vec.write_all(&(d.len() as u16).to_be_bytes())?;
-            vec.write_all(d)?;
+            out.write_all(&Self::DATA.to_be_bytes())?;
+            out.write_all(&(d.len() as u16).to_be_bytes())?;
+            out.write_all(d)?;
             let pad = (4 - (d.len() % 4)) % 4;
             for _ in 0..pad {
-                vec.write_all(&[0])?;
+                out.write_all(&[0])?;
             }
         }
         if let Some(v) = self.xor_relayed_address {
             let mut buf = [0_u8; 20];
             let len = encode_xor(v, &mut buf, trans_id);
-            vec.write_all(&Self::XOR_RELAYED_ADDRESS.to_be_bytes())?;
-            vec.write_all(&((len as u16).to_be_bytes()))?;
-            vec.write_all(&buf[0..len])?;
+            out.write_all(&Self::XOR_RELAYED_ADDRESS.to_be_bytes())?;
+            out.write_all(&((len as u16).to_be_bytes()))?;
+            out.write_all(&buf[0..len])?;
         }
         if let Some(v) = self.xor_peer_address {
             let mut buf = [0_u8; 20];
             let len = encode_xor(v, &mut buf, trans_id);
-            vec.write_all(&Self::XOR_PEER_ADDRESS.to_be_bytes())?;
-            vec.write_all(&((len as u16).to_be_bytes()))?;
-            vec.write_all(&buf[0..len])?;
+            out.write_all(&Self::XOR_PEER_ADDRESS.to_be_bytes())?;
+            out.write_all(&((len as u16).to_be_bytes()))?;
+            out.write_all(&buf[0..len])?;
         }
         if let Some(v) = self.channel_number {
-            vec.write_all(&Self::CHANNEL_NUMBER.to_be_bytes())?;
-            vec.write_all(&2_u16.to_be_bytes())?;
-            vec.write_all(&v.to_be_bytes())?;
+            out.write_all(&Self::CHANNEL_NUMBER.to_be_bytes())?;
+            out.write_all(&2_u16.to_be_bytes())?;
+            out.write_all(&v.to_be_bytes())?;
             // Add padding to make the length a multiple of 4
-            vec.write_all(&[0, 0])?;
+            out.write_all(&[0, 0])?;
         }
         if let Some(v) = self.lifetime {
-            vec.write_all(&Self::LIFETIME.to_be_bytes())?;
-            vec.write_all(&4_u16.to_be_bytes())?;
-            vec.write_all(&v.to_be_bytes())?;
+            out.write_all(&Self::LIFETIME.to_be_bytes())?;
+            out.write_all(&4_u16.to_be_bytes())?;
+            out.write_all(&v.to_be_bytes())?;
         }
         if let Some(v) = self.realm {
-            vec.write_all(&Self::REALM.to_be_bytes())?;
-            encode_str(Self::REALM, v, vec)?;
+            out.write_all(&Self::REALM.to_be_bytes())?;
+            encode_str(Self::REALM, v, out)?;
         }
         if let Some(v) = self.nonce {
-            vec.write_all(&Self::NONCE.to_be_bytes())?;
-            encode_str(Self::NONCE, v, vec)?;
+            out.write_all(&Self::NONCE.to_be_bytes())?;
+            encode_str(Self::NONCE, v, out)?;
         }
 
         Ok(())
