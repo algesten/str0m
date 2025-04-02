@@ -649,7 +649,7 @@ pub mod config {
 pub mod ice {
     pub use crate::ice_::IceCreds;
     pub use crate::ice_::{IceAgent, IceAgentEvent};
-    pub use crate::io::{StunMessage, StunPacket};
+    pub use crate::io::{StunMessage, StunMessageBuilder, StunPacket, TransId};
 }
 
 mod io;

@@ -79,10 +79,12 @@ pub enum StunError {
     Io(#[from] io::Error),
 }
 
+/// STUN transaction ID.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransId([u8; 12]);
 
 impl TransId {
+    /// A new random transaction id.
     pub fn new() -> Self {
         let mut t = [0_u8; 12];
         for v in &mut t {
@@ -165,7 +167,7 @@ impl<'a> StunMessage<'a> {
                 return Err(StunError::Parse("STUN packet missing username".into()));
             }
             if attrs.priority.is_none() {
-                return Err(StunError::Parse("STUN packet missing mapped addr".into()));
+                return Err(StunError::Parse("STUN packet missing priority".into()));
             }
         }
 
@@ -188,7 +190,7 @@ impl<'a> StunMessage<'a> {
     }
 
     /// Whether this STUN message is a BINDING request.
-    pub(crate) fn is_binding_request(&self) -> bool {
+    pub fn is_binding_request(&self) -> bool {
         self.method == Method::Binding && self.class == Class::Request
     }
 
@@ -196,16 +198,126 @@ impl<'a> StunMessage<'a> {
     ///
     /// STUN binding requests are very simple, they just return the observed address.
     /// As such, they cannot actually fail which is why we don't have `is_failed_binding_response`.
-    pub(crate) fn is_successful_binding_response(&self) -> bool {
+    pub fn is_successful_binding_response(&self) -> bool {
         self.method == Method::Binding && self.class == Class::Success
     }
 
+    /// Whether this STUN message is an ALLOCATE request (TURN).
+    pub fn is_allocate_request(&self) -> bool {
+        self.method == Method::Allocate && self.class == Class::Request
+    }
+
+    /// Whether this STUN message is a CREATE_PERMISSION request (TURN).
+    pub fn is_create_permission_request(&self) -> bool {
+        self.method == Method::CreatePermission && self.class == Class::Request
+    }
+
+    /// Whether this STUN message is a CHANNEL_BIND request (TURN).
+    pub fn is_channel_bind_request(&self) -> bool {
+        self.method == Method::ChannelBind && self.class == Class::Request
+    }
+
+    /// Whether this STUN message is a REFRESH request (TURN).
+    pub fn is_refresh_request(&self) -> bool {
+        self.method == Method::Refresh && self.class == Class::Request
+    }
+
+    /// Whether this STUN message is a SEND indication (TURN).
+    pub fn is_send_indication(&self) -> bool {
+        self.method == Method::Send && self.class == Class::Indication
+    }
+
     /// The transaction ID of this STUN message.
-    pub(crate) fn trans_id(&self) -> TransId {
+    pub fn trans_id(&self) -> TransId {
         self.trans_id
     }
 
-    /// Constructs a new BINDING request from the provided data.
+    /// Returns the value of the USERNAME attribute, if present.
+    pub fn username(&self) -> Option<&'a str> {
+        self.attrs.username
+    }
+
+    /// If present, splits the value of the USERNAME attribute into local and remote (separated by `:`).
+    pub fn split_username(&self) -> Option<(&str, &str)> {
+        self.attrs.split_username()
+    }
+
+    /// Returns the value of the XOR-MAPPED-ADDRESS attribute, if present.
+    pub fn mapped_address(&self) -> Option<SocketAddr> {
+        self.attrs.xor_mapped_address
+    }
+
+    /// Returns the value of the PRIORITY attribute (ICE), if present.
+    pub fn prio(&self) -> Option<u32> {
+        self.attrs.priority
+    }
+
+    /// Returns whether the USE-CANDIDATE attribute (ICE) is present.
+    pub fn use_candidate(&self) -> bool {
+        self.attrs.use_candidate
+    }
+
+    /// Returns the value of the ERROR_CODE attribute, if present.
+    pub fn error_code(&self) -> Option<(u16, &'a str)> {
+        self.attrs.error_code
+    }
+
+    /// Returns the value of the CHANNEL_NUMBER attribute (TURN), if present.
+    pub fn channel_number(&self) -> Option<u16> {
+        self.attrs.channel_number
+    }
+
+    /// Returns the value of the LIFETIME attribute (TURN), if present.
+    pub fn lifetime(&self) -> Option<u32> {
+        self.attrs.lifetime
+    }
+
+    /// Returns the value of the XOR_PEER_ADDRESS attribute (TURN), if present.
+    pub fn xor_peer_address(&self) -> Option<SocketAddr> {
+        self.attrs.xor_peer_address
+    }
+
+    /// Returns the value of the DATA attribute (TURN), if present.
+    pub fn data(&self) -> Option<&'a [u8]> {
+        self.attrs.data
+    }
+
+    /// Returns the value of the REALM attribute, if present.
+    pub fn realm(&self) -> Option<&'a str> {
+        self.attrs.realm
+    }
+
+    /// Returns the value of the NONCE attribute, if present.
+    pub fn nonce(&self) -> Option<&'a str> {
+        self.attrs.nonce
+    }
+
+    /// Returns the value of the XOR_RELAYED_ADDRESS attribute (TURN), if present.
+    pub fn xor_relayed_address(&self) -> Option<SocketAddr> {
+        self.attrs.xor_relayed_address
+    }
+
+    /// Returns the value of the SOFTWARE attribute, if present.
+    pub fn software(&self) -> Option<&'a str> {
+        self.attrs.software
+    }
+
+    /// Returns the value of the ICE_CONTROLLED attribute (ICE), if present.
+    pub fn ice_controlled(&self) -> Option<u64> {
+        self.attrs.ice_controlled
+    }
+
+    /// Returns the value of the ICE_CONTROLLING attribute (ICE), if present.
+    pub fn ice_controlling(&self) -> Option<u64> {
+        self.attrs.ice_controlling
+    }
+
+    /// Returns the value of the NETWORK_COST attribute (ICE), if present.
+    pub fn network_cost(&self) -> Option<(u16, u16)> {
+        self.attrs.network_cost
+    }
+
+    /// Constructs a new BINDING request using the provided data.
     pub(crate) fn binding_request(
         username: &'a str,
         trans_id: TransId,
@@ -214,56 +326,32 @@ impl<'a> StunMessage<'a> {
         prio: u32,
         use_candidate: bool,
     ) -> Self {
-        StunMessage {
-            class: Class::Request,
-            method: Method::Binding,
-            trans_id,
-            attrs: Attributes {
-                username: Some(username),
-                ice_controlling: controlling.then_some(control_tie_breaker),
-                ice_controlled: (!controlling).then_some(control_tie_breaker),
-                priority: Some(prio),
-                use_candidate,
-                ..Default::default()
-            },
-            integrity: &[],
-            integrity_len: 0,
+        let mut builder = StunMessageBuilder::new()
+            .binding()
+            .request()
+            .username(username)
+            .prio(prio);
+
+        if use_candidate {
+            builder = builder.use_candidate();
         }
-    }
 
-    /// Constructs a new STUN BINDING reply.
-    pub(crate) fn reply(trans_id: TransId, mapped_address: SocketAddr) -> StunMessage<'a> {
-        StunMessage {
-            class: Class::Success,
-            method: Method::Binding,
-            trans_id,
-            attrs: Attributes {
-                xor_mapped_address: Some(mapped_address),
-                ..Default::default()
-            },
-            integrity: &[],
-            integrity_len: 0,
+        if controlling {
+            builder = builder.ice_controlling(control_tie_breaker);
+        } else {
+            builder = builder.ice_controlled(control_tie_breaker);
         }
+
+        builder.build(trans_id)
     }
 
-    /// If present, splits the value of the USERNAME attribute into local and remote (separated by `:`).
-    pub fn split_username(&self) -> Option<(&str, &str)> {
-        self.attrs.split_username()
-    }
-
-    /// If present, returns the value of XOR-MAPPED-ADDRESS attribute.
-    pub(crate) fn mapped_address(&self) -> Option<SocketAddr> {
-        self.attrs.xor_mapped_address
-    }
-
-    /// If present, returns the value of the PRIORITY attribute.
-    pub(crate) fn prio(&self) -> Option<u32> {
-        self.attrs.priority
-    }
-
-    /// Whether this message has the USE-CANDIDATE attribute.
-    pub(crate) fn use_candidate(&self) -> bool {
-        self.attrs.use_candidate
+    /// Constructs a new STUN BINDING success reply using the builder.
+    pub(crate) fn binding_reply(trans_id: TransId, mapped_address: SocketAddr) -> StunMessage<'a> {
+        StunMessageBuilder::new()
+            .binding()
+            .success()
+            .xor_mapped_address(mapped_address)
+            .build(trans_id)
     }
 
     /// Verify the integrity of this message against the provided password.
@@ -1005,11 +1093,256 @@ impl<'a> fmt::Debug for StunMessage<'a> {
     }
 }
 
+pub use builder::Builder as StunMessageBuilder;
+
+mod builder {
+    use super::{Attributes, Class, Method, StunMessage, TransId};
+    use std::net::SocketAddr;
+
+    /// Type state representing a builder where the STUN method has not yet been set.
+    #[doc(hidden)]
+    #[derive(Default, Debug, Clone)]
+    pub struct NoMethod;
+
+    /// Type state representing a builder where the STUN method has been set, but the class has not.
+    #[doc(hidden)]
+    #[derive(Debug, Clone)]
+    pub struct HasMethod {
+        method: Method,
+    }
+
+    /// Type state representing a builder where both the STUN method and class have been set.
+    /// Attributes can now be added.
+    #[doc(hidden)]
+    #[derive(Debug, Clone)]
+    pub struct HasClass {
+        method: Method,
+        class: Class,
+    }
+
+    /// A type-state builder for creating [`StunMessage`] instances.
+    ///
+    /// This builder guides the user through the required steps:
+    /// 1. Set the STUN method (e.g., `binding()`, `allocate()`).
+    /// 2. Set the STUN class (e.g., `request()`, `success()`).
+    /// 3. Optionally set attributes (e.g., `username()`, `priority()`).
+    /// 4. Call `build()` with a [`TransId`].
+    #[derive(Default, Debug, Clone)]
+    pub struct Builder<'a, State> {
+        attrs: Attributes<'a>,
+        state: State,
+    }
+
+    impl<'a> Builder<'a, NoMethod> {
+        /// Creates a new STUN message builder, starting in the initial state
+        /// where the method needs to be set.
+        pub fn new() -> Self {
+            Builder {
+                attrs: Attributes::default(),
+                state: NoMethod,
+            }
+        }
+    }
+
+    // Method Setters (Transition from NoMethod to HasMethod) ---
+    impl<'a> Builder<'a, NoMethod> {
+        fn set_method(self, method: Method) -> Builder<'a, HasMethod> {
+            Builder {
+                attrs: self.attrs,
+                state: HasMethod { method },
+            }
+        }
+
+        /// Sets the STUN method to BINDING.
+        pub fn binding(self) -> Builder<'a, HasMethod> {
+            self.set_method(Method::Binding)
+        }
+
+        /// Sets the STUN method to ALLOCATE (TURN).
+        pub fn allocate(self) -> Builder<'a, HasMethod> {
+            self.set_method(Method::Allocate)
+        }
+
+        /// Sets the STUN method to REFRESH (TURN).
+        pub fn refresh(self) -> Builder<'a, HasMethod> {
+            self.set_method(Method::Refresh)
+        }
+
+        /// Sets the STUN method to SEND (TURN).
+        pub fn send(self) -> Builder<'a, HasMethod> {
+            self.set_method(Method::Send)
+        }
+
+        /// Sets the STUN method to DATA (TURN).
+        pub fn data(self) -> Builder<'a, HasMethod> {
+            self.set_method(Method::Data)
+        }
+
+        /// Sets the STUN method to CREATE_PERMISSION (TURN).
+        pub fn create_permission(self) -> Builder<'a, HasMethod> {
+            self.set_method(Method::CreatePermission)
+        }
+
+        /// Sets the STUN method to CHANNEL_BIND (TURN).
+        pub fn channel_bind(self) -> Builder<'a, HasMethod> {
+            self.set_method(Method::ChannelBind)
+        }
+    }
+
+    // Class Setters (Transition from HasMethod to HasClass) ---
+    impl<'a> Builder<'a, HasMethod> {
+        fn set_class(self, class: Class) -> Builder<'a, HasClass> {
+            Builder {
+                attrs: self.attrs,
+                state: HasClass {
+                    method: self.state.method,
+                    class,
+                },
+            }
+        }
+
+        /// Sets the STUN class to Request.
+        pub fn request(self) -> Builder<'a, HasClass> {
+            self.set_class(Class::Request)
+        }
+
+        /// Sets the STUN class to Indication.
+        pub fn indication(self) -> Builder<'a, HasClass> {
+            self.set_class(Class::Indication)
+        }
+
+        /// Sets the STUN class to Success Response.
+        pub fn success(self) -> Builder<'a, HasClass> {
+            self.set_class(Class::Success)
+        }
+
+        /// Sets the STUN class to Error Response.
+        pub fn failure(self) -> Builder<'a, HasClass> {
+            self.set_class(Class::Failure)
+        }
+    }
+
+    // Attribute Setters (Only on HasClass state) ---
+    impl<'a> Builder<'a, HasClass> {
+        /// Sets the USERNAME attribute.
+        pub fn username(mut self, username: &'a str) -> Self {
+            self.attrs.username = Some(username);
+            self
+        }
+
+        /// Sets the ERROR_CODE attribute.
+        pub fn error_code(mut self, code: u16, reason: &'a str) -> Self {
+            self.attrs.error_code = Some((code, reason));
+            self
+        }
+
+        /// Sets the CHANNEL_NUMBER attribute (TURN).
+        pub fn channel_number(mut self, number: u16) -> Self {
+            self.attrs.channel_number = Some(number);
+            self
+        }
+
+        /// Sets the LIFETIME attribute (TURN).
+        pub fn lifetime(mut self, lifetime: u32) -> Self {
+            self.attrs.lifetime = Some(lifetime);
+            self
+        }
+
+        /// Sets the XOR_PEER_ADDRESS attribute (TURN).
+        pub fn xor_peer_address(mut self, addr: SocketAddr) -> Self {
+            self.attrs.xor_peer_address = Some(addr);
+            self
+        }
+
+        /// Sets the DATA attribute (TURN).
+        pub fn data(mut self, data: &'a [u8]) -> Self {
+            self.attrs.data = Some(data);
+            self
+        }
+
+        /// Sets the REALM attribute.
+        pub fn realm(mut self, realm: &'a str) -> Self {
+            self.attrs.realm = Some(realm);
+            self
+        }
+
+        /// Sets the NONCE attribute.
+        pub fn nonce(mut self, nonce: &'a str) -> Self {
+            self.attrs.nonce = Some(nonce);
+            self
+        }
+
+        /// Sets the XOR_RELAYED_ADDRESS attribute (TURN).
+        pub fn xor_relayed_address(mut self, addr: SocketAddr) -> Self {
+            self.attrs.xor_relayed_address = Some(addr);
+            self
+        }
+
+        /// Sets the XOR_MAPPED_ADDRESS attribute.
+        pub fn xor_mapped_address(mut self, addr: SocketAddr) -> Self {
+            self.attrs.xor_mapped_address = Some(addr);
+            self
+        }
+
+        /// Sets the SOFTWARE attribute.
+        pub fn software(mut self, software: &'a str) -> Self {
+            self.attrs.software = Some(software);
+            self
+        }
+
+        /// Sets the PRIORITY attribute (ICE).
+        pub fn prio(mut self, prio: u32) -> Self {
+            self.attrs.priority = Some(prio);
+            self
+        }
+
+        /// Adds the USE_CANDIDATE attribute (ICE).
+        pub fn use_candidate(mut self) -> Self {
+            self.attrs.use_candidate = true;
+            self
+        }
+
+        /// Sets the ICE_CONTROLLED attribute (ICE).
+        pub fn ice_controlled(mut self, tie_breaker: u64) -> Self {
+            self.attrs.ice_controlled = Some(tie_breaker);
+            self
+        }
+
+        /// Sets the ICE_CONTROLLING attribute (ICE).
+        pub fn ice_controlling(mut self, tie_breaker: u64) -> Self {
+            self.attrs.ice_controlling = Some(tie_breaker);
+            self
+        }
+
+        /// Sets the NETWORK_COST attribute (ICE).
+        pub fn network_cost(mut self, net_id: u16, cost: u16) -> Self {
+            self.attrs.network_cost = Some((net_id, cost));
+            self
+        }
+
+        /// Builds the final [`StunMessage`].
+        ///
+        /// This method consumes the builder and requires a transaction ID.
+        /// Note that `MESSAGE_INTEGRITY` and `FINGERPRINT` attributes are not
+        /// added here; they are calculated and added during serialization in
+        /// [`StunMessage::to_bytes()`].
+        pub fn build(self, trans_id: TransId) -> StunMessage<'a> {
+            StunMessage {
+                method: self.state.method,
+                class: self.state.class,
+                trans_id,
+                attrs: self.attrs,
+                integrity: &[],   // Calculated during serialization
+                integrity_len: 0, // Calculated during serialization
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::net::SocketAddrV4;
-    use systemstat::Ipv4Addr;
+    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
     #[test]
     fn parse_stun_message() {
@@ -1329,5 +1662,65 @@ mod test {
         assert_eq!(parsed.attrs.channel_number, Some(0x4000));
         assert_eq!(parsed.attrs.xor_peer_address, Some(peer_addr));
         assert!(parsed.check_integrity("password"));
+    }
+
+    #[test]
+    fn build_stun_binding_request_with_attrs() {
+        let trans_id = TransId::new();
+        let username = "test:user";
+        let tie_breaker = 1234567890;
+        let prio = 9876;
+
+        let message = StunMessageBuilder::new()
+            .binding()
+            .request()
+            .username(username)
+            .prio(prio)
+            .ice_controlling(tie_breaker)
+            .use_candidate()
+            .build(trans_id);
+
+        assert_eq!(message.method(), Method::Binding);
+        assert_eq!(message.class(), Class::Request);
+        assert_eq!(message.trans_id(), trans_id);
+        assert_eq!(message.attrs.username, Some(username));
+        assert_eq!(message.attrs.priority, Some(prio));
+        assert_eq!(message.attrs.ice_controlling, Some(tie_breaker));
+        assert!(message.attrs.use_candidate);
+        assert!(message.attrs.ice_controlled.is_none()); // Ensure others aren't set
+    }
+
+    #[test]
+    fn build_stun_binding_success_with_attrs() {
+        let trans_id = TransId::new();
+        let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(1, 2, 3, 4), 5678));
+
+        let message = StunMessageBuilder::new()
+            .binding()
+            .success()
+            .xor_mapped_address(addr)
+            .build(trans_id);
+
+        assert_eq!(message.method(), Method::Binding);
+        assert_eq!(message.class(), Class::Success);
+        assert_eq!(message.trans_id(), trans_id);
+        assert_eq!(message.attrs.xor_mapped_address, Some(addr));
+    }
+
+    #[test]
+    fn build_stun_data_indication_with_attrs() {
+        let trans_id = TransId::new();
+        let data_payload: &[u8] = &[0xca, 0xfe, 0xba, 0xbe];
+
+        let message = StunMessageBuilder::new()
+            .data()
+            .indication()
+            .data(data_payload)
+            .build(trans_id);
+
+        assert_eq!(message.method(), Method::Data);
+        assert_eq!(message.class(), Class::Indication);
+        assert_eq!(message.trans_id(), trans_id);
+        assert_eq!(message.attrs.data, Some(data_payload));
     }
 }
