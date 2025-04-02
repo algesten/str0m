@@ -984,6 +984,19 @@ impl IceAgent {
                 trace!("Message rejected, unknown STUN method");
                 false
             }
+            (
+                StunMethod::Allocate
+                | StunMethod::Refresh
+                | StunMethod::Send
+                | StunMethod::Data
+                | StunMethod::CreatePermission
+                | StunMethod::ChannelBind,
+                _,
+            ) => {
+                // Unexpected TURN related message
+                trace!("Message rejected, TURN method({method:?}) unexpected in this context");
+                false
+            }
         }
     }
 

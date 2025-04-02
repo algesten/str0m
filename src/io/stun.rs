@@ -390,6 +390,13 @@ impl Class {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) enum Method {
     Binding,
+    // TURN specific
+    Allocate,
+    Refresh,
+    Send,
+    Data,
+    CreatePermission,
+    ChannelBind,
     Unknown,
 }
 
@@ -398,14 +405,27 @@ impl Method {
         use Method::*;
         match typ & 0b0011_1110_1110_1111 {
             0b0000_0000_0000_0001 => Binding,
+            0b0000_0000_0000_0011 => Allocate,
+            0b0000_0000_0000_0100 => Refresh,
+            0b0000_0000_0000_0110 => Send,
+            0b0000_0000_0000_0111 => Data,
+            0b0000_0000_0000_1000 => CreatePermission,
+            0b0000_0000_0000_1001 => ChannelBind,
             _ => Unknown,
         }
     }
 
+    #[rustfmt::skip]
     fn to_u16(self) -> u16 {
         use Method::*;
         match self {
-            Binding => 0b0000_0000_0000_0001,
+            Binding          => 0b0000_0000_0000_0001,
+            Allocate         => 0b0000_0000_0000_0011,
+            Refresh          => 0b0000_0000_0000_0100,
+            Send             => 0b0000_0000_0000_0110,
+            Data             => 0b0000_0000_0000_0111,
+            CreatePermission => 0b0000_0000_0000_1000,
+            ChannelBind      => 0b0000_0000_0000_1001,
             _ => panic!("Unknown method"),
         }
     }
@@ -414,19 +434,24 @@ impl Method {
 #[derive(Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[rustfmt::skip]
 pub struct Attributes<'a> {
-    username: Option<&'a str>,              // < 128 utf8 chars
-    message_integrity: Option<&'a [u8]>,    // 20 bytes sha-1
-    error_code: Option<(u16, &'a str)>,     // 300-699 and reason phrase < 128 utf8 chars
-    realm: Option<&'a str>,                 // < 128 utf8 chars
-    nonce: Option<&'a str>,                 // < 128 utf8 chars
-    xor_mapped_address: Option<SocketAddr>, // 0x0020
-    software: Option<&'a str>,              // 0x0022
-    fingerprint: Option<u32>,               // crc32
-    priority: Option<u32>,                  // 0x0024 https://tools.ietf.org/html/rfc8445
-    use_candidate: bool,                    // 0x0025
-    ice_controlled: Option<u64>,            // 0x8029
-    ice_controlling: Option<u64>,           // 0x802a
-    network_cost: Option<(u16, u16)>,       // 0xc057 https://tools.ietf.org/html/draft-thatcher-ice-network-cost-00
+    username: Option<&'a str>,               // < 128 utf8 chars
+    message_integrity: Option<&'a [u8]>,     // 20 bytes sha-1
+    error_code: Option<(u16, &'a str)>,      // 300-699 and reason phrase < 128 utf8 chars
+    channel_number: Option<u16>,             // 0x000C https://tools.ietf.org/html/rfc5766#section-14.1
+    lifetime: Option<u32>,                   // 0x000D https://tools.ietf.org/html/rfc5766#section-14.2
+    xor_peer_address: Option<SocketAddr>,    // 0x0012
+    data: Option<&'a [u8]>,                  // 0x0013
+    realm: Option<&'a str>,                  // < 128 utf8 chars, 0x0014
+    nonce: Option<&'a str>,                  // < 128 utf8 chars, 0x0015
+    xor_relayed_address: Option<SocketAddr>, // 0x0016
+    xor_mapped_address: Option<SocketAddr>,  // 0x0020
+    software: Option<&'a str>,               // 0x0022
+    fingerprint: Option<u32>,                // crc32
+    priority: Option<u32>,                   // 0x0024 https://tools.ietf.org/html/rfc8445
+    use_candidate: bool,                     // 0x0025
+    ice_controlled: Option<u64>,             // 0x8029
+    ice_controlling: Option<u64>,            // 0x802a
+    network_cost: Option<(u16, u16)>,        // 0xc057 https://tools.ietf.org/html/draft-thatcher-ice-network-cost-00
 }
 
 impl<'a> fmt::Debug for Attributes<'a> {
@@ -442,11 +467,26 @@ impl<'a> fmt::Debug for Attributes<'a> {
         if let Some(value) = self.error_code {
             debug_struct.field("error_code", &value);
         }
+        if let Some(value) = self.channel_number {
+            debug_struct.field("channel_number", &value);
+        }
+        if let Some(value) = self.lifetime {
+            debug_struct.field("lifetime", &value);
+        }
+        if let Some(value) = self.xor_peer_address {
+            debug_struct.field("xor_peer_address", &value);
+        }
+        if let Some(value) = self.data {
+            debug_struct.field("data", &value);
+        }
         if let Some(value) = self.realm {
             debug_struct.field("realm", &value);
         }
         if let Some(value) = self.nonce {
             debug_struct.field("nonce", &value);
+        }
+        if let Some(value) = self.xor_relayed_address {
+            debug_struct.field("xor_relayed_address", &value);
         }
         if let Some(value) = self.xor_mapped_address {
             debug_struct.field("xor_mapped_address", &value);
@@ -512,8 +552,13 @@ impl<'a> Attributes<'a> {
     const MESSAGE_INTEGRITY: u16 = 0x0008;
     const ERROR_CODE: u16 = 0x0009;
     const UNKNOWN_ATTRIBUTES: u16 = 0x000a;
+    const CHANNEL_NUMBER: u16 = 0x000c;
+    const LIFETIME: u16 = 0x000d;
+    const XOR_PEER_ADDRESS: u16 = 0x0012;
+    const DATA: u16 = 0x0013;
     const REALM: u16 = 0x0014;
     const NONCE: u16 = 0x0015;
+    const XOR_RELAYED_ADDRESS: u16 = 0x0016;
     const XOR_MAPPED_ADDRESS: u16 = 0x0020;
     const SOFTWARE: u16 = 0x0022;
     const PRIORITY: u16 = 0x0024;
@@ -552,19 +597,63 @@ impl<'a> Attributes<'a> {
         } else {
             0
         };
+        let xor_peer_address = self
+            .xor_peer_address
+            .map(|a| ATTR_TLV_LENGTH + if a.is_ipv4() { 8 } else { 20 })
+            .unwrap_or_default();
+        let xor_relayed_address = self
+            .xor_relayed_address
+            .map(|a| ATTR_TLV_LENGTH + if a.is_ipv4() { 8 } else { 20 })
+            .unwrap_or_default();
+        let data = self
+            .data
+            .map(|d| {
+                let pad = (4 - (d.len() % 4)) % 4;
+                ATTR_TLV_LENGTH + d.len() + pad
+            })
+            .unwrap_or_default();
+        let channel_number = self
+            .channel_number
+            .map(|_| ATTR_TLV_LENGTH + 4)
+            .unwrap_or_default();
+        let lifetime = self
+            .lifetime
+            .map(|_| ATTR_TLV_LENGTH + 4)
+            .unwrap_or_default();
+        let realm = self
+            .realm
+            .map(|v| {
+                let pad = 4 - (v.len() % 4) % 4;
+                ATTR_TLV_LENGTH + v.len() + pad
+            })
+            .unwrap_or_default();
+        let nonce = self
+            .nonce
+            .map(|v| {
+                let pad = 4 - (v.len() % 4) % 4;
+                ATTR_TLV_LENGTH + v.len() + pad
+            })
+            .unwrap_or_default();
 
-        username + ice_controlled + ice_controlling + priority + address + use_candidate
+        username
+            + ice_controlled
+            + ice_controlling
+            + priority
+            + address
+            + use_candidate
+            + xor_peer_address
+            + xor_relayed_address
+            + data
+            + channel_number
+            + lifetime
+            + realm
+            + nonce
     }
 
     fn to_bytes(self, vec: &mut dyn Write, trans_id: &[u8]) -> io::Result<()> {
         if let Some(v) = self.username {
             vec.write_all(&Self::USERNAME.to_be_bytes())?;
-            vec.write_all(&(v.len() as u16).to_be_bytes())?;
-            vec.write_all(v.as_bytes())?;
-            let pad = 4 - (v.len() % 4) % 4;
-            for _ in 0..pad {
-                vec.write_all(&[0])?;
-            }
+            encode_str(Self::USERNAME, v, vec)?;
         }
         if let Some(v) = self.ice_controlled {
             vec.write_all(&Self::ICE_CONTROLLED.to_be_bytes())?;
@@ -591,6 +680,56 @@ impl<'a> Attributes<'a> {
         if self.use_candidate {
             vec.write_all(&Self::USE_CANDIDATE.to_be_bytes())?;
             vec.write_all(&0_u16.to_be_bytes())?;
+        }
+        if let Some(d) = self.data {
+            if d.len() > u16::MAX as usize {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Data attribute too long, max 65535 bytes",
+                ));
+            }
+
+            vec.write_all(&Self::DATA.to_be_bytes())?;
+            vec.write_all(&(d.len() as u16).to_be_bytes())?;
+            vec.write_all(d)?;
+            let pad = (4 - (d.len() % 4)) % 4;
+            for _ in 0..pad {
+                vec.write_all(&[0])?;
+            }
+        }
+        if let Some(v) = self.xor_relayed_address {
+            let mut buf = [0_u8; 20];
+            let len = encode_xor(v, &mut buf, trans_id);
+            vec.write_all(&Self::XOR_RELAYED_ADDRESS.to_be_bytes())?;
+            vec.write_all(&((len as u16).to_be_bytes()))?;
+            vec.write_all(&buf[0..len])?;
+        }
+        if let Some(v) = self.xor_peer_address {
+            let mut buf = [0_u8; 20];
+            let len = encode_xor(v, &mut buf, trans_id);
+            vec.write_all(&Self::XOR_PEER_ADDRESS.to_be_bytes())?;
+            vec.write_all(&((len as u16).to_be_bytes()))?;
+            vec.write_all(&buf[0..len])?;
+        }
+        if let Some(v) = self.channel_number {
+            vec.write_all(&Self::CHANNEL_NUMBER.to_be_bytes())?;
+            vec.write_all(&2_u16.to_be_bytes())?;
+            vec.write_all(&v.to_be_bytes())?;
+            // Add padding to make the length a multiple of 4
+            vec.write_all(&[0, 0])?;
+        }
+        if let Some(v) = self.lifetime {
+            vec.write_all(&Self::LIFETIME.to_be_bytes())?;
+            vec.write_all(&4_u16.to_be_bytes())?;
+            vec.write_all(&v.to_be_bytes())?;
+        }
+        if let Some(v) = self.realm {
+            vec.write_all(&Self::REALM.to_be_bytes())?;
+            encode_str(Self::REALM, v, vec)?;
+        }
+        if let Some(v) = self.nonce {
+            vec.write_all(&Self::NONCE.to_be_bytes())?;
+            encode_str(Self::NONCE, v, vec)?;
         }
 
         Ok(())
@@ -660,14 +799,47 @@ impl<'a> Attributes<'a> {
                         let code = class + (buf[7] % 100) as u16;
                         attributes.error_code = Some((code, decode_str(typ, &buf[8..], len - 4)?));
                     }
+                    Self::CHANNEL_NUMBER => {
+                        if len != 2 {
+                            return Err(StunError::Parse(
+                                "Channel number that isn't 2 in length".into(),
+                            ));
+                        }
+                        let bytes = [buf[4], buf[5]];
+                        let channel = u16::from_be_bytes(bytes);
+                        // Channel numbers must be between 0x4000 and 0x7FFF inclusive
+                        // https://tools.ietf.org/html/rfc5766#section-2.5
+                        if !(0x4000..=0x7FFF).contains(&channel) {
+                            return Err(StunError::Parse(format!(
+                                "Channel number {channel} is not in valid range 0x4000-0x7FFF"
+                            )));
+                        }
+                        attributes.channel_number = Some(channel);
+                    }
+                    Self::LIFETIME => {
+                        if len != 4 {
+                            return Err(StunError::Parse("Lifetime that isn't 4 in length".into()));
+                        }
+                        let bytes = [buf[4], buf[5], buf[6], buf[7]];
+                        attributes.lifetime = Some(u32::from_be_bytes(bytes));
+                    }
                     Self::UNKNOWN_ATTRIBUTES => {
                         warn!("STUN got UnknownAttributes");
+                    }
+                    Self::XOR_PEER_ADDRESS => {
+                        attributes.xor_peer_address = Some(decode_xor(&buf[4..], trans_id)?)
+                    }
+                    Self::DATA => {
+                        attributes.data = Some(&buf[4..len + 4]);
                     }
                     Self::REALM => {
                         attributes.realm = Some(decode_str(typ, &buf[4..], len)?);
                     }
                     Self::NONCE => {
                         attributes.nonce = Some(decode_str(typ, &buf[4..], len)?);
+                    }
+                    Self::XOR_RELAYED_ADDRESS => {
+                        attributes.xor_relayed_address = Some(decode_xor(&buf[4..], trans_id)?);
                     }
                     Self::XOR_MAPPED_ADDRESS => {
                         attributes.xor_mapped_address = Some(decode_xor(&buf[4..], trans_id)?);
@@ -737,6 +909,22 @@ impl<'a> Attributes<'a> {
         }
         Ok(attributes)
     }
+}
+
+fn encode_str(typ: u16, s: &str, out: &mut dyn Write) -> io::Result<()> {
+    if s.len() > 128 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("0x{typ:04x?} too long str len: {}", s.len()),
+        ));
+    }
+    out.write_all(&(s.len() as u16).to_be_bytes())?;
+    out.write_all(s.as_bytes())?;
+    let pad = 4 - (s.len() % 4) % 4;
+    for _ in 0..pad {
+        out.write_all(&[0])?;
+    }
+    Ok(())
 }
 
 fn decode_str(typ: u16, buf: &[u8], len: usize) -> Result<&str, StunError> {
@@ -860,8 +1048,13 @@ mod test {
             username: Some("foo"),
             message_integrity: Some(b"0000"),
             error_code: Some((401, "Unauthorized")),
+            channel_number: Some(0x4000),
+            lifetime: Some(3600),
+            xor_peer_address: Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))),
+            data: Some(&[0xDE, 0xAD, 0xBE, 0xEF]),
             realm: Some("baz"),
             nonce: Some("abcd"),
+            xor_relayed_address: Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))),
             xor_mapped_address: Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))),
             software: Some("str0m"),
             fingerprint: Some(9999),
@@ -876,7 +1069,7 @@ mod test {
 
         assert_eq!(
             dbg_print,
-            r#"Attributes { username: "foo", message_integrity: [48, 48, 48, 48], error_code: (401, "Unauthorized"), realm: "baz", nonce: "abcd", xor_mapped_address: 127.0.0.1:0, software: "str0m", fingerprint: 9999, priority: 1, use_candidate: true, ice_controlled: 10, ice_controlling: 100, network_cost: (10, 10) }"#
+            r#"Attributes { username: "foo", message_integrity: [48, 48, 48, 48], error_code: (401, "Unauthorized"), channel_number: 16384, lifetime: 3600, xor_peer_address: 127.0.0.1:0, data: [222, 173, 190, 239], realm: "baz", nonce: "abcd", xor_relayed_address: 127.0.0.1:0, xor_mapped_address: 127.0.0.1:0, software: "str0m", fingerprint: 9999, priority: 1, use_candidate: true, ice_controlled: 10, ice_controlling: 100, network_cost: (10, 10) }"#
         );
     }
 
@@ -885,5 +1078,256 @@ mod test {
         let result = StunMessage::parse(&[]);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_allocate_request() {
+        let trans_id = TransId::new();
+        let message = StunMessage {
+            method: Method::Allocate,
+            class: Class::Request,
+            trans_id,
+            attrs: Attributes {
+                username: Some("user"),
+                realm: Some("example.org"),
+                nonce: Some("dcd98b7102dd2f0e8b11d0f600bfb0c093"),
+                lifetime: Some(3600),
+                ..Default::default()
+            },
+            integrity: &[],
+            integrity_len: 0,
+        };
+
+        let mut buf = [0u8; 1024];
+        let len = message.to_bytes("password", &mut buf).unwrap();
+        let serialized = &buf[..len];
+
+        let parsed = StunMessage::parse(serialized).unwrap();
+
+        assert_eq!(parsed.method, Method::Allocate);
+        assert_eq!(parsed.class, Class::Request);
+        assert_eq!(parsed.trans_id, trans_id);
+        assert_eq!(parsed.attrs.username, Some("user"));
+        assert_eq!(parsed.attrs.realm, Some("example.org"));
+        assert_eq!(
+            parsed.attrs.nonce,
+            Some("dcd98b7102dd2f0e8b11d0f600bfb0c093")
+        );
+        assert_eq!(parsed.attrs.lifetime, Some(3600));
+        assert!(parsed.check_integrity("password"));
+    }
+
+    #[test]
+    fn parse_allocate_response() {
+        let trans_id = TransId::new();
+        let relayed_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 1234));
+        let message = StunMessage {
+            method: Method::Allocate,
+            class: Class::Success,
+            trans_id,
+            attrs: Attributes {
+                xor_relayed_address: Some(relayed_addr),
+                lifetime: Some(1800),
+                ..Default::default()
+            },
+            integrity: &[],
+            integrity_len: 0,
+        };
+
+        let mut buf = [0u8; 1024];
+        let len = message.to_bytes("password", &mut buf).unwrap();
+        let serialized = &buf[..len];
+
+        let parsed = StunMessage::parse(serialized).unwrap();
+
+        assert_eq!(parsed.method, Method::Allocate);
+        assert_eq!(parsed.class, Class::Success);
+        assert_eq!(parsed.trans_id, trans_id);
+        assert_eq!(parsed.attrs.xor_relayed_address, Some(relayed_addr));
+        assert_eq!(parsed.attrs.lifetime, Some(1800));
+        assert!(parsed.check_integrity("password"));
+    }
+
+    #[test]
+    fn parse_send_request() {
+        // Data length of 3 bytes (0xDEADBE) requires 1 byte of padding
+        let trans_id = TransId::new();
+        let message = StunMessage {
+            method: Method::Send,
+            class: Class::Indication,
+            trans_id,
+            attrs: Attributes {
+                username: Some("user"),
+                realm: Some("example.org"),
+                nonce: Some("dcd98b7102dd2f0e8b11d0f600bfb0c093"),
+                // Data length of 3 bytes (0xDEADBE) requires 1 byte of padding
+                data: Some(&[0xDE, 0xAD, 0xBE]),
+                ..Default::default()
+            },
+            integrity: &[],
+            integrity_len: 0,
+        };
+
+        let mut buf = [0u8; 1024];
+        let len = message.to_bytes("password", &mut buf).unwrap();
+        let serialized = &buf[..len];
+
+        let parsed = StunMessage::parse(serialized).unwrap();
+
+        assert_eq!(parsed.method, Method::Send);
+        assert_eq!(parsed.class, Class::Indication);
+        assert_eq!(parsed.trans_id, trans_id);
+        assert_eq!(parsed.attrs.username, Some("user"));
+        assert_eq!(parsed.attrs.realm, Some("example.org"));
+        assert_eq!(
+            parsed.attrs.nonce,
+            Some("dcd98b7102dd2f0e8b11d0f600bfb0c093")
+        );
+        assert_eq!(parsed.attrs.data, Some(&[0xDE, 0xAD, 0xBE][..]));
+        assert!(parsed.check_integrity("password"));
+    }
+
+    #[test]
+    fn parse_data_indication() {
+        // Data length of 5 bytes (0xDEADBEEF00) requires 3 bytes of padding
+        let trans_id = TransId::new();
+        let message = StunMessage {
+            method: Method::Data,
+            class: Class::Indication,
+            trans_id,
+            attrs: Attributes {
+                data: Some(&[0xDE, 0xAD, 0xBE, 0xEF, 0xF7]),
+                ..Default::default()
+            },
+            integrity: &[],
+            integrity_len: 0,
+        };
+
+        let mut buf = [0u8; 1024];
+        let len = message.to_bytes("password", &mut buf).unwrap();
+        let serialized = &buf[..len];
+
+        let parsed = StunMessage::parse(serialized).unwrap();
+
+        assert_eq!(parsed.method, Method::Data);
+        assert_eq!(parsed.class, Class::Indication);
+        assert_eq!(parsed.trans_id, trans_id);
+        assert_eq!(parsed.attrs.data, Some(&[0xDE, 0xAD, 0xBE, 0xEF, 0xF7][..]));
+        assert!(parsed.check_integrity("password"));
+    }
+
+    #[test]
+    fn parse_refresh_request() {
+        let trans_id = TransId::new();
+        let message = StunMessage {
+            method: Method::Refresh,
+            class: Class::Request,
+            trans_id,
+            attrs: Attributes {
+                username: Some("user"),
+                realm: Some("example.org"),
+                nonce: Some("dcd98b7102dd2f0e8b11d0f600bfb0c093"),
+                lifetime: Some(600),
+                ..Default::default()
+            },
+            integrity: &[],
+            integrity_len: 0,
+        };
+
+        let mut buf = [0u8; 1024];
+        let len = message.to_bytes("password", &mut buf).unwrap();
+        let serialized = &buf[..len];
+
+        let parsed = StunMessage::parse(serialized).unwrap();
+
+        assert_eq!(parsed.method, Method::Refresh);
+        assert_eq!(parsed.class, Class::Request);
+        assert_eq!(parsed.trans_id, trans_id);
+        assert_eq!(parsed.attrs.username, Some("user"));
+        assert_eq!(parsed.attrs.realm, Some("example.org"));
+        assert_eq!(
+            parsed.attrs.nonce,
+            Some("dcd98b7102dd2f0e8b11d0f600bfb0c093")
+        );
+        assert_eq!(parsed.attrs.lifetime, Some(600));
+        assert!(parsed.check_integrity("password"));
+    }
+
+    #[test]
+    fn parse_create_permission_request() {
+        let trans_id = TransId::new();
+        let peer_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 8080));
+        let message = StunMessage {
+            method: Method::CreatePermission,
+            class: Class::Request,
+            trans_id,
+            attrs: Attributes {
+                username: Some("user"),
+                realm: Some("example.org"),
+                nonce: Some("dcd98b7102dd2f0e8b11d0f600bfb0c093"),
+                xor_peer_address: Some(peer_addr),
+                ..Default::default()
+            },
+            integrity: &[],
+            integrity_len: 0,
+        };
+
+        let mut buf = [0u8; 1024];
+        let len = message.to_bytes("password", &mut buf).unwrap();
+        let serialized = &buf[..len];
+
+        let parsed = StunMessage::parse(serialized).unwrap();
+
+        assert_eq!(parsed.method, Method::CreatePermission);
+        assert_eq!(parsed.class, Class::Request);
+        assert_eq!(parsed.trans_id, trans_id);
+        assert_eq!(parsed.attrs.username, Some("user"));
+        assert_eq!(parsed.attrs.realm, Some("example.org"));
+        assert_eq!(
+            parsed.attrs.nonce,
+            Some("dcd98b7102dd2f0e8b11d0f600bfb0c093")
+        );
+        assert_eq!(parsed.attrs.xor_peer_address, Some(peer_addr));
+        assert!(parsed.check_integrity("password"));
+    }
+
+    #[test]
+    fn parse_channel_bind_request() {
+        let trans_id = TransId::new();
+        let peer_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(192, 0, 2, 1), 8080));
+        let message = StunMessage {
+            method: Method::ChannelBind,
+            class: Class::Request,
+            trans_id,
+            attrs: Attributes {
+                username: Some("user"),
+                realm: Some("example.org"),
+                nonce: Some("dcd98b7102dd2f0e8b11d0f600bfb0c093"),
+                channel_number: Some(0x4000),
+                xor_peer_address: Some(peer_addr),
+                ..Default::default()
+            },
+            integrity: &[],
+            integrity_len: 0,
+        };
+
+        let mut buf = [0u8; 1024];
+        let len = message.to_bytes("password", &mut buf).unwrap();
+        let serialized = &buf[..len];
+
+        let parsed = StunMessage::parse(serialized).unwrap();
+
+        assert_eq!(parsed.method, Method::ChannelBind);
+        assert_eq!(parsed.class, Class::Request);
+        assert_eq!(parsed.trans_id, trans_id);
+        assert_eq!(parsed.attrs.username, Some("user"));
+        assert_eq!(parsed.attrs.realm, Some("example.org"));
+        assert_eq!(
+            parsed.attrs.nonce,
+            Some("dcd98b7102dd2f0e8b11d0f600bfb0c093")
+        );
+        assert_eq!(parsed.attrs.channel_number, Some(0x4000));
+        assert_eq!(parsed.attrs.xor_peer_address, Some(peer_addr));
+        assert!(parsed.check_integrity("password"));
     }
 }
