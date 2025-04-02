@@ -11,11 +11,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 mod stun;
-pub use stun::StunMessage;
 pub(crate) use stun::{
-    Class as StunClass, Method as StunMethod, StunError, StunTiming, TransId,
-    DEFAULT_MAX_RETRANSMITS,
+    Class as StunClass, Method as StunMethod, StunError, StunTiming, DEFAULT_MAX_RETRANSMITS,
 };
+pub use stun::{StunMessage, StunMessageBuilder, TransId};
 
 mod id;
 // this is only exported from this crate to avoid needing

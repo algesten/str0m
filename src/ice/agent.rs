@@ -1437,7 +1437,7 @@ impl IceAgent {
 
         let (_, password) = self.stun_credentials(true);
 
-        let reply = StunMessage::reply(req.trans_id, req.source);
+        let reply = StunMessage::binding_reply(req.trans_id, req.source);
 
         trace!(
             "Send STUN reply: {} -> {} {:?}",
@@ -2162,7 +2162,7 @@ mod test {
     }
 
     fn make_authenticated_stun_reply(tx_id: TransId, addr: SocketAddr, password: &str) -> Vec<u8> {
-        let reply = StunMessage::reply(tx_id, addr);
+        let reply = StunMessage::binding_reply(tx_id, addr);
         serialize_stun_msg(reply, password)
     }
 
