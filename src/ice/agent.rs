@@ -917,7 +917,7 @@ impl IceAgent {
 
         let do_integrity_check = |is_request: bool| -> bool {
             let (_, password) = self.stun_credentials(is_request);
-            let integrity_passed = message.check_integrity(&password);
+            let integrity_passed = message.verify(password.as_bytes());
 
             // The integrity is always the last thing we check
             if integrity_passed {
@@ -1449,7 +1449,7 @@ impl IceAgent {
         let mut buf = vec![0_u8; DATAGRAM_MTU];
 
         let n = reply
-            .to_bytes(&password, &mut buf)
+            .to_bytes(Some(password.as_bytes()), &mut buf)
             .expect("IO error writing STUN reply");
         buf.truncate(n);
 
@@ -1496,7 +1496,7 @@ impl IceAgent {
         let mut buf = vec![0_u8; DATAGRAM_MTU];
 
         let n = binding
-            .to_bytes(&password, &mut buf)
+            .to_bytes(Some(password.as_bytes()), &mut buf)
             .expect("IO error writing STUN reply");
         buf.truncate(n);
 
@@ -2172,7 +2172,7 @@ mod test {
         let mut buf = vec![0_u8; DATAGRAM_MTU];
 
         let n = msg
-            .to_bytes(password, &mut buf)
+            .to_bytes(Some(password.as_bytes()), &mut buf)
             .expect("IO error writing STUN message");
         buf.truncate(n);
 
