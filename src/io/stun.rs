@@ -145,24 +145,40 @@ impl<'a> StunMessage<'a> {
 
         let attrs = Attributes::parse(&buf[20..], trans_id, &mut message_integrity_offset)?;
 
-        // message-integrity only includes the length up until and including
-        // the message-integrity attribute.
-        if message_integrity_offset == 0 {
-            return Err(StunError::Parse("No message integrity in incoming".into()));
-        }
-
         // length including message integrity attribute
-        let integrity_len = (message_integrity_offset + 4 + 20) as u16;
+        let (integrity_len, integrity) = if message_integrity_offset > 0 {
+            let integrity_len = (message_integrity_offset + 4 + 20) as u16;
 
-        // password as key is called "short-term credentials"
-        // buffer from beginning including header (+20) to where message-integrity starts.
-        let integrity = &buf[0..(message_integrity_offset + 20)];
+            // password as key is called "short-term credentials"
+            // buffer from beginning including header (+20) to where message-integrity starts.
+            let integrity = &buf[0..(message_integrity_offset + 20)];
+
+            (integrity_len, integrity)
+        } else {
+            (0_u16, [].as_slice())
+        };
 
         if method == Method::Binding && class == Class::Success {
+            // // message-integrity only includes the length up until and including
+            // // the message-integrity attribute.
+            if message_integrity_offset == 0 {
+                return Err(StunError::Parse(
+                    "No message integrity in incoming STUN binding reply".into(),
+                ));
+            }
+
             if attrs.xor_mapped_address.is_none() {
                 return Err(StunError::Parse("STUN packet missing mapped addr".into()));
             }
         } else if method == Method::Binding && class == Class::Request {
+            // // message-integrity only includes the length up until and including
+            // // the message-integrity attribute.
+            if message_integrity_offset == 0 {
+                return Err(StunError::Parse(
+                    "No message integrity in incoming STUN binding request".into(),
+                ));
+            }
+
             if attrs.split_username().is_none() {
                 return Err(StunError::Parse("STUN packet missing username".into()));
             }
@@ -356,10 +372,10 @@ impl<'a> StunMessage<'a> {
 
     /// Verify the integrity of this message against the provided password.
     #[must_use]
-    pub(crate) fn check_integrity(&self, password: &str) -> bool {
+    pub fn verify(&self, password: &[u8]) -> bool {
         if let Some(integ) = self.attrs.message_integrity {
             let comp = crate::crypto::sha1_hmac(
-                password.as_bytes(),
+                password,
                 &[
                     &self.integrity[..2],
                     &[(self.integrity_len >> 8) as u8, self.integrity_len as u8],
@@ -375,18 +391,22 @@ impl<'a> StunMessage<'a> {
 
     /// Serialize this message into the provided buffer, returning the final length of the message.
     ///
-    /// The provided password is used to authenticate the message.
-    pub(crate) fn to_bytes(self, password: &str, buf: &mut [u8]) -> Result<usize, StunError> {
+    /// The provided password is used to authenticate the message if provided, otherwise no `MESSAGE-INTEGRITY` attribute will be present.
+    pub fn to_bytes(self, password: Option<&[u8]>, buf: &mut [u8]) -> Result<usize, StunError> {
         const MSG_HEADER_LEN: usize = 20;
         const MSG_INTEGRITY_LEN: usize = 20;
         const FPRINT_LEN: usize = 4;
         const ATTR_TLV_LENGTH: usize = 4;
 
-        let attr_len = self.attrs.padded_len()
-            + MSG_INTEGRITY_LEN
-            + ATTR_TLV_LENGTH
-            + FPRINT_LEN
-            + ATTR_TLV_LENGTH;
+        let include_message_integrity = password.is_some();
+        let message_integrity_len = if include_message_integrity {
+            MSG_INTEGRITY_LEN + ATTR_TLV_LENGTH
+        } else {
+            0
+        };
+
+        let attr_len =
+            self.attrs.padded_len() + message_integrity_len + FPRINT_LEN + ATTR_TLV_LENGTH;
 
         let mut buf = io::Cursor::new(buf);
 
@@ -404,27 +424,31 @@ impl<'a> StunMessage<'a> {
         // Custom attributes
         self.attrs.to_bytes(&mut buf, &self.trans_id.0)?;
 
-        // Message integrity
-        buf.write_all(&Attributes::MESSAGE_INTEGRITY.to_be_bytes())?;
-        buf.write_all(&(MSG_INTEGRITY_LEN as u16).to_be_bytes())?;
-        buf.write_all(&[0; MSG_INTEGRITY_LEN])?; // placeholder
+        if include_message_integrity {
+            // Message integrity
+            buf.write_all(&Attributes::MESSAGE_INTEGRITY.to_be_bytes())?;
+            buf.write_all(&(MSG_INTEGRITY_LEN as u16).to_be_bytes())?;
+            buf.write_all(&[0; MSG_INTEGRITY_LEN])?; // placeholder
+        }
         let integrity_value_offset = MSG_HEADER_LEN + self.attrs.padded_len() + ATTR_TLV_LENGTH;
 
         // Fingerprint
         buf.write_all(&Attributes::FINGERPRINT.to_be_bytes())?;
         buf.write_all(&(FPRINT_LEN as u16).to_be_bytes())?;
         buf.write_all(&[0; FPRINT_LEN])?; // placeholder
-        let fingerprint_value_offest = integrity_value_offset + MSG_INTEGRITY_LEN + ATTR_TLV_LENGTH;
+        let fingerprint_value_offest = integrity_value_offset + message_integrity_len;
 
         let buf = buf.into_inner();
 
-        // Compute and fill in message integrity
-        let hmac = crate::crypto::sha1_hmac(
-            password.as_bytes(),
-            &[&buf[0..(integrity_value_offset - ATTR_TLV_LENGTH)]],
-        );
-        buf[integrity_value_offset..(integrity_value_offset + MSG_INTEGRITY_LEN)]
-            .copy_from_slice(&hmac);
+        if let Some(password) = password {
+            // Compute and fill in message integrity
+            let hmac = crate::crypto::sha1_hmac(
+                password,
+                &[&buf[0..(integrity_value_offset - ATTR_TLV_LENGTH)]],
+            );
+            buf[integrity_value_offset..(integrity_value_offset + MSG_INTEGRITY_LEN)]
+                .copy_from_slice(&hmac);
+        }
 
         // Fill in total message length
         buf[2..4].copy_from_slice(&(attr_len as u16).to_be_bytes());
@@ -722,6 +746,13 @@ impl<'a> Attributes<'a> {
                 ATTR_TLV_LENGTH + v.len() + pad
             })
             .unwrap_or_default();
+        let error_code = self
+            .error_code
+            .map(|(_, reason)| {
+                let pad = 4 - (reason.len() % 4) % 4;
+                ATTR_TLV_LENGTH + 4 + reason.len() + pad
+            })
+            .unwrap_or_default();
 
         username
             + ice_controlled
@@ -736,6 +767,7 @@ impl<'a> Attributes<'a> {
             + lifetime
             + realm
             + nonce
+            + error_code
     }
 
     fn to_bytes(self, out: &mut dyn Write, trans_id: &[u8]) -> io::Result<()> {
@@ -818,6 +850,18 @@ impl<'a> Attributes<'a> {
         if let Some(v) = self.nonce {
             out.write_all(&Self::NONCE.to_be_bytes())?;
             encode_str(Self::NONCE, v, out)?;
+        }
+        if let Some((code, reason)) = self.error_code {
+            out.write_all(&Self::ERROR_CODE.to_be_bytes())?;
+            // Length
+            out.write_all(&(4_u16 + reason.len() as u16).to_be_bytes())?;
+            // Reserved 16 bites
+            out.write_all(&((0_u16).to_be_bytes()))?;
+            // Reserved 5 high bits, class 3 bits
+            out.write_all(&((0x7_u8 & (code / 100) as u8).to_be_bytes()))?;
+            // code 8 bits
+            out.write_all(&(((code % 100) as u8).to_be_bytes()))?;
+            encode_str_no_len(Self::ERROR_CODE, reason, out)?;
         }
 
         Ok(())
@@ -1000,13 +1044,18 @@ impl<'a> Attributes<'a> {
 }
 
 fn encode_str(typ: u16, s: &str, out: &mut dyn Write) -> io::Result<()> {
+    out.write_all(&(s.len() as u16).to_be_bytes())?;
+
+    encode_str_no_len(typ, s, out)
+}
+
+fn encode_str_no_len(typ: u16, s: &str, out: &mut dyn Write) -> io::Result<()> {
     if s.len() > 128 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("0x{typ:04x?} too long str len: {}", s.len()),
         ));
     }
-    out.write_all(&(s.len() as u16).to_be_bytes())?;
     out.write_all(s.as_bytes())?;
     let pad = 4 - (s.len() % 4) % 4;
     for _ in 0..pad {
@@ -1359,7 +1408,7 @@ mod test {
 
         let packet = PACKET.to_vec();
         let message = StunMessage::parse(&packet).unwrap();
-        assert!(message.check_integrity("xJcE9AQAR7kczUDVOXRUCl"));
+        assert!(message.verify(b"xJcE9AQAR7kczUDVOXRUCl"));
     }
 
     #[test]
@@ -1432,7 +1481,7 @@ mod test {
         };
 
         let mut buf = [0u8; 1024];
-        let len = message.to_bytes("password", &mut buf).unwrap();
+        let len = message.to_bytes(Some(b"password"), &mut buf).unwrap();
         let serialized = &buf[..len];
 
         let parsed = StunMessage::parse(serialized).unwrap();
@@ -1447,7 +1496,7 @@ mod test {
             Some("dcd98b7102dd2f0e8b11d0f600bfb0c093")
         );
         assert_eq!(parsed.attrs.lifetime, Some(3600));
-        assert!(parsed.check_integrity("password"));
+        assert!(parsed.verify(b"password"));
     }
 
     #[test]
@@ -1468,7 +1517,7 @@ mod test {
         };
 
         let mut buf = [0u8; 1024];
-        let len = message.to_bytes("password", &mut buf).unwrap();
+        let len = message.to_bytes(Some(b"password"), &mut buf).unwrap();
         let serialized = &buf[..len];
 
         let parsed = StunMessage::parse(serialized).unwrap();
@@ -1478,7 +1527,41 @@ mod test {
         assert_eq!(parsed.trans_id, trans_id);
         assert_eq!(parsed.attrs.xor_relayed_address, Some(relayed_addr));
         assert_eq!(parsed.attrs.lifetime, Some(1800));
-        assert!(parsed.check_integrity("password"));
+        assert!(parsed.verify(b"password"));
+    }
+
+    #[test]
+    fn parse_allocate_failure_no_integrity() {
+        let trans_id = TransId::new();
+        let message = StunMessage {
+            method: Method::Allocate,
+            class: Class::Failure,
+            trans_id,
+            attrs: Attributes {
+                error_code: Some((401, "Unauthorized")),
+                realm: Some("example.org"),
+                nonce: Some("dcd98b7102dd2f0e8b11d0f600bfb0c093"),
+                ..Default::default()
+            },
+            integrity: &[],
+            integrity_len: 0,
+        };
+
+        let mut buf = [0u8; 1024];
+        let len = message.to_bytes(None, &mut buf).unwrap();
+        let serialized = &buf[..len];
+
+        let parsed = StunMessage::parse(serialized).unwrap();
+
+        assert_eq!(parsed.method, Method::Allocate);
+        assert_eq!(parsed.class, Class::Failure);
+        assert_eq!(parsed.trans_id, trans_id);
+        assert_eq!(parsed.attrs.error_code, Some((401, "Unauthorized")));
+        assert_eq!(parsed.attrs.realm, Some("example.org"));
+        assert_eq!(
+            parsed.attrs.nonce,
+            Some("dcd98b7102dd2f0e8b11d0f600bfb0c093")
+        );
     }
 
     #[test]
@@ -1502,7 +1585,7 @@ mod test {
         };
 
         let mut buf = [0u8; 1024];
-        let len = message.to_bytes("password", &mut buf).unwrap();
+        let len = message.to_bytes(Some(b"password"), &mut buf).unwrap();
         let serialized = &buf[..len];
 
         let parsed = StunMessage::parse(serialized).unwrap();
@@ -1517,7 +1600,7 @@ mod test {
             Some("dcd98b7102dd2f0e8b11d0f600bfb0c093")
         );
         assert_eq!(parsed.attrs.data, Some(&[0xDE, 0xAD, 0xBE][..]));
-        assert!(parsed.check_integrity("password"));
+        assert!(parsed.verify(b"password"));
     }
 
     #[test]
@@ -1537,7 +1620,7 @@ mod test {
         };
 
         let mut buf = [0u8; 1024];
-        let len = message.to_bytes("password", &mut buf).unwrap();
+        let len = message.to_bytes(Some(b"password"), &mut buf).unwrap();
         let serialized = &buf[..len];
 
         let parsed = StunMessage::parse(serialized).unwrap();
@@ -1546,7 +1629,7 @@ mod test {
         assert_eq!(parsed.class, Class::Indication);
         assert_eq!(parsed.trans_id, trans_id);
         assert_eq!(parsed.attrs.data, Some(&[0xDE, 0xAD, 0xBE, 0xEF, 0xF7][..]));
-        assert!(parsed.check_integrity("password"));
+        assert!(parsed.verify(b"password"));
     }
 
     #[test]
@@ -1568,7 +1651,7 @@ mod test {
         };
 
         let mut buf = [0u8; 1024];
-        let len = message.to_bytes("password", &mut buf).unwrap();
+        let len = message.to_bytes(Some(b"password"), &mut buf).unwrap();
         let serialized = &buf[..len];
 
         let parsed = StunMessage::parse(serialized).unwrap();
@@ -1583,7 +1666,7 @@ mod test {
             Some("dcd98b7102dd2f0e8b11d0f600bfb0c093")
         );
         assert_eq!(parsed.attrs.lifetime, Some(600));
-        assert!(parsed.check_integrity("password"));
+        assert!(parsed.verify(b"password"));
     }
 
     #[test]
@@ -1606,7 +1689,7 @@ mod test {
         };
 
         let mut buf = [0u8; 1024];
-        let len = message.to_bytes("password", &mut buf).unwrap();
+        let len = message.to_bytes(Some(b"password"), &mut buf).unwrap();
         let serialized = &buf[..len];
 
         let parsed = StunMessage::parse(serialized).unwrap();
@@ -1621,7 +1704,7 @@ mod test {
             Some("dcd98b7102dd2f0e8b11d0f600bfb0c093")
         );
         assert_eq!(parsed.attrs.xor_peer_address, Some(peer_addr));
-        assert!(parsed.check_integrity("password"));
+        assert!(parsed.verify(b"password"));
     }
 
     #[test]
@@ -1645,7 +1728,7 @@ mod test {
         };
 
         let mut buf = [0u8; 1024];
-        let len = message.to_bytes("password", &mut buf).unwrap();
+        let len = message.to_bytes(Some(b"password"), &mut buf).unwrap();
         let serialized = &buf[..len];
 
         let parsed = StunMessage::parse(serialized).unwrap();
@@ -1661,7 +1744,7 @@ mod test {
         );
         assert_eq!(parsed.attrs.channel_number, Some(0x4000));
         assert_eq!(parsed.attrs.xor_peer_address, Some(peer_addr));
-        assert!(parsed.check_integrity("password"));
+        assert!(parsed.verify(b"password"));
     }
 
     #[test]
