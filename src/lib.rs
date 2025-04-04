@@ -606,6 +606,7 @@
 #![allow(clippy::get_first)]
 #![allow(clippy::needless_lifetimes)]
 #![allow(clippy::precedence)]
+#![allow(clippy::doc_overindented_list_items)]
 #![deny(missing_docs)]
 
 #[macro_use]
