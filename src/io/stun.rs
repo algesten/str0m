@@ -833,9 +833,9 @@ impl<'a> Attributes<'a> {
         }
         if let Some(v) = self.channel_number {
             out.write_all(&Self::CHANNEL_NUMBER.to_be_bytes())?;
-            out.write_all(&2_u16.to_be_bytes())?;
+            out.write_all(&4_u16.to_be_bytes())?;
             out.write_all(&v.to_be_bytes())?;
-            // Add padding to make the length a multiple of 4
+            // RFU bytes
             out.write_all(&[0, 0])?;
         }
         if let Some(v) = self.lifetime {
@@ -932,10 +932,11 @@ impl<'a> Attributes<'a> {
                         attributes.error_code = Some((code, decode_str(typ, &buf[8..], len - 4)?));
                     }
                     Self::CHANNEL_NUMBER => {
-                        if len != 2 {
-                            return Err(StunError::Parse(
-                                "Channel number that isn't 2 in length".into(),
-                            ));
+                        if len != 4 {
+                            return Err(StunError::Parse(format!(
+                                "Channel number that isn't 4 in length, was {}",
+                                len
+                            )));
                         }
                         let bytes = [buf[4], buf[5]];
                         let channel = u16::from_be_bytes(bytes);
