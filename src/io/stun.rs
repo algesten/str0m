@@ -653,6 +653,7 @@ use std::{io, str};
 
 use crate::util::NonCryptographicRng;
 
+const PAD: [u8; 4] = [0, 0, 0, 0];
 impl<'a> Attributes<'a> {
     const ALTERNATE_SERVER: u16 = 0x8023;
     const FINGERPRINT: u16 = 0x8028;
@@ -683,10 +684,7 @@ impl<'a> Attributes<'a> {
 
         let username = self
             .username
-            .map(|v| {
-                let pad = 4 - (v.len() % 4) % 4;
-                ATTR_TLV_LENGTH + v.len() + pad
-            })
+            .map(|v| ATTR_TLV_LENGTH + v.len() + calculate_pad(v.len()))
             .unwrap_or_default();
         let ice_controlled = self
             .ice_controlled
@@ -719,10 +717,7 @@ impl<'a> Attributes<'a> {
             .unwrap_or_default();
         let data = self
             .data
-            .map(|d| {
-                let pad = (4 - (d.len() % 4)) % 4;
-                ATTR_TLV_LENGTH + d.len() + pad
-            })
+            .map(|d| ATTR_TLV_LENGTH + d.len() + calculate_pad(d.len()))
             .unwrap_or_default();
         let channel_number = self
             .channel_number
@@ -734,24 +729,15 @@ impl<'a> Attributes<'a> {
             .unwrap_or_default();
         let realm = self
             .realm
-            .map(|v| {
-                let pad = 4 - (v.len() % 4) % 4;
-                ATTR_TLV_LENGTH + v.len() + pad
-            })
+            .map(|v| ATTR_TLV_LENGTH + v.len() + calculate_pad(v.len()))
             .unwrap_or_default();
         let nonce = self
             .nonce
-            .map(|v| {
-                let pad = 4 - (v.len() % 4) % 4;
-                ATTR_TLV_LENGTH + v.len() + pad
-            })
+            .map(|v| ATTR_TLV_LENGTH + v.len() + calculate_pad(v.len()))
             .unwrap_or_default();
         let error_code = self
             .error_code
-            .map(|(_, reason)| {
-                let pad = 4 - (reason.len() % 4) % 4;
-                ATTR_TLV_LENGTH + 4 + reason.len() + pad
-            })
+            .map(|(_, reason)| ATTR_TLV_LENGTH + 4 + reason.len() + calculate_pad(reason.len()))
             .unwrap_or_default();
 
         username
@@ -774,6 +760,8 @@ impl<'a> Attributes<'a> {
         if let Some(v) = self.username {
             out.write_all(&Self::USERNAME.to_be_bytes())?;
             encode_str(Self::USERNAME, v, out)?;
+            let pad = calculate_pad(v.len());
+            out.write_all(&PAD[0..pad])?;
         }
         if let Some(v) = self.ice_controlled {
             out.write_all(&Self::ICE_CONTROLLED.to_be_bytes())?;
@@ -812,10 +800,9 @@ impl<'a> Attributes<'a> {
             out.write_all(&Self::DATA.to_be_bytes())?;
             out.write_all(&(d.len() as u16).to_be_bytes())?;
             out.write_all(d)?;
-            let pad = (4 - (d.len() % 4)) % 4;
-            for _ in 0..pad {
-                out.write_all(&[0])?;
-            }
+
+            let pad = calculate_pad(d.len());
+            out.write_all(&PAD[0..pad])?;
         }
         if let Some(v) = self.xor_relayed_address {
             let mut buf = [0_u8; 20];
@@ -846,22 +833,32 @@ impl<'a> Attributes<'a> {
         if let Some(v) = self.realm {
             out.write_all(&Self::REALM.to_be_bytes())?;
             encode_str(Self::REALM, v, out)?;
+            let pad = calculate_pad(v.len());
+            out.write_all(&PAD[0..pad])?;
         }
         if let Some(v) = self.nonce {
             out.write_all(&Self::NONCE.to_be_bytes())?;
             encode_str(Self::NONCE, v, out)?;
+            let pad = calculate_pad(v.len());
+            out.write_all(&PAD[0..pad])?;
         }
         if let Some((code, reason)) = self.error_code {
             out.write_all(&Self::ERROR_CODE.to_be_bytes())?;
             // Length
             out.write_all(&(4_u16 + reason.len() as u16).to_be_bytes())?;
-            // Reserved 16 bites
+            // Reserved 16 bits
             out.write_all(&((0_u16).to_be_bytes()))?;
             // Reserved 5 high bits, class 3 bits
             out.write_all(&((0x7_u8 & (code / 100) as u8).to_be_bytes()))?;
             // code 8 bits
             out.write_all(&(((code % 100) as u8).to_be_bytes()))?;
+            // Total written 8 bytes 4 byte aligned
             encode_str_no_len(Self::ERROR_CODE, reason, out)?;
+
+            // Need to ensure padding is correct only with respect to reason since the
+            // prior length was 4 byte aligned.
+            let pad = calculate_pad(reason.len());
+            out.write_all(&PAD[0..pad])?;
         }
 
         Ok(())
@@ -1035,13 +1032,17 @@ impl<'a> Attributes<'a> {
                 }
             }
             // attributes are on even 32 bit boundaries
-            let pad = (4 - (len % 4)) % 4;
+            let pad = calculate_pad(len);
             let pad_len = len + pad;
             buf = &buf[(4 + pad_len)..];
             off += 4 + pad_len;
         }
         Ok(attributes)
     }
+}
+
+fn calculate_pad(len: usize) -> usize {
+    (4 - (len % 4)) % 4
 }
 
 fn encode_str(typ: u16, s: &str, out: &mut dyn Write) -> io::Result<()> {
@@ -1058,10 +1059,6 @@ fn encode_str_no_len(typ: u16, s: &str, out: &mut dyn Write) -> io::Result<()> {
         ));
     }
     out.write_all(s.as_bytes())?;
-    let pad = 4 - (s.len() % 4) % 4;
-    for _ in 0..pad {
-        out.write_all(&[0])?;
-    }
     Ok(())
 }
 
@@ -1453,6 +1450,24 @@ mod test {
         assert_eq!(
             dbg_print,
             r#"Attributes { username: "foo", message_integrity: [48, 48, 48, 48], error_code: (401, "Unauthorized"), channel_number: 16384, lifetime: 3600, xor_peer_address: 127.0.0.1:0, data: [222, 173, 190, 239], realm: "baz", nonce: "abcd", xor_relayed_address: 127.0.0.1:0, xor_mapped_address: 127.0.0.1:0, software: "str0m", fingerprint: 9999, priority: 1, use_candidate: true, ice_controlled: 10, ice_controlling: 100, network_cost: (10, 10) }"#
+        );
+    }
+
+    #[test]
+    fn test_username_4_bytes_no_padding() {
+        let attrs = Attributes {
+            username: Some("abcd"),
+            ..Default::default()
+        };
+        let mut buf = vec![];
+        let trans_id = TransId::new();
+        attrs
+            .to_bytes(&mut buf, &trans_id.0)
+            .expect("To serialize attributes");
+        assert_eq!(
+            buf.len(),
+            8,
+            "A 4 byte username attribute should be 8 bytes, 4 for TVL and 4 for the username"
         );
     }
 
