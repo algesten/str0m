@@ -2,12 +2,13 @@
 
 use std::{
     collections::{HashMap, VecDeque},
+    net::SocketAddr,
     time::{Duration, Instant},
 };
 
-use crate::rtp_::MidRid;
 use crate::rtp_::{Mid, Rid};
 use crate::Bitrate;
+use crate::{io::Protocol, rtp_::MidRid};
 
 pub(crate) struct Stats {
     last_now: Option<Instant>,
@@ -25,6 +26,7 @@ pub(crate) struct StatsSnapshot {
     pub ingress: HashMap<MidRid, MediaIngressStats>,
     pub egress: HashMap<MidRid, MediaEgressStats>,
     pub bwe_tx: Option<Bitrate>,
+    pub selected_candidate_pair: Option<CandidatePairStats>,
     timestamp: Instant,
 }
 
@@ -40,6 +42,7 @@ impl StatsSnapshot {
             ingress: HashMap::new(),
             egress: HashMap::new(),
             bwe_tx: None,
+            selected_candidate_pair: None,
             timestamp,
         }
     }
@@ -75,6 +78,26 @@ pub struct PeerStats {
     pub egress_loss_fraction: Option<f32>,
     /// The ingress loss since the last stats event.
     pub ingress_loss_fraction: Option<f32>,
+    /// The selected ICE candidate pair, if any.
+    pub selected_candidate_pair: Option<CandidatePairStats>,
+}
+
+#[derive(Debug, Clone)]
+/// ICE candidate pair statistics.
+pub struct CandidatePairStats {
+    /// The selected protocol.
+    pub protocol: Protocol,
+    /// The local candidate.
+    pub local: CandidateStats,
+    /// The remote candidate.
+    pub remote: CandidateStats,
+}
+
+#[derive(Debug, Clone)]
+/// ICE candidate statistics.
+pub struct CandidateStats {
+    /// The address of the candidate.
+    pub addr: SocketAddr,
 }
 
 /// Outgoing media statistics in [`Event::MediaEgressStats`][crate::Event::MediaEgressStats].
@@ -233,6 +256,7 @@ impl Stats {
             bwe_tx: snapshot.bwe_tx,
             egress_loss_fraction: snapshot.egress_loss_fraction,
             ingress_loss_fraction: snapshot.ingress_loss_fraction,
+            selected_candidate_pair: snapshot.selected_candidate_pair.clone(),
         };
 
         self.events.push_back(StatsEvent::Peer(event));
