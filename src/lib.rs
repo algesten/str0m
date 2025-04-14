@@ -727,7 +727,10 @@ mod session;
 use session::Session;
 
 pub mod stats;
-use stats::{MediaEgressStats, MediaIngressStats, PeerStats, Stats, StatsEvent, StatsSnapshot};
+use stats::{
+    CandidatePairStats, CandidateStats, MediaEgressStats, MediaIngressStats, PeerStats, Stats,
+    StatsEvent, StatsSnapshot,
+};
 
 mod streams;
 
@@ -1760,6 +1763,14 @@ impl Rtc {
                 let mut snapshot = StatsSnapshot::new(now);
                 snapshot.peer_rx = self.peer_bytes_rx;
                 snapshot.peer_tx = self.peer_bytes_tx;
+                snapshot.selected_candidate_pair =
+                    self.send_addr.as_ref().map(|s| CandidatePairStats {
+                        protocol: s.proto,
+                        local: CandidateStats { addr: s.source },
+                        remote: CandidateStats {
+                            addr: s.destination,
+                        },
+                    });
                 self.session.visit_stats(now, &mut snapshot);
                 stats.do_handle_timeout(&mut snapshot);
             }
