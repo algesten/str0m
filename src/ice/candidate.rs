@@ -383,8 +383,15 @@ impl Candidate {
     }
 
     pub(crate) fn local_preference(&self) -> u32 {
-        self.local_preference
-            .unwrap_or_else(|| if self.addr.is_ipv6() { 65_535 } else { 65_534 })
+        if let Some(local) = self.local_preference {
+            return local;
+        }
+
+        if self.addr.is_ipv6() {
+            65_535
+        } else {
+            65_534
+        }
     }
 
     pub(crate) fn component_id(&self) -> u16 {
