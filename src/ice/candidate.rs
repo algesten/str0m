@@ -227,7 +227,7 @@ impl Candidate {
     ///
     /// ICE generally prefers IPv6 over IPv4, meaning an IPv6 address sent to from an IPv4 base
     /// may be preferred over the IPv4 address on the same allocation.
-    /// In order to avoid conversions across IP versions, we take into account this `base` address
+    /// In order to avoid conversions across IP versions, we take into account this address
     /// as part of priority calculation.
     pub fn relayed(
         addr: SocketAddr,
