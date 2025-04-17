@@ -1765,7 +1765,6 @@ impl IceAgent {
 
 #[cfg(test)]
 mod test {
-    use tracing_subscriber::util::SubscriberInitExt;
 
     use crate::ice_::test::relay;
 
