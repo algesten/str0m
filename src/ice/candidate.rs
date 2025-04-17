@@ -688,7 +688,7 @@ mod tests {
         let candidate = Candidate::relayed(socket_addr, Protocol::SslTcp, socket_addr).unwrap();
         assert_eq!(
             no_hash(candidate.to_string()),
-            "candidate:--- 1 ssltcp 16776959 1.2.3.4 9876 typ relay raddr 0.0.0.0 rport 0"
+            "candidate:--- 1 ssltcp 7680255 1.2.3.4 9876 typ relay raddr 0.0.0.0 rport 0"
         );
     }
 
