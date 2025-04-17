@@ -528,7 +528,7 @@ impl IceAgent {
                 ServerReflexive => 32_767,
                 Relayed => 16_383,
             };
-            x - (if ip.is_ipv6() { 0 } else { 1 })
+            x - if ip.is_ipv6() { 0 } else { 1 }
         };
 
         // Count the number of existing candidates of the same kind.
