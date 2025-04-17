@@ -804,6 +804,38 @@ mod test {
         assert_eq!(a2.num_candidate_pairs(), 1);
     }
 
+    #[test]
+    fn relayed_candidates_across_ip_versions_have_lower_priority() {
+        let mut agent = IceAgent::new();
+
+        let relay_ipv4_ipv4 = relay("1.1.1.1:0", "udp", "2.2.2.2:0");
+        let relay_ipv4_ipv6 = relay("1.1.1.1:1", "udp", "[::1]:0");
+        let relay_ipv6_ipv4 = relay("[::1]:0", "udp", "1.1.1.1:0");
+        let relay_ipv6_ipv6 = relay("[::1]:1", "udp", "[::2]:0");
+
+        agent.add_local_candidate(relay_ipv4_ipv4.clone());
+        agent.add_local_candidate(relay_ipv6_ipv6.clone());
+        agent.add_local_candidate(relay_ipv4_ipv6.clone());
+        agent.add_local_candidate(relay_ipv6_ipv4.clone());
+
+        let extract_candidate = |c: &Candidate| {
+            agent
+                .local_candidates()
+                .iter()
+                .find(|cand| cand.addr() == c.addr())
+                .unwrap()
+        };
+
+        let relay_ipv4_ipv4 = extract_candidate(&relay_ipv4_ipv4);
+        let relay_ipv4_ipv6 = extract_candidate(&relay_ipv4_ipv6);
+        let relay_ipv6_ipv4 = extract_candidate(&relay_ipv6_ipv4);
+        let relay_ipv6_ipv6 = extract_candidate(&relay_ipv6_ipv6);
+
+        assert!(relay_ipv6_ipv6.prio() > relay_ipv4_ipv4.prio());
+        assert!(relay_ipv4_ipv4.prio() > relay_ipv4_ipv6.prio());
+        assert!(relay_ipv4_ipv4.prio() > relay_ipv6_ipv4.prio());
+    }
+
     pub struct TestAgent {
         pub start_time: Instant,
         pub agent: IceAgent,
