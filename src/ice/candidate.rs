@@ -57,7 +57,7 @@ pub struct Candidate {
     ///
     /// TURN allows a client to allocate IPv4 and IPv6 addresses in a single allocation.
     /// Thus, a client may send traffic over IPv4 to an IPv6 peer.
-    /// In order to avoid conversions across IP versions, we take into account this `base` address when calculating the priority.
+    /// In order to avoid conversions across IP versions, we take into account this address when calculating the priority.
     local_turn_socket: Option<SocketAddr>,
 
     /// Type of candidate.
