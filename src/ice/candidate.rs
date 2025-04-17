@@ -418,10 +418,15 @@ impl Candidate {
             return local;
         }
 
-        if self.addr.is_ipv6() {
-            65_535
-        } else {
-            65_534
+        let Some(relay_base) = self.relay_base else {
+            return if self.addr.is_ipv6() { 65_535 } else { 65_534 };
+        };
+
+        match (self.addr, relay_base) {
+            (SocketAddr::V6(_), SocketAddr::V6(_)) => 60_000,
+            (SocketAddr::V4(_), SocketAddr::V4(_)) => 50_000,
+            (SocketAddr::V4(_), SocketAddr::V6(_)) => 40_000,
+            (SocketAddr::V6(_), SocketAddr::V4(_)) => 40_000,
         }
     }
 
