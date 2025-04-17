@@ -94,8 +94,12 @@ mod test {
         Candidate::server_reflexive(sock(s), sock(base), proto).unwrap()
     }
 
-    pub fn relay(s: impl Into<String>, proto: impl TryInto<Protocol>) -> Candidate {
-        Candidate::relayed(sock(s), proto).unwrap()
+    pub fn relay(
+        s: impl Into<String>,
+        proto: impl TryInto<Protocol>,
+        b: impl Into<String>,
+    ) -> Candidate {
+        Candidate::relayed(sock(s), proto, sock(b)).unwrap()
     }
 
     /// Transform the socket to rig different test scenarios.
@@ -677,7 +681,7 @@ mod test {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 
-        let c1 = relay("1.1.1.1:1000", "udp");
+        let c1 = relay("1.1.1.1:1000", "udp", "2.2.2.2:1000");
         a1.add_local_candidate(c1.clone());
         a2.add_remote_candidate(c1);
         let c2 = srflx("4.4.4.4:1000", "3.3.3.3:1000", "udp");
@@ -698,8 +702,8 @@ mod test {
             progress(&mut a1, &mut a2);
         }
 
-        a1.add_local_candidate(relay("1.1.1.1:1001", "udp"));
-        a2.add_remote_candidate(relay("1.1.1.1:1001", "udp"));
+        a1.add_local_candidate(relay("1.1.1.1:1001", "udp", "5.5.5.5:1001"));
+        a2.add_remote_candidate(relay("1.1.1.1:1001", "udp", "5.5.5.5:1001"));
 
         loop {
             if a2.has_event(|e| {
@@ -728,8 +732,8 @@ mod test {
         let c2 = host("1.1.1.1:1001", "udp");
 
         // We need a 2nd pair of candidates to make sure the agent doesn't go straight into `Completed`.
-        let c3 = relay("2.2.2.2:1000", "udp");
-        let c4 = relay("2.2.2.2:1001", "udp");
+        let c3 = relay("2.2.2.2:1000", "udp", "5.5.5.5:1000");
+        let c4 = relay("2.2.2.2:1001", "udp", "5.5.5.5:1001");
 
         // Agent 1 knows all candidates ahead of time.
         a1.add_local_candidate(c1.clone());
