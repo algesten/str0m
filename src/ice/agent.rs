@@ -528,7 +528,7 @@ impl IceAgent {
                 ServerReflexive => 32_767,
                 Relayed => 16_383,
             };
-            x - if ip.is_ipv6() { 0 } else { 1 }
+            x - (if ip.is_ipv6() { 0 } else { 1 })
         };
 
         // Count the number of existing candidates of the same kind.
@@ -539,7 +539,20 @@ impl IceAgent {
             .filter(|v| v.addr().is_ipv6() == ip.is_ipv6())
             .count() as u32;
 
-        let pref = counter_start - same_kind * 2;
+        // For relayed candidates, we add a "punishment" to the local preference
+        // if the `turn_socket` differs in the IP version from the allocated address
+        // of the candidate.
+        // This punishment ensures that we prefer relayed within the same IP version,
+        // e.g. IPv4 <> IPv4 over ones that translate between IP version, e.g. IPv4 <> IPv6.
+        let relay_across_ip_version_punishment = c.turn_socket().map_or(0, |relay_base| {
+            if relay_base.ip().is_ipv4() != ip.is_ipv4() {
+                1000
+            } else {
+                0
+            }
+        });
+
+        let pref = counter_start - same_kind * 2 - relay_across_ip_version_punishment;
         trace!("Calculated local preference: {}", pref);
 
         c.set_local_preference(pref);
@@ -1752,6 +1765,10 @@ impl IceAgent {
 
 #[cfg(test)]
 mod test {
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    use crate::ice_::test::relay;
+
     use super::*;
     use std::net::SocketAddr;
 
@@ -2147,6 +2164,38 @@ mod test {
         );
 
         assert!(agent.poll_transmit().is_none());
+    }
+
+    #[test]
+    fn relayed_candidates_across_ip_versions_have_lower_priority() {
+        let mut agent = IceAgent::new();
+
+        let relay_ipv4_ipv4 = relay("1.1.1.1:0", "udp", "2.2.2.2:0");
+        let relay_ipv4_ipv6 = relay("1.1.1.1:1", "udp", "[::1]:0");
+        let relay_ipv6_ipv4 = relay("[::1]:0", "udp", "1.1.1.1:0");
+        let relay_ipv6_ipv6 = relay("[::1]:1", "udp", "[::2]:0");
+
+        agent.add_local_candidate(relay_ipv4_ipv4.clone());
+        agent.add_local_candidate(relay_ipv6_ipv6.clone());
+        agent.add_local_candidate(relay_ipv4_ipv6.clone());
+        agent.add_local_candidate(relay_ipv6_ipv4.clone());
+
+        let extract_candidate = |c: &Candidate| {
+            agent
+                .local_candidates()
+                .iter()
+                .find(|cand| cand.addr() == c.addr())
+                .unwrap()
+        };
+
+        let relay_ipv4_ipv4 = extract_candidate(&relay_ipv4_ipv4);
+        let relay_ipv4_ipv6 = extract_candidate(&relay_ipv4_ipv6);
+        let relay_ipv6_ipv4 = extract_candidate(&relay_ipv6_ipv4);
+        let relay_ipv6_ipv6 = extract_candidate(&relay_ipv6_ipv6);
+
+        assert!(relay_ipv6_ipv6.prio() > relay_ipv4_ipv4.prio());
+        assert!(relay_ipv4_ipv4.prio() > relay_ipv4_ipv6.prio());
+        assert!(relay_ipv4_ipv4.prio() > relay_ipv6_ipv4.prio());
     }
 
     fn make_serialized_binding_request(

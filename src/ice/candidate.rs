@@ -53,12 +53,12 @@ pub struct Candidate {
     /// also have a base, but it's the same as the host candidate.
     base: Option<SocketAddr>, // the "base" used for local candidates.
 
-    /// The address the client uses to communicate with the relay.
+    /// The local socket the client uses to communicate with the TURN server.
     ///
     /// TURN allows a client to allocate IPv4 and IPv6 addresses in a single allocation.
     /// Thus, a client may send traffic over IPv4 to an IPv6 peer.
     /// In order to avoid conversions across IP versions, we take into account this `base` address when calculating the priority.
-    relay_base: Option<SocketAddr>,
+    local_turn_socket: Option<SocketAddr>,
 
     /// Type of candidate.
     kind: CandidateKind, // host/srflx/prflx/relay
@@ -117,7 +117,7 @@ impl Candidate {
         prio: Option<u32>,
         addr: SocketAddr,
         base: Option<SocketAddr>,
-        relay_base: Option<SocketAddr>,
+        local_turn_socket: Option<SocketAddr>,
         kind: CandidateKind,
         raddr: Option<SocketAddr>,
         ufrag: Option<String>,
@@ -134,7 +134,7 @@ impl Candidate {
             ufrag,
             local_preference: None,
             discarded: false,
-            relay_base,
+            local_turn_socket,
         }
     }
 
@@ -218,8 +218,8 @@ impl Candidate {
     /// Relayed candidates are server sockets relaying traffic to a local socket.
     /// Allocate a TURN addr to use as a local candidate.
     ///
-    /// - `addr` is the address of the allocation on the relay.
-    /// - `relay_base` is the local socket used to communicate with the relay.
+    /// - `addr` is the address of the allocation on the TURN server.
+    /// - `local_turn_socket` is the local socket used to communicate with the TURN server.
     ///
     /// These two may be different IP versions.
     /// TURN allows a client to allocate IPv4 and IPv6 addresses in a single allocation.
@@ -232,7 +232,7 @@ impl Candidate {
     pub fn relayed(
         addr: SocketAddr,
         proto: impl TryInto<Protocol>,
-        relay_base: SocketAddr,
+        local_turn_socket: SocketAddr,
     ) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
@@ -245,7 +245,7 @@ impl Candidate {
             None,
             addr,
             Some(addr),
-            Some(relay_base),
+            Some(local_turn_socket),
             CandidateKind::Relayed,
             Some(Self::arbitrary_raddr(addr)),
             None,
@@ -418,15 +418,15 @@ impl Candidate {
             return local;
         }
 
-        let Some(relay_base) = self.relay_base else {
+        let Some(relay_base) = self.local_turn_socket else {
             return if self.addr.is_ipv6() { 65_535 } else { 65_534 };
         };
 
         match (self.addr, relay_base) {
             (SocketAddr::V6(_), SocketAddr::V6(_)) => 60_000,
-            (SocketAddr::V4(_), SocketAddr::V4(_)) => 50_000,
-            (SocketAddr::V4(_), SocketAddr::V6(_)) => 40_000,
-            (SocketAddr::V6(_), SocketAddr::V4(_)) => 40_000,
+            (SocketAddr::V4(_), SocketAddr::V4(_)) => 30_000,
+            (SocketAddr::V4(_), SocketAddr::V6(_)) => 10_000,
+            (SocketAddr::V6(_), SocketAddr::V4(_)) => 10_000,
         }
     }
 
@@ -447,6 +447,10 @@ impl Candidate {
 
     pub(crate) fn base(&self) -> SocketAddr {
         self.base.unwrap_or(self.addr)
+    }
+
+    pub(crate) fn turn_socket(&self) -> Option<SocketAddr> {
+        self.local_turn_socket
     }
 
     pub(crate) fn raddr(&self) -> Option<SocketAddr> {
