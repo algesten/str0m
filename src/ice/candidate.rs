@@ -745,6 +745,18 @@ mod tests {
         assert!(candidates[5].contains("host"));
     }
 
+    #[test]
+    fn relay_candidate_priorities_across_ip_versions() {
+        let relay_ipv4_ipv4 = relay_c("1.1.1.1:0", "2.2.2.2:0");
+        let relay_ipv4_ipv6 = relay_c("1.1.1.1:0", "[::1]:0");
+        let relay_ipv6_ipv4 = relay_c("[::1]:0", "1.1.1.1:0");
+        let relay_ipv6_ipv6 = relay_c("[::1]:0", "[::2]:0");
+
+        assert!(relay_ipv6_ipv6.prio() > relay_ipv4_ipv4.prio());
+        assert!(relay_ipv4_ipv4.prio() > relay_ipv4_ipv6.prio());
+        assert!(relay_ipv4_ipv4.prio() > relay_ipv6_ipv4.prio());
+    }
+
     fn host(socket: &str) -> String {
         Candidate::host(socket.parse().unwrap(), "udp")
             .unwrap()
