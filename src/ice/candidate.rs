@@ -406,6 +406,16 @@ impl Candidate {
         self.base.unwrap_or(self.addr)
     }
 
+    pub(crate) fn source_addr(&self) -> SocketAddr {
+        // For relayed candidates, the source address the allocated address on the TURN server.
+        // The base is the local address.
+        if self.kind == CandidateKind::Relayed {
+            self.addr
+        } else {
+            self.base()
+        }
+    }
+
     pub(crate) fn raddr(&self) -> Option<SocketAddr> {
         self.raddr
     }

@@ -1416,7 +1416,7 @@ impl IceAgent {
 
         let local = pair.local_candidate(&self.local_candidates);
         let proto = local.proto();
-        let local_addr = local.base();
+        let local_addr = local.source_addr();
         let remote = pair.remote_candidate(&self.remote_candidates);
         let remote_addr = remote.addr();
 
@@ -1658,7 +1658,7 @@ impl IceAgent {
             self.nominated_send = Some(best_prio.id());
             self.emit_event(IceAgentEvent::NominatedSend {
                 proto: local.proto(),
-                source: local.base(),
+                source: local.source_addr(),
                 destination: remote.addr(),
             })
         }
