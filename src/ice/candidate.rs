@@ -205,6 +205,12 @@ impl Candidate {
     ///
     /// Relayed candidates are server sockets relaying traffic to a local socket.
     /// Allocate a TURN addr to use as a local candidate.
+    ///
+    /// * `addr` - The TURN server's allocated address that will be used for relaying traffic.
+    ///            This is the address that will be used for communication with the peer.
+    /// * `base` - The local interface address that corresponds to this candidate. This is the
+    ///            address from which the TURN allocation request was sent.
+    /// * `proto` - The transport protocol to use (UDP, TCP, etc.).
     pub fn relayed(
         addr: SocketAddr,
         base: SocketAddr,
