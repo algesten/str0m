@@ -1767,8 +1767,6 @@ impl IceAgent {
 
 #[cfg(test)]
 mod test {
-    use crate::ice_::test::relay;
-
     use super::*;
     use std::net::SocketAddr;
 
@@ -2194,37 +2192,5 @@ mod test {
         buf.truncate(n);
 
         buf
-    }
-
-    #[test]
-    fn relayed_candidates_across_ip_versions_have_lower_priority() {
-        let mut agent = IceAgent::new();
-
-        let relay_ipv4_ipv4 = relay("1.1.1.1:5000", "2.2.2.2:5000", "udp");
-        let relay_ipv4_ipv6 = relay("1.1.1.1:5001", "[::1]:5000", "udp");
-        let relay_ipv6_ipv4 = relay("[::1]:5000", "1.1.1.1:5000", "udp");
-        let relay_ipv6_ipv6 = relay("[::1]:5001", "[::2]:5000", "udp");
-
-        agent.add_local_candidate(relay_ipv4_ipv6.clone());
-        agent.add_local_candidate(relay_ipv6_ipv4.clone());
-        agent.add_local_candidate(relay_ipv4_ipv4.clone());
-        agent.add_local_candidate(relay_ipv6_ipv6.clone());
-
-        let extract_candidate = |c: &Candidate| {
-            agent
-                .local_candidates()
-                .iter()
-                .find(|cand| cand.addr() == c.addr())
-                .unwrap()
-        };
-
-        let relay_ipv4_ipv4 = extract_candidate(&relay_ipv4_ipv4);
-        let relay_ipv4_ipv6 = extract_candidate(&relay_ipv4_ipv6);
-        let relay_ipv6_ipv4 = extract_candidate(&relay_ipv6_ipv4);
-        let relay_ipv6_ipv6 = extract_candidate(&relay_ipv6_ipv6);
-
-        assert!(relay_ipv6_ipv6.prio() > relay_ipv4_ipv4.prio());
-        assert!(relay_ipv4_ipv4.prio() > relay_ipv4_ipv6.prio());
-        assert!(relay_ipv4_ipv4.prio() > relay_ipv6_ipv4.prio());
     }
 }

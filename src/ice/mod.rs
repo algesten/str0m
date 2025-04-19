@@ -804,6 +804,56 @@ mod test {
         assert_eq!(a2.num_candidate_pairs(), 1);
     }
 
+    // In general, ICE prefers IPv6 over IPv4.
+    // However, in case our only IPv6 connectivity is via a relay that we are talking to over IPv4,
+    // we want to prefer the IPv4 code path.
+    #[test]
+    fn prefers_ipv4_ipv4_relay_candidate_over_ipv4_ipv6() {
+        let _guard = tracing_subscriber::fmt()
+            .with_env_filter("debug")
+            .with_test_writer()
+            .set_default();
+
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        // Agent 1 only has IPv4 connectivity to a relay but allocates both IPv4 and IPv6 addresses.
+        let relay_ipv4_ipv4 = relay("7.7.7.7:5000", "1.1.1.1:5000", "udp");
+        let relay_ipv6_ipv4 = relay("[::7]:5000", "1.1.1.1:5000", "udp");
+
+        // Agent 2 has no relay but has full IPv4 and IPv6 connectivity.
+        let host_ipv4 = host("5.5.5.5:3000", "udp");
+        let host_ipv6 = host("[::2]:3000", "udp");
+
+        a1.add_local_candidate(relay_ipv4_ipv4.clone());
+        a1.add_local_candidate(relay_ipv6_ipv4.clone());
+        a2.add_remote_candidate(relay_ipv4_ipv4.clone());
+        a2.add_remote_candidate(relay_ipv6_ipv4.clone());
+
+        a2.add_local_candidate(host_ipv4.clone());
+        a2.add_local_candidate(host_ipv6.clone());
+        a1.add_remote_candidate(host_ipv4.clone());
+        a1.add_remote_candidate(host_ipv6.clone());
+
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+
+        // loop until we're connected.
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        assert!(a1.has_event(|e| {
+            matches!(e, IceAgentEvent::NominatedSend { source, destination, .. } if source == &sock("7.7.7.7:5000") && destination == &sock("5.5.5.5:3000"))
+        }));
+        assert!(a2.has_event(|e| {
+            matches!(e, IceAgentEvent::NominatedSend { source, destination, .. } if source == &sock("5.5.5.5:3000") && destination == &sock("7.7.7.7:5000"))
+        }));
+    }
+
     pub struct TestAgent {
         pub start_time: Instant,
         pub agent: IceAgent,
