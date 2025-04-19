@@ -1517,7 +1517,7 @@ impl IceAgent {
 
         let trans = Transmit {
             proto: local.proto(),
-            source: local.base(),
+            source: local.source_addr(),
             destination: remote.addr(),
             contents: buf.into(),
         };
