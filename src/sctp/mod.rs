@@ -382,6 +382,12 @@ impl RtcSctp {
 
         match event {
             DatagramEvent::NewAssociation(a) => {
+                // In slow or unreliable networks from browsers (use 3g or slow 4g) settings.
+                // The browser resends a new associations and str0m would override the previously
+                // acked association. Webrtc should use only 1 association.
+                if self.assoc.is_some() {
+                    return;
+                }
                 info!("New remote association");
                 // Remote side initiated the association
                 self.assoc = Some(a);
