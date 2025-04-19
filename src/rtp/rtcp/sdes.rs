@@ -201,6 +201,18 @@ impl<'a> TryFrom<&'a [u8]> for Sdes {
         let mut abs = 0;
 
         loop {
+            // Per RFC 3550 Section 6.5:
+            // "The list of items in each chunk MUST be terminated by one or more null octets,
+            // the first of which is interpreted as an item type of end of list.
+            // No length octet follows the null item type octet, but additional null octets
+            // MUST be included if needed to pad until the next 32-bit boundary."
+            //
+            // This means we need a special case when there's only a single END byte (0x00)
+            // at the end of the buffer - it's a valid terminator despite not having a length byte.
+            if buf.len() == 1 && buf[0] == SdesType::END as u8 {
+                break;
+            }
+
             if buf.len() < 2 {
                 return Err("Less than 2 bytes for next Sdes value");
             }
