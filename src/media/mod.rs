@@ -169,6 +169,7 @@ pub(crate) struct ToPayload {
     pub rid: Option<Rid>,
     pub wallclock: Instant,
     pub rtp_time: MediaTime,
+    pub start_of_talk_spurt: bool,
     pub data: Vec<u8>,
     pub ext_vals: ExtensionValues,
 }

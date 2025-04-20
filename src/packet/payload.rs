@@ -32,6 +32,7 @@ impl Payloader {
             wallclock,
             rtp_time,
             data,
+            start_of_talk_spurt,
             ext_vals,
             ..
         } = to_payload;
@@ -43,7 +44,8 @@ impl Payloader {
             let last = idx == len - 1;
 
             let previous_data = stream.last_packet();
-            let marker = self.pack.is_marker(data.as_slice(), previous_data, last);
+            let marker = self.pack.is_marker(data.as_slice(), previous_data, last)
+                || (is_audio && start_of_talk_spurt);
 
             let seq_no = stream.next_seq_no();
 

@@ -18,6 +18,7 @@ pub struct Writer<'a> {
     session: &'a mut Session,
     mid: Mid,
     rid: Option<Rid>,
+    start_of_talkspurt: Option<bool>,
     ext_vals: ExtensionValues,
 }
 
@@ -30,6 +31,7 @@ impl<'a> Writer<'a> {
             session,
             mid,
             rid: None,
+            start_of_talkspurt: None,
             ext_vals: ExtensionValues::default(),
         }
     }
@@ -75,6 +77,16 @@ impl<'a> Writer<'a> {
     pub fn audio_level(mut self, audio_level: i8, voice_activity: bool) -> Self {
         self.ext_vals.audio_level = Some(audio_level);
         self.ext_vals.voice_activity = Some(voice_activity);
+        self
+    }
+
+    /// First packet of a talkspurt, that is the first packet after a silence period during
+    /// which packets have not been transmitted contiguously.
+    ///
+    /// For audio only when dtx or silence suppression is enabled.
+    /// This will set the marker bit in the RTP header.
+    pub fn start_of_talkspurt(mut self, start_of_talkspurt: bool) -> Self {
+        self.start_of_talkspurt = Some(start_of_talkspurt);
         self
     }
 
@@ -151,6 +163,7 @@ impl<'a> Writer<'a> {
             wallclock,
             rtp_time,
             data,
+            start_of_talk_spurt: self.start_of_talkspurt.unwrap_or(false),
             ext_vals: self.ext_vals,
         };
 

@@ -47,12 +47,15 @@ pub fn unidirectional() -> Result<(), RtcError> {
 
     let data_a = vec![1_u8; 80];
 
+    let mut start_of_talk_spurt = true;
     loop {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
         l.writer(mid)
             .unwrap()
+            .start_of_talkspurt(start_of_talk_spurt)
             .write(pt, wallclock, time, data_a.clone())?;
+        start_of_talk_spurt = false;
 
         progress(&mut l, &mut r)?;
 
@@ -68,6 +71,17 @@ pub fn unidirectional() -> Result<(), RtcError> {
         .count();
 
     assert!(media_count > 1700, "Not enough MediaData: {}", media_count);
+
+    assert!(
+        r.events
+            .iter()
+            .find_map(|(_, e)| match e {
+                Event::MediaData(m) => Some(m),
+                _ => None,
+            })
+            .expect("no MediaData event found")
+            .audio_start_of_talk_spurt
+    );
 
     Ok(())
 }
