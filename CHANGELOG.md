@@ -1,5 +1,20 @@
 # Unreleased
 
+# 0.8.0
+
+  * Add start of talkspurt for sample writer #645
+  * Avoid overwriting acked SCTP association #643
+  * Fix bug misparsing SDES #641
+  * Prefer relayed candidates with matching IP versions #640
+  * Add stats for the selected candidate pair #638
+  * Optional integrity on STUN messages #632
+  * Support for most of TURN's messages in STUN #631
+  * Reset cached nack flag #629
+  * Only reset deplayloader if SSRC did change #628
+  * SSRC changes reset StreamRx state #627
+  * Direct API reset_stream_tx() call #626
+  * Handle very long media pauses #625
+
 # 0.7.0
 
   * Spoof raddr in srflx relay candidate #621
