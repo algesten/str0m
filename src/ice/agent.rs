@@ -239,9 +239,7 @@ impl IceCreds {
         // checks.  The values MUST be unguessable, with at least 128 bits of
         // random number generator output used to generate the password, and
         // at least 24 bits of output to generate the username fragment.
-        //
-        // Chrome demands lengths for ufrag 4 and pass 22.
-        let ufrag = Id::<4>::random().to_string();
+        let ufrag = Id::<16>::random().to_string();
         let pass = Id::<22>::random().to_string();
         IceCreds { ufrag, pass }
     }
