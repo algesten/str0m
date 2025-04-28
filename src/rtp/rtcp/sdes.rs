@@ -122,12 +122,14 @@ impl Sdes {
 
 impl WordSized for Sdes {
     fn word_size(&self) -> usize {
-        let byte_size = 4 + self
-            .values
-            .iter()
-            // 2 here for 2 byte encoding of type + length
-            .map(|(_, s)| 2 + s.len())
-            .sum::<usize>();
+        let byte_size = 4
+            + self
+                .values
+                .iter()
+                // 2 here for 2 byte encoding of type + length
+                .map(|(_, s)| 2 + s.len())
+                .sum::<usize>()
+            + 1; // 1 here for the end byte
 
         let padded = pad_bytes_to_word(byte_size);
 
@@ -267,6 +269,24 @@ impl<'a> TryFrom<&'a [u8]> for Sdes {
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn computed_and_write_to_equal() {
+        let mut buf = vec![0; 1500];
+
+        for i in 1usize..=255 {
+            let mut r = ReportList::new();
+            r.push((
+                SdesType::CNAME,
+                String::from_utf8_lossy(&vec![b'a'; i][..]).to_string(),
+            ));
+            let sdes = Sdes {
+                ssrc: 1.into(),
+                values: r,
+            };
+            assert_eq!(sdes.write_to(&mut buf), sdes.word_size() * 4);
+        }
+    }
 
     #[test]
     fn cname_serialize_deserialize() {
