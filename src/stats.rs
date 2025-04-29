@@ -23,6 +23,7 @@ pub(crate) struct StatsSnapshot {
     pub rx: u64,
     pub egress_loss_fraction: Option<f32>,
     pub ingress_loss_fraction: Option<f32>,
+    pub rtt: Option<Duration>,
     pub ingress: HashMap<MidRid, MediaIngressStats>,
     pub egress: HashMap<MidRid, MediaEgressStats>,
     pub bwe_tx: Option<Bitrate>,
@@ -41,6 +42,7 @@ impl StatsSnapshot {
             ingress_loss_fraction: None,
             ingress: HashMap::new(),
             egress: HashMap::new(),
+            rtt: None,
             bwe_tx: None,
             selected_candidate_pair: None,
             timestamp,
@@ -78,6 +80,8 @@ pub struct PeerStats {
     pub egress_loss_fraction: Option<f32>,
     /// The ingress loss since the last stats event.
     pub ingress_loss_fraction: Option<f32>,
+    /// The most recent RTT since the last stats event.
+    pub rtt: Option<Duration>,
     /// The selected ICE candidate pair, if any.
     pub selected_candidate_pair: Option<CandidatePairStats>,
 }
@@ -256,6 +260,7 @@ impl Stats {
             bwe_tx: snapshot.bwe_tx,
             egress_loss_fraction: snapshot.egress_loss_fraction,
             ingress_loss_fraction: snapshot.ingress_loss_fraction,
+            rtt: snapshot.rtt,
             selected_candidate_pair: snapshot.selected_candidate_pair.clone(),
         };
 
