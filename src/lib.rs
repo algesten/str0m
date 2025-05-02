@@ -1220,6 +1220,9 @@ impl Rtc {
     /// Add a local ICE candidate. Local candidates are socket addresses the `Rtc` instance
     /// use for communicating with the peer.
     ///
+    /// If the candidate is accepted by the `Rtc` instance, it will return `Some` with a reference
+    /// to it. You should then signal this candidate to the remote peer.
+    ///
     /// This library has no built-in discovery of local network addresses on the host
     /// or NATed addresses via a STUN server or TURN server. The user of the library
     /// is expected to add new local candidates as they are discovered.
@@ -1240,8 +1243,8 @@ impl Rtc {
     /// ```
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
-    pub fn add_local_candidate(&mut self, c: Candidate) {
-        self.ice.add_local_candidate(c);
+    pub fn add_local_candidate(&mut self, c: Candidate) -> Option<&Candidate> {
+        self.ice.add_local_candidate(c)
     }
 
     /// Add a remote ICE candidate. Remote candidates are addresses of the peer.
