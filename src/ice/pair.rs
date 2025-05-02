@@ -37,7 +37,7 @@ pub struct CandidatePair {
 
     /// The next time we are to do a binding attempt, cached, since we
     /// potentially recalculate this many times per second otherwise.
-    cached_next_attempt_time: Option<Instant>,
+    pub(crate) cached_next_attempt_time: Option<Instant>,
 
     /// Number of remote binding requests we seen for this pair.
     pub(crate) remote_binding_requests: u64,

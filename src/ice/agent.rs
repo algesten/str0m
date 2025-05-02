@@ -333,6 +333,8 @@ impl IceAgent {
         self.timing_config.initial_rto = timeout;
 
         tracing::debug!("initial_rto = {timeout:?}");
+
+        self.bust_candidate_pair_timeout_caches();
     }
 
     /// Sets the maximum STUN **R**etransmission **T**ime**O**ut.
@@ -346,6 +348,8 @@ impl IceAgent {
         self.timing_config.max_rto = timeout;
 
         tracing::debug!("max_rto = {timeout:?}");
+
+        self.bust_candidate_pair_timeout_caches();
     }
 
     /// Sets the maximum number of retransmits for STUN messages.
@@ -355,6 +359,12 @@ impl IceAgent {
         self.timing_config.max_retransmits = num;
 
         tracing::debug!("max_retransmits = {num}");
+    }
+
+    fn bust_candidate_pair_timeout_caches(&mut self) {
+        for pair in self.candidate_pairs.iter_mut() {
+            pair.cached_next_attempt_time = None;
+        }
     }
 
     /// How long we at most tolerate missing replies for a candidate pair before considering it failed.
