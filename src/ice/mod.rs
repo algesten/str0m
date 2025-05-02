@@ -350,8 +350,8 @@ mod test {
         a2.add_remote_candidate(c1.clone());
 
         let c2 = host("2.2.2.2:1000", "udp");
-        a1.add_remote_candidate(c2.clone());
-        a2.add_local_candidate(c2).unwrap();
+        let c2 = a2.add_local_candidate(c2).unwrap().clone();
+        a1.add_remote_candidate(c2);
 
         a1.set_controlling(true);
         a2.set_controlling(false);
@@ -735,15 +735,16 @@ mod test {
         let c3 = relay("2.2.2.2:1000", "5.6.7.8:4321", "udp");
         let c4 = relay("2.2.2.2:1001", "5.6.7.8:4321", "udp");
 
-        // Agent 1 knows all candidates ahead of time.
+        // Both agents know their local candidates
         let c1 = a1.add_local_candidate(c1).unwrap().clone();
-        a1.add_remote_candidate(c2.clone());
         let c3 = a1.add_local_candidate(c3).unwrap().clone();
-        a1.add_remote_candidate(c4.clone());
 
-        // Agent 2 only knows his own candidates (imagine signalling layer being a bit slow)
-        a2.add_local_candidate(c2);
-        a2.add_local_candidate(c4.clone());
+        let c2 = a2.add_local_candidate(c2).unwrap().clone();
+        let c4 = a2.add_local_candidate(c4.clone()).unwrap().clone();
+
+        // Agent 1 also learns about the remote candidates but agent 2 doesn't (imagine signalling layer being a bit slow)
+        a1.add_remote_candidate(c2);
+        a1.add_remote_candidate(c4);
 
         a1.set_controlling(true);
         a2.set_controlling(false);
@@ -851,15 +852,15 @@ mod test {
         let host_ipv4 = host("5.5.5.5:3000", "udp");
         let host_ipv6 = host("[::2]:3000", "udp");
 
-        a1.add_local_candidate(relay_ipv4_ipv4.clone());
-        a1.add_local_candidate(relay_ipv6_ipv4.clone());
-        a2.add_remote_candidate(relay_ipv4_ipv4.clone());
-        a2.add_remote_candidate(relay_ipv6_ipv4.clone());
+        let relay_ipv4_ipv4 = a1.add_local_candidate(relay_ipv4_ipv4).unwrap().clone();
+        let relay_ipv6_ipv4 = a1.add_local_candidate(relay_ipv6_ipv4).unwrap().clone();
+        a2.add_remote_candidate(relay_ipv4_ipv4);
+        a2.add_remote_candidate(relay_ipv6_ipv4);
 
-        a2.add_local_candidate(host_ipv4.clone());
-        a2.add_local_candidate(host_ipv6.clone());
-        a1.add_remote_candidate(host_ipv4.clone());
-        a1.add_remote_candidate(host_ipv6.clone());
+        let host_ipv4 = a2.add_local_candidate(host_ipv4).unwrap().clone();
+        let host_ipv6 = a2.add_local_candidate(host_ipv6).unwrap().clone();
+        a1.add_remote_candidate(host_ipv4);
+        a1.add_remote_candidate(host_ipv6);
 
         // loop until we're connected.
         loop {
