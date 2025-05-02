@@ -331,6 +331,10 @@ impl IceAgent {
     /// Defaults to 250ms.
     pub fn set_initial_stun_rto(&mut self, timeout: Duration) {
         self.timing_config.initial_rto = timeout;
+
+        debug!("initial_rto = {timeout:?}");
+
+        self.bust_candidate_pair_timeout_caches();
     }
 
     /// Sets the maximum STUN **R**etransmission **T**ime**O**ut.
@@ -342,6 +346,10 @@ impl IceAgent {
     /// Defaults to 3000ms.
     pub fn set_max_stun_rto(&mut self, timeout: Duration) {
         self.timing_config.max_rto = timeout;
+
+        debug!("max_rto = {timeout:?}");
+
+        self.bust_candidate_pair_timeout_caches();
     }
 
     /// Sets the maximum number of retransmits for STUN messages.
@@ -349,6 +357,14 @@ impl IceAgent {
     /// Defaults to 9.
     pub fn set_max_stun_retransmits(&mut self, num: usize) {
         self.timing_config.max_retransmits = num;
+
+        debug!("max_retransmits = {num}");
+    }
+
+    fn bust_candidate_pair_timeout_caches(&mut self) {
+        for pair in self.candidate_pairs.iter_mut() {
+            pair.cached_next_attempt_time = None;
+        }
     }
 
     /// How long we at most tolerate missing replies for a candidate pair before considering it failed.
