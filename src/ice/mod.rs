@@ -30,16 +30,10 @@ mod test {
         let mut a2 = TestAgent::new(info_span!("R"));
 
         // 9999 is just dropped by propagate
-        let c1 = a1
-            .add_local_candidate(host("1.1.1.1:9999", "udp"))
-            .unwrap()
-            .clone();
+        let c1 = a1.add_host_candidate("1.1.1.1:9999");
         a2.add_remote_candidate(c1);
 
-        let c2 = a2
-            .add_local_candidate(host("2.2.2.2:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
         a1.add_remote_candidate(c2);
 
         a1.set_controlling(true);
@@ -162,16 +156,10 @@ mod test {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 
-        let c1 = a1
-            .add_local_candidate(host("1.1.1.1:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c1 = a1.add_host_candidate("1.1.1.1:1000");
         a2.add_remote_candidate(c1);
 
-        let c2 = a1
-            .add_local_candidate(host("2.2.2.2:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
         a1.add_remote_candidate(c2);
 
         a1.set_controlling(true);
@@ -238,16 +226,10 @@ mod test {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 
-        let c1 = a1
-            .add_local_candidate(host("1.1.1.1:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c1 = a1.add_host_candidate("1.1.1.1:1000");
         a2.add_remote_candidate(c1);
 
-        let c2 = a2
-            .add_local_candidate(host("2.2.2.2:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
         a1.add_remote_candidate(c2);
 
         a1.set_controlling(true);
@@ -294,16 +276,10 @@ mod test {
         let mut a2 = TestAgent::new(info_span!("R"));
         a2.time = early_now;
 
-        let c1 = a1
-            .add_local_candidate(host("1.1.1.1:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c1 = a1.add_host_candidate("1.1.1.1:1000");
         a2.add_remote_candidate(c1);
 
-        let c2 = a2
-            .add_local_candidate(host("2.2.2.2:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
         a1.add_remote_candidate(c2);
 
         a1.set_controlling(true);
@@ -322,16 +298,10 @@ mod test {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 
-        let c1 = a1
-            .add_local_candidate(host("1.1.1.1:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c1 = a1.add_host_candidate("1.1.1.1:1000");
         a2.add_remote_candidate(c1.clone());
 
-        let c2 = a2
-            .add_local_candidate(host("2.2.2.2:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
         a1.add_remote_candidate(c2);
 
         a1.set_controlling(true);
@@ -379,10 +349,7 @@ mod test {
         let c1 = a1.add_local_candidate(c1).unwrap().clone();
         a2.add_remote_candidate(c1.clone());
 
-        let c2 = a2
-            .add_local_candidate(host("2.2.2.2:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
         a1.add_remote_candidate(c2);
 
         a1.set_controlling(true);
@@ -430,16 +397,10 @@ mod test {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 
-        let c1 = a1
-            .add_local_candidate(host("1.1.1.1:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c1 = a1.add_host_candidate("1.1.1.1:1000");
         a2.add_remote_candidate(c1.clone());
 
-        let c2 = a2
-            .add_local_candidate(host("2.2.2.2:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
         a1.add_remote_candidate(c2);
 
         a1.set_controlling(true);
@@ -481,16 +442,10 @@ mod test {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 
-        let c1 = a1
-            .add_local_candidate(host("1.1.1.1:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c1 = a1.add_host_candidate("1.1.1.1:1000");
         a2.add_remote_candidate(c1);
 
-        let c2 = a2
-            .add_local_candidate(host("2.2.2.2:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
         a1.add_remote_candidate(c2.clone());
 
         a1.set_controlling(true);
@@ -536,16 +491,10 @@ mod test {
         a1.agent.set_ice_lite(true);
 
         // 9999 is just dropped by propagate
-        let c1 = a1
-            .add_local_candidate(host("1.1.1.1:9999", "udp"))
-            .unwrap()
-            .clone();
+        let c1 = a1.add_host_candidate("1.1.1.1:9999");
         a2.add_remote_candidate(c1);
 
-        let c2 = a2
-            .add_local_candidate(host("2.2.2.2:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
         a1.add_remote_candidate(c2);
 
         a1.set_controlling(true);
@@ -591,16 +540,10 @@ mod test {
         let mut a2 = TestAgent::new(info_span!("R"));
 
         // will be rewritten to 4.4.4.4
-        let c1 = a1
-            .add_local_candidate(host("3.3.3.3:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c1 = a1.add_host_candidate("3.3.3.3:1000");
         a2.add_remote_candidate(c1);
 
-        let c2 = a2
-            .add_local_candidate(host("2.2.2.2:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
         a1.add_remote_candidate(c2);
 
         a1.set_controlling(true);
@@ -655,16 +598,10 @@ mod test {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 
-        let c1 = a1
-            .add_local_candidate(host("1.1.1.1:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c1 = a1.add_host_candidate("1.1.1.1:1000");
         a2.add_remote_candidate(c1.clone());
 
-        let c2 = a2
-            .add_local_candidate(host("2.2.2.2:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
         a1.add_remote_candidate(c2.clone());
 
         a1.set_controlling(true);
@@ -712,16 +649,10 @@ mod test {
         let mut a2 = TestAgent::new(info_span!("R"));
 
         // no traffic possible
-        let c1 = a1
-            .add_local_candidate(host("3.3.3.3:9999", "udp"))
-            .unwrap()
-            .clone();
+        let c1 = a1.add_host_candidate("3.3.3.3:9999");
         a2.add_remote_candidate(c1);
 
-        let c2 = a2
-            .add_local_candidate(host("2.2.2.2:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c2 = a2.add_host_candidate("2.2.2.2:1000");
         a1.add_remote_candidate(c2);
 
         a1.set_controlling(true);
@@ -733,9 +664,8 @@ mod test {
         }
 
         // "trickle" a possible candidate
-        a1.add_local_candidate(host("1.1.1.1:1000", "udp")); // possible
+        a1.add_host_candidate("1.1.1.1:1000");
 
-        // loop until we're connected.
         loop {
             if a1.state().is_connected() && a2.state().is_connected() {
                 break;
@@ -760,10 +690,7 @@ mod test {
             .unwrap()
             .clone();
         a1.add_remote_candidate(c2);
-        let c3 = a2
-            .add_local_candidate(host("3.3.3.3:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c3 = a2.add_host_candidate("3.3.3.3:1000");
         a1.add_remote_candidate(c3);
 
         a1.set_controlling(true);
@@ -806,19 +733,13 @@ mod test {
         // We need a 2nd pair of candidates to make sure the agent doesn't go straight into `Completed`.
 
         // Both agents know their local candidates
-        let c1 = a1
-            .add_local_candidate(host("1.1.1.1:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c1 = a1.add_host_candidate("1.1.1.1:1000");
         let c3 = a1
             .add_local_candidate(relay("2.2.2.2:1000", "5.6.7.8:4321", "udp"))
             .unwrap()
             .clone();
 
-        let c2 = a2
-            .add_local_candidate(host("1.1.1.1:1001", "udp"))
-            .unwrap()
-            .clone();
+        let c2 = a2.add_host_candidate("1.1.1.1:1001");
         let c4 = a2
             .add_local_candidate(relay("2.2.2.2:1001", "5.6.7.8:4321", "udp"))
             .unwrap()
@@ -861,20 +782,14 @@ mod test {
         let mut a1 = TestAgent::new(info_span!("L"));
         let mut a2 = TestAgent::new(info_span!("R"));
 
-        let c1 = a1
-            .add_local_candidate(host("1.1.1.1:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c1 = a1.add_host_candidate("1.1.1.1:1000");
         a2.add_remote_candidate(c1);
         let c2 = a2
             .add_local_candidate(srflx("2.2.2.2:1000", "2.2.2.2:1000", "udp"))
             .unwrap()
             .clone();
         a1.add_remote_candidate(c2);
-        let c3 = a2
-            .add_local_candidate(host("2.2.2.2:1000", "udp"))
-            .unwrap()
-            .clone();
+        let c3 = a2.add_host_candidate("2.2.2.2:1000");
         a1.add_remote_candidate(c3);
 
         a1.set_controlling(true);
@@ -945,14 +860,8 @@ mod test {
         a2.add_remote_candidate(relay_ipv4_ipv4);
         a2.add_remote_candidate(relay_ipv6_ipv4);
 
-        let host_ipv4 = a2
-            .add_local_candidate(host("5.5.5.5:3000", "udp"))
-            .unwrap()
-            .clone();
-        let host_ipv6 = a2
-            .add_local_candidate(host("[::2]:3000", "udp"))
-            .unwrap()
-            .clone();
+        let host_ipv4 = a2.add_host_candidate("5.5.5.5:3000");
+        let host_ipv6 = a2.add_host_candidate("[::2]:3000");
         a1.add_remote_candidate(host_ipv4);
         a1.add_remote_candidate(host_ipv6);
 
@@ -1050,6 +959,13 @@ mod test {
                 time: now,
                 drop_sent_packets: false,
             }
+        }
+
+        fn add_host_candidate(&mut self, addr: &str) -> Candidate {
+            self.agent
+                .add_local_candidate(host(addr, "udp"))
+                .unwrap()
+                .clone()
         }
 
         fn has_event(&self, predicate: impl Fn(&IceAgentEvent) -> bool) -> bool {
