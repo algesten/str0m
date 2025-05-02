@@ -424,7 +424,7 @@ mod test {
         }
 
         // Add back the invalidated candidate
-        a1.add_local_candidate(c1);
+        a1.add_local_candidate(c1).unwrap();
 
         // progress() fails after 100 number of polls.
         a1.progress_count = 0;
@@ -704,7 +704,8 @@ mod test {
             progress(&mut a1, &mut a2);
         }
 
-        a1.add_local_candidate(relay("1.1.1.1:1001", "5.6.7.8:4321", "udp"));
+        a1.add_local_candidate(relay("1.1.1.1:1001", "5.6.7.8:4321", "udp"))
+            .unwrap();
         a2.add_remote_candidate(relay("1.1.1.1:1001", "5.6.7.8:4321", "udp"));
 
         loop {

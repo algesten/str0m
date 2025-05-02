@@ -20,8 +20,8 @@ pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
 
     let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp")?;
     let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp")?;
-    l.add_local_candidate(host1);
-    r.add_local_candidate(host2);
+    l.add_local_candidate(host1).unwrap();
+    r.add_local_candidate(host2).unwrap();
 
     // The change is on the L (sending side) with Direction::SendRecv.
     let mut change = l.sdp_api();
@@ -112,8 +112,8 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
 
     let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp")?;
     let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp")?;
-    l.add_local_candidate(host1);
-    r.add_local_candidate(host2);
+    l.add_local_candidate(host1).unwrap();
+    r.add_local_candidate(host2).unwrap();
 
     // The change is on the L (sending side) with Direction::SendRecv.
     let mut change = l.sdp_api();
@@ -205,8 +205,8 @@ pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
 
     let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp")?;
     let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp")?;
-    l.add_local_candidate(host1);
-    r.add_local_candidate(host2);
+    l.add_local_candidate(host1).unwrap();
+    r.add_local_candidate(host2).unwrap();
 
     // The change is on the L (sending side) with Direction::SendRecv.
     let mut change = l.sdp_api();

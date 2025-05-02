@@ -240,9 +240,9 @@ pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {
 
     let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp").unwrap();
     let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp").unwrap();
-    l.add_local_candidate(host1.clone());
+    l.add_local_candidate(host1.clone()).unwrap();
     l.add_remote_candidate(host2.clone());
-    r.add_local_candidate(host2);
+    r.add_local_candidate(host2).unwrap();
     r.add_remote_candidate(host1);
 
     let finger_l = l.direct_api().local_dtls_fingerprint();

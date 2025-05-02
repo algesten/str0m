@@ -20,8 +20,8 @@ pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
 
     let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp")?;
     let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp")?;
-    l.add_local_candidate(host1);
-    r.add_local_candidate(host2);
+    l.add_local_candidate(host1).unwrap();
+    r.add_local_candidate(host2).unwrap();
 
     // The change is on the R (not sending side) with Direction::RecvOnly.
     let mut change = r.sdp_api();
