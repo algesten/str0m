@@ -331,6 +331,8 @@ impl IceAgent {
     /// Defaults to 250ms.
     pub fn set_initial_stun_rto(&mut self, timeout: Duration) {
         self.timing_config.initial_rto = timeout;
+
+        tracing::debug!("initial_rto = {timeout:?}");
     }
 
     /// Sets the maximum STUN **R**etransmission **T**ime**O**ut.
@@ -342,6 +344,8 @@ impl IceAgent {
     /// Defaults to 3000ms.
     pub fn set_max_stun_rto(&mut self, timeout: Duration) {
         self.timing_config.max_rto = timeout;
+
+        tracing::debug!("max_rto = {timeout:?}");
     }
 
     /// Sets the maximum number of retransmits for STUN messages.
@@ -349,6 +353,8 @@ impl IceAgent {
     /// Defaults to 9.
     pub fn set_max_stun_retransmits(&mut self, num: usize) {
         self.timing_config.max_retransmits = num;
+
+        tracing::debug!("max_retransmits = {num}");
     }
 
     /// How long we at most tolerate missing replies for a candidate pair before considering it failed.
