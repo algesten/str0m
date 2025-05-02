@@ -854,6 +854,62 @@ mod test {
         }));
     }
 
+    #[test]
+    fn changed_timing_config_takes_effect_immediately() {
+        let _guard = tracing_subscriber::fmt()
+            .with_env_filter("trace")
+            .with_test_writer()
+            .set_default();
+
+        const IDLE_RTO: Duration = Duration::from_secs(60);
+        const NORMAL_RTO: Duration = Duration::from_secs(3);
+
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        let c1 = host("1.1.1.1:1000", "udp");
+        a1.add_local_candidate(c1.clone());
+        a2.add_remote_candidate(c1);
+
+        let c2 = host("2.2.2.2:1000", "udp");
+        a2.add_local_candidate(c2.clone());
+        a1.add_remote_candidate(c2);
+
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+
+        // loop until we're connected.
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        // Move to "idle" mode
+        a1.set_initial_stun_rto(IDLE_RTO);
+        a1.set_max_stun_rto(IDLE_RTO);
+        a2.set_initial_stun_rto(IDLE_RTO);
+        a2.set_max_stun_rto(IDLE_RTO);
+
+        // Spin for a bit
+        for _ in 0..10 {
+            progress(&mut a1, &mut a2);
+        }
+
+        // This is a bit of a hack because we use "insider" knowledge here
+        // that the next timeout is in fact `IDLE_RTO` away.
+        let now = a1.poll_timeout().unwrap() - IDLE_RTO;
+
+        a1.set_initial_stun_rto(NORMAL_RTO);
+        a1.set_max_stun_rto(NORMAL_RTO);
+
+        let timeout_after = a1.poll_timeout().unwrap();
+
+        // After applying the new timeout, it should only be `NORMAL_RTO` away.
+        assert_eq!(timeout_after, now + NORMAL_RTO);
+    }
+
     pub struct TestAgent {
         pub start_time: Instant,
         pub agent: IceAgent,
