@@ -740,7 +740,7 @@ mod test {
         let c3 = a1.add_local_candidate(c3).unwrap().clone();
 
         let c2 = a2.add_local_candidate(c2).unwrap().clone();
-        let c4 = a2.add_local_candidate(c4.clone()).unwrap().clone();
+        let c4 = a2.add_local_candidate(c4).unwrap().clone();
 
         // Agent 1 also learns about the remote candidates but agent 2 doesn't (imagine signalling layer being a bit slow)
         a1.add_remote_candidate(c2);
