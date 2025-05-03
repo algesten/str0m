@@ -37,13 +37,13 @@ pub struct CandidatePair {
 
     /// The next time we are to do a binding attempt, cached, since we
     /// potentially recalculate this many times per second otherwise.
-    pub(crate) cached_next_attempt_time: Option<Instant>,
+    cached_next_attempt_time: Option<Instant>,
 
     /// Number of remote binding requests we seen for this pair.
-    pub(crate) remote_binding_requests: u64,
+    remote_binding_requests: u64,
 
     /// Last remote binding request.
-    pub(crate) remote_binding_request_time: Option<Instant>,
+    remote_binding_request_time: Option<Instant>,
 
     /// State of nomination for this candidate pair.
     nomination_state: NominationState,
@@ -378,6 +378,18 @@ impl CandidatePair {
     pub(crate) fn copy_remote_binding_requests(&mut self, other: &CandidatePair) {
         self.remote_binding_requests = other.remote_binding_requests;
         self.remote_binding_request_time = other.remote_binding_request_time;
+    }
+
+    pub(crate) fn reset_cached_next_attempt_time(&mut self) {
+        self.cached_next_attempt_time = None;
+    }
+
+    #[cfg(test)]
+    pub fn remote_binding_requests(&self) -> (u64, Option<Instant>) {
+        (
+            self.remote_binding_requests,
+            self.remote_binding_request_time,
+        )
     }
 }
 

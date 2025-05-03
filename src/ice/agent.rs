@@ -363,7 +363,7 @@ impl IceAgent {
 
     fn bust_candidate_pair_timeout_caches(&mut self) {
         for pair in self.candidate_pairs.iter_mut() {
-            pair.cached_next_attempt_time = None;
+            pair.reset_cached_next_attempt_time();
         }
     }
 
@@ -2020,8 +2020,10 @@ mod test {
 
         let pair = &agent.candidate_pairs[0];
         assert!(pair.is_nominated());
-        assert_eq!(pair.remote_binding_requests, 1);
-        assert_eq!(pair.remote_binding_request_time, Some(now));
+
+        let (req, time) = pair.remote_binding_requests();
+        assert_eq!(req, 1);
+        assert_eq!(time, Some(now));
     }
 
     #[test]
