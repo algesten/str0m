@@ -86,7 +86,7 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
 
     // Add the shared UDP socket as a host candidate
     let candidate = Candidate::host(addr, "udp").expect("a host candidate");
-    rtc.add_local_candidate(candidate);
+    rtc.add_local_candidate(candidate).unwrap();
 
     // Create an SDP Answer.
     let answer = rtc

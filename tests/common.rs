@@ -1,6 +1,6 @@
 #![allow(unused)]
 use std::io::Cursor;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::ops::{Deref, DerefMut};
 use std::sync::Once;
 use std::time::{Duration, Instant};
@@ -40,6 +40,13 @@ impl TestRtc {
             last: now,
             events: vec![],
         }
+    }
+
+    pub fn add_host_candidate(&mut self, socket: SocketAddr) -> Candidate {
+        self.rtc
+            .add_local_candidate(Candidate::host(socket, "udp").unwrap())
+            .unwrap()
+            .clone()
     }
 
     pub fn duration(&self) -> Duration {

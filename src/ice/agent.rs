@@ -482,17 +482,19 @@ impl IceAgent {
 
     /// Adds a local candidate.
     ///
-    /// Returns `false` if the candidate was not added because it is redundant.
+    /// Returns `Some` if the candidate was added and `None` in all other cases.
+    /// If the candidate was added, it should be signalled to the remote party.
+    ///
     /// Adding loopback addresses or multicast/broadcast addresses causes
     /// an error.
-    pub fn add_local_candidate(&mut self, mut c: Candidate) -> bool {
+    pub fn add_local_candidate(&mut self, mut c: Candidate) -> Option<&Candidate> {
         let ip = c.addr().ip();
 
         if self.ice_lite {
             // Reject all non-host candidates.
             if c.kind() != CandidateKind::Host {
                 debug!("Reject non-host candidate due to ice-lite mode: {:?}", c);
-                return false;
+                return None;
             }
         }
 
@@ -599,7 +601,7 @@ impl IceAgent {
                         "Reject redundant candidate, current: {:?} rejected: {:?}",
                         other, c
                     );
-                    return false;
+                    return None;
                 }
 
                 // Stop using the current candidate in favor of the new one.
@@ -640,7 +642,9 @@ impl IceAgent {
         // by the remote party, whether we form local pairs directly or later seems irrelevant.
         self.form_pairs(&[local_idx], &remote_idxs);
 
-        true
+        // We specifically use indexing here instead of `.get`.
+        // If the index is wrong, this is a bug!
+        Some(&self.local_candidates[local_idx])
     }
 
     /// Adds a remote candidate.
@@ -1820,10 +1824,18 @@ mod test {
     fn local_preference_host() {
         let mut agent = IceAgent::new();
 
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
-        agent.add_local_candidate(Candidate::host(ipv6_1(), "udp").unwrap());
-        agent.add_local_candidate(Candidate::host(ipv6_2(), "udp").unwrap());
-        agent.add_local_candidate(Candidate::host(ipv4_2(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
+        agent
+            .add_local_candidate(Candidate::host(ipv6_1(), "udp").unwrap())
+            .unwrap();
+        agent
+            .add_local_candidate(Candidate::host(ipv6_2(), "udp").unwrap())
+            .unwrap();
+        agent
+            .add_local_candidate(Candidate::host(ipv4_2(), "udp").unwrap())
+            .unwrap();
 
         let v: Vec<_> = agent
             .local_candidates
@@ -1842,11 +1854,11 @@ mod test {
         // redundant when the agent is not behind a NAT.
 
         let x2 = agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
-        assert!(x2);
+        assert!(x2.is_some());
 
         // this is redundant given we have the direct host candidate above.
         let x1 = agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_1(), ipv4_1(), "udp"));
-        assert!(!x1);
+        assert!(x1.is_none());
     }
 
     #[test]
@@ -1855,7 +1867,7 @@ mod test {
         let host = Candidate::host(ipv4_1(), "udp").unwrap();
         let srflx = Candidate::server_reflexive(ipv4_1(), ipv4_1(), "udp").unwrap();
 
-        agent.add_local_candidate(host.clone());
+        agent.add_local_candidate(host.clone()).unwrap();
         let invalidated = agent.invalidate_candidate(&srflx);
         assert!(!invalidated);
 
@@ -1883,17 +1895,31 @@ mod test {
         let mut agent = IceAgent::new();
 
         // Candidates with the same SocketAddr but different protocols are considered distinct.
-        assert!(agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap()));
-        assert!(agent.add_local_candidate(Candidate::host(ipv4_1(), "tcp").unwrap()));
-        assert!(agent.add_local_candidate(Candidate::host(ipv4_1(), "ssltcp").unwrap()));
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .is_some());
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "tcp").unwrap())
+            .is_some());
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "ssltcp").unwrap())
+            .is_some());
 
         // Verify these are rejected, since these tuples of address and protocol have been added.
-        assert!(!agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap()));
-        assert!(!agent.add_local_candidate(Candidate::host(ipv4_1(), "ssltcp").unwrap()));
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .is_none());
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "ssltcp").unwrap())
+            .is_none());
 
         // Verify these are allowed, since these have different addresses.
-        assert!(agent.add_local_candidate(Candidate::host(ipv4_2(), "udp").unwrap()));
-        assert!(agent.add_local_candidate(Candidate::host(ipv4_2(), "ssltcp").unwrap()));
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_2(), "udp").unwrap())
+            .is_some());
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_2(), "ssltcp").unwrap())
+            .is_some());
     }
 
     #[test]
@@ -1905,10 +1931,10 @@ mod test {
 
         // this is contrived, but it is redundant when we add the host candidate below.
         let x1 = agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_1(), ipv4_1(), "udp"));
-        assert!(x1);
+        assert!(x1.is_some());
 
         let x2 = agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
-        assert!(x2);
+        assert!(x2.is_some());
 
         let v: Vec<_> = agent
             .local_candidates
@@ -1924,11 +1950,17 @@ mod test {
         let mut agent = IceAgent::new();
 
         // local 0
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
         // local 1 "udp"
-        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_4(), ipv4_2(), "udp"));
+        agent
+            .add_local_candidate(Candidate::test_peer_rflx(ipv4_4(), ipv4_2(), "udp"))
+            .unwrap();
         // local 2 "tcp"
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "tcp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "tcp").unwrap())
+            .unwrap();
 
         // remote 0
         agent.add_remote_candidate(Candidate::test_peer_rflx(ipv4_4(), ipv4_3(), "udp"));
@@ -1956,18 +1988,24 @@ mod test {
 
         agent.add_remote_candidate(Candidate::host(ipv4_3(), "udp").unwrap());
         agent.add_remote_candidate(Candidate::host(ipv4_3(), "tcp").unwrap());
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
 
         // the UDP candidates should be pair up.
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 
         // this local UDP candidate is redundant an won't form a new pair.
-        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp"));
+        agent
+            .add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp"))
+            .unwrap();
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 
         // this local TCP candidate will be paired up (This is the 3rd local candidate)
-        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "tcp"));
+        agent
+            .add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "tcp"))
+            .unwrap();
 
         assert_eq!(agent.pair_indexes(), [(0, 0), (2, 1)]);
     }
@@ -1977,13 +2015,17 @@ mod test {
         let mut agent = IceAgent::new();
 
         agent.add_remote_candidate(Candidate::host(ipv4_3(), "udp").unwrap());
-        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp"));
+        agent
+            .add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp"))
+            .unwrap();
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 
         // this local candidate is redundant, but has higher priority than then existing pair.
         // it replaces the existing pair.
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
 
         assert_eq!(agent.pair_indexes(), [(1, 0)]);
     }
@@ -2004,7 +2046,9 @@ mod test {
         );
 
         agent.add_remote_candidate(c);
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 
@@ -2032,7 +2076,7 @@ mod test {
 
         let local = Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp");
 
-        agent.add_local_candidate(local.clone());
+        agent.add_local_candidate(local.clone()).unwrap();
         agent.invalidate_candidate(&local);
 
         agent.add_remote_candidate(Candidate::host(ipv4_3(), "udp").unwrap());
@@ -2050,7 +2094,9 @@ mod test {
         agent.add_remote_candidate(remote.clone());
         agent.invalidate_candidate(&remote);
 
-        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp"));
+        agent
+            .add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp"))
+            .unwrap();
 
         // There should be no pairs since we invalidated the local candidate.
         assert_eq!(agent.pair_indexes(), []);
@@ -2059,7 +2105,9 @@ mod test {
     #[test]
     fn poll_time_must_timing_advance() {
         let mut agent = IceAgent::new();
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
         agent.add_remote_candidate(Candidate::host(ipv4_3(), "udp").unwrap());
 
         let now1 = Instant::now();
@@ -2098,7 +2146,9 @@ mod test {
         remote_candidate.set_ufrag(&remote_creds.ufrag);
 
         agent.set_remote_credentials(remote_creds.clone());
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
         agent.add_remote_candidate(remote_candidate);
         agent.handle_timeout(Instant::now());
 
@@ -2117,7 +2167,9 @@ mod test {
     #[test]
     fn queues_stun_binding_before_remote_creds() {
         let mut agent = IceAgent::new();
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
 
         let remote_creds = IceCreds::new();
         let mut remote_candidate = Candidate::host(ipv4_3(), "udp").unwrap();
