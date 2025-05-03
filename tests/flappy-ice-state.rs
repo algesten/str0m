@@ -2,7 +2,7 @@ use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use str0m::RtcConfig;
-use str0m::{Candidate, Event, RtcError};
+use str0m::{Event, RtcError};
 use tracing::info_span;
 
 mod common;
@@ -18,10 +18,8 @@ pub fn flappy_ice_lite_state() -> Result<(), RtcError> {
     let rtc = RtcConfig::new().set_ice_lite(true).build();
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc);
 
-    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp")?;
-    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp")?;
-    l.add_local_candidate(host1).unwrap();
-    r.add_local_candidate(host2).unwrap();
+    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     let mut change = l.sdp_api();
     let _ = change.add_channel("My little channel".into());
