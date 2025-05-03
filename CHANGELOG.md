@@ -1,5 +1,10 @@
 # Unreleased
 
+  * Bust cache on config change #649
+  * RTT in PeerStats #648
+  * Fix off-by-one SDES size calculation #647
+  * Increase ufrag size to 16 #646
+
 # 0.8.0
 
   * Add start of talkspurt for sample writer #645
