@@ -413,7 +413,8 @@ impl Session {
             Some(v) => v,
             None => {
                 trace!(
-                    "Failed to unprotect SRTP for SSRC: {} pt: {}  mid: {} rid: {:?} seq_no: {} is_repair: {}",
+                    "Failed to unprotect SRTP for SSRC: {} pt: {}  mid: {} \
+                    rid: {:?} seq_no: {} is_repair: {}",
                     header.ssrc,
                     pt,
                     stream.mid(),
@@ -485,7 +486,8 @@ impl Session {
 
         if self.rtp_mode {
             // In RTP mode, we store the packet temporarily here for the next poll_output().
-            // However only if this is a packet not seen before. This filters out spurious resends for padding.
+            // However only if this is a packet not seen before. This filters out spurious
+            // resends for padding.
             if receipt.is_new_packet {
                 self.pending_packet = Some(packet);
             }

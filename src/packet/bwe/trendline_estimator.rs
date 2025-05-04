@@ -375,7 +375,8 @@ mod test {
         assert_eq!(
             estimator.hypothesis(),
             BandwidthUsage::Normal,
-            "After getting an a second increasing delay the hypothesis should remain at normal because we the time overusing threshold hasn't been reached yet"
+            "After getting an a second increasing delay the hypothesis should remain at normal \
+            because we the time overusing threshold hasn't been reached yet"
         );
 
         estimator.add_delay_observation(
@@ -389,7 +390,8 @@ mod test {
         assert_eq!(
             estimator.hypothesis(),
             BandwidthUsage::Overuse,
-            "After getting a third increasing delay the hypothesis should move to over because we have been overusing for more than 10ms"
+            "After getting a third increasing delay the hypothesis should move to over because \
+            we have been overusing for more than 10ms"
         );
     }
 

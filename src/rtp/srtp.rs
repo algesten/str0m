@@ -151,7 +151,9 @@ impl SrtpContext {
             Derived::Aes128CmSha1_80 { key, salt, enc, .. } => {
                 assert!(
                     input.len() % SRTP_BLOCK_SIZE == 0,
-                    "RTP body should be padded to 16 byte block size, {header:?} with body length {} was not", input.len()
+                    "RTP body should be padded to 16 byte block size, {header:?} with \
+                    body length {} was not",
+                    input.len()
                 );
                 use aes_128_cm_sha1_80::HMAC_TAG_LEN;
 
@@ -175,7 +177,8 @@ impl SrtpContext {
                 let iv = aead_aes_128_gcm::rtp_iv(*salt, *header.ssrc, roc, header.sequence_number);
                 let aad = &buf[..hlen];
 
-                // Input and output lengths for encryption: https://www.rfc-editor.org/rfc/rfc7714#section-5.2.1
+                // Input and output lengths for encryption:
+                // https://www.rfc-editor.org/rfc/rfc7714#section-5.2.1
                 let mut output = vec![0_u8; buf.len() + TAG_LEN];
                 enc.encrypt(&iv, aad, input, &mut output[hlen..])
                     .expect("rtp encrypt");
@@ -245,7 +248,8 @@ impl SrtpContext {
                 let iv = aead_aes_128_gcm::rtp_iv(*salt, *header.ssrc, roc, seq);
 
                 let (aad, input) = buf.split_at(header.header_len);
-                // Input and output lengths for decryption: https://www.rfc-editor.org/rfc/rfc7714#section-5.2.2
+                // Input and output lengths for decryption:
+                // https://www.rfc-editor.org/rfc/rfc7714#section-5.2.2
                 let mut output = vec![0; input.len() - TAG_LEN];
 
                 match dec.decrypt(&iv, &[aad], input, &mut output) {
@@ -951,7 +955,11 @@ mod test {
                 RtpHeader::parse(&header_buf, &ExtensionMap::empty()).expect("header to parse");
 
             let result = context.unprotect_rtp(rfc7714::PROTECTED_RTP_PACKET, &header, 0);
-            assert!(result.is_none(), "Should fail to decrypt a SRTP packet that has mismatched authenicated additional data");
+            assert!(
+                result.is_none(),
+                "Should fail to decrypt a SRTP packet that has mismatched \
+                authenicated additional data"
+            );
         }
 
         #[test]

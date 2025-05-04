@@ -75,16 +75,17 @@ pub struct Transmit {
     /// hole-punching will only work if the packets are routed through the correct interfaces.
     ///
     /// This address will either be:
-    /// - The address of a socket you have bound locally, such as with [`UdpSocket::bind`][std::net::UdpSocket].
+    /// - The address of a socket you have bound locally, such as
+    ///   with [`UdpSocket::bind`][std::net::UdpSocket].
     /// - The address of a relay socket that you have
-    ///     [allocated](https://www.rfc-editor.org/rfc/rfc8656#name-allocations-2) using TURN.
+    ///   [allocated](https://www.rfc-editor.org/rfc/rfc8656#name-allocations-2) using TURN.
     ///
     /// To correctly handle an instance of [`Transmit`], you should:
     ///
     /// - Check if [`Transmit::source`] corresponds to one of your local sockets,
-    ///     if yes, send it through that.
+    ///   if yes, send it through that.
     /// - Check if [`Transmit::source`] corresponds to one of your relay sockets (i.e. allocations),
-    ///     if yes, send it via one of:
+    ///   if yes, send it via one of:
     ///     - a [TURN channel data message](https://www.rfc-editor.org/rfc/rfc8656#name-sending-a-channeldata-messa)
     ///     - a [SEND indication](https://www.rfc-editor.org/rfc/rfc8656#name-send-and-data-methods)
     ///

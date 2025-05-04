@@ -31,8 +31,8 @@ const STARTUP_PAHSE: Duration = Duration::from_secs(2);
 
 /// Main entry point for the Googcc inspired BWE implementation.
 ///
-/// This takes as input packet statuses recorded at send time and enriched by TWCC reports and produces as its output a periodic
-/// estimate of the available send bitrate.
+/// This takes as input packet statuses recorded at send time and enriched by TWCC reports
+/// and produces as its output a periodic estimate of the available send bitrate.
 pub struct SendSideBandwithEstimator {
     delay_controller: DelayController,
     loss_controller: Option<LossController>,

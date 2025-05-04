@@ -1336,7 +1336,8 @@ impl Rtc {
     /// writer.write(pt, data.network_time, data.time, data.data).unwrap();
     /// ```
     ///
-    /// This is a sample level API: For RTP level see [`DirectApi::stream_tx()`] and [`DirectApi::stream_rx()`].
+    /// This is a sample level API: For RTP level see [`DirectApi::stream_tx()`]
+    /// and [`DirectApi::stream_rx()`].
     ///
     pub fn writer(&mut self, mid: Mid) -> Option<Writer> {
         if self.session.rtp_mode {

@@ -58,8 +58,9 @@ pub struct Candidate {
 
     /// Related address.
     ///
-    /// For server-reflexive candidates, this is the internal IP/port the candidate corresponds to (the one behind the
-    /// NAT, usually). For relay candidates, this is the mapped address selected by the TURN server.
+    /// For server-reflexive candidates, this is the internal IP/port the candidate corresponds to
+    /// (the one behind the NAT, usually). For relay candidates, this is the mapped address selected
+    /// by the TURN server.
     raddr: Option<SocketAddr>, // ip/port
 
     /// Ufrag.
@@ -264,15 +265,17 @@ impl Candidate {
         )
     }
 
-    /// Create an arbitrary socket address, matching the format of the input address, for placement in the `raddr`
-    /// field.
+    /// Create an arbitrary socket address, matching the format of the input address,
+    /// for placement in the `raddr` field.
     ///
-    /// For non-host candidates, Firefox (and perhaps others) require the SDP string to contain `raddr` and
-    /// `rport` to correctly parse. While we could put honest values here, those honest values are likely private
-    /// IP addresses that we would rather not expose to the world. Instead, browsers often spoof values to go here
-    /// instead, and we do the same.
+    /// For non-host candidates, Firefox (and perhaps others) require the SDP string to
+    /// contain `raddr` and `rport` to correctly parse. While we could put honest values
+    /// here, those honest values are likely private IP addresses that we would rather not
+    /// expose to the world. Instead, browsers often spoof values to go here instead, and
+    /// we do the same.
     ///
-    /// Note that `raddr` and `rport` are only for diagnostic purposes, and have no bearing on ICE connectivity checks.
+    /// Note that `raddr` and `rport` are only for diagnostic purposes, and have no
+    /// bearing on ICE connectivity checks.
     fn arbitrary_raddr(s: SocketAddr) -> SocketAddr {
         use std::net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6};
         match s {

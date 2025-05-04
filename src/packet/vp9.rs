@@ -283,7 +283,8 @@ pub struct Vp9Depacketizer {
 }
 
 impl Depacketizer for Vp9Depacketizer {
-    /// depacketize parses the passed byte slice and stores the result in the Vp9Packet this method is called upon
+    /// depacketize parses the passed byte slice and stores the result
+    /// in the Vp9Packet this method is called upon
     fn depacketize(
         &mut self,
         packet: &[u8],

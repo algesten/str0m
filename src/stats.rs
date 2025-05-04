@@ -235,7 +235,8 @@ impl Stats {
 
     /// Returns true if we want to handle the timeout
     ///
-    /// The caller can use this to compute the snapshot only if needed, before calling [`Stats::do_handle_timeout`]
+    /// The caller can use this to compute the snapshot only if needed, before calling \
+    /// [`Stats::do_handle_timeout`]
     pub fn wants_timeout(&mut self, now: Instant) -> bool {
         let Some(last_now) = self.last_now else {
             // Learn our first ever `now`
