@@ -35,6 +35,17 @@ jobs:
         with:
           command: test
 
+  snowflake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Martin's snowflake formatting rules
+        uses: algesten/snowflake@v1.0.4
+        with:
+          check_diff: true
+
   test_wincrypto:
     strategy:
       matrix:
