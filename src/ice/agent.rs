@@ -325,8 +325,9 @@ impl IceAgent {
 
     /// Sets the initial STUN **R**etransmission **T**ime**O**ut.
     ///
-    /// It defines the initial period of time between transmission of a request and the first retransmit of that request.
-    /// The actual RTO doubles with each retransmit up until the configured maximum RTO.
+    /// It defines the initial period of time between transmission of a request
+    /// and the first retransmit of that request. The actual RTO doubles with
+    /// each retransmit up until the configured maximum RTO.
     ///
     /// Defaults to 250ms.
     pub fn set_initial_stun_rto(&mut self, timeout: Duration) {
@@ -339,9 +340,12 @@ impl IceAgent {
 
     /// Sets the maximum STUN **R**etransmission **T**ime**O**ut.
     ///
-    /// It defines the maximum period of time between transmission of a request and the first retransmit of that request.
-    /// Once a candidate pair is successful, this is how often we check that a STUN binding is alive.
-    /// As the STUN bindings of a successful candidate pair start to time out, we probe the binding more often by halfing this value, up until the maximum number of retransmits before we declare them failed.
+    /// It defines the maximum period of time between transmission of a request
+    /// and the first retransmit of that request. Once a candidate pair is
+    /// successful, this is how often we check that a STUN binding is alive.
+    /// As the STUN bindings of a successful candidate pair start to time out,
+    /// we probe the binding more often by halfing this value, up until the
+    /// maximum number of retransmits before we declare them failed.
     ///
     /// Defaults to 3000ms.
     pub fn set_max_stun_rto(&mut self, timeout: Duration) {
@@ -1328,7 +1332,9 @@ impl IceAgent {
             .iter()
             .enumerate()
             .filter(|(_, c)| !c.discarded() && c.proto() == req.proto && c.addr() == req.source)
-            .max_by_key(|(_, c)| c.prio()); // We may have multiple candidates with the same address (i.e. host and server-reflexive could be the same).
+            // We may have multiple candidates with the same address
+            // (i.e. host and server-reflexive could be the same).
+            .max_by_key(|(_, c)| c.prio());
 
         let remote_idx = if let Some((idx, _)) = found_in_remote {
             trace!("Remote candidate for STUN request found");

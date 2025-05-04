@@ -213,7 +213,8 @@ pub struct H264Depacketizer {
 }
 
 impl Depacketizer for H264Depacketizer {
-    /// depacketize parses the passed byte slice and stores the result in the H264Packet this method is called upon
+    /// depacketize parses the passed byte slice and stores the result in the
+    /// H264Packet this method is called upon
     fn depacketize(
         &mut self,
         packet: &[u8],

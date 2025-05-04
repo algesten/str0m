@@ -4,7 +4,7 @@
   * RTT in PeerStats #648
   * Fix off-by-one SDES size calculation #647
   * Increase ufrag size to 16 #646
-  * Change `Rtc::add_local_candidate` and `IceAgent::add_local_candidate` to return the candidate on success #650
+  * `add_local_candidate` return candidate on success #650
 
 # 0.8.0
 

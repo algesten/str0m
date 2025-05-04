@@ -31,7 +31,8 @@ vendored = ["openssl?/vendored"]
 # Without the sha1 feature, str0m uses the openssl sha1 impl which is slower.
 sha1 = ["dep:sha1"]
 
-# Uses native Windows API to implement cryptographic features, use instead on openssl and sha1.
+# Uses native Windows API to implement cryptographic features, use instead on
+# openssl and sha1.
 wincrypto = ["dep:str0m-wincrypto"]
 
 _internal_dont_use_log_stats = []
