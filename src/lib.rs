@@ -727,10 +727,8 @@ mod session;
 use session::Session;
 
 pub mod stats;
-use stats::{
-    CandidatePairStats, CandidateStats, MediaEgressStats, MediaIngressStats, PeerStats, Stats,
-    StatsEvent, StatsSnapshot,
-};
+use stats::{CandidatePairStats, CandidateStats, MediaEgressStats, MediaIngressStats};
+use stats::{PeerStats, Stats, StatsEvent, StatsSnapshot};
 
 mod streams;
 

@@ -384,10 +384,8 @@ impl fmt::Debug for Depacketized {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{
-        packet::vp9::Vp9Depacketizer,
-        rtp_::{Frequency, MediaTime, Pt, Ssrc},
-    };
+    use crate::packet::vp9::Vp9Depacketizer;
+    use crate::rtp_::{Frequency, MediaTime, Pt, Ssrc};
 
     #[test]
     fn end_on_marker() {

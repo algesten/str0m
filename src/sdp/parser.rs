@@ -1,12 +1,10 @@
+use combine::error::*;
+use combine::parser::char::*;
+use combine::parser::combinator::*;
+use combine::stream::StreamErrorFor;
+use combine::*;
+use combine::{ParseError, Parser, Stream};
 use std::net::{IpAddr, SocketAddr};
-use {
-    combine::error::*,
-    combine::parser::char::*,
-    combine::parser::combinator::*,
-    combine::stream::StreamErrorFor,
-    combine::*,
-    combine::{ParseError, Parser, Stream},
-};
 
 use crate::crypto::Fingerprint;
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, SessionId, Ssrc};
