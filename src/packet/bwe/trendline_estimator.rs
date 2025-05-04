@@ -2,10 +2,8 @@ use std::collections::VecDeque;
 use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
-use super::{
-    time::{TimeDelta, Timestamp},
-    BandwidthUsage, InterGroupDelayDelta,
-};
+use super::time::{TimeDelta, Timestamp};
+use super::{BandwidthUsage, InterGroupDelayDelta};
 
 const SMOOTHING_COEF: f64 = 0.9;
 const OVER_USE_THRESHOLD_DEFAULT_MS: f64 = 12.5;

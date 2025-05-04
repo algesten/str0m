@@ -1,10 +1,8 @@
 //! Statistics events.
 
-use std::{
-    collections::{HashMap, VecDeque},
-    net::SocketAddr,
-    time::{Duration, Instant},
-};
+use std::collections::{HashMap, VecDeque};
+use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 
 use crate::rtp_::{Mid, Rid};
 use crate::Bitrate;
