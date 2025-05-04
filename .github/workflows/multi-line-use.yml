@@ -1,0 +1,37 @@
+name: Check Multi-line Use Statements
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check-use-statements:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Check for multi-line use statements
+        run: |
+          # Find import statements that span multiple lines
+          # Pattern matches: use statements with opening brace at end of line
+          # but excludes cases like "if x.use_something {"
+          MULTILINE_USES=$(grep -r "^[[:space:]]*use[[:space:]].*{$" --include="*.rs" src || true)
+
+          if [ -n "$MULTILINE_USES" ]; then
+            echo "Found multi-line use statements."
+            echo "Please reformat these statements to avoid multi-line breaks"
+            echo ""
+            echo "INCORRECT format:"
+            echo "use crate::rtp_::{"
+            echo "    Bitrate, Descriptions,"
+            echo "    Extension"
+            echo "};"
+            echo ""
+            echo "CORRECT format:"
+            echo "use crate::rtp_::Bitrate, Descriptions;"
+            echo "use crate::rtp_::Extension;"
+            echo ""
+            exit 1
+          fi
