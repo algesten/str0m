@@ -105,6 +105,8 @@ pub struct CodecSpec {
 #[allow(missing_docs)]
 pub enum Codec {
     Opus,
+    PCMU,
+    PCMA,
     H264,
     // TODO show this when we support h265.
     #[doc(hidden)]
@@ -317,6 +319,14 @@ impl PayloadParams {
 
         if c0.codec.is_audio() && c0.codec == Codec::Opus {
             return Some(Self::match_opus_score(c0, c1));
+        }
+
+        if c0.codec == Codec::PCMU {
+            return Some(100);
+        }
+
+        if c0.codec == Codec::PCMA {
+            return Some(100);
         }
 
         if c0.codec == Codec::H264 {
@@ -939,7 +949,7 @@ impl Codec {
     /// Tells if codec is audio.
     pub fn is_audio(&self) -> bool {
         use Codec::*;
-        matches!(self, Opus)
+        matches!(self, Opus | PCMU | PCMA)
     }
 
     /// Tells if codec is video.
@@ -963,6 +973,8 @@ impl<'a> From<&'a str> for Codec {
         let lc = v.to_ascii_lowercase();
         match &lc[..] {
             "opus" => Codec::Opus,
+            "pcmu" => Codec::PCMU,
+            "pcma" => Codec::PCMA,
             "h264" => Codec::H264,
             "h265" => Codec::H265,
             "vp8" => Codec::Vp8,
@@ -978,6 +990,8 @@ impl fmt::Display for Codec {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Codec::Opus => write!(f, "opus"),
+            Codec::PCMU => write!(f, "PCMU"),
+            Codec::PCMA => write!(f, "PCMA"),
             Codec::H264 => write!(f, "H264"),
             Codec::H265 => write!(f, "H265"),
             Codec::Vp8 => write!(f, "VP8"),

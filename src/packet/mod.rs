@@ -213,6 +213,8 @@ impl From<Codec> for CodecPacketizer {
     fn from(c: Codec) -> Self {
         match c {
             Codec::Opus => CodecPacketizer::Opus(OpusPacketizer),
+            Codec::PCMU => CodecPacketizer::G711(G711Packetizer::default()),
+            Codec::PCMA => CodecPacketizer::G711(G711Packetizer::default()),
             Codec::H264 => CodecPacketizer::H264(H264Packetizer::default()),
             Codec::H265 => unimplemented!("Missing packetizer for H265"),
             Codec::Vp8 => CodecPacketizer::Vp8(Vp8Packetizer::default()),
@@ -229,6 +231,8 @@ impl From<Codec> for CodecDepacketizer {
     fn from(c: Codec) -> Self {
         match c {
             Codec::Opus => CodecDepacketizer::Opus(OpusDepacketizer),
+            Codec::PCMU => unimplemented!("Missing depacketizer for PCMU"),
+            Codec::PCMA => unimplemented!("Missing depacketizer for PCMA"),
             Codec::H264 => CodecDepacketizer::H264(H264Depacketizer::default()),
             Codec::H265 => CodecDepacketizer::H265(H265Depacketizer::default()),
             Codec::Vp8 => CodecDepacketizer::Vp8(Vp8Depacketizer::default()),
