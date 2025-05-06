@@ -2150,6 +2150,22 @@ impl RtcConfig {
         self
     }
 
+    /// Enable PCM μ-law audio codec.
+    ///
+    /// This is 14-bit audio compressed to 8-bit as specified by G.711
+    pub fn enable_pcmu(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_pcmu(enabled);
+        self
+    }
+
+    /// Enable PCM a-law audio codec.
+    ///
+    /// This is 13-bit audio compressed to 8-bit as specified by G.711
+    pub fn enable_pcma(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_pcma(enabled);
+        self
+    }
+
     /// Enable VP8 video codec.
     ///
     /// Enabled by default.

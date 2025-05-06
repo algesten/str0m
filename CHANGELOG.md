@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Support PCMu/PCMa #685
   * Make STUN timers configurable on RtcConfig #674
   * ice: stricter srflx candidate checks #672
   * ice: Dont report Disconnected when no local candidates #670
