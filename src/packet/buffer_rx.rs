@@ -116,6 +116,7 @@ impl DepacketizingBuffer {
             | CodecDepacketizer::H265(_)
             | CodecDepacketizer::Boxed(_)
             | CodecDepacketizer::Opus(_)
+            | CodecDepacketizer::G711(_)
             | CodecDepacketizer::Null(_) => Contiguity::None,
         };
 

@@ -8,7 +8,7 @@ use crate::format::Codec;
 use crate::sdp::MediaType;
 
 mod g7xx;
-use g7xx::{G711Packetizer, G722Packetizer};
+use g7xx::{G711Depacketizer, G711Packetizer, G722Packetizer};
 
 mod h264;
 pub use h264::H264CodecExtra;
@@ -199,6 +199,7 @@ pub(crate) enum CodecPacketizer {
 
 #[derive(Debug)]
 pub(crate) enum CodecDepacketizer {
+    G711(G711Depacketizer),
     H264(H264Depacketizer),
     H265(H265Depacketizer),
     Opus(OpusDepacketizer),
@@ -213,6 +214,8 @@ impl From<Codec> for CodecPacketizer {
     fn from(c: Codec) -> Self {
         match c {
             Codec::Opus => CodecPacketizer::Opus(OpusPacketizer),
+            Codec::PCMU => CodecPacketizer::G711(G711Packetizer::default()),
+            Codec::PCMA => CodecPacketizer::G711(G711Packetizer::default()),
             Codec::H264 => CodecPacketizer::H264(H264Packetizer::default()),
             Codec::H265 => unimplemented!("Missing packetizer for H265"),
             Codec::Vp8 => CodecPacketizer::Vp8(Vp8Packetizer::default()),
@@ -229,6 +232,8 @@ impl From<Codec> for CodecDepacketizer {
     fn from(c: Codec) -> Self {
         match c {
             Codec::Opus => CodecDepacketizer::Opus(OpusDepacketizer),
+            Codec::PCMU => CodecDepacketizer::G711(G711Depacketizer),
+            Codec::PCMA => CodecDepacketizer::G711(G711Depacketizer),
             Codec::H264 => CodecDepacketizer::H264(H264Depacketizer::default()),
             Codec::H265 => CodecDepacketizer::H265(H265Depacketizer::default()),
             Codec::Vp8 => CodecDepacketizer::Vp8(Vp8Depacketizer::default()),
@@ -282,6 +287,7 @@ impl Depacketizer for CodecDepacketizer {
             H264(v) => v.depacketize(packet, out, extra),
             H265(v) => v.depacketize(packet, out, extra),
             Opus(v) => v.depacketize(packet, out, extra),
+            G711(v) => v.depacketize(packet, out, extra),
             Vp8(v) => v.depacketize(packet, out, extra),
             Vp9(v) => v.depacketize(packet, out, extra),
             Null(v) => v.depacketize(packet, out, extra),
@@ -295,6 +301,7 @@ impl Depacketizer for CodecDepacketizer {
             H264(v) => v.is_partition_head(packet),
             H265(v) => v.is_partition_head(packet),
             Opus(v) => v.is_partition_head(packet),
+            G711(v) => v.is_partition_head(packet),
             Vp8(v) => v.is_partition_head(packet),
             Vp9(v) => v.is_partition_head(packet),
             Null(v) => v.is_partition_head(packet),
@@ -308,6 +315,7 @@ impl Depacketizer for CodecDepacketizer {
             H264(v) => v.is_partition_tail(marker, packet),
             H265(v) => v.is_partition_tail(marker, packet),
             Opus(v) => v.is_partition_tail(marker, packet),
+            G711(v) => v.is_partition_tail(marker, packet),
             Vp8(v) => v.is_partition_tail(marker, packet),
             Vp9(v) => v.is_partition_tail(marker, packet),
             Null(v) => v.is_partition_tail(marker, packet),

@@ -1,4 +1,4 @@
-use super::{PacketError, Packetizer};
+use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
 
 /// Packetizes G711 RTP packets.
 pub type G711Packetizer = G7xxPacketizer;
@@ -34,6 +34,33 @@ impl Packetizer for G7xxPacketizer {
 
     fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, _last: bool) -> bool {
         false
+    }
+}
+
+/// Depacketizer for G711 packets
+#[derive(PartialEq, Eq, Debug, Default, Clone)]
+pub struct G711Depacketizer;
+
+impl Depacketizer for G711Depacketizer {
+    fn depacketize(
+        &mut self,
+        packet: &[u8],
+        out: &mut Vec<u8>,
+        _: &mut CodecExtra,
+    ) -> Result<(), PacketError> {
+        if !packet.is_empty() {
+            out.extend_from_slice(packet);
+        }
+
+        Ok(())
+    }
+
+    fn is_partition_head(&self, _payload: &[u8]) -> bool {
+        true
+    }
+
+    fn is_partition_tail(&self, _marker: bool, _payload: &[u8]) -> bool {
+        true
     }
 }
 
@@ -86,6 +113,29 @@ mod test {
         // Positive MTU, small payload
         let result = pck.packetize(10, payload)?;
         assert_eq!(result.len(), 1, "Generated payload should be the 1");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_g7xx_unmarshal() -> Result<(), PacketError> {
+        let mut pck = G711Depacketizer;
+        let mut extra = CodecExtra::None;
+
+        // Empty packet
+        let empty_bytes = &[];
+        let mut out = Vec::new();
+        let result = pck.depacketize(empty_bytes, &mut out, &mut extra);
+        assert!(
+            result.is_ok(),
+            "Result should not be err in case of empty packet"
+        );
+
+        // Normal packet
+        let raw_bytes: &[u8] = &[0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x90];
+        let mut out = Vec::new();
+        pck.depacketize(raw_bytes, &mut out, &mut extra)?;
+        assert_eq!(raw_bytes, &out, "Payload must be same");
 
         Ok(())
     }

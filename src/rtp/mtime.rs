@@ -48,6 +48,9 @@ impl Frequency {
     /// Cycles in a second of a 48 kHz signal.
     pub const FORTY_EIGHT_KHZ: Frequency = Self::make(48_000);
 
+    /// Cycles in a second of a 8000 Hz signal.
+    pub const EIGHT_KHZ: Frequency = Self::make(8_000);
+
     /// Milliseconds in a second.
     pub const MILLIS: Frequency = Self::make(1_000);
 
