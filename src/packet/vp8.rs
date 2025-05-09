@@ -352,14 +352,15 @@ mod test {
         let result = pck.depacketize(empty_bytes, &mut payload, &mut extra);
         assert!(result.is_err(), "Result should be err in case of error");
 
-        // Payload smaller than header size
+        // Small Payload with single octet header
         let small_bytes = &[0x00, 0x11, 0x22];
         let mut payload = Vec::new();
-        let result = pck.depacketize(small_bytes, &mut payload, &mut extra);
-        assert!(result.is_err(), "Result should be err in case of error");
+        pck.depacketize(small_bytes, &mut payload, &mut extra)
+            .expect("Small packet");
+        assert_eq!(payload, [0x11, 0x22]);
 
-        // Payload smaller than header size
-        let small_bytes = &[0x00, 0x11];
+        // Payload is header only
+        let small_bytes = &[0x00];
         let mut payload = Vec::new();
         let result = pck.depacketize(small_bytes, &mut payload, &mut extra);
         assert!(result.is_err(), "Result should be err in case of error");
