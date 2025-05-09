@@ -182,9 +182,9 @@ impl Depacketizer for Vp8Depacketizer {
         extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
         let payload_len = packet.len();
-        if payload_len < 4 {
-            return Err(PacketError::ErrShortPacket);
-        }
+        // VP8 Payload Descriptor
+        // https://datatracker.ietf.org/doc/html/rfc7741#section-4.2
+        //
         //    0 1 2 3 4 5 6 7                      0 1 2 3 4 5 6 7
         //    +-+-+-+-+-+-+-+-+                   +-+-+-+-+-+-+-+-+
         //    |X|R|N|S|R| PID | (REQUIRED)        |X|R|N|S|R| PID | (REQUIRED)
@@ -197,8 +197,8 @@ impl Depacketizer for Vp8Depacketizer {
         //    +-+-+-+-+-+-+-+-+                   +-+-+-+-+-+-+-+-+
         //T/K:|tid|Y| KEYIDX  | (OPTIONAL)   L:   |   tl0picidx   | (OPTIONAL)
         //    +-+-+-+-+-+-+-+-+                   +-+-+-+-+-+-+-+-+
-        //T/K:|tid|Y| KEYIDX  | (OPTIONAL)
-        //    +-+-+-+-+-+-+-+-+
+        //                                    T/K:|tid|Y| KEYIDX  | (OPTIONAL)
+        //                                        +-+-+-+-+-+-+-+-+
 
         let mut reader = (packet, 0);
         let mut payload_index = 0;
