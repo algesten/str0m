@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Fix growing feedback bug before ICE #654
+  * Fix vp8 depacketize for small packets #653
   * Bust cache on config change #649
   * RTT in PeerStats #648
   * Fix off-by-one SDES size calculation #647
