@@ -1586,6 +1586,9 @@ impl Rtc {
                 };
                 return Ok(Output::Transmit(t));
             }
+        } else {
+            // Don't allow accumulated feedback to build up indefinitely
+            self.session.clear_feedback();
         }
 
         let stats = self.stats.as_mut();

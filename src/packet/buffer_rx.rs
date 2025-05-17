@@ -606,7 +606,7 @@ mod test {
         }
 
         fn is_partition_tail(&self, _marker: bool, packet: &[u8]) -> bool {
-            !packet.is_empty() && packet.iter().any(|v| *v == 9)
+            !packet.is_empty() && packet.contains(&9)
         }
     }
 

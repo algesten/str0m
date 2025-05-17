@@ -657,6 +657,13 @@ impl Session {
         x
     }
 
+    /// To be called in lieu of [`Self::poll_datagram`] when the owner is not in a position to transmit any
+    /// generated feedback, and thus such feedback should be dropped.
+    pub fn clear_feedback(&mut self) {
+        self.feedback_rx.clear();
+        self.feedback_tx.clear();
+    }
+
     fn poll_feedback(&mut self) -> Option<net::DatagramSend> {
         if self.feedback_tx.is_empty() {
             return None;
