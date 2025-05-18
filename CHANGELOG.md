@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Document behavior of MediaAdded #655
   * Fix growing feedback bug before ICE #654
   * Fix vp8 depacketize for small packets #653
   * Bust cache on config change #649

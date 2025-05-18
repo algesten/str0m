@@ -912,9 +912,13 @@ pub enum Event {
 
     // =================== Media related events ==================
 
-    /// Upon adding new media to the session. The lines are emitted.
+    /// Upon detecting the remote side adding new media to the session.
     ///
-    /// Upon this event, the [`Media`] instance is available via [`Rtc::media()`].
+    /// For locally added media, this event never fires. Thus it can be thought of as an
+    /// "SDP only" event. If the direct API is used on both sides, the declaration is local \
+    /// to both sides and the event never fires.
+    ///
+    /// The [`Media`] instance is available via [`Rtc::media()`].
     MediaAdded(MediaAdded),
 
     /// Incoming media data sent by the remote peer.
