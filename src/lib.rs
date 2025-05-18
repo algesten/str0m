@@ -1272,10 +1272,9 @@ impl Rtc {
 
     /// Checks if we are connected.
     ///
-    /// This tests both if we have ICE connection and DTLS is ready.
-    ///
+    /// This tests if we have ICE connection, DTLS and the SRTP crypto derived contexts are up.
     pub fn is_connected(&self) -> bool {
-        self.ice.state().is_connected() && self.dtls.is_connected()
+        self.ice.state().is_connected() && self.dtls.is_connected() && self.session.is_connected()
     }
 
     /// Make changes to the Rtc session via SDP.
