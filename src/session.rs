@@ -945,6 +945,11 @@ impl Session {
             KeyframeRequestKind::Fir => r.fb_fir,
         })
     }
+
+    /// Checks whether the SRTP contexts are up.
+    pub fn is_connected(&self) -> bool {
+        self.srtp_rx.is_some() && self.srtp_tx.is_some()
+    }
 }
 
 struct Bwe {

@@ -34,16 +34,8 @@ pub fn no_pre_ice_feedback() -> Result<(), RtcError> {
     t += Duration::from_secs(10);
     l.handle_input(str0m::Input::Timeout(t))?;
 
-    /// Some things are gated not only on DTLS being connected, i.e. `Rtc.is_connected()`, but on that
-    /// connected event being propagated internally. This includes the outputting of raw packets sometimes.
-    fn is_fully_connected(rtc: &TestRtc) -> bool {
-        rtc.events
-            .iter()
-            .any(|(_, e)| matches!(e, str0m::Event::Connected))
-    }
-
     loop {
-        if is_fully_connected(&l) && is_fully_connected(&r) {
+        if l.is_connected() && r.is_connected() {
             break;
         }
 
