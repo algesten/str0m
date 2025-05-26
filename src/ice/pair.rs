@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::io::{Id, StunTiming, TransId, DEFAULT_MAX_RETRANSMITS};
 use crate::Candidate;
+use crate::Pii;
 
 // When running ice-lite we need a cutoff when we consider the remote definitely gone.
 const RECENT_BINDING_REQUEST: Duration = Duration::from_secs(15);
@@ -199,10 +200,10 @@ impl CandidatePair {
         assert!(self.nomination_state == NominationState::None);
         if force_success {
             self.nomination_state = NominationState::Success;
-            debug!("Force success nominated pair {:?}", self);
+            debug!("Force success nominated pair {:?}", Pii(&self));
         } else {
             self.nomination_state = NominationState::Nominated;
-            debug!("Nominated pair: {:?}", self);
+            debug!("Nominated pair: {:?}", Pii(&self));
         }
     }
 
@@ -226,7 +227,7 @@ impl CandidatePair {
         self.cached_next_attempt_time = None;
 
         if matches!(self.nomination_state, NominationState::Nominated) {
-            debug!("Nominated attempt STUN binding: {:?}", self);
+            debug!("Nominated attempt STUN binding: {:?}", Pii(&self));
             self.nomination_state = NominationState::Attempt;
         }
 
@@ -283,7 +284,7 @@ impl CandidatePair {
 
         if attempt.nominated && self.nomination_state == NominationState::Attempt {
             self.nomination_state = NominationState::Success;
-            debug!("Nomination success: {:?}", self);
+            debug!("Nomination success: {:?}", Pii(&self));
         }
 
         if self.state == CheckState::InProgress {
