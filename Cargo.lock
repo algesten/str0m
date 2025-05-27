@@ -1125,6 +1125,7 @@ dependencies = [
  "openssl",
  "openssl-sys",
  "pcap-file",
+ "regex",
  "rouille",
  "sctp-proto",
  "serde",

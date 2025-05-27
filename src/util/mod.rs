@@ -4,6 +4,10 @@ mod bit_pattern;
 
 pub(crate) use bit_pattern::BitPattern;
 
+mod pii;
+
+pub(crate) use pii::Pii;
+
 pub(crate) mod value_history;
 
 mod time_tricks;

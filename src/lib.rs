@@ -621,7 +621,7 @@ use std::time::{Duration, Instant};
 use streams::RtpPacket;
 use streams::StreamPaused;
 use thiserror::Error;
-use util::InstantExt;
+use util::{InstantExt, Pii};
 
 mod crypto;
 use crypto::CryptoProvider;
@@ -1444,7 +1444,7 @@ impl Rtc {
                     return Ok(Output::Event(Event::IceConnectionStateChange(v)))
                 }
                 IceAgentEvent::DiscoveredRecv { proto, source } => {
-                    info!("ICE remote address: {:?}/{:?}", source, proto);
+                    info!("ICE remote address: {:?}/{:?}", Pii(source), proto);
                     self.remote_addrs.push(source);
                     while self.remote_addrs.len() > 20 {
                         self.remote_addrs.remove(0);
@@ -1457,7 +1457,9 @@ impl Rtc {
                 } => {
                     info!(
                         "ICE nominated send from: {:?} to: {:?} with protocol {:?}",
-                        source, destination, proto,
+                        Pii(source),
+                        Pii(destination),
+                        proto,
                     );
                     self.send_addr = Some(SendAddr {
                         proto,

@@ -8,7 +8,7 @@ use crate::io::{Id, StunClass, StunMethod, StunTiming, DATAGRAM_MTU_WARN};
 use crate::io::{Protocol, StunPacket};
 use crate::io::{StunMessage, TransId};
 use crate::io::{Transmit, DATAGRAM_MTU};
-use crate::util::NonCryptographicRng;
+use crate::util::{NonCryptographicRng, Pii};
 
 use super::candidate::{Candidate, CandidateKind};
 use super::pair::{CandidatePair, CheckState, PairId};
@@ -318,7 +318,7 @@ impl IceAgent {
     /// Sets the local ice credentials.
     pub fn set_local_credentials(&mut self, r: IceCreds) {
         if self.local_credentials != r {
-            info!("Set local credentials: {:?}", r);
+            info!("Set local credentials: {:?}", Pii(&r));
             self.local_credentials = r;
         }
     }
@@ -400,7 +400,7 @@ impl IceAgent {
     /// Sets the remote ice credentials.
     pub fn set_remote_credentials(&mut self, r: IceCreds) {
         if self.remote_credentials.as_ref() != Some(&r) {
-            info!("Set remote credentials: {:?}", r);
+            info!("Set remote credentials: {:?}", Pii(&r));
             self.remote_credentials = Some(r);
         }
     }
@@ -603,7 +603,8 @@ impl IceAgent {
                     // The new candidate is not better than what we already got.
                     debug!(
                         "Reject redundant candidate, current: {:?} rejected: {:?}",
-                        other, c
+                        Pii(&other),
+                        Pii(&c)
                     );
                     return None;
                 }
@@ -611,17 +612,18 @@ impl IceAgent {
                 // Stop using the current candidate in favor of the new one.
                 debug!(
                     "Replace redundant candidate, current: {:?} replaced with: {:?}",
-                    other, c
+                    Pii(&other),
+                    Pii(&c)
                 );
                 other.set_discarded(true);
                 self.discard_candidate_pairs_by_local(idx);
 
-                info!("Add local candidate: {:?}", c);
+                info!("Add local candidate: {:?}", Pii(&c));
                 self.local_candidates.push(c);
                 self.local_candidates.len() - 1
             }
         } else {
-            info!("Add local candidate: {:?}", c);
+            info!("Add local candidate: {:?}", Pii(&c));
             self.local_candidates.push(c);
             self.local_candidates.len() - 1
         };
@@ -660,7 +662,7 @@ impl IceAgent {
         // This is a a:rtcp-mux-only implementation. The only component
         // we accept is 1 for RTP.
         if c.component_id() != 1 {
-            debug!("Reject candidate for component other than 1: {:?}", c);
+            debug!("Reject candidate for component other than 1: {:?}", Pii(&c));
             return;
         }
 
@@ -669,7 +671,8 @@ impl IceAgent {
                 if ufrag != creds.ufrag {
                     debug!(
                         "Reject candidate with ufrag mismatch: {} != {}",
-                        ufrag, creds.ufrag
+                        Pii(&ufrag),
+                        Pii(&creds.ufrag)
                     );
                     return;
                 }
@@ -712,7 +715,8 @@ impl IceAgent {
             // candidate, it will signal the actual foundation for the candidate.
             info!(
                 "Replace peer reflexive candidate, current: {:?} replaced with: {:?}",
-                existing, c
+                Pii(&existing),
+                Pii(&c)
             );
             *existing = c;
             idx
@@ -724,11 +728,11 @@ impl IceAgent {
             });
 
             if let Some((idx, other)) = existing_discarded {
-                debug!("Re-enable previously discarded remote: {:?}", other);
+                debug!("Re-enable previously discarded remote: {:?}", Pii(&other));
                 other.set_discarded(false);
                 idx
             } else {
-                info!("Add remote candidate: {:?}", c);
+                info!("Add remote candidate: {:?}", Pii(&c));
                 self.remote_candidates.push(c);
                 self.remote_candidates.len() - 1
             }
@@ -786,7 +790,8 @@ impl IceAgent {
                             // list with higher/equal priority.
                             debug!(
                                 "Reject redundant pair, current: {:?} rejected: {:?}",
-                                check, pair
+                                Pii(&check),
+                                Pii(&pair)
                             );
                         } else {
                             // replace the existing candidate pair, since the new one got a higher prio.
@@ -794,7 +799,8 @@ impl IceAgent {
 
                             debug!(
                                 "Replace redundant pair, current: {:?} replaced with: {:?}",
-                                check, pair
+                                Pii(&check),
+                                Pii(&pair)
                             );
 
                             if self.ice_lite {
@@ -812,7 +818,7 @@ impl IceAgent {
                     }
                 }
 
-                debug!("Add new pair {:?}", pair);
+                debug!("Add new pair {:?}", Pii(&pair));
 
                 // This is not a redundant pair, add it.
                 self.candidate_pairs.push(pair);
@@ -840,7 +846,7 @@ impl IceAgent {
 
         while self.candidate_pairs.len() > max {
             let pair = self.candidate_pairs.pop();
-            debug!("Remove overflow pair {:?}", pair);
+            debug!("Remove overflow pair {:?}", Pii(&pair));
         }
     }
 
@@ -862,7 +868,7 @@ impl IceAgent {
                 && v.kind() == c.kind()
         }) {
             if !other.discarded() {
-                info!("Local candidate to discard {:?}", other);
+                info!("Local candidate to discard {:?}", Pii(&other));
                 other.set_discarded(true);
                 self.discard_candidate_pairs_by_local(idx);
                 return true;
@@ -881,14 +887,14 @@ impl IceAgent {
             })
         {
             if !other.discarded() {
-                info!("Remote candidate to discard {:?}", other);
+                info!("Remote candidate to discard {:?}", Pii(&other));
                 other.set_discarded(true);
                 self.discard_candidate_pairs_by_remote(idx);
                 return true;
             }
         }
 
-        debug!("No local or remote candidate found: {:?}", c);
+        debug!("No local or remote candidate found: {:?}", Pii(&c));
         false
     }
 
@@ -1094,7 +1100,7 @@ impl IceAgent {
             }
 
             if let Some(req) = self.stun_server_queue.pop_front() {
-                debug!("Handle enqueued STUN request: {:?}", req);
+                debug!("Handle enqueued STUN request: {:?}", Pii(&req));
                 self.stun_server_handle_request(req);
                 return;
             }
@@ -1113,7 +1119,7 @@ impl IceAgent {
                 p.is_still_possible(now, &self.timing_config)
             };
             if !keep {
-                debug!("Remove failed pair: {:?}", p);
+                debug!("Remove failed pair: {:?}", Pii(&p));
                 any_pruned = true;
             }
             keep
@@ -1277,7 +1283,7 @@ impl IceAgent {
         } else {
             debug!(
                 "Enqueue STUN request due to missing remote credentials: {:?}",
-                req
+                Pii(&req)
             );
 
             let queue = &mut self.stun_server_queue;
@@ -1290,7 +1296,7 @@ impl IceAgent {
             // This is some denial-of-service attack protection.
             while queue.len() > 100 {
                 let r = queue.pop_front();
-                debug!("Remove overflow STUN request {:?}", r);
+                debug!("Remove overflow STUN request {:?}", Pii(&r));
             }
 
             // If this happens, the agent MUST
@@ -1311,7 +1317,8 @@ impl IceAgent {
             // get the exchange on the signal level.
             debug!(
                 "STUN request rejected, remote user mismatch (enqueued): {} != {}",
-                req.remote_ufrag, remote_creds.ufrag
+                Pii(&req.remote_ufrag),
+                Pii(&remote_creds.ufrag)
             );
             return;
         }
@@ -1375,7 +1382,7 @@ impl IceAgent {
 
             info!(
                 "Created peer reflexive remote candidate from STUN request: {:?}",
-                c
+                Pii(&c)
             );
 
             // This candidate is added to the list of remote candidates.  However,
@@ -1404,7 +1411,7 @@ impl IceAgent {
 
                 debug!(
                     "Discarding STUN request on unknown interface: {}",
-                    req.destination
+                    Pii(req.destination)
                 );
                 return;
             }
@@ -1440,7 +1447,7 @@ impl IceAgent {
             // *  The pair is enqueued into the triggered-check queue.
             let pair = CandidatePair::new(local_idx, remote_idx, prio);
 
-            debug!("Created new pair for STUN request: {:?}", pair);
+            debug!("Created new pair for STUN request: {:?}", Pii(&pair));
 
             self.candidate_pairs.push(pair);
             self.candidate_pairs.sort();
@@ -1626,7 +1633,7 @@ impl IceAgent {
 
             debug!(
                 "Created local peer reflexive candidate for mapped address: {}",
-                mapped_address
+                Pii(&mapped_address)
             );
 
             // The ICE agent does not need to pair the peer-reflexive candidate with

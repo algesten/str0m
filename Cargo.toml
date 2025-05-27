@@ -35,6 +35,9 @@ sha1 = ["dep:sha1"]
 # openssl and sha1.
 wincrypto = ["dep:str0m-wincrypto"]
 
+# Redacts personally identifiable information (PII) from logs debug and above
+pii = []
+
 _internal_dont_use_log_stats = []
 _internal_test_exports = []
 
@@ -72,6 +75,7 @@ serde_json = "1.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }
 systemstat = "0.2.2"
 pcap-file = "2.0.0"
+regex = "1.11.1"
 
 # dummy package that enables "_internal_test_exports"
 _str0m_test = { path = "_str0m_test" }
