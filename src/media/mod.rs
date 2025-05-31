@@ -366,7 +366,7 @@ impl Media {
     }
 
     pub(crate) fn set_simulcast(&mut self, s: SdpSimulcast) {
-        info!("Set simulcast: {:?}", s);
+        debug!("Set simulcast: {:?}", s);
         self.simulcast = Some(s);
     }
 
@@ -445,7 +445,7 @@ impl Media {
 
         // TODO: We should verify the remote peer doesn't suddenly change the PT
         // order or removes/adds PTs that weren't there from the start.
-        info!("Mid ({}) remote PT order is: {:?}", self.mid, pts);
+        debug!("Mid ({}) remote PT order is: {:?}", self.mid, pts);
         self.remote_pts = pts;
     }
 

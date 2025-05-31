@@ -1214,7 +1214,7 @@ impl Rtc {
     /// ```
     pub fn disconnect(&mut self) {
         if self.alive {
-            info!("Set alive=false");
+            debug!("Set alive=false");
             self.alive = false;
         }
     }
@@ -1364,7 +1364,7 @@ impl Rtc {
             return Ok(());
         }
 
-        info!("DTLS setup is: {:?}", active);
+        debug!("DTLS setup is: {:?}", active);
         self.dtls.set_active(active);
 
         if active {
@@ -1444,7 +1444,7 @@ impl Rtc {
                     return Ok(Output::Event(Event::IceConnectionStateChange(v)))
                 }
                 IceAgentEvent::DiscoveredRecv { proto, source } => {
-                    info!("ICE remote address: {:?}/{:?}", Pii(source), proto);
+                    debug!("ICE remote address: {:?}/{:?}", Pii(source), proto);
                     self.remote_addrs.push(source);
                     while self.remote_addrs.len() > 20 {
                         self.remote_addrs.remove(0);
@@ -1455,7 +1455,7 @@ impl Rtc {
                     source,
                     destination,
                 } => {
-                    info!(
+                    debug!(
                         "ICE nominated send from: {:?} to: {:?} with protocol {:?}",
                         Pii(source),
                         Pii(destination),
@@ -1479,7 +1479,7 @@ impl Rtc {
                     dtls_connected = true;
                 }
                 DtlsEvent::SrtpKeyingMaterial(mat, srtp_profile) => {
-                    info!(
+                    debug!(
                         "DTLS set SRTP keying material and profile: {}",
                         srtp_profile
                     );

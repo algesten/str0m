@@ -655,7 +655,7 @@ impl StreamRx {
 
         self.need_paused_event = false;
 
-        info!(
+        debug!(
             "{} StreamRx with {:?} and SSRC: {}",
             if self.paused { "Paused" } else { "Unpaused" },
             self.midrid,
@@ -688,7 +688,7 @@ impl StreamRx {
             return false;
         }
 
-        info!(
+        debug!(
             "Change main SSRC: {} -> {} {:?}",
             self.ssrc, ssrc, self.midrid
         );
@@ -721,7 +721,7 @@ impl StreamRx {
                 return;
             }
 
-            info!(
+            debug!(
                 "Change RTX SSRC {} -> {} for main SSRC: {} {:?}",
                 current, rtx, self.ssrc, self.midrid
             );
