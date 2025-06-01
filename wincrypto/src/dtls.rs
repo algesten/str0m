@@ -630,14 +630,12 @@ impl Drop for Dtls {
         // this struct, so it's safe to Delete/Free them here.
         unsafe {
             if let Some(ctx_handle) = self.security_ctx {
-                if let Err(e) = DeleteSecurityContext(&ctx_handle) {
-                    error!("DeleteSecurityContext on Drop failed: {:?}", e);
-                }
+                DeleteSecurityContext(&ctx_handle)
+                    .expect("DeleteSecurityContext should always get valid handle");
             }
             if let Some(cred_handle) = self.cred_handle {
-                if let Err(e) = FreeCredentialsHandle(&cred_handle) {
-                    error!("FreeCredentialsHandle on Drop failed: {:?}", e);
-                }
+                FreeCredentialsHandle(&cred_handle)
+                    .expect("FreeCredentialsHandle should always get valid handle");
             }
         }
     }
