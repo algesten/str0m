@@ -1,7 +1,7 @@
 #![allow(clippy::all)]
 #![allow(unused)]
 
-use super::{CodecExtra, Depacketizer, PacketError};
+use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
 
 ///
 /// Network Abstraction Unit Header implementation
@@ -823,6 +823,270 @@ impl Depacketizer for H265Depacketizer {
 
     fn is_partition_tail(&self, marker: bool, _payload: &[u8]) -> bool {
         marker
+    }
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct H265Packetizer {
+    pub add_donl: bool,
+    pub skip_aggregation: bool,
+    pub donl: u16,
+}
+
+impl H265Packetizer {
+    // Helper function to find next Annex B start code (copied from H264)
+    fn next_ind(nalu: &[u8], start: usize) -> (isize, isize) {
+        let mut zero_count = 0;
+
+        for (i, &b) in nalu[start..].iter().enumerate() {
+            if b == 0 {
+                zero_count += 1;
+                continue;
+            } else if b == 1 && zero_count >= 2 {
+                return ((start + i - zero_count) as isize, zero_count as isize + 1);
+            }
+            zero_count = 0
+        }
+        (-1, -1)
+    }
+
+    // Process individual NALU
+    fn process_nalu(
+        &mut self,
+        nalu: &[u8],
+        mtu: usize,
+        buffered_nalus: &mut Vec<Vec<u8>>,
+        aggregation_buffer_size: &mut usize,
+        payloads: &mut Vec<Vec<u8>>,
+    ) {
+        if nalu.len() < H265NALU_HEADER_SIZE {
+            return;
+        }
+
+        let header = H265NALUHeader::new(nalu[0], nalu[1]);
+        let nalu_type = header.nalu_type();
+
+        // Calculate size needed for this NALU
+        let single_nalu_size = if self.add_donl {
+            nalu.len() + 2
+        } else {
+            nalu.len()
+        };
+
+        // Handle large NALUs via fragmentation
+        if single_nalu_size + H265NALU_HEADER_SIZE > mtu {
+            if !buffered_nalus.is_empty() {
+                self.flush_buffered_nalus(buffered_nalus, payloads);
+                *aggregation_buffer_size = 0;
+            }
+            self.fragment_nalu(nalu, mtu, payloads);
+            return;
+        }
+
+        // Calculate marginal size if added to aggregation packet
+        let marginal_size = if buffered_nalus.is_empty() {
+            // Aggregation header + NALU size + possible DONL
+            2 + 2 + nalu.len() + if self.add_donl { 2 } else { 0 }
+        } else {
+            // NALU size + possible DOND
+            2 + nalu.len() + if self.add_donl { 1 } else { 0 }
+        };
+
+        // Flush if this NALU doesn't fit in current aggregation
+        if *aggregation_buffer_size + marginal_size > mtu {
+            self.flush_buffered_nalus(buffered_nalus, payloads);
+            *aggregation_buffer_size = 0;
+        }
+
+        // Add to buffer or output immediately
+        if self.skip_aggregation {
+            self.output_single_nalu(nalu, payloads);
+        } else {
+            buffered_nalus.push(nalu.to_vec());
+            *aggregation_buffer_size += marginal_size;
+        }
+    }
+
+    // Output a single NALU packet
+    fn output_single_nalu(&mut self, nalu: &[u8], payloads: &mut Vec<Vec<u8>>) {
+        if self.add_donl {
+            let mut packet = Vec::with_capacity(nalu.len() + 2);
+            packet.extend_from_slice(&nalu[0..2]);
+            packet.extend_from_slice(&self.donl.to_be_bytes());
+            packet.extend_from_slice(&nalu[2..]);
+            payloads.push(packet);
+            self.donl = self.donl.wrapping_add(1);
+        } else {
+            payloads.push(nalu.to_vec());
+        }
+    }
+
+    // Flush buffered NALUs as aggregation packet or singles
+    fn flush_buffered_nalus(
+        &mut self,
+        buffered_nalus: &mut Vec<Vec<u8>>,
+        payloads: &mut Vec<Vec<u8>>,
+    ) {
+        match buffered_nalus.len() {
+            0 => return,
+            1 => {
+                let nalu = buffered_nalus.remove(0);
+                self.output_single_nalu(&nalu, payloads);
+            }
+            _ => {
+                let mut layer_id = u8::MAX;
+                let mut tid = u8::MAX;
+
+                // Find min layer_id and tid
+                for nalu in buffered_nalus.iter() {
+                    let header = H265NALUHeader::new(nalu[0], nalu[1]);
+                    layer_id = layer_id.min(header.layer_id());
+                    tid = tid.min(header.tid());
+                }
+
+                // Build aggregation header
+                let aggregation_header = H265NALUHeader(
+                    (0 << 15) // F=0
+                        | ((H265NALU_AGGREGATION_PACKET_TYPE as u16) << 9)
+                        | ((layer_id as u16) << 3)
+                        | (tid as u16),
+                );
+
+                let mut packet = Vec::new();
+                packet.push((aggregation_header.0 >> 8) as u8);
+                packet.push(aggregation_header.0 as u8);
+
+                // Add DONL if needed
+                if self.add_donl {
+                    packet.extend_from_slice(&self.donl.to_be_bytes());
+                }
+
+                // Add all buffered NALUs
+                for (i, nalu) in buffered_nalus.iter().enumerate() {
+                    if self.add_donl && i > 0 {
+                        packet.push((i - 1) as u8);
+                    }
+                    packet.extend_from_slice(&(nalu.len() as u16).to_be_bytes());
+                    packet.extend_from_slice(nalu);
+                }
+
+                payloads.push(packet);
+            }
+        }
+        buffered_nalus.clear();
+    }
+
+    // Fragment a large NALU
+    fn fragment_nalu(&mut self, nalu: &[u8], mtu: usize, payloads: &mut Vec<Vec<u8>>) {
+        let header = H265NALUHeader::new(nalu[0], nalu[1]);
+        let nalu_type = header.nalu_type();
+        let payload = &nalu[2..];
+
+        // Calculate available payload size
+        let fu_header_size = 1 + if self.add_donl { 2 } else { 0 };
+
+        if mtu <= H265NALU_HEADER_SIZE + fu_header_size {
+            return; // Not enough space for even a single FU header
+        }
+
+        let max_fragment_size = mtu - H265NALU_HEADER_SIZE - fu_header_size;
+
+        let mut offset = 0;
+        let payload_len = payload.len();
+        let mut is_first = true;
+
+        while offset < payload_len {
+            let fragment_size = std::cmp::min(max_fragment_size, payload_len - offset);
+            let is_last = offset + fragment_size == payload_len;
+
+            // Build fragmentation header
+            let fragmentation_header = H265NALUHeader(
+                (header.0 & 0x81FF) // Keep F and layer/tid bits
+                    | ((H265NALU_FRAGMENTATION_UNIT_TYPE as u16) << 9),
+            );
+
+            let mut packet =
+                Vec::with_capacity(H265NALU_HEADER_SIZE + fu_header_size + fragment_size);
+
+            // Add NALU header
+            packet.push((fragmentation_header.0 >> 8) as u8);
+            packet.push(fragmentation_header.0 as u8);
+
+            // Add FU header
+            let fu_header =
+                nalu_type | if is_first { 0x80 } else { 0 } | if is_last { 0x40 } else { 0 };
+            packet.push(fu_header);
+
+            // Add DONL if needed
+            if self.add_donl {
+                packet.extend_from_slice(&self.donl.to_be_bytes());
+                self.donl = self.donl.wrapping_add(1);
+            }
+
+            // Add payload fragment
+            packet.extend_from_slice(&payload[offset..offset + fragment_size]);
+
+            payloads.push(packet);
+
+            offset += fragment_size;
+            is_first = false;
+        }
+    }
+}
+
+impl Packetizer for H265Packetizer {
+    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+        if payload.is_empty() || mtu == 0 {
+            return Ok(vec![]);
+        }
+
+        let mut payloads = Vec::new();
+        let mut buffered_nalus = Vec::new();
+        let mut aggregation_buffer_size = 0;
+
+        // Split into NALUs using Annex B start codes
+        let (mut next_ind_start, mut next_ind_len) = Self::next_ind(payload, 0);
+        if next_ind_start == -1 {
+            // Single NALU mode
+            self.process_nalu(
+                payload,
+                mtu,
+                &mut buffered_nalus,
+                &mut aggregation_buffer_size,
+                &mut payloads,
+            );
+        } else {
+            let mut start = 0;
+            while next_ind_start != -1 {
+                let nalu_start = (next_ind_start + next_ind_len) as usize;
+                let (next_ind_start2, next_ind_len2) = Self::next_ind(payload, nalu_start);
+                next_ind_start = next_ind_start2;
+                next_ind_len = next_ind_len2;
+
+                let nalu_end = if next_ind_start == -1 {
+                    payload.len()
+                } else {
+                    next_ind_start as usize
+                };
+
+                self.process_nalu(
+                    &payload[nalu_start..nalu_end],
+                    mtu,
+                    &mut buffered_nalus,
+                    &mut aggregation_buffer_size,
+                    &mut payloads,
+                );
+            }
+        }
+
+        // Flush any remaining buffered NALUs
+        self.flush_buffered_nalus(&mut buffered_nalus, &mut payloads);
+
+        Ok(payloads)
+    }
+
+    fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, last: bool) -> bool {
+        last
     }
 }
 
@@ -1760,5 +2024,595 @@ mod test {
             !depacketizer.is_partition_head(&fu_end_nalu),
             "fu end nalu must not be a partition head"
         );
+    }
+
+    struct H265PayloadTestCase<'a> {
+        name: &'a str,
+        data: &'a [u8],
+        mtu: usize,
+        add_donl: bool,
+        skip_aggregation: bool,
+        expected_len: Option<usize>,
+        expected_data: Option<Vec<Vec<u8>>>,
+        msg: &'a str,
+    }
+
+    #[test]
+    fn test_h265_payload() -> Result<()> {
+        let test_cases = vec![
+            H265PayloadTestCase {
+                name: "Positive MTU, nil payload",
+                mtu: 1,
+                data: &[],
+                add_donl: false,
+                skip_aggregation: false,
+                expected_len: Some(0),
+                expected_data: None,
+                msg: "Generated payload must be empty",
+            },
+            H265PayloadTestCase {
+                name: "Positive MTU, empty NAL",
+                mtu: 1,
+                data: &[],
+                add_donl: false,
+                skip_aggregation: false,
+                expected_len: Some(0),
+                expected_data: None,
+                msg: "Generated payload should be empty",
+            },
+            H265PayloadTestCase {
+                name: "Zero MTU, start code",
+                mtu: 0,
+                data: &[0x00, 0x00, 0x01],
+                add_donl: false,
+                skip_aggregation: false,
+                expected_len: Some(0),
+                expected_data: None,
+                msg: "Generated payload should be empty",
+            },
+            H265PayloadTestCase {
+                name: "Positive MTU, 1 byte payload",
+                mtu: 1,
+                data: &[0x90],
+                add_donl: false,
+                skip_aggregation: false,
+                expected_len: Some(0),
+                expected_data: None,
+                msg: "Generated payload should be empty. H.265 nal unit too small",
+            },
+            H265PayloadTestCase {
+                name: "MTU:1, 2 byte payload",
+                mtu: 1,
+                data: &[0x46, 0x01],
+                add_donl: false,
+                skip_aggregation: false,
+                expected_len: Some(0),
+                expected_data: None,
+                msg: "Generated payload should be empty. H.265 nal unit too small",
+            },
+            H265PayloadTestCase {
+                name: "MTU:2, 2 byte payload",
+                mtu: 2,
+                data: &[0x46, 0x01],
+                add_donl: false,
+                skip_aggregation: false,
+                expected_len: Some(0),
+                expected_data: None,
+                msg: "Generated payload should be empty. min MTU is 4",
+            },
+            H265PayloadTestCase {
+                name: "MTU:4, 2 byte payload",
+                mtu: 4,
+                data: &[0x46, 0x01],
+                add_donl: false,
+                skip_aggregation: false,
+                expected_len: None,
+                expected_data: Some(vec![vec![0x46, 0x01]]),
+                msg: "AUD packetization failed",
+            },
+            H265PayloadTestCase {
+                name: "Negative MTU, small payload",
+                mtu: 0,
+                data: &[0x90, 0x90, 0x90],
+                add_donl: false,
+                skip_aggregation: false,
+                expected_len: Some(0),
+                expected_data: None,
+                msg: "",
+            },
+            H265PayloadTestCase {
+                name: "MTU:1, small payload",
+                mtu: 1,
+                data: &[0x90, 0x90, 0x90],
+                add_donl: false,
+                skip_aggregation: false,
+                expected_len: Some(0),
+                expected_data: None,
+                msg: "",
+            },
+            H265PayloadTestCase {
+                name: "MTU:5, small payload",
+                mtu: 5,
+                data: &[0x90, 0x90, 0x90],
+                add_donl: false,
+                skip_aggregation: false,
+                expected_len: None,
+                expected_data: Some(vec![vec![0x90, 0x90, 0x90]]),
+                msg: "",
+            },
+            H265PayloadTestCase {
+                name: "Large payload",
+                mtu: 5,
+                data: &[
+                    0x00, 0x00, 0x01, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+                    0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
+                ],
+                add_donl: false,
+                skip_aggregation: false,
+                expected_len: None,
+                expected_data: Some(vec![
+                    vec![0x62, 0x01, 0x80, 0x02, 0x03],
+                    vec![0x62, 0x01, 0x00, 0x04, 0x05],
+                    vec![0x62, 0x01, 0x00, 0x06, 0x07],
+                    vec![0x62, 0x01, 0x00, 0x08, 0x09],
+                    vec![0x62, 0x01, 0x00, 0x10, 0x11],
+                    vec![0x62, 0x01, 0x00, 0x12, 0x13],
+                    vec![0x62, 0x01, 0x40, 0x14, 0x15],
+                ]),
+                msg: "Large payload split across fragmentation Packets",
+            },
+            H265PayloadTestCase {
+                name: "Short MTU, multiple NALUs flushed in single packet",
+                mtu: 5,
+                data: &[0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x02, 0x03],
+                add_donl: false,
+                skip_aggregation: false,
+                expected_len: None,
+                expected_data: Some(vec![vec![0x00, 0x01], vec![0x02, 0x03]]),
+                msg: "multiple Single NALUs packetization should succeed",
+            },
+            H265PayloadTestCase {
+                name: "Enough MTU, multiple NALUs create Single Packet",
+                mtu: 10,
+                data: &[0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x02, 0x03],
+                add_donl: false,
+                skip_aggregation: false,
+                expected_len: None,
+                expected_data: Some(vec![vec![
+                    0x60, 0x01, 0x00, 0x02, 0x00, 0x01, 0x00, 0x02, 0x02, 0x03,
+                ]]),
+                msg: "Aggregation packetization should succeed",
+            },
+            H265PayloadTestCase {
+                name: "Enough MTU, multiple NALUs flushed two Packets, don't aggregate",
+                mtu: 5,
+                data: &[
+                    0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x02, 0x03, 0x00, 0x00, 0x01,
+                    0x04, 0x05,
+                ],
+                add_donl: false,
+                skip_aggregation: false,
+                expected_len: None,
+                expected_data: Some(vec![vec![0x00, 0x01], vec![0x02, 0x03], vec![0x04, 0x05]]),
+                msg: "multiple Single NALUs packetization should succeed",
+            },
+            H265PayloadTestCase {
+                name: "Enough MTU, multiple NALUs flushed two Packets, aggregate",
+                mtu: 15,
+                data: &[
+                    0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x02, 0x03, 0x00, 0x00, 0x01,
+                    0x04, 0x05,
+                ],
+                add_donl: false,
+                skip_aggregation: false,
+                expected_len: None,
+                expected_data: Some(vec![vec![
+                    0x60, 0x01, 0x00, 0x02, 0x00, 0x01, 0x00, 0x02, 0x02, 0x03, 0x00, 0x02, 0x04,
+                    0x05,
+                ]]),
+                msg: "Aggregation packetization should succeed",
+            },
+            // Add DONL = true
+            H265PayloadTestCase {
+                name: "DONL, invalid MTU:1",
+                mtu: 1,
+                data: &[0x01],
+                add_donl: true,
+                skip_aggregation: false,
+                expected_len: Some(0),
+                expected_data: None,
+                msg: "Generated payload must be empty",
+            },
+            H265PayloadTestCase {
+                name: "DONL MTU:4, 2 byte payload",
+                mtu: 4,
+                data: &[0x00, 0x01],
+                add_donl: true,
+                skip_aggregation: false,
+                expected_len: Some(0),
+                expected_data: None,
+                msg: "Generated payload must be empty",
+            },
+            H265PayloadTestCase {
+                name: "DONL single NALU minimum payload",
+                mtu: 6,
+                data: &[0x00, 0x01],
+                add_donl: true,
+                skip_aggregation: false,
+                expected_len: None,
+                expected_data: Some(vec![vec![0x00, 0x01, 0x00, 0x00]]),
+                msg: "single NALU should be packetized",
+            },
+            H265PayloadTestCase {
+                name: "DONL multiple NALU",
+                mtu: 6,
+                data: &[
+                    0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x02, 0x03, 0x00, 0x00, 0x01,
+                    0x04, 0x05,
+                ],
+                add_donl: true,
+                skip_aggregation: false,
+                expected_len: None,
+                expected_data: Some(vec![
+                    vec![0x00, 0x01, 0x00, 0x00],
+                    vec![0x02, 0x03, 0x00, 0x01],
+                    vec![0x04, 0x05, 0x00, 0x02],
+                ]),
+                msg: "DONL should be incremented",
+            },
+            H265PayloadTestCase {
+                name: "DONL aggregation minimum payload",
+                mtu: 18,
+                data: &[
+                    0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x02, 0x03, 0x00, 0x00, 0x01,
+                    0x04, 0x05,
+                ],
+                add_donl: true,
+                skip_aggregation: false,
+                expected_len: None,
+                expected_data: Some(vec![vec![
+                    0x60, 0x01, // NALU Header + Layer ID + TID
+                    0x00, 0x00, // DONL
+                    0x00, 0x02, 0x00, 0x01, 0x00, // DONL
+                    0x00, 0x02, 0x02, 0x03, 0x01, // DONL
+                    0x00, 0x02, 0x04, 0x05,
+                ]]),
+                msg: "DONL Aggregation packetization should succeed",
+            },
+            H265PayloadTestCase {
+                name: "DONL Large payload",
+                mtu: 7,
+                data: &[
+                    0x00, 0x00, 0x01, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+                    0x10, 0x11, 0x12, 0x13, 0x14, 0x15,
+                ],
+                add_donl: true,
+                skip_aggregation: false,
+                expected_len: None,
+                expected_data: Some(vec![
+                    vec![0x62, 0x01, 0x80, 0x00, 0x00, 0x02, 0x03],
+                    vec![0x62, 0x01, 0x00, 0x00, 0x01, 0x04, 0x05],
+                    vec![0x62, 0x01, 0x00, 0x00, 0x02, 0x06, 0x07],
+                    vec![0x62, 0x01, 0x00, 0x00, 0x03, 0x08, 0x09],
+                    vec![0x62, 0x01, 0x00, 0x00, 0x04, 0x10, 0x11],
+                    vec![0x62, 0x01, 0x00, 0x00, 0x05, 0x12, 0x13],
+                    vec![0x62, 0x01, 0x40, 0x00, 0x06, 0x14, 0x15],
+                ]),
+                msg: "DONL Large payload split across fragmentation Packets",
+            },
+            // SkipAggregation = true
+            H265PayloadTestCase {
+                name: "SkipAggregation Enough MUT, multiple NALUs",
+                mtu: 4,
+                data: &[
+                    0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x01, 0x02, 0x03, 0x00, 0x00, 0x01,
+                    0x04, 0x05,
+                ],
+                add_donl: false,
+                skip_aggregation: true,
+                expected_len: None,
+                expected_data: Some(vec![vec![0x00, 0x01], vec![0x02, 0x03], vec![0x04, 0x05]]),
+                msg: "Aggregation packetization should be skipped",
+            },
+        ];
+
+        for case in test_cases {
+            let mut pck = H265Packetizer {
+                add_donl: case.add_donl,
+                skip_aggregation: case.skip_aggregation,
+                donl: 0,
+            };
+
+            let res = pck.packetize(case.mtu, case.data)?;
+
+            if let Some(expected_data) = case.expected_data {
+                assert_eq!(res, expected_data, "{}: {}", case.name, case.msg);
+            } else if let Some(expected_len) = case.expected_len {
+                assert_eq!(res.len(), expected_len, "{}: {}", case.name, case.msg);
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_h265_real_payload() -> Result<()> {
+        // curl -LO "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h265/1080/Big_Buck_Bunny_1080_10s_1MB.mp4"
+        // ffmpeg -i Big_Buck_Bunny_1080_10s_1MB.mp4 -c:v copy Big_Buck_Bunny_1080_10s_1MB.h265
+        // hexdump -v -e '1/1 "0x%02x, "' Big_Buck_Bunny_1080_10s_1MB.h265 > aaa
+
+        let payload: &[u8] = &[
+            0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x0c, 0x01, 0xff, 0xff, 0x01, 0x60, 0x00, 0x00,
+            0x03, 0x00, 0x90, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x78, 0x95, 0x98, 0x09,
+            0x00, 0x00, 0x00, 0x01, 0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x90,
+            0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x78, 0xa0, 0x03, 0xc0, 0x80, 0x10, 0xe5,
+            0x96, 0x56, 0x69, 0x24, 0xca, 0xf0, 0x10, 0x10, 0x00, 0x00, 0x03, 0x00, 0x10, 0x00,
+            0x00, 0x03, 0x01, 0xe0, 0x80, 0x00, 0x00, 0x00, 0x01, 0x44, 0x01, 0xc1, 0x72, 0xb4,
+            0x62, 0x40, 0x00, 0x00, 0x00, 0x01, 0x4e, 0x01, 0x05, 0xff, 0xff, 0xff, 0xff, 0xff,
+            0xff, 0xff, 0x71, 0x2c, 0xa2, 0xde, 0x09, 0xb5, 0x17, 0x47, 0xdb, 0xbb, 0x55, 0xa4,
+            0xfe, 0x7f, 0xc2, 0xfc, 0x4e, 0x78, 0x32, 0x36, 0x35, 0x20, 0x28, 0x62, 0x75, 0x69,
+            0x6c, 0x64, 0x20, 0x31, 0x35, 0x31, 0x29, 0x20, 0x2d, 0x20, 0x32, 0x2e, 0x36, 0x2b,
+            0x34, 0x39, 0x2d, 0x37, 0x32, 0x31, 0x39, 0x33, 0x37, 0x36, 0x64, 0x65, 0x34, 0x32,
+            0x61, 0x3a, 0x5b, 0x57, 0x69, 0x6e, 0x64, 0x6f, 0x77, 0x73, 0x5d, 0x5b, 0x47, 0x43,
+            0x43, 0x20, 0x37, 0x2e, 0x33, 0x2e, 0x30, 0x5d, 0x5b, 0x36, 0x34, 0x20, 0x62, 0x69,
+            0x74, 0x5d, 0x20, 0x38, 0x62, 0x69, 0x74, 0x2b, 0x31, 0x30, 0x62, 0x69, 0x74, 0x20,
+            0x2d, 0x20, 0x48, 0x2e, 0x32, 0x36, 0x35, 0x2f, 0x48, 0x45, 0x56, 0x43, 0x20, 0x63,
+            0x6f, 0x64, 0x65, 0x63, 0x20, 0x2d, 0x20, 0x43, 0x6f, 0x70, 0x79, 0x72, 0x69, 0x67,
+            0x68, 0x74, 0x20, 0x32, 0x30, 0x31, 0x33, 0x2d, 0x32, 0x30, 0x31, 0x38, 0x20, 0x28,
+            0x63, 0x29, 0x20, 0x4d, 0x75, 0x6c, 0x74, 0x69, 0x63, 0x6f, 0x72, 0x65, 0x77, 0x61,
+            0x72, 0x65, 0x2c, 0x20, 0x49, 0x6e, 0x63, 0x20, 0x2d, 0x20, 0x68, 0x74, 0x74, 0x70,
+            0x3a, 0x2f, 0x2f, 0x78, 0x32, 0x36, 0x35, 0x2e, 0x6f, 0x72, 0x67, 0x20, 0x2d, 0x20,
+            0x6f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x3a, 0x20, 0x63, 0x70, 0x75, 0x69, 0x64,
+            0x3d, 0x31, 0x30, 0x35, 0x30, 0x31, 0x31, 0x31, 0x20, 0x66, 0x72, 0x61, 0x6d, 0x65,
+            0x2d, 0x74, 0x68, 0x72, 0x65, 0x61, 0x64, 0x73, 0x3d, 0x33, 0x20, 0x6e, 0x75, 0x6d,
+            0x61, 0x2d, 0x70, 0x6f, 0x6f, 0x6c, 0x73, 0x3d, 0x38, 0x20, 0x77, 0x70, 0x70, 0x20,
+            0x6e, 0x6f, 0x2d, 0x70, 0x6d, 0x6f, 0x64, 0x65, 0x20, 0x6e, 0x6f, 0x2d, 0x70, 0x6d,
+            0x65, 0x20, 0x6e, 0x6f, 0x2d, 0x70, 0x73, 0x6e, 0x72, 0x20, 0x6e, 0x6f, 0x2d, 0x73,
+            0x73, 0x69, 0x6d, 0x20, 0x6c, 0x6f, 0x67, 0x2d, 0x6c, 0x65, 0x76, 0x65, 0x6c, 0x3d,
+            0x32, 0x20, 0x62, 0x69, 0x74, 0x64, 0x65, 0x70, 0x74, 0x68, 0x3d, 0x38, 0x20, 0x69,
+            0x6e, 0x70, 0x75, 0x74, 0x2d, 0x63, 0x73, 0x70, 0x3d, 0x31, 0x20, 0x66, 0x70, 0x73,
+            0x3d, 0x33, 0x30, 0x2f, 0x31, 0x20, 0x69, 0x6e, 0x70, 0x75, 0x74, 0x2d, 0x72, 0x65,
+            0x73, 0x3d, 0x31, 0x39, 0x32, 0x30, 0x78, 0x31, 0x30, 0x38, 0x30, 0x20, 0x69, 0x6e,
+            0x74, 0x65, 0x72, 0x6c, 0x61, 0x63, 0x65, 0x3d, 0x30, 0x20, 0x74, 0x6f, 0x74, 0x61,
+            0x6c, 0x2d, 0x66, 0x72, 0x61, 0x6d, 0x65, 0x73, 0x3d, 0x30, 0x20, 0x6c, 0x65, 0x76,
+            0x65, 0x6c, 0x2d, 0x69, 0x64, 0x63, 0x3d, 0x30, 0x20, 0x68, 0x69, 0x67, 0x68, 0x2d,
+            0x74, 0x69, 0x65, 0x72, 0x3d, 0x31, 0x20, 0x75, 0x68, 0x64, 0x2d, 0x62, 0x64, 0x3d,
+            0x30, 0x20, 0x72, 0x65, 0x66, 0x3d, 0x34, 0x20, 0x6e, 0x6f, 0x2d, 0x61, 0x6c, 0x6c,
+            0x6f, 0x77, 0x2d, 0x6e, 0x6f, 0x6e, 0x2d, 0x63, 0x6f, 0x6e, 0x66, 0x6f, 0x72, 0x6d,
+            0x61, 0x6e, 0x63, 0x65, 0x20, 0x6e, 0x6f, 0x2d, 0x72, 0x65, 0x70, 0x65, 0x61, 0x74,
+            0x2d, 0x68, 0x65, 0x61, 0x64, 0x65, 0x72, 0x73, 0x20, 0x61, 0x6e, 0x6e, 0x65, 0x78,
+            0x62, 0x20, 0x6e, 0x6f, 0x2d, 0x61, 0x75, 0x64, 0x20, 0x6e, 0x6f, 0x2d, 0x68, 0x72,
+            0x64, 0x20, 0x69, 0x6e, 0x66, 0x6f, 0x20, 0x68, 0x61, 0x73, 0x68, 0x3d, 0x30, 0x20,
+            0x6e, 0x6f, 0x2d, 0x74, 0x65, 0x6d, 0x70, 0x6f, 0x72, 0x61, 0x6c, 0x2d, 0x6c, 0x61,
+            0x79, 0x65, 0x72, 0x73, 0x20, 0x6f, 0x70, 0x65, 0x6e, 0x2d, 0x67, 0x6f, 0x70, 0x20,
+            0x6d, 0x69, 0x6e, 0x2d, 0x6b, 0x65, 0x79, 0x69, 0x6e, 0x74, 0x3d, 0x32, 0x35, 0x20,
+            0x6b, 0x65, 0x79, 0x69, 0x6e, 0x74, 0x3d, 0x32, 0x35, 0x30, 0x20, 0x67, 0x6f, 0x70,
+            0x2d, 0x6c, 0x6f, 0x6f, 0x6b, 0x61, 0x68, 0x65, 0x61, 0x64, 0x3d, 0x30, 0x20, 0x62,
+            0x66, 0x72, 0x61, 0x6d, 0x65, 0x73, 0x3d, 0x34, 0x20, 0x62, 0x2d, 0x61, 0x64, 0x61,
+            0x70, 0x74, 0x3d, 0x32, 0x20, 0x62, 0x2d, 0x70, 0x79, 0x72, 0x61, 0x6d, 0x69, 0x64,
+            0x20, 0x62, 0x66, 0x72, 0x61, 0x6d, 0x65, 0x2d, 0x62, 0x69, 0x61, 0x73, 0x3d, 0x30,
+            0x20, 0x72, 0x63, 0x2d, 0x6c, 0x6f, 0x6f, 0x6b, 0x61, 0x68, 0x65, 0x61, 0x64, 0x3d,
+            0x32, 0x35, 0x20, 0x6c, 0x6f, 0x6f, 0x6b, 0x61, 0x68, 0x65, 0x61, 0x64, 0x2d, 0x73,
+            0x6c, 0x69, 0x63, 0x65, 0x73, 0x3d, 0x34, 0x20, 0x73, 0x63, 0x65, 0x6e, 0x65, 0x63,
+            0x75, 0x74, 0x3d, 0x34, 0x30, 0x20, 0x72, 0x61, 0x64, 0x6c, 0x3d, 0x30, 0x20, 0x6e,
+            0x6f, 0x2d, 0x69, 0x6e, 0x74, 0x72, 0x61, 0x2d, 0x72, 0x65, 0x66, 0x72, 0x65, 0x73,
+            0x68, 0x20, 0x63, 0x74, 0x75, 0x3d, 0x36, 0x34, 0x20, 0x6d, 0x69, 0x6e, 0x2d, 0x63,
+            0x75, 0x2d, 0x73, 0x69, 0x7a, 0x65, 0x3d, 0x38, 0x20, 0x72, 0x65, 0x63, 0x74, 0x20,
+            0x6e, 0x6f, 0x2d, 0x61, 0x6d, 0x70, 0x20, 0x6d, 0x61, 0x78, 0x2d, 0x74, 0x75, 0x2d,
+            0x73, 0x69, 0x7a, 0x65, 0x3d, 0x33, 0x32, 0x20, 0x74, 0x75, 0x2d, 0x69, 0x6e, 0x74,
+            0x65, 0x72, 0x2d, 0x64, 0x65, 0x70, 0x74, 0x68, 0x3d, 0x31, 0x20, 0x74, 0x75, 0x2d,
+            0x69, 0x6e, 0x74, 0x72, 0x61, 0x2d, 0x64, 0x65, 0x70, 0x74, 0x68, 0x3d, 0x31, 0x20,
+            0x6c, 0x69, 0x6d, 0x69, 0x74, 0x2d, 0x74, 0x75, 0x3d, 0x30, 0x20, 0x72, 0x64, 0x6f,
+            0x71, 0x2d, 0x6c, 0x65, 0x76, 0x65, 0x6c, 0x3d, 0x32, 0x20, 0x64, 0x79, 0x6e, 0x61,
+            0x6d, 0x69, 0x63, 0x2d, 0x72, 0x64, 0x3d, 0x30, 0x2e, 0x30, 0x30, 0x20, 0x6e, 0x6f,
+            0x2d, 0x73, 0x73, 0x69, 0x6d, 0x2d, 0x72, 0x64, 0x20, 0x73, 0x69, 0x67, 0x6e, 0x68,
+            0x69, 0x64, 0x65, 0x20, 0x6e, 0x6f, 0x2d, 0x74, 0x73, 0x6b, 0x69, 0x70, 0x20, 0x6e,
+            0x72, 0x2d, 0x69, 0x6e, 0x74, 0x72, 0x61, 0x3d, 0x30, 0x20, 0x6e, 0x72, 0x2d, 0x69,
+            0x6e, 0x74, 0x65, 0x72, 0x3d, 0x30, 0x20, 0x6e, 0x6f, 0x2d, 0x63, 0x6f, 0x6e, 0x73,
+            0x74, 0x72, 0x61, 0x69, 0x6e, 0x65, 0x64, 0x2d, 0x69, 0x6e, 0x74, 0x72, 0x61, 0x20,
+            0x73, 0x74, 0x72, 0x6f, 0x6e, 0x67, 0x2d, 0x69, 0x6e, 0x74, 0x72, 0x61, 0x2d, 0x73,
+            0x6d, 0x6f, 0x6f, 0x74, 0x68, 0x69, 0x6e, 0x67, 0x20, 0x6d, 0x61, 0x78, 0x2d, 0x6d,
+            0x65, 0x72, 0x67, 0x65, 0x3d, 0x33, 0x20, 0x6c, 0x69, 0x6d, 0x69, 0x74, 0x2d, 0x72,
+            0x65, 0x66, 0x73, 0x3d, 0x33, 0x20, 0x6c, 0x69, 0x6d, 0x69, 0x74, 0x2d, 0x6d, 0x6f,
+            0x64, 0x65, 0x73, 0x20, 0x6d, 0x65, 0x3d, 0x33, 0x20, 0x73, 0x75, 0x62, 0x6d, 0x65,
+            0x3d, 0x33, 0x20, 0x6d, 0x65, 0x72, 0x61, 0x6e, 0x67, 0x65, 0x3d, 0x35, 0x37, 0x20,
+            0x74, 0x65, 0x6d, 0x70, 0x6f, 0x72, 0x61, 0x6c, 0x2d, 0x6d, 0x76, 0x70, 0x20, 0x77,
+            0x65, 0x69, 0x67, 0x68, 0x74, 0x70, 0x20, 0x6e, 0x6f, 0x2d, 0x77, 0x65, 0x69, 0x67,
+            0x68, 0x74, 0x62, 0x20, 0x6e, 0x6f, 0x2d, 0x61, 0x6e, 0x61, 0x6c, 0x79, 0x7a, 0x65,
+            0x2d, 0x73, 0x72, 0x63, 0x2d, 0x70, 0x69, 0x63, 0x73, 0x20, 0x64, 0x65, 0x62, 0x6c,
+            0x6f, 0x63, 0x6b, 0x3d, 0x30, 0x3a, 0x30, 0x20, 0x73, 0x61, 0x6f, 0x20, 0x6e, 0x6f,
+            0x2d, 0x73, 0x61, 0x6f, 0x2d, 0x6e, 0x6f, 0x6e, 0x2d, 0x64, 0x65, 0x62, 0x6c, 0x6f,
+            0x63, 0x6b, 0x20, 0x72, 0x64, 0x3d, 0x34, 0x20, 0x6e, 0x6f, 0x2d, 0x65, 0x61, 0x72,
+            0x6c, 0x79, 0x2d, 0x73, 0x6b, 0x69, 0x70, 0x20, 0x72, 0x73, 0x6b, 0x69, 0x70, 0x20,
+            0x6e, 0x6f, 0x2d, 0x66, 0x61, 0x73, 0x74, 0x2d, 0x69, 0x6e, 0x74, 0x72, 0x61, 0x20,
+            0x6e, 0x6f, 0x2d, 0x74, 0x73, 0x6b, 0x69, 0x70, 0x2d, 0x66, 0x61, 0x73, 0x74, 0x20,
+            0x6e, 0x6f, 0x2d, 0x63, 0x75, 0x2d, 0x6c, 0x6f, 0x73, 0x73, 0x6c, 0x65, 0x73, 0x73,
+            0x20, 0x6e, 0x6f, 0x2d, 0x62, 0x2d, 0x69, 0x6e, 0x74, 0x72, 0x61, 0x20, 0x6e, 0x6f,
+            0x2d, 0x73, 0x70, 0x6c, 0x69, 0x74, 0x72, 0x64, 0x2d, 0x73, 0x6b, 0x69, 0x70, 0x20,
+            0x72, 0x64, 0x70, 0x65, 0x6e, 0x61, 0x6c, 0x74, 0x79, 0x3d, 0x30, 0x20, 0x70, 0x73,
+            0x79, 0x2d, 0x72, 0x64, 0x3d, 0x32, 0x2e, 0x30, 0x30, 0x20, 0x70, 0x73, 0x79, 0x2d,
+            0x72, 0x64, 0x6f, 0x71, 0x3d, 0x31, 0x2e, 0x30, 0x30, 0x20, 0x6e, 0x6f, 0x2d, 0x72,
+            0x64, 0x2d, 0x72, 0x65, 0x66, 0x69, 0x6e, 0x65, 0x20, 0x6e, 0x6f, 0x2d, 0x6c, 0x6f,
+            0x73, 0x73, 0x6c, 0x65, 0x73, 0x73, 0x20, 0x63, 0x62, 0x71, 0x70, 0x6f, 0x66, 0x66,
+            0x73, 0x3d, 0x30, 0x20, 0x63, 0x72, 0x71, 0x70, 0x6f, 0x66, 0x66, 0x73, 0x3d, 0x30,
+            0x20, 0x72, 0x63, 0x3d, 0x61, 0x62, 0x72, 0x20, 0x62, 0x69, 0x74, 0x72, 0x61, 0x74,
+            0x65, 0x3d, 0x38, 0x38, 0x30, 0x20, 0x71, 0x63, 0x6f, 0x6d, 0x70, 0x3d, 0x30, 0x2e,
+            0x36, 0x30, 0x20, 0x71, 0x70, 0x73, 0x74, 0x65, 0x70, 0x3d, 0x34, 0x20, 0x73, 0x74,
+            0x61, 0x74, 0x73, 0x2d, 0x77, 0x72, 0x69, 0x74, 0x65, 0x3d, 0x30, 0x20, 0x73, 0x74,
+            0x61, 0x74, 0x73, 0x2d, 0x72, 0x65, 0x61, 0x64, 0x3d, 0x30, 0x20, 0x69, 0x70, 0x72,
+            0x61, 0x74, 0x69, 0x6f, 0x3d, 0x31, 0x2e, 0x34, 0x30, 0x20, 0x70, 0x62, 0x72, 0x61,
+            0x74, 0x69, 0x6f, 0x3d, 0x31, 0x2e, 0x33, 0x30, 0x20, 0x61, 0x71, 0x2d, 0x6d, 0x6f,
+            0x64, 0x65, 0x3d, 0x31, 0x20, 0x61, 0x71, 0x2d, 0x73, 0x74, 0x72, 0x65, 0x6e, 0x67,
+            0x74, 0x68, 0x3d, 0x31, 0x2e, 0x30, 0x30, 0x20, 0x63, 0x75, 0x74, 0x72, 0x65, 0x65,
+            0x20, 0x7a, 0x6f, 0x6e, 0x65, 0x2d, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x3d, 0x30, 0x20,
+            0x6e, 0x6f, 0x2d, 0x73, 0x74, 0x72, 0x69, 0x63, 0x74, 0x2d, 0x63, 0x62, 0x72, 0x20,
+            0x71, 0x67, 0x2d, 0x73, 0x69, 0x7a, 0x65, 0x3d, 0x33, 0x32, 0x20, 0x6e, 0x6f, 0x2d,
+            0x72, 0x63, 0x2d, 0x67, 0x72, 0x61, 0x69, 0x6e, 0x20, 0x71, 0x70, 0x6d, 0x61, 0x78,
+            0x3d, 0x36, 0x39, 0x20, 0x71, 0x70, 0x6d, 0x69, 0x6e, 0x3d, 0x30, 0x20, 0x6e, 0x6f,
+            0x2d, 0x63, 0x6f, 0x6e, 0x73, 0x74, 0x2d, 0x76, 0x62, 0x76, 0x20, 0x73, 0x61, 0x72,
+            0x3d, 0x31, 0x20, 0x6f, 0x76, 0x65, 0x72, 0x73, 0x63, 0x61, 0x6e, 0x3d, 0x30, 0x20,
+            0x76, 0x69, 0x64, 0x65, 0x6f, 0x66, 0x6f, 0x72, 0x6d, 0x61, 0x74, 0x3d, 0x35, 0x20,
+            0x72, 0x61, 0x6e, 0x67, 0x65, 0x3d, 0x30, 0x20, 0x63, 0x6f, 0x6c, 0x6f, 0x72, 0x70,
+            0x72, 0x69, 0x6d, 0x3d, 0x32, 0x20, 0x74, 0x72, 0x61, 0x6e, 0x73, 0x66, 0x65, 0x72,
+            0x3d, 0x32, 0x20, 0x63, 0x6f, 0x6c, 0x6f, 0x72, 0x6d, 0x61, 0x74, 0x72, 0x69, 0x78,
+            0x3d, 0x32, 0x20, 0x63, 0x68, 0x72, 0x6f, 0x6d, 0x61, 0x6c, 0x6f, 0x63, 0x3d, 0x30,
+            0x20, 0x64, 0x69, 0x73, 0x70, 0x6c, 0x61, 0x79, 0x2d, 0x77, 0x69, 0x6e, 0x64, 0x6f,
+            0x77, 0x3d, 0x30, 0x20, 0x6d, 0x61, 0x78, 0x2d, 0x63, 0x6c, 0x6c, 0x3d, 0x30, 0x2c,
+            0x30, 0x20, 0x6d, 0x69, 0x6e, 0x2d, 0x6c, 0x75, 0x6d, 0x61, 0x3d, 0x30, 0x20, 0x6d,
+            0x61, 0x78, 0x2d, 0x6c, 0x75, 0x6d, 0x61, 0x3d, 0x32, 0x35, 0x35, 0x20, 0x6c, 0x6f,
+            0x67, 0x32, 0x2d, 0x6d, 0x61, 0x78, 0x2d, 0x70, 0x6f, 0x63, 0x2d, 0x6c, 0x73, 0x62,
+            0x3d, 0x38, 0x20, 0x76, 0x75, 0x69, 0x2d, 0x74, 0x69, 0x6d, 0x69, 0x6e, 0x67, 0x2d,
+            0x69, 0x6e, 0x66, 0x6f, 0x20, 0x76, 0x75, 0x69, 0x2d, 0x68, 0x72, 0x64, 0x2d, 0x69,
+            0x6e, 0x66, 0x6f, 0x20, 0x73, 0x6c, 0x69, 0x63, 0x65, 0x73, 0x3d, 0x31, 0x20, 0x6e,
+            0x6f, 0x2d, 0x6f, 0x70, 0x74, 0x2d, 0x71, 0x70, 0x2d, 0x70, 0x70, 0x73, 0x20, 0x6e,
+            0x6f, 0x2d, 0x6f, 0x70, 0x74, 0x2d, 0x72, 0x65, 0x66, 0x2d, 0x6c, 0x69, 0x73, 0x74,
+            0x2d, 0x6c, 0x65, 0x6e, 0x67, 0x74, 0x68, 0x2d, 0x70, 0x70, 0x73, 0x20, 0x6e, 0x6f,
+            0x2d, 0x6d, 0x75, 0x6c, 0x74, 0x69, 0x2d, 0x70, 0x61, 0x73, 0x73, 0x2d, 0x6f, 0x70,
+            0x74, 0x2d, 0x72, 0x70, 0x73, 0x20, 0x73, 0x63, 0x65, 0x6e, 0x65, 0x63, 0x75, 0x74,
+            0x2d, 0x62, 0x69, 0x61, 0x73, 0x3d, 0x30, 0x2e, 0x30, 0x35, 0x20, 0x6e, 0x6f, 0x2d,
+            0x6f, 0x70, 0x74, 0x2d, 0x63, 0x75, 0x2d, 0x64, 0x65, 0x6c, 0x74, 0x61, 0x2d, 0x71,
+            0x70, 0x20, 0x6e, 0x6f, 0x2d, 0x61, 0x71, 0x2d, 0x6d, 0x6f, 0x74, 0x69, 0x6f, 0x6e,
+            0x20, 0x6e, 0x6f, 0x2d, 0x68, 0x64, 0x72, 0x20, 0x6e, 0x6f, 0x2d, 0x68, 0x64, 0x72,
+            0x2d, 0x6f, 0x70, 0x74, 0x20, 0x6e, 0x6f, 0x2d, 0x64, 0x68, 0x64, 0x72, 0x31, 0x30,
+            0x2d, 0x6f, 0x70, 0x74, 0x20, 0x61, 0x6e, 0x61, 0x6c, 0x79, 0x73, 0x69, 0x73, 0x2d,
+            0x72, 0x65, 0x75, 0x73, 0x65, 0x2d, 0x6c, 0x65, 0x76, 0x65, 0x6c, 0x3d, 0x35, 0x20,
+            0x73, 0x63, 0x61, 0x6c, 0x65, 0x2d, 0x66, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x3d, 0x30,
+            0x20, 0x72, 0x65, 0x66, 0x69, 0x6e, 0x65, 0x2d, 0x69, 0x6e, 0x74, 0x72, 0x61, 0x3d,
+            0x30, 0x20, 0x72, 0x65, 0x66, 0x69, 0x6e, 0x65, 0x2d, 0x69, 0x6e, 0x74, 0x65, 0x72,
+            0x3d, 0x30, 0x20, 0x72, 0x65, 0x66, 0x69, 0x6e, 0x65, 0x2d, 0x6d, 0x76, 0x3d, 0x30,
+            0x20, 0x6e, 0x6f, 0x2d, 0x6c, 0x69, 0x6d, 0x69, 0x74, 0x2d, 0x73, 0x61, 0x6f, 0x20,
+            0x63, 0x74, 0x75, 0x2d, 0x69, 0x6e, 0x66, 0x6f, 0x3d, 0x30, 0x20, 0x6e, 0x6f, 0x2d,
+            0x6c, 0x6f, 0x77, 0x70, 0x61, 0x73, 0x73, 0x2d, 0x64, 0x63, 0x74, 0x20, 0x72, 0x65,
+            0x66, 0x69, 0x6e, 0x65, 0x2d, 0x6d, 0x76, 0x2d, 0x74, 0x79, 0x70, 0x65, 0x3d, 0x30,
+            0x20, 0x63, 0x6f, 0x70, 0x79, 0x2d, 0x70, 0x69, 0x63, 0x3d, 0x31, 0x80,
+        ];
+
+        let mut pck = H265Packetizer::default();
+
+        let res = pck.packetize(1400, payload)?;
+
+        // These expected results are obtained from running pion's golang code
+        let res_exp_1 = &[
+            96, 1, 0, 24, 64, 1, 12, 1, 255, 255, 1, 96, 0, 0, 3, 0, 144, 0, 0, 3, 0, 0, 3, 0, 120,
+            149, 152, 9, 0, 43, 66, 1, 1, 1, 96, 0, 0, 3, 0, 144, 0, 0, 3, 0, 0, 3, 0, 120, 160, 3,
+            192, 128, 16, 229, 150, 86, 105, 36, 202, 240, 16, 16, 0, 0, 3, 0, 16, 0, 0, 3, 1, 224,
+            128, 0, 7, 68, 1, 193, 114, 180, 98, 64,
+        ];
+
+        let res_exp_2 = &[
+            98, 1, 167, 5, 255, 255, 255, 255, 255, 255, 255, 113, 44, 162, 222, 9, 181, 23, 71,
+            219, 187, 85, 164, 254, 127, 194, 252, 78, 120, 50, 54, 53, 32, 40, 98, 117, 105, 108,
+            100, 32, 49, 53, 49, 41, 32, 45, 32, 50, 46, 54, 43, 52, 57, 45, 55, 50, 49, 57, 51,
+            55, 54, 100, 101, 52, 50, 97, 58, 91, 87, 105, 110, 100, 111, 119, 115, 93, 91, 71, 67,
+            67, 32, 55, 46, 51, 46, 48, 93, 91, 54, 52, 32, 98, 105, 116, 93, 32, 56, 98, 105, 116,
+            43, 49, 48, 98, 105, 116, 32, 45, 32, 72, 46, 50, 54, 53, 47, 72, 69, 86, 67, 32, 99,
+            111, 100, 101, 99, 32, 45, 32, 67, 111, 112, 121, 114, 105, 103, 104, 116, 32, 50, 48,
+            49, 51, 45, 50, 48, 49, 56, 32, 40, 99, 41, 32, 77, 117, 108, 116, 105, 99, 111, 114,
+            101, 119, 97, 114, 101, 44, 32, 73, 110, 99, 32, 45, 32, 104, 116, 116, 112, 58, 47,
+            47, 120, 50, 54, 53, 46, 111, 114, 103, 32, 45, 32, 111, 112, 116, 105, 111, 110, 115,
+            58, 32, 99, 112, 117, 105, 100, 61, 49, 48, 53, 48, 49, 49, 49, 32, 102, 114, 97, 109,
+            101, 45, 116, 104, 114, 101, 97, 100, 115, 61, 51, 32, 110, 117, 109, 97, 45, 112, 111,
+            111, 108, 115, 61, 56, 32, 119, 112, 112, 32, 110, 111, 45, 112, 109, 111, 100, 101,
+            32, 110, 111, 45, 112, 109, 101, 32, 110, 111, 45, 112, 115, 110, 114, 32, 110, 111,
+            45, 115, 115, 105, 109, 32, 108, 111, 103, 45, 108, 101, 118, 101, 108, 61, 50, 32, 98,
+            105, 116, 100, 101, 112, 116, 104, 61, 56, 32, 105, 110, 112, 117, 116, 45, 99, 115,
+            112, 61, 49, 32, 102, 112, 115, 61, 51, 48, 47, 49, 32, 105, 110, 112, 117, 116, 45,
+            114, 101, 115, 61, 49, 57, 50, 48, 120, 49, 48, 56, 48, 32, 105, 110, 116, 101, 114,
+            108, 97, 99, 101, 61, 48, 32, 116, 111, 116, 97, 108, 45, 102, 114, 97, 109, 101, 115,
+            61, 48, 32, 108, 101, 118, 101, 108, 45, 105, 100, 99, 61, 48, 32, 104, 105, 103, 104,
+            45, 116, 105, 101, 114, 61, 49, 32, 117, 104, 100, 45, 98, 100, 61, 48, 32, 114, 101,
+            102, 61, 52, 32, 110, 111, 45, 97, 108, 108, 111, 119, 45, 110, 111, 110, 45, 99, 111,
+            110, 102, 111, 114, 109, 97, 110, 99, 101, 32, 110, 111, 45, 114, 101, 112, 101, 97,
+            116, 45, 104, 101, 97, 100, 101, 114, 115, 32, 97, 110, 110, 101, 120, 98, 32, 110,
+            111, 45, 97, 117, 100, 32, 110, 111, 45, 104, 114, 100, 32, 105, 110, 102, 111, 32,
+            104, 97, 115, 104, 61, 48, 32, 110, 111, 45, 116, 101, 109, 112, 111, 114, 97, 108, 45,
+            108, 97, 121, 101, 114, 115, 32, 111, 112, 101, 110, 45, 103, 111, 112, 32, 109, 105,
+            110, 45, 107, 101, 121, 105, 110, 116, 61, 50, 53, 32, 107, 101, 121, 105, 110, 116,
+            61, 50, 53, 48, 32, 103, 111, 112, 45, 108, 111, 111, 107, 97, 104, 101, 97, 100, 61,
+            48, 32, 98, 102, 114, 97, 109, 101, 115, 61, 52, 32, 98, 45, 97, 100, 97, 112, 116, 61,
+            50, 32, 98, 45, 112, 121, 114, 97, 109, 105, 100, 32, 98, 102, 114, 97, 109, 101, 45,
+            98, 105, 97, 115, 61, 48, 32, 114, 99, 45, 108, 111, 111, 107, 97, 104, 101, 97, 100,
+            61, 50, 53, 32, 108, 111, 111, 107, 97, 104, 101, 97, 100, 45, 115, 108, 105, 99, 101,
+            115, 61, 52, 32, 115, 99, 101, 110, 101, 99, 117, 116, 61, 52, 48, 32, 114, 97, 100,
+            108, 61, 48, 32, 110, 111, 45, 105, 110, 116, 114, 97, 45, 114, 101, 102, 114, 101,
+            115, 104, 32, 99, 116, 117, 61, 54, 52, 32, 109, 105, 110, 45, 99, 117, 45, 115, 105,
+            122, 101, 61, 56, 32, 114, 101, 99, 116, 32, 110, 111, 45, 97, 109, 112, 32, 109, 97,
+            120, 45, 116, 117, 45, 115, 105, 122, 101, 61, 51, 50, 32, 116, 117, 45, 105, 110, 116,
+            101, 114, 45, 100, 101, 112, 116, 104, 61, 49, 32, 116, 117, 45, 105, 110, 116, 114,
+            97, 45, 100, 101, 112, 116, 104, 61, 49, 32, 108, 105, 109, 105, 116, 45, 116, 117, 61,
+            48, 32, 114, 100, 111, 113, 45, 108, 101, 118, 101, 108, 61, 50, 32, 100, 121, 110, 97,
+            109, 105, 99, 45, 114, 100, 61, 48, 46, 48, 48, 32, 110, 111, 45, 115, 115, 105, 109,
+            45, 114, 100, 32, 115, 105, 103, 110, 104, 105, 100, 101, 32, 110, 111, 45, 116, 115,
+            107, 105, 112, 32, 110, 114, 45, 105, 110, 116, 114, 97, 61, 48, 32, 110, 114, 45, 105,
+            110, 116, 101, 114, 61, 48, 32, 110, 111, 45, 99, 111, 110, 115, 116, 114, 97, 105,
+            110, 101, 100, 45, 105, 110, 116, 114, 97, 32, 115, 116, 114, 111, 110, 103, 45, 105,
+            110, 116, 114, 97, 45, 115, 109, 111, 111, 116, 104, 105, 110, 103, 32, 109, 97, 120,
+            45, 109, 101, 114, 103, 101, 61, 51, 32, 108, 105, 109, 105, 116, 45, 114, 101, 102,
+            115, 61, 51, 32, 108, 105, 109, 105, 116, 45, 109, 111, 100, 101, 115, 32, 109, 101,
+            61, 51, 32, 115, 117, 98, 109, 101, 61, 51, 32, 109, 101, 114, 97, 110, 103, 101, 61,
+            53, 55, 32, 116, 101, 109, 112, 111, 114, 97, 108, 45, 109, 118, 112, 32, 119, 101,
+            105, 103, 104, 116, 112, 32, 110, 111, 45, 119, 101, 105, 103, 104, 116, 98, 32, 110,
+            111, 45, 97, 110, 97, 108, 121, 122, 101, 45, 115, 114, 99, 45, 112, 105, 99, 115, 32,
+            100, 101, 98, 108, 111, 99, 107, 61, 48, 58, 48, 32, 115, 97, 111, 32, 110, 111, 45,
+            115, 97, 111, 45, 110, 111, 110, 45, 100, 101, 98, 108, 111, 99, 107, 32, 114, 100, 61,
+            52, 32, 110, 111, 45, 101, 97, 114, 108, 121, 45, 115, 107, 105, 112, 32, 114, 115,
+            107, 105, 112, 32, 110, 111, 45, 102, 97, 115, 116, 45, 105, 110, 116, 114, 97, 32,
+            110, 111, 45, 116, 115, 107, 105, 112, 45, 102, 97, 115, 116, 32, 110, 111, 45, 99,
+            117, 45, 108, 111, 115, 115, 108, 101, 115, 115, 32, 110, 111, 45, 98, 45, 105, 110,
+            116, 114, 97, 32, 110, 111, 45, 115, 112, 108, 105, 116, 114, 100, 45, 115, 107, 105,
+            112, 32, 114, 100, 112, 101, 110, 97, 108, 116, 121, 61, 48, 32, 112, 115, 121, 45,
+            114, 100, 61, 50, 46, 48, 48, 32, 112, 115, 121, 45, 114, 100, 111, 113, 61, 49, 46,
+            48, 48, 32, 110, 111, 45, 114, 100, 45, 114, 101, 102, 105, 110, 101, 32, 110, 111, 45,
+            108, 111, 115, 115, 108, 101, 115, 115, 32, 99, 98, 113, 112, 111, 102, 102, 115, 61,
+            48, 32, 99, 114, 113, 112, 111, 102, 102, 115, 61, 48, 32, 114, 99, 61, 97, 98, 114,
+            32, 98, 105, 116, 114, 97, 116, 101, 61, 56, 56, 48, 32, 113, 99, 111, 109, 112, 61,
+            48, 46, 54, 48, 32, 113, 112, 115, 116, 101, 112, 61, 52, 32, 115, 116, 97, 116, 115,
+            45, 119, 114, 105, 116, 101, 61, 48, 32, 115, 116, 97, 116, 115, 45, 114, 101, 97, 100,
+            61, 48, 32, 105, 112, 114, 97, 116, 105, 111, 61, 49, 46, 52, 48, 32, 112, 98, 114, 97,
+            116, 105, 111, 61, 49, 46, 51, 48, 32, 97, 113, 45, 109, 111, 100, 101, 61, 49, 32, 97,
+            113, 45, 115, 116, 114, 101, 110, 103, 116, 104, 61, 49, 46, 48, 48, 32, 99, 117, 116,
+            114, 101, 101, 32, 122, 111, 110, 101, 45, 99, 111, 117, 110, 116, 61, 48, 32, 110,
+            111, 45, 115, 116, 114, 105, 99, 116, 45, 99, 98, 114, 32, 113, 103, 45, 115, 105, 122,
+            101, 61, 51, 50, 32, 110, 111, 45, 114, 99, 45, 103, 114, 97, 105, 110, 32, 113, 112,
+            109, 97, 120, 61, 54, 57, 32, 113,
+        ];
+
+        let res_exp_3 = &[
+            98, 1, 103, 112, 109, 105, 110, 61, 48, 32, 110, 111, 45, 99, 111, 110, 115, 116, 45,
+            118, 98, 118, 32, 115, 97, 114, 61, 49, 32, 111, 118, 101, 114, 115, 99, 97, 110, 61,
+            48, 32, 118, 105, 100, 101, 111, 102, 111, 114, 109, 97, 116, 61, 53, 32, 114, 97, 110,
+            103, 101, 61, 48, 32, 99, 111, 108, 111, 114, 112, 114, 105, 109, 61, 50, 32, 116, 114,
+            97, 110, 115, 102, 101, 114, 61, 50, 32, 99, 111, 108, 111, 114, 109, 97, 116, 114,
+            105, 120, 61, 50, 32, 99, 104, 114, 111, 109, 97, 108, 111, 99, 61, 48, 32, 100, 105,
+            115, 112, 108, 97, 121, 45, 119, 105, 110, 100, 111, 119, 61, 48, 32, 109, 97, 120, 45,
+            99, 108, 108, 61, 48, 44, 48, 32, 109, 105, 110, 45, 108, 117, 109, 97, 61, 48, 32,
+            109, 97, 120, 45, 108, 117, 109, 97, 61, 50, 53, 53, 32, 108, 111, 103, 50, 45, 109,
+            97, 120, 45, 112, 111, 99, 45, 108, 115, 98, 61, 56, 32, 118, 117, 105, 45, 116, 105,
+            109, 105, 110, 103, 45, 105, 110, 102, 111, 32, 118, 117, 105, 45, 104, 114, 100, 45,
+            105, 110, 102, 111, 32, 115, 108, 105, 99, 101, 115, 61, 49, 32, 110, 111, 45, 111,
+            112, 116, 45, 113, 112, 45, 112, 112, 115, 32, 110, 111, 45, 111, 112, 116, 45, 114,
+            101, 102, 45, 108, 105, 115, 116, 45, 108, 101, 110, 103, 116, 104, 45, 112, 112, 115,
+            32, 110, 111, 45, 109, 117, 108, 116, 105, 45, 112, 97, 115, 115, 45, 111, 112, 116,
+            45, 114, 112, 115, 32, 115, 99, 101, 110, 101, 99, 117, 116, 45, 98, 105, 97, 115, 61,
+            48, 46, 48, 53, 32, 110, 111, 45, 111, 112, 116, 45, 99, 117, 45, 100, 101, 108, 116,
+            97, 45, 113, 112, 32, 110, 111, 45, 97, 113, 45, 109, 111, 116, 105, 111, 110, 32, 110,
+            111, 45, 104, 100, 114, 32, 110, 111, 45, 104, 100, 114, 45, 111, 112, 116, 32, 110,
+            111, 45, 100, 104, 100, 114, 49, 48, 45, 111, 112, 116, 32, 97, 110, 97, 108, 121, 115,
+            105, 115, 45, 114, 101, 117, 115, 101, 45, 108, 101, 118, 101, 108, 61, 53, 32, 115,
+            99, 97, 108, 101, 45, 102, 97, 99, 116, 111, 114, 61, 48, 32, 114, 101, 102, 105, 110,
+            101, 45, 105, 110, 116, 114, 97, 61, 48, 32, 114, 101, 102, 105, 110, 101, 45, 105,
+            110, 116, 101, 114, 61, 48, 32, 114, 101, 102, 105, 110, 101, 45, 109, 118, 61, 48, 32,
+            110, 111, 45, 108, 105, 109, 105, 116, 45, 115, 97, 111, 32, 99, 116, 117, 45, 105,
+            110, 102, 111, 61, 48, 32, 110, 111, 45, 108, 111, 119, 112, 97, 115, 115, 45, 100, 99,
+            116, 32, 114, 101, 102, 105, 110, 101, 45, 109, 118, 45, 116, 121, 112, 101, 61, 48,
+            32, 99, 111, 112, 121, 45, 112, 105, 99, 61, 49, 128,
+        ];
+
+        assert_eq!(res.len(), 3, "Generated payload should be 3");
+        assert_eq!(res[0], res_exp_1, "First packet does not match expected");
+        assert_eq!(res[1], res_exp_2, "Second packet does not match expected");
+        assert_eq!(res[2], res_exp_3, "Third packet does not match expected");
+
+        Ok(())
     }
 }
