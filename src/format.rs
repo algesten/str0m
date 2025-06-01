@@ -784,7 +784,7 @@ impl CodecConfig {
                     panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
                 };
 
-                info!("Reassigned PT {} => {}", p.pt, pt);
+                debug!("Reassigned PT {} => {}", p.pt, pt);
                 p.pt = pt;
 
                 claimed.assert_claim_once(pt);
@@ -800,7 +800,7 @@ impl CodecConfig {
                     panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
                 };
 
-                info!("Reassigned RTX PT {:?} => {:?}", p.resend, rtx);
+                debug!("Reassigned RTX PT {:?} => {:?}", p.resend, rtx);
                 p.resend = Some(rtx);
 
                 claimed.assert_claim_once(rtx);

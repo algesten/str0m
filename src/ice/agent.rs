@@ -318,7 +318,7 @@ impl IceAgent {
     /// Sets the local ice credentials.
     pub fn set_local_credentials(&mut self, r: IceCreds) {
         if self.local_credentials != r {
-            info!("Set local credentials: {:?}", Pii(&r));
+            debug!("Set local credentials: {:?}", Pii(&r));
             self.local_credentials = r;
         }
     }
@@ -400,7 +400,7 @@ impl IceAgent {
     /// Sets the remote ice credentials.
     pub fn set_remote_credentials(&mut self, r: IceCreds) {
         if self.remote_credentials.as_ref() != Some(&r) {
-            info!("Set remote credentials: {:?}", Pii(&r));
+            debug!("Set remote credentials: {:?}", Pii(&r));
             self.remote_credentials = Some(r);
         }
     }
@@ -618,12 +618,12 @@ impl IceAgent {
                 other.set_discarded(true);
                 self.discard_candidate_pairs_by_local(idx);
 
-                info!("Add local candidate: {:?}", Pii(&c));
+                debug!("Add local candidate: {:?}", Pii(&c));
                 self.local_candidates.push(c);
                 self.local_candidates.len() - 1
             }
         } else {
-            info!("Add local candidate: {:?}", Pii(&c));
+            debug!("Add local candidate: {:?}", Pii(&c));
             self.local_candidates.push(c);
             self.local_candidates.len() - 1
         };
@@ -713,7 +713,7 @@ impl IceAgent {
         let remote_idx = if let Some((idx, existing)) = existing_prflx {
             // If any subsequent candidate exchanges contain this peer-reflexive
             // candidate, it will signal the actual foundation for the candidate.
-            info!(
+            debug!(
                 "Replace peer reflexive candidate, current: {:?} replaced with: {:?}",
                 Pii(&existing),
                 Pii(&c)
@@ -732,7 +732,7 @@ impl IceAgent {
                 other.set_discarded(false);
                 idx
             } else {
-                info!("Add remote candidate: {:?}", Pii(&c));
+                debug!("Add remote candidate: {:?}", Pii(&c));
                 self.remote_candidates.push(c);
                 self.remote_candidates.len() - 1
             }
@@ -868,7 +868,7 @@ impl IceAgent {
                 && v.kind() == c.kind()
         }) {
             if !other.discarded() {
-                info!("Local candidate to discard {:?}", Pii(&other));
+                debug!("Local candidate to discard {:?}", Pii(&other));
                 other.set_discarded(true);
                 self.discard_candidate_pairs_by_local(idx);
                 return true;
@@ -887,7 +887,7 @@ impl IceAgent {
             })
         {
             if !other.discarded() {
-                info!("Remote candidate to discard {:?}", Pii(&other));
+                debug!("Remote candidate to discard {:?}", Pii(&other));
                 other.set_discarded(true);
                 self.discard_candidate_pairs_by_remote(idx);
                 return true;
@@ -1380,7 +1380,7 @@ impl IceAgent {
                 self.local_credentials.ufrag.clone(),
             );
 
-            info!(
+            debug!(
                 "Created peer reflexive remote candidate from STUN request: {:?}",
                 Pii(&c)
             );
@@ -1720,7 +1720,7 @@ impl IceAgent {
 
     fn set_connection_state(&mut self, state: IceConnectionState, reason: &'static str) {
         if self.state != state {
-            info!("State change ({}): {:?} -> {:?}", reason, self.state, state);
+            debug!("State change ({}): {:?} -> {:?}", reason, self.state, state);
             self.state = state;
             self.emit_event(IceAgentEvent::IceConnectionStateChange(state));
         }

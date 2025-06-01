@@ -1073,7 +1073,7 @@ fn update_media(
         && new_dir == Direction::SendOnly;
 
     if change_direction_disallowed {
-        info!(
+        debug!(
             "Ignore attempt to change inactive to recvonly by remote peer for locally created mid: {}",
             media.mid()
         );
@@ -1163,7 +1163,7 @@ fn update_media(
 
     for i in main {
         // TODO: If the remote is communicating _BOTH_ rid and a=ssrc this will fail.
-        info!("Adding pre-communicated SSRC: {:?}", i);
+        debug!("Adding pre-communicated SSRC: {:?}", i);
         let repair_ssrc = infos
             .iter()
             .find(|r| r.repairs == Some(i.ssrc))
