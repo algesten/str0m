@@ -807,9 +807,18 @@ impl Depacketizer for H265Depacketizer {
     }
 
     /// is_partition_head checks if this is the head of a packetized nalu stream.
-    fn is_partition_head(&self, _payload: &[u8]) -> bool {
-        //TODO:
-        true
+    fn is_partition_head(&self, packet: &[u8]) -> bool {
+        if packet.len() < 3 {
+            return false;
+        }
+
+        let header = H265NALUHeader::new(packet[0], packet[1]);
+
+        if header.is_fragmentation_unit() {
+            H265FragmentationUnitHeader(packet[2]).s()
+        } else {
+            true // AP and Single NALU packets are always partition heads
+        }
     }
 
     fn is_partition_tail(&self, marker: bool, _payload: &[u8]) -> bool {
@@ -1717,5 +1726,39 @@ mod test {
         }
 
         Ok(())
+    }
+
+    #[test]
+    fn test_h265_is_partition_head() {
+        let depacketizer = H265Depacketizer::default();
+
+        assert!(
+            !depacketizer.is_partition_head(&[]),
+            "empty nalu must not be a partition head"
+        );
+
+        let single_nalu = [0x01, 0x01, 0xab, 0xcd, 0xef];
+        assert!(
+            depacketizer.is_partition_head(&single_nalu),
+            "single nalu must be a partition head"
+        );
+
+        let fbit_nalu = [0x80, 0x00, 0x00];
+        assert!(
+            depacketizer.is_partition_head(&fbit_nalu),
+            "fbit nalu must be a partition head"
+        );
+
+        let fu_start_nalu = [0x62, 0x01, 0x93];
+        assert!(
+            depacketizer.is_partition_head(&fu_start_nalu),
+            "fu start nalu must be a partition head"
+        );
+
+        let fu_end_nalu = [0x62, 0x01, 0x53];
+        assert!(
+            !depacketizer.is_partition_head(&fu_end_nalu),
+            "fu end nalu must not be a partition head"
+        );
     }
 }
