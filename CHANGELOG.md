@@ -1,5 +1,8 @@
 # Unreleased
 
+  * Wincrypto fail on drop #660
+  * All logging on DEBUG and lower #658
+  * Redact PII (ip addresses) in logs #656
   * Document behavior of MediaAdded #655
   * Fix growing feedback bug before ICE #654
   * Fix vp8 depacketize for small packets #653
