@@ -9,7 +9,7 @@ use crate::rtp_::{Mid, Pli, Pt, ReceiverReport};
 use crate::rtp_::{ReportBlock, ReportList, Rid, Rrtr, Rtcp};
 use crate::rtp_::{RtcpFb, RtpHeader, SenderInfo, SeqNo};
 use crate::rtp_::{SdesType, Ssrc};
-use crate::stats::{MediaIngressStats, StatsSnapshot};
+use crate::stats::{MediaIngressStats, RemoteEgressStats, StatsSnapshot};
 use crate::util::InstantExt;
 use crate::util::{already_happened, calculate_rtt_ms};
 
@@ -645,7 +645,8 @@ impl StreamRx {
     }
 
     pub(crate) fn visit_stats(&mut self, snapshot: &mut StatsSnapshot, now: Instant) {
-        self.stats.fill(snapshot, self.midrid, now);
+        self.stats
+            .fill(snapshot, self.midrid, self.sender_info.as_ref(), now);
     }
 
     pub(crate) fn poll_paused(&mut self) -> Option<StreamPaused> {
@@ -762,7 +763,13 @@ impl StreamRxStats {
         self.loss = Some(fraction_lost as f32 / u8::MAX as f32)
     }
 
-    pub(crate) fn fill(&mut self, snapshot: &mut StatsSnapshot, midrid: MidRid, now: Instant) {
+    pub(crate) fn fill(
+        &mut self,
+        snapshot: &mut StatsSnapshot,
+        midrid: MidRid,
+        sender_info: Option<&(Instant, SenderInfo)>,
+        now: Instant,
+    ) {
         if self.bytes == 0 {
             return;
         }
@@ -778,6 +785,10 @@ impl StreamRxStats {
             rtt: self.rtt,
             loss: self.loss,
             timestamp: now,
+            remote: sender_info.map(|(_, sender_info)| RemoteEgressStats {
+                bytes: sender_info.sender_octet_count as u64,
+                packets: sender_info.sender_packet_count as u64,
+            }),
         };
 
         // Several SSRCs can back a given (mid, rid) tuple. For example, Firefox creates new SSRCs

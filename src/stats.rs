@@ -4,6 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
+use crate::rtp::SeqNo;
 use crate::rtp_::{Mid, Rid};
 use crate::Bitrate;
 use crate::{io::Protocol, rtp_::MidRid};
@@ -136,15 +137,19 @@ pub struct MediaEgressStats {
     pub loss: Option<f32>,
     /// Timestamp when this event was generated
     pub timestamp: Instant,
-    // TODO
-    // pub remote: RemoteIngressStats,
+    /// Stats provided by the remote peer via ReceiverReports
+    pub remote: Option<RemoteIngressStats>,
 }
 
 /// Stats as reported by the remote side (via RTCP ReceiverReports).
 #[derive(Debug, Clone)]
 pub struct RemoteIngressStats {
-    /// Total bytes received.
-    pub bytes_rx: u64,
+    /// The remotely calculated jitter.
+    pub jitter: u32,
+    /// The maximum extended sequence number received.
+    pub maximum_sequence_number: SeqNo,
+    /// The cumulative number of packets lost.
+    pub packets_lost: u64,
 }
 
 /// Incoming media statistics in [`Event::MediaIngressStats`][crate::Event::MediaIngressStats].
@@ -172,8 +177,8 @@ pub struct MediaIngressStats {
     pub loss: Option<f32>,
     /// Timestamp when this event was generated.
     pub timestamp: Instant,
-    // TODO
-    // pub remote: RemoteEgressStats,
+    /// Stats provided by the remote peer via SenderReports
+    pub remote: Option<RemoteEgressStats>,
 }
 
 impl MediaIngressStats {
@@ -206,6 +211,20 @@ impl MediaIngressStats {
             rtt,
             loss,
             timestamp: self.timestamp.max(other.timestamp),
+            remote: self.remote.as_ref().map_or_else(
+                || other.remote.clone(),
+                |remote| {
+                    other.remote.as_ref().map_or_else(
+                        || Some(remote.clone()),
+                        |other_remote| {
+                            Some(RemoteEgressStats {
+                                bytes: remote.bytes + other_remote.bytes,
+                                packets: remote.packets + other_remote.packets,
+                            })
+                        },
+                    )
+                },
+            ),
         };
     }
 }
@@ -213,8 +232,10 @@ impl MediaIngressStats {
 /// Stats as reported by the remote side (via RTCP SenderReports).
 #[derive(Debug, Clone)]
 pub struct RemoteEgressStats {
-    /// Total bytes transmitted.
-    pub bytes_tx: u64,
+    /// Total bytes sent, including retransmissions.
+    pub bytes: u64,
+    /// Total number of rtp packets sent, including retransmissions.
+    pub packets: u64,
 }
 
 impl Stats {

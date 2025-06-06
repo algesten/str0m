@@ -877,7 +877,7 @@ impl StreamTx {
     }
 
     pub(crate) fn visit_stats(&mut self, snapshot: &mut StatsSnapshot, now: Instant) {
-        self.stats.fill(snapshot, self.midrid, now);
+        self.stats.fill(snapshot, self.midrid, self.seq_no, now);
     }
 
     pub(crate) fn queue_state(&mut self, now: Instant) -> QueueState {
