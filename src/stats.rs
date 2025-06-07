@@ -211,20 +211,15 @@ impl MediaIngressStats {
             rtt,
             loss,
             timestamp: self.timestamp.max(other.timestamp),
-            remote: self.remote.as_ref().map_or_else(
-                || other.remote.clone(),
-                |remote| {
-                    other.remote.as_ref().map_or_else(
-                        || Some(remote.clone()),
-                        |other_remote| {
-                            Some(RemoteEgressStats {
-                                bytes: remote.bytes + other_remote.bytes,
-                                packets: remote.packets + other_remote.packets,
-                            })
-                        },
-                    )
-                },
-            ),
+            remote: match (&self.remote, &other.remote) {
+                (None, None) => None,
+                (Some(remote), None) => Some(remote.clone()),
+                (None, Some(other_remote)) => Some(other_remote.clone()),
+                (Some(remote), Some(other_remote)) => Some(RemoteEgressStats {
+                    bytes: remote.bytes + other_remote.bytes,
+                    packets: remote.packets + other_remote.packets,
+                }),
+            },
         };
     }
 }
