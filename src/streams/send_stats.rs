@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use crate::rtp::SeqNo;
-use crate::rtp_::{extend_u16, ReceptionReport};
+use crate::rtp_::{extend_u32, ReceptionReport};
 use crate::stats::{MediaEgressStats, RemoteIngressStats, StatsSnapshot};
 use crate::util::value_history::ValueHistory;
 use crate::util::{calculate_rtt_ms, InstantExt};
@@ -33,7 +33,10 @@ pub(crate) struct StreamTxStats {
     /// losses collecter from RR (known packets, lost ratio)
     losses: Losses,
     /// The last reception report for the stream, if any.
-    last_rr: Option<ReceptionReport>,
+    ///
+    /// The SeqNo is the extended max_seq of the reception report, extended
+    /// using the last sent sequence number.
+    last_rr: Option<(SeqNo, ReceptionReport)>,
 
     /// `None` if `rtx_ratio_cap` is `None`.
     pub bytes_transmitted: Option<ValueHistory<u64>>,
@@ -81,29 +84,21 @@ impl StreamTxStats {
         self.firs += 1;
     }
 
-    pub fn update_with_rr(&mut self, now: Instant, r: ReceptionReport) {
+    pub fn update_with_rr(&mut self, now: Instant, last_sent_seq_no: SeqNo, r: ReceptionReport) {
         let ntp_time = now.to_ntp_duration();
         let rtt = calculate_rtt_ms(ntp_time, r.last_sr_delay, r.last_sr_time);
         self.rtt = rtt;
-        self.last_rr = Some(r);
 
-        let ext_seq = {
-            let prev = self.losses.last().map(|s| s.0).unwrap_or(r.max_seq as u64);
-            let next = (r.max_seq & 0xffff) as u16;
-            extend_u16(Some(prev), next)
-        };
+        // The last_sent_seq_no should be in the vicinity of the rr.max_seq.
+        let ext_seq = extend_u32(Some(*last_sent_seq_no), r.max_seq).into();
+
+        self.last_rr = Some((ext_seq, r));
 
         self.losses
-            .push((ext_seq, r.fraction_lost as f32 / u8::MAX as f32));
+            .push((*ext_seq, r.fraction_lost as f32 / u8::MAX as f32));
     }
 
-    pub(crate) fn fill(
-        &mut self,
-        snapshot: &mut StatsSnapshot,
-        midrid: MidRid,
-        seq_no: SeqNo,
-        now: Instant,
-    ) {
+    pub(crate) fn fill(&mut self, snapshot: &mut StatsSnapshot, midrid: MidRid, now: Instant) {
         if self.bytes == 0 {
             return;
         }
@@ -139,28 +134,14 @@ impl StreamTxStats {
                 rtt: self.rtt,
                 loss,
                 timestamp: now,
-                remote: self.last_rr.as_ref().map(|rr| {
-                    // We only receive 32-bit extend sequence numbers, so we'll extend it to 64bits.
-                    // Since our local SeqNo should be higher than anything received in the RR, we'll
-                    // assume the RR SeqNo represents a packet within the last 2**32 packets.
-                    let maximum_sequence_number = if rr.max_seq < *seq_no as u32 {
-                        // If max_seq is less than the 32-bit partial of seq_no, then we can reuse the
-                        // upper 32-bits unchanged to generate an extended sequence number.
-                        (*seq_no & 0xffff_ffff_0000_0000) | (rr.max_seq as u64)
-                    } else {
-                        // If max_seq is not less than the 32-bit partial of seq_no, then we need to
-                        // decrement the upper 32-bits by 1 to generate an extended sequence number.
-                        ((*seq_no).wrapping_sub(0x0000_0001_0000_0000) & 0xffff_ffff_0000_0000)
-                            | (rr.max_seq as u64)
-                    }
-                    .into();
-
-                    RemoteIngressStats {
+                remote: self
+                    .last_rr
+                    .as_ref()
+                    .map(|(seq_no, rr)| RemoteIngressStats {
                         jitter: rr.jitter,
-                        maximum_sequence_number,
+                        maximum_sequence_number: *seq_no,
                         packets_lost: rr.packets_lost as u64,
-                    }
-                }),
+                    }),
             },
         );
     }
@@ -180,13 +161,6 @@ impl Losses {
         } else {
             Self::Disabled
         }
-    }
-
-    fn last(&self) -> Option<&(u64, f32)> {
-        let Self::Enabled(losses) = self else {
-            return None;
-        };
-        losses.last()
     }
 
     fn push(&mut self, value: (u64, f32)) {
