@@ -69,6 +69,10 @@ pub struct StreamTx {
     /// If we are using RTX, this is the seq no counter.
     seq_no_rtx: SeqNo,
 
+    /// The last seq_no that we sent, either by increasing seq_no ourselves (media API), or by
+    /// direct RTP mode writing.
+    last_sent_seq_no: SeqNo,
+
     /// When we last sent something for this encoded stream, packet or RTCP.
     last_used: Instant,
 
@@ -142,6 +146,7 @@ impl StreamTx {
             clock_rate: None,
             seq_no: SeqNo::default(),
             seq_no_rtx: SeqNo::default(),
+            last_sent_seq_no: SeqNo::default(),
             last_used: already_happened(),
             rtp_and_wallclock: None,
             send_queue: SendQueue::new(),
@@ -514,6 +519,10 @@ impl StreamTx {
         }
 
         let seq_no = next.seq_no;
+        if next.kind == NextPacketKind::Regular {
+            self.last_sent_seq_no = seq_no;
+        }
+
         self.last_used = now;
 
         // Padding comes in two forms, "spurious resends" of sent packets where
@@ -736,7 +745,7 @@ impl StreamTx {
             ReceptionReport(r) => {
                 // Receiver has bound MidRid to SSRC
                 self.remote_acked_ssrc = true;
-                self.stats.update_with_rr(now, r)
+                self.stats.update_with_rr(now, self.last_sent_seq_no, r)
             }
             Nack(_, list) => {
                 self.stats.increase_nacks();
