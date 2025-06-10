@@ -1,7 +1,8 @@
 use std::time::Instant;
 
-use crate::rtp_::{extend_u16, ReceptionReport};
-use crate::stats::{MediaEgressStats, StatsSnapshot};
+use crate::rtp::SeqNo;
+use crate::rtp_::{extend_u32, ReceptionReport};
+use crate::stats::{MediaEgressStats, RemoteIngressStats, StatsSnapshot};
 use crate::util::value_history::ValueHistory;
 use crate::util::{calculate_rtt_ms, InstantExt};
 
@@ -31,6 +32,11 @@ pub(crate) struct StreamTxStats {
     rtt: Option<f32>,
     /// losses collecter from RR (known packets, lost ratio)
     losses: Losses,
+    /// The last reception report for the stream, if any.
+    ///
+    /// The SeqNo is the extended max_seq of the reception report, extended
+    /// using the last sent sequence number.
+    last_rr: Option<(SeqNo, ReceptionReport)>,
 
     /// `None` if `rtx_ratio_cap` is `None`.
     pub bytes_transmitted: Option<ValueHistory<u64>>,
@@ -51,6 +57,7 @@ impl StreamTxStats {
             nacks: 0,
             rtt: None,
             losses: Losses::new(enable_stats),
+            last_rr: None,
             bytes_transmitted: Some(Default::default()),
             bytes_retransmitted: Some(Default::default()),
         }
@@ -77,19 +84,18 @@ impl StreamTxStats {
         self.firs += 1;
     }
 
-    pub fn update_with_rr(&mut self, now: Instant, r: ReceptionReport) {
+    pub fn update_with_rr(&mut self, now: Instant, last_sent_seq_no: SeqNo, r: ReceptionReport) {
         let ntp_time = now.to_ntp_duration();
         let rtt = calculate_rtt_ms(ntp_time, r.last_sr_delay, r.last_sr_time);
         self.rtt = rtt;
 
-        let ext_seq = {
-            let prev = self.losses.last().map(|s| s.0).unwrap_or(r.max_seq as u64);
-            let next = (r.max_seq & 0xffff) as u16;
-            extend_u16(Some(prev), next)
-        };
+        // The last_sent_seq_no should be in the vicinity of the rr.max_seq.
+        let ext_seq = extend_u32(Some(*last_sent_seq_no), r.max_seq).into();
+
+        self.last_rr = Some((ext_seq, r));
 
         self.losses
-            .push((ext_seq, r.fraction_lost as f32 / u8::MAX as f32));
+            .push((*ext_seq, r.fraction_lost as f32 / u8::MAX as f32));
     }
 
     pub(crate) fn fill(&mut self, snapshot: &mut StatsSnapshot, midrid: MidRid, now: Instant) {
@@ -128,6 +134,14 @@ impl StreamTxStats {
                 rtt: self.rtt,
                 loss,
                 timestamp: now,
+                remote: self
+                    .last_rr
+                    .as_ref()
+                    .map(|(seq_no, rr)| RemoteIngressStats {
+                        jitter: rr.jitter,
+                        maximum_sequence_number: *seq_no,
+                        packets_lost: rr.packets_lost as u64,
+                    }),
             },
         );
     }
@@ -147,13 +161,6 @@ impl Losses {
         } else {
             Self::Disabled
         }
-    }
-
-    fn last(&self) -> Option<&(u64, f32)> {
-        let Self::Enabled(losses) = self else {
-            return None;
-        };
-        losses.last()
     }
 
     fn push(&mut self, value: (u64, f32)) {
