@@ -779,7 +779,7 @@ impl IceAgent {
                     let check_local = check.local_candidate(&self.local_candidates);
                     let check_remote = check.remote_candidate(&self.remote_candidates);
 
-                    let redundant = local.base() == check_local.base()
+                    let redundant = local.source_addr() == check_local.source_addr()
                         && remote.addr() == check_remote.addr()
                         && local.proto() == check_local.proto()
                         && remote.proto() == check_remote.proto();
