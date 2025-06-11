@@ -265,6 +265,41 @@ mod test {
         );
     }
 
+    #[test]
+    pub fn relay_relay() {
+        let _guard = tracing_subscriber::fmt()
+            .with_test_writer()
+            .with_env_filter("trace")
+            .set_default();
+
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        // Add unreachable host candidates (simulating symmetric NAT)
+        a2.add_remote_candidate(a1.add_host_candidate("1.1.1.1:9999"));
+        a1.add_remote_candidate(a2.add_host_candidate("2.2.2.2:9999"));
+
+        // Add relay candidates
+        let r1 = a1
+            .add_local_candidate(relay("5.5.5.5:1000", "1.1.1.1:9999", "udp"))
+            .unwrap();
+        a2.add_remote_candidate(r1.clone());
+        let r2 = a2
+            .add_local_candidate(relay("6.6.6.6:1000", "2.2.2.2:9999", "udp"))
+            .unwrap();
+        a1.add_remote_candidate(r2.clone());
+
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+    }
+
     // str0m performs calculations on `now` internally
     // To ensure that these never panic, we run a happy-path of `host-host` that uses a very early `Instant`.
     #[test]
