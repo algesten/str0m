@@ -1,5 +1,10 @@
 # Unreleased
 
+  * Simplified serde of SDP #664
+  * SR/RR stats in Ingress/EgressStats #661 #662
+
+# 0.9.0
+
   * Wincrypto fail on drop #660
   * All logging on DEBUG and lower #658
   * Redact PII (ip addresses) in logs #656
