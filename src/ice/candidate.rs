@@ -114,6 +114,7 @@ impl Candidate {
         kind: CandidateKind,
         raddr: Option<SocketAddr>,
         ufrag: Option<String>,
+        local_preference_adjustment: u32,
     ) -> Self {
         let local_preference = {
             use CandidateKind::*;
@@ -123,7 +124,7 @@ impl Candidate {
                 ServerReflexive => 32_767,
                 Relayed => 16_383,
             };
-            x - if addr.is_ipv6() { 0 } else { 1 }
+            x - if addr.is_ipv6() { 0 } else { 1 } - local_preference_adjustment
         };
 
         Candidate {
@@ -162,6 +163,7 @@ impl Candidate {
             kind,
             raddr,
             ufrag,
+            0,
         )
     }
 
@@ -183,6 +185,7 @@ impl Candidate {
             CandidateKind::Host,
             None,
             None,
+            0,
         ))
     }
 
@@ -210,6 +213,7 @@ impl Candidate {
             CandidateKind::ServerReflexive,
             Some(Self::arbitrary_raddr(addr)),
             None,
+            0,
         ))
     }
 
@@ -236,6 +240,7 @@ impl Candidate {
             CandidateKind::Relayed,
             Some(Self::arbitrary_raddr(addr)),
             None,
+            0,
         ))
     }
 
@@ -267,6 +272,7 @@ impl Candidate {
             CandidateKind::PeerReflexive,
             None,
             Some(ufrag),
+            0,
         )
     }
 
@@ -305,6 +311,7 @@ impl Candidate {
             CandidateKind::PeerReflexive,
             None,
             None,
+            0,
         )
     }
 
