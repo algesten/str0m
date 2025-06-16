@@ -700,9 +700,11 @@ mod test {
             progress(&mut a1, &mut a2);
         }
 
-        a1.add_local_candidate(relay("1.1.1.1:1001", "udp"))
-            .unwrap();
-        a2.add_remote_candidate(relay("1.1.1.1:1001", "udp"));
+        let c4 = a1
+            .add_local_candidate(relay("1.1.1.1:1001", "udp"))
+            .unwrap()
+            .clone();
+        a2.add_remote_candidate(c4);
 
         loop {
             if a2.has_event(|e| {
