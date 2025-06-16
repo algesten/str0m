@@ -1,5 +1,6 @@
 use std::collections::{HashSet, VecDeque};
 use std::net::SocketAddr;
+use std::ops::SubAssign;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -540,16 +541,6 @@ impl IceAgent {
         // 65534 - first ipv4
         // 65533 - second ipv6
         // 65432 - second ipv4
-        let counter_start: u32 = {
-            use CandidateKind::*;
-            let x = match c.kind() {
-                Host => 65_535,
-                PeerReflexive => 49_151,
-                ServerReflexive => 32_767,
-                Relayed => 16_383,
-            };
-            x - if ip.is_ipv6() { 0 } else { 1 }
-        };
 
         // Count the number of existing candidates of the same kind.
         let same_kind = self
@@ -574,10 +565,10 @@ impl IceAgent {
             0
         };
 
-        let pref = counter_start - same_kind * 2 - relay_across_ip_version_punishment;
-        trace!("Calculated local preference: {}", pref);
+        let pref = same_kind * 2 - relay_across_ip_version_punishment;
+        trace!("Calculated local preference adjustment: {}", pref);
 
-        c.set_local_preference(pref);
+        c.local_preference_mut().sub_assign(pref);
 
         // Tie this ufrag to this ICE-session.
         c.set_ufrag(&self.local_credentials.ufrag);

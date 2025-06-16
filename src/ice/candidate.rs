@@ -115,6 +115,17 @@ impl Candidate {
         raddr: Option<SocketAddr>,
         ufrag: Option<String>,
     ) -> Self {
+        let local_preference = {
+            use CandidateKind::*;
+            let x = match kind {
+                Host => 65_535,
+                PeerReflexive => 49_151,
+                ServerReflexive => 32_767,
+                Relayed => 16_383,
+            };
+            x - if addr.is_ipv6() { 0 } else { 1 }
+        };
+
         Candidate {
             foundation,
             component_id,
@@ -125,7 +136,7 @@ impl Candidate {
             kind,
             raddr,
             ufrag,
-            local_preference: if addr.is_ipv6() { 65_535 } else { 65_534 },
+            local_preference,
             discarded: false,
         }
     }
@@ -432,8 +443,8 @@ impl Candidate {
         self.kind
     }
 
-    pub(crate) fn set_local_preference(&mut self, v: u32) {
-        self.local_preference = v;
+    pub(crate) fn local_preference_mut(&mut self) -> &mut u32 {
+        &mut self.local_preference
     }
 
     pub(crate) fn set_discarded(&mut self, discarded: bool) {
