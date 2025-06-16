@@ -1942,14 +1942,14 @@ mod test {
 
         // we expect:
         // (host/udp host/udp) - (0, 1)
-        // (host/udp rflx/udp) - (0, 1)
         // (rflx/udp host/udp) - (1, 1)
+        // (host/udp rflx/udp) - (0, 0)
         // (rflx/udp rflx/udp) - (1, 0)
         // (host/tcp host/tcp) - (2, 2)
 
         assert_eq!(
             agent.pair_indexes(),
-            [(0, 1), (0, 0), (1, 1), (1, 0), (2, 2)]
+            [(0, 1), (1, 1), (0, 0), (1, 0), (2, 2)]
         );
     }
 
