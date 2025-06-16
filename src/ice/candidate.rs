@@ -114,7 +114,6 @@ impl Candidate {
         kind: CandidateKind,
         raddr: Option<SocketAddr>,
         ufrag: Option<String>,
-        local_preference_adjustment: u32,
     ) -> Self {
         Candidate {
             foundation,
@@ -126,7 +125,7 @@ impl Candidate {
             kind,
             raddr,
             ufrag,
-            local_preference: compute_local_preference(addr, kind) - local_preference_adjustment,
+            local_preference: compute_local_preference(addr, kind),
             discarded: false,
         }
     }
@@ -152,7 +151,6 @@ impl Candidate {
             kind,
             raddr,
             ufrag,
-            0,
         )
     }
 
@@ -174,7 +172,6 @@ impl Candidate {
             CandidateKind::Host,
             None,
             None,
-            0,
         ))
     }
 
@@ -202,7 +199,6 @@ impl Candidate {
             CandidateKind::ServerReflexive,
             Some(Self::arbitrary_raddr(addr)),
             None,
-            0,
         ))
     }
 
@@ -227,18 +223,7 @@ impl Candidate {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
         }
 
-        // For relayed candidates, we add a "punishment" to the local preference
-        // if the base address differs in the IP version from the allocated address
-        // of the candidate.
-        // This punishment ensures that we prefer relayed within the same IP version,
-        // e.g. IPv4 <> IPv4 over ones that translate between IP version, e.g. IPv4 <> IPv6.
-        let relay_across_ip_version_punishment = if created_via.is_ipv4() != addr.is_ipv4() {
-            1000
-        } else {
-            0
-        };
-
-        Ok(Candidate::new(
+        let mut candidate = Candidate::new(
             None,
             1, // only RTP
             parse_proto(proto)?,
@@ -248,8 +233,18 @@ impl Candidate {
             CandidateKind::Relayed,
             Some(Self::arbitrary_raddr(addr)),
             None,
-            relay_across_ip_version_punishment,
-        ))
+        );
+
+        // For relayed candidates, we adjust to the local preference
+        // if the `created_via` address differs in the IP version from the allocated address
+        // of the candidate.
+        // This punishment ensures that we prefer relayed within the same IP version,
+        // e.g. IPv4 <> IPv4 over ones that translate between IP version, e.g. IPv4 <> IPv6.
+        if created_via.is_ipv4() != addr.is_ipv4() {
+            candidate.adjust_local_preference(1000);
+        }
+
+        Ok(candidate)
     }
 
     /// Creates a new ICE candidate from a string.
@@ -280,7 +275,6 @@ impl Candidate {
             CandidateKind::PeerReflexive,
             None,
             Some(ufrag),
-            0,
         )
     }
 
@@ -319,7 +313,6 @@ impl Candidate {
             CandidateKind::PeerReflexive,
             None,
             None,
-            0,
         )
     }
 
