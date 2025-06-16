@@ -116,17 +116,6 @@ impl Candidate {
         ufrag: Option<String>,
         local_preference_adjustment: u32,
     ) -> Self {
-        let local_preference = {
-            use CandidateKind::*;
-            let x = match kind {
-                Host => 65_535,
-                PeerReflexive => 49_151,
-                ServerReflexive => 32_767,
-                Relayed => 16_383,
-            };
-            x - if addr.is_ipv6() { 0 } else { 1 } - local_preference_adjustment
-        };
-
         Candidate {
             foundation,
             component_id,
@@ -137,7 +126,7 @@ impl Candidate {
             kind,
             raddr,
             ufrag,
-            local_preference,
+            local_preference: compute_local_preference(addr, kind) - local_preference_adjustment,
             discarded: false,
         }
     }
@@ -469,8 +458,13 @@ impl Candidate {
         self.kind
     }
 
-    pub(crate) fn local_preference_mut(&mut self) -> &mut u32 {
-        &mut self.local_preference
+    pub(crate) fn adjust_local_preference(&mut self, delta: u32) {
+        trace!(
+            current = self.local_preference,
+            "Adjusting local preference by {delta}"
+        );
+
+        self.local_preference -= delta;
     }
 
     pub(crate) fn set_discarded(&mut self, discarded: bool) {
@@ -513,6 +507,40 @@ impl Candidate {
         }
         s
     }
+}
+
+/// Compute the local preference for a candidate.
+///
+/// The local preference is how ICE agents describe the ordering between
+/// candidates of the same kind. We always operate in trickle-ICE mode and
+/// therefore never have full knowledge of all candidates.
+///
+/// We assign the following intervals for the different types of candidates:
+///
+/// 0     - 16384 => relay
+/// 16384 - 32768 => srflx
+/// 32768 - 49152 => prflx
+/// 49152 - 65536 => host
+///
+/// And furthermore we subdivide these to interleave IPv6 with IPv4
+/// so that odd numbers are ipv6 and even are ipv4.
+///
+/// For host candidates this means:
+/// 65535 - first ipv6
+/// 65534 - first ipv4
+/// 65533 - second ipv6
+/// 65432 - second ipv4
+fn compute_local_preference(addr: SocketAddr, kind: CandidateKind) -> u32 {
+    use CandidateKind::*;
+
+    let band = match kind {
+        Host => 65_535,
+        PeerReflexive => 49_151,
+        ServerReflexive => 32_767,
+        Relayed => 16_383,
+    };
+
+    band - if addr.is_ipv6() { 0 } else { 1 }
 }
 
 impl fmt::Display for Candidate {

@@ -1,6 +1,5 @@
 use std::collections::{HashSet, VecDeque};
 use std::net::SocketAddr;
-use std::ops::SubAssign;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -524,23 +523,9 @@ impl IceAgent {
         // ================
         //
         // The above presupposes that we know all the candidates when we start
-        // the ice agent. That doesn't work for us, so we deliberately do not
-        // follow spec. We assign the following intervals for the different
-        // types of candidates:
-        //
-        // 0     - 16384 => relay
-        // 16384 - 32768 => srflx
-        // 32768 - 49152 => prflx
-        // 49152 - 65536 => host
-        //
-        // And furthermore we subdivide these to interleave IPv6 with IPv4
-        // so that odd numbers are ipv6 and even are ipv4.
-        //
-        // For host candidates this means:
-        // 65535 - first ipv6
-        // 65534 - first ipv4
-        // 65533 - second ipv6
-        // 65432 - second ipv4
+        // the ice agent. That doesn't work for us. The best we can do is adjust
+        // the computed local preference for each new candidate such that it is
+        // always less than the previous one.
 
         // Count the number of existing candidates of the same kind.
         let same_kind = self
@@ -550,10 +535,7 @@ impl IceAgent {
             .filter(|v| v.addr().is_ipv6() == ip.is_ipv6())
             .count() as u32;
 
-        let pref = same_kind * 2;
-        trace!("Calculated local preference adjustment: {}", pref);
-
-        c.local_preference_mut().sub_assign(pref);
+        c.adjust_local_preference(same_kind * 2);
 
         // Tie this ufrag to this ICE-session.
         c.set_ufrag(&self.local_credentials.ufrag);
