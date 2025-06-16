@@ -76,7 +76,7 @@ pub struct Candidate {
 
     /// The ice agent might assign a local preference if we have multiple candidates
     /// that are the same type.
-    local_preference: Option<u32>,
+    local_preference: u32,
 
     /// If we discarded this candidate (for example due to being redundant
     /// against another candidate).
@@ -125,7 +125,7 @@ impl Candidate {
             kind,
             raddr,
             ufrag,
-            local_preference: None,
+            local_preference: if addr.is_ipv6() { 65_535 } else { 65_534 },
             discarded: false,
         }
     }
@@ -391,7 +391,6 @@ impl Candidate {
 
     pub(crate) fn local_preference(&self) -> u32 {
         self.local_preference
-            .unwrap_or_else(|| if self.addr.is_ipv6() { 65_535 } else { 65_534 })
     }
 
     pub(crate) fn component_id(&self) -> u16 {
@@ -433,7 +432,7 @@ impl Candidate {
     }
 
     pub(crate) fn set_local_preference(&mut self, v: u32) {
-        self.local_preference = Some(v);
+        self.local_preference = v;
     }
 
     pub(crate) fn set_discarded(&mut self, discarded: bool) {
