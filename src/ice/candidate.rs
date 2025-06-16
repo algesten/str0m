@@ -380,7 +380,7 @@ impl Candidate {
         //     (2^8)*(local preference) +
         //     (2^0)*(256 - component ID)
         let prio =
-            type_preference << 24 | self.local_preference() << 8 | (256 - self.component_id as u32);
+            type_preference << 24 | self.local_preference << 8 | (256 - self.component_id as u32);
 
         // https://datatracker.ietf.org/doc/html/rfc8445#section-5.1.2
         // MUST be a positive integer between 1 and (2**31 - 1)
@@ -389,6 +389,7 @@ impl Candidate {
         prio
     }
 
+    #[cfg(test)]
     pub(crate) fn local_preference(&self) -> u32 {
         self.local_preference
     }
