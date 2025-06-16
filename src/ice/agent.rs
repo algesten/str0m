@@ -550,22 +550,7 @@ impl IceAgent {
             .filter(|v| v.addr().is_ipv6() == ip.is_ipv6())
             .count() as u32;
 
-        // For relayed candidates, we add a "punishment" to the local preference
-        // if the base address differs in the IP version from the allocated address
-        // of the candidate.
-        // This punishment ensures that we prefer relayed within the same IP version,
-        // e.g. IPv4 <> IPv4 over ones that translate between IP version, e.g. IPv4 <> IPv6.
-        let relay_across_ip_version_punishment = if c.kind() == CandidateKind::Relayed {
-            if c.base().is_ipv4() != ip.is_ipv4() {
-                1000
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        let pref = same_kind * 2 - relay_across_ip_version_punishment;
+        let pref = same_kind * 2;
         trace!("Calculated local preference adjustment: {}", pref);
 
         c.local_preference_mut().sub_assign(pref);

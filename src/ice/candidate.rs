@@ -222,13 +222,32 @@ impl Candidate {
     /// Relayed candidates are server sockets relaying traffic to a local socket.
     /// Allocate a TURN addr to use as a local candidate.
     ///
-    /// * `addr` - The TURN server's allocated address that will be used for relaying traffic.
-    ///            This is the address that will be used for communication with the peer.
-    /// * `proto` - The transport protocol to use (UDP, TCP, etc.).
-    pub fn relayed(addr: SocketAddr, proto: impl TryInto<Protocol>) -> Result<Self, IceError> {
+    /// * `addr`        - The TURN server's allocated address that will be used for relaying traffic.
+    ///                   This is the address that will be used for communication with the peer.
+    /// * `created_via` - The local socket that was used to allocate this candidate.
+    ///                   This will inform the local preference to prefer the same IP stack across the
+    ///                   entire connection and avoid landing on a IPv6 <> IPv4 pair if both peers
+    ///                   would support IPv4.
+    /// * `proto`       - The transport protocol to use (UDP, TCP, etc.).
+    pub fn relayed(
+        addr: SocketAddr,
+        created_via: SocketAddr,
+        proto: impl TryInto<Protocol>,
+    ) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
         }
+
+        // For relayed candidates, we add a "punishment" to the local preference
+        // if the base address differs in the IP version from the allocated address
+        // of the candidate.
+        // This punishment ensures that we prefer relayed within the same IP version,
+        // e.g. IPv4 <> IPv4 over ones that translate between IP version, e.g. IPv4 <> IPv6.
+        let relay_across_ip_version_punishment = if created_via.is_ipv4() != addr.is_ipv4() {
+            1000
+        } else {
+            0
+        };
 
         Ok(Candidate::new(
             None,
@@ -240,7 +259,7 @@ impl Candidate {
             CandidateKind::Relayed,
             Some(Self::arbitrary_raddr(addr)),
             None,
-            0,
+            relay_across_ip_version_punishment,
         ))
     }
 
@@ -673,9 +692,9 @@ mod tests {
             no_hash(candidate.to_string()),
             "candidate:--- 1 udp 2130706175 1.2.3.4 9876 typ host raddr 5.5.5.5 rport 5555 ufrag ufrag");
 
-        // let base_addr = "5.6.7.8:4321".parse().unwrap();
+        let created_via = "5.6.7.8:4321".parse().unwrap();
 
-        let candidate = Candidate::relayed(socket_addr, Protocol::SslTcp).unwrap();
+        let candidate = Candidate::relayed(socket_addr, created_via, Protocol::SslTcp).unwrap();
         assert_eq!(
             no_hash(candidate.to_string()),
             "candidate:--- 1 ssltcp 16776959 1.2.3.4 9876 typ relay raddr 0.0.0.0 rport 0"
@@ -702,7 +721,7 @@ mod tests {
         assert!(host.raddr().is_none());
 
         // We're not picky on the exact choice, but it must not be the private base
-        let relay = Candidate::relayed(socket_addr, Protocol::Udp).unwrap();
+        let relay = Candidate::relayed(socket_addr, base_addr, Protocol::Udp).unwrap();
         assert!(relay.raddr().is_some());
         let srflx = Candidate::server_reflexive(socket_addr, base_addr, Protocol::Udp).unwrap();
         assert!(srflx.raddr().is_some_and(|raddr| raddr != base_addr));
@@ -731,8 +750,8 @@ mod tests {
             host("2.2.2.2:0"),
             srflx("3.3.3.3:0", "4.4.4.4:0"),
             srflx("5.5.5.5:0", "6.6.6.6:0"),
-            relay("8.8.8.8:0"),
-            relay("7.7.7.7:0"),
+            relay("8.8.8.8:0", "4.4.4.4:0"),
+            relay("7.7.7.7:0", "6.6.6.6:0"),
         ]);
         candidates.sort();
 
@@ -756,8 +775,8 @@ mod tests {
             .to_sdp_string()
     }
 
-    fn relay(addr: &str) -> String {
-        Candidate::relayed(addr.parse().unwrap(), "udp")
+    fn relay(addr: &str, created_at: &str) -> String {
+        Candidate::relayed(addr.parse().unwrap(), created_at.parse().unwrap(), "udp")
             .unwrap()
             .to_sdp_string()
     }
