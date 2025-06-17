@@ -443,12 +443,12 @@ impl Candidate {
     }
 
     pub(crate) fn source_addr(&self) -> SocketAddr {
-        // For relayed candidates, the source address the allocated address on the TURN server.
-        // The base is the local address.
         if self.kind == CandidateKind::Relayed {
+            // For relayed candidates, the source address the allocated address on the TURN server.
             self.addr
         } else {
-            self.base()
+            // For non-relayed, the local interface address is what we need to send from.
+            self.local()
         }
     }
 
