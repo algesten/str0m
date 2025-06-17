@@ -4,12 +4,15 @@
 use thiserror::Error;
 
 mod agent;
-pub use agent::{IceAgent, IceAgentEvent, IceConnectionState, IceCreds};
+pub use agent::{IceAgent, IceAgentEvent, IceConnectionState, IceCreds, LocalPreference};
 
 mod candidate;
 pub use candidate::{Candidate, CandidateKind};
 
 mod pair;
+
+mod preference;
+pub use preference::default_local_preference;
 
 /// Errors from the ICE agent.
 #[allow(missing_docs)]

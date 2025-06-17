@@ -649,6 +649,7 @@ pub mod config {
 #[doc(hidden)]
 pub mod ice {
     pub use crate::ice_::IceCreds;
+    pub use crate::ice_::{default_local_preference, LocalPreference};
     pub use crate::ice_::{IceAgent, IceAgentEvent};
     pub use crate::io::{StunMessage, StunMessageBuilder, StunPacket, TransId};
 }
