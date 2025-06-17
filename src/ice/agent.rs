@@ -565,7 +565,7 @@ impl IceAgent {
         // This punishment ensures that we prefer relayed within the same IP version,
         // e.g. IPv4 <> IPv4 over ones that translate between IP version, e.g. IPv4 <> IPv6.
         let relay_across_ip_version_punishment = if c.kind() == CandidateKind::Relayed {
-            if c.base().is_ipv4() != ip.is_ipv4() {
+            if c.local().is_ipv4() != ip.is_ipv4() {
                 1000
             } else {
                 0

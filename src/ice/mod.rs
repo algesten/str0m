@@ -95,8 +95,12 @@ mod test {
         Candidate::server_reflexive(sock(s), sock(base), proto).unwrap()
     }
 
-    pub fn relay(s: impl Into<String>, proto: impl TryInto<Protocol>) -> Candidate {
-        Candidate::relayed(sock(s), proto).unwrap()
+    pub fn relay(
+        s: impl Into<String>,
+        proto: impl TryInto<Protocol>,
+        l: impl Into<String>,
+    ) -> Candidate {
+        Candidate::relayed(sock(s), proto, sock(l)).unwrap()
     }
 
     /// Transform the socket to rig different test scenarios.
@@ -676,7 +680,7 @@ mod test {
         let mut a2 = TestAgent::new(info_span!("R"));
 
         let c1 = a1
-            .add_local_candidate(relay("1.1.1.1:1000", "udp"))
+            .add_local_candidate(relay("1.1.1.1:1000", "udp", "9.9.9.9:2000"))
             .unwrap()
             .clone();
         a2.add_remote_candidate(c1);
@@ -700,9 +704,9 @@ mod test {
             progress(&mut a1, &mut a2);
         }
 
-        a1.add_local_candidate(relay("1.1.1.1:1001", "udp"))
+        a1.add_local_candidate(relay("1.1.1.1:1001", "udp", "9.9.9.9:2000"))
             .unwrap();
-        a2.add_remote_candidate(relay("1.1.1.1:1001", "udp"));
+        a2.add_remote_candidate(relay("1.1.1.1:1001", "udp", "9.9.9.9:2000"));
 
         loop {
             if a2.has_event(|e| {
@@ -732,13 +736,13 @@ mod test {
         // Both agents know their local candidates
         let c1 = a1.add_host_candidate("1.1.1.1:1000");
         let c3 = a1
-            .add_local_candidate(relay("2.2.2.2:1000", "udp"))
+            .add_local_candidate(relay("2.2.2.2:1000", "udp", "9.9.9.9:2000"))
             .unwrap()
             .clone();
 
         let c2 = a2.add_host_candidate("1.1.1.1:1001");
         let c4 = a2
-            .add_local_candidate(relay("2.2.2.2:1001", "udp"))
+            .add_local_candidate(relay("2.2.2.2:1001", "udp", "9.9.9.9:2000"))
             .unwrap()
             .clone();
 
