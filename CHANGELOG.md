@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Make ICE agent local preference pluggable #668
+  * Fix Candidate::relay() base (breaking) #668 #665
   * Simplified serde of SDP #664
   * SR/RR stats in Ingress/EgressStats #661 #662
 
