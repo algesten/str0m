@@ -46,11 +46,15 @@ pub struct Candidate {
     /// The actual address to use. This might be a host address, server reflex, relay etc.
     addr: SocketAddr, // ip/port
 
-    /// The base on the local host.
+    /// The base address
     ///
     /// "Base" refers to the address an agent sends from for a
     /// particular candidate.  Thus, as a degenerate case, host candidates
     /// also have a base, but it's the same as the host candidate.
+    ///
+    /// * host - same as `addr`, i.e the local interface address
+    /// * peer/server reflexive - the local interface address
+    /// * relay - same as `addr`, the allocation on the TURN server
     base: Option<SocketAddr>, // the "base" used for local candidates.
 
     /// Type of candidate.
@@ -440,16 +444,6 @@ impl Candidate {
 
     pub(crate) fn base(&self) -> SocketAddr {
         self.base.unwrap_or(self.addr)
-    }
-
-    pub(crate) fn source_addr(&self) -> SocketAddr {
-        if self.kind == CandidateKind::Relayed {
-            // For relayed candidates, the source address the allocated address on the TURN server.
-            self.addr
-        } else {
-            // For non-relayed, the local interface address is what we need to send from.
-            self.local()
-        }
     }
 
     pub(crate) fn raddr(&self) -> Option<SocketAddr> {

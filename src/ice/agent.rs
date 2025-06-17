@@ -397,6 +397,13 @@ impl IceAgent {
         debug!("max_retransmits = {num}");
     }
 
+    /// Sets the local preference calculation.
+    ///
+    /// This must be used before adding any local candidates.
+    pub fn set_local_preference(&mut self, p: impl LocalPreference) {
+        self.local_preference = LocalPreferenceHolder(Arc::new(p));
+    }
+
     fn bust_candidate_pair_timeout_caches(&mut self) {
         for pair in self.candidate_pairs.iter_mut() {
             pair.reset_cached_next_attempt_time();
@@ -1430,7 +1437,7 @@ impl IceAgent {
 
         let local = pair.local_candidate(&self.local_candidates);
         let proto = local.proto();
-        let local_addr = local.source_addr();
+        let local_addr = local.base();
         let remote = pair.remote_candidate(&self.remote_candidates);
         let remote_addr = remote.addr();
 
@@ -1516,7 +1523,7 @@ impl IceAgent {
 
         let trans = Transmit {
             proto: local.proto(),
-            source: local.source_addr(),
+            source: local.base(),
             destination: remote.addr(),
             contents: buf.into(),
         };
@@ -1672,7 +1679,7 @@ impl IceAgent {
             self.nominated_send = Some(best_prio.id());
             self.emit_event(IceAgentEvent::NominatedSend {
                 proto: local.proto(),
-                source: local.source_addr(),
+                source: local.base(),
                 destination: remote.addr(),
             })
         }
