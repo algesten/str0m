@@ -1,9 +1,13 @@
 use std::collections::{HashSet, VecDeque};
+use std::fmt;
 use std::net::SocketAddr;
+use std::panic::RefUnwindSafe;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::ice_::preference::default_local_preference;
 use crate::io::{Id, StunClass, StunMethod, StunTiming, DATAGRAM_MTU_WARN};
 use crate::io::{Protocol, StunPacket};
 use crate::io::{StunMessage, TransId};
@@ -96,6 +100,33 @@ pub struct IceAgent {
 
     /// The timing configuration for STUN bindings.
     timing_config: StunTiming,
+
+    /// Pluggable calculation of local preference.
+    local_preference: LocalPreferenceHolder,
+}
+
+// Stupid holder to implement fmt::Debug
+struct LocalPreferenceHolder(Arc<dyn LocalPreference>);
+
+/// Trait for pluggable LocalPreference calculation
+pub trait LocalPreference: RefUnwindSafe + Send + Sync + 'static {
+    /// Calculate the local preference for a candidate.
+    ///
+    /// The `same_kind` parameter is the number of candidates of the same IP version that
+    /// have already been added to the agent.
+    ///
+    /// The `c` parameter is the candidate to calculate the preference for.
+    fn calculate(&self, c: &Candidate, same_kind: usize) -> u32;
+}
+
+/// Blanket impl for functions that look like preference calculations.
+impl<F> LocalPreference for F
+where
+    F: Fn(&Candidate, usize) -> u32 + RefUnwindSafe + Send + Sync + 'static,
+{
+    fn calculate(&self, c: &Candidate, same_kind: usize) -> u32 {
+        (self)(c, same_kind)
+    }
 }
 
 #[derive(Debug)]
@@ -275,6 +306,7 @@ impl IceAgent {
             stats: IceAgentStats::default(),
             timing_advance: Duration::from_millis(50),
             timing_config: StunTiming::default(),
+            local_preference: LocalPreferenceHolder(Arc::new(default_local_preference)),
         }
     }
 
@@ -363,6 +395,13 @@ impl IceAgent {
         self.timing_config.max_retransmits = num;
 
         debug!("max_retransmits = {num}");
+    }
+
+    /// Sets the local preference calculation.
+    ///
+    /// This must be used before adding any local candidates.
+    pub fn set_local_preference(&mut self, p: impl LocalPreference) {
+        self.local_preference = LocalPreferenceHolder(Arc::new(p));
     }
 
     fn bust_candidate_pair_timeout_caches(&mut self) {
@@ -502,84 +541,20 @@ impl IceAgent {
             }
         }
 
-        // "Adopt" any incoming candidate by setting our current ufrag.
-        c.set_ufrag(&self.local_credentials.ufrag);
-
-        // https://datatracker.ietf.org/doc/html/rfc8445#section-5.1.2.1
-        // The local preference MUST be an integer from 0 (lowest preference) to
-        // 65535 (highest preference) inclusive.  When there is only a single IP
-        // address, this value SHOULD be set to 65535.  If there are multiple
-        // candidates for a particular component for a particular data stream
-        // that have the same type, the local preference MUST be unique for each
-        // one.
-        // ...
-        // If an ICE agent is multihomed and has multiple IP addresses, the
-        // recommendations in [RFC8421] SHOULD be followed.  If multiple TURN
-        // servers are used, local priorities for the candidates obtained from
-        // the TURN servers are chosen in a similar fashion as for multihomed
-        // local candidates: the local preference value is used to indicate a
-        // preference among different servers, but the preference MUST be unique
-        // for each one.
-        // ================
-        //
-        // The above presupposes that we know all the candidates when we start
-        // the ice agent. That doesn't work for us, so we deliberately do not
-        // follow spec. We assign the following intervals for the different
-        // types of candidates:
-        //
-        // 0     - 16384 => relay
-        // 16384 - 32768 => srflx
-        // 32768 - 49152 => prflx
-        // 49152 - 65536 => host
-        //
-        // And furthermore we subdivide these to interleave IPv6 with IPv4
-        // so that odd numbers are ipv6 and even are ipv4.
-        //
-        // For host candidates this means:
-        // 65535 - first ipv6
-        // 65534 - first ipv4
-        // 65533 - second ipv6
-        // 65432 - second ipv4
-        let counter_start: u32 = {
-            use CandidateKind::*;
-            let x = match c.kind() {
-                Host => 65_535,
-                PeerReflexive => 49_151,
-                ServerReflexive => 32_767,
-                Relayed => 16_383,
-            };
-            x - if ip.is_ipv6() { 0 } else { 1 }
-        };
-
         // Count the number of existing candidates of the same kind.
         let same_kind = self
             .local_candidates
             .iter()
             .filter(|v| v.kind() == c.kind())
             .filter(|v| v.addr().is_ipv6() == ip.is_ipv6())
-            .count() as u32;
+            .count();
 
-        // For relayed candidates, we add a "punishment" to the local preference
-        // if the base address differs in the IP version from the allocated address
-        // of the candidate.
-        // This punishment ensures that we prefer relayed within the same IP version,
-        // e.g. IPv4 <> IPv4 over ones that translate between IP version, e.g. IPv4 <> IPv6.
-        let relay_across_ip_version_punishment = if c.kind() == CandidateKind::Relayed {
-            if c.base().is_ipv4() != ip.is_ipv4() {
-                1000
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        let pref = counter_start - same_kind * 2 - relay_across_ip_version_punishment;
+        // Delegate local preference calculation to pluggable algo.
+        let pref = self.local_preference.0.calculate(&c, same_kind);
         trace!("Calculated local preference: {}", pref);
-
         c.set_local_preference(pref);
 
-        // Tie this ufrag to this ICE-session.
+        // "Adopt" any incoming candidate by setting our current ufrag.
         c.set_ufrag(&self.local_credentials.ufrag);
 
         // A candidate is redundant if and only if its transport address and base equal those
@@ -1462,7 +1437,7 @@ impl IceAgent {
 
         let local = pair.local_candidate(&self.local_candidates);
         let proto = local.proto();
-        let local_addr = local.source_addr();
+        let local_addr = local.base();
         let remote = pair.remote_candidate(&self.remote_candidates);
         let remote_addr = remote.addr();
 
@@ -1548,7 +1523,7 @@ impl IceAgent {
 
         let trans = Transmit {
             proto: local.proto(),
-            source: local.source_addr(),
+            source: local.base(),
             destination: remote.addr(),
             contents: buf.into(),
         };
@@ -1704,7 +1679,7 @@ impl IceAgent {
             self.nominated_send = Some(best_prio.id());
             self.emit_event(IceAgentEvent::NominatedSend {
                 proto: local.proto(),
-                source: local.source_addr(),
+                source: local.base(),
                 destination: remote.addr(),
             })
         }
@@ -1793,6 +1768,12 @@ impl IceAgent {
 
     pub(crate) fn remote_credentials(&self) -> Option<&IceCreds> {
         self.remote_credentials.as_ref()
+    }
+}
+
+impl fmt::Debug for LocalPreferenceHolder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("LocalPreferenceHolder").finish()
     }
 }
 

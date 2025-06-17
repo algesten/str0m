@@ -46,11 +46,15 @@ pub struct Candidate {
     /// The actual address to use. This might be a host address, server reflex, relay etc.
     addr: SocketAddr, // ip/port
 
-    /// The base on the local host.
+    /// The base address
     ///
     /// "Base" refers to the address an agent sends from for a
     /// particular candidate.  Thus, as a degenerate case, host candidates
     /// also have a base, but it's the same as the host candidate.
+    ///
+    /// * host - same as `addr`, i.e the local interface address
+    /// * peer/server reflexive - the local interface address
+    /// * relay - same as `addr`, the allocation on the TURN server
     base: Option<SocketAddr>, // the "base" used for local candidates.
 
     /// Type of candidate.
@@ -73,6 +77,16 @@ pub struct Candidate {
     /// This value is only set for incoming candidates. Once we use the candidate inside
     /// pairs, the field is blanked to not be confusing during ice-restarts.
     ufrag: Option<String>,
+
+    /// The address of the local interface.
+    ///
+    /// * host - same as `addr`
+    /// * peer/server reflexive - same as `base`
+    /// * relay - set explicitly
+    ///
+    /// This is an extension to the ICE spec that we use to track
+    /// local interfaces also for relayed candidates.
+    local: SocketAddr,
 
     /// The ice agent might assign a local preference if we have multiple candidates
     /// that are the same type.
@@ -114,6 +128,7 @@ impl Candidate {
         kind: CandidateKind,
         raddr: Option<SocketAddr>,
         ufrag: Option<String>,
+        local: SocketAddr,
     ) -> Self {
         Candidate {
             foundation,
@@ -125,6 +140,7 @@ impl Candidate {
             kind,
             raddr,
             ufrag,
+            local,
             local_preference: None,
             discarded: false,
         }
@@ -151,6 +167,12 @@ impl Candidate {
             kind,
             raddr,
             ufrag,
+            match kind {
+                CandidateKind::Host => addr,
+                CandidateKind::PeerReflexive
+                | CandidateKind::ServerReflexive
+                | CandidateKind::Relayed => Self::arbitrary_raddr(addr),
+            },
         )
     }
 
@@ -172,6 +194,7 @@ impl Candidate {
             CandidateKind::Host,
             None,
             None,
+            addr,
         ))
     }
 
@@ -199,6 +222,7 @@ impl Candidate {
             CandidateKind::ServerReflexive,
             Some(Self::arbitrary_raddr(addr)),
             None,
+            base,
         ))
     }
 
@@ -210,7 +234,13 @@ impl Candidate {
     /// * `addr` - The TURN server's allocated address that will be used for relaying traffic.
     ///            This is the address that will be used for communication with the peer.
     /// * `proto` - The transport protocol to use (UDP, TCP, etc.).
-    pub fn relayed(addr: SocketAddr, proto: impl TryInto<Protocol>) -> Result<Self, IceError> {
+    /// * `local` - The local interface address that corresponds to this candidate. This is the
+    ///             address from which the TURN allocation request was sent.
+    pub fn relayed(
+        addr: SocketAddr,
+        proto: impl TryInto<Protocol>,
+        local: SocketAddr,
+    ) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
         }
@@ -225,6 +255,7 @@ impl Candidate {
             CandidateKind::Relayed,
             Some(Self::arbitrary_raddr(addr)),
             None,
+            local,
         ))
     }
 
@@ -256,6 +287,7 @@ impl Candidate {
             CandidateKind::PeerReflexive,
             None,
             Some(ufrag),
+            base,
         )
     }
 
@@ -294,6 +326,7 @@ impl Candidate {
             CandidateKind::PeerReflexive,
             None,
             None,
+            base,
         )
     }
 
@@ -413,16 +446,6 @@ impl Candidate {
         self.base.unwrap_or(self.addr)
     }
 
-    pub(crate) fn source_addr(&self) -> SocketAddr {
-        // For relayed candidates, the source address the allocated address on the TURN server.
-        // The base is the local address.
-        if self.kind == CandidateKind::Relayed {
-            self.addr
-        } else {
-            self.base()
-        }
-    }
-
     pub(crate) fn raddr(&self) -> Option<SocketAddr> {
         self.raddr
     }
@@ -454,6 +477,10 @@ impl Candidate {
 
     pub(crate) fn clear_ufrag(&mut self) {
         self.ufrag = None;
+    }
+
+    pub(crate) fn local(&self) -> SocketAddr {
+        self.local
     }
 
     /// Generates a candidate attribute string.
@@ -637,6 +664,7 @@ mod tests {
 
     #[test]
     fn to_string() {
+        let local_addr = "7.8.9.0:2345".parse().unwrap();
         let socket_addr = "1.2.3.4:9876".parse().unwrap();
         let mut candidate = Candidate::host(socket_addr, Protocol::Udp).unwrap();
         assert_eq!(
@@ -657,7 +685,7 @@ mod tests {
 
         // let base_addr = "5.6.7.8:4321".parse().unwrap();
 
-        let candidate = Candidate::relayed(socket_addr, Protocol::SslTcp).unwrap();
+        let candidate = Candidate::relayed(socket_addr, Protocol::SslTcp, local_addr).unwrap();
         assert_eq!(
             no_hash(candidate.to_string()),
             "candidate:--- 1 ssltcp 16776959 1.2.3.4 9876 typ relay raddr 0.0.0.0 rport 0"
@@ -677,6 +705,7 @@ mod tests {
 
     #[test]
     fn spoofed_raddr() {
+        let local_addr = "7.8.9.0:2345".parse().unwrap();
         let socket_addr = "1.2.3.4:9876".parse().unwrap();
         let base_addr = "5.6.7.8:4321".parse().unwrap();
 
@@ -684,7 +713,7 @@ mod tests {
         assert!(host.raddr().is_none());
 
         // We're not picky on the exact choice, but it must not be the private base
-        let relay = Candidate::relayed(socket_addr, Protocol::Udp).unwrap();
+        let relay = Candidate::relayed(socket_addr, Protocol::Udp, local_addr).unwrap();
         assert!(relay.raddr().is_some());
         let srflx = Candidate::server_reflexive(socket_addr, base_addr, Protocol::Udp).unwrap();
         assert!(srflx.raddr().is_some_and(|raddr| raddr != base_addr));
@@ -713,8 +742,8 @@ mod tests {
             host("2.2.2.2:0"),
             srflx("3.3.3.3:0", "4.4.4.4:0"),
             srflx("5.5.5.5:0", "6.6.6.6:0"),
-            relay("8.8.8.8:0"),
-            relay("7.7.7.7:0"),
+            relay("8.8.8.8:0", "9.9.9.9:0"),
+            relay("7.7.7.7:0", "9.9.9.9:0"),
         ]);
         candidates.sort();
 
@@ -738,8 +767,8 @@ mod tests {
             .to_sdp_string()
     }
 
-    fn relay(addr: &str) -> String {
-        Candidate::relayed(addr.parse().unwrap(), "udp")
+    fn relay(addr: &str, local: &str) -> String {
+        Candidate::relayed(addr.parse().unwrap(), "udp", local.parse().unwrap())
             .unwrap()
             .to_sdp_string()
     }
