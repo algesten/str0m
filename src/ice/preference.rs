@@ -192,7 +192,7 @@ mod tests {
     fn test_relayed_candidates_ipv4_same_ip_version() {
         let addr = ipv4_addr("192.0.2.1");
         let local = ipv4_addr("192.168.1.1");
-        let candidate = Candidate::relayed(addr, "udp", local).unwrap();
+        let candidate = Candidate::relayed(addr, local, "udp").unwrap();
 
         // First relay candidate (same_kind = 0, no IP version punishment)
         let pref = default_local_preference(&candidate, 0);
@@ -207,7 +207,7 @@ mod tests {
     fn test_relayed_candidates_ipv6_same_ip_version() {
         let addr = ipv6_addr("2001:db8::300");
         let local = ipv6_addr("2001:db8::1");
-        let candidate = Candidate::relayed(addr, "udp", local).unwrap();
+        let candidate = Candidate::relayed(addr, local, "udp").unwrap();
 
         // First relay candidate (same_kind = 0, no IP version punishment)
         let pref = default_local_preference(&candidate, 0);
@@ -223,7 +223,7 @@ mod tests {
         // IPv4 allocated address with IPv6 local address
         let addr = ipv4_addr("192.0.2.1");
         let local = ipv6_addr("2001:db8::1");
-        let candidate = Candidate::relayed(addr, "udp", local).unwrap();
+        let candidate = Candidate::relayed(addr, local, "udp").unwrap();
 
         // First relay candidate with IP version punishment
         let pref = default_local_preference(&candidate, 0);
@@ -239,7 +239,7 @@ mod tests {
         // IPv6 allocated address with IPv4 local address
         let addr = ipv6_addr("2001:db8::300");
         let local = ipv4_addr("192.168.1.1");
-        let candidate = Candidate::relayed(addr, "udp", local).unwrap();
+        let candidate = Candidate::relayed(addr, local, "udp").unwrap();
 
         // First relay candidate with IP version punishment
         let pref = default_local_preference(&candidate, 0);
@@ -263,8 +263,8 @@ mod tests {
         let srflx_ipv6 = Candidate::server_reflexive(ipv6_addr, ipv6_addr, "udp").unwrap();
         let prflx_ipv4 = Candidate::test_peer_rflx(ipv4_addr, local, "udp");
         let prflx_ipv6 = Candidate::test_peer_rflx(ipv6_addr, ipv6_addr, "udp");
-        let relay_ipv4 = Candidate::relayed(ipv4_addr, "udp", local).unwrap();
-        let relay_ipv6 = Candidate::relayed(ipv6_addr, "udp", ipv6_addr).unwrap();
+        let relay_ipv4 = Candidate::relayed(ipv4_addr, local, "udp").unwrap();
+        let relay_ipv6 = Candidate::relayed(ipv6_addr, ipv6_addr, "udp").unwrap();
 
         let same_kind = 0;
 

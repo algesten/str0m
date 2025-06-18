@@ -103,7 +103,7 @@ mod test {
         proto: impl TryInto<Protocol>,
         l: impl Into<String>,
     ) -> Candidate {
-        Candidate::relayed(sock(s), proto, sock(l)).unwrap()
+        Candidate::relayed(sock(s), sock(l), proto).unwrap()
     }
 
     /// Transform the socket to rig different test scenarios.

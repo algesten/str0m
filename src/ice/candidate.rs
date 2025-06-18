@@ -233,13 +233,13 @@ impl Candidate {
     ///
     /// * `addr` - The TURN server's allocated address that will be used for relaying traffic.
     ///            This is the address that will be used for communication with the peer.
-    /// * `proto` - The transport protocol to use (UDP, TCP, etc.).
     /// * `local` - The local interface address that corresponds to this candidate. This is the
     ///             address from which the TURN allocation request was sent.
+    /// * `proto` - The transport protocol to use (UDP, TCP, etc.).
     pub fn relayed(
         addr: SocketAddr,
-        proto: impl TryInto<Protocol>,
         local: SocketAddr,
+        proto: impl TryInto<Protocol>,
     ) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
@@ -685,7 +685,7 @@ mod tests {
 
         // let base_addr = "5.6.7.8:4321".parse().unwrap();
 
-        let candidate = Candidate::relayed(socket_addr, Protocol::SslTcp, local_addr).unwrap();
+        let candidate = Candidate::relayed(socket_addr, local_addr, Protocol::SslTcp).unwrap();
         assert_eq!(
             no_hash(candidate.to_string()),
             "candidate:--- 1 ssltcp 16776959 1.2.3.4 9876 typ relay raddr 0.0.0.0 rport 0"
@@ -713,7 +713,7 @@ mod tests {
         assert!(host.raddr().is_none());
 
         // We're not picky on the exact choice, but it must not be the private base
-        let relay = Candidate::relayed(socket_addr, Protocol::Udp, local_addr).unwrap();
+        let relay = Candidate::relayed(socket_addr, local_addr, Protocol::Udp).unwrap();
         assert!(relay.raddr().is_some());
         let srflx = Candidate::server_reflexive(socket_addr, base_addr, Protocol::Udp).unwrap();
         assert!(srflx.raddr().is_some_and(|raddr| raddr != base_addr));
@@ -768,7 +768,7 @@ mod tests {
     }
 
     fn relay(addr: &str, local: &str) -> String {
-        Candidate::relayed(addr.parse().unwrap(), "udp", local.parse().unwrap())
+        Candidate::relayed(addr.parse().unwrap(), local.parse().unwrap(), "udp")
             .unwrap()
             .to_sdp_string()
     }
