@@ -1715,10 +1715,10 @@ impl IceAgent {
             }
         }
 
-        // As a special case, before the ice agent has received any add_remote_candidate() or
+        // As a special case, before the ice agent has received any candidates or
         // discovered a peer reflexive via a STUN message, the agent is still viable. This is
         // also the case for ice_restart.
-        if self.remote_candidates.is_empty() {
+        if self.remote_candidates.is_empty() || self.local_candidates.is_empty() {
             any_still_possible = true;
         }
 
