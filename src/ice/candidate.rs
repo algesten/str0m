@@ -212,6 +212,12 @@ impl Candidate {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
         }
 
+        if addr.is_ipv4() != base.is_ipv4() {
+            return Err(IceError::BadCandidate(
+                "addr and base are different IP versions".to_owned(),
+            ));
+        }
+
         Ok(Candidate::new(
             None,
             1, // only RTP
@@ -753,6 +759,21 @@ mod tests {
         assert!(candidates[3].contains("srflx"));
         assert!(candidates[4].contains("host"));
         assert!(candidates[5].contains("host"));
+    }
+
+    #[test]
+    fn srflx_candidate_disallows_mixed_ip_versions() {
+        let error = Candidate::server_reflexive(
+            "10.0.0.1:1000".parse().unwrap(),
+            "[::1]:1000".parse().unwrap(),
+            "udp",
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "ICE bad candidate: addr and base are different IP versions"
+        );
     }
 
     fn host(socket: &str) -> String {
