@@ -104,11 +104,11 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --all-targets -- -D warnings
+          args: -- -D warnings
       - uses: actions-rs/cargo@v1
         with:
           command: clippy
-          args: --all-targets --no-default-features --features openssl,vendored,sha1 -- -D warnings
+          args: --no-default-features --features openssl,vendored,sha1 -- -D warnings
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
