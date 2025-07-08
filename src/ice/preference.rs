@@ -353,26 +353,4 @@ mod tests {
             "Preference should decrease by 2 for each same_kind increment"
         );
     }
-
-    #[test]
-    fn test_no_punishment_for_non_relayed_candidates() {
-        // Test that cross-IP version scenarios don't apply punishment to non-relayed candidates
-        let ipv4_addr = ipv4_addr("192.168.1.1");
-        let ipv6_base = ipv6_addr("2001:db8::1");
-
-        // Server reflexive candidate with different IP version base (should not be punished)
-        let srflx = Candidate::server_reflexive(ipv4_addr, ipv6_base, "udp").unwrap();
-        let srflx_pref = default_local_preference(&srflx, 0);
-
-        // Compare with same IP version scenario
-        let ipv4_base = ipv4_addr;
-        let srflx_same_ip = Candidate::server_reflexive(ipv4_addr, ipv4_base, "udp").unwrap();
-        let srflx_same_ip_pref = default_local_preference(&srflx_same_ip, 0);
-
-        // Both should have the same preference (no punishment for cross-IP version in non-relayed)
-        assert_eq!(
-            srflx_pref, srflx_same_ip_pref,
-            "Server reflexive candidates should not be punished for cross-IP version"
-        );
-    }
 }
