@@ -1715,10 +1715,10 @@ impl IceAgent {
             }
         }
 
-        // As a special case, before the ice agent has received any add_remote_candidate() or
+        // As a special case, before the ice agent has received any candidates or
         // discovered a peer reflexive via a STUN message, the agent is still viable. This is
         // also the case for ice_restart.
-        if self.remote_candidates.is_empty() {
+        if self.remote_candidates.is_empty() || self.local_candidates.is_empty() {
             any_still_possible = true;
         }
 
@@ -1779,8 +1779,10 @@ impl fmt::Debug for LocalPreferenceHolder {
 
 #[cfg(test)]
 mod test {
+    use crate::ice_::test::host;
+
     use super::*;
-    use std::net::SocketAddr;
+    use std::{iter, net::SocketAddr};
 
     impl IceAgent {
         pub(crate) fn num_candidate_pairs(&self) -> usize {
@@ -2224,6 +2226,21 @@ mod test {
         );
 
         assert!(agent.poll_transmit().is_none());
+    }
+
+    #[test]
+    pub fn no_disconnect_missing_local_candidates() {
+        let mut agent = IceAgent::new();
+        agent.set_remote_credentials(IceCreds::new().clone());
+
+        agent.add_remote_candidate(host("1.1.1.1:1000", "udp"));
+        agent.handle_timeout(Instant::now());
+        agent.handle_timeout(Instant::now() + Duration::from_millis(100));
+
+        let events = iter::from_fn(|| agent.poll_event()).collect::<Vec<_>>();
+        assert!(!events.contains(&IceAgentEvent::IceConnectionStateChange(
+            IceConnectionState::Disconnected
+        )));
     }
 
     fn make_serialized_binding_request(
