@@ -1,10 +1,12 @@
 use std::fmt;
 use std::ops::Deref;
 
+use serde::ser::SerializeStruct;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use thiserror::Error;
 
-mod data;
+/// Parsed SDP data.
+pub mod data;
 pub(crate) use data::{FormatParam, Sdp, Session, SessionAttribute, Setup};
 pub(crate) use data::{MediaAttribute, MediaLine, MediaType, Msid, Proto};
 pub(crate) use data::{RestrictionId, Simulcast, SimulcastGroups};
@@ -112,17 +114,10 @@ macro_rules! sdp_ser {
             where
                 S: Serializer,
             {
-                #[derive(Serialize)]
-                struct Data {
-                    r#type: &'static str,
-                    sdp: String,
-                }
-
-                Data {
-                    r#type: $LCName,
-                    sdp: self.0.to_string(),
-                }
-                .serialize(s)
+                let mut o = s.serialize_struct($Name, 2)?;
+                o.serialize_field("type", $LCName)?;
+                o.serialize_field("sdp", &self.0.to_string())?;
+                o.end()
             }
         }
 
@@ -131,25 +126,109 @@ macro_rules! sdp_ser {
             where
                 D: Deserializer<'de>,
             {
-                #[derive(Deserialize)]
-                struct Data {
-                    r#type: String,
-                    sdp: String,
+                #[derive(Debug)]
+                enum Field {
+                    Typ,
+                    Sdp,
                 }
 
-                let data = Data::deserialize(d)?;
+                impl<'de> Deserialize<'de> for Field {
+                    fn deserialize<D>(deserializer: D) -> Result<Field, D::Error>
+                    where
+                        D: Deserializer<'de>,
+                    {
+                        struct FieldVisitor;
+                        impl<'de> de::Visitor<'de> for FieldVisitor {
+                            type Value = Field;
 
-                if data.r#type != $LCName {
-                    return Err(de::Error::custom(format!(
-                        "Expected SDP type '{}', got '{}'",
-                        $LCName, data.r#type
-                    )));
+                            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                                formatter.write_str("`type` or `sdp`")
+                            }
+
+                            fn visit_str<E>(self, value: &str) -> Result<Field, E>
+                            where
+                                E: de::Error,
+                            {
+                                match value {
+                                    "type" => Ok(Field::Typ),
+                                    "sdp" => Ok(Field::Sdp),
+                                    _ => Err(de::Error::unknown_field(value, FIELDS)),
+                                }
+                            }
+                        }
+                        deserializer.deserialize_identifier(FieldVisitor)
+                    }
                 }
 
-                let sdp = Sdp::parse(&data.sdp)
-                    .map_err(|err| de::Error::custom(format!("Failed to parse SDP: {:?}", err)))?;
+                struct StructVisitor;
 
-                Ok(Self(sdp))
+                impl<'de> de::Visitor<'de> for StructVisitor {
+                    type Value = $Struct;
+
+                    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                        formatter.write_str($Name)
+                    }
+
+                    fn visit_seq<V>(self, mut seq: V) -> Result<$Struct, V::Error>
+                    where
+                        V: de::SeqAccess<'de>,
+                    {
+                        let typ: &'de str = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::invalid_length(0, &self))?;
+                        if typ != $LCName {
+                            return Err(de::Error::custom(format!(
+                                "{} type field is '{}'",
+                                $Name, typ
+                            )));
+                        }
+                        let sdp: &'de str = seq
+                            .next_element()?
+                            .ok_or_else(|| de::Error::invalid_length(1, &self))?;
+                        let sdp = Sdp::parse(sdp)
+                            .map_err(|_ph| de::Error::custom("Failed to parse SDP"))?;
+                        Ok($Struct(sdp))
+                    }
+
+                    fn visit_map<V>(self, mut map: V) -> Result<$Struct, V::Error>
+                    where
+                        V: de::MapAccess<'de>,
+                    {
+                        let mut typ: Option<String> = None;
+                        let mut sdp: Option<String> = None;
+                        while let Some(key) = map.next_key()? {
+                            match key {
+                                Field::Typ => {
+                                    if typ.is_some() {
+                                        return Err(de::Error::duplicate_field("type"));
+                                    }
+                                    let value = map.next_value()?;
+                                    if value != $LCName {
+                                        return Err(de::Error::custom(format!(
+                                            "{} type field is '{}'",
+                                            $Name, value
+                                        )));
+                                    }
+                                    typ = Some(value);
+                                }
+                                Field::Sdp => {
+                                    if sdp.is_some() {
+                                        return Err(de::Error::duplicate_field("sdp"));
+                                    }
+                                    sdp = Some(map.next_value()?);
+                                }
+                            }
+                        }
+                        let sdp = sdp.ok_or_else(|| de::Error::missing_field("sdp"))?;
+                        let sdp = Sdp::parse(&sdp).map_err(|ph| {
+                            de::Error::custom(format!("Failed to parse SDP: {:?}", ph))
+                        })?;
+                        Ok($Struct(sdp))
+                    }
+                }
+
+                const FIELDS: &'static [&'static str] = &["type", "sdp"];
+                d.deserialize_struct($Name, FIELDS, StructVisitor)
             }
         }
     };

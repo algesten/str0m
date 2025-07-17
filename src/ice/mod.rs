@@ -4,15 +4,12 @@
 use thiserror::Error;
 
 mod agent;
-pub use agent::{IceAgent, IceAgentEvent, IceConnectionState, IceCreds, LocalPreference};
+pub use agent::{IceAgent, IceAgentEvent, IceConnectionState, IceCreds};
 
 mod candidate;
 pub use candidate::{Candidate, CandidateKind};
 
 mod pair;
-
-mod preference;
-pub use preference::default_local_preference;
 
 /// Errors from the ICE agent.
 #[allow(missing_docs)]
@@ -100,10 +97,10 @@ mod test {
 
     pub fn relay(
         s: impl Into<String>,
+        base: impl Into<String>,
         proto: impl TryInto<Protocol>,
-        l: impl Into<String>,
     ) -> Candidate {
-        Candidate::relayed(sock(s), sock(l), proto).unwrap()
+        Candidate::relayed(sock(s), sock(base), proto).unwrap()
     }
 
     /// Transform the socket to rig different test scenarios.
@@ -683,7 +680,7 @@ mod test {
         let mut a2 = TestAgent::new(info_span!("R"));
 
         let c1 = a1
-            .add_local_candidate(relay("1.1.1.1:1000", "udp", "9.9.9.9:2000"))
+            .add_local_candidate(relay("1.1.1.1:1000", "5.6.7.8:4321", "udp"))
             .unwrap()
             .clone();
         a2.add_remote_candidate(c1);
@@ -707,9 +704,9 @@ mod test {
             progress(&mut a1, &mut a2);
         }
 
-        a1.add_local_candidate(relay("1.1.1.1:1001", "udp", "9.9.9.9:2000"))
+        a1.add_local_candidate(relay("1.1.1.1:1001", "5.6.7.8:4321", "udp"))
             .unwrap();
-        a2.add_remote_candidate(relay("1.1.1.1:1001", "udp", "9.9.9.9:2000"));
+        a2.add_remote_candidate(relay("1.1.1.1:1001", "5.6.7.8:4321", "udp"));
 
         loop {
             if a2.has_event(|e| {
@@ -739,13 +736,13 @@ mod test {
         // Both agents know their local candidates
         let c1 = a1.add_host_candidate("1.1.1.1:1000");
         let c3 = a1
-            .add_local_candidate(relay("2.2.2.2:1000", "udp", "9.9.9.9:2000"))
+            .add_local_candidate(relay("2.2.2.2:1000", "5.6.7.8:4321", "udp"))
             .unwrap()
             .clone();
 
         let c2 = a2.add_host_candidate("1.1.1.1:1001");
         let c4 = a2
-            .add_local_candidate(relay("2.2.2.2:1001", "udp", "9.9.9.9:2000"))
+            .add_local_candidate(relay("2.2.2.2:1001", "5.6.7.8:4321", "udp"))
             .unwrap()
             .clone();
 
@@ -854,11 +851,11 @@ mod test {
         // Agent 1 only has IPv4 connectivity to a relay but allocates both IPv4 and IPv6 addresses.
         // Agent 2 has no relay but has full IPv4 and IPv6 connectivity.
         let relay_ipv4_ipv4 = a1
-            .add_local_candidate(relay("7.7.7.7:5000", "udp", "1.1.1.1:5000"))
+            .add_local_candidate(relay("7.7.7.7:5000", "1.1.1.1:5000", "udp"))
             .unwrap()
             .clone();
         let relay_ipv6_ipv4 = a1
-            .add_local_candidate(relay("[::7]:5000", "udp", "1.1.1.1:5000"))
+            .add_local_candidate(relay("[::7]:5000", "1.1.1.1:5000", "udp"))
             .unwrap()
             .clone();
         a2.add_remote_candidate(relay_ipv4_ipv4);
@@ -878,13 +875,11 @@ mod test {
         }
 
         assert!(a1.has_event(|e| {
-            matches!(e, IceAgentEvent::NominatedSend { source, destination, .. }
-                         if source == &sock("7.7.7.7:5000") && destination == &sock("5.5.5.5:3000"))
-        }));
+                    matches!(e, IceAgentEvent::NominatedSend { source, destination, .. } if source == &sock("7.7.7.7:5000") && destination == &sock("5.5.5.5:3000"))
+                }));
         assert!(a2.has_event(|e| {
-            matches!(e, IceAgentEvent::NominatedSend { source, destination, .. }
-                         if source == &sock("5.5.5.5:3000") && destination == &sock("7.7.7.7:5000"))
-        }));
+                    matches!(e, IceAgentEvent::NominatedSend { source, destination, .. } if source == &sock("5.5.5.5:3000") && destination == &sock("7.7.7.7:5000"))
+                }));
     }
 
     #[test]

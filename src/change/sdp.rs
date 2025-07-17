@@ -986,7 +986,7 @@ fn add_new_lines(
 
         if m.typ.is_media() {
             let mut media = Media::from_remote_media_line(m, idx, is_offer);
-            media.need_open_event = is_offer;
+            media.need_open_event = true;
 
             // Match/remap remote params.
             session

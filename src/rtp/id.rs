@@ -176,7 +176,7 @@ num_id!(SessionId, u64);
 /// assert_eq!(b, 1);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct SeqNo(u64);
+pub struct SeqNo(pub u64);
 num_id!(SeqNo, u64);
 
 impl SeqNo {

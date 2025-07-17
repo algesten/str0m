@@ -69,10 +69,6 @@ pub struct StreamTx {
     /// If we are using RTX, this is the seq no counter.
     seq_no_rtx: SeqNo,
 
-    /// The last seq_no that we sent, either by increasing seq_no ourselves (media API), or by
-    /// direct RTP mode writing.
-    last_sent_seq_no: SeqNo,
-
     /// When we last sent something for this encoded stream, packet or RTCP.
     last_used: Instant,
 
@@ -146,7 +142,6 @@ impl StreamTx {
             clock_rate: None,
             seq_no: SeqNo::default(),
             seq_no_rtx: SeqNo::default(),
-            last_sent_seq_no: SeqNo::default(),
             last_used: already_happened(),
             rtp_and_wallclock: None,
             send_queue: SendQueue::new(),
@@ -329,7 +324,7 @@ impl StreamTx {
         let mid = self.midrid.mid();
         let rid = self.midrid.rid();
         let ssrc_rtx = self.rtx;
-        let remote_acked_ssrc = self.remote_acked_ssrc;
+        let _remote_acked_ssrc = self.remote_acked_ssrc;
 
         let (next, is_padding) = if let Some(next) = self.poll_packet_resend(now) {
             (next, false)
@@ -360,10 +355,16 @@ impl StreamTx {
         // then stops attaching the MID and RID.
 
         // This is true also for RTX.
-        if !remote_acked_ssrc {
-            header_ref.ext_vals.mid = Some(mid);
-            header_ref.ext_vals.rid = rid;
-        }
+        // if !remote_acked_ssrc {
+        //     header_ref.ext_vals.mid = Some(mid);
+        //     header_ref.ext_vals.rid = rid;
+        // }
+
+        // TODO: Investigate MID/RID headers issues further
+        // The above was causing problems with clients still expecting the MID/RID headers
+        // Not sure exactly why, but for now we will just always set the headers
+        header_ref.ext_vals.mid = Some(mid);
+        header_ref.ext_vals.rid = rid;
 
         let pt_main = header_ref.payload_type;
 
@@ -519,10 +520,6 @@ impl StreamTx {
         }
 
         let seq_no = next.seq_no;
-        if next.kind == NextPacketKind::Regular {
-            self.last_sent_seq_no = seq_no;
-        }
-
         self.last_used = now;
 
         // Padding comes in two forms, "spurious resends" of sent packets where
@@ -745,7 +742,7 @@ impl StreamTx {
             ReceptionReport(r) => {
                 // Receiver has bound MidRid to SSRC
                 self.remote_acked_ssrc = true;
-                self.stats.update_with_rr(now, self.last_sent_seq_no, r)
+                self.stats.update_with_rr(now, r)
             }
             Nack(_, list) => {
                 self.stats.increase_nacks();

@@ -606,8 +606,8 @@
 #![allow(clippy::get_first)]
 #![allow(clippy::needless_lifetimes)]
 #![allow(clippy::precedence)]
-#![allow(clippy::doc_overindented_list_items)]
-#![deny(missing_docs)]
+// TODO: Remove override (making SDP pub is a WIP)
+// #![deny(missing_docs)]
 
 #[macro_use]
 extern crate tracing;
@@ -649,7 +649,6 @@ pub mod config {
 #[doc(hidden)]
 pub mod ice {
     pub use crate::ice_::IceCreds;
-    pub use crate::ice_::{default_local_preference, LocalPreference};
     pub use crate::ice_::{IceAgent, IceAgentEvent};
     pub use crate::io::{StunMessage, StunMessageBuilder, StunPacket, TransId};
 }
@@ -706,7 +705,8 @@ pub mod bwe;
 mod sctp;
 use sctp::{RtcSctp, SctpEvent};
 
-mod sdp;
+/// Interfaces for parsing and working with SDP directly.
+pub mod sdp;
 
 pub mod format;
 use format::CodecConfig;
@@ -1415,7 +1415,10 @@ impl Rtc {
 
         match &o {
             Output::Event(e) => match e {
-                Event::ChannelData(_) | Event::MediaData(_) | Event::RtpPacket(_) => {
+                Event::ChannelData(_)
+                | Event::MediaData(_)
+                | Event::RtpPacket(_)
+                | Event::KeyframeRequest(_) => {
                     trace!("{:?}", e)
                 }
                 _ => debug!("{:?}", e),

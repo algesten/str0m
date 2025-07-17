@@ -19,6 +19,9 @@ use crate::{Candidate, IceCreds, VERSION};
 use super::parser::sdp_parser;
 use super::SdpError;
 
+/// A parsed SDP.
+///
+/// Should not be interacted with until calling [Sdp::assert_consistency].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sdp {
     pub session: Session,
@@ -33,7 +36,8 @@ impl Sdp {
             .map_err(|e| SdpError::ParseError(e.to_string()))
     }
 
-    pub(crate) fn assert_consistency(&self) -> Result<(), SdpError> {
+    /// Validate that the SDP is semantically sound in the context of WebRTC
+    pub fn assert_consistency(&self) -> Result<(), SdpError> {
         match self.do_assert_consistency() {
             None => Ok(()),
             Some(error) => Err(SdpError::Inconsistent(error)),
@@ -52,7 +56,7 @@ impl Sdp {
             .or_else(|| self.media_lines.iter().find_map(|m| m.ice_creds()))
     }
 
-    pub(crate) fn ice_candidates(&self) -> impl Iterator<Item = &Candidate> {
+    pub fn ice_candidates(&self) -> impl Iterator<Item = &Candidate> {
         let mut candidates: HashSet<&Candidate> = HashSet::new();
 
         // Session level ice candidates.
@@ -64,6 +68,11 @@ impl Sdp {
         }
 
         candidates.into_iter()
+    }
+
+    /// Get the media defined in the SDP.
+    pub fn media(&self) -> impl Iterator<Item = &MediaLine> {
+        self.media_lines.iter()
     }
 
     pub(crate) fn setup(&self) -> Option<Setup> {

@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// let mtime = MediaTime::new(2000, freq);
 /// ```
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct Frequency(NonZeroU32);
 
 impl Frequency {
@@ -85,13 +85,6 @@ impl Frequency {
         self.0
     }
 }
-
-impl PartialEq for Frequency {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-impl Eq for Frequency {}
 
 impl From<Frequency> for NonZeroU32 {
     fn from(value: Frequency) -> Self {

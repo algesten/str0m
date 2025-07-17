@@ -46,7 +46,7 @@ fn rr_interval(audio: bool) -> Duration {
 /// Packet of RTP data.
 ///
 /// As emitted by [`Event::RtpPacket`][crate::Event::RtpPacket] when using rtp mode.
-#[derive(PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RtpPacket {
     /// Extended sequence number to avoid having to deal with ROC.
     pub seq_no: SeqNo,
@@ -79,7 +79,7 @@ pub struct RtpPacket {
     ///
     /// This is often false for audio, but might also be false for discardable frames when
     /// using temporal encoding as in a VP8 simulcast situation.
-    pub(crate) nackable: bool,
+    pub nackable: bool,
 }
 
 /// Event when an encoded stream is considered paused/unpaused.

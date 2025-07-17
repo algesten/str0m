@@ -83,7 +83,7 @@ impl PartialEq for PayloadParams {
 impl Eq for PayloadParams {}
 
 /// Codec specification
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CodecSpec {
     /// The codec identifier.
     pub codec: Codec,
@@ -100,7 +100,7 @@ pub struct CodecSpec {
 }
 
 /// Known codecs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 #[allow(missing_docs)]
 pub enum Codec {
@@ -126,7 +126,7 @@ pub enum Codec {
 }
 
 /// Codec specific format parameters.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct FormatParams {
     /// Opus specific parameter.
     ///
