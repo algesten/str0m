@@ -1149,6 +1149,18 @@ impl Rtc {
             ice.set_ice_lite(config.ice_lite);
         }
 
+        if let Some(initial_stun_rto) = config.initial_stun_rto {
+            ice.set_initial_stun_rto(initial_stun_rto);
+        }
+
+        if let Some(max_stun_rto) = config.max_stun_rto {
+            ice.set_max_stun_rto(max_stun_rto);
+        }
+
+        if let Some(max_stun_retransmits) = config.max_stun_retransmits {
+            ice.set_max_stun_retransmits(max_stun_retransmits);
+        }
+
         let dtls_cert = match config.dtls_cert_config {
             DtlsCertConfig::Options(options) => DtlsCert::new(config.crypto_provider, options),
             DtlsCertConfig::PregeneratedCert(cert) => cert,
@@ -1918,6 +1930,9 @@ pub struct RtcConfig {
     dtls_cert_config: DtlsCertConfig,
     fingerprint_verification: bool,
     ice_lite: bool,
+    initial_stun_rto: Option<Duration>,
+    max_stun_rto: Option<Duration>,
+    max_stun_retransmits: Option<usize>,
     codec_config: CodecConfig,
     exts: ExtensionMap,
     stats_interval: Option<Duration>,
@@ -2038,6 +2053,27 @@ impl RtcConfig {
     pub fn set_ice_lite(mut self, enabled: bool) -> Self {
         self.ice_lite = enabled;
         self
+    }
+
+    /// Sets the initial STUN retransmission timeout (RTO).
+    ///
+    /// This is the initial wait time before a STUN request is retransmitted.
+    /// The timeout will double with each retry, starting from this value.
+    pub fn set_initial_stun_rto(&mut self, rto: Duration) {
+        self.initial_stun_rto = Some(rto);
+    }
+
+    /// Sets the maximum STUN retransmission timeout for the ICE agent.
+    ///
+    /// This is the upper bound for how long to wait between retransmissions.
+    /// It also controls how often successful bindings are checked.
+    pub fn set_max_stun_rto(&mut self, rto: Duration) {
+        self.max_stun_rto = Some(rto);
+    }
+
+    /// Sets the maximum number of retransmits for STUN messages.
+    pub fn set_max_stun_retransmits(&mut self, num: usize) {
+        self.max_stun_retransmits = Some(num);
     }
 
     /// Get fingerprint verification mode.
@@ -2437,6 +2473,9 @@ impl Default for RtcConfig {
             dtls_cert_config: Default::default(),
             fingerprint_verification: true,
             ice_lite: false,
+            initial_stun_rto: None,
+            max_stun_rto: None,
+            max_stun_retransmits: None,
             codec_config: CodecConfig::new_with_defaults(),
             exts: ExtensionMap::standard(),
             stats_interval: None,
