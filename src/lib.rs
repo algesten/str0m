@@ -2059,6 +2059,8 @@ impl RtcConfig {
     ///
     /// This is the initial wait time before a STUN request is retransmitted.
     /// The timeout will double with each retry, starting from this value.
+    ///
+    /// Defaults to 250ms.
     pub fn set_initial_stun_rto(&mut self, rto: Duration) {
         self.initial_stun_rto = Some(rto);
     }
@@ -2067,11 +2069,15 @@ impl RtcConfig {
     ///
     /// This is the upper bound for how long to wait between retransmissions.
     /// It also controls how often successful bindings are checked.
+    ///
+    /// Defaults to 3000ms.
     pub fn set_max_stun_rto(&mut self, rto: Duration) {
         self.max_stun_rto = Some(rto);
     }
 
     /// Sets the maximum number of retransmits for STUN messages.
+    ///
+    /// Defaults to 9.
     pub fn set_max_stun_retransmits(&mut self, num: usize) {
         self.max_stun_retransmits = Some(num);
     }
