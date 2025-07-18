@@ -1,5 +1,8 @@
 # Unreleased
 
+  * Make STUN timers configurable on RtcConfig #674
+  * ice: stricter srflx candidate checks #672
+  * ice: Dont report Disconnected when no local candidates #670
   * Make ICE agent local preference pluggable #668
   * Simplified serde of SDP #664
   * SR/RR stats in Ingress/EgressStats #661 #662
