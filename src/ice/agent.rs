@@ -436,6 +436,11 @@ impl IceAgent {
             .any(|pair| self.remote_candidates[pair.remote_idx()].addr() == addr)
     }
 
+    /// Remote ice credentials.
+    pub fn remote_credentials(&self) -> Option<&IceCreds> {
+        self.remote_credentials.as_ref()
+    }
+
     /// Sets the remote ice credentials.
     pub fn set_remote_credentials(&mut self, r: IceCreds) {
         if self.remote_credentials.as_ref() != Some(&r) {
@@ -1764,10 +1769,6 @@ impl IceAgent {
                 }
             }
         }
-    }
-
-    pub(crate) fn remote_credentials(&self) -> Option<&IceCreds> {
-        self.remote_credentials.as_ref()
     }
 }
 
