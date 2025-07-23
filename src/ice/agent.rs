@@ -1744,6 +1744,8 @@ impl IceAgent {
                     }
                 } else if !any_still_possible {
                     self.set_connection_state(Disconnected, "no possible pairs");
+                } else {
+                    self.set_connection_state(Checking, "got new possible");
                 }
             }
             Connected => {

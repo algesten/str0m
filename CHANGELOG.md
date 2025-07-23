@@ -4,6 +4,7 @@
   * ice: stricter srflx candidate checks #672
   * ice: Dont report Disconnected when no local candidates #670
   * ice: expose remote ICE credentials #675
+  * ice: transition from `Disconnected -> Checking` on new candidates #676
   * Make ICE agent local preference pluggable #668
   * Simplified serde of SDP #664
   * SR/RR stats in Ingress/EgressStats #661 #662
