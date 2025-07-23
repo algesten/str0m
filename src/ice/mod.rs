@@ -943,6 +943,80 @@ mod test {
         assert_eq!(timeout_after, now + NORMAL_RTO);
     }
 
+    #[test]
+    fn new_candidates_after_disconnected_should_transition_to_checking() {
+        let _guard = tracing_subscriber::fmt()
+            .with_env_filter("trace")
+            .with_test_writer()
+            .set_default();
+
+        let mut a1 = TestAgent::new(info_span!("L"));
+        let mut a2 = TestAgent::new(info_span!("R"));
+
+        let c1 = host("1.1.1.1:1000", "udp");
+        a1.add_local_candidate(c1.clone());
+        a2.add_remote_candidate(c1);
+
+        let c2 = host("2.2.2.2:1000", "udp");
+        a2.add_local_candidate(c2.clone());
+        a1.add_remote_candidate(c2);
+
+        a1.set_controlling(true);
+        a2.set_controlling(false);
+
+        // loop until we're connected.
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        // signal network outage
+        a1.drop_sent_packets = true;
+        a2.drop_sent_packets = true;
+
+        loop {
+            if a1.state().is_disconnected() && a2.state().is_disconnected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        // Reconnect with new candidates
+        a1.drop_sent_packets = false;
+        a2.drop_sent_packets = false;
+
+        let c1 = host("5.5.5.5:1000", "udp");
+        a1.add_local_candidate(c1.clone());
+        a2.add_remote_candidate(c1);
+
+        let c2 = host("6.6.6.6:1000", "udp");
+        a2.add_local_candidate(c2.clone());
+        a1.add_remote_candidate(c2);
+
+        // Clear all existing events
+        a1.events.clear();
+        a2.events.clear();
+
+        // Reconnect
+        loop {
+            if a1.state().is_connected() && a2.state().is_connected() {
+                break;
+            }
+            progress(&mut a1, &mut a2);
+        }
+
+        assert!(a1.has_event(|e| matches!(
+            e,
+            IceAgentEvent::IceConnectionStateChange(IceConnectionState::Checking)
+        )));
+        assert!(a2.has_event(|e| matches!(
+            e,
+            IceAgentEvent::IceConnectionStateChange(IceConnectionState::Checking)
+        )));
+    }
+
     pub struct TestAgent {
         pub start_time: Instant,
         pub agent: IceAgent,
