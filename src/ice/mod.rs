@@ -970,7 +970,7 @@ mod test {
     }
 
     #[test]
-    pub fn symmetric_nat_one_side_uses_peer_reflexive_candidate() {
+    pub fn symmetric_nat_one_side() {
         let _guard = tracing_subscriber::fmt()
             .with_test_writer()
             .with_env_filter("trace")
@@ -984,11 +984,13 @@ mod test {
         a2.add_remote_candidate(a1.add_host_candidate("1.1.1.1:1000"));
         a1.add_remote_candidate(a2.add_host_candidate("2.2.2.2:1000"));
 
-        // Add server-reflexive candidates.
-        // The one from A1 will fail but A2's is valid so we should generate a peer-reflexive candidate and make a direct connection.
+        // Add server-reflexive candidates, those will also fail due to A1's symmetric NAT.
         a2.add_remote_candidate(a1.server_reflexive_candidate("8.8.8.8:3478", "1.1.1.1:1000"));
-        let a2_srflx = a2.server_reflexive_candidate("8.8.8.8:3478", "2.2.2.2:1000");
-        a1.add_remote_candidate(a2_srflx.clone());
+        a1.add_remote_candidate(a2.server_reflexive_candidate("8.8.8.8:3478", "2.2.2.2:1000"));
+
+        // Add relay candidates, those will work.
+        a2.add_remote_candidate(a1.add_relay_candidate("3.3.3.3:1000", "1.1.1.1:1000"));
+        a1.add_remote_candidate(a2.add_relay_candidate("4.4.4.4:1000", "2.2.2.2:1000"));
 
         a1.set_controlling(true);
         a2.set_controlling(false);
@@ -1000,14 +1002,15 @@ mod test {
             progress(&mut a1, &mut a2);
         }
 
+        // A1 sends from its host candidate with a random port getting assigned by the symmetric NAT.
         assert!(a1.has_event(|e| {
             matches!(e, IceAgentEvent::NominatedSend { source, destination, .. }
-                         if source == &sock("1.1.1.1:1000") && destination == &a2_srflx.addr())
+                         if source == &sock("1.1.1.1:1000") && destination == &sock("4.4.4.4:1000"))
         }));
-        // We don't know the destination port for A2 because A1's symmetric NAT will have assigned a random one.
+        // A2 sends from its relay candidate, towards the public IP of A1.
         assert!(a2.has_event(|e| {
             matches!(e, IceAgentEvent::NominatedSend { source, destination, .. }
-                         if source == &sock("2.2.2.2:1000") && destination.ip() == ip("5.5.5.5"))
+                         if source == &sock("4.4.4.4:1000") && destination.ip() == ip("5.5.5.5"))
         }));
     }
 
@@ -1063,7 +1066,7 @@ mod test {
         }
 
         pub fn with_restricted_nat(mut self, external_ip: &str) -> Self {
-            self.nat = Some(Nat::new_restricted(external_ip));
+            self.nat = Some(Nat::new_port_restricted_cone(external_ip));
             self
         }
 
@@ -1101,7 +1104,7 @@ mod test {
             match self.nat.as_mut() {
                 None => Candidate::server_reflexive(base, base, "udp"),
                 Some(Nat {
-                    nat_type: RestrictedCone { .. },
+                    nat_type: PortRestrictedCone { .. },
                     external_ip,
                 }) => Candidate::server_reflexive(
                     SocketAddr::new(*external_ip, base.port()),
@@ -1235,8 +1238,8 @@ mod test {
 
     #[derive(Debug, Clone)]
     enum NatType {
-        RestrictedCone {
-            mappings: HashMap<SocketAddr, u16>,
+        PortRestrictedCone {
+            mappings: HashMap<(SocketAddr, SocketAddr), u16>,
         },
         Symmetric {
             mappings: HashMap<(SocketAddr, SocketAddr), u16>,
@@ -1250,10 +1253,10 @@ mod test {
     }
 
     impl Nat {
-        fn new_restricted(external_ip: &str) -> Self {
+        fn new_port_restricted_cone(external_ip: &str) -> Self {
             Self {
                 external_ip: external_ip.parse().expect("Invalid IP address"),
-                nat_type: NatType::RestrictedCone {
+                nat_type: NatType::PortRestrictedCone {
                     mappings: Default::default(),
                 },
             }
@@ -1279,11 +1282,10 @@ mod test {
 
                     symmetric_nat_lookup(from, to, mappings)
                 }
-                NatType::RestrictedCone { mappings } => {
-                    // For a restricted-cone NAT, the key is just the source address.
-                    //
-                    // For simplicity, we reuse the inner port.
-                    *mappings.entry(from).or_insert(from.port())
+                NatType::PortRestrictedCone { mappings } => {
+                    // For a port-restricted-cone NAT, the key is also the 4-tuple of the connection.
+                    // Contrary to a symmetric NAT, the source port is preserved.
+                    *mappings.entry((from, to)).or_insert(from.port())
                 }
             };
 
@@ -1304,11 +1306,11 @@ mod test {
 
                     *src
                 }
-                // For restricted-code NAT, any traffic on the outside assigned port is routed back, regardless of the source.
-                NatType::RestrictedCone { mappings } => {
-                    let (src, _) = mappings
+                // For restricted-cone NAT, traffic on the outside assigned port is routed back if we have previously contacted this IP + port combination.
+                NatType::PortRestrictedCone { mappings } => {
+                    let ((src, _), _) = mappings
                         .iter()
-                        .find(|(_, outside)| **outside == to.port())?;
+                        .find(|((_, dst), outside)| from == *dst && **outside == to.port())?;
 
                     *src
                 }
