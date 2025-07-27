@@ -1298,7 +1298,7 @@ mod test {
             to: SocketAddr,
         ) -> Option<(SocketAddr, SocketAddr)> {
             let internal_addr = match &self.nat_type {
-                // For symmetric NAT, need exact source match of from == dst and only on the outside assigned port.
+                // For symmetric NAT, need exact source match of from == dst and only on the assigned port.
                 NatType::Symmetric { mappings } => {
                     let ((src, _), _) = mappings
                         .iter()
@@ -1306,7 +1306,8 @@ mod test {
 
                     *src
                 }
-                // For restricted-cone NAT, traffic on the outside assigned port is routed back if we have previously contacted this IP + port combination.
+                // For restricted-cone NAT, traffic on the outside assigned port is routed back
+                // if we have previously contacted this IP + port combination.
                 NatType::PortRestrictedCone { mappings } => {
                     let ((src, _), _) = mappings
                         .iter()
@@ -1387,7 +1388,10 @@ mod test {
             } else {
                 if nat.external_ip != to.ip() {
                     to_agent.span.in_scope(|| {
-                        tracing::debug!(external = %nat.external_ip, %to, "Dropping packet: Only traffic for external IP of NAT is allowed");
+                        tracing::debug!(
+                            external = %nat.external_ip, %to,
+                            "Dropping packet: Only traffic for external IP of NAT is allowed"
+                        );
                     });
 
                     return None;
