@@ -81,79 +81,6 @@ mod test {
         );
     }
 
-    pub fn sock(s: impl Into<String>) -> SocketAddr {
-        let s: String = s.into();
-        s.parse().unwrap()
-    }
-
-    pub fn host(s: impl Into<String>, proto: impl TryInto<Protocol>) -> Candidate {
-        Candidate::host(sock(s), proto).unwrap()
-    }
-
-    pub fn srflx(
-        s: impl Into<String>,
-        base: impl Into<String>,
-        proto: impl TryInto<Protocol>,
-    ) -> Candidate {
-        Candidate::server_reflexive(sock(s), sock(base), proto).unwrap()
-    }
-
-    pub fn relay(
-        s: impl Into<String>,
-        proto: impl TryInto<Protocol>,
-        l: impl Into<String>,
-    ) -> Candidate {
-        Candidate::relayed(sock(s), sock(l), proto).unwrap()
-    }
-
-    /// Transform the socket to rig different test scenarios.
-    ///
-    /// * either port 9999 -> closed (packets dropped)
-    /// * from 3.3.3.3 is rewritten to 4.4.4.4
-    /// * to 3.3.3.3 is dropped
-    /// * to 4.4.4.4 is rewritten to 3.3.3.3
-    fn transform(from: SocketAddr, to: SocketAddr) -> Option<(SocketAddr, SocketAddr)> {
-        if from.port() == 9999 || to.port() == 9999 {
-            // drop packet.
-            return None;
-        }
-
-        const IP3333: Ipv4Addr = Ipv4Addr::new(3, 3, 3, 3);
-        const IP4444: Ipv4Addr = Ipv4Addr::new(4, 4, 4, 4);
-
-        let ip_from = match from.ip() {
-            IpAddr::V4(v) => {
-                if v == IP3333 {
-                    // rewrite 3.3.3.3 -> 4.4.4.4
-                    IpAddr::V4(IP4444)
-                } else {
-                    IpAddr::V4(v)
-                }
-            }
-            IpAddr::V6(v) => IpAddr::V6(v),
-        };
-
-        let ip_to = match to.ip() {
-            IpAddr::V4(v) => {
-                if v == IP3333 {
-                    // drop packets targeted at 3.3.3.3
-                    return None;
-                } else if v == IP4444 {
-                    // rewrite 4.4.4.4 -> 3.3.3.3
-                    IpAddr::V4(IP3333)
-                } else {
-                    IpAddr::V4(v)
-                }
-            }
-            IpAddr::V6(v) => IpAddr::V6(v),
-        };
-
-        Some((
-            SocketAddr::new(ip_from, from.port()),
-            SocketAddr::new(ip_to, to.port()),
-        ))
-    }
-
     #[test]
     pub fn host_host_disconnect() {
         let mut a1 = TestAgent::new(info_span!("L"));
@@ -1145,5 +1072,78 @@ mod test {
         }
 
         now
+    }
+
+    pub fn sock(s: impl Into<String>) -> SocketAddr {
+        let s: String = s.into();
+        s.parse().unwrap()
+    }
+
+    pub fn host(s: impl Into<String>, proto: impl TryInto<Protocol>) -> Candidate {
+        Candidate::host(sock(s), proto).unwrap()
+    }
+
+    pub fn srflx(
+        s: impl Into<String>,
+        base: impl Into<String>,
+        proto: impl TryInto<Protocol>,
+    ) -> Candidate {
+        Candidate::server_reflexive(sock(s), sock(base), proto).unwrap()
+    }
+
+    pub fn relay(
+        s: impl Into<String>,
+        proto: impl TryInto<Protocol>,
+        l: impl Into<String>,
+    ) -> Candidate {
+        Candidate::relayed(sock(s), sock(l), proto).unwrap()
+    }
+
+    /// Transform the socket to rig different test scenarios.
+    ///
+    /// * either port 9999 -> closed (packets dropped)
+    /// * from 3.3.3.3 is rewritten to 4.4.4.4
+    /// * to 3.3.3.3 is dropped
+    /// * to 4.4.4.4 is rewritten to 3.3.3.3
+    fn transform(from: SocketAddr, to: SocketAddr) -> Option<(SocketAddr, SocketAddr)> {
+        if from.port() == 9999 || to.port() == 9999 {
+            // drop packet.
+            return None;
+        }
+
+        const IP3333: Ipv4Addr = Ipv4Addr::new(3, 3, 3, 3);
+        const IP4444: Ipv4Addr = Ipv4Addr::new(4, 4, 4, 4);
+
+        let ip_from = match from.ip() {
+            IpAddr::V4(v) => {
+                if v == IP3333 {
+                    // rewrite 3.3.3.3 -> 4.4.4.4
+                    IpAddr::V4(IP4444)
+                } else {
+                    IpAddr::V4(v)
+                }
+            }
+            IpAddr::V6(v) => IpAddr::V6(v),
+        };
+
+        let ip_to = match to.ip() {
+            IpAddr::V4(v) => {
+                if v == IP3333 {
+                    // drop packets targeted at 3.3.3.3
+                    return None;
+                } else if v == IP4444 {
+                    // rewrite 4.4.4.4 -> 3.3.3.3
+                    IpAddr::V4(IP3333)
+                } else {
+                    IpAddr::V4(v)
+                }
+            }
+            IpAddr::V6(v) => IpAddr::V6(v),
+        };
+
+        Some((
+            SocketAddr::new(ip_from, from.port()),
+            SocketAddr::new(ip_to, to.port()),
+        ))
     }
 }
