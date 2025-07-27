@@ -1079,16 +1079,7 @@ mod test {
 
         fn add_relay_candidate(&mut self, addr: &str, local: &str) -> Candidate {
             let local = local.parse().unwrap();
-            let addr = addr.parse::<SocketAddr>().unwrap();
-
-            if let Some(Nat {
-                nat_type: NatType::Symmetric { mappings },
-                ..
-            }) = self.nat.as_mut()
-            {
-                // Register an outgoing port mapping to the relay.
-                symmetric_nat_lookup(local, SocketAddr::new(addr.ip(), 3478), mappings);
-            }
+            let addr = addr.parse().unwrap();
 
             self.agent
                 .add_local_candidate(Candidate::relayed(addr, local, "udp").unwrap())
