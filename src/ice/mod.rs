@@ -1387,7 +1387,7 @@ mod test {
                         return None;
                     }
 
-                    return match nat.transform_inbound(from, to) {
+                    match nat.transform_inbound(from, to) {
                         Some((new_from, new_to)) => {
                             debug_assert_eq!(new_from, from);
 
@@ -1400,7 +1400,7 @@ mod test {
 
                             None
                         }
-                    };
+                    }
                 }
             } else {
                 Some((from, to))
