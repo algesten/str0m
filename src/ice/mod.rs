@@ -1347,24 +1347,24 @@ mod test {
             .any(|c| c.addr() == from && c.kind() == CandidateKind::Relayed);
 
         // If NAT is present on sending agent, apply it.
-        let (from, to) = if let Some(nat) = &mut from_agent.nat {
-            // If our traffic is "from" a relay candidate, the NAT does not apply.
-            if outgoing_is_from_relay {
-                (from, to)
+        let (from, to) = from_agent.span.in_scope(|| {
+            if let Some(nat) = &mut from_agent.nat {
+                // If our traffic is "from" a relay candidate, the NAT does not apply.
+                if outgoing_is_from_relay {
+                    (from, to)
+                } else {
+                    let (new_from, new_to) = nat.transform_outbound(from, to);
+
+                    debug_assert_eq!(new_to, to);
+
+                    tracing::trace!("Outbound NAT: {} => {}", from, new_from);
+
+                    (new_from, new_to)
+                }
             } else {
-                let (new_from, new_to) = nat.transform_outbound(from, to);
-
-                debug_assert_eq!(new_to, to);
-
-                from_agent
-                    .span
-                    .in_scope(|| tracing::trace!("Outbound NAT: {} => {}", from, new_from));
-
-                (new_from, new_to)
+                (from, to)
             }
-        } else {
-            (from, to)
-        };
+        });
 
         let incoming_is_from_relay = to_agent
             .local_candidates()
@@ -1372,43 +1372,39 @@ mod test {
             .any(|c| c.addr() == to && c.kind() == CandidateKind::Relayed);
 
         // If NAT is present on receiving agent, apply it.
-        if let Some(nat) = &mut to_agent.nat {
-            // If our traffic is "to" a relay candidate, the NAT does not apply.
-            if incoming_is_from_relay {
-                Some((from, to))
-            } else {
-                if nat.external_ip != to.ip() {
-                    to_agent.span.in_scope(|| {
+        to_agent.span.in_scope(|| {
+            if let Some(nat) = &mut to_agent.nat {
+                // If our traffic is "to" a relay candidate, the NAT does not apply.
+                if incoming_is_from_relay {
+                    Some((from, to))
+                } else {
+                    if nat.external_ip != to.ip() {
                         tracing::debug!(
                             external = %nat.external_ip, %to,
                             "Dropping packet: Only traffic for external IP of NAT is allowed"
                         );
-                    });
 
-                    return None;
-                }
-
-                return match nat.transform_inbound(from, to) {
-                    Some((new_from, new_to)) => {
-                        debug_assert_eq!(new_from, from);
-
-                        to_agent
-                            .span
-                            .in_scope(|| tracing::trace!("Inbound NAT: {} => {}", to, new_to));
-
-                        Some((new_from, new_to))
+                        return None;
                     }
-                    None => {
-                        to_agent.span.in_scope(|| {
+
+                    return match nat.transform_inbound(from, to) {
+                        Some((new_from, new_to)) => {
+                            debug_assert_eq!(new_from, from);
+
+                            tracing::trace!("Inbound NAT: {} => {}", to, new_to);
+
+                            Some((new_from, new_to))
+                        }
+                        None => {
                             tracing::debug!(%from, %to, "Dropping packet: No port mapping");
-                        });
 
-                        None
-                    }
-                };
+                            None
+                        }
+                    };
+                }
+            } else {
+                Some((from, to))
             }
-        } else {
-            Some((from, to))
-        }
+        })
     }
 }
