@@ -467,7 +467,7 @@ mod test {
 
     #[test]
     pub fn prflx_host() {
-        let mut a1 = TestAgent::new(info_span!("L")).with_restricted_nat("4.4.4.4");
+        let mut a1 = TestAgent::new(info_span!("L")).with_port_restricted_nat("4.4.4.4");
         let mut a2 = TestAgent::new(info_span!("R"));
 
         // will be rewritten to 4.4.4.4
@@ -608,7 +608,7 @@ mod test {
     #[test]
     pub fn candidate_pair_of_same_kind_does_not_get_nominated() {
         let mut a1 = TestAgent::new(info_span!("L"));
-        let mut a2 = TestAgent::new(info_span!("R")).with_restricted_nat("4.4.4.4");
+        let mut a2 = TestAgent::new(info_span!("R")).with_port_restricted_nat("4.4.4.4");
 
         let c1 = a1.add_relay_candidate("1.1.1.1:1000", "9.9.9.9:2000");
         a2.add_remote_candidate(c1);
@@ -978,7 +978,7 @@ mod test {
 
         // Only one agent is behind symmetric NAT.
         let mut a1 = TestAgent::new(info_span!("L")).with_symmetric_nat("5.5.5.5");
-        let mut a2 = TestAgent::new(info_span!("R")).with_restricted_nat("6.6.6.6");
+        let mut a2 = TestAgent::new(info_span!("R")).with_port_restricted_nat("6.6.6.6");
 
         // Add host candidates. Those will fail behind NAT.
         a2.add_remote_candidate(a1.add_host_candidate("1.1.1.1:1000"));
@@ -1026,7 +1026,7 @@ mod test {
 
     #[test]
     fn server_reflexive_candidate_from_different_servers_are_equal_on_restricted_nat() {
-        let mut agent = TestAgent::new(info_span!("A")).with_restricted_nat("4.4.4.4");
+        let mut agent = TestAgent::new(info_span!("A")).with_port_restricted_nat("4.4.4.4");
 
         let c1 = agent.server_reflexive_candidate("8.8.8.8:3478", "1.1.1.1:1000");
         let c2 = agent.server_reflexive_candidate("9.9.9.9:3478", "1.1.1.1:1000");
@@ -1065,7 +1065,7 @@ mod test {
             self
         }
 
-        pub fn with_restricted_nat(mut self, external_ip: &str) -> Self {
+        pub fn with_port_restricted_nat(mut self, external_ip: &str) -> Self {
             self.nat = Some(Nat::new_port_restricted_cone(external_ip));
             self
         }
