@@ -1087,6 +1087,13 @@ mod test {
                 .clone()
         }
 
+        /// Simulate STUN to the given server and returned the server-reflexive candidate.
+        ///
+        /// Unlike [`TestAgent::add_host_candidate`] and [`TestAgent::add_relay_candidate`],
+        /// this candidate is **not** added to the agent.
+        /// Server-reflexive candidates are typically not added locally because one cannot
+        /// directly send from them.
+        /// The agent can only send from the base which is a host candidate.
         fn server_reflexive_candidate(&mut self, stun_server: &str, base: &str) -> Candidate {
             use NatType::*;
             let base = base.parse().unwrap();
