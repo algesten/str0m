@@ -1071,20 +1071,24 @@ mod test {
         }
 
         fn add_host_candidate(&mut self, addr: &str) -> Candidate {
-            self.agent
-                .add_local_candidate(host(addr, "udp"))
-                .unwrap()
-                .clone()
+            self.span.in_scope(|| {
+                self.agent
+                    .add_local_candidate(host(addr, "udp"))
+                    .unwrap()
+                    .clone()
+            })
         }
 
         fn add_relay_candidate(&mut self, addr: &str, local: &str) -> Candidate {
             let local = local.parse().unwrap();
             let addr = addr.parse().unwrap();
 
-            self.agent
-                .add_local_candidate(Candidate::relayed(addr, local, "udp").unwrap())
-                .unwrap()
-                .clone()
+            self.span.in_scope(|| {
+                self.agent
+                    .add_local_candidate(Candidate::relayed(addr, local, "udp").unwrap())
+                    .unwrap()
+                    .clone()
+            })
         }
 
         /// Simulate STUN to the given server and returned the server-reflexive candidate.
