@@ -321,8 +321,6 @@ impl CandidatePair {
     }
 
     /// When we should do the next retry.
-    ///
-    /// Returns `None` if we are not to attempt this pair anymore.
     pub fn next_binding_attempt(&mut self, now: Instant, timing_config: &StunTiming) -> Instant {
         if let Some(cached) = self.cached_next_attempt_time {
             return cached;
