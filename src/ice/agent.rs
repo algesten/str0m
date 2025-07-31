@@ -735,7 +735,7 @@ impl IceAgent {
     fn form_pairs(&mut self, local_idxs: &[usize], remote_idxs: &[usize]) {
         // Ensure to first update the kinds so any log statements are up-to-date.
         for pair in &mut self.candidate_pairs {
-            pair.update_cached_kinds(&self.local_candidates, &self.remote_candidates);
+            pair.update_kinds(&self.local_candidates, &self.remote_candidates);
         }
 
         for local_idx in local_idxs {
