@@ -455,7 +455,7 @@ impl fmt::Debug for CandidatePair {
         write!(
             f,
             "CandidatePair(\
-                {}-{} ({}-{}) prio={} state={:?} attempts={} unanswered={} remote={} last={:?} nom={:?}\
+                {}-{} ({}-{}) prio={} state={:?} attempts={} unanswered={} remote={} nom={:?}\
             )",
             self.local_idx,
             self.remote_idx,
@@ -466,7 +466,6 @@ impl fmt::Debug for CandidatePair {
             self.binding_attempts.len(),
             self.unanswered().map(|b| b.0).unwrap_or(0),
             self.remote_binding_requests,
-            self.remote_binding_request_time,
             self.nomination_state
         )
     }
