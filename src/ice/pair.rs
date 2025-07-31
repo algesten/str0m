@@ -178,7 +178,7 @@ impl CandidatePair {
     pub fn increase_remote_binding_requests(&mut self, now: Instant) {
         self.remote_binding_requests += 1;
         self.remote_binding_request_time = Some(now);
-        trace!("Remote binding requests: {}", self.remote_binding_requests);
+        trace!("Recorded binding request: {:?}", self);
     }
 
     pub fn remote_binding_request_time(&self) -> Option<Instant> {
@@ -253,6 +253,8 @@ impl CandidatePair {
             );
             self.state = CheckState::InProgress;
         }
+
+        trace!("Sending binding request: {:?}", self);
 
         let last = self.binding_attempts.back().unwrap();
 
