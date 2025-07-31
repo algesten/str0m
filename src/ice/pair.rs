@@ -6,6 +6,8 @@ use crate::io::{Id, StunTiming, TransId, DEFAULT_MAX_RETRANSMITS};
 use crate::Candidate;
 use crate::Pii;
 
+use super::CandidateKind;
+
 // When running ice-lite we need a cutoff when we consider the remote definitely gone.
 const RECENT_BINDING_REQUEST: Duration = Duration::from_secs(15);
 
@@ -15,9 +17,11 @@ pub struct CandidatePair {
 
     /// Index into the local_candidates list in IceAgent.
     local_idx: usize,
+    cached_local_kind: CandidateKind,
 
     /// Index into the remote_candidates list in IceAgent.
     remote_idx: usize,
+    cached_remote_kind: CandidateKind,
 
     /// Index into local_candidates for the last successful
     /// response. This forms the "valid pair" logic in the spec.
@@ -114,10 +118,18 @@ impl Default for PairId {
 }
 
 impl CandidatePair {
-    pub fn new(local_idx: usize, remote_idx: usize, prio: u64) -> Self {
+    pub fn new(
+        local_idx: usize,
+        local_kind: CandidateKind,
+        remote_idx: usize,
+        remote_kind: CandidateKind,
+        prio: u64,
+    ) -> Self {
         CandidatePair {
             local_idx,
+            cached_local_kind: local_kind,
             remote_idx,
+            cached_remote_kind: remote_kind,
             prio,
             binding_attempts: VecDeque::with_capacity(DEFAULT_MAX_RETRANSMITS * 2),
             id: Default::default(),
@@ -382,6 +394,15 @@ impl CandidatePair {
         self.remote_binding_request_time = other.remote_binding_request_time;
     }
 
+    pub(crate) fn update_cached_kinds(
+        &mut self,
+        local_candidates: &[Candidate],
+        remote_candidates: &[Candidate],
+    ) {
+        self.cached_local_kind = local_candidates[self.local_idx].kind();
+        self.cached_remote_kind = remote_candidates[self.remote_idx].kind();
+    }
+
     pub(crate) fn reset_cached_next_attempt_time(&mut self) {
         self.cached_next_attempt_time = None;
     }
@@ -431,9 +452,11 @@ impl fmt::Debug for CandidatePair {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "CandidatePair({}-{} prio={} state={:?} attempts={} unanswered={} remote={} last={:?} nom={:?})",
+            "CandidatePair({}-{} ({}-{}) prio={} state={:?} attempts={} unanswered={} remote={} last={:?} nom={:?})",
             self.local_idx,
             self.remote_idx,
+            self.cached_local_kind,
+            self.cached_remote_kind,
             self.prio,
             self.state,
             self.binding_attempts.len(),

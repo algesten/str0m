@@ -733,6 +733,11 @@ impl IceAgent {
 
     /// Form pairs given two slices of indexes into the local_candidates and remote_candidates.
     fn form_pairs(&mut self, local_idxs: &[usize], remote_idxs: &[usize]) {
+        // Ensure to first update the kinds so any log statements are up-to-date.
+        for pair in &mut self.candidate_pairs {
+            pair.update_cached_kinds(&self.local_candidates, &self.remote_candidates);
+        }
+
         for local_idx in local_idxs {
             'outer: for remote_idx in remote_idxs {
                 let local = &self.local_candidates[*local_idx];
@@ -745,7 +750,8 @@ impl IceAgent {
 
                 let prio =
                     CandidatePair::calculate_prio(self.controlling, remote.prio(), local.prio());
-                let mut pair = CandidatePair::new(*local_idx, *remote_idx, prio);
+                let mut pair =
+                    CandidatePair::new(*local_idx, local.kind(), *remote_idx, remote.kind(), prio);
 
                 trace!("Form pair local: {:?} remote: {:?}", local, remote);
 
@@ -1425,7 +1431,7 @@ impl IceAgent {
             // *  Its state is set to Waiting. (this is the default)
             // *  The pair is inserted into the checklist based on its priority.
             // *  The pair is enqueued into the triggered-check queue.
-            let pair = CandidatePair::new(local_idx, remote_idx, prio);
+            let pair = CandidatePair::new(local_idx, local.kind(), remote_idx, remote.kind(), prio);
 
             debug!("Created new pair for STUN request: {:?}", Pii(&pair));
 
