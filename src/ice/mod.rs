@@ -1091,6 +1091,13 @@ mod test {
             })
         }
 
+        fn add_remote_candidate(&mut self, c: Candidate) {
+            // Round-trip via SDP to simulate signalling protocol.
+            let c = Candidate::from_sdp_string(&c.to_sdp_string()).unwrap();
+
+            self.span.in_scope(|| self.agent.add_remote_candidate(c))
+        }
+
         /// Simulate STUN to the given server and returned the server-reflexive candidate.
         ///
         /// Unlike [`TestAgent::add_host_candidate`] and [`TestAgent::add_relay_candidate`],
