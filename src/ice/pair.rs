@@ -452,7 +452,9 @@ impl fmt::Debug for CandidatePair {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "CandidatePair({}-{} ({}-{}) prio={} state={:?} attempts={} unanswered={} remote={} last={:?} nom={:?})",
+            "CandidatePair(\
+                {}-{} ({}-{}) prio={} state={:?} attempts={} unanswered={} remote={} last={:?} nom={:?}\
+            )",
             self.local_idx,
             self.remote_idx,
             self.cached_local_kind,
