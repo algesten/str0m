@@ -1088,7 +1088,8 @@ mod test {
         }
 
         fn add_remote_candidate(&mut self, c: Candidate) {
-            let c = Candidate::from_sdp_string(&c.to_sdp_string()).unwrap(); // Round-trip via SDP to simulate signalling protocol.
+            // Round-trip via SDP to simulate signalling protocol.
+            let c = Candidate::from_sdp_string(&c.to_sdp_string()).unwrap();
 
             self.span.in_scope(|| self.agent.add_remote_candidate(c))
         }
