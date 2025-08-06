@@ -1473,11 +1473,27 @@ mod test {
 
         assert_eq!(
             dbg_print,
-            r#"Attributes { username: "foo", message_integrity: 30303030, error_code: (401, "Unauthorized"), \
-            channel_number: 16384, lifetime: 3600, xor_peer_address: 127.0.0.1:0, data: [222, 173, 190, 239], \
-            realm: "baz", nonce: "abcd", xor_relayed_address: 127.0.0.1:0, xor_mapped_address: 127.0.0.1:0, \
-            software: "str0m", fingerprint: 9999, priority: 1, use_candidate: true, ice_controlled: 10, \
-            ice_controlling: 100, network_cost: (10, 10) }"#
+            r#"\
+Attributes { \
+username: "foo", \
+message_integrity: 30303030, \
+error_code: (401, "Unauthorized"), \
+channel_number: 16384, \
+lifetime: 3600, \
+xor_peer_address: 127.0.0.1:0, \
+data: [222, 173, 190, 239], \
+realm: "baz", \
+nonce: "abcd", \
+xor_relayed_address: 127.0.0.1:0, \
+xor_mapped_address: 127.0.0.1:0, \
+software: "str0m", \
+fingerprint: 9999, \
+priority: 1, \
+use_candidate: true, \
+ice_controlled: 10, \
+ice_controlling: 100, \
+network_cost: (10, 10) \
+}"#
         );
     }
 
