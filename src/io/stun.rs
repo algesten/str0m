@@ -1,4 +1,5 @@
 use std::fmt;
+use std::fmt::Formatter;
 use std::io::Write;
 use std::net::IpAddr;
 use std::net::SocketAddr;
@@ -82,8 +83,14 @@ pub enum StunError {
 }
 
 /// STUN transaction ID.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransId([u8; 12]);
+
+impl fmt::Debug for TransId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        DebugHex(&self.0).fmt(f)
+    }
+}
 
 impl TransId {
     /// A new random transaction id.
@@ -577,7 +584,7 @@ impl<'a> fmt::Debug for Attributes<'a> {
             debug_struct.field("username", &value);
         }
         if let Some(value) = self.message_integrity {
-            debug_struct.field("message_integrity", &value);
+            debug_struct.field("message_integrity", &DebugHex(&value));
         }
         if let Some(value) = self.error_code {
             debug_struct.field("error_code", &value);
@@ -1137,6 +1144,7 @@ impl<'a> fmt::Debug for StunMessage<'a> {
         f.debug_struct("StunMessage")
             .field("method", &self.method)
             .field("class", &self.class)
+            .field("id", &self.trans_id)
             .field("attrs", &self.attrs)
             .field("integrity_len", &self.integrity.len())
             .finish()
@@ -1386,6 +1394,18 @@ mod builder {
                 integrity_len: 0, // Calculated during serialization
             }
         }
+    }
+}
+
+struct DebugHex<'a>(&'a [u8]);
+
+impl fmt::Debug for DebugHex<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        for b in self.0 {
+            write!(f, "{:x}", b)?;
+        }
+
+        Ok(())
     }
 }
 
