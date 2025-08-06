@@ -119,7 +119,8 @@ impl VideoLayersAllocation {
         // Temporal layer counts
         // 2 bits per spatial layer
         // A maximum of 5 temporal layers per spatial layer.
-        // For a maximum of 5x4x5 = 100 temporal layers across all spatial layers across all simulcast streams.
+        // For a maximum of 5x4x5 = 100 temporal layers across all spatial layers
+        // across all simulcast streams.
         let (temporal_layer_counts, after_temporal_layer_counts) = split_at(
             after_spatial_layer_bitmasks,
             div_round_up(total_active_spatial_layer_count, 4),

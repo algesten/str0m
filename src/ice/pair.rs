@@ -4,6 +4,9 @@ use std::time::{Duration, Instant};
 
 use crate::io::{Id, StunTiming, TransId, DEFAULT_MAX_RETRANSMITS};
 use crate::Candidate;
+use crate::Pii;
+
+use super::CandidateKind;
 
 // When running ice-lite we need a cutoff when we consider the remote definitely gone.
 const RECENT_BINDING_REQUEST: Duration = Duration::from_secs(15);
@@ -14,9 +17,11 @@ pub struct CandidatePair {
 
     /// Index into the local_candidates list in IceAgent.
     local_idx: usize,
+    local_kind: CandidateKind,
 
     /// Index into the remote_candidates list in IceAgent.
     remote_idx: usize,
+    remote_kind: CandidateKind,
 
     /// Index into local_candidates for the last successful
     /// response. This forms the "valid pair" logic in the spec.
@@ -40,10 +45,10 @@ pub struct CandidatePair {
     cached_next_attempt_time: Option<Instant>,
 
     /// Number of remote binding requests we seen for this pair.
-    pub(crate) remote_binding_requests: u64,
+    remote_binding_requests: u64,
 
     /// Last remote binding request.
-    pub(crate) remote_binding_request_time: Option<Instant>,
+    remote_binding_request_time: Option<Instant>,
 
     /// State of nomination for this candidate pair.
     nomination_state: NominationState,
@@ -113,10 +118,18 @@ impl Default for PairId {
 }
 
 impl CandidatePair {
-    pub fn new(local_idx: usize, remote_idx: usize, prio: u64) -> Self {
+    pub fn new(
+        local_idx: usize,
+        local_kind: CandidateKind,
+        remote_idx: usize,
+        remote_kind: CandidateKind,
+        prio: u64,
+    ) -> Self {
         CandidatePair {
             local_idx,
+            local_kind,
             remote_idx,
+            remote_kind,
             prio,
             binding_attempts: VecDeque::with_capacity(DEFAULT_MAX_RETRANSMITS * 2),
             id: Default::default(),
@@ -177,7 +190,7 @@ impl CandidatePair {
     pub fn increase_remote_binding_requests(&mut self, now: Instant) {
         self.remote_binding_requests += 1;
         self.remote_binding_request_time = Some(now);
-        trace!("Remote binding requests: {}", self.remote_binding_requests);
+        trace!("Recorded binding request: {:?}", self);
     }
 
     pub fn remote_binding_request_time(&self) -> Option<Instant> {
@@ -199,10 +212,10 @@ impl CandidatePair {
         assert!(self.nomination_state == NominationState::None);
         if force_success {
             self.nomination_state = NominationState::Success;
-            debug!("Force success nominated pair {:?}", self);
+            debug!("Force success nominated pair {:?}", Pii(&self));
         } else {
             self.nomination_state = NominationState::Nominated;
-            debug!("Nominated pair: {:?}", self);
+            debug!("Nominated pair: {:?}", Pii(&self));
         }
     }
 
@@ -211,8 +224,10 @@ impl CandidatePair {
             NominationState::Nominated | NominationState::Success => {
                 self.nomination_state = other.nomination_state;
             }
-            NominationState::None => {} // None is the default, no need to copy
-            NominationState::Attempt => {} // Attempt can't be copied because we don't have sent binding requests in the new pair.
+            // None is the default, no need to copy
+            NominationState::None => {}
+            // Attempt can't be copied because we don't have sent binding requests in the new pair.
+            NominationState::Attempt => {}
         }
     }
 
@@ -224,7 +239,7 @@ impl CandidatePair {
         self.cached_next_attempt_time = None;
 
         if matches!(self.nomination_state, NominationState::Nominated) {
-            debug!("Nominated attempt STUN binding: {:?}", self);
+            debug!("Nominated attempt STUN binding: {:?}", Pii(&self));
             self.nomination_state = NominationState::Attempt;
         }
 
@@ -250,6 +265,8 @@ impl CandidatePair {
             );
             self.state = CheckState::InProgress;
         }
+
+        trace!("Sending binding request: {:?}", self);
 
         let last = self.binding_attempts.back().unwrap();
 
@@ -281,7 +298,7 @@ impl CandidatePair {
 
         if attempt.nominated && self.nomination_state == NominationState::Attempt {
             self.nomination_state = NominationState::Success;
-            debug!("Nomination success: {:?}", self);
+            debug!("Nomination success: {:?}", Pii(&self));
         }
 
         if self.state == CheckState::InProgress {
@@ -318,8 +335,6 @@ impl CandidatePair {
     }
 
     /// When we should do the next retry.
-    ///
-    /// Returns `None` if we are not to attempt this pair anymore.
     pub fn next_binding_attempt(&mut self, now: Instant, timing_config: &StunTiming) -> Instant {
         if let Some(cached) = self.cached_next_attempt_time {
             return cached;
@@ -327,7 +342,8 @@ impl CandidatePair {
 
         let next = if matches!(self.nomination_state, NominationState::Nominated) {
             // Cheating a bit to make the nomination "skip the queue".
-            now.checked_sub(Duration::from_secs(60)).unwrap_or(now) // Must handle underflow gracefully, machine may be running for < 60s.
+            // Must handle underflow gracefully, machine may be running for < 60s.
+            now.checked_sub(Duration::from_secs(60)).unwrap_or(now)
         } else if let Some(last) = self.last_attempt_time() {
             // When we have unanswered for longer than STUN_MAX_RTO_MILLIS / 2, start
             // checking more often.
@@ -379,6 +395,27 @@ impl CandidatePair {
         self.remote_binding_requests = other.remote_binding_requests;
         self.remote_binding_request_time = other.remote_binding_request_time;
     }
+
+    pub(crate) fn update_kinds(
+        &mut self,
+        local_candidates: &[Candidate],
+        remote_candidates: &[Candidate],
+    ) {
+        self.local_kind = local_candidates[self.local_idx].kind();
+        self.remote_kind = remote_candidates[self.remote_idx].kind();
+    }
+
+    pub(crate) fn reset_cached_next_attempt_time(&mut self) {
+        self.cached_next_attempt_time = None;
+    }
+
+    #[cfg(test)]
+    pub fn remote_binding_requests(&self) -> (u64, Option<Instant>) {
+        (
+            self.remote_binding_requests,
+            self.remote_binding_request_time,
+        )
+    }
 }
 
 impl PartialEq for CandidatePair {
@@ -417,15 +454,18 @@ impl fmt::Debug for CandidatePair {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "CandidatePair({}-{} prio={} state={:?} attempts={} unanswered={} remote={} last={:?} nom={:?})",
+            "CandidatePair(\
+                {}-{} ({}-{}) prio={} state={:?} attempts={} unanswered={} remote={} nom={:?}\
+            )",
             self.local_idx,
             self.remote_idx,
+            self.local_kind,
+            self.remote_kind,
             self.prio,
             self.state,
             self.binding_attempts.len(),
             self.unanswered().map(|b| b.0).unwrap_or(0),
             self.remote_binding_requests,
-            self.remote_binding_request_time,
             self.nomination_state
         )
     }

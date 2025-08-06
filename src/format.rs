@@ -775,7 +775,8 @@ impl CodecConfig {
             // indistinguishable from RTP payload types 79 with the marker bit set
             80..=95,
             77..=78,
-            // reserved because RTCP packet types 200–204 would otherwise be indistinguishable from RTP payload types 72–76
+            // reserved because RTCP packet types 200–204 would otherwise be indistinguishable
+            // from RTP payload types 72–76
             // 72..77,
             // lol range.
             35..=71,
@@ -793,7 +794,7 @@ impl CodecConfig {
                     panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
                 };
 
-                info!("Reassigned PT {} => {}", p.pt, pt);
+                debug!("Reassigned PT {} => {}", p.pt, pt);
                 p.pt = pt;
 
                 claimed.assert_claim_once(pt);
@@ -809,7 +810,7 @@ impl CodecConfig {
                     panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
                 };
 
-                info!("Reassigned RTX PT {:?} => {:?}", p.resend, rtx);
+                debug!("Reassigned RTX PT {:?} => {:?}", p.resend, rtx);
                 p.resend = Some(rtx);
 
                 claimed.assert_claim_once(rtx);
@@ -1068,7 +1069,9 @@ mod test {
             c1: h264_codec_spec(None, None, Some(0x42B00A)),
             must_match: true,
             msg:
-                "0x424000 and 0x42B00A should match because they are both the baseline subprofile and the level idc of 0x42F01F will be adjusted to Level1B because the constraint set 3 flag is set"
+                "0x424000 and 0x42B00A should match because they are both the baseline subprofile \
+                and the level idc of 0x42F01F will be adjusted to Level1B because the constraint \
+                set 3 flag is set"
         }];
 
         for Case {

@@ -1,9 +1,7 @@
-use std::{
-    collections::VecDeque,
-    iter::Sum,
-    ops::{AddAssign, SubAssign},
-    time::{Duration, Instant},
-};
+use std::collections::VecDeque;
+use std::iter::Sum;
+use std::ops::{AddAssign, SubAssign};
+use std::time::{Duration, Instant};
 
 /// Holds a history values of type T for up to a certain Duration, as well as the
 /// cumulated (total) value.

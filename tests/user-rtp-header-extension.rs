@@ -8,7 +8,7 @@ use str0m::rtp::Extension;
 use str0m::rtp::ExtensionSerializer;
 use str0m::rtp::ExtensionValues;
 use str0m::Rtc;
-use str0m::{Candidate, Event, RtcError};
+use str0m::{Event, RtcError};
 use tracing::info_span;
 
 mod common;
@@ -82,10 +82,8 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc_l);
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
 
-    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp")?;
-    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp")?;
-    l.add_local_candidate(host1);
-    r.add_local_candidate(host2);
+    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // The change is on the L (sending side) with Direction::SendRecv.
     let mut change = l.sdp_api();
@@ -225,10 +223,8 @@ pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
     let mut l = TestRtc::new_with_rtc(info_span!("L"), rtc_l);
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
 
-    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp")?;
-    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp")?;
-    l.add_local_candidate(host1);
-    r.add_local_candidate(host2);
+    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // The change is on the L (sending side) with Direction::SendRecv.
     let mut change = l.sdp_api();

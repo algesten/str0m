@@ -1267,6 +1267,11 @@ impl TwccSendRegister {
 
         Some((lost as f32) / (total as f32))
     }
+
+    /// Calculate the RTT for the most recently reported packet.
+    pub fn rtt(&self) -> Option<Duration> {
+        self.queue.iter().rev().find_map(|s| s.rtt())
+    }
 }
 
 #[derive()]

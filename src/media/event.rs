@@ -117,7 +117,8 @@ pub struct MediaData {
     /// For audio the timebase is often 48kHz for video it is 90kHz.
     pub time: MediaTime,
 
-    /// The time of the [`Input::Receive`][crate::Input::Receive] of the first packet that caused this MediaData.
+    /// The time of the [`Input::Receive`][crate::Input::Receive] of the first packet
+    /// that caused this MediaData.
     ///
     /// In simple SFU setups this can be used as wallclock for [`Writer::write`][crate::media::Writer].
     pub network_time: Instant,

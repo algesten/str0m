@@ -20,9 +20,9 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
 
     let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp")?;
     let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp")?;
-    l.add_local_candidate(host1.clone());
+    l.add_local_candidate(host1.clone()).unwrap();
     l.add_remote_candidate(host2.clone());
-    r.add_local_candidate(host2);
+    r.add_local_candidate(host2).unwrap();
     r.add_remote_candidate(host1);
 
     let finger_l = l.direct_api().local_dtls_fingerprint();

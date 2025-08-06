@@ -1,7 +1,7 @@
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
-use str0m::{Candidate, RtcError};
+use str0m::RtcError;
 use tracing::info_span;
 
 mod common;
@@ -15,10 +15,8 @@ pub fn data_channel() -> Result<(), RtcError> {
     let mut l = TestRtc::new(info_span!("L"));
     let mut r = TestRtc::new(info_span!("R"));
 
-    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp")?;
-    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp")?;
-    l.add_local_candidate(host1);
-    r.add_local_candidate(host2);
+    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     let mut change = l.sdp_api();
     let cid = change.add_channel("My little channel".into());

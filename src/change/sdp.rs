@@ -760,7 +760,7 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
     // support for mixing one-byte and two-byte RTP header extensions.
     // TODO: It would make sense to perform an actual negotiation, however
     //       just adding this line should work fine:
-    //       https://github.com/meetecho/janus-gateway/blob/d2e74fdf9bb8aa7a39ed68ed28394afe1e0cd22d/src/sdp.c#L1519
+    // https://github.com/meetecho/janus-gateway/blob/d2e74fdf9bb8aa7a39ed68ed28394afe1e0cd22d/src/sdp.c#L1519
     let mut attrs = vec![
         SessionAttribute::Group {
             typ: "BUNDLE".into(),
@@ -1073,7 +1073,7 @@ fn update_media(
         && new_dir == Direction::SendOnly;
 
     if change_direction_disallowed {
-        info!(
+        debug!(
             "Ignore attempt to change inactive to recvonly by remote peer for locally created mid: {}",
             media.mid()
         );
@@ -1163,7 +1163,7 @@ fn update_media(
 
     for i in main {
         // TODO: If the remote is communicating _BOTH_ rid and a=ssrc this will fail.
-        info!("Adding pre-communicated SSRC: {:?}", i);
+        debug!("Adding pre-communicated SSRC: {:?}", i);
         let repair_ssrc = infos
             .iter()
             .find(|r| r.repairs == Some(i.ssrc))

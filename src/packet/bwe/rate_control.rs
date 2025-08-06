@@ -360,7 +360,8 @@ mod test {
 
         #[test]
         fn test_state_transitions() {
-            // Tests based on the table in https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02#section-5
+            // Tests based on the table in
+            // https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02#section-5
 
             // Hold
             let hold = State::Hold;
@@ -461,8 +462,10 @@ mod test {
 
             rate_controller.update(Signal::Overuse, 90_000.into(), None, now + duration_ms(500));
             assert_eq!(
-                rate_controller.estimated_bitrate().as_u64(), 76_500,
-                "When overuse is detected we should reduce the estimate to 85% of the obeserved rate immediately"
+                rate_controller.estimated_bitrate().as_u64(),
+                76_500,
+                "When overuse is detected we should reduce the estimate to \
+                85% of the obeserved rate immediately"
             );
         }
 

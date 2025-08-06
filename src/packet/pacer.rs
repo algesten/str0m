@@ -511,8 +511,12 @@ impl LeakyBucketPacer {
             // Min rate exceeds our pacing rate, increase the rate to force drain the queue.
             self.adjusted_bitrate = min_rate.clamp(Bitrate::ZERO, MAX_BITRATE);
             trace!(
-                "LeakyBucketPacer: Increased rate above pacing rate {} to {} in order to drain queue of size {}. Aim to drain each packet in the next {:?} on average",
-                self.pacing_bitrate, self.adjusted_bitrate, queue_size, target_queue_wait
+                "LeakyBucketPacer: Increased rate above pacing rate {} to {} in order to drain \
+                queue of size {}. Aim to drain each packet in the next {:?} on average",
+                self.pacing_bitrate,
+                self.adjusted_bitrate,
+                queue_size,
+                target_queue_wait
             );
         }
     }
@@ -719,7 +723,8 @@ mod test {
             &mut pacer,
             &mut queue,
             now + duration_ms(52),
-            "Sixth packet (audio) should be released despite too much media debt because audio packets are not paced",
+            "Sixth packet (audio) should be released despite too much media debt because \
+            audio packets are not paced",
             |packet| {
                 assert_eq!(packet.kind, PacketKind::Audio);
                 assert_eq!(packet.header.sequence_number, 6);
@@ -953,7 +958,8 @@ mod test {
             &mut pacer,
             &mut queue,
             now + duration_ms(165),
-            "Third packet should be released because the sent padding doesn't increase the media debt too much",
+            "Third packet should be released because the sent padding doesn't \
+            increase the media debt too much",
             |packet| {
                 assert_eq!(packet.header.sequence_number, 3);
             },
@@ -978,7 +984,9 @@ mod test {
 
         assert!(
             total_rate >= lower_bound && total_rate <= upper_bound,
-            "Expected reuslting total rate to be within expected bounds. total_rate={total_rate}, media_rate={media_rate}, padding_rate={padding_rate}, config={config:?}, lower_bound={lower_bound}, upper_bound={upper_bound}"
+            "Expected reuslting total rate to be within expected bounds. \
+            total_rate={total_rate}, media_rate={media_rate}, padding_rate={padding_rate}, \
+            config={config:?}, lower_bound={lower_bound}, upper_bound={upper_bound}"
         );
     }
 

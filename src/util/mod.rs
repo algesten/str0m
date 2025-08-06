@@ -4,6 +4,10 @@ mod bit_pattern;
 
 pub(crate) use bit_pattern::BitPattern;
 
+mod pii;
+
+pub(crate) use pii::Pii;
+
 pub(crate) mod value_history;
 
 mod time_tricks;
@@ -36,7 +40,8 @@ impl<T: Default> Soonest for (Option<Instant>, T) {
 /// ## Params
 /// - `ntp_time` the offset since 1900-01-01.
 /// - `delay` the delay(`DLSR`) since last sender report expressed as fractions of a second in 32 bits.
-/// - `last_report` the middle 32 bits of an NTP timestamp for the most recent sender report(LSR) or Receiver Report(LRR).
+/// - `last_report` the middle 32 bits of an NTP timestamp for the most recent sender report(LSR)
+///   or Receiver Report(LRR).
 pub(crate) fn calculate_rtt_ms(ntp_time: Duration, delay: u32, last_report: u32) -> Option<f32> {
     // [10 Nov 1995 11:33:25.125 UTC]       [10 Nov 1995 11:33:36.5 UTC]
     // n                 SR(n)              A=b710:8000 (46864.500 s)

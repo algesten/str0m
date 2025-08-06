@@ -1,4 +1,5 @@
 use std::fmt;
+use std::fmt::Formatter;
 use std::io::Write;
 use std::net::IpAddr;
 use std::net::SocketAddr;
@@ -29,7 +30,8 @@ impl StunTiming {
     ///
     // Technically RTO should be calculated as per https://datatracker.ietf.org/doc/html/rfc2988, and
     // modified by https://datatracker.ietf.org/doc/html/rfc5389#section-7.2.1,
-    // but chrome does it like this. https://webrtc.googlesource.com/src/+/refs/heads/main/p2p/base/stun_request.cc
+    // but chrome does it like this.
+    // https://webrtc.googlesource.com/src/+/refs/heads/main/p2p/base/stun_request.cc
     pub fn stun_resend_delay(&self, send_count: usize) -> Duration {
         if send_count == 0 {
             return Duration::ZERO;
@@ -62,7 +64,8 @@ impl Default for StunTiming {
         Self {
             initial_rto: Duration::from_millis(250),
             max_retransmits: DEFAULT_MAX_RETRANSMITS,
-            max_rto: Duration::from_millis(3000), // libwebrtc uses 8000 here but we want faster detection of gone peers.
+            // libwebrtc uses 8000 here but we want faster detection of gone peers.
+            max_rto: Duration::from_millis(3000),
         }
     }
 }
@@ -80,8 +83,14 @@ pub enum StunError {
 }
 
 /// STUN transaction ID.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TransId([u8; 12]);
+
+impl fmt::Debug for TransId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        DebugHex(&self.0).fmt(f)
+    }
+}
 
 impl TransId {
     /// A new random transaction id.
@@ -391,7 +400,8 @@ impl<'a> StunMessage<'a> {
 
     /// Serialize this message into the provided buffer, returning the final length of the message.
     ///
-    /// The provided password is used to authenticate the message if provided, otherwise no `MESSAGE-INTEGRITY` attribute will be present.
+    /// The provided password is used to authenticate the message if provided, otherwise no
+    /// `MESSAGE-INTEGRITY` attribute will be present.
     pub fn to_bytes(self, password: Option<&[u8]>, buf: &mut [u8]) -> Result<usize, StunError> {
         const MSG_HEADER_LEN: usize = 20;
         const MSG_INTEGRITY_LEN: usize = 20;
@@ -574,7 +584,7 @@ impl<'a> fmt::Debug for Attributes<'a> {
             debug_struct.field("username", &value);
         }
         if let Some(value) = self.message_integrity {
-            debug_struct.field("message_integrity", &value);
+            debug_struct.field("message_integrity", &DebugHex(value));
         }
         if let Some(value) = self.error_code {
             debug_struct.field("error_code", &value);
@@ -1134,6 +1144,7 @@ impl<'a> fmt::Debug for StunMessage<'a> {
         f.debug_struct("StunMessage")
             .field("method", &self.method)
             .field("class", &self.class)
+            .field("id", &self.trans_id)
             .field("attrs", &self.attrs)
             .field("integrity_len", &self.integrity.len())
             .finish()
@@ -1386,6 +1397,18 @@ mod builder {
     }
 }
 
+struct DebugHex<'a>(&'a [u8]);
+
+impl fmt::Debug for DebugHex<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        for b in self.0 {
+            write!(f, "{:x}", b)?;
+        }
+
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -1421,7 +1444,8 @@ mod test {
         assert_eq!(dbg_print, r#"Attributes { username: "foo" }"#);
     }
 
-    // README: IF YOU NEED TO ADJUST THIS TEST BECAUSE YOU ADDED AN ATTRIBUTE, MAKE SURE TO ADJUST THE `fmt::Debug` impl.
+    // README: IF YOU NEED TO ADJUST THIS TEST BECAUSE YOU ADDED AN ATTRIBUTE,
+    // MAKE SURE TO ADJUST THE `fmt::Debug` impl.
     #[test]
     fn all_attributes_are_printed() {
         let attrs = Attributes {
@@ -1449,7 +1473,27 @@ mod test {
 
         assert_eq!(
             dbg_print,
-            r#"Attributes { username: "foo", message_integrity: [48, 48, 48, 48], error_code: (401, "Unauthorized"), channel_number: 16384, lifetime: 3600, xor_peer_address: 127.0.0.1:0, data: [222, 173, 190, 239], realm: "baz", nonce: "abcd", xor_relayed_address: 127.0.0.1:0, xor_mapped_address: 127.0.0.1:0, software: "str0m", fingerprint: 9999, priority: 1, use_candidate: true, ice_controlled: 10, ice_controlling: 100, network_cost: (10, 10) }"#
+            "\
+Attributes { \
+username: \"foo\", \
+message_integrity: 30303030, \
+error_code: (401, \"Unauthorized\"), \
+channel_number: 16384, \
+lifetime: 3600, \
+xor_peer_address: 127.0.0.1:0, \
+data: [222, 173, 190, 239], \
+realm: \"baz\", \
+nonce: \"abcd\", \
+xor_relayed_address: 127.0.0.1:0, \
+xor_mapped_address: 127.0.0.1:0, \
+software: \"str0m\", \
+fingerprint: 9999, \
+priority: 1, \
+use_candidate: true, \
+ice_controlled: 10, \
+ice_controlling: 100, \
+network_cost: (10, 10) \
+}"
         );
     }
 

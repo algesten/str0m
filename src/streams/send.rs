@@ -15,10 +15,8 @@ use crate::packet::QueuePriority;
 use crate::packet::QueueSnapshot;
 use crate::packet::QueueState;
 use crate::rtp_::MidRid;
-use crate::rtp_::{Bitrate, Extension};
-use crate::rtp_::{Descriptions, ReportList, Rtcp};
-use crate::rtp_::{ExtensionMap, RtpHeader};
-use crate::rtp_::{ExtensionValues, Frequency, MediaTime, Mid, NackEntry};
+use crate::rtp_::{Bitrate, Descriptions, Extension, ExtensionMap, ExtensionValues, Frequency};
+use crate::rtp_::{MediaTime, Mid, NackEntry, ReportList, Rtcp, RtpHeader};
 use crate::rtp_::{Pt, Rid, RtcpFb, SenderInfo, SenderReport, Ssrc};
 use crate::rtp_::{Sdes, SdesType, MAX_BLANK_PADDING_PAYLOAD_SIZE};
 use crate::rtp_::{SeqNo, SRTP_BLOCK_SIZE};
@@ -70,6 +68,10 @@ pub struct StreamTx {
 
     /// If we are using RTX, this is the seq no counter.
     seq_no_rtx: SeqNo,
+
+    /// The last seq_no that we sent, either by increasing seq_no ourselves (media API), or by
+    /// direct RTP mode writing.
+    last_sent_seq_no: SeqNo,
 
     /// When we last sent something for this encoded stream, packet or RTCP.
     last_used: Instant,
@@ -144,6 +146,7 @@ impl StreamTx {
             clock_rate: None,
             seq_no: SeqNo::default(),
             seq_no_rtx: SeqNo::default(),
+            last_sent_seq_no: SeqNo::default(),
             last_used: already_happened(),
             rtp_and_wallclock: None,
             send_queue: SendQueue::new(),
@@ -266,7 +269,11 @@ impl StreamTx {
 
         if first_call && seq_no.roc() > 0 {
             // TODO: make it possible to supress this.
-            warn!("First SeqNo has non-zero ROC ({}), which needs out-of-band signalling to remote peer", seq_no.roc());
+            warn!(
+                "First SeqNo has non-zero ROC ({}), which needs out-of-band signalling \
+                to remote peer",
+                seq_no.roc()
+            );
         }
 
         // This 1 in clock frequency will be fixed in poll_output.
@@ -512,6 +519,10 @@ impl StreamTx {
         }
 
         let seq_no = next.seq_no;
+        if next.kind == NextPacketKind::Regular {
+            self.last_sent_seq_no = seq_no;
+        }
+
         self.last_used = now;
 
         // Padding comes in two forms, "spurious resends" of sent packets where
@@ -734,7 +745,7 @@ impl StreamTx {
             ReceptionReport(r) => {
                 // Receiver has bound MidRid to SSRC
                 self.remote_acked_ssrc = true;
-                self.stats.update_with_rr(now, r)
+                self.stats.update_with_rr(now, self.last_sent_seq_no, r)
             }
             Nack(_, list) => {
                 self.stats.increase_nacks();

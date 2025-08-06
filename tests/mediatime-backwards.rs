@@ -4,7 +4,7 @@ use std::time::Duration;
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind, MediaTime};
 use str0m::rtp::RawPacket;
-use str0m::{Candidate, Event, RtcError};
+use str0m::{Event, RtcError};
 use tracing::info;
 use tracing::info_span;
 
@@ -22,10 +22,8 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
     // Enable raw packets to trace the RTP headers
     r.rtc = str0m::Rtc::builder().enable_raw_packets(true).build();
 
-    let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp")?;
-    let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp")?;
-    l.add_local_candidate(host1);
-    r.add_local_candidate(host2);
+    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // The change is on the L (sending side) with Direction::SendRecv.
     let mut change = l.sdp_api();

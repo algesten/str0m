@@ -607,6 +607,7 @@
 #![allow(clippy::needless_lifetimes)]
 #![allow(clippy::precedence)]
 #![allow(clippy::doc_overindented_list_items)]
+#![allow(clippy::uninlined_format_args)]
 #![deny(missing_docs)]
 
 #[macro_use]
@@ -621,7 +622,7 @@ use std::time::{Duration, Instant};
 use streams::RtpPacket;
 use streams::StreamPaused;
 use thiserror::Error;
-use util::InstantExt;
+use util::{InstantExt, Pii};
 
 mod crypto;
 use crypto::CryptoProvider;
@@ -649,6 +650,7 @@ pub mod config {
 #[doc(hidden)]
 pub mod ice {
     pub use crate::ice_::IceCreds;
+    pub use crate::ice_::{default_local_preference, LocalPreference};
     pub use crate::ice_::{IceAgent, IceAgentEvent};
     pub use crate::io::{StunMessage, StunMessageBuilder, StunPacket, TransId};
 }
@@ -727,10 +729,8 @@ mod session;
 use session::Session;
 
 pub mod stats;
-use stats::{
-    CandidatePairStats, CandidateStats, MediaEgressStats, MediaIngressStats, PeerStats, Stats,
-    StatsEvent, StatsSnapshot,
-};
+use stats::{CandidatePairStats, CandidateStats, MediaEgressStats, MediaIngressStats};
+use stats::{PeerStats, Stats, StatsEvent, StatsSnapshot};
 
 mod streams;
 
@@ -914,9 +914,13 @@ pub enum Event {
 
     // =================== Media related events ==================
 
-    /// Upon adding new media to the session. The lines are emitted.
+    /// Upon detecting the remote side adding new media to the session.
     ///
-    /// Upon this event, the [`Media`] instance is available via [`Rtc::media()`].
+    /// For locally added media, this event never fires. Thus it can be thought of as an
+    /// "SDP only" event. If the direct API is used on both sides, the declaration is local \
+    /// to both sides and the event never fires.
+    ///
+    /// The [`Media`] instance is available via [`Rtc::media()`].
     MediaAdded(MediaAdded),
 
     /// Incoming media data sent by the remote peer.
@@ -1145,6 +1149,18 @@ impl Rtc {
             ice.set_ice_lite(config.ice_lite);
         }
 
+        if let Some(initial_stun_rto) = config.initial_stun_rto {
+            ice.set_initial_stun_rto(initial_stun_rto);
+        }
+
+        if let Some(max_stun_rto) = config.max_stun_rto {
+            ice.set_max_stun_rto(max_stun_rto);
+        }
+
+        if let Some(max_stun_retransmits) = config.max_stun_retransmits {
+            ice.set_max_stun_retransmits(max_stun_retransmits);
+        }
+
         let dtls_cert = match config.dtls_cert_config {
             DtlsCertConfig::Options(options) => DtlsCert::new(config.crypto_provider, options),
             DtlsCertConfig::PregeneratedCert(cert) => cert,
@@ -1212,13 +1228,16 @@ impl Rtc {
     /// ```
     pub fn disconnect(&mut self) {
         if self.alive {
-            info!("Set alive=false");
+            debug!("Set alive=false");
             self.alive = false;
         }
     }
 
     /// Add a local ICE candidate. Local candidates are socket addresses the `Rtc` instance
     /// use for communicating with the peer.
+    ///
+    /// If the candidate is accepted by the `Rtc` instance, it will return `Some` with a reference
+    /// to it. You should then signal this candidate to the remote peer.
     ///
     /// This library has no built-in discovery of local network addresses on the host
     /// or NATed addresses via a STUN server or TURN server. The user of the library
@@ -1240,8 +1259,8 @@ impl Rtc {
     /// ```
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
-    pub fn add_local_candidate(&mut self, c: Candidate) {
-        self.ice.add_local_candidate(c);
+    pub fn add_local_candidate(&mut self, c: Candidate) -> Option<&Candidate> {
+        self.ice.add_local_candidate(c)
     }
 
     /// Add a remote ICE candidate. Remote candidates are addresses of the peer.
@@ -1271,10 +1290,9 @@ impl Rtc {
 
     /// Checks if we are connected.
     ///
-    /// This tests both if we have ICE connection and DTLS is ready.
-    ///
+    /// This tests if we have ICE connection, DTLS and the SRTP crypto derived contexts are up.
     pub fn is_connected(&self) -> bool {
-        self.ice.state().is_connected() && self.dtls.is_connected()
+        self.ice.state().is_connected() && self.dtls.is_connected() && self.session.is_connected()
     }
 
     /// Make changes to the Rtc session via SDP.
@@ -1333,7 +1351,8 @@ impl Rtc {
     /// writer.write(pt, data.network_time, data.time, data.data).unwrap();
     /// ```
     ///
-    /// This is a sample level API: For RTP level see [`DirectApi::stream_tx()`] and [`DirectApi::stream_rx()`].
+    /// This is a sample level API: For RTP level see [`DirectApi::stream_tx()`]
+    /// and [`DirectApi::stream_rx()`].
     ///
     pub fn writer(&mut self, mid: Mid) -> Option<Writer> {
         if self.session.rtp_mode {
@@ -1359,7 +1378,7 @@ impl Rtc {
             return Ok(());
         }
 
-        info!("DTLS setup is: {:?}", active);
+        debug!("DTLS setup is: {:?}", active);
         self.dtls.set_active(active);
 
         if active {
@@ -1439,7 +1458,7 @@ impl Rtc {
                     return Ok(Output::Event(Event::IceConnectionStateChange(v)))
                 }
                 IceAgentEvent::DiscoveredRecv { proto, source } => {
-                    info!("ICE remote address: {:?}/{:?}", source, proto);
+                    debug!("ICE remote address: {:?}/{:?}", Pii(source), proto);
                     self.remote_addrs.push(source);
                     while self.remote_addrs.len() > 20 {
                         self.remote_addrs.remove(0);
@@ -1450,9 +1469,11 @@ impl Rtc {
                     source,
                     destination,
                 } => {
-                    info!(
+                    debug!(
                         "ICE nominated send from: {:?} to: {:?} with protocol {:?}",
-                        source, destination, proto,
+                        Pii(source),
+                        Pii(destination),
+                        proto,
                     );
                     self.send_addr = Some(SendAddr {
                         proto,
@@ -1472,7 +1493,7 @@ impl Rtc {
                     dtls_connected = true;
                 }
                 DtlsEvent::SrtpKeyingMaterial(mat, srtp_profile) => {
-                    info!(
+                    debug!(
                         "DTLS set SRTP keying material and profile: {}",
                         srtp_profile
                     );
@@ -1584,6 +1605,9 @@ impl Rtc {
                 };
                 return Ok(Output::Transmit(t));
             }
+        } else {
+            // Don't allow accumulated feedback to build up indefinitely
+            self.session.clear_feedback();
         }
 
         let stats = self.stats.as_mut();
@@ -1906,6 +1930,9 @@ pub struct RtcConfig {
     dtls_cert_config: DtlsCertConfig,
     fingerprint_verification: bool,
     ice_lite: bool,
+    initial_stun_rto: Option<Duration>,
+    max_stun_rto: Option<Duration>,
+    max_stun_retransmits: Option<usize>,
     codec_config: CodecConfig,
     exts: ExtensionMap,
     stats_interval: Option<Duration>,
@@ -2026,6 +2053,33 @@ impl RtcConfig {
     pub fn set_ice_lite(mut self, enabled: bool) -> Self {
         self.ice_lite = enabled;
         self
+    }
+
+    /// Sets the initial STUN retransmission timeout (RTO).
+    ///
+    /// This is the initial wait time before a STUN request is retransmitted.
+    /// The timeout will double with each retry, starting from this value.
+    ///
+    /// Defaults to 250ms.
+    pub fn set_initial_stun_rto(&mut self, rto: Duration) {
+        self.initial_stun_rto = Some(rto);
+    }
+
+    /// Sets the maximum STUN retransmission timeout for the ICE agent.
+    ///
+    /// This is the upper bound for how long to wait between retransmissions.
+    /// It also controls how often successful bindings are checked.
+    ///
+    /// Defaults to 3000ms.
+    pub fn set_max_stun_rto(&mut self, rto: Duration) {
+        self.max_stun_rto = Some(rto);
+    }
+
+    /// Sets the maximum number of retransmits for STUN messages.
+    ///
+    /// Defaults to 9.
+    pub fn set_max_stun_retransmits(&mut self, num: usize) {
+        self.max_stun_retransmits = Some(num);
     }
 
     /// Get fingerprint verification mode.
@@ -2425,6 +2479,9 @@ impl Default for RtcConfig {
             dtls_cert_config: Default::default(),
             fingerprint_verification: true,
             ice_lite: false,
+            initial_stun_rto: None,
+            max_stun_rto: None,
+            max_stun_retransmits: None,
             codec_config: CodecConfig::new_with_defaults(),
             exts: ExtensionMap::standard(),
             stats_interval: None,

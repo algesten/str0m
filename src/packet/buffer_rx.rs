@@ -384,10 +384,8 @@ impl fmt::Debug for Depacketized {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{
-        packet::vp9::Vp9Depacketizer,
-        rtp_::{Frequency, MediaTime, Pt, Ssrc},
-    };
+    use crate::packet::vp9::Vp9Depacketizer;
+    use crate::rtp_::{Frequency, MediaTime, Pt, Ssrc};
 
     #[test]
     fn end_on_marker() {
@@ -608,7 +606,7 @@ mod test {
         }
 
         fn is_partition_tail(&self, _marker: bool, packet: &[u8]) -> bool {
-            !packet.is_empty() && packet.iter().any(|v| *v == 9)
+            !packet.is_empty() && packet.contains(&9)
         }
     }
 
@@ -777,14 +775,17 @@ mod test {
             buffer.push(meta.clone(), data.clone());
         }
 
-        let res0after = buffer.pop().unwrap().unwrap(); // Pop PID: 23860, `contiguous_seq == true`.
-        assert!(buffer.pop().is_none()); // Try to pop PID: 23861. `None` because `contiguous_seq == false` -- no seq_num=8689.
+        // Pop PID: 23860, `contiguous_seq == true`.
+        let res0after = buffer.pop().unwrap().unwrap();
+        // Try to pop PID: 23861. `None` because `contiguous_seq == false` -- no seq_num=8689.
+        assert!(buffer.pop().is_none());
         assert!(buffer.pop().is_none()); // Ensure once again.
 
         for input in &inputs {
             let (meta, data) = construct_input(input.clone());
             if meta.seq_no == SeqNo::from(8689) {
-                buffer.push(meta.clone(), data.clone()); // Send RTP packet with seq_num=8689 vp9_payload=[20, 2, 2, 2, 2, 2, 2, 2, 2].
+                // Send RTP packet with seq_num=8689 vp9_payload=[20, 2, 2, 2, 2, 2, 2, 2, 2].
+                buffer.push(meta.clone(), data.clone());
                 break;
             }
         }

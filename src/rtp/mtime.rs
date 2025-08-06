@@ -128,17 +128,13 @@ impl<'de> Deserialize<'de> for Frequency {
     }
 }
 
-/// Media timeline offset represented by a count (numerator) /
-/// frequency (denominator) in seconds.
+/// Media timeline offset represented by a count (numerator) / frequency (denominator) in seconds.
 ///
-/// The numerator is typically the packet time of an Rtp header. The
-/// denominator is the clock frequency of the media source (typically
-/// 90kHz for video and 48kHz for audio). The denominator is
-/// guaranteed to be a positive integer while the numerator could be
-/// positive, negative, or zero.
+/// The numerator is typically the packet time of an Rtp header. The denominator is the clock
+/// frequency of the media source (typically 90kHz for video and 48kHz for audio). The denominator
+/// is guaranteed to be a positive integer while the numerator could be positive, negative, or zero.
 ///
-/// The frequency can be found in the negotiated payload parameters for a
-/// media writer.
+/// The frequency can be found in the negotiated payload parameters for a media writer.
 ///
 /// ```no_run
 /// # use str0m::Rtc;
@@ -278,8 +274,14 @@ impl MediaTime {
     /// ```
     /// use str0m::media::MediaTime;
     ///
-    /// assert_eq!(MediaTime::from_micros(10).checked_sub(MediaTime::from_micros(5)), Some(MediaTime::from_micros(5)));
-    /// assert_eq!(MediaTime::from_micros(5).checked_sub(MediaTime::from_micros(10)), None);
+    /// assert_eq!(
+    ///     MediaTime::from_micros(10).checked_sub(MediaTime::from_micros(5)),
+    ///     Some(MediaTime::from_micros(5))
+    /// );
+    /// assert_eq!(
+    ///     MediaTime::from_micros(5).checked_sub(MediaTime::from_micros(10)),
+    ///     None
+    /// );
     /// ```
     #[inline]
     pub fn checked_sub(self, rhs: MediaTime) -> Option<MediaTime> {
@@ -300,8 +302,14 @@ impl MediaTime {
     /// ```
     /// use str0m::media::MediaTime;
     ///
-    /// assert_eq!(MediaTime::from_micros(10).saturating_sub(MediaTime::from_micros(5)), MediaTime::from_micros(5));
-    /// assert_eq!(MediaTime::from_micros(5).saturating_sub(MediaTime::from_micros(10)), MediaTime::ZERO);
+    /// assert_eq!(
+    ///     MediaTime::from_micros(10).saturating_sub(MediaTime::from_micros(5)),
+    ///     MediaTime::from_micros(5)
+    /// );
+    /// assert_eq!(
+    ///     MediaTime::from_micros(5).saturating_sub(MediaTime::from_micros(10)),
+    ///     MediaTime::ZERO
+    /// );
     /// ```
     #[inline]
     pub fn saturating_sub(self, rhs: MediaTime) -> MediaTime {

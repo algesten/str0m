@@ -65,7 +65,10 @@ impl FrameContiguityState {
 
         if layer_index == Some(0) {
             if tl0_picture_id == last_tl0_picture_id {
-                warn!("VP8 or VP9: 2 subsequent frames on layer zero must have different tl0 picture id: encoding problem?")
+                warn!(
+                    "VP8 or VP9: 2 subsequent frames on layer zero must \
+                    have different tl0 picture id: encoding problem?"
+                );
             }
 
             // Frame on layer 0: always emit and report discontinuity if not subsequent

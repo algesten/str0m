@@ -10,9 +10,9 @@ use crate::{Bitrate, DataSize};
 
 use super::time::{TimeDelta, Timestamp};
 
-/// Loss controller based loosely on libWebRTC's `LossBasedBweV2`(commit `14e2779a6ccdc67038ed2069a5732dd41617c6f0`)
-/// We don't implement ALR, link capacity estimates or probing(although we use constant padding
-/// rates to prove estimates).
+/// Loss controller based loosely on libWebRTC's `LossBasedBweV2`
+/// (commit `14e2779a6ccdc67038ed2069a5732dd41617c6f0`). We don't implement ALR, link capacity
+/// estimates or probing (although we use constant padding rates to prove estimates).
 ///
 /// ## Overview
 ///

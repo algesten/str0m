@@ -65,7 +65,7 @@ fn web_request(request: &Request) -> Response {
     let socket = UdpSocket::bind(format!("{addr}:0")).expect("binding a random UDP port");
     let addr = socket.local_addr().expect("a local socket address");
     let candidate = Candidate::host(addr, "udp").expect("a host candidate");
-    rtc.add_local_candidate(candidate);
+    rtc.add_local_candidate(candidate).unwrap();
 
     // Create an SDP Answer.
     let answer = rtc

@@ -413,7 +413,8 @@ impl Session {
             Some(v) => v,
             None => {
                 trace!(
-                    "Failed to unprotect SRTP for SSRC: {} pt: {}  mid: {} rid: {:?} seq_no: {} is_repair: {}",
+                    "Failed to unprotect SRTP for SSRC: {} pt: {}  mid: {} \
+                    rid: {:?} seq_no: {} is_repair: {}",
                     header.ssrc,
                     pt,
                     stream.mid(),
@@ -485,7 +486,8 @@ impl Session {
 
         if self.rtp_mode {
             // In RTP mode, we store the packet temporarily here for the next poll_output().
-            // However only if this is a packet not seen before. This filters out spurious resends for padding.
+            // However only if this is a packet not seen before. This filters out spurious
+            // resends for padding.
             if receipt.is_new_packet {
                 self.pending_packet = Some(packet);
             }
@@ -653,6 +655,13 @@ impl Session {
         }
 
         x
+    }
+
+    /// To be called in lieu of [`Self::poll_datagram`] when the owner is not in a position to transmit any
+    /// generated feedback, and thus such feedback should be dropped.
+    pub fn clear_feedback(&mut self) {
+        self.feedback_rx.clear();
+        self.feedback_tx.clear();
     }
 
     fn poll_feedback(&mut self) -> Option<net::DatagramSend> {
@@ -824,6 +833,7 @@ impl Session {
         snapshot.bwe_tx = self.bwe.as_ref().and_then(|bwe| bwe.last_estimate());
 
         snapshot.egress_loss_fraction = self.twcc_tx_register.loss(Duration::from_secs(1), now);
+        snapshot.rtt = self.twcc_tx_register.rtt();
         snapshot.ingress_loss_fraction = self.twcc_rx_register.loss();
     }
 
@@ -934,6 +944,11 @@ impl Session {
             KeyframeRequestKind::Pli => r.fb_pli,
             KeyframeRequestKind::Fir => r.fb_fir,
         })
+    }
+
+    /// Checks whether the SRTP contexts are up.
+    pub fn is_connected(&self) -> bool {
+        self.srtp_rx.is_some() && self.srtp_tx.is_some()
     }
 }
 

@@ -1,11 +1,10 @@
 //! Statistics events.
 
-use std::{
-    collections::{HashMap, VecDeque},
-    net::SocketAddr,
-    time::{Duration, Instant},
-};
+use std::collections::{HashMap, VecDeque};
+use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 
+use crate::rtp::SeqNo;
 use crate::rtp_::{Mid, Rid};
 use crate::Bitrate;
 use crate::{io::Protocol, rtp_::MidRid};
@@ -23,6 +22,7 @@ pub(crate) struct StatsSnapshot {
     pub rx: u64,
     pub egress_loss_fraction: Option<f32>,
     pub ingress_loss_fraction: Option<f32>,
+    pub rtt: Option<Duration>,
     pub ingress: HashMap<MidRid, MediaIngressStats>,
     pub egress: HashMap<MidRid, MediaEgressStats>,
     pub bwe_tx: Option<Bitrate>,
@@ -41,6 +41,7 @@ impl StatsSnapshot {
             ingress_loss_fraction: None,
             ingress: HashMap::new(),
             egress: HashMap::new(),
+            rtt: None,
             bwe_tx: None,
             selected_candidate_pair: None,
             timestamp,
@@ -78,6 +79,8 @@ pub struct PeerStats {
     pub egress_loss_fraction: Option<f32>,
     /// The ingress loss since the last stats event.
     pub ingress_loss_fraction: Option<f32>,
+    /// The most recent RTT since the last stats event.
+    pub rtt: Option<Duration>,
     /// The selected ICE candidate pair, if any.
     pub selected_candidate_pair: Option<CandidatePairStats>,
 }
@@ -134,15 +137,19 @@ pub struct MediaEgressStats {
     pub loss: Option<f32>,
     /// Timestamp when this event was generated
     pub timestamp: Instant,
-    // TODO
-    // pub remote: RemoteIngressStats,
+    /// Stats provided by the remote peer via ReceiverReports
+    pub remote: Option<RemoteIngressStats>,
 }
 
 /// Stats as reported by the remote side (via RTCP ReceiverReports).
 #[derive(Debug, Clone)]
 pub struct RemoteIngressStats {
-    /// Total bytes received.
-    pub bytes_rx: u64,
+    /// The remotely calculated jitter.
+    pub jitter: u32,
+    /// The maximum extended sequence number received.
+    pub maximum_sequence_number: SeqNo,
+    /// The cumulative number of packets lost.
+    pub packets_lost: u64,
 }
 
 /// Incoming media statistics in [`Event::MediaIngressStats`][crate::Event::MediaIngressStats].
@@ -170,8 +177,8 @@ pub struct MediaIngressStats {
     pub loss: Option<f32>,
     /// Timestamp when this event was generated.
     pub timestamp: Instant,
-    // TODO
-    // pub remote: RemoteEgressStats,
+    /// Stats provided by the remote peer via SenderReports
+    pub remote: Option<RemoteEgressStats>,
 }
 
 impl MediaIngressStats {
@@ -204,6 +211,15 @@ impl MediaIngressStats {
             rtt,
             loss,
             timestamp: self.timestamp.max(other.timestamp),
+            remote: match (&self.remote, &other.remote) {
+                (None, None) => None,
+                (Some(remote), None) => Some(remote.clone()),
+                (None, Some(other_remote)) => Some(other_remote.clone()),
+                (Some(remote), Some(other_remote)) => Some(RemoteEgressStats {
+                    bytes: remote.bytes + other_remote.bytes,
+                    packets: remote.packets + other_remote.packets,
+                }),
+            },
         };
     }
 }
@@ -211,8 +227,10 @@ impl MediaIngressStats {
 /// Stats as reported by the remote side (via RTCP SenderReports).
 #[derive(Debug, Clone)]
 pub struct RemoteEgressStats {
-    /// Total bytes transmitted.
-    pub bytes_tx: u64,
+    /// Total bytes sent, including retransmissions.
+    pub bytes: u64,
+    /// Total number of rtp packets sent, including retransmissions.
+    pub packets: u64,
 }
 
 impl Stats {
@@ -231,7 +249,8 @@ impl Stats {
 
     /// Returns true if we want to handle the timeout
     ///
-    /// The caller can use this to compute the snapshot only if needed, before calling [`Stats::do_handle_timeout`]
+    /// The caller can use this to compute the snapshot only if needed, before calling \
+    /// [`Stats::do_handle_timeout`]
     pub fn wants_timeout(&mut self, now: Instant) -> bool {
         let Some(last_now) = self.last_now else {
             // Learn our first ever `now`
@@ -256,6 +275,7 @@ impl Stats {
             bwe_tx: snapshot.bwe_tx,
             egress_loss_fraction: snapshot.egress_loss_fraction,
             ingress_loss_fraction: snapshot.ingress_loss_fraction,
+            rtt: snapshot.rtt,
             selected_candidate_pair: snapshot.selected_candidate_pair.clone(),
         };
 

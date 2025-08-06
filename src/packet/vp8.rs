@@ -173,7 +173,8 @@ pub struct Vp8Depacketizer {
 }
 
 impl Depacketizer for Vp8Depacketizer {
-    /// depacketize parses the passed byte slice and stores the result in the VP8Packet this method is called upon
+    /// depacketize parses the passed byte slice and stores the result in the
+    /// VP8Packet this method is called upon
     fn depacketize(
         &mut self,
         packet: &[u8],
@@ -181,9 +182,9 @@ impl Depacketizer for Vp8Depacketizer {
         extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
         let payload_len = packet.len();
-        if payload_len < 4 {
-            return Err(PacketError::ErrShortPacket);
-        }
+        // VP8 Payload Descriptor
+        // https://datatracker.ietf.org/doc/html/rfc7741#section-4.2
+        //
         //    0 1 2 3 4 5 6 7                      0 1 2 3 4 5 6 7
         //    +-+-+-+-+-+-+-+-+                   +-+-+-+-+-+-+-+-+
         //    |X|R|N|S|R| PID | (REQUIRED)        |X|R|N|S|R| PID | (REQUIRED)
@@ -196,8 +197,8 @@ impl Depacketizer for Vp8Depacketizer {
         //    +-+-+-+-+-+-+-+-+                   +-+-+-+-+-+-+-+-+
         //T/K:|tid|Y| KEYIDX  | (OPTIONAL)   L:   |   tl0picidx   | (OPTIONAL)
         //    +-+-+-+-+-+-+-+-+                   +-+-+-+-+-+-+-+-+
-        //T/K:|tid|Y| KEYIDX  | (OPTIONAL)
-        //    +-+-+-+-+-+-+-+-+
+        //                                    T/K:|tid|Y| KEYIDX  | (OPTIONAL)
+        //                                        +-+-+-+-+-+-+-+-+
 
         let mut reader = (packet, 0);
         let mut payload_index = 0;
@@ -351,14 +352,15 @@ mod test {
         let result = pck.depacketize(empty_bytes, &mut payload, &mut extra);
         assert!(result.is_err(), "Result should be err in case of error");
 
-        // Payload smaller than header size
+        // Small Payload with single octet header
         let small_bytes = &[0x00, 0x11, 0x22];
         let mut payload = Vec::new();
-        let result = pck.depacketize(small_bytes, &mut payload, &mut extra);
-        assert!(result.is_err(), "Result should be err in case of error");
+        pck.depacketize(small_bytes, &mut payload, &mut extra)
+            .expect("Small packet");
+        assert_eq!(payload, [0x11, 0x22]);
 
-        // Payload smaller than header size
-        let small_bytes = &[0x00, 0x11];
+        // Payload is header only
+        let small_bytes = &[0x00];
         let mut payload = Vec::new();
         let result = pck.depacketize(small_bytes, &mut payload, &mut extra);
         assert!(result.is_err(), "Result should be err in case of error");

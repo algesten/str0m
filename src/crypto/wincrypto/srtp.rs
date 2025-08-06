@@ -1,10 +1,8 @@
 use crate::crypto::srtp::SrtpCryptoImpl;
 use crate::crypto::srtp::{aead_aes_128_gcm, aes_128_cm_sha1_80};
 use crate::crypto::CryptoError;
-use str0m_wincrypto::{
-    srtp_aead_aes_128_gcm_decrypt, srtp_aead_aes_128_gcm_encrypt, srtp_aes_128_cm,
-    srtp_aes_128_ecb_round, SrtpKey,
-};
+use str0m_wincrypto::{srtp_aead_aes_128_gcm_decrypt, srtp_aead_aes_128_gcm_encrypt};
+use str0m_wincrypto::{srtp_aes_128_cm, srtp_aes_128_ecb_round, SrtpKey};
 
 pub struct WinCryptoSrtpCryptoImpl;
 

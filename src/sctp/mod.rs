@@ -244,7 +244,7 @@ impl RtcSctp {
         self.last_now = now;
 
         if client {
-            info!("New local association");
+            debug!("New local association");
             let (handle, assoc) = self
                 .endpoint
                 .connect(ClientConfig::default(), self.fake_addr)
@@ -388,7 +388,7 @@ impl RtcSctp {
                 if self.assoc.is_some() {
                     return;
                 }
-                info!("New remote association");
+                debug!("New remote association");
                 // Remote side initiated the association
                 self.assoc = Some(a);
                 self.handle = handle;
@@ -491,7 +491,7 @@ impl RtcSctp {
                             StreamEntryState::AwaitConfig,
                             "closed",
                         );
-                        info!("Stream {} closed", id);
+                        debug!("Stream {} closed", id);
                         entry.do_close = true;
                     }
                     _ => {}
@@ -508,7 +508,7 @@ impl RtcSctp {
             let want_open = entry.state == StreamEntryState::AwaitOpen;
 
             if want_open {
-                info!("Open stream {}", entry.id);
+                debug!("Open stream {}", entry.id);
                 match assoc.open_stream(entry.id, PayloadProtocolIdentifier::Unknown) {
                     Ok(mut s) => {
                         if !entry.configure_reliability(&mut s) {
@@ -710,7 +710,7 @@ fn transmit_to_vec(t: Transmit) -> Option<VecDeque<Vec<u8>>> {
 
 fn set_state(current_state: &mut RtcSctpState, state: RtcSctpState) {
     if *current_state != state {
-        info!("{:?} => {:?}", current_state, state);
+        debug!("{:?} => {:?}", current_state, state);
         *current_state = state;
     }
 }
@@ -725,7 +725,7 @@ fn stream_entry<'a>(
     if let Some(idx) = idx {
         entries.get_mut(idx).unwrap()
     } else {
-        info!("New stream {} ({:?}): {}", id, initial_state, reason);
+        debug!("New stream {} ({:?}): {}", id, initial_state, reason);
         let e = StreamEntry {
             config: None,
             state: initial_state,

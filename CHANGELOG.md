@@ -1,5 +1,28 @@
 # Unreleased
 
+  * Make STUN timers configurable on RtcConfig #674
+  * ice: stricter srflx candidate checks #672
+  * ice: Dont report Disconnected when no local candidates #670
+  * ice: expose remote ICE credentials #675
+  * ice: transition from `Disconnected -> Checking` on new candidates #676
+  * Make ICE agent local preference pluggable #668
+  * Simplified serde of SDP #664
+  * SR/RR stats in Ingress/EgressStats #661 #662
+
+# 0.9.0
+
+  * Wincrypto fail on drop #660
+  * All logging on DEBUG and lower #658
+  * Redact PII (ip addresses) in logs #656
+  * Document behavior of MediaAdded #655
+  * Fix growing feedback bug before ICE #654
+  * Fix vp8 depacketize for small packets #653
+  * Bust cache on config change #649
+  * RTT in PeerStats #648
+  * Fix off-by-one SDES size calculation #647
+  * Increase ufrag size to 16 #646
+  * `add_local_candidate` return candidate on success #650
+
 # 0.8.0
 
   * Add start of talkspurt for sample writer #645

@@ -1,14 +1,18 @@
 use std::collections::{HashSet, VecDeque};
+use std::fmt;
 use std::net::SocketAddr;
+use std::panic::RefUnwindSafe;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::ice_::preference::default_local_preference;
 use crate::io::{Id, StunClass, StunMethod, StunTiming, DATAGRAM_MTU_WARN};
 use crate::io::{Protocol, StunPacket};
 use crate::io::{StunMessage, TransId};
 use crate::io::{Transmit, DATAGRAM_MTU};
-use crate::util::NonCryptographicRng;
+use crate::util::{NonCryptographicRng, Pii};
 
 use super::candidate::{Candidate, CandidateKind};
 use super::pair::{CandidatePair, CheckState, PairId};
@@ -96,6 +100,33 @@ pub struct IceAgent {
 
     /// The timing configuration for STUN bindings.
     timing_config: StunTiming,
+
+    /// Pluggable calculation of local preference.
+    local_preference: LocalPreferenceHolder,
+}
+
+// Stupid holder to implement fmt::Debug
+struct LocalPreferenceHolder(Arc<dyn LocalPreference>);
+
+/// Trait for pluggable LocalPreference calculation
+pub trait LocalPreference: RefUnwindSafe + Send + Sync + 'static {
+    /// Calculate the local preference for a candidate.
+    ///
+    /// The `same_kind` parameter is the number of candidates of the same IP version that
+    /// have already been added to the agent.
+    ///
+    /// The `c` parameter is the candidate to calculate the preference for.
+    fn calculate(&self, c: &Candidate, same_kind: usize) -> u32;
+}
+
+/// Blanket impl for functions that look like preference calculations.
+impl<F> LocalPreference for F
+where
+    F: Fn(&Candidate, usize) -> u32 + RefUnwindSafe + Send + Sync + 'static,
+{
+    fn calculate(&self, c: &Candidate, same_kind: usize) -> u32 {
+        (self)(c, same_kind)
+    }
 }
 
 #[derive(Debug)]
@@ -239,9 +270,7 @@ impl IceCreds {
         // checks.  The values MUST be unguessable, with at least 128 bits of
         // random number generator output used to generate the password, and
         // at least 24 bits of output to generate the username fragment.
-        //
-        // Chrome demands lengths for ufrag 4 and pass 22.
-        let ufrag = Id::<4>::random().to_string();
+        let ufrag = Id::<16>::random().to_string();
         let pass = Id::<22>::random().to_string();
         IceCreds { ufrag, pass }
     }
@@ -277,6 +306,7 @@ impl IceAgent {
             stats: IceAgentStats::default(),
             timing_advance: Duration::from_millis(50),
             timing_config: StunTiming::default(),
+            local_preference: LocalPreferenceHolder(Arc::new(default_local_preference)),
         }
     }
 
@@ -320,30 +350,42 @@ impl IceAgent {
     /// Sets the local ice credentials.
     pub fn set_local_credentials(&mut self, r: IceCreds) {
         if self.local_credentials != r {
-            info!("Set local credentials: {:?}", r);
+            debug!("Set local credentials: {:?}", Pii(&r));
             self.local_credentials = r;
         }
     }
 
     /// Sets the initial STUN **R**etransmission **T**ime**O**ut.
     ///
-    /// It defines the initial period of time between transmission of a request and the first retransmit of that request.
-    /// The actual RTO doubles with each retransmit up until the configured maximum RTO.
+    /// It defines the initial period of time between transmission of a request
+    /// and the first retransmit of that request. The actual RTO doubles with
+    /// each retransmit up until the configured maximum RTO.
     ///
     /// Defaults to 250ms.
     pub fn set_initial_stun_rto(&mut self, timeout: Duration) {
         self.timing_config.initial_rto = timeout;
+
+        debug!("initial_rto = {timeout:?}");
+
+        self.bust_candidate_pair_timeout_caches();
     }
 
     /// Sets the maximum STUN **R**etransmission **T**ime**O**ut.
     ///
-    /// It defines the maximum period of time between transmission of a request and the first retransmit of that request.
-    /// Once a candidate pair is successful, this is how often we check that a STUN binding is alive.
-    /// As the STUN bindings of a successful candidate pair start to time out, we probe the binding more often by halfing this value, up until the maximum number of retransmits before we declare them failed.
+    /// It defines the maximum period of time between transmission of a request
+    /// and the first retransmit of that request. Once a candidate pair is
+    /// successful, this is how often we check that a STUN binding is alive.
+    /// As the STUN bindings of a successful candidate pair start to time out,
+    /// we probe the binding more often by halfing this value, up until the
+    /// maximum number of retransmits before we declare them failed.
     ///
     /// Defaults to 3000ms.
     pub fn set_max_stun_rto(&mut self, timeout: Duration) {
         self.timing_config.max_rto = timeout;
+
+        debug!("max_rto = {timeout:?}");
+
+        self.bust_candidate_pair_timeout_caches();
     }
 
     /// Sets the maximum number of retransmits for STUN messages.
@@ -351,6 +393,21 @@ impl IceAgent {
     /// Defaults to 9.
     pub fn set_max_stun_retransmits(&mut self, num: usize) {
         self.timing_config.max_retransmits = num;
+
+        debug!("max_retransmits = {num}");
+    }
+
+    /// Sets the local preference calculation.
+    ///
+    /// This must be used before adding any local candidates.
+    pub fn set_local_preference(&mut self, p: impl LocalPreference) {
+        self.local_preference = LocalPreferenceHolder(Arc::new(p));
+    }
+
+    fn bust_candidate_pair_timeout_caches(&mut self) {
+        for pair in self.candidate_pairs.iter_mut() {
+            pair.reset_cached_next_attempt_time();
+        }
     }
 
     /// How long we at most tolerate missing replies for a candidate pair before considering it failed.
@@ -379,10 +436,15 @@ impl IceAgent {
             .any(|pair| self.remote_candidates[pair.remote_idx()].addr() == addr)
     }
 
+    /// Remote ice credentials.
+    pub fn remote_credentials(&self) -> Option<&IceCreds> {
+        self.remote_credentials.as_ref()
+    }
+
     /// Sets the remote ice credentials.
     pub fn set_remote_credentials(&mut self, r: IceCreds) {
         if self.remote_credentials.as_ref() != Some(&r) {
-            info!("Set remote credentials: {:?}", r);
+            debug!("Set remote credentials: {:?}", Pii(&r));
             self.remote_credentials = Some(r);
         }
     }
@@ -468,68 +530,21 @@ impl IceAgent {
 
     /// Adds a local candidate.
     ///
-    /// Returns `false` if the candidate was not added because it is redundant.
+    /// Returns `Some` if the candidate was added and `None` in all other cases.
+    /// If the candidate was added, it should be signalled to the remote party.
+    ///
     /// Adding loopback addresses or multicast/broadcast addresses causes
     /// an error.
-    pub fn add_local_candidate(&mut self, mut c: Candidate) -> bool {
+    pub fn add_local_candidate(&mut self, mut c: Candidate) -> Option<&Candidate> {
         let ip = c.addr().ip();
 
         if self.ice_lite {
             // Reject all non-host candidates.
             if c.kind() != CandidateKind::Host {
                 debug!("Reject non-host candidate due to ice-lite mode: {:?}", c);
-                return false;
+                return None;
             }
         }
-
-        // "Adopt" any incoming candidate by setting our current ufrag.
-        c.set_ufrag(&self.local_credentials.ufrag);
-
-        // https://datatracker.ietf.org/doc/html/rfc8445#section-5.1.2.1
-        // The local preference MUST be an integer from 0 (lowest preference) to
-        // 65535 (highest preference) inclusive.  When there is only a single IP
-        // address, this value SHOULD be set to 65535.  If there are multiple
-        // candidates for a particular component for a particular data stream
-        // that have the same type, the local preference MUST be unique for each
-        // one.
-        // ...
-        // If an ICE agent is multihomed and has multiple IP addresses, the
-        // recommendations in [RFC8421] SHOULD be followed.  If multiple TURN
-        // servers are used, local priorities for the candidates obtained from
-        // the TURN servers are chosen in a similar fashion as for multihomed
-        // local candidates: the local preference value is used to indicate a
-        // preference among different servers, but the preference MUST be unique
-        // for each one.
-        // ================
-        //
-        // The above presupposes that we know all the candidates when we start
-        // the ice agent. That doesn't work for us, so we deliberately do not
-        // follow spec. We assign the following intervals for the different
-        // types of candidates:
-        //
-        // 0     - 16384 => relay
-        // 16384 - 32768 => srflx
-        // 32768 - 49152 => prflx
-        // 49152 - 65536 => host
-        //
-        // And furthermore we subdivide these to interleave IPv6 with IPv4
-        // so that odd numbers are ipv6 and even are ipv4.
-        //
-        // For host candidates this means:
-        // 65535 - first ipv6
-        // 65534 - first ipv4
-        // 65533 - second ipv6
-        // 65432 - second ipv4
-        let counter_start: u32 = {
-            use CandidateKind::*;
-            let x = match c.kind() {
-                Host => 65_535,
-                PeerReflexive => 49_151,
-                ServerReflexive => 32_767,
-                Relayed => 16_383,
-            };
-            x - if ip.is_ipv6() { 0 } else { 1 }
-        };
 
         // Count the number of existing candidates of the same kind.
         let same_kind = self
@@ -537,29 +552,14 @@ impl IceAgent {
             .iter()
             .filter(|v| v.kind() == c.kind())
             .filter(|v| v.addr().is_ipv6() == ip.is_ipv6())
-            .count() as u32;
+            .count();
 
-        // For relayed candidates, we add a "punishment" to the local preference
-        // if the base address differs in the IP version from the allocated address
-        // of the candidate.
-        // This punishment ensures that we prefer relayed within the same IP version,
-        // e.g. IPv4 <> IPv4 over ones that translate between IP version, e.g. IPv4 <> IPv6.
-        let relay_across_ip_version_punishment = if c.kind() == CandidateKind::Relayed {
-            if c.base().is_ipv4() != ip.is_ipv4() {
-                1000
-            } else {
-                0
-            }
-        } else {
-            0
-        };
-
-        let pref = counter_start - same_kind * 2 - relay_across_ip_version_punishment;
+        // Delegate local preference calculation to pluggable algo.
+        let pref = self.local_preference.0.calculate(&c, same_kind);
         trace!("Calculated local preference: {}", pref);
-
         c.set_local_preference(pref);
 
-        // Tie this ufrag to this ICE-session.
+        // "Adopt" any incoming candidate by setting our current ufrag.
         c.set_ufrag(&self.local_credentials.ufrag);
 
         // A candidate is redundant if and only if its transport address and base equal those
@@ -583,25 +583,27 @@ impl IceAgent {
                     // The new candidate is not better than what we already got.
                     debug!(
                         "Reject redundant candidate, current: {:?} rejected: {:?}",
-                        other, c
+                        Pii(&other),
+                        Pii(&c)
                     );
-                    return false;
+                    return None;
                 }
 
                 // Stop using the current candidate in favor of the new one.
                 debug!(
                     "Replace redundant candidate, current: {:?} replaced with: {:?}",
-                    other, c
+                    Pii(&other),
+                    Pii(&c)
                 );
                 other.set_discarded(true);
                 self.discard_candidate_pairs_by_local(idx);
 
-                info!("Add local candidate: {:?}", c);
+                debug!("Add local candidate: {:?}", Pii(&c));
                 self.local_candidates.push(c);
                 self.local_candidates.len() - 1
             }
         } else {
-            info!("Add local candidate: {:?}", c);
+            debug!("Add local candidate: {:?}", Pii(&c));
             self.local_candidates.push(c);
             self.local_candidates.len() - 1
         };
@@ -626,7 +628,9 @@ impl IceAgent {
         // by the remote party, whether we form local pairs directly or later seems irrelevant.
         self.form_pairs(&[local_idx], &remote_idxs);
 
-        true
+        // We specifically use indexing here instead of `.get`.
+        // If the index is wrong, this is a bug!
+        Some(&self.local_candidates[local_idx])
     }
 
     /// Adds a remote candidate.
@@ -638,7 +642,7 @@ impl IceAgent {
         // This is a a:rtcp-mux-only implementation. The only component
         // we accept is 1 for RTP.
         if c.component_id() != 1 {
-            debug!("Reject candidate for component other than 1: {:?}", c);
+            debug!("Reject candidate for component other than 1: {:?}", Pii(&c));
             return;
         }
 
@@ -647,7 +651,8 @@ impl IceAgent {
                 if ufrag != creds.ufrag {
                     debug!(
                         "Reject candidate with ufrag mismatch: {} != {}",
-                        ufrag, creds.ufrag
+                        Pii(&ufrag),
+                        Pii(&creds.ufrag)
                     );
                     return;
                 }
@@ -688,9 +693,10 @@ impl IceAgent {
         let remote_idx = if let Some((idx, existing)) = existing_prflx {
             // If any subsequent candidate exchanges contain this peer-reflexive
             // candidate, it will signal the actual foundation for the candidate.
-            info!(
+            debug!(
                 "Replace peer reflexive candidate, current: {:?} replaced with: {:?}",
-                existing, c
+                Pii(&existing),
+                Pii(&c)
             );
             *existing = c;
             idx
@@ -702,11 +708,11 @@ impl IceAgent {
             });
 
             if let Some((idx, other)) = existing_discarded {
-                debug!("Re-enable previously discarded remote: {:?}", other);
+                debug!("Re-enable previously discarded remote: {:?}", Pii(&other));
                 other.set_discarded(false);
                 idx
             } else {
-                info!("Add remote candidate: {:?}", c);
+                debug!("Add remote candidate: {:?}", Pii(&c));
                 self.remote_candidates.push(c);
                 self.remote_candidates.len() - 1
             }
@@ -727,6 +733,11 @@ impl IceAgent {
 
     /// Form pairs given two slices of indexes into the local_candidates and remote_candidates.
     fn form_pairs(&mut self, local_idxs: &[usize], remote_idxs: &[usize]) {
+        // Ensure to first update the kinds so any log statements are up-to-date.
+        for pair in &mut self.candidate_pairs {
+            pair.update_kinds(&self.local_candidates, &self.remote_candidates);
+        }
+
         for local_idx in local_idxs {
             'outer: for remote_idx in remote_idxs {
                 let local = &self.local_candidates[*local_idx];
@@ -739,7 +750,8 @@ impl IceAgent {
 
                 let prio =
                     CandidatePair::calculate_prio(self.controlling, remote.prio(), local.prio());
-                let mut pair = CandidatePair::new(*local_idx, *remote_idx, prio);
+                let mut pair =
+                    CandidatePair::new(*local_idx, local.kind(), *remote_idx, remote.kind(), prio);
 
                 trace!("Form pair local: {:?} remote: {:?}", local, remote);
 
@@ -764,7 +776,8 @@ impl IceAgent {
                             // list with higher/equal priority.
                             debug!(
                                 "Reject redundant pair, current: {:?} rejected: {:?}",
-                                check, pair
+                                Pii(&check),
+                                Pii(&pair)
                             );
                         } else {
                             // replace the existing candidate pair, since the new one got a higher prio.
@@ -772,7 +785,8 @@ impl IceAgent {
 
                             debug!(
                                 "Replace redundant pair, current: {:?} replaced with: {:?}",
-                                check, pair
+                                Pii(&check),
+                                Pii(&pair)
                             );
 
                             if self.ice_lite {
@@ -790,7 +804,7 @@ impl IceAgent {
                     }
                 }
 
-                debug!("Add new pair {:?}", pair);
+                debug!("Add new pair {:?}", Pii(&pair));
 
                 // This is not a redundant pair, add it.
                 self.candidate_pairs.push(pair);
@@ -818,7 +832,7 @@ impl IceAgent {
 
         while self.candidate_pairs.len() > max {
             let pair = self.candidate_pairs.pop();
-            debug!("Remove overflow pair {:?}", pair);
+            debug!("Remove overflow pair {:?}", Pii(&pair));
         }
     }
 
@@ -840,7 +854,7 @@ impl IceAgent {
                 && v.kind() == c.kind()
         }) {
             if !other.discarded() {
-                info!("Local candidate to discard {:?}", other);
+                debug!("Local candidate to discard {:?}", Pii(&other));
                 other.set_discarded(true);
                 self.discard_candidate_pairs_by_local(idx);
                 return true;
@@ -859,14 +873,14 @@ impl IceAgent {
             })
         {
             if !other.discarded() {
-                info!("Remote candidate to discard {:?}", other);
+                debug!("Remote candidate to discard {:?}", Pii(&other));
                 other.set_discarded(true);
                 self.discard_candidate_pairs_by_remote(idx);
                 return true;
             }
         }
 
-        debug!("No local or remote candidate found: {:?}", c);
+        debug!("No local or remote candidate found: {:?}", Pii(&c));
         false
     }
 
@@ -1072,7 +1086,7 @@ impl IceAgent {
             }
 
             if let Some(req) = self.stun_server_queue.pop_front() {
-                debug!("Handle enqueued STUN request: {:?}", req);
+                debug!("Handle enqueued STUN request: {:?}", Pii(&req));
                 self.stun_server_handle_request(req);
                 return;
             }
@@ -1091,7 +1105,7 @@ impl IceAgent {
                 p.is_still_possible(now, &self.timing_config)
             };
             if !keep {
-                debug!("Remove failed pair: {:?}", p);
+                debug!("Remove failed pair: {:?}", Pii(&p));
                 any_pruned = true;
             }
             keep
@@ -1255,7 +1269,7 @@ impl IceAgent {
         } else {
             debug!(
                 "Enqueue STUN request due to missing remote credentials: {:?}",
-                req
+                Pii(&req)
             );
 
             let queue = &mut self.stun_server_queue;
@@ -1268,7 +1282,7 @@ impl IceAgent {
             // This is some denial-of-service attack protection.
             while queue.len() > 100 {
                 let r = queue.pop_front();
-                debug!("Remove overflow STUN request {:?}", r);
+                debug!("Remove overflow STUN request {:?}", Pii(&r));
             }
 
             // If this happens, the agent MUST
@@ -1289,7 +1303,8 @@ impl IceAgent {
             // get the exchange on the signal level.
             debug!(
                 "STUN request rejected, remote user mismatch (enqueued): {} != {}",
-                req.remote_ufrag, remote_creds.ufrag
+                Pii(&req.remote_ufrag),
+                Pii(&remote_creds.ufrag)
             );
             return;
         }
@@ -1310,7 +1325,9 @@ impl IceAgent {
             .iter()
             .enumerate()
             .filter(|(_, c)| !c.discarded() && c.proto() == req.proto && c.addr() == req.source)
-            .max_by_key(|(_, c)| c.prio()); // We may have multiple candidates with the same address (i.e. host and server-reflexive could be the same).
+            // We may have multiple candidates with the same address
+            // (i.e. host and server-reflexive could be the same).
+            .max_by_key(|(_, c)| c.prio());
 
         let remote_idx = if let Some((idx, _)) = found_in_remote {
             trace!("Remote candidate for STUN request found");
@@ -1349,9 +1366,9 @@ impl IceAgent {
                 self.local_credentials.ufrag.clone(),
             );
 
-            info!(
+            debug!(
                 "Created peer reflexive remote candidate from STUN request: {:?}",
-                c
+                Pii(&c)
             );
 
             // This candidate is added to the list of remote candidates.  However,
@@ -1380,7 +1397,7 @@ impl IceAgent {
 
                 debug!(
                     "Discarding STUN request on unknown interface: {}",
-                    req.destination
+                    Pii(req.destination)
                 );
                 return;
             }
@@ -1414,9 +1431,9 @@ impl IceAgent {
             // *  Its state is set to Waiting. (this is the default)
             // *  The pair is inserted into the checklist based on its priority.
             // *  The pair is enqueued into the triggered-check queue.
-            let pair = CandidatePair::new(local_idx, remote_idx, prio);
+            let pair = CandidatePair::new(local_idx, local.kind(), remote_idx, remote.kind(), prio);
 
-            debug!("Created new pair for STUN request: {:?}", pair);
+            debug!("Created new pair for STUN request: {:?}", Pii(&pair));
 
             self.candidate_pairs.push(pair);
             self.candidate_pairs.sort();
@@ -1431,7 +1448,7 @@ impl IceAgent {
 
         let local = pair.local_candidate(&self.local_candidates);
         let proto = local.proto();
-        let local_addr = local.source_addr();
+        let local_addr = local.base();
         let remote = pair.remote_candidate(&self.remote_candidates);
         let remote_addr = remote.addr();
 
@@ -1517,7 +1534,7 @@ impl IceAgent {
 
         let trans = Transmit {
             proto: local.proto(),
-            source: local.source_addr(),
+            source: local.base(),
             destination: remote.addr(),
             contents: buf.into(),
         };
@@ -1602,7 +1619,7 @@ impl IceAgent {
 
             debug!(
                 "Created local peer reflexive candidate for mapped address: {}",
-                mapped_address
+                Pii(&mapped_address)
             );
 
             // The ICE agent does not need to pair the peer-reflexive candidate with
@@ -1673,7 +1690,7 @@ impl IceAgent {
             self.nominated_send = Some(best_prio.id());
             self.emit_event(IceAgentEvent::NominatedSend {
                 proto: local.proto(),
-                source: local.source_addr(),
+                source: local.base(),
                 destination: remote.addr(),
             })
         }
@@ -1689,7 +1706,7 @@ impl IceAgent {
 
     fn set_connection_state(&mut self, state: IceConnectionState, reason: &'static str) {
         if self.state != state {
-            info!("State change ({}): {:?} -> {:?}", reason, self.state, state);
+            debug!("State change ({}): {:?} -> {:?}", reason, self.state, state);
             self.state = state;
             self.emit_event(IceAgentEvent::IceConnectionStateChange(state));
         }
@@ -1709,10 +1726,10 @@ impl IceAgent {
             }
         }
 
-        // As a special case, before the ice agent has received any add_remote_candidate() or
+        // As a special case, before the ice agent has received any candidates or
         // discovered a peer reflexive via a STUN message, the agent is still viable. This is
         // also the case for ice_restart.
-        if self.remote_candidates.is_empty() {
+        if self.remote_candidates.is_empty() || self.local_candidates.is_empty() {
             any_still_possible = true;
         }
 
@@ -1733,6 +1750,8 @@ impl IceAgent {
                     }
                 } else if !any_still_possible {
                     self.set_connection_state(Disconnected, "no possible pairs");
+                } else {
+                    self.set_connection_state(Checking, "got new possible");
                 }
             }
             Connected => {
@@ -1759,16 +1778,20 @@ impl IceAgent {
             }
         }
     }
+}
 
-    pub(crate) fn remote_credentials(&self) -> Option<&IceCreds> {
-        self.remote_credentials.as_ref()
+impl fmt::Debug for LocalPreferenceHolder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("LocalPreferenceHolder").finish()
     }
 }
 
 #[cfg(test)]
 mod test {
+    use crate::ice_::test::host;
+
     use super::*;
-    use std::net::SocketAddr;
+    use std::{iter, net::SocketAddr};
 
     impl IceAgent {
         pub(crate) fn num_candidate_pairs(&self) -> usize {
@@ -1806,10 +1829,18 @@ mod test {
     fn local_preference_host() {
         let mut agent = IceAgent::new();
 
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
-        agent.add_local_candidate(Candidate::host(ipv6_1(), "udp").unwrap());
-        agent.add_local_candidate(Candidate::host(ipv6_2(), "udp").unwrap());
-        agent.add_local_candidate(Candidate::host(ipv4_2(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
+        agent
+            .add_local_candidate(Candidate::host(ipv6_1(), "udp").unwrap())
+            .unwrap();
+        agent
+            .add_local_candidate(Candidate::host(ipv6_2(), "udp").unwrap())
+            .unwrap();
+        agent
+            .add_local_candidate(Candidate::host(ipv4_2(), "udp").unwrap())
+            .unwrap();
 
         let v: Vec<_> = agent
             .local_candidates
@@ -1828,11 +1859,11 @@ mod test {
         // redundant when the agent is not behind a NAT.
 
         let x2 = agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
-        assert!(x2);
+        assert!(x2.is_some());
 
         // this is redundant given we have the direct host candidate above.
         let x1 = agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_1(), ipv4_1(), "udp"));
-        assert!(!x1);
+        assert!(x1.is_none());
     }
 
     #[test]
@@ -1841,7 +1872,7 @@ mod test {
         let host = Candidate::host(ipv4_1(), "udp").unwrap();
         let srflx = Candidate::server_reflexive(ipv4_1(), ipv4_1(), "udp").unwrap();
 
-        agent.add_local_candidate(host.clone());
+        agent.add_local_candidate(host.clone()).unwrap();
         let invalidated = agent.invalidate_candidate(&srflx);
         assert!(!invalidated);
 
@@ -1869,17 +1900,31 @@ mod test {
         let mut agent = IceAgent::new();
 
         // Candidates with the same SocketAddr but different protocols are considered distinct.
-        assert!(agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap()));
-        assert!(agent.add_local_candidate(Candidate::host(ipv4_1(), "tcp").unwrap()));
-        assert!(agent.add_local_candidate(Candidate::host(ipv4_1(), "ssltcp").unwrap()));
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .is_some());
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "tcp").unwrap())
+            .is_some());
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "ssltcp").unwrap())
+            .is_some());
 
         // Verify these are rejected, since these tuples of address and protocol have been added.
-        assert!(!agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap()));
-        assert!(!agent.add_local_candidate(Candidate::host(ipv4_1(), "ssltcp").unwrap()));
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .is_none());
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "ssltcp").unwrap())
+            .is_none());
 
         // Verify these are allowed, since these have different addresses.
-        assert!(agent.add_local_candidate(Candidate::host(ipv4_2(), "udp").unwrap()));
-        assert!(agent.add_local_candidate(Candidate::host(ipv4_2(), "ssltcp").unwrap()));
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_2(), "udp").unwrap())
+            .is_some());
+        assert!(agent
+            .add_local_candidate(Candidate::host(ipv4_2(), "ssltcp").unwrap())
+            .is_some());
     }
 
     #[test]
@@ -1891,10 +1936,10 @@ mod test {
 
         // this is contrived, but it is redundant when we add the host candidate below.
         let x1 = agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_1(), ipv4_1(), "udp"));
-        assert!(x1);
+        assert!(x1.is_some());
 
         let x2 = agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
-        assert!(x2);
+        assert!(x2.is_some());
 
         let v: Vec<_> = agent
             .local_candidates
@@ -1910,11 +1955,17 @@ mod test {
         let mut agent = IceAgent::new();
 
         // local 0
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
         // local 1 "udp"
-        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_4(), ipv4_2(), "udp"));
+        agent
+            .add_local_candidate(Candidate::test_peer_rflx(ipv4_4(), ipv4_2(), "udp"))
+            .unwrap();
         // local 2 "tcp"
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "tcp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "tcp").unwrap())
+            .unwrap();
 
         // remote 0
         agent.add_remote_candidate(Candidate::test_peer_rflx(ipv4_4(), ipv4_3(), "udp"));
@@ -1942,18 +1993,24 @@ mod test {
 
         agent.add_remote_candidate(Candidate::host(ipv4_3(), "udp").unwrap());
         agent.add_remote_candidate(Candidate::host(ipv4_3(), "tcp").unwrap());
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
 
         // the UDP candidates should be pair up.
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 
         // this local UDP candidate is redundant an won't form a new pair.
-        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp"));
+        agent
+            .add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp"))
+            .unwrap();
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 
         // this local TCP candidate will be paired up (This is the 3rd local candidate)
-        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "tcp"));
+        agent
+            .add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "tcp"))
+            .unwrap();
 
         assert_eq!(agent.pair_indexes(), [(0, 0), (2, 1)]);
     }
@@ -1963,13 +2020,17 @@ mod test {
         let mut agent = IceAgent::new();
 
         agent.add_remote_candidate(Candidate::host(ipv4_3(), "udp").unwrap());
-        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp"));
+        agent
+            .add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp"))
+            .unwrap();
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 
         // this local candidate is redundant, but has higher priority than then existing pair.
         // it replaces the existing pair.
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
 
         assert_eq!(agent.pair_indexes(), [(1, 0)]);
     }
@@ -1990,7 +2051,9 @@ mod test {
         );
 
         agent.add_remote_candidate(c);
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
 
         assert_eq!(agent.pair_indexes(), [(0, 0)]);
 
@@ -2006,8 +2069,10 @@ mod test {
 
         let pair = &agent.candidate_pairs[0];
         assert!(pair.is_nominated());
-        assert_eq!(pair.remote_binding_requests, 1);
-        assert_eq!(pair.remote_binding_request_time, Some(now));
+
+        let (req, time) = pair.remote_binding_requests();
+        assert_eq!(req, 1);
+        assert_eq!(time, Some(now));
     }
 
     #[test]
@@ -2016,7 +2081,7 @@ mod test {
 
         let local = Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp");
 
-        agent.add_local_candidate(local.clone());
+        agent.add_local_candidate(local.clone()).unwrap();
         agent.invalidate_candidate(&local);
 
         agent.add_remote_candidate(Candidate::host(ipv4_3(), "udp").unwrap());
@@ -2034,7 +2099,9 @@ mod test {
         agent.add_remote_candidate(remote.clone());
         agent.invalidate_candidate(&remote);
 
-        agent.add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp"));
+        agent
+            .add_local_candidate(Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp"))
+            .unwrap();
 
         // There should be no pairs since we invalidated the local candidate.
         assert_eq!(agent.pair_indexes(), []);
@@ -2043,7 +2110,9 @@ mod test {
     #[test]
     fn poll_time_must_timing_advance() {
         let mut agent = IceAgent::new();
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
         agent.add_remote_candidate(Candidate::host(ipv4_3(), "udp").unwrap());
 
         let now1 = Instant::now();
@@ -2082,7 +2151,9 @@ mod test {
         remote_candidate.set_ufrag(&remote_creds.ufrag);
 
         agent.set_remote_credentials(remote_creds.clone());
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
         agent.add_remote_candidate(remote_candidate);
         agent.handle_timeout(Instant::now());
 
@@ -2101,7 +2172,9 @@ mod test {
     #[test]
     fn queues_stun_binding_before_remote_creds() {
         let mut agent = IceAgent::new();
-        agent.add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap());
+        agent
+            .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
+            .unwrap();
 
         let remote_creds = IceCreds::new();
         let mut remote_candidate = Candidate::host(ipv4_3(), "udp").unwrap();
@@ -2162,6 +2235,21 @@ mod test {
         );
 
         assert!(agent.poll_transmit().is_none());
+    }
+
+    #[test]
+    pub fn no_disconnect_missing_local_candidates() {
+        let mut agent = IceAgent::new();
+        agent.set_remote_credentials(IceCreds::new().clone());
+
+        agent.add_remote_candidate(host("1.1.1.1:1000", "udp"));
+        agent.handle_timeout(Instant::now());
+        agent.handle_timeout(Instant::now() + Duration::from_millis(100));
+
+        let events = iter::from_fn(|| agent.poll_event()).collect::<Vec<_>>();
+        assert!(!events.contains(&IceAgentEvent::IceConnectionStateChange(
+            IceConnectionState::Disconnected
+        )));
     }
 
     fn make_serialized_binding_request(

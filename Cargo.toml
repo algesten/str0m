@@ -1,6 +1,6 @@
 [package]
 name = "str0m"
-version = "0.8.0"
+version = "0.9.0"
 authors = ["Martin Algesten <martin@algesten.se>", "Hugo Tunius <h@tunius.se>", "Davide Bertola <dade@dadeb.it>"]
 description = "WebRTC library in Sans-IO style"
 license = "MIT OR Apache-2.0"
@@ -31,8 +31,12 @@ vendored = ["openssl?/vendored"]
 # Without the sha1 feature, str0m uses the openssl sha1 impl which is slower.
 sha1 = ["dep:sha1"]
 
-# Uses native Windows API to implement cryptographic features, use instead on openssl and sha1.
+# Uses native Windows API to implement cryptographic features, use instead on
+# openssl and sha1.
 wincrypto = ["dep:str0m-wincrypto"]
+
+# Redacts personally identifiable information (PII) from logs debug and above
+pii = []
 
 _internal_dont_use_log_stats = []
 _internal_test_exports = []
@@ -71,6 +75,8 @@ serde_json = "1.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }
 systemstat = "0.2.2"
 pcap-file = "2.0.0"
+regex = "1.11.1"
+rand = "0.9.0"
 
 # dummy package that enables "_internal_test_exports"
 _str0m_test = { path = "_str0m_test" }
