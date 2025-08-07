@@ -590,6 +590,38 @@ impl CodecConfig {
         )
     }
 
+    /// Convenience for adding a PCM u-law payload type.
+    pub fn enable_pcmu(&mut self, enabled: bool) {
+        self.params.retain(|c| c.spec.codec != Codec::PCMU);
+        if !enabled {
+            return;
+        }
+        self.add_config(
+            0.into(),
+            None,
+            Codec::PCMU,
+            Frequency::EIGHT_KHZ,
+            None,
+            Default::default(),
+        );
+    }
+
+    /// Convenience for adding a PCM a-law payload type.
+    pub fn enable_pcma(&mut self, enabled: bool) {
+        self.params.retain(|c| c.spec.codec != Codec::PCMA);
+        if !enabled {
+            return;
+        }
+        self.add_config(
+            8.into(),
+            None,
+            Codec::PCMA,
+            Frequency::EIGHT_KHZ,
+            None,
+            Default::default(),
+        );
+    }
+
     /// Add a default OPUS payload type.
     pub fn enable_opus(&mut self, enabled: bool) {
         self.params.retain(|c| c.spec.codec != Codec::Opus);
