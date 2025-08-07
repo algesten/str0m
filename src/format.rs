@@ -321,14 +321,6 @@ impl PayloadParams {
             return Some(Self::match_opus_score(c0, c1));
         }
 
-        if c0.codec == Codec::PCMU {
-            return Some(100);
-        }
-
-        if c0.codec == Codec::PCMA {
-            return Some(100);
-        }
-
         if c0.codec == Codec::H264 {
             return Self::match_h264_score(c0, c1);
         }
