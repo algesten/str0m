@@ -86,6 +86,38 @@ struct StreamEntry {
     id: u16,
     /// If we are to close this entry.
     do_close: bool,
+    /// If the queued outgoing data drops below this threshold, Rtc is to emit an
+    /// event to the user.
+    buffered_threshold: BufferedThresholdConfig,
+}
+
+#[derive(Debug)]
+/// Tracks the `buffered_amount_low_threshold` for a stream.
+///
+/// Lets us defer applying user changes to the underlying SCTP
+/// stream until the next poll cycle, without first querying the current
+/// configured value.
+enum BufferedThresholdConfig {
+    /// No threshold has been set or it was cleared after an error.
+    Unconfigured,
+    /// A user-requested threshold to apply on the next poll.
+    Desired(usize),
+    /// The threshold value currently configured in the SCTP stream.
+    Configured(usize),
+}
+
+impl BufferedThresholdConfig {
+    pub fn set(&mut self, v: usize) {
+        let is_change = match self {
+            BufferedThresholdConfig::Unconfigured => true,
+            BufferedThresholdConfig::Desired(w) if v != *w => true,
+            BufferedThresholdConfig::Configured(x) if v != *x => true,
+            _ => false,
+        };
+        if is_change {
+            *self = BufferedThresholdConfig::Desired(v);
+        }
+    }
 }
 
 pub(crate) enum SctpEvent {
@@ -103,6 +135,9 @@ pub(crate) enum SctpEvent {
         id: u16,
         binary: bool,
         data: Vec<u8>,
+    },
+    BufferedAmountLow {
+        id: u16,
     },
 }
 
@@ -369,6 +404,29 @@ impl RtcSctp {
         Ok(stream.write_with_ppi(buf, ppi)?)
     }
 
+    pub fn buffered_amount(&mut self, id: u16) -> usize {
+        let Some(assoc) = self.assoc.as_mut() else {
+            return 0;
+        };
+
+        let Ok(stream) = assoc.stream(id) else {
+            return 0;
+        };
+
+        stream.buffered_amount().unwrap_or(0)
+    }
+
+    pub fn set_buffered_amount_low_threshold(&mut self, id: u16, threshold: usize) {
+        let entry = self
+            .entries
+            .iter_mut()
+            .find(|e| e.id == id)
+            .expect("stream entry for valid channel id");
+
+        // This update will be propagated on next poll.
+        entry.buffered_threshold.set(threshold);
+    }
+
     pub fn handle_input(&mut self, now: Instant, data: &[u8]) {
         trace!("Handle input: {}", data.len());
 
@@ -494,6 +552,9 @@ impl RtcSctp {
                         debug!("Stream {} closed", id);
                         entry.do_close = true;
                     }
+                    StreamEvent::BufferedAmountLow { id } => {
+                        return Some(SctpEvent::BufferedAmountLow { id });
+                    }
                     _ => {}
                 }
             }
@@ -590,6 +651,19 @@ impl RtcSctp {
                 }
             };
 
+            // Propagate the desired buffered threshold.
+            // The idea is to only do this if the user has changed the value for it without
+            // incurring the cost of looking up the currently confifured value.
+            if let BufferedThresholdConfig::Desired(x) = entry.buffered_threshold {
+                if let Err(e) = stream.set_buffered_amount_low_threshold(x) {
+                    debug!("Setting buffered_amount_low_threshold failed: {:?}", e);
+                    entry.do_close = true;
+                    entry.buffered_threshold = BufferedThresholdConfig::Unconfigured;
+                    continue;
+                }
+
+                entry.buffered_threshold = BufferedThresholdConfig::Configured(x);
+            }
             match stream_read_data(&mut stream) {
                 Ok(Some((buf, ppi))) => {
                     if ppi != PayloadProtocolIdentifier::Dcep {
@@ -731,6 +805,7 @@ fn stream_entry<'a>(
             state: initial_state,
             id,
             do_close: false,
+            buffered_threshold: BufferedThresholdConfig::Unconfigured,
         };
         entries.push(e);
         entries.last_mut().unwrap()
@@ -793,6 +868,9 @@ impl fmt::Debug for SctpEvent {
                 .field("binary", binary)
                 .field("data", &data.len())
                 .finish(),
+            Self::BufferedAmountLow { id } => {
+                f.debug_struct("BufferedAmountLow").field("id", id).finish()
+            }
         }
     }
 }
