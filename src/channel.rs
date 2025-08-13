@@ -59,6 +59,11 @@ impl<'a> Channel<'a> {
     pub fn buffered_amount(&mut self) -> Result<usize, RtcError> {
         Ok(self.rtc.sctp.buffered_amount(self.sctp_stream_id)?)
     }
+
+    /// Set the threshold to emit an [`Event::ChannelBufferedAmountLow`][crate::Event::ChannelBufferedAmountLow]
+    pub fn set_buffered_amount_low_threshold(&mut self, threshold: usize) -> Result<(), RtcError> {
+        Ok(self.rtc.sctp.set_buffered_amount_low_threshold(self.sctp_stream_id, threshold)?)
+    }
 }
 
 impl fmt::Debug for ChannelData {

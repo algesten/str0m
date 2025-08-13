@@ -108,6 +108,9 @@ pub(crate) enum SctpEvent {
         binary: bool,
         data: Vec<u8>,
     },
+    BufferedAmountLow {
+        id: u16
+    }
 }
 
 /// These are the possible paths:
@@ -398,6 +401,32 @@ impl RtcSctp {
         Ok(stream.buffered_amount()?)
     }
 
+    pub fn set_buffered_amount_low_threshold(&mut self, id: u16, threshold: usize) -> Result<(), SctpError> {
+        if self.state != RtcSctpState::Established {
+            return Err(SctpError::BufferedAmountQueryBeforeEstablished);
+        }
+
+        let assoc = self
+            .assoc
+            .as_mut()
+            .ok_or(SctpError::BufferedAmountQueryBeforeEstablished)?;
+
+        let rec = self
+            .entries
+            .iter()
+            .find(|e| e.id == id)
+            .expect("stream entry for write");
+
+        if rec.state != StreamEntryState::Open {
+            return Err(SctpError::BufferedAmountQueryBeforeEstablished);
+        }
+
+        let mut stream = assoc.stream(id)?;
+        stream.set_buffered_amount_low_threshold(threshold)?;
+
+        Ok(())
+    }
+
     pub fn handle_input(&mut self, now: Instant, data: &[u8]) {
         trace!("Handle input: {}", data.len());
 
@@ -522,6 +551,9 @@ impl RtcSctp {
                         );
                         debug!("Stream {} closed", id);
                         entry.do_close = true;
+                    }
+                    StreamEvent::BufferedAmountLow { id } => {
+                        return Some(SctpEvent::BufferedAmountLow { id });
                     }
                     _ => {}
                 }
@@ -822,6 +854,7 @@ impl fmt::Debug for SctpEvent {
                 .field("binary", binary)
                 .field("data", &data.len())
                 .finish(),
+            Self::BufferedAmountLow { id } => f.debug_struct("BufferedAmountLow").field("id", id).finish(),
         }
     }
 }

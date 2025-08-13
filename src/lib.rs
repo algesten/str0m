@@ -953,6 +953,9 @@ pub enum Event {
     /// A data channel has been closed.
     ChannelClose(ChannelId),
 
+    /// A data channel's buffered amount has dropped below the configured threshold.
+    ChannelBufferedAmountLow(ChannelId),
+
     // =================== Statistics and BWE related events ===================
 
     /// Statistics event for the Rtc instance
@@ -1565,6 +1568,13 @@ impl Rtc {
                     };
                     let cd = ChannelData { id, binary, data };
                     return Ok(Output::Event(Event::ChannelData(cd)));
+                }
+                SctpEvent::BufferedAmountLow { id } => {
+                    let Some(id) = self.chan.channel_id_by_stream_id(id) else {
+                        warn!("Drop BufferedAmountLow for id: {:?}", id);
+                        continue;
+                    };
+                    return Ok(Output::Event(Event::ChannelBufferedAmountLow(id)));
                 }
             }
         }
