@@ -54,6 +54,29 @@ impl<'a> Channel<'a> {
     pub fn write(&mut self, binary: bool, buf: &[u8]) -> Result<usize, RtcError> {
         Ok(self.rtc.sctp.write(self.sctp_stream_id, binary, buf)?)
     }
+
+    /// Get the amount of buffered data.
+    ///
+    /// Returns 0 if the channel is closed or encountered some error. This is to
+    /// be similar to the [RTCPeerConnection equivalent][buff]
+    ///
+    /// [buff]: https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel/bufferedAmount
+    pub fn buffered_amount(&mut self) -> usize {
+        self.rtc.sctp.buffered_amount(self.sctp_stream_id)
+    }
+
+    /// Set the threshold to emit an
+    /// [`Event::ChannelBufferedAmountLow`][crate::Event::ChannelBufferedAmountLow]
+    ///
+    /// Setting this on a closed or broken channel does not show an error. This is
+    /// be similar to the [RTCPeerConnection equivalent][buff]
+    ///
+    /// [buff]: https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel/bufferedAmountLowThreshold
+    pub fn set_buffered_amount_low_threshold(&mut self, threshold: usize) {
+        self.rtc
+            .sctp
+            .set_buffered_amount_low_threshold(self.sctp_stream_id, threshold);
+    }
 }
 
 impl fmt::Debug for ChannelData {
