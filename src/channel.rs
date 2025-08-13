@@ -54,6 +54,11 @@ impl<'a> Channel<'a> {
     pub fn write(&mut self, binary: bool, buf: &[u8]) -> Result<usize, RtcError> {
         Ok(self.rtc.sctp.write(self.sctp_stream_id, binary, buf)?)
     }
+
+    /// Get the amount of buffered data.
+    pub fn buffered_amount(&mut self) -> Result<usize, RtcError> {
+        Ok(self.rtc.sctp.buffered_amount(self.sctp_stream_id)?)
+    }
 }
 
 impl fmt::Debug for ChannelData {

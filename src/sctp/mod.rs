@@ -31,6 +31,10 @@ pub enum SctpError {
     #[error("Write on a stream before it was established")]
     WriteBeforeEstablished,
 
+    /// Stream was not ready and we tried to get the buffered amount
+    #[error("Buffered amount query on a stream before it was established")]
+    BufferedAmountQueryBeforeEstablished,
+
     /// The initial DCEP is not valid.
     #[error("DCEP open message too small")]
     DcepOpenTooSmall,
@@ -367,6 +371,31 @@ impl RtcSctp {
         };
 
         Ok(stream.write_with_ppi(buf, ppi)?)
+    }
+
+    pub fn buffered_amount(&mut self, id: u16) -> Result<usize, SctpError> {
+        if self.state != RtcSctpState::Established {
+            return Err(SctpError::BufferedAmountQueryBeforeEstablished);
+        }
+
+        let assoc = self
+            .assoc
+            .as_mut()
+            .ok_or(SctpError::BufferedAmountQueryBeforeEstablished)?;
+
+        let rec = self
+            .entries
+            .iter()
+            .find(|e| e.id == id)
+            .expect("stream entry for write");
+
+        if rec.state != StreamEntryState::Open {
+            return Err(SctpError::BufferedAmountQueryBeforeEstablished);
+        }
+
+        let stream = assoc.stream(id)?;
+
+        Ok(stream.buffered_amount()?)
     }
 
     pub fn handle_input(&mut self, now: Instant, data: &[u8]) {
