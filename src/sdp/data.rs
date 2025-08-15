@@ -3,9 +3,7 @@
 use combine::EasyParser;
 use std::collections::HashSet;
 use std::fmt::{self};
-use std::num::ParseFloatError;
 use std::ops::Deref;
-use std::str::FromStr;
 
 use crate::crypto::Fingerprint;
 use crate::format::Codec;
@@ -688,24 +686,6 @@ impl RestrictionId {
 impl Default for RestrictionId {
     fn default() -> Self {
         RestrictionId("".to_string(), true)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct F32Eq(f32);
-
-impl PartialEq for F32Eq {
-    fn eq(&self, other: &Self) -> bool {
-        (self.0 - other.0).abs() < 0.00000000001
-    }
-}
-impl Eq for F32Eq {}
-
-impl FromStr for F32Eq {
-    type Err = ParseFloatError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(F32Eq(s.parse()?))
     }
 }
 

@@ -394,7 +394,7 @@ impl StreamRx {
         // Calculate the extended timestamp
         let mut time_u32 = extend_u32(previous_time, header.timestamp);
 
-        if self.paused && previous_time.is_some() && time_u32 < previous_time.unwrap() {
+        if self.paused && Some(time_u32) < previous_time {
             // In 32-bit RTP timestamps, adding 2^31 (MAX/2) flips to the other half of timestamp space
             // This forces extend_u32 to produce a value in the next cycle
             const HALF_CYCLE: u32 = 1u32 << 31;
