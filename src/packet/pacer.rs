@@ -416,7 +416,7 @@ impl LeakyBucketPacer {
             .queue_states
             .iter()
             .filter(|qs| qs.unpaced)
-            .filter_map(|qs| (qs.snapshot.first_unsent.map(|t| (t, qs))))
+            .filter_map(|qs| qs.snapshot.first_unsent.map(|t| (t, qs)))
             .min_by_key(|(t, _)| *t);
 
         // Unpaced packets (such as audio by default) are sent immediately.

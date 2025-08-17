@@ -1011,7 +1011,7 @@ pub struct PacketReceipt {
 /// Find the PayloadParams for the given Pt, either when the Pt is the main Pt for the Codec or
 /// when it's the RTX Pt.
 fn main_payload_params(c: &CodecConfig, pt: Pt) -> Option<&PayloadParams> {
-    c.iter().find(|p| (p.pt == pt || p.resend == Some(pt)))
+    c.iter().find(|p| p.pt == pt || p.resend == Some(pt))
 }
 
 fn make_max_seq_lookup(map: &HashMap<Ssrc, SeqNo>) -> impl Fn(Ssrc) -> Option<SeqNo> + '_ {
