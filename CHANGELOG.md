@@ -1,5 +1,7 @@
 # Unreleased
 
+# 0.10.0
+
   * Channel::buffered_amount/set_buffered_amount #688
   * Support PCMu/PCMa #685
   * Make STUN timers configurable on RtcConfig #674

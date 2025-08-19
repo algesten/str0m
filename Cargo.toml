@@ -1,6 +1,6 @@
 [package]
 name = "str0m"
-version = "0.9.0"
+version = "0.10.0"
 authors = ["Martin Algesten <martin@algesten.se>", "Hugo Tunius <h@tunius.se>", "Davide Bertola <dade@dadeb.it>"]
 description = "WebRTC library in Sans-IO style"
 license = "MIT OR Apache-2.0"
