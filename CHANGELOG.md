@@ -1,5 +1,7 @@
 # Unreleased
 
+ * ice: fix panic on STUN Binding Indication #690
+
 # 0.10.0
 
   * Channel::buffered_amount/set_buffered_amount #688

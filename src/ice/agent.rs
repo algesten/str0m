@@ -960,7 +960,13 @@ impl IceAgent {
         let method = message.method();
         let class = message.class();
         match (method, class) {
-            (StunMethod::Binding, StunClass::Request | StunClass::Indication) => {
+            (StunMethod::Binding, StunClass::Indication) => {
+                // https://datatracker.ietf.org/doc/html/rfc8489#section-6.3.2
+                // An Indication can be safely ignored, its purpose is to refresh NATs in the
+                // network path. Some clients MAY omit USERNAME attribute.
+                false
+            }
+            (StunMethod::Binding, StunClass::Request) => {
                 // The username for the credential is formed by concatenating the
                 // username fragment provided by the peer with the username fragment of
                 // the ICE agent sending the request, separated by a colon (":").
@@ -2167,6 +2173,32 @@ mod test {
 
         assert!(!agent.accepts_message(&StunMessage::parse(&fake_reply).unwrap()));
         assert!(agent.accepts_message(&StunMessage::parse(&valid_reply).unwrap()));
+    }
+
+    #[test]
+    fn ignore_binding_indication() {
+        // STUN Binding Indication from OBS WHIP Client using Wireshark
+        //
+        // Session Traversal Utilities for NAT
+        // Message Type: 0x0011 (Binding Indication)
+        // Message Length: 8
+        // Message Cookie: 2112a442
+        // Message Transaction ID: fb9859e67da4bc991c0cab8f
+        // [STUN Network Version: RFC-5389/8489 (3)]
+        // Attributes
+        //     FINGERPRINT
+        //         Attribute Type: FINGERPRINT
+        //         Attribute Length: 4
+        //         CRC-32: 0xed80c297 [correct]
+        //         [CRC-32 Status: Good]
+        const BINDING: &[u8] = &[
+            0x00, 0x11, 0x00, 0x08, 0x21, 0x12, 0xa4, 0x42, 0xfb, 0x98, 0x59, 0xe6, 0x7d, 0xa4,
+            0xbc, 0x99, 0x1c, 0x0c, 0xab, 0x8f, 0x80, 0x28, 0x00, 0x04, 0xed, 0x80, 0xc2, 0x97,
+        ];
+        let stun_msg = StunMessage::parse(&BINDING).unwrap();
+
+        let agent = IceAgent::new();
+        assert!(!agent.accepts_message(&stun_msg));
     }
 
     #[test]
