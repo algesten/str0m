@@ -960,7 +960,13 @@ impl IceAgent {
         let method = message.method();
         let class = message.class();
         match (method, class) {
-            (StunMethod::Binding, StunClass::Request | StunClass::Indication) => {
+            (StunMethod::Binding, StunClass::Indication) => {
+                // https://datatracker.ietf.org/doc/html/rfc8489#section-6.3.2
+                // An Indication can be safely ignored, its purpose is to refresh NATs in the
+                // network path. Some clients MAY omit USERNAME attribute.
+                false
+            }
+            (StunMethod::Binding, StunClass::Request) => {
                 // The username for the credential is formed by concatenating the
                 // username fragment provided by the peer with the username fragment of
                 // the ICE agent sending the request, separated by a colon (":").
