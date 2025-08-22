@@ -2176,6 +2176,34 @@ mod test {
     }
 
     #[test]
+    fn ignore_binding_indication() {
+        // STUN Binding Indication from OBS WHIP Client using Wireshark
+        //
+        // Session Traversal Utilities for NAT
+        // Message Type: 0x0011 (Binding Indication)
+        // Message Length: 8
+        // Message Cookie: 2112a442
+        // Message Transaction ID: fb9859e67da4bc991c0cab8f
+        // [STUN Network Version: RFC-5389/8489 (3)]
+        // Attributes
+        //     FINGERPRINT
+        //         Attribute Type: FINGERPRINT
+        //         Attribute Length: 4
+        //         CRC-32: 0xed80c297 [correct]
+        //         [CRC-32 Status: Good]
+        let binding_hex: String = "
+00 11 00 08 21 12 a4 42 fb 98 59 e6 7d a4 bc 99
+1c 0c ab 8f 80 28 00 04 ed 80 c2 97"
+            .split_whitespace()
+            .collect();
+        let binding_raw = hex::decode(&binding_hex).expect("Failed to decode hex string");
+        let stun_msg = StunMessage::parse(&binding_raw).unwrap();
+
+        let agent = IceAgent::new();
+        assert!(!agent.accepts_message(&stun_msg));
+    }
+
+    #[test]
     fn queues_stun_binding_before_remote_creds() {
         let mut agent = IceAgent::new();
         agent
