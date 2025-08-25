@@ -108,8 +108,6 @@ pub enum Codec {
     PCMU,
     PCMA,
     H264,
-    // TODO show this when we support h265.
-    #[doc(hidden)]
     H265,
     Vp8,
     Vp9,
@@ -505,6 +503,7 @@ impl CodecConfig {
         let mut c = Self::empty();
         c.enable_opus(true);
 
+        c.enable_h265(true);
         c.enable_vp8(true);
         c.enable_h264(true);
         // c.add_default_av1();
@@ -669,6 +668,23 @@ impl CodecConfig {
         for p in PARAMS {
             self.add_h264(p.0.into(), Some(p.1.into()), p.2, p.3)
         }
+    }
+
+    /// Enable H265 codec.
+    pub fn enable_h265(&mut self, enabled: bool) {
+        self.params.retain(|c| c.spec.codec != Codec::H265);
+        if !enabled {
+            return;
+        }
+
+        self.add_config(
+            116.into(),
+            Some(117.into()),
+            Codec::H265,
+            Frequency::NINETY_KHZ,
+            None,
+            FormatParams::default(),
+        );
     }
 
     // TODO: AV1 depacketizer/packetizer.
