@@ -121,6 +121,7 @@ pub struct StunMessage<'a> {
     attrs: Attributes<'a>,
     integrity: &'a [u8],
     integrity_len: u16,
+    unparsed_len: Option<usize>,
 }
 
 impl<'a> StunMessage<'a> {
@@ -129,6 +130,8 @@ impl<'a> StunMessage<'a> {
         if buf.len() < 4 {
             return Err(StunError::Parse("Buffer too short".into()));
         }
+
+        let unparsed_len = buf.len();
 
         let typ = (buf[0] as u16 & 0b0011_1111) << 8 | buf[1] as u16;
         let len = (buf[2] as u16) << 8 | buf[3] as u16;
@@ -203,6 +206,7 @@ impl<'a> StunMessage<'a> {
             attrs,
             integrity,
             integrity_len,
+            unparsed_len: Some(unparsed_len),
         })
     }
 
@@ -340,6 +344,11 @@ impl<'a> StunMessage<'a> {
     /// Returns the value of the NETWORK_COST attribute (ICE), if present.
     pub fn network_cost(&self) -> Option<(u16, u16)> {
         self.attrs.network_cost
+    }
+
+    /// The length of bytes parsed when instance is built using [`Self::parse`].
+    pub fn unparsed_len(&self) -> Option<usize> {
+        self.unparsed_len
     }
 
     /// Constructs a new BINDING request using the provided data.
@@ -1392,6 +1401,7 @@ mod builder {
                 attrs: self.attrs,
                 integrity: &[],   // Calculated during serialization
                 integrity_len: 0, // Calculated during serialization
+                unparsed_len: None,
             }
         }
     }
@@ -1538,6 +1548,7 @@ network_cost: (10, 10) \
             },
             integrity: &[],
             integrity_len: 0,
+            unparsed_len: None,
         };
 
         let mut buf = [0u8; 1024];
@@ -1574,6 +1585,7 @@ network_cost: (10, 10) \
             },
             integrity: &[],
             integrity_len: 0,
+            unparsed_len: None,
         };
 
         let mut buf = [0u8; 1024];
@@ -1605,6 +1617,7 @@ network_cost: (10, 10) \
             },
             integrity: &[],
             integrity_len: 0,
+            unparsed_len: None,
         };
 
         let mut buf = [0u8; 1024];
@@ -1642,6 +1655,7 @@ network_cost: (10, 10) \
             },
             integrity: &[],
             integrity_len: 0,
+            unparsed_len: None,
         };
 
         let mut buf = [0u8; 1024];
@@ -1677,6 +1691,7 @@ network_cost: (10, 10) \
             },
             integrity: &[],
             integrity_len: 0,
+            unparsed_len: None,
         };
 
         let mut buf = [0u8; 1024];
@@ -1708,6 +1723,7 @@ network_cost: (10, 10) \
             },
             integrity: &[],
             integrity_len: 0,
+            unparsed_len: None,
         };
 
         let mut buf = [0u8; 1024];
@@ -1746,6 +1762,7 @@ network_cost: (10, 10) \
             },
             integrity: &[],
             integrity_len: 0,
+            unparsed_len: None,
         };
 
         let mut buf = [0u8; 1024];
@@ -1785,6 +1802,7 @@ network_cost: (10, 10) \
             },
             integrity: &[],
             integrity_len: 0,
+            unparsed_len: None,
         };
 
         let mut buf = [0u8; 1024];

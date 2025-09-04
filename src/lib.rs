@@ -1822,8 +1822,9 @@ impl Rtc {
         use DatagramRecvInner::*;
 
         let bytes_rx = match r.contents.inner {
-            // TODO: stun is already parsed (depacketized) here
-            Stun(_) => 0,
+            // unwrap: StunMessage:parse sets the unparsed_len. We can't be here
+            //         unless we parsed the message.
+            Stun(v) => v.unparsed_len().unwrap(),
             Dtls(v) | Rtp(v) | Rtcp(v) => v.len(),
         };
 
