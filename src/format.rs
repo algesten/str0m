@@ -329,6 +329,10 @@ impl PayloadParams {
             return Self::match_av1_score(c0, c1);
         }
 
+        if c0.codec == Codec::H265 {
+            return Self::match_h265_score(c0, c1);
+        }
+
         // TODO: Fuzzy matching for any other audio codecs
         // TODO: Fuzzy matching for video
 
@@ -430,6 +434,14 @@ impl PayloadParams {
         if c0_profile_level != c1_profile_level {
             return None;
         }
+
+        Some(100)
+    }
+
+    fn match_h265_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
+        // TODO: What to match???
+        // Safari: level-id=93;tx-mode=SRST
+        // Chrome: level-id=180;profile-id=1;tier-flag=0;tx-mode=SRST and level-id=180;profile-id=2;tier-flag=0;tx-mode=SRST
 
         Some(100)
     }
