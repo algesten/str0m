@@ -1,7 +1,10 @@
 use crate::crypto::srtp::SrtpCryptoImpl;
 use crate::crypto::srtp::{aead_aes_128_gcm, aead_aes_256_gcm, aes_128_cm_sha1_80};
 use crate::crypto::CryptoError;
-use str0m_wincrypto::{srtp_aead_aes_gcm_decrypt, srtp_aead_aes_gcm_encrypt,srtp_aes_128_cm, srtp_aes_ecb_round, SrtpKey};
+use str0m_wincrypto::{
+    srtp_aead_aes_gcm_decrypt, srtp_aead_aes_gcm_encrypt, srtp_aes_128_cm, srtp_aes_ecb_round,
+    SrtpKey,
+};
 
 pub struct WinCryptoSrtpCryptoImpl;
 
@@ -98,7 +101,13 @@ impl aead_aes_128_gcm::CipherCtx for WinCryptoAeadAes128Gcm {
         cipher_text: &[u8],
         plain_text: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        Ok(srtp_aead_aes_gcm_decrypt(&self.key, iv, additional_auth_data, cipher_text,plain_text)?)
+        Ok(srtp_aead_aes_gcm_decrypt(
+            &self.key,
+            iv,
+            additional_auth_data,
+            cipher_text,
+            plain_text,
+        )?)
     }
 }
 
@@ -138,6 +147,12 @@ impl aead_aes_256_gcm::CipherCtx for WinCryptoAeadAes256Gcm {
         cipher_text: &[u8],
         plain_text: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        Ok(srtp_aead_aes_gcm_decrypt(&self.key, iv, additional_auth_data, cipher_text, plain_text)?)
+        Ok(srtp_aead_aes_gcm_decrypt(
+            &self.key,
+            iv,
+            additional_auth_data,
+            cipher_text,
+            plain_text,
+        )?)
     }
 }
