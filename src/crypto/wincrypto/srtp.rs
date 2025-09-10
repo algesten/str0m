@@ -1,8 +1,7 @@
 use crate::crypto::srtp::SrtpCryptoImpl;
 use crate::crypto::srtp::{aead_aes_128_gcm, aead_aes_256_gcm, aes_128_cm_sha1_80};
 use crate::crypto::CryptoError;
-use str0m_wincrypto::srtp_aead_aes_gcm_crypt;
-use str0m_wincrypto::{srtp_aes_128_cm, srtp_aes_128_ecb_round, srtp_aes_256_ecb_round, SrtpKey};
+use str0m_wincrypto::{srtp_aead_aes_gcm_decrypt, srtp_aead_aes_gcm_encrypt,srtp_aes_128_cm, srtp_aes_ecb_round, SrtpKey};
 
 pub struct WinCryptoSrtpCryptoImpl;
 
@@ -13,13 +12,13 @@ impl SrtpCryptoImpl for WinCryptoSrtpCryptoImpl {
 
     fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
         let key = SrtpKey::create_aes_ecb_key(key).expect("AES key");
-        let count = srtp_aes_128_ecb_round(&key, input, output).expect("AES encrypt");
+        let count = srtp_aes_ecb_round(&key, input, output).expect("AES encrypt");
         assert_eq!(count, 16 + 16); // block size
     }
 
     fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
         let key = SrtpKey::create_aes_ecb_key(key).expect("AES key");
-        let count = srtp_aes_256_ecb_round(&key, input, output).expect("AES encrypt");
+        let count = srtp_aes_ecb_round(&key, input, output).expect("AES encrypt");
         assert_eq!(count, 16 + 16); // block size
     }
 }
@@ -88,7 +87,7 @@ impl aead_aes_128_gcm::CipherCtx for WinCryptoAeadAes128Gcm {
         plain_text: &[u8],
         cipher_text: &mut [u8],
     ) -> Result<(), CryptoError> {
-        srtp_aead_aes_gcm_crypt(&self.key, iv, additional_auth_data, plain_text, cipher_text)?;
+        srtp_aead_aes_gcm_encrypt(&self.key, iv, additional_auth_data, plain_text, cipher_text)?;
         Ok(())
     }
 
@@ -99,7 +98,7 @@ impl aead_aes_128_gcm::CipherCtx for WinCryptoAeadAes128Gcm {
         cipher_text: &[u8],
         plain_text: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        srtp_aead_aes_gcm_crypt(&self.key, iv, additional_auth_data, plain_text, cipher_text);
+        Ok(srtp_aead_aes_gcm_decrypt(&self.key, iv, additional_auth_data, cipher_text,plain_text)?)
     }
 }
 
@@ -128,7 +127,7 @@ impl aead_aes_256_gcm::CipherCtx for WinCryptoAeadAes256Gcm {
         plain_text: &[u8],
         cipher_text: &mut [u8],
     ) -> Result<(), CryptoError> {
-        srtp_aead_aes_gcm_crypt(&self.key, iv, additional_auth_data, plain_text, cipher_text)?;
+        srtp_aead_aes_gcm_encrypt(&self.key, iv, additional_auth_data, plain_text, cipher_text)?;
         Ok(())
     }
 
@@ -139,6 +138,6 @@ impl aead_aes_256_gcm::CipherCtx for WinCryptoAeadAes256Gcm {
         cipher_text: &[u8],
         plain_text: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        srtp_aead_aes_gcm_crypt(&self.key, iv, additional_auth_data, plain_text, cipher_text)
+        Ok(srtp_aead_aes_gcm_decrypt(&self.key, iv, additional_auth_data, cipher_text, plain_text)?)
     }
 }

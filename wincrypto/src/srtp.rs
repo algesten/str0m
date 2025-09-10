@@ -146,9 +146,9 @@ pub fn srtp_aes_128_cm(
     Ok(input.len() as usize)
 }
 
-/// Run the given plain_text through the AES-xxx-GCM alg with the given key and receive the
+/// Run the given plain_text through the AES-GCM alg with the given key and receive the
 /// cipher_text which will include the auth tag.
-pub fn srtp_aead_aes_gcm_crypt(
+pub fn srtp_aead_aes_gcm_encrypt(
     key: &SrtpKey,
     iv: &[u8],
     additional_auth_data: &[u8],
@@ -190,6 +190,64 @@ pub fn srtp_aead_aes_gcm_crypt(
             Some(addr_of!(auth_cipher_mode_info) as *const std::ffi::c_void),
             None,
             Some(cipher_text),
+            &mut count,
+            BCRYPT_FLAGS(0),
+        ))?;
+    }
+    Ok(count as usize)
+}
+
+/// Run the given tagged cipher_text through the AES-GCM alg with the given key and
+/// receive the decrypted plain_text.
+pub fn srtp_aead_aes_gcm_decrypt(
+    key: &SrtpKey,
+    iv: &[u8],
+    additional_auth_data: &[&[u8]],
+    cipher_text: &[u8],
+    plain_text: &mut [u8],
+) -> Result<usize, WinCryptoError> {
+    if cipher_text.len() < AEAD_AES_GCM_TAG_LEN {
+        return Err(WinCryptoError(
+            "Cipher Text too short to include tag".to_string(),
+        ));
+    }
+    let (cipher_text, tag) = cipher_text.split_at(cipher_text.len() - AEAD_AES_GCM_TAG_LEN);
+
+    // If don't have exactly one auth_data, we need to flatten it. This will
+    // hold our reference to the data.
+    let flattened_auth_data = if additional_auth_data.len() != 1 {
+        Some(additional_auth_data.concat())
+    } else {
+        None
+    };
+    let additional_auth_data = flattened_auth_data
+        .as_ref()
+        .map_or(additional_auth_data[0], |f| f.as_slice());
+
+    let auth_cipher_mode_info = BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO {
+        pbAuthData: additional_auth_data.as_ptr() as *mut u8,
+        cbAuthData: additional_auth_data.len() as u32,
+        dwInfoVersion: BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO_VERSION,
+        cbSize: std::mem::size_of::<BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO>() as u32,
+        pbTag: tag.as_ptr() as *mut u8,
+        cbTag: tag.len() as u32,
+        pbNonce: iv.as_ptr() as *mut u8,
+        cbNonce: iv.len() as u32,
+        ..Default::default()
+    };
+
+    let mut count = 0;
+    // SAFETY: The Windows API accepts references, so normal borrow checker
+    // behaviors work for those. The `auth_cipher_mode_info` however, contains
+    // pointers. It is important that the data pointed to there (`additional_auth_data`,
+    // `cipher_text` and `iv`) exists for the duration of the unsafe block.
+    unsafe {
+        WinCryptoError::from_ntstatus(BCryptDecrypt(
+            *key.0,
+            Some(cipher_text),
+            Some(addr_of!(auth_cipher_mode_info) as *const std::ffi::c_void),
+            None,
+            Some(plain_text),
             &mut count,
             BCRYPT_FLAGS(0),
         ))?;

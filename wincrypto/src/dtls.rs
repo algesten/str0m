@@ -37,7 +37,7 @@ use windows::Win32::{
 #[repr(C)]
 struct SrtpProtectionProfilesBuffer {
     count: u16,
-    profiles: [u16; 2], // Big-Endian Encoded values.
+    profiles: [u16; 3], // Big-Endian Encoded values.
 }
 const SRTP_PROTECTION_PROFILES_BUFFER_INSTANCE: SrtpProtectionProfilesBuffer =
     SrtpProtectionProfilesBuffer {
