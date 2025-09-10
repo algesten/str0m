@@ -2,7 +2,7 @@ use crate::crypto::srtp::SrtpCryptoImpl;
 use crate::crypto::srtp::{aead_aes_128_gcm, aead_aes_256_gcm, aes_128_cm_sha1_80};
 use crate::crypto::CryptoError;
 use str0m_wincrypto::srtp_aead_aes_gcm_crypt;
-use str0m_wincrypto::{srtp_aes_128_cm, srtp_aes_128_ecb_round, SrtpKey};
+use str0m_wincrypto::{srtp_aes_128_cm, srtp_aes_128_ecb_round, srtp_aes_256_ecb_round, SrtpKey};
 
 pub struct WinCryptoSrtpCryptoImpl;
 
@@ -14,6 +14,12 @@ impl SrtpCryptoImpl for WinCryptoSrtpCryptoImpl {
     fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
         let key = SrtpKey::create_aes_ecb_key(key).expect("AES key");
         let count = srtp_aes_128_ecb_round(&key, input, output).expect("AES encrypt");
+        assert_eq!(count, 16 + 16); // block size
+    }
+
+    fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
+        let key = SrtpKey::create_aes_ecb_key(key).expect("AES key");
+        let count = srtp_aes_256_ecb_round(&key, input, output).expect("AES encrypt");
         assert_eq!(count, 16 + 16); // block size
     }
 }

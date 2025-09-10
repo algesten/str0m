@@ -70,9 +70,9 @@ impl SrtpContext {
                 }
             }
             SrtpProfile::AeadAes256Gcm => {
-                use aead_aes_256_gcm::{MASTER_KEY_LEN, SALT_LEN};
+                use aead_aes_256_gcm::{KEY_LEN, SALT_LEN};
 
-                let key = SrtpKey::<MASTER_KEY_LEN, SALT_LEN>::new(mat, left);
+                let key = SrtpKey::<KEY_LEN, SALT_LEN>::new(mat, left);
 
                 let (rtp, rtcp) = Derived::aead_aes_256_gcm(crypto, &key);
 
@@ -690,13 +690,13 @@ impl<const ML: usize, const SL: usize> SrtpKey<ML, SL> {
     }
 
     fn derive(&self, crypto: &SrtpCrypto, label: u8, out: &mut [u8]) {
-        // AES-CM (128 bits) defined in RFC3711
-        assert!(ML == 16, "Only valid for 128 bit master keys");
+        // AES-CM (128 or 256 bits) defined in RFC3711
+        assert!(ML == 16 || ML == 32, "Only valid for 128 bit master keys");
         assert!(SL <= 14, "Only valid for 128 bit master keys");
         let mut i = 0; // index in out
 
         // input layout: [salt[SL] || label, round[2]] (|| is xor 7th byte)
-        let mut input = [0; ML];
+        let mut input = [0; 16];
 
         input[0..SL].copy_from_slice(&self.salt[..]);
         input[7] ^= label;
@@ -714,7 +714,11 @@ impl<const ML: usize, const SL: usize> SrtpKey<ML, SL> {
             input[14..].copy_from_slice(&round.to_be_bytes()[..]);
 
             // default key derivation function, which uses AES-128 in Counter Mode
-            crypto.srtp_aes_128_ecb_round(&self.master, &input[..], &mut buf[..]);
+            match ML {
+                16 => crypto.srtp_aes_128_ecb_round(&self.master, &input[..], &mut buf[..]),
+                32 => crypto.srtp_aes_256_ecb_round(&self.master, &input[..], &mut buf[..]),
+                _ => panic!("Only valid for 128 or 256 bit master keys"),
+            }
 
             // Copy to output. Even if we get 32 bytes of output with AES 128 ECB, we
             // only use the first 16. That matches the tests in the RFC.
@@ -846,7 +850,7 @@ impl Derived {
 
     fn aead_aes_256_gcm(
         crypto: &SrtpCrypto,
-        srtp_key: &SrtpKey<{ aead_aes_256_gcm::MASTER_KEY_LEN }, { aead_aes_256_gcm::SALT_LEN }>,
+        srtp_key: &SrtpKey<{ aead_aes_256_gcm::KEY_LEN }, { aead_aes_256_gcm::SALT_LEN }>,
     ) -> (Derived, Derived) {
         use aead_aes_256_gcm::*;
 

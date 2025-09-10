@@ -33,7 +33,7 @@ impl SrtpProfile {
              // don't want a dependency in that direction.
             SrtpProfile::Aes128CmSha1_80 => 16 * 2 + 14 * 2,
             SrtpProfile::AeadAes128Gcm   => 16 * 2 + 12 * 2,
-            SrtpProfile::AeadAes256Gcm   => 16 * 2 + 12 * 2,
+            SrtpProfile::AeadAes256Gcm   => 32 * 2 + 12 * 2,
         }
     }
 }
@@ -114,6 +114,13 @@ impl SrtpCrypto {
             SrtpCrypto::WinCrypto(v) => v.srtp_aes_128_ecb_round(key, input, output),
         }
     }
+
+    pub fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
+        match self {
+            SrtpCrypto::OpenSsl(v) => v.srtp_aes_256_ecb_round(key, input, output),
+            SrtpCrypto::WinCrypto(v) => v.srtp_aes_256_ecb_round(key, input, output),
+        }
+    }
 }
 
 pub trait SrtpCryptoImpl {
@@ -142,6 +149,8 @@ pub trait SrtpCryptoImpl {
     }
 
     fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]);
+
+    fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]);
 }
 
 pub mod aes_128_cm_sha1_80 {
@@ -300,7 +309,6 @@ pub mod aead_aes_256_gcm {
     use crate::crypto::CryptoError;
 
     pub const KEY_LEN: usize = 32;
-    pub const MASTER_KEY_LEN: usize = 16;
     pub const SALT_LEN: usize = 12;
     pub const RTCP_AAD_LEN: usize = 12;
     pub const TAG_LEN: usize = 16;
@@ -405,6 +413,10 @@ impl SrtpCryptoImpl for DummySrtpCryptoImpl {
     }
 
     fn srtp_aes_128_ecb_round(&self, _: &[u8], _: &[u8], _: &mut [u8]) {
+        panic!("Must enable feature: {}", self.0)
+    }
+
+    fn srtp_aes_256_ecb_round(&self, _: &[u8], _: &[u8], _: &mut [u8]) {
         panic!("Must enable feature: {}", self.0)
     }
 }

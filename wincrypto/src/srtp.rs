@@ -64,8 +64,8 @@ impl SrtpKey {
     }
 }
 
-/// Run the given input through the AES-128-ECB using the given AES ECB key.
-pub fn srtp_aes_128_ecb_round(
+/// Run the given input through the AES-xxx-ECB using the given AES ECB key.
+pub fn srtp_aes_ecb_round(
     key: &SrtpKey,
     input: &[u8],
     output: &mut [u8],
@@ -206,7 +206,7 @@ mod test {
         let key =
             SrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
         let mut out = [0u8; 32];
-        srtp_aes_128_ecb_round(
+        srtp_aes_ecb_round(
             &key,
             &hex_to_vec("6bc1bee22e409f96e93d7e117393172a"),
             &mut out,
@@ -220,7 +220,7 @@ mod test {
         let key =
             SrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
         let mut out = [0u8; 32];
-        srtp_aes_128_ecb_round(
+        srtp_aes_ecb_round(
             &key,
             &hex_to_vec("ae2d8a571e03ac9c9eb76fac45af8e51"),
             &mut out,
@@ -234,7 +234,7 @@ mod test {
         let key =
             SrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
         let mut out = [0u8; 32];
-        srtp_aes_128_ecb_round(
+        srtp_aes_ecb_round(
             &key,
             &hex_to_vec("30c81c46a35ce411e5fbc1191a0a52ef"),
             &mut out,
@@ -248,7 +248,7 @@ mod test {
         let key =
             SrtpKey::create_aes_ecb_key(&hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c")).unwrap();
         let mut out = [0u8; 32];
-        srtp_aes_128_ecb_round(
+        srtp_aes_ecb_round(
             &key,
             &hex_to_vec("f69f2445df4f9b17ad2b417be66c3710"),
             &mut out,

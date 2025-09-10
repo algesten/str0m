@@ -23,6 +23,17 @@ impl SrtpCryptoImpl for OsslSrtpCryptoImpl {
 
         assert_eq!(count + rest, 16 + 16); // input len + block size
     }
+
+    fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
+        let mut aes =
+            Crypter::new(Cipher::aes_256_ecb(), Mode::Encrypt, key, None).expect("AES deriver");
+
+        // Run AES
+        let count = aes.update(input, output).expect("AES update");
+        let rest = aes.finalize(&mut output[count..]).expect("AES finalize");
+
+        assert_eq!(count + rest, 16 + 16); // input len + block size
+    }
 }
 
 pub struct OsslAes128CmSha1_80(CipherCtx);
