@@ -86,7 +86,7 @@ mod keying;
 pub use keying::KeyingMaterial;
 
 mod srtp;
-pub use srtp::{aead_aes_128_gcm, aes_128_cm_sha1_80, SrtpCrypto, SrtpProfile};
+pub use srtp::{aead_aes_128_gcm, aead_aes_256_gcm, aes_128_cm_sha1_80, SrtpCrypto, SrtpProfile};
 
 /// SHA1 HMAC as used for STUN and older SRTP.
 /// If sha1 feature is enabled, it uses `rust-crypto` crate.

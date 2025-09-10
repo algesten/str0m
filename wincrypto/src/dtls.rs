@@ -44,6 +44,7 @@ const SRTP_PROTECTION_PROFILES_BUFFER_INSTANCE: SrtpProtectionProfilesBuffer =
         count: 4,
         // These are encoded as BE, since SChannel seemingly copies this buffer verbatim.
         profiles: [
+            u16::to_be(0x0008), /* SRTP_AES256_GCM (RFC7714 Sec 14.2) */
             u16::to_be(0x0007), /* SRTP_AES128_GCM (RFC7714 Sec 14.2) */
             u16::to_be(0x0001), /* SRTP_AES128_CM_SHA1_80 (RFC5764 Section 4.1.2) */
         ],
