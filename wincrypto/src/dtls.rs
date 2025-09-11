@@ -37,13 +37,14 @@ use windows::Win32::{
 #[repr(C)]
 struct SrtpProtectionProfilesBuffer {
     count: u16,
-    profiles: [u16; 2], // Big-Endian Encoded values.
+    profiles: [u16; 3], // Big-Endian Encoded values.
 }
 const SRTP_PROTECTION_PROFILES_BUFFER_INSTANCE: SrtpProtectionProfilesBuffer =
     SrtpProtectionProfilesBuffer {
         count: 4,
         // These are encoded as BE, since SChannel seemingly copies this buffer verbatim.
         profiles: [
+            u16::to_be(0x0008), /* SRTP_AES256_GCM (RFC7714 Sec 14.2) */
             u16::to_be(0x0007), /* SRTP_AES128_GCM (RFC7714 Sec 14.2) */
             u16::to_be(0x0001), /* SRTP_AES128_CM_SHA1_80 (RFC5764 Section 4.1.2) */
         ],
@@ -645,6 +646,7 @@ fn srtp_keying_material_len(srtp_profile_id: u16) -> Result<u32, WinCryptoError>
     match srtp_profile_id {
         0x0001 => Ok(16 * 2 + 14 * 2),
         0x0007 => Ok(16 * 2 + 12 * 2),
+        0x0008 => Ok(32 * 2 + 12 * 2),
         id => Err(WinCryptoError(format!(
             "Unknown SRTP Profile Requested: {id}"
         ))),

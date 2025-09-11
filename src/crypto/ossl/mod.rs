@@ -22,6 +22,7 @@ impl SrtpProfile {
             SrtpProfile::PassThrough => "NULL",
             SrtpProfile::Aes128CmSha1_80 => "SRTP_AES128_CM_SHA1_80",
             SrtpProfile::AeadAes128Gcm => "SRTP_AEAD_AES_128_GCM",
+            SrtpProfile::AeadAes256Gcm => "SRTP_AEAD_AES_256_GCM",
         }
     }
 }

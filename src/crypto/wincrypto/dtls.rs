@@ -85,6 +85,7 @@ fn srtp_profile_from_network_endian_id(srtp_profile_id: u16) -> SrtpProfile {
     match srtp_profile_id {
         0x0001 => SrtpProfile::Aes128CmSha1_80,
         0x0007 => SrtpProfile::AeadAes128Gcm,
+        0x0008 => SrtpProfile::AeadAes256Gcm,
         _ => panic!("Unknown SRTP profile ID: {:04x}", srtp_profile_id),
     }
 }
