@@ -259,7 +259,8 @@ pub fn srtp_aead_aes_gcm_decrypt(
 mod test {
     use super::*;
 
-    // These test vectors come from: https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf
+    // The test vectors in the following tests come from:
+    // https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf
 
     #[test]
     fn test_srtp_aes_128_ecb_round_test_vec_1() {
