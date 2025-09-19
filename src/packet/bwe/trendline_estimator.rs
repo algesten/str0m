@@ -414,9 +414,9 @@ mod test {
         // Test for algesten/str0m#698
         //
         // This test reproduces the scenario where a sample with a remote receive time
-        // earlier than all existing history entries is added when the window is full.
+        // earlier than all existing history entries is added.
         // Prior to the fix, this appended the smallest (negative) element to the end
-        // causing the monotonicity assert to fail.
+        // causing the monotonicity assert to fail when the window is full.
 
         let now = Instant::now();
         let zero_time_base = Instant::now();
