@@ -1,7 +1,7 @@
 # Unreleased
 
  * ice: fix panic on STUN Binding Indication #690
- * ice: fix `Vp9Depacketizer` failing on high scalability modes #701
+ * fix `Vp9Depacketizer` failing on high scalability modes #701
 
 # 0.10.0
 
