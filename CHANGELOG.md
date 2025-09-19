@@ -1,6 +1,8 @@
 # Unreleased
 
+ * srtp: support (and prefer) AES_256_GCM #697
  * ice: fix panic on STUN Binding Indication #690
+ * bwe: fix panic on history monotonicity assert in `TrendlineEstimator` #700
  * fix `Vp9Depacketizer` failing on high scalability modes #701
 
 # 0.10.0
