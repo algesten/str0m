@@ -252,8 +252,8 @@ pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {
     r.add_local_candidate(host2);
     r.add_remote_candidate(host1);
 
-    let finger_l = l.direct_api().local_dtls_fingerprint();
-    let finger_r = r.direct_api().local_dtls_fingerprint();
+    let finger_l = l.direct_api().local_dtls_fingerprint().clone();
+    let finger_r = r.direct_api().local_dtls_fingerprint().clone();
 
     l.direct_api().set_remote_fingerprint(finger_r);
     r.direct_api().set_remote_fingerprint(finger_l);

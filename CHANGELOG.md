@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Tweak DirectAPI fingerprint() calls (breaking) #711
+  * Restore disabling RtcConfig.fingerprint_verification #711
   * Fix panic width incorrect STUN packet #709
 
 # 0.11.0

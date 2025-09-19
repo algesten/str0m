@@ -77,13 +77,13 @@ impl<'a> DirectApi<'a> {
     ///
     /// The DTLS fingerprint is a hash of the local SSL/TLS certificate used to authenticate the
     /// peer connection and establish a secure communication channel between the peers.
-    pub fn local_dtls_fingerprint(&self) -> Fingerprint {
-        self.rtc.dtls.local_fingerprint().clone()
+    pub fn local_dtls_fingerprint(&self) -> &Fingerprint {
+        self.rtc.dtls.local_fingerprint()
     }
 
     /// Returns a reference to the remote DTLS fingerprint used by this peer connection.
-    pub fn remote_dtls_fingerprint(&self) -> Option<Fingerprint> {
-        self.rtc.dtls.remote_fingerprint().clone()
+    pub fn remote_dtls_fingerprint(&self) -> Option<&Fingerprint> {
+        self.rtc.dtls.remote_fingerprint()
     }
 
     /// Sets the remote DTLS fingerprint.
