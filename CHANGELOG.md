@@ -1,5 +1,6 @@
 # Unreleased
 
+ * dtls: support (and prefer) AES_256_GGCM #697
  * ice: fix panic on STUN Binding Indication #690
 
 # 0.10.0
