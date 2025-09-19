@@ -901,7 +901,8 @@ impl<'a> Attributes<'a> {
                         warn!("STUN got MappedAddress");
                     }
                     Self::USERNAME => {
-                        attributes.username = Some(decode_str(typ, &buf[4..], len)?);
+                        // It MUST contain a UTF-8 [RFC3629] encoded sequence of less than 513 bytes
+                        attributes.username = Some(decode_str(typ, 513, &buf[4..], len)?);
                     }
                     Self::MESSAGE_INTEGRITY => {
                         if len != 20 {
@@ -926,7 +927,10 @@ impl<'a> Attributes<'a> {
                             )));
                         }
                         let code = class + (buf[7] % 100) as u16;
-                        attributes.error_code = Some((code, decode_str(typ, &buf[8..], len - 4)?));
+                        // The reason phrase MUST be a UTF-8 [RFC3629] encoded sequence of less
+                        // than 128 characters (which can be as long as 763 bytes).
+                        attributes.error_code =
+                            Some((code, decode_str(typ, 763, &buf[8..], len - 4)?));
                     }
                     Self::CHANNEL_NUMBER => {
                         if len != 4 {
@@ -963,10 +967,13 @@ impl<'a> Attributes<'a> {
                         attributes.data = Some(&buf[4..len + 4]);
                     }
                     Self::REALM => {
-                        attributes.realm = Some(decode_str(typ, &buf[4..], len)?);
+                        // It MUST be a UTF-8 [RFC3629] encoded sequence of less than
+                        // 128 characters (which can be as long as 763 bytes)
+                        attributes.realm = Some(decode_str(typ, 763, &buf[4..], len)?);
                     }
                     Self::NONCE => {
-                        attributes.nonce = Some(decode_str(typ, &buf[4..], len)?);
+                        // It MUST be less than 128 characters (which can be as long as 763 bytes).
+                        attributes.nonce = Some(decode_str(typ, 763, &buf[4..], len)?);
                     }
                     Self::XOR_RELAYED_ADDRESS => {
                         attributes.xor_relayed_address = Some(decode_xor(&buf[4..], trans_id)?);
@@ -975,7 +982,9 @@ impl<'a> Attributes<'a> {
                         attributes.xor_mapped_address = Some(decode_xor(&buf[4..], trans_id)?);
                     }
                     Self::SOFTWARE => {
-                        attributes.software = Some(decode_str(typ, &buf[4..], len)?);
+                        // It MUST be a UTF-8 [RFC3629] encoded sequence of less than
+                        // 128 characters (which can be as long as 763 bytes)
+                        attributes.software = Some(decode_str(typ, 763, &buf[4..], len)?);
                     }
                     Self::PRIORITY => {
                         if len != 4 {
@@ -1062,10 +1071,10 @@ fn encode_str_no_len(typ: u16, s: &str, out: &mut dyn Write) -> io::Result<()> {
     Ok(())
 }
 
-fn decode_str(typ: u16, buf: &[u8], len: usize) -> Result<&str, StunError> {
-    if len > 128 {
+fn decode_str(typ: u16, max_bytes: usize, buf: &[u8], len: usize) -> Result<&str, StunError> {
+    if len > max_bytes {
         return Err(StunError::Parse(format!(
-            "0x{typ:04x?} too long str len: {len}"
+            "0x{typ:04x?} too long str len: {len} (max {max_bytes})"
         )));
     }
     match str::from_utf8(&buf[0..len]).ok() {
