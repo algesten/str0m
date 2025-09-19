@@ -1,6 +1,7 @@
 # Unreleased
 
  * ice: fix panic on STUN Binding Indication #690
+ * bwe: fix panic on assert in `TrendlineEstimator` caused by monotonicity breaking on packet reordering #700 
 
 # 0.10.0
 

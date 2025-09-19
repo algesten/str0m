@@ -453,6 +453,9 @@ mod test {
             .iter()
             .zip(estimator.history.iter().skip(1))
             .all(|(a, b)| a.remote_recv_time_ms <= b.remote_recv_time_ms);
-        assert!(ordered, "history should remain sorted by remote_recv_time_ms");
+        assert!(
+            ordered,
+            "history should remain sorted by remote_recv_time_ms"
+        );
     }
 }
