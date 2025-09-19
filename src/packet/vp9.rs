@@ -259,7 +259,7 @@ pub struct Vp9Depacketizer {
 
     /// Conditionally required headers
     /// Reference index (F=1)
-    pub pdiff: Vec<u8>,
+    pub pdiff: [u8; MAX_VP9REF_PICS],
     /// Temporal layer zero index (F=0)
     pub tl0picidx: u8,
 
@@ -503,17 +503,20 @@ impl Vp9Depacketizer {
         mut payload_index: usize,
     ) -> Result<usize, PacketError> {
         let mut b = 1u8;
+        let mut num_ref_pics = 0;
         while (b & 0x1) != 0 {
+            if num_ref_pics == MAX_VP9REF_PICS {
+                return Err(PacketError::ErrTooManyPDiff);
+            }
+
             if reader.remaining() == 0 {
                 return Err(PacketError::ErrShortPacket);
             }
             b = reader.get_u8().ok_or(PacketError::ErrShortPacket)?;
             payload_index += 1;
 
-            self.pdiff.push(b >> 1);
-            if self.pdiff.len() >= MAX_VP9REF_PICS {
-                return Err(PacketError::ErrTooManyPDiff);
-            }
+            self.pdiff[num_ref_pics] = b >> 1;
+            num_ref_pics += 1;
         }
 
         Ok(payload_index)
@@ -558,7 +561,7 @@ impl Vp9Depacketizer {
         let ns = (self.ns + 1) as usize;
         self.ng = 0;
 
-        if ns >= MAX_SPATIAL_LAYERS {
+        if ns > MAX_SPATIAL_LAYERS {
             return Err(PacketError::ErrVP9CorruptedPacket);
         }
 
@@ -722,7 +725,7 @@ mod test {
                     p: true,
                     f: true,
                     picture_id: 0x02,
-                    pdiff: vec![0x01, 0x02],
+                    pdiff: [0x01, 0x02, 0],
                     ..Default::default()
                 },
                 &[0xAA],
@@ -743,7 +746,7 @@ mod test {
                     p: true,
                     f: true,
                     picture_id: 0x02,
-                    pdiff: vec![0x01, 0x02],
+                    pdiff: [0x01, 0x02, 0],
                     ..Default::default()
                 },
                 &[],
@@ -830,6 +833,61 @@ mod test {
                     pgtid: vec![0, 2],
                     pgu: vec![true, false],
                     pgpdiff: vec![vec![], vec![33]],
+                    ..Default::default()
+                },
+                &[],
+                None,
+            ),
+            (
+                "ScalabilityStructureThreeLayers",
+                &[
+                    0x0A,
+                    (2 << 5) | (1 << 4), // NS:2 Y:1 G:0
+                    (480 >> 8) as u8,
+                    (480 & 0xff) as u8,
+                    (270 >> 8) as u8,
+                    (270 & 0xff) as u8,
+                    (960 >> 8) as u8,
+                    (960 & 0xff) as u8,
+                    (540 >> 8) as u8,
+                    (540 & 0xff) as u8,
+                    (1920 >> 8) as u8,
+                    (1920 & 0xff) as u8,
+                    (1080 >> 8) as u8,
+                    (1080 & 0xff) as u8,
+                ],
+                Vp9Depacketizer {
+                    b: true,
+                    v: true,
+                    ns: 2,
+                    y: true,
+                    g: false,
+                    ng: 0,
+                    width: [Some(480), Some(960), Some(1920)],
+                    height: [Some(270), Some(540), Some(1080)],
+                    ..Default::default()
+                },
+                &[],
+                None,
+            ),
+            (
+                "ParseRefIdx",
+                &[
+                    0xD8,                              /* I:1 P:1 L:0 F:1
+                                                        * B:1 E:0 V:0 Z:0 */
+                    (0x80 | ((17 >> 8) & 0x7F)) as u8, // Two byte pictureID.
+                    17,                                // TL0PICIDX
+                    (17 << 1) | 1,                     // P_DIFF N:1
+                    (18 << 1) | 1,                     // P_DIFF N:1
+                    (127 << 1) | 0,                    // P_DIFF N:0
+                ],
+                Vp9Depacketizer {
+                    i: true,
+                    p: true,
+                    f: true,
+                    b: true,
+                    picture_id: 17,
+                    pdiff: [17, 18, 127],
                     ..Default::default()
                 },
                 &[],
