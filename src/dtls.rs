@@ -80,8 +80,8 @@ impl Dtls {
     }
 
     /// Remote fingerprint.
-    pub fn remote_fingerprint(&self) -> &Option<Fingerprint> {
-        &self.remote_fingerprint
+    pub fn remote_fingerprint(&self) -> Option<&Fingerprint> {
+        self.remote_fingerprint.as_ref()
     }
 
     /// Poll for the next datagram to send.
@@ -115,7 +115,12 @@ impl Dtls {
             return Ok(());
         }
 
-        Ok(self.dtls_impl.handle_receive(message, &mut self.events)?)
+        let len_before = self.events.len();
+        self.dtls_impl.handle_receive(message, &mut self.events)?;
+
+        self.intercept_fingerprint(len_before);
+
+        Ok(())
     }
 
     /// Handle handshaking.
@@ -125,6 +130,12 @@ impl Dtls {
         let len_before = self.events.len();
         let result = self.dtls_impl.handle_handshake(&mut self.events)?;
 
+        self.intercept_fingerprint(len_before);
+
+        Ok(result)
+    }
+
+    fn intercept_fingerprint(&mut self, len_before: usize) {
         if self.remote_fingerprint.is_none() && self.events.len() > len_before {
             for ev in &self.events {
                 if let DtlsEvent::RemoteFingerprint(fingerprint) = ev {
@@ -132,8 +143,6 @@ impl Dtls {
                 }
             }
         }
-
-        Ok(result)
     }
 
     pub(crate) fn is_connected(&self) -> bool {

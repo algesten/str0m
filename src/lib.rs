@@ -793,6 +793,7 @@ pub struct Rtc {
     change_counter: usize,
     last_timeout_reason: Reason,
     crypto_provider: CryptoProvider,
+    fingerprint_verification: bool,
 }
 
 struct SendAddr {
@@ -1092,6 +1093,7 @@ impl Rtc {
             change_counter: 0,
             last_timeout_reason: Reason::NotHappening,
             crypto_provider,
+            fingerprint_verification: config.fingerprint_verification,
         }
     }
 
@@ -1411,7 +1413,9 @@ impl Rtc {
                 DtlsEvent::RemoteFingerprint(v1) => {
                     debug!("DTLS verify remote fingerprint");
                     if let Some(v2) = &self.remote_fingerprint {
-                        if v1 != *v2 {
+                        if !self.fingerprint_verification {
+                            debug!("DTLS fingerprint verification disabled");
+                        } else if v1 != *v2 {
                             self.disconnect();
                             return Err(RtcError::RemoteSdp("remote fingerprint no match".into()));
                         }
