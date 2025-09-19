@@ -128,7 +128,7 @@ impl TrendlineEstimator {
             .iter()
             .rev()
             .position(|p| p.remote_recv_time_ms <= timing.remote_recv_time_ms)
-            .unwrap_or(0);
+            .unwrap_or(self.history.len());
 
         // we expect pos to be 0 more often than not
         self.history.insert(self.history.len() - pos, timing);
@@ -407,5 +407,52 @@ mod test {
             arrival_delta: recv_delta.into(),
             last_remote_recv_time,
         }
+    }
+
+    #[test]
+    fn test_history_insertion_regression_out_of_order() {
+        // Test for algesten/str0m#698
+        //
+        // This test reproduces the scenario where a sample with a remote receive time
+        // earlier than all existing history entries is added when the window is full.
+        // Prior to the fix, this appended the smallest (negative) element to the end
+        // causing the monotonicity assert to fail.
+
+        let now = Instant::now();
+        let zero_time_base = Instant::now();
+        let mut estimator = TrendlineEstimator::new(8);
+
+        // Add a few normal monotonically increasing values
+        for offset_ms in [100, 200, 300, 400] {
+            estimator.add_delay_observation(
+                delay_variation(
+                    duration_ms(10),
+                    duration_ms(1),
+                    zero_time_base + duration_ms(offset_ms),
+                ),
+                now,
+            );
+        }
+
+        // Add some out-of-order samples that are earlier than the zero_time
+        // (packet reordering is fun).
+        for offset_ms in [50, 100, 25, 300] {
+            estimator.add_delay_observation(
+                delay_variation(
+                    duration_ms(10),
+                    duration_ms(1),
+                    zero_time_base - duration_ms(offset_ms),
+                ),
+                now,
+            );
+        }
+
+        // History should remain sorted.
+        let ordered = estimator
+            .history
+            .iter()
+            .zip(estimator.history.iter().skip(1))
+            .all(|(a, b)| a.remote_recv_time_ms <= b.remote_recv_time_ms);
+        assert!(ordered, "history should remain sorted by remote_recv_time_ms");
     }
 }
