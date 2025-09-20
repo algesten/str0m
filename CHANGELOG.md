@@ -1,5 +1,6 @@
 # Unreleased
 
+ * Channel::config() to get data channel config #702
  * srtp: support (and prefer) AES_256_GCM #697
  * ice: fix panic on STUN Binding Indication #690
  * bwe: fix panic on history monotonicity assert in `TrendlineEstimator` #700

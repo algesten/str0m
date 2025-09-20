@@ -772,6 +772,13 @@ impl RtcSctp {
 
         None
     }
+
+    pub fn config(&self, sctp_stream_id: u16) -> Option<&ChannelConfig> {
+        self.entries
+            .iter()
+            .find(|s| s.id == sctp_stream_id)
+            .and_then(|s| s.config.as_ref())
+    }
 }
 
 fn transmit_to_vec(t: Transmit) -> Option<VecDeque<Vec<u8>>> {
