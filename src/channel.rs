@@ -77,6 +77,35 @@ impl<'a> Channel<'a> {
             .sctp
             .set_buffered_amount_low_threshold(self.sctp_stream_id, threshold);
     }
+
+    /// Get the channel config.
+    ///
+    /// The config is not available in every case depending on whether the channel was
+    /// negotiated in- or out of band.
+    ///
+    /// # In-band negotiation (the usual case)
+    ///
+    /// For (regular) in-band negotiation (DCEP, Data Channel Establishment Protocol), this
+    /// returns `None` until the DCEP handshake completes. The config is guaranteed to be
+    /// available when [`Event::ChannelOpen`][crate::Event::ChannelOpen] is emitted.
+    ///
+    /// # Out-of-band negotiation
+    ///
+    /// Returns `None` when the remote side created the data channel connection without using
+    /// DCEP. This is called out-of-band negotiation, where the remote peer opens a stream
+    /// but doesn't send the channel configuration through the DCEP protocol messages.
+    ///
+    /// For locally created out-of-band channels, the config is always available since it
+    /// was provided during channel creation.
+    ///
+    /// In str0m, DCEP is disabled by setting the `negotiated` field to `Some(stream_id)` in
+    /// [`ChannelConfig`]. This corresponds to the `negotiated: true` property in the
+    /// browser's [`createDataChannel()`][n] dictionary.
+    ///
+    /// [n]: https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/createDataChannel#negotiated
+    pub fn config(&self) -> Option<&ChannelConfig> {
+        self.rtc.sctp.config(self.sctp_stream_id)
+    }
 }
 
 impl fmt::Debug for ChannelData {
