@@ -2,7 +2,6 @@
 
 use std::fmt;
 use std::panic::UnwindSafe;
-use thiserror::Error;
 
 use crate::format::Codec;
 use crate::sdp::MediaType;
@@ -36,9 +35,11 @@ use null::{NullDepacketizer, NullPacketizer};
 
 mod buffer_rx;
 pub(crate) use buffer_rx::{DepacketizingBuffer, RtpMeta};
+
 mod contiguity;
 mod contiguity_vp8;
 mod contiguity_vp9;
+mod error;
 
 mod payload;
 pub(crate) use payload::Payloader;
@@ -118,27 +119,7 @@ pub(crate) trait Depacketizer: fmt::Debug {
     fn is_partition_tail(&self, marker: bool, packet: &[u8]) -> bool;
 }
 
-/// Errors arising in packet- and depacketization.
-#[derive(Debug, Error, PartialEq, Eq)]
-#[allow(missing_docs)]
-pub enum PacketError {
-    #[error("Packet is too short")]
-    ErrShortPacket,
-    #[error("Too many spatial layers")]
-    ErrTooManySpatialLayers,
-    #[error("Too many P-Diff")]
-    ErrTooManyPDiff,
-    #[error("H265 corrupted packet")]
-    ErrH265CorruptedPacket,
-    #[error("H265 invalid packet type")]
-    ErrInvalidH265PacketType,
-    #[error("H264 StapA size larger than buffer: {0} > {1}")]
-    StapASizeLargerThanBuffer(usize, usize),
-    #[error("H264 NALU type is not handled: {0}")]
-    NaluTypeIsNotHandled(u8),
-    #[error("VP9 corrupted packet")]
-    ErrVP9CorruptedPacket,
-}
+pub use error::PacketError;
 
 /// Helper to replace Bytes. Provides get_u8 and get_u16 over some buffer of bytes.
 pub(crate) trait BitRead {

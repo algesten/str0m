@@ -1,33 +1,23 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 use std::{fmt, io};
-use thiserror::Error;
 
 use crate::crypto::{CryptoError, DtlsImpl, Fingerprint};
 
 pub use crate::crypto::{DtlsCert, DtlsCertOptions, DtlsEvent};
 use crate::net::DatagramSend;
 
-/// Errors that can arise in DTLS.
-#[derive(Debug, Error)]
-pub enum DtlsError {
-    /// Error arising in the crypto
-    #[error("{0}")]
-    CryptoError(CryptoError),
-
-    /// Other IO errors.
-    #[error("{0}")]
-    Io(#[from] io::Error),
-}
+pub use crate::crypto::DtlsError;
 
 impl DtlsError {
     pub(crate) fn is_would_block(&self) -> bool {
-        #[allow(irrefutable_let_patterns)]
-        let DtlsError::Io(e) = self
-        else {
-            return false;
-        };
-        e.kind() == io::ErrorKind::WouldBlock
+        match self {
+            DtlsError::Io(e) => e.kind() == io::ErrorKind::WouldBlock,
+            DtlsError::CryptoError(crypto_err) => match crypto_err {
+                CryptoError::Io(e) => e.kind() == io::ErrorKind::WouldBlock,
+                _ => false,
+            },
+        }
     }
 }
 
@@ -164,15 +154,6 @@ impl fmt::Debug for DtlsEvent {
                 f.debug_tuple("RemoteFingerprint").field(arg0).finish()
             }
             Self::Data(arg0) => f.debug_tuple("Data").field(&arg0.len()).finish(),
-        }
-    }
-}
-
-impl From<CryptoError> for DtlsError {
-    fn from(value: CryptoError) -> Self {
-        match value {
-            CryptoError::Io(error) => DtlsError::Io(error),
-            x => DtlsError::CryptoError(x),
         }
     }
 }

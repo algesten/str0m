@@ -622,7 +622,6 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use streams::RtpPacket;
 use streams::StreamPaused;
-use thiserror::Error;
 use util::{InstantExt, Pii};
 
 mod crypto;
@@ -730,119 +729,22 @@ mod session;
 use session::Session;
 
 pub mod stats;
+
 use stats::{CandidatePairStats, CandidateStats, MediaEgressStats, MediaIngressStats};
 use stats::{PeerStats, Stats, StatsEvent, StatsSnapshot};
 
 mod streams;
+
+pub mod error;
 
 /// Network related types to get socket data in/out of [`Rtc`].
 pub mod net {
     pub use crate::io::{DatagramRecv, DatagramSend, Protocol, Receive, Transmit};
 }
 
-/// Various error types.
-pub mod error {
-    pub use crate::dtls::DtlsError;
-    pub use crate::ice_::IceError;
-    pub use crate::io::NetError;
-    pub use crate::packet::PacketError;
-    pub use crate::rtp_::RtpError;
-    pub use crate::sctp::{ProtoError, SctpError};
-    pub use crate::sdp::SdpError;
-}
-
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Errors for the whole Rtc engine.
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum RtcError {
-    /// Some problem with the remote SDP.
-    #[error("remote sdp: {0}")]
-    RemoteSdp(String),
-
-    /// SDP errors.
-    #[error("{0}")]
-    Sdp(#[from] error::SdpError),
-
-    /// RTP errors.
-    #[error("{0}")]
-    Rtp(#[from] error::RtpError),
-
-    /// Other IO errors.
-    #[error("{0}")]
-    Io(#[from] std::io::Error),
-
-    /// DTLS errors
-    #[error("{0}")]
-    Dtls(#[from] error::DtlsError),
-
-    /// RTP packetization error
-    #[error("{0} {1} {2}")]
-    Packet(Mid, Pt, error::PacketError),
-
-    /// The PT attempted to write to is not known.
-    #[error("PT is unknown {0}")]
-    UnknownPt(Pt),
-
-    /// The Rid attempted to write is not known.
-    #[error("RID is unknown {0}")]
-    UnknownRid(Rid),
-
-    /// If MediaWriter.write fails because we can't find an SSRC to use.
-    #[error("No sender source")]
-    NoSenderSource,
-
-    /// Using `write_rtp` for a stream with RTX without providing a rtx_pt.
-    #[error("When outgoing stream has RTX, write_rtp must be called with rtp_pt set")]
-    ResendRequiresRtxPt,
-
-    /// Direction does not allow sending of Media data.
-    #[error("Direction does not allow sending: {0}")]
-    NotSendingDirection(Direction),
-
-    /// Direction does not allow receiving media data.
-    #[error("Direction does not allow receiving")]
-    NotReceivingDirection,
-
-    /// If MediaWriter.request_keyframe fails because we can't find an SSRC to use.
-    #[error("No receiver source (rid: {0:?})")]
-    // TODO: remove rid here.
-    NoReceiverSource(Option<Rid>),
-
-    /// The keyframe request failed because the kind of request is not enabled
-    /// in the media.
-    #[error("Requested feedback is not enabled: {0:?}")]
-    FeedbackNotEnabled(KeyframeRequestKind),
-
-    /// Parser errors from network packet parsing.
-    #[error("{0}")]
-    Net(#[from] error::NetError),
-
-    /// ICE agent errors.
-    #[error("{0}")]
-    Ice(#[from] error::IceError),
-
-    /// SCTP (data channel engine) errors.
-    #[error("{0}")]
-    Sctp(#[from] error::SctpError),
-
-    /// [`SdpApi`] was not done in a correct order.
-    ///
-    /// For [`SdpApi`]:
-    ///
-    /// 1. We created an [`SdpOffer`][change::SdpOffer].
-    /// 2. The remote side created an [`SdpOffer`][change::SdpOffer] at the same time.
-    /// 3. We applied the remote side [`SdpApi::accept_offer()`][change::SdpOffer].
-    /// 4. The we used the [`SdpPendingOffer`][change::SdpPendingOffer] created in step 1.
-    #[error("Changes made out of order")]
-    ChangesOutOfOrder,
-
-    /// The [`Writer`] was used twice without doing `Rtc::poll_output` in between. This
-    /// is an incorrect usage pattern of the str0m API.
-    #[error("Consecutive calls to write() without poll_output() in between")]
-    WriteWithoutPoll,
-}
+pub use error::RtcError;
 
 /// Instance that does WebRTC. Main struct of the entire library.
 ///

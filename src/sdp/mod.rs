@@ -2,7 +2,6 @@ use std::fmt;
 use std::ops::Deref;
 
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
-use thiserror::Error;
 
 mod data;
 pub(crate) use data::{FormatParam, Sdp, Session, SessionAttribute, Setup};
@@ -15,16 +14,8 @@ pub(crate) use data::RtpMap;
 
 mod parser;
 
-/// Errors from parsing and serializing SDP.
-#[derive(Debug, Error)]
-#[allow(missing_docs)]
-pub enum SdpError {
-    #[error("SDP parse: {0}")]
-    ParseError(String),
-
-    #[error("SDP inconsistent: {0}")]
-    Inconsistent(String),
-}
+mod error;
+pub use error::SdpError;
 
 #[derive(Debug, PartialEq, Eq)]
 /// SDP offer. Offers can be serialized via serde.

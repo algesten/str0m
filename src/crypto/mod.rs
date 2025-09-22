@@ -2,8 +2,6 @@
 
 use once_cell::sync::OnceCell;
 use std::fmt;
-use std::io;
-use thiserror::Error;
 
 /// Crypto provider setting.
 ///
@@ -88,6 +86,9 @@ pub use keying::KeyingMaterial;
 mod srtp;
 pub use srtp::{aead_aes_128_gcm, aead_aes_256_gcm, aes_128_cm_sha1_80, SrtpCrypto, SrtpProfile};
 
+mod error;
+pub use error::{CryptoError, DtlsError};
+
 /// SHA1 HMAC as used for STUN and older SRTP.
 /// If sha1 feature is enabled, it uses `rust-crypto` crate.
 #[cfg(feature = "sha1")]
@@ -128,24 +129,6 @@ pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
 #[cfg(all(feature = "wincrypto", not(feature = "sha1")))]
 pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
     wincrypto::sha1_hmac(key, payloads)
-}
-
-/// Errors that can arise in DTLS.
-#[derive(Debug, Error)]
-pub enum CryptoError {
-    /// Some error from OpenSSL layer (used for DTLS).
-    #[error("{0}")]
-    #[cfg(feature = "openssl")]
-    OpenSsl(#[from] openssl::error::ErrorStack),
-
-    /// Some error from OpenSSL layer (used for DTLS).
-    #[error("{0}")]
-    #[cfg(all(feature = "wincrypto", target_os = "windows"))]
-    WinCrypto(#[from] wincrypto::WinCryptoError),
-
-    /// Other IO errors.
-    #[error("{0}")]
-    Io(#[from] io::Error),
 }
 
 impl fmt::Display for CryptoProvider {
