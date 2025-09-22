@@ -12,7 +12,7 @@ readme = "README.md"
 description = "Supporting crate for str0m"
 
 [dependencies]
-thiserror = { version = "1.0.38" }
+thiserror = "2.0.16"
 tracing = "0.1.37"
 windows = { version = "0.58", features = [
     "Win32_Security_Cryptography",
