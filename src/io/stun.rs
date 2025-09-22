@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 pub(crate) const DEFAULT_MAX_RETRANSMITS: usize = 9;
 
@@ -70,17 +69,7 @@ impl Default for StunTiming {
     }
 }
 
-/// Possible errors when handling STUN messages.
-#[derive(Debug, Error)]
-pub enum StunError {
-    /// A STUN message could not be parsed.
-    #[error("STUN parse error: {0}")]
-    Parse(String),
-
-    /// An IO error occurred while handling a STUN message.
-    #[error("STUN io: {0}")]
-    Io(#[from] io::Error),
-}
+pub use super::StunError;
 
 /// STUN transaction ID.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

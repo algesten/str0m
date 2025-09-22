@@ -8,11 +8,10 @@ use std::net::SocketAddr;
 use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 mod stun;
 pub(crate) use stun::{
-    Class as StunClass, Method as StunMethod, StunError, StunTiming, DEFAULT_MAX_RETRANSMITS,
+    Class as StunClass, Method as StunMethod, StunTiming, DEFAULT_MAX_RETRANSMITS,
 };
 pub use stun::{StunMessage, StunMessageBuilder, TransId};
 
@@ -33,17 +32,8 @@ pub(crate) const DATAGRAM_MAX_PACKET_SIZE: usize = 2000;
 /// Max expected RTP header over, with full extensions etc.
 pub const MAX_RTP_OVERHEAD: usize = 80;
 
-/// Errors from parsing network data.
-#[derive(Debug, Error)]
-pub enum NetError {
-    /// Some STUN protocol error.
-    #[error("{0}")]
-    Stun(#[from] StunError),
-
-    /// A wrapped IO error.
-    #[error("{0}")]
-    Io(#[from] io::Error),
-}
+mod error;
+pub use self::error::{NetError, StunError};
 
 /// Type of protocol used in [`Transmit`] and [`Receive`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

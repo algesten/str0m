@@ -10,37 +10,16 @@ use std::time::Instant;
 use sctp_proto::{Association, AssociationHandle, ClientConfig, DatagramEvent};
 use sctp_proto::{Endpoint, EndpointConfig, Stream, StreamEvent, Transmit};
 use sctp_proto::{Event, Payload, PayloadProtocolIdentifier, ServerConfig};
-use thiserror::Error;
 
 pub use sctp_proto::Error as ProtoError;
 use sctp_proto::ReliabilityType;
 
 mod dcep;
+use dcep::DcepAck;
 use dcep::DcepOpen;
 
-use dcep::DcepAck;
-
-/// Errors from the SCTP subsystem.
-#[derive(Debug, Error, Eq, Clone, PartialEq)]
-pub enum SctpError {
-    /// Some protocol error as wrapped from the sctp_proto crate.
-    #[error("{0}")]
-    Proto(#[from] ProtoError),
-
-    /// Stream was not ready and we tried to write.
-    #[error("Write on a stream before it was established")]
-    WriteBeforeEstablished,
-
-    /// The initial DCEP is not valid.
-    #[error("DCEP open message too small")]
-    DcepOpenTooSmall,
-    /// The initial DCEP is not the correct message type.
-    #[error("DCEP incorrect message type")]
-    DcepIncorrectMessageType,
-    /// The initial DCEP cant be read as utf-8.
-    #[error("DCEP bad UTF-8 string")]
-    DcepBadUtf8,
-}
+mod error;
+pub use error::SctpError;
 
 pub(crate) struct RtcSctp {
     state: RtcSctpState,

@@ -1165,7 +1165,6 @@ dependencies = [
  "sha1",
  "str0m-wincrypto",
  "systemstat",
- "thiserror",
  "tracing",
  "tracing-subscriber",
  "zerofrom",
