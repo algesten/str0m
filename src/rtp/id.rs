@@ -114,7 +114,7 @@ macro_rules! num_id {
 /// encoded streams. For example a simulcast of 3 layers would have
 /// 3 incoming StreamRx, but since they belong to the same media,
 /// the have the same `Mid`.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Mid([u8; 16]);
 str_id!(Mid, "Mid", 16, 3);
 
