@@ -1,7 +1,6 @@
 #[macro_use]
 extern crate tracing;
 
-use thiserror::Error;
 use windows::{core::Error as WindowsError, Win32::Foundation::NTSTATUS};
 
 mod cert;
@@ -16,20 +15,39 @@ pub use srtp::*;
 mod dtls;
 pub use dtls::*;
 
-#[derive(Error, Debug)]
-#[error("{0}")]
-pub struct WinCryptoError(pub String);
+#[derive(Debug)]
+pub enum WinCryptoError {
+    NtStatus(NTSTATUS),
+    WindowsError(WindowsError),
+}
 
 impl WinCryptoError {
     /// Conversion function from NTSTATUS to Result. The result will
     /// be Ok(()) if the NTSTATUS indicates OK, otherwise it will be
-    /// an Err with a message containing the status code.
-    pub fn from_ntstatus(status: NTSTATUS) -> Result<(), Self> {
-        if status.is_ok() {
+    /// an Err with the NTSTATUS.
+    pub fn from_ntstatus(ntstatus: NTSTATUS) -> Result<(), Self> {
+        if ntstatus.is_ok() {
             Ok(())
         } else {
-            let status = status.0;
-            Err(Self(format!("NTSTATUS({status})")))
+            Err(Self::NtStatus(ntstatus))
+        }
+    }
+}
+
+impl fmt::Display for WinCryptoError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NtStatus(ntstatus) => write!(f, "{}", ntstatus),
+            Self::WindowsError(err) => write!(f, "{}", err),
+        }
+    }
+}
+
+impl Error for NetError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::NtStatus(_) => None,
+            Self::WindowsError(err) => Some(err),
         }
     }
 }
@@ -38,7 +56,6 @@ impl WinCryptoError {
 /// will include the windows error code in the message.
 impl From<WindowsError> for WinCryptoError {
     fn from(err: WindowsError) -> Self {
-        let code = err.code();
-        Self(format!("WindowsError({code})"))
+        Self::WindowsError(err)
     }
 }
