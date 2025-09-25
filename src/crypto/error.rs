@@ -13,6 +13,14 @@ pub enum CryptoError {
     #[cfg(all(feature = "wincrypto", target_os = "windows"))]
     WinCrypto(super::wincrypto::WinCryptoError),
 
+    /// Some error from Dimpl certificate generation.
+    #[cfg(feature = "dimpl")]
+    DimplCert(dimpl::certificate::CertificateError),
+
+    /// Some error from Dimpl DTLS layer.
+    #[cfg(feature = "dimpl")]
+    Dimpl(dimpl::Error),
+
     /// Other IO errors.
     Io(io::Error),
 }
@@ -25,6 +33,10 @@ impl fmt::Display for CryptoError {
             #[cfg(all(feature = "wincrypto", target_os = "windows"))]
             CryptoError::WinCrypto(err) => write!(f, "{}", err),
             CryptoError::Io(err) => write!(f, "{}", err),
+            #[cfg(feature = "dimpl")]
+            CryptoError::DimplCert(err) => write!(f, "{}", err),
+            #[cfg(feature = "dimpl")]
+            CryptoError::Dimpl(err) => write!(f, "{}", err),
         }
     }
 }
@@ -37,6 +49,10 @@ impl Error for CryptoError {
             #[cfg(all(feature = "wincrypto", target_os = "windows"))]
             CryptoError::WinCrypto(err) => Some(err),
             CryptoError::Io(err) => Some(err),
+            #[cfg(feature = "dimpl")]
+            CryptoError::DimplCert(err) => Some(err),
+            #[cfg(feature = "dimpl")]
+            CryptoError::Dimpl(err) => Some(err),
         }
     }
 }
@@ -58,6 +74,20 @@ impl From<super::wincrypto::WinCryptoError> for CryptoError {
 impl From<io::Error> for CryptoError {
     fn from(err: io::Error) -> Self {
         CryptoError::Io(err)
+    }
+}
+
+#[cfg(feature = "dimpl")]
+impl From<dimpl::certificate::CertificateError> for CryptoError {
+    fn from(err: dimpl::certificate::CertificateError) -> Self {
+        CryptoError::DimplCert(err)
+    }
+}
+
+#[cfg(feature = "dimpl")]
+impl From<dimpl::Error> for CryptoError {
+    fn from(err: dimpl::Error) -> Self {
+        CryptoError::Dimpl(err)
     }
 }
 
