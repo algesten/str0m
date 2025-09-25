@@ -14,7 +14,7 @@ use windows::{
             NCRYPT_FLAGS, NCRYPT_KEY_HANDLE, NCRYPT_PROV_HANDLE, NCRYPT_SILENT_FLAG,
             X509_ASN_ENCODING,
         },
-        System::Rpc::{UuidCreate, UuidToStringW, RPC_S_OK},
+        System::Rpc::{UuidCreate, UuidToStringW},
     },
 };
 
@@ -62,22 +62,13 @@ impl Certificate {
             let cert_context = if use_ec_dsa_keys {
                 let mut guid = GUID::default();
                 let result = UuidCreate(&mut guid);
-                if result != RPC_S_OK {
-                    return Err(WinCryptoError(format!(
-                        "Failed to generate GUID for EC-DSA key: {:?}",
-                        result
-                    )));
-                }
+                WinCryptoError::from_rpc_status(result)?;
+
                 // A formated UUID is 20 characters long, plus null termination.
                 let mut guid_buffer = [0u16; 42];
                 let mut guid_pwstr = PWSTR::from_raw(guid_buffer.as_mut_ptr());
                 let result = UuidToStringW(&guid, &mut guid_pwstr);
-                if result != RPC_S_OK {
-                    return Err(WinCryptoError(format!(
-                        "Failed to format GUID for EC-DSA key: {:?}",
-                        result
-                    )));
-                }
+                WinCryptoError::from_rpc_status(result)?;
 
                 // We need to first create a EC-DSA key. We need to use NCrypt APIs
                 // for this, although we don't really want to persist this key.
@@ -137,11 +128,7 @@ impl Certificate {
             };
 
             if cert_context.is_null() {
-                let win_err = GetLastError();
-                Err(WinCryptoError(format!(
-                    "Failed to generate self-signed certificate: {:?}",
-                    win_err
-                )))
+                Err(GetLastError().into())
             } else {
                 Ok(Self {
                     cert_context,
@@ -158,28 +145,24 @@ impl Certificate {
         unsafe {
             let mut hash_handle = Owned::new(BCRYPT_HASH_HANDLE::default());
             // Create the hash instance.
-            if let Err(e) = WinCryptoError::from_ntstatus(BCryptCreateHash(
+            WinCryptoError::from_ntstatus(BCryptCreateHash(
                 BCRYPT_SHA256_ALG_HANDLE,
                 &mut *hash_handle,
                 None,
                 None,
                 0,
-            )) {
-                return Err(WinCryptoError(format!("Failed to create hash: {e}")));
-            }
+            ))?;
 
             // Hash the certificate contents.
             let cert_info = *self.cert_context;
-            if let Err(e) = WinCryptoError::from_ntstatus(BCryptHashData(
+            WinCryptoError::from_ntstatus(BCryptHashData(
                 *hash_handle,
                 std::slice::from_raw_parts(
                     cert_info.pbCertEncoded,
                     cert_info.cbCertEncoded as usize,
                 ),
                 0,
-            )) {
-                return Err(WinCryptoError(format!("Failed to hash data: {e}")));
-            }
+            ))?;
 
             // Grab the result of the hash.
             WinCryptoError::from_ntstatus(BCryptFinishHash(*hash_handle, &mut hash, 0))?;
