@@ -194,12 +194,8 @@ impl Dtls {
                 }
             }
             EstablishmentState::Handshaking => self.handshake(datagram),
-            EstablishmentState::Failed => {
-                Err("Handshake failed".into())
-            }
-            EstablishmentState::Idle => {
-                Err("Handshake not initialized".into())
-            }
+            EstablishmentState::Failed => Err("Handshake failed".into()),
+            EstablishmentState::Idle => Err("Handshake not initialized".into()),
         }
     }
 
@@ -618,8 +614,6 @@ fn srtp_keying_material_len(srtp_profile_id: u16) -> Result<u32, WinCryptoError>
         0x0001 => Ok(16 * 2 + 14 * 2),
         0x0007 => Ok(16 * 2 + 12 * 2),
         0x0008 => Ok(32 * 2 + 12 * 2),
-        id => Err(format!(
-            "Unknown SRTP Profile Requested: {id}"
-        ).into()),
+        id => Err(format!("Unknown SRTP Profile Requested: {id}").into()),
     }
 }
