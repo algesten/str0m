@@ -413,7 +413,7 @@ impl Dtls {
             e => {
                 // Failed
                 self.state = EstablishmentState::Failed;
-                Err(format!("DTLS handshake failure: {:?}", e).into())
+                Err(e.into())
             }
         };
     }
