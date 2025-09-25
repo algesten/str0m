@@ -1,10 +1,13 @@
 # Unreleased
 
- * Channel::config() to get data channel config #702
- * srtp: support (and prefer) AES_256_GCM #697
- * ice: fix panic on STUN Binding Indication #690
- * bwe: fix panic on history monotonicity assert in `TrendlineEstimator` #700
- * fix `Vp9Depacketizer` failing on high scalability modes #701
+# 0.11.0
+
+  * Remove str0m/wincrypto use of thiserror #704 #706
+  * Channel::config() to get data channel config #702
+  * fix `Vp9Depacketizer` failing on high scalability modes #701
+  * srtp: support (and prefer) AES_256_GCM #697
+  * bwe: fix panic on history monotonicity assert in `TrendlineEstimator` #700
+  * ice: fix panic on STUN Binding Indication #690
 
 # 0.10.0
 
