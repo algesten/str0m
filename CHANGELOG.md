@@ -2,6 +2,7 @@
 
 # 0.11.0
 
+  * Bump str0m-wincrypto to 0.2.0
   * Remove str0m/wincrypto use of thiserror #704 #706
   * Channel::config() to get data channel config #702
   * fix `Vp9Depacketizer` failing on high scalability modes #701

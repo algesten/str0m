@@ -66,7 +66,7 @@ sha1 = { version = "0.10.6", features = ["asm"], optional = true }
 # we're supposed to check when it gets sorted out.
 sha1 = { version = "0.10.6", optional = true }
 # Windows Crypto (CNG + SChannel)
-str0m-wincrypto = { version = "0.1.0", path = "wincrypto", optional = true }
+str0m-wincrypto = { version = "0.2.0", path = "wincrypto", optional = true }
 
 [dev-dependencies]
 rouille = { version = "3.6.2", features = [] }
