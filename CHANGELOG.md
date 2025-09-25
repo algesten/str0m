@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Fix panic width incorrect STUN packet #709
+
 # 0.11.0
 
   * Bump str0m-wincrypto to 0.2.0

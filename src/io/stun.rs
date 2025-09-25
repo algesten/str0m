@@ -124,7 +124,8 @@ impl<'a> StunMessage<'a> {
         if len & 0b0000_0011 > 0 {
             return Err(StunError::Parse("len is not a multiple of 4".into()));
         }
-        if len as usize != buf.len() - 20 {
+        // Use addition here to avoid panic! if the UDP packet is under 20 bytes long.
+        if (len as usize + 20) != buf.len() {
             return Err(StunError::Parse(
                 "STUN length vs UDP packet mismatch".into(),
             ));
