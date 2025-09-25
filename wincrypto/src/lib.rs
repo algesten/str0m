@@ -2,13 +2,9 @@
 extern crate tracing;
 
 use std::{error::Error, fmt};
-use windows::{
-    core::{Error as WindowsError, HRESULT},
-    Win32::{
-        Foundation::{NTSTATUS, WIN32_ERROR},
-        System::Rpc::{RPC_STATUS, RPC_S_OK},
-    },
-};
+use windows::core::{Error as WindowsError, HRESULT};
+use windows::Win32::Foundation::{NTSTATUS, WIN32_ERROR};
+use windows::Win32::System::Rpc::{RPC_STATUS, RPC_S_OK};
 
 mod cert;
 pub use cert::*;
