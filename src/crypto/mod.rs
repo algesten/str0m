@@ -20,6 +20,10 @@ pub enum CryptoProvider {
     ///
     /// Requires feature flag **wincrypto**.
     WinCrypto,
+    /// Dimpl
+    ///
+    /// Pure rust DTLS 1.2 implementation.
+    Dimpl,
 }
 
 static PROCESS_DEFAULT: OnceCell<CryptoProvider> = OnceCell::new();
@@ -29,6 +33,7 @@ impl CryptoProvider {
         match self {
             CryptoProvider::OpenSsl => SrtpCrypto::new_openssl(),
             CryptoProvider::WinCrypto => SrtpCrypto::new_wincrypto(),
+            CryptoProvider::Dimpl => SrtpCrypto::new_rust_crypto(),
         }
     }
 
@@ -72,6 +77,11 @@ mod ossl;
 
 #[cfg(all(feature = "wincrypto", target_os = "windows"))]
 mod wincrypto;
+
+#[cfg(feature = "dimpl")]
+mod dimpl;
+
+mod rcrypto;
 
 mod dtls;
 pub(crate) use dtls::DtlsImpl;
@@ -136,6 +146,7 @@ impl fmt::Display for CryptoProvider {
         match self {
             CryptoProvider::OpenSsl => write!(f, "openssl"),
             CryptoProvider::WinCrypto => write!(f, "wincrypto"),
+            CryptoProvider::Dimpl => write!(f, "dimpl"),
         }
     }
 }
