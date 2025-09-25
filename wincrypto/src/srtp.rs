@@ -156,9 +156,7 @@ pub fn srtp_aead_aes_gcm_encrypt(
     cipher_text: &mut [u8],
 ) -> Result<usize, WinCryptoError> {
     if cipher_text.len() < plain_text.len() {
-        return Err(WinCryptoError(
-            "Cipher Text is to small to include TAG".to_string(),
-        ));
+        return Err("Cipher Text is to small to include TAG".into());
     }
 
     assert!(
@@ -207,9 +205,7 @@ pub fn srtp_aead_aes_gcm_decrypt(
     plain_text: &mut [u8],
 ) -> Result<usize, WinCryptoError> {
     if cipher_text.len() < AEAD_AES_GCM_TAG_LEN {
-        return Err(WinCryptoError(
-            "Cipher Text too short to include tag".to_string(),
-        ));
+        return Err("Cipher Text too short to include tag".into());
     }
     let (cipher_text, tag) = cipher_text.split_at(cipher_text.len() - AEAD_AES_GCM_TAG_LEN);
 

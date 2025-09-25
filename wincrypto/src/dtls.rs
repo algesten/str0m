@@ -195,10 +195,10 @@ impl Dtls {
             }
             EstablishmentState::Handshaking => self.handshake(datagram),
             EstablishmentState::Failed => {
-                Err(WinCryptoError("Handshake failed".to_string()).into())
+                Err("Handshake failed".into())
             }
             EstablishmentState::Idle => {
-                Err(WinCryptoError("Handshake not initialized".to_string()).into())
+                Err("Handshake not initialized".into())
             }
         }
     }
@@ -222,9 +222,7 @@ impl Dtls {
             return Ok(false);
         }
         let Some(security_ctx) = self.security_ctx.as_ref() else {
-            return Err(WinCryptoError(
-                "Security Context not generated.".to_string(),
-            ));
+            return Err("Security Context not generated.".into());
         };
 
         let header_size = self.encrypt_message_input_sizes.cbHeader as usize;
@@ -273,18 +271,14 @@ impl Dtls {
                 self.output_datagrams.push_back(output);
                 Ok(true)
             }
-            status => Err(WinCryptoError(format!(
-                "EncryptMessage returned error, message dropped. Status: {}",
-                status
-            ))
-            .into()),
+            status => Err(status.into()),
         }
     }
 
     fn handshake(&mut self, datagram: Option<&[u8]>) -> Result<DtlsEvent, WinCryptoError> {
-        let is_client = self.is_client.ok_or_else(|| {
-            WinCryptoError("handshake attempted without setting is_client".to_string())
-        })?;
+        let Some(is_client) = self.is_client else {
+            return Err("handshake attempted without setting is_client".into());
+        };
         let mut new_ctx_handle = SecHandle::default();
 
         let mut buffers = [
@@ -423,7 +417,7 @@ impl Dtls {
             e => {
                 // Failed
                 self.state = EstablishmentState::Failed;
-                Err(WinCryptoError(format!("DTLS handshake failure: {:?}", e)).into())
+                Err(format!("DTLS handshake failure: {:?}", e).into())
             }
         };
     }
@@ -431,7 +425,7 @@ impl Dtls {
     fn transition_to_completed(&mut self) -> Result<DtlsEvent, WinCryptoError> {
         let mut srtp_parameters = SecPkgContext_SrtpParameters::default();
         let Some(security_ctx) = self.security_ctx.as_ref() else {
-            return Err(WinCryptoError("Security context missing".to_string()));
+            return Err("Security context missing".into());
         };
 
         // SAFETY: The references used in the unsafe block are all borrow checked.
@@ -440,17 +434,13 @@ impl Dtls {
                 security_ctx as *const _,
                 SECPKG_ATTR_STREAM_SIZES,
                 &mut self.encrypt_message_input_sizes as *mut _ as *mut std::ffi::c_void,
-            )
-            .map_err(|e| WinCryptoError(format!("SECPKG_ATTR_STREAM_SIZES: {:?}", e)))?;
+            )?;
 
             QueryContextAttributesW(
                 security_ctx as *const _,
                 SECPKG_ATTR(SECPKG_ATTR_SRTP_PARAMETERS),
                 &mut srtp_parameters as *mut _ as *mut std::ffi::c_void,
-            )
-            .map_err(|e| {
-                WinCryptoError(format!("QueryContextAttributesW Keying Material: {:?}", e))
-            })?;
+            )?;
         }
 
         let srtp_profile_id = u16::from_be(srtp_parameters.ProtectionProfile);
@@ -471,23 +461,14 @@ impl Dtls {
                 SECPKG_ATTR_KEYING_MATERIAL_INFO,
                 &keying_material_info as *const _ as *const std::ffi::c_void,
                 std::mem::size_of::<SecPkgContext_KeyingMaterialInfo>() as u32,
-            )
-            .map_err(|e| {
-                WinCryptoError(format!("SetContextAttributesA Keying Material: {:?}", e))
-            })?;
+            )?;
 
             QueryContextAttributesExW(
                 security_ctx as *const _,
                 SECPKG_ATTR(SECPKG_ATTR_KEYING_MATERIAL),
                 &mut keying_material as *mut _ as *mut std::ffi::c_void,
                 std::mem::size_of::<SecPkgContext_KeyingMaterial>() as u32,
-            )
-            .map_err(|e| {
-                WinCryptoError(format!(
-                    "QueryContextAttributesExW Keying Material: {:?}",
-                    e
-                ))
-            })?;
+            )?;
 
             // Copy the returned keying material to a Vec.
             let keying_material_vec = std::slice::from_raw_parts(
@@ -497,10 +478,7 @@ impl Dtls {
             .to_vec();
 
             // Now that we copied the key to the Rust heap, we can free the buffer.
-            FreeContextBuffer(keying_material.pbKeyingMaterial as *mut _ as *mut std::ffi::c_void)
-                .map_err(|e| {
-                    WinCryptoError(format!("FreeContextBuffer Keying Material: {:?}", e))
-                })?;
+            FreeContextBuffer(keying_material.pbKeyingMaterial as *mut _ as *mut std::ffi::c_void)?;
 
             keying_material_vec
         };
@@ -513,8 +491,7 @@ impl Dtls {
                 security_ctx as *const _,
                 SECPKG_ATTR_REMOTE_CERT_CONTEXT,
                 &mut peer_cert_context as *mut _ as *mut std::ffi::c_void,
-            )
-            .map_err(|e| WinCryptoError(format!("QueryContextAttributesW: {:?}", e)))?;
+            )?;
             (peer_cert_context as *const CERT_CONTEXT).into()
         };
 
@@ -533,9 +510,7 @@ impl Dtls {
             return Ok(DtlsEvent::WouldBlock);
         }
         let Some(security_ctx) = self.security_ctx.as_ref() else {
-            return Err(WinCryptoError(
-                "Security Context not generated.".to_string(),
-            ));
+            return Err("Security Context not generated.".into());
         };
 
         let header_size = self.encrypt_message_input_sizes.cbHeader as usize;
@@ -596,7 +571,7 @@ impl Dtls {
             }
             SEC_I_CONTEXT_EXPIRED => {
                 self.state = EstablishmentState::Failed;
-                Err(WinCryptoError("Context expired".to_string()).into())
+                Err("Context expired".into())
             }
             SEC_I_RENEGOTIATE => {
                 // SChannel provides a token to feed into a new handshake
@@ -613,14 +588,10 @@ impl Dtls {
                     // is valid so long as `sec_buffers` is.
                     self.handshake(Some(unsafe { std::slice::from_raw_parts(data, len) }))
                 } else {
-                    Err(WinCryptoError("Renegotiate didn't include a token".to_string()).into())
+                    Err("Renegotiate didn't include a token".into())
                 }
             }
-            status => Err(WinCryptoError(format!(
-                "DecryptMessage returned error, message dropped. Status: {}",
-                status
-            ))
-            .into()),
+            status => Err(status.into()),
         }
     }
 }
@@ -647,8 +618,8 @@ fn srtp_keying_material_len(srtp_profile_id: u16) -> Result<u32, WinCryptoError>
         0x0001 => Ok(16 * 2 + 14 * 2),
         0x0007 => Ok(16 * 2 + 12 * 2),
         0x0008 => Ok(32 * 2 + 12 * 2),
-        id => Err(WinCryptoError(format!(
+        id => Err(format!(
             "Unknown SRTP Profile Requested: {id}"
-        ))),
+        ).into()),
     }
 }
