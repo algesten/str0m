@@ -115,9 +115,9 @@ checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
 
 [[package]]
 name = "base64ct"
-version = "1.8.0"
+version = "1.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55248b47b0caf0546f7988906588779981c43bb1bc9d0c44087278f80cdb44ba"
+checksum = "89e25b6adfb930f02d1981565a6e5d9c547ac15a96606256d3b59040e5cd4ca3"
 
 [[package]]
 name = "bitflags"
@@ -1511,9 +1511,7 @@ dependencies = [
  "dimpl",
  "fastrand",
  "hmac",
- "idna_adapter",
  "libc",
- "litemap",
  "once_cell",
  "openssl",
  "openssl-sys",
@@ -1529,7 +1527,6 @@ dependencies = [
  "systemstat",
  "tracing",
  "tracing-subscriber",
- "zerofrom",
 ]
 
 [[package]]
