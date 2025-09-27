@@ -22,7 +22,7 @@ targets = [
   { triple = "x86_64-unknown-redox" },
 ]
 
-exclude = ["rouille"]
+exclude = ["rouille", "rand_core"]
 
 [advisories]
 yanked = "deny"
