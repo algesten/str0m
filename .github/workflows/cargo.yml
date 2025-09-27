@@ -12,6 +12,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+
   test:
     strategy:
       matrix:
@@ -21,19 +22,18 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: actions/checkout@v4
         with:
-          profile: minimal
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
           toolchain: ${{ matrix.rust }}
-          override: true
-      - uses: Swatinem/rust-cache@v1
-      - uses: actions-rs/cargo@v1
-        with:
-          command: build
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
+      - uses: Swatinem/rust-cache@v2
+      - name: Build 1
+        run: cargo +${{steps.toolchain.outputs.name}} build --all-features
+      - name: Build 2
+        run: cargo +${{steps.toolchain.outputs.name}} build --all-features
 
   snowflake:
     runs-on: ubuntu-latest
@@ -50,16 +50,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@master
+        id: toolchain
         with:
-          profile: minimal
           toolchain: stable
-          override: true
       - uses: Swatinem/rust-cache@v1
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --test pii --features pii
+      - name: Test pii
+        run: cargo +${{steps.toolchain.outputs.name}} test --test pii --features pii
 
   test_wincrypto:
     strategy:
@@ -71,49 +68,35 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@master
+        id: toolchain
         with:
-          profile: minimal
           toolchain: ${{ matrix.rust }}
-          override: true
       - uses: Swatinem/rust-cache@v1
-      - uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --no-default-features --features wincrypto
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --no-default-features --features wincrypto
+      - name: Build
+        run: cargo +${{steps.toolchain.outputs.name}} build --no-default-features --features wincrypto
+      - name: Test
+        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features wincrypto
 
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@master
+        id: toolchain
         with:
-          profile: minimal
           toolchain: stable
-          override: true
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v1
-      - uses: actions-rs/cargo@v1
+      - name: fmt
+        run: cargo +${{steps.toolchain.outputs.name}} fmt --all -- --check
+      - name: clippy
+        run: cargo +${{steps.toolchain.outputs.name}} clippy -- -D warnings
+      - name: clippy (openssl features)
+        run: cargo +${{steps.toolchain.outputs.name}} clippy --no-default-features --features openssl,vendored,sha1 -- -D warnings
+      - uses: dtolnay/rust-toolchain@master
         with:
-          command: fmt
-          args: --all -- --check
-      - uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: -- -D warnings
-      - uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --no-default-features --features openssl,vendored,sha1 -- -D warnings
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
           toolchain: stable
-          override: true
           components: clippy
       - name: doc
         run: cargo doc --no-deps
