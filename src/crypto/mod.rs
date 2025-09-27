@@ -57,9 +57,12 @@ impl CryptoProvider {
 
     /// Get a possible crypto backend using feature flags.
     ///
-    /// Favors **openssl** if enabled. Panics if no crypto backend is available.
+    /// Favors **dimpl** if enabled to exercise the pure-Rust DTLS backend.
+    /// Panics if no crypto backend is available.
     pub fn from_feature_flags() -> CryptoProvider {
-        if cfg!(feature = "openssl") {
+        if cfg!(feature = "dimpl") {
+            return CryptoProvider::Dimpl;
+        } else if cfg!(feature = "openssl") {
             return CryptoProvider::OpenSsl;
         } else if cfg!(all(feature = "wincrypto", target_os = "windows")) {
             return CryptoProvider::WinCrypto;
