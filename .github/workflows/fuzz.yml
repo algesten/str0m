@@ -17,7 +17,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Install Rust and cargo-fuzz
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
           components: rust-src
