@@ -24,7 +24,7 @@ rust-version = "1.71.1"
 # security patching than updating statically linked software.
 
 [features]
-default = ["openssl", "vendored", "sha1", "dimpl"]
+default = ["dimpl", "vendored", "sha1"]
 openssl = ["dep:openssl", "dep:openssl-sys", "dep:libc", "rouille/ssl"]
 vendored = ["openssl?/vendored"]
 
