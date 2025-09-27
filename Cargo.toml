@@ -12,7 +12,7 @@ edition = "2021"
 exclude = ["/cargo_deny.sh", "/deny.toml", "/run-fuzz.sh"]
 
 # MSRV
-rust-version = "1.71.1"
+rust-version = "1.81.0"
 
 # Notes on OpenSSL
 # - Vendored (static link source build) ensures version consistency and easier
@@ -82,11 +82,6 @@ str0m-wincrypto = { version = "0.2.0", path = "wincrypto", optional = true }
 
 [dev-dependencies]
 rouille = { version = "3.6.2", features = [] }
-# The following dependencies are not compatible with MSRV 1.71.1
-# Hence we pin them until we decide to bump our MSRV
-zerofrom = "=0.1.5"
-litemap = "=0.7.4"
-idna_adapter = "=1.2.0"
 
 serde_json = "1.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }

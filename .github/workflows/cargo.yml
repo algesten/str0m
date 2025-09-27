@@ -17,7 +17,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable, beta, 1.71.1]
+        rust: [stable, beta, 1.81.0]
 
     runs-on: ${{ matrix.os }}
 
@@ -64,7 +64,7 @@ jobs:
     strategy:
       matrix:
         os: [windows-latest]
-        rust: [stable, beta, 1.71.1]
+        rust: [stable, beta, 1.81.0]
 
     runs-on: ${{ matrix.os }}
 

@@ -165,7 +165,7 @@ fn export_srtp_keying_material<S>(
     // remote peer certificate fingerprint
     let x509 = ssl
         .peer_certificate()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "No remote X509 cert"))?;
+        .ok_or_else(|| io::Error::other("No remote X509 cert"))?;
     let digest: &[u8] = &x509.digest(MessageDigest::sha256())?;
 
     let fp = Fingerprint {
@@ -176,7 +176,7 @@ fn export_srtp_keying_material<S>(
     let srtp_profile_id = ssl
         .selected_srtp_profile()
         .map(|s| s.id())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Failed to negotiate SRTP profile"))?;
+        .ok_or_else(|| io::Error::other("Failed to negotiate SRTP profile"))?;
     let srtp_profile: SrtpProfile = srtp_profile_id.try_into()?;
 
     // extract SRTP keying material
@@ -218,10 +218,10 @@ impl TryFrom<SrtpProfileId> for SrtpProfile {
             SrtpProfileId::SRTP_AES128_CM_SHA1_80 => Ok(SrtpProfile::Aes128CmSha1_80),
             SrtpProfileId::SRTP_AEAD_AES_128_GCM => Ok(SrtpProfile::AeadAes128Gcm),
             SrtpProfileId::SRTP_AEAD_AES_256_GCM => Ok(SrtpProfile::AeadAes256Gcm),
-            x => Err(io::Error::new(
-                io::ErrorKind::Other,
-                format!("Unsupported SRTP profile {:x}", x.as_raw()),
-            )),
+            x => Err(io::Error::other(format!(
+                "Unsupported SRTP profile {:x}",
+                x.as_raw()
+            ))),
         }
     }
 }
