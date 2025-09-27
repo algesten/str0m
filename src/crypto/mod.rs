@@ -72,8 +72,9 @@ impl CryptoProvider {
 
     /// Get a possible crypto backend using feature flags.
     ///
-    /// Favors **openssl** if enabled, falls back to **wincrypto** on Windows.
-    /// Panics if no crypto backend is available.
+    /// The order of preference is: **openssl**, **wincrypto**, **dimpl**.
+    ///
+    /// **NB** It's likely we will put **dimpl** first in a future release.
     ///
     /// This is useful for applications that want to automatically select the
     /// available crypto provider based on enabled features.
@@ -91,6 +92,8 @@ impl CryptoProvider {
             return CryptoProvider::OpenSsl;
         } else if cfg!(all(feature = "wincrypto", target_os = "windows")) {
             return CryptoProvider::WinCrypto;
+        } else if cfg!(feature = "dimpl") {
+            return CryptoProvider::Dimpl;
         }
         panic!("No crypto backend enabled");
     }
