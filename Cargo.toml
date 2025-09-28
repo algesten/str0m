@@ -32,12 +32,12 @@ unversioned = []
 # Without the sha1 feature, str0m uses the openssl sha1 impl which is slower.
 sha1 = ["dep:sha1"]
 
-# Uses native Windows API to implement cryptographic features, use instead on
+# Uses native Windows API to implement cryptographic features, use instead of
 # openssl and sha1.
 wincrypto = ["dep:str0m-wincrypto"]
 
 # DTLS impl made for str0m (experimental) in pure Rust.
-dimpl = ["dep:dimpl"]
+dimpl = ["sha1", "dep:dimpl", "dep:aes", "dep:aes-gcm", "dep:ctr"]
 
 # Redacts personally identifiable information (PII) from logs debug and above
 pii = []
@@ -53,9 +53,9 @@ sctp-proto = "0.5.0"
 combine = "4.6.6"
 
 # RustCrypto primitives used for SRTP when using the Rust backend
-aes = "0.8"
-aes-gcm = "0.10"
-ctr = "0.9"
+aes = { version = "0.8", optional = true }
+aes-gcm = { version = "0.10", optional = true }
+ctr = { version = "0.9", optional = true }
 
 # Sadly no DTLS support in rustls.
 openssl = { version = "0.10.70", optional = true }

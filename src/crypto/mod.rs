@@ -112,6 +112,7 @@ mod wincrypto;
 #[cfg(feature = "dimpl")]
 mod dimpl;
 
+#[cfg(feature = "dimpl")]
 mod rcrypto;
 
 mod dtls;
@@ -170,6 +171,15 @@ pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
 #[cfg(all(feature = "wincrypto", not(feature = "sha1")))]
 pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
     wincrypto::sha1_hmac(key, payloads)
+}
+
+#[cfg(all(
+    not(feature = "sha1"),
+    not(feature = "openssl"),
+    not(feature = "wincrypto"),
+))]
+pub fn sha1_hmac(_key: &[u8], _payloads: &[&[u8]]) -> [u8; 20] {
+    panic!("Need sha1 feature (via dimpl), openssl or wincrypto");
 }
 
 impl fmt::Display for CryptoProvider {
