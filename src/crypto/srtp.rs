@@ -47,7 +47,10 @@ pub enum SrtpCrypto {
     WinCrypto(super::wincrypto::WinCryptoSrtpCryptoImpl),
     #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]
     WinCrypto(DummySrtpCryptoImpl),
+    #[cfg(feature = "dimpl")]
     RustCrypto(super::rcrypto::RustCryptoImpl),
+    #[cfg(not(feature = "dimpl"))]
+    RustCrypto(DummySrtpCryptoImpl),
 }
 
 #[allow(clippy::unit_arg)]
@@ -72,8 +75,14 @@ impl SrtpCrypto {
         Self::WinCrypto(DummySrtpCryptoImpl(CryptoProvider::WinCrypto))
     }
 
+    #[cfg(feature = "dimpl")]
     pub fn new_rust_crypto() -> SrtpCrypto {
         Self::RustCrypto(super::rcrypto::RustCryptoImpl)
+    }
+
+    #[cfg(not(feature = "dimpl"))]
+    pub fn new_rust_crypto() -> SrtpCrypto {
+        Self::RustCrypto(DummySrtpCryptoImpl(CryptoProvider::Dimpl))
     }
 
     // TODO: Can we avoice dynamic dispatch in this signature? The parameters are:
