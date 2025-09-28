@@ -15,6 +15,7 @@ impl DtlsError {
             DtlsError::Io(e) => e.kind() == io::ErrorKind::WouldBlock,
             DtlsError::CryptoError(crypto_err) => match crypto_err {
                 CryptoError::Io(e) => e.kind() == io::ErrorKind::WouldBlock,
+                #[allow(unreachable_patterns)]
                 _ => false,
             },
         }
