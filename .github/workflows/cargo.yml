@@ -42,9 +42,11 @@ jobs:
         with:
           fetch-depth: 0
       - name: Martin's snowflake formatting rules
-        uses: algesten/snowflake@v1.0.4
+        uses: algesten/snowflake@v1.1.0
         with:
           check_diff: true
+          line_width_rules: 'CHANGELOG.md:120;c_cpp_properties.json:160;Cargo.toml:130;*.md:110;*.rs:110;*.toml:110;DEFAULT=110'
+          rust_import_ignore: 'wincrypto/src/**/*.rs'
 
   pii:
     runs-on: ubuntu-latest
