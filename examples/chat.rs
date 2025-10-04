@@ -26,7 +26,7 @@ fn init_log() {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("chat=info,str0m=info"));
+        .unwrap_or_else(|_| EnvFilter::new("chat=info,str0m=info,dimpl=info"));
 
     tracing_subscriber::registry()
         .with(fmt::layer())
