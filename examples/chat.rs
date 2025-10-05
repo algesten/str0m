@@ -15,6 +15,7 @@ use rouille::Server;
 use rouille::{Request, Response};
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::channel::{ChannelData, ChannelId};
+use str0m::config::CryptoProvider;
 use str0m::media::{Direction, KeyframeRequest, MediaData, Mid, Rid};
 use str0m::media::{KeyframeRequestKind, MediaKind};
 use str0m::net::Protocol;
@@ -76,6 +77,9 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
 
     // Expected POST SDP Offers.
     let mut data = request.data().expect("body to be available");
+
+    // Run with whatever is configured.
+    CryptoProvider::from_feature_flags().install_process_default();
 
     let offer: SdpOffer = serde_json::from_reader(&mut data).expect("serialized offer");
     let mut rtc = Rtc::builder()
@@ -650,6 +654,7 @@ impl Client {
 
 /// Events propagated between client.
 #[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
 enum Propagated {
     /// When we have nothing to propagate.
     Noop,

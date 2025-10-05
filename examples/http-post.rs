@@ -11,9 +11,10 @@ use rouille::Server;
 use rouille::{Request, Response};
 
 use str0m::change::SdpOffer;
+use str0m::config::CryptoProvider;
 use str0m::net::Protocol;
 use str0m::net::Receive;
-use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcError};
+use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcConfig, RtcError};
 
 mod util;
 
@@ -56,8 +57,13 @@ fn web_request(request: &Request) -> Response {
     // Expected POST SDP Offers.
     let mut data = request.data().expect("body to be available");
 
+    // Run with whatever is configured.
+    CryptoProvider::from_feature_flags().install_process_default();
+
     let offer: SdpOffer = serde_json::from_reader(&mut data).expect("serialized offer");
-    let mut rtc = Rtc::new();
+    let mut rtc = RtcConfig::new()
+        // .set_ice_lite(true)
+        .build();
 
     let addr = util::select_host_address();
 

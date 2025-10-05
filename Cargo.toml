@@ -24,8 +24,8 @@ rust-version = "1.81.0"
 # security patching than updating statically linked software.
 
 [features]
-default = ["openssl", "vendored", "sha1"]
-openssl = ["dep:openssl", "dep:openssl-sys", "dep:libc", "rouille/ssl"]
+default = ["openssl", "vendored", "sha1", "examples"]
+openssl = ["dep:openssl", "dep:openssl-sys", "dep:libc"]
 vendored = ["openssl?/vendored"]
 unversioned = []
 
@@ -41,6 +41,11 @@ dimpl = ["sha1", "dep:dimpl", "dep:aes", "dep:aes-gcm", "dep:ctr"]
 
 # Redacts personally identifiable information (PII) from logs debug and above
 pii = []
+
+# The examples require openssl because of rouille, not because of str0m.
+# However windows fails to compile with rouille/ssl, so we can't have it on
+# in the dev-dependencies.
+examples = ["rouille/ssl"]
 
 _internal_dont_use_log_stats = []
 _internal_test_exports = []
@@ -95,8 +100,8 @@ _str0m_test = { path = "_str0m_test" }
 
 [[example]]
 name = "chat"
-required-features = ["openssl"]
+required-features = ["examples"]
 
 [[example]]
 name = "http-post"
-required-features = ["openssl"]
+required-features = ["examples"]
