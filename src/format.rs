@@ -77,6 +77,7 @@ impl PartialEq for PayloadParams {
             && self.fb_nack == other.fb_nack
             && self.fb_pli == other.fb_pli
             && self.fb_fir == other.fb_fir
+            && self.fb_remb == other.fb_remb
     }
 }
 
