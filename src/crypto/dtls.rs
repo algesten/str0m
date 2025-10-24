@@ -76,6 +76,10 @@ enum DtlsCertInner {
     WinCrypto(super::wincrypto::WinCryptoDtlsCert),
     #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]
     WinCrypto(DummyCert),
+    #[cfg(all(feature = "applecrypto"))]
+    AppleCrypto(super::applecrypto::AppleCryptoDtlsCert),
+    #[cfg(not(all(feature = "applecrypto")))]
+    AppleCrypto(DummyCert),
 }
 
 impl DtlsCert {
@@ -86,7 +90,8 @@ impl DtlsCert {
     /// using the feature flags:
     ///
     /// * **openssl** (defaults to on) for crypto backed by OpenSSL.
-    /// * **wincrypto** for crypto backed by windows crypto.
+    /// * **wincrypto** for crypto backed by windows crypto APIs.
+    /// * **applecrypto** for crypto backed by apple crypto APIs.
     pub fn new(p: CryptoProvider, opts: DtlsCertOptions) -> Self {
         let inner = match p {
             CryptoProvider::OpenSsl => {
@@ -111,6 +116,17 @@ impl DtlsCert {
                     DtlsCertInner::WinCrypto(DummyCert(p))
                 }
             }
+            CryptoProvider::AppleCrypto => {
+                #[cfg(all(feature = "applecrypto"))]
+                {
+                    let cert = super::applecrypto::AppleCryptoDtlsCert::new(opts);
+                    DtlsCertInner::AppleCrypto(cert)
+                }
+                #[cfg(not(all(feature = "applecrypto")))]
+                {
+                    DtlsCertInner::AppleCrypto(DummyCert(p))
+                }
+            }
         };
 
         DtlsCert(inner)
@@ -120,6 +136,7 @@ impl DtlsCert {
         match self.0 {
             DtlsCertInner::OpenSsl(_) => CryptoProvider::OpenSsl,
             DtlsCertInner::WinCrypto(_) => CryptoProvider::WinCrypto,
+            DtlsCertInner::AppleCrypto(_) => CryptoProvider::AppleCrypto,
         }
     }
 
@@ -130,6 +147,7 @@ impl DtlsCert {
         match &self.0 {
             DtlsCertInner::OpenSsl(v) => v.fingerprint(),
             DtlsCertInner::WinCrypto(v) => v.fingerprint(),
+            DtlsCertInner::AppleCrypto(v) => v.fingerprint(),
             _ => unreachable!(),
         }
     }
@@ -138,6 +156,7 @@ impl DtlsCert {
         let imp = match &self.0 {
             DtlsCertInner::OpenSsl(v) => DtlsImpl::OpenSsl(v.new_dtls_impl()?),
             DtlsCertInner::WinCrypto(v) => DtlsImpl::WinCrypto(v.new_dtls_impl()?),
+            DtlsCertInner::AppleCrypto(v) => DtlsImpl::AppleCrypto(v.new_dtls_impl()?),
         };
 
         Ok(imp)
@@ -149,6 +168,7 @@ impl fmt::Debug for DtlsCert {
         match &self.0 {
             DtlsCertInner::OpenSsl(c) => c.fmt(f),
             DtlsCertInner::WinCrypto(c) => c.fmt(f),
+            DtlsCertInner::AppleCrypto(c) => c.fmt(f),
             _ => unreachable!(),
         }
     }
@@ -192,6 +212,10 @@ pub(crate) enum DtlsImpl {
     WinCrypto(super::wincrypto::WinCryptoDtls),
     #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]
     WinCrypto(DummyDtlsImpl),
+    #[cfg(all(feature = "applecrypto"))]
+    AppleCrypto(super::applecrypto::AppleCryptoDtls),
+    #[cfg(not(all(feature = "applecrypto")))]
+    AppleCrypto(DummyDtlsImpl),
 }
 
 impl DtlsImpl {
@@ -199,6 +223,7 @@ impl DtlsImpl {
         match self {
             DtlsImpl::OpenSsl(v) => v.set_active(active),
             DtlsImpl::WinCrypto(v) => v.set_active(active),
+            DtlsImpl::AppleCrypto(v) => v.set_active(active),
         }
     }
 
@@ -206,6 +231,7 @@ impl DtlsImpl {
         match self {
             DtlsImpl::OpenSsl(i) => i.handle_handshake(o),
             DtlsImpl::WinCrypto(i) => i.handle_handshake(o),
+            DtlsImpl::AppleCrypto(i) => i.handle_handshake(o),
         }
     }
 
@@ -213,6 +239,7 @@ impl DtlsImpl {
         match self {
             DtlsImpl::OpenSsl(i) => i.is_active(),
             DtlsImpl::WinCrypto(i) => i.is_active(),
+            DtlsImpl::AppleCrypto(i) => i.is_active(),
         }
     }
 
@@ -224,6 +251,7 @@ impl DtlsImpl {
         match self {
             DtlsImpl::OpenSsl(i) => i.handle_receive(m, o),
             DtlsImpl::WinCrypto(i) => i.handle_receive(m, o),
+            DtlsImpl::AppleCrypto(i) => i.handle_receive(m, o),
         }
     }
 
@@ -231,6 +259,7 @@ impl DtlsImpl {
         match self {
             DtlsImpl::OpenSsl(i) => i.poll_datagram(),
             DtlsImpl::WinCrypto(i) => i.poll_datagram(),
+            DtlsImpl::AppleCrypto(i) => i.poll_datagram(),
         }
     }
 
@@ -238,6 +267,7 @@ impl DtlsImpl {
         match self {
             DtlsImpl::OpenSsl(i) => i.poll_timeout(now),
             DtlsImpl::WinCrypto(i) => i.poll_timeout(now),
+            DtlsImpl::AppleCrypto(i) => i.poll_timeout(now),
         }
     }
 
@@ -245,6 +275,7 @@ impl DtlsImpl {
         match self {
             DtlsImpl::OpenSsl(i) => i.handle_input(data),
             DtlsImpl::WinCrypto(i) => i.handle_input(data),
+            DtlsImpl::AppleCrypto(i) => i.handle_input(data),
         }
     }
 
@@ -252,6 +283,7 @@ impl DtlsImpl {
         match self {
             DtlsImpl::OpenSsl(i) => i.is_connected(),
             DtlsImpl::WinCrypto(i) => i.is_connected(),
+            DtlsImpl::AppleCrypto(i) => i.is_connected(),
         }
     }
 }

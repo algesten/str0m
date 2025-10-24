@@ -299,11 +299,12 @@
 //!
 //! # Crypto backends
 //!
-//! str0m has two crypto backends, `openssl` and `wincrypto`. The default is
-//! `openssl` which works on all platforms (also Windows). Ideally we want a
-//! pure rust version of the crypto code, but WebRTC currently requires
-//! DTLS 1.2 (not the latest version 1.3), and that leaves us only with a
-//! few possible options.
+//! str0m has three crypto backends, `openssl`, `wincrypto`, and
+//! `applecrypto`. The default is `openssl` which works on all platforms
+//! (including Windows and MacOS). Ideally we want a pure rust version of
+//! the crypto code, but WebRTC currently requires DTLS 1.2 (not the
+//! latest version 1.3), and that leaves us only with a few possible
+//! options.
 //!
 //! When compiling for Windows, the `openssl` feature can be removed and
 //! only rely on `wincrypto`. However notice that `str0m` never picks up a

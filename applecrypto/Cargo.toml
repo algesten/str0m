@@ -1,0 +1,16 @@
+# Package to isolate unsafe APIs used for the Str0m Windows Cryptography feature.
+
+[package]
+name = "str0m-applecrypto"
+version = "0.2.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+keywords = ["webrtc", "streaming", "video", "audio", "media"]
+categories = ["web-programming", "multimedia", "network-programming"]
+repository = "https://github.com/algesten/str0m"
+readme = "README.md"
+description = "Supporting crate for str0m"
+
+[dependencies]
+tracing = "0.1.37"
+objc2-security = { version = "0" }

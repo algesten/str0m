@@ -47,6 +47,10 @@ pub enum SrtpCrypto {
     WinCrypto(super::wincrypto::WinCryptoSrtpCryptoImpl),
     #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]
     WinCrypto(DummySrtpCryptoImpl),
+    #[cfg(feature = "applecrypto")]
+    AppleCrypto(super::applecrypto::AppleCryptoSrtpCryptoImpl),
+    #[cfg(not(feature = "applecrypto"))]
+    AppleCrypto(DummySrtpCryptoImpl),
 }
 
 #[allow(clippy::unit_arg)]
@@ -71,6 +75,16 @@ impl SrtpCrypto {
         Self::WinCrypto(DummySrtpCryptoImpl(CryptoProvider::WinCrypto))
     }
 
+    #[cfg(feature = "applecrypto")]
+    pub fn new_applecrypto() -> SrtpCrypto {
+        Self::AppleCrypto(super::applecrypto::AppleCryptoSrtpCryptoImpl)
+    }
+
+    #[cfg(not(feature = "applecrypto"))]
+    pub fn new_applecrypto() -> SrtpCrypto {
+        Self::AppleCrypto(DummySrtpCryptoImpl(CryptoProvider::AppleCrypto))
+    }
+
     // TODO: Can we avoice dynamic dispatch in this signature? The parameters are:
     //       1. As few "touch points" beteen rtp/srtp.rs and here as possible.
     //       2. Clear contract towards the actual impl.
@@ -83,6 +97,7 @@ impl SrtpCrypto {
         match self {
             SrtpCrypto::OpenSsl(v) => Box::new(v.new_aes_128_cm_sha1_80(key, encrypt)),
             SrtpCrypto::WinCrypto(v) => Box::new(v.new_aes_128_cm_sha1_80(key, encrypt)),
+            SrtpCrypto::AppleCrypto(v) => Box::new(v.new_aes_128_cm_sha1_80(key, encrypt)),
         }
     }
 
@@ -94,6 +109,7 @@ impl SrtpCrypto {
         match self {
             SrtpCrypto::OpenSsl(v) => Box::new(v.new_aead_aes_128_gcm(key, encrypt)),
             SrtpCrypto::WinCrypto(v) => Box::new(v.new_aead_aes_128_gcm(key, encrypt)),
+            SrtpCrypto::AppleCrypto(v) => Box::new(v.new_aead_aes_128_gcm(key, encrypt)),
         }
     }
 
@@ -105,6 +121,7 @@ impl SrtpCrypto {
         match self {
             SrtpCrypto::OpenSsl(v) => Box::new(v.new_aead_aes_256_gcm(key, encrypt)),
             SrtpCrypto::WinCrypto(v) => Box::new(v.new_aead_aes_256_gcm(key, encrypt)),
+            SrtpCrypto::AppleCrypto(v) => Box::new(v.new_aead_aes_256_gcm(key, encrypt)),
         }
     }
 
@@ -112,6 +129,7 @@ impl SrtpCrypto {
         match self {
             SrtpCrypto::OpenSsl(v) => v.srtp_aes_128_ecb_round(key, input, output),
             SrtpCrypto::WinCrypto(v) => v.srtp_aes_128_ecb_round(key, input, output),
+            SrtpCrypto::AppleCrypto(v) => v.srtp_aes_128_ecb_round(key, input, output),
         }
     }
 
@@ -119,6 +137,7 @@ impl SrtpCrypto {
         match self {
             SrtpCrypto::OpenSsl(v) => v.srtp_aes_256_ecb_round(key, input, output),
             SrtpCrypto::WinCrypto(v) => v.srtp_aes_256_ecb_round(key, input, output),
+            SrtpCrypto::AppleCrypto(v) => v.srtp_aes_256_ecb_round(key, input, output),
         }
     }
 }

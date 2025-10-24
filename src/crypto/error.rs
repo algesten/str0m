@@ -9,9 +9,13 @@ pub enum CryptoError {
     #[cfg(feature = "openssl")]
     OpenSsl(openssl::error::ErrorStack),
 
-    /// Some error from OpenSSL layer (used for DTLS).
+    /// Some error from WinCryto layer (used for DTLS).
     #[cfg(all(feature = "wincrypto", target_os = "windows"))]
     WinCrypto(super::wincrypto::WinCryptoError),
+
+    /// Some error from AppleCrypto layer (used for DTLS).
+    #[cfg(all(feature = "applecrypto"))]
+    AppleCrypto(super::applecrypto::AppleCryptoError),
 
     /// Other IO errors.
     Io(io::Error),
@@ -24,6 +28,8 @@ impl fmt::Display for CryptoError {
             CryptoError::OpenSsl(err) => write!(f, "{}", err),
             #[cfg(all(feature = "wincrypto", target_os = "windows"))]
             CryptoError::WinCrypto(err) => write!(f, "{}", err),
+            #[cfg(all(feature = "applecrypto"))]
+            CryptoError::AppleCrypto(err) => write!(f, "{}", err),
             CryptoError::Io(err) => write!(f, "{}", err),
         }
     }
@@ -36,6 +42,8 @@ impl Error for CryptoError {
             CryptoError::OpenSsl(err) => Some(err),
             #[cfg(all(feature = "wincrypto", target_os = "windows"))]
             CryptoError::WinCrypto(err) => Some(err),
+            #[cfg(all(feature = "applecrypto"))]
+            CryptoError::AppleCrypto(err) => Some(err),
             CryptoError::Io(err) => Some(err),
         }
     }
@@ -52,6 +60,13 @@ impl From<openssl::error::ErrorStack> for CryptoError {
 impl From<super::wincrypto::WinCryptoError> for CryptoError {
     fn from(err: super::wincrypto::WinCryptoError) -> Self {
         CryptoError::WinCrypto(err)
+    }
+}
+
+#[cfg(all(feature = "applecrypto"))]
+impl From<super::applecrypto::AppleCryptoError> for CryptoError {
+    fn from(err: super::applecrypto::AppleCryptoError) -> Self {
+        CryptoError::AppleCrypto(err)
     }
 }
 
