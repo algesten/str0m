@@ -1,12 +1,9 @@
-use std::ffi::c_void;
-
-use crate::apple_common_crypto::{CC_SHA256, CC_SHA256_DIGEST_LENGTH};
-
 use super::AppleCryptoError;
-//use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use chrono::{DateTime, Duration, Utc};
+use crate::apple_common_crypto::{CC_SHA256, CC_SHA256_DIGEST_LENGTH};
 use security_framework::certificate::SecCertificate;
 use security_framework::key::{Algorithm, GenerateKeyOptions, KeyType, SecKey};
+use std::ffi::c_void;
+use std::time::SystemTime;
 
 #[derive(Debug)]
 pub struct Certificate {
@@ -81,9 +78,10 @@ impl Certificate {
         ])])]);
         let subject = issuer.clone();
 
-        let now = Utc::now();
+        let now = SystemTime::now();
         let not_before = generalized_time(now);
-        let not_after = generalized_time(now + Duration::days(365));
+        // Add 365 days (in seconds)
+        let not_after = generalized_time(now + std::time::Duration::from_secs(365 * 24 * 60 * 60));
 
         let validity = sequence(&[not_before, not_after]);
 
@@ -236,8 +234,41 @@ fn set(elements: &[Vec<u8>]) -> Vec<u8> {
 }
 
 /// Helper: GeneralizedTime (YYYYMMDDHHMMSSZ)
-fn generalized_time(dt: DateTime<Utc>) -> Vec<u8> {
-    let s = dt.format("%Y%m%d%H%M%SZ").to_string();
+fn generalized_time(time: SystemTime) -> Vec<u8> {
+    // Convert SystemTime to seconds since UNIX_EPOCH
+    let duration = time
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("Time went backwards");
+    let secs = duration.as_secs();
+
+    // Convert to broken-down time (year, month, day, hour, minute, second)
+    // Algorithm based on civil_from_days from Howard Hinnant's date library
+    const SECONDS_PER_DAY: u64 = 86400;
+    let days = (secs / SECONDS_PER_DAY) as i64;
+    let time_of_day = secs % SECONDS_PER_DAY;
+
+    let hour = time_of_day / 3600;
+    let minute = (time_of_day % 3600) / 60;
+    let second = time_of_day % 60;
+
+    // Calculate civil date from days since Unix epoch (1970-01-01)
+    let z = days + 719468; // Days from 0000-03-01 to Unix epoch
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = (z - era * 146097) as u32; // Day of era
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365; // Year of era
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // Day of year
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    let month = m;
+    let day = d;
+
+    let s = format!(
+        "{:04}{:02}{:02}{:02}{:02}{:02}Z",
+        year, month, day, hour, minute, second
+    );
     tag(0x18, s.as_bytes())
 }
 
