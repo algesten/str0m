@@ -15,3 +15,5 @@ description = "Supporting crate for str0m"
 tracing = "0.1.37"
 core-foundation = "0.10"
 security-framework = "3.5"
+chrono = "0"
+base64 = { version="0.22"}

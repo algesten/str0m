@@ -55,3 +55,9 @@ impl From<String> for AppleCryptoError {
         Self::Generic(msg)
     }
 }
+
+impl From<core_foundation::error::CFError> for AppleCryptoError {
+    fn from(cf_error: core_foundation::error::CFError) -> Self {
+        Self::Generic(cf_error.description().to_string())
+    }
+}
