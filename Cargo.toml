@@ -35,6 +35,10 @@ sha1 = ["dep:sha1"]
 # openssl and sha1.
 wincrypto = ["dep:str0m-wincrypto"]
 
+# Uses native Apple API to implement cryptographic features, use instead on
+# openssl and sha1.
+applecrypto = ["dep:str0m-applecrypto"]
+
 # Redacts personally identifiable information (PII) from logs debug and above
 pii = []
 
@@ -60,6 +64,7 @@ serde = { version = "1.0.152", features = ["derive"] }
 
 [target.'cfg(unix)'.dependencies]
 sha1 = { version = "0.10.6", features = ["asm"], optional = true }
+str0m-applecrypto = { version = "0.2.0", path = "applecrypto", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # The ASM feature is broken on windows. Unclear where in the rust-crypto project

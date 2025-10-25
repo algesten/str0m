@@ -9,6 +9,7 @@ use std::fmt;
 ///
 /// * **openssl** (defaults to on) for crypto backed by OpenSSL.
 /// * **wincrypto** for crypto backed by windows crypto.
+/// * **applecrypto** for crypto backed by apple crypto.
 ///
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CryptoProvider {
@@ -20,6 +21,10 @@ pub enum CryptoProvider {
     ///
     /// Requires feature flag **wincrypto**.
     WinCrypto,
+    /// Apple implementation of cryptographic functions.
+    ///
+    /// Requires feature flag **applecrypto**.
+    AppleCrypto,
 }
 
 static PROCESS_DEFAULT: OnceCell<CryptoProvider> = OnceCell::new();
@@ -29,6 +34,7 @@ impl CryptoProvider {
         match self {
             CryptoProvider::OpenSsl => SrtpCrypto::new_openssl(),
             CryptoProvider::WinCrypto => SrtpCrypto::new_wincrypto(),
+            CryptoProvider::AppleCrypto => SrtpCrypto::new_applecrypto(),
         }
     }
 
@@ -58,6 +64,8 @@ impl CryptoProvider {
             return CryptoProvider::OpenSsl;
         } else if cfg!(all(feature = "wincrypto", target_os = "windows")) {
             return CryptoProvider::WinCrypto;
+        } else if cfg!(all(feature = "applecrypto")) {
+            return CryptoProvider::AppleCrypto;
         }
         panic!("No crypto backend enabled");
     }
@@ -72,6 +80,9 @@ mod ossl;
 
 #[cfg(all(feature = "wincrypto", target_os = "windows"))]
 mod wincrypto;
+
+#[cfg(feature = "applecrypto")]
+mod applecrypto;
 
 mod dtls;
 pub(crate) use dtls::DtlsImpl;
@@ -131,11 +142,18 @@ pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
     wincrypto::sha1_hmac(key, payloads)
 }
 
+/// If applecrypto is enabled and sha1 is not, it uses `applecrypto` crate.
+#[cfg(all(feature = "applecrypto", not(feature = "sha1")))]
+pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
+    applecrypto::sha1_hmac(key, payloads)
+}
+
 impl fmt::Display for CryptoProvider {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CryptoProvider::OpenSsl => write!(f, "openssl"),
             CryptoProvider::WinCrypto => write!(f, "wincrypto"),
+            CryptoProvider::AppleCrypto => write!(f, "applecrypto"),
         }
     }
 }
