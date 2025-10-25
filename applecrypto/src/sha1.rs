@@ -1,7 +1,47 @@
+use std::ffi::c_void;
+
+use super::apple_common_crypto::*;
 use super::AppleCryptoError;
 
-pub fn sha1_hmac(_key: &[u8], _payloads: &[&[u8]]) -> Result<[u8; 20], AppleCryptoError> {
-    todo!();
+const CC_SHA1_DIGEST_LENGTH: usize = 20;
+
+/// Computes HMAC-SHA1 using Apple's CommonCrypto framework.
+///
+/// This implementation uses the system-provided CCHmac function from
+/// Apple's CommonCrypto library, which provides optimized cryptographic
+/// operations on macOS and iOS platforms.
+///
+/// # Arguments
+///
+/// * `key` - The secret key for HMAC computation
+/// * `payloads` - Array of byte slices to be hashed (concatenated)
+///
+/// # Returns
+///
+/// Returns a Result containing the 20-byte SHA-1 HMAC digest, or an
+/// AppleCryptoError if the operation fails.
+pub fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> Result<[u8; 20], AppleCryptoError> {
+    // Concatenate all payloads into a single buffer
+    let total_len: usize = payloads.iter().map(|p| p.len()).sum();
+    let mut data = Vec::with_capacity(total_len);
+    for payload in payloads {
+        data.extend_from_slice(payload);
+    }
+
+    let mut result = [0u8; CC_SHA1_DIGEST_LENGTH];
+
+    unsafe {
+        CCHmac(
+            K_CC_HMAC_ALG_SHA1,
+            key.as_ptr() as *const c_void,
+            key.len(),
+            data.as_ptr() as *const c_void,
+            data.len(),
+            result.as_mut_ptr() as *mut c_void,
+        );
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -82,7 +122,7 @@ mod test {
         );
     }
 
-    fn hash_to_hex(hash: Result<[u8; 20], WinCryptoError>) -> String {
+    fn hash_to_hex(hash: Result<[u8; 20], AppleCryptoError>) -> String {
         let hash = hash.unwrap();
         let mut s = String::new();
         for byte in hash.iter() {

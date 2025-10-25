@@ -13,4 +13,5 @@ description = "Supporting crate for str0m"
 
 [dependencies]
 tracing = "0.1.37"
-objc2-security = { version = "0" }
+core-foundation = "0.9"
+security-framework = "2.0"
