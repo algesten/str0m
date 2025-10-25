@@ -1,13 +1,12 @@
-use super::apple_common_crypto::{CC_SHA256, CC_SHA256_DIGEST_LENGTH};
 use super::AppleCryptoError;
-use security_framework::key::SecKey;
-use std::ffi::c_void;
-
 #[derive(Debug)]
 pub struct Certificate {}
 
 impl Certificate {
-    pub fn new_self_signed(use_ec_dsa_keys: bool, subject: &str) -> Result<Self, AppleCryptoError> {
+    pub fn new_self_signed(
+        _use_ec_dsa_keys: bool,
+        _subject: &str,
+    ) -> Result<Self, AppleCryptoError> {
         todo!();
     }
 
