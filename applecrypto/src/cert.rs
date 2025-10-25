@@ -30,12 +30,15 @@ impl Certificate {
         key_options.set_size_in_bits(2048);
         let key = SecKey::new(&key_options)?;
         let public_key = key.public_key().unwrap();
-        println!("{key:?} {public_key:?}");
+
         // 2. Export public key as DER (SPKI)
-        let spki_der = public_key.external_representation().unwrap();
+        // external_representation() returns the PKCS#1 RSAPublicKey (SEQUENCE { modulus, exponent })
+        // We need to wrap it in SubjectPublicKeyInfo structure
+        let rsa_public_key = public_key.external_representation().unwrap();
+        let rsa_public_key_vec = rsa_public_key.to_vec();
         let spki = sequence(&[
-            sequence(&[rsa_encryption, tag(0x05, &[])]), // NULL
-            bit_string(&spki_der),
+            sequence(&[rsa_encryption.clone(), tag(0x05, &[])]), // AlgorithmIdentifier with NULL parameter
+            bit_string(&rsa_public_key_vec),
         ]);
 
         // 3. Build TBSCertificate
@@ -54,16 +57,19 @@ impl Certificate {
         let validity = sequence(&[not_before, not_after]);
 
         // basicConstraints: critical, CA:TRUE
-        let bc_value = sequence(&[vec![0x01, 0x01, 0x00]]); // BOOLEAN TRUE
+        // The extension value is a SEQUENCE containing BOOLEAN TRUE
+        let bc_value_inner = vec![0x01, 0x01, 0xFF]; // BOOLEAN TRUE (tag 0x01, length 0x01, value 0xFF)
+        let bc_value = tag(0x30, &bc_value_inner); // SEQUENCE wrapping the BOOLEAN
         let bc_ext = sequence(&[
             basic_constraints,
-            vec![0x01, 0x01, 0xFF], // critical
-            bc_value,
+            vec![0x01, 0x01, 0xFF], // critical = TRUE
+            octet_string(&bc_value),
         ]);
-        let extensions = tag(0xA0, &sequence(&[bc_ext])); // [3] EXPLICIT
+        let extensions_seq = sequence(&[bc_ext]);
+        let extensions = tag(0xA3, &extensions_seq); // [3] EXPLICIT
 
         let tbs = sequence(&[
-            tag(0xA0, &sequence(&[vec![0x02, 0x01, 0x02]])), // version v3
+            tag(0xA0, &integer(2)), // version v3 [0] EXPLICIT
             serial,
             sig_alg.clone(),
             issuer,
@@ -73,7 +79,7 @@ impl Certificate {
             extensions,
         ]);
 
-        // 4. SHA-256 hash of TBS
+        // 4. SHA-256 hash of TBSCertificate
         let mut hash = [0u8; CC_SHA256_DIGEST_LENGTH];
         unsafe {
             CC_SHA256(
@@ -83,7 +89,8 @@ impl Certificate {
             )
         };
 
-        // 5. Sign hash with private key
+        // 5. Sign the hash with private key
+        // RSASignatureDigestPKCS1v15SHA256 expects pre-hashed data
         let signature = key.create_signature(Algorithm::RSASignatureDigestPKCS1v15SHA256, &hash)?;
 
         // 6. Full Certificate
@@ -96,7 +103,16 @@ impl Certificate {
     }
 
     pub fn sha256_fingerprint(&self) -> Result<[u8; 32], AppleCryptoError> {
-        todo!();
+        let der = self.certificate.to_der();
+        let mut hash = [0u8; CC_SHA256_DIGEST_LENGTH];
+        unsafe {
+            CC_SHA256(
+                der.as_ptr() as *const c_void,
+                der.len() as u32,
+                hash.as_mut_ptr(),
+            )
+        };
+        Ok(hash)
     }
 }
 
@@ -150,8 +166,9 @@ fn oid(components: &[u64]) -> Vec<u8> {
                 break;
             }
         }
-        if let Some(b) = bytes.get_mut(0) {
-            *b |= 0x80;
+        // Set high bit on all but the last byte
+        for i in 0..bytes.len() - 1 {
+            bytes[i] |= 0x80;
         }
         packed.extend(bytes);
     }
@@ -161,6 +178,11 @@ fn oid(components: &[u64]) -> Vec<u8> {
 /// Helper: ASN.1 UTF8String
 fn utf8_string(s: &str) -> Vec<u8> {
     tag(0x0C, s.as_bytes())
+}
+
+/// Helper: ASN.1 Octet String
+fn octet_string(data: &[u8]) -> Vec<u8> {
+    tag(0x04, data)
 }
 
 /// Helper: ASN.1 Bit String (unused bits = 0)
@@ -182,9 +204,9 @@ fn set(elements: &[Vec<u8>]) -> Vec<u8> {
     tag(0x31, &body)
 }
 
-/// Helper: GeneralizedTime (YYMMDDHHMMSSZ)
+/// Helper: GeneralizedTime (YYYYMMDDHHMMSSZ)
 fn generalized_time(dt: DateTime<Utc>) -> Vec<u8> {
-    let s = dt.format("%y%m%d%H%M%SZ").to_string();
+    let s = dt.format("%Y%m%d%H%M%SZ").to_string();
     tag(0x18, s.as_bytes())
 }
 
@@ -192,7 +214,7 @@ fn generalized_time(dt: DateTime<Utc>) -> Vec<u8> {
 mod tests {
     #[test]
     fn verify_self_signed_rsa() {
-        let cert = super::Certificate::new_self_signed(false, "cn=WebRTC-RSA").unwrap();
+        let _cert = super::Certificate::new_self_signed(false, "cn=WebRTC-RSA").unwrap();
 
         // TODO: Verify subject and issuer are the same
         // TODO: Verify subject common name is cn=WebRTC-RSA
@@ -201,7 +223,7 @@ mod tests {
 
     #[test]
     fn verify_self_signed_ec_dsa() {
-        let cert = super::Certificate::new_self_signed(true, "cn=ecDsa").unwrap();
+        let _cert = super::Certificate::new_self_signed(true, "cn=ecDsa").unwrap();
 
         // TODO: Verify subject and issuer are the same
         // TODO: Verify subject common name is cn=ecDsa
