@@ -14,36 +14,67 @@ pub struct Certificate {
 }
 
 impl Certificate {
-    pub fn new_self_signed(
-        _use_ec_dsa_keys: bool,
-        subject: &str,
-    ) -> Result<Self, AppleCryptoError> {
+    pub fn new_self_signed(use_ec_dsa_keys: bool, subject: &str) -> Result<Self, AppleCryptoError> {
         // OIDs
-        let rsa_encryption = oid(&[1, 2, 840, 113549, 1, 1, 1]);
-        let sha256_with_rsa = oid(&[1, 2, 840, 113549, 1, 1, 11]);
         let common_name = oid(&[2, 5, 4, 3]);
         let basic_constraints = oid(&[2, 5, 29, 19]);
 
-        // 1. Generate RSA-2048 key pair
+        // Choose algorithm-specific OIDs and parameters
+        let (key_alg_oid, sig_alg_oid, key_type, key_size, sign_algorithm) = if use_ec_dsa_keys {
+            (
+                oid(&[1, 2, 840, 10045, 2, 1]),    // ecPublicKey
+                oid(&[1, 2, 840, 10045, 4, 3, 2]), // ecdsa-with-SHA256
+                KeyType::ec(),
+                256,
+                Algorithm::ECDSASignatureDigestX962SHA256,
+            )
+        } else {
+            (
+                oid(&[1, 2, 840, 113549, 1, 1, 1]),  // rsaEncryption
+                oid(&[1, 2, 840, 113549, 1, 1, 11]), // sha256WithRSAEncryption
+                KeyType::rsa(),
+                2048,
+                Algorithm::RSASignatureDigestPKCS1v15SHA256,
+            )
+        };
+
+        // 1. Generate key pair
         let mut key_options = GenerateKeyOptions::default();
-        key_options.set_key_type(KeyType::rsa());
-        key_options.set_size_in_bits(2048);
+        key_options.set_key_type(key_type);
+        key_options.set_size_in_bits(key_size);
         let key = SecKey::new(&key_options)?;
         let public_key = key.public_key().unwrap();
 
         // 2. Export public key as DER (SPKI)
-        // external_representation() returns the PKCS#1 RSAPublicKey (SEQUENCE { modulus, exponent })
-        // We need to wrap it in SubjectPublicKeyInfo structure
-        let rsa_public_key = public_key.external_representation().unwrap();
-        let rsa_public_key_vec = rsa_public_key.to_vec();
-        let spki = sequence(&[
-            sequence(&[rsa_encryption.clone(), tag(0x05, &[])]), // AlgorithmIdentifier with NULL parameter
-            bit_string(&rsa_public_key_vec),
-        ]);
+        let public_key_data = public_key.external_representation().unwrap();
+        let public_key_vec = public_key_data.to_vec();
+
+        // Build SubjectPublicKeyInfo
+        let spki = if use_ec_dsa_keys {
+            // For ECDSA, we need to specify the curve (secp256r1/P-256)
+            let secp256r1_oid = oid(&[1, 2, 840, 10045, 3, 1, 7]);
+            sequence(&[
+                sequence(&[key_alg_oid.clone(), secp256r1_oid]),
+                bit_string(&public_key_vec),
+            ])
+        } else {
+            // For RSA, AlgorithmIdentifier has NULL parameter
+            sequence(&[
+                sequence(&[key_alg_oid.clone(), tag(0x05, &[])]),
+                bit_string(&public_key_vec),
+            ])
+        };
 
         // 3. Build TBSCertificate
         let serial = integer(1);
-        let sig_alg = sequence(&[sha256_with_rsa.clone(), tag(0x05, &[])]);
+        let sig_alg = if use_ec_dsa_keys {
+            // ECDSA signature algorithm has no parameters
+            sequence(&[sig_alg_oid.clone()])
+        } else {
+            // RSA signature algorithm has NULL parameter
+            sequence(&[sig_alg_oid.clone(), tag(0x05, &[])])
+        };
+
         let issuer = sequence(&[set(&[sequence(&[
             common_name.clone(),
             utf8_string(subject),
@@ -90,8 +121,8 @@ impl Certificate {
         };
 
         // 5. Sign the hash with private key
-        // RSASignatureDigestPKCS1v15SHA256 expects pre-hashed data
-        let signature = key.create_signature(Algorithm::RSASignatureDigestPKCS1v15SHA256, &hash)?;
+        // Both RSASignatureDigestPKCS1v15SHA256 and ECDSASignatureDigestX962SHA256 expect pre-hashed data
+        let signature = key.create_signature(sign_algorithm, &hash)?;
 
         // 6. Full Certificate
         let cert_der = sequence(&[tbs, sig_alg, bit_string(&signature)]);
@@ -212,22 +243,51 @@ fn generalized_time(dt: DateTime<Utc>) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use crate::AppleCryptoError;
+    use security_framework::certificate::SecCertificate;
+
     #[test]
     fn verify_self_signed_rsa() {
-        let _cert = super::Certificate::new_self_signed(false, "cn=WebRTC-RSA").unwrap();
+        let cert = super::Certificate::new_self_signed(false, "cn=WebRTC-RSA").unwrap();
 
-        // TODO: Verify subject and issuer are the same
-        // TODO: Verify subject common name is cn=WebRTC-RSA
-        // TODO: Verify issuer common name is cn=WebRTC-RSA
+        // Verify it's self-signed
+        assert!(
+            is_self_signed(&cert.certificate).unwrap(),
+            "Certificate should be self-signed"
+        );
+
+        // Verify subject and issuer common names
+        let subject_cn = extract_common_name_from_subject(&cert.certificate).unwrap();
+        let issuer_cn = extract_common_name_from_issuer(&cert.certificate).unwrap();
+
+        assert_eq!(subject_cn, "cn=WebRTC-RSA", "Subject CN should match");
+        assert_eq!(issuer_cn, "cn=WebRTC-RSA", "Issuer CN should match");
+        assert_eq!(
+            subject_cn, issuer_cn,
+            "Subject and issuer CN should be the same"
+        );
     }
 
     #[test]
     fn verify_self_signed_ec_dsa() {
-        let _cert = super::Certificate::new_self_signed(true, "cn=ecDsa").unwrap();
+        let cert = super::Certificate::new_self_signed(true, "cn=ecDsa").unwrap();
 
-        // TODO: Verify subject and issuer are the same
-        // TODO: Verify subject common name is cn=ecDsa
-        // TODO: Verify issuer common name is cn=ecDsa
+        // Verify it's self-signed
+        assert!(
+            is_self_signed(&cert.certificate).unwrap(),
+            "Certificate should be self-signed"
+        );
+
+        // Verify subject and issuer common names
+        let subject_cn = extract_common_name_from_subject(&cert.certificate).unwrap();
+        let issuer_cn = extract_common_name_from_issuer(&cert.certificate).unwrap();
+
+        assert_eq!(subject_cn, "cn=ecDsa", "Subject CN should match");
+        assert_eq!(issuer_cn, "cn=ecDsa", "Issuer CN should match");
+        assert_eq!(
+            subject_cn, issuer_cn,
+            "Subject and issuer CN should be the same"
+        );
     }
 
     #[test]
@@ -242,5 +302,183 @@ mod tests {
         let cert = super::Certificate::new_self_signed(true, "cn=WebRTC").unwrap();
         let fingerprint = cert.sha256_fingerprint().unwrap();
         assert_eq!(fingerprint.len(), 32);
+    }
+
+    /// Check if this is a self-signed certificate (issuer == subject)
+    fn is_self_signed(certificate: &SecCertificate) -> Result<bool, AppleCryptoError> {
+        let der = certificate.to_der();
+        let (issuer, subject) = parse_issuer_and_subject(&der)?;
+        Ok(issuer == subject)
+    }
+
+    /// Extract common name from subject
+    fn extract_common_name_from_subject(
+        certificate: &SecCertificate,
+    ) -> Result<String, AppleCryptoError> {
+        let der = certificate.to_der();
+        let (_, subject) = parse_issuer_and_subject(&der)?;
+        extract_cn_from_name(&subject)
+    }
+
+    /// Extract common name from issuer
+    fn extract_common_name_from_issuer(
+        certificate: &SecCertificate,
+    ) -> Result<String, AppleCryptoError> {
+        let der = certificate.to_der();
+        let (issuer, _) = parse_issuer_and_subject(&der)?;
+        extract_cn_from_name(&issuer)
+    }
+
+    /// Parse issuer and subject from certificate DER
+    fn parse_issuer_and_subject(der: &[u8]) -> Result<(Vec<u8>, Vec<u8>), AppleCryptoError> {
+        // Certificate structure:
+        // SEQUENCE {
+        //   tbsCertificate SEQUENCE {
+        //     [0] version
+        //     serialNumber
+        //     signature AlgorithmIdentifier
+        //     issuer Name              <- we want this
+        //     validity
+        //     subject Name             <- and this
+        //     ...
+        //   }
+        // }
+
+        let mut pos = 0;
+
+        // Skip outer SEQUENCE tag and length
+        if der[pos] != 0x30 {
+            return Err(AppleCryptoError::Generic(
+                "Invalid certificate format".to_string(),
+            ));
+        }
+        pos += 1;
+        pos += skip_length(&der[pos..])?;
+
+        // Skip TBS SEQUENCE tag and length
+        if der[pos] != 0x30 {
+            return Err(AppleCryptoError::Generic(
+                "Invalid TBS certificate format".to_string(),
+            ));
+        }
+        pos += 1;
+        pos += skip_length(&der[pos..])?;
+
+        // Skip version [0] EXPLICIT
+        if der[pos] == 0xA0 {
+            pos += 1;
+            let len = read_length(&der[pos..])?;
+            pos += skip_length(&der[pos..])?;
+            pos += len;
+        }
+
+        // Skip serial number
+        pos += skip_asn1_element(&der[pos..])?;
+
+        // Skip signature algorithm
+        pos += skip_asn1_element(&der[pos..])?;
+
+        // Read issuer
+        let issuer_start = pos;
+        let issuer_len = skip_asn1_element(&der[pos..])?;
+        let issuer = der[issuer_start..issuer_start + issuer_len].to_vec();
+        pos += issuer_len;
+
+        // Skip validity
+        pos += skip_asn1_element(&der[pos..])?;
+
+        // Read subject
+        let subject_start = pos;
+        let subject_len = skip_asn1_element(&der[pos..])?;
+        let subject = der[subject_start..subject_start + subject_len].to_vec();
+
+        Ok((issuer, subject))
+    }
+
+    /// Extract CN from a Name structure
+    fn extract_cn_from_name(name: &[u8]) -> Result<String, AppleCryptoError> {
+        // Name is a SEQUENCE of SETs of AttributeTypeAndValue
+        // We're looking for the one with OID 2.5.4.3 (commonName)
+        let cn_oid = vec![0x06, 0x03, 0x55, 0x04, 0x03]; // OID encoding for 2.5.4.3
+
+        let mut pos = 0;
+
+        // Skip SEQUENCE tag and length
+        if name[pos] != 0x30 {
+            return Err(AppleCryptoError::Generic("Invalid Name format".to_string()));
+        }
+        pos += 1;
+        pos += skip_length(&name[pos..])?;
+
+        // Iterate through SETs
+        while pos < name.len() {
+            if name[pos] != 0x31 {
+                // SET tag
+                break;
+            }
+            pos += 1;
+            let set_len = read_length(&name[pos..])?;
+            pos += skip_length(&name[pos..])?;
+            let set_end = pos + set_len;
+
+            // Check if this SET contains the CN OID
+            if pos + cn_oid.len() < name.len()
+                && &name[pos + 2..pos + 2 + cn_oid.len()] == &cn_oid[..]
+            {
+                // Found CN! Skip SEQUENCE and OID
+                pos += 2; // SEQUENCE tag and length
+                pos += cn_oid.len();
+
+                // Read the string value (usually UTF8String tag 0x0C)
+                let string_tag = name[pos];
+                pos += 1;
+                let string_len = read_length(&name[pos..])?;
+                pos += skip_length(&name[pos..])?;
+
+                if string_tag == 0x0C || string_tag == 0x13 {
+                    // UTF8String or PrintableString
+                    let cn_bytes = &name[pos..pos + string_len];
+                    return String::from_utf8(cn_bytes.to_vec())
+                        .map_err(|_| AppleCryptoError::Generic("Invalid UTF-8 in CN".to_string()));
+                }
+            }
+
+            pos = set_end;
+        }
+
+        Err(AppleCryptoError::Generic(
+            "CN not found in Name".to_string(),
+        ))
+    }
+
+    /// Read ASN.1 length field and return the length value
+    fn read_length(data: &[u8]) -> Result<usize, AppleCryptoError> {
+        if data[0] < 0x80 {
+            Ok(data[0] as usize)
+        } else {
+            let num_bytes = (data[0] & 0x7F) as usize;
+            let mut len = 0;
+            for i in 0..num_bytes {
+                len = (len << 8) | data[1 + i] as usize;
+            }
+            Ok(len)
+        }
+    }
+
+    /// Skip ASN.1 length field and return how many bytes were skipped
+    fn skip_length(data: &[u8]) -> Result<usize, AppleCryptoError> {
+        if data[0] < 0x80 {
+            Ok(1)
+        } else {
+            Ok(1 + (data[0] & 0x7F) as usize)
+        }
+    }
+
+    /// Skip an entire ASN.1 element (tag + length + value) and return total size
+    fn skip_asn1_element(data: &[u8]) -> Result<usize, AppleCryptoError> {
+        let mut pos = 1; // Skip tag
+        let len = read_length(&data[pos..])?;
+        pos += skip_length(&data[pos..])?;
+        Ok(pos + len)
     }
 }
