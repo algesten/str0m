@@ -21,7 +21,7 @@ fn init_log() {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
     let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("http_post=debug,str0m=debug"));
+        .unwrap_or_else(|_| EnvFilter::new("http_post=debug,str0m=debug,dimpl=debug"));
 
     tracing_subscriber::registry()
         .with(fmt::layer())
