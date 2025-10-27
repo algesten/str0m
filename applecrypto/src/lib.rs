@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate tracing;
-
 use std::{error::Error, fmt};
 
 pub(crate) mod apple_common_crypto;
