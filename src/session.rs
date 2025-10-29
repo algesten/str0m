@@ -439,7 +439,7 @@ impl Session {
         // Mark as received for TWCC purposes
         if let Some(transport_cc) = header.ext_vals.transport_cc {
             let prev = self.twcc_rx_register.max_seq();
-            let extended = extend_u16(Some(*prev), transport_cc);
+            let extended = extend_u16(prev.map(|s| *s), transport_cc);
             self.twcc_rx_register.update_seq(extended.into(), now);
         }
 
