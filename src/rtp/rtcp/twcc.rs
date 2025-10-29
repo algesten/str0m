@@ -270,10 +270,11 @@ impl TwccRecvRegister {
         }
     }
 
-    pub fn max_seq(&self) -> SeqNo {
+    /// Find the last sequence number, or `None` if the queue is empty.
+    pub fn max_seq(&self) -> Option<SeqNo> {
         // The highest seq must be the last since update_seq inserts values
         // using a binary search.
-        self.queue.back().map(|r| r.seq).unwrap_or_else(|| 0.into())
+        self.queue.back().map(|r| r.seq)
     }
 
     pub fn update_seq(&mut self, seq: SeqNo, time: Instant) {
@@ -2163,6 +2164,86 @@ mod test {
             // [5, 6] are delayed/lost
             // 7 is acked in the last report
             assert_eq!(acked_packets, [3, 7]);
+        }
+    }
+
+    #[test]
+    fn test_twcc_recv_register_high_initial_sequence() {
+        // Test TWCC sequence numbers starting at high values (>= 32768)
+        let test_cases = vec![
+            (32767, "just below half"),
+            (32768, "exactly half"),
+            (65434, "just below u16"),
+            (65535, "maximum u16"),
+        ];
+
+        for (transport_cc, description) in test_cases {
+            let mut twcc_rx_register = TwccRecvRegister::new(100);
+            let now = Instant::now();
+
+            // Empty register should return `None`
+            assert_eq!(
+                twcc_rx_register.max_seq(),
+                None,
+                "Empty register should return None for {}",
+                description
+            );
+
+            // This is what `session.rs` does:
+            let prev = twcc_rx_register.max_seq();
+            let extended = extend_u16(prev.map(|s| *s), transport_cc);
+            twcc_rx_register.update_seq(extended.into(), now);
+
+            assert_eq!(
+                twcc_rx_register.max_seq(),
+                Some(extended.into()),
+                "First packet for {}",
+                description
+            );
+
+            // Add a few more packets, simulating production code path
+            for i in 1..5 {
+                let raw_seq = ((transport_cc as u32 + i) % 65536) as u16;
+                let prev = twcc_rx_register.max_seq();
+                let extended = extend_u16(prev.map(|s| *s), raw_seq);
+                twcc_rx_register
+                    .update_seq(extended.into(), now + Duration::from_millis(i as u64 * 10));
+            }
+
+            // Verify wrap-around handling if we crossed the boundary
+            if transport_cc >= 65533 {
+                // Should have wrapped to extended values > 65536
+                let max = twcc_rx_register.max_seq().unwrap();
+                assert!(
+                    *max > 65536,
+                    "Should wrap correctly for {}: got {}",
+                    description,
+                    *max
+                );
+            }
+
+            // build_report should NOT panic or allocate huge memory (leading to OOM)
+            let report = twcc_rx_register.build_report(1000);
+            assert!(report.is_some(), "Should build report for {}", description);
+
+            let report = report.unwrap();
+            assert!(
+                report.status_count > 0,
+                "Should have packets for {}",
+                description
+            );
+            assert!(
+                report.chunks.len() > 0,
+                "Should have chunks for {}",
+                description
+            );
+
+            // Sanity check: should never have an absurdly large number of chunks
+            assert!(
+                report.chunks.len() < 10,
+                "Should not create excessive chunks for {}",
+                description
+            );
         }
     }
 }

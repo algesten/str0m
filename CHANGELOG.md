@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Fix bug when TWCC sequence starts above 32768 #717
+
 # 0.11.1
 
   * stun: stricter string parsing #712
