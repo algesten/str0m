@@ -11,7 +11,11 @@ use g7xx::{G711Depacketizer, G711Packetizer, G722Packetizer};
 
 mod h264;
 pub use h264::H264CodecExtra;
+#[cfg(not(feature = "unversioned"))]
 use h264::{H264Depacketizer, H264Packetizer};
+
+#[cfg(feature = "unversioned")]
+pub use h264::{H264Depacketizer, H264Packetizer};
 
 mod h264_profile;
 pub(crate) use h264_profile::H264ProfileLevel;
@@ -24,7 +28,11 @@ use opus::{OpusDepacketizer, OpusPacketizer};
 
 mod vp8;
 pub use vp8::Vp8CodecExtra;
+#[cfg(not(feature = "unversioned"))]
 use vp8::{Vp8Depacketizer, Vp8Packetizer};
+
+#[cfg(feature = "unversioned")]
+pub use vp8::{Vp8Depacketizer, Vp8Packetizer};
 
 mod vp9;
 pub use vp9::Vp9CodecExtra;
@@ -73,10 +81,16 @@ impl MediaKind {
 }
 
 /// Packetizes some bytes for use as RTP packet.
-pub(crate) trait Packetizer: fmt::Debug {
+///
+/// ## Unversioned API surface
+///
+/// This trait is not currently versioned according to semver rules.
+/// Breaking changes may be made in minor or patch releases.
+pub trait Packetizer: fmt::Debug {
     /// Chunk the data up into RTP packets.
     fn packetize(&mut self, mtu: usize, b: &[u8]) -> Result<Vec<Vec<u8>>, PacketError>;
 
+    /// Tell if this is the last packet of a frame.
     fn is_marker(&mut self, data: &[u8], previous: Option<&[u8]>, last: bool) -> bool;
 }
 
@@ -99,7 +113,12 @@ pub enum CodecExtra {
 /// Depacketizes an RTP payload.
 ///
 /// Removes any RTP specific data from the payload.
-pub(crate) trait Depacketizer: fmt::Debug {
+///
+/// ## Unversioned API surface
+///
+/// This trait is not currently versioned according to semver rules.
+/// Breaking changes may be made in minor or patch releases.
+pub trait Depacketizer: fmt::Debug {
     /// Unpack the RTP packet into a provided `Vec<u8>`.
     fn depacketize(
         &mut self,
