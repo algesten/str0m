@@ -11,10 +11,6 @@ use g7xx::{G711Depacketizer, G711Packetizer, G722Packetizer};
 
 mod h264;
 pub use h264::H264CodecExtra;
-#[cfg(not(feature = "unversioned"))]
-use h264::{H264Depacketizer, H264Packetizer};
-
-#[cfg(feature = "unversioned")]
 pub use h264::{H264Depacketizer, H264Packetizer};
 
 mod h264_profile;
@@ -28,10 +24,6 @@ use opus::{OpusDepacketizer, OpusPacketizer};
 
 mod vp8;
 pub use vp8::Vp8CodecExtra;
-#[cfg(not(feature = "unversioned"))]
-use vp8::{Vp8Depacketizer, Vp8Packetizer};
-
-#[cfg(feature = "unversioned")]
 pub use vp8::{Vp8Depacketizer, Vp8Packetizer};
 
 mod vp9;
