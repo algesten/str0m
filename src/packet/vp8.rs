@@ -27,6 +27,11 @@ pub struct Vp8CodecExtra {
 }
 
 /// Packetizes VP8 RTP packets.
+///
+/// ## Unversioned API surface
+///
+/// This struct is not currently versioned according to semver rules.
+/// Breaking changes may be made in minor or patch releases.
 #[derive(Default, Debug, Copy, Clone)]
 pub struct Vp8Packetizer {
     enable_picture_id: bool,
@@ -127,6 +132,11 @@ impl Packetizer for Vp8Packetizer {
 }
 
 /// Depacketizes VP8 RTP packets.
+///
+/// ## Unversioned API surface
+///
+/// This struct is not currently versioned according to semver rules.
+/// Breaking changes may be made in minor or patch releases.
 #[derive(PartialEq, Eq, Debug, Default, Clone)]
 pub struct Vp8Depacketizer {
     /// Required Header
@@ -152,7 +162,7 @@ pub struct Vp8Depacketizer {
     /// Optional extension
     /// 8 or 16 bits, picture ID
     pub picture_id: u16,
-    // extended picture id
+    /// extended picture id
     pub extended_pid: Option<u64>,
 
     /// 8 bits temporal level zero index

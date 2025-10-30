@@ -14,6 +14,11 @@ pub struct H264CodecExtra {
 }
 
 /// Packetizes H264 RTP packets.
+///
+/// ## Unversioned API surface
+///
+/// This struct is not currently versioned according to semver rules.
+/// Breaking changes may be made in minor or patch releases.
 #[derive(Default, Debug, Clone)]
 pub struct H264Packetizer {
     sps_nalu: Option<Vec<u8>>,
@@ -206,8 +211,14 @@ impl Packetizer for H264Packetizer {
 }
 
 /// Depacketizes H264 RTP packets.
+///
+/// ## Unversioned API surface
+///
+/// This struct is not currently versioned according to semver rules.
+/// Breaking changes may be made in minor or patch releases.
 #[derive(PartialEq, Eq, Debug, Default, Clone)]
 pub struct H264Depacketizer {
+    /// Whether to output in AVC format (length-prefixed NALUs) instead of Annex B format
     pub is_avc: bool,
     fua_buffer: Option<Vec<u8>>,
 }

@@ -2524,3 +2524,16 @@ mod test {
 #[cfg(feature = "_internal_test_exports")]
 #[allow(missing_docs)]
 pub mod _internal_test_exports;
+
+#[cfg(feature = "unversioned")]
+pub mod unversioned {
+    //! This module provides functionality that is not versioned according to semver.
+    //! It may change in breaking ways between minor/patch releases, there are no guarantees.
+    //! USE AT YOUR OWN RISK.
+    //!
+    //! To use this module, enable the `unversioned` feature flag in your Cargo.toml.
+
+    pub use super::packet::{
+        Depacketizer, H264Depacketizer, H264Packetizer, Packetizer, Vp8Depacketizer, Vp8Packetizer,
+    };
+}
