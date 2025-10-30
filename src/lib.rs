@@ -935,11 +935,12 @@ pub enum Output {
 }
 
 /// The reason for the next [`Output::Timeout`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Reason {
     /// No timeout scheduled.
     ///
     /// The timeout value is in the distant future.
+    #[default]
     NotHappening,
 
     /// The DTLS subsystem.
@@ -1008,12 +1009,6 @@ pub enum Reason {
     ///
     /// Calculations regarding sender bandwidth using incoming TWCC.
     Bwe,
-}
-
-impl Default for Reason {
-    fn default() -> Self {
-        Self::NotHappening
-    }
 }
 
 impl Rtc {
