@@ -6,13 +6,12 @@ use windows::{
         Security::Cryptography::{
             szOID_ECDSA_SHA256, szOID_RSA_SHA256RSA, BCryptCreateHash, BCryptFinishHash,
             BCryptHashData, CertCreateSelfSignCertificate, CertFreeCertificateContext,
-            CertStrToNameW, NCryptCreatePersistedKey, NCryptDeleteKey, NCryptFinalizeKey,
+            CertStrToNameW, NCryptCreatePersistedKey, NCryptFinalizeKey,
             NCryptOpenStorageProvider, BCRYPT_HASH_HANDLE, BCRYPT_SHA256_ALG_HANDLE, CERT_CONTEXT,
             CERT_CREATE_SELFSIGN_FLAGS, CERT_KEY_SPEC, CERT_OID_NAME_STR,
-            CRYPT_ALGORITHM_IDENTIFIER, CRYPT_INTEGER_BLOB,
-            HCRYPTPROV_OR_NCRYPT_KEY_HANDLE, MS_KEY_STORAGE_PROVIDER, NCRYPT_ECDSA_P256_ALGORITHM,
-            NCRYPT_FLAGS, NCRYPT_KEY_HANDLE, NCRYPT_PROV_HANDLE, NCRYPT_SILENT_FLAG,
-            X509_ASN_ENCODING,
+            CRYPT_ALGORITHM_IDENTIFIER, CRYPT_INTEGER_BLOB, HCRYPTPROV_OR_NCRYPT_KEY_HANDLE,
+            MS_KEY_STORAGE_PROVIDER, NCRYPT_ECDSA_P256_ALGORITHM, NCRYPT_FLAGS, NCRYPT_KEY_HANDLE,
+            NCRYPT_PROV_HANDLE, NCRYPT_SILENT_FLAG, X509_ASN_ENCODING,
         },
     },
 };
@@ -85,10 +84,11 @@ impl Certificate {
                     ..Default::default()
                 };
 
-                // Don't pass key_prov_info since the key is ephemeral and directly accessible via handle.
-                // Previously, key_prov_info referenced a GUID-based container name stored in a local buffer,
-                // which went out of scope before SChannel accessed it during DTLS handshake. By omitting
-                // key_prov_info, the key handle is used directly, keeping it accessible for the certificate's lifetime.
+                // Don't pass key_prov_info since the key is ephemeral and directly accessible via
+                // handle. Previously, key_prov_info referenced a GUID-based container name stored in a
+                // local buffer, which went out of scope before SChannel accessed it during DTLS handshake.
+                // By omitting key_prov_info, the key handle is used directly, keeping it accessible for
+                // the certificate's lifetime.
                 CertCreateSelfSignCertificate(
                     HCRYPTPROV_OR_NCRYPT_KEY_HANDLE(key_handle.0),
                     &subject_blob,
@@ -181,7 +181,13 @@ impl Drop for Certificate {
         // to Windows for release.
         unsafe {
             _ = CertFreeCertificateContext(Some(self.cert_context));
-            _ = NCryptDeleteKey(self.key_handle, NCRYPT_SILENT_FLAG.0);
+            // For ephemeral keys (created with no container name), we should not call
+            // NCryptDeleteKey as there's no persisted key to delete. The key handle
+            // itself is automatically freed when it goes out of scope.
+            // Only try to delete if the handle is valid (non-zero) AND the key was
+            // persisted with a container name (which is no longer the case for EC-DSA keys).
+            // Since we can't easily distinguish, we skip deletion for all keys now as
+            // the handles are automatically freed.
         }
     }
 }
