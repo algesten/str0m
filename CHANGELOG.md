@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Fix WinCrypto EC-DSA certificate generation to use ephemeral keys (fixes Firefox compatibility)
   * Fix bug when TWCC sequence starts above 32768 #717
 
 # 0.11.1

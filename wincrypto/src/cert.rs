@@ -61,6 +61,9 @@ impl Certificate {
             let cert_context = if use_ec_dsa_keys {
                 // We need to first create a EC-DSA key. We need to use NCrypt APIs
                 // for this. Pass None as container name to make the key truly ephemeral.
+                // This is critical for Firefox compatibility - using named containers can
+                // cause SEC_E_NO_CREDENTIALS (0x80090320) errors during DTLS handshake
+                // because the container name references go out of scope.
                 let mut h_provider = Owned::new(NCRYPT_PROV_HANDLE::default());
                 NCryptOpenStorageProvider(&mut *h_provider, MS_KEY_STORAGE_PROVIDER, 0)?;
 
@@ -81,7 +84,9 @@ impl Certificate {
                     ..Default::default()
                 };
 
-                // Don't pass key_prov_info since the key is ephemeral and directly accessible via handle
+                // Don't pass key_prov_info since the key is ephemeral and directly accessible via handle.
+                // Passing key_prov_info with a named container can cause the key to become inaccessible
+                // when SChannel tries to use it during DTLS handshake (SEC_E_NO_CREDENTIALS error).
                 CertCreateSelfSignCertificate(
                     HCRYPTPROV_OR_NCRYPT_KEY_HANDLE(key_handle.0),
                     &subject_blob,
