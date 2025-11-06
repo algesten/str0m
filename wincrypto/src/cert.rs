@@ -1,6 +1,6 @@
 use super::WinCryptoError;
 use windows::{
-    core::{Owned, GUID, HSTRING, PSTR, PWSTR},
+    core::{Owned, HSTRING, PSTR},
     Win32::{
         Foundation::GetLastError,
         Security::Cryptography::{
@@ -9,12 +9,11 @@ use windows::{
             CertStrToNameW, NCryptCreatePersistedKey, NCryptDeleteKey, NCryptFinalizeKey,
             NCryptOpenStorageProvider, BCRYPT_HASH_HANDLE, BCRYPT_SHA256_ALG_HANDLE, CERT_CONTEXT,
             CERT_CREATE_SELFSIGN_FLAGS, CERT_KEY_SPEC, CERT_OID_NAME_STR,
-            CRYPT_ALGORITHM_IDENTIFIER, CRYPT_INTEGER_BLOB, CRYPT_KEY_PROV_INFO,
+            CRYPT_ALGORITHM_IDENTIFIER, CRYPT_INTEGER_BLOB,
             HCRYPTPROV_OR_NCRYPT_KEY_HANDLE, MS_KEY_STORAGE_PROVIDER, NCRYPT_ECDSA_P256_ALGORITHM,
             NCRYPT_FLAGS, NCRYPT_KEY_HANDLE, NCRYPT_PROV_HANDLE, NCRYPT_SILENT_FLAG,
             X509_ASN_ENCODING,
         },
-        System::Rpc::{UuidCreate, UuidToStringW},
     },
 };
 
@@ -60,18 +59,8 @@ impl Certificate {
 
             // Generate the self-signed cert.
             let cert_context = if use_ec_dsa_keys {
-                let mut guid = GUID::default();
-                let result = UuidCreate(&mut guid);
-                WinCryptoError::from_rpc_status(result)?;
-
-                // A formated UUID is 20 characters long, plus null termination.
-                let mut guid_buffer = [0u16; 42];
-                let mut guid_pwstr = PWSTR::from_raw(guid_buffer.as_mut_ptr());
-                let result = UuidToStringW(&guid, &mut guid_pwstr);
-                WinCryptoError::from_rpc_status(result)?;
-
                 // We need to first create a EC-DSA key. We need to use NCrypt APIs
-                // for this, although we don't really want to persist this key.
+                // for this. Pass None as container name to make the key truly ephemeral.
                 let mut h_provider = Owned::new(NCRYPT_PROV_HANDLE::default());
                 NCryptOpenStorageProvider(&mut *h_provider, MS_KEY_STORAGE_PROVIDER, 0)?;
 
@@ -81,28 +70,23 @@ impl Certificate {
                     // Use EC-256 which corresponds to NID_X9_62_prime256v1
                     NCRYPT_ECDSA_P256_ALGORITHM,
                     // Passing None makes this key ephemeral and not persisted.
-                    guid_pwstr,
+                    None,
                     CERT_KEY_SPEC(0),
                     NCRYPT_SILENT_FLAG,
                 )?;
                 NCryptFinalizeKey(key_handle, NCRYPT_FLAGS(0))?;
-
-                let key_prov_info = CRYPT_KEY_PROV_INFO {
-                    pwszContainerName: guid_pwstr,
-                    pwszProvName: PWSTR(MS_KEY_STORAGE_PROVIDER.as_ptr() as *mut u16),
-                    ..Default::default()
-                };
 
                 let signature_algorithm = CRYPT_ALGORITHM_IDENTIFIER {
                     pszObjId: PSTR::from_raw(szOID_ECDSA_SHA256.as_ptr() as *mut u8),
                     ..Default::default()
                 };
 
+                // Don't pass key_prov_info since the key is ephemeral and directly accessible via handle
                 CertCreateSelfSignCertificate(
                     HCRYPTPROV_OR_NCRYPT_KEY_HANDLE(key_handle.0),
                     &subject_blob,
                     CERT_CREATE_SELFSIGN_FLAGS(0),
-                    Some(&key_prov_info as *const _ as *const _),
+                    None,
                     Some(&signature_algorithm),
                     None,
                     None,
