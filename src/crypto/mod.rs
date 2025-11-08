@@ -1,7 +1,7 @@
 #![allow(unreachable_patterns)]
 
-use once_cell::sync::OnceCell;
 use std::fmt;
+use std::sync::OnceLock;
 
 /// Crypto provider setting.
 ///
@@ -26,7 +26,7 @@ pub enum CryptoProvider {
     Dimpl,
 }
 
-static PROCESS_DEFAULT: OnceCell<CryptoProvider> = OnceCell::new();
+static PROCESS_DEFAULT: OnceLock<CryptoProvider> = OnceLock::new();
 
 impl CryptoProvider {
     pub(crate) fn srtp_crypto(&self) -> SrtpCrypto {
