@@ -256,16 +256,26 @@ impl DtlsImpl {
     }
 }
 
+fn crypto_backend_not_available(provider: CryptoProvider) -> ! {
+    panic!(
+        "Crypto backend '{}' not available. Either enable the '{}' feature flag, \
+         or configure a different crypto provider using \
+         CryptoProvider::from_feature_flags().install_process_default() or \
+         RtcConfig::set_crypto_provider()",
+        provider, provider
+    )
+}
+
 #[derive(Debug, Clone)]
 struct DummyCert(CryptoProvider);
 
 impl DummyCert {
     fn fingerprint(&self) -> Fingerprint {
-        panic!("Must enable feature: {}", self.0)
+        crypto_backend_not_available(self.0)
     }
 
     fn new_dtls_impl(&self) -> Result<DummyDtlsImpl, CryptoError> {
-        panic!("Must enable feature: {}", self.0)
+        crypto_backend_not_available(self.0)
     }
 }
 
@@ -273,34 +283,34 @@ pub struct DummyDtlsImpl(CryptoProvider);
 
 impl DummyDtlsImpl {
     fn set_active(&self, active: bool) {
-        panic!("Must enable feature: {}", self.0)
+        crypto_backend_not_available(self.0)
     }
 
     fn handle_handshake(&self, o: &mut VecDeque<DtlsEvent>) -> Result<bool, CryptoError> {
-        panic!("Must enable feature: {}", self.0)
+        crypto_backend_not_available(self.0)
     }
 
     fn is_active(&self) -> Option<bool> {
-        panic!("Must enable feature: {}", self.0)
+        crypto_backend_not_available(self.0)
     }
 
     fn handle_receive(&self, m: &[u8], o: &mut VecDeque<DtlsEvent>) -> Result<(), CryptoError> {
-        panic!("Must enable feature: {}", self.0)
+        crypto_backend_not_available(self.0)
     }
 
     fn poll_datagram(&self) -> Option<DatagramSend> {
-        panic!("Must enable feature: {}", self.0)
+        crypto_backend_not_available(self.0)
     }
 
     fn poll_timeout(&self, now: Instant) -> Option<Instant> {
-        panic!("Must enable feature: {}", self.0)
+        crypto_backend_not_available(self.0)
     }
 
     fn handle_input(&self, data: &[u8]) -> Result<(), CryptoError> {
-        panic!("Must enable feature: {}", self.0)
+        crypto_backend_not_available(self.0)
     }
 
     fn is_connected(&self) -> bool {
-        panic!("Must enable feature: {}", self.0)
+        crypto_backend_not_available(self.0)
     }
 }

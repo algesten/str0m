@@ -38,6 +38,21 @@ impl CryptoProvider {
     ///
     /// The process default can only be installed once, the second time will panic. Libraries
     /// should never install a process default.
+    ///
+    /// # When to use this
+    ///
+    /// This is particularly important when building without the `openssl` feature.
+    /// Since `openssl` is the default crypto provider, disabling it requires you to
+    /// explicitly configure an alternative like `wincrypto`.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use str0m::config::CryptoProvider;
+    ///
+    /// // At application startup, before creating any Rtc instances
+    /// CryptoProvider::from_feature_flags().install_process_default();
+    /// ```
     pub fn install_process_default(&self) {
         PROCESS_DEFAULT
             .set(*self)
@@ -52,7 +67,20 @@ impl CryptoProvider {
 
     /// Get a possible crypto backend using feature flags.
     ///
-    /// Favors **openssl** if enabled. Panics if no crypto backend is available.
+    /// Favors **openssl** if enabled, falls back to **wincrypto** on Windows.
+    /// Panics if no crypto backend is available.
+    ///
+    /// This is useful for applications that want to automatically select the
+    /// available crypto provider based on enabled features.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use str0m::config::CryptoProvider;
+    ///
+    /// // Automatically select available crypto provider and set as default
+    /// CryptoProvider::from_feature_flags().install_process_default();
+    /// ```
     pub fn from_feature_flags() -> CryptoProvider {
         if cfg!(feature = "openssl") {
             return CryptoProvider::OpenSsl;
