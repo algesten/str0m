@@ -95,7 +95,7 @@ rtc.add_local_candidate(candidate);
 let mut change = rtc.sdp_api();
 
 // Do some change. A valid OFFER needs at least one "m-line" (media).
-let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None);
+let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
 
 // Get the offer.
 let (offer, pending) = change.apply().unwrap();
@@ -296,18 +296,28 @@ DTLS 1.2 (not the latest version 1.3), and that leaves us only with a
 few possible options.
 
 When compiling for Windows, the `openssl` feature can be removed and
-only rely on `wincrypto`. However notice that `str0m` never picks up a
-default automatically, you must explicitly configure the crypto backend,
-also when removing the `openssl` feature.
+only rely on `wincrypto`. However, `str0m` defaults to `openssl` when
+available. If you disable the `openssl` feature, you MUST explicitly
+configure an alternative crypto backend either process-wide or per-instance.
 
-If you are building an application, the easiest is to set the default
-for the entire process.
+For applications, the easiest is to set a process-wide default at startup:
 
 ```rust
 use str0m::config::CryptoProvider;
 
-// Will panic if run twice
+// Set process default (will panic if called twice)
 CryptoProvider::WinCrypto.install_process_default();
+```
+
+Alternatively, configure per-instance:
+
+```rust
+use str0m::Rtc;
+use str0m::config::CryptoProvider;
+
+let rtc = Rtc::builder()
+    .set_crypto_provider(CryptoProvider::WinCrypto)
+    .build();
 ```
 
 ## Project status
