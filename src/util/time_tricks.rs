@@ -1,11 +1,10 @@
+use std::sync::LazyLock;
 use std::time::SystemTime;
 use std::time::{Duration, Instant};
 
-use once_cell::sync::Lazy;
-
 pub(crate) fn not_happening() -> Instant {
     const YEARS_100: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 100);
-    static FUTURE: Lazy<Instant> = Lazy::new(|| Instant::now() + YEARS_100);
+    static FUTURE: LazyLock<Instant> = LazyLock::new(|| Instant::now() + YEARS_100);
     *FUTURE
 }
 
@@ -14,7 +13,7 @@ pub(crate) fn not_happening() -> Instant {
 // This is indeed a bit dodgy, but we want str0m's internal idea of time to be completely
 // driven from the external API using `Instant`. What works against us is that Instant can't
 // represent things like UNIX EPOCH (but SystemTime can).
-static BEGINNING_OF_TIME: Lazy<(Instant, SystemTime)> = Lazy::new(|| {
+static BEGINNING_OF_TIME: LazyLock<(Instant, SystemTime)> = LazyLock::new(|| {
     // These two should be "frozen" the same instant. Hopefully they are not differing too much.
     let now = Instant::now();
     let now_sys = SystemTime::now();

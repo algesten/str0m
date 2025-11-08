@@ -1512,7 +1512,6 @@ dependencies = [
  "fastrand",
  "hmac",
  "libc",
- "once_cell",
  "openssl",
  "openssl-sys",
  "pcap-file",
