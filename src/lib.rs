@@ -11,8 +11,7 @@
 //!
 //! # Join us
 //!
-//! We are discussing str0m things on Zulip. Join us using this [invitation link][zulip]. Or browse the
-//! discussions anonymously at [str0m.zulipchat.com][zulip-anon]
+//! We are discussing str0m things on Discord. Join us using this [invitation link][discord].
 //!
 //! <image width="300px" src="https://user-images.githubusercontent.com/227204/209446544-f8a8d673-cb1b-4144-a0f2-42307b8d8869.gif" alt="silly clip showing video playing" ></image>
 //!
@@ -578,7 +577,7 @@
 //!
 //! ### Discovered a bug? Here's how to share it with us
 //!
-//! We'd love to hear about it! Please submit an issue and consider joining our Zulip community
+//! We'd love to hear about it! Please submit an issue and consider joining our Discord community
 //! to discuss further. For a seamless reporting experience, refer to this exemplary
 //! bug report: <https://github.com/algesten/str0m/issues/382>. We appreciate your contribution
 //! to making str0m better!
@@ -591,8 +590,8 @@
 //! [quinn]:      https://github.com/quinn-rs/quinn
 //! [pion]:       https://github.com/pion/webrtc
 //! [webrtc-rs]:  https://github.com/webrtc-rs/webrtc
-//! [zulip]:      https://str0m.zulipchat.com/join/hsiuva2zx47ujrwgmucjez5o/
-//! [zulip-anon]: https://str0m.zulipchat.com
+//! [discord]:    https://discord.gg/e2CC8UYebP
+//! [zulip]:      https://str0m.zulipchat.com
 //! [ice]:        https://www.rfc-editor.org/rfc/rfc8445
 //! [lookback]:   https://www.lookback.com
 //! [x-post]:     https://github.com/algesten/str0m/blob/main/examples/http-post.rs
