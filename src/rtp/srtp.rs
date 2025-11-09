@@ -28,6 +28,10 @@ const MAX_TAG_LEN: usize = aead_aes_256_gcm::TAG_LEN;
 pub const SRTCP_OVERHEAD: usize = MAX_TAG_LEN + SRTCP_INDEX_LEN;
 pub const SRTP_OVERHEAD: usize = MAX_TAG_LEN;
 
+// aws-lc-rs CTR mode requires output buffer to be input.len() + block_len - 1
+// This adds 15 bytes of padding that we truncate after encryption
+const CTR_BUFFER_PADDING: usize = SRTP_BLOCK_SIZE - 1;
+
 impl SrtpContext {
     /// Create an SRTP context for the relevant profile using the provided keying material.
     pub fn new(
@@ -197,7 +201,11 @@ impl SrtpContext {
 
                 let iv = aes_128_cm_sha1_80::rtp_iv(*salt, *header.ssrc, srtp_index);
 
-                let mut output = vec![0_u8; buf.len() + HMAC_TAG_LEN];
+                // Allocate buffer with CTR padding (aws-lc-rs requirement)
+                // HMAC_TAG_LEN is 10, CTR_BUFFER_PADDING is 15, so we need 5 extra bytes
+                let padding_needed = CTR_BUFFER_PADDING.saturating_sub(HMAC_TAG_LEN);
+                let mut output = vec![0_u8; buf.len() + HMAC_TAG_LEN + padding_needed];
+
                 enc.encrypt(&iv, input, &mut output[hlen..])
                     .expect("rtp encrypt");
 
@@ -206,6 +214,7 @@ impl SrtpContext {
                 let hmac_start = buf.len();
                 aes_128_cm_sha1_80::rtp_hmac(key, &mut output, srtp_index, hmac_start);
 
+                output.truncate(buf.len() + HMAC_TAG_LEN);
                 output
             }
             Derived::AeadAes128Gcm { salt, enc, .. } => {
@@ -276,7 +285,8 @@ impl SrtpContext {
                 let iv = aes_128_cm_sha1_80::rtp_iv(*salt, *header.ssrc, srtp_index);
 
                 let input = &buf[header.header_len..hmac_start];
-                let mut output = vec![0; input.len()];
+                // Allocate buffer with CTR padding (aws-lc-rs requirement)
+                let mut output = vec![0; input.len() + CTR_BUFFER_PADDING];
 
                 if let Err(e) = dec.decrypt(&iv, input, &mut output) {
                     warn!(
@@ -288,6 +298,7 @@ impl SrtpContext {
                     return None;
                 };
 
+                output.truncate(input.len());
                 Some(output)
             }
             Derived::AeadAes128Gcm { salt, dec, .. } => {
@@ -382,19 +393,25 @@ impl SrtpContext {
 
                 let iv = aes_128_cm_sha1_80::rtp_iv(*salt, ssrc, srtcp_index as u64);
 
-                let mut output = vec![0_u8; buf.len() + SRTCP_INDEX_LEN + HMAC_TAG_LEN];
+                let final_size = buf.len() + SRTCP_INDEX_LEN + HMAC_TAG_LEN;
+                // Allocate buffer with CTR padding (aws-lc-rs requirement)
+                // SRTCP_INDEX_LEN + HMAC_TAG_LEN is 14, CTR_BUFFER_PADDING is 15, so we need 1 extra byte
+                let padding_needed =
+                    CTR_BUFFER_PADDING.saturating_sub(SRTCP_INDEX_LEN + HMAC_TAG_LEN);
+                let mut output = vec![0_u8; final_size + padding_needed];
+
                 output[0..8].copy_from_slice(&buf[0..8]);
                 let input = &buf[8..];
-                let encout = &mut output[8..(8 + input.len())];
-
-                enc.encrypt(&iv, input, encout).expect("rtcp encrypt");
+                enc.encrypt(&iv, input, &mut output[8..])
+                    .expect("rtcp encrypt");
 
                 let to = &mut output[buf.len()..];
                 to[0..4].copy_from_slice(&e_and_si.to_be_bytes());
 
-                let hmac_index = output.len() - HMAC_TAG_LEN;
+                let hmac_index = final_size - HMAC_TAG_LEN;
                 aes_128_cm_sha1_80::rtcp_hmac(key, &mut output, hmac_index);
 
+                output.truncate(final_size);
                 output
             }
             Derived::AeadAes128Gcm { salt, enc, .. } => {
@@ -502,7 +519,8 @@ impl SrtpContext {
                 // first RTCP packet, i.e., from the ninth (9) octet to the end of the
                 // compound packet.
                 let input = &buf[8..idx_start];
-                let mut output = vec![0_u8; input.len() + 8];
+                // Allocate buffer with CTR padding (aws-lc-rs requirement)
+                let mut output = vec![0_u8; input.len() + 8 + CTR_BUFFER_PADDING];
                 output[0..8].copy_from_slice(&buf[0..8]);
 
                 if let Err(e) = dec.decrypt(&iv, input, &mut output[8..]) {
@@ -510,6 +528,7 @@ impl SrtpContext {
                     return None;
                 }
 
+                output.truncate(input.len() + 8);
                 Some(output)
             }
             Derived::AeadAes128Gcm { salt, dec, .. } => {

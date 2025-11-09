@@ -113,7 +113,7 @@ mod wincrypto;
 mod dimpl;
 
 #[cfg(feature = "dimpl")]
-mod rcrypto;
+mod aws_lc;
 
 mod dtls;
 pub(crate) use dtls::DtlsImpl;
