@@ -38,6 +38,9 @@ fn init_log() {
 pub fn main() {
     init_log();
 
+    // Run with whatever is configured.
+    CryptoProvider::from_feature_flags().install_process_default();
+
     let certificate = include_bytes!("cer.pem").to_vec();
     let private_key = include_bytes!("key.pem").to_vec();
 
@@ -77,9 +80,6 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
 
     // Expected POST SDP Offers.
     let mut data = request.data().expect("body to be available");
-
-    // Run with whatever is configured.
-    CryptoProvider::from_feature_flags().install_process_default();
 
     let offer: SdpOffer = serde_json::from_reader(&mut data).expect("serialized offer");
     let mut rtc = Rtc::builder()
