@@ -48,9 +48,9 @@ pub enum SrtpCrypto {
     #[cfg(not(all(feature = "wincrypto", target_os = "windows")))]
     WinCrypto(DummySrtpCryptoImpl),
     #[cfg(feature = "dimpl")]
-    RustCrypto(super::rcrypto::RustCryptoImpl),
+    AwsLc(super::aws_lc::AwsLcImpl),
     #[cfg(not(feature = "dimpl"))]
-    RustCrypto(DummySrtpCryptoImpl),
+    AwsLc(DummySrtpCryptoImpl),
 }
 
 #[allow(clippy::unit_arg)]
@@ -77,12 +77,12 @@ impl SrtpCrypto {
 
     #[cfg(feature = "dimpl")]
     pub fn new_rust_crypto() -> SrtpCrypto {
-        Self::RustCrypto(super::rcrypto::RustCryptoImpl)
+        Self::AwsLc(super::aws_lc::AwsLcImpl)
     }
 
     #[cfg(not(feature = "dimpl"))]
     pub fn new_rust_crypto() -> SrtpCrypto {
-        Self::RustCrypto(DummySrtpCryptoImpl(CryptoProvider::Dimpl))
+        Self::AwsLc(DummySrtpCryptoImpl(CryptoProvider::Dimpl))
     }
 
     // TODO: Can we avoice dynamic dispatch in this signature? The parameters are:
@@ -97,7 +97,7 @@ impl SrtpCrypto {
         match self {
             SrtpCrypto::OpenSsl(v) => Box::new(v.new_aes_128_cm_sha1_80(key, encrypt)),
             SrtpCrypto::WinCrypto(v) => Box::new(v.new_aes_128_cm_sha1_80(key, encrypt)),
-            SrtpCrypto::RustCrypto(v) => Box::new(v.new_aes_128_cm_sha1_80(key, encrypt)),
+            SrtpCrypto::AwsLc(v) => Box::new(v.new_aes_128_cm_sha1_80(key, encrypt)),
         }
     }
 
@@ -109,7 +109,7 @@ impl SrtpCrypto {
         match self {
             SrtpCrypto::OpenSsl(v) => Box::new(v.new_aead_aes_128_gcm(key, encrypt)),
             SrtpCrypto::WinCrypto(v) => Box::new(v.new_aead_aes_128_gcm(key, encrypt)),
-            SrtpCrypto::RustCrypto(v) => Box::new(v.new_aead_aes_128_gcm(key, encrypt)),
+            SrtpCrypto::AwsLc(v) => Box::new(v.new_aead_aes_128_gcm(key, encrypt)),
         }
     }
 
@@ -121,7 +121,7 @@ impl SrtpCrypto {
         match self {
             SrtpCrypto::OpenSsl(v) => Box::new(v.new_aead_aes_256_gcm(key, encrypt)),
             SrtpCrypto::WinCrypto(v) => Box::new(v.new_aead_aes_256_gcm(key, encrypt)),
-            SrtpCrypto::RustCrypto(v) => Box::new(v.new_aead_aes_256_gcm(key, encrypt)),
+            SrtpCrypto::AwsLc(v) => Box::new(v.new_aead_aes_256_gcm(key, encrypt)),
         }
     }
 
@@ -129,7 +129,7 @@ impl SrtpCrypto {
         match self {
             SrtpCrypto::OpenSsl(v) => v.srtp_aes_128_ecb_round(key, input, output),
             SrtpCrypto::WinCrypto(v) => v.srtp_aes_128_ecb_round(key, input, output),
-            SrtpCrypto::RustCrypto(v) => v.srtp_aes_128_ecb_round(key, input, output),
+            SrtpCrypto::AwsLc(v) => v.srtp_aes_128_ecb_round(key, input, output),
         }
     }
 
@@ -137,7 +137,7 @@ impl SrtpCrypto {
         match self {
             SrtpCrypto::OpenSsl(v) => v.srtp_aes_256_ecb_round(key, input, output),
             SrtpCrypto::WinCrypto(v) => v.srtp_aes_256_ecb_round(key, input, output),
-            SrtpCrypto::RustCrypto(v) => v.srtp_aes_256_ecb_round(key, input, output),
+            SrtpCrypto::AwsLc(v) => v.srtp_aes_256_ecb_round(key, input, output),
         }
     }
 }
