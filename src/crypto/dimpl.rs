@@ -103,9 +103,10 @@ impl DtlsInner for DimplImpl {
         Some(self.instance.is_active())
     }
 
-    fn set_active(&mut self, active: bool) {
+    fn set_active(&mut self, active: bool) -> Result<(), CryptoError> {
         self.inited = true;
         self.instance.set_active(active);
+        Ok(())
     }
 
     fn poll_timeout(&mut self, now: Instant) -> Option<Instant> {

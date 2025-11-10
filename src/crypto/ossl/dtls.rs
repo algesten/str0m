@@ -44,8 +44,9 @@ impl OsslDtlsImpl {
 }
 
 impl DtlsInner for OsslDtlsImpl {
-    fn set_active(&mut self, active: bool) {
+    fn set_active(&mut self, active: bool) -> Result<(), CryptoError> {
         self.tls.set_active(active);
+        Ok(())
     }
 
     fn is_active(&self) -> Option<bool> {

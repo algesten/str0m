@@ -191,7 +191,7 @@ pub trait DtlsInner: Sized {
     ///
     /// i.e. initiating the client hello or not. This must be called
     /// exactly once before starting to handshake (I/O).
-    fn set_active(&mut self, active: bool);
+    fn set_active(&mut self, active: bool) -> Result<(), CryptoError>;
 
     /// Handle the handshake. Once this succeeds, it becomes a no-op.
     fn handle_handshake(&mut self, o: &mut VecDeque<DtlsEvent>) -> Result<bool, CryptoError>;
@@ -231,7 +231,7 @@ pub(crate) enum DtlsImpl {
 }
 
 impl DtlsImpl {
-    pub fn set_active(&mut self, active: bool) {
+    pub fn set_active(&mut self, active: bool) -> Result<(), CryptoError>{
         match self {
             DtlsImpl::OpenSsl(v) => v.set_active(active),
             DtlsImpl::WinCrypto(v) => v.set_active(active),

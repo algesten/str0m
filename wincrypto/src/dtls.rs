@@ -7,27 +7,26 @@ use std::{
 use windows::Win32::{
     Foundation::{
         SEC_E_MESSAGE_ALTERED, SEC_E_OK, SEC_E_OUT_OF_SEQUENCE, SEC_I_CONTEXT_EXPIRED,
-        SEC_I_CONTINUE_NEEDED, SEC_I_MESSAGE_FRAGMENT, SEC_I_RENEGOTIATE,
+        SEC_I_MESSAGE_FRAGMENT, SEC_I_RENEGOTIATE,
     },
     Security::{
         Authentication::Identity::{
-            AcceptSecurityContext, AcquireCredentialsHandleW, DecryptMessage,
+            ASC_REQ_CONFIDENTIALITY, ASC_REQ_DATAGRAM, ASC_REQ_EXTENDED_ERROR, ASC_REQ_INTEGRITY,
+            ASC_REQ_MUTUAL_AUTH, AcceptSecurityContext, AcquireCredentialsHandleW, DecryptMessage,
             DeleteSecurityContext, EncryptMessage, FreeContextBuffer, FreeCredentialsHandle,
-            InitializeSecurityContextW, QueryContextAttributesExW, QueryContextAttributesW,
-            SecBuffer, SecBufferDesc, SecPkgContext_KeyingMaterial,
-            SecPkgContext_KeyingMaterialInfo, SecPkgContext_SrtpParameters,
-            SecPkgContext_StreamSizes, SetContextAttributesW, ASC_REQ_CONFIDENTIALITY,
-            ASC_REQ_DATAGRAM, ASC_REQ_EXTENDED_ERROR, ASC_REQ_INTEGRITY, ASC_REQ_MUTUAL_AUTH,
             ISC_REQ_CONFIDENTIALITY, ISC_REQ_DATAGRAM, ISC_REQ_EXTENDED_ERROR, ISC_REQ_INTEGRITY,
-            ISC_REQ_MANUAL_CRED_VALIDATION, ISC_REQ_USE_SUPPLIED_CREDS, SCHANNEL_CRED,
-            SCHANNEL_CRED_VERSION, SCH_CRED_MANUAL_CRED_VALIDATION, SECBUFFER_ALERT,
-            SECBUFFER_DATA, SECBUFFER_DTLS_MTU, SECBUFFER_EMPTY, SECBUFFER_EXTRA,
+            ISC_REQ_MANUAL_CRED_VALIDATION, ISC_REQ_USE_SUPPLIED_CREDS, InitializeSecurityContextW,
+            QueryContextAttributesExW, QueryContextAttributesW, SCH_CRED_FORMAT_CERT_CONTEXT,
+            SCH_CREDENTIALS, SCH_CREDENTIALS_VERSION, SCH_USE_DTLS_ONLY, SEC_DTLS_MTU,
+            SECBUFFER_ALERT, SECBUFFER_DATA, SECBUFFER_DTLS_MTU, SECBUFFER_EMPTY, SECBUFFER_EXTRA,
             SECBUFFER_SRTP_PROTECTION_PROFILES, SECBUFFER_STREAM_HEADER, SECBUFFER_STREAM_TRAILER,
             SECBUFFER_TOKEN, SECBUFFER_VERSION, SECPKG_ATTR, SECPKG_ATTR_KEYING_MATERIAL,
             SECPKG_ATTR_KEYING_MATERIAL_INFO, SECPKG_ATTR_REMOTE_CERT_CONTEXT,
             SECPKG_ATTR_SRTP_PARAMETERS, SECPKG_ATTR_STREAM_SIZES, SECPKG_CRED_INBOUND,
-            SECPKG_CRED_OUTBOUND, SECURITY_NATIVE_DREP, SEC_DTLS_MTU, SP_PROT_DTLS1_2_CLIENT,
-            SP_PROT_DTLS1_2_SERVER, UNISP_NAME_W,
+            SECPKG_CRED_OUTBOUND, SECURITY_NATIVE_DREP, SecBuffer, SecBufferDesc,
+            SecPkgContext_KeyingMaterial, SecPkgContext_KeyingMaterialInfo,
+            SecPkgContext_SrtpParameters, SecPkgContext_StreamSizes, SetContextAttributesW,
+            UNISP_NAME_W
         },
         Credentials::SecHandle,
         Cryptography::CERT_CONTEXT,
@@ -126,30 +125,18 @@ impl Dtls {
         self.is_client = Some(active);
 
         let mut cert_contexts = [self.cert.context()];
-        let schannel_cred = SCHANNEL_CRED {
-            dwVersion: SCHANNEL_CRED_VERSION,
-            hRootStore: windows::Win32::Security::Cryptography::HCERTSTORE(std::ptr::null_mut()),
-
-            grbitEnabledProtocols: if active {
-                SP_PROT_DTLS1_2_CLIENT
-            } else {
-                SP_PROT_DTLS1_2_SERVER
-            },
-
+        let sch_cred = SCH_CREDENTIALS {
+            dwVersion: SCH_CREDENTIALS_VERSION,
+            dwCredFormat: SCH_CRED_FORMAT_CERT_CONTEXT,
             cCreds: cert_contexts.len() as u32,
             paCred: cert_contexts.as_mut_ptr() as *mut *mut CERT_CONTEXT,
-
+            hRootStore: windows::Win32::Security::Cryptography::HCERTSTORE(std::ptr::null_mut()),
             cMappers: 0,
             aphMappers: std::ptr::null_mut(),
-
-            cSupportedAlgs: 0,
-            palgSupportedAlgs: std::ptr::null_mut(),
-
-            dwMinimumCipherStrength: 128,
-            dwMaximumCipherStrength: 256,
             dwSessionLifespan: 0,
-            dwFlags: SCH_CRED_MANUAL_CRED_VALIDATION,
-            dwCredFormat: 0,
+            dwFlags: SCH_USE_DTLS_ONLY,
+            cTlsParameters: 0,
+            pTlsParameters: std::ptr::null_mut(),
         };
 
         // These are the outputs of AcquireCredentialsHandleA
@@ -169,7 +156,7 @@ impl Dtls {
                     SECPKG_CRED_INBOUND
                 },
                 None,
-                Some(&schannel_cred as *const _ as *const std::ffi::c_void),
+                Some(&sch_cred as *const _ as *const std::ffi::c_void),
                 None,
                 None,
                 &mut cred_handle,
@@ -390,25 +377,29 @@ impl Dtls {
 
         debug!("DTLS Handshake status: {status}");
         self.security_ctx = Some(new_ctx_handle);
-        if out_buffers[0].cbBuffer > 0 {
+        
+        // Only output datagram if we have data to send and we didn't fail.
+        if (status.is_ok() || status == SEC_E_OK) && out_buffers[0].cbBuffer > 0 {
             let len = out_buffers[0].cbBuffer;
             self.output_datagrams
                 .push_back(token_buffer[..len as usize].to_vec());
         }
+
         return match status {
             SEC_E_OK => {
                 // Move to Done
                 self.transition_to_completed()
             }
-            SEC_I_CONTINUE_NEEDED => {
-                // Stay in handshake while we wait for the other side to respond.
-                debug!("Wait for peer");
-                Ok(DtlsEvent::None)
-            }
             SEC_I_MESSAGE_FRAGMENT => {
                 // Fragment was sent, we need to call again to send the next fragment.
                 debug!("Sent handshake fragment");
                 self.handshake(None)
+            }
+            status if status.is_ok() => {
+                // For any other "OK" status, we just wait for the peer, this
+                // includes SEC_I_CONTINUE_NEEDED.
+                debug!(?status, "Wait for peer");
+                Ok(DtlsEvent::None)
             }
             e => {
                 // Failed

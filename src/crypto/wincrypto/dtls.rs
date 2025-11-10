@@ -20,8 +20,9 @@ impl WinCryptoDtls {
 }
 
 impl DtlsInner for WinCryptoDtls {
-    fn set_active(&mut self, active: bool) {
-        self.0.set_as_client(active).expect("Set client failed");
+    fn set_active(&mut self, active: bool) -> Result<(), super::CryptoError>{
+        self.0.set_as_client(active)?;
+        Ok(())
     }
 
     fn is_active(&self) -> Option<bool> {
