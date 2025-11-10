@@ -13,6 +13,42 @@ use crate::sdp::FormatParam;
 // to codecs etc.
 pub use crate::packet::{CodecExtra, H264CodecExtra, Vp8CodecExtra, Vp9CodecExtra};
 
+/// Preferred ranges for dynamic payload type allocation.
+const PREFERED_RANGES: &[RangeInclusive<usize>] = &[
+    // Payload identifiers 96–127 are used for payloads defined dynamically during a session.
+    96..=127,
+    // "unassigned" ranged. note that RTCP packet type 207 (XR, Extended Reports) would be
+    // indistinguishable from RTP payload types 79 with the marker bit set
+    80..=95,
+    77..=78,
+    // reserved because RTCP packet types 200–204 would otherwise be indistinguishable
+    // from RTP payload types 72–76
+    // 72..77,
+    // lol range.
+    35..=71,
+];
+
+/// Default payload type for PCMU (G.711 μ-law).
+const PT_PCMU: Pt = Pt::new_with_value(0);
+
+/// Default payload type for PCMA (G.711 A-law).
+const PT_PCMA: Pt = Pt::new_with_value(8);
+
+/// Default payload type for VP8.
+const PT_VP8: Pt = Pt::new_with_value(96);
+
+/// Default payload type for VP8 RTX.
+const PT_VP8_RTX: Pt = Pt::new_with_value(97);
+
+/// Default payload type for VP9 profile 0.
+const PT_VP9: Pt = Pt::new_with_value(98);
+
+/// Default payload type for VP9 profile 0 RTX.
+const PT_VP9_RTX: Pt = Pt::new_with_value(99);
+
+/// Default payload type for Opus.
+const PT_OPUS: Pt = Pt::new_with_value(111);
+
 /// Session config for all codecs.
 #[derive(Debug, Clone, Default)]
 pub struct CodecConfig {
@@ -443,7 +479,7 @@ impl PayloadParams {
         &mut self,
         remote_pts: &[PayloadParams],
         claimed: &mut [bool; 128],
-        warn_on_locked: bool,
+        local_is_controlling: bool,
     ) {
         let Some((first, _)) = remote_pts
             .iter()
@@ -453,13 +489,13 @@ impl PayloadParams {
             return;
         };
 
-        let remote_pt = first.pt;
-        let remote_rtx = first.resend;
+        let mut remote_pt = first.pt;
+        let mut remote_rtx = first.resend;
 
         if self.locked {
             // This can happen if the incoming PTs are suggestions (send-direction) rather than demanded
             // (receive-direction). We only want to warn if we get receive direction changes.
-            if !warn_on_locked {
+            if local_is_controlling {
                 return;
             }
             // Just verify it's still the same. We should validate this in apply_offer/answer instead
@@ -475,15 +511,55 @@ impl PayloadParams {
                 );
             }
         } else {
+            // Before locking, check if the remote PT conflicts with an already locked PT.
+            // If we're receiving, we control what PTs to use,
+            // so we can remap the conflicting PT.
+            if local_is_controlling && claimed.is_claimed(remote_pt) {
+                // Try to use the codec's default PT first, fall back to any free PT
+                let new_pt = self
+                    .spec
+                    .codec
+                    .default_pt()
+                    .filter(|pt| !claimed.is_claimed(*pt))
+                    .or_else(|| claimed.find_unclaimed(PREFERED_RANGES));
+
+                if let Some(new_pt) = new_pt {
+                    debug!(
+                        "Remapped conflicting PT {} => {} for codec {:?}",
+                        remote_pt, new_pt, self.spec.codec
+                    );
+                    remote_pt = new_pt;
+                } else {
+                    panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
+                }
+            }
+
             // Lock down the PT
             self.pt = remote_pt;
-            self.resend = remote_rtx;
-            self.locked = true;
-
             claimed.assert_claim_once(remote_pt);
+
+            // Check if RTX PT also conflicts
+            if local_is_controlling {
+                if let Some(rtx) = remote_rtx {
+                    if claimed.is_claimed(rtx) {
+                        if let Some(new_rtx) = claimed.find_unclaimed(PREFERED_RANGES) {
+                            debug!("Remapped conflicting RTX PT {:?} => {}", rtx, new_rtx);
+                            remote_rtx = Some(new_rtx);
+                        } else {
+                            panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
+                        }
+                    }
+                }
+            }
+
+            // Lock down the RTX PT
+            self.resend = remote_rtx;
             if let Some(rtx) = remote_rtx {
                 claimed.assert_claim_once(rtx);
             }
+
+            // This is now locked.
+            self.locked = true;
         }
     }
 }
@@ -590,7 +666,7 @@ impl CodecConfig {
             return;
         }
         self.add_config(
-            0.into(),
+            PT_PCMU,
             None,
             Codec::PCMU,
             Frequency::EIGHT_KHZ,
@@ -606,7 +682,7 @@ impl CodecConfig {
             return;
         }
         self.add_config(
-            8.into(),
+            PT_PCMA,
             None,
             Codec::PCMA,
             Frequency::EIGHT_KHZ,
@@ -622,7 +698,7 @@ impl CodecConfig {
             return;
         }
         self.add_config(
-            111.into(),
+            PT_OPUS,
             None,
             Codec::Opus,
             Frequency::FORTY_EIGHT_KHZ,
@@ -642,8 +718,8 @@ impl CodecConfig {
             return;
         }
         self.add_config(
-            96.into(),
-            Some(97.into()),
+            PT_VP8,
+            Some(PT_VP8_RTX),
             Codec::Vp8,
             Frequency::NINETY_KHZ,
             None,
@@ -693,8 +769,8 @@ impl CodecConfig {
             return;
         }
         self.add_config(
-            98.into(),
-            Some(99.into()),
+            PT_VP9,
+            Some(PT_VP9_RTX),
             Codec::Vp9,
             Frequency::NINETY_KHZ,
             None,
@@ -783,29 +859,15 @@ impl CodecConfig {
 
         // Now lock potential new parameters to remote.
         //
-        // If the remote is doing `SendOnly`, the PTs are suggestions, and we are allowed to
-        // ANSWER with our own allocations as overrides. If SendRecv or RecvOnly, the remote
-        // is talking about its own receiving capapbilities and we are not allowed to change it
-        // in the ANSWER.
-        let warn_on_locked = remote_dir.sdp_is_receiving();
+        // If the remote is doing `SendOnly`, we are receiving, so the PTs are suggestions,
+        // and we are allowed to ANSWER with our own allocations as overrides.
+        // If SendRecv or RecvOnly, the remote is talking about its own receiving capabilities
+        // and we are not allowed to change it in the ANSWER.
+        let local_is_controlling = !remote_dir.sdp_is_receiving();
 
         for p in self.params.iter_mut() {
-            p.update_param(remote_params, &mut claimed, warn_on_locked);
+            p.update_param(remote_params, &mut claimed, local_is_controlling);
         }
-
-        const PREFERED_RANGES: &[RangeInclusive<usize>] = &[
-            // Payload identifiers 96–127 are used for payloads defined dynamically during a session.
-            96..=127,
-            // "unassigned" ranged. note that RTCP packet type 207 (XR, Extended Reports) would be
-            // indistinguishable from RTP payload types 79 with the marker bit set
-            80..=95,
-            77..=78,
-            // reserved because RTCP packet types 200–204 would otherwise be indistinguishable
-            // from RTP payload types 72–76
-            // 72..77,
-            // lol range.
-            35..=71,
-        ];
 
         // Make a pass to reassign unconfirmed payloads that have PT which are now claimed.
         for p in self.params.iter_mut() {
@@ -992,6 +1054,19 @@ impl Codec {
             MediaKind::Video
         }
     }
+
+    /// Get the default PT for this codec, if one exists.
+    fn default_pt(&self) -> Option<Pt> {
+        use Codec::*;
+        match self {
+            Opus => Some(PT_OPUS),
+            PCMU => Some(PT_PCMU),
+            PCMA => Some(PT_PCMA),
+            Vp8 => Some(PT_VP8),
+            Vp9 => Some(PT_VP9),
+            _ => None,
+        }
+    }
 }
 
 impl<'a> From<&'a str> for Codec {
@@ -1109,5 +1184,97 @@ mod test {
             let matched = PayloadParams::match_h264_score(c0, c1).is_some();
             assert_eq!(matched, must_match, "{msg}\nc0: {c0:#?}\nc1: {c1:#?}");
         }
+    }
+
+    #[test]
+    fn test_pt_conflict_different_directions() {
+        // Simulates:
+        // 1. str0m OFFER sendonly H264 PT 108, RTX PT 109
+        // 2. FF ANSWER recvonly (locks PT 109 as H264 RTX)
+        // 3. FF OFFER sendonly Opus PT 109
+        // 4. Crash on PT 109 conflict
+
+        let mut config = CodecConfig::empty();
+
+        // Initial local config: H264 with PT 108, RTX 109 and Opus with PT 111
+        config.add_config(
+            108.into(),
+            Some(109.into()),
+            Codec::H264,
+            Frequency::NINETY_KHZ,
+            None,
+            FormatParams {
+                packetization_mode: Some(1),
+                profile_level_id: Some(0x42e01f),
+                ..Default::default()
+            },
+        );
+        config.add_config(
+            111.into(),
+            None,
+            Codec::Opus,
+            Frequency::FORTY_EIGHT_KHZ,
+            Some(2),
+            FormatParams::default(),
+        );
+
+        // Step 2: Remote answers recvonly with our H264 PT 108/109
+        // This locks PT 109 as RTX
+        let remote_h264_params = vec![PayloadParams::new(
+            108.into(),
+            Some(109.into()),
+            CodecSpec {
+                codec: Codec::H264,
+                clock_rate: Frequency::NINETY_KHZ,
+                channels: None,
+                format: FormatParams {
+                    packetization_mode: Some(1),
+                    profile_level_id: Some(0x42e01f),
+                    ..Default::default()
+                },
+            },
+        )];
+
+        config.update_params(&remote_h264_params, Direction::RecvOnly);
+
+        // Verify PT 109 is now locked as RTX for H264
+        assert!(config
+            .params()
+            .iter()
+            .any(|p| p.resend() == Some(109.into()) && p.locked));
+
+        // Step 3: Remote offers sendonly Opus PT 109
+        // This should NOT crash - PT 109 should be remapped to 111 (Opus default)
+        let remote_opus_params = vec![PayloadParams::new(
+            109.into(),
+            None,
+            CodecSpec {
+                codec: Codec::Opus,
+                clock_rate: Frequency::FORTY_EIGHT_KHZ,
+                channels: Some(2),
+                format: FormatParams::default(),
+            },
+        )];
+
+        config.update_params(&remote_opus_params, Direction::SendOnly);
+
+        // Verify the fix: Opus should be remapped to PT_OPUS (its default)
+        let opus_param = config
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::Opus);
+        assert!(opus_param.is_some(), "Opus param should exist");
+        assert_eq!(
+            opus_param.unwrap().pt(),
+            PT_OPUS,
+            "Opus should be remapped to PT_OPUS (default)"
+        );
+        assert!(opus_param.unwrap().locked, "Opus param should be locked");
+
+        // Verify H264 RTX PT 109 is still locked
+        assert!(config
+            .params()
+            .iter()
+            .any(|p| p.resend() == Some(109.into()) && p.locked));
     }
 }
