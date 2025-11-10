@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Fix PT conflict when using Firefox #730
   * Add new non-openssl DTLS under `dimpl` feature #708
   * Fix bug when TWCC sequence starts above 32768 #717
 
