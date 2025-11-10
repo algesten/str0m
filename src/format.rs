@@ -145,8 +145,6 @@ pub enum Codec {
     PCMU,
     PCMA,
     H264,
-    // TODO show this when we support h265.
-    #[doc(hidden)]
     H265,
     Vp8,
     Vp9,
@@ -370,6 +368,10 @@ impl PayloadParams {
             return Self::match_av1_score(c0, c1);
         }
 
+        if c0.codec == Codec::H265 {
+            return Self::match_h265_score(c0, c1);
+        }
+
         // TODO: Fuzzy matching for any other audio codecs
         // TODO: Fuzzy matching for video
 
@@ -471,6 +473,14 @@ impl PayloadParams {
         if c0_profile_level != c1_profile_level {
             return None;
         }
+
+        Some(100)
+    }
+
+    fn match_h265_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
+        // TODO: What to match???
+        // Safari: level-id=93;tx-mode=SRST
+        // Chrome: level-id=180;profile-id=1;tier-flag=0;tx-mode=SRST and level-id=180;profile-id=2;tier-flag=0;tx-mode=SRST
 
         Some(100)
     }
@@ -582,6 +592,7 @@ impl CodecConfig {
         let mut c = Self::empty();
         c.enable_opus(true);
 
+        c.enable_h265(true);
         c.enable_vp8(true);
         c.enable_h264(true);
         // c.add_default_av1();
@@ -746,6 +757,23 @@ impl CodecConfig {
         for p in PARAMS {
             self.add_h264(p.0.into(), Some(p.1.into()), p.2, p.3)
         }
+    }
+
+    /// Enable H265 codec.
+    pub fn enable_h265(&mut self, enabled: bool) {
+        self.params.retain(|c| c.spec.codec != Codec::H265);
+        if !enabled {
+            return;
+        }
+
+        self.add_config(
+            116.into(),
+            Some(117.into()),
+            Codec::H265,
+            Frequency::NINETY_KHZ,
+            None,
+            FormatParams::default(),
+        );
     }
 
     // TODO: AV1 depacketizer/packetizer.
