@@ -11,22 +11,22 @@ use windows::Win32::{
     },
     Security::{
         Authentication::Identity::{
-            ASC_REQ_CONFIDENTIALITY, ASC_REQ_DATAGRAM, ASC_REQ_EXTENDED_ERROR, ASC_REQ_INTEGRITY,
-            ASC_REQ_MUTUAL_AUTH, AcceptSecurityContext, AcquireCredentialsHandleW, DecryptMessage,
+            AcceptSecurityContext, AcquireCredentialsHandleW, DecryptMessage,
             DeleteSecurityContext, EncryptMessage, FreeContextBuffer, FreeCredentialsHandle,
+            InitializeSecurityContextW, QueryContextAttributesExW, QueryContextAttributesW,
+            SecBuffer, SecBufferDesc, SecPkgContext_KeyingMaterial,
+            SecPkgContext_KeyingMaterialInfo, SecPkgContext_SrtpParameters,
+            SecPkgContext_StreamSizes, SetContextAttributesW, ASC_REQ_CONFIDENTIALITY,
+            ASC_REQ_DATAGRAM, ASC_REQ_EXTENDED_ERROR, ASC_REQ_INTEGRITY, ASC_REQ_MUTUAL_AUTH,
             ISC_REQ_CONFIDENTIALITY, ISC_REQ_DATAGRAM, ISC_REQ_EXTENDED_ERROR, ISC_REQ_INTEGRITY,
-            ISC_REQ_MANUAL_CRED_VALIDATION, ISC_REQ_USE_SUPPLIED_CREDS, InitializeSecurityContextW,
-            QueryContextAttributesExW, QueryContextAttributesW, SCH_CRED_FORMAT_CERT_CONTEXT,
-            SCH_CREDENTIALS, SCH_CREDENTIALS_VERSION, SCH_USE_DTLS_ONLY, SEC_DTLS_MTU,
+            ISC_REQ_MANUAL_CRED_VALIDATION, ISC_REQ_USE_SUPPLIED_CREDS, SCH_CREDENTIALS,
+            SCH_CREDENTIALS_VERSION, SCH_CRED_FORMAT_CERT_CONTEXT, SCH_USE_DTLS_ONLY,
             SECBUFFER_ALERT, SECBUFFER_DATA, SECBUFFER_DTLS_MTU, SECBUFFER_EMPTY, SECBUFFER_EXTRA,
             SECBUFFER_SRTP_PROTECTION_PROFILES, SECBUFFER_STREAM_HEADER, SECBUFFER_STREAM_TRAILER,
             SECBUFFER_TOKEN, SECBUFFER_VERSION, SECPKG_ATTR, SECPKG_ATTR_KEYING_MATERIAL,
             SECPKG_ATTR_KEYING_MATERIAL_INFO, SECPKG_ATTR_REMOTE_CERT_CONTEXT,
             SECPKG_ATTR_SRTP_PARAMETERS, SECPKG_ATTR_STREAM_SIZES, SECPKG_CRED_INBOUND,
-            SECPKG_CRED_OUTBOUND, SECURITY_NATIVE_DREP, SecBuffer, SecBufferDesc,
-            SecPkgContext_KeyingMaterial, SecPkgContext_KeyingMaterialInfo,
-            SecPkgContext_SrtpParameters, SecPkgContext_StreamSizes, SetContextAttributesW,
-            UNISP_NAME_W
+            SECPKG_CRED_OUTBOUND, SECURITY_NATIVE_DREP, SEC_DTLS_MTU, UNISP_NAME_W,
         },
         Credentials::SecHandle,
         Cryptography::CERT_CONTEXT,
@@ -377,7 +377,7 @@ impl Dtls {
 
         debug!("DTLS Handshake status: {status}");
         self.security_ctx = Some(new_ctx_handle);
-        
+
         // Only output datagram if we have data to send and we didn't fail.
         if (status.is_ok() || status == SEC_E_OK) && out_buffers[0].cbBuffer > 0 {
             let len = out_buffers[0].cbBuffer;
