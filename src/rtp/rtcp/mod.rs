@@ -588,7 +588,7 @@ mod test {
         let Rtcp::SenderReport(s) = parsed.get(0).unwrap() else {
             panic!("Not a SenderReport in Rtcp");
         };
-        let now2 = s.sender_info.ntp_time.unwrap().to_instant();
+        let now2 = s.sender_info.ntp_time.to_instant();
 
         let mut compare = VecDeque::new();
         compare.push_back(sr(1, now2));
