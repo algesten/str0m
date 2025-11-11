@@ -5,5 +5,6 @@ tracing*
 *.svg
 xamples
 .vscode
+.idea
 fuzz/corpus
 fuzz/artifacts

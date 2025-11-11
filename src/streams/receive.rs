@@ -584,7 +584,7 @@ impl StreamRx {
                 None => None
             };
             let t64 = match ntp_time {
-                Some(n) => n.to_ntp_64(),
+                Some(n) => n.as_ntp_64(),
                 None => 0u64
             };
 
