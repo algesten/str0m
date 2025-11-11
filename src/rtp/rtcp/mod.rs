@@ -469,8 +469,7 @@ fn pad_bytes_to_word(n: usize) -> usize {
 
 #[cfg(test)]
 mod test {
-    use std::time::{Duration, Instant};
-    use crate::util::{InstantExt, SystemTimeExt};
+    use std::time::{Duration, SystemTime};
 
     use crate::rtp_::MediaTime;
 
@@ -520,7 +519,7 @@ mod test {
 
     #[test]
     fn pack_sr_4_rr() {
-        let now = Instant::now();
+        let now = SystemTime::now();
         let mut queue = VecDeque::new();
         queue.push_back(rr(3));
         queue.push_back(rr(4));
@@ -571,7 +570,7 @@ mod test {
 
     #[test]
     fn roundtrip_sr_rr() {
-        let now = Instant::now();
+        let now = SystemTime::now();
         let mut feedback = VecDeque::new();
         feedback.push_back(sr(1, now));
         feedback.push_back(rr(3));
@@ -588,7 +587,7 @@ mod test {
         let Rtcp::SenderReport(s) = parsed.get(0).unwrap() else {
             panic!("Not a SenderReport in Rtcp");
         };
-        let now2 = s.sender_info.ntp_time.to_instant();
+        let now2 = s.sender_info.ntp_time;
 
         let mut compare = VecDeque::new();
         compare.push_back(sr(1, now2));
@@ -600,15 +599,20 @@ mod test {
         assert_eq!(parsed, compare);
 
         // Ensure ntp_time is not too far off.
-        let abs = if now > now2 { now - now2 } else { now2 - now };
+        let abs = abs_time_delta(now, now2);
         assert!(abs < Duration::from_millis(1));
     }
 
-    fn sr(ssrc: u32, ntp_time: Instant) -> Rtcp {
+    fn abs_time_delta(st1: SystemTime, st2: SystemTime) -> Duration {
+        let delta = if st1 > st2 {  st1.duration_since(st2) } else { st2.duration_since(st1) };
+        delta.unwrap()
+    }
+
+    fn sr(ssrc: u32, ntp_time: SystemTime) -> Rtcp {
         Rtcp::SenderReport(SenderReport {
             sender_info: SenderInfo {
                 ssrc: ssrc.into(),
-                ntp_time: ntp_time.to_system_time(),
+                ntp_time,
                 rtp_time: MediaTime::from_secs(4),
                 sender_packet_count: 5,
                 sender_octet_count: 6,
