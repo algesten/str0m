@@ -10,7 +10,7 @@ use crate::rtp_::{ReportBlock, ReportList, Rid, Rrtr, Rtcp};
 use crate::rtp_::{RtcpFb, RtpHeader, SenderInfo, SeqNo};
 use crate::rtp_::{SdesType, Ssrc};
 use crate::stats::{MediaIngressStats, RemoteEgressStats, StatsSnapshot};
-use crate::util::InstantExt;
+use crate::util::{InstantExt, SystemTimeExt};
 use crate::util::{already_happened, calculate_rtt_ms};
 
 use super::register::ReceiverRegister;
@@ -579,12 +579,15 @@ impl StreamRx {
         // (SR) packet from source SSRC_n.  If no SR has been received yet,
         // the field is set to zero.
         report.last_sr_time = {
-            let t = self
-                .sender_info
-                .map(|(_, s)| s.ntp_time)
-                .unwrap_or(already_happened());
+            let ntp_time = match self.sender_info {
+                Some((_, s)) => s.ntp_time,
+                None => None
+            };
+            let t64 = match ntp_time {
+                Some(n) => n.as_ntp_64(),
+                None => 0u64
+            };
 
-            let t64 = t.as_ntp_64();
             (t64 >> 16) as u32
         };
 
@@ -608,7 +611,7 @@ impl StreamRx {
     fn create_extended_receiver_report(&self, now: Instant) -> ExtendedReport {
         // we only want to report our time to measure RTT,
         // the source will answer with Dlrr feedback, allowing us to calculate RTT
-        let block = ReportBlock::Rrtr(Rrtr { ntp_time: now });
+        let block = ReportBlock::Rrtr(Rrtr { ntp_time: now.to_system_time() });
         ExtendedReport {
             ssrc: self.ssrc,
             blocks: vec![block],

@@ -1,7 +1,7 @@
-use std::time::Instant;
+use std::time::SystemTime;
 
 use crate::rtp_::MediaTime;
-use crate::util::InstantExt;
+use crate::util::SystemTimeExt;
 
 use super::{FeedbackMessageType, RtcpType, Ssrc};
 use super::{ReceptionReport, ReportList, RtcpHeader, RtcpPacket};
@@ -25,8 +25,8 @@ pub struct SenderReport {
 pub struct SenderInfo {
     /// The SSRC of the SR originator.
     pub ssrc: Ssrc,
-    /// The 64 bit NTP timestamp converted to an [`Instant`].
-    pub ntp_time: Instant,
+    /// The 64 bit NTP timestamp converted to a [`SystemTime`].
+    pub ntp_time: Option<SystemTime>,
     /// The RTP timestamp that corresponds to the same point in time as the NTP timestamp above.
     pub rtp_time: MediaTime,
     /// The total number of packets the sender had sent when this information was generated.
@@ -72,7 +72,10 @@ impl SenderInfo {
         // pub sender_octet_count: u32,
         buf[..4].copy_from_slice(&self.ssrc.to_be_bytes());
 
-        let mt = self.ntp_time.as_ntp_64();
+        let mt = match self.ntp_time {
+            Some(v) => v.as_ntp_64(),
+            None => 0u64
+        };
         buf[4..12].copy_from_slice(&mt.to_be_bytes());
 
         buf[12..16].copy_from_slice(&(self.rtp_time.numer() as u32).to_be_bytes());
@@ -123,7 +126,7 @@ impl<'a> TryFrom<&'a [u8]> for SenderInfo {
         let ntp_time = u64::from_be_bytes([
             buf[4], buf[5], buf[6], buf[7], buf[8], buf[9], buf[10], buf[11],
         ]);
-        let ntp_time = Instant::from_ntp_64(ntp_time);
+        let ntp_time = SystemTime::from_ntp_64(ntp_time);
 
         // https://www.cs.columbia.edu/~hgs/rtp/faq.html#timestamp-computed
         // For video, time clock rate is fixed at 90 kHz. The timestamps generated
