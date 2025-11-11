@@ -604,7 +604,11 @@ mod test {
     }
 
     fn abs_time_delta(st1: SystemTime, st2: SystemTime) -> Duration {
-        let delta = if st1 > st2 {  st1.duration_since(st2) } else { st2.duration_since(st1) };
+        let delta = if st1 > st2 {
+            st1.duration_since(st2)
+        } else {
+            st2.duration_since(st1)
+        };
         delta.unwrap()
     }
 

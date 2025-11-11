@@ -23,7 +23,7 @@ use crate::rtp_::{SeqNo, SRTP_BLOCK_SIZE};
 use crate::session::PacketReceipt;
 use crate::stats::StatsSnapshot;
 use crate::util::value_history::ValueHistory;
-use crate::util::{InstantExt, already_happened, not_happening};
+use crate::util::{already_happened, not_happening, InstantExt};
 
 use super::rtx_cache::RtxCache;
 use super::send_queue::SendQueue;

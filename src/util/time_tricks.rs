@@ -144,8 +144,8 @@ impl SystemTimeExt for SystemTime {
 
     fn as_ntp_64(&self) -> u64 {
         let secs_epoch = match self.duration_since(SystemTime::UNIX_EPOCH) {
-             Ok(value) => value.as_secs_f64() + SECS_1900 as f64,
-             Err(_) => 0.0
+            Ok(value) => value.as_secs_f64() + SECS_1900 as f64,
+            Err(_) => 0.0,
         };
 
         (secs_epoch * F32) as u64
@@ -178,14 +178,21 @@ mod test {
         let now = SystemTime::now();
         let ntp = now.as_ntp_64();
         let now2 = SystemTime::from_ntp_64(ntp);
-        let abs = if now > now2 { now.duration_since(now2) } else { now2.duration_since(now) };
+        let abs = if now > now2 {
+            now.duration_since(now2)
+        } else {
+            now2.duration_since(now)
+        };
         assert!(abs.unwrap() < Duration::from_millis(1));
     }
 
     #[test]
     fn from_ntp_64_zero() {
         let s = SystemTime::from_ntp_64(0);
-        assert_eq!(s.duration_since(SystemTime::UNIX_EPOCH).unwrap(), Duration::ZERO);
+        assert_eq!(
+            s.duration_since(SystemTime::UNIX_EPOCH).unwrap(),
+            Duration::ZERO
+        );
     }
 
     #[test]
