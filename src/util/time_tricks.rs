@@ -72,7 +72,7 @@ pub trait SystemTimeExt {
     fn from_ntp_64(v: u64) -> Option<SystemTime>;
 
     /// Convert a SystemTime to ntp_64.
-    fn to_ntp_64(&self) -> u64;
+    fn as_ntp_64(&self) -> u64;
 
     /// Convert to Instant, for testing only.
     #[cfg(test)]
@@ -149,7 +149,7 @@ impl SystemTimeExt for SystemTime {
         Some(SystemTime::UNIX_EPOCH + Duration::from_secs_f64(secs_epoch))
     }
 
-    fn to_ntp_64(&self) -> u64 {
+    fn as_ntp_64(&self) -> u64 {
         let since_epoch = self.duration_since(SystemTime::UNIX_EPOCH);
         match since_epoch {
              Ok(value) => {
@@ -192,7 +192,7 @@ mod test {
     #[test]
     fn ntp_64_from_to() {
         let now = SystemTime::now();
-        let ntp = now.to_ntp_64();
+        let ntp = now.as_ntp_64();
         let now2 = SystemTime::from_ntp_64(ntp).unwrap();
         let abs = if now > now2 { now.duration_since(now2) } else { now2.duration_since(now) };
         assert!(abs.unwrap() < Duration::from_millis(1));
