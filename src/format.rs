@@ -1,6 +1,7 @@
 //! Media formats and parameters
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fmt;
 use std::ops::RangeInclusive;
 
@@ -480,6 +481,7 @@ impl PayloadParams {
         remote_pts: &[PayloadParams],
         claimed: &mut [bool; 128],
         local_is_controlling: bool,
+        unlocked: &mut HashSet<Pt>,
     ) {
         let Some((first, _)) = remote_pts
             .iter()
@@ -521,7 +523,7 @@ impl PayloadParams {
                     .codec
                     .default_pt()
                     .filter(|pt| !claimed.is_claimed(*pt))
-                    .or_else(|| claimed.find_unclaimed(PREFERED_RANGES));
+                    .or_else(|| claimed.find_unclaimed(PREFERED_RANGES, unlocked));
 
                 if let Some(new_pt) = new_pt {
                     debug!(
@@ -529,6 +531,7 @@ impl PayloadParams {
                         remote_pt, new_pt, self.spec.codec
                     );
                     remote_pt = new_pt;
+                    unlocked.remove(&new_pt);
                 } else {
                     panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
                 }
@@ -542,9 +545,10 @@ impl PayloadParams {
             if local_is_controlling {
                 if let Some(rtx) = remote_rtx {
                     if claimed.is_claimed(rtx) {
-                        if let Some(new_rtx) = claimed.find_unclaimed(PREFERED_RANGES) {
+                        if let Some(new_rtx) = claimed.find_unclaimed(PREFERED_RANGES, unlocked) {
                             debug!("Remapped conflicting RTX PT {:?} => {}", rtx, new_rtx);
                             remote_rtx = Some(new_rtx);
+                            unlocked.remove(&new_rtx);
                         } else {
                             panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
                         }
@@ -857,6 +861,15 @@ impl CodecConfig {
             }
         }
 
+        // Collect all currently unlocked PTs since we will need to avoid them when reassigning.
+        let mut unlocked = self
+            .params
+            .iter()
+            .filter(|p| !p.locked)
+            .flat_map(|p| [Some(p.pt()), p.resend()])
+            .flatten()
+            .collect::<HashSet<_>>();
+
         // Now lock potential new parameters to remote.
         //
         // If the remote is doing `SendOnly`, we are receiving, so the PTs are suggestions,
@@ -866,7 +879,12 @@ impl CodecConfig {
         let local_is_controlling = !remote_dir.sdp_is_receiving();
 
         for p in self.params.iter_mut() {
-            p.update_param(remote_params, &mut claimed, local_is_controlling);
+            p.update_param(
+                remote_params,
+                &mut claimed,
+                local_is_controlling,
+                &mut unlocked,
+            );
         }
 
         // Make a pass to reassign unconfirmed payloads that have PT which are now claimed.
@@ -876,7 +894,7 @@ impl CodecConfig {
             }
 
             if claimed.is_claimed(p.pt) {
-                let Some(pt) = claimed.find_unclaimed(PREFERED_RANGES) else {
+                let Some(pt) = claimed.find_unclaimed(PREFERED_RANGES, &unlocked) else {
                     // TODO: handle this gracefully.
                     panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
                 };
@@ -885,6 +903,7 @@ impl CodecConfig {
                 p.pt = pt;
 
                 claimed.assert_claim_once(pt);
+                unlocked.remove(&pt);
             }
 
             let Some(rtx) = p.resend else {
@@ -892,7 +911,7 @@ impl CodecConfig {
             };
 
             if claimed.is_claimed(rtx) {
-                let Some(rtx) = claimed.find_unclaimed(PREFERED_RANGES) else {
+                let Some(rtx) = claimed.find_unclaimed(PREFERED_RANGES, &unlocked) else {
                     // TODO: handle this gracefully.
                     panic!("Exhausted all PT ranges, inconsistent PayloadParam state");
                 };
@@ -901,6 +920,7 @@ impl CodecConfig {
                 p.resend = Some(rtx);
 
                 claimed.assert_claim_once(rtx);
+                unlocked.remove(&rtx);
             }
         }
     }
@@ -913,7 +933,11 @@ impl CodecConfig {
 trait Claimed {
     fn assert_claim_once(&mut self, pt: Pt);
     fn is_claimed(&self, pt: Pt) -> bool;
-    fn find_unclaimed(&self, ranges: &[RangeInclusive<usize>]) -> Option<Pt>;
+    fn find_unclaimed(
+        &self,
+        ranges: &[RangeInclusive<usize>],
+        unlocked: &HashSet<Pt>,
+    ) -> Option<Pt>;
 }
 
 impl Claimed for [bool; 128] {
@@ -926,10 +950,14 @@ impl Claimed for [bool; 128] {
         let idx = *pt as usize;
         self[idx]
     }
-    fn find_unclaimed(&self, ranges: &[RangeInclusive<usize>]) -> Option<Pt> {
+    fn find_unclaimed(
+        &self,
+        ranges: &[RangeInclusive<usize>],
+        unlocked: &HashSet<Pt>,
+    ) -> Option<Pt> {
         for range in ranges {
             for i in range.clone() {
-                if !self[i] {
+                if !self[i] && !unlocked.contains(&(i as u8).into()) {
                     let pt: Pt = (i as u8).into();
                     return Some(pt);
                 }
@@ -1276,5 +1304,206 @@ mod test {
             .params()
             .iter()
             .any(|p| p.resend() == Some(109.into()) && p.locked));
+    }
+
+    #[test]
+    fn test_pt_conflict_same_mline_multiple_codecs() {
+        // Reproduces a bug we have had where reassigned PTs were conflicting with unlocked PTs.
+        //
+        // SCENARIO & ROOT CAUSE:
+        // This test reproduces the exact bug from sdp.json using str0m's default config.
+        //
+        // 1. str0m starts with DEFAULT codec configuration:
+        //    - VP8 at PT 96/97 (unlocked)
+        //    - H264 High (0x64001f) at PT 114/115 (unlocked)
+        //    - Many other H264 profiles at various PTs (127, 125, 108, 124, 123, 35)
+        //
+        // 2. Chrome (peer A) offers video with H264 only - PTs: 103/104, 109/114, 117/118
+        //    Chrome's OFFER direction: sendonly (Chrome sends video to us)
+        //    **CRITICAL**: Chrome uses PT 114 as RTX for H264 42e01f (PT 109)
+        //
+        // 3. str0m ANSWERs accepting Chrome's H264 offer:
+        //    - Chrome's H264 PTs (103, 109, 117) are LOCKED
+        //    - Chrome's RTX PTs (104, 114, 118) are LOCKED
+        //    - VP8 at PT 96 remains UNLOCKED (Chrome didn't negotiate it)
+        //    - H264 High at PT 114 CONFLICTS with Chrome's RTX usage of PT 114!
+        //
+        // 4. THE BUG (before fix): update_params reassigns H264 High from PT 114:
+        //    - Searches for available PT starting from 96
+        //    - PT 96 appears "unclaimed" because it only checked LOCKED PTs
+        //    - VP8 is at PT 96 but UNLOCKED, so wasn't checked!
+        //    - H264 High gets reassigned to PT 96
+        //    - Now BOTH VP8 and H264 High are at PT 96! ❌
+        //
+        // 5. Later, Firefox (peer B) joins - str0m creates NEW video m-line (mid KvE)
+        //    When generating SDP, str0m collects ALL video codecs from codec_config
+        //    Result (before fix): PT 96 appears TWICE in the same m-line!
+        //    - Line 729 in sdp.json: a=rtpmap:96 VP8/90000
+        //    - Line 791 in sdp.json: a=rtpmap:96 H264/90000 profile-level-id=64001f
+        //
+        // EXPECTED: Each PT in an m-line must be unique
+        // THE FIX: Now checks BOTH locked and unlocked PTs when reassigning
+
+        // Start with str0m's default codec configuration
+        // This includes VP8 at 96/97 and H264 High at 114/115 (among others)
+        let mut config = CodecConfig::new_with_defaults();
+
+        // Verify H264 High starts at its default PT 114 BEFORE Chrome's offer
+        let h264_high_before = config
+            .params()
+            .iter()
+            .find(|p| {
+                p.spec().codec == Codec::H264 && p.spec().format.profile_level_id == Some(0x64001f)
+            })
+            .expect("H264 High should exist");
+        assert_eq!(
+            h264_high_before.pt(),
+            114.into(),
+            "H264 High should start at PT 114"
+        );
+
+        // Simulate Chrome's OFFER with H264 only (sendonly from Chrome's perspective)
+        // Chrome is sending video to us, so we're receiving
+        // Direction::SendOnly means the remote is sending (we receive)
+        let chrome_h264_params = vec![
+            PayloadParams::new(
+                103.into(),
+                Some(104.into()),
+                CodecSpec {
+                    codec: Codec::H264,
+                    clock_rate: Frequency::NINETY_KHZ,
+                    channels: None,
+                    format: FormatParams {
+                        packetization_mode: Some(1),
+                        profile_level_id: Some(0x42001f),
+                        ..Default::default()
+                    },
+                },
+            ),
+            PayloadParams::new(
+                109.into(),
+                Some(114.into()),
+                CodecSpec {
+                    codec: Codec::H264,
+                    clock_rate: Frequency::NINETY_KHZ,
+                    channels: None,
+                    format: FormatParams {
+                        packetization_mode: Some(1),
+                        profile_level_id: Some(0x42e01f),
+                        ..Default::default()
+                    },
+                },
+            ),
+            PayloadParams::new(
+                117.into(),
+                Some(118.into()),
+                CodecSpec {
+                    codec: Codec::H264,
+                    clock_rate: Frequency::NINETY_KHZ,
+                    channels: None,
+                    format: FormatParams {
+                        packetization_mode: Some(1),
+                        profile_level_id: Some(0x4d001f),
+                        ..Default::default()
+                    },
+                },
+            ),
+        ];
+
+        // Process Chrome's offer - this locks the H264 PTs that Chrome offered
+        // Chrome is SendOnly, so from our perspective we're receiving (recvonly)
+        config.update_params(&chrome_h264_params, Direction::SendOnly);
+
+        // Verify: Chrome's H264 profiles are locked at their specific PTs
+        assert!(
+            config.params().iter().any(|p| p.pt() == 103.into()
+                && p.spec().codec == Codec::H264
+                && p.spec().format.profile_level_id == Some(0x42001f)
+                && p.locked),
+            "H264 42001f should be locked at PT 103"
+        );
+        assert!(
+            config.params().iter().any(|p| p.pt() == 109.into()
+                && p.spec().codec == Codec::H264
+                && p.spec().format.profile_level_id == Some(0x42e01f)
+                && p.locked),
+            "H264 42e01f should be locked at PT 109"
+        );
+        assert!(
+            config.params().iter().any(|p| p.pt() == 117.into()
+                && p.spec().codec == Codec::H264
+                && p.spec().format.profile_level_id == Some(0x4d001f)
+                && p.locked),
+            "H264 4d001f should be locked at PT 117"
+        );
+
+        // Verify: VP8 at PT 96 is NOT locked (Chrome didn't negotiate it)
+        let vp8_param = config
+            .params()
+            .iter()
+            .find(|p| p.spec().codec == Codec::Vp8);
+        assert!(vp8_param.is_some(), "VP8 should still exist");
+        assert_eq!(vp8_param.unwrap().pt(), 96.into(), "VP8 should be at PT 96");
+        assert!(!vp8_param.unwrap().locked, "VP8 should NOT be locked");
+
+        // THE FIX VERIFICATION:
+        // H264 64001f was originally at PT 114, but Chrome used PT 114 for RTX
+        // update_params should reassign H264 64001f to a PT that avoids BOTH:
+        // - Locked PTs (103, 104, 109, 114, 117, 118)
+        // - Unlocked PTs already in use (96 for VP8, 97 for VP8 RTX)
+        let h264_high_param = config.params().iter().find(|p| {
+            p.spec().codec == Codec::H264 && p.spec().format.profile_level_id == Some(0x64001f)
+        });
+        assert!(h264_high_param.is_some(), "H264 64001f should still exist");
+        let h264_pt = h264_high_param.unwrap().pt();
+
+        // Should NOT be at PT 96 (VP8 is there)
+        assert_ne!(
+            h264_pt,
+            96.into(),
+            "FIX WORKING: H264 64001f should NOT be at PT 96 (VP8 is there)"
+        );
+
+        // Should NOT be at any of the locked PTs
+        assert!(
+            ![103, 104, 109, 114, 117, 118].contains(&(*h264_pt as u8)),
+            "H264 64001f should not conflict with locked PTs"
+        );
+
+        assert!(
+            !h264_high_param.unwrap().locked,
+            "H264 64001f should NOT be locked (Chrome didn't offer it)"
+        );
+
+        // Now simulate creating a new video m-line (for Firefox's camera)
+        // This is where the bug manifests: we collect ALL video codecs from config
+        let all_video_params: Vec<_> = config.all_for_kind(MediaKind::Video).collect();
+
+        // Extract just the PTs (including RTX PTs)
+        let mut all_pts = Vec::new();
+        for p in all_video_params {
+            all_pts.push(p.pt());
+            if let Some(rtx) = p.resend() {
+                all_pts.push(rtx);
+            }
+        }
+
+        // THE FIX: With the bug fixed, no PT should appear multiple times
+        // Check for duplicate PTs - this should now PASS
+        let mut seen = std::collections::HashSet::new();
+        let mut duplicates = Vec::new();
+        for pt in &all_pts {
+            if !seen.insert(pt) {
+                duplicates.push(*pt);
+            }
+        }
+
+        assert!(
+            duplicates.is_empty(),
+            "FAILED: Found duplicate PTs in same m-line: {:?}\nAll PTs: {:?}\n
+            This creates invalid SDP with multiple a=rtpmap lines for the same PT!",
+            duplicates,
+            all_pts
+        );
     }
 }
