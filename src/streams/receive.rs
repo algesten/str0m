@@ -579,12 +579,8 @@ impl StreamRx {
         // (SR) packet from source SSRC_n.  If no SR has been received yet,
         // the field is set to zero.
         report.last_sr_time = {
-            let ntp_time = match self.sender_info {
-                Some((_, s)) => s.ntp_time,
-                None => None
-            };
-            let t64 = match ntp_time {
-                Some(n) => n.as_ntp_64(),
+            let t64 = match self.sender_info {
+                Some((_, s)) => s.ntp_time.as_ntp_64(),
                 None => 0u64
             };
 

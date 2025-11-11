@@ -50,7 +50,7 @@ pub enum ReportBlock {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(missing_docs)]
 pub struct Rrtr {
-    pub ntp_time: Option<SystemTime>,
+    pub ntp_time: SystemTime,
 }
 
 //   0                   1                   2                   3
@@ -137,10 +137,7 @@ impl Rrtr {
         buf[2..4].copy_from_slice(&2_u16.to_be_bytes());
 
         // NTP timestamp
-        let mt = match self.ntp_time {
-            Some(n) => n.as_ntp_64(),
-            None => 0u64
-        };
+        let mt = self.ntp_time.as_ntp_64();
         buf[4..12].copy_from_slice(&mt.to_be_bytes());
 
         12

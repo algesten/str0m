@@ -64,12 +64,12 @@ pub trait InstantExt {
     fn to_ntp_duration(&self) -> Duration;
 
     /// Convert an Instant to a SystemTime for ntp time
-    fn to_system_time(&self) -> Option<SystemTime>;
+    fn to_system_time(&self) -> SystemTime;
 }
 
 pub trait SystemTimeExt {
     /// Convert an ntp_64 as seen in SR to a SystemTime.
-    fn from_ntp_64(v: u64) -> Option<SystemTime>;
+    fn from_ntp_64(v: u64) -> SystemTime;
 
     /// Convert a SystemTime to ntp_64.
     fn as_ntp_64(&self) -> u64;
@@ -112,22 +112,21 @@ impl InstantExt for Instant {
         self.to_unix_duration() + Duration::from_micros(MICROS_1900)
     }
 
-    fn to_system_time(&self) -> Option<SystemTime> {
+    fn to_system_time(&self) -> SystemTime {
         // This is a bit fishy. We "freeze" a moment in time for Instant and SystemTime,
         // so we can make relative comparisons of Instant - Instant and translate that to
         // SystemTime - unix epoch. Hopefully the error is quite small.
         if *self < BEGINNING_OF_TIME.0 {
             warn!("Time went backwards from beginning_of_time Instant");
-            return None;
         }
 
         let duration_since_time_0 = self.duration_since(BEGINNING_OF_TIME.0);
-        Some(BEGINNING_OF_TIME.1 + duration_since_time_0)
+        BEGINNING_OF_TIME.1 + duration_since_time_0
     }
 }
 
 impl SystemTimeExt for SystemTime {
-    fn from_ntp_64(v: u64) -> Option<SystemTime> {
+    fn from_ntp_64(v: u64) -> SystemTime {
         // https://tools.ietf.org/html/rfc3550#section-4
         // Wallclock time (absolute date and time) is represented using the
         // timestamp format of the Network Time Protocol (NTP), which is in
@@ -141,12 +140,10 @@ impl SystemTimeExt for SystemTime {
         let secs_epoch = secs_ntp - SECS_1900 as f64;
 
         // Duration not allowed to be negative
-        if secs_epoch < 0.0 {
-            return None
-        };
+        let secs_dur = Duration::try_from_secs_f64(secs_epoch).unwrap_or_else(|_| Duration::ZERO);
 
         // Time in SystemTime
-        Some(SystemTime::UNIX_EPOCH + Duration::from_secs_f64(secs_epoch))
+        SystemTime::UNIX_EPOCH + secs_dur
     }
 
     fn as_ntp_64(&self) -> u64 {
@@ -193,21 +190,21 @@ mod test {
     fn ntp_64_from_to() {
         let now = SystemTime::now();
         let ntp = now.as_ntp_64();
-        let now2 = SystemTime::from_ntp_64(ntp).unwrap();
+        let now2 = SystemTime::from_ntp_64(ntp);
         let abs = if now > now2 { now.duration_since(now2) } else { now2.duration_since(now) };
         assert!(abs.unwrap() < Duration::from_millis(1));
     }
 
     #[test]
     fn from_ntp_64() {
-        SystemTime::from_ntp_64(0);
+        let s = SystemTime::from_ntp_64(0);
+        assert_eq!(s.duration_since(SystemTime::UNIX_EPOCH).unwrap(), Duration::new(0, 0));
     }
 
     #[test]
     fn from_ntp_64_val1() {
         let s = SystemTime::from_ntp_64((3971792775u64 << 32) | 4184015405u64);
-        let t = s.unwrap();
-        match t.duration_since(SystemTime::UNIX_EPOCH) {
+        match s.duration_since(SystemTime::UNIX_EPOCH) {
             Ok(n) => assert_eq!(n.as_micros(), 1762803975974166),
             Err(_) => panic!("Cannot calculate unix epoch"),
         }

@@ -26,7 +26,7 @@ pub struct SenderInfo {
     /// The SSRC of the SR originator.
     pub ssrc: Ssrc,
     /// The 64 bit NTP timestamp converted to a [`SystemTime`].
-    pub ntp_time: Option<SystemTime>,
+    pub ntp_time: SystemTime,
     /// The RTP timestamp that corresponds to the same point in time as the NTP timestamp above.
     pub rtp_time: MediaTime,
     /// The total number of packets the sender had sent when this information was generated.
@@ -72,10 +72,7 @@ impl SenderInfo {
         // pub sender_octet_count: u32,
         buf[..4].copy_from_slice(&self.ssrc.to_be_bytes());
 
-        let mt = match self.ntp_time {
-            Some(v) => v.as_ntp_64(),
-            None => 0u64
-        };
+        let mt = self.ntp_time.as_ntp_64();
         buf[4..12].copy_from_slice(&mt.to_be_bytes());
 
         buf[12..16].copy_from_slice(&(self.rtp_time.numer() as u32).to_be_bytes());
