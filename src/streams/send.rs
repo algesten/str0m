@@ -42,7 +42,7 @@ pub const DEFAULT_RTX_RATIO_CAP: Option<f32> = Some(0.15f32);
 ///
 /// A stream is a primary SSRC + optional RTX SSRC.
 ///
-/// This is RTP level API. For sample level API see [`Rtc::writer`][crate::Rtc::writer].
+/// This is RTP level API. For frame level API see [`Rtc::writer`][crate::Rtc::writer].
 #[derive(Debug)]
 pub struct StreamTx {
     /// Unique identifier of the remote encoded stream.
@@ -63,7 +63,7 @@ pub struct StreamTx {
     /// The last main payload clock rate that was sent.
     clock_rate: Option<Frequency>,
 
-    /// If we are doing seq_no ourselves (when writing sample mode).
+    /// If we are doing seq_no ourselves (when writing frame mode).
     seq_no: SeqNo,
 
     /// If we are using RTX, this is the seq no counter.

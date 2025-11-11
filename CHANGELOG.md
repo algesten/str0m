@@ -96,7 +96,7 @@
   * refactor(ice): always use latest timing config #568
   * Fix RTX stops working after packet loss spike #566
   * Add Sub trait impl (back) to MediaTime #560
-  * Make start of talkspurt information available for sample api #559
+  * Make start of talkspurt information available for frame api #559
   * Do not disconnect whilst we still check new candidates #489
   * Ensure lexical ordering of SDP-formatted candidates follows priority #557
   * Limit TWCC iteration with packet status count #606

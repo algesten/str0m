@@ -366,25 +366,25 @@
 //! no internal threads, just an enormous state machine that is driven
 //! forward by different kinds of input.
 //!
-//! ## Sample or RTP level?
+//! ## Frame or RTP level?
 //!
-//! Str0m defaults to the "sample level" which treats the RTP as an internal detail. The user
+//! Str0m defaults to the "frame level" which treats the RTP as an internal detail. The user
 //! will thus mainly interact with:
 //!
-//! 1. [`Event::MediaData`][evmed] to receive full "samples" (audio frames or video frames).
-//! 2. [`Writer::write`][writer] to write full samples.
+//! 1. [`Event::MediaData`][evmed] to receive full frames (audio frames or video frames).
+//! 2. [`Writer::write`][writer] to write full frames.
 //! 3. [`Writer::request_keyframe`][reqkey] to request keyframes.
 //!
-//! ### Sample level
+//! ### Frame level
 //!
 //! All codecs such as h264, vp8, vp9 and opus outputs what we call
-//! "Samples". A sample has a very specific meaning for audio, but this
-//! project uses it in a broader sense, where a sample is either a video
+//! "Frames". A frame has a very specific meaning for video, but this
+//! project uses it in a broader sense, where a frame is either a video
 //! or audio time stamped chunk of encoded data that typically represents
 //! a chunk of audio, or _one single frame for video_.
 //!
-//! Samples are not suitable to use directly in UDP (RTP) packets - for
-//! one they are too big. Samples are therefore further chunked up by
+//! Frames are not suitable to use directly in UDP (RTP) packets - for
+//! one they are too big. Frames are therefore further chunked up by
 //! codec specific payloaders into RTP packets.
 //!
 //! ### RTP mode
@@ -392,7 +392,7 @@
 //! Str0m also provides an RTP level API. This would be similar to many other
 //! RTP libraries where the RTP packets themselves are the the API surface
 //! towards the user (when building an SFU one would often talk about "forwarding
-//! RTP packets", while with str0m we can also "forward samples").  Using
+//! RTP packets", while with str0m we can also "forward frames").  Using
 //! this API requires a deeper knowledge of RTP and WebRTC.
 //!
 //! To enable RTP mode
@@ -566,7 +566,7 @@
 //!
 //! ### Can I use str0m in a media server?
 //!
-//! Yes! str0m excels as a server component with support for both RTP API and Sample API. You can
+//! Yes! str0m excels as a server component with support for both RTP API and Frame API. You can
 //! easily build that recording server or SFU you dreamt of in Rust!
 //!
 //! ### Can I deploy the chat example into production?
@@ -1238,7 +1238,7 @@ impl Rtc {
         DirectApi::new(self)
     }
 
-    /// Send outgoing media data (samples) or request keyframes.
+    /// Send outgoing media data (frames) or request keyframes.
     ///
     /// Returns `None` if the direction isn't sending (`sendrecv` or `sendonly`).
     ///
@@ -1263,7 +1263,7 @@ impl Rtc {
     /// writer.write(pt, data.network_time, data.time, data.data).unwrap();
     /// ```
     ///
-    /// This is a sample level API: For RTP level see [`DirectApi::stream_tx()`]
+    /// This is a frame level API: For RTP level see [`DirectApi::stream_tx()`]
     /// and [`DirectApi::stream_rx()`].
     ///
     pub fn writer(&mut self, mid: Mid) -> Option<Writer> {
@@ -2233,7 +2233,7 @@ impl RtcConfig {
 
     /// Sets the number of packets held back for reordering audio packets.
     ///
-    /// Str0m tries to deliver the samples in order. This number determines how many
+    /// Str0m tries to deliver the frames in order. This number determines how many
     /// packets to "wait" before releasing media
     /// [`contiguous: false`][crate::media::MediaData::contiguous].
     ///
@@ -2263,7 +2263,7 @@ impl RtcConfig {
 
     /// Sets the number of packets held back for reordering video packets.
     ///
-    /// Str0m tries to deliver the samples in order. This number determines how many
+    /// Str0m tries to deliver the frames in order. This number determines how many
     /// packets to "wait" before releasing media with gaps.
     ///
     /// This must be at least as big as the number of packets the biggest keyframe can be split over.
