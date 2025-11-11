@@ -73,10 +73,6 @@ pub trait SystemTimeExt {
 
     /// Convert a SystemTime to ntp_64.
     fn as_ntp_64(&self) -> u64;
-
-    /// Convert to Instant, for testing only.
-    #[cfg(test)]
-    fn to_instant(&self) -> Instant;
 }
 
 // RTP spec "wallclock" uses NTP time, which starts at 1900-01-01.
@@ -153,12 +149,6 @@ impl SystemTimeExt for SystemTime {
         };
 
         (secs_epoch * F32) as u64
-    }
-
-    #[cfg(test)]
-    fn to_instant(&self) -> Instant {
-        let diff = self.duration_since(BEGINNING_OF_TIME.1).unwrap_or_else(|_| Duration::from_secs(0));
-        BEGINNING_OF_TIME.0 + diff
     }
 }
 
