@@ -536,7 +536,7 @@ impl Streams {
         }
     }
 
-    pub fn new_ssrc_pair(&mut self) -> (Ssrc, Ssrc) {
+    pub fn new_ssrc_pair(&self) -> (Ssrc, Ssrc) {
         let ssrc = self.new_ssrc();
 
         let rtx = loop {
@@ -675,7 +675,7 @@ impl Streams {
         self.any_nack_active.unwrap()
     }
 
-    fn rx_lookup_at(&mut self) -> Instant {
+    fn rx_lookup_at(&self) -> Instant {
         self.last_rx_lookup_cleanup + RX_LOOKUP_CLEANUP_INTERVAL
     }
 }

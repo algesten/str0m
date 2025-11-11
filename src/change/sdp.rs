@@ -951,7 +951,7 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
                     update_media(
                         media,
                         m,
-                        &mut session.codec_config,
+                        &session.codec_config,
                         &session.exts,
                         &mut session.streams,
                     );
@@ -999,7 +999,7 @@ fn add_new_lines(
             update_media(
                 &mut media,
                 m,
-                &mut session.codec_config,
+                &session.codec_config,
                 &session.exts,
                 &mut session.streams,
             );
@@ -1057,7 +1057,7 @@ fn as_media_lines(session: &Session) -> Vec<&dyn AsSdpMediaLine> {
 fn update_media(
     media: &mut Media,
     m: &MediaLine,
-    config: &mut CodecConfig,
+    config: &CodecConfig,
     exts: &ExtensionMap,
     streams: &mut Streams,
 ) {

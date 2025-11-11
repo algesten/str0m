@@ -295,7 +295,7 @@ impl Stats {
     /// Poll for the next time to call [`Stats::wants_timeout`] and [`Stats::do_handle_timeout`].
     ///
     /// NOTE: we only need Option<_> to conform to .soonest() (see caller)
-    pub fn poll_timeout(&mut self) -> Option<Instant> {
+    pub fn poll_timeout(&self) -> Option<Instant> {
         let last_now = self.last_now?;
         Some(last_now + self.interval)
     }

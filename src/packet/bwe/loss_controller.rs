@@ -636,7 +636,7 @@ impl LossController {
         bias_factor * (diff / self.config.bandwidth_preference_smoothing_factor + diff.abs())
     }
 
-    fn calculate_instant_upper_bound(&mut self) -> Bitrate {
+    fn calculate_instant_upper_bound(&self) -> Bitrate {
         // this requires someone to set the max bitrate from outside
         let mut instant_limit = self.max_bitrate;
 
