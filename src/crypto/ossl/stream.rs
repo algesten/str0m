@@ -158,7 +158,7 @@ where
 }
 
 fn export_srtp_keying_material<S>(
-    stream: &mut SslStream<S>,
+    stream: &SslStream<S>,
 ) -> Result<(KeyingMaterial, SrtpProfile, Fingerprint), io::Error> {
     let ssl = stream.ssl();
 

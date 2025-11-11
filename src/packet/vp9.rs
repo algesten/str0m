@@ -350,7 +350,7 @@ impl Vp9Depacketizer {
     /// Updates provided [`CodecExtra`].
     /// __MUST__ be called after the all transformations of `payload_index`.
     fn update_extra(
-        &mut self,
+        &self,
         extra: &mut CodecExtra,
         out_len: usize,
         packet_len: usize,

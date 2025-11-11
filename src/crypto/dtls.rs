@@ -330,7 +330,7 @@ impl DummyDtlsImpl {
         crypto_backend_not_available(self.0)
     }
 
-    fn handle_handshake(&self, o: &mut VecDeque<DtlsEvent>) -> Result<bool, CryptoError> {
+    fn handle_handshake(&self, o: &VecDeque<DtlsEvent>) -> Result<bool, CryptoError> {
         crypto_backend_not_available(self.0)
     }
 
@@ -338,7 +338,7 @@ impl DummyDtlsImpl {
         crypto_backend_not_available(self.0)
     }
 
-    fn handle_receive(&self, m: &[u8], o: &mut VecDeque<DtlsEvent>) -> Result<(), CryptoError> {
+    fn handle_receive(&self, m: &[u8], o: &VecDeque<DtlsEvent>) -> Result<(), CryptoError> {
         crypto_backend_not_available(self.0)
     }
 

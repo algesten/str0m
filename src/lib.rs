@@ -618,6 +618,7 @@
 #![allow(clippy::doc_overindented_list_items)]
 #![allow(clippy::uninlined_format_args)]
 #![allow(mismatched_lifetime_syntaxes)]
+#![deny(clippy::needless_pass_by_ref_mut)]
 #![deny(missing_docs)]
 
 #[macro_use]

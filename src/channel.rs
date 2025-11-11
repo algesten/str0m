@@ -251,7 +251,7 @@ impl ChannelHandler {
     }
 
     // Do automatic allocations of sctp stream id.
-    fn do_allocations(&mut self, sctp: &mut RtcSctp) {
+    fn do_allocations(&mut self, sctp: &RtcSctp) {
         if !self.need_allocation() {
             return;
         }
@@ -326,7 +326,8 @@ impl ChannelHandler {
         }
     }
 
-    pub fn close_channel(&mut self, id: ChannelId, sctp: &mut RtcSctp) {
+    // NB: Maybe this should still be &mut self or even `self` to prove singular ownership
+    pub fn close_channel(&self, id: ChannelId, sctp: &mut RtcSctp) {
         if let Some(sctp_stream_id) = self
             .allocations
             .iter()

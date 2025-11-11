@@ -644,7 +644,7 @@ impl StreamRx {
         Some(())
     }
 
-    pub(crate) fn visit_stats(&mut self, snapshot: &mut StatsSnapshot, now: Instant) {
+    pub(crate) fn visit_stats(&self, snapshot: &mut StatsSnapshot, now: Instant) {
         self.stats
             .fill(snapshot, self.midrid, self.sender_info.as_ref(), now);
     }
@@ -764,7 +764,7 @@ impl StreamRxStats {
     }
 
     pub(crate) fn fill(
-        &mut self,
+        &self,
         snapshot: &mut StatsSnapshot,
         midrid: MidRid,
         sender_info: Option<&(Instant, SenderInfo)>,
