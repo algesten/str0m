@@ -71,8 +71,12 @@ pub trait SystemTimeExt {
     /// Convert an ntp_64 as seen in SR to a SystemTime.
     fn from_ntp_64(v: u64) -> Option<SystemTime>;
 
-    /// Convert a SystemTime to ntp_64
-    fn as_ntp_64(&self) -> u64;
+    /// Convert a SystemTime to ntp_64.
+    fn to_ntp_64(&self) -> u64;
+
+    /// Convert to Instant, for testing only.
+    #[cfg(test)]
+    fn to_instant(&self) -> Instant;
 }
 
 // RTP spec "wallclock" uses NTP time, which starts at 1900-01-01.
@@ -145,7 +149,7 @@ impl SystemTimeExt for SystemTime {
         Some(SystemTime::UNIX_EPOCH + Duration::from_secs_f64(secs_epoch))
     }
 
-    fn as_ntp_64(&self) -> u64 {
+    fn to_ntp_64(&self) -> u64 {
         let since_epoch = self.duration_since(SystemTime::UNIX_EPOCH);
         match since_epoch {
              Ok(value) => {
@@ -155,6 +159,12 @@ impl SystemTimeExt for SystemTime {
              },
              Err(_) => 0u64
         }
+    }
+
+    #[cfg(test)]
+    fn to_instant(&self) -> Instant {
+        let diff = self.duration_since(BEGINNING_OF_TIME.1).unwrap_or_else(|_| Duration::from_secs(0));
+        BEGINNING_OF_TIME.0 + diff
     }
 }
 
@@ -181,15 +191,25 @@ mod test {
 
     #[test]
     fn ntp_64_from_to() {
-        let now = Instant::now();
-        let ntp = now.as_ntp_64();
-        let now2 = Instant::from_ntp_64(ntp);
-        let abs = if now > now2 { now - now2 } else { now2 - now };
-        assert!(abs < Duration::from_millis(1));
+        let now = SystemTime::now();
+        let ntp = now.to_ntp_64();
+        let now2 = SystemTime::from_ntp_64(ntp).unwrap();
+        let abs = if now > now2 { now.duration_since(now2) } else { now2.duration_since(now) };
+        assert!(abs.unwrap() < Duration::from_millis(1));
     }
 
     #[test]
     fn from_ntp_64() {
-        Instant::from_ntp_64(0);
+        SystemTime::from_ntp_64(0);
+    }
+
+    #[test]
+    fn from_ntp_64_val1() {
+        let s = SystemTime::from_ntp_64((3971792775u64 << 32) | 4184015405u64);
+        let t = s.unwrap();
+        match t.duration_since(SystemTime::UNIX_EPOCH) {
+            Ok(n) => assert!(n.as_millis() == 1762803975974),
+            Err(_) => panic!("Cannot calculate unix epoch"),
+        }
     }
 }

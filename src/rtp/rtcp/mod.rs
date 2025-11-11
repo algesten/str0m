@@ -470,6 +470,7 @@ fn pad_bytes_to_word(n: usize) -> usize {
 #[cfg(test)]
 mod test {
     use std::time::{Duration, Instant};
+    use crate::util::{InstantExt, SystemTimeExt};
 
     use crate::rtp_::MediaTime;
 
@@ -587,7 +588,7 @@ mod test {
         let Rtcp::SenderReport(s) = parsed.get(0).unwrap() else {
             panic!("Not a SenderReport in Rtcp");
         };
-        let now2 = s.sender_info.ntp_time;
+        let now2 = s.sender_info.ntp_time.unwrap().to_instant();
 
         let mut compare = VecDeque::new();
         compare.push_back(sr(1, now2));
@@ -607,7 +608,7 @@ mod test {
         Rtcp::SenderReport(SenderReport {
             sender_info: SenderInfo {
                 ssrc: ssrc.into(),
-                ntp_time,
+                ntp_time: ntp_time.to_system_time(),
                 rtp_time: MediaTime::from_secs(4),
                 sender_packet_count: 5,
                 sender_octet_count: 6,

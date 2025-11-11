@@ -73,7 +73,7 @@ impl SenderInfo {
         buf[..4].copy_from_slice(&self.ssrc.to_be_bytes());
 
         let mt = match self.ntp_time {
-            Some(v) => v.as_ntp_64(),
+            Some(v) => v.to_ntp_64(),
             None => 0u64
         };
         buf[4..12].copy_from_slice(&mt.to_be_bytes());

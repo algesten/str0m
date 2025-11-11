@@ -138,7 +138,7 @@ impl Rrtr {
 
         // NTP timestamp
         let mt = match self.ntp_time {
-            Some(n) => n.as_ntp_64(),
+            Some(n) => n.to_ntp_64(),
             None => 0u64
         };
         buf[4..12].copy_from_slice(&mt.to_be_bytes());
