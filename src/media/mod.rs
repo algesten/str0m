@@ -106,13 +106,13 @@ pub struct Media {
     // ========================================= Payloaders, etc =========================================
     //
     /// Buffers of incoming RTP packets. These do reordering/jitter buffer and also
-    /// depayload from RTP to samples.
+    /// depayload from RTP to frames.
     depayloaders: HashMap<(Pt, Option<Rid>), DepacketizingBuffer>,
 
     /// Payloaders for outoing RTP packets.
     payloaders: HashMap<(Pt, Option<Rid>), Payloader>,
 
-    /// Samples to payload. Should typically only be 0 or 1.
+    /// Frames to payload. Should typically only be 0 or 1.
     to_payload: VecDeque<ToPayload>,
 
     pub(crate) need_open_event: bool,

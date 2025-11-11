@@ -133,7 +133,7 @@ impl DepacketizingBuffer {
     }
 
     pub fn push(&mut self, meta: RtpMeta, data: Vec<u8>) {
-        // We're not emitting samples in the wrong order. If we receive
+        // We're not emitting frames in the wrong order. If we receive
         // packets that are before the last emitted, we drop.
         //
         // As a special case, per popular demand, if hold_back is 0, we do emit
@@ -228,7 +228,7 @@ impl DepacketizingBuffer {
             .meta
             .seq_no;
 
-        // We're not going to emit samples in the incorrect order, there's no point in keeping
+        // We're not going to emit frames in the incorrect order, there's no point in keeping
         // stuff before the emitted range.
         self.queue.drain(0..=stop);
 

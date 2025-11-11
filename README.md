@@ -356,25 +356,25 @@ as time passing into external input to the API. This means str0m has
 no internal threads, just an enormous state machine that is driven
 forward by different kinds of input.
 
-### Sample or RTP level?
+### Frame or RTP level?
 
-Str0m defaults to the "sample level" which treats the RTP as an internal detail. The user
+Str0m defaults to the "frame level" which treats the RTP as an internal detail. The user
 will thus mainly interact with:
 
-1. [`Event::MediaData`][evmed] to receive full "samples" (audio frames or video frames).
-2. [`Writer::write`][writer] to write full samples.
+1. [`Event::MediaData`][evmed] to receive full frames (audio frames or video frames).
+2. [`Writer::write`][writer] to write full frames.
 3. [`Writer::request_keyframe`][reqkey] to request keyframes.
 
-#### Sample level
+#### Frame level
 
 All codecs such as h264, vp8, vp9 and opus outputs what we call
-"Samples". A sample has a very specific meaning for audio, but this
-project uses it in a broader sense, where a sample is either a video
+"Frames". A frame has a very specific meaning for video, but this
+project uses it in a broader sense, where a frame is either a video
 or audio time stamped chunk of encoded data that typically represents
 a chunk of audio, or _one single frame for video_.
 
-Samples are not suitable to use directly in UDP (RTP) packets - for
-one they are too big. Samples are therefore further chunked up by
+Frames are not suitable to use directly in UDP (RTP) packets - for
+one they are too big. Frames are therefore further chunked up by
 codec specific payloaders into RTP packets.
 
 #### RTP mode
@@ -382,7 +382,7 @@ codec specific payloaders into RTP packets.
 Str0m also provides an RTP level API. This would be similar to many other
 RTP libraries where the RTP packets themselves are the the API surface
 towards the user (when building an SFU one would often talk about "forwarding
-RTP packets", while with str0m we can also "forward samples").  Using
+RTP packets", while with str0m we can also "forward frames").  Using
 this API requires a deeper knowledge of RTP and WebRTC.
 
 To enable RTP mode
@@ -553,7 +553,7 @@ don't let that stop you from building amazing applications!
 
 #### Can I use str0m in a media server?
 
-Yes! str0m excels as a server component with support for both RTP API and Sample API. You can
+Yes! str0m excels as a server component with support for both RTP API and Frame API. You can
 easily build that recording server or SFU you dreamt of in Rust!
 
 #### Can I deploy the chat example into production?

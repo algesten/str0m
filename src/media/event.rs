@@ -133,12 +133,12 @@ pub struct MediaData {
     /// For audio this flag most likely doesn't matter.
     pub contiguous: bool,
 
-    /// The actual packet data a.k.a Sample.
+    /// The actual packet data a.k.a Frame.
     ///
-    /// Bigger samples don't fit in one UDP packet, thus WebRTC RTP is chopping up codec
+    /// Bigger frames don't fit in one UDP packet, thus WebRTC RTP is chopping up codec
     /// transmission units into smaller parts.
     ///
-    /// This data is a full depayloaded Sample.
+    /// This data is a full depayloaded Frame.
     pub data: Vec<u8>,
 
     /// RTP header extensions for this media data. This is taken from the

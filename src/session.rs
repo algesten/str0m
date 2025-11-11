@@ -209,7 +209,7 @@ impl Session {
     }
 
     pub fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
-        // Payload any waiting samples
+        // Payload any waiting frames
         self.do_payload()?;
 
         let sender_ssrc = self.streams.first_ssrc_local();
