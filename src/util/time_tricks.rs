@@ -208,7 +208,7 @@ mod test {
         let s = SystemTime::from_ntp_64((3971792775u64 << 32) | 4184015405u64);
         let t = s.unwrap();
         match t.duration_since(SystemTime::UNIX_EPOCH) {
-            Ok(n) => assert!(n.as_millis() == 1762803975974),
+            Ok(n) => assert_eq!(n.as_micros(), 1762803975974166),
             Err(_) => panic!("Cannot calculate unix epoch"),
         }
     }
