@@ -196,9 +196,9 @@ mod test {
     }
 
     #[test]
-    fn from_ntp_64() {
+    fn from_ntp_64_zero() {
         let s = SystemTime::from_ntp_64(0);
-        assert_eq!(s.duration_since(SystemTime::UNIX_EPOCH).unwrap(), Duration::new(0, 0));
+        assert_eq!(s.duration_since(SystemTime::UNIX_EPOCH).unwrap(), Duration::ZERO);
     }
 
     #[test]
