@@ -143,9 +143,10 @@ impl SystemTimeExt for SystemTime {
     }
 
     fn as_ntp_64(&self) -> u64 {
-        let secs_epoch = match self.duration_since(SystemTime::UNIX_EPOCH) {
-            Ok(value) => value.as_secs_f64() + SECS_1900 as f64,
-            Err(_) => 0.0,
+        let secs_epoch = if let Ok(value) = self.duration_since(SystemTime::UNIX_EPOCH) {
+            value.as_secs_f64() + SECS_1900 as f64
+        } else {
+            0.0
         };
 
         (secs_epoch * F32) as u64

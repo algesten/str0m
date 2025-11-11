@@ -609,7 +609,7 @@ mod test {
         } else {
             st2.duration_since(st1)
         };
-        delta.unwrap()
+        delta.expect("In tests, the time delta should not be None")
     }
 
     fn sr(ssrc: u32, ntp_time: SystemTime) -> Rtcp {
