@@ -1,6 +1,6 @@
-use std::time::Instant;
+use std::time::SystemTime;
 
-use crate::util::InstantExt;
+use crate::util::SystemTimeExt;
 
 use super::{FeedbackMessageType, RtcpType, Ssrc};
 use super::{RtcpHeader, RtcpPacket};
@@ -50,7 +50,7 @@ pub enum ReportBlock {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(missing_docs)]
 pub struct Rrtr {
-    pub ntp_time: Instant,
+    pub ntp_time: Option<SystemTime>,
 }
 
 //   0                   1                   2                   3
@@ -137,7 +137,10 @@ impl Rrtr {
         buf[2..4].copy_from_slice(&2_u16.to_be_bytes());
 
         // NTP timestamp
-        let mt = self.ntp_time.as_ntp_64();
+        let mt = match self.ntp_time {
+            Some(n) => n.as_ntp_64(),
+            None => 0u64
+        };
         buf[4..12].copy_from_slice(&mt.to_be_bytes());
 
         12
@@ -227,7 +230,7 @@ impl<'a> TryFrom<&'a [u8]> for Rrtr {
 
     fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
         let ntp_time = u64::from_be_bytes(buf[4..4 + 8].try_into().unwrap());
-        let ntp_time = Instant::from_ntp_64(ntp_time);
+        let ntp_time = SystemTime::from_ntp_64(ntp_time);
 
         Ok(Rrtr { ntp_time })
     }

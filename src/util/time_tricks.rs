@@ -1,6 +1,5 @@
 use std::sync::LazyLock;
-use std::time::SystemTime;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 pub(crate) fn not_happening() -> Instant {
     const YEARS_100: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 100);
@@ -64,10 +63,15 @@ pub trait InstantExt {
     /// Convert an Instant to a Duration for ntp time.
     fn to_ntp_duration(&self) -> Duration;
 
-    /// Convert an ntp_64 as seen in SR to an Instant.
-    fn from_ntp_64(v: u64) -> Self;
+    /// Convert an Instant to a SystemTime for ntp time
+    fn to_system_time(&self) -> Option<SystemTime>;
+}
 
-    /// Convert instant to ntp_64
+pub trait SystemTimeExt {
+    /// Convert an ntp_64 as seen in SR to a SystemTime.
+    fn from_ntp_64(v: u64) -> Option<SystemTime>;
+
+    /// Convert a SystemTime to ntp_64
     fn as_ntp_64(&self) -> u64;
 }
 
@@ -104,7 +108,22 @@ impl InstantExt for Instant {
         self.to_unix_duration() + Duration::from_micros(MICROS_1900)
     }
 
-    fn from_ntp_64(v: u64) -> Self {
+    fn to_system_time(&self) -> Option<SystemTime> {
+        // This is a bit fishy. We "freeze" a moment in time for Instant and SystemTime,
+        // so we can make relative comparisons of Instant - Instant and translate that to
+        // SystemTime - unix epoch. Hopefully the error is quite small.
+        if *self < BEGINNING_OF_TIME.0 {
+            warn!("Time went backwards from beginning_of_time Instant");
+            return None;
+        }
+
+        let duration_since_time_0 = self.duration_since(BEGINNING_OF_TIME.0);
+        Some(BEGINNING_OF_TIME.1 + duration_since_time_0)
+    }
+}
+
+impl SystemTimeExt for SystemTime {
+    fn from_ntp_64(v: u64) -> Option<SystemTime> {
         // https://tools.ietf.org/html/rfc3550#section-4
         // Wallclock time (absolute date and time) is represented using the
         // timestamp format of the Network Time Protocol (NTP), which is in
@@ -118,33 +137,24 @@ impl InstantExt for Instant {
         let secs_epoch = secs_ntp - SECS_1900 as f64;
 
         // Duration not allowed to be negative
-        let secs_dur = if secs_epoch <= 0.0 {
-            Duration::ZERO
-        } else {
-            Duration::from_secs_f64(secs_epoch)
+        if secs_epoch < 0.0 {
+            return None
         };
 
         // Time in SystemTime
-        let sys = SystemTime::UNIX_EPOCH + secs_dur;
-
-        // Relative duration from our beginning of time.
-        let since_beginning_of_time = sys
-            .duration_since(BEGINNING_OF_TIME.1)
-            .unwrap_or(Duration::ZERO);
-
-        // Translate relative to Instant
-        BEGINNING_OF_TIME.0 + since_beginning_of_time
+        Some(SystemTime::UNIX_EPOCH + Duration::from_secs_f64(secs_epoch))
     }
 
     fn as_ntp_64(&self) -> u64 {
-        let since_beginning_of_time = self.duration_since(BEGINNING_OF_TIME.0);
-
-        let since_epoch = since_beginning_of_time + epoch_to_beginning();
-        let secs_epoch = since_epoch.as_secs_f64();
-
-        let secs_ntp = secs_epoch + SECS_1900 as f64;
-
-        (secs_ntp * F32) as u64
+        let since_epoch = self.duration_since(SystemTime::UNIX_EPOCH);
+        match since_epoch {
+             Ok(value) => {
+                let secs_epoch = value.as_secs_f64();
+                let secs_ntp = secs_epoch + SECS_1900 as f64;
+                (secs_ntp * F32) as u64
+             },
+             Err(_) => 0u64
+        }
     }
 }
 

@@ -23,7 +23,7 @@ use crate::rtp_::{SeqNo, SRTP_BLOCK_SIZE};
 use crate::session::PacketReceipt;
 use crate::stats::StatsSnapshot;
 use crate::util::value_history::ValueHistory;
-use crate::util::{already_happened, not_happening};
+use crate::util::{InstantExt, already_happened, not_happening};
 
 use super::rtx_cache::RtxCache;
 use super::send_queue::SendQueue;
@@ -843,7 +843,7 @@ impl StreamTx {
 
         SenderInfo {
             ssrc: self.ssrc,
-            ntp_time: now,
+            ntp_time: now.to_system_time(),
             rtp_time,
             sender_packet_count: self.stats.packets as u32,
             sender_octet_count: self.stats.bytes as u32,
