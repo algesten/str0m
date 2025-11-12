@@ -380,7 +380,7 @@ codec specific payloaders into RTP packets.
 #### RTP mode
 
 Str0m also provides an RTP level API. This would be similar to many other
-RTP libraries where the RTP packets themselves are the the API surface
+RTP libraries where the RTP packets themselves are the API surface
 towards the user (when building an SFU one would often talk about "forwarding
 RTP packets", while with str0m we can also "forward frames").  Using
 this API requires a deeper knowledge of RTP and WebRTC.
