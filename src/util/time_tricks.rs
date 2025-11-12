@@ -136,7 +136,7 @@ impl SystemTimeExt for SystemTime {
         let secs_epoch = secs_ntp - SECS_1900 as f64;
 
         // Duration not allowed to be negative
-        let secs_dur = Duration::try_from_secs_f64(secs_epoch).unwrap_or_else(|_| Duration::ZERO);
+        let secs_dur = Duration::try_from_secs_f64(secs_epoch).unwrap_or(Duration::ZERO);
 
         // Time in SystemTime
         SystemTime::UNIX_EPOCH + secs_dur
