@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use crc::{Crc, CRC_32_ISO_HDLC};
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 
 pub(crate) const DEFAULT_MAX_RETRANSMITS: usize = 9;
 
@@ -382,7 +383,7 @@ impl<'a> StunMessage<'a> {
                 ],
             );
 
-            comp == integ
+            comp[..].ct_eq(integ).into()
         } else {
             false
         }

@@ -1684,6 +1684,7 @@ dependencies = [
  "sha1",
  "sha2",
  "str0m-wincrypto",
+ "subtle",
  "systemstat",
  "tracing",
  "tracing-subscriber",
