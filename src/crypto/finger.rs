@@ -1,10 +1,12 @@
 use core::fmt;
 
+use subtle::ConstantTimeEq;
+
 /// Certificate fingerprint.
 ///
 /// DTLS uses self signed certificates, and the fingerprint is communicated via
 /// SDP to let the remote peer verify who is connecting.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Hash)]
 pub struct Fingerprint {
     /// Hash function used to produce the `bytes`.
     ///
@@ -14,6 +16,15 @@ pub struct Fingerprint {
     /// Digest of the certificate by the algorithm in `hash_func`.
     pub bytes: Vec<u8>,
 }
+
+impl PartialEq for Fingerprint {
+    fn eq(&self, other: &Self) -> bool {
+        // Use constant-time comparison for the bytes to prevent timing attacks
+        self.hash_func == other.hash_func && self.bytes[..].ct_eq(&other.bytes[..]).into()
+    }
+}
+
+impl Eq for Fingerprint {}
 
 // DO NOT CHANGE!
 // This format is exactly what's needed in n SDP.
