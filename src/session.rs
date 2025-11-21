@@ -23,15 +23,10 @@ use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, Streams};
-use crate::util::{already_happened, not_happening, Soonest};
+use crate::util::{already_happened, Soonest};
 use crate::Event;
 use crate::{net, Reason};
 use crate::{RtcConfig, RtcError};
-
-/// Minimum time we delay between sending nacks. This should be
-/// set high enough to not cause additional problems in very bad
-/// network conditions.
-const NACK_MIN_INTERVAL: Duration = Duration::from_millis(33);
 
 /// Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(100);
@@ -71,7 +66,6 @@ pub(crate) struct Session {
 
     srtp_rx: Option<SrtpContext>,
     srtp_tx: Option<SrtpContext>,
-    last_nack: Instant,
     last_twcc: Instant,
     twcc: u64,
     twcc_rx_register: TwccRecvRegister,
@@ -147,7 +141,6 @@ impl Session {
 
             srtp_rx: None,
             srtp_tx: None,
-            last_nack: already_happened(),
             last_twcc: already_happened(),
             twcc: 0,
             twcc_rx_register: TwccRecvRegister::new(100),
@@ -214,20 +207,13 @@ impl Session {
 
         let sender_ssrc = self.streams.first_ssrc_local();
 
-        let do_nack = now >= self.nack_at().unwrap_or(not_happening());
-
         self.streams.handle_timeout(
             now,
             sender_ssrc,
-            do_nack,
             &self.medias,
             &self.codec_config,
             &mut self.feedback_tx,
         );
-
-        if do_nack {
-            self.last_nack = now;
-        }
 
         self.update_queue_state(now);
 
@@ -800,7 +786,7 @@ impl Session {
             return None;
         }
 
-        Some(self.last_nack + NACK_MIN_INTERVAL)
+        self.streams.nack_at()
     }
 
     fn twcc_at(&self) -> Option<Instant> {
