@@ -26,7 +26,7 @@ use windows::{
 #[derive(Debug)]
 pub struct Certificate {
     cert_context: *const CERT_CONTEXT,
-    key_handle: NCRYPT_KEY_HANDLE,
+    key_handle: Option<NCRYPT_KEY_HANDLE>,
 }
 // SAFETY: CERT_CONTEXT pointers are safe to send between threads.
 unsafe impl Send for Certificate {}
@@ -56,10 +56,9 @@ impl Certificate {
                 None,
             )?;
 
-            let mut key_handle = NCRYPT_KEY_HANDLE::default();
-
             // Generate the self-signed cert.
-            let cert_context = if use_ec_dsa_keys {
+            let (cert_context, key_handle) = if use_ec_dsa_keys {
+                let mut key_handle = NCRYPT_KEY_HANDLE::default();
                 let mut guid = GUID::default();
                 let result = UuidCreate(&mut guid);
                 WinCryptoError::from_rpc_status(result)?;
@@ -98,15 +97,18 @@ impl Certificate {
                     ..Default::default()
                 };
 
-                CertCreateSelfSignCertificate(
-                    HCRYPTPROV_OR_NCRYPT_KEY_HANDLE(key_handle.0),
-                    &subject_blob,
-                    CERT_CREATE_SELFSIGN_FLAGS(0),
-                    Some(&key_prov_info as *const _ as *const _),
-                    Some(&signature_algorithm),
-                    None,
-                    None,
-                    None,
+                (
+                    CertCreateSelfSignCertificate(
+                        HCRYPTPROV_OR_NCRYPT_KEY_HANDLE(key_handle.0),
+                        &subject_blob,
+                        CERT_CREATE_SELFSIGN_FLAGS(0),
+                        Some(&key_prov_info as *const _ as *const _),
+                        Some(&signature_algorithm),
+                        None,
+                        None,
+                        None,
+                    ),
+                    Some(key_handle),
                 )
             } else {
                 // Use RSA-SHA256 for the signature, since SHA1 is deprecated.
@@ -115,14 +117,17 @@ impl Certificate {
                     ..Default::default()
                 };
 
-                CertCreateSelfSignCertificate(
-                    HCRYPTPROV_OR_NCRYPT_KEY_HANDLE(0),
-                    &subject_blob,
-                    CERT_CREATE_SELFSIGN_FLAGS(0),
-                    None,
-                    Some(&signature_algorithm),
-                    None,
-                    None,
+                (
+                    CertCreateSelfSignCertificate(
+                        HCRYPTPROV_OR_NCRYPT_KEY_HANDLE(0),
+                        &subject_blob,
+                        CERT_CREATE_SELFSIGN_FLAGS(0),
+                        None,
+                        Some(&signature_algorithm),
+                        None,
+                        None,
+                        None,
+                    ),
                     None,
                 )
             };
@@ -179,7 +184,7 @@ impl From<*const CERT_CONTEXT> for Certificate {
     fn from(cert_context: *const CERT_CONTEXT) -> Self {
         Self {
             cert_context,
-            key_handle: NCRYPT_KEY_HANDLE::default(),
+            key_handle: None,
         }
     }
 }
@@ -190,7 +195,9 @@ impl Drop for Certificate {
         // to Windows for release.
         unsafe {
             _ = CertFreeCertificateContext(Some(self.cert_context));
-            _ = NCryptDeleteKey(self.key_handle, NCRYPT_SILENT_FLAG.0);
+            if let Some(key_handle) = self.key_handle {
+                _ = NCryptDeleteKey(key_handle, NCRYPT_SILENT_FLAG.0);
+            }
         }
     }
 }
