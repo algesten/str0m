@@ -1454,6 +1454,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "str0m-wincrypto",
+ "subtle",
  "systemstat",
  "tracing",
  "tracing-subscriber",

@@ -55,6 +55,7 @@ tracing = "0.1.37"
 fastrand = "2.0.1"
 sctp-proto = "0.5.0"
 combine = "4.6.6"
+subtle = "2.0.0"
 
 # aws-lc-rs is used when we are using the dimpl DTLS implementation
 aws-lc-rs = { version = "1", optional = true, default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
