@@ -175,6 +175,8 @@ pub trait SrtpCryptoImpl {
 pub mod aes_128_cm_sha1_80 {
     use std::panic::UnwindSafe;
 
+    use subtle::ConstantTimeEq;
+
     use crate::crypto::CryptoError;
 
     pub const KEY_LEN: usize = 16;
@@ -214,7 +216,8 @@ pub mod aes_128_cm_sha1_80 {
     pub fn rtp_verify(key: &[u8], buf: &[u8], srtp_index: u64, cmp: &[u8]) -> bool {
         let roc = (srtp_index >> 16) as u32;
         let tag = crate::crypto::sha1_hmac(key, &[buf, &roc.to_be_bytes()]);
-        &tag[0..HMAC_TAG_LEN] == cmp
+
+        tag[0..HMAC_TAG_LEN].ct_eq(cmp).into()
     }
 
     pub fn rtp_iv(salt: RtpSalt, ssrc: u32, srtp_index: u64) -> RtpIv {
@@ -240,7 +243,7 @@ pub mod aes_128_cm_sha1_80 {
     pub fn rtcp_verify(key: &[u8], buf: &[u8], cmp: &[u8]) -> bool {
         let tag = crate::crypto::sha1_hmac(key, &[buf]);
 
-        &tag[0..HMAC_TAG_LEN] == cmp
+        tag[0..HMAC_TAG_LEN].ct_eq(cmp).into()
     }
 }
 

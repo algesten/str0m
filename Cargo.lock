@@ -1456,6 +1456,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "str0m-wincrypto",
+ "subtle",
  "systemstat",
  "tracing",
  "tracing-subscriber",
@@ -1463,7 +1464,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-wincrypto"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "tracing",
  "windows",
