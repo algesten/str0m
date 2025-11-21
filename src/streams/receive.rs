@@ -17,6 +17,9 @@ use super::register::ReceiverRegister;
 use super::StreamPaused;
 use super::{rr_interval, RtpPacket};
 
+/// Default RTT when no RTT measurement is available yet (matching libWebRTC's kDefaultRtt).
+const NACK_DEFAULT_RTT: Duration = Duration::from_millis(100);
+
 /// Incoming encoded stream.
 ///
 /// A stream is a primary SSRC + optional RTX SSRC.
@@ -106,6 +109,9 @@ pub struct StreamRx {
 
     /// The configured threshold before considering the lack of packets as going into paused.
     pause_threshold: Duration,
+
+    /// Next time a NACK should be sent for this stream
+    nack_at: Option<Instant>,
 }
 
 /// The last sender info we recieved.
@@ -165,6 +171,7 @@ impl StreamRx {
             paused: true,
             need_paused_event: false,
             pause_threshold: Duration::from_millis(1500),
+            nack_at: None,
         }
     }
 
@@ -395,16 +402,42 @@ impl StreamRx {
         }
         self.check_paused_at = Some(now + self.pause_threshold);
 
-        let register_ref = if is_repair {
-            &mut self.register_rtx
-        } else {
-            &mut self.register
-        };
+        let is_new_packet;
+        let should_update_nack_at;
 
-        // Unwrap is OK because we always call extend_seq() for the same is_repair flag beforehand
-        let register = register_ref.as_mut().unwrap();
+        {
+            let register_ref = if is_repair {
+                &mut self.register_rtx
+            } else {
+                &mut self.register
+            };
 
-        let is_new_packet = register.update(seq_no, now, header.timestamp, clock_rate.get());
+            // Unwrap is OK because we always call extend_seq() for the same is_repair flag beforehand
+            let register = register_ref.as_mut().unwrap();
+
+            is_new_packet = register.update(seq_no, now, header.timestamp, clock_rate.get());
+
+            // Check if we should update nack_at (only for main register, not RTX)
+            should_update_nack_at = !is_repair && self.nack_enabled();
+        }
+
+        // Update nack_at when gaps are detected (after releasing register borrow)
+        if should_update_nack_at {
+            // Convert stats.rtt (f32 ms) to Duration, or use default
+            let rtt = self
+                .stats
+                .rtt
+                .map(|ms| Duration::from_secs_f32(ms / 1000.0))
+                .unwrap_or(NACK_DEFAULT_RTT);
+            let register = self.register.as_ref().unwrap();
+            if let Some(next_time) = register.next_nack_time(now, rtt) {
+                // If there are missing packets, update nack_at
+                self.nack_at = Some(match self.nack_at {
+                    None => next_time,
+                    Some(existing) => existing.min(next_time),
+                });
+            }
+        }
 
         // Get the previous time for comparison
         let previous_time = self.last_time.map(|t| t.numer());
@@ -647,14 +680,26 @@ impl StreamRx {
 
     pub(crate) fn maybe_create_nack(
         &mut self,
+        now: Instant,
         sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,
     ) -> Option<()> {
         if !self.nack_enabled() {
+            self.nack_at = None;
             return None;
         }
 
-        let nacks = self.register.as_mut().and_then(|r| r.nack_report())?;
+        // Convert stats.rtt (f32 ms) to Duration, or use default
+        let rtt = self
+            .stats
+            .rtt
+            .map(|ms| Duration::from_secs_f32(ms / 1000.0))
+            .unwrap_or(NACK_DEFAULT_RTT);
+
+        let nacks = self
+            .register
+            .as_mut()
+            .and_then(|r| r.nack_report(now, rtt))?;
 
         for mut nack in nacks {
             nack.sender_ssrc = sender_ssrc;
@@ -665,7 +710,20 @@ impl StreamRx {
             self.stats.nacks += 1;
         }
 
+        // Update nack_at for next time
+        self.nack_at = self
+            .register
+            .as_ref()
+            .and_then(|r| r.next_nack_time(now, rtt));
+
         Some(())
+    }
+
+    pub(crate) fn nack_at(&self) -> Option<Instant> {
+        if !self.nack_enabled() {
+            return None;
+        }
+        self.nack_at
     }
 
     pub(crate) fn visit_stats(&self, snapshot: &mut StatsSnapshot, now: Instant) {

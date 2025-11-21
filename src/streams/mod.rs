@@ -408,7 +408,6 @@ impl Streams {
         &mut self,
         now: Instant,
         sender_ssrc: Ssrc,
-        do_nack: bool,
         medias: &[Media],
         config: &CodecConfig,
         feedback: &mut VecDeque<Rtcp>,
@@ -429,9 +428,7 @@ impl Streams {
                 stream.create_rr_and_update(now, sender_ssrc, feedback);
             }
 
-            if do_nack {
-                stream.maybe_create_nack(sender_ssrc, feedback);
-            }
+            stream.maybe_create_nack(now, sender_ssrc, feedback);
 
             stream.handle_timeout(now);
         }
@@ -687,6 +684,11 @@ impl Streams {
             self.any_nack_active = Some(self.streams_rx.values().any(|s| s.nack_enabled()));
         }
         self.any_nack_active.unwrap()
+    }
+
+    pub(crate) fn nack_at(&self) -> Option<Instant> {
+        // Return the earliest NACK time across all streams
+        self.streams_rx.values().filter_map(|s| s.nack_at()).min()
     }
 
     fn rx_lookup_at(&self) -> Instant {
