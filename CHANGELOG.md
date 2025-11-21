@@ -1,12 +1,15 @@
-# Released
-
-  * Bump str0m-wincrypto to 0.2.1
-
 # Unreleased
 
+# 0.12.0
+
+  * Bump str0m-wincrypto to 0.2.1
+  * str0m-wincrypto crate: fix double-free #751
+  * Represent NTP as SystemTime in SenderReports #735
   * Fix bug in PT remapping to unlocked PTs #734
   * Fix PT conflict when using Firefox #730
-  * Add new non-openssl DTLS under `dimpl` feature #708
+  * Rename Sample level API -> Frame level API #732
+  * Add new non-openssl DTLS under `dimpl` feature #708  
+  * Expose packetizers under `unversioned` feature #718
   * Fix bug when TWCC sequence starts above 32768 #717
 
 # 0.11.1

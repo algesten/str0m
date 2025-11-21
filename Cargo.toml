@@ -1,6 +1,6 @@
 [package]
 name = "str0m"
-version = "0.11.1"
+version = "0.12.0"
 authors = ["Martin Algesten <martin@algesten.se>", "Hugo Tunius <h@tunius.se>", "Davide Bertola <dade@dadeb.it>"]
 description = "WebRTC library in Sans-IO style"
 license = "MIT OR Apache-2.0"
@@ -70,7 +70,7 @@ crc = "3.0.0"
 serde = { version = "1.0.152", features = ["derive"] }
 
 # DTLS made for str0m
-dimpl = { version = "0.1.4", optional = true }
+dimpl = { version = "0.1.5", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 sha1 = { version = "0.10.6", features = ["asm"], optional = true }
@@ -80,7 +80,7 @@ sha1 = { version = "0.10.6", features = ["asm"], optional = true }
 # we're supposed to check when it gets sorted out.
 sha1 = { version = "0.10.6", optional = true }
 # Windows Crypto (CNG + SChannel)
-str0m-wincrypto = { version = "0.2.0", path = "wincrypto", optional = true }
+str0m-wincrypto = { version = "0.2.1", path = "wincrypto", optional = true }
 
 [dev-dependencies]
 rouille = { version = "3.6.2", features = [] }

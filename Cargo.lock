@@ -55,6 +55,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arrayvec"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
+
+[[package]]
 name = "ascii"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -402,10 +408,11 @@ dependencies = [
 
 [[package]]
 name = "dimpl"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94de2114c5821e36d65d5db87f5ede146eff049d5c14868c474a042eeef206a6"
+checksum = "ab9fedcfe06e6d301ac6df1f114d61ceb1d48ba963c339ee9ebc1e9d6b2b92ba"
 dependencies = [
+ "arrayvec",
  "aws-lc-rs",
  "der",
  "log",
@@ -415,13 +422,10 @@ dependencies = [
  "rand 0.9.2",
  "rcgen",
  "sec1",
- "self_cell",
  "signature",
  "spki",
  "time",
- "tinyvec",
  "x509-cert",
- "zeroize",
 ]
 
 [[package]]
@@ -1307,12 +1311,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "self_cell"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f7d95a54511e0c7be3f51e8867aa8cf35148d7b9445d44de2f943e2b206e749"
-
-[[package]]
 name = "serde"
 version = "1.0.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1435,7 +1433,7 @@ checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
 
 [[package]]
 name = "str0m"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "_str0m_test",
  "aws-lc-rs",
@@ -1463,7 +1461,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-wincrypto"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "tracing",
  "windows",
@@ -1649,12 +1647,6 @@ dependencies = [
  "displaydoc",
  "zerovec",
 ]
-
-[[package]]
-name = "tinyvec"
-version = "1.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfa5fdc3bce6191a1dbc8c02d5c8bffcf557bafa17c124c5264a458f1b0613fa"
 
 [[package]]
 name = "tls_codec"
