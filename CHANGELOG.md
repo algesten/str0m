@@ -1,3 +1,7 @@
+# Released
+
+  * Bump str0m-wincrypto to 0.2.1
+
 # Unreleased
 
   * Fix bug in PT remapping to unlocked PTs #734
