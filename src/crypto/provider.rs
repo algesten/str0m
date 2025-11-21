@@ -20,6 +20,7 @@ pub use dimpl::KeyingMaterial;
 pub use dimpl::SrtpProfile;
 // Note: dimpl::Error is renamed to DimplError to avoid conflict with str0m's DtlsError
 pub use dimpl::{Error as DimplError, Output as DtlsOutput};
+use subtle::ConstantTimeEq;
 
 // ============================================================================
 // CryptoProvider
@@ -340,7 +341,7 @@ impl Aes128CmSha1_80 {
     ) -> bool {
         let roc = (srtp_index >> 16) as u32;
         let tag = sha1_hmac(key, &[buf, &roc.to_be_bytes()]);
-        &tag[0..Self::HMAC_TAG_LEN] == cmp
+        tag[0..Self::HMAC_TAG_LEN].ct_eq(cmp).into()
     }
 
     /// Compute RTP IV.
@@ -378,7 +379,7 @@ impl Aes128CmSha1_80 {
         cmp: &[u8],
     ) -> bool {
         let tag = sha1_hmac(key, &[buf]);
-        &tag[0..Self::HMAC_TAG_LEN] == cmp
+        tag[0..Self::HMAC_TAG_LEN].ct_eq(cmp).into()
     }
 }
 

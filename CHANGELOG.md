@@ -2,6 +2,7 @@
 
   * New CryptoProvider API #760
   * Update H.264 profile and level matching logic #758
+  * Use constant time equality in some key places #753
   * Fix off-by-one nack reports #748
 
 # 0.12.0
