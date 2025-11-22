@@ -126,6 +126,16 @@ impl H264ProfileLevel {
                 Some(Self { profile, level_idc })
             })
     }
+
+    /// Returns the H.264 profile (Baseline, Main, High, etc.).
+    pub(crate) fn profile(&self) -> H264Profile {
+        self.profile
+    }
+
+    /// Returns the H.264 level (Level 3.1, Level 4.0, etc.).
+    pub(crate) fn level(&self) -> H264LevelIdc {
+        self.level_idc
+    }
 }
 
 impl TryFrom<u32> for H264ProfileLevel {
@@ -164,7 +174,7 @@ impl TryFrom<u32> for H264ProfileLevel {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum H264Profile {
+pub(crate) enum H264Profile {
     Baseline,
     ConstrainedBaseline,
     Main,
@@ -216,11 +226,11 @@ impl TryFrom<u8> for H264ProfileIdc {
 // Per libWebRTC
 //     All values are equal to ten times the level number, except level 1b which is
 //     special.
-// Can't find the source for this.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// https://datatracker.ietf.org/doc/html/rfc6184#section-8.2.2
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
 #[repr(u8)]
 #[rustfmt::skip]
-enum H264LevelIdc {
+pub(crate) enum H264LevelIdc {
     Level1B  = 0_u8,
     Level1   = 10_u8,
     Level1_1 = 11_u8,
