@@ -5,8 +5,6 @@ use crate::rtp_::{Nack, NackEntry, ReportList, SeqNo};
 /// Number of out of order packets we keep track of for reports
 const MAX_MISORDER: u64 = 100;
 
-const U16_MAX: u64 = u16::MAX as u64 + 1_u64;
-
 /// The max number of NACKs we perform for a single packet
 const MAX_NACKS: u8 = 5;
 
@@ -59,7 +57,7 @@ impl<'a> Iterator for NackIterator<'a> {
             (self.next..=self.end).find(|s| self.reg.packet_mut((*s).into()).needs_nack())?;
 
         let mut entry = NackEntry {
-            pid: (self.next % U16_MAX) as u16,
+            pid: self.next as u16,
             blp: 0,
         };
 
@@ -74,8 +72,6 @@ impl<'a> Iterator for NackIterator<'a> {
             }
             self.next += 1;
         }
-
-        self.next += 1;
 
         Some(entry)
     }
@@ -618,5 +614,36 @@ mod test {
         assert!(reg.nack_reports().is_none());
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 65666);
+    }
+
+    #[test]
+    fn nack_reports_on_boundaries() {
+        let mut reg = NackRegister::new(None);
+
+        for i in 0..=20 {
+            // gap must be at least 17 packets to separate the reports.
+            if i == 2 || i == 19 {
+                continue;
+            }
+            reg.update(i.into());
+        }
+
+        let reports: Vec<_> = reg
+            .nack_reports()
+            .expect("should generate reports")
+            .flat_map(|nack| nack.reports)
+            .collect();
+
+        assert_eq!(reports.len(), 2, "Should have found two NACK entries");
+        assert_eq!(reports[0].pid, 2, "First missing packet should be 2");
+        assert_eq!(
+            reports[0].blp, 0,
+            "No missing packets in blp bits following 2"
+        );
+        assert_eq!(reports[1].pid, 19, "Second missing packet should be 19");
+        assert_eq!(
+            reports[1].blp, 0,
+            "No missing packets in blp bits following 19"
+        );
     }
 }
