@@ -386,7 +386,14 @@ impl PayloadParams {
             .map(|l| l.try_into().ok())
             .unwrap_or(Some(H264ProfileLevel::FALLBACK))?;
 
-        if c0_profile_level != c1_profile_level {
+        // RFC 6184 Section 8.2.2: Profiles must match exactly, but we can decode
+        // bitstreams at our configured level or any lower level.
+        if c0_profile_level.profile() != c1_profile_level.profile() {
+            return None;
+        }
+
+        // Reject if the offered level exceeds our configured capability
+        if c1_profile_level.level() > c0_profile_level.level() {
             return None;
         }
 
@@ -540,6 +547,79 @@ mod test {
                 and the level idc of 0x42F01F will be adjusted to Level1B because the constraint \
                 set 3 flag is set"
         }];
+
+        for Case {
+            c0,
+            c1,
+            must_match,
+            msg,
+        } in cases.into_iter()
+        {
+            let matched = PayloadParams::match_h264_score(c0, c1).is_some();
+            assert_eq!(matched, must_match, "{msg}\nc0: {c0:#?}\nc1: {c1:#?}");
+        }
+    }
+
+    #[test]
+    fn test_h264_level_matching_rfc_compliant() {
+        struct Case {
+            c0: CodecSpec,
+            c1: CodecSpec,
+            must_match: bool,
+            msg: &'static str,
+        }
+
+        let cases = [
+            // Test 1: Same profile, same level -> should match
+            Case {
+                c0: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0
+                c1: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0
+                must_match: true,
+                msg: "Same profile (CB) and same level (4.0) should match",
+            },
+            // Test 2: Same profile, offered level lower -> should match (RFC 6184)
+            Case {
+                c0: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0 (configured)
+                c1: h264_codec_spec(None, None, Some(0x42e01f)), // CB L3.1 (offered)
+                must_match: true,
+                msg: "Same profile (CB), offered level 3.1 < configured 4.0 should match per RFC 6184",
+            },
+            // Test 3: Same profile, offered level higher -> should NOT match
+            Case {
+                c0: h264_codec_spec(None, None, Some(0x42e01f)), // CB L3.1 (configured)
+                c1: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0 (offered)
+                must_match: false,
+                msg: "Same profile (CB), offered level 4.0 > configured 3.1 should NOT match",
+            },
+            // Test 4: Different profiles -> should NOT match
+            Case {
+                c0: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0
+                c1: h264_codec_spec(None, None, Some(0x4d0028)), // Main L4.0
+                must_match: false,
+                msg: "Different profiles (CB vs Main) should NOT match even with same level",
+            },
+            // Test 5: Main profile, offered lower level -> should match
+            Case {
+                c0: h264_codec_spec(None, None, Some(0x4d002a)), // Main L4.2 (configured)
+                c1: h264_codec_spec(None, None, Some(0x4d0028)), // Main L4.0 (offered)
+                must_match: true,
+                msg: "Same profile (Main), offered level 4.0 < configured 4.2 should match",
+            },
+            // Test 6: High profile, multiple levels down -> should match
+            Case {
+                c0: h264_codec_spec(None, None, Some(0x640033)), // High L5.1 (configured)
+                c1: h264_codec_spec(None, None, Some(0x64001f)), // High L3.1 (offered)
+                must_match: true,
+                msg: "Same profile (High), offered level 3.1 << configured 5.1 should match",
+            },
+            // Test 7: Baseline (not CB) with different levels
+            Case {
+                c0: h264_codec_spec(None, None, Some(0x42001f)), // Baseline L3.1
+                c1: h264_codec_spec(None, None, Some(0x420014)), // Baseline L2.0
+                must_match: true,
+                msg: "Same profile (Baseline), offered level 2.0 < configured 3.1 should match",
+            },
+        ];
 
         for Case {
             c0,
