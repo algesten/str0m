@@ -107,7 +107,8 @@ pub fn stats() -> Result<(), RtcError> {
     egress_stats_l
         .iter()
         .filter_map(|egress_stat_l| egress_stat_l.rtt)
-        .for_each(|rtt| assert!(rtt < 100_f32)); // rtt should be under 100ms in this scenario
+        // rtt should be under 100ms in this scenario
+        .for_each(|rtt| assert!(rtt < Duration::from_millis(100)));
 
     let egress_stats_r: Vec<MediaEgressStats> = l
         .events
@@ -125,8 +126,8 @@ pub fn stats() -> Result<(), RtcError> {
     egress_stats_r
         .iter()
         .filter_map(|egress_stat_l| egress_stat_l.rtt)
-        .for_each(|rtt| assert!(rtt < 100_f32)); // rtt should be under 100ms in this scenario
-
+        // rtt should be under 100ms in this scenario
+        .for_each(|rtt| assert!(rtt < Duration::from_millis(100)));
     assert!(
         media_count_l > 1100,
         "Not enough MediaData at L: {}",

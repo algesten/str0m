@@ -130,8 +130,8 @@ pub struct MediaEgressStats {
     pub plis: u64,
     /// Number of nacks received.
     pub nacks: u64,
-    /// Round-trip-time (ms) extracted from the last RTCP receiver report.
-    pub rtt: Option<f32>,
+    /// Round-trip-time extracted from the last RTCP receiver report.
+    pub rtt: Option<Duration>,
     /// Fraction of packets lost averaged from the RTCP receiver reports received.
     /// `None` if no reports have been received since the last event
     pub loss: Option<f32>,
@@ -171,8 +171,8 @@ pub struct MediaIngressStats {
     pub plis: u64,
     /// Number of nacks sent.
     pub nacks: u64,
-    /// Round-trip-time (ms) extracted from the last RTCP XR DLRR report block.
-    pub rtt: Option<f32>,
+    /// Round-trip-time extracted from the last RTCP XR DLRR report block.
+    pub rtt: Option<Duration>,
     /// Fraction of packets lost extracted from the last RTCP receiver report.
     pub loss: Option<f32>,
     /// Timestamp when this event was generated.
