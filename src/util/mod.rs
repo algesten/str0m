@@ -44,7 +44,7 @@ impl<T: Default> Soonest for (Option<Instant>, T) {
 /// - `delay` the delay(`DLSR`) since last sender report expressed as fractions of a second in 32 bits.
 /// - `last_report` the middle 32 bits of an NTP timestamp for the most recent sender report(LSR)
 ///   or Receiver Report(LRR).
-pub(crate) fn calculate_rtt_ms(ntp_time: Duration, delay: u32, last_report: u32) -> Option<f32> {
+pub(crate) fn calculate_rtt(ntp_time: Duration, delay: u32, last_report: u32) -> Option<Duration> {
     // [10 Nov 1995 11:33:25.125 UTC]       [10 Nov 1995 11:33:36.5 UTC]
     // n                 SR(n)              A=b710:8000 (46864.500 s)
     // ---------------------------------------------------------------->
@@ -84,7 +84,8 @@ pub(crate) fn calculate_rtt_ms(ntp_time: Duration, delay: u32, last_report: u32)
     let rtt_seconds = rtt >> 16;
     let rtt_fraction = (rtt & (u16::MAX as u32)) as f32 / (u16::MAX as u32) as f32;
 
-    Some(rtt_seconds as f32 * 1000.0 + rtt_fraction * 1000.0)
+    let nanos = (rtt_fraction * 1_000_000_000.0) as u32;
+    Some(Duration::new(rtt_seconds as u64, nanos))
 }
 
 pub struct NonCryptographicRng;

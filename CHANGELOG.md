@@ -1,5 +1,6 @@
 # Unreleased
 
+  * RTT as Duration #756
   * Network emulation for tests #774
   * Apple Crypto backend #763
   * Move all crypto backends out of main crate #768

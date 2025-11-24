@@ -10,7 +10,7 @@ use crate::rtp_::{ReportBlock, ReportList, Rid, Rrtr, Rtcp};
 use crate::rtp_::{RtcpFb, RtpHeader, SenderInfo, SeqNo};
 use crate::rtp_::{SdesType, Ssrc};
 use crate::stats::{MediaIngressStats, RemoteEgressStats, StatsSnapshot};
-use crate::util::{already_happened, calculate_rtt_ms};
+use crate::util::{already_happened, calculate_rtt};
 use crate::util::{InstantExt, SystemTimeExt};
 
 use super::register::ReceiverRegister;
@@ -121,8 +121,8 @@ pub(crate) struct StreamRxStats {
     plis: u64,
     /// count of NACKs sent
     nacks: u64,
-    /// round trip time (ms) from the last DLRR, if any
-    rtt: Option<f32>,
+    /// round trip time from the last DLRR, if any
+    rtt: Option<Duration>,
     /// fraction of packets lost from the last RR, if any
     loss: Option<f32>,
 }
@@ -289,7 +289,7 @@ impl StreamRx {
 
     fn set_dlrr_item(&mut self, now: Instant, dlrr: DlrrItem) {
         let ntp_time = now.to_ntp_duration();
-        let rtt = calculate_rtt_ms(ntp_time, dlrr.last_rr_delay, dlrr.last_rr_time);
+        let rtt = calculate_rtt(ntp_time, dlrr.last_rr_delay, dlrr.last_rr_time);
         self.stats.rtt = rtt;
     }
 
