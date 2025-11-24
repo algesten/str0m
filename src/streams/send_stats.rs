@@ -1,10 +1,10 @@
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::rtp::SeqNo;
 use crate::rtp_::{extend_u32, ReceptionReport};
 use crate::stats::{MediaEgressStats, RemoteIngressStats, StatsSnapshot};
 use crate::util::value_history::ValueHistory;
-use crate::util::{calculate_rtt_ms, InstantExt};
+use crate::util::{calculate_rtt, InstantExt};
 
 use super::MidRid;
 
@@ -27,9 +27,9 @@ pub(crate) struct StreamTxStats {
     plis: u64,
     /// count of NACKs received
     nacks: u64,
-    /// round trip time (ms)
+    /// round trip time
     /// Can be null in case of missing or bad reports
-    rtt: Option<f32>,
+    rtt: Option<Duration>,
     /// losses collecter from RR (known packets, lost ratio)
     losses: Losses,
     /// The last reception report for the stream, if any.
@@ -86,7 +86,7 @@ impl StreamTxStats {
 
     pub fn update_with_rr(&mut self, now: Instant, last_sent_seq_no: SeqNo, r: ReceptionReport) {
         let ntp_time = now.to_ntp_duration();
-        let rtt = calculate_rtt_ms(ntp_time, r.last_sr_delay, r.last_sr_time);
+        let rtt = calculate_rtt(ntp_time, r.last_sr_delay, r.last_sr_time);
         self.rtt = rtt;
 
         // The last_sent_seq_no should be in the vicinity of the rr.max_seq.
