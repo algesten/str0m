@@ -10,7 +10,7 @@ use crate::rtp_::{ReportBlock, ReportList, Rid, Rrtr, Rtcp};
 use crate::rtp_::{RtcpFb, RtpHeader, SenderInfo, SeqNo};
 use crate::rtp_::{SdesType, Ssrc};
 use crate::stats::{MediaIngressStats, RemoteEgressStats, StatsSnapshot};
-use crate::util::{already_happened, calculate_rtt_ms};
+use crate::util::{already_happened, calculate_rtt};
 use crate::util::{InstantExt, SystemTimeExt};
 
 use super::register::ReceiverRegister;
@@ -127,8 +127,8 @@ pub(crate) struct StreamRxStats {
     plis: u64,
     /// count of NACKs sent
     nacks: u64,
-    /// round trip time (ms) from the last DLRR, if any
-    rtt: Option<f32>,
+    /// round trip time from the last DLRR, if any
+    rtt: Option<Duration>,
     /// fraction of packets lost from the last RR, if any
     loss: Option<f32>,
 }
@@ -296,7 +296,7 @@ impl StreamRx {
 
     fn set_dlrr_item(&mut self, now: Instant, dlrr: DlrrItem) {
         let ntp_time = now.to_ntp_duration();
-        let rtt = calculate_rtt_ms(ntp_time, dlrr.last_rr_delay, dlrr.last_rr_time);
+        let rtt = calculate_rtt(ntp_time, dlrr.last_rr_delay, dlrr.last_rr_time);
         self.stats.rtt = rtt;
     }
 
@@ -405,12 +405,7 @@ impl StreamRx {
 
         // Update nack_at when gaps are detected (after releasing register borrow)
         if should_update_nack_at {
-            // Convert stats.rtt (f32 ms) to Duration, or use default
-            let rtt = self
-                .stats
-                .rtt
-                .map(|ms| Duration::from_secs_f32(ms / 1000.0))
-                .unwrap_or(NACK_DEFAULT_RTT);
+            let rtt = self.stats.rtt.unwrap_or(NACK_DEFAULT_RTT);
             let register = self.register.as_ref().unwrap();
             if let Some(next_time) = register.next_nack_time(now, rtt) {
                 // If there are missing packets, update nack_at
@@ -665,12 +660,7 @@ impl StreamRx {
             return None;
         }
 
-        // Convert stats.rtt (f32 ms) to Duration, or use default
-        let rtt = self
-            .stats
-            .rtt
-            .map(|ms| Duration::from_secs_f32(ms / 1000.0))
-            .unwrap_or(NACK_DEFAULT_RTT);
+        let rtt = self.stats.rtt.unwrap_or(NACK_DEFAULT_RTT);
 
         let nacks = self
             .register
