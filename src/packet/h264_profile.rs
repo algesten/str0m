@@ -227,7 +227,7 @@ impl TryFrom<u8> for H264ProfileIdc {
 //     All values are equal to ten times the level number, except level 1b which is
 //     special.
 // https://datatracker.ietf.org/doc/html/rfc6184#section-8.2.2
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 #[rustfmt::skip]
 pub(crate) enum H264LevelIdc {
@@ -248,6 +248,44 @@ pub(crate) enum H264LevelIdc {
     Level5   = 50_u8,
     Level5_1 = 51_u8,
     Level5_2 = 52_u8,
+}
+
+impl H264LevelIdc {
+    /// Returns the ordinal position (0-16) representing capability order.
+    /// This takes into account that Level1B is between Level1 and Level1_1.
+    pub(crate) fn ordinal(self) -> usize {
+        match self {
+            Self::Level1 => 0,
+            Self::Level1B => 1,
+            Self::Level1_1 => 2,
+            Self::Level1_2 => 3,
+            Self::Level1_3 => 4,
+            Self::Level2 => 5,
+            Self::Level2_1 => 6,
+            Self::Level2_2 => 7,
+            Self::Level3 => 8,
+            Self::Level3_1 => 9,
+            Self::Level3_2 => 10,
+            Self::Level4 => 11,
+            Self::Level4_1 => 12,
+            Self::Level4_2 => 13,
+            Self::Level5 => 14,
+            Self::Level5_1 => 15,
+            Self::Level5_2 => 16,
+        }
+    }
+}
+
+impl PartialOrd for H264LevelIdc {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for H264LevelIdc {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.ordinal().cmp(&other.ordinal())
+    }
 }
 
 impl TryFrom<u8> for H264LevelIdc {

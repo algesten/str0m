@@ -370,7 +370,13 @@ impl PayloadParams {
             return None;
         }
 
-        Some(100)
+        // Decrement score based on level difference
+        let level_difference: usize = c0_profile_level
+            .level()
+            .ordinal()
+            .saturating_sub(c1_profile_level.level().ordinal());
+
+        Some(100_usize.saturating_sub(level_difference))
     }
 
     pub(crate) fn update_param(
@@ -538,7 +544,7 @@ mod test {
         struct Case {
             c0: CodecSpec,
             c1: CodecSpec,
-            must_match: bool,
+            expected: Option<usize>,
             msg: &'static str,
         }
 
@@ -547,62 +553,79 @@ mod test {
             Case {
                 c0: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0
                 c1: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0
-                must_match: true,
+                expected: Some(100),
                 msg: "Same profile (CB) and same level (4.0) should match",
             },
             // Test 2: Same profile, offered level lower -> should match (RFC 6184)
             Case {
                 c0: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0 (configured)
                 c1: h264_codec_spec(None, None, Some(0x42e01f)), // CB L3.1 (offered)
-                must_match: true,
+                expected: Some(100 - 2),
                 msg: "Same profile (CB), offered level 3.1 < configured 4.0 should match per RFC 6184",
             },
             // Test 3: Same profile, offered level higher -> should NOT match
             Case {
                 c0: h264_codec_spec(None, None, Some(0x42e01f)), // CB L3.1 (configured)
                 c1: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0 (offered)
-                must_match: false,
+                expected: None,
                 msg: "Same profile (CB), offered level 4.0 > configured 3.1 should NOT match",
             },
             // Test 4: Different profiles -> should NOT match
             Case {
                 c0: h264_codec_spec(None, None, Some(0x42e028)), // CB L4.0
                 c1: h264_codec_spec(None, None, Some(0x4d0028)), // Main L4.0
-                must_match: false,
+                expected: None,
                 msg: "Different profiles (CB vs Main) should NOT match even with same level",
             },
             // Test 5: Main profile, offered lower level -> should match
             Case {
                 c0: h264_codec_spec(None, None, Some(0x4d002a)), // Main L4.2 (configured)
                 c1: h264_codec_spec(None, None, Some(0x4d0028)), // Main L4.0 (offered)
-                must_match: true,
+                expected: Some(100 - 2),
                 msg: "Same profile (Main), offered level 4.0 < configured 4.2 should match",
             },
             // Test 6: High profile, multiple levels down -> should match
             Case {
                 c0: h264_codec_spec(None, None, Some(0x640033)), // High L5.1 (configured)
                 c1: h264_codec_spec(None, None, Some(0x64001f)), // High L3.1 (offered)
-                must_match: true,
-                msg: "Same profile (High), offered level 3.1 << configured 5.1 should match",
+                expected: Some(100 - 6),
+                msg: "Same profile (High), offered level 3.1 < configured 5.1 should match",
             },
-            // Test 7: Baseline (not CB) with different levels
+            // Test 7: Baseline (not CB) with Level1B as offered
             Case {
                 c0: h264_codec_spec(None, None, Some(0x42001f)), // Baseline L3.1
-                c1: h264_codec_spec(None, None, Some(0x420014)), // Baseline L2.0
-                must_match: true,
-                msg: "Same profile (Baseline), offered level 2.0 < configured 3.1 should match",
+                c1: h264_codec_spec(None, None, Some(0x420000)), // Baseline Level1B
+                expected: Some(100 - 8),
+                msg: "Same profile (Baseline), offered level 1B < configured 3.1 should match",
+            },
+            // Test 8: Baseline (not CB) offered lower level > should match with (special Level1B case)
+            Case {
+                c0: h264_codec_spec(None, None, Some(0x420000)), // Baseline Level1B
+                c1: h264_codec_spec(None, None, Some(0x42000a)), // Baseline L1
+                expected: Some(100 - 1),
+                msg: "Same profile (Baseline), offered level 1 < configured 1B should match",
+            },
+            // Test 9: Baseline (not CB) offered higher level -> should not match (special Level1B case)
+            Case {
+                c0: h264_codec_spec(None, None, Some(0x42000a)), // Baseline L1
+                c1: h264_codec_spec(None, None, Some(0x420000)), // Baseline Level1B
+                expected: None,
+                msg: "Same profile (Baseline), offered level 1B > configured 1 should not match",
             },
         ];
 
         for Case {
             c0,
             c1,
-            must_match,
+            expected,
             msg,
         } in cases.into_iter()
         {
-            let matched = PayloadParams::match_h264_score(c0, c1).is_some();
-            assert_eq!(matched, must_match, "{msg}\nc0: {c0:#?}\nc1: {c1:#?}");
+            assert_eq!(
+                PayloadParams::match_h264_score(c0, c1),
+                expected,
+                "{msg}\nc0: {c0:#?}\nc1: {c1:#?}"
+            );
         }
     }
 }
