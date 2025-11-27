@@ -146,15 +146,9 @@ impl DtlsInstance for WinCryptoDtlsInstance {
     }
 
     fn handle_timeout(&mut self, _now: Instant) -> Result<(), crate::crypto::DimplError> {
-        // Progress the handshake if we're not connected yet
-        if !self.dtls.is_connected() && self.dtls.is_client().is_some() {
-            let event = self.dtls.handle_receive(None).map_err(|e| {
-                crate::crypto::DimplError::CryptoError(format!("DTLS handshake: {}", e))
-            })?;
-
-            // Store the event for poll_output to retrieve
-            self.process_dtls_event(event);
-        }
+        // For wincrypto, we don't call handle_receive(None) from handle_timeout.
+        // The handshake progresses via handle_packet when packets arrive.
+        // This is different from dimpl which uses handle_timeout for retransmissions.
         Ok(())
     }
 
