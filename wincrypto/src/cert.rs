@@ -143,36 +143,21 @@ impl Certificate {
         }
     }
 
-    pub fn sha256_fingerprint(&self) -> Result<[u8; 32], WinCryptoError> {
-        let mut hash = [0u8; 32];
-        // SAFETY: The Windows APIs accept references, so normal borrow checker
-        // behaviors work for those uses.
+    /// Get the DER-encoded bytes of the certificate.
+    pub fn get_der_bytes(&self) -> Result<Vec<u8>, WinCryptoError> {
         unsafe {
-            let mut hash_handle = Owned::new(BCRYPT_HASH_HANDLE::default());
-            // Create the hash instance.
-            WinCryptoError::from_ntstatus(BCryptCreateHash(
-                BCRYPT_SHA256_ALG_HANDLE,
-                &mut *hash_handle,
-                None,
-                None,
-                0,
-            ))?;
-
-            // Hash the certificate contents.
             let cert_info = *self.cert_context;
-            WinCryptoError::from_ntstatus(BCryptHashData(
-                *hash_handle,
-                std::slice::from_raw_parts(
-                    cert_info.pbCertEncoded,
-                    cert_info.cbCertEncoded as usize,
-                ),
-                0,
-            ))?;
-
-            // Grab the result of the hash.
-            WinCryptoError::from_ntstatus(BCryptFinishHash(*hash_handle, &mut hash, 0))?;
+            let der_bytes = std::slice::from_raw_parts(
+                cert_info.pbCertEncoded,
+                cert_info.cbCertEncoded as usize,
+            );
+            Ok(der_bytes.to_vec())
         }
-        Ok(hash)
+    }
+
+    pub fn sha256_fingerprint(&self) -> Result<[u8; 32], WinCryptoError> {
+        let der_bytes = self.get_der_bytes()?;
+        crate::sha256(&der_bytes)
     }
 
     pub fn context(&self) -> *const CERT_CONTEXT {

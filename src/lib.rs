@@ -311,21 +311,22 @@
 //!
 //! For applications, the easiest is to set a process-wide default at startup:
 //!
-//! ```no_run
-//! use str0m::config::CryptoProvider;
+//! ```ignore
+//! use str0m::crypto::CryptoProvider;
 //!
 //! // Set process default (will panic if called twice)
-//! CryptoProvider::WinCrypto.install_process_default();
+//! CryptoProvider::install_default(my_custom_provider);
 //! ```
 //!
 //! Alternatively, configure per-instance:
 //!
-//! ```no_run
+//! ```ignore
+//! use std::sync::Arc;
 //! use str0m::Rtc;
-//! use str0m::config::CryptoProvider;
+//! use str0m::crypto::CryptoProvider;
 //!
 //! let rtc = Rtc::builder()
-//!     .set_crypto_provider(CryptoProvider::WinCrypto)
+//!     .set_crypto_provider(Arc::new(my_custom_provider))
 //!     .build();
 //! ```
 //!
@@ -629,17 +630,23 @@ use change::{DirectApi, SdpApi};
 use rtp::RawPacket;
 use std::fmt;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use streams::RtpPacket;
 use streams::StreamPaused;
 use util::{InstantExt, Pii};
 
-mod crypto;
-use crypto::CryptoProvider;
+/// Cryptographic provider traits and implementations.
+///
+/// This module provides the traits for pluggable cryptographic operations
+/// used in DTLS, SRTP, and STUN.
+pub mod crypto;
 use crypto::Fingerprint;
 
 mod dtls;
-use dtls::{Dtls, DtlsCert, DtlsCertOptions, DtlsEvent};
+pub use crate::crypto::DtlsCert;
+use crate::crypto::{CryptoProvider, DtlsOutput};
+use dtls::Dtls;
 
 #[path = "ice/mod.rs"]
 mod ice_;
@@ -649,7 +656,7 @@ pub use ice_::{Candidate, CandidateKind, IceConnectionState, IceCreds};
 
 /// Additional configuration.
 pub mod config {
-    pub use super::crypto::{CryptoProvider, DtlsCert, DtlsCertOptions, DtlsPKeyType, Fingerprint};
+    pub use super::crypto::{CryptoProvider, DtlsCert, Fingerprint};
 }
 
 /// Low level ICE access.
@@ -789,6 +796,10 @@ pub struct Rtc {
     alive: bool,
     ice: IceAgent,
     dtls: Dtls,
+    dtls_connected: bool,
+    dtls_buf: Vec<u8>,
+    pending_dtls_packets: std::collections::VecDeque<net::DatagramSend>,
+    next_dtls_timeout: Option<Instant>,
     sctp: RtcSctp,
     chan: ChannelHandler,
     stats: Option<Stats>,
@@ -802,7 +813,7 @@ pub struct Rtc {
     peer_bytes_tx: u64,
     change_counter: usize,
     last_timeout_reason: Reason,
-    crypto_provider: CryptoProvider,
+    crypto_provider: Arc<crate::crypto::CryptoProvider>,
     fingerprint_verification: bool,
 }
 
@@ -1035,7 +1046,7 @@ impl Rtc {
     /// ```
     pub fn new() -> Self {
         let config = RtcConfig::default();
-        Self::new_from_config(config)
+        Self::new_from_config(config).expect("Failed to create Rtc from default config")
     }
 
     /// Creates a config builder that configures an [`Rtc`] instance.
@@ -1052,11 +1063,11 @@ impl Rtc {
         RtcConfig::new()
     }
 
-    pub(crate) fn new_from_config(config: RtcConfig) -> Self {
+    pub(crate) fn new_from_config(config: RtcConfig) -> Result<Self, RtcError> {
         let session = Session::new(&config);
 
         let local_creds = config.local_ice_credentials.unwrap_or_else(IceCreds::new);
-        let mut ice = IceAgent::with_local_credentials(local_creds);
+        let mut ice = IceAgent::new(local_creds, config.crypto_provider.sha1_hmac_provider);
         if config.ice_lite {
             ice.set_ice_lite(config.ice_lite);
         }
@@ -1073,17 +1084,30 @@ impl Rtc {
             ice.set_max_stun_retransmits(max_stun_retransmits);
         }
 
-        let dtls_cert = match config.dtls_cert_config {
-            DtlsCertConfig::Options(options) => DtlsCert::new(config.crypto_provider, options),
-            DtlsCertConfig::PregeneratedCert(cert) => cert,
-        };
+        let dtls_cert = config
+            .dtls_cert
+            .or_else(|| config.crypto_provider.dtls_provider.generate_certificate())
+            .expect(
+                "No DTLS certificate provided and the crypto provider cannot generate one. \
+             Either provide a certificate via RtcConfig::set_dtls_cert or use a \
+             crypto provider that supports certificate generation.",
+            );
 
-        let crypto_provider = dtls_cert.crypto_provider();
+        let crypto_provider = config.crypto_provider.clone();
 
-        Rtc {
+        Ok(Rtc {
             alive: true,
             ice,
-            dtls: Dtls::new(dtls_cert).expect("DTLS to init without problem"),
+            dtls: Dtls::new(
+                &dtls_cert,
+                config.crypto_provider.dtls_provider,
+                config.crypto_provider.sha256_provider,
+            )
+            .expect("DTLS to init without problem"),
+            dtls_connected: false,
+            dtls_buf: vec![0; 2000],
+            pending_dtls_packets: std::collections::VecDeque::new(),
+            next_dtls_timeout: None,
             session,
             sctp: RtcSctp::new(),
             chan: ChannelHandler::default(),
@@ -1099,7 +1123,7 @@ impl Rtc {
             last_timeout_reason: Reason::NotHappening,
             crypto_provider,
             fingerprint_verification: config.fingerprint_verification,
-        }
+        })
     }
 
     /// Tests if this instance is still working.
@@ -1205,7 +1229,7 @@ impl Rtc {
     ///
     /// This tests if we have ICE connection, DTLS and the SRTP crypto derived contexts are up.
     pub fn is_connected(&self) -> bool {
-        self.ice.state().is_connected() && self.dtls.is_connected() && self.session.is_connected()
+        self.ice.state().is_connected() && self.dtls_connected && self.session.is_connected()
     }
 
     /// Make changes to the Rtc session via SDP.
@@ -1294,8 +1318,13 @@ impl Rtc {
         debug!("DTLS setup is: {:?}", active);
         self.dtls.set_active(active);
 
+        // Initialize the DTLS state (client or server) before any operations
+        // This ensures internal state like random (client) or last_now (server) is initialized
+        self.dtls.handle_timeout(self.last_now)?;
+
         if active {
-            self.dtls.handle_handshake()?;
+            // Drive handshake by sending an empty packet to trigger ClientHello
+            let _ = self.dtls.handle_receive(&[]);
         }
 
         Ok(())
@@ -1397,30 +1426,44 @@ impl Rtc {
             }
         }
 
-        let mut dtls_connected = false;
-
-        while let Some(e) = self.dtls.poll_event() {
-            match e {
-                DtlsEvent::Connected => {
-                    debug!("DTLS connected");
-                    dtls_connected = true;
+        // Poll DTLS output - collect packets, handle events
+        let mut just_connected = false;
+        loop {
+            match self.dtls.poll_output(&mut self.dtls_buf) {
+                DtlsOutput::Packet(data) => {
+                    self.pending_dtls_packets.push_back(data.to_vec().into());
                 }
-                DtlsEvent::SrtpKeyingMaterial(mat, srtp_profile) => {
-                    debug!(
-                        "DTLS set SRTP keying material and profile: {}",
-                        srtp_profile
-                    );
+                DtlsOutput::Connected => {
+                    if !self.dtls_connected {
+                        debug!("DTLS connected");
+                        self.dtls_connected = true;
+                        just_connected = true;
+                    }
+                }
+                DtlsOutput::KeyingMaterial(km, profile) => {
+                    use crate::crypto::KeyingMaterial;
+                    let km_bytes = km.as_ref().to_vec();
+                    debug!("DTLS set SRTP keying material and profile: {}", profile);
                     let active = self.dtls.is_active().expect("DTLS must be inited by now");
-                    let srtp_crypto = self.crypto_provider.srtp_crypto();
-                    self.session
-                        .set_keying_material(mat, &srtp_crypto, srtp_profile, active);
+                    self.session.set_keying_material(
+                        KeyingMaterial::new(&km_bytes),
+                        &self.crypto_provider,
+                        profile,
+                        active,
+                    );
                 }
-                DtlsEvent::RemoteFingerprint(v1) => {
+                DtlsOutput::PeerCert(der) => {
                     debug!("DTLS verify remote fingerprint");
-                    if let Some(v2) = &self.remote_fingerprint {
+                    // Compute fingerprint from peer's DER certificate
+                    let fingerprint = crate::crypto::Fingerprint {
+                        hash_func: "sha-256".to_string(),
+                        bytes: self.crypto_provider.sha256_provider.sha256(der).to_vec(),
+                    };
+                    self.dtls.set_remote_fingerprint(fingerprint.clone());
+                    if let Some(expected) = &self.remote_fingerprint {
                         if !self.fingerprint_verification {
                             debug!("DTLS fingerprint verification disabled");
-                        } else if v1 != *v2 {
+                        } else if fingerprint != *expected {
                             self.disconnect();
                             return Err(RtcError::RemoteSdp("remote fingerprint no match".into()));
                         }
@@ -1429,13 +1472,17 @@ impl Rtc {
                         return Err(RtcError::RemoteSdp("no a=fingerprint before dtls".into()));
                     }
                 }
-                DtlsEvent::Data(v) => {
-                    self.sctp.handle_input(self.last_now, &v);
+                DtlsOutput::ApplicationData(data) => {
+                    self.sctp.handle_input(self.last_now, data);
+                }
+                DtlsOutput::Timeout(t) => {
+                    self.next_dtls_timeout = Some(t);
+                    break;
                 }
             }
         }
 
-        if dtls_connected {
+        if just_connected {
             return Ok(Output::Event(Event::Connected));
         }
 
@@ -1515,7 +1562,7 @@ impl Rtc {
         if let Some(send) = &self.send_addr {
             // These can only be sent after we got an ICE connection.
             let datagram = None
-                .or_else(|| self.dtls.poll_datagram())
+                .or_else(|| self.pending_dtls_packets.pop_front())
                 .or_else(|| self.session.poll_datagram(self.last_now));
 
             if let Some(contents) = datagram {
@@ -1534,8 +1581,16 @@ impl Rtc {
 
         let stats = self.stats.as_mut();
 
+        // Handle DTLS timeout
+        if let Some(timeout) = self.next_dtls_timeout {
+            if timeout <= self.last_now {
+                let _ = self.dtls.handle_timeout(self.last_now);
+                self.next_dtls_timeout = None;
+            }
+        }
+
         let time_and_reason = (None, Reason::NotHappening)
-            .soonest((self.dtls.poll_timeout(self.last_now), Reason::DTLS))
+            .soonest((self.next_dtls_timeout, Reason::DTLS))
             .soonest((self.ice.poll_timeout(), Reason::Ice))
             .soonest(self.session.poll_timeout())
             .soonest((self.sctp.poll_timeout(), Reason::Sctp))
@@ -1813,25 +1868,6 @@ impl Rtc {
     }
 }
 
-/// Configuation for the DTLS certificate used for the Rtc instance. This can be set to
-/// allow a pregenerated certificate, or options to pass when generating a certificate
-/// on-the-fly.
-///
-/// The default value is DtlsCertConfig::Options(DtlsCertOptions::default())
-#[derive(Clone, Debug)]
-pub enum DtlsCertConfig {
-    /// The options to use for the DTLS certificate generated for this Rtc instance.
-    Options(DtlsCertOptions),
-    /// A pregenerated certificate to use for this Rtc instance.
-    PregeneratedCert(DtlsCert),
-}
-
-impl Default for DtlsCertConfig {
-    fn default() -> Self {
-        DtlsCertConfig::Options(DtlsCertOptions::default())
-    }
-}
-
 /// Customized config for creating an [`Rtc`] instance.
 ///
 /// ```
@@ -1848,8 +1884,8 @@ impl Default for DtlsCertConfig {
 #[derive(Debug, Clone)]
 pub struct RtcConfig {
     local_ice_credentials: Option<IceCreds>,
-    crypto_provider: CryptoProvider,
-    dtls_cert_config: DtlsCertConfig,
+    crypto_provider: Arc<crate::crypto::CryptoProvider>,
+    dtls_cert: Option<DtlsCert>,
     fingerprint_verification: bool,
     ice_lite: bool,
     initial_stun_rto: Option<Duration>,
@@ -1896,72 +1932,43 @@ impl RtcConfig {
 
     /// Set the crypto provider.
     ///
-    /// This happens implicitly if you use [`RtcConfig::set_dtls_cert_config()`].
-    ///
-    /// Panics: If you `set_dtls_cert_config()` followed by a different [`CryptoProvider`].
-    ///
-    /// This overrides what is set in [`CryptoProvider::install_process_default()`].
-    pub fn set_crypto_provider(mut self, p: CryptoProvider) -> Self {
-        if let DtlsCertConfig::PregeneratedCert(c) = &self.dtls_cert_config {
-            if p != c.crypto_provider() {
-                panic!("set_dtls_cert_config() locked crypto provider to: {}", p);
-            }
-        } else {
-            self.crypto_provider = p;
-        }
+    /// This overrides what is set in [`crate::crypto::CryptoProvider::install_default()`].
+    pub fn set_crypto_provider(mut self, p: Arc<crate::crypto::CryptoProvider>) -> Self {
+        self.crypto_provider = p;
         self
     }
 
     /// The configured crypto provider.
     ///
-    /// Defaults to what's set in [`CryptoProvider::install_process_default()`] followed
-    /// by a fallback to [`CryptoProvider::OpenSsl`].
-    pub fn crypto_provider(&self) -> CryptoProvider {
-        self.crypto_provider
+    /// Defaults to what's set in [`crate::crypto::CryptoProvider::get_default()`] followed
+    /// by a fallback to the default OpenSSL provider.
+    pub fn crypto_provider(&self) -> &Arc<crate::crypto::CryptoProvider> {
+        &self.crypto_provider
     }
 
-    /// Returns the configured DTLS certificate configuration.
+    /// Returns the configured DTLS certificate, if set.
     ///
-    /// Defaults to a configuration similar to libwebrtc:
-    /// ```
-    /// # use str0m::DtlsCertConfig;
-    /// # use str0m::config::{DtlsCertOptions, DtlsPKeyType};
-    ///
-    /// DtlsCertConfig::Options(DtlsCertOptions {
-    ///     common_name: "WebRTC".into(),
-    ///     pkey_type: DtlsPKeyType::EcDsaP256,
-    /// });
-    /// ```
-    pub fn dtls_cert_config(&self) -> &DtlsCertConfig {
-        &self.dtls_cert_config
+    /// If not set, a certificate will be generated automatically.
+    pub fn dtls_cert(&self) -> Option<&DtlsCert> {
+        self.dtls_cert.as_ref()
     }
 
-    /// Set the DTLS certificate configuration for certificate generation.
+    /// Set a pregenerated DTLS certificate.
     ///
-    /// Setting this permits you to assign a Pregenerated certificate, or
-    /// options for certificate generation, such as signing key type, and
-    /// subject name.
-    ///
-    /// If a Pregenerated certificate is set, this locks the `crypto_provider()`
-    /// setting to the [`CryptoProvider`], for the DTLS certificate.
+    /// If not set, a certificate will be generated automatically using
+    /// the configured crypto provider.
     ///
     /// ```
-    /// # use str0m::{DtlsCertConfig, RtcConfig};
-    /// # use str0m::config::{DtlsCertOptions, DtlsPKeyType};
+    /// # use str0m::RtcConfig;
+    /// # use str0m::crypto::CryptoProvider;
     ///
-    /// let dtls_cert_config = DtlsCertConfig::Options(DtlsCertOptions {
-    ///     common_name: "Clark Kent".into(),
-    ///     pkey_type: DtlsPKeyType::EcDsaP256,
-    /// });
-    ///
+    /// let provider = CryptoProvider::from_feature_flags();
+    /// let cert = provider.dtls_provider.generate_certificate().unwrap();
     /// let rtc_config = RtcConfig::default()
-    ///     .set_dtls_cert_config(dtls_cert_config);
+    ///     .set_dtls_cert(cert);
     /// ```
-    pub fn set_dtls_cert_config(mut self, dtls_cert_config: DtlsCertConfig) -> Self {
-        if let DtlsCertConfig::PregeneratedCert(ref cert) = dtls_cert_config {
-            self.crypto_provider = cert.crypto_provider();
-        }
-        self.dtls_cert_config = dtls_cert_config;
+    pub fn set_dtls_cert(mut self, cert: DtlsCert) -> Self {
+        self.dtls_cert = Some(cert);
         self
     }
 
@@ -2396,7 +2403,7 @@ impl RtcConfig {
 
     /// Create a [`Rtc`] from the configuration.
     pub fn build(self) -> Rtc {
-        Rtc::new_from_config(self)
+        Rtc::new_from_config(self).expect("Failed to create Rtc from config")
     }
 }
 
@@ -2411,10 +2418,14 @@ impl BweConfig {
 
 impl Default for RtcConfig {
     fn default() -> Self {
+        let crypto_provider = CryptoProvider::get_default()
+            .cloned()
+            .unwrap_or_else(CryptoProvider::from_feature_flags);
+
         Self {
             local_ice_credentials: None,
-            crypto_provider: CryptoProvider::process_default().unwrap_or(CryptoProvider::OpenSsl),
-            dtls_cert_config: Default::default(),
+            crypto_provider: Arc::new(crypto_provider),
+            dtls_cert: None,
             fingerprint_verification: true,
             ice_lite: false,
             initial_stun_rto: None,
@@ -2496,7 +2507,7 @@ pub(crate) use log_stat;
 #[cfg(test)]
 #[doc(hidden)]
 pub fn init_crypto_default() {
-    crate::config::CryptoProvider::from_feature_flags().__test_install_process_default();
+    crate::config::CryptoProvider::from_feature_flags().install_process_default();
 }
 
 #[cfg(test)]

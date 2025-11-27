@@ -224,7 +224,7 @@ pub fn init_log() {
 }
 
 pub fn init_crypto_default() {
-    str0m::config::CryptoProvider::from_feature_flags().__test_install_process_default();
+    str0m::config::CryptoProvider::from_feature_flags().install_process_default();
 }
 
 pub fn connect_l_r() -> (TestRtc, TestRtc) {

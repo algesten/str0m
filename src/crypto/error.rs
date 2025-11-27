@@ -2,6 +2,8 @@ use std::error::Error;
 use std::fmt;
 use std::io;
 
+use super::provider::DimplError;
+
 /// Errors that can arise in DTLS.
 #[derive(Debug)]
 pub enum CryptoError {
@@ -9,20 +11,14 @@ pub enum CryptoError {
     #[cfg(feature = "openssl")]
     OpenSsl(openssl::error::ErrorStack),
 
-    /// Some error from OpenSSL layer (used for DTLS).
-    #[cfg(all(feature = "wincrypto", target_os = "windows"))]
-    WinCrypto(super::wincrypto::WinCryptoError),
-
-    /// Some error from Dimpl certificate generation.
-    #[cfg(feature = "dimpl")]
-    DimplCert(dimpl::certificate::CertificateError),
-
     /// Some error from Dimpl DTLS layer.
-    #[cfg(feature = "dimpl")]
-    Dimpl(dimpl::Error),
+    Dimpl(DimplError),
 
     /// Other IO errors.
     Io(io::Error),
+
+    /// Other errors.
+    Other(String),
 }
 
 impl fmt::Display for CryptoError {
@@ -30,13 +26,9 @@ impl fmt::Display for CryptoError {
         match self {
             #[cfg(feature = "openssl")]
             CryptoError::OpenSsl(err) => write!(f, "{}", err),
-            #[cfg(all(feature = "wincrypto", target_os = "windows"))]
-            CryptoError::WinCrypto(err) => write!(f, "{}", err),
             CryptoError::Io(err) => write!(f, "{}", err),
-            #[cfg(feature = "dimpl")]
-            CryptoError::DimplCert(err) => write!(f, "{}", err),
-            #[cfg(feature = "dimpl")]
             CryptoError::Dimpl(err) => write!(f, "{}", err),
+            CryptoError::Other(err) => write!(f, "{}", err),
         }
     }
 }
@@ -46,13 +38,9 @@ impl Error for CryptoError {
         match self {
             #[cfg(feature = "openssl")]
             CryptoError::OpenSsl(err) => Some(err),
-            #[cfg(all(feature = "wincrypto", target_os = "windows"))]
-            CryptoError::WinCrypto(err) => Some(err),
             CryptoError::Io(err) => Some(err),
-            #[cfg(feature = "dimpl")]
-            CryptoError::DimplCert(err) => Some(err),
-            #[cfg(feature = "dimpl")]
             CryptoError::Dimpl(err) => Some(err),
+            CryptoError::Other(_) => None,
         }
     }
 }
@@ -64,29 +52,14 @@ impl From<openssl::error::ErrorStack> for CryptoError {
     }
 }
 
-#[cfg(all(feature = "wincrypto", target_os = "windows"))]
-impl From<super::wincrypto::WinCryptoError> for CryptoError {
-    fn from(err: super::wincrypto::WinCryptoError) -> Self {
-        CryptoError::WinCrypto(err)
-    }
-}
-
 impl From<io::Error> for CryptoError {
     fn from(err: io::Error) -> Self {
         CryptoError::Io(err)
     }
 }
 
-#[cfg(feature = "dimpl")]
-impl From<dimpl::certificate::CertificateError> for CryptoError {
-    fn from(err: dimpl::certificate::CertificateError) -> Self {
-        CryptoError::DimplCert(err)
-    }
-}
-
-#[cfg(feature = "dimpl")]
-impl From<dimpl::Error> for CryptoError {
-    fn from(err: dimpl::Error) -> Self {
+impl From<DimplError> for CryptoError {
+    fn from(err: DimplError) -> Self {
         CryptoError::Dimpl(err)
     }
 }

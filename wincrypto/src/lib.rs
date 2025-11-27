@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate tracing;
 
+use std::sync::Arc;
 use std::{error::Error, fmt};
 use windows::core::{Error as WindowsError, HRESULT};
 use windows::Win32::Foundation::{NTSTATUS, WIN32_ERROR};
@@ -11,6 +12,9 @@ pub use cert::*;
 
 mod sha1;
 pub use sha1::*;
+
+mod sha256;
+pub use sha256::*;
 
 mod srtp;
 pub use srtp::*;
