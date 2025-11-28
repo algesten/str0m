@@ -2,6 +2,7 @@
 
 use crate::crypto::{CryptoError, DtlsCert, DtlsInstance, DtlsOutput, DtlsProvider};
 use crate::crypto::{KeyingMaterial, SrtpProfile};
+use crate::util::not_happening;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
@@ -54,6 +55,7 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         Ok(Box::new(WinCryptoDtlsInstance {
             dtls,
             pending_outputs: VecDeque::new(),
+            last_timeout: None,
         }))
     }
 }
@@ -65,6 +67,8 @@ impl DtlsProvider for WinCryptoDtlsProvider {
 struct WinCryptoDtlsInstance {
     dtls: str0m_wincrypto::Dtls,
     pending_outputs: VecDeque<PendingOutput>,
+    /// The last time we were given via handle_timeout, used for calculating next timeout.
+    last_timeout: Option<Instant>,
 }
 
 #[derive(Debug)]
@@ -161,14 +165,16 @@ impl DtlsInstance for WinCryptoDtlsInstance {
             return DtlsOutput::Packet(&buf[..len]);
         }
 
-        // Return timeout - actual handshake progression happens in handle_timeout
-        DtlsOutput::Timeout(Instant::now() + std::time::Duration::from_millis(100))
+        // Return timeout based on last known time. If we don't have one yet,
+        // return a far-future time until handle_timeout is called.
+        let base_time = self.last_timeout.unwrap_or_else(not_happening);
+        DtlsOutput::Timeout(base_time + std::time::Duration::from_millis(100))
     }
 
-    fn handle_timeout(&mut self, _now: Instant) -> Result<(), crate::crypto::DimplError> {
-        // For wincrypto, we don't call handle_receive(None) from handle_timeout.
-        // The handshake progresses via handle_packet when packets arrive.
-        // This is different from dimpl which uses handle_timeout for retransmissions.
+    fn handle_timeout(&mut self, now: Instant) -> Result<(), crate::crypto::DimplError> {
+        self.last_timeout = Some(now);
+        // SChannel handles DTLS retransmissions internally, so we don't need to do anything here.
+        // The handshake is driven by handle_packet receiving data from the peer.
         Ok(())
     }
 
