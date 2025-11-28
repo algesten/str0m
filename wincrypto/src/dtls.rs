@@ -117,7 +117,7 @@ pub enum DtlsEvent {
     Connected {
         srtp_profile_id: u16,
         srtp_keying_material: Vec<u8>,
-        peer_fingerprint: [u8; 32],
+        peer_cert_der: Vec<u8>,
     },
     Data(Vec<u8>),
 }
@@ -515,13 +515,13 @@ impl Dtls {
             (peer_cert_context as *const CERT_CONTEXT).into()
         };
 
-        let peer_fingerprint = peer_certificate.sha256_fingerprint()?;
+        let peer_cert_der = peer_certificate.get_der_bytes()?;
 
         self.state = EstablishmentState::Established;
         Ok(DtlsEvent::Connected {
             srtp_profile_id,
             srtp_keying_material,
-            peer_fingerprint,
+            peer_cert_der,
         })
     }
 

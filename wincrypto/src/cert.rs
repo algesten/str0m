@@ -4,10 +4,9 @@ use windows::{
     Win32::{
         Foundation::GetLastError,
         Security::Cryptography::{
-            szOID_ECDSA_SHA256, szOID_RSA_SHA256RSA, BCryptCreateHash, BCryptFinishHash,
-            BCryptHashData, CertCreateSelfSignCertificate, CertFreeCertificateContext,
-            CertStrToNameW, NCryptCreatePersistedKey, NCryptDeleteKey, NCryptFinalizeKey,
-            NCryptOpenStorageProvider, BCRYPT_HASH_HANDLE, BCRYPT_SHA256_ALG_HANDLE, CERT_CONTEXT,
+            szOID_ECDSA_SHA256, szOID_RSA_SHA256RSA, CertCreateSelfSignCertificate,
+            CertFreeCertificateContext, CertStrToNameW, NCryptCreatePersistedKey,
+            NCryptDeleteKey, NCryptFinalizeKey, NCryptOpenStorageProvider, CERT_CONTEXT,
             CERT_CREATE_SELFSIGN_FLAGS, CERT_KEY_SPEC, CERT_OID_NAME_STR,
             CRYPT_ALGORITHM_IDENTIFIER, CRYPT_INTEGER_BLOB, CRYPT_KEY_PROV_INFO,
             HCRYPTPROV_OR_NCRYPT_KEY_HANDLE, MS_KEY_STORAGE_PROVIDER, NCRYPT_ECDSA_P256_ALGORITHM,

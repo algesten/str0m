@@ -30,11 +30,12 @@ pub use str0m_wincrypto::WinCryptoError;
 /// # Example
 ///
 /// ```no_run
+/// use std::sync::Arc;
 /// use str0m::crypto::wincrypto::default_provider;
 /// use str0m::RtcConfig;
 ///
-/// let crypto_provider = default_provider();
-/// let config = RtcConfig::new().with_crypto_provider(crypto_provider);
+/// let crypto_provider = Arc::new(default_provider());
+/// let config = RtcConfig::new().set_crypto_provider(crypto_provider);
 /// ```
 pub fn default_provider() -> CryptoProvider {
     static SRTP: WinCryptoSrtpProvider = WinCryptoSrtpProvider;

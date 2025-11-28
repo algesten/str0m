@@ -1,7 +1,6 @@
 #[macro_use]
 extern crate tracing;
 
-use std::sync::Arc;
 use std::{error::Error, fmt};
 use windows::core::{Error as WindowsError, HRESULT};
 use windows::Win32::Foundation::{NTSTATUS, WIN32_ERROR};

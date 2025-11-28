@@ -2,9 +2,16 @@
 
 use crate::crypto::{CryptoError, DtlsCert, DtlsInstance, DtlsOutput, DtlsProvider};
 use crate::crypto::{KeyingMaterial, SrtpProfile};
-use std::collections::VecDeque;
-use std::sync::Arc;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
+
+/// Cache for Windows certificates, keyed by their DER bytes.
+/// This ensures the same Windows certificate handle is used for both
+/// fingerprint generation and DTLS handshake, even when multiple Rtc
+/// instances are created in parallel.
+static CERT_CACHE: LazyLock<Mutex<HashMap<Vec<u8>, Arc<str0m_wincrypto::Certificate>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 #[derive(Debug)]
 pub(super) struct WinCryptoDtlsProvider;
@@ -12,9 +19,15 @@ pub(super) struct WinCryptoDtlsProvider;
 impl DtlsProvider for WinCryptoDtlsProvider {
     fn generate_certificate(&self) -> Option<DtlsCert> {
         let cert = str0m_wincrypto::Certificate::new_self_signed(true, "CN=WebRTC").ok()?;
+        let cert = Arc::new(cert);
 
-        // Get the DER bytes and fingerprint from the certificate
+        // Get the DER bytes from the certificate
         let der_bytes = cert.get_der_bytes().ok()?;
+
+        // Cache the certificate for later use in new_dtls, keyed by DER bytes
+        if let Ok(mut cache) = CERT_CACHE.lock() {
+            cache.insert(der_bytes.clone(), Arc::clone(&cert));
+        }
 
         Some(DtlsCert {
             certificate: der_bytes,
@@ -22,13 +35,20 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         })
     }
 
-    fn new_dtls(&self, _cert: &DtlsCert) -> Result<Box<dyn DtlsInstance>, CryptoError> {
-        // For now, generate a new certificate since we need the Windows CERT_CONTEXT
-        // In a real implementation, we'd need to reconstruct from the DER bytes
-        let win_cert = str0m_wincrypto::Certificate::new_self_signed(true, "CN=WebRTC")
-            .map_err(|e| CryptoError::Other(format!("Certificate creation: {}", e)))?;
+    fn new_dtls(&self, cert: &DtlsCert) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+        // Look up the Windows certificate by its DER bytes
+        let win_cert = CERT_CACHE
+            .lock()
+            .map_err(|e| CryptoError::Other(format!("Failed to lock certificate cache: {}", e)))?
+            .get(&cert.certificate)
+            .cloned()
+            .ok_or_else(|| {
+                CryptoError::Other(
+                    "Certificate not found in cache - was generate_certificate called?".to_string(),
+                )
+            })?;
 
-        let dtls = str0m_wincrypto::Dtls::new(Arc::new(win_cert))
+        let dtls = str0m_wincrypto::Dtls::new(win_cert)
             .map_err(|e| CryptoError::Other(format!("DTLS creation: {}", e)))?;
 
         Ok(Box::new(WinCryptoDtlsInstance {
@@ -67,7 +87,7 @@ impl WinCryptoDtlsInstance {
             str0m_wincrypto::DtlsEvent::Connected {
                 srtp_profile_id,
                 srtp_keying_material,
-                peer_fingerprint,
+                peer_cert_der,
             } => {
                 let profile = match srtp_profile_id {
                     0x0001 => SrtpProfile::Aes128CmSha1_80,
@@ -79,7 +99,7 @@ impl WinCryptoDtlsInstance {
                 // Queue up the sequence: Connected -> PeerCert -> KeyingMaterial
                 self.pending_outputs.push_back(PendingOutput::Connected);
                 self.pending_outputs
-                    .push_back(PendingOutput::PeerCert(peer_fingerprint.to_vec()));
+                    .push_back(PendingOutput::PeerCert(peer_cert_der));
                 self.pending_outputs
                     .push_back(PendingOutput::KeyingMaterial(
                         KeyingMaterial::new(&srtp_keying_material),
