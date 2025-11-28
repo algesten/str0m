@@ -1,116 +1,191 @@
-use std::collections::VecDeque;
+//! DTLS provider implementation using Windows SChannel.
+
+use crate::crypto::{CryptoError, DtlsCert, DtlsInstance, DtlsOutput, DtlsProvider};
+use crate::crypto::{KeyingMaterial, SrtpProfile};
+use crate::util::not_happening;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 
-use crate::crypto::dtls::DtlsInner;
-use crate::crypto::CryptoError;
-use crate::crypto::DtlsEvent;
-use crate::crypto::{KeyingMaterial, SrtpProfile};
-use crate::io::DATAGRAM_MTU_WARN;
+/// Cache for Windows certificates, keyed by their DER bytes.
+/// This ensures the same Windows certificate handle is used for both
+/// fingerprint generation and DTLS handshake, even when multiple Rtc
+/// instances are created in parallel.
+static CERT_CACHE: LazyLock<Mutex<HashMap<Vec<u8>, Arc<str0m_wincrypto::Certificate>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
-use super::cert::{create_sha256_fingerprint, WinCryptoDtlsCert};
+#[derive(Debug)]
+pub(super) struct WinCryptoDtlsProvider;
 
-pub struct WinCryptoDtls(str0m_wincrypto::Dtls);
+impl DtlsProvider for WinCryptoDtlsProvider {
+    fn generate_certificate(&self) -> Option<DtlsCert> {
+        let cert = str0m_wincrypto::Certificate::new_self_signed(true, "CN=WebRTC").ok()?;
+        let cert = Arc::new(cert);
 
-impl WinCryptoDtls {
-    pub fn new(cert: WinCryptoDtlsCert) -> Result<Self, super::CryptoError> {
-        Ok(WinCryptoDtls(str0m_wincrypto::Dtls::new(
-            cert.certificate.clone(),
-        )?))
+        // Get the DER bytes from the certificate
+        let der_bytes = cert.get_der_bytes().ok()?;
+
+        // Cache the certificate for later use in new_dtls, keyed by DER bytes
+        if let Ok(mut cache) = CERT_CACHE.lock() {
+            cache.insert(der_bytes.clone(), Arc::clone(&cert));
+        }
+
+        Some(DtlsCert {
+            certificate: der_bytes,
+            private_key: vec![], // Private key is managed internally by Windows
+        })
+    }
+
+    fn new_dtls(&self, cert: &DtlsCert) -> Result<Box<dyn DtlsInstance>, CryptoError> {
+        // Look up the Windows certificate by its DER bytes
+        let win_cert = CERT_CACHE
+            .lock()
+            .map_err(|e| CryptoError::Other(format!("Failed to lock certificate cache: {}", e)))?
+            .get(&cert.certificate)
+            .cloned()
+            .ok_or_else(|| {
+                CryptoError::Other(
+                    "Certificate not found in cache - was generate_certificate called?".to_string(),
+                )
+            })?;
+
+        let dtls = str0m_wincrypto::Dtls::new(win_cert)
+            .map_err(|e| CryptoError::Other(format!("DTLS creation: {}", e)))?;
+
+        Ok(Box::new(WinCryptoDtlsInstance {
+            dtls,
+            pending_outputs: VecDeque::new(),
+            last_timeout: None,
+        }))
     }
 }
 
-impl DtlsInner for WinCryptoDtls {
+// ============================================================================
+// DTLS Instance Wrapper
+// ============================================================================
+
+struct WinCryptoDtlsInstance {
+    dtls: str0m_wincrypto::Dtls,
+    pending_outputs: VecDeque<PendingOutput>,
+    /// The last time we were given via handle_timeout, used for calculating next timeout.
+    last_timeout: Option<Instant>,
+}
+
+#[derive(Debug)]
+enum PendingOutput {
+    Connected,
+    PeerCert(Vec<u8>),
+    KeyingMaterial(KeyingMaterial, SrtpProfile),
+    ApplicationData(Vec<u8>),
+}
+
+impl std::fmt::Debug for WinCryptoDtlsInstance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WinCryptoDtlsInstance").finish()
+    }
+}
+
+impl WinCryptoDtlsInstance {
+    fn process_dtls_event(&mut self, event: str0m_wincrypto::DtlsEvent) {
+        match event {
+            str0m_wincrypto::DtlsEvent::Connected {
+                srtp_profile_id,
+                srtp_keying_material,
+                peer_cert_der,
+            } => {
+                let profile = match srtp_profile_id {
+                    0x0001 => SrtpProfile::Aes128CmSha1_80,
+                    0x0007 => SrtpProfile::AeadAes128Gcm,
+                    0x0008 => SrtpProfile::AeadAes256Gcm,
+                    _ => return, // Unknown profile, ignore
+                };
+
+                // Queue up the sequence: Connected -> PeerCert -> KeyingMaterial
+                self.pending_outputs.push_back(PendingOutput::Connected);
+                self.pending_outputs
+                    .push_back(PendingOutput::PeerCert(peer_cert_der));
+                self.pending_outputs
+                    .push_back(PendingOutput::KeyingMaterial(
+                        KeyingMaterial::new(&srtp_keying_material),
+                        profile,
+                    ));
+            }
+            str0m_wincrypto::DtlsEvent::Data(data) => {
+                self.pending_outputs
+                    .push_back(PendingOutput::ApplicationData(data));
+            }
+            str0m_wincrypto::DtlsEvent::None | str0m_wincrypto::DtlsEvent::WouldBlock => {
+                // No event to queue
+            }
+        }
+    }
+}
+
+impl DtlsInstance for WinCryptoDtlsInstance {
     fn set_active(&mut self, active: bool) {
-        self.0.set_as_client(active).expect("Set client failed");
+        self.dtls.set_as_client(active).expect("set_as_client");
     }
 
-    fn is_active(&self) -> Option<bool> {
-        self.0.is_client()
-    }
+    fn handle_packet(&mut self, packet: &[u8]) -> Result<(), crate::crypto::DimplError> {
+        let event = self
+            .dtls
+            .handle_receive(Some(packet))
+            .map_err(|e| crate::crypto::DimplError::CryptoError(format!("DTLS error: {}", e)))?;
 
-    fn is_connected(&self) -> bool {
-        self.0.is_connected()
-    }
-
-    fn handle_receive(
-        &mut self,
-        datagram: &[u8],
-        output_events: &mut VecDeque<DtlsEvent>,
-    ) -> Result<(), CryptoError> {
-        transform_dtls_event(self.0.handle_receive(Some(datagram))?, output_events);
+        // Store the event for poll_output to retrieve
+        self.process_dtls_event(event);
         Ok(())
     }
 
-    fn handle_handshake(
-        &mut self,
-        output_events: &mut VecDeque<DtlsEvent>,
-    ) -> Result<bool, CryptoError> {
-        if self.is_connected() || self.is_active().is_none() {
-            return Ok(false);
+    fn poll_output<'a>(&mut self, buf: &'a mut [u8]) -> DtlsOutput<'a> {
+        // First check if we have pending outputs from a previous Connected event
+        if let Some(pending) = self.pending_outputs.pop_front() {
+            return match pending {
+                PendingOutput::Connected => DtlsOutput::Connected,
+                PendingOutput::PeerCert(cert) => {
+                    let len = cert.len().min(buf.len());
+                    buf[..len].copy_from_slice(&cert[..len]);
+                    DtlsOutput::PeerCert(&buf[..len])
+                }
+                PendingOutput::KeyingMaterial(km, profile) => {
+                    DtlsOutput::KeyingMaterial(km, profile)
+                }
+                PendingOutput::ApplicationData(data) => {
+                    let len = data.len().min(buf.len());
+                    buf[..len].copy_from_slice(&data[..len]);
+                    DtlsOutput::ApplicationData(&buf[..len])
+                }
+            };
         }
-        transform_dtls_event(self.0.handle_receive(None)?, output_events);
-        Ok(!self.0.is_connected())
-    }
 
-    // This is DATA sent from client over SCTP/DTLS
-    fn handle_input(&mut self, data: &[u8]) -> Result<(), CryptoError> {
-        match self.0.send_data(data) {
-            Ok(true) => Ok(()),
-            Ok(false) => Err(std::io::Error::new(
-                std::io::ErrorKind::WouldBlock,
-                "Not ready".to_string(),
-            )
-            .into()),
-            Err(e) => Err(e.into()),
+        // Poll for datagram first
+        if let Some(datagram) = self.dtls.pull_datagram() {
+            let len = datagram.len().min(buf.len());
+            buf[..len].copy_from_slice(&datagram[..len]);
+            return DtlsOutput::Packet(&buf[..len]);
         }
+
+        // Return timeout based on last known time. If we don't have one yet,
+        // return a far-future time until handle_timeout is called.
+        let base_time = self.last_timeout.unwrap_or_else(not_happening);
+        DtlsOutput::Timeout(base_time + std::time::Duration::from_millis(100))
     }
 
-    fn poll_datagram(&mut self) -> Option<crate::net::DatagramSend> {
-        let datagram: Option<crate::io::DatagramSend> = self.0.pull_datagram().map(|v| v.into());
-        if let Some(datagram) = &datagram {
-            if datagram.len() > DATAGRAM_MTU_WARN {
-                warn!("DTLS above MTU {}: {}", DATAGRAM_MTU_WARN, datagram.len());
-            }
-            trace!("Poll datagram: {}", datagram.len());
-        }
-        datagram
+    fn handle_timeout(&mut self, now: Instant) -> Result<(), crate::crypto::DimplError> {
+        self.last_timeout = Some(now);
+        // SChannel handles DTLS retransmissions internally, so we don't need to do anything here.
+        // The handshake is driven by handle_packet receiving data from the peer.
+        Ok(())
     }
 
-    fn poll_timeout(&mut self, now: Instant) -> Option<Instant> {
-        self.0.next_timeout(now)
+    fn send_application_data(&mut self, data: &[u8]) -> Result<(), crate::crypto::DimplError> {
+        self.dtls
+            .send_data(data)
+            .map_err(|e| crate::crypto::DimplError::CryptoError(format!("DTLS send: {}", e)))?;
+        Ok(())
     }
-}
 
-fn srtp_profile_from_network_endian_id(srtp_profile_id: u16) -> SrtpProfile {
-    match srtp_profile_id {
-        0x0001 => SrtpProfile::Aes128CmSha1_80,
-        0x0007 => SrtpProfile::AeadAes128Gcm,
-        0x0008 => SrtpProfile::AeadAes256Gcm,
-        _ => panic!("Unknown SRTP profile ID: {:04x}", srtp_profile_id),
-    }
-}
-
-fn transform_dtls_event(
-    event: str0m_wincrypto::DtlsEvent,
-    output_events: &mut VecDeque<DtlsEvent>,
-) {
-    match event {
-        str0m_wincrypto::DtlsEvent::None => {}
-        str0m_wincrypto::DtlsEvent::WouldBlock => {}
-        str0m_wincrypto::DtlsEvent::Connected {
-            srtp_profile_id,
-            srtp_keying_material,
-            peer_fingerprint,
-        } => {
-            output_events.push_back(DtlsEvent::Connected);
-            output_events.push_back(DtlsEvent::RemoteFingerprint(create_sha256_fingerprint(
-                &peer_fingerprint,
-            )));
-            output_events.push_back(DtlsEvent::SrtpKeyingMaterial(
-                KeyingMaterial::new(srtp_keying_material),
-                srtp_profile_from_network_endian_id(srtp_profile_id),
-            ));
-        }
-        str0m_wincrypto::DtlsEvent::Data(vec) => output_events.push_back(DtlsEvent::Data(vec)),
+    fn is_active(&self) -> bool {
+        self.dtls.is_client().unwrap_or(false)
     }
 }

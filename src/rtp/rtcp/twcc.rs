@@ -2233,7 +2233,7 @@ mod test {
                 description
             );
             assert!(
-                report.chunks.len() > 0,
+                !report.chunks.is_empty(),
                 "Should have chunks for {}",
                 description
             );

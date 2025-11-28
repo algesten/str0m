@@ -18,6 +18,13 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         rust: [stable, beta, 1.81.0]
+        crypto: [openssl, aws-lc-rs, rust-crypto, wincrypto]
+        exclude:
+          # wincrypto is only for Windows
+          - os: ubuntu-latest
+            crypto: wincrypto
+          - os: macos-latest
+            crypto: wincrypto
 
     runs-on: ${{ matrix.os }}
 
@@ -30,10 +37,12 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
-      - name: Build 1
-        run: cargo +${{steps.toolchain.outputs.name}} build --all-features
-      - name: Build 2
-        run: cargo +${{steps.toolchain.outputs.name}} build --all-features
+      - name: Test with ${{ matrix.crypto }} (Windows + OpenSSL with vendored)
+        if: matrix.crypto == 'openssl' && runner.os == 'Windows'
+        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features openssl,vendored
+      - name: Test with ${{ matrix.crypto }}
+        if: matrix.crypto != 'openssl' || runner.os != 'Windows'
+        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features ${{ matrix.crypto }}
 
   snowflake:
     runs-on: ubuntu-latest
@@ -46,7 +55,6 @@ jobs:
         with:
           check_diff: true
           line_width_rules: 'CHANGELOG.md:120;c_cpp_properties.json:160;Cargo.toml:130;README.md:180;README.tpl:180;*.md:110;*.rs:110;*.toml:110;DEFAULT=110'
-          rust_import_ignore: 'wincrypto/src/**/*.rs'
 
   pii:
     runs-on: ubuntu-latest
@@ -60,26 +68,6 @@ jobs:
       - name: Test pii
         run: cargo +${{steps.toolchain.outputs.name}} test --test pii --features pii
 
-  test_wincrypto:
-    strategy:
-      matrix:
-        os: [windows-latest]
-        rust: [stable, beta, 1.81.0]
-
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - uses: actions/checkout@v2
-      - uses: dtolnay/rust-toolchain@master
-        id: toolchain
-        with:
-          toolchain: ${{ matrix.rust }}
-      - uses: Swatinem/rust-cache@v1
-      - name: Build
-        run: cargo +${{steps.toolchain.outputs.name}} build --no-default-features --features wincrypto
-      - name: Test
-        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features wincrypto
-
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -92,14 +80,13 @@ jobs:
       - uses: Swatinem/rust-cache@v1
       - name: fmt
         run: cargo +${{steps.toolchain.outputs.name}} fmt --all -- --check
-      - name: clippy
+      - name: clippy (default features)
         run: cargo +${{steps.toolchain.outputs.name}} clippy -- -D warnings
-      - name: clippy (openssl features)
-        run: cargo +${{steps.toolchain.outputs.name}} clippy --no-default-features --features openssl,vendored,sha1 -- -D warnings
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-          components: clippy
+      - name: clippy (all crypto backends)
+        run: |
+          cargo +${{steps.toolchain.outputs.name}} clippy --no-default-features --features openssl -- -D warnings
+          cargo +${{steps.toolchain.outputs.name}} clippy --no-default-features --features aws-lc-rs -- -D warnings
+          cargo +${{steps.toolchain.outputs.name}} clippy --no-default-features --features rust-crypto -- -D warnings
       - name: doc
         run: cargo doc --no-deps
         env:

@@ -24,20 +24,13 @@ rust-version = "1.81.0"
 # security patching than updating statically linked software.
 
 [features]
-default = ["openssl", "vendored", "sha1", "examples"]
+default = ["aws-lc-rs", "examples"]
+aws-lc-rs = ["dep:aws-lc-rs", "dimpl/aws-lc-rs", "dimpl/rcgen"]
+rust-crypto = ["dep:aes-gcm", "dep:aes", "dep:ctr", "dep:p256", "dep:sha1", "dep:sha2", "dimpl/rust-crypto", "dimpl/rcgen"]
 openssl = ["dep:openssl", "dep:openssl-sys", "dep:libc"]
+wincrypto = ["dep:str0m-wincrypto"]
 vendored = ["openssl?/vendored"]
 unversioned = []
-
-# Without the sha1 feature, str0m uses the openssl sha1 impl which is slower.
-sha1 = ["dep:sha1"]
-
-# Uses native Windows API to implement cryptographic features, use instead of
-# openssl and sha1.
-wincrypto = ["dep:str0m-wincrypto"]
-
-# DTLS impl made for str0m (experimental) in pure Rust.
-dimpl = ["sha1", "dep:dimpl", "dep:aws-lc-rs"]
 
 # Redacts personally identifiable information (PII) from logs debug and above
 pii = []
@@ -56,10 +49,18 @@ fastrand = "2.0.1"
 sctp-proto = "0.5.0"
 combine = "4.6.6"
 
-# aws-lc-rs is used when we are using the dimpl DTLS implementation
+# Crypto providers
 aws-lc-rs = { version = "1", optional = true, default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
 
-# Sadly no DTLS support in rustls.
+# RustCrypto backend
+aes-gcm = { version = "0.10", optional = true }
+aes = { version = "0.8", optional = true }
+ctr = { version = "0.9", optional = true }
+p256 = { version = "0.13", optional = true, features = ["ecdh"] }
+sha1 = { version = "0.10", optional = true }
+sha2 = { version = "0.10", optional = true }
+
+# OpenSSL backend
 openssl = { version = "0.10.70", optional = true }
 openssl-sys = { version = "0.9.80", optional = true }
 libc = { version = "0.2", optional = true }
@@ -69,16 +70,10 @@ hmac = "0.12.1"
 crc = "3.0.0"
 serde = { version = "1.0.152", features = ["derive"] }
 
-# DTLS made for str0m
-dimpl = { version = "0.1.5", optional = true }
-
-[target.'cfg(unix)'.dependencies]
-sha1 = { version = "0.10.6", features = ["asm"], optional = true }
+# DTLS made for str0m (required dependency)
+dimpl = { git = "https://github.com/algesten/dimpl.git", rev = "6f04360", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
-# The ASM feature is broken on windows. Unclear where in the rust-crypto project
-# we're supposed to check when it gets sorted out.
-sha1 = { version = "0.10.6", optional = true }
 # Windows Crypto (CNG + SChannel)
 str0m-wincrypto = { version = "0.2.1", path = "wincrypto", optional = true }
 

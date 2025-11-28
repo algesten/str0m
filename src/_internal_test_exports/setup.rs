@@ -32,6 +32,7 @@ pub fn random_extmap(rng: &mut Rng, to_set: usize) -> Option<ExtensionMap> {
     Some(e)
 }
 
+#[allow(unused)]
 pub fn random_config(rng: &mut Rng) -> Option<RtcConfig> {
     let mut c = RtcConfig::new();
     c = c.set_extension_map(random_extmap(rng, 8)?);

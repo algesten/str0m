@@ -371,9 +371,9 @@ impl<'a> StunMessage<'a> {
 
     /// Verify the integrity of this message against the provided password.
     #[must_use]
-    pub fn verify(&self, password: &[u8]) -> bool {
+    pub fn verify(&self, password: &[u8], sha1_hmac: impl Fn(&[u8], &[&[u8]]) -> [u8; 20]) -> bool {
         if let Some(integ) = self.attrs.message_integrity {
-            let comp = crate::crypto::sha1_hmac(
+            let comp = sha1_hmac(
                 password,
                 &[
                     &self.integrity[..2],
@@ -392,7 +392,12 @@ impl<'a> StunMessage<'a> {
     ///
     /// The provided password is used to authenticate the message if provided, otherwise no
     /// `MESSAGE-INTEGRITY` attribute will be present.
-    pub fn to_bytes(self, password: Option<&[u8]>, buf: &mut [u8]) -> Result<usize, StunError> {
+    pub fn to_bytes(
+        self,
+        password: Option<&[u8]>,
+        buf: &mut [u8],
+        sha1_hmac: impl Fn(&[u8], &[&[u8]]) -> [u8; 20],
+    ) -> Result<usize, StunError> {
         const MSG_HEADER_LEN: usize = 20;
         const MSG_INTEGRITY_LEN: usize = 20;
         const FPRINT_LEN: usize = 4;
@@ -442,7 +447,7 @@ impl<'a> StunMessage<'a> {
 
         if let Some(password) = password {
             // Compute and fill in message integrity
-            let hmac = crate::crypto::sha1_hmac(
+            let hmac = sha1_hmac(
                 password,
                 &[&buf[0..(integrity_value_offset - ATTR_TLV_LENGTH)]],
             );
@@ -1413,6 +1418,12 @@ mod test {
     use super::*;
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
+    fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
+        crate::crypto::test_default_provider()
+            .sha1_hmac_provider
+            .sha1_hmac(key, payloads)
+    }
+
     #[test]
     fn parse_stun_message() {
         const PACKET: &[u8] = &[
@@ -1428,7 +1439,7 @@ mod test {
 
         let packet = PACKET.to_vec();
         let message = StunMessage::parse(&packet).unwrap();
-        assert!(message.verify(b"xJcE9AQAR7kczUDVOXRUCl"));
+        assert!(message.verify(b"xJcE9AQAR7kczUDVOXRUCl", sha1_hmac));
     }
 
     #[test]
@@ -1540,7 +1551,9 @@ network_cost: (10, 10) \
         };
 
         let mut buf = [0u8; 1024];
-        let len = message.to_bytes(Some(b"password"), &mut buf).unwrap();
+        let len = message
+            .to_bytes(Some(b"password"), &mut buf, sha1_hmac)
+            .unwrap();
         let serialized = &buf[..len];
 
         let parsed = StunMessage::parse(serialized).unwrap();
@@ -1555,7 +1568,7 @@ network_cost: (10, 10) \
             Some("dcd98b7102dd2f0e8b11d0f600bfb0c093")
         );
         assert_eq!(parsed.attrs.lifetime, Some(3600));
-        assert!(parsed.verify(b"password"));
+        assert!(parsed.verify(b"password", sha1_hmac));
     }
 
     #[test]
@@ -1576,7 +1589,9 @@ network_cost: (10, 10) \
         };
 
         let mut buf = [0u8; 1024];
-        let len = message.to_bytes(Some(b"password"), &mut buf).unwrap();
+        let len = message
+            .to_bytes(Some(b"password"), &mut buf, sha1_hmac)
+            .unwrap();
         let serialized = &buf[..len];
 
         let parsed = StunMessage::parse(serialized).unwrap();
@@ -1586,7 +1601,7 @@ network_cost: (10, 10) \
         assert_eq!(parsed.trans_id, trans_id);
         assert_eq!(parsed.attrs.xor_relayed_address, Some(relayed_addr));
         assert_eq!(parsed.attrs.lifetime, Some(1800));
-        assert!(parsed.verify(b"password"));
+        assert!(parsed.verify(b"password", sha1_hmac));
     }
 
     #[test]
@@ -1607,7 +1622,7 @@ network_cost: (10, 10) \
         };
 
         let mut buf = [0u8; 1024];
-        let len = message.to_bytes(None, &mut buf).unwrap();
+        let len = message.to_bytes(None, &mut buf, sha1_hmac).unwrap();
         let serialized = &buf[..len];
 
         let parsed = StunMessage::parse(serialized).unwrap();
@@ -1644,7 +1659,9 @@ network_cost: (10, 10) \
         };
 
         let mut buf = [0u8; 1024];
-        let len = message.to_bytes(Some(b"password"), &mut buf).unwrap();
+        let len = message
+            .to_bytes(Some(b"password"), &mut buf, sha1_hmac)
+            .unwrap();
         let serialized = &buf[..len];
 
         let parsed = StunMessage::parse(serialized).unwrap();
@@ -1659,7 +1676,7 @@ network_cost: (10, 10) \
             Some("dcd98b7102dd2f0e8b11d0f600bfb0c093")
         );
         assert_eq!(parsed.attrs.data, Some(&[0xDE, 0xAD, 0xBE][..]));
-        assert!(parsed.verify(b"password"));
+        assert!(parsed.verify(b"password", sha1_hmac));
     }
 
     #[test]
@@ -1679,7 +1696,9 @@ network_cost: (10, 10) \
         };
 
         let mut buf = [0u8; 1024];
-        let len = message.to_bytes(Some(b"password"), &mut buf).unwrap();
+        let len = message
+            .to_bytes(Some(b"password"), &mut buf, sha1_hmac)
+            .unwrap();
         let serialized = &buf[..len];
 
         let parsed = StunMessage::parse(serialized).unwrap();
@@ -1688,7 +1707,7 @@ network_cost: (10, 10) \
         assert_eq!(parsed.class, Class::Indication);
         assert_eq!(parsed.trans_id, trans_id);
         assert_eq!(parsed.attrs.data, Some(&[0xDE, 0xAD, 0xBE, 0xEF, 0xF7][..]));
-        assert!(parsed.verify(b"password"));
+        assert!(parsed.verify(b"password", sha1_hmac));
     }
 
     #[test]
@@ -1710,7 +1729,9 @@ network_cost: (10, 10) \
         };
 
         let mut buf = [0u8; 1024];
-        let len = message.to_bytes(Some(b"password"), &mut buf).unwrap();
+        let len = message
+            .to_bytes(Some(b"password"), &mut buf, sha1_hmac)
+            .unwrap();
         let serialized = &buf[..len];
 
         let parsed = StunMessage::parse(serialized).unwrap();
@@ -1725,7 +1746,7 @@ network_cost: (10, 10) \
             Some("dcd98b7102dd2f0e8b11d0f600bfb0c093")
         );
         assert_eq!(parsed.attrs.lifetime, Some(600));
-        assert!(parsed.verify(b"password"));
+        assert!(parsed.verify(b"password", sha1_hmac));
     }
 
     #[test]
@@ -1748,7 +1769,9 @@ network_cost: (10, 10) \
         };
 
         let mut buf = [0u8; 1024];
-        let len = message.to_bytes(Some(b"password"), &mut buf).unwrap();
+        let len = message
+            .to_bytes(Some(b"password"), &mut buf, sha1_hmac)
+            .unwrap();
         let serialized = &buf[..len];
 
         let parsed = StunMessage::parse(serialized).unwrap();
@@ -1763,7 +1786,7 @@ network_cost: (10, 10) \
             Some("dcd98b7102dd2f0e8b11d0f600bfb0c093")
         );
         assert_eq!(parsed.attrs.xor_peer_address, Some(peer_addr));
-        assert!(parsed.verify(b"password"));
+        assert!(parsed.verify(b"password", sha1_hmac));
     }
 
     #[test]
@@ -1787,7 +1810,9 @@ network_cost: (10, 10) \
         };
 
         let mut buf = [0u8; 1024];
-        let len = message.to_bytes(Some(b"password"), &mut buf).unwrap();
+        let len = message
+            .to_bytes(Some(b"password"), &mut buf, sha1_hmac)
+            .unwrap();
         let serialized = &buf[..len];
 
         let parsed = StunMessage::parse(serialized).unwrap();
@@ -1803,7 +1828,7 @@ network_cost: (10, 10) \
         );
         assert_eq!(parsed.attrs.channel_number, Some(0x4000));
         assert_eq!(parsed.attrs.xor_peer_address, Some(peer_addr));
-        assert!(parsed.verify(b"password"));
+        assert!(parsed.verify(b"password", sha1_hmac));
     }
 
     #[test]

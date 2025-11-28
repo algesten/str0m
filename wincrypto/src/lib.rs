@@ -12,6 +12,9 @@ pub use cert::*;
 mod sha1;
 pub use sha1::*;
 
+mod sha256;
+pub use sha256::*;
+
 mod srtp;
 pub use srtp::*;
 

@@ -1,156 +1,202 @@
-use crate::crypto::srtp::SrtpCryptoImpl;
-use crate::crypto::srtp::{aead_aes_128_gcm, aead_aes_256_gcm, aes_128_cm_sha1_80};
-use crate::crypto::CryptoError;
-use str0m_wincrypto::{srtp_aead_aes_gcm_decrypt, srtp_aead_aes_gcm_encrypt};
-use str0m_wincrypto::{srtp_aes_128_cm, srtp_aes_ecb_round, SrtpKey};
+//! SRTP provider implementation using Windows CNG.
 
-pub struct WinCryptoSrtpCryptoImpl;
+use crate::crypto::SupportedAes128CmSha1_80;
+use crate::crypto::{AeadAes128GcmCipher, AeadAes256GcmCipher};
+use crate::crypto::{Aes128CmSha1_80Cipher, CryptoError, SrtpProvider};
+use crate::crypto::{SupportedAeadAes128Gcm, SupportedAeadAes256Gcm};
 
-impl SrtpCryptoImpl for WinCryptoSrtpCryptoImpl {
-    type Aes128CmSha1_80 = WinCryptoAes128CmSha1_80;
-    type AeadAes128Gcm = WinCryptoAeadAes128Gcm;
-    type AeadAes256Gcm = WinCryptoAeadAes256Gcm;
+#[derive(Debug)]
+pub(super) struct WinCryptoSrtpProvider;
+
+impl SrtpProvider for WinCryptoSrtpProvider {
+    fn aes_128_cm_sha1_80(&self) -> &'static dyn SupportedAes128CmSha1_80 {
+        &WinCryptoAes128CmSha1_80Factory
+    }
+
+    fn aead_aes_128_gcm(&self) -> &'static dyn SupportedAeadAes128Gcm {
+        &WinCryptoAeadAes128GcmFactory
+    }
+
+    fn aead_aes_256_gcm(&self) -> &'static dyn SupportedAeadAes256Gcm {
+        &WinCryptoAeadAes256GcmFactory
+    }
 
     fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
-        let key = SrtpKey::create_aes_ecb_key(key).expect("AES key");
-        let count = srtp_aes_ecb_round(&key, input, output).expect("AES encrypt");
-        assert_eq!(count, 16 + 16); // block size
+        let key = str0m_wincrypto::SrtpKey::create_aes_ecb_key(key).expect("AES-128 ECB key");
+        let count = str0m_wincrypto::srtp_aes_ecb_round(&key, input, output).expect("AES-128 ECB");
+        assert_eq!(count, 16 + 16); // block size + padding
     }
 
     fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
-        let key = SrtpKey::create_aes_ecb_key(key).expect("AES key");
-        let count = srtp_aes_ecb_round(&key, input, output).expect("AES encrypt");
-        assert_eq!(count, 16 + 16); // block size
+        let key = str0m_wincrypto::SrtpKey::create_aes_ecb_key(key).expect("AES-256 ECB key");
+        let count = str0m_wincrypto::srtp_aes_ecb_round(&key, input, output).expect("AES-256 ECB");
+        assert_eq!(count, 16 + 16); // block size + padding
     }
 }
 
-pub struct WinCryptoAes128CmSha1_80 {
-    key: SrtpKey,
+// Cipher Factories
+
+#[derive(Debug)]
+struct WinCryptoAes128CmSha1_80Factory;
+
+impl SupportedAes128CmSha1_80 for WinCryptoAes128CmSha1_80Factory {
+    fn create_cipher(&self, key: [u8; 16], _encrypt: bool) -> Box<dyn Aes128CmSha1_80Cipher> {
+        Box::new(WinCryptoAes128CmSha1_80::new(key))
+    }
 }
 
-impl aes_128_cm_sha1_80::CipherCtx for WinCryptoAes128CmSha1_80 {
-    /// Create a new context for AES-128-CM-SHA1-80 encryption/decryption.
-    ///
-    /// The encrypt flag is ignored, since the same operation is used for both encryption and
-    /// decryption.
-    fn new(key: aes_128_cm_sha1_80::AesKey, _encrypt: bool) -> Self
-    where
-        Self: Sized,
-    {
+#[derive(Debug)]
+struct WinCryptoAeadAes128GcmFactory;
+
+impl SupportedAeadAes128Gcm for WinCryptoAeadAes128GcmFactory {
+    fn create_cipher(&self, key: [u8; 16], _encrypt: bool) -> Box<dyn AeadAes128GcmCipher> {
+        Box::new(WinCryptoAeadAes128Gcm::new(key))
+    }
+}
+
+#[derive(Debug)]
+struct WinCryptoAeadAes256GcmFactory;
+
+impl SupportedAeadAes256Gcm for WinCryptoAeadAes256GcmFactory {
+    fn create_cipher(&self, key: [u8; 32], _encrypt: bool) -> Box<dyn AeadAes256GcmCipher> {
+        Box::new(WinCryptoAeadAes256Gcm::new(key))
+    }
+}
+
+// Cipher Implementations
+
+struct WinCryptoAes128CmSha1_80 {
+    key: str0m_wincrypto::SrtpKey,
+}
+
+impl std::fmt::Debug for WinCryptoAes128CmSha1_80 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WinCryptoAes128CmSha1_80").finish()
+    }
+}
+
+impl WinCryptoAes128CmSha1_80 {
+    fn new(key: [u8; 16]) -> Self {
         Self {
-            key: SrtpKey::create_aes_ctr_key(&key).expect("generate sym key"),
+            key: str0m_wincrypto::SrtpKey::create_aes_ctr_key(&key).expect("AES-128-CTR key"),
         }
     }
+}
 
+impl Aes128CmSha1_80Cipher for WinCryptoAes128CmSha1_80 {
     fn encrypt(
         &mut self,
-        iv: &aes_128_cm_sha1_80::RtpIv,
-        plain_text: &[u8],
-        cipher_text: &mut [u8],
+        iv: &[u8; 16],
+        input: &[u8],
+        output: &mut [u8],
     ) -> Result<(), CryptoError> {
-        srtp_aes_128_cm(&self.key, iv, plain_text, cipher_text)?;
+        str0m_wincrypto::srtp_aes_128_cm(&self.key, iv, input, output)
+            .map_err(|e| CryptoError::Other(format!("AES-128-CM encrypt: {}", e)))?;
         Ok(())
     }
 
     fn decrypt(
         &mut self,
-        iv: &aes_128_cm_sha1_80::RtpIv,
-        cipher_text: &[u8],
-        plain_text: &mut [u8],
+        iv: &[u8; 16],
+        input: &[u8],
+        output: &mut [u8],
     ) -> Result<(), CryptoError> {
-        srtp_aes_128_cm(&self.key, iv, cipher_text, plain_text)?;
+        str0m_wincrypto::srtp_aes_128_cm(&self.key, iv, input, output)
+            .map_err(|e| CryptoError::Other(format!("AES-128-CM decrypt: {}", e)))?;
         Ok(())
     }
 }
 
-pub struct WinCryptoAeadAes128Gcm {
-    key: SrtpKey,
+struct WinCryptoAeadAes128Gcm {
+    key: str0m_wincrypto::SrtpKey,
 }
 
-impl aead_aes_128_gcm::CipherCtx for WinCryptoAeadAes128Gcm {
-    /// Create a new context for AES-128-GCM encryption/decryption.
-    ///
-    /// The encrypt flag is ignored, since it is not needed and the same
-    /// key can be used for both encryption and decryption.
-    fn new(key: aead_aes_128_gcm::AeadKey, _encrypt: bool) -> Self
-    where
-        Self: Sized,
-    {
+impl std::fmt::Debug for WinCryptoAeadAes128Gcm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WinCryptoAeadAes128Gcm").finish()
+    }
+}
+
+impl WinCryptoAeadAes128Gcm {
+    fn new(key: [u8; 16]) -> Self {
         Self {
-            key: SrtpKey::create_aes_gcm_key(&key).expect("generate sym key"),
+            key: str0m_wincrypto::SrtpKey::create_aes_gcm_key(&key).expect("AES-128-GCM key"),
         }
     }
+}
 
+impl AeadAes128GcmCipher for WinCryptoAeadAes128Gcm {
     fn encrypt(
         &mut self,
-        iv: &[u8; aead_aes_128_gcm::IV_LEN],
-        additional_auth_data: &[u8],
-        plain_text: &[u8],
-        cipher_text: &mut [u8],
+        iv: &[u8; 12],
+        aad: &[u8],
+        input: &[u8],
+        output: &mut [u8],
     ) -> Result<(), CryptoError> {
-        srtp_aead_aes_gcm_encrypt(&self.key, iv, additional_auth_data, plain_text, cipher_text)?;
+        // wincrypto appends tag to output (output contains ciphertext + 16-byte tag)
+        str0m_wincrypto::srtp_aead_aes_gcm_encrypt(&self.key, iv, aad, input, output)
+            .map_err(|e| CryptoError::Other(format!("AES-128-GCM encrypt: {}", e)))?;
         Ok(())
     }
 
     fn decrypt(
         &mut self,
-        iv: &[u8; aead_aes_128_gcm::IV_LEN],
-        additional_auth_data: &[&[u8]],
-        cipher_text: &[u8],
-        plain_text: &mut [u8],
+        iv: &[u8; 12],
+        aads: &[&[u8]],
+        input: &[u8],
+        output: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        Ok(srtp_aead_aes_gcm_decrypt(
-            &self.key,
-            iv,
-            additional_auth_data,
-            cipher_text,
-            plain_text,
-        )?)
+        // wincrypto expects input to contain ciphertext + tag
+        let written =
+            str0m_wincrypto::srtp_aead_aes_gcm_decrypt(&self.key, iv, aads, input, output)
+                .map_err(|e| CryptoError::Other(format!("AES-128-GCM decrypt: {}", e)))?;
+        Ok(written)
     }
 }
 
-pub struct WinCryptoAeadAes256Gcm {
-    key: SrtpKey,
+struct WinCryptoAeadAes256Gcm {
+    key: str0m_wincrypto::SrtpKey,
 }
 
-impl aead_aes_256_gcm::CipherCtx for WinCryptoAeadAes256Gcm {
-    /// Create a new context for AES-256-GCM encryption/decryption.
-    ///
-    /// The encrypt flag is ignored, since it is not needed and the same
-    /// key can be used for both encryption and decryption.
-    fn new(key: aead_aes_256_gcm::AeadKey, _encrypt: bool) -> Self
-    where
-        Self: Sized,
-    {
+impl std::fmt::Debug for WinCryptoAeadAes256Gcm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WinCryptoAeadAes256Gcm").finish()
+    }
+}
+
+impl WinCryptoAeadAes256Gcm {
+    fn new(key: [u8; 32]) -> Self {
         Self {
-            key: SrtpKey::create_aes_gcm_key(&key).expect("generate sym key"),
+            key: str0m_wincrypto::SrtpKey::create_aes_gcm_key(&key).expect("AES-256-GCM key"),
         }
     }
+}
 
+impl AeadAes256GcmCipher for WinCryptoAeadAes256Gcm {
     fn encrypt(
         &mut self,
-        iv: &[u8; aead_aes_256_gcm::IV_LEN],
-        additional_auth_data: &[u8],
-        plain_text: &[u8],
-        cipher_text: &mut [u8],
+        iv: &[u8; 12],
+        aad: &[u8],
+        input: &[u8],
+        output: &mut [u8],
     ) -> Result<(), CryptoError> {
-        srtp_aead_aes_gcm_encrypt(&self.key, iv, additional_auth_data, plain_text, cipher_text)?;
+        // wincrypto appends tag to output (output contains ciphertext + 16-byte tag)
+        str0m_wincrypto::srtp_aead_aes_gcm_encrypt(&self.key, iv, aad, input, output)
+            .map_err(|e| CryptoError::Other(format!("AES-256-GCM encrypt: {}", e)))?;
         Ok(())
     }
 
     fn decrypt(
         &mut self,
-        iv: &[u8; aead_aes_256_gcm::IV_LEN],
-        additional_auth_data: &[&[u8]],
-        cipher_text: &[u8],
-        plain_text: &mut [u8],
+        iv: &[u8; 12],
+        aads: &[&[u8]],
+        input: &[u8],
+        output: &mut [u8],
     ) -> Result<usize, CryptoError> {
-        Ok(srtp_aead_aes_gcm_decrypt(
-            &self.key,
-            iv,
-            additional_auth_data,
-            cipher_text,
-            plain_text,
-        )?)
+        // wincrypto expects input to contain ciphertext + tag
+        let written =
+            str0m_wincrypto::srtp_aead_aes_gcm_decrypt(&self.key, iv, aads, input, output)
+                .map_err(|e| CryptoError::Other(format!("AES-256-GCM decrypt: {}", e)))?;
+        Ok(written)
     }
 }

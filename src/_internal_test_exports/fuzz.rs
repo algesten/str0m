@@ -4,14 +4,13 @@ use std::time::Duration;
 use std::time::Instant;
 
 use crate::change::{SdpAnswer, SdpOffer};
-use crate::crypto::KeyingMaterial;
-use crate::crypto::SrtpProfile;
 use crate::format::Codec;
 use crate::packet::{DepacketizingBuffer, RtpMeta};
 use crate::rtp_::{Frequency, MediaTime, RtpHeader};
 use crate::streams::register::ReceiverRegister;
 use crate::streams::rtx_cache_buf::EvictingBuffer;
 
+#[allow(unused)]
 use super::setup::{random_config, random_extmap};
 use super::Rng;
 
@@ -44,33 +43,6 @@ pub fn rtp_header(data: &[u8]) -> Option<()> {
     let len = rng.usize(76)?;
     RtpHeader::_parse(rng.slice(len)?, &exts);
     Some(())
-}
-
-#[cfg(feature = "_internal_test_exports")]
-pub fn rtp_packet(data: &[u8]) -> Option<()> {
-    use crate::Session;
-    let mut rng = Rng::new(data);
-
-    let config = random_config(&mut rng)?;
-
-    let mut session = Session::new(&config);
-    session.set_keying_material(
-        KeyingMaterial::new(rng.slice(16)?.to_vec()),
-        &crate::crypto::SrtpCrypto::new_openssl(),
-        SrtpProfile::PassThrough,
-        rng.bool()?,
-    );
-
-    // Loop rest of data as RTP input.
-    let start = Instant::now();
-    loop {
-        let now = start + Duration::from_micros(rng.u64(u64::MAX)?);
-        let len = rng.usize(76)?;
-        let header = RtpHeader::_parse(rng.slice(len)?, &session.exts)?;
-        let pkt_len = rng.usize(1500)?;
-        let data = rng.slice(pkt_len)?;
-        session.handle_rtp(now, header, data);
-    }
 }
 
 pub fn sdp_offer(data: &[u8]) -> Option<()> {

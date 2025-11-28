@@ -688,7 +688,7 @@ mod test {
 
         // Should NOT be at any of the locked PTs
         assert!(
-            ![103, 104, 109, 114, 117, 118].contains(&(*h264_pt as u8)),
+            ![103, 104, 109, 114, 117, 118].contains(&{ *h264_pt }),
             "H264 64001f should not conflict with locked PTs"
         );
 
