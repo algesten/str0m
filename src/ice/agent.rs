@@ -1,12 +1,13 @@
 use std::collections::{HashSet, VecDeque};
 use std::fmt;
 use std::net::SocketAddr;
-use std::panic::RefUnwindSafe;
+use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::crypto::Sha1HmacProvider;
 use crate::ice_::preference::default_local_preference;
 use crate::io::{Id, StunClass, StunMethod, StunTiming, DATAGRAM_MTU_WARN};
 use crate::io::{Protocol, StunPacket};
@@ -98,12 +99,20 @@ pub struct IceAgent {
     /// Statistics counter for the agent.
     stats: IceAgentStats,
 
+    /// SHA1-HMAC provider for STUN message integrity.
+    sha1_hmac_provider: &'static dyn Sha1HmacProvider,
+
     /// The timing configuration for STUN bindings.
     timing_config: StunTiming,
 
     /// Pluggable calculation of local preference.
     local_preference: LocalPreferenceHolder,
 }
+
+/// IceAgent contains only static references to thread-safe traits,
+/// so it's safe to use across panic boundaries.
+impl UnwindSafe for IceAgent {}
+impl RefUnwindSafe for IceAgent {}
 
 // Stupid holder to implement fmt::Debug
 struct LocalPreferenceHolder(Arc<dyn LocalPreference>);
@@ -277,14 +286,11 @@ impl IceCreds {
 }
 
 impl IceAgent {
-    /// Create a new [`IceAgent`] with randomly generated credentials.
-    #[allow(unused)]
-    pub fn new() -> Self {
-        Self::with_local_credentials(IceCreds::new())
-    }
-
-    /// Create a new [`IceAgent`] with a specific set of credentials.
-    pub fn with_local_credentials(local_credentials: IceCreds) -> Self {
+    /// Create a new [`IceAgent`] with a specific set of credentials and SHA1-HMAC provider.
+    pub fn new(
+        local_credentials: IceCreds,
+        sha1_hmac_provider: &'static dyn Sha1HmacProvider,
+    ) -> Self {
         IceAgent {
             last_now: None,
             ice_lite: false,
@@ -307,6 +313,7 @@ impl IceAgent {
             timing_advance: Duration::from_millis(50),
             timing_config: StunTiming::default(),
             local_preference: LocalPreferenceHolder(Arc::new(default_local_preference)),
+            sha1_hmac_provider,
         }
     }
 
@@ -944,9 +951,12 @@ impl IceAgent {
     pub fn accepts_message(&self, message: &StunMessage<'_>) -> bool {
         trace!("Check if accepts message: {:?}", message);
 
+        let sha1_hmac =
+            |key: &[u8], payloads: &[&[u8]]| self.sha1_hmac_provider.sha1_hmac(key, payloads);
+
         let do_integrity_check = |is_request: bool| -> bool {
             let (_, password) = self.stun_credentials(is_request);
-            let integrity_passed = message.verify(password.as_bytes());
+            let integrity_passed = message.verify(password.as_bytes(), sha1_hmac);
 
             // The integrity is always the last thing we check
             if integrity_passed {
@@ -1486,8 +1496,10 @@ impl IceAgent {
 
         let mut buf = vec![0_u8; DATAGRAM_MTU];
 
+        let sha1_hmac =
+            |key: &[u8], payloads: &[&[u8]]| self.sha1_hmac_provider.sha1_hmac(key, payloads);
         let n = reply
-            .to_bytes(Some(password.as_bytes()), &mut buf)
+            .to_bytes(Some(password.as_bytes()), &mut buf, sha1_hmac)
             .expect("IO error writing STUN reply");
         buf.truncate(n);
 
@@ -1533,8 +1545,10 @@ impl IceAgent {
 
         let mut buf = vec![0_u8; DATAGRAM_MTU];
 
+        let sha1_hmac =
+            |key: &[u8], payloads: &[&[u8]]| self.sha1_hmac_provider.sha1_hmac(key, payloads);
         let n = binding
-            .to_bytes(Some(password.as_bytes()), &mut buf)
+            .to_bytes(Some(password.as_bytes()), &mut buf, sha1_hmac)
             .expect("IO error writing STUN reply");
         buf.truncate(n);
 
@@ -1812,6 +1826,14 @@ mod test {
         }
     }
 
+    /// Create a new test IceAgent with random credentials and OpenSSL provider.
+    fn new_test_agent() -> IceAgent {
+        IceAgent::new(
+            IceCreds::new(),
+            crate::crypto::test_default_provider().sha1_hmac_provider,
+        )
+    }
+
     fn ipv4_1() -> SocketAddr {
         "1.2.3.4:5000".parse().unwrap()
     }
@@ -1833,7 +1855,7 @@ mod test {
 
     #[test]
     fn local_preference_host() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
 
         agent
             .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
@@ -1859,7 +1881,7 @@ mod test {
 
     #[test]
     fn discard_adding_redundant() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
 
         // Frequently, a server-reflexive candidate and a host candidate will be
         // redundant when the agent is not behind a NAT.
@@ -1874,7 +1896,7 @@ mod test {
 
     #[test]
     fn does_not_invalidate_local_candidate_with_same_ip_but_different_kind() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
         let host = Candidate::host(ipv4_1(), "udp").unwrap();
         let srflx = Candidate::server_reflexive(ipv4_1(), ipv4_1(), "udp").unwrap();
 
@@ -1888,7 +1910,7 @@ mod test {
 
     #[test]
     fn does_not_invalidate_remote_candidate_with_same_ip_but_different_kind() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
         let host = Candidate::host(ipv4_1(), "udp").unwrap();
         let srflx = Candidate::server_reflexive(ipv4_1(), ipv4_1(), "udp").unwrap();
 
@@ -1903,7 +1925,7 @@ mod test {
 
     #[test]
     fn discard_adding_redundant_by_address_and_protocol() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
 
         // Candidates with the same SocketAddr but different protocols are considered distinct.
         assert!(agent
@@ -1935,7 +1957,7 @@ mod test {
 
     #[test]
     fn discard_already_added_redundant() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
 
         // Frequently, a server-reflexive candidate and a host candidate will be
         // redundant when the agent is not behind a NAT.
@@ -1958,7 +1980,7 @@ mod test {
 
     #[test]
     fn form_pairs() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
 
         // local 0
         agent
@@ -1995,7 +2017,7 @@ mod test {
 
     #[test]
     fn form_pairs_skip_redundant() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
 
         agent.add_remote_candidate(Candidate::host(ipv4_3(), "udp").unwrap());
         agent.add_remote_candidate(Candidate::host(ipv4_3(), "tcp").unwrap());
@@ -2023,7 +2045,7 @@ mod test {
 
     #[test]
     fn form_pairs_replace_redundant() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
 
         agent.add_remote_candidate(Candidate::host(ipv4_3(), "udp").unwrap());
         agent
@@ -2043,7 +2065,7 @@ mod test {
 
     #[test]
     fn form_pairs_replace_remote_redundant() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
         agent.set_ice_lite(true);
 
         // This is just prepping the test, this would have been discovered in a STUN packet.
@@ -2083,7 +2105,7 @@ mod test {
 
     #[test]
     fn form_pairs_skip_invalidated_local() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
 
         let local = Candidate::test_peer_rflx(ipv4_2(), ipv4_1(), "udp");
 
@@ -2098,7 +2120,7 @@ mod test {
 
     #[test]
     fn form_pairs_skip_invalidated_remote() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
 
         let remote = Candidate::host(ipv4_3(), "udp").unwrap();
 
@@ -2115,7 +2137,7 @@ mod test {
 
     #[test]
     fn poll_time_must_timing_advance() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
         agent
             .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
             .unwrap();
@@ -2130,7 +2152,7 @@ mod test {
 
     #[test]
     fn no_disconnect_before_remote_candidates() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
 
         let now = Instant::now();
         agent.handle_timeout(now);
@@ -2151,7 +2173,7 @@ mod test {
 
     #[test]
     fn does_not_accept_response_with_unknown_transaction_id() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
         let remote_creds = IceCreds::new();
         let mut remote_candidate = Candidate::host(ipv4_3(), "udp").unwrap();
         remote_candidate.set_ufrag(&remote_creds.ufrag);
@@ -2197,13 +2219,13 @@ mod test {
         ];
         let stun_msg = StunMessage::parse(BINDING).unwrap();
 
-        let agent = IceAgent::new();
+        let agent = new_test_agent();
         assert!(!agent.accepts_message(&stun_msg));
     }
 
     #[test]
     fn queues_stun_binding_before_remote_creds() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
         agent
             .add_local_candidate(Candidate::host(ipv4_1(), "udp").unwrap())
             .unwrap();
@@ -2249,7 +2271,7 @@ mod test {
 
     #[test]
     pub fn discards_packet_from_unknown_candidate() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
         let remote_creds = IceCreds::new();
         agent.set_remote_credentials(remote_creds.clone());
 
@@ -2271,7 +2293,7 @@ mod test {
 
     #[test]
     pub fn no_disconnect_missing_local_candidates() {
-        let mut agent = IceAgent::new();
+        let mut agent = new_test_agent();
         agent.set_remote_credentials(IceCreds::new().clone());
 
         agent.add_remote_candidate(host("1.1.1.1:1000", "udp"));
@@ -2306,8 +2328,13 @@ mod test {
     fn serialize_stun_msg(msg: StunMessage<'_>, password: &str) -> Vec<u8> {
         let mut buf = vec![0_u8; DATAGRAM_MTU];
 
+        let sha1_hmac = |key: &[u8], payloads: &[&[u8]]| {
+            crate::crypto::test_default_provider()
+                .sha1_hmac_provider
+                .sha1_hmac(key, payloads)
+        };
         let n = msg
-            .to_bytes(Some(password.as_bytes()), &mut buf)
+            .to_bytes(Some(password.as_bytes()), &mut buf, sha1_hmac)
             .expect("IO error writing STUN message");
         buf.truncate(n);
 

@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 
 // Re-export all error types for convenience
-pub use crate::dtls::DtlsError;
+pub use crate::crypto::DtlsError;
 pub use crate::ice_::IceError;
 pub use crate::io::NetError;
 pub use crate::packet::PacketError;

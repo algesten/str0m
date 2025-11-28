@@ -1041,9 +1041,10 @@ mod test {
     impl TestAgent {
         pub fn new(span: Span) -> Self {
             let now = Instant::now();
+            let provider = crate::crypto::test_default_provider();
             TestAgent {
                 start_time: now,
-                agent: IceAgent::new(),
+                agent: IceAgent::new(IceCreds::new(), provider.sha1_hmac_provider),
                 span,
                 events: vec![],
                 progress_count: 0,
