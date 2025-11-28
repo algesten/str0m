@@ -2,6 +2,7 @@
 
   * New CryptoProvider API #760
   * Update H.264 profile and level matching logic #758
+  * Fix off-by-one nack reports #748
 
 # 0.12.0
 
