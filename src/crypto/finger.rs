@@ -6,7 +6,7 @@ use subtle::ConstantTimeEq;
 ///
 /// DTLS uses self signed certificates, and the fingerprint is communicated via
 /// SDP to let the remote peer verify who is connecting.
-#[derive(Debug, Clone, Hash)]
+#[derive(Debug, Clone)]
 pub struct Fingerprint {
     /// Hash function used to produce the `bytes`.
     ///
@@ -25,6 +25,13 @@ impl PartialEq for Fingerprint {
 }
 
 impl Eq for Fingerprint {}
+
+impl std::hash::Hash for Fingerprint {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.hash_func.hash(state);
+        self.bytes.hash(state);
+    }
+}
 
 // DO NOT CHANGE!
 // This format is exactly what's needed in n SDP.
