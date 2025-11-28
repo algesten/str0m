@@ -1,5 +1,8 @@
 # Unreleased
 
+  * New CryptoProvider API #760
+  * Update H.264 profile and level matching logic #758
+
 # 0.12.0
 
   * Bump str0m-wincrypto to 0.2.1
