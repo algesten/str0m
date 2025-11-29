@@ -1,0 +1,28 @@
+[package]
+name = "str0m-apple-crypto"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Apple CommonCrypto/Security framework backend for str0m WebRTC"
+repository = "https://github.com/algesten/str0m"
+keywords = ["webrtc", "crypto", "apple", "macos", "ios"]
+categories = ["cryptography", "multimedia"]
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+# str0m for CryptoProvider traits and dimpl re-exports
+str0m = { version = "0.12", path = "..", default-features = false }
+
+# Apple platform bindings
+core-foundation = "0.10"
+security-framework = "3.5"
+security-framework-sys = "2.15"
+
+# ASN.1/X.509 parsing for certificate handling
+der = "0.7"
+pkcs8 = { version = "0.10", features = ["pem"] }
+sec1 = "0.7"
+spki = "0.7"
+x509-cert = { version = "0.2", default-features = false }
+
+# Constant-time comparison for crypto
+subtle = "2.0.0"

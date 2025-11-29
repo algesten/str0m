@@ -6,6 +6,26 @@ pub use provider::{DtlsCert, DtlsInstance, DtlsOutput, DtlsProvider, KeyingMater
 pub use provider::{SrtpProvider, SupportedAeadAes128Gcm};
 pub use provider::{SupportedAeadAes256Gcm, SupportedAes128CmSha1_80};
 
+/// Re-exports from dimpl for implementing custom DTLS crypto providers.
+///
+/// This module re-exports all the types needed to implement a `dimpl::crypto::CryptoProvider`
+/// for use with str0m's DTLS layer. External crypto crates can depend only on str0m
+/// and use these types to provide their own crypto implementations.
+pub mod dimpl_types {
+    // Core DTLS types
+    pub use dimpl::{Config, Dtls, DtlsCertificate};
+
+    // Buffer types
+    pub use dimpl::buffer::{Buf, TmpBuf};
+
+    // Crypto provider trait and types
+    pub use dimpl::crypto::{
+        Aad, ActiveKeyExchange, Cipher, CipherSuite, CryptoProvider, HashAlgorithm, HashContext,
+        HashProvider, HmacProvider, KeyProvider, NamedGroup, Nonce, PrfProvider, SecureRandom,
+        SignatureAlgorithm, SignatureVerifier, SigningKey, SupportedCipherSuite, SupportedKxGroup,
+    };
+}
+
 #[cfg(any(test, feature = "_internal_test_exports"))]
 #[allow(unused)]
 pub(crate) use provider::test_default_provider;
