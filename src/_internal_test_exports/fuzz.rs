@@ -56,7 +56,7 @@ pub fn rtp_packet(data: &[u8]) -> Option<()> {
     let header = RtpHeader::_parse(packet, &exts)?;
 
     // Extract the payload (data after the header)
-    let _payload = &packet[header.header_len..];
+    let _payload = packet.get(header.header_len..)?;
 
     Some(())
 }
