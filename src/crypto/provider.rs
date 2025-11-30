@@ -61,6 +61,9 @@ impl CryptoProvider {
     /// Create a crypto provider based on enabled feature flags.
     ///
     /// Priority order: aws-lc-rs, rust-crypto, openssl, wincrypto (Windows only)
+    ///
+    /// Note: For Apple platforms, use the separate `str0m-apple-crypto` crate
+    /// and call `str0m_apple_crypto::default_provider()` directly.
     #[allow(unreachable_code, clippy::needless_return)]
     pub fn from_feature_flags() -> CryptoProvider {
         #[cfg(feature = "aws-lc-rs")]
@@ -77,7 +80,7 @@ impl CryptoProvider {
 
         panic!(
             "No crypto provider available. Enable one of: aws-lc-rs, 
-             rust-crypto, openssl, wincrypto (Windows only)"
+             rust-crypto, openssl, wincrypto (Windows only), or use str0m-apple-crypto crate"
         );
     }
 

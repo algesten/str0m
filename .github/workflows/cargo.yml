@@ -44,6 +44,22 @@ jobs:
         if: matrix.crypto != 'openssl' || runner.os != 'Windows'
         run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features ${{ matrix.crypto }}
 
+  apple-crypto:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test apple_crypto crate
+        run: cargo +${{steps.toolchain.outputs.name}} test --manifest-path apple_crypto/Cargo.toml
+      - name: Test crypto integration tests
+        run: cargo +${{steps.toolchain.outputs.name}} test --manifest-path crypto-integration-tests/Cargo.toml
+
   snowflake:
     runs-on: ubuntu-latest
     steps:
