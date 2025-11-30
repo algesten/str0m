@@ -45,6 +45,22 @@ pub fn rtp_header(data: &[u8]) -> Option<()> {
     Some(())
 }
 
+pub fn rtp_packet(data: &[u8]) -> Option<()> {
+    let mut rng = Rng::new(data);
+    let exts = random_extmap(&mut rng, 10)?;
+    // Maximum RTP packet size is typically around 1500 bytes (MTU)
+    let packet_len = rng.usize(1500)?;
+    let packet = rng.slice(packet_len)?;
+
+    // Parse the header from the packet
+    let header = RtpHeader::_parse(packet, &exts)?;
+
+    // Extract the payload (data after the header)
+    let _payload = &packet[header.header_len..];
+
+    Some(())
+}
+
 pub fn sdp_offer(data: &[u8]) -> Option<()> {
     let str = std::str::from_utf8(data).ok()?;
     let _ = SdpOffer::from_sdp_string(str);
