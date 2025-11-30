@@ -1,29 +1,19 @@
 mod provider;
 pub use provider::{AeadAes128Gcm, AeadAes128GcmCipher, AeadAes256Gcm, AeadAes256GcmCipher};
 pub use provider::{Aes128CmSha1_80, Aes128CmSha1_80Cipher, CryptoProvider, CryptoSafe};
-pub use provider::{DimplError, Sha1HmacProvider, Sha256Provider, SrtpProfile};
-pub use provider::{DtlsCert, DtlsInstance, DtlsOutput, DtlsProvider, KeyingMaterial};
+pub use provider::{Sha1HmacProvider, Sha256Provider};
 pub use provider::{SrtpProvider, SupportedAeadAes128Gcm};
 pub use provider::{SupportedAeadAes256Gcm, SupportedAes128CmSha1_80};
 
-/// Re-exports from dimpl for implementing custom DTLS crypto providers.
-///
-/// This module re-exports all the types needed to implement a `dimpl::crypto::CryptoProvider`
-/// for use with str0m's DTLS layer. External crypto crates can depend only on str0m
-/// and use these types to provide their own crypto implementations.
-pub mod dimpl_types {
-    // Core DTLS types
-    pub use dimpl::{Config, Dtls, DtlsCertificate};
+/// DTLS related types and traits.
+pub mod dtls {
+    pub use super::provider::{DtlsInstance, DtlsProvider};
 
-    // Buffer types
-    pub use dimpl::buffer::{Buf, TmpBuf};
-
-    // Crypto provider trait and types
-    pub use dimpl::crypto::{
-        Aad, ActiveKeyExchange, Cipher, CipherSuite, CryptoProvider, HashAlgorithm, HashContext,
-        HashProvider, HmacProvider, KeyProvider, NamedGroup, Nonce, PrfProvider, SecureRandom,
-        SignatureAlgorithm, SignatureVerifier, SigningKey, SupportedCipherSuite, SupportedKxGroup,
-    };
+    pub use dimpl::DtlsCertificate as DtlsCert;
+    pub use dimpl::KeyingMaterial;
+    pub use dimpl::SrtpProfile;
+    // Note: dimpl::Error is renamed to DtlsImplError to avoid conflict with str0m's DtlsError
+    pub use dimpl::{Error as DtlsImplError, Output as DtlsOutput};
 }
 
 #[cfg(any(test, feature = "_internal_test_exports"))]

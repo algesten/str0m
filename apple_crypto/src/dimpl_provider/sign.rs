@@ -10,12 +10,13 @@ use core_foundation::error::CFError;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
 use der::Decode;
+use dimpl::buffer::Buf;
 use security_framework::key::{Algorithm, SecKey};
 use spki::ObjectIdentifier;
 use x509_cert::Certificate as X509Certificate;
 
-use str0m::crypto::dimpl_types::{Buf, CipherSuite, HashAlgorithm, KeyProvider};
-use str0m::crypto::dimpl_types::{SignatureAlgorithm, SignatureVerifier, SigningKey as SigningKeyTrait};
+use dimpl::crypto::{CipherSuite, HashAlgorithm, KeyProvider};
+use dimpl::crypto::{SignatureAlgorithm, SignatureVerifier, SigningKey as SigningKeyTrait};
 
 use super::hash::{sha256, sha384};
 

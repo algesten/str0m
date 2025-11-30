@@ -126,11 +126,11 @@ impl DtlsInstance for WinCryptoDtlsInstance {
         self.dtls.set_as_client(active).expect("set_as_client");
     }
 
-    fn handle_packet(&mut self, packet: &[u8]) -> Result<(), crate::crypto::DimplError> {
+    fn handle_packet(&mut self, packet: &[u8]) -> Result<(), crate::crypto::DtlsImplError> {
         let event = self
             .dtls
             .handle_receive(Some(packet))
-            .map_err(|e| crate::crypto::DimplError::CryptoError(format!("DTLS error: {}", e)))?;
+            .map_err(|e| crate::crypto::DtlsImplError::CryptoError(format!("DTLS error: {}", e)))?;
 
         // Store the event for poll_output to retrieve
         self.process_dtls_event(event);
@@ -171,17 +171,17 @@ impl DtlsInstance for WinCryptoDtlsInstance {
         DtlsOutput::Timeout(base_time + std::time::Duration::from_millis(100))
     }
 
-    fn handle_timeout(&mut self, now: Instant) -> Result<(), crate::crypto::DimplError> {
+    fn handle_timeout(&mut self, now: Instant) -> Result<(), crate::crypto::DtlsImplError> {
         self.last_timeout = Some(now);
         // SChannel handles DTLS retransmissions internally, so we don't need to do anything here.
         // The handshake is driven by handle_packet receiving data from the peer.
         Ok(())
     }
 
-    fn send_application_data(&mut self, data: &[u8]) -> Result<(), crate::crypto::DimplError> {
+    fn send_application_data(&mut self, data: &[u8]) -> Result<(), crate::crypto::DtlsImplError> {
         self.dtls
             .send_data(data)
-            .map_err(|e| crate::crypto::DimplError::CryptoError(format!("DTLS send: {}", e)))?;
+            .map_err(|e| crate::crypto::DtlsImplError::CryptoError(format!("DTLS send: {}", e)))?;
         Ok(())
     }
 

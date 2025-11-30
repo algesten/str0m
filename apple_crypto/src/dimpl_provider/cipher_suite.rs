@@ -1,7 +1,8 @@
 //! Cipher suite implementations using Apple CommonCrypto.
 
-use str0m::crypto::dimpl_types::{Aad, Buf, Cipher, CipherSuite, HashAlgorithm, Nonce};
-use str0m::crypto::dimpl_types::{SupportedCipherSuite, TmpBuf};
+use dimpl::buffer::{Buf, TmpBuf};
+use dimpl::crypto::SupportedCipherSuite;
+use dimpl::crypto::{Aad, Cipher, CipherSuite, HashAlgorithm, Nonce};
 
 use crate::ffi::ccNoPadding;
 use crate::ffi::kCCAlgorithmAES;

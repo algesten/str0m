@@ -12,7 +12,7 @@ mod kx_group;
 mod sign;
 mod tls12;
 
-use str0m::crypto::dimpl_types::{CryptoProvider, SecureRandom};
+use dimpl::crypto::{CryptoProvider, SecureRandom};
 
 /// Get the Apple Security Framework based crypto provider for dimpl.
 pub fn default_provider() -> CryptoProvider {

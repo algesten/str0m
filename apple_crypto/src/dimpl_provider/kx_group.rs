@@ -6,9 +6,10 @@ use core_foundation::dictionary::CFMutableDictionary;
 use core_foundation::error::CFError;
 use core_foundation::number::CFNumber;
 use core_foundation::string::CFString;
+use dimpl::buffer::Buf;
 use security_framework::key::{GenerateKeyOptions, KeyType, SecKey};
 
-use str0m::crypto::dimpl_types::{ActiveKeyExchange, Buf, NamedGroup, SupportedKxGroup};
+use dimpl::crypto::{ActiveKeyExchange, NamedGroup, SupportedKxGroup};
 
 // Security framework key exchange algorithm
 #[link(name = "Security", kind = "framework")]

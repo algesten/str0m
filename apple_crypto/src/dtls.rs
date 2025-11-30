@@ -8,7 +8,8 @@ use core_foundation::data::CFData;
 use security_framework::key::{GenerateKeyOptions, KeyType, SecKey};
 use security_framework_sys::key::SecKeyCopyExternalRepresentation;
 
-use str0m::crypto::{CryptoError, DimplError, DtlsCert, DtlsInstance, DtlsOutput, DtlsProvider};
+use str0m::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
+use str0m::crypto::CryptoError;
 
 // ============================================================================
 // Certificate Generation
@@ -325,7 +326,7 @@ fn encode_ec_private_key(
 // DTLS Provider Implementation
 // ============================================================================
 
-use str0m::crypto::dimpl_types::{Config, Dtls, DtlsCertificate};
+use dimpl::{Config, Dtls, DtlsCertificate};
 
 #[derive(Debug)]
 pub(crate) struct AppleCryptoDtlsProvider;
@@ -372,7 +373,7 @@ impl DtlsInstance for AppleCryptoDtlsInstance {
         self.dtls.set_active(active);
     }
 
-    fn handle_packet(&mut self, packet: &[u8]) -> Result<(), DimplError> {
+    fn handle_packet(&mut self, packet: &[u8]) -> Result<(), DtlsImplError> {
         self.dtls.handle_packet(packet)
     }
 
@@ -380,11 +381,11 @@ impl DtlsInstance for AppleCryptoDtlsInstance {
         self.dtls.poll_output(buf)
     }
 
-    fn handle_timeout(&mut self, now: Instant) -> Result<(), DimplError> {
+    fn handle_timeout(&mut self, now: Instant) -> Result<(), DtlsImplError> {
         self.dtls.handle_timeout(now)
     }
 
-    fn send_application_data(&mut self, data: &[u8]) -> Result<(), DimplError> {
+    fn send_application_data(&mut self, data: &[u8]) -> Result<(), DtlsImplError> {
         self.dtls.send_application_data(data)
     }
 

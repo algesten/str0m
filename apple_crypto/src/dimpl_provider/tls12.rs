@@ -1,6 +1,7 @@
 //! TLS 1.2 PRF implementation using Apple CommonCrypto.
 
-use str0m::crypto::dimpl_types::{Buf, HashAlgorithm, PrfProvider};
+use dimpl::buffer::Buf;
+use dimpl::crypto::{HashAlgorithm, PrfProvider};
 
 use crate::ffi::{kCCHmacAlgSHA256, kCCHmacAlgSHA384, CCHmac};
 

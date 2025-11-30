@@ -1,6 +1,6 @@
 //! HMAC implementations using Apple CommonCrypto.
 
-use str0m::crypto::dimpl_types::HmacProvider;
+use dimpl::crypto::HmacProvider;
 
 use crate::ffi::{kCCHmacAlgSHA256, CCHmac};
 

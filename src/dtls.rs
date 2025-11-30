@@ -2,9 +2,11 @@ use std::io;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::time::Instant;
 
+use crate::crypto::dtls::{DtlsCert, DtlsOutput};
+use crate::crypto::dtls::{DtlsInstance, DtlsProvider};
+use crate::crypto::Fingerprint;
 use crate::crypto::Sha256Provider;
-use crate::crypto::{CryptoError, DtlsCert, DtlsError, DtlsInstance};
-use crate::crypto::{DtlsOutput, DtlsProvider, Fingerprint};
+use crate::crypto::{CryptoError, DtlsError};
 
 impl DtlsError {
     pub(crate) fn is_would_block(&self) -> bool {

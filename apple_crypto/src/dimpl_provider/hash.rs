@@ -1,6 +1,7 @@
 //! Hash implementations using Apple CommonCrypto.
 
-use str0m::crypto::dimpl_types::{Buf, HashAlgorithm, HashContext, HashProvider};
+use dimpl::buffer::Buf;
+use dimpl::crypto::{HashAlgorithm, HashContext, HashProvider};
 
 use crate::ffi::CC_SHA256_Final;
 use crate::ffi::CC_SHA256_Init;
