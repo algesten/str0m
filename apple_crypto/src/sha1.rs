@@ -2,7 +2,7 @@
 
 use str0m::crypto::Sha1HmacProvider;
 
-use crate::ffi::{CCHmacContext, CCHmacFinal, CCHmacInit, CCHmacUpdate, kCCHmacAlgSHA1};
+use crate::ffi::{kCCHmacAlgSHA1, CCHmacContext, CCHmacFinal, CCHmacInit, CCHmacUpdate};
 
 // SHA1 HMAC Provider Implementation
 

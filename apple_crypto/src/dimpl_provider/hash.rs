@@ -3,14 +3,14 @@
 use dimpl::buffer::Buf;
 use dimpl::crypto::{HashAlgorithm, HashContext, HashProvider};
 
-use crate::ffi::CC_LONG;
-use crate::ffi::CC_SHA256_CTX;
 use crate::ffi::CC_SHA256_Final;
 use crate::ffi::CC_SHA256_Init;
 use crate::ffi::CC_SHA256_Update;
 use crate::ffi::CC_SHA384_Final;
 use crate::ffi::CC_SHA384_Init;
 use crate::ffi::CC_SHA384_Update;
+use crate::ffi::CC_LONG;
+use crate::ffi::CC_SHA256_CTX;
 use crate::ffi::CC_SHA512_CTX;
 
 #[derive(Debug)]

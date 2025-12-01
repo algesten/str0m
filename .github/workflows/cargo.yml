@@ -151,8 +151,10 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: fmt
+        if: matrix.rust == 'stable'
         run: cargo +${{steps.toolchain.outputs.name}} fmt --manifest-path apple_crypto/Cargo.toml -- --check
       - name: clippy
+        if: matrix.rust == 'stable'
         run: cargo +${{steps.toolchain.outputs.name}} clippy --manifest-path apple_crypto/Cargo.toml -- -D warnings
       - name: test
         run: cargo +${{steps.toolchain.outputs.name}} test --manifest-path apple_crypto/Cargo.toml
@@ -174,8 +176,10 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: fmt
+        if: matrix.rust == 'stable'
         run: cargo +${{steps.toolchain.outputs.name}} fmt --manifest-path crypto-integration-tests/Cargo.toml -- --check
       - name: clippy
+        if: matrix.rust == 'stable'
         run: cargo +${{steps.toolchain.outputs.name}} clippy --manifest-path crypto-integration-tests/Cargo.toml -- -D warnings
       - name: test
         run: cargo +${{steps.toolchain.outputs.name}} test --manifest-path crypto-integration-tests/Cargo.toml

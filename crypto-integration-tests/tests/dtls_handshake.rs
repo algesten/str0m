@@ -8,12 +8,12 @@
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
-use str0m::RtcError;
 use str0m::media::{Direction, MediaKind};
+use str0m::RtcError;
 use tracing::info_span;
 
 mod common;
-use common::{TestRtc, init_crypto, init_log, progress};
+use common::{init_crypto, init_log, progress, TestRtc};
 
 /// Test that DTLS handshake completes successfully with Apple crypto.
 #[test]

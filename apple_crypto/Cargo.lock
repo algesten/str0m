@@ -483,6 +483,7 @@ dependencies = [
 name = "str0m-apple-crypto"
 version = "0.1.0"
 dependencies = [
+ "base64ct",
  "core-foundation",
  "der",
  "dimpl",

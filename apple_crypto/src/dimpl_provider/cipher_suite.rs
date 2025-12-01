@@ -4,6 +4,12 @@ use dimpl::buffer::{Buf, TmpBuf};
 use dimpl::crypto::SupportedCipherSuite;
 use dimpl::crypto::{Aad, Cipher, CipherSuite, HashAlgorithm, Nonce};
 
+use crate::ffi::ccNoPadding;
+use crate::ffi::kCCAlgorithmAES;
+use crate::ffi::kCCDecrypt;
+use crate::ffi::kCCEncrypt;
+use crate::ffi::kCCModeGCM;
+use crate::ffi::kCCSuccess;
 use crate::ffi::CCCryptorCreateWithMode;
 use crate::ffi::CCCryptorGCMAddAAD;
 use crate::ffi::CCCryptorGCMAddIV;
@@ -13,12 +19,6 @@ use crate::ffi::CCCryptorGCMFinal;
 use crate::ffi::CCCryptorRef;
 use crate::ffi::CryptorGuard;
 use crate::ffi::GCM_TAG_LEN;
-use crate::ffi::ccNoPadding;
-use crate::ffi::kCCAlgorithmAES;
-use crate::ffi::kCCDecrypt;
-use crate::ffi::kCCEncrypt;
-use crate::ffi::kCCModeGCM;
-use crate::ffi::kCCSuccess;
 
 /// AES-GCM cipher implementation using CommonCrypto.
 struct AesGcm {
