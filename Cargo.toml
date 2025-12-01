@@ -35,10 +35,9 @@ unversioned = []
 # Redacts personally identifiable information (PII) from logs debug and above
 pii = []
 
-# The examples require openssl because of rouille, not because of str0m.
-# However windows fails to compile with rouille/ssl, so we can't have it on
-# in the dev-dependencies.
-examples = ["rouille/ssl"]
+# The examples require TLS for the web server via rouille.
+# We use rustls instead of ssl to avoid OpenSSL dependency issues on Windows.
+examples = ["rouille/rustls"]
 
 _internal_dont_use_log_stats = []
 _internal_test_exports = []
