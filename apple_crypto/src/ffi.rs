@@ -48,7 +48,7 @@ pub(crate) const kCCHmacAlgSHA384: CCHmacAlgorithm = 3;
 
 // CommonCrypto Function Declarations
 
-extern "C" {
+unsafe extern "C" {
     // CCCryptor Functions (for AES-GCM, AES-CTR, etc.)
 
     pub(crate) fn CCCryptorCreateWithMode(

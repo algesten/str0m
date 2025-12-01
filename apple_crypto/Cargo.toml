@@ -1,7 +1,7 @@
 [package]
 name = "str0m-apple-crypto"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "Apple CommonCrypto/Security framework backend for str0m WebRTC"
 repository = "https://github.com/algesten/str0m"
@@ -9,7 +9,7 @@ keywords = ["webrtc", "crypto", "apple", "macos", "ios"]
 categories = ["cryptography", "multimedia"]
 
 # MSRV
-rust-version = "1.81.0"
+rust-version = "1.85.0"
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 # str0m for CryptoProvider traits and dimpl re-exports

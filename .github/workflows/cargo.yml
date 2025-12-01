@@ -138,7 +138,7 @@ jobs:
   apple-crypto:
     strategy:
       matrix:
-        rust: [stable, beta, 1.81.0]
+        rust: [stable, beta, 1.85.0]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -160,7 +160,7 @@ jobs:
   crypto-integration-tests:
     strategy:
       matrix:
-        rust: [stable, beta, 1.81.0]
+        rust: [stable, beta, 1.85.0]
         os: [macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
