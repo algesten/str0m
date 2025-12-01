@@ -11,9 +11,9 @@ pub(crate) struct AppleCryptoSha256Provider;
 impl Sha256Provider for AppleCryptoSha256Provider {
     fn sha256(&self, data: &[u8]) -> [u8; 32] {
         let mut result = [0u8; 32];
-        unsafe {
-            CC_SHA256(data.as_ptr(), data.len() as u32, result.as_mut_ptr());
-        }
+        // SAFETY: CC_SHA256 is safe with valid data pointer and length from slice,
+        // and result buffer is properly sized for SHA256 (32 bytes)
+        unsafe { CC_SHA256(data.as_ptr(), data.len() as u32, result.as_mut_ptr()) };
         result
     }
 }

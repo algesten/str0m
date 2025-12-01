@@ -91,7 +91,7 @@ impl EcdhKeyExchange {
         buf.clear();
         buf.extend_from_slice(&public_key_data);
 
-        Ok(EcdhKeyExchange {
+        Ok(Self {
             private_key,
             public_key_bytes: buf,
             group,

@@ -186,12 +186,8 @@ impl KeyProvider for AppleCryptoKeyProvider {
 /// For P-384: 1 + 48 + 48 + 48 = 145 bytes
 fn extract_apple_key_data(key_der: &[u8]) -> Result<(EcCurve, Vec<u8>), String> {
     // Try PKCS#8 format first - extract the SEC1 ECPrivateKey from inside
-    let sec1_data = if let Ok(info) = pkcs8::PrivateKeyInfo::from_der(key_der) {
-        info.private_key.to_vec()
-    } else {
-        // Assume it's already SEC1 format
-        key_der.to_vec()
-    };
+    let sec1_data = pkcs8::PrivateKeyInfo::from_der(key_der)
+        .map_or_else(|_| key_der.to_vec(), |info| info.private_key.to_vec());
 
     // Parse SEC1 ECPrivateKey structure to extract raw bytes
     let ec_key = sec1::EcPrivateKey::try_from(sec1_data.as_slice())

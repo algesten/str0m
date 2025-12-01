@@ -45,18 +45,18 @@ impl Cipher for AesGcm {
         let mut cryptor: CCCryptorRef = std::ptr::null_mut();
         let status = unsafe {
             CCCryptorCreateWithMode(
-                kCCEncrypt,
-                kCCModeGCM,
-                kCCAlgorithmAES,
-                ccNoPadding,
-                std::ptr::null(),
-                self.key.as_ptr() as *const _,
-                self.key.len(),
-                std::ptr::null(),
-                0,
-                0,
-                0,
-                &mut cryptor,
+                kCCEncrypt,                    // operation: encrypt
+                kCCModeGCM,                    // mode: Galois/Counter Mode
+                kCCAlgorithmAES,               // algorithm: AES
+                ccNoPadding,                   // padding: none (GCM handles internally)
+                std::ptr::null(),              // iv: set later via CCCryptorGCMAddIV
+                self.key.as_ptr() as *const _, // key: encryption key
+                self.key.len(),                // keyLength: 16 or 32 bytes
+                std::ptr::null(),              // tweak: not used for GCM
+                0,                             // tweakLength: not used
+                0,                             // numRounds: 0 = default
+                0,                             // options: none
+                &mut cryptor,                  // cryptorRef: output handle
             )
         };
         if status != kCCSuccess {
@@ -114,18 +114,18 @@ impl Cipher for AesGcm {
         let mut cryptor: CCCryptorRef = std::ptr::null_mut();
         let status = unsafe {
             CCCryptorCreateWithMode(
-                kCCDecrypt,
-                kCCModeGCM,
-                kCCAlgorithmAES,
-                ccNoPadding,
-                std::ptr::null(),
-                self.key.as_ptr() as *const _,
-                self.key.len(),
-                std::ptr::null(),
-                0,
-                0,
-                0,
-                &mut cryptor,
+                kCCDecrypt,                    // operation: decrypt
+                kCCModeGCM,                    // mode: Galois/Counter Mode
+                kCCAlgorithmAES,               // algorithm: AES
+                ccNoPadding,                   // padding: none (GCM handles internally)
+                std::ptr::null(),              // iv: set later via CCCryptorGCMAddIV
+                self.key.as_ptr() as *const _, // key: decryption key
+                self.key.len(),                // keyLength: 16 or 32 bytes
+                std::ptr::null(),              // tweak: not used for GCM
+                0,                             // tweakLength: not used
+                0,                             // numRounds: 0 = default
+                0,                             // options: none
+                &mut cryptor,                  // cryptorRef: output handle
             )
         };
         if status != kCCSuccess {

@@ -4,9 +4,7 @@ use str0m::crypto::Sha1HmacProvider;
 
 use crate::ffi::{kCCHmacAlgSHA1, CCHmac};
 
-// ============================================================================
 // SHA1 HMAC Provider Implementation
-// ============================================================================
 
 pub(crate) struct AppleCryptoSha1HmacProvider;
 
@@ -26,14 +24,16 @@ impl Sha1HmacProvider for AppleCryptoSha1HmacProvider {
         }
 
         let mut result = [0u8; 20];
+        // SAFETY: CCHmac is safe with valid key, data pointers and lengths from slices,
+        // and result buffer is properly sized for SHA1 (20 bytes)
         unsafe {
             CCHmac(
-                kCCHmacAlgSHA1,
-                key.as_ptr() as *const _,
-                key.len(),
-                data.as_ptr() as *const _,
-                data.len(),
-                result.as_mut_ptr() as *mut _,
+                kCCHmacAlgSHA1,                // algorithm: HMAC-SHA1
+                key.as_ptr() as *const _,      // key: HMAC key
+                key.len(),                     // keyLength: key size
+                data.as_ptr() as *const _,     // data: message to authenticate
+                data.len(),                    // dataLength: message size
+                result.as_mut_ptr() as *mut _, // macOut: 20-byte output
             );
         }
         result

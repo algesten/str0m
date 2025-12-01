@@ -43,12 +43,12 @@ impl PrfProvider for ApplePrfProvider {
         let mut a = vec![0u8; hash_len];
         unsafe {
             CCHmac(
-                alg,
-                secret.as_ptr() as *const _,
-                secret.len(),
-                label_seed.as_ptr() as *const _,
-                label_seed.len(),
-                a.as_mut_ptr() as *mut _,
+                alg,                             // algorithm: SHA256 or SHA384
+                secret.as_ptr() as *const _,     // key: PRF secret
+                secret.len(),                    // keyLength: secret size
+                label_seed.as_ptr() as *const _, // data: label || seed
+                label_seed.len(),                // dataLength: label+seed size
+                a.as_mut_ptr() as *mut _,        // macOut: A(1) output
             );
         }
 
@@ -61,12 +61,12 @@ impl PrfProvider for ApplePrfProvider {
             let mut output_block = vec![0u8; hash_len];
             unsafe {
                 CCHmac(
-                    alg,
-                    secret.as_ptr() as *const _,
-                    secret.len(),
-                    data.as_ptr() as *const _,
-                    data.len(),
-                    output_block.as_mut_ptr() as *mut _,
+                    alg,                                 // algorithm: SHA256 or SHA384
+                    secret.as_ptr() as *const _,         // key: PRF secret
+                    secret.len(),                        // keyLength: secret size
+                    data.as_ptr() as *const _,           // data: A(i) || label || seed
+                    data.len(),                          // dataLength: data size
+                    output_block.as_mut_ptr() as *mut _, // macOut: P_hash output block
                 );
             }
 
@@ -79,12 +79,12 @@ impl PrfProvider for ApplePrfProvider {
                 let mut next_a = vec![0u8; hash_len];
                 unsafe {
                     CCHmac(
-                        alg,
-                        secret.as_ptr() as *const _,
-                        secret.len(),
-                        a.as_ptr() as *const _,
-                        a.len(),
-                        next_a.as_mut_ptr() as *mut _,
+                        alg,                           // algorithm: SHA256 or SHA384
+                        secret.as_ptr() as *const _,   // key: PRF secret
+                        secret.len(),                  // keyLength: secret size
+                        a.as_ptr() as *const _,        // data: A(i)
+                        a.len(),                       // dataLength: hash output size
+                        next_a.as_mut_ptr() as *mut _, // macOut: A(i+1) output
                     );
                 }
                 a = next_a;

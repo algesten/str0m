@@ -11,9 +11,22 @@ use security_framework_sys::key::SecKeyCopyExternalRepresentation;
 use str0m::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
 use str0m::crypto::CryptoError;
 
-// ============================================================================
 // Certificate Generation
-// ============================================================================
+
+/// Export a SecKey to its external representation as CFData.
+fn export_sec_key(key: &SecKey) -> Result<CFData, CryptoError> {
+    let mut error: core_foundation::base::CFTypeRef = std::ptr::null_mut();
+    // SAFETY: SecKeyCopyExternalRepresentation is safe to call with valid SecKey reference.
+    // The error pointer is properly initialized and the returned data is wrapped with create rule.
+    let data = unsafe {
+        SecKeyCopyExternalRepresentation(key.as_concrete_TypeRef(), &mut error as *mut _ as *mut _)
+    };
+    if data.is_null() {
+        return Err(CryptoError::Other("Failed to export key".into()));
+    }
+    // SAFETY: data is non-null and was created by SecKeyCopyExternalRepresentation
+    Ok(unsafe { CFData::wrap_under_create_rule(data) })
+}
 
 fn generate_certificate_impl() -> Result<DtlsCert, CryptoError> {
     // Generate EC P-256 key pair using Security framework
@@ -22,7 +35,7 @@ fn generate_certificate_impl() -> Result<DtlsCert, CryptoError> {
     options.set_size_in_bits(256);
 
     let private_key = SecKey::new(&options)
-        .map_err(|e| CryptoError::Other(format!("Failed to generate key pair: {}", e)))?;
+        .map_err(|e| CryptoError::Other(format!("Failed to generate key pair: {e}")))?;
 
     // Get the public key
     let public_key = private_key
@@ -31,30 +44,13 @@ fn generate_certificate_impl() -> Result<DtlsCert, CryptoError> {
 
     // Export the private key.
     // For EC P-256, Apple exports: 04 || X (32 bytes) || Y (32 bytes) || D (32 bytes) = 97 bytes
-    let mut error: core_foundation::base::CFTypeRef = std::ptr::null_mut();
-    let private_key_data = unsafe {
-        let data = SecKeyCopyExternalRepresentation(
-            private_key.as_concrete_TypeRef(),
-            &mut error as *mut _ as *mut _,
-        );
-        if data.is_null() {
-            return Err(CryptoError::Other("Failed to export private key".into()));
-        }
-        CFData::wrap_under_create_rule(data)
-    };
+    let private_key_data = export_sec_key(&private_key)
+        .map_err(|_| CryptoError::Other("Failed to export private key".into()))?;
 
     // Export the public key
     // For EC P-256, Apple exports: 04 || X (32 bytes) || Y (32 bytes) = 65 bytes
-    let public_key_data = unsafe {
-        let data = SecKeyCopyExternalRepresentation(
-            public_key.as_concrete_TypeRef(),
-            &mut error as *mut _ as *mut _,
-        );
-        if data.is_null() {
-            return Err(CryptoError::Other("Failed to export public key".into()));
-        }
-        CFData::wrap_under_create_rule(data)
-    };
+    let public_key_data = export_sec_key(&public_key)
+        .map_err(|_| CryptoError::Other("Failed to export public key".into()))?;
 
     let private_key_bytes = private_key_data.bytes().to_vec();
     let public_key_bytes = public_key_data.bytes().to_vec();
@@ -150,15 +146,14 @@ fn encode_tag(tag: u8, content: &[u8]) -> Vec<u8> {
 
 fn encode_length(len: usize, out: &mut Vec<u8>) {
     if len < 128 {
-        out.push(len as u8);
+        // len fits in a single byte
     } else if len < 256 {
         out.push(0x81);
-        out.push(len as u8);
     } else {
         out.push(0x82);
         out.push((len >> 8) as u8);
-        out.push(len as u8);
     }
+    out.push(len as u8);
 }
 
 fn encode_integer(value: &[u8]) -> Vec<u8> {
@@ -248,7 +243,7 @@ fn sign_with_ecdsa_sha256(data: &[u8], private_key: &SecKey) -> Result<Vec<u8>, 
             security_framework::key::Algorithm::ECDSASignatureMessageX962SHA256,
             data,
         )
-        .map_err(|e| CryptoError::Other(format!("Failed to sign: {}", e)))?;
+        .map_err(|e| CryptoError::Other(format!("Failed to sign: {e}")))?;
 
     Ok(signature)
 }
@@ -322,9 +317,7 @@ fn encode_ec_private_key(
     ))
 }
 
-// ============================================================================
 // DTLS Provider Implementation
-// ============================================================================
 
 use dimpl::{Config, Dtls, DtlsCertificate};
 
@@ -346,7 +339,7 @@ impl DtlsProvider for AppleCryptoDtlsProvider {
         let config = Config::builder()
             .with_crypto_provider(crate::dimpl_provider::default_provider())
             .build()
-            .map_err(|e| CryptoError::Other(format!("dimpl config creation failed: {}", e)))?;
+            .map_err(|e| CryptoError::Other(format!("dimpl config creation failed: {e}")))?;
 
         let dtls = Dtls::new(Arc::new(config), dimpl_cert);
 
@@ -354,9 +347,7 @@ impl DtlsProvider for AppleCryptoDtlsProvider {
     }
 }
 
-// ============================================================================
 // DTLS Instance Wrapper
-// ============================================================================
 
 struct AppleCryptoDtlsInstance {
     dtls: Dtls,

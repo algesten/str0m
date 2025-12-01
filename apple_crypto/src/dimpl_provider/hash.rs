@@ -34,7 +34,9 @@ struct Sha256Context {
 
 impl Sha256Context {
     fn new() -> Self {
+        // SAFETY: zeroed memory is valid for CC_SHA256_CTX
         let mut ctx = unsafe { std::mem::zeroed() };
+        // SAFETY: ctx is properly initialized zeroed memory
         unsafe { CC_SHA256_Init(&mut ctx) };
         Self { ctx }
     }
@@ -48,17 +50,15 @@ impl std::fmt::Debug for Sha256Context {
 
 impl HashContext for Sha256Context {
     fn update(&mut self, data: &[u8]) {
-        unsafe {
-            CC_SHA256_Update(&mut self.ctx, data.as_ptr(), data.len() as CC_LONG);
-        }
+        // SAFETY: ctx is valid, data pointer and length are from valid slice
+        unsafe { CC_SHA256_Update(&mut self.ctx, data.as_ptr(), data.len() as CC_LONG) };
     }
 
     fn clone_and_finalize(&self, out: &mut Buf) {
         let mut ctx_copy = self.ctx;
         let mut digest = [0u8; 32];
-        unsafe {
-            CC_SHA256_Final(digest.as_mut_ptr(), &mut ctx_copy);
-        }
+        // SAFETY: ctx_copy is valid copy, digest is properly sized buffer
+        unsafe { CC_SHA256_Final(digest.as_mut_ptr(), &mut ctx_copy) };
         out.clear();
         out.extend_from_slice(&digest);
     }
@@ -70,7 +70,9 @@ struct Sha384Context {
 
 impl Sha384Context {
     fn new() -> Self {
+        // SAFETY: zeroed memory is valid for CC_SHA512_CTX
         let mut ctx = unsafe { std::mem::zeroed() };
+        // SAFETY: ctx is properly initialized zeroed memory
         unsafe { CC_SHA384_Init(&mut ctx) };
         Self { ctx }
     }
@@ -84,17 +86,15 @@ impl std::fmt::Debug for Sha384Context {
 
 impl HashContext for Sha384Context {
     fn update(&mut self, data: &[u8]) {
-        unsafe {
-            CC_SHA384_Update(&mut self.ctx, data.as_ptr(), data.len() as CC_LONG);
-        }
+        // SAFETY: ctx is valid, data pointer and length are from valid slice
+        unsafe { CC_SHA384_Update(&mut self.ctx, data.as_ptr(), data.len() as CC_LONG) };
     }
 
     fn clone_and_finalize(&self, out: &mut Buf) {
         let mut ctx_copy = self.ctx;
         let mut digest = [0u8; 48];
-        unsafe {
-            CC_SHA384_Final(digest.as_mut_ptr(), &mut ctx_copy);
-        }
+        // SAFETY: ctx_copy is valid copy, digest is properly sized buffer
+        unsafe { CC_SHA384_Final(digest.as_mut_ptr(), &mut ctx_copy) };
         out.clear();
         out.extend_from_slice(&digest);
     }
@@ -105,9 +105,8 @@ pub(super) fn sha256(data: &[u8]) -> [u8; 32] {
     let mut ctx = Sha256Context::new();
     ctx.update(data);
     let mut digest = [0u8; 32];
-    unsafe {
-        CC_SHA256_Final(digest.as_mut_ptr(), &mut ctx.ctx);
-    }
+    // SAFETY: ctx is valid, digest is properly sized buffer
+    unsafe { CC_SHA256_Final(digest.as_mut_ptr(), &mut ctx.ctx) };
     digest
 }
 
@@ -116,8 +115,7 @@ pub(super) fn sha384(data: &[u8]) -> [u8; 48] {
     let mut ctx = Sha384Context::new();
     ctx.update(data);
     let mut digest = [0u8; 48];
-    unsafe {
-        CC_SHA384_Final(digest.as_mut_ptr(), &mut ctx.ctx);
-    }
+    // SAFETY: ctx is valid, digest is properly sized buffer
+    unsafe { CC_SHA384_Final(digest.as_mut_ptr(), &mut ctx.ctx) };
     digest
 }
