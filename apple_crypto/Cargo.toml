@@ -12,7 +12,7 @@ categories = ["cryptography", "multimedia"]
 # str0m for CryptoProvider traits and dimpl re-exports
 str0m = { version = "0.12", path = "..", default-features = false }
 
-dimpl = { git = "https://github.com/algesten/dimpl.git", rev = "ab48b1b", default-features = false }
+dimpl = { git = "https://github.com/algesten/dimpl.git", rev = "ed3e4e9", default-features = false }
 
 # Apple platform bindings
 core-foundation = "0.10"

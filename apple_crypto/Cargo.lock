@@ -151,7 +151,7 @@ dependencies = [
 [[package]]
 name = "dimpl"
 version = "0.1.5"
-source = "git+https://github.com/algesten/dimpl.git?rev=ab48b1b#ab48b1bbbbd396af7a02954286b30803560b64b7"
+source = "git+https://github.com/algesten/dimpl.git?rev=ed3e4e9#ed3e4e939651c5247ee8263cc2d9ce05c9143b88"
 dependencies = [
  "arrayvec",
  "der",
