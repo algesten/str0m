@@ -12,6 +12,7 @@
 //!
 //! # Usage
 //!
+#![allow(clippy::redundant_pub_crate)]
 //! ```ignore
 //! use str0m::Rtc;
 //! use str0m_apple_crypto::default_provider;

@@ -24,14 +24,16 @@ use crate::ffi::CCCryptorGCMFinal;
 use crate::ffi::CCCryptorRef;
 use crate::ffi::CCCryptorStatus;
 use crate::ffi::CCCryptorUpdate;
-use crate::ffi::CCOperation;
 use crate::ffi::CryptorGuard;
 use crate::ffi::GCM_TAG_LEN;
 
 // GCM Helper Functions
 
 /// Create a GCM cryptor for encryption or decryption.
-fn gcm_create_cryptor(op: CCOperation, key: &[u8]) -> Result<CCCryptorRef, CryptoError> {
+fn gcm_create_cryptor(
+    op: crate::ffi::CCOperation,
+    key: &[u8],
+) -> Result<CCCryptorRef, CryptoError> {
     let mut cryptor: CCCryptorRef = std::ptr::null_mut();
     // SAFETY: CCCryptorCreateWithMode is safe with valid key pointer and length
     let status = unsafe {

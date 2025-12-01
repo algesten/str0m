@@ -3,30 +3,12 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use core_foundation::base::TCFType;
-use core_foundation::data::CFData;
 use security_framework::key::{GenerateKeyOptions, KeyType, SecKey};
-use security_framework_sys::key::SecKeyCopyExternalRepresentation;
 
 use str0m::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
 use str0m::crypto::CryptoError;
 
 // Certificate Generation
-
-/// Export a SecKey to its external representation as CFData.
-fn export_sec_key(key: &SecKey) -> Result<CFData, CryptoError> {
-    let mut error: core_foundation::base::CFTypeRef = std::ptr::null_mut();
-    // SAFETY: SecKeyCopyExternalRepresentation is safe to call with valid SecKey reference.
-    // The error pointer is properly initialized and the returned data is wrapped with create rule.
-    let data = unsafe {
-        SecKeyCopyExternalRepresentation(key.as_concrete_TypeRef(), &mut error as *mut _ as *mut _)
-    };
-    if data.is_null() {
-        return Err(CryptoError::Other("Failed to export key".into()));
-    }
-    // SAFETY: data is non-null and was created by SecKeyCopyExternalRepresentation
-    Ok(unsafe { CFData::wrap_under_create_rule(data) })
-}
 
 fn generate_certificate_impl() -> Result<DtlsCert, CryptoError> {
     // Generate EC P-256 key pair using Security framework
@@ -42,15 +24,17 @@ fn generate_certificate_impl() -> Result<DtlsCert, CryptoError> {
         .public_key()
         .ok_or_else(|| CryptoError::Other("Failed to get public key".to_string()))?;
 
-    // Export the private key.
+    // Export the private key using the safe wrapper.
     // For EC P-256, Apple exports: 04 || X (32 bytes) || Y (32 bytes) || D (32 bytes) = 97 bytes
-    let private_key_data = export_sec_key(&private_key)
-        .map_err(|_| CryptoError::Other("Failed to export private key".into()))?;
+    let private_key_data = private_key
+        .external_representation()
+        .ok_or_else(|| CryptoError::Other("Failed to export private key".into()))?;
 
-    // Export the public key
+    // Export the public key using the safe wrapper.
     // For EC P-256, Apple exports: 04 || X (32 bytes) || Y (32 bytes) = 65 bytes
-    let public_key_data = export_sec_key(&public_key)
-        .map_err(|_| CryptoError::Other("Failed to export public key".into()))?;
+    let public_key_data = public_key
+        .external_representation()
+        .ok_or_else(|| CryptoError::Other("Failed to export public key".into()))?;
 
     let private_key_bytes = private_key_data.bytes().to_vec();
     let public_key_bytes = public_key_data.bytes().to_vec();

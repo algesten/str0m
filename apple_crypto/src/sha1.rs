@@ -2,7 +2,7 @@
 
 use str0m::crypto::Sha1HmacProvider;
 
-use crate::ffi::{kCCHmacAlgSHA1, CCHmac};
+use crate::ffi::{kCCHmacAlgSHA1, CCHmacContext, CCHmacFinal, CCHmacInit, CCHmacUpdate};
 
 // SHA1 HMAC Provider Implementation
 
@@ -16,25 +16,26 @@ impl std::fmt::Debug for AppleCryptoSha1HmacProvider {
 
 impl Sha1HmacProvider for AppleCryptoSha1HmacProvider {
     fn sha1_hmac(&self, key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
-        // Concatenate all payloads for HMAC computation
-        let total_len: usize = payloads.iter().map(|p| p.len()).sum();
-        let mut data = Vec::with_capacity(total_len);
-        for payload in payloads {
-            data.extend_from_slice(payload);
-        }
-
+        let mut ctx = CCHmacContext::default();
         let mut result = [0u8; 20];
-        // SAFETY: CCHmac is safe with valid key, data pointers and lengths from slices,
-        // and result buffer is properly sized for SHA1 (20 bytes)
+
+        // SAFETY: CCHmacInit/Update/Final are safe with valid context, key,
+        // data pointers and lengths from slices, and result buffer is properly
+        // sized for SHA1 (20 bytes). Using streaming API avoids Vec allocation
+        // for concatenating payloads.
         unsafe {
-            CCHmac(
-                kCCHmacAlgSHA1,                // algorithm: HMAC-SHA1
-                key.as_ptr() as *const _,      // key: HMAC key
-                key.len(),                     // keyLength: key size
-                data.as_ptr() as *const _,     // data: message to authenticate
-                data.len(),                    // dataLength: message size
-                result.as_mut_ptr() as *mut _, // macOut: 20-byte output
+            CCHmacInit(
+                &mut ctx,
+                kCCHmacAlgSHA1,
+                key.as_ptr() as *const _,
+                key.len(),
             );
+
+            for payload in payloads {
+                CCHmacUpdate(&mut ctx, payload.as_ptr() as *const _, payload.len());
+            }
+
+            CCHmacFinal(&mut ctx, result.as_mut_ptr() as *mut _);
         }
         result
     }

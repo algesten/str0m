@@ -126,7 +126,7 @@ extern "C" {
         dataOutMoved: *mut usize,
     ) -> CCCryptorStatus;
 
-    // HMAC Functions
+    // HMAC Functions (one-shot)
 
     pub(crate) fn CCHmac(
         algorithm: CCHmacAlgorithm,
@@ -136,6 +136,19 @@ extern "C" {
         dataLength: usize,
         macOut: *mut c_void,
     );
+
+    // HMAC Functions (streaming)
+
+    pub(crate) fn CCHmacInit(
+        ctx: *mut CCHmacContext,
+        algorithm: CCHmacAlgorithm,
+        key: *const c_void,
+        keyLength: usize,
+    );
+
+    pub(crate) fn CCHmacUpdate(ctx: *mut CCHmacContext, data: *const c_void, dataLength: usize);
+
+    pub(crate) fn CCHmacFinal(ctx: *mut CCHmacContext, macOut: *mut c_void);
 
     // SHA Hash Functions (one-shot)
 
@@ -168,6 +181,22 @@ pub(crate) struct CC_SHA512_CTX {
     pub(crate) count: [u64; 2],
     pub(crate) hash: [u64; 8],
     pub(crate) wbuf: [u64; 16],
+}
+
+// HMAC Context Structure
+
+/// HMAC context for streaming operations.
+/// Size is CC_HMAC_CONTEXT_SIZE (96 u32 words = 384 bytes).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct CCHmacContext {
+    pub(crate) ctx: [u32; 96],
+}
+
+impl Default for CCHmacContext {
+    fn default() -> Self {
+        Self { ctx: [0u32; 96] }
+    }
 }
 
 // RAII Guard for CCCryptorRef
