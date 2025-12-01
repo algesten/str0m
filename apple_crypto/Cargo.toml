@@ -20,10 +20,12 @@ dimpl = { git = "https://github.com/algesten/dimpl.git", rev = "ed3e4e9", defaul
 # Apple platform bindings
 core-foundation = "0.10"
 security-framework = "3.5"
-security-framework-sys = "2.15"
 
 # ASN.1/X.509 parsing for certificate handling
-der = "0.7"
+# Pin der to 0.7.9 to avoid base64ct 1.8 which requires edition 2024
+der = "=0.7.9"
+# Pin base64ct to avoid 1.8 which requires edition 2024 (MSRV 1.85)
+base64ct = ">=1.0, <1.8"
 pkcs8 = { version = "0.10", features = ["pem"] }
 sec1 = "0.7"
 spki = "0.7"
@@ -31,8 +33,6 @@ x509-cert = { version = "0.2", default-features = false }
 
 # Constant-time comparison for crypto
 subtle = "2.0.0"
-
-base64ct = "1.7"  # Pin to version before edition 2024
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
