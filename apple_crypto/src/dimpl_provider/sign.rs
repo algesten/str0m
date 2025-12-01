@@ -22,7 +22,7 @@ use super::hash::{sha256, sha384};
 
 // Security framework FFI bindings
 #[link(name = "Security", kind = "framework")]
-unsafe extern "C" {
+extern "C" {
     static kSecAttrKeyType: core_foundation::string::CFStringRef;
     static kSecAttrKeyTypeECSECPrimeRandom: core_foundation::string::CFStringRef;
     static kSecAttrKeyClass: core_foundation::string::CFStringRef;

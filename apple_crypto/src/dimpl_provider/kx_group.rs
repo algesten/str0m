@@ -13,7 +13,7 @@ use dimpl::crypto::{ActiveKeyExchange, NamedGroup, SupportedKxGroup};
 
 // Security framework key exchange algorithm
 #[link(name = "Security", kind = "framework")]
-unsafe extern "C" {
+extern "C" {
     static kSecKeyAlgorithmECDHKeyExchangeStandard: *const std::ffi::c_void;
 
     fn SecKeyCopyKeyExchangeResult(
