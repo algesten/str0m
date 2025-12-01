@@ -8,15 +8,15 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
+use str0m::Candidate;
 use str0m::change::SdpApi;
 use str0m::format::Codec;
 use str0m::format::PayloadParams;
 use str0m::media::MediaKind;
 use str0m::net::Receive;
-use str0m::Candidate;
 use str0m::{Event, Input, Output, Rtc, RtcError};
-use tracing::info_span;
 use tracing::Span;
+use tracing::info_span;
 
 pub struct TestRtc {
     pub span: Span,
@@ -205,7 +205,7 @@ impl DerefMut for TestRtc {
 }
 
 pub fn init_log() {
-    use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+    use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("debug"));
 

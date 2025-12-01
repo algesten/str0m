@@ -2,7 +2,7 @@
 
 use dimpl::crypto::HmacProvider;
 
-use crate::ffi::{kCCHmacAlgSHA256, CCHmac};
+use crate::ffi::{CCHmac, kCCHmacAlgSHA256};
 
 #[derive(Debug)]
 pub(super) struct AppleHmacProvider;

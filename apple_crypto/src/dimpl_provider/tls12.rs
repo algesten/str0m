@@ -4,7 +4,7 @@ use dimpl::buffer::Buf;
 use dimpl::crypto::{HashAlgorithm, PrfProvider};
 
 use crate::ffi::{
-    kCCHmacAlgSHA256, kCCHmacAlgSHA384, CCHmacContext, CCHmacFinal, CCHmacInit, CCHmacUpdate,
+    CCHmacContext, CCHmacFinal, CCHmacInit, CCHmacUpdate, kCCHmacAlgSHA256, kCCHmacAlgSHA384,
 };
 
 #[derive(Debug)]

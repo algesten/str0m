@@ -14,7 +14,7 @@ use str0m::{Event, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto, init_log, progress, TestRtc};
+use common::{TestRtc, init_crypto, init_log, progress};
 
 /// Test unidirectional audio transmission (SRTP encryption/decryption).
 #[test]

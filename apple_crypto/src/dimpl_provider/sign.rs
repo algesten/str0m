@@ -315,7 +315,7 @@ impl SignatureVerifier for AppleCryptoSignatureVerifier {
             _ => {
                 return Err(format!(
                     "Unsupported hash algorithm for ECDSA: {hash_alg:?}"
-                ))
+                ));
             }
         };
 
