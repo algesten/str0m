@@ -3,7 +3,7 @@
 //! This module provides a complete CryptoProvider that can be passed to str0m,
 //! implementing all cryptographic operations using Windows native APIs.
 
-use dimpl::{Error as DimplError, KeyingMaterial, SrtpProfile};
+use dimpl::{Error as DtlsImplError, KeyingMaterial, SrtpProfile};
 use std::sync::Arc;
 use std::time::Instant;
 use str0m::crypto::SupportedAes128CmSha1_80;
@@ -330,10 +330,10 @@ impl DtlsInstance for WinCryptoDtlsInstance {
         self.dtls.set_as_client(active).expect("set_as_client");
     }
 
-    fn handle_packet(&mut self, packet: &[u8]) -> Result<(), DimplError> {
+    fn handle_packet(&mut self, packet: &[u8]) -> Result<(), DtlsImplError> {
         self.dtls
             .handle_receive(Some(packet))
-            .map_err(|e| DimplError::from(format!("DTLS error: {}", e)))?;
+            .map_err(|e| DtlsImplError::from(format!("DTLS error: {}", e)))?;
         Ok(())
     }
 
@@ -356,7 +356,7 @@ impl DtlsInstance for WinCryptoDtlsInstance {
                     0x0001 => SrtpProfile::Aes128CmSha1_80,
                     0x0007 => SrtpProfile::AeadAes128Gcm,
                     0x0008 => SrtpProfile::AeadAes256Gcm,
-                    _ => return DtlsOutput::Error(DimplError::from("Unknown SRTP profile")),
+                    _ => return DtlsOutput::Error(DtlsImplError::from("Unknown SRTP profile")),
                 };
 
                 DtlsOutput::Connected {
@@ -371,21 +371,21 @@ impl DtlsInstance for WinCryptoDtlsInstance {
                 DtlsOutput::ApplicationData(&buf[..len])
             }
             Ok(crate::DtlsEvent::None) | Ok(crate::DtlsEvent::WouldBlock) => DtlsOutput::None,
-            Err(e) => DtlsOutput::Error(DimplError::from(format!("DTLS error: {}", e))),
+            Err(e) => DtlsOutput::Error(DtlsImplError::from(format!("DTLS error: {}", e))),
         }
     }
 
-    fn handle_timeout(&mut self, _now: Instant) -> Result<(), DimplError> {
+    fn handle_timeout(&mut self, _now: Instant) -> Result<(), DtlsImplError> {
         self.dtls
             .handle_receive(None)
-            .map_err(|e| DimplError::from(format!("DTLS timeout: {}", e)))?;
+            .map_err(|e| DtlsImplError::from(format!("DTLS timeout: {}", e)))?;
         Ok(())
     }
 
-    fn send_application_data(&mut self, data: &[u8]) -> Result<(), DimplError> {
+    fn send_application_data(&mut self, data: &[u8]) -> Result<(), DtlsImplError> {
         self.dtls
             .send_data(data)
-            .map_err(|e| DimplError::from(format!("DTLS send: {}", e)))?;
+            .map_err(|e| DtlsImplError::from(format!("DTLS send: {}", e)))?;
         Ok(())
     }
 

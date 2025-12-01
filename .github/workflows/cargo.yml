@@ -134,3 +134,52 @@ jobs:
         command: check
         log-level: error
         arguments: --all-features --target ${{ matrix.platform }}
+
+  apple-crypto:
+    strategy:
+      matrix:
+        rust: [stable, beta, 1.81.0]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        if: matrix.rust == 'stable'
+        run: cargo +${{steps.toolchain.outputs.name}} fmt --manifest-path apple_crypto/Cargo.toml -- --check
+      - name: clippy
+        if: matrix.rust == 'stable'
+        run: cargo +${{steps.toolchain.outputs.name}} clippy --manifest-path apple_crypto/Cargo.toml -- -D warnings
+      - name: test
+        run: cargo +${{steps.toolchain.outputs.name}} test --manifest-path apple_crypto/Cargo.toml
+
+  crypto-integration-tests:
+    strategy:
+      matrix:
+        rust: [stable, beta, 1.81.0]
+        os: [macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        if: matrix.rust == 'stable'
+        run: cargo +${{steps.toolchain.outputs.name}} fmt --manifest-path crypto-integration-tests/Cargo.toml -- --check
+      - name: clippy
+        if: matrix.rust == 'stable'
+        run: cargo +${{steps.toolchain.outputs.name}} clippy --manifest-path crypto-integration-tests/Cargo.toml -- -D warnings
+      - name: test
+        run: cargo +${{steps.toolchain.outputs.name}} test --manifest-path crypto-integration-tests/Cargo.toml

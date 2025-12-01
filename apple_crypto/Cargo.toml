@@ -1,0 +1,73 @@
+[package]
+name = "str0m-apple-crypto"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Apple CommonCrypto/Security framework backend for str0m WebRTC"
+repository = "https://github.com/algesten/str0m"
+keywords = ["webrtc", "crypto", "apple", "macos", "ios"]
+categories = ["cryptography", "multimedia"]
+
+# MSRV
+rust-version = "1.81.0"
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+# str0m for CryptoProvider traits and dimpl re-exports
+str0m = { version = "0.12", path = "..", default-features = false }
+
+dimpl = { git = "https://github.com/algesten/dimpl.git", rev = "ed3e4e9", default-features = false }
+
+# Apple platform bindings
+core-foundation = "0.10"
+security-framework = "3.5"
+
+# ASN.1/X.509 parsing for certificate handling
+# Pin der to 0.7.9 to avoid base64ct 1.8 which requires edition 2024
+der = "=0.7.9"
+# Pin base64ct to avoid 1.8 which requires edition 2024 (MSRV 1.85)
+base64ct = ">=1.0, <1.8"
+pkcs8 = { version = "0.10", features = ["pem"] }
+sec1 = "0.7"
+spki = "0.7"
+x509-cert = { version = "0.2", default-features = false }
+
+# Constant-time comparison for crypto
+subtle = "2.0.0"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_import_braces = "deny"
+unused_lifetimes = "deny"
+unused_macro_rules = "deny"
+
+[lints.clippy]
+as_ptr_cast_mut = "deny"
+branches_sharing_code = "deny"
+clear_with_drain = "deny"
+collection_is_never_read = "deny"
+debug_assert_with_mut_call = "deny"
+derive_partial_eq_without_eq = "deny"
+equatable_if_let = "deny"
+fallible_impl_from = "deny"
+iter_on_empty_collections = "deny"
+iter_on_single_items = "deny"
+iter_with_drain = "deny"
+large_stack_frames = "deny"
+missing_const_for_fn = "deny"
+mutex_integer = "deny"
+needless_collect = "deny"
+needless_pass_by_ref_mut = "deny"
+nonstandard_macro_braces = "deny"
+option_if_let_else = "deny"
+or_fun_call = "deny"
+path_buf_push_overwrite = "deny"
+read_zero_byte_vec = "deny"
+redundant_clone = "deny"
+redundant_pub_crate = "deny"
+semicolon_if_nothing_returned = "deny"
+set_contains_or_insert = "deny"
+significant_drop_in_scrutinee = "deny"
+suboptimal_flops = "deny"
+suspicious_operation_groupings = "deny"
+trailing_empty_array = "deny"
+use_self = "deny"

@@ -12,15 +12,10 @@ use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::sync::OnceLock;
 use std::time::Instant;
 
-use crate::crypto::error::CryptoError;
-
-// Re-export dimpl types for DTLS - all dimpl usage should go through these re-exports
-pub use dimpl::DtlsCertificate as DtlsCert;
-pub use dimpl::KeyingMaterial;
-pub use dimpl::SrtpProfile;
-// Note: dimpl::Error is renamed to DimplError to avoid conflict with str0m's DtlsError
-pub use dimpl::{Error as DimplError, Output as DtlsOutput};
 use subtle::ConstantTimeEq;
+
+use crate::crypto::dtls::*;
+use crate::crypto::error::CryptoError;
 
 // ============================================================================
 // CryptoProvider
@@ -61,6 +56,9 @@ impl CryptoProvider {
     /// Create a crypto provider based on enabled feature flags.
     ///
     /// Priority order: aws-lc-rs, rust-crypto, openssl, wincrypto (Windows only)
+    ///
+    /// Note: For Apple platforms, use the separate `str0m-apple-crypto` crate
+    /// and call `str0m_apple_crypto::default_provider()` directly.
     #[allow(unreachable_code, clippy::needless_return)]
     pub fn from_feature_flags() -> CryptoProvider {
         #[cfg(feature = "aws-lc-rs")]
@@ -77,7 +75,7 @@ impl CryptoProvider {
 
         panic!(
             "No crypto provider available. Enable one of: aws-lc-rs, 
-             rust-crypto, openssl, wincrypto (Windows only)"
+             rust-crypto, openssl, wincrypto (Windows only), or use str0m-apple-crypto crate"
         );
     }
 
@@ -192,7 +190,7 @@ pub trait DtlsInstance: CryptoSafe {
     fn set_active(&mut self, active: bool);
 
     /// Handle an incoming DTLS packet.
-    fn handle_packet(&mut self, packet: &[u8]) -> Result<(), DimplError>;
+    fn handle_packet(&mut self, packet: &[u8]) -> Result<(), DtlsImplError>;
 
     /// Poll for output from the DTLS instance.
     ///
@@ -200,10 +198,10 @@ pub trait DtlsInstance: CryptoSafe {
     fn poll_output<'a>(&mut self, buf: &'a mut [u8]) -> DtlsOutput<'a>;
 
     /// Handle a timeout event.
-    fn handle_timeout(&mut self, now: Instant) -> Result<(), DimplError>;
+    fn handle_timeout(&mut self, now: Instant) -> Result<(), DtlsImplError>;
 
     /// Send application data over DTLS.
-    fn send_application_data(&mut self, data: &[u8]) -> Result<(), DimplError>;
+    fn send_application_data(&mut self, data: &[u8]) -> Result<(), DtlsImplError>;
 
     /// Return true if the instance is operating in the client role.
     fn is_active(&self) -> bool;
