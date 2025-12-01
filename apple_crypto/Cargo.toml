@@ -1,7 +1,7 @@
 [package]
 name = "str0m-apple-crypto"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Apple CommonCrypto/Security framework backend for str0m WebRTC"
 repository = "https://github.com/algesten/str0m"
@@ -9,7 +9,7 @@ keywords = ["webrtc", "crypto", "apple", "macos", "ios"]
 categories = ["cryptography", "multimedia"]
 
 # MSRV
-rust-version = "1.85.0"
+rust-version = "1.81.0"
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 # str0m for CryptoProvider traits and dimpl re-exports
@@ -31,6 +31,8 @@ x509-cert = { version = "0.2", default-features = false }
 
 # Constant-time comparison for crypto
 subtle = "2.0.0"
+
+base64ct = "1.7"  # Pin to version before edition 2024
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
