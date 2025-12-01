@@ -644,8 +644,8 @@ pub mod crypto;
 use crypto::Fingerprint;
 
 mod dtls;
-pub use crate::crypto::DtlsCert;
-use crate::crypto::{CryptoProvider, DtlsOutput};
+use crate::crypto::dtls::DtlsOutput;
+use crate::crypto::CryptoProvider;
 use dtls::Dtls;
 
 #[path = "ice/mod.rs"]
@@ -656,7 +656,8 @@ pub use ice_::{Candidate, CandidateKind, IceConnectionState, IceCreds};
 
 /// Additional configuration.
 pub mod config {
-    pub use super::crypto::{CryptoProvider, DtlsCert, Fingerprint};
+    pub use super::crypto::dtls::{DtlsCert, KeyingMaterial};
+    pub use super::crypto::{CryptoProvider, Fingerprint};
 }
 
 /// Low level ICE access.
@@ -1441,7 +1442,7 @@ impl Rtc {
                     }
                 }
                 DtlsOutput::KeyingMaterial(km, profile) => {
-                    use crate::crypto::KeyingMaterial;
+                    use config::KeyingMaterial;
                     let km_bytes = km.as_ref().to_vec();
                     debug!("DTLS set SRTP keying material and profile: {}", profile);
                     let active = self.dtls.is_active().expect("DTLS must be inited by now");
@@ -1885,7 +1886,7 @@ impl Rtc {
 pub struct RtcConfig {
     local_ice_credentials: Option<IceCreds>,
     crypto_provider: Arc<crate::crypto::CryptoProvider>,
-    dtls_cert: Option<DtlsCert>,
+    dtls_cert: Option<config::DtlsCert>,
     fingerprint_verification: bool,
     ice_lite: bool,
     initial_stun_rto: Option<Duration>,
@@ -1949,7 +1950,7 @@ impl RtcConfig {
     /// Returns the configured DTLS certificate, if set.
     ///
     /// If not set, a certificate will be generated automatically.
-    pub fn dtls_cert(&self) -> Option<&DtlsCert> {
+    pub fn dtls_cert(&self) -> Option<&config::DtlsCert> {
         self.dtls_cert.as_ref()
     }
 
@@ -1967,7 +1968,7 @@ impl RtcConfig {
     /// let rtc_config = RtcConfig::default()
     ///     .set_dtls_cert(cert);
     /// ```
-    pub fn set_dtls_cert(mut self, cert: DtlsCert) -> Self {
+    pub fn set_dtls_cert(mut self, cert: config::DtlsCert) -> Self {
         self.dtls_cert = Some(cert);
         self
     }

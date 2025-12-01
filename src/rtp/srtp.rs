@@ -1,10 +1,11 @@
 use std::fmt;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 
+use crate::crypto::dtls::{KeyingMaterial, SrtpProfile};
 use crate::crypto::Aes128CmSha1_80Cipher;
-use crate::crypto::{AeadAes128Gcm, AeadAes256Gcm, Aes128CmSha1_80, SrtpProfile};
+use crate::crypto::{AeadAes128Gcm, AeadAes256Gcm, Aes128CmSha1_80};
 use crate::crypto::{AeadAes128GcmCipher, AeadAes256GcmCipher};
-use crate::crypto::{CryptoProvider, KeyingMaterial, Sha1HmacProvider, SrtpProvider};
+use crate::crypto::{CryptoProvider, Sha1HmacProvider, SrtpProvider};
 
 use super::header::RtpHeader;
 

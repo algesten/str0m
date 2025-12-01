@@ -477,7 +477,7 @@ dependencies = [
 [[package]]
 name = "dimpl"
 version = "0.1.5"
-source = "git+https://github.com/algesten/dimpl.git?rev=6f04360#6f043609f9870692bfa8a4ed58369d6b4747504d"
+source = "git+https://github.com/algesten/dimpl.git?rev=ed3e4e9#ed3e4e939651c5247ee8263cc2d9ce05c9143b88"
 dependencies = [
  "aes-gcm",
  "arrayvec",
@@ -499,6 +499,7 @@ dependencies = [
  "sha2",
  "signature",
  "spki",
+ "subtle",
  "time",
  "x509-cert",
 ]
@@ -1947,27 +1948,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tls_codec"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0de2e01245e2bb89d6f05801c564fa27624dbd7b1846859876c7dad82e90bf6b"
-dependencies = [
- "tls_codec_derive",
- "zeroize",
-]
-
-[[package]]
-name = "tls_codec_derive"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d2e76690929402faae40aebdda620a2c0e25dd6d3b9afe48867dfd95991f4bd"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.106",
-]
-
-[[package]]
 name = "tracing"
 version = "0.1.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2547,10 +2527,7 @@ checksum = "1301e935010a701ae5f8655edc0ad17c44bad3ac5ce8c39185f75453b720ae94"
 dependencies = [
  "const-oid",
  "der",
- "sha1",
- "signature",
  "spki",
- "tls_codec",
 ]
 
 [[package]]
@@ -2632,20 +2609,6 @@ name = "zeroize"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ced3678a2879b30306d323f4542626697a464a97c0a07c9aebf7ebca65cd4dde"
-dependencies = [
- "zeroize_derive",
-]
-
-[[package]]
-name = "zeroize_derive"
-version = "1.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce36e65b0d2999d2aafac989fb249189a141aee1f53c612c1f37d72631959f69"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.106",
-]
 
 [[package]]
 name = "zerovec"

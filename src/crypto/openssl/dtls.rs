@@ -18,10 +18,9 @@ use openssl::ssl::{SslOptions, SslStream, SslVerifyMode};
 use openssl::x509::extension::{BasicConstraints, ExtendedKeyUsage, KeyUsage};
 use openssl::x509::{X509Builder, X509NameBuilder, X509};
 
+use crate::crypto::dtls::{DtlsCert, KeyingMaterial, SrtpProfile};
+use crate::crypto::dtls::{DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
 use crate::crypto::error::CryptoError;
-use crate::crypto::provider::{DimplError, DtlsInstance, DtlsOutput, DtlsProvider};
-use crate::crypto::DtlsCert;
-use crate::crypto::{KeyingMaterial, SrtpProfile};
 use crate::io::{DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::net::DatagramSend;
 
@@ -488,7 +487,7 @@ impl DtlsInstance for OsslDtlsInstance {
         self.inner.set_active(active);
     }
 
-    fn handle_packet(&mut self, packet: &[u8]) -> Result<(), DimplError> {
+    fn handle_packet(&mut self, packet: &[u8]) -> Result<(), DtlsImplError> {
         match self.inner.handle_receive(packet) {
             Ok(Some(data)) => {
                 self.pending_application_data.push_back(data);
@@ -500,10 +499,10 @@ impl DtlsInstance for OsslDtlsInstance {
                     if io_err.kind() == std::io::ErrorKind::WouldBlock {
                         // This is fine
                     } else {
-                        return Err(DimplError::CryptoError(format!("DTLS error: {}", e)));
+                        return Err(DtlsImplError::CryptoError(format!("DTLS error: {}", e)));
                     }
                 } else {
-                    return Err(DimplError::CryptoError(format!("DTLS error: {}", e)));
+                    return Err(DtlsImplError::CryptoError(format!("DTLS error: {}", e)));
                 }
             }
         }
@@ -569,21 +568,21 @@ impl DtlsInstance for OsslDtlsInstance {
         DtlsOutput::Timeout(Instant::now() + Duration::from_secs(3600))
     }
 
-    fn handle_timeout(&mut self, now: Instant) -> Result<(), DimplError> {
+    fn handle_timeout(&mut self, now: Instant) -> Result<(), DtlsImplError> {
         if let Some(timeout) = self.inner.poll_timeout(now) {
             self.next_timeout = Some(timeout);
         }
         Ok(())
     }
 
-    fn send_application_data(&mut self, data: &[u8]) -> Result<(), DimplError> {
+    fn send_application_data(&mut self, data: &[u8]) -> Result<(), DtlsImplError> {
         if let Err(e) = self.inner.handle_input(data) {
             if let CryptoError::Io(ref io_err) = e {
                 if io_err.kind() == std::io::ErrorKind::WouldBlock {
                     return Ok(());
                 }
             }
-            return Err(DimplError::CryptoError(format!("DTLS error: {}", e)));
+            return Err(DtlsImplError::CryptoError(format!("DTLS error: {}", e)));
         }
 
         self.collect_output();

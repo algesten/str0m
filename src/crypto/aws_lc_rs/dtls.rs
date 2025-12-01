@@ -3,9 +3,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use crate::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
 use crate::crypto::error::CryptoError;
-use crate::crypto::provider::{DimplError, DtlsInstance, DtlsOutput, DtlsProvider};
-use crate::crypto::DtlsCert;
 
 // ============================================================================
 // DTLS Provider Implementation
@@ -61,7 +60,7 @@ impl DtlsInstance for AwsLcRsDtlsInstance {
         self.dtls.set_active(active);
     }
 
-    fn handle_packet(&mut self, packet: &[u8]) -> Result<(), DimplError> {
+    fn handle_packet(&mut self, packet: &[u8]) -> Result<(), DtlsImplError> {
         self.dtls.handle_packet(packet)
     }
 
@@ -69,11 +68,11 @@ impl DtlsInstance for AwsLcRsDtlsInstance {
         self.dtls.poll_output(buf)
     }
 
-    fn handle_timeout(&mut self, now: Instant) -> Result<(), DimplError> {
+    fn handle_timeout(&mut self, now: Instant) -> Result<(), DtlsImplError> {
         self.dtls.handle_timeout(now)
     }
 
-    fn send_application_data(&mut self, data: &[u8]) -> Result<(), DimplError> {
+    fn send_application_data(&mut self, data: &[u8]) -> Result<(), DtlsImplError> {
         self.dtls.send_application_data(data)
     }
 

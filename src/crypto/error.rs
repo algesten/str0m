@@ -2,7 +2,7 @@ use std::error::Error;
 use std::fmt;
 use std::io;
 
-use super::provider::DimplError;
+use crate::crypto::dtls::DtlsImplError;
 
 /// Errors that can arise in DTLS.
 #[derive(Debug)]
@@ -11,8 +11,8 @@ pub enum CryptoError {
     #[cfg(feature = "openssl")]
     OpenSsl(openssl::error::ErrorStack),
 
-    /// Some error from Dimpl DTLS layer.
-    Dimpl(DimplError),
+    /// Error from DTLS implementation layer.
+    DtlsImpl(DtlsImplError),
 
     /// Other IO errors.
     Io(io::Error),
@@ -27,7 +27,7 @@ impl fmt::Display for CryptoError {
             #[cfg(feature = "openssl")]
             CryptoError::OpenSsl(err) => write!(f, "{}", err),
             CryptoError::Io(err) => write!(f, "{}", err),
-            CryptoError::Dimpl(err) => write!(f, "{}", err),
+            CryptoError::DtlsImpl(err) => write!(f, "{}", err),
             CryptoError::Other(err) => write!(f, "{}", err),
         }
     }
@@ -39,7 +39,7 @@ impl Error for CryptoError {
             #[cfg(feature = "openssl")]
             CryptoError::OpenSsl(err) => Some(err),
             CryptoError::Io(err) => Some(err),
-            CryptoError::Dimpl(err) => Some(err),
+            CryptoError::DtlsImpl(err) => Some(err),
             CryptoError::Other(_) => None,
         }
     }
@@ -58,9 +58,9 @@ impl From<io::Error> for CryptoError {
     }
 }
 
-impl From<DimplError> for CryptoError {
-    fn from(err: DimplError) -> Self {
-        CryptoError::Dimpl(err)
+impl From<DtlsImplError> for CryptoError {
+    fn from(err: DtlsImplError) -> Self {
+        CryptoError::DtlsImpl(err)
     }
 }
 
