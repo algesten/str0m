@@ -3,9 +3,8 @@
 use dimpl::buffer::Buf;
 use dimpl::crypto::{HashAlgorithm, PrfProvider};
 
-use crate::ffi::{
-    CCHmacContext, CCHmacFinal, CCHmacInit, CCHmacUpdate, kCCHmacAlgSHA256, kCCHmacAlgSHA384,
-};
+use crate::ffi::{CCHmacContext, CCHmacFinal, CCHmacInit, CCHmacUpdate};
+use crate::ffi::{kCCHmacAlgSHA256, kCCHmacAlgSHA384};
 
 #[derive(Debug)]
 pub(super) struct ApplePrfProvider;
