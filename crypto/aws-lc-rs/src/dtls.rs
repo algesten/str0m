@@ -3,8 +3,8 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use str0m_proto::crypto::CryptoError;
 use str0m_proto::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
+use str0m_proto::crypto::CryptoError;
 
 // ============================================================================
 // DTLS Provider Implementation

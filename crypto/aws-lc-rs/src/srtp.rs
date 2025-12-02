@@ -1,7 +1,7 @@
 //! SRTP cipher implementations using AWS-LC-RS.
 
-use aws_lc_rs::aead::{AES_128_GCM, AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
-use aws_lc_rs::cipher::{AES_128, EncryptingKey, EncryptionContext, UnboundCipherKey};
+use aws_lc_rs::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_128_GCM, AES_256_GCM};
+use aws_lc_rs::cipher::{EncryptingKey, EncryptionContext, UnboundCipherKey, AES_128};
 
 use str0m_proto::crypto::CryptoError;
 use str0m_proto::crypto::{AeadAes128Gcm, AeadAes128GcmCipher, AeadAes256Gcm};
@@ -290,7 +290,7 @@ impl SrtpProvider for AwsLcRsSrtpProvider {
     }
 
     fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
-        use aws_lc_rs::cipher::{AES_128, EncryptingKey, EncryptionContext, UnboundCipherKey};
+        use aws_lc_rs::cipher::{EncryptingKey, EncryptionContext, UnboundCipherKey, AES_128};
 
         let unbound_key = UnboundCipherKey::new(&AES_128, key).expect("valid key");
         let encrypting_key = EncryptingKey::ecb(unbound_key).expect("ECB mode");
@@ -308,7 +308,7 @@ impl SrtpProvider for AwsLcRsSrtpProvider {
     }
 
     fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
-        use aws_lc_rs::cipher::{AES_256, EncryptingKey, EncryptionContext, UnboundCipherKey};
+        use aws_lc_rs::cipher::{EncryptingKey, EncryptionContext, UnboundCipherKey, AES_256};
 
         let unbound_key = UnboundCipherKey::new(&AES_256, key).expect("valid key");
         let encrypting_key = EncryptingKey::ecb(unbound_key).expect("ECB mode");

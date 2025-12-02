@@ -8,7 +8,7 @@ pub struct OsslSha256Provider;
 
 impl Sha256Provider for OsslSha256Provider {
     fn sha256(&self, data: &[u8]) -> [u8; 32] {
-        use openssl::hash::{MessageDigest, hash};
+        use openssl::hash::{hash, MessageDigest};
         let digest = hash(MessageDigest::sha256(), data).expect("SHA-256 hash");
         let mut result = [0u8; 32];
         result.copy_from_slice(&digest);

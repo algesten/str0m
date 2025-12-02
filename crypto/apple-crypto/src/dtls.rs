@@ -5,8 +5,8 @@ use std::time::Instant;
 
 use security_framework::key::{GenerateKeyOptions, KeyType, SecKey};
 
-use str0m_proto::crypto::CryptoError;
 use str0m_proto::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
+use str0m_proto::crypto::CryptoError;
 
 // Certificate Generation
 

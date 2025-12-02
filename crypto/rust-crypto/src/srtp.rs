@@ -276,8 +276,8 @@ impl SrtpProvider for RustCryptoSrtpProvider {
 
     fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
         // Use aes crate for ECB mode
-        use aes::Aes128;
         use aes::cipher::{BlockEncrypt, KeyInit};
+        use aes::Aes128;
 
         let cipher = Aes128::new(GenericArray::from_slice(key));
 
@@ -299,8 +299,8 @@ impl SrtpProvider for RustCryptoSrtpProvider {
 
     fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
         // Use aes crate for ECB mode
-        use aes::Aes256;
         use aes::cipher::{BlockEncrypt, KeyInit};
+        use aes::Aes256;
 
         let cipher = Aes256::new(GenericArray::from_slice(key));
 
