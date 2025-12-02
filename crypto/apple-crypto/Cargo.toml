@@ -22,8 +22,6 @@ security-framework = "3.5"
 # ASN.1/X.509 parsing for certificate handling
 # Pin der to 0.7.9 to avoid base64ct 1.8 which requires edition 2024
 der = "=0.7.9"
-# Pin base64ct to avoid 1.8 which requires edition 2024 (MSRV 1.85)
-base64ct = ">=1.0, <1.8"
 pkcs8 = { version = "0.10", features = ["pem"] }
 sec1 = "0.7"
 spki = "0.7"

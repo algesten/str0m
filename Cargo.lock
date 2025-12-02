@@ -1789,7 +1789,6 @@ dependencies = [
 name = "str0m-apple-crypto"
 version = "0.1.0"
 dependencies = [
- "base64ct",
  "core-foundation",
  "der",
  "dimpl",
@@ -1826,6 +1825,7 @@ dependencies = [
 name = "str0m-proto"
 version = "0.1.0"
 dependencies = [
+ "base64ct",
  "dimpl",
  "openssl",
  "subtle",
