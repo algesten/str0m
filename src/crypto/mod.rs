@@ -1,5 +1,3 @@
-use std::sync::OnceLock;
-
 use str0m_proto::crypto as provider;
 
 pub use provider::{AeadAes128Gcm, AeadAes128GcmCipher, AeadAes256Gcm, AeadAes256GcmCipher};
@@ -22,6 +20,7 @@ pub mod dtls {
 #[cfg(any(test, feature = "_internal_test_exports"))]
 #[allow(unused)]
 pub(crate) fn test_default_provider() -> &'static CryptoProvider {
+    use std::sync::OnceLock;
     static TEST_PROVIDER: OnceLock<CryptoProvider> = OnceLock::new();
     TEST_PROVIDER.get_or_init(from_feature_flags)
 }
