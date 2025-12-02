@@ -13,7 +13,7 @@ rust-version = "1.81.0"
 
 [dependencies]
 str0m-proto = { version = "0.1.0", path = "../../proto" }
-dimpl = { git = "https://github.com/algesten/dimpl.git", rev = "ed3e4e9", default-features = false }
+dimpl = { version = "0.2.0", default-features = false }
 
 # Apple platform bindings
 core-foundation = "0.10"

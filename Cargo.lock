@@ -486,8 +486,9 @@ dependencies = [
 
 [[package]]
 name = "dimpl"
-version = "0.1.5"
-source = "git+https://github.com/algesten/dimpl.git?rev=ed3e4e9#ed3e4e939651c5247ee8263cc2d9ce05c9143b88"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e22956ce1bf433b0cd0f544d71f4994ac5dee5f1515bb1d2d1cb1401a770851"
 dependencies = [
  "aes-gcm",
  "arrayvec",

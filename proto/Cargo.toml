@@ -1,7 +1,7 @@
 [package]
 name = "str0m-proto"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [features]
 features = []
@@ -9,7 +9,7 @@ openssl = ["dep:openssl"]
 
 [dependencies]
 # DTLS made for str0m (required dependency for types and traits)
-dimpl = { git = "https://github.com/algesten/dimpl.git", rev = "ed3e4e9", default-features = false }
+dimpl = { version = "0.2.0", default-features = false }
 
 subtle = "2.0.0"
 

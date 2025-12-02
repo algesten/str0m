@@ -1,11 +1,11 @@
 [package]
 name = "str0m-rust-crypto"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 str0m-proto = { version = "0.1.0", path = "../../proto" }
-dimpl = { git = "https://github.com/algesten/dimpl.git", rev = "ed3e4e9", default-features = false, features = ["rust-crypto", "rcgen"] }
+dimpl = { version = "0.2.0", default-features = false, features = ["rust-crypto", "rcgen"] }
 
 hmac = { version = "0.12.1" }
 aes-gcm = { version = "0.10" }

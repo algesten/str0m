@@ -56,7 +56,7 @@ crc = ">=3.0, <3.4"
 serde = { version = "1.0.152", features = ["derive"] }
 
 # DTLS made for str0m (required dependency)
-dimpl = { git = "https://github.com/algesten/dimpl.git", rev = "ed3e4e9", default-features = false }
+dimpl = { version = "0.2.0", default-features = false }
 
 str0m-proto = { version = "0.1.0", path = "proto" }
 
