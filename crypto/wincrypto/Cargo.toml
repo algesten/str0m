@@ -20,3 +20,6 @@ windows = { version = "0.58", features = [
     "Win32_Security_Credentials",
     "Win32_System_Rpc",
 ] }
+
+[dev-dependencies]
+str0m = { version = "0.12.0", path = "../../" }
