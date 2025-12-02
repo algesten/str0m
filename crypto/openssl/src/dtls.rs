@@ -74,7 +74,7 @@ impl io::Read for IoBuffer {
 
 impl io::Write for IoBuffer {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let dsend = buf.to_vec().into();
+        let dsend = buf.to_vec();
         self.outgoing.push_back(dsend);
         Ok(buf.len())
     }
@@ -463,7 +463,7 @@ impl OsslDtlsInstance {
     fn collect_output(&mut self) {
         // Collect outgoing packets
         while let Some(packet) = self.inner.poll_datagram() {
-            self.pending_packets.push_back(packet.into());
+            self.pending_packets.push_back(packet);
         }
 
         // Check for keying material
