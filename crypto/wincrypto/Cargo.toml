@@ -14,4 +14,9 @@ description = "Supporting crate for str0m"
 [dependencies]
 tracing = "0.1.37"
 str0m-proto = { version = "0.1.0", path = "../../proto" }
-windows = { version = "0.58", features = ["Win32_Security_Cryptography", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_System_Rpc"] }
+windows = { version = "0.58", features = [
+    "Win32_Security_Cryptography",
+    "Win32_Security_Authentication_Identity",
+    "Win32_Security_Credentials",
+    "Win32_System_Rpc",
+] }
