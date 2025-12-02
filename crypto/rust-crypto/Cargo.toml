@@ -1,0 +1,16 @@
+[package]
+name = "str0m-rust-crypto"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+str0m-proto = { version = "0.1.0", path = "../../proto" }
+dimpl = { git = "https://github.com/algesten/dimpl.git", rev = "ed3e4e9", default-features = false, features = ["rust-crypto", "rcgen"] }
+
+hmac = { version = "0.12.1" }
+aes-gcm = { version = "0.10" }
+aes = { version = "0.8" }
+ctr = { version = "0.9" }
+p256 = { version = "0.13", features = ["ecdh"] }
+sha1 = { version = "0.10" }
+sha2 = { version = "0.10" }

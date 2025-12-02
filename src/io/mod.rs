@@ -10,9 +10,8 @@ use std::ops::Deref;
 use serde::{Deserialize, Serialize};
 
 mod stun;
-pub(crate) use stun::{
-    Class as StunClass, Method as StunMethod, StunTiming, DEFAULT_MAX_RETRANSMITS,
-};
+pub(crate) use stun::{Class as StunClass, DEFAULT_MAX_RETRANSMITS};
+pub(crate) use stun::{Method as StunMethod, StunTiming};
 pub use stun::{StunMessage, StunMessageBuilder, TransId};
 
 mod id;
@@ -20,11 +19,8 @@ mod id;
 // a "util" crate or similar.
 pub(crate) use id::Id;
 
-/// Targeted MTU
-pub(crate) const DATAGRAM_MTU: usize = 1150;
-
-/// Warn if any packet we are about to send is above this size.
-pub(crate) const DATAGRAM_MTU_WARN: usize = 1280;
+pub use str0m_proto::DATAGRAM_MTU;
+pub use str0m_proto::DATAGRAM_MTU_WARN;
 
 /// Max UDP packet size
 pub(crate) const DATAGRAM_MAX_PACKET_SIZE: usize = 2000;

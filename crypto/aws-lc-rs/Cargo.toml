@@ -1,0 +1,17 @@
+[package]
+name = "str0m-aws-lc-rs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "aws-lc-rs backend for str0m WebRTC"
+repository = "https://github.com/algesten/str0m"
+keywords = ["webrtc", "crypto", "apple", "macos", "ios"]
+categories = ["cryptography", "multimedia"]
+
+# MSRV
+rust-version = "1.81.0"
+
+[dependencies]
+str0m-proto = { version = "0.1.0", path = "../../proto" }
+dimpl = { git = "https://github.com/algesten/dimpl.git", rev = "ed3e4e9", default-features = false, features = ["aws-lc-rs", "rcgen"] }
+aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }

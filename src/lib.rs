@@ -645,7 +645,8 @@ use crypto::Fingerprint;
 
 mod dtls;
 use crate::crypto::dtls::DtlsOutput;
-use crate::crypto::CryptoProvider;
+use crate::crypto::{from_feature_flags, CryptoProvider};
+use crate::dtls::is_would_block;
 use dtls::Dtls;
 
 #[path = "ice/mod.rs"]
@@ -1492,7 +1493,7 @@ impl Rtc {
                 SctpEvent::Transmit { mut packets } => {
                     if let Some(v) = packets.front() {
                         if let Err(e) = self.dtls.handle_input(v) {
-                            if e.is_would_block() {
+                            if is_would_block(&e) {
                                 self.sctp.push_back_transmit(packets);
                                 break;
                             } else {
@@ -1961,9 +1962,9 @@ impl RtcConfig {
     ///
     /// ```
     /// # use str0m::RtcConfig;
-    /// # use str0m::crypto::CryptoProvider;
+    /// # use str0m::crypto;
     ///
-    /// let provider = CryptoProvider::from_feature_flags();
+    /// let provider = crypto::from_feature_flags();
     /// let cert = provider.dtls_provider.generate_certificate().unwrap();
     /// let rtc_config = RtcConfig::default()
     ///     .set_dtls_cert(cert);
@@ -2421,7 +2422,7 @@ impl Default for RtcConfig {
     fn default() -> Self {
         let crypto_provider = CryptoProvider::get_default()
             .cloned()
-            .unwrap_or_else(CryptoProvider::from_feature_flags);
+            .unwrap_or_else(from_feature_flags);
 
         Self {
             local_ice_credentials: None,
@@ -2508,7 +2509,7 @@ pub(crate) use log_stat;
 #[cfg(test)]
 #[doc(hidden)]
 pub fn init_crypto_default() {
-    crate::config::CryptoProvider::from_feature_flags().install_process_default();
+    crate::crypto::from_feature_flags().install_process_default();
 }
 
 #[cfg(test)]

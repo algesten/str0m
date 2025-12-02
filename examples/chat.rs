@@ -15,7 +15,7 @@ use rouille::Server;
 use rouille::{Request, Response};
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::channel::{ChannelData, ChannelId};
-use str0m::config::CryptoProvider;
+use str0m::crypto::from_feature_flags;
 use str0m::media::{Direction, KeyframeRequest, MediaData, Mid, Rid};
 use str0m::media::{KeyframeRequestKind, MediaKind};
 use str0m::net::Protocol;
@@ -39,7 +39,7 @@ pub fn main() {
     init_log();
 
     // Run with whatever is configured.
-    CryptoProvider::from_feature_flags().install_process_default();
+    from_feature_flags().install_process_default();
 
     let certificate = include_bytes!("cer.pem").to_vec();
     let private_key = include_bytes!("key.pem").to_vec();
