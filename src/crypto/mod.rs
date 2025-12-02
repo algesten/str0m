@@ -42,6 +42,9 @@ pub fn from_feature_flags() -> CryptoProvider {
     #[cfg(feature = "openssl")]
     return str0m_openssl::default_provider();
 
+    #[cfg(all(feature = "wincrypto", target_vendor = "apple"))]
+    return str0m_apple_crypto::default_provider();
+
     #[cfg(all(feature = "wincrypto", target_os = "windows"))]
     return str0m_wincrypto::default_provider();
 
