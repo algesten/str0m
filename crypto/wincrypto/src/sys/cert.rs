@@ -155,7 +155,7 @@ impl Certificate {
 
     pub fn sha256_fingerprint(&self) -> Result<[u8; 32], WinCryptoError> {
         let der_bytes = self.get_der_bytes()?;
-        crate::sha256(&der_bytes)
+        crate::sys::sha256(&der_bytes)
     }
 
     pub fn context(&self) -> *const CERT_CONTEXT {
