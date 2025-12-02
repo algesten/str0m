@@ -44,7 +44,7 @@ impl Sha1HmacProvider for AppleCryptoSha1HmacProvider {
 #[cfg(test)]
 mod test {
     use super::*;
-    use str0m::crypto::Sha1HmacProvider;
+    use str0m_proto::crypto::Sha1HmacProvider;
 
     fn sha1_hmac(key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
         AppleCryptoSha1HmacProvider.sha1_hmac(key, payloads)

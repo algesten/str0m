@@ -459,7 +459,7 @@ impl SrtpProvider for AppleCryptoSrtpProvider {
 #[cfg(test)]
 mod test {
     use super::*;
-    use str0m::crypto::SrtpProvider;
+    use str0m_proto::crypto::SrtpProvider;
 
     // Test vectors from NIST SP 800-38A:
     // https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf

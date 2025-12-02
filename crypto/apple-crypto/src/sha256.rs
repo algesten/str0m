@@ -21,7 +21,7 @@ impl Sha256Provider for AppleCryptoSha256Provider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use str0m::crypto::Sha256Provider;
+    use str0m_proto::crypto::Sha256Provider;
 
     #[test]
     fn test_sha256() {
