@@ -28,6 +28,16 @@ pub use writer::Writer;
 pub use crate::packet::MediaKind;
 pub use crate::rtp_::{Direction, ExtensionValues, Frequency, MediaTime, Mid, Pt, Rid};
 
+/// Mid used for SSRC 0 non-media BWE probes.
+///
+/// libwebrtc sends bandwidth estimation probes on SSRC 0 when:
+/// - Video m-line with RTX is negotiated
+/// - `allow_probe_without_media` is enabled (Chrome default)
+/// - No video media packets have been sent yet
+///
+/// These probes carry `transport_cc` for TWCC feedback but no real media.
+pub(crate) const MID_PROBE: Mid = Mid::from_array(*b"~]probe\0\0\0\0\0\0\0\0\0");
+
 #[derive(Debug)]
 /// Information about some configured media.
 pub struct Media {
@@ -122,6 +132,10 @@ pub struct Media {
     /// as a Media. This field is true when we do that. No Session::medias will have
     /// this set to true – they only exist temporarily.
     pub(crate) app_tmp: bool,
+
+    /// Whether this is an internal media such as SSRC 0 BWE probes.
+    /// Internal medias are not included in SDP offers/answers.
+    pub(crate) internal: bool,
 }
 
 #[derive(Debug)]
@@ -525,6 +539,7 @@ impl Default for Media {
             to_payload: VecDeque::default(),
             need_open_event: true,
             need_changed_event: false,
+            internal: false,
         }
     }
 }
@@ -592,5 +607,28 @@ impl Media {
             remote_exts: exts,
             ..Default::default()
         }
+    }
+
+    /// Creates a minimal Media for handling SSRC 0 BWE probes.
+    ///
+    /// The probe media does not emit events and is not included in SDP.
+    pub(crate) fn new_probe(index: usize) -> Media {
+        Media {
+            mid: MID_PROBE,
+            index,
+            kind: MediaKind::Video, // probes typically use video clock rate (90kHz)
+            dir: Direction::RecvOnly,
+            need_open_event: false,
+            need_changed_event: false,
+            internal: true,
+            ..Default::default()
+        }
+    }
+
+    /// Returns true if this is an internal probe.
+    ///
+    /// Internal medias are not included in SDP offers/answers.
+    pub(crate) fn is_internal(&self) -> bool {
+        self.internal
     }
 }

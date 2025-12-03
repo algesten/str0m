@@ -8,8 +8,8 @@ use crate::crypto::CryptoProvider;
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
 use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
-use crate::media::KeyframeRequestKind;
 use crate::media::Media;
+use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
 use crate::packet::SendSideBandwithEstimator;
 use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
@@ -69,6 +69,10 @@ pub(crate) struct Session {
 
     // Configuration of how we are sending/receiving media.
     pub codec_config: CodecConfig,
+
+    // Payload params for SSRC 0 BWE probes.
+    // Lazy init when we see the PT.
+    probe_payload_params: Option<PayloadParams>,
 
     srtp_rx: Option<SrtpContext>,
     srtp_tx: Option<SrtpContext>,
@@ -145,6 +149,7 @@ impl Session {
             // Both sending and receiving starts from the configured codecs.
             // These can then be changed in the SDP OFFER/ANSWER dance.
             codec_config: config.codec_config.clone(),
+            probe_payload_params: None,
 
             srtp_rx: None,
             srtp_tx: None,
@@ -301,7 +306,39 @@ impl Session {
         self.map_dynamic(header);
 
         // The dynamic mapping might have added an entry by now.
-        self.streams.mid_ssrc_rx_by_ssrc_or_rtx(now, ssrc_header)
+        if let Some(r) = self.streams.mid_ssrc_rx_by_ssrc_or_rtx(now, ssrc_header) {
+            return Some(r);
+        }
+
+        // SSRC 0 is used for non-media BWE probes from libwebrtc.
+        // These probes need TWCC feedback but don't carry actual media.
+        if ssrc_header.is_probe() {
+            return self.ensure_probe_stream(header.payload_type);
+        }
+
+        None
+    }
+
+    /// Creates the probe stream and media on-demand for handling SSRC 0 BWE probes.
+    fn ensure_probe_stream(&mut self, pt: Pt) -> Option<(Mid, Ssrc)> {
+        let ssrc: Ssrc = 0.into();
+        let midrid = MidRid(MID_PROBE, None);
+
+        // Create probe Media if it doesn't exist
+        if !self.medias.iter().any(|m| m.mid() == MID_PROBE) {
+            let index = self.medias.len();
+            let media = Media::new_probe(index);
+            self.medias.push(media);
+        }
+
+        // Add PayloadParams for this PT if not already configured.
+        // Probes may use different PTs, so we add them as we see them.
+        self.probe_payload_params = Some(PayloadParams::new_probe(pt));
+
+        // Create the stream with NACK suppressed (probes don't need retransmission)
+        self.streams.expect_stream_rx(ssrc, None, midrid, true);
+
+        Some((MID_PROBE, ssrc))
     }
 
     fn map_dynamic(&mut self, header: &RtpHeader) {
@@ -378,7 +415,13 @@ impl Session {
         let media = self.medias.iter_mut().find(|m| m.mid() == mid).unwrap();
         let stream = self.streams.stream_rx(&ssrc).unwrap();
 
-        let params = match main_payload_params(&self.codec_config, header.payload_type) {
+        let maybe_params = if ssrc.is_probe() {
+            self.probe_payload_params.as_ref()
+        } else {
+            main_payload_params(&self.codec_config, header.payload_type)
+        };
+
+        let params = match maybe_params {
             Some(p) => p,
             None => {
                 trace!(
@@ -482,6 +525,11 @@ impl Session {
             // stream.update will have updated the main register.
             receipt_outer
         };
+
+        // Probe packets (SSRC 0) contain only padding, no real media to process
+        if ssrc.is_probe() {
+            return;
+        }
 
         let packet = stream.handle_rtp(now, header, data, seq_no, receipt.time);
 

@@ -80,7 +80,15 @@ macro_rules! num_id {
         impl $id {
             /// Creates a new random id.
             pub fn new() -> Self {
-                $id(NonCryptographicRng::$t())
+                loop {
+                    let v = NonCryptographicRng::$t();
+                    // At least Ssrc assigns special meaning to 0,
+                    // but it's fine to avoid for the other numeric
+                    // ids as well.
+                    if v != 0 {
+                        return $id(v);
+                    }
+                }
             }
         }
 
@@ -138,7 +146,17 @@ str_id!(Rid, "Rid", 8, 3);
 pub struct Ssrc(u32);
 num_id!(Ssrc, u32);
 
-/// Paylad type.
+impl Ssrc {
+    /// Returns true if this is the probe SSRC (0).
+    ///
+    /// libwebrtc uses SSRC 0 for bandwidth estimation probes sent before
+    /// video media starts. These probes require special handling.
+    pub fn is_probe(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+/// Payload type.
 ///
 /// The payload type identifies which codec and format parameters a stream is sent with.
 /// The mappings of Pt-Codec + parameters is negotiated in SDP OFFER/ANSWER.
