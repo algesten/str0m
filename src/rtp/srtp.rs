@@ -956,7 +956,7 @@ mod test {
     #[test]
     fn derive_key() {
         crate::init_crypto_default();
-        let provider = crate::crypto::CryptoProvider::from_feature_flags();
+        let provider = crate::crypto::from_feature_flags();
         let crypto = provider.srtp_provider;
 
         // https://tools.ietf.org/html/rfc3711#appendix-B.3

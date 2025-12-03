@@ -1,0 +1,25 @@
+# Package to isolate unsafe APIs used for the Str0m Windows Cryptography feature.
+
+[package]
+name = "str0m-wincrypto"
+version = "0.2.1"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+keywords = ["webrtc", "streaming", "video", "audio", "media"]
+categories = ["web-programming", "multimedia", "network-programming"]
+repository = "https://github.com/algesten/str0m"
+readme = "README.md"
+description = "Supporting crate for str0m"
+
+[dependencies]
+tracing = "0.1.37"
+str0m-proto = { version = "0.1.0", path = "../../proto" }
+windows = { version = "0.58", features = [
+    "Win32_Security_Cryptography",
+    "Win32_Security_Authentication_Identity",
+    "Win32_Security_Credentials",
+    "Win32_System_Rpc",
+] }
+
+[dev-dependencies]
+str0m = { version = "0.12.0", path = "../../" }

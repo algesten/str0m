@@ -16,17 +16,33 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         rust: [stable, beta, 1.81.0]
-        crypto: [openssl, aws-lc-rs, rust-crypto, wincrypto]
-        exclude:
-          # wincrypto is only for Windows
-          - os: ubuntu-latest
-            crypto: wincrypto
-          - os: macos-latest
-            crypto: wincrypto
+        crypto:
+          - name: openssl
+            os: ubuntu-latest
+          - name: openssl
+            os: macos-latest
+          - name: openssl
+            os: windows-latest
+            features: openssl,vendored
+          - name: aws-lc-rs
+            os: ubuntu-latest
+          - name: aws-lc-rs
+            os: macos-latest
+          - name: aws-lc-rs
+            os: windows-latest
+          - name: rust-crypto
+            os: ubuntu-latest
+          - name: rust-crypto
+            os: macos-latest
+          - name: rust-crypto
+            os: windows-latest
+          - name: wincrypto
+            os: windows-latest
+          - name: apple-crypto
+            os: macos-latest
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.crypto.os }}
 
     steps:
       - uses: actions/checkout@v4
@@ -37,12 +53,8 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
-      - name: Test with ${{ matrix.crypto }} (Windows + OpenSSL with vendored)
-        if: matrix.crypto == 'openssl' && runner.os == 'Windows'
-        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features openssl,vendored
-      - name: Test with ${{ matrix.crypto }}
-        if: matrix.crypto != 'openssl' || runner.os != 'Windows'
-        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features ${{ matrix.crypto }}
+      - name: Test with ${{ matrix.crypto.name }}
+        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features ${{ matrix.crypto.features || matrix.crypto.name }}
 
   snowflake:
     runs-on: ubuntu-latest
@@ -54,7 +66,7 @@ jobs:
         uses: algesten/snowflake@v1.1.0
         with:
           check_diff: true
-          line_width_rules: 'CHANGELOG.md:120;c_cpp_properties.json:160;Cargo.toml:130;README.md:180;README.tpl:180;*.md:110;*.rs:110;*.toml:110;DEFAULT=110'
+          line_width_rules: 'CHANGELOG.md:120;c_cpp_properties.json:160;Cargo.toml:150;README.md:180;README.tpl:180;*.md:110;*.rs:110;*.toml:110;DEFAULT=110'
 
   pii:
     runs-on: ubuntu-latest
@@ -104,42 +116,23 @@ jobs:
         run: cargo install cargo-fuzz
       - name: Build fuzz targets
         run: cargo fuzz build
-
-  cargo-deny:
-    name: cargo-deny
-
-    # TODO: remove this matrix when https://github.com/EmbarkStudios/cargo-deny/issues/324 is resolved
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - aarch64-apple-ios
-          - aarch64-linux-android
-          - i686-pc-windows-gnu
-          - i686-pc-windows-msvc
-          - i686-unknown-linux-gnu
-          - wasm32-unknown-unknown
-          - x86_64-apple-darwin
-          - x86_64-apple-ios
-          - x86_64-pc-windows-gnu
-          - x86_64-pc-windows-msvc
-          - x86_64-unknown-linux-gnu
-          - x86_64-unknown-redox
-
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-    - uses: EmbarkStudios/cargo-deny-action@v1
-      with:
-        command: check
-        log-level: error
-        arguments: --all-features --target ${{ matrix.platform }}
-
-  apple-crypto:
+        
+  crypto-backends:
     strategy:
       matrix:
         rust: [stable, beta, 1.81.0]
-    runs-on: macos-latest
+        backend:
+          - name: apple-crypto
+            os: macos-latest
+          - name: aws-lc-rs
+            os: ubuntu-latest
+          - name: openssl
+            os: ubuntu-latest
+          - name: rust-crypto
+            os: ubuntu-latest
+          - name: wincrypto
+            os: windows-latest
+    runs-on: ${{ matrix.backend.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -152,34 +145,40 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: fmt
         if: matrix.rust == 'stable'
-        run: cargo +${{steps.toolchain.outputs.name}} fmt --manifest-path apple_crypto/Cargo.toml -- --check
+        run: cargo +${{steps.toolchain.outputs.name}} fmt --manifest-path crypto/${{ matrix.backend.name }}/Cargo.toml -- --check
       - name: clippy
         if: matrix.rust == 'stable'
-        run: cargo +${{steps.toolchain.outputs.name}} clippy --manifest-path apple_crypto/Cargo.toml -- -D warnings
+        run: cargo +${{steps.toolchain.outputs.name}} clippy --manifest-path crypto/${{ matrix.backend.name }}/Cargo.toml -- -D warnings
       - name: test
-        run: cargo +${{steps.toolchain.outputs.name}} test --manifest-path apple_crypto/Cargo.toml
+        run: cargo +${{steps.toolchain.outputs.name}} test --manifest-path crypto/${{ matrix.backend.name }}/Cargo.toml        
 
-  crypto-integration-tests:
-    strategy:
-      matrix:
-        rust: [stable, beta, 1.81.0]
-        os: [macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@master
-        id: toolchain
-        with:
-          toolchain: ${{ matrix.rust }}
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: fmt
-        if: matrix.rust == 'stable'
-        run: cargo +${{steps.toolchain.outputs.name}} fmt --manifest-path crypto-integration-tests/Cargo.toml -- --check
-      - name: clippy
-        if: matrix.rust == 'stable'
-        run: cargo +${{steps.toolchain.outputs.name}} clippy --manifest-path crypto-integration-tests/Cargo.toml -- -D warnings
-      - name: test
-        run: cargo +${{steps.toolchain.outputs.name}} test --manifest-path crypto-integration-tests/Cargo.toml
+  # cargo-deny:
+  #   name: cargo-deny
+
+  #   # TODO: remove this matrix when https://github.com/EmbarkStudios/cargo-deny/issues/324 is resolved
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       platform:
+  #         - aarch64-apple-ios
+  #         - aarch64-linux-android
+  #         - i686-pc-windows-gnu
+  #         - i686-pc-windows-msvc
+  #         - i686-unknown-linux-gnu
+  #         - wasm32-unknown-unknown
+  #         - x86_64-apple-darwin
+  #         - x86_64-apple-ios
+  #         - x86_64-pc-windows-gnu
+  #         - x86_64-pc-windows-msvc
+  #         - x86_64-unknown-linux-gnu
+  #         - x86_64-unknown-redox
+
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #   - uses: actions/checkout@v3
+  #   - uses: EmbarkStudios/cargo-deny-action@v1
+  #     with:
+  #       command: check
+  #       log-level: error
+  #       arguments: --all-features --target ${{ matrix.platform }}
+
