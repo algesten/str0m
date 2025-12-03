@@ -298,35 +298,34 @@
 //!
 //! # Crypto backends
 //!
-//! str0m has two crypto backends, `openssl` and `wincrypto`. The default is
-//! `openssl` which works on all platforms (also Windows). Ideally we want a
-//! pure rust version of the crypto code, but WebRTC currently requires
-//! DTLS 1.2 (not the latest version 1.3), and that leaves us only with a
-//! few possible options.
+//! str0m supports multiple crypto backends via feature flags. The default is `aws-lc-rs`.
 //!
-//! When compiling for Windows, the `openssl` feature can be removed and
-//! only rely on `wincrypto`. However, `str0m` defaults to `openssl` when
-//! available. If you disable the `openssl` feature, you MUST explicitly
-//! configure an alternative crypto backend either process-wide or per-instance.
+//! | Feature        | Crate                 | DTLS                         | Platforms |
+//! |----------------|-----------------------|------------------------------|-----------|
+//! | `aws-lc-rs`    | `str0m-aws-lc-rs`     | dimpl + AWS-LC-RS            | All       |
+//! | `rust-crypto`  | `str0m-rust-crypto`   | dimpl + RustCrypto           | All       |
+//! | `openssl`      | `str0m-openssl`       | OpenSSL native DTLS          | All       |
+//! | `wincrypto`    | `str0m-wincrypto`     | Windows SChannel             | Windows   |
+//! | `apple-crypto` | `str0m-apple-crypto`  | dimpl + Apple CommonCrypto   | macOS/iOS |
+//!
+//! If you disable the default features, you MUST explicitly configure an alternative
+//! crypto backend either process-wide or per-instance.
 //!
 //! For applications, the easiest is to set a process-wide default at startup:
 //!
-//! ```ignore
-//! use str0m::crypto::CryptoProvider;
-//!
+//! ```no_run
 //! // Set process default (will panic if called twice)
-//! CryptoProvider::install_default(my_custom_provider);
+//! str0m_openssl::default_provider().install_process_default();
 //! ```
 //!
 //! Alternatively, configure per-instance:
 //!
-//! ```ignore
+//! ```no_run
 //! use std::sync::Arc;
 //! use str0m::Rtc;
-//! use str0m::crypto::CryptoProvider;
 //!
 //! let rtc = Rtc::builder()
-//!     .set_crypto_provider(Arc::new(my_custom_provider))
+//!     .set_crypto_provider(Arc::new(str0m_openssl::default_provider()))
 //!     .build();
 //! ```
 //!
