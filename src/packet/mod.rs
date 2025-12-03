@@ -20,7 +20,7 @@ mod h265;
 use h265::H265Depacketizer;
 
 mod opus;
-use opus::{OpusDepacketizer, OpusPacketizer};
+pub use opus::{OpusDepacketizer, OpusPacketizer};
 
 mod vp8;
 pub use vp8::Vp8CodecExtra;
