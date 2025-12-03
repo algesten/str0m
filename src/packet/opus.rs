@@ -1,6 +1,11 @@
 use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
 
 /// Packetizes Opus RTP packets.
+///
+/// ## Unversioned API surface
+///
+/// This struct is not currently versioned according to semver rules.
+/// Breaking changes may be made in minor or patch releases.
 #[derive(Default, Debug, Copy, Clone)]
 pub struct OpusPacketizer;
 
@@ -29,6 +34,11 @@ impl Packetizer for OpusPacketizer {
 }
 
 /// Depacketizes Opus RTP packets.
+///
+/// ## Unversioned API surface
+///
+/// This struct is not currently versioned according to semver rules.
+/// Breaking changes may be made in minor or patch releases.
 #[derive(PartialEq, Eq, Debug, Default, Clone)]
 pub struct OpusDepacketizer;
 
