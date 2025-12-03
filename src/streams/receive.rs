@@ -534,6 +534,10 @@ impl StreamRx {
     }
 
     pub(crate) fn need_rr(&self, now: Instant) -> bool {
+        if self.ssrc.is_probe() {
+            return false;
+        }
+
         now >= self.receiver_report_at()
     }
 
@@ -645,11 +649,19 @@ impl StreamRx {
     }
 
     pub(crate) fn visit_stats(&self, snapshot: &mut StatsSnapshot, now: Instant) {
+        if self.ssrc.is_probe() {
+            return;
+        }
+
         self.stats
             .fill(snapshot, self.midrid, self.sender_info.as_ref(), now);
     }
 
     pub(crate) fn poll_paused(&mut self) -> Option<StreamPaused> {
+        if self.ssrc.is_probe() {
+            return None;
+        }
+
         if !self.need_paused_event {
             return None;
         }

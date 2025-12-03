@@ -153,6 +153,33 @@ impl PayloadParams {
         }
     }
 
+    /// Creates minimal payload params for SSRC 0 BWE probes.
+    ///
+    /// These probes don't carry real media, only padding for bandwidth estimation.
+    /// Uses 90kHz clock rate (video rate) and enables only transport_cc feedback.
+    pub(crate) fn new_probe(pt: Pt) -> Self {
+        use super::codec::Codec;
+        use super::format_params::FormatParams;
+        use crate::rtp_::Frequency;
+
+        PayloadParams {
+            pt,
+            resend: None,
+            spec: CodecSpec {
+                codec: Codec::Null,
+                clock_rate: Frequency::NINETY_KHZ,
+                channels: None,
+                format: FormatParams::default(),
+            },
+            fb_transport_cc: true,
+            fb_nack: false,
+            fb_pli: false,
+            fb_fir: false,
+            fb_remb: false,
+            locked: false,
+        }
+    }
+
     /// The payload type that groups these parameters.
     pub fn pt(&self) -> Pt {
         self.pt
