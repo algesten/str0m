@@ -411,6 +411,7 @@ impl Streams {
         medias: &[Media],
         config: &CodecConfig,
         feedback: &mut VecDeque<Rtcp>,
+        twcc_rtt: Option<Duration>,
     ) {
         self.mids_to_report.clear(); // Clear for checking StreamRx.
         for stream in self.streams_rx.values() {
@@ -428,7 +429,7 @@ impl Streams {
                 stream.create_rr_and_update(now, sender_ssrc, feedback);
             }
 
-            stream.maybe_create_nack(now, sender_ssrc, feedback);
+            stream.maybe_create_nack(now, sender_ssrc, feedback, twcc_rtt);
 
             stream.handle_timeout(now);
         }

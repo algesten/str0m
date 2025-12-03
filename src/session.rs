@@ -209,6 +209,7 @@ impl Session {
         self.do_payload()?;
 
         let sender_ssrc = self.streams.first_ssrc_local();
+        let twcc_rtt = self.twcc_tx_register.rtt();
 
         self.streams.handle_timeout(
             now,
@@ -216,6 +217,7 @@ impl Session {
             &self.medias,
             &self.codec_config,
             &mut self.feedback_tx,
+            twcc_rtt,
         );
 
         self.update_queue_state(now);
@@ -492,8 +494,12 @@ impl Session {
         // like A -> B -> A. When we go back to A, we must keep the ROC.
         update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
 
+        // Get RTT from TWCC for NACK timing
+        let twcc_rtt = self.twcc_tx_register.rtt();
+
         // Register reception in nack registers.
-        let receipt_outer = stream.update_register(now, &header, clock_rate, is_repair, seq_no);
+        let receipt_outer =
+            stream.update_register(now, &header, clock_rate, is_repair, seq_no, twcc_rtt);
 
         // RTX packets must be rewritten to be a normal packet. This only changes the
         // the seq_no, however MediaTime might be different when interpreted against the
@@ -520,7 +526,7 @@ impl Session {
             update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
 
             // Now update the "main" register with the repaired packet info.
-            stream.update_register(now, &header, clock_rate, false, seq_no)
+            stream.update_register(now, &header, clock_rate, false, seq_no, twcc_rtt)
         } else {
             // This is not RTX, the outer seq and time is what we use. The first
             // stream.update will have updated the main register.

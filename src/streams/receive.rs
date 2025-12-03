@@ -393,6 +393,7 @@ impl StreamRx {
         clock_rate: Frequency,
         is_repair: bool,
         seq_no: SeqNo,
+        twcc_rtt: Option<Duration>,
     ) -> RegisterUpdateReceipt {
         self.last_used = now;
 
@@ -423,12 +424,7 @@ impl StreamRx {
 
         // Update nack_at when gaps are detected (after releasing register borrow)
         if should_update_nack_at {
-            // Convert stats.rtt (f32 ms) to Duration, or use default
-            let rtt = self
-                .stats
-                .rtt
-                .map(|ms| Duration::from_secs_f32(ms / 1000.0))
-                .unwrap_or(NACK_DEFAULT_RTT);
+            let rtt = twcc_rtt.unwrap_or(NACK_DEFAULT_RTT);
             let register = self.register.as_ref().unwrap();
             if let Some(next_time) = register.next_nack_time(now, rtt) {
                 // If there are missing packets, update nack_at
@@ -683,18 +679,14 @@ impl StreamRx {
         now: Instant,
         sender_ssrc: Ssrc,
         feedback: &mut VecDeque<Rtcp>,
+        twcc_rtt: Option<Duration>,
     ) -> Option<()> {
         if !self.nack_enabled() {
             self.nack_at = None;
             return None;
         }
 
-        // Convert stats.rtt (f32 ms) to Duration, or use default
-        let rtt = self
-            .stats
-            .rtt
-            .map(|ms| Duration::from_secs_f32(ms / 1000.0))
-            .unwrap_or(NACK_DEFAULT_RTT);
+        let rtt = twcc_rtt.unwrap_or(NACK_DEFAULT_RTT);
 
         let nacks = self
             .register
