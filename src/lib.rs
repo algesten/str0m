@@ -1903,6 +1903,7 @@ pub struct RtcConfig {
     send_buffer_video: usize,
     rtp_mode: bool,
     enable_raw_packets: bool,
+    probe_without_media: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -2397,9 +2398,34 @@ impl RtcConfig {
     ///
     /// This clones data, and is therefore expensive.
     /// Should not be enabled outside of tests and troubleshooting.
+    ///
+    /// Default: false
     pub fn enable_raw_packets(mut self, enabled: bool) -> Self {
         self.enable_raw_packets = enabled;
         self
+    }
+
+    /// Enable sending SSRC 0 BWE probes before video starts.
+    ///
+    /// This is useful for bandwidth estimation before video starts.
+    ///
+    /// Default: false
+    pub fn enable_probe_without_media(mut self, enabled: bool) -> Self {
+        self.probe_without_media = enabled;
+        self
+    }
+
+    /// Checks if SSRC 0 BWE probes before video starts are enabled.
+    ///
+    /// ```
+    /// # use str0m::Rtc;
+    /// let config = Rtc::builder();
+    ///
+    /// // Defaults to false.
+    /// assert_eq!(config.probe_without_media(), false);
+    /// ```
+    pub fn probe_without_media(&self) -> bool {
+        self.probe_without_media
     }
 
     /// Create a [`Rtc`] from the configuration.
@@ -2442,6 +2468,7 @@ impl Default for RtcConfig {
             send_buffer_video: 1000,
             rtp_mode: false,
             enable_raw_packets: false,
+            probe_without_media: false,
         }
     }
 }

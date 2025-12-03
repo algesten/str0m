@@ -44,24 +44,25 @@ available network bandwidth.
 
 ### Conditions for SSRC 0 probes
 
-SSRC 0 probes are generated when all of the following are true:
+SSRC 0 probes are sent when all of the following are true:
 
 1. A video m-line with RTX (retransmission) is negotiated
-2. `allow_probe_without_media` is enabled in the pacing controller (Chrome default)
-3. No video media packets have been sent yet by the remote peer
+2. BWE (bandwidth estimation) is enabled
+3. TWCC extension is configured
+4. No video media packets have been sent yet
 
-Once the remote peer sends actual video RTP packets, the probing switches to
-using padding on the actual video SSRC (with RTX), and SSRC 0 traffic stops.
+Once actual video RTP packets are sent, padding switches to the real video
+SSRC (via RTX), and SSRC 0 probing stops.
 
 ### What the probes contain
 
 - **SSRC**: Always 0
-- **Payload type**: May use any PT, typically the RTX PT from negotiation
-- **Payload**: Empty or padding-only (no actual media data)
+- **Payload type**: The RTX PT from negotiation
+- **Payload**: Padding-only (no actual media data)
 - **transport_cc extension**: Present for TWCC feedback
-- **No mid/rid extensions**: The SSRC 0 is not associated with any m-line
+- **No mid/rid extensions**: SSRC 0 is not associated with any m-line
 
-### How str0m handles these
+### Receiving probes (from libwebrtc)
 
 str0m dynamically creates an internal "probe" stream when it receives SSRC 0
 packets. This allows:
@@ -72,6 +73,19 @@ packets. This allows:
 
 The probe stream is marked internal and will not emit media events like "paused"
 when the traffic stops (as it will once real video starts).
+
+### Sending probes (to libwebrtc)
+
+str0m can send SSRC 0 probes when enabled via:
+
+```rust
+let rtc = Rtc::builder()
+    .enable_probe_without_media(true)
+    .build();
+```
+
+This is disabled by default. When enabled, str0m will send padding probes on
+SSRC 0 before any video is sent, allowing early bandwidth estimation.
 
 Reference: https://github.com/pion/webrtc/pull/2816
 
