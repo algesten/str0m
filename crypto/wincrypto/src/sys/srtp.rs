@@ -40,7 +40,7 @@ impl SrtpKey {
                 BCRYPT_AES_ECB_ALG_HANDLE,
                 &mut *key_handle,
                 None,
-                &key,
+                key,
                 0,
             ))?;
             Ok(Self(key_handle))
@@ -56,7 +56,7 @@ impl SrtpKey {
                 BCRYPT_AES_GCM_ALG_HANDLE,
                 &mut *key_handle,
                 None,
-                &key,
+                key,
                 0,
             ))?;
             Ok(Self(key_handle))
@@ -143,7 +143,7 @@ pub fn srtp_aes_128_cm(
         output[i] = input[i] ^ countered_iv[i];
     }
 
-    Ok(input.len() as usize)
+    Ok(input.len())
 }
 
 /// Run the given plain_text through the AES-GCM alg with the given key and receive the

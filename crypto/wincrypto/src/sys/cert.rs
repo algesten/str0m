@@ -153,6 +153,7 @@ impl Certificate {
         }
     }
 
+    #[allow(dead_code)]
     pub fn sha256_fingerprint(&self) -> Result<[u8; 32], WinCryptoError> {
         let der_bytes = self.get_der_bytes()?;
         crate::sys::sha256(&der_bytes)

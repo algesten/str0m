@@ -150,6 +150,7 @@ impl Dtls {
         self.is_client
     }
 
+    #[allow(dead_code)]
     pub fn is_connected(&self) -> bool {
         self.state == EstablishmentState::Established
     }
@@ -223,6 +224,7 @@ impl Dtls {
         self.output_datagrams.pop_front()
     }
 
+    #[allow(dead_code)]
     pub fn next_timeout(&mut self, now: Instant) -> Option<Instant> {
         match self.state {
             EstablishmentState::Idle | EstablishmentState::Handshaking => {
@@ -418,7 +420,7 @@ impl Dtls {
                 .push_back(token_buffer[..len as usize].to_vec());
         }
 
-        return match status {
+        match status {
             SEC_E_OK => {
                 // Move to Done
                 self.transition_to_completed()
@@ -439,7 +441,7 @@ impl Dtls {
                 self.state = EstablishmentState::Failed;
                 Err(e.into())
             }
-        };
+        }
     }
 
     fn transition_to_completed(&mut self) -> Result<DtlsEvent, WinCryptoError> {
