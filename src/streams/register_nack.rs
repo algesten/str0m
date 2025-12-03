@@ -98,8 +98,6 @@ impl<'a> Iterator for NackIterator<'a> {
             self.next += 1;
         }
 
-        self.next += 1;
-
         Some(entry)
     }
 }
@@ -727,5 +725,52 @@ mod test {
         assert!(reg.nack_reports(now, rtt).is_none());
         let active = reg.active.clone().expect("nack range");
         assert_eq!(*active.start, 65666);
+    }
+
+    #[test]
+    fn nack_does_not_skip_packet_at_pid_plus_17() {
+        // This test verifies that packet at position pid + 17 is NOT skipped.
+        // One NACK entry covers: pid (1 packet) + blp bits 0-15 (16 packets) = 17 packets.
+        // With 18+ missing packets, we need multiple NACK entries.
+        // The bug: an extra self.next += 1 after the blp loop causes packet
+        // at position pid + 17 to be skipped when generating the next entry.
+        let now = Instant::now();
+        let rtt = Duration::from_millis(100);
+        let mut reg = NackRegister::new(None);
+
+        // Receive packet 100, then skip 101-118 (18 missing), then receive 119+
+        // First NACK entry covers 101 (pid) + 102-117 (blp) = 17 packets
+        // Packet 118 must be in the second NACK entry
+        reg.update(100.into());
+        for i in 119..=130 {
+            reg.update(i.into());
+        }
+
+        // Get all NACK entries
+        let reports: Vec<_> = reg
+            .nack_reports(now, rtt)
+            .expect("should generate reports")
+            .flat_map(|nack| nack.reports)
+            .collect();
+
+        // Collect all NACKed sequence numbers
+        let mut nacked_seqs: Vec<u16> = Vec::new();
+        for entry in &reports {
+            nacked_seqs.push(entry.pid);
+            for bit in 0..16 {
+                if entry.blp & (1 << bit) != 0 {
+                    nacked_seqs.push(entry.pid.wrapping_add(bit + 1));
+                }
+            }
+        }
+        nacked_seqs.sort();
+
+        // All packets 101-118 should be NACKed (18 packets)
+        let expected: Vec<u16> = (101..=118).collect();
+        assert_eq!(
+            nacked_seqs, expected,
+            "Expected all packets 101-118 to be NACKed, but got {:?}",
+            nacked_seqs
+        );
     }
 }
