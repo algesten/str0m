@@ -315,7 +315,7 @@
 //!
 //! ```no_run
 //! // Set process default (will panic if called twice)
-//! str0m_openssl::default_provider().install_process_default();
+//! str0m_rust_crypto::default_provider().install_process_default();
 //! ```
 //!
 //! Alternatively, configure per-instance:
@@ -325,7 +325,7 @@
 //! use str0m::Rtc;
 //!
 //! let rtc = Rtc::builder()
-//!     .set_crypto_provider(Arc::new(str0m_openssl::default_provider()))
+//!     .set_crypto_provider(Arc::new(str0m_rust_crypto::default_provider()))
 //!     .build();
 //! ```
 //!
