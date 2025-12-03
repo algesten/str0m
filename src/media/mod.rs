@@ -96,6 +96,8 @@ pub struct Media {
     /// These must have corresponding entries in Session::codec_config.
     ///
     /// SDP property.
+    ///
+    /// If this is empty, the m-line is disabled/rejected (port=0 in SDP).
     remote_pts: Vec<Pt>,
 
     /// Remote extmaps negotiated for this media.
@@ -274,6 +276,20 @@ impl Media {
     /// SDP level property.
     pub fn direction(&self) -> Direction {
         self.dir
+    }
+
+    /// Whether this m-line is disabled/rejected (port=0 in SDP).
+    ///
+    /// An m-line is disabled if there are no negotiated codecs,
+    /// either because no codecs matched or because the remote rejected the m-line.
+    ///
+    /// SDP level property.
+    pub fn disabled(&self) -> bool {
+        self.remote_pts.is_empty()
+    }
+
+    pub(crate) fn mark_disabled(&mut self) {
+        self.remote_pts.clear();
     }
 
     pub(crate) fn simulcast(&self) -> Option<&SdpSimulcast> {
@@ -552,7 +568,11 @@ impl Media {
             // cname,
             msid: l.msid().unwrap_or(Msid::random()),
             kind: l.typ.clone().into(),
-            dir: l.direction().invert(), // remote direction is reverse.
+            dir: if l.disabled {
+                Direction::Inactive
+            } else {
+                l.direction().invert() // remote direction is reverse.
+            },
             remote_created,
             ..Default::default()
         }

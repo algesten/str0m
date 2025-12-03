@@ -1187,7 +1187,8 @@ impl fmt::Display for SessionAttribute {
 
 impl fmt::Display for MediaLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "m={} 9 {} ", self.typ, self.proto,)?;
+        let port = if self.disabled { 0 } else { 9 };
+        write!(f, "m={} {} {} ", self.typ, port, self.proto)?;
         let len = self.pts.len();
         if self.typ.is_channel() {
             write!(f, "webrtc-datachannel\r\n")?;

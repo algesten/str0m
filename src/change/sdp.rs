@@ -744,7 +744,12 @@ fn as_sdp(session: &Session, params: AsSdpParams) -> Sdp {
         }
 
         // Mids go into the session part of the SDP.
-        let mids = v.iter().map(|m| m.mid()).collect();
+        // Rejected (disabled) m-lines must not be part of the BUNDLE group.
+        let mids = lines
+            .iter()
+            .filter(|l| !l.disabled)
+            .map(|l| l.mid())
+            .collect();
 
         let mut stream_ids = vec![];
         for msid in v.iter().filter_map(|v| v.msid()) {
@@ -986,7 +991,10 @@ fn add_new_lines(
 
         if m.typ.is_media() {
             let mut media = Media::from_remote_media_line(m, idx, is_offer);
-            media.need_open_event = is_offer;
+
+            // For disabled (rejected) m-lines, don't fire open event
+            // and the direction will be set to Inactive by update_media.
+            media.need_open_event = is_offer && !m.disabled;
 
             // Match/remap remote params.
             session
@@ -1061,6 +1069,20 @@ fn update_media(
     exts: &ExtensionMap,
     streams: &mut Streams,
 ) {
+    // If the m-line is disabled (port=0), clear remote_pts and set direction to Inactive.
+    // This handles the case where the remote rejects an m-line.
+    if m.disabled {
+        if !media.disabled() {
+            debug!(
+                "Mid ({}) is rejected (port=0), setting to Inactive",
+                media.mid()
+            );
+        }
+        media.mark_disabled();
+        media.set_direction(Direction::Inactive);
+        return;
+    }
+
     // Direction changes
     //
     // All changes come from the other side, either via an incoming OFFER
@@ -1336,7 +1358,7 @@ impl AsSdpMediaLine for Media {
 
         MediaLine {
             typ: self.kind().into(),
-            disabled: false,
+            disabled: self.disabled(),
             proto: Proto::Srtp,
             pts,
             bw: None,
