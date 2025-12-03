@@ -23,6 +23,7 @@ use crate::rtp_::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRe
 use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
 use crate::rtp_::{SrtpContext, Ssrc};
 use crate::stats::StatsSnapshot;
+use crate::streams::probe_sender::ProbeSender;
 use crate::streams::{RtpPacket, Streams};
 use crate::util::{already_happened, not_happening, Soonest};
 use crate::Event;
@@ -74,11 +75,20 @@ pub(crate) struct Session {
     // Lazy init when we see the PT.
     probe_payload_params: Option<PayloadParams>,
 
+    /// Whether to send SSRC 0 BWE probes before video starts.
+    probe_without_media: bool,
+
+    /// Probe sender for SSRC 0 BWE probes (before video starts).
+    probe_sender: Option<ProbeSender>,
+
+    /// Track if any video packet has been sent.
+    has_sent_video: bool,
+
     srtp_rx: Option<SrtpContext>,
     srtp_tx: Option<SrtpContext>,
     last_nack: Instant,
     last_twcc: Instant,
-    twcc: u64,
+    twcc: SeqNo,
     twcc_rx_register: TwccRecvRegister,
     twcc_tx_register: TwccSendRegister,
     max_rx_seq_lookup: HashMap<Ssrc, SeqNo>,
@@ -151,11 +161,16 @@ impl Session {
             codec_config: config.codec_config.clone(),
             probe_payload_params: None,
 
+            // Probe sender for SSRC 0 BWE probes (before video starts)
+            probe_without_media: config.probe_without_media(),
+            probe_sender: None,
+            has_sent_video: false,
+
             srtp_rx: None,
             srtp_tx: None,
             last_nack: already_happened(),
             last_twcc: already_happened(),
-            twcc: 0,
+            twcc: SeqNo::from(0),
             twcc_rx_register: TwccRecvRegister::new(100),
             twcc_tx_register: TwccSendRegister::new(1000),
             max_rx_seq_lookup: HashMap::new(),
@@ -251,18 +266,86 @@ impl Session {
     }
 
     fn update_queue_state(&mut self, now: Instant) {
-        let iter = self.streams.streams_tx().map(|m| m.queue_state(now));
+        // Lazily initialize probe sender if needed (works for both SDP and Direct API)
+        // Also removes ProbeSender if a single video packet has been sent.
+        self.maybe_enable_probe_sender();
+
+        // Create probe QueueState before borrowing streams (if probe sender is active)
+        let probe_state = self.probe_sender.as_ref().map(|p| p.probe_queue_state(now));
+
+        // Build iterator over all StreamTx queue states, chain probe state, if enabled
+        let stream_states = self.streams.streams_tx().map(|m| m.queue_state(now));
+        let iter = stream_states.chain(probe_state);
 
         let Some(padding_request) = self.pacer.handle_timeout(now, iter) else {
             return;
         };
 
+        // Check if pacer selected the probe sender
+        if padding_request.midrid.mid() == MID_PROBE {
+            if let Some(probe) = &mut self.probe_sender {
+                probe.generate_padding(padding_request.padding);
+            }
+            return;
+        }
+
+        // Normal path: route to StreamTx
         let stream = self
             .streams
             .stream_tx_by_midrid(padding_request.midrid)
             .expect("pacer to use an existing stream");
 
         stream.generate_padding(padding_request.padding);
+    }
+
+    /// Initialize probe sender if conditions are met.
+    ///
+    /// Called lazily from update_queue_state, works for both SDP and Direct API.
+    fn maybe_enable_probe_sender(&mut self) {
+        if !self.probe_without_media {
+            return;
+        }
+
+        // Remove probe sender if a single video packet has been sent
+        // since further padding is sent as RTX.
+        if self.has_sent_video {
+            self.probe_sender = None;
+            return; // Don't re-initialize after video has started
+        }
+
+        // Only init if not already initialized
+        if self.probe_sender.is_some() {
+            return;
+        }
+
+        // Need BWE enabled for probing to make sense
+        if self.bwe.is_none() {
+            return;
+        }
+
+        // Ensure TWCC is enabled.
+        let has_twcc = self
+            .exts
+            .id_of(Extension::TransportSequenceNumber)
+            .is_some();
+
+        if !has_twcc {
+            return;
+        }
+
+        // Find first video PT with RTX
+        let maybe_pt_rx = self
+            .codec_config
+            .iter()
+            .filter(|p| p.spec().codec.is_video())
+            .filter_map(|p| p.resend)
+            .next();
+
+        let Some(rtx_pt) = maybe_pt_rx else {
+            return;
+        };
+
+        self.probe_sender = Some(ProbeSender::new(rtx_pt));
     }
 
     fn create_twcc_feedback(&mut self, sender_ssrc: Ssrc, now: Instant) -> Option<()> {
@@ -749,36 +832,20 @@ impl Session {
     }
 
     fn poll_packet(&mut self, now: Instant) -> Option<DatagramSend> {
-        let srtp_tx = self.srtp_tx.as_mut()?;
+        // No polling until we got the SRTP context.
+        self.srtp_tx.as_ref()?;
 
         // Figure out which, if any, queue to poll
         let midrid = self.pacer.poll_queue()?;
-        let media = self
-            .medias
-            .iter()
-            .find(|m| m.mid() == midrid.mid())
-            .expect("index is media");
 
-        let buf = &mut self.poll_packet_buf;
-        let twcc_seq = self.twcc;
-
-        let stream = self.streams.stream_tx_by_midrid(midrid)?;
-
-        let params = &self.codec_config;
-        let exts = media.remote_extmap();
-
-        // TWCC might not be enabled for this m-line. Firefox do use TWCC, but not
-        // for audio. This is indiciated via the SDP.
-        let twcc_enabled = exts.id_of(Extension::TransportSequenceNumber).is_some();
-        let twcc = twcc_enabled.then_some(&mut self.twcc);
-
-        let receipt = stream.poll_packet(now, exts, twcc, params, buf)?;
+        let receipt = self.packet_to_buf(now, midrid)?;
 
         let PacketReceipt {
             header,
             seq_no,
             is_padding,
             payload_size,
+            twcc_seq,
         } = receipt;
 
         trace!(payload_size, is_padding, "Poll RTP: {:?}", header);
@@ -792,15 +859,18 @@ impl Session {
 
         self.pacer.register_send(now, payload_size.into(), midrid);
 
+        let buf = &mut self.poll_packet_buf;
+
         if let Some(raw_packets) = &mut self.raw_packets {
             raw_packets.push_back(Box::new(RawPacket::RtpTx(header.clone(), buf.clone())));
         }
 
+        let srtp_tx = self.srtp_tx.as_mut().expect("srtp_tx is set");
         let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
-        if twcc_enabled {
+        if let Some(twcc_seq) = twcc_seq {
             self.twcc_tx_register
-                .register_seq(twcc_seq.into(), now, payload_size);
+                .register_seq(twcc_seq, now, payload_size);
         }
 
         // Technically we should wait for the next handle_timeout, but this speeds things up a bit
@@ -808,6 +878,39 @@ impl Session {
         self.update_queue_state(now);
 
         Some(protected.into())
+    }
+
+    fn packet_to_buf(&mut self, now: Instant, midrid: MidRid) -> Option<PacketReceipt> {
+        let buf = &mut self.poll_packet_buf;
+
+        // Probe packets on SSRC 0 before video starts.
+        if midrid.mid() == MID_PROBE {
+            let probe_sender = self.probe_sender.as_mut()?;
+            return probe_sender.poll_packet(&mut self.twcc, &self.exts, buf);
+        }
+
+        let media = self
+            .medias
+            .iter()
+            .find(|m| m.mid() == midrid.mid())
+            .expect("index is media");
+
+        let stream = self.streams.stream_tx_by_midrid(midrid)?;
+
+        let params = &self.codec_config;
+        let exts = media.remote_extmap();
+
+        // TWCC might not be enabled for this m-line. Firefox do use TWCC, but not
+        // for audio. This is indiciated via the SDP.
+        let twcc_enabled = exts.id_of(Extension::TransportSequenceNumber).is_some();
+        let twcc = twcc_enabled.then_some(&mut self.twcc);
+
+        // This will stop sending probe SSRC 0 packets.
+        if media.kind().is_video() && stream.rtx().is_some() {
+            self.has_sent_video = true;
+        }
+
+        stream.poll_packet(now, exts, twcc, params, buf)
     }
 
     pub fn poll_timeout(&mut self) -> (Option<Instant>, Reason) {
@@ -1053,6 +1156,7 @@ pub struct PacketReceipt {
     pub seq_no: SeqNo,
     pub is_padding: bool,
     pub payload_size: usize,
+    pub twcc_seq: Option<SeqNo>,
 }
 
 /// Find the PayloadParams for the given Pt, either when the Pt is the main Pt for the Codec or
