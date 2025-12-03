@@ -1029,10 +1029,11 @@ impl Session {
             return;
         };
 
+        // Use current_bitrate as fallback when no estimate yet (enables early probing)
         let padding_rate = bwe
             .last_estimate()
             .map(|estimate| estimate.min(bwe.desired_bitrate))
-            .unwrap_or(Bitrate::ZERO);
+            .unwrap_or_else(|| bwe.current_bitrate.min(bwe.desired_bitrate));
 
         self.pacer.set_padding_rate(padding_rate);
 
