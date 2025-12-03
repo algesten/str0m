@@ -686,6 +686,13 @@ impl StreamRx {
             return None;
         }
 
+        // Don't generate NACKs before scheduled time
+        if let Some(nack_at) = self.nack_at {
+            if now < nack_at {
+                return None;
+            }
+        }
+
         let rtt = twcc_rtt.unwrap_or(NACK_DEFAULT_RTT);
 
         let nacks = self
