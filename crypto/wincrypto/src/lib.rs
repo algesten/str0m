@@ -36,11 +36,10 @@ mod sys;
 ///
 /// ```no_run
 /// use std::sync::Arc;
-/// use str0m::crypto::wincrypto::default_provider;
-/// use str0m::RtcConfig;
+/// use str0m_wincrypto::default_provider;
 ///
 /// let crypto_provider = Arc::new(default_provider());
-/// let config = RtcConfig::new().set_crypto_provider(crypto_provider);
+/// // Pass this to str0m's RtcConfig when creating a WebRTC session
 /// ```
 pub fn default_provider() -> CryptoProvider {
     static SRTP: WinCryptoSrtpProvider = WinCryptoSrtpProvider;
