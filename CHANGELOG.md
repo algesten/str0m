@@ -1,7 +1,10 @@
 # Unreleased
 
-  * Set SDP port 0 for rejected m-lines #772
+  * Handle rejected m-lines (set port 0 etc) #772
+  * Expose Opus packetizer #770
   * Handle incoming SSRC 0 BWE probe #769
+  * Move all crypto backends out of main crate #768
+  * Apple Crypto backend #763
   * New CryptoProvider API #760
   * Update H.264 profile and level matching logic #758
   * Use constant time equality in some key places #753
