@@ -122,13 +122,40 @@ pub fn answer_no_match() {
     init_crypto_default();
 
     // L has one codec, and that is not matched by R. This should disable the m-line.
-    let (l, r) = with_params(
-        //
-        info_span!("L"),
-        &[vp8(100)],
-        info_span!("R"),
-        &[h264(96)],
+    let mut l = build_params(info_span!("L"), &[vp8(100)]);
+    let mut r = build_params(info_span!("R"), &[h264(96)]);
+
+    // Create offer from L
+    let (offer, pending) = l.span.in_scope(|| {
+        let mut change = l.rtc.sdp_api();
+        change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
+        change.apply().unwrap()
+    });
+
+    // R accepts the offer and generates an answer
+    let answer = r
+        .span
+        .in_scope(|| r.rtc.sdp_api().accept_offer(offer).unwrap());
+
+    // Check that the answer SDP has port 0 for the rejected m-line
+    let answer_sdp = answer.to_sdp_string();
+    assert!(
+        answer_sdp.contains("m=video 0 "),
+        "Expected rejected m-line with port 0, got:\n{}",
+        answer_sdp
     );
+
+    // Rejected m-line should not be in the BUNDLE group
+    assert!(
+        !answer_sdp.contains("a=group:BUNDLE 0"),
+        "Rejected m-line should not be in BUNDLE group:\n{}",
+        answer_sdp
+    );
+
+    // L accepts the answer
+    l.span.in_scope(|| {
+        l.rtc.sdp_api().accept_answer(pending, answer).unwrap();
+    });
 
     let mid = l._mids()[0];
 
@@ -138,13 +165,18 @@ pub fn answer_no_match() {
     // No remote PTs.
     assert_eq!(l.media(mid).unwrap().remote_pts(), &[]);
 
+    // After receiving a rejected answer (port=0), direction should be Inactive.
+    assert_eq!(
+        l.media(mid).unwrap().direction(),
+        Direction::Inactive,
+        "Offerer's m-line should be Inactive after receiving rejected answer"
+    );
+
     // Test right side. Nothing has changed. The codec is not locked.
     assert_eq!(&[h264(96)], &**r.codec_config());
     assert!(!r.codec_config()[0]._is_locked());
     // No remote PTs.
     assert_eq!(r.media(mid).unwrap().remote_pts(), &[]);
-
-    // TODO: here we should check for the m-line being made inactive by setting the port to 0.
 }
 
 #[test]
