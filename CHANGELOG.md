@@ -1,5 +1,8 @@
 # Unreleased
 
+  * Apple Crypto backend #763
+  * Move all crypto backends out of main crate #768
+
 # 0.13.0
 
   * Simulcast send attributes RFC 8851 #780
