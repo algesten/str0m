@@ -1,15 +1,5 @@
-//! OpenSSL cryptographic provider implementation for str0m.
-//!
-//! This module provides the OpenSSL-based cryptographic backend for str0m,
-//! handling SRTP encryption and SHA1-HMAC for STUN.
-//!
-//! DTLS uses dimpl for the protocol implementation, with OpenSSL providing
-//! the underlying TLS transport.
-//!
-//! # Feature Flag
-//!
-//! This module is only available when the `openssl` feature is enabled.
-//! The `openssl` feature is included in the default features.
+//! OpenSSL implementation of cryptographic functions.
+//! DTLS via OpenSSL's native DTLS implementation.
 
 mod dtls;
 mod sha1;

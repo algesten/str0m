@@ -1,7 +1,5 @@
 //! Windows SChannel + CNG implementation of cryptographic functions.
-//!
-//! This module wraps the `str0m-wincrypto` crate which contains the unsafe Windows CNG/SChannel
-//! implementations and provides a `CryptoProvider` implementation for str0m.
+//! DTLS via Windows SChannel.
 
 #[macro_use]
 extern crate tracing;
@@ -27,7 +25,7 @@ mod sys;
 /// Create the default Windows CNG/SChannel crypto provider.
 ///
 /// This provider implements all cryptographic operations required for WebRTC:
-/// - DTLS 1.2 for secure key exchange (using dimpl protocol + SChannel)
+/// - DTLS 1.2 for secure key exchange (using Windows SChannel)
 /// - SRTP for encrypted media (using Windows CNG)
 /// - SHA1-HMAC for STUN message integrity (using Windows CNG)
 /// - SHA-256 for certificate fingerprints (using Windows CNG)

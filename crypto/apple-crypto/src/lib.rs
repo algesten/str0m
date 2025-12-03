@@ -1,37 +1,7 @@
-//! Apple CommonCrypto cryptographic provider implementation for str0m.
-//!
-//! This crate provides the Apple CommonCrypto/Security framework-based cryptographic
-//! backend for str0m, handling SRTP encryption and SHA1-HMAC for STUN.
-//!
-//! DTLS uses dimpl for the protocol implementation, with Apple CommonCrypto providing
-//! the underlying cryptographic operations.
-//!
-//! # Platform Support
-//!
-//! This crate only works on Apple platforms (macOS, iOS, tvOS, watchOS).
-//!
-//! # Usage
-//!
-#![allow(clippy::redundant_pub_crate)]
-//! ```ignore
-//! use str0m::Rtc;
-//! use str0m_apple_crypto::default_provider;
-//!
-//! // Install as process-wide default
-//! default_provider().install_process_default();
-//!
-//! // Or use with RtcConfig
-//! let rtc = Rtc::builder()
-//!     .set_crypto_provider(default_provider())
-//!     .build();
-//! ```
-//!
-//! # Supported SRTP Profiles
-//!
-//! - `SRTP_AES128_CM_SHA1_80`
-//! - `SRTP_AEAD_AES_128_GCM`
-//! - `SRTP_AEAD_AES_256_GCM`
+//! Apple CommonCrypto/Security framework implementation of cryptographic functions.
+//! DTLS via dimpl with Apple CommonCrypto as crypto backend.
 
+#![allow(clippy::redundant_pub_crate)]
 #![allow(unsafe_code)]
 #![cfg(target_vendor = "apple")]
 

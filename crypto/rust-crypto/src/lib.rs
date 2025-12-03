@@ -1,14 +1,5 @@
-//! RustCrypto cryptographic provider implementation for str0m.
-//!
-//! This module provides the RustCrypto-based cryptographic backend for str0m,
-//! handling SRTP encryption and SHA1-HMAC for STUN.
-//!
-//! DTLS uses dimpl for the protocol implementation, with RustCrypto providing
-//! the underlying cryptographic operations.
-//!
-//! # Feature Flag
-//!
-//! This module is only available when the `rust-crypto` feature is enabled.
+//! RustCrypto implementation of cryptographic functions.
+//! DTLS via dimpl with RustCrypto as crypto backend.
 
 mod dtls;
 mod sha1;

@@ -1,15 +1,5 @@
-//! AWS-LC-RS cryptographic provider implementation for str0m.
-//!
-//! This module provides the AWS-LC-RS-based cryptographic backend for str0m,
-//! handling SRTP encryption and SHA1-HMAC for STUN.
-//!
-//! DTLS uses dimpl for the protocol implementation, with AWS-LC-RS providing
-//! the underlying cryptographic operations.
-//!
-//! # Feature Flag
-//!
-//! This module is only available when the `aws-lc-rs` feature is enabled.
-//! The `aws-lc-rs` feature is included in the default features.
+//! AWS-LC-RS implementation of cryptographic functions.
+//! DTLS via dimpl with AWS-LC-RS as crypto backend.
 
 mod dtls;
 mod sha1;
