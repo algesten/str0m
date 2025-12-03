@@ -319,17 +319,13 @@ impl Session {
         None
     }
 
-    /// Creates the probe stream and media on-demand for handling SSRC 0 BWE probes.
+    /// Creates the probe stream on-demand for handling SSRC 0 BWE probes.
+    ///
+    /// No Media is created since probes don't carry real media - they only need
+    /// SRTP decryption and TWCC feedback.
     fn ensure_probe_stream(&mut self, pt: Pt) -> Option<(Mid, Ssrc)> {
         let ssrc: Ssrc = 0.into();
         let midrid = MidRid(MID_PROBE, None);
-
-        // Create probe Media if it doesn't exist
-        if !self.medias.iter().any(|m| m.mid() == MID_PROBE) {
-            let index = self.medias.len();
-            let media = Media::new_probe(index);
-            self.medias.push(media);
-        }
 
         // Add PayloadParams for this PT if not already configured.
         // Probes may use different PTs, so we add them as we see them.
@@ -411,8 +407,8 @@ impl Session {
             }
         };
 
-        // Both of these unwraps are fine because mid_and_ssrc_for_header guarantees it.
-        let media = self.medias.iter_mut().find(|m| m.mid() == mid).unwrap();
+        // mid_and_ssrc_for_header guarantees stream exists.
+        // Media may not exist for internal probe streams (SSRC 0).
         let stream = self.streams.stream_rx(&ssrc).unwrap();
 
         let maybe_params = if ssrc.is_probe() {
@@ -542,6 +538,8 @@ impl Session {
             }
         } else {
             // In non-RTP mode, we let the Media use a Depayloader.
+            // unwrap is fine because mid_and_ssrc_for_header guarantees it.
+            let media = self.medias.iter_mut().find(|m| m.mid() == mid).unwrap();
             media.depayload(
                 stream.rid(),
                 packet,

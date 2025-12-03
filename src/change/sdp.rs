@@ -1049,14 +1049,7 @@ fn as_media_lines(session: &Session) -> Vec<&dyn AsSdpMediaLine> {
     if let Some(app) = session.app() {
         v.push(app as &dyn AsSdpMediaLine);
     }
-    // Filter out internal probe medias - they should not appear in SDP
-    v.extend(
-        session
-            .medias()
-            .iter()
-            .filter(|m| !m.is_internal())
-            .map(|m| m as &dyn AsSdpMediaLine),
-    );
+    v.extend(session.medias().iter().map(|m| m as &dyn AsSdpMediaLine));
     v.sort_by_key(|f| f.index());
     v
 }
