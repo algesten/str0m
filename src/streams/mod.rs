@@ -12,7 +12,7 @@ use crate::rtp_::{Bitrate, Pt};
 use crate::rtp_::{MediaTime, SenderInfo};
 use crate::rtp_::{Mid, Rid, SeqNo};
 use crate::rtp_::{Rtcp, RtpHeader};
-use crate::util::{already_happened, NonCryptographicRng};
+use crate::util::already_happened;
 
 pub use self::receive::StreamRx;
 pub use self::send::StreamTx;
@@ -512,7 +512,8 @@ impl Streams {
 
     pub(crate) fn new_ssrc(&self) -> Ssrc {
         loop {
-            let ssrc: Ssrc = (NonCryptographicRng::u32()).into();
+            // This new guarantees we never get SSRC 0 (reserved for BWE probes)
+            let ssrc = Ssrc::new();
 
             let has_ssrc = self.has_stream_rx(ssrc) || self.has_stream_tx(ssrc);
 
