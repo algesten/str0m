@@ -2,11 +2,11 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use netem::{LossModel, NetemConfig, Probability, RandomLoss};
-use str0m::RtcError;
 use str0m::format::Codec;
 use str0m::media::MediaKind;
 use str0m::rtp::rtcp::Rtcp;
 use str0m::rtp::{ExtensionValues, RawPacket, SeqNo, Ssrc};
+use str0m::RtcError;
 
 mod common;
 use common::{connect_l_r, init_crypto_default, init_log, progress};
@@ -155,7 +155,11 @@ pub fn loss_recovery() -> Result<(), RtcError> {
         .filter_map(|slice| {
             let a = slice.first()?;
             let b = slice.get(1)?;
-            if a + 1 != *b { Some((*a, *b)) } else { None }
+            if a + 1 != *b {
+                Some((*a, *b))
+            } else {
+                None
+            }
         })
         .collect::<Vec<_>>();
 
