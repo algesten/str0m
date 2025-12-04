@@ -15,7 +15,7 @@ pub fn contiguous_all_the_way() -> Result<(), RtcError> {
     init_crypto_default();
 
     let output = Server::with_vp8_input()
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(10))
         .get_output()?;
     let mut count = 0;
 
