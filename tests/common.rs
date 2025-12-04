@@ -147,7 +147,8 @@ pub fn progress(l: &mut TestRtc, r: &mut TestRtc) -> Result<(), RtcError> {
         if let Some(first_time) = first_time {
             // The idea is that we try to advance all the components that might be
             // within some distance of each other.
-            if time.saturating_duration_since(first_time) >= Duration::from_millis(1) {
+            let elapsed = time.saturating_duration_since(first_time);
+            if elapsed >= Duration::from_millis(5) {
                 break;
             }
         } else {

@@ -25,10 +25,8 @@ pub fn contiguous_all_the_way() -> Result<(), RtcError> {
         count += 1;
     }
 
-    // The last packet, 14362, is never flushed out because the depacketizer wants
-    // to see the next packet before releasing.
-    // We have 3 continuations and one last packet missing: 104 - 3 - 1 == 100
-    assert_eq!(count, 100);
+    // We have 3 continuations: 104 - 3 == 101
+    assert_eq!(count, 101);
 
     Ok(())
 }
@@ -54,9 +52,9 @@ pub fn not_contiguous() -> Result<(), RtcError> {
     }
 
     // assert!(false);
-    // We have 3 continuations, 2 missing packet (14337 14338), and one last
-    // packet missing: 104 - 3 - 2 - 1 == 98
-    assert_eq!(count, 98);
+    // We have 3 continuations, 2 missing packet (14337 14338)
+    // 104 - 3 - 2  == 99
+    assert_eq!(count, 99);
 
     Ok(())
 }
