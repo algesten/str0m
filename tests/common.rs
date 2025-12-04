@@ -1,4 +1,5 @@
 #![allow(unused)]
+use std::collections::VecDeque;
 use std::io::Cursor;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::ops::{Deref, DerefMut};
@@ -18,12 +19,22 @@ use str0m::{Event, Input, Output, Rtc, RtcError};
 use tracing::info_span;
 use tracing::Span;
 
+/// Owned version of Receive for queueing.
+pub struct PendingPacket {
+    pub proto: Protocol,
+    pub source: SocketAddr,
+    pub destination: SocketAddr,
+    pub contents: Vec<u8>,
+}
+
 pub struct TestRtc {
     pub span: Span,
     pub rtc: Rtc,
     pub start: Instant,
     pub last: Instant,
     pub events: Vec<(Instant, Event)>,
+    /// Pending packets waiting to be delivered to this RTC.
+    pub pending: VecDeque<PendingPacket>,
 }
 
 impl TestRtc {
@@ -39,6 +50,7 @@ impl TestRtc {
             start: now,
             last: now,
             events: vec![],
+            pending: VecDeque::new(),
         }
     }
 
@@ -87,47 +99,37 @@ impl TestRtc {
 }
 
 pub fn progress(l: &mut TestRtc, r: &mut TestRtc) -> Result<(), RtcError> {
-    let (f, t) = if l.last < r.last { (l, r) } else { (r, l) };
+    // Pick which side to process:
+    // - Prefer the side with pending inputs
+    // - If both or neither have pending, pick the one behind in time
+    let (f, t) = match (l.pending.is_empty(), r.pending.is_empty()) {
+        (false, true) => (l, r), // l has pending
+        (true, false) => (r, l), // r has pending
+        _ => {
+            // Both or neither have pending - pick by time
+            if l.last <= r.last { (l, r) } else { (r, l) }
+        }
+    };
 
-    loop {
+    // Process ONE input: either a pending packet or a Timeout
+    if let Some(packet) = f.pending.pop_front() {
+        let input = Input::Receive(
+            f.last,
+            Receive {
+                proto: packet.proto,
+                source: packet.source,
+                destination: packet.destination,
+                contents: (&packet.contents[..]).try_into()?,
+            },
+        );
+        f.span.in_scope(|| f.rtc.handle_input(input))?;
+    } else {
         f.span
             .in_scope(|| f.rtc.handle_input(Input::Timeout(f.last)))?;
-
-        match f.span.in_scope(|| f.rtc.poll_output())? {
-            Output::Timeout(v) => {
-                let tick = f.last + Duration::from_millis(10);
-                f.last = if v == f.last { tick } else { tick.min(v) };
-                break;
-            }
-            Output::Transmit(v) => {
-                let data = v.contents;
-                let input = Input::Receive(
-                    f.last,
-                    Receive {
-                        proto: v.proto,
-                        source: v.source,
-                        destination: v.destination,
-                        contents: (&*data).try_into()?,
-                    },
-                );
-                t.span.in_scope(|| t.rtc.handle_input(input))?;
-            }
-            Output::Event(v) => {
-                f.events.push((f.last, v));
-            }
-        }
     }
 
-    Ok(())
-}
-
-pub fn progress_with_loss(l: &mut TestRtc, r: &mut TestRtc, loss: f32) -> Result<(), RtcError> {
-    let (f, t) = if l.last < r.last { (l, r) } else { (r, l) };
-
+    // Poll output until Timeout
     loop {
-        f.span
-            .in_scope(|| f.rtc.handle_input(Input::Timeout(f.last)))?;
-
         match f.span.in_scope(|| f.rtc.poll_output())? {
             Output::Timeout(v) => {
                 let tick = f.last + Duration::from_millis(10);
@@ -135,22 +137,13 @@ pub fn progress_with_loss(l: &mut TestRtc, r: &mut TestRtc, loss: f32) -> Result
                 break;
             }
             Output::Transmit(v) => {
-                if fastrand::f32() <= loss {
-                    // LOSS !
-                    break;
-                }
-
-                let data = v.contents;
-                let input = Input::Receive(
-                    f.last,
-                    Receive {
-                        proto: v.proto,
-                        source: v.source,
-                        destination: v.destination,
-                        contents: (&*data).try_into()?,
-                    },
-                );
-                t.span.in_scope(|| t.rtc.handle_input(input))?;
+                let packet = PendingPacket {
+                    proto: v.proto,
+                    source: v.source,
+                    destination: v.destination,
+                    contents: v.contents.to_vec(),
+                };
+                t.pending.push_back(packet);
             }
             Output::Event(v) => {
                 f.events.push((f.last, v));
