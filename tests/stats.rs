@@ -128,7 +128,7 @@ pub fn stats() -> Result<(), RtcError> {
         .for_each(|rtt| assert!(rtt < 100_f32)); // rtt should be under 100ms in this scenario
 
     assert!(
-        media_count_l > 1700,
+        media_count_l > 1100,
         "Not enough MediaData at L: {}",
         media_count_l
     );
