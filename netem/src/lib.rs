@@ -245,21 +245,21 @@ impl<T: Clone + WithLen> Netem<T> {
         let mut send_at = now + delay;
 
         // Apply rate limiting
-        if let Some(rate) = self.config.rate
-            && rate > 0
-        {
-            let transmission_time = self.calculate_transmission_time(data.len(), rate);
+        if let Some(rate) = self.config.rate {
+            if rate > 0 {
+                let transmission_time = self.calculate_transmission_time(data.len(), rate);
 
-            // If we have a previous virtual time, the packet can't be sent until
-            // the previous packet finishes transmitting
-            if let Some(virtual_time) = self.rate_virtual_time
-                && virtual_time > send_at
-            {
-                send_at = virtual_time;
+                // If we have a previous virtual time, the packet can't be sent until
+                // the previous packet finishes transmitting
+                if let Some(virtual_time) = self.rate_virtual_time {
+                    if virtual_time > send_at {
+                        send_at = virtual_time;
+                    }
+                }
+
+                // Update virtual time for next packet (when this one finishes)
+                self.rate_virtual_time = Some(send_at + transmission_time);
             }
-
-            // Update virtual time for next packet (when this one finishes)
-            self.rate_virtual_time = Some(send_at + transmission_time);
         }
 
         // Handle reordering
