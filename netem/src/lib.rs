@@ -100,11 +100,14 @@ struct QueuedPacket<T> {
 
     /// The packet data.
     data: T,
+
+    /// Ever increasing counter to break ties when send_at is the same.
+    packet_index: u64,
 }
 
 impl<T> PartialEq for QueuedPacket<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.send_at == other.send_at
+        self.send_at == other.send_at && self.packet_index == other.packet_index
     }
 }
 
@@ -118,7 +121,9 @@ impl<T> PartialOrd for QueuedPacket<T> {
 
 impl<T> Ord for QueuedPacket<T> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.send_at.cmp(&other.send_at)
+        self.send_at
+            .cmp(&other.send_at)
+            .then(self.packet_index.cmp(&other.packet_index))
     }
 }
 
@@ -144,6 +149,9 @@ pub struct Netem<T> {
     /// Current time from the last input.
     current_time: Option<Instant>,
 
+    /// Number of packets for the current time.
+    packet_count: u64,
+
     /// Whether we've already returned a timeout for the next packet.
     timeout_pending: bool,
 }
@@ -162,6 +170,7 @@ impl<T: Clone + WithLen> Netem<T> {
             rate_virtual_time: None,
             reorder_counter: 0,
             current_time: None,
+            packet_count: 0,
             timeout_pending: false,
         }
     }
@@ -170,14 +179,24 @@ impl<T: Clone + WithLen> Netem<T> {
     pub fn handle_input(&mut self, input: Input<T>) {
         match input {
             Input::Timeout(now) => {
-                self.current_time = Some(now);
+                self.progress_time(now);
                 self.timeout_pending = false;
             }
             Input::Packet(now, data) => {
-                self.current_time = Some(now);
+                self.progress_time(now);
                 self.process_packet(now, data);
             }
         }
+    }
+
+    fn progress_time(&mut self, now: Instant) {
+        if let Some(last_time) = self.current_time {
+            if now < last_time {
+                // Time does not go badkwards.
+                return;
+            }
+        }
+        self.current_time = Some(now);
     }
 
     /// Poll for the next output event.
@@ -272,7 +291,14 @@ impl<T: Clone + WithLen> Netem<T> {
             }
         }
 
-        let packet = QueuedPacket { send_at, data };
+        let packet_index = self.packet_count;
+        self.packet_count += 1;
+
+        let packet = QueuedPacket {
+            send_at,
+            data,
+            packet_index,
+        };
         self.queue.push(Reverse(packet));
 
         // Reset timeout pending since queue changed
