@@ -35,7 +35,7 @@ impl Probability {
 ///     .loss(GilbertElliot::wifi())
 ///     .seed(42);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct NetemConfig {
     pub(crate) latency: Duration,
     pub(crate) jitter: Duration,
@@ -191,7 +191,7 @@ impl NetemConfig {
 /// Real networks rarely have uniform random loss. Instead, losses tend to come
 /// in bursts due to congestion, interference, or route changes. This enum
 /// provides different models to simulate various loss patterns.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum LossModel {
     /// No packet loss. All packets are delivered.
     #[default]
