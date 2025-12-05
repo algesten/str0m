@@ -120,7 +120,8 @@ impl TestRtc {
 /// - l.pending: packet ready to deliver to l
 /// - r.pending: packet ready to deliver to r
 ///
-/// Pick the earliest, process it, return.
+/// Pick the earliest, process it, then try to progress again for any
+/// more even that is within 5ms of the first time.
 pub fn progress(l: &mut TestRtc, r: &mut TestRtc) -> Result<(), RtcError> {
     let mut first_time = None;
 
