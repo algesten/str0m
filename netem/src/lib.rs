@@ -22,7 +22,7 @@
 //! let config = NetemConfig::new()
 //!     .latency(Duration::from_millis(50))
 //!     .jitter(Duration::from_millis(10))
-//!     .loss(LossModel::Random(RandomLoss::new(Probability::new(0.01))))
+//!     .loss(RandomLoss::new(Probability::new(0.01)))
 //!     .seed(42);
 //!
 //! let mut netem: Netem<Vec<u8>> = Netem::new(config);
@@ -427,7 +427,7 @@ mod tests {
     #[test]
     fn test_total_loss() {
         let config = NetemConfig::new()
-            .loss(LossModel::Random(RandomLoss::new(Probability::ONE)))
+            .loss(RandomLoss::new(Probability::ONE))
             .seed(42);
         let mut netem: Netem<Vec<u8>> = Netem::new(config);
 

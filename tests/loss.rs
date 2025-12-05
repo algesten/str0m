@@ -19,7 +19,7 @@ use crate::common::init_log;
 /// Run a media transmission test with the given loss model using real VP8 data.
 ///
 /// Returns the number of packets received.
-fn run_loss_test(loss_model: LossModel, seed: u64) -> Result<usize, RtcError> {
+fn run_loss_test(loss_model: impl Into<LossModel>, seed: u64) -> Result<usize, RtcError> {
     init_log();
     init_crypto_default();
 
@@ -138,7 +138,7 @@ fn run_loss_test(loss_model: LossModel, seed: u64) -> Result<usize, RtcError> {
 #[test]
 fn loss_light() -> Result<(), RtcError> {
     // ~1% loss - should recover everything easily
-    let loss = LossModel::GilbertElliot(GilbertElliot::wifi());
+    let loss = GilbertElliot::wifi();
     let received = run_loss_test(loss, 12345)?;
 
     // VP8 data has 104 packets, with light loss we should get all
@@ -153,7 +153,7 @@ fn loss_light() -> Result<(), RtcError> {
 #[test]
 fn loss_medium() -> Result<(), RtcError> {
     // ~5% loss
-    let loss = LossModel::GilbertElliot(GilbertElliot::wifi_lossy());
+    let loss = GilbertElliot::wifi_lossy();
     let received = run_loss_test(loss, 12345)?;
 
     assert_eq!(
@@ -167,7 +167,7 @@ fn loss_medium() -> Result<(), RtcError> {
 #[test]
 fn loss_heavy() -> Result<(), RtcError> {
     // ~10% loss
-    let loss = LossModel::GilbertElliot(GilbertElliot::congested());
+    let loss = GilbertElliot::congested();
     let received = run_loss_test(loss, 12345)?;
 
     assert_eq!(

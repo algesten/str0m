@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
-use netem::{LossModel, NetemConfig, Probability, RandomLoss};
+use netem::{NetemConfig, Probability, RandomLoss};
 use str0m::format::Codec;
 use str0m::media::MediaKind;
 use str0m::rtp::rtcp::Rtcp;
@@ -20,7 +20,7 @@ pub fn loss_recovery() -> Result<(), RtcError> {
 
     // Configure 5% random loss on R's incoming queue (L -> R has loss)
     let loss_config = NetemConfig::new()
-        .loss(LossModel::Random(RandomLoss::new(Probability::new(0.05))))
+        .loss(RandomLoss::new(Probability::new(0.05)))
         .seed(42);
     r.set_netem(loss_config);
 
@@ -88,7 +88,7 @@ pub fn loss_recovery() -> Result<(), RtcError> {
         // Re-enable loss for middle packets
         if index == 9 {
             let loss_config = NetemConfig::new()
-                .loss(LossModel::Random(RandomLoss::new(Probability::new(0.05))))
+                .loss(RandomLoss::new(Probability::new(0.05)))
                 .seed(42);
             r.set_netem(loss_config);
         }

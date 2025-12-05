@@ -32,7 +32,7 @@ impl Probability {
 /// let config = NetemConfig::new()
 ///     .latency(Duration::from_millis(50))
 ///     .jitter(Duration::from_millis(10))
-///     .loss(LossModel::GilbertElliot(GilbertElliot::wifi()))
+///     .loss(GilbertElliot::wifi())
 ///     .seed(42);
 /// ```
 #[derive(Debug, Clone)]
@@ -121,8 +121,8 @@ impl NetemConfig {
     /// Set the loss model.
     ///
     /// See [`LossModel`] for available options.
-    pub fn loss(mut self, loss: LossModel) -> Self {
-        self.loss = loss;
+    pub fn loss(mut self, loss: impl Into<LossModel>) -> Self {
+        self.loss = loss.into();
         self
     }
 
@@ -460,5 +460,17 @@ impl GilbertElliot {
             .good_duration(20.0) // ~20 packets between bursts
             .bad_duration(2.0) // ~2 packets lost per burst
             .loss_in_bad(Probability::ONE)
+    }
+}
+
+impl From<RandomLoss> for LossModel {
+    fn from(value: RandomLoss) -> Self {
+        LossModel::Random(value)
+    }
+}
+
+impl From<GilbertElliot> for LossModel {
+    fn from(value: GilbertElliot) -> Self {
+        LossModel::GilbertElliot(value)
     }
 }
