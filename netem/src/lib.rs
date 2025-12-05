@@ -139,10 +139,12 @@ impl<T: Clone + WithLen> Netem<T> {
     pub fn new(config: NetemConfig) -> Self {
         let rng = Rng::with_seed(config.seed);
 
+        let loss_state = LossState::new(&config.loss);
+
         Self {
             config,
             rng,
-            loss_state: LossState::new(),
+            loss_state,
             queue: BinaryHeap::new(),
             last_delay: Duration::ZERO,
             rate_virtual_time: None,
@@ -345,7 +347,7 @@ impl<T: Clone + WithLen> Netem<T> {
     /// packets already in the queue.
     pub fn set_config(&mut self, config: NetemConfig) {
         self.rng = Rng::with_seed(config.seed);
-        self.loss_state = LossState::new();
+        self.loss_state = LossState::new(&config.loss);
         self.last_delay = Duration::ZERO;
         // Don't reset: rate_virtual_time, reorder_counter, timeout_pending, current_time
         // These affect packets already queued
