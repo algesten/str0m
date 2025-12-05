@@ -1,26 +1,5 @@
 use std::time::Duration;
 
-/// Probability in range 0.0..=1.0
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct Probability(pub f32);
-
-impl Probability {
-    pub const ZERO: Probability = Probability(0.0);
-    pub const ONE: Probability = Probability(1.0);
-
-    pub fn new(value: f32) -> Self {
-        debug_assert!(
-            (0.0..=1.0).contains(&value),
-            "Probability must be in 0.0..=1.0"
-        );
-        Probability(value.clamp(0.0, 1.0))
-    }
-
-    pub fn value(self) -> f32 {
-        self.0
-    }
-}
-
 /// Configuration for the network emulator.
 ///
 /// Use the builder pattern to configure the emulator:
@@ -183,6 +162,27 @@ impl NetemConfig {
     pub fn seed(mut self, seed: u64) -> Self {
         self.seed = seed;
         self
+    }
+}
+
+/// Probability in range 0.0..=1.0
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Probability(pub f32);
+
+impl Probability {
+    pub const ZERO: Probability = Probability(0.0);
+    pub const ONE: Probability = Probability(1.0);
+
+    pub fn new(value: f32) -> Self {
+        debug_assert!(
+            (0.0..=1.0).contains(&value),
+            "Probability must be in 0.0..=1.0"
+        );
+        Probability(value.clamp(0.0, 1.0))
+    }
+
+    pub fn value(self) -> f32 {
+        self.0
     }
 }
 

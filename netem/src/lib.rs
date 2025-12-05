@@ -57,54 +57,6 @@ use fastrand::Rng;
 
 use loss::LossState;
 
-/// Trait for getting the length of packet data (used for rate limiting).
-pub trait WithLen {
-    fn len(&self) -> usize;
-
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
-
-impl<T: AsRef<[u8]>> WithLen for T {
-    fn len(&self) -> usize {
-        self.as_ref().len()
-    }
-}
-
-/// Input events to the network emulator.
-#[derive(Debug)]
-pub enum Input<T> {
-    /// A timeout has occurred at the given instant.
-    Timeout(Instant),
-
-    /// A packet arrived at the given instant with the given data.
-    Packet(Instant, T),
-}
-
-/// Output events from the network emulator.
-#[derive(Debug)]
-pub enum Output<T> {
-    /// Request a timeout at the given instant.
-    Timeout(Instant),
-
-    /// A packet is ready to be sent.
-    Packet(T),
-}
-
-/// A queued packet waiting to be sent.
-#[derive(Debug)]
-struct QueuedPacket<T> {
-    /// When this packet should be sent.
-    send_at: Instant,
-
-    /// The packet data.
-    data: T,
-
-    /// Ever increasing counter to break ties when send_at is the same.
-    packet_index: u64,
-}
-
 /// Sans-IO network emulator.
 pub struct Netem<T> {
     config: NetemConfig,
@@ -353,6 +305,54 @@ impl<T: Clone + WithLen> Netem<T> {
         // These affect packets already queued
         self.config = config;
     }
+}
+
+/// Trait for getting the length of packet data (used for rate limiting).
+pub trait WithLen {
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+impl<T: AsRef<[u8]>> WithLen for T {
+    fn len(&self) -> usize {
+        self.as_ref().len()
+    }
+}
+
+/// Input events to the network emulator.
+#[derive(Debug)]
+pub enum Input<T> {
+    /// A timeout has occurred at the given instant.
+    Timeout(Instant),
+
+    /// A packet arrived at the given instant with the given data.
+    Packet(Instant, T),
+}
+
+/// Output events from the network emulator.
+#[derive(Debug)]
+pub enum Output<T> {
+    /// Request a timeout at the given instant.
+    Timeout(Instant),
+
+    /// A packet is ready to be sent.
+    Packet(T),
+}
+
+/// A queued packet waiting to be sent.
+#[derive(Debug)]
+struct QueuedPacket<T> {
+    /// When this packet should be sent.
+    send_at: Instant,
+
+    /// The packet data.
+    data: T,
+
+    /// Ever increasing counter to break ties when send_at is the same.
+    packet_index: u64,
 }
 
 fn not_happening() -> Instant {
