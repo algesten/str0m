@@ -49,7 +49,7 @@ mod loss;
 
 pub use config::{GilbertElliot, LossModel, NetemConfig, Probability, RandomLoss};
 
-use std::cmp::Reverse;
+use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
 use std::time::{Duration, Instant};
 
@@ -103,28 +103,6 @@ struct QueuedPacket<T> {
 
     /// Ever increasing counter to break ties when send_at is the same.
     packet_index: u64,
-}
-
-impl<T> PartialEq for QueuedPacket<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.send_at == other.send_at && self.packet_index == other.packet_index
-    }
-}
-
-impl<T> Eq for QueuedPacket<T> {}
-
-impl<T> PartialOrd for QueuedPacket<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl<T> Ord for QueuedPacket<T> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.send_at
-            .cmp(&other.send_at)
-            .then(self.packet_index.cmp(&other.packet_index))
-    }
 }
 
 /// Sans-IO network emulator.
@@ -192,7 +170,7 @@ impl<T: Clone + WithLen> Netem<T> {
     fn progress_time(&mut self, now: Instant) {
         if let Some(last_time) = self.current_time {
             if now < last_time {
-                // Time does not go badkwards.
+                // Time does not go backwards.
                 return;
             }
         }
@@ -377,6 +355,28 @@ impl<T: Clone + WithLen> Netem<T> {
 
 fn not_happening() -> Instant {
     Instant::now() + Duration::from_secs(3600 * 24 * 365 * 10)
+}
+
+impl<T> PartialEq for QueuedPacket<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.send_at == other.send_at && self.packet_index == other.packet_index
+    }
+}
+
+impl<T> Eq for QueuedPacket<T> {}
+
+impl<T> PartialOrd for QueuedPacket<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<T> Ord for QueuedPacket<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.send_at
+            .cmp(&other.send_at)
+            .then(self.packet_index.cmp(&other.packet_index))
+    }
 }
 
 #[cfg(test)]
