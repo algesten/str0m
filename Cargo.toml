@@ -39,7 +39,7 @@ pii = []
 # The examples require a web server via feather.
 # Note: Feather doesn't have built-in TLS support. For production use,
 # a reverse proxy (nginx/caddy) should be used for HTTPS termination.
-examples = ["feather/json"]
+examples = []
 
 _internal_dont_use_log_stats = []
 _internal_test_exports = []
