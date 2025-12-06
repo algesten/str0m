@@ -84,6 +84,9 @@ pub struct Netem<T> {
 
     /// Whether we've already returned a timeout for the next packet.
     timeout_pending: bool,
+
+    /// Send time of the last queued packet (for reordering).
+    last_send_at: Option<Instant>,
 }
 
 impl<T: Clone + WithLen> Netem<T> {
@@ -104,6 +107,7 @@ impl<T: Clone + WithLen> Netem<T> {
             current_time: None,
             packet_count: 0,
             timeout_pending: false,
+            last_send_at: None,
         }
     }
 
@@ -192,38 +196,61 @@ impl<T: Clone + WithLen> Netem<T> {
         // Calculate delay with jitter
         let delay = self.calculate_delay();
 
-        // Calculate send time
+        // Calculate base send time
         let mut send_at = now + delay;
 
-        // Apply rate limiting
-        if let Some(rate) = self.config.rate {
+        // Calculate rate-limited send time (but don't update rate_virtual_time yet)
+        let transmission_time = self.config.rate.and_then(|rate| {
             if rate > 0 {
-                let transmission_time = self.calculate_transmission_time(data.len(), rate);
+                Some(self.calculate_transmission_time(data.len(), rate))
+            } else {
+                None
+            }
+        });
 
-                // If we have a previous virtual time, the packet can't be sent until
-                // the previous packet finishes transmitting
-                if let Some(virtual_time) = self.rate_virtual_time {
-                    if virtual_time > send_at {
-                        send_at = virtual_time;
-                    }
-                }
-
-                // Update virtual time for next packet (when this one finishes)
-                self.rate_virtual_time = Some(send_at + transmission_time);
+        if let Some(virtual_time) = self.rate_virtual_time {
+            if virtual_time > send_at {
+                send_at = virtual_time;
             }
         }
 
-        // Handle reordering
-        if let Some(gap) = self.config.reorder_gap {
+        // Determine if this packet should be reordered
+        let should_reorder = if let Some(gap) = self.config.reorder_gap {
             self.reorder_counter += 1;
             if self.reorder_counter >= gap {
                 self.reorder_counter = 0;
-                // Send this packet immediately (no delay) to cause reordering
-                send_at = now;
+                // Can only reorder if we have a previous packet to reorder before
+                self.last_send_at.is_some() && self.packet_count > 0
+            } else {
+                false
             }
+        } else {
+            false
+        };
+
+        let gap = self.config.reorder_gap.unwrap_or(1) as u64;
+        let packet_index;
+
+        if should_reorder {
+            // Reordered packet: use previous packet's send_at and a lower index
+            send_at = self.last_send_at.unwrap();
+            // Index slots before the previous packet: count * gap - 1
+            // Previous packet had index = count * gap
+            packet_index = self.packet_count * gap - 1;
+            // Don't update rate_virtual_time or last_send_at
+        } else {
+            // Normal packet: use calculated send_at with gaps for index
+            packet_index = (self.packet_count + 1) * gap;
+
+            // Update rate_virtual_time for next packet
+            if let Some(tx_time) = transmission_time {
+                self.rate_virtual_time = Some(send_at + tx_time);
+            }
+
+            // Track this packet's send_at for potential future reordering
+            self.last_send_at = Some(send_at);
         }
 
-        let packet_index = self.packet_count;
         self.packet_count += 1;
 
         let packet = QueuedPacket {
@@ -301,6 +328,7 @@ impl<T: Clone + WithLen> Netem<T> {
         self.rng = Rng::with_seed(config.seed);
         self.loss_state = LossState::new(&config.loss);
         self.last_delay = Duration::ZERO;
+        self.last_send_at = None;
         // Don't reset: rate_virtual_time, reorder_counter, timeout_pending, current_time
         // These affect packets already queued
         self.config = config;
@@ -375,9 +403,9 @@ impl<T> PartialOrd for QueuedPacket<T> {
 
 impl<T> Ord for QueuedPacket<T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.send_at
-            .cmp(&other.send_at)
-            .then(self.packet_index.cmp(&other.packet_index))
+        self.packet_index
+            .cmp(&other.packet_index)
+            .then(self.send_at.cmp(&other.send_at))
     }
 }
 
@@ -497,11 +525,68 @@ mod tests {
         // Send 3 packets
         netem.handle_input(Input::Packet(now, vec![1]));
         netem.handle_input(Input::Packet(now, vec![2]));
-        netem.handle_input(Input::Packet(now, vec![3])); // This one should be sent immediately
+        netem.handle_input(Input::Packet(now, vec![3])); // This one should be reordered before packet 2
 
-        // The 3rd packet should come out first (no delay)
+        // All packets are delayed by latency, so we get a timeout first
+        let output = netem.poll_output();
+        assert!(
+            matches!(output, Some(Output::Timeout(t)) if t == now + Duration::from_millis(100))
+        );
+
+        // After the timeout, packets should be ready in reordered sequence: 1, 3, 2
+        let later = now + Duration::from_millis(100);
+        netem.handle_input(Input::Timeout(later));
+
+        // Packet 1 comes first (lowest index)
+        let output = netem.poll_output();
+        assert!(matches!(output, Some(Output::Packet(data)) if data == vec![1]));
+
+        // Packet 3 comes second (reordered before packet 2)
         let output = netem.poll_output();
         assert!(matches!(output, Some(Output::Packet(data)) if data == vec![3]));
+
+        // Packet 2 comes last
+        let output = netem.poll_output();
+        assert!(matches!(output, Some(Output::Packet(data)) if data == vec![2]));
+    }
+
+    #[test]
+    fn test_reordering_with_rate_limiting() {
+        let config = NetemConfig::new()
+            .rate(1000) // 1000 bytes/sec
+            .reorder_gap(3) // Every 3rd packet is reordered
+            .seed(42);
+        let mut netem: Netem<Vec<u8>> = Netem::new(config);
+
+        let now = instant();
+
+        // Send 3 packets of 100 bytes each
+        netem.handle_input(Input::Packet(now, vec![0; 100]));
+        netem.handle_input(Input::Packet(now, vec![0; 100]));
+        netem.handle_input(Input::Packet(now, vec![0; 100])); // Reordered
+
+        // First packet should be immediate (no latency configured)
+        let output = netem.poll_output();
+        assert!(matches!(output, Some(Output::Packet(_))));
+
+        // Next output should be a timeout (rate limited)
+        // The reordered packet (3rd) shares the slot with packet 2
+        let output = netem.poll_output();
+        match output {
+            Some(Output::Timeout(t)) => {
+                // Should be delayed by ~100ms (100 bytes at 1000 bytes/sec)
+                let delay = t - now;
+                assert!(
+                    delay >= Duration::from_millis(90),
+                    "Reordered packet should respect rate limiting, got delay {:?}",
+                    delay
+                );
+            }
+            _ => panic!(
+                "Expected timeout for rate-limited reordered packet, got {:?}",
+                output
+            ),
+        }
     }
 
     #[test]
