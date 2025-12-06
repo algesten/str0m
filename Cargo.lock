@@ -1775,6 +1775,7 @@ dependencies = [
  "serde_json",
  "str0m-apple-crypto",
  "str0m-aws-lc-rs",
+ "str0m-netem",
  "str0m-openssl",
  "str0m-proto",
  "str0m-rust-crypto",
@@ -1807,6 +1808,14 @@ version = "0.1.0"
 dependencies = [
  "aws-lc-rs",
  "dimpl",
+ "str0m-proto",
+]
+
+[[package]]
+name = "str0m-netem"
+version = "0.1.0"
+dependencies = [
+ "fastrand",
  "str0m-proto",
 ]
 
