@@ -7,7 +7,7 @@ use std::process;
 use std::thread;
 use std::time::Instant;
 
-use feather::{App, middleware, next};
+use feather::{middleware, next, App};
 
 use str0m::change::SdpOffer;
 use str0m::crypto::from_feature_flags;
@@ -63,9 +63,12 @@ pub fn main() {
         "/",
         middleware!(|req, res, _ctx| {
             let json_value = req.json()?;
-            let offer: SdpOffer = serde_json::from_value(json_value)
-                .map_err(|e| -> Box<dyn std::error::Error> { 
-                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Failed to parse offer: {}", e)))
+            let offer: SdpOffer =
+                serde_json::from_value(json_value).map_err(|e| -> Box<dyn std::error::Error> {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!("Failed to parse offer: {}", e),
+                    ))
                 })?;
             let mut rtc = RtcConfig::new()
                 // .set_ice_lite(true)

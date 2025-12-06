@@ -11,8 +11,8 @@ use std::sync::{Arc, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use feather::{App, middleware, next};
 use feather::middlewares::Middleware;
+use feather::{middleware, next, App};
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::channel::{ChannelData, ChannelId};
 use str0m::crypto::from_feature_flags;
@@ -61,11 +61,14 @@ pub fn main() {
     // 2. Manually wrap the server with rustls/native-tls
     // For now, this serves plain HTTP on port 3000
     info!("IMPORTANT: WebRTC requires HTTPS. Consider using a reverse proxy with TLS.");
-    info!("Connect a browser to http://{:?}:3000 (use reverse proxy for HTTPS)", addr.ip());
+    info!(
+        "Connect a browser to http://{:?}:3000 (use reverse proxy for HTTPS)",
+        addr.ip()
+    );
     info!("Example nginx config: listen 443 ssl; proxy_pass http://localhost:3000;");
 
     let mut app = App::new();
-    
+
     // GET handler - serve the HTML page
     app.get(
         "/",
@@ -113,7 +116,7 @@ fn handle_post_request(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let json_value = request.json()?;
     let offer: SdpOffer = serde_json::from_value(json_value)?;
-    
+
     let mut rtc = Rtc::builder()
         // Uncomment this to see statistics
         // .set_stats_interval(Some(Duration::from_secs(1)))
