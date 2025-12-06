@@ -2,6 +2,9 @@
 
   * Simulcast send attributes RFC 8851 #780
   * Set SDP port 0 for rejected m-lines #772
+  * Network emulation for tests #774
+  * Handle rejected m-lines (set port 0 etc) #772
+  * Expose Opus packetizer #770
   * Handle incoming SSRC 0 BWE probe #769
   * New CryptoProvider API #760
   * Update H.264 profile and level matching logic #758
