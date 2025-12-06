@@ -1,9 +1,9 @@
 use str0m::media::{MediaKind, MediaTime};
-use str0m::rtp::{Extension, ExtensionValues, Ssrc};
-use str0m::{Event, Rtc, RtcError};
 use str0m::rtp::vla::{ResolutionAndFramerate, Serializer as VlaSerializer};
 use str0m::rtp::vla::{SimulcastStreamAllocation, SpatialLayerAllocation};
 use str0m::rtp::vla::{TemporalLayerAllocation, VideoLayersAllocation, URI as VLA_URI};
+use str0m::rtp::{Extension, ExtensionValues, Ssrc};
+use str0m::{Event, Rtc, RtcError};
 
 mod common;
 use common::{connect_l_r_with_rtc, init_crypto_default, init_log, progress};
@@ -45,11 +45,9 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
         current_simulcast_stream_index: 0,
         simulcast_streams: vec![SimulcastStreamAllocation {
             spatial_layers: vec![SpatialLayerAllocation {
-                temporal_layers: vec![
-                    TemporalLayerAllocation {
-                        cumulative_kbps: 500,
-                    },
-                ],
+                temporal_layers: vec![TemporalLayerAllocation {
+                    cumulative_kbps: 500,
+                }],
                 resolution_and_framerate: Some(ResolutionAndFramerate {
                     width: 640,
                     height: 480,
@@ -85,13 +83,31 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
 
         for (_, event) in &r.events {
             if let Event::RtpPacket(packet) = event {
-                if let Some(v) = packet.header.ext_vals.user_values.get::<VideoLayersAllocation>() {
+                if let Some(v) = packet
+                    .header
+                    .ext_vals
+                    .user_values
+                    .get::<VideoLayersAllocation>()
+                {
                     assert_eq!(v, &vla);
-                    assert_eq!(v.simulcast_streams[0].spatial_layers[0].temporal_layers[0].cumulative_kbps, 500);
-                    assert_eq!(v.simulcast_streams[0].spatial_layers[0].resolution_and_framerate.as_ref().unwrap().width, 640);
+                    assert_eq!(
+                        v.simulcast_streams[0].spatial_layers[0].temporal_layers[0].cumulative_kbps,
+                        500
+                    );
+                    assert_eq!(
+                        v.simulcast_streams[0].spatial_layers[0]
+                            .resolution_and_framerate
+                            .as_ref()
+                            .unwrap()
+                            .width,
+                        640
+                    );
                     vla_received = true;
                 } else {
-                    println!("Packet received but no VLA. Exts: {:?}", packet.header.ext_vals);
+                    println!(
+                        "Packet received but no VLA. Exts: {:?}",
+                        packet.header.ext_vals
+                    );
                 }
             }
         }
@@ -113,22 +129,18 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
 
     let vla_ext = Extension::with_serializer(VLA_URI, VlaSerializer);
 
-    let rtc_l = Rtc::builder()
-        .set_extension(14, vla_ext.clone())
-        .build();
-    let rtc_r = Rtc::builder()
-        .set_extension(14, vla_ext)
-        .build();
+    let rtc_l = Rtc::builder().set_extension(14, vla_ext.clone()).build();
+    let rtc_r = Rtc::builder().set_extension(14, vla_ext).build();
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc_l, rtc_r);
 
     let mid = "vid".into();
     let ssrc_tx: Ssrc = 1000.into();
-    
+
     l.direct_api().declare_media(mid, MediaKind::Video);
     l.direct_api().declare_stream_tx(ssrc_tx, None, mid, None);
     r.direct_api().declare_media(mid, MediaKind::Video);
-    
+
     let max = l.last.max(r.last);
     l.last = max;
     r.last = max;
@@ -137,11 +149,9 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
         current_simulcast_stream_index: 0,
         simulcast_streams: vec![SimulcastStreamAllocation {
             spatial_layers: vec![SpatialLayerAllocation {
-                temporal_layers: vec![
-                    TemporalLayerAllocation {
-                        cumulative_kbps: 500,
-                    },
-                ],
+                temporal_layers: vec![TemporalLayerAllocation {
+                    cumulative_kbps: 500,
+                }],
                 resolution_and_framerate: Some(ResolutionAndFramerate {
                     width: 640,
                     height: 480,
@@ -155,7 +165,7 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
     let last = l.last;
 
     let writer = l.writer(mid).unwrap();
-    
+
     writer
         .user_extension_value(vla.clone())
         .write(pt, last, MediaTime::ZERO, vec![0xAA; 10])?;
@@ -166,10 +176,20 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
 
         for (_, event) in &r.events {
             if let Event::MediaData(data) = event {
-                 if let Some(v) = data.ext_vals.user_values.get::<VideoLayersAllocation>() {
+                if let Some(v) = data.ext_vals.user_values.get::<VideoLayersAllocation>() {
                     assert_eq!(v, &vla);
-                    assert_eq!(v.simulcast_streams[0].spatial_layers[0].temporal_layers[0].cumulative_kbps, 500);
-                    assert_eq!(v.simulcast_streams[0].spatial_layers[0].resolution_and_framerate.as_ref().unwrap().width, 640);
+                    assert_eq!(
+                        v.simulcast_streams[0].spatial_layers[0].temporal_layers[0].cumulative_kbps,
+                        500
+                    );
+                    assert_eq!(
+                        v.simulcast_streams[0].spatial_layers[0]
+                            .resolution_and_framerate
+                            .as_ref()
+                            .unwrap()
+                            .width,
+                        640
+                    );
                     vla_received = true;
                 } else {
                     println!("MediaData received but no VLA. Exts: {:?}", data.ext_vals);
