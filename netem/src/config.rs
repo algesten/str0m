@@ -63,6 +63,99 @@ impl NetemConfig {
         }
     }
 
+    // --- Preset constructors for common network environments ---
+
+    /// Good WiFi: low latency, minimal loss, high bandwidth.
+    ///
+    /// Simulates a typical home/office WiFi connection with good signal.
+    /// - Latency: 5ms (local network)
+    /// - Jitter: 2ms
+    /// - Loss: ~1% bursty (GilbertElliot::wifi)
+    /// - Bandwidth: 100 Mbps with 200 KB buffer
+    pub fn wifi() -> Self {
+        Self::new()
+            .latency(Duration::from_millis(5))
+            .jitter(Duration::from_millis(2))
+            .loss(GilbertElliot::wifi())
+            .link(Bitrate::mbps(100), DataSize::kbytes(200))
+    }
+
+    /// Lossy WiFi: poor signal, more interference and loss.
+    ///
+    /// Simulates WiFi with weak signal or interference.
+    /// - Latency: 15ms
+    /// - Jitter: 10ms
+    /// - Loss: ~5% bursty (GilbertElliot::wifi_lossy)
+    /// - Bandwidth: 50 Mbps with 100 KB buffer
+    pub fn wifi_lossy() -> Self {
+        Self::new()
+            .latency(Duration::from_millis(15))
+            .jitter(Duration::from_millis(10))
+            .loss(GilbertElliot::wifi_lossy())
+            .link(Bitrate::mbps(50), DataSize::kbytes(100))
+    }
+
+    /// Congested WiFi: shared connection with competing traffic.
+    ///
+    /// Simulates a home WiFi where others are streaming video,
+    /// causing buffer bloat and bandwidth contention.
+    /// - Latency: 10ms
+    /// - Jitter: 20ms (high due to competing traffic)
+    /// - Loss: ~10% (buffer overflow from congestion)
+    /// - Bandwidth: 5 Mbps with 30 KB buffer (your share of the link)
+    pub fn wifi_congested() -> Self {
+        Self::new()
+            .latency(Duration::from_millis(10))
+            .jitter(Duration::from_millis(20))
+            .loss(GilbertElliot::congested())
+            .link(Bitrate::mbps(5), DataSize::kbytes(30))
+    }
+
+    /// Cellular/4G: moderate latency with occasional handoff loss.
+    ///
+    /// Simulates a mobile LTE/4G connection.
+    /// - Latency: 50ms
+    /// - Jitter: 15ms
+    /// - Loss: ~2% bursty (handoffs, signal fading)
+    /// - Bandwidth: 30 Mbps with 100 KB buffer
+    pub fn cellular() -> Self {
+        Self::new()
+            .latency(Duration::from_millis(50))
+            .jitter(Duration::from_millis(15))
+            .loss(GilbertElliot::cellular())
+            .link(Bitrate::mbps(30), DataSize::kbytes(100))
+    }
+
+    /// Satellite (GEO): very high latency, weather-related loss bursts.
+    ///
+    /// Simulates a geostationary satellite link (e.g., Viasat, HughesNet).
+    /// - Latency: 600ms (round-trip to GEO orbit)
+    /// - Jitter: 30ms
+    /// - Loss: ~3% bursty (weather, atmospheric)
+    /// - Bandwidth: 15 Mbps with 500 KB buffer (large buffer for high BDP)
+    pub fn satellite() -> Self {
+        Self::new()
+            .latency(Duration::from_millis(600))
+            .jitter(Duration::from_millis(30))
+            .loss(GilbertElliot::satellite())
+            .link(Bitrate::mbps(15), DataSize::kbytes(500))
+    }
+
+    /// Congested network: high latency/jitter, frequent loss, throttled.
+    ///
+    /// Simulates a severely congested network path.
+    /// - Latency: 80ms
+    /// - Jitter: 40ms
+    /// - Loss: ~10% (queue overflow)
+    /// - Bandwidth: 10 Mbps with 50 KB buffer (small buffer causes loss)
+    pub fn congested() -> Self {
+        Self::new()
+            .latency(Duration::from_millis(80))
+            .jitter(Duration::from_millis(40))
+            .loss(GilbertElliot::congested())
+            .link(Bitrate::mbps(10), DataSize::kbytes(50))
+    }
+
     /// Set fixed delay added to every packet.
     ///
     /// This simulates the propagation delay of a network link. For example:
