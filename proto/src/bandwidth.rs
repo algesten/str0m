@@ -145,29 +145,51 @@ impl fmt::Display for Bitrate {
     }
 }
 
+/// A data size expressed in bytes.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct DataSize(u64);
 
 impl DataSize {
+    /// A data size of zero bytes.
     pub const ZERO: Self = DataSize::bytes(0);
 
+    /// Create a data size of some bytes.
     pub const fn bytes(bytes: u64) -> DataSize {
         Self(bytes)
     }
 
+    /// Create a data size of some kilobytes.
+    pub const fn kbytes(kbytes: u64) -> DataSize {
+        Self(kbytes * 1024)
+    }
+
+    /// Create a data size of some megabytes.
+    pub const fn mbytes(mbytes: u64) -> DataSize {
+        Self(mbytes * 1024 * 1024)
+    }
+
+    /// Create a data size of some gigabytes.
+    pub const fn gbytes(gbytes: u64) -> DataSize {
+        Self(gbytes * 1024 * 1024 * 1024)
+    }
+
+    /// The number of bytes as f64.
     pub fn as_bytes_f64(&self) -> f64 {
         self.0 as f64
     }
 
+    /// The number of bytes as usize.
     pub fn as_bytes_usize(&self) -> usize {
         self.0 as usize
     }
 
+    /// Subtract, saturating at zero.
     pub fn saturating_sub(self, rhs: Self) -> Self {
         Self(self.0.saturating_sub(rhs.0))
     }
 
-    pub(crate) fn as_kb(&self) -> f64 {
+    /// The number of kilobytes as f64.
+    pub fn as_kb(&self) -> f64 {
         self.0 as f64 / 1000.0
     }
 }
