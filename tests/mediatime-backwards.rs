@@ -137,18 +137,15 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
     let wallclock = l.start + l.duration();
     let time = MediaTime::from_90khz(problematic_timestamp as u64);
 
+    // Save the timestamp index for comparison BEFORE sending
+    let events_before_problematic = r.events.len();
+
     l.rtc
         .writer(mid)
         .unwrap()
         .write(pt, wallclock, time, data_a.clone())?;
 
-    // Process the packet
-    progress(&mut l, &mut r)?;
-
-    // Save the timestamp index for comparison
-    let events_before_problematic = r.events.len();
-
-    // Process a few more cycles to ensure the packet is processed
+    // Process the packet and a few more cycles to ensure it's received
     for _ in 0..10 {
         progress(&mut l, &mut r)?;
     }

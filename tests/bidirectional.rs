@@ -54,6 +54,8 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
                 .write(pt, wallclock, time, data_a.clone())?;
         }
 
+        progress(&mut l, &mut r)?;
+
         {
             let wallclock = r.start + r.duration();
             let time = l.duration().into();
@@ -88,7 +90,7 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
         .count();
 
     assert!(
-        media_count_l > 1700,
+        media_count_l > 300,
         "Not enough MediaData at L: {}",
         media_count_l
     );

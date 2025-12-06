@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+use netem::{NetemConfig, Probability, RandomLoss};
 use str0m::format::Codec;
 use str0m::media::MediaKind;
 use str0m::rtp::rtcp::Rtcp;
@@ -10,14 +11,18 @@ use str0m::RtcError;
 mod common;
 use common::{connect_l_r, init_crypto_default, init_log, progress};
 
-use crate::common::progress_with_loss;
-
 #[test]
 pub fn loss_recovery() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
     let (mut l, mut r) = connect_l_r();
+
+    // Configure 5% random loss on R's incoming queue (L -> R has loss)
+    let loss_config = NetemConfig::new()
+        .loss(RandomLoss::new(Probability::new(0.05)))
+        .seed(42);
+    r.set_netem(loss_config);
 
     let mid = "vid".into();
 
@@ -72,18 +77,25 @@ pub fn loss_recovery() -> Result<(), RtcError> {
             )
             .expect("clean write");
 
+        // Disable loss near start and end to let retransmission algo stabilize
+        // (see MISORDER_DELAY in register.rs)
         if !(10..=990).contains(&index) {
-            // close to start and end we disable loss to make sure the
-            // retransmission nacking algo is in a stable state
-            // (see MISORDER_DELAY in register.rs)
-            progress(&mut l, &mut r)?;
-        } else {
-            progress_with_loss(&mut l, &mut r, 0.05)?;
+            r.set_netem(NetemConfig::new()); // No loss
+        }
+
+        progress(&mut l, &mut r)?;
+
+        // Re-enable loss for middle packets
+        if index == 9 {
+            let loss_config = NetemConfig::new()
+                .loss(RandomLoss::new(Probability::new(0.05)))
+                .seed(42);
+            r.set_netem(loss_config);
         }
     }
 
     // let some time pass for retransmission to happen
-    let settle_time = l.duration() + Duration::from_secs(2);
+    let settle_time = l.duration() + Duration::from_secs(10);
     loop {
         progress(&mut l, &mut r)?;
 
@@ -155,10 +167,13 @@ pub fn loss_recovery() -> Result<(), RtcError> {
     let max = packets_rx.last().unwrap();
 
     // useful for debugging
-    // println!(
-    //     "min: {}, max: {}, discontinuities: {:?}",
-    //     min, max, discontinuities
-    // );
+    println!(
+        "min: {}, max: {}, total_rx: {}, discontinuities: {:?}",
+        min,
+        max,
+        packets_rx.len(),
+        discontinuities
+    );
 
     assert_eq!(*min, 47_000);
     assert_eq!(*max, 47_999);

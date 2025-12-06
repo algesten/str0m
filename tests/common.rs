@@ -5,6 +5,8 @@ use std::ops::{Deref, DerefMut};
 use std::sync::Once;
 use std::time::{Duration, Instant};
 
+use netem::{Input as NetemInput, Netem, NetemConfig, Output as NetemOutput};
+
 use pcap_file::pcap::PcapReader;
 use str0m::change::SdpApi;
 use str0m::format::Codec;
@@ -18,12 +20,28 @@ use str0m::{Event, Input, Output, Rtc, RtcError};
 use tracing::info_span;
 use tracing::Span;
 
+/// Owned version of Receive for queueing.
+#[derive(Clone)]
+pub struct PendingPacket {
+    pub proto: Protocol,
+    pub source: SocketAddr,
+    pub destination: SocketAddr,
+    pub contents: Vec<u8>,
+}
+
+impl AsRef<[u8]> for PendingPacket {
+    fn as_ref(&self) -> &[u8] {
+        &self.contents
+    }
+}
+
 pub struct TestRtc {
     pub span: Span,
     pub rtc: Rtc,
     pub start: Instant,
     pub last: Instant,
     pub events: Vec<(Instant, Event)>,
+    pub pending: Netem<PendingPacket>,
 }
 
 impl TestRtc {
@@ -39,7 +57,15 @@ impl TestRtc {
             start: now,
             last: now,
             events: vec![],
+            pending: Netem::new(NetemConfig::new()),
         }
+    }
+
+    /// Configure network emulation for incoming traffic to this RTC.
+    /// Call this on the RECEIVER to affect traffic coming TO this peer.
+    /// This preserves any packets already queued in the netem.
+    pub fn set_netem(&mut self, config: NetemConfig) {
+        self.pending.set_config(config);
     }
 
     pub fn add_host_candidate(&mut self, socket: SocketAddr) -> Candidate {
@@ -86,78 +112,149 @@ impl TestRtc {
     }
 }
 
+/// Progress time forward by processing the next event.
+///
+/// We have 4 event sources:
+/// - l.last: l's rtc timeout
+/// - r.last: r's rtc timeout
+/// - l.pending: packet ready to deliver to l
+/// - r.pending: packet ready to deliver to r
+///
+/// Pick the earliest, process it, then try to progress again for any
+/// more even that is within 5ms of the first time.
 pub fn progress(l: &mut TestRtc, r: &mut TestRtc) -> Result<(), RtcError> {
-    let (f, t) = if l.last < r.last { (l, r) } else { (r, l) };
+    let mut first_time = None;
 
     loop {
-        f.span
-            .in_scope(|| f.rtc.handle_input(Input::Timeout(f.last)))?;
+        // Find earliest event
+        let l_netem = l.pending.poll_timeout();
+        let r_netem = r.pending.poll_timeout();
 
-        match f.span.in_scope(|| f.rtc.poll_output())? {
-            Output::Timeout(v) => {
-                let tick = f.last + Duration::from_millis(10);
-                f.last = if v == f.last { tick } else { tick.min(v) };
+        // Determine which event is next: (time, is_l, is_netem)
+        let mut next = (l.last, true, false); // default: l's rtc
+
+        if r.last < next.0 {
+            next = (r.last, false, false);
+        }
+        if l_netem < next.0 {
+            next = (l_netem, true, true);
+        }
+        if r_netem < next.0 {
+            next = (r_netem, false, true);
+        }
+
+        let (time, is_l, is_netem) = next;
+
+        if let Some(first_time) = first_time {
+            // The idea is that we try to advance all the components that might be
+            // within some distance of each other.
+            let elapsed = time.saturating_duration_since(first_time);
+            if elapsed >= Duration::from_millis(5) {
                 break;
             }
-            Output::Transmit(v) => {
-                let data = v.contents;
-                let input = Input::Receive(
-                    f.last,
-                    Receive {
-                        proto: v.proto,
-                        source: v.source,
-                        destination: v.destination,
-                        contents: (&*data).try_into()?,
-                    },
-                );
-                t.span.in_scope(|| t.rtc.handle_input(input))?;
-            }
-            Output::Event(v) => {
-                f.events.push((f.last, v));
-            }
+        } else {
+            first_time = Some(time);
         }
+
+        progress_one(l, r, time, is_l, is_netem)?;
     }
 
     Ok(())
 }
 
-pub fn progress_with_loss(l: &mut TestRtc, r: &mut TestRtc, loss: f32) -> Result<(), RtcError> {
-    let (f, t) = if l.last < r.last { (l, r) } else { (r, l) };
+fn progress_one(
+    l: &mut TestRtc,
+    r: &mut TestRtc,
+    time: Instant,
+    is_l: bool,
+    is_netem: bool,
+) -> Result<(), RtcError> {
+    if is_netem {
+        // Deliver packet from netem to rtc (no timeout processing)
+        if is_l {
+            netem_to_rtc(l, time, &mut r.pending)?;
+        } else {
+            netem_to_rtc(r, time, &mut l.pending)?;
+        }
+    } else {
+        // Process rtc timeout and poll outputs
+        if is_l {
+            rtc_timeout(l, time, &mut r.pending)?;
+        } else {
+            rtc_timeout(r, time, &mut l.pending)?;
+        }
+    }
+    Ok(())
+}
 
+/// Deliver one packet from rtc.pending to rtc. No timeout processing.
+fn netem_to_rtc(
+    rtc: &mut TestRtc,
+    time: Instant,
+    other_netem: &mut Netem<PendingPacket>,
+) -> Result<(), RtcError> {
+    rtc.pending.handle_input(NetemInput::Timeout(time));
+
+    let Some(NetemOutput::Packet(packet)) = rtc.pending.poll_output() else {
+        return Ok(());
+    };
+
+    let input = Input::Receive(
+        time,
+        Receive {
+            proto: packet.proto,
+            source: packet.source,
+            destination: packet.destination,
+            contents: (&packet.contents[..]).try_into()?,
+        },
+    );
+    rtc.span.in_scope(|| rtc.rtc.handle_input(input))?;
+
+    rtc_poll_to_timeout(rtc, time, other_netem)?;
+
+    Ok(())
+}
+
+/// Process rtc timeout and poll until next timeout, queueing transmits in other_netem.
+fn rtc_timeout(
+    rtc: &mut TestRtc,
+    time: Instant,
+    other_netem: &mut Netem<PendingPacket>,
+) -> Result<(), RtcError> {
+    rtc.span
+        .in_scope(|| rtc.rtc.handle_input(Input::Timeout(time)))?;
+
+    rtc_poll_to_timeout(rtc, time, other_netem)?;
+
+    Ok(())
+}
+
+fn rtc_poll_to_timeout(
+    rtc: &mut TestRtc,
+    time: Instant,
+    other_netem: &mut Netem<PendingPacket>,
+) -> Result<(), RtcError> {
     loop {
-        f.span
-            .in_scope(|| f.rtc.handle_input(Input::Timeout(f.last)))?;
-
-        match f.span.in_scope(|| f.rtc.poll_output())? {
+        match rtc.span.in_scope(|| rtc.rtc.poll_output())? {
             Output::Timeout(v) => {
-                let tick = f.last + Duration::from_millis(10);
-                f.last = if v == f.last { tick } else { tick.min(v) };
+                let tick = rtc.last + Duration::from_millis(10);
+                rtc.last = if v == rtc.last { tick } else { tick.min(v) };
                 break;
             }
             Output::Transmit(v) => {
-                if fastrand::f32() <= loss {
-                    // LOSS !
-                    break;
-                }
-
-                let data = v.contents;
-                let input = Input::Receive(
-                    f.last,
-                    Receive {
-                        proto: v.proto,
-                        source: v.source,
-                        destination: v.destination,
-                        contents: (&*data).try_into()?,
-                    },
-                );
-                t.span.in_scope(|| t.rtc.handle_input(input))?;
+                let packet = PendingPacket {
+                    proto: v.proto,
+                    source: v.source,
+                    destination: v.destination,
+                    contents: v.contents.to_vec(),
+                };
+                other_netem.handle_input(NetemInput::Packet(time, packet));
             }
             Output::Event(v) => {
-                f.events.push((f.last, v));
+                rtc.events.push((rtc.last, v));
             }
         }
     }
-
     Ok(())
 }
 

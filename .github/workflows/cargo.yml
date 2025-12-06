@@ -117,22 +117,26 @@ jobs:
       - name: Build fuzz targets
         run: cargo fuzz build
         
-  crypto-backends:
+  related-crates:
     strategy:
       matrix:
         rust: [stable, beta, 1.81.0]
-        backend:
-          - name: apple-crypto
+        dir:
+          - name: proto
+            os: ubuntu-latest
+          - name: netem
+            os: ubuntu-latest
+          - name: crypto/apple-crypto
             os: macos-latest
-          - name: aws-lc-rs
+          - name: crypto/aws-lc-rs
             os: ubuntu-latest
-          - name: openssl
+          - name: crypto/openssl
             os: ubuntu-latest
-          - name: rust-crypto
+          - name: crypto/rust-crypto
             os: ubuntu-latest
-          - name: wincrypto
+          - name: crypto/wincrypto
             os: windows-latest
-    runs-on: ${{ matrix.backend.os }}
+    runs-on: ${{ matrix.dir.os }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -145,12 +149,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: fmt
         if: matrix.rust == 'stable'
-        run: cargo +${{steps.toolchain.outputs.name}} fmt --manifest-path crypto/${{ matrix.backend.name }}/Cargo.toml -- --check
+        run: cargo +${{steps.toolchain.outputs.name}} fmt --manifest-path ${{ matrix.dir.name }}/Cargo.toml -- --check
       - name: clippy
         if: matrix.rust == 'stable'
-        run: cargo +${{steps.toolchain.outputs.name}} clippy --manifest-path crypto/${{ matrix.backend.name }}/Cargo.toml -- -D warnings
+        run: cargo +${{steps.toolchain.outputs.name}} clippy --manifest-path ${{ matrix.dir.name }}/Cargo.toml -- -D warnings
       - name: test
-        run: cargo +${{steps.toolchain.outputs.name}} test --manifest-path crypto/${{ matrix.backend.name }}/Cargo.toml        
+        run: cargo +${{steps.toolchain.outputs.name}} test --manifest-path ${{ matrix.dir.name }}/Cargo.toml        
 
   # cargo-deny:
   #   name: cargo-deny
