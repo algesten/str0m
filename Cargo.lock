@@ -1816,6 +1816,7 @@ name = "str0m-netem"
 version = "0.1.0"
 dependencies = [
  "fastrand",
+ "str0m-proto",
 ]
 
 [[package]]

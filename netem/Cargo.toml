@@ -9,3 +9,4 @@ rust-version = "1.81.0"
 
 [dependencies]
 fastrand = "2"
+str0m-proto = { version = "0.1.0", path = "../proto" }

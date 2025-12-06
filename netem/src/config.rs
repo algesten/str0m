@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+pub use str0m_proto::{Bitrate, DataSize};
+
 /// Configuration for the network emulator.
 ///
 /// Use the builder pattern to configure the emulator:
@@ -22,8 +24,20 @@ pub struct NetemConfig {
     pub(crate) loss: LossModel,
     pub(crate) duplicate: Probability,
     pub(crate) reorder_gap: Option<u32>,
-    pub(crate) rate: Option<u64>,
+    pub(crate) link: Option<Link>,
     pub(crate) seed: u64,
+}
+
+/// A bottleneck link with rate limiting and finite buffer.
+///
+/// When packets arrive faster than the link rate, they queue up.
+/// When the queue exceeds the buffer size, packets are dropped (tail drop).
+#[derive(Debug, Clone, Copy)]
+pub struct Link {
+    /// Link capacity in bits per second.
+    pub(crate) rate: Bitrate,
+    /// Buffer size in bytes. When exceeded, packets are dropped.
+    pub(crate) buffer: DataSize,
 }
 
 impl Default for NetemConfig {
@@ -44,7 +58,7 @@ impl NetemConfig {
             loss: LossModel::None,
             duplicate: Probability::ZERO,
             reorder_gap: None,
-            rate: None,
+            link: None,
             seed: 0,
         }
     }
@@ -134,19 +148,36 @@ impl NetemConfig {
         self
     }
 
-    /// Set maximum transmission rate in bytes per second.
+    /// Set a bottleneck link with rate limiting and finite buffer.
     ///
-    /// Simulates bandwidth limitations by delaying packets to enforce a rate limit.
-    /// Each packet's send time is calculated so the overall throughput doesn't
-    /// exceed this rate.
+    /// Simulates a network link with limited capacity. When packets arrive faster
+    /// than the link can transmit, they queue up. When the queue (buffer) is full,
+    /// packets are dropped (tail drop), simulating congestion-induced loss.
     ///
-    /// - `1_000_000`: 1 MB/s (~8 Mbps)
-    /// - `125_000`: 125 KB/s (~1 Mbps)
-    /// - `12_500`: 12.5 KB/s (~100 Kbps, very slow)
+    /// # Arguments
     ///
-    /// Note: This is the raw byte rate. For bits per second, divide by 8.
-    pub fn rate(mut self, bytes_per_second: u64) -> Self {
-        self.rate = Some(bytes_per_second);
+    /// * `rate` - Link capacity (e.g., `Bitrate::mbps(10)` for 10 Mbps)
+    /// * `buffer` - Buffer size before packets are dropped (e.g., `DataSize::bytes(200_000)`)
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use str0m_netem::{NetemConfig, Bitrate, DataSize};
+    ///
+    /// // 10 Mbps link with 200KB buffer (~160ms at full rate)
+    /// let config = NetemConfig::new()
+    ///     .latency(Duration::from_millis(50))
+    ///     .link(Bitrate::mbps(10), DataSize::bytes(200_000));
+    /// ```
+    ///
+    /// # Behavior
+    ///
+    /// - Below capacity: packets flow with minimal queuing delay
+    /// - At capacity: queuing delay increases as buffer fills
+    /// - Over capacity: buffer fills, then excess packets are dropped
+    pub fn link(mut self, rate: Bitrate, buffer: DataSize) -> Self {
+        self.link = Some(Link { rate, buffer });
         self
     }
 

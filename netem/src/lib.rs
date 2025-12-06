@@ -47,7 +47,8 @@
 mod config;
 mod loss;
 
-pub use config::{GilbertElliot, LossModel, NetemConfig, Probability, RandomLoss};
+pub use config::{Bitrate, DataSize, GilbertElliot, Link};
+pub use config::{LossModel, NetemConfig, Probability, RandomLoss};
 
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
@@ -199,20 +200,32 @@ impl<T: Clone + WithLen> Netem<T> {
         // Calculate base send time
         let mut send_at = now + delay;
 
-        // Calculate rate-limited send time (but don't update rate_virtual_time yet)
-        let transmission_time = self.config.rate.and_then(|rate| {
-            if rate > 0 {
-                Some(self.calculate_transmission_time(data.len(), rate))
-            } else {
-                None
-            }
-        });
+        // Handle link rate limiting and buffer overflow
+        let transmission_time = if let Some(link) = self.config.link {
+            let packet_size = DataSize::from(data.len());
+            let tx_time = packet_size / link.rate;
 
-        if let Some(virtual_time) = self.rate_virtual_time {
-            if virtual_time > send_at {
-                send_at = virtual_time;
+            // Apply rate limiting: packet can't be sent until previous finishes
+            if let Some(virtual_time) = self.rate_virtual_time {
+                if virtual_time > send_at {
+                    send_at = virtual_time;
+                }
             }
-        }
+
+            // Check buffer overflow (tail drop)
+            // Queue delay = how far into the future packets are scheduled
+            let queue_delay = send_at.saturating_duration_since(now);
+            let queue_bytes = link.rate * queue_delay;
+
+            if queue_bytes.as_bytes_usize() + data.len() > link.buffer.as_bytes_usize() {
+                // Buffer overflow - drop packet
+                return;
+            }
+
+            Some(tx_time)
+        } else {
+            None
+        };
 
         // Determine if this packet should be reordered
         let should_reorder = if let Some(gap) = self.config.reorder_gap {
@@ -300,13 +313,6 @@ impl<T: Clone + WithLen> Netem<T> {
 
         self.last_delay = delay;
         delay
-    }
-
-    /// Calculate transmission time based on rate limit.
-    fn calculate_transmission_time(&self, packet_len: usize, rate: u64) -> Duration {
-        // Time = bytes / (bytes/second) = seconds
-        let nanos = (packet_len as u128 * 1_000_000_000) / rate as u128;
-        Duration::from_nanos(nanos as u64)
     }
 
     /// Returns the number of packets currently queued.
@@ -482,8 +488,9 @@ mod tests {
 
     #[test]
     fn test_rate_limiting() {
+        // 8 kbps = 1000 bytes/sec, large buffer to avoid drops
         let config = NetemConfig::new()
-            .rate(1000) // 1000 bytes/sec
+            .link(Bitrate::kbps(8), DataSize::kbytes(10))
             .seed(42);
         let mut netem: Netem<Vec<u8>> = Netem::new(config);
 
@@ -552,8 +559,9 @@ mod tests {
 
     #[test]
     fn test_reordering_with_rate_limiting() {
+        // 8 kbps = 1024 bytes/sec, large buffer to avoid drops
         let config = NetemConfig::new()
-            .rate(1000) // 1000 bytes/sec
+            .link(Bitrate::kbps(8), DataSize::kbytes(10))
             .reorder_gap(3) // Every 3rd packet is reordered
             .seed(42);
         let mut netem: Netem<Vec<u8>> = Netem::new(config);
@@ -615,6 +623,106 @@ mod tests {
             (0.005..=0.05).contains(&loss_ratio),
             "Loss ratio: {}",
             loss_ratio
+        );
+    }
+
+    #[test]
+    fn test_buffer_overflow_drops_packets() {
+        // 80 kbps = 10KB/sec, tiny 100 byte buffer
+        // This means only ~1 packet of 100 bytes can be queued
+        let config = NetemConfig::new()
+            .link(Bitrate::kbps(80), DataSize::bytes(100))
+            .seed(42);
+        let mut netem: Netem<Vec<u8>> = Netem::new(config);
+
+        let now = instant();
+
+        // Send 5 packets of 100 bytes each at once
+        // Only the first should be accepted, rest should be dropped due to buffer overflow
+        for i in 0..5 {
+            netem.handle_input(Input::Packet(now, vec![i; 100]));
+        }
+
+        // Count how many packets we actually receive
+        let mut received = 0;
+        while let Some(output) = netem.poll_output() {
+            match output {
+                Output::Packet(_) => received += 1,
+                Output::Timeout(t) => {
+                    // Advance time to release next packet
+                    netem.handle_input(Input::Timeout(t));
+                }
+            }
+        }
+
+        // With a 100 byte buffer and 100 byte packets, only 1-2 should fit
+        assert!(
+            received < 5,
+            "Expected buffer overflow to drop packets, but received all {received}"
+        );
+        assert!(
+            received >= 1,
+            "Expected at least one packet to be delivered, got {received}"
+        );
+    }
+
+    #[test]
+    fn test_congestion_causes_delay_then_loss() {
+        // 80 kbps = 10KB/sec, 500 byte buffer (~50ms worth at this rate)
+        // This allows ~5 packets of 100 bytes each to be queued
+        let config = NetemConfig::new()
+            .link(Bitrate::kbps(80), DataSize::bytes(500))
+            .seed(42);
+        let mut netem: Netem<Vec<u8>> = Netem::new(config);
+
+        let now = instant();
+
+        // Send many packets to cause congestion and buffer overflow
+        // 20 packets * 100 bytes = 2000 bytes, but buffer is only 500 bytes
+        for i in 0..20 {
+            netem.handle_input(Input::Packet(now, vec![i; 100]));
+        }
+
+        // First packet should be immediate (no queue yet)
+        let first = netem.poll_output();
+        assert!(matches!(first, Some(Output::Packet(_))));
+
+        // Next should be a timeout (queued due to rate limiting)
+        let second = netem.poll_output();
+        match second {
+            Some(Output::Timeout(t)) => {
+                // Delay should be positive (congestion causing queue buildup)
+                assert!(t > now, "Expected queuing delay");
+            }
+            _ => panic!("Expected timeout due to rate limiting"),
+        }
+
+        // Advance time to release all remaining packets
+        // Send a dummy packet at a far future time to advance current_time
+        let far_future = now + Duration::from_secs(10);
+        netem.handle_input(Input::Packet(far_future, vec![]));
+
+        // Count total packets received (including the first one we already got)
+        let mut received = 1;
+        while let Some(output) = netem.poll_output() {
+            if matches!(output, Output::Packet(_)) {
+                received += 1;
+            }
+        }
+
+        // Should have lost some packets due to buffer overflow
+        // With 500 byte buffer and 100 byte packets:
+        // - First packet sent immediately (no queue)
+        // - 5 more packets can be buffered (500 bytes)
+        // - Remaining 14 packets should be dropped
+        // Expected: ~6 packets total (plus the dummy 0-byte packet)
+        assert!(
+            received < 20,
+            "Expected buffer overflow to cause loss, but received all {received}"
+        );
+        assert!(
+            received >= 5,
+            "Expected some packets to get through, only got {received}"
         );
     }
 }
