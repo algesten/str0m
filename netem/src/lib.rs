@@ -88,6 +88,9 @@ pub struct Netem<T> {
 
     /// Send time of the last queued packet (for reordering).
     last_send_at: Option<Instant>,
+
+    /// Total bytes currently queued (for buffer overflow detection).
+    queued_bytes: usize,
 }
 
 impl<T: Clone + WithLen> Netem<T> {
@@ -109,6 +112,7 @@ impl<T: Clone + WithLen> Netem<T> {
             packet_count: 0,
             timeout_pending: false,
             last_send_at: None,
+            queued_bytes: 0,
         }
     }
 
@@ -146,6 +150,8 @@ impl<T: Clone + WithLen> Netem<T> {
         if let Some(Reverse(packet)) = self.queue.peek() {
             if packet.send_at <= now {
                 let Reverse(packet) = self.queue.pop().unwrap();
+                // Decrement queued bytes when packet is dequeued
+                self.queued_bytes = self.queued_bytes.saturating_sub(packet.data.len());
                 return Some(Output::Packet(packet.data));
             }
 
@@ -212,12 +218,8 @@ impl<T: Clone + WithLen> Netem<T> {
                 }
             }
 
-            // Check buffer overflow (tail drop)
-            // Queue delay = how far into the future packets are scheduled
-            let queue_delay = send_at.saturating_duration_since(now);
-            let queue_bytes = link.rate * queue_delay;
-
-            if queue_bytes.as_bytes_usize() + data.len() > link.buffer.as_bytes_usize() {
+            // Check buffer overflow (tail drop) using actual queued bytes
+            if self.queued_bytes + data.len() > link.buffer.as_bytes_usize() {
                 // Buffer overflow - drop packet
                 return;
             }
@@ -265,6 +267,9 @@ impl<T: Clone + WithLen> Netem<T> {
         }
 
         self.packet_count += 1;
+
+        // Track queued bytes for buffer overflow detection
+        self.queued_bytes += data.len();
 
         let packet = QueuedPacket {
             send_at,
