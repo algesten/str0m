@@ -11,8 +11,8 @@ use std::sync::{Arc, Weak};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rouille::Server;
-use rouille::{Request, Response};
+use feather::{App, middleware, next};
+use feather::middlewares::Middleware;
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::channel::{ChannelData, ChannelId};
 use str0m::crypto::from_feature_flags;
@@ -41,9 +41,6 @@ pub fn main() {
     // Run with whatever is configured.
     from_feature_flags().install_process_default();
 
-    let certificate = include_bytes!("cer.pem").to_vec();
-    let private_key = include_bytes!("key.pem").to_vec();
-
     // Figure out some public IP address, since Firefox will not accept 127.0.0.1 for WebRTC traffic.
     let host_addr = util::select_host_address();
 
@@ -58,30 +55,65 @@ pub fn main() {
     // The run loop is on a separate thread to the web server.
     thread::spawn(move || run(socket, rx));
 
-    let server = Server::new_ssl(
-        "0.0.0.0:3000",
-        move |request| web_request(request, addr, tx.clone()),
-        certificate,
-        private_key,
-    )
-    .expect("starting the web server");
+    // Note: Feather doesn't have built-in TLS support like Rouille.
+    // For production use with WebRTC, you'll need to:
+    // 1. Use a reverse proxy (nginx/caddy) for HTTPS termination, OR
+    // 2. Manually wrap the server with rustls/native-tls
+    // For now, this serves plain HTTP on port 3000
+    info!("IMPORTANT: WebRTC requires HTTPS. Consider using a reverse proxy with TLS.");
+    info!("Connect a browser to http://{:?}:3000 (use reverse proxy for HTTPS)", addr.ip());
+    info!("Example nginx config: listen 443 ssl; proxy_pass http://localhost:3000;");
 
-    let port = server.server_addr().port();
-    info!("Connect a browser to https://{:?}:{:?}", addr.ip(), port);
+    let mut app = App::new();
+    
+    // GET handler - serve the HTML page
+    app.get(
+        "/",
+        middleware!(|_req, res, _ctx| {
+            res.send_html(include_str!("chat.html"));
+            next!()
+        }),
+    );
 
-    server.run();
+    // POST handler - accept SDP offers using a middleware struct to capture tx and addr
+    app.post("/", PostHandler { tx, addr });
+
+    app.listen("0.0.0.0:3000");
 }
 
-// Handle a web request.
-fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Response {
-    if request.method() == "GET" {
-        return Response::html(include_str!("chat.html"));
+// Custom middleware handler to capture tx and addr
+struct PostHandler {
+    tx: SyncSender<Rtc>,
+    addr: SocketAddr,
+}
+
+impl Middleware for PostHandler {
+    fn handle(
+        &self,
+        request: &mut feather::Request,
+        response: &mut feather::Response,
+        _ctx: &feather::AppContext,
+    ) -> feather::Outcome {
+        match handle_post_request(&self.tx, self.addr, request, response) {
+            Ok(_) => next!(),
+            Err(e) => {
+                warn!("Failed to handle POST request: {:?}", e);
+                response.set_status(500).send_text("Internal Server Error");
+                next!()
+            }
+        }
     }
+}
 
-    // Expected POST SDP Offers.
-    let mut data = request.data().expect("body to be available");
-
-    let offer: SdpOffer = serde_json::from_reader(&mut data).expect("serialized offer");
+fn handle_post_request(
+    tx: &SyncSender<Rtc>,
+    addr: SocketAddr,
+    request: &feather::Request,
+    response: &mut feather::Response,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let json_value = request.json()?;
+    let offer: SdpOffer = serde_json::from_value(json_value)?;
+    
     let mut rtc = Rtc::builder()
         // Uncomment this to see statistics
         // .set_stats_interval(Some(Duration::from_secs(1)))
@@ -101,9 +133,8 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
     // The Rtc instance is shipped off to the main run loop.
     tx.send(rtc).expect("to send Rtc instance");
 
-    let body = serde_json::to_vec(&answer).expect("answer to serialize");
-
-    Response::from_data("application/json", body)
+    response.send_json(answer);
+    Ok(())
 }
 
 /// This is the "main run loop" that handles all clients, reads and writes UdpSocket traffic,

@@ -7,8 +7,7 @@ use std::process;
 use std::thread;
 use std::time::Instant;
 
-use rouille::Server;
-use rouille::{Request, Response};
+use feather::{App, middleware, next};
 
 use str0m::change::SdpOffer;
 use str0m::crypto::from_feature_flags;
@@ -36,60 +35,70 @@ pub fn main() {
     // Run with whatever is configured.
     from_feature_flags().install_process_default();
 
-    let certificate = include_bytes!("cer.pem").to_vec();
-    let private_key = include_bytes!("key.pem").to_vec();
-
     // Figure out some public IP address, since Firefox will not accept 127.0.0.1 for WebRTC traffic.
     let host_addr = util::select_host_address();
 
-    let server = Server::new_ssl("0.0.0.0:3000", web_request, certificate, private_key)
-        .expect("starting the web server");
+    // Note: Feather doesn't have built-in TLS support like Rouille.
+    // For production use with WebRTC, you'll need to:
+    // 1. Use a reverse proxy (nginx/caddy) for HTTPS termination, OR
+    // 2. Manually wrap the server with rustls/native-tls
+    // For now, this serves plain HTTP on port 3000
+    info!("IMPORTANT: WebRTC requires HTTPS. Consider using a reverse proxy with TLS.");
+    info!("Connect a browser to http://{:?}:3000", host_addr);
+    info!("Example nginx config: listen 443 ssl; proxy_pass http://localhost:3000;");
 
-    let port = server.server_addr().port();
-    info!("Connect a browser to https://{:?}:{:?}", host_addr, port);
+    let mut app = App::new();
 
-    server.run();
-}
+    // GET handler - serve the HTML page
+    app.get(
+        "/",
+        middleware!(|_req, res, _ctx| {
+            res.send_html(include_str!("http-post.html"));
+            next!()
+        }),
+    );
 
-// Handle a web request.
-fn web_request(request: &Request) -> Response {
-    if request.method() == "GET" {
-        return Response::html(include_str!("http-post.html"));
-    }
+    // POST handler - accept SDP offers
+    app.post(
+        "/",
+        middleware!(|req, res, _ctx| {
+            let json_value = req.json()?;
+            let offer: SdpOffer = serde_json::from_value(json_value)
+                .map_err(|e| -> Box<dyn std::error::Error> { 
+                    Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, format!("Failed to parse offer: {}", e)))
+                })?;
+            let mut rtc = RtcConfig::new()
+                // .set_ice_lite(true)
+                .build();
 
-    // Expected POST SDP Offers.
-    let mut data = request.data().expect("body to be available");
+            let addr = util::select_host_address();
 
-    let offer: SdpOffer = serde_json::from_reader(&mut data).expect("serialized offer");
-    let mut rtc = RtcConfig::new()
-        // .set_ice_lite(true)
-        .build();
+            // Spin up a UDP socket for the RTC
+            let socket = UdpSocket::bind(format!("{addr}:0")).expect("binding a random UDP port");
+            let addr = socket.local_addr().expect("a local socket address");
+            let candidate = Candidate::host(addr, "udp").expect("a host candidate");
+            rtc.add_local_candidate(candidate).unwrap();
 
-    let addr = util::select_host_address();
+            // Create an SDP Answer.
+            let answer = rtc
+                .sdp_api()
+                .accept_offer(offer)
+                .expect("offer to be accepted");
 
-    // Spin up a UDP socket for the RTC
-    let socket = UdpSocket::bind(format!("{addr}:0")).expect("binding a random UDP port");
-    let addr = socket.local_addr().expect("a local socket address");
-    let candidate = Candidate::host(addr, "udp").expect("a host candidate");
-    rtc.add_local_candidate(candidate).unwrap();
+            // Launch WebRTC in separate thread.
+            thread::spawn(|| {
+                if let Err(e) = run(rtc, socket) {
+                    eprintln!("Exited: {e:?}");
+                    process::exit(1);
+                }
+            });
 
-    // Create an SDP Answer.
-    let answer = rtc
-        .sdp_api()
-        .accept_offer(offer)
-        .expect("offer to be accepted");
+            res.send_json(answer);
+            next!()
+        }),
+    );
 
-    // Launch WebRTC in separate thread.
-    thread::spawn(|| {
-        if let Err(e) = run(rtc, socket) {
-            eprintln!("Exited: {e:?}");
-            process::exit(1);
-        }
-    });
-
-    let body = serde_json::to_vec(&answer).expect("answer to serialize");
-
-    Response::from_data("application/json", body)
+    app.listen("0.0.0.0:3000");
 }
 
 fn run(mut rtc: Rtc, socket: UdpSocket) -> Result<(), RtcError> {

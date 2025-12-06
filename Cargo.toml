@@ -36,9 +36,10 @@ unversioned = []
 # Redacts personally identifiable information (PII) from logs debug and above
 pii = []
 
-# The examples require TLS for the web server via rouille.
-# We use rustls instead of ssl to avoid OpenSSL dependency issues on Windows.
-examples = ["rouille/rustls"]
+# The examples require a web server via feather.
+# Note: Feather doesn't have built-in TLS support. For production use,
+# a reverse proxy (nginx/caddy) should be used for HTTPS termination.
+examples = ["feather/json"]
 
 _internal_dont_use_log_stats = []
 _internal_test_exports = []
@@ -73,7 +74,7 @@ str0m-apple-crypto = { version = "0.1.0", path = "crypto/apple-crypto", optional
 str0m-wincrypto = { version = "0.2.1", path = "crypto/wincrypto", optional = true }
 
 [dev-dependencies]
-rouille = { version = "3.6.2", features = [] }
+feather = { version = "0.6.0", features = ["json"] }
 str0m-rust-crypto = { version = "0.1.0", path = "crypto/rust-crypto" }
 netem = { package = "str0m-netem", version = "0.1.0", path = "netem" }
 
