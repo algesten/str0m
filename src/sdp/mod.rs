@@ -6,7 +6,9 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 mod data;
 pub(crate) use data::{FormatParam, Sdp, Session, SessionAttribute, Setup};
 pub(crate) use data::{MediaAttribute, MediaLine, MediaType, Msid, Proto};
-pub(crate) use data::{RestrictionId, Simulcast, SimulcastGroups};
+pub(crate) use data::{
+    RestrictionId, Simulcast, SimulcastGroups, SimulcastLayer, SimulcastLayerAttributes,
+};
 pub(crate) use parser::parse_candidate;
 
 #[cfg(test)]

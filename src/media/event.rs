@@ -4,15 +4,66 @@ use std::time::Instant;
 
 use crate::packet::MediaKind;
 use crate::rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, SenderInfo, SeqNo};
-use crate::sdp::Simulcast as SdpSimulcast;
+use crate::sdp::{
+    RestrictionId, Simulcast as SdpSimulcast, SimulcastGroups as SdpSimulcastGroups,
+    SimulcastLayer as SdpSimulcastLayer, SimulcastLayerAttributes as SdpSimulcastLayerAttributes,
+};
 
 use super::PayloadParams;
 use crate::format::CodecExtra;
 
+impl From<SdpSimulcastLayer> for SimulcastLayer {
+    fn from(layer: SdpSimulcastLayer) -> Self {
+        SimulcastLayer {
+            rid: Rid::from(layer.restriction_id.0.as_ref()),
+            attributes: layer.attributes.map(Into::into),
+        }
+    }
+}
+
+impl From<SdpSimulcastLayerAttributes> for SimulcastLayerAttributes {
+    fn from(attributes: SdpSimulcastLayerAttributes) -> Self {
+        SimulcastLayerAttributes {
+            max_width: attributes.max_width,
+            max_height: attributes.max_height,
+            max_br: attributes.max_br,
+            max_fps: attributes.max_fps,
+        }
+    }
+}
+
+impl From<SimulcastLayer> for SdpSimulcastLayer {
+    fn from(layer: SimulcastLayer) -> Self {
+        SdpSimulcastLayer {
+            restriction_id: RestrictionId::new_active(layer.rid.to_string()),
+            attributes: layer.attributes.map(Into::into),
+        }
+    }
+}
+
+impl From<SimulcastLayerAttributes> for SdpSimulcastLayerAttributes {
+    fn from(attributes: SimulcastLayerAttributes) -> Self {
+        SdpSimulcastLayerAttributes {
+            max_width: attributes.max_width,
+            max_height: attributes.max_height,
+            max_br: attributes.max_br,
+            max_fps: attributes.max_fps,
+        }
+    }
+}
+
 impl From<SdpSimulcast> for Simulcast {
     fn from(s: SdpSimulcast) -> Self {
-        let send = s.send.iter().map(|r| r.0.as_ref()).map(Rid::from).collect();
-        let recv = s.recv.iter().map(|r| r.0.as_ref()).map(Rid::from).collect();
+        let send = s
+            .send
+            .iter()
+            .map(|layer| Into::into(layer.clone()))
+            .collect();
+        let recv = s
+            .recv
+            .iter()
+            .map(|layer| Into::into(layer.clone()))
+            .collect();
 
         Simulcast { send, recv }
     }
@@ -62,24 +113,66 @@ pub struct MediaChanged {
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Simulcast {
     /// The RID used for sending simulcast.
-    pub send: Vec<Rid>,
+    pub send: Vec<SimulcastLayer>,
     /// The RID used for receiving simulcast.
-    pub recv: Vec<Rid>,
+    pub recv: Vec<SimulcastLayer>,
+}
+
+/// A simulcast layer which has a RID and optional attributes
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct SimulcastLayer {
+    /// The RID for simulcast
+    pub rid: Rid,
+    /// Optional attributes
+    pub attributes: Option<SimulcastLayerAttributes>,
+}
+
+impl SimulcastLayer {
+    /// Create a new layer with just the rid name
+    pub fn new(rid: &str) -> Self {
+        SimulcastLayer {
+            rid: Rid::from(rid),
+            attributes: None,
+        }
+    }
+
+    /// Create a new layer with the rid name and attributes
+    pub fn new_with_attributes(rid: &str, attributes: SimulcastLayerAttributes) -> Self {
+        SimulcastLayer {
+            rid: Rid::from(rid),
+            attributes: Some(attributes),
+        }
+    }
+}
+
+/// Layer attributes, per RFC 8851. There are more attributes in the RFC, but we've chosen these
+/// for practical reasons - they are the ones in the Google VLA extension, so an application publishing
+/// a simulcast stream has to provide these, to the SDP and also to the VLA.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct SimulcastLayerAttributes {
+    /// Maximum video width
+    pub max_width: u32,
+    /// Maximum video height
+    pub max_height: u32,
+    /// Maximum bitrate, in bits per second (not kilobits)
+    pub max_br: u32,
+    /// Maximum frame rate
+    pub max_fps: u32,
 }
 
 impl Simulcast {
     pub(crate) fn into_sdp(self) -> SdpSimulcast {
         SdpSimulcast {
-            send: crate::sdp::SimulcastGroups(
+            send: SdpSimulcastGroups(
                 self.send
                     .into_iter()
-                    .map(|r| crate::sdp::RestrictionId::new_active(r.to_string()))
+                    .map(|layer| Into::into(layer))
                     .collect(),
             ),
-            recv: crate::sdp::SimulcastGroups(
+            recv: SdpSimulcastGroups(
                 self.recv
                     .into_iter()
-                    .map(|r| crate::sdp::RestrictionId::new_active(r.to_string()))
+                    .map(|layer| Into::into(layer))
                     .collect(),
             ),
             is_munged: false,

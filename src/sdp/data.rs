@@ -1080,10 +1080,28 @@ impl Simulcast {
 /// The choice between 3 and 4 for the rid is currently ignored and the first option is always
 /// selected.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SimulcastGroups(pub Vec<RestrictionId>);
+pub struct SimulcastGroups(pub Vec<SimulcastLayer>);
+
+/// Represents a simulcast layer in a group
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SimulcastLayer {
+    pub restriction_id: RestrictionId,
+    pub attributes: Option<SimulcastLayerAttributes>,
+}
+
+/// Layer attributes, per RFC 8851. There are more attributes in the RFC, but we've chosen these
+/// for practical reasons - they are the ones in the Google VLA extension, so an application publishing
+/// a simulcast stream has to provide these, to the SDP and also to the VLA.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SimulcastLayerAttributes {
+    pub max_width: u32,
+    pub max_height: u32,
+    pub max_br: u32,
+    pub max_fps: u32,
+}
 
 impl Deref for SimulcastGroups {
-    type Target = [RestrictionId];
+    type Target = [SimulcastLayer];
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -1107,11 +1125,11 @@ impl Msid {
 
 impl fmt::Display for SimulcastGroups {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (idx, a) in self.0.iter().enumerate() {
+        for (idx, layer) in self.0.iter().enumerate() {
             if idx + 1 == self.0.len() {
-                write!(f, "{}", a.to_sdp())?;
+                write!(f, "{}", layer.restriction_id.to_sdp())?;
             } else {
-                write!(f, "{};", a.to_sdp())?;
+                write!(f, "{};", layer.restriction_id.to_sdp())?;
             }
         }
         Ok(())

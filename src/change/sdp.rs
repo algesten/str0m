@@ -14,9 +14,9 @@ use crate::rtp_::MidRid;
 use crate::rtp_::Rid;
 use crate::rtp_::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
-use crate::sdp::SimulcastGroups;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
 use crate::sdp::{Proto, SessionAttribute, Setup};
+use crate::sdp::{SimulcastGroups, SimulcastLayerAttributes};
 use crate::session::Session;
 use crate::Rtc;
 use crate::RtcError;
@@ -837,8 +837,8 @@ fn ensure_stream_tx(session: &mut Session) {
         let mut rids: Vec<Option<Rid>> = vec![];
 
         if let Some(sim) = media.simulcast() {
-            for rid in &*sim.send {
-                let rid: Rid = rid.0.as_str().into();
+            for layer in &*sim.send {
+                let rid: Rid = layer.restriction_id.0.as_str().into();
                 rids.push(Some(rid));
             }
         } else {
@@ -905,11 +905,14 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
         media.set_msid(add_media.msid);
 
         // If there are RIDs, the SSRC order matches that of the rid order.
-        let rids = add_media.simulcast.map(|x| x.send).unwrap_or(vec![]);
+        let layers = add_media.simulcast.map(|x| x.send).unwrap_or(vec![]);
 
         for (i, (ssrc, rtx)) in add_media.ssrcs.into_iter().enumerate() {
-            let maybe_rid = rids.get(i).cloned();
-            let midrid = MidRid(add_media.mid, maybe_rid);
+            let maybe_layer = layers.get(i).cloned();
+            let midrid = match maybe_layer {
+                Some(layer) => MidRid(add_media.mid, Some(layer.rid)),
+                None => MidRid(add_media.mid, None),
+            };
 
             let stream = session.streams.declare_stream_tx(ssrc, rtx, midrid);
 
@@ -1282,15 +1285,38 @@ impl AsSdpMediaLine for Media {
         }
 
         if let Some(s) = self.simulcast() {
+            fn to_attributes<'a>(
+                attributes: Option<SimulcastLayerAttributes>,
+            ) -> Vec<(String, String)> {
+                if let Some(attributes) = attributes {
+                    let mut attrs = vec![];
+                    if attributes.max_br > 0 {
+                        attrs.push(("max-br".to_string(), attributes.max_br.to_string()));
+                    }
+                    if attributes.max_fps > 0 {
+                        attrs.push(("max-fps".to_string(), attributes.max_fps.to_string()));
+                    }
+                    if attributes.max_width > 0 {
+                        attrs.push(("max-width".to_string(), attributes.max_fps.to_string()));
+                    }
+                    if attributes.max_height > 0 {
+                        attrs.push(("max-height".to_string(), attributes.max_fps.to_string()));
+                    }
+                    return attrs;
+                }
+
+                vec![]
+            }
+
             fn to_rids<'a>(
                 gs: &'a SimulcastGroups,
                 direction: &'static str,
             ) -> impl Iterator<Item = MediaAttribute> + 'a {
-                gs.iter().map(move |rid| MediaAttribute::Rid {
-                    id: rid.clone(),
+                gs.iter().map(move |layer| MediaAttribute::Rid {
+                    id: layer.restriction_id.clone(),
                     direction,
                     pt: vec![],
-                    restriction: vec![],
+                    restriction: to_attributes(layer.attributes.clone()),
                 })
             }
             attrs.extend(to_rids(&s.recv, "recv"));
@@ -1578,10 +1604,13 @@ impl Change {
 
 #[cfg(test)]
 mod test {
-    use sdp::RestrictionId;
+    use sdp::{
+        RestrictionId, SimulcastLayer as SdpSimulcastLayer,
+        SimulcastLayerAttributes as SdpSimulcastLayerAttributes,
+    };
 
     use crate::format::Codec;
-    use crate::media::Simulcast;
+    use crate::media::{Simulcast, SimulcastLayer, SimulcastLayerAttributes};
     use crate::sdp::RtpMap;
 
     use super::*;
@@ -1736,7 +1765,11 @@ mod test {
             None,
             None,
             Some(Simulcast {
-                send: vec!["m".into(), "h".into(), "l".into()],
+                send: vec![
+                    SimulcastLayer::new("h"),
+                    SimulcastLayer::new("m"),
+                    SimulcastLayer::new("l"),
+                ],
                 recv: vec![],
             }),
         );
@@ -1760,9 +1793,18 @@ mod test {
         assert_eq!(
             line.simulcast().unwrap().send,
             SimulcastGroups(vec![
-                RestrictionId("m".into(), true),
-                RestrictionId("h".into(), true),
-                RestrictionId("l".into(), true),
+                SdpSimulcastLayer {
+                    restriction_id: RestrictionId("h".into(), true),
+                    attributes: None,
+                },
+                SdpSimulcastLayer {
+                    restriction_id: RestrictionId("m".into(), true),
+                    attributes: None,
+                },
+                SdpSimulcastLayer {
+                    restriction_id: RestrictionId("l".into(), true),
+                    attributes: None,
+                },
             ])
         );
 
@@ -1790,5 +1832,97 @@ mod test {
             assert_eq!(a.0, b.0);
             assert_eq!(Some(a.1), b.1);
         }
+    }
+
+    #[test]
+    fn simulcast_attributes() {
+        crate::init_crypto_default();
+
+        let mut rtc1 = Rtc::new();
+
+        let mut change = rtc1.sdp_api();
+        change.add_media(
+            MediaKind::Video,
+            Direction::SendOnly,
+            None,
+            None,
+            Some(Simulcast {
+                send: vec![
+                    SimulcastLayer::new_with_attributes(
+                        "high",
+                        SimulcastLayerAttributes {
+                            max_width: 1280,
+                            max_height: 720,
+                            max_br: 1000000,
+                            max_fps: 30,
+                        },
+                    ),
+                    SimulcastLayer::new_with_attributes(
+                        "medium",
+                        SimulcastLayerAttributes {
+                            max_width: 640,
+                            max_height: 360,
+                            max_br: 600000,
+                            max_fps: 30,
+                        },
+                    ),
+                    SimulcastLayer::new_with_attributes(
+                        "low",
+                        SimulcastLayerAttributes {
+                            max_width: 320,
+                            max_height: 180,
+                            max_br: 200000,
+                            max_fps: 15,
+                        },
+                    ),
+                ],
+                recv: vec![],
+            }),
+        );
+
+        let (offer, _) = change.apply().unwrap();
+        let sdp = offer.into_inner();
+        let line = &sdp.media_lines[0];
+
+        assert_eq!(
+            line.simulcast().unwrap().send,
+            SimulcastGroups(vec![
+                SdpSimulcastLayer {
+                    restriction_id: RestrictionId("high".into(), true),
+                    attributes: Some(SdpSimulcastLayerAttributes {
+                        max_width: 1280,
+                        max_height: 720,
+                        max_br: 1000000,
+                        max_fps: 30,
+                    }),
+                },
+                SdpSimulcastLayer {
+                    restriction_id: RestrictionId("medium".into(), true),
+                    attributes: Some(SdpSimulcastLayerAttributes {
+                        max_width: 640,
+                        max_height: 360,
+                        max_br: 600000,
+                        max_fps: 30,
+                    }),
+                },
+                SdpSimulcastLayer {
+                    restriction_id: RestrictionId("low".into(), true),
+                    attributes: Some(SdpSimulcastLayerAttributes {
+                        max_width: 320,
+                        max_height: 180,
+                        max_br: 200000,
+                        max_fps: 15,
+                    }),
+                },
+            ])
+        );
+
+        let line_string = line.to_string();
+        assert!(line_string
+            .contains("a=rid:high send max-br=1000000;max-fps=30;max-width=30;max-height=30"));
+        assert!(line_string
+            .contains("a=rid:medium send max-br=600000;max-fps=30;max-width=30;max-height=30"));
+        assert!(line_string
+            .contains("a=rid:low send max-br=200000;max-fps=15;max-width=15;max-height=15"));
     }
 }
