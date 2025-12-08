@@ -12,17 +12,17 @@ use crate::sdp::{
 use super::PayloadParams;
 use crate::format::CodecExtra;
 
-impl From<SdpSimulcastLayer> for SimulcastLayer {
-    fn from(layer: SdpSimulcastLayer) -> Self {
+impl From<&SdpSimulcastLayer> for SimulcastLayer {
+    fn from(layer: &SdpSimulcastLayer) -> Self {
         SimulcastLayer {
             rid: Rid::from(layer.restriction_id.0.as_ref()),
-            attributes: layer.attributes.map(Into::into),
+            attributes: layer.attributes.as_ref().map(Into::into),
         }
     }
 }
 
-impl From<SdpSimulcastLayerAttributes> for SimulcastLayerAttributes {
-    fn from(attributes: SdpSimulcastLayerAttributes) -> Self {
+impl From<&SdpSimulcastLayerAttributes> for SimulcastLayerAttributes {
+    fn from(attributes: &SdpSimulcastLayerAttributes) -> Self {
         SimulcastLayerAttributes {
             max_width: attributes.max_width,
             max_height: attributes.max_height,
@@ -32,17 +32,17 @@ impl From<SdpSimulcastLayerAttributes> for SimulcastLayerAttributes {
     }
 }
 
-impl From<SimulcastLayer> for SdpSimulcastLayer {
-    fn from(layer: SimulcastLayer) -> Self {
+impl From<&SimulcastLayer> for SdpSimulcastLayer {
+    fn from(layer: &SimulcastLayer) -> Self {
         SdpSimulcastLayer {
             restriction_id: RestrictionId::new_active(layer.rid.to_string()),
-            attributes: layer.attributes.map(Into::into),
+            attributes: layer.attributes.as_ref().map(Into::into),
         }
     }
 }
 
-impl From<SimulcastLayerAttributes> for SdpSimulcastLayerAttributes {
-    fn from(attributes: SimulcastLayerAttributes) -> Self {
+impl From<&SimulcastLayerAttributes> for SdpSimulcastLayerAttributes {
+    fn from(attributes: &SimulcastLayerAttributes) -> Self {
         SdpSimulcastLayerAttributes {
             max_width: attributes.max_width,
             max_height: attributes.max_height,
@@ -54,16 +54,8 @@ impl From<SimulcastLayerAttributes> for SdpSimulcastLayerAttributes {
 
 impl From<SdpSimulcast> for Simulcast {
     fn from(s: SdpSimulcast) -> Self {
-        let send = s
-            .send
-            .iter()
-            .map(|layer| Into::into(layer.clone()))
-            .collect();
-        let recv = s
-            .recv
-            .iter()
-            .map(|layer| Into::into(layer.clone()))
-            .collect();
+        let send = s.send.iter().map(|layer| Into::into(layer)).collect();
+        let recv = s.recv.iter().map(|layer| Into::into(layer)).collect();
 
         Simulcast { send, recv }
     }
@@ -163,18 +155,8 @@ pub struct SimulcastLayerAttributes {
 impl Simulcast {
     pub(crate) fn into_sdp(self) -> SdpSimulcast {
         SdpSimulcast {
-            send: SdpSimulcastGroups(
-                self.send
-                    .into_iter()
-                    .map(|layer| Into::into(layer))
-                    .collect(),
-            ),
-            recv: SdpSimulcastGroups(
-                self.recv
-                    .into_iter()
-                    .map(|layer| Into::into(layer))
-                    .collect(),
-            ),
+            send: SdpSimulcastGroups(self.send.iter().map(|layer| Into::into(layer)).collect()),
+            recv: SdpSimulcastGroups(self.recv.iter().map(|layer| Into::into(layer)).collect()),
             is_munged: false,
         }
     }

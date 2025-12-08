@@ -1297,10 +1297,10 @@ impl AsSdpMediaLine for Media {
                         attrs.push(("max-fps".to_string(), attributes.max_fps.to_string()));
                     }
                     if attributes.max_width > 0 {
-                        attrs.push(("max-width".to_string(), attributes.max_fps.to_string()));
+                        attrs.push(("max-width".to_string(), attributes.max_width.to_string()));
                     }
                     if attributes.max_height > 0 {
-                        attrs.push(("max-height".to_string(), attributes.max_fps.to_string()));
+                        attrs.push(("max-height".to_string(), attributes.max_height.to_string()));
                     }
                     return attrs;
                 }
@@ -1832,6 +1832,12 @@ mod test {
             assert_eq!(a.0, b.0);
             assert_eq!(Some(a.1), b.1);
         }
+
+        let line_string = line.to_string();
+
+        assert!(line_string.lines().any(|l| l == "a=rid:h send"));
+        assert!(line_string.lines().any(|l| l == "a=rid:m send"));
+        assert!(line_string.lines().any(|l| l == "a=rid:l send"));
     }
 
     #[test]
@@ -1853,7 +1859,7 @@ mod test {
                         SimulcastLayerAttributes {
                             max_width: 1280,
                             max_height: 720,
-                            max_br: 1000000,
+                            max_br: 1500000,
                             max_fps: 30,
                         },
                     ),
@@ -1892,7 +1898,7 @@ mod test {
                     attributes: Some(SdpSimulcastLayerAttributes {
                         max_width: 1280,
                         max_height: 720,
-                        max_br: 1000000,
+                        max_br: 1500000,
                         max_fps: 30,
                     }),
                 },
@@ -1919,10 +1925,13 @@ mod test {
 
         let line_string = line.to_string();
         assert!(line_string
-            .contains("a=rid:high send max-br=1000000;max-fps=30;max-width=30;max-height=30"));
+            .lines()
+            .any(|l| l == "a=rid:high send max-br=1500000;max-fps=30;max-width=1280;max-height=720"));
         assert!(line_string
-            .contains("a=rid:medium send max-br=600000;max-fps=30;max-width=30;max-height=30"));
+            .lines()
+            .any(|l| l == "a=rid:medium send max-br=600000;max-fps=30;max-width=640;max-height=360"));
         assert!(line_string
-            .contains("a=rid:low send max-br=200000;max-fps=15;max-width=15;max-height=15"));
+            .lines()
+            .any(|l| l == "a=rid:low send max-br=200000;max-fps=15;max-width=320;max-height=180"));
     }
 }
