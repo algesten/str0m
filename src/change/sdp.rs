@@ -651,7 +651,7 @@ fn add_ice_details(
                 // Answer contained changed remote creds, indicating an ice restart
                 // but since we have no pending ice-creds, we didn't initiate it
                 // Ice restart in an ANSWER breaks spec.
-                    RtcError::RemoteSdp(
+                RtcError::RemoteSdp(
                     "Ice restart in answer without one in the preceeding offer".into(),
                 ))?
         } else {
@@ -1290,17 +1290,17 @@ impl AsSdpMediaLine for Media {
             ) -> Vec<(String, String)> {
                 if let Some(attributes) = attributes {
                     let mut attrs = vec![];
-                    if attributes.max_br > 0 {
-                        attrs.push(("max-br".to_string(), attributes.max_br.to_string()));
-                    }
-                    if attributes.max_fps > 0 {
-                        attrs.push(("max-fps".to_string(), attributes.max_fps.to_string()));
-                    }
                     if attributes.max_width > 0 {
                         attrs.push(("max-width".to_string(), attributes.max_width.to_string()));
                     }
                     if attributes.max_height > 0 {
                         attrs.push(("max-height".to_string(), attributes.max_height.to_string()));
+                    }
+                    if attributes.max_br > 0 {
+                        attrs.push(("max-br".to_string(), attributes.max_br.to_string()));
+                    }
+                    if attributes.max_fps > 0 {
+                        attrs.push(("max-fps".to_string(), attributes.max_fps.to_string()));
                     }
                     return attrs;
                 }
@@ -1868,13 +1868,13 @@ mod test {
                             max_width: 640,
                             max_height: 360,
                             max_br: 600000,
-                            max_fps: 30,
+                            max_fps: 0, // will not be included in the SDP
                         },
                     ),
                     SimulcastLayer::new_with_attributes(
                         "low",
                         SimulcastLayerAttributes {
-                            max_width: 320,
+                            max_width: 0, // will not be included in the SDP
                             max_height: 180,
                             max_br: 200000,
                             max_fps: 15,
@@ -1907,13 +1907,13 @@ mod test {
                         max_width: 640,
                         max_height: 360,
                         max_br: 600000,
-                        max_fps: 30,
+                        max_fps: 0,
                     }),
                 },
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("low".into(), true),
                     attributes: Some(SdpSimulcastLayerAttributes {
-                        max_width: 320,
+                        max_width: 0,
                         max_height: 180,
                         max_br: 200000,
                         max_fps: 15,
@@ -1924,13 +1924,13 @@ mod test {
 
         let line_string = line.to_string();
         assert!(line_string.lines().any(
-            |l| l == "a=rid:high send max-br=1500000;max-fps=30;max-width=1280;max-height=720"
-        ));
-        assert!(line_string.lines().any(
-            |l| l == "a=rid:medium send max-br=600000;max-fps=30;max-width=640;max-height=360"
+            |l| l == "a=rid:high send max-width=1280;max-height=720;max-br=1500000;max-fps=30"
         ));
         assert!(line_string
             .lines()
-            .any(|l| l == "a=rid:low send max-br=200000;max-fps=15;max-width=320;max-height=180"));
+            .any(|l| l == "a=rid:medium send max-width=640;max-height=360;max-br=600000"));
+        assert!(line_string
+            .lines()
+            .any(|l| l == "a=rid:low send max-height=180;max-br=200000;max-fps=15"));
     }
 }
