@@ -142,13 +142,13 @@ impl SimulcastLayer {
 /// a simulcast stream has to provide these, to the SDP and also to the VLA.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SimulcastLayerAttributes {
-    /// Maximum video width
+    /// Maximum video width, or 0 if none
     pub max_width: u32,
-    /// Maximum video height
+    /// Maximum video height, or 0 if none
     pub max_height: u32,
-    /// Maximum bitrate, in bits per second (not kilobits)
+    /// Maximum bitrate, in bits per second (not kilobits), or 0 if none
     pub max_br: u32,
-    /// Maximum frame rate
+    /// Maximum frame rate, in frames per second, or 0 if none
     pub max_fps: u32,
 }
 
