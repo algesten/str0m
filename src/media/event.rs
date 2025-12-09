@@ -53,8 +53,8 @@ impl From<&SimulcastLayerAttributes> for SdpSimulcastLayerAttributes {
 
 impl From<SdpSimulcast> for Simulcast {
     fn from(s: SdpSimulcast) -> Self {
-        let send = s.send.iter().map(|layer| Into::into(layer)).collect();
-        let recv = s.recv.iter().map(|layer| Into::into(layer)).collect();
+        let send = s.send.iter().map(Into::into).collect();
+        let recv = s.recv.iter().map(Into::into).collect();
 
         Simulcast { send, recv }
     }
@@ -154,8 +154,8 @@ pub struct SimulcastLayerAttributes {
 impl Simulcast {
     pub(crate) fn into_sdp(self) -> SdpSimulcast {
         SdpSimulcast {
-            send: SdpSimulcastGroups(self.send.iter().map(|layer| Into::into(layer)).collect()),
-            recv: SdpSimulcastGroups(self.recv.iter().map(|layer| Into::into(layer)).collect()),
+            send: SdpSimulcastGroups(self.send.iter().map(Into::into).collect()),
+            recv: SdpSimulcastGroups(self.recv.iter().map(Into::into).collect()),
             is_munged: false,
         }
     }

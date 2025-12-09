@@ -1285,7 +1285,7 @@ impl AsSdpMediaLine for Media {
         }
 
         if let Some(s) = self.simulcast() {
-            fn to_attributes<'a>(
+            fn to_attributes(
                 attributes: Option<SimulcastLayerAttributes>,
             ) -> Vec<(String, String)> {
                 if let Some(attributes) = attributes {
@@ -1604,10 +1604,9 @@ impl Change {
 
 #[cfg(test)]
 mod test {
-    use sdp::{
-        RestrictionId, SimulcastLayer as SdpSimulcastLayer,
-        SimulcastLayerAttributes as SdpSimulcastLayerAttributes,
-    };
+    use sdp::RestrictionId;
+    use sdp::SimulcastLayer as SdpSimulcastLayer;
+    use sdp::SimulcastLayerAttributes as SdpSimulcastLayerAttributes;
 
     use crate::format::Codec;
     use crate::media::{Simulcast, SimulcastLayer, SimulcastLayerAttributes};
