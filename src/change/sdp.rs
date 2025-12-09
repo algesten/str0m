@@ -1625,6 +1625,10 @@ mod test {
             .unwrap_or_else(|| panic!("Expected to find RtpMap for {needle}"))
     }
 
+    fn count_lines(lines: &str, what: &str) -> usize {
+        lines.lines().filter(|l| l == &what).count()
+    }
+
     #[test]
     fn test_out_of_order_error() {
         crate::init_crypto_default();
@@ -1834,9 +1838,10 @@ mod test {
 
         let line_string = line.to_string();
 
-        assert!(line_string.lines().any(|l| l == "a=rid:h send"));
-        assert!(line_string.lines().any(|l| l == "a=rid:m send"));
-        assert!(line_string.lines().any(|l| l == "a=rid:l send"));
+        // The SDP offer should contain layers without any attributes
+        assert_eq!(count_lines(&line_string, "a=rid:h send"), 1);
+        assert_eq!(count_lines(&line_string, "a=rid:m send"), 1);
+        assert_eq!(count_lines(&line_string, "a=rid:l send"), 1);
     }
 
     #[test]
@@ -1922,15 +1927,28 @@ mod test {
             ])
         );
 
+        // The SDP offer should contain layers with our attributes
         let line_string = line.to_string();
-        assert!(line_string.lines().any(
-            |l| l == "a=rid:high send max-width=1280;max-height=720;max-br=1500000;max-fps=30"
-        ));
-        assert!(line_string
-            .lines()
-            .any(|l| l == "a=rid:medium send max-width=640;max-height=360;max-br=600000"));
-        assert!(line_string
-            .lines()
-            .any(|l| l == "a=rid:low send max-height=180;max-br=200000;max-fps=15"));
+        assert_eq!(
+            count_lines(
+                &line_string,
+                "a=rid:high send max-width=1280;max-height=720;max-br=1500000;max-fps=30"
+            ),
+            1
+        );
+        assert_eq!(
+            count_lines(
+                &line_string,
+                "a=rid:medium send max-width=640;max-height=360;max-br=600000"
+            ),
+            1
+        );
+        assert_eq!(
+            count_lines(
+                &line_string,
+                "a=rid:low send max-height=180;max-br=200000;max-fps=15"
+            ),
+            1
+        );
     }
 }
