@@ -4,10 +4,9 @@ use std::time::Instant;
 
 use crate::packet::MediaKind;
 use crate::rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, SenderInfo, SeqNo};
-use crate::sdp::{
-    RestrictionId, Simulcast as SdpSimulcast, SimulcastGroups as SdpSimulcastGroups,
-    SimulcastLayer as SdpSimulcastLayer, SimulcastLayerAttributes as SdpSimulcastLayerAttributes,
-};
+use crate::sdp::SimulcastLayer as SdpSimulcastLayer;
+use crate::sdp::SimulcastLayerAttributes as SdpSimulcastLayerAttributes;
+use crate::sdp::{RestrictionId, Simulcast as SdpSimulcast, SimulcastGroups as SdpSimulcastGroups};
 
 use super::PayloadParams;
 use crate::format::CodecExtra;

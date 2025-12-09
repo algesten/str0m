@@ -1773,7 +1773,7 @@ mod test {
                 recv: vec![],
             }),
         );
-        
+
         let Change::AddMedia(am) = &change.changes[0] else {
             panic!("Not AddMedia?!");
         };
@@ -1924,12 +1924,12 @@ mod test {
         );
 
         let line_string = line.to_string();
-        assert!(line_string
-            .lines()
-            .any(|l| l == "a=rid:high send max-br=1500000;max-fps=30;max-width=1280;max-height=720"));
-        assert!(line_string
-            .lines()
-            .any(|l| l == "a=rid:medium send max-br=600000;max-fps=30;max-width=640;max-height=360"));
+        assert!(line_string.lines().any(
+            |l| l == "a=rid:high send max-br=1500000;max-fps=30;max-width=1280;max-height=720"
+        ));
+        assert!(line_string.lines().any(
+            |l| l == "a=rid:medium send max-br=600000;max-fps=30;max-width=640;max-height=360"
+        ));
         assert!(line_string
             .lines()
             .any(|l| l == "a=rid:low send max-br=200000;max-fps=15;max-width=320;max-height=180"));
