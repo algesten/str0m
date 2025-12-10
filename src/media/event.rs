@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::ops::RangeInclusive;
 use std::time::Instant;
@@ -5,7 +6,6 @@ use std::time::Instant;
 use crate::packet::MediaKind;
 use crate::rtp_::{Direction, ExtensionValues, MediaTime, Mid, Pt, Rid, SenderInfo, SeqNo};
 use crate::sdp::SimulcastLayer as SdpSimulcastLayer;
-use crate::sdp::SimulcastLayerAttributes as SdpSimulcastLayerAttributes;
 use crate::sdp::{RestrictionId, Simulcast as SdpSimulcast, SimulcastGroups as SdpSimulcastGroups};
 
 use super::PayloadParams;
@@ -15,18 +15,7 @@ impl From<&SdpSimulcastLayer> for SimulcastLayer {
     fn from(layer: &SdpSimulcastLayer) -> Self {
         SimulcastLayer {
             rid: Rid::from(layer.restriction_id.0.as_ref()),
-            attributes: layer.attributes.as_ref().map(Into::into),
-        }
-    }
-}
-
-impl From<&SdpSimulcastLayerAttributes> for SimulcastLayerAttributes {
-    fn from(attributes: &SdpSimulcastLayerAttributes) -> Self {
-        SimulcastLayerAttributes {
-            max_width: attributes.max_width,
-            max_height: attributes.max_height,
-            max_br: attributes.max_br,
-            max_fps: attributes.max_fps,
+            attributes: layer.attributes.clone(),
         }
     }
 }
@@ -35,18 +24,7 @@ impl From<&SimulcastLayer> for SdpSimulcastLayer {
     fn from(layer: &SimulcastLayer) -> Self {
         SdpSimulcastLayer {
             restriction_id: RestrictionId::new_active(layer.rid.to_string()),
-            attributes: layer.attributes.as_ref().map(Into::into),
-        }
-    }
-}
-
-impl From<&SimulcastLayerAttributes> for SdpSimulcastLayerAttributes {
-    fn from(attributes: &SimulcastLayerAttributes) -> Self {
-        SdpSimulcastLayerAttributes {
-            max_width: attributes.max_width,
-            max_height: attributes.max_height,
-            max_br: attributes.max_br,
-            max_fps: attributes.max_fps,
+            attributes: layer.attributes.clone(),
         }
     }
 }
@@ -112,10 +90,9 @@ pub struct Simulcast {
 /// A simulcast layer which has a RID and optional attributes
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SimulcastLayer {
-    /// The RID for simulcast
+    /// The layer's rid
     pub rid: Rid,
-    /// Optional attributes
-    pub attributes: Option<SimulcastLayerAttributes>,
+    attributes: Option<HashMap<String, String>>,
 }
 
 impl SimulcastLayer {
@@ -127,18 +104,70 @@ impl SimulcastLayer {
         }
     }
 
-    /// Create a new layer with the rid name and attributes
-    pub fn new_with_attributes(rid: &str, attributes: SimulcastLayerAttributes) -> Self {
-        SimulcastLayer {
+    /// Create a new layer with the rid name and an attributes builder
+    pub fn new_with_attributes(rid: &str) -> SimulcastLayerBuilder {
+        SimulcastLayerBuilder {
             rid: Rid::from(rid),
-            attributes: Some(attributes),
+            attributes: HashMap::new(),
         }
     }
 }
 
-/// Layer attributes, per RFC 8851. There are more attributes in the RFC, but we've chosen these
-/// for practical reasons - they are the ones in the Google VLA extension, so an application publishing
-/// a simulcast stream has to provide these, to the SDP and also to the VLA.
+/// A builder which is used to populate layer attributes
+pub struct SimulcastLayerBuilder {
+    rid: Rid,
+    attributes: HashMap<String, String>,
+}
+
+impl SimulcastLayerBuilder {
+    /// Maximum video width
+    pub fn max_width(&mut self, max_width: u32) -> &mut Self {
+        self.attributes
+            .insert("max-width".to_string(), max_width.to_string());
+        self
+    }
+
+    /// Maximum video height
+    pub fn max_height(&mut self, max_height: u32) -> &mut Self {
+        self.attributes
+            .insert("max-height".to_string(), max_height.to_string());
+        self
+    }
+
+    /// Maximum bitrate, in bits per second (not kilobits)
+    pub fn max_br(&mut self, max_br: u32) -> &mut Self {
+        self.attributes
+            .insert("max-br".to_string(), max_br.to_string());
+        self
+    }
+
+    /// Maximum frame rate, in frames per second, or 0 if none
+    pub fn max_fps(&mut self, max_fps: u32) -> &mut Self {
+        self.attributes
+            .insert("max-fps".to_string(), max_fps.to_string());
+        self
+    }
+
+    /// A custom attribute
+    pub fn custom(&mut self, key: &str, value: &str) -> &mut Self {
+        self.attributes.insert(key.to_string(), value.to_string());
+        self
+    }
+
+    /// Build the layer
+    pub fn finish(&self) -> SimulcastLayer {
+        SimulcastLayer {
+            rid: self.rid,
+            attributes: if self.attributes.is_empty() {
+                None
+            } else {
+                Some(self.attributes.clone())
+            },
+        }
+    }
+}
+
+/// Layer attributes, per RFC 8851.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SimulcastLayerAttributes {
     /// Maximum video width, or 0 if none

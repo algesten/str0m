@@ -15,8 +15,7 @@ use crate::rtp_::Rid;
 use crate::rtp_::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
-use crate::sdp::{Proto, SessionAttribute, Setup};
-use crate::sdp::{SimulcastGroups, SimulcastLayerAttributes};
+use crate::sdp::{Proto, SessionAttribute, Setup, SimulcastGroups};
 use crate::session::Session;
 use crate::Rtc;
 use crate::RtcError;
@@ -1282,29 +1281,6 @@ impl AsSdpMediaLine for Media {
         }
 
         if let Some(s) = self.simulcast() {
-            fn to_attributes<'a>(
-                attributes: &'a Option<SimulcastLayerAttributes>,
-            ) -> Vec<(String, String)> {
-                if let Some(attributes) = attributes {
-                    let mut attrs = vec![];
-                    if attributes.max_width > 0 {
-                        attrs.push(("max-width".to_string(), attributes.max_width.to_string()));
-                    }
-                    if attributes.max_height > 0 {
-                        attrs.push(("max-height".to_string(), attributes.max_height.to_string()));
-                    }
-                    if attributes.max_br > 0 {
-                        attrs.push(("max-br".to_string(), attributes.max_br.to_string()));
-                    }
-                    if attributes.max_fps > 0 {
-                        attrs.push(("max-fps".to_string(), attributes.max_fps.to_string()));
-                    }
-                    return attrs;
-                }
-
-                vec![]
-            }
-
             fn to_rids<'a>(
                 gs: &'a SimulcastGroups,
                 direction: &'static str,
@@ -1313,7 +1289,17 @@ impl AsSdpMediaLine for Media {
                     id: layer.restriction_id.clone(),
                     direction,
                     pt: vec![],
-                    restriction: to_attributes(&layer.attributes),
+                    restriction: layer
+                        .attributes
+                        .as_ref()
+                        .map(|map| {
+                            // Sort the attributes so we can validate them in tests
+                            let mut v: Vec<(String, String)> =
+                                map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                            v.sort_by(|a, b| a.0.cmp(&b.0));
+                            v
+                        })
+                        .unwrap_or_default(),
                 })
             }
             attrs.extend(to_rids(&s.recv, "recv"));
@@ -1603,10 +1589,9 @@ impl Change {
 mod test {
     use sdp::RestrictionId;
     use sdp::SimulcastLayer as SdpSimulcastLayer;
-    use sdp::SimulcastLayerAttributes as SdpSimulcastLayerAttributes;
 
     use crate::format::Codec;
-    use crate::media::{Simulcast, SimulcastLayer, SimulcastLayerAttributes};
+    use crate::media::{Simulcast, SimulcastLayer};
     use crate::sdp::RtpMap;
 
     use super::*;
@@ -1855,42 +1840,25 @@ mod test {
             None,
             Some(Simulcast {
                 send: vec![
-                    SimulcastLayer::new_with_attributes(
-                        "high",
-                        SimulcastLayerAttributes {
-                            max_width: 1280,
-                            max_height: 720,
-                            max_br: 1500000,
-                            max_fps: 30,
-                        },
-                    ),
-                    SimulcastLayer::new_with_attributes(
-                        "medium",
-                        SimulcastLayerAttributes {
-                            max_width: 640,
-                            max_height: 360,
-                            max_br: 600000,
-                            max_fps: 0, // will not be included in the SDP
-                        },
-                    ),
-                    SimulcastLayer::new_with_attributes(
-                        "low",
-                        SimulcastLayerAttributes {
-                            max_width: 0, // will not be included in the SDP
-                            max_height: 180,
-                            max_br: 200000,
-                            max_fps: 15,
-                        },
-                    ),
-                    SimulcastLayer::new_with_attributes(
-                        "all_zero",
-                        SimulcastLayerAttributes {
-                            max_width: 0, // none will not be included in the SDP
-                            max_height: 0,
-                            max_br: 0,
-                            max_fps: 0,
-                        },
-                    ),
+                    SimulcastLayer::new_with_attributes("high")
+                        .max_width(1280)
+                        .max_height(720)
+                        .max_br(1500000)
+                        .max_fps(30)
+                        .finish(),
+                    SimulcastLayer::new_with_attributes("medium")
+                        .max_width(640)
+                        .max_height(360)
+                        .max_br(600000)
+                        // no max_fps
+                        .finish(),
+                    SimulcastLayer::new_with_attributes("low")
+                        // no max_width
+                        .max_height(180)
+                        .max_br(200000)
+                        .max_fps(15)
+                        .finish(),
+                    SimulcastLayer::new_with_attributes("no_attrs").finish(),
                 ],
                 recv: vec![],
             }),
@@ -1905,39 +1873,47 @@ mod test {
             SimulcastGroups(vec![
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("high".into(), true),
-                    attributes: Some(SdpSimulcastLayerAttributes {
-                        max_width: 1280,
-                        max_height: 720,
-                        max_br: 1500000,
-                        max_fps: 30,
-                    }),
+                    attributes: Some(
+                        [
+                            ("max-width", "1280"),
+                            ("max-height", "720"),
+                            ("max-br", "1500000"),
+                            ("max-fps", "30"),
+                        ]
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect()
+                    ),
                 },
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("medium".into(), true),
-                    attributes: Some(SdpSimulcastLayerAttributes {
-                        max_width: 640,
-                        max_height: 360,
-                        max_br: 600000,
-                        max_fps: 0,
-                    }),
+                    attributes: Some(
+                        [
+                            ("max-width", "640"),
+                            ("max-height", "360"),
+                            ("max-br", "600000"),
+                        ]
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect()
+                    ),
                 },
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("low".into(), true),
-                    attributes: Some(SdpSimulcastLayerAttributes {
-                        max_width: 0,
-                        max_height: 180,
-                        max_br: 200000,
-                        max_fps: 15,
-                    }),
+                    attributes: Some(
+                        [
+                            ("max-height", "180"),
+                            ("max-br", "200000"),
+                            ("max-fps", "15"),
+                        ]
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect()
+                    ),
                 },
                 SdpSimulcastLayer {
-                    restriction_id: RestrictionId("all_zero".into(), true),
-                    attributes: Some(SdpSimulcastLayerAttributes {
-                        max_width: 0,
-                        max_height: 0,
-                        max_br: 0,
-                        max_fps: 0,
-                    }),
+                    restriction_id: RestrictionId("no_attrs".into(), true),
+                    attributes: None,
                 },
             ])
         );
@@ -1947,28 +1923,28 @@ mod test {
         assert_eq!(
             count_lines(
                 &line_string,
-                "a=rid:high send max-width=1280;max-height=720;max-br=1500000;max-fps=30"
+                "a=rid:high send max-br=1500000;max-fps=30;max-height=720;max-width=1280"
             ),
             1
         );
         assert_eq!(
             count_lines(
                 &line_string,
-                "a=rid:medium send max-width=640;max-height=360;max-br=600000"
+                "a=rid:medium send max-br=600000;max-height=360;max-width=640"
             ),
             1
         );
         assert_eq!(
             count_lines(
                 &line_string,
-                "a=rid:low send max-height=180;max-br=200000;max-fps=15"
+                "a=rid:low send max-br=200000;max-fps=15;max-height=180"
             ),
             1
         );
         assert_eq!(
             count_lines(
                 &line_string,
-                "a=rid:all_zero send" // No space at the end
+                "a=rid:no_attrs send" // No space at the end
             ),
             1
         );

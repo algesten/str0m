@@ -1,6 +1,7 @@
 #![allow(clippy::single_match)]
 
 use combine::EasyParser;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::{self};
 use std::ops::Deref;
@@ -1086,18 +1087,7 @@ pub struct SimulcastGroups(pub Vec<SimulcastLayer>);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SimulcastLayer {
     pub restriction_id: RestrictionId,
-    pub attributes: Option<SimulcastLayerAttributes>,
-}
-
-/// Layer attributes, per RFC 8851. There are more attributes in the RFC, but we've chosen these
-/// for practical reasons - they are the ones in the Google VLA extension, so an application publishing
-/// a simulcast stream has to provide these, to the SDP and also to the VLA.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SimulcastLayerAttributes {
-    pub max_width: u32,
-    pub max_height: u32,
-    pub max_br: u32,
-    pub max_fps: u32,
+    pub attributes: Option<HashMap<String, String>>,
 }
 
 impl Deref for SimulcastGroups {
