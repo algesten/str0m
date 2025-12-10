@@ -1873,7 +1873,7 @@ mod test {
         let sdp = offer.into_inner();
         let line = &sdp.media_lines[0];
 
-        fn pairs_to_map(pairs: Vec<(&str, &str)>) -> Option<HashMap<String, String>> {
+        fn pairs_to_map(pairs: &[(&str, &str)]) -> Option<HashMap<String, String>> {
             Some(
                 pairs
                     .iter()
@@ -1887,7 +1887,7 @@ mod test {
             SimulcastGroups(vec![
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("high".into(), true),
-                    attributes: pairs_to_map(vec![
+                    attributes: pairs_to_map(&[
                         ("max-width", "1280"),
                         ("max-height", "720"),
                         ("max-br", "1500000"),
@@ -1896,7 +1896,7 @@ mod test {
                 },
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("medium".into(), true),
-                    attributes: pairs_to_map(vec![
+                    attributes: pairs_to_map(&[
                         ("max-width", "640"),
                         ("max-height", "360"),
                         ("max-br", "600000"),
@@ -1904,7 +1904,7 @@ mod test {
                 },
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("low".into(), true),
-                    attributes: pairs_to_map(vec![
+                    attributes: pairs_to_map(&[
                         ("max-height", "180"),
                         ("max-br", "200000"),
                         ("max-fps", "15"),
@@ -1912,7 +1912,7 @@ mod test {
                 },
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("custom".into(), true),
-                    attributes: pairs_to_map(vec![("foo", "bar"),]),
+                    attributes: pairs_to_map(&[("foo", "bar"),]),
                 },
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("no_attrs".into(), true),
