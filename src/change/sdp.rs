@@ -1285,8 +1285,8 @@ impl AsSdpMediaLine for Media {
         }
 
         if let Some(s) = self.simulcast() {
-            fn to_attributes(
-                attributes: Option<SimulcastLayerAttributes>,
+            fn to_attributes<'a>(
+                attributes: &'a Option<SimulcastLayerAttributes>,
             ) -> Vec<(String, String)> {
                 if let Some(attributes) = attributes {
                     let mut attrs = vec![];
@@ -1316,7 +1316,7 @@ impl AsSdpMediaLine for Media {
                     id: layer.restriction_id.clone(),
                     direction,
                     pt: vec![],
-                    restriction: to_attributes(layer.attributes.clone()),
+                    restriction: to_attributes(&layer.attributes),
                 })
             }
             attrs.extend(to_rids(&s.recv, "recv"));
@@ -1885,6 +1885,15 @@ mod test {
                             max_fps: 15,
                         },
                     ),
+                    SimulcastLayer::new_with_attributes(
+                        "all_zero",
+                        SimulcastLayerAttributes {
+                            max_width: 0, // none will not be included in the SDP
+                            max_height: 0,
+                            max_br: 0,
+                            max_fps: 0,
+                        },
+                    ),
                 ],
                 recv: vec![],
             }),
@@ -1924,6 +1933,15 @@ mod test {
                         max_fps: 15,
                     }),
                 },
+                SdpSimulcastLayer {
+                    restriction_id: RestrictionId("all_zero".into(), true),
+                    attributes: Some(SdpSimulcastLayerAttributes {
+                        max_width: 0,
+                        max_height: 0,
+                        max_br: 0,
+                        max_fps: 0,
+                    }),
+                },
             ])
         );
 
@@ -1947,6 +1965,13 @@ mod test {
             count_lines(
                 &line_string,
                 "a=rid:low send max-height=180;max-br=200000;max-fps=15"
+            ),
+            1
+        );
+        assert_eq!(
+            count_lines(
+                &line_string,
+                "a=rid:all_zero send" // No space at the end
             ),
             1
         );
