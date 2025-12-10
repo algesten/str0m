@@ -909,10 +909,7 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
 
         for (i, (ssrc, rtx)) in add_media.ssrcs.into_iter().enumerate() {
             let maybe_layer = layers.get(i).cloned();
-            let midrid = match maybe_layer {
-                Some(layer) => MidRid(add_media.mid, Some(layer.rid)),
-                None => MidRid(add_media.mid, None),
-            };
+            let midrid = MidRid(add_media.mid, maybe_layer.map(|layer| layer.rid));
 
             let stream = session.streams.declare_stream_tx(ssrc, rtx, midrid);
 
