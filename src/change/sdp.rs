@@ -1858,6 +1858,9 @@ mod test {
                         .max_br(200000)
                         .max_fps(15)
                         .finish(),
+                    SimulcastLayer::new_with_attributes("custom")
+                        .custom("foo", "bar")
+                        .finish(),
                     SimulcastLayer::new_with_attributes("no_attrs").finish(),
                 ],
                 recv: vec![],
@@ -1912,6 +1915,15 @@ mod test {
                     ),
                 },
                 SdpSimulcastLayer {
+                    restriction_id: RestrictionId("custom".into(), true),
+                    attributes: Some(
+                        [("foo", "bar"),]
+                            .iter()
+                            .map(|(k, v)| (k.to_string(), v.to_string()))
+                            .collect()
+                    ),
+                },
+                SdpSimulcastLayer {
                     restriction_id: RestrictionId("no_attrs".into(), true),
                     attributes: None,
                 },
@@ -1941,6 +1953,7 @@ mod test {
             ),
             1
         );
+        assert_eq!(count_lines(&line_string, "a=rid:custom send foo=bar"), 1);
         assert_eq!(
             count_lines(
                 &line_string,

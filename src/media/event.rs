@@ -167,19 +167,6 @@ impl SimulcastLayerBuilder {
     }
 }
 
-/// Layer attributes, per RFC 8851.
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct SimulcastLayerAttributes {
-    /// Maximum video width, or 0 if none
-    pub max_width: u32,
-    /// Maximum video height, or 0 if none
-    pub max_height: u32,
-    /// Maximum bitrate, in bits per second (not kilobits), or 0 if none
-    pub max_br: u32,
-    /// Maximum frame rate, in frames per second, or 0 if none
-    pub max_fps: u32,
-}
-
 impl Simulcast {
     pub(crate) fn into_sdp(self) -> SdpSimulcast {
         SdpSimulcast {
