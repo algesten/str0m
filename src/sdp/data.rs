@@ -1076,7 +1076,7 @@ impl Simulcast {
 /// RID organization inside a=simulcast line.
 ///
 /// `a=simulcast send 2;3,4` would result in
-/// `SimulcastGroups(vec![RestrictionId("2"), RestrictionId("3")])`
+/// `SimulcastGroups(vec![SimulcastLayer("2"), SimulcastLayer("3")])`
 ///
 /// The choice between 3 and 4 for the rid is currently ignored and the first option is always
 /// selected.
@@ -1086,7 +1086,9 @@ pub struct SimulcastGroups(pub Vec<SimulcastLayer>);
 /// Represents a simulcast layer in a group
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SimulcastLayer {
+    /// The layer's rid
     pub restriction_id: RestrictionId,
+    /// Optional attributes per RFC 8851
     pub attributes: Option<HashMap<String, String>>,
 }
 
