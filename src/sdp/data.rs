@@ -1,7 +1,6 @@
 #![allow(clippy::single_match)]
 
 use combine::EasyParser;
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt::{self};
 use std::ops::Deref;
@@ -1089,7 +1088,7 @@ pub struct SimulcastLayer {
     /// The layer's rid
     pub restriction_id: RestrictionId,
     /// Optional attributes per RFC 8851
-    pub attributes: Option<HashMap<String, String>>,
+    pub attributes: Option<Vec<(String, String)>>,
 }
 
 impl Deref for SimulcastGroups {

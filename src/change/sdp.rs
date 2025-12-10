@@ -1289,17 +1289,7 @@ impl AsSdpMediaLine for Media {
                     id: layer.restriction_id.clone(),
                     direction,
                     pt: vec![],
-                    restriction: layer
-                        .attributes
-                        .as_ref()
-                        .map(|map| {
-                            // Sort the attributes so we can validate them in tests
-                            let mut v: Vec<(String, String)> =
-                                map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                            v.sort_by(|a, b| a.0.cmp(&b.0));
-                            v
-                        })
-                        .unwrap_or_default(),
+                    restriction: layer.attributes.clone().unwrap_or_default(),
                 })
             }
             attrs.extend(to_rids(&s.recv, "recv"));
@@ -1594,8 +1584,6 @@ mod test {
     use crate::media::{Simulcast, SimulcastLayer};
     use crate::sdp::RtpMap;
 
-    use std::collections::HashMap;
-
     use super::*;
 
     fn resolve_pt(m_line: &MediaLine, needle: Pt) -> RtpMap {
@@ -1845,7 +1833,9 @@ mod test {
                     SimulcastLayer::new_with_attributes("high")
                         .max_width(1280)
                         .max_height(720)
-                        .max_br(1500000)
+                        .max_br(1100000)
+                        .max_br(1300000)
+                        .max_br(1500000) // the last one wins
                         .max_fps(30)
                         .finish(),
                     SimulcastLayer::new_with_attributes("medium")
@@ -1863,7 +1853,9 @@ mod test {
                     SimulcastLayer::new_with_attributes("custom")
                         .custom("foo", "bar")
                         .finish(),
-                    SimulcastLayer::new_with_attributes("no_attrs").finish(),
+                    SimulcastLayer::new_with_attributes("no_attrs")
+                        // no attributes at all
+                        .finish(),
                 ],
                 recv: vec![],
             }),
@@ -1873,7 +1865,7 @@ mod test {
         let sdp = offer.into_inner();
         let line = &sdp.media_lines[0];
 
-        fn pairs_to_map(pairs: &[(&str, &str)]) -> Option<HashMap<String, String>> {
+        fn pairs_to_some_vec(pairs: &[(&str, &str)]) -> Option<Vec<(String, String)>> {
             Some(
                 pairs
                     .iter()
@@ -1887,7 +1879,7 @@ mod test {
             SimulcastGroups(vec![
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("high".into(), true),
-                    attributes: pairs_to_map(&[
+                    attributes: pairs_to_some_vec(&[
                         ("max-width", "1280"),
                         ("max-height", "720"),
                         ("max-br", "1500000"),
@@ -1896,7 +1888,7 @@ mod test {
                 },
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("medium".into(), true),
-                    attributes: pairs_to_map(&[
+                    attributes: pairs_to_some_vec(&[
                         ("max-width", "640"),
                         ("max-height", "360"),
                         ("max-br", "600000"),
@@ -1904,7 +1896,7 @@ mod test {
                 },
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("low".into(), true),
-                    attributes: pairs_to_map(&[
+                    attributes: pairs_to_some_vec(&[
                         ("max-height", "180"),
                         ("max-br", "200000"),
                         ("max-fps", "15"),
@@ -1912,7 +1904,7 @@ mod test {
                 },
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("custom".into(), true),
-                    attributes: pairs_to_map(&[("foo", "bar"),]),
+                    attributes: pairs_to_some_vec(&[("foo", "bar"),]),
                 },
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("no_attrs".into(), true),
@@ -1926,31 +1918,26 @@ mod test {
         assert_eq!(
             count_lines(
                 &line_string,
-                "a=rid:high send max-br=1500000;max-fps=30;max-height=720;max-width=1280"
+                "a=rid:high send max-width=1280;max-height=720;max-br=1500000;max-fps=30"
             ),
             1
         );
         assert_eq!(
             count_lines(
                 &line_string,
-                "a=rid:medium send max-br=600000;max-height=360;max-width=640"
+                "a=rid:medium send max-width=640;max-height=360;max-br=600000"
             ),
             1
         );
         assert_eq!(
             count_lines(
                 &line_string,
-                "a=rid:low send max-br=200000;max-fps=15;max-height=180"
+                "a=rid:low send max-height=180;max-br=200000;max-fps=15"
             ),
             1
         );
         assert_eq!(count_lines(&line_string, "a=rid:custom send foo=bar"), 1);
-        assert_eq!(
-            count_lines(
-                &line_string,
-                "a=rid:no_attrs send" // No space at the end
-            ),
-            1
-        );
+        // No space at the end
+        assert_eq!(count_lines(&line_string, "a=rid:no_attrs send"), 1);
     }
 }

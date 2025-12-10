@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::fmt;
 use std::ops::RangeInclusive;
 use std::time::Instant;
@@ -92,7 +91,8 @@ pub struct Simulcast {
 pub struct SimulcastLayer {
     /// The layer's rid
     pub rid: Rid,
-    attributes: Option<HashMap<String, String>>,
+    /// The layer's attributes per RFC 8851
+    pub attributes: Option<Vec<(String, String)>>,
 }
 
 impl SimulcastLayer {
@@ -108,7 +108,7 @@ impl SimulcastLayer {
     pub fn new_with_attributes(rid: &str) -> SimulcastLayerBuilder {
         SimulcastLayerBuilder {
             rid: Rid::from(rid),
-            attributes: HashMap::new(),
+            attributes: Vec::new(),
         }
     }
 }
@@ -116,42 +116,37 @@ impl SimulcastLayer {
 /// A builder which is used to populate layer attributes
 pub struct SimulcastLayerBuilder {
     rid: Rid,
-    attributes: HashMap<String, String>,
+    // We could use a HashMap but that doesn't preserve order - which we need for tests (to validate the
+    // resulting SDP). BTreeMap seems like overkill for 4-6 keys, so does HashMap, actually. A simple
+    // vector of pairs is perfect: preserves order and is efficient enough.
+    attributes: Vec<(String, String)>,
 }
 
 impl SimulcastLayerBuilder {
     /// Maximum video width
     pub fn max_width(&mut self, max_width: u32) -> &mut Self {
-        self.attributes
-            .insert("max-width".to_string(), max_width.to_string());
+        self.update_or_insert("max-width", max_width.to_string());
         self
     }
 
     /// Maximum video height
     pub fn max_height(&mut self, max_height: u32) -> &mut Self {
-        self.attributes
-            .insert("max-height".to_string(), max_height.to_string());
-        self
+        self.update_or_insert("max-height", max_height.to_string())
     }
 
     /// Maximum bitrate, in bits per second (not kilobits)
     pub fn max_br(&mut self, max_br: u32) -> &mut Self {
-        self.attributes
-            .insert("max-br".to_string(), max_br.to_string());
-        self
+        self.update_or_insert("max-br", max_br.to_string())
     }
 
     /// Maximum frame rate, in frames per second, or 0 if none
     pub fn max_fps(&mut self, max_fps: u32) -> &mut Self {
-        self.attributes
-            .insert("max-fps".to_string(), max_fps.to_string());
-        self
+        self.update_or_insert("max-fps", max_fps.to_string())
     }
 
     /// A custom attribute
     pub fn custom(&mut self, key: &str, value: &str) -> &mut Self {
-        self.attributes.insert(key.to_string(), value.to_string());
-        self
+        self.update_or_insert(key, value.to_string())
     }
 
     /// Build the layer
@@ -164,6 +159,18 @@ impl SimulcastLayerBuilder {
                 Some(self.attributes.clone())
             },
         }
+    }
+
+    fn update_or_insert(&mut self, key: &str, value: String) -> &mut Self {
+        for (k, v) in &mut self.attributes {
+            if k == key {
+                *v = value;
+                return self;
+            }
+        }
+
+        self.attributes.push((key.to_string(), value));
+        self
     }
 }
 
