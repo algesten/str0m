@@ -1594,6 +1594,8 @@ mod test {
     use crate::media::{Simulcast, SimulcastLayer};
     use crate::sdp::RtpMap;
 
+    use std::collections::HashMap;
+
     use super::*;
 
     fn resolve_pt(m_line: &MediaLine, needle: Pt) -> RtpMap {
@@ -1871,57 +1873,46 @@ mod test {
         let sdp = offer.into_inner();
         let line = &sdp.media_lines[0];
 
+        fn pairs_to_map(pairs: Vec<(&str, &str)>) -> Option<HashMap<String, String>> {
+            Some(
+                pairs
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            )
+        }
+
         assert_eq!(
             line.simulcast().unwrap().send,
             SimulcastGroups(vec![
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("high".into(), true),
-                    attributes: Some(
-                        [
-                            ("max-width", "1280"),
-                            ("max-height", "720"),
-                            ("max-br", "1500000"),
-                            ("max-fps", "30"),
-                        ]
-                        .iter()
-                        .map(|(k, v)| (k.to_string(), v.to_string()))
-                        .collect()
-                    ),
+                    attributes: pairs_to_map(vec![
+                        ("max-width", "1280"),
+                        ("max-height", "720"),
+                        ("max-br", "1500000"),
+                        ("max-fps", "30"),
+                    ]),
                 },
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("medium".into(), true),
-                    attributes: Some(
-                        [
-                            ("max-width", "640"),
-                            ("max-height", "360"),
-                            ("max-br", "600000"),
-                        ]
-                        .iter()
-                        .map(|(k, v)| (k.to_string(), v.to_string()))
-                        .collect()
-                    ),
+                    attributes: pairs_to_map(vec![
+                        ("max-width", "640"),
+                        ("max-height", "360"),
+                        ("max-br", "600000"),
+                    ]),
                 },
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("low".into(), true),
-                    attributes: Some(
-                        [
-                            ("max-height", "180"),
-                            ("max-br", "200000"),
-                            ("max-fps", "15"),
-                        ]
-                        .iter()
-                        .map(|(k, v)| (k.to_string(), v.to_string()))
-                        .collect()
-                    ),
+                    attributes: pairs_to_map(vec![
+                        ("max-height", "180"),
+                        ("max-br", "200000"),
+                        ("max-fps", "15"),
+                    ]),
                 },
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("custom".into(), true),
-                    attributes: Some(
-                        [("foo", "bar"),]
-                            .iter()
-                            .map(|(k, v)| (k.to_string(), v.to_string()))
-                            .collect()
-                    ),
+                    attributes: pairs_to_map(vec![("foo", "bar"),]),
                 },
                 SdpSimulcastLayer {
                     restriction_id: RestrictionId("no_attrs".into(), true),
