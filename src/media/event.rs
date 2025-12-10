@@ -81,9 +81,9 @@ pub struct MediaChanged {
 /// [1]: https://datatracker.ietf.org/doc/html/draft-ietf-mmusic-sdp-simulcast-14
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Simulcast {
-    /// The RID used for sending simulcast.
+    /// The layers used for sending simulcast.
     pub send: Vec<SimulcastLayer>,
-    /// The RID used for receiving simulcast.
+    /// The layers used for receiving simulcast.
     pub recv: Vec<SimulcastLayer>,
 }
 
