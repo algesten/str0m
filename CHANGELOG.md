@@ -1,5 +1,7 @@
 # Unreleased
 
+# 0.13.0
+
   * Simulcast send attributes RFC 8851 #780
   * Handle rejected m-lines (set port 0 etc) #772
   * Expose Opus packetizer #770
