@@ -1581,7 +1581,7 @@ mod test {
     use sdp::SimulcastLayer as SdpSimulcastLayer;
 
     use crate::format::Codec;
-    use crate::media::{Simulcast, SimulcastLayer};
+    use crate::media::Simulcast;
     use crate::sdp::RtpMap;
 
     use super::*;
@@ -1733,20 +1733,19 @@ mod test {
 
         let mut rtc1 = Rtc::new();
 
+        let simulcast = Simulcast::builder()
+            .add_send_layer("h")
+            .add_send_layer("m")
+            .add_send_layer("l")
+            .build();
+
         let mut change = rtc1.sdp_api();
         change.add_media(
             MediaKind::Video,
             Direction::SendOnly,
             None,
             None,
-            Some(Simulcast {
-                send: vec![
-                    SimulcastLayer::new("h"),
-                    SimulcastLayer::new("m"),
-                    SimulcastLayer::new("l"),
-                ],
-                recv: vec![],
-            }),
+            Some(simulcast),
         );
 
         let Change::AddMedia(am) = &change.changes[0] else {
@@ -1822,43 +1821,50 @@ mod test {
 
         let mut rtc1 = Rtc::new();
 
+        let simulcast_builder = Simulcast::builder()
+            // High layer
+            .add_send_layer_with_attributes("high")
+            .max_width(1280)
+            .max_height(720)
+            .max_br(1100000)
+            .max_br(1300000)
+            .max_br(1500000) // the last one wins
+            .max_fps(30)
+            .finish()
+            // Medium layer
+            .add_send_layer_with_attributes("medium")
+            .max_width(640)
+            .max_height(360)
+            .max_br(600000)
+            // No max_fps
+            .finish()
+            // Low layer
+            .add_send_layer_with_attributes("low")
+            // No max_width
+            .max_height(180)
+            .max_br(200000)
+            .max_fps(15)
+            .finish()
+            // Custom attribute
+            .add_send_layer_with_attributes("custom")
+            .custom("foo", "bar")
+            .finish();
+
+        // Make sure we can add layers one at a time, e.g. in a loop in a user's application
+        let simulcast = simulcast_builder
+            // No attributes
+            .add_send_layer_with_attributes("no_attrs")
+            .finish()
+            // Build the simulcast itself
+            .build();
+
         let mut change = rtc1.sdp_api();
         change.add_media(
             MediaKind::Video,
             Direction::SendOnly,
             None,
             None,
-            Some(Simulcast {
-                send: vec![
-                    SimulcastLayer::new_with_attributes("high")
-                        .max_width(1280)
-                        .max_height(720)
-                        .max_br(1100000)
-                        .max_br(1300000)
-                        .max_br(1500000) // the last one wins
-                        .max_fps(30)
-                        .finish(),
-                    SimulcastLayer::new_with_attributes("medium")
-                        .max_width(640)
-                        .max_height(360)
-                        .max_br(600000)
-                        // no max_fps
-                        .finish(),
-                    SimulcastLayer::new_with_attributes("low")
-                        // no max_width
-                        .max_height(180)
-                        .max_br(200000)
-                        .max_fps(15)
-                        .finish(),
-                    SimulcastLayer::new_with_attributes("custom")
-                        .custom("foo", "bar")
-                        .finish(),
-                    SimulcastLayer::new_with_attributes("no_attrs")
-                        // no attributes at all
-                        .finish(),
-                ],
-                recv: vec![],
-            }),
+            Some(simulcast),
         );
 
         let (offer, _) = change.apply().unwrap();

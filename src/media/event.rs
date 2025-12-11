@@ -86,6 +86,59 @@ pub struct Simulcast {
     pub recv: Vec<SimulcastLayer>,
 }
 
+impl Simulcast {
+    /// Create a new struct with no layers
+    pub fn builder() -> SimulcastBuilder {
+        SimulcastBuilder {
+            send: vec![],
+            recv: vec![],
+        }
+    }
+}
+
+/// A builder for simulcast
+pub struct SimulcastBuilder {
+    send: Vec<SimulcastLayer>,
+    recv: Vec<SimulcastLayer>,
+}
+
+impl SimulcastBuilder {
+    /// Add a new simulcast layer with just the rid name
+    pub fn add_send_layer(mut self, rid: &str) -> Self {
+        self.send.push(SimulcastLayer {
+            rid: Rid::from(rid),
+            attributes: None,
+        });
+        self
+    }
+
+    /// Add a new simulcast layer with rid name and attributes
+    pub fn add_send_layer_with_attributes(self, rid: &str) -> SimulcastLayerBuilder {
+        SimulcastLayerBuilder {
+            builder: self,
+            rid: Rid::from(rid),
+            attributes: vec![],
+        }
+    }
+
+    /// Add a new receive layer
+    pub fn add_receive_layer(mut self, rid: &str) -> Self {
+        self.recv.push(SimulcastLayer {
+            rid: Rid::from(rid),
+            attributes: None,
+        });
+        self
+    }
+
+    /// Finish the building process
+    pub fn build(self) -> Simulcast {
+        Simulcast {
+            send: self.send,
+            recv: self.recv,
+        }
+    }
+}
+
 /// A simulcast layer which has a RID and optional attributes
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct SimulcastLayer {
@@ -95,26 +148,9 @@ pub struct SimulcastLayer {
     pub attributes: Option<Vec<(String, String)>>,
 }
 
-impl SimulcastLayer {
-    /// Create a new layer with just the rid name
-    pub fn new(rid: &str) -> Self {
-        SimulcastLayer {
-            rid: Rid::from(rid),
-            attributes: None,
-        }
-    }
-
-    /// Create a new layer with the rid name and an attributes builder
-    pub fn new_with_attributes(rid: &str) -> SimulcastLayerBuilder {
-        SimulcastLayerBuilder {
-            rid: Rid::from(rid),
-            attributes: Vec::new(),
-        }
-    }
-}
-
 /// A builder which is used to populate layer attributes
 pub struct SimulcastLayerBuilder {
+    builder: SimulcastBuilder,
     rid: Rid,
     // We could use a HashMap but that doesn't preserve order - which we need for tests (to validate the
     // resulting SDP). BTreeMap seems like overkill for 4-6 keys, so does HashMap, actually. A simple
@@ -124,53 +160,57 @@ pub struct SimulcastLayerBuilder {
 
 impl SimulcastLayerBuilder {
     /// Maximum video width
-    pub fn max_width(&mut self, max_width: u32) -> &mut Self {
+    pub fn max_width(mut self, max_width: u32) -> Self {
         self.update_or_insert("max-width", max_width.to_string());
         self
     }
 
     /// Maximum video height
-    pub fn max_height(&mut self, max_height: u32) -> &mut Self {
-        self.update_or_insert("max-height", max_height.to_string())
+    pub fn max_height(mut self, max_height: u32) -> Self {
+        self.update_or_insert("max-height", max_height.to_string());
+        self
     }
 
     /// Maximum bitrate, in bits per second (not kilobits)
-    pub fn max_br(&mut self, max_br: u32) -> &mut Self {
-        self.update_or_insert("max-br", max_br.to_string())
+    pub fn max_br(mut self, max_br: u32) -> Self {
+        self.update_or_insert("max-br", max_br.to_string());
+        self
     }
 
     /// Maximum frame rate, in frames per second, or 0 if none
-    pub fn max_fps(&mut self, max_fps: u32) -> &mut Self {
-        self.update_or_insert("max-fps", max_fps.to_string())
+    pub fn max_fps(mut self, max_fps: u32) -> Self {
+        self.update_or_insert("max-fps", max_fps.to_string());
+        self
     }
 
     /// A custom attribute
-    pub fn custom(&mut self, key: &str, value: &str) -> &mut Self {
-        self.update_or_insert(key, value.to_string())
+    pub fn custom(mut self, key: &str, value: &str) -> Self {
+        self.update_or_insert(key, value.to_string());
+        self
     }
 
     /// Build the layer
-    pub fn finish(&self) -> SimulcastLayer {
-        SimulcastLayer {
+    pub fn finish(mut self) -> SimulcastBuilder {
+        self.builder.send.push(SimulcastLayer {
             rid: self.rid,
             attributes: if self.attributes.is_empty() {
                 None
             } else {
-                Some(self.attributes.clone())
+                Some(self.attributes)
             },
-        }
+        });
+        self.builder
     }
 
-    fn update_or_insert(&mut self, key: &str, value: String) -> &mut Self {
+    fn update_or_insert(&mut self, key: &str, value: String) {
         for (k, v) in &mut self.attributes {
             if k == key {
                 *v = value;
-                return self;
+                return;
             }
         }
 
         self.attributes.push((key.to_string(), value));
-        self
     }
 }
 
