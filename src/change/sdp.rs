@@ -14,9 +14,8 @@ use crate::rtp_::MidRid;
 use crate::rtp_::Rid;
 use crate::rtp_::{Direction, Extension, ExtensionMap, Mid, Pt, Ssrc};
 use crate::sctp::ChannelConfig;
-use crate::sdp::SimulcastGroups;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
-use crate::sdp::{Proto, SessionAttribute, Setup};
+use crate::sdp::{Proto, SessionAttribute, Setup, SimulcastGroups};
 use crate::session::Session;
 use crate::Rtc;
 use crate::RtcError;
@@ -651,7 +650,7 @@ fn add_ice_details(
                 // Answer contained changed remote creds, indicating an ice restart
                 // but since we have no pending ice-creds, we didn't initiate it
                 // Ice restart in an ANSWER breaks spec.
-                    RtcError::RemoteSdp(
+                RtcError::RemoteSdp(
                     "Ice restart in answer without one in the preceeding offer".into(),
                 ))?
         } else {
@@ -837,8 +836,8 @@ fn ensure_stream_tx(session: &mut Session) {
         let mut rids: Vec<Option<Rid>> = vec![];
 
         if let Some(sim) = media.simulcast() {
-            for rid in &*sim.send {
-                let rid: Rid = rid.0.as_str().into();
+            for layer in &*sim.send {
+                let rid: Rid = layer.restriction_id.0.as_str().into();
                 rids.push(Some(rid));
             }
         } else {
@@ -905,11 +904,11 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
         media.set_msid(add_media.msid);
 
         // If there are RIDs, the SSRC order matches that of the rid order.
-        let rids = add_media.simulcast.map(|x| x.send).unwrap_or(vec![]);
+        let layers = add_media.simulcast.map(|x| x.send).unwrap_or(vec![]);
 
         for (i, (ssrc, rtx)) in add_media.ssrcs.into_iter().enumerate() {
-            let maybe_rid = rids.get(i).cloned();
-            let midrid = MidRid(add_media.mid, maybe_rid);
+            let maybe_layer = layers.get(i).cloned();
+            let midrid = MidRid(add_media.mid, maybe_layer.map(|layer| layer.rid));
 
             let stream = session.streams.declare_stream_tx(ssrc, rtx, midrid);
 
@@ -1286,11 +1285,11 @@ impl AsSdpMediaLine for Media {
                 gs: &'a SimulcastGroups,
                 direction: &'static str,
             ) -> impl Iterator<Item = MediaAttribute> + 'a {
-                gs.iter().map(move |rid| MediaAttribute::Rid {
-                    id: rid.clone(),
+                gs.iter().map(move |layer| MediaAttribute::Rid {
+                    id: layer.restriction_id.clone(),
                     direction,
                     pt: vec![],
-                    restriction: vec![],
+                    restriction: layer.attributes.clone().unwrap_or_default(),
                 })
             }
             attrs.extend(to_rids(&s.recv, "recv"));
@@ -1579,6 +1578,7 @@ impl Change {
 #[cfg(test)]
 mod test {
     use sdp::RestrictionId;
+    use sdp::SimulcastLayer as SdpSimulcastLayer;
 
     use crate::format::Codec;
     use crate::media::Simulcast;
@@ -1595,6 +1595,10 @@ mod test {
                 _ => None,
             })
             .unwrap_or_else(|| panic!("Expected to find RtpMap for {needle}"))
+    }
+
+    fn count_lines(lines: &str, what: &str) -> usize {
+        lines.lines().filter(|l| l == &what).count()
     }
 
     #[test]
@@ -1729,16 +1733,19 @@ mod test {
 
         let mut rtc1 = Rtc::new();
 
+        let simulcast = Simulcast::builder()
+            .add_send_layer("h")
+            .add_send_layer("m")
+            .add_send_layer("l")
+            .build();
+
         let mut change = rtc1.sdp_api();
         change.add_media(
             MediaKind::Video,
             Direction::SendOnly,
             None,
             None,
-            Some(Simulcast {
-                send: vec!["m".into(), "h".into(), "l".into()],
-                recv: vec![],
-            }),
+            Some(simulcast),
         );
 
         let Change::AddMedia(am) = &change.changes[0] else {
@@ -1760,9 +1767,18 @@ mod test {
         assert_eq!(
             line.simulcast().unwrap().send,
             SimulcastGroups(vec![
-                RestrictionId("m".into(), true),
-                RestrictionId("h".into(), true),
-                RestrictionId("l".into(), true),
+                SdpSimulcastLayer {
+                    restriction_id: RestrictionId("h".into(), true),
+                    attributes: None,
+                },
+                SdpSimulcastLayer {
+                    restriction_id: RestrictionId("m".into(), true),
+                    attributes: None,
+                },
+                SdpSimulcastLayer {
+                    restriction_id: RestrictionId("l".into(), true),
+                    attributes: None,
+                },
             ])
         );
 
@@ -1790,5 +1806,144 @@ mod test {
             assert_eq!(a.0, b.0);
             assert_eq!(Some(a.1), b.1);
         }
+
+        let line_string = line.to_string();
+
+        // The SDP offer should contain layers without any attributes
+        assert_eq!(count_lines(&line_string, "a=rid:h send"), 1);
+        assert_eq!(count_lines(&line_string, "a=rid:m send"), 1);
+        assert_eq!(count_lines(&line_string, "a=rid:l send"), 1);
+    }
+
+    #[test]
+    fn simulcast_attributes() {
+        crate::init_crypto_default();
+
+        let mut rtc1 = Rtc::new();
+
+        let simulcast_builder = Simulcast::builder()
+            // High layer
+            .add_send_layer_with_attributes("high")
+            .max_width(1280)
+            .max_height(720)
+            .max_br(1100000)
+            .max_br(1300000)
+            .max_br(1500000) // the last one wins
+            .max_fps(30)
+            .finish()
+            // Medium layer
+            .add_send_layer_with_attributes("medium")
+            .max_width(640)
+            .max_height(360)
+            .max_br(600000)
+            // No max_fps
+            .finish()
+            // Low layer
+            .add_send_layer_with_attributes("low")
+            // No max_width
+            .max_height(180)
+            .max_br(200000)
+            .max_fps(15)
+            .finish()
+            // Custom attribute
+            .add_send_layer_with_attributes("custom")
+            .custom("foo", "bar")
+            .finish();
+
+        // Make sure we can add layers one at a time, e.g. in a loop in a user's application
+        let simulcast = simulcast_builder
+            // No attributes
+            .add_send_layer_with_attributes("no_attrs")
+            .finish()
+            // Build the simulcast itself
+            .build();
+
+        let mut change = rtc1.sdp_api();
+        change.add_media(
+            MediaKind::Video,
+            Direction::SendOnly,
+            None,
+            None,
+            Some(simulcast),
+        );
+
+        let (offer, _) = change.apply().unwrap();
+        let sdp = offer.into_inner();
+        let line = &sdp.media_lines[0];
+
+        fn pairs_to_some_vec(pairs: &[(&str, &str)]) -> Option<Vec<(String, String)>> {
+            Some(
+                pairs
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+            )
+        }
+
+        assert_eq!(
+            line.simulcast().unwrap().send,
+            SimulcastGroups(vec![
+                SdpSimulcastLayer {
+                    restriction_id: RestrictionId("high".into(), true),
+                    attributes: pairs_to_some_vec(&[
+                        ("max-width", "1280"),
+                        ("max-height", "720"),
+                        ("max-br", "1500000"),
+                        ("max-fps", "30"),
+                    ]),
+                },
+                SdpSimulcastLayer {
+                    restriction_id: RestrictionId("medium".into(), true),
+                    attributes: pairs_to_some_vec(&[
+                        ("max-width", "640"),
+                        ("max-height", "360"),
+                        ("max-br", "600000"),
+                    ]),
+                },
+                SdpSimulcastLayer {
+                    restriction_id: RestrictionId("low".into(), true),
+                    attributes: pairs_to_some_vec(&[
+                        ("max-height", "180"),
+                        ("max-br", "200000"),
+                        ("max-fps", "15"),
+                    ]),
+                },
+                SdpSimulcastLayer {
+                    restriction_id: RestrictionId("custom".into(), true),
+                    attributes: pairs_to_some_vec(&[("foo", "bar"),]),
+                },
+                SdpSimulcastLayer {
+                    restriction_id: RestrictionId("no_attrs".into(), true),
+                    attributes: None,
+                },
+            ])
+        );
+
+        // The SDP offer should contain layers with our attributes
+        let line_string = line.to_string();
+        assert_eq!(
+            count_lines(
+                &line_string,
+                "a=rid:high send max-width=1280;max-height=720;max-br=1500000;max-fps=30"
+            ),
+            1
+        );
+        assert_eq!(
+            count_lines(
+                &line_string,
+                "a=rid:medium send max-width=640;max-height=360;max-br=600000"
+            ),
+            1
+        );
+        assert_eq!(
+            count_lines(
+                &line_string,
+                "a=rid:low send max-height=180;max-br=200000;max-fps=15"
+            ),
+            1
+        );
+        assert_eq!(count_lines(&line_string, "a=rid:custom send foo=bar"), 1);
+        // No space at the end
+        assert_eq!(count_lines(&line_string, "a=rid:no_attrs send"), 1);
     }
 }

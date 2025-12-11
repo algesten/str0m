@@ -1075,15 +1075,24 @@ impl Simulcast {
 /// RID organization inside a=simulcast line.
 ///
 /// `a=simulcast send 2;3,4` would result in
-/// `SimulcastGroups(vec![RestrictionId("2"), RestrictionId("3")])`
+/// `SimulcastGroups(vec![SimulcastLayer("2"), SimulcastLayer("3")])`
 ///
 /// The choice between 3 and 4 for the rid is currently ignored and the first option is always
 /// selected.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SimulcastGroups(pub Vec<RestrictionId>);
+pub struct SimulcastGroups(pub Vec<SimulcastLayer>);
+
+/// Represents a simulcast layer in a group
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SimulcastLayer {
+    /// The layer's rid
+    pub restriction_id: RestrictionId,
+    /// Optional attributes per RFC 8851
+    pub attributes: Option<Vec<(String, String)>>,
+}
 
 impl Deref for SimulcastGroups {
-    type Target = [RestrictionId];
+    type Target = [SimulcastLayer];
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -1107,11 +1116,11 @@ impl Msid {
 
 impl fmt::Display for SimulcastGroups {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for (idx, a) in self.0.iter().enumerate() {
+        for (idx, layer) in self.0.iter().enumerate() {
             if idx + 1 == self.0.len() {
-                write!(f, "{}", a.to_sdp())?;
+                write!(f, "{}", layer.restriction_id.to_sdp())?;
             } else {
-                write!(f, "{};", a.to_sdp())?;
+                write!(f, "{};", layer.restriction_id.to_sdp())?;
             }
         }
         Ok(())

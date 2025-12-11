@@ -689,7 +689,10 @@ where
                 let first = group.into_iter().next();
 
                 if let Some(rid) = first.map(|(rid, active)| RestrictionId::new(rid, active)) {
-                    to.0.push(rid);
+                    to.0.push(SimulcastLayer {
+                        restriction_id: rid,
+                        attributes: None,
+                    });
                 }
             }
         }
