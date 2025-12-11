@@ -140,7 +140,7 @@ impl NackRegister {
         for (i, s) in (*active.start..*start).enumerate() {
             let p = self.packet_mut(s.into());
             if !p.received && s != *seq {
-                debug!("Seq no {} missing after {} attempts", s, p.nack_count);
+                trace!("Seq no {} missing after {} attempts", s, p.nack_count);
             }
             self.packet_mut(s.into()).reset();
 
