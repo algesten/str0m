@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Simulcast send attributes RFC 8851 #780
+
 # 0.12.0
 
   * Bump str0m-wincrypto to 0.2.1
