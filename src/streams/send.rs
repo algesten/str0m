@@ -322,7 +322,7 @@ impl StreamTx {
         &mut self,
         now: Instant,
         exts: &ExtensionMap,
-        twcc: Option<&mut u64>,
+        twcc: Option<&mut SeqNo>,
         params: &[PayloadParams],
         buf: &mut Vec<u8>,
     ) -> Option<PacketReceipt> {
@@ -448,9 +448,9 @@ impl StreamTx {
         }
 
         // TWCC might not be enabled for this m-line.
-        if let Some(twcc) = twcc {
-            header.ext_vals.transport_cc = Some(*twcc as u16);
-            *twcc += 1;
+        let twcc_seq = twcc.map(|x| x.inc());
+        if let Some(twcc_seq) = twcc_seq {
+            header.ext_vals.transport_cc = Some(*twcc_seq as u16);
         }
 
         buf.resize(DATAGRAM_MAX_PACKET_SIZE, 0);
@@ -556,6 +556,7 @@ impl StreamTx {
             seq_no,
             is_padding,
             payload_size: body_len,
+            twcc_seq,
         })
     }
 
