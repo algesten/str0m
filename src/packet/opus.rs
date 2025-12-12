@@ -43,6 +43,10 @@ impl Packetizer for OpusPacketizer {
 pub struct OpusDepacketizer;
 
 impl Depacketizer for OpusDepacketizer {
+    fn out_size_hint(&self, packets_size: usize) -> Option<usize> {
+        Some(packets_size)
+    }
+
     fn depacketize(
         &mut self,
         packet: &[u8],

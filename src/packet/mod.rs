@@ -111,6 +111,13 @@ pub enum CodecExtra {
 /// This trait is not currently versioned according to semver rules.
 /// Breaking changes may be made in minor or patch releases.
 pub trait Depacketizer: fmt::Debug {
+    /// Provide a size hint for the `out: &mut Vec<u8>` parameter in [`Depacketizer::depacketize`].
+    /// The [`packets_size`] parameter is the sum of the size of all packets that will be processed in
+    /// subsequent calls to [`Depacketizer::depacketize`].
+    /// This is used to allocate the vector with upfront capacity.
+    /// Return [`None`] if it cannot be determined.
+    fn out_size_hint(&self, packets_size: usize) -> Option<usize>;
+
     /// Unpack the RTP packet into a provided `Vec<u8>`.
     fn depacketize(
         &mut self,
@@ -268,6 +275,20 @@ impl Packetizer for CodecPacketizer {
 }
 
 impl Depacketizer for CodecDepacketizer {
+    fn out_size_hint(&self, packets_size: usize) -> Option<usize> {
+        use CodecDepacketizer::*;
+        match self {
+            H264(v) => v.out_size_hint(packets_size),
+            H265(v) => v.out_size_hint(packets_size),
+            Opus(v) => v.out_size_hint(packets_size),
+            G711(v) => v.out_size_hint(packets_size),
+            Vp8(v) => v.out_size_hint(packets_size),
+            Vp9(v) => v.out_size_hint(packets_size),
+            Null(v) => v.out_size_hint(packets_size),
+            Boxed(v) => v.out_size_hint(packets_size),
+        }
+    }
+
     fn depacketize(
         &mut self,
         packet: &[u8],

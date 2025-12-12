@@ -17,6 +17,10 @@ impl Packetizer for NullPacketizer {
 }
 
 impl Depacketizer for NullDepacketizer {
+    fn out_size_hint(&self, packets_size: usize) -> Option<usize> {
+        Some(packets_size)
+    }
+
     fn depacketize(
         &mut self,
         packet: &[u8],

@@ -756,6 +756,10 @@ impl H265Depacketizer {
 }
 
 impl Depacketizer for H265Depacketizer {
+    fn out_size_hint(&self, packets_size: usize) -> Option<usize> {
+        Some(packets_size)
+    }
+
     /// depacketize parses the passed byte slice and stores the result
     /// in the H265Packet this method is called upon
     fn depacketize(

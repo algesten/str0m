@@ -183,6 +183,10 @@ pub struct Vp8Depacketizer {
 }
 
 impl Depacketizer for Vp8Depacketizer {
+    fn out_size_hint(&self, packets_size: usize) -> Option<usize> {
+        Some(packets_size)
+    }
+
     /// depacketize parses the passed byte slice and stores the result in the
     /// VP8Packet this method is called upon
     fn depacketize(
