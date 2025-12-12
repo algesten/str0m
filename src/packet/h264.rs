@@ -224,6 +224,12 @@ pub struct H264Depacketizer {
 }
 
 impl Depacketizer for H264Depacketizer {
+    fn out_size_hint(&self, packets_size: usize) -> Option<usize> {
+        // Roughly account for Annex B start codes or AVC length prefixes.
+        let estimated_packets = (packets_size / 1200).saturating_add(1);
+        Some(packets_size.saturating_add(4usize.saturating_mul(estimated_packets)))
+    }
+
     /// depacketize parses the passed byte slice and stores the result in the
     /// H264Packet this method is called upon
     fn depacketize(

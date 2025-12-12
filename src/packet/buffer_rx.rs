@@ -254,7 +254,12 @@ impl DepacketizingBuffer {
             }
         }
 
-        let mut data = Vec::new();
+        let packets_size = self.queue.range(start..=stop).map(|p| p.data.len()).sum();
+        let mut data = self
+            .depack
+            .out_size_hint(packets_size)
+            .map(Vec::with_capacity)
+            .unwrap_or_else(Vec::new);
         let mut codec_extra = CodecExtra::None;
 
         let time = self.queue.get(start).expect("first index exist").meta.time;
@@ -592,6 +597,10 @@ mod test {
     struct TestDepack;
 
     impl Depacketizer for TestDepack {
+        fn out_size_hint(&self, packets_size: usize) -> Option<usize> {
+            Some(packets_size)
+        }
+
         fn depacketize(
             &mut self,
             packet: &[u8],

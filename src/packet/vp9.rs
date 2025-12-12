@@ -283,6 +283,10 @@ pub struct Vp9Depacketizer {
 }
 
 impl Depacketizer for Vp9Depacketizer {
+    fn out_size_hint(&self, packets_size: usize) -> Option<usize> {
+        Some(packets_size)
+    }
+
     /// depacketize parses the passed byte slice and stores the result
     /// in the Vp9Packet this method is called upon
     fn depacketize(
