@@ -116,5 +116,61 @@ by str0m or the client. For media str0m creates, it refuses to allow the client 
 transition `Inactive` -> `RecvOnly`. All other transitions are fine, i.e. a client can change, also a
 str0m created media, from `Inactive` to `SendRecv`.
 
+## BUNDLE and Bundle Policies
+
+str0m only supports a single ICE transport, meaning all m-lines must
+be bundled together. The `a=group:BUNDLE` attribute in the SDP lists
+which m-lines share transport.
+
+### max-bundle vs max-compat
+
+[RFC 8843][rfc8843] defines bundle policies that control how ports are set in SDP offers:
+
+- **max-bundle**: Only the first m-line in the bundle has a real port
+  (typically 9). Subsequent bundled m-lines use `port=0` to indicate
+  they share transport with the first m-line.
+- **max-compat**: All m-lines use a non-zero port (typically 9), for
+    backwards compatibility with endpoints that don't understand
+    BUNDLE.
+
+The bundle policy is a local choice made by the offerer and is **not
+explicitly stated** in the SDP. It can only be inferred by looking at
+the port values on bundled m-lines.
+
+Example max-bundle offer:
+
+```
+a=group:BUNDLE 0 1
+m=audio 9 UDP/TLS/RTP/SAVPF 111   <- port 9
+m=video 0 UDP/TLS/RTP/SAVPF 96   <- port 0 (bundled, NOT rejected)
+```
+
+Example max-compat offer:
+
+```
+a=group:BUNDLE 0 1
+m=audio 9 UDP/TLS/RTP/SAVPF 111   <- port 9
+m=video 9 UDP/TLS/RTP/SAVPF 96   <- port 9
+```
+
+### How str0m handles this
+
+**Generating SDPs**: str0m produces max-compat style SDPs. All active
+m-lines use port 9. Only truly rejected m-lines (e.g., no codec
+match) use port 0.
+
+**Receiving SDPs**: str0m accepts both styles. An m-line with `port=0`
+is only considered rejected if it is NOT listed in the
+`a=group:BUNDLE` attribute. If it is in the BUNDLE group, `port=0`
+simply indicates the m-line shares transport with the first bundled
+m-line (max-bundle style).
+
+| Port | In BUNDLE group | Meaning                                 |
+|------|-----------------|-----------------------------------------|
+| 0    | Yes             | Valid bundled m-line (max-bundle style) |
+| 0    | No              | Rejected m-line                         |
+| 9    | Yes             | Valid bundled m-line (max-compat style) |
+
 [quote]: https://mailarchive.ietf.org/arch/msg/mmusic/2N1_-eUTVrmciX3LpSjkjFH7oCU/
 [sdpspec]: https://datatracker.ietf.org/doc/html/rfc3264#section-6.1
+[rfc8843]: https://datatracker.ietf.org/doc/html/rfc8843

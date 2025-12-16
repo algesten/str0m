@@ -796,9 +796,10 @@ fn apply_offer(session: &mut Session, offer: SdpOffer) -> Result<(), RtcError> {
 
     update_session(session, &offer);
 
+    let bundle_mids = offer.bundle_mids();
     let new_lines = sync_medias(session, &offer).map_err(RtcError::RemoteSdp)?;
 
-    add_new_lines(session, &new_lines, true).map_err(RtcError::RemoteSdp)?;
+    add_new_lines(session, &new_lines, true, bundle_mids).map_err(RtcError::RemoteSdp)?;
 
     ensure_stream_tx(session);
 
@@ -814,6 +815,7 @@ fn apply_answer(
 
     update_session(session, &answer);
 
+    let bundle_mids = answer.bundle_mids();
     let new_lines = sync_medias(session, &answer).map_err(RtcError::RemoteSdp)?;
 
     // The new_lines from the answer must correspond to what we sent in the offer.
@@ -821,7 +823,7 @@ fn apply_answer(
         return Err(RtcError::RemoteSdp(err));
     }
 
-    add_new_lines(session, &new_lines, false).map_err(RtcError::RemoteSdp)?;
+    add_new_lines(session, &new_lines, false, bundle_mids).map_err(RtcError::RemoteSdp)?;
 
     // Add all pending changes (since we pre-allocated SSRC communicated in the Offer).
     add_pending_changes(session, pending);
@@ -934,6 +936,7 @@ fn add_pending_changes(session: &mut Session, pending: Changes) {
 /// * New m-lines are returned to the caller.
 fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaLine>, String> {
     let mut new_lines = Vec::with_capacity(sdp.media_lines.len());
+    let bundle_mids = sdp.bundle_mids();
 
     for (idx, m) in sdp.media_lines.iter().enumerate() {
         // First, match existing m-lines.
@@ -958,6 +961,7 @@ fn sync_medias<'a>(session: &mut Session, sdp: &'a Sdp) -> Result<Vec<&'a MediaL
                         &session.codec_config,
                         &session.exts,
                         &mut session.streams,
+                        bundle_mids,
                     );
 
                     continue;
@@ -984,6 +988,7 @@ fn add_new_lines(
     session: &mut Session,
     new_lines: &[&MediaLine],
     is_offer: bool,
+    bundle_mids: Option<&[Mid]>,
 ) -> Result<(), String> {
     for m in new_lines {
         let idx = session.line_count();
@@ -993,7 +998,12 @@ fn add_new_lines(
 
             // For disabled (rejected) m-lines, don't fire open event
             // and the direction will be set to Inactive by update_media.
-            media.need_open_event = is_offer && !m.disabled;
+            // In max-bundle, port=0 with the MID in BUNDLE group is NOT rejected.
+            let is_in_bundle = bundle_mids
+                .map(|mids| mids.contains(&m.mid()))
+                .unwrap_or(false);
+            let is_rejected = m.disabled && !is_in_bundle;
+            media.need_open_event = is_offer && !is_rejected;
 
             // Match/remap remote params.
             session
@@ -1009,6 +1019,7 @@ fn add_new_lines(
                 &session.codec_config,
                 &session.exts,
                 &mut session.streams,
+                bundle_mids,
             );
 
             session.add_media(media);
@@ -1067,13 +1078,23 @@ fn update_media(
     config: &CodecConfig,
     exts: &ExtensionMap,
     streams: &mut Streams,
+    bundle_mids: Option<&[Mid]>,
 ) {
-    // If the m-line is disabled (port=0), clear remote_pts and set direction to Inactive.
-    // This handles the case where the remote rejects an m-line.
-    if m.disabled {
+    // If the m-line has port=0, it could mean:
+    // 1. The m-line is rejected (not in BUNDLE group)
+    // 2. The m-line is bundled with another m-line (max-bundle format, RFC 8843)
+    //
+    // In max-bundle, secondary m-lines use port=0 to indicate they share transport
+    // with the first m-line. This is NOT a rejection.
+    let is_in_bundle = bundle_mids
+        .map(|mids| mids.contains(&m.mid()))
+        .unwrap_or(false);
+    let is_rejected = m.disabled && !is_in_bundle;
+
+    if is_rejected {
         if !media.disabled() {
             debug!(
-                "Mid ({}) is rejected (port=0), setting to Inactive",
+                "Mid ({}) is rejected (port=0, not in BUNDLE), setting to Inactive",
                 media.mid()
             );
         }
