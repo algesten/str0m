@@ -438,30 +438,32 @@ fn max_bundle_offer_accepted() {
     // This is a max-bundle offer where the video m-line has port=0
     // to indicate it shares transport with the audio m-line.
     let max_bundle_offer = "\
-v=0\r\n\
-o=- 123456789 2 IN IP4 127.0.0.1\r\n\
-s=-\r\n\
-t=0 0\r\n\
-a=group:BUNDLE 0 1\r\n\
-a=msid-semantic:WMS *\r\n\
-a=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\r\n\
-a=ice-ufrag:testufrag\r\n\
-a=ice-pwd:testpassword12345678\r\n\
-a=setup:actpass\r\n\
-m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
-c=IN IP4 0.0.0.0\r\n\
-a=mid:0\r\n\
-a=sendrecv\r\n\
-a=rtcp-mux\r\n\
-a=rtpmap:111 opus/48000/2\r\n\
-a=fmtp:111 minptime=10;useinbandfec=1\r\n\
-m=video 0 UDP/TLS/RTP/SAVPF 96\r\n\
-c=IN IP4 0.0.0.0\r\n\
-a=mid:1\r\n\
-a=sendrecv\r\n\
-a=rtcp-mux\r\n\
-a=rtpmap:96 VP8/90000\r\n\
-";
+        v=0\r\n\
+        o=- 123456789 2 IN IP4 127.0.0.1\r\n\
+        s=-\r\n\
+        t=0 0\r\n\
+        a=group:BUNDLE 0 1\r\n\
+        a=msid-semantic:WMS *\r\n\
+        a=fingerprint:sha-256 00:00:00:00:00:00:00:00\
+        :00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\
+        :00:00:00:00:00:00:00:00:00\r\n\
+        a=ice-ufrag:testufrag\r\n\
+        a=ice-pwd:testpassword12345678\r\n\
+        a=setup:actpass\r\n\
+        m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
+        c=IN IP4 0.0.0.0\r\n\
+        a=mid:0\r\n\
+        a=sendrecv\r\n\
+        a=rtcp-mux\r\n\
+        a=rtpmap:111 opus/48000/2\r\n\
+        a=fmtp:111 minptime=10;useinbandfec=1\r\n\
+        m=video 0 UDP/TLS/RTP/SAVPF 96\r\n\
+        c=IN IP4 0.0.0.0\r\n\
+        a=mid:1\r\n\
+        a=sendrecv\r\n\
+        a=rtcp-mux\r\n\
+        a=rtpmap:96 VP8/90000\r\n\
+        ";
 
     // Parse and accept the max-bundle offer
     let offer = SdpOffer::from_sdp_string(max_bundle_offer).expect("should parse");
