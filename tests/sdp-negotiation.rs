@@ -417,6 +417,83 @@ fn media_creator_can_change_inactive_to_recvonly() {
     assert_eq!(m_r.direction(), Direction::SendOnly);
 }
 
+/// Test that max-bundle offers (where secondary m-lines have port=0) are handled correctly.
+/// In max-bundle format (RFC 8843), m-lines after the first one use port=0 to indicate
+/// they share transport with the first m-line. This is NOT a rejection.
+#[test]
+fn max_bundle_offer_accepted() {
+    init_log();
+    init_crypto_default();
+
+    // Create an Rtc that supports both opus and VP8
+    let mut r = TestRtc::new_with_rtc(
+        info_span!("R"),
+        Rtc::builder()
+            .clear_codecs()
+            .enable_opus(true)
+            .enable_vp8(true)
+            .build(),
+    );
+
+    // This is a max-bundle offer where the video m-line has port=0
+    // to indicate it shares transport with the audio m-line.
+    let max_bundle_offer = "\
+v=0\r\n\
+o=- 123456789 2 IN IP4 127.0.0.1\r\n\
+s=-\r\n\
+t=0 0\r\n\
+a=group:BUNDLE 0 1\r\n\
+a=msid-semantic:WMS *\r\n\
+a=fingerprint:sha-256 00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\r\n\
+a=ice-ufrag:testufrag\r\n\
+a=ice-pwd:testpassword12345678\r\n\
+a=setup:actpass\r\n\
+m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=mid:0\r\n\
+a=sendrecv\r\n\
+a=rtcp-mux\r\n\
+a=rtpmap:111 opus/48000/2\r\n\
+a=fmtp:111 minptime=10;useinbandfec=1\r\n\
+m=video 0 UDP/TLS/RTP/SAVPF 96\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=mid:1\r\n\
+a=sendrecv\r\n\
+a=rtcp-mux\r\n\
+a=rtpmap:96 VP8/90000\r\n\
+";
+
+    // Parse and accept the max-bundle offer
+    let offer = SdpOffer::from_sdp_string(max_bundle_offer).expect("should parse");
+    let answer = r.rtc.sdp_api().accept_offer(offer).expect("should accept");
+
+    // Verify the answer includes both m-lines in the BUNDLE group
+    let answer_sdp = answer.to_sdp_string();
+    assert!(
+        answer_sdp.contains("a=group:BUNDLE 0 1"),
+        "Answer should have both MIDs in BUNDLE group, got:\n{}",
+        answer_sdp
+    );
+
+    // Both m-lines should be active (not rejected)
+    let mids = r._mids();
+    assert_eq!(mids.len(), 2, "Should have 2 media lines");
+
+    let audio = r.media(mids[0]).unwrap();
+    assert_eq!(
+        audio.direction(),
+        Direction::SendRecv,
+        "Audio should be SendRecv, not disabled"
+    );
+
+    let video = r.media(mids[1]).unwrap();
+    assert_eq!(
+        video.direction(),
+        Direction::SendRecv,
+        "Video should be SendRecv even though offer had port=0 (max-bundle)"
+    );
+}
+
 fn with_params(
     span_l: Span,
     params_l: &[PayloadParams],

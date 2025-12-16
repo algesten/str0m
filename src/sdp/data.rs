@@ -31,6 +31,18 @@ impl Sdp {
             .map_err(|e| SdpError::ParseError(e.to_string()))
     }
 
+    /// Get the MIDs listed in the BUNDLE group, if any.
+    pub(crate) fn bundle_mids(&self) -> Option<&[Mid]> {
+        self.session.attrs.iter().find_map(|a| {
+            if let SessionAttribute::Group { typ, mids } = a {
+                if typ == "BUNDLE" {
+                    return Some(mids.as_slice());
+                }
+            }
+            None
+        })
+    }
+
     pub(crate) fn assert_consistency(&self) -> Result<(), SdpError> {
         match self.do_assert_consistency() {
             None => Ok(()),
@@ -1599,5 +1611,54 @@ mod test {
             a=rtpmap:46 rtx/90000\r\n\
             a=fmtp:46 apt=45\r\n\
             "));
+    }
+
+    #[test]
+    fn bundle_mids_returns_correct_mids() {
+        let input = "v=0\r\n\
+            o=- 123456 2 IN IP4 127.0.0.1\r\n\
+            s=-\r\n\
+            t=0 0\r\n\
+            a=group:BUNDLE 0 1 2\r\n\
+            a=msid-semantic:WMS *\r\n\
+            m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:0\r\n\
+            a=sendrecv\r\n\
+            a=rtpmap:111 opus/48000/2\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword1234\r\n\
+            m=video 0 UDP/TLS/RTP/SAVPF 96\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:1\r\n\
+            a=sendrecv\r\n\
+            a=rtpmap:96 VP8/90000\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword1234\r\n\
+            m=application 0 UDP/DTLS/SCTP webrtc-datachannel\r\n\
+            c=IN IP4 0.0.0.0\r\n\
+            a=mid:2\r\n\
+            a=setup:actpass\r\n\
+            a=ice-ufrag:test\r\n\
+            a=ice-pwd:testpassword1234\r\n\
+            a=sctp-port:5000\r\n\
+            ";
+
+        let sdp = Sdp::parse(input).expect("should parse");
+
+        // bundle_mids should return all MIDs from the BUNDLE group
+        let mids = sdp.bundle_mids().expect("should have BUNDLE group");
+        assert_eq!(mids.len(), 3);
+        assert_eq!(mids[0], "0".into());
+        assert_eq!(mids[1], "1".into());
+        assert_eq!(mids[2], "2".into());
+
+        // The m-lines with port=0 should have disabled=true at parsing level
+        // (interpretation of whether this means "rejected" happens later)
+        assert!(!sdp.media_lines[0].disabled, "audio has port=9");
+        assert!(sdp.media_lines[1].disabled, "video has port=0");
+        assert!(sdp.media_lines[2].disabled, "application has port=0");
     }
 }
