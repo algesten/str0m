@@ -425,13 +425,13 @@ fn max_bundle_offer_accepted() {
     init_log();
     init_crypto_default();
 
-    // Create an Rtc that supports both opus and VP8
+    // Create an Rtc that supports both opus and H264
     let mut r = TestRtc::new_with_rtc(
         info_span!("R"),
         Rtc::builder()
             .clear_codecs()
             .enable_opus(true)
-            .enable_vp8(true)
+            .enable_h264(true)
             .build(),
     );
 
@@ -439,30 +439,60 @@ fn max_bundle_offer_accepted() {
     // to indicate it shares transport with the audio m-line.
     let max_bundle_offer = "\
         v=0\r\n\
-        o=- 123456789 2 IN IP4 127.0.0.1\r\n\
+        o=- 6902011900567120825 0 IN IP4 0.0.0.0\r\n\
         s=-\r\n\
         t=0 0\r\n\
-        a=group:BUNDLE 0 1\r\n\
-        a=msid-semantic:WMS *\r\n\
-        a=fingerprint:sha-256 00:00:00:00:00:00:00:00\
-        :00:00:00:00:00:00:00:00:00:00:00:00:00:00:00\
-        :00:00:00:00:00:00:00:00:00\r\n\
-        a=ice-ufrag:testufrag\r\n\
-        a=ice-pwd:testpassword12345678\r\n\
+        a=ice-options:trickle\r\n\
+        a=group:BUNDLE video0 audio1\r\n\
+        m=video 9 UDP/TLS/RTP/SAVPF 96 98 99 100 101\r\n\
+        c=IN IP4 0.0.0.0\r\n\
         a=setup:actpass\r\n\
-        m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n\
-        c=IN IP4 0.0.0.0\r\n\
-        a=mid:0\r\n\
-        a=sendrecv\r\n\
+        a=ice-ufrag:xxxxxxxxxxxxxxxxxxxxxx\r\n\
+        a=ice-pwd:xxxxxxxxxxxxxxxxxxxxxx\r\n\
         a=rtcp-mux\r\n\
-        a=rtpmap:111 opus/48000/2\r\n\
-        a=fmtp:111 minptime=10;useinbandfec=1\r\n\
-        m=video 0 UDP/TLS/RTP/SAVPF 96\r\n\
+        a=rtcp-rsize\r\n\
+        a=sendonly\r\n\
+        a=rtpmap:96 H264/90000\r\n\
+        a=rtcp-fb:96 nack\r\n\
+        a=rtcp-fb:96 nack pli\r\n\
+        a=rtcp-fb:96 ccm fir\r\n\
+        a=rtcp-fb:96 transport-cc\r\n\
+        a=extmap:1 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01\r\n\
+        a=fmtp:96 packetization-mode=1;profile-level-id=42c01f;level-asymmetry-allowed=1\r\n\
+        a=rtpmap:98 red/90000\r\n\
+        a=rtpmap:99 ulpfec/90000\r\n\
+        a=rtpmap:100 rtx/90000\r\n\
+        a=fmtp:100 apt=96\r\n\
+        a=rtpmap:101 rtx/90000\r\n\
+        a=fmtp:101 apt=98\r\n\
+        a=ssrc-group:FID 890761327 1199875303\r\n\
+        a=ssrc:890761327 msid:user169237359@host-f471cdc7 webrtctransceiver0\r\n\
+        a=ssrc:890761327 cname:user169237359@host-f471cdc7\r\n\
+        a=ssrc:1199875303 msid:user169237359@host-f471cdc7 webrtctransceiver0\r\n\
+        a=ssrc:1199875303 cname:user169237359@host-f471cdc7\r\n\
+        a=mid:video0\r\n\
+        a=fingerprint:sha-256 F5:AA:B1:C8:E6:54:4D:15:76:10:B8:6D:0A:BE:E0:70:\
+            EF:B9:95:B3:05:61:5C:7B:75:E1:C6:FE:D0:2D:7C:2C\r\n\
+        a=rtcp-mux-only\r\n\
+        m=audio 0 UDP/TLS/RTP/SAVPF 97\r\n\
         c=IN IP4 0.0.0.0\r\n\
-        a=mid:1\r\n\
-        a=sendrecv\r\n\
+        a=setup:actpass\r\n\
+        a=ice-ufrag:xxxxxxxxxxxxxxxxxxxxxx\r\n\
+        a=ice-pwd:xxxxxxxxxxxxxxxxxxxxxx\r\n\
+        a=bundle-only\r\n\
         a=rtcp-mux\r\n\
-        a=rtpmap:96 VP8/90000\r\n\
+        a=rtcp-rsize\r\n\
+        a=sendonly\r\n\
+        a=rtpmap:97 OPUS/48000/2\r\n\
+        a=rtcp-fb:97 transport-cc\r\n\
+        a=extmap:1 http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01\r\n\
+        a=fmtp:97 sprop-stereo=1;sprop-maxcapturerate=48000\r\n\
+        a=ssrc:4184568016 msid:user169237359@host-f471cdc7 webrtctransceiver1\r\n\
+        a=ssrc:4184568016 cname:user169237359@host-f471cdc7\r\n\
+        a=mid:audio1\r\n\
+        a=fingerprint:sha-256 F5:AA:B1:C8:E6:54:4D:15:76:10:\
+            B8:6D:0A:BE:E0:70:EF:B9:95:B3:05:61:5C:7B:75:E1:C6:FE:D0:2D:7C:2C\r\n\
+        a=rtcp-mux-only\
         ";
 
     // Parse and accept the max-bundle offer
@@ -472,27 +502,29 @@ fn max_bundle_offer_accepted() {
     // Verify the answer includes both m-lines in the BUNDLE group
     let answer_sdp = answer.to_sdp_string();
     assert!(
-        answer_sdp.contains("a=group:BUNDLE 0 1"),
+        answer_sdp.contains("a=group:BUNDLE video0 audio1"),
         "Answer should have both MIDs in BUNDLE group, got:\n{}",
         answer_sdp
     );
 
     // Both m-lines should be active (not rejected)
+    // The offer has sendonly, which inverts to RecvOnly on our side
     let mids = r._mids();
     assert_eq!(mids.len(), 2, "Should have 2 media lines");
 
-    let audio = r.media(mids[0]).unwrap();
-    assert_eq!(
-        audio.direction(),
-        Direction::SendRecv,
-        "Audio should be SendRecv, not disabled"
-    );
-
-    let video = r.media(mids[1]).unwrap();
+    // mids[0] is video0, mids[1] is audio1 (order from offer)
+    let video = r.media(mids[0]).unwrap();
     assert_eq!(
         video.direction(),
-        Direction::SendRecv,
-        "Video should be SendRecv even though offer had port=0 (max-bundle)"
+        Direction::RecvOnly,
+        "Video should be RecvOnly (not Inactive), port=0 in BUNDLE is valid"
+    );
+
+    let audio = r.media(mids[1]).unwrap();
+    assert_eq!(
+        audio.direction(),
+        Direction::RecvOnly,
+        "Audio should be RecvOnly (not Inactive), max-bundle port=0 is valid"
     );
 }
 
