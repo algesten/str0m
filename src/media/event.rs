@@ -88,54 +88,23 @@ pub struct Simulcast {
 
 impl Simulcast {
     /// Create a new struct with no layers
-    pub fn builder() -> SimulcastBuilder {
-        SimulcastBuilder {
+    pub fn new() -> Simulcast {
+        Simulcast {
             send: vec![],
             recv: vec![],
         }
     }
 }
 
-/// A builder for simulcast
-pub struct SimulcastBuilder {
-    send: Vec<SimulcastLayer>,
-    recv: Vec<SimulcastLayer>,
-}
-
-impl SimulcastBuilder {
-    /// Add a new simulcast layer with just the rid name
-    pub fn add_send_layer(mut self, rid: &str) -> Self {
-        self.send.push(SimulcastLayer {
-            rid: Rid::from(rid),
-            attributes: None,
-        });
-        self
+impl Simulcast {
+    /// Add a send layer
+    pub fn add_send_layer(&mut self, layer: SimulcastLayer) {
+        self.send.push(layer);
     }
 
-    /// Add a new simulcast layer with rid name and attributes
-    pub fn add_send_layer_with_attributes(self, rid: &str) -> SimulcastLayerBuilder {
-        SimulcastLayerBuilder {
-            builder: self,
-            rid: Rid::from(rid),
-            attributes: vec![],
-        }
-    }
-
-    /// Add a new receive layer
-    pub fn add_receive_layer(mut self, rid: &str) -> Self {
-        self.recv.push(SimulcastLayer {
-            rid: Rid::from(rid),
-            attributes: None,
-        });
-        self
-    }
-
-    /// Finish the building process
-    pub fn build(self) -> Simulcast {
-        Simulcast {
-            send: self.send,
-            recv: self.recv,
-        }
+    /// Add a receive layer
+    pub fn add_recv_layer(&mut self, layer: SimulcastLayer) {
+        self.send.push(layer);
     }
 }
 
@@ -148,9 +117,26 @@ pub struct SimulcastLayer {
     pub attributes: Option<Vec<(String, String)>>,
 }
 
+impl SimulcastLayer {
+    /// Creates a new layer with the rid
+    pub fn new(rid: &str) -> SimulcastLayer {
+        SimulcastLayer {
+            rid: Rid::from(rid),
+            attributes: None,
+        }
+    }
+
+    /// Create a new layer builder for setting attributes
+    pub fn new_with_attributes(rid: &str) -> SimulcastLayerBuilder {
+        SimulcastLayerBuilder {
+            rid: Rid::from(rid),
+            attributes: vec![],
+        }
+    }
+}
+
 /// A builder which is used to populate layer attributes
 pub struct SimulcastLayerBuilder {
-    builder: SimulcastBuilder,
     rid: Rid,
     // We could use a HashMap but that doesn't preserve order - which we need for tests (to validate the
     // resulting SDP). BTreeMap seems like overkill for 4-6 keys, so does HashMap, actually. A simple
@@ -190,16 +176,15 @@ impl SimulcastLayerBuilder {
     }
 
     /// Build the layer
-    pub fn finish(mut self) -> SimulcastBuilder {
-        self.builder.send.push(SimulcastLayer {
+    pub fn build(self) -> SimulcastLayer {
+        SimulcastLayer {
             rid: self.rid,
             attributes: if self.attributes.is_empty() {
                 None
             } else {
                 Some(self.attributes)
             },
-        });
-        self.builder
+        }
     }
 
     fn update_or_insert(&mut self, key: &str, value: String) {
