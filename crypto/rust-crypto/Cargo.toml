@@ -1,7 +1,15 @@
 [package]
 name = "str0m-rust-crypto"
 version = "0.1.0"
+authors = ["Martin Algesten <martin@algesten.se>"]
+description = "Pure Rust crypto backend for str0m WebRTC"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/algesten/str0m"
+readme = "README.md"
 edition = "2021"
+
+# MSRV
+rust-version = "1.81.0"
 
 [dependencies]
 str0m-proto = { version = "0.1.0", path = "../../proto" }

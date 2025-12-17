@@ -70,7 +70,7 @@ str0m-apple-crypto = { version = "0.1.0", path = "crypto/apple-crypto", optional
 
 [target.'cfg(windows)'.dependencies]
 # Windows Crypto (CNG + SChannel)
-str0m-wincrypto = { version = "0.2.1", path = "crypto/wincrypto", optional = true }
+str0m-wincrypto = { version = "0.3.0", path = "crypto/wincrypto", optional = true }
 
 [dev-dependencies]
 rouille = { version = "3.6.2", features = [] }

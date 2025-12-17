@@ -1,12 +1,12 @@
 [package]
 name = "str0m-aws-lc-rs"
 version = "0.1.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
+authors = ["Martin Algesten <martin@algesten.se>"]
 description = "aws-lc-rs backend for str0m WebRTC"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/algesten/str0m"
-keywords = ["webrtc", "crypto", "apple", "macos", "ios"]
-categories = ["cryptography", "multimedia"]
+readme = "README.md"
+edition = "2021"
 
 # MSRV
 rust-version = "1.81.0"

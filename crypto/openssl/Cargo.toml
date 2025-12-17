@@ -1,7 +1,15 @@
 [package]
 name = "str0m-openssl"
 version = "0.1.0"
+authors = ["Martin Algesten <martin@algesten.se>"]
+description = "OpenSSL backend for str0m WebRTC"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/algesten/str0m"
+readme = "README.md"
 edition = "2021"
+
+# MSRV
+rust-version = "1.81.0"
 
 [features]
 vendored = ["openssl/vendored"]
