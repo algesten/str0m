@@ -1,8 +1,12 @@
 [package]
 name = "str0m-netem"
 version = "0.1.0"
-edition = "2021"
+authors = ["Martin Algesten <martin@algesten.se>"]
+description = "Sans-IO network emulation for testing str0m under simulated network conditions"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/algesten/str0m"
+readme = "README.md"
+edition = "2021"
 
 # MSRV
 rust-version = "1.81.0"

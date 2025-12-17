@@ -305,20 +305,28 @@
 //! | `aws-lc-rs`    | `str0m-aws-lc-rs`     | dimpl + AWS-LC-RS            | All       |
 //! | `rust-crypto`  | `str0m-rust-crypto`   | dimpl + RustCrypto           | All       |
 //! | `openssl`      | `str0m-openssl`       | OpenSSL native DTLS          | All       |
-//! | `wincrypto`    | `str0m-wincrypto`     | Windows SChannel             | Windows   |
 //! | `apple-crypto` | `str0m-apple-crypto`  | dimpl + Apple CommonCrypto   | macOS/iOS |
+//! | `wincrypto`    | `str0m-wincrypto`     | Windows SChannel             | Windows   |
+//!
+//! If multiple backend features are enabled, str0m automatically selects the backend in this
+//! priority order: `aws-lc-rs`, `rust-crypto`, `openssl`, `apple-crypto` (Apple platforms only),
+//! `wincrypto` (Windows only).
 //!
 //! If you disable the default features, you MUST explicitly configure an alternative
 //! crypto backend either process-wide or per-instance.
 //!
-//! For applications, the easiest is to set a process-wide default at startup:
+//! ## Process-wide default
+//!
+//! For applications, the easiest is to set a process-wide default at startup.
+//! Note that you can use any backend crate directly without enabling its feature flag:
 //!
 //! ```no_run
 //! // Set process default (will panic if called twice)
+//! // No need to enable the "rust-crypto" feature flag
 //! str0m_rust_crypto::default_provider().install_process_default();
 //! ```
 //!
-//! Alternatively, configure per-instance:
+//! ## Crypto provider per Rtc instance
 //!
 //! ```no_run
 //! use std::sync::Arc;
@@ -1934,7 +1942,7 @@ impl RtcConfig {
     /// Set the crypto provider.
     ///
     /// This overrides what is set in [`crate::crypto::CryptoProvider::install_default()`].
-    pub fn set_crypto_provider(mut self, p: Arc<crate::crypto::CryptoProvider>) -> Self {
+    pub fn set_crypto_provider(mut self, p: Arc<CryptoProvider>) -> Self {
         self.crypto_provider = p;
         self
     }
@@ -1943,7 +1951,7 @@ impl RtcConfig {
     ///
     /// Defaults to what's set in [`crate::crypto::CryptoProvider::get_default()`] followed
     /// by a fallback to the default OpenSSL provider.
-    pub fn crypto_provider(&self) -> &Arc<crate::crypto::CryptoProvider> {
+    pub fn crypto_provider(&self) -> &Arc<CryptoProvider> {
         &self.crypto_provider
     }
 

@@ -3,9 +3,15 @@
 # 0.14.0
 
   * RTT as Duration #756
+  * Revise Simulcast layer API #784
+  * Fix max-bundle bug introduced in 0.13 #786
+  * Reduce reallocation when depacketizing #782
   * Network emulation for tests #774
+  * Handle SSRC 0 BWE probe #769
   * Apple Crypto backend #763
   * Move all crypto backends out of main crate #768
+  * h264 profile/level matching comply with RFC 6184 #758
+  * Constant time HMAC equality #753
 
 # 0.13.0
 

@@ -295,20 +295,28 @@ str0m supports multiple crypto backends via feature flags. The default is `aws-l
 | `aws-lc-rs`    | `str0m-aws-lc-rs`     | dimpl + AWS-LC-RS            | All       |
 | `rust-crypto`  | `str0m-rust-crypto`   | dimpl + RustCrypto           | All       |
 | `openssl`      | `str0m-openssl`       | OpenSSL native DTLS          | All       |
-| `wincrypto`    | `str0m-wincrypto`     | Windows SChannel             | Windows   |
 | `apple-crypto` | `str0m-apple-crypto`  | dimpl + Apple CommonCrypto   | macOS/iOS |
+| `wincrypto`    | `str0m-wincrypto`     | Windows SChannel             | Windows   |
+
+If multiple backend features are enabled, str0m automatically selects the backend in this
+priority order: `aws-lc-rs`, `rust-crypto`, `openssl`, `apple-crypto` (Apple platforms only),
+`wincrypto` (Windows only).
 
 If you disable the default features, you MUST explicitly configure an alternative
 crypto backend either process-wide or per-instance.
 
-For applications, the easiest is to set a process-wide default at startup:
+### Process-wide default
+
+For applications, the easiest is to set a process-wide default at startup.
+Note that you can use any backend crate directly without enabling its feature flag:
 
 ```rust
 // Set process default (will panic if called twice)
+// No need to enable the "rust-crypto" feature flag
 str0m_rust_crypto::default_provider().install_process_default();
 ```
 
-Alternatively, configure per-instance:
+### Set crypto provider per Rtc instance
 
 ```rust
 use std::sync::Arc;

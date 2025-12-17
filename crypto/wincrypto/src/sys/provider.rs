@@ -6,12 +6,12 @@
 use dimpl::{Error as DtlsImplError, KeyingMaterial, SrtpProfile};
 use std::sync::Arc;
 use std::time::Instant;
-use str0m::crypto::SupportedAes128CmSha1_80;
-use str0m::crypto::{AeadAes128GcmCipher, AeadAes256GcmCipher, Aes128CmSha1_80Cipher};
-use str0m::crypto::{CryptoError, CryptoProvider};
-use str0m::crypto::{DtlsCert, DtlsInstance, DtlsOutput, DtlsProvider};
-use str0m::crypto::{Sha1HmacProvider, Sha256Provider};
-use str0m::crypto::{SrtpProvider, SupportedAeadAes128Gcm, SupportedAeadAes256Gcm};
+use str0m_proto::crypto::SupportedAes128CmSha1_80;
+use str0m_proto::crypto::{AeadAes128GcmCipher, AeadAes256GcmCipher, Aes128CmSha1_80Cipher};
+use str0m_proto::crypto::{CryptoError, CryptoProvider};
+use str0m_proto::crypto::{DtlsCert, DtlsInstance, DtlsOutput, DtlsProvider};
+use str0m_proto::crypto::{Sha1HmacProvider, Sha256Provider};
+use str0m_proto::crypto::{SrtpProvider, SupportedAeadAes128Gcm, SupportedAeadAes256Gcm};
 
 /// Create the default Windows CNG/SChannel crypto provider.
 ///
