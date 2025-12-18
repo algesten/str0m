@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Configure sctp to not give up INIT/data retransmissions #791
+  * update sctp-proto to 0.6.0 #791
   * wincrypto: queue data until handshake completes #787
   * openssl: queue data until handshake completes #787
 
