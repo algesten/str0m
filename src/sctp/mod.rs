@@ -7,7 +7,7 @@ use std::panic::UnwindSafe;
 use std::sync::Arc;
 use std::time::Instant;
 
-use sctp_proto::{Association, AssociationHandle, ClientConfig, DatagramEvent};
+use sctp_proto::{Association, AssociationHandle, ClientConfig, DatagramEvent, TransportConfig};
 use sctp_proto::{Endpoint, EndpointConfig, Stream, StreamEvent, Transmit};
 use sctp_proto::{Event, Payload, PayloadProtocolIdentifier, ServerConfig};
 
@@ -258,10 +258,21 @@ impl RtcSctp {
         self.last_now = now;
 
         if client {
+            // For WebRTC, we never want to give up retransmitting
+            // init and data packets. The connectivity is in ICE,
+            // and SCTP should not give up until ICE gives up.
+            let transport = TransportConfig::default()
+                .with_max_init_retransmits(None)
+                .with_max_data_retransmits(None);
+
+            let config = ClientConfig {
+                transport: Arc::new(transport),
+            };
+
             debug!("New local association");
             let (handle, assoc) = self
                 .endpoint
-                .connect(ClientConfig::default(), self.fake_addr)
+                .connect(config, self.fake_addr)
                 .expect("be able to create an association");
             self.handle = handle;
             self.assoc = Some(assoc);
