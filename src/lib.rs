@@ -1514,6 +1514,7 @@ impl Rtc {
                                 return Err(e.into());
                             }
                         }
+
                         packets.pop_front();
                         // If there are still packets, they are sent on next
                         // poll_output()
@@ -1523,7 +1524,7 @@ impl Rtc {
 
                         // Run again since this would feed the DTLS subsystem
                         // to produce a packet now.
-                        return self.poll_output();
+                        return self.do_poll_output();
                     }
                 }
                 SctpEvent::Open { id, label } => {
