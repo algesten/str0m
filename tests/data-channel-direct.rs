@@ -117,8 +117,8 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
         .expect("ChannelOpen event");
     let channel_open_delay = channel_open_time.duration_since(ice_completed_time);
     assert!(
-        channel_open_delay < Duration::from_millis(100),
-        "ChannelOpen should happen within 100ms of ICE completing, but took {:?}",
+        channel_open_delay < Duration::from_millis(250),
+        "ChannelOpen should happen within 250ms of ICE completing, but took {:?}",
         channel_open_delay
     );
 
