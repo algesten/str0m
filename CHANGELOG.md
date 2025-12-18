@@ -1,5 +1,6 @@
 # Unreleased
 
+  * wincrypto: queue data until handshake completes #787
   * openssl: queue data until handshake completes #787
 
 # 0.14.0
