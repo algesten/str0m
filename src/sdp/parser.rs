@@ -316,7 +316,7 @@ where
                     SocketAddr::from((addr, port)),
                     kind,
                     raddr.map(|(_, addr, _, port)| SocketAddr::from((addr, port))),
-                    tcptype,
+                    tcptype.map(|(_, tcptype)| tcptype),
                     ufrag.map(|(_, u)| u),
                 )
             },
