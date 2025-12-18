@@ -2,13 +2,7 @@
 [formatting]
 # Set column width to 150 before line breaking
 column_width = 150
-# Prevent automatic array expansion - keep arrays compact unless they exceed column_width
-array_auto_expand = false
-# Keep arrays on single line if they fit within column_width
+# Expand arrays that exceed column_width to multiple lines
+array_auto_expand = true
+# Collapse arrays to single line if they fit (but auto_expand takes precedence for long lines)
 array_auto_collapse = true
-
-# Override for wincrypto which has long feature arrays
-[[rule]]
-include = ["crypto/wincrypto/Cargo.toml"]
-[rule.formatting]
-array_auto_collapse = false
