@@ -212,7 +212,7 @@ impl Candidate {
     pub fn host_tcp(
         addr: SocketAddr,
         proto: impl TryInto<Protocol>,
-        tcptype: Option<TcpType>,
+        tcptype: TcpType,
     ) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
@@ -235,7 +235,7 @@ impl Candidate {
             Some(addr),
             CandidateKind::Host,
             None,
-            tcptype,
+            Some(tcptype),
             None,
             addr,
         ))
