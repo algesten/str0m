@@ -269,16 +269,16 @@ where
         string(" typ "),
         kind,
         optional((
-            attempt(string(" tcptype ")),
-            not_sp().and_then(|s| {
-                TcpType::from_str(s.as_str()).map_err(StreamErrorFor::<Input>::message_format)
-            }),
-        )),
-        optional((
             attempt(string(" raddr ")),
             ip_addr(),
             string(" rport "),
             port(),
+        )),
+        optional((
+            attempt(string(" tcptype ")),
+            not_sp().and_then(|s| {
+                TcpType::from_str(s.as_str()).map_err(StreamErrorFor::<Input>::message_format)
+            }),
         )),
         optional((attempt(string(" generation ")), not_sp())),
         optional((attempt(string(" network-id ")), not_sp())),
@@ -301,8 +301,8 @@ where
                 port,
                 _,
                 kind,
-                tcptype, // (" tcptype ", tcptype)
                 raddr,   // (" raddr ", addr, " rport ", port)
+                tcptype, // (" tcptype ", tcptype)
                 _,       // (" generation ", generation)
                 _,       // (" network-id ", network_id)
                 ufrag,   // (" ufrag ", ufrag)
