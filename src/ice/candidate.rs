@@ -206,6 +206,41 @@ impl Candidate {
         ))
     }
 
+    /// Creates a host tcp ICE candidate.
+    ///
+    /// Host candidates are local sockets directly on the host.
+    pub fn host_tcp(
+        addr: SocketAddr,
+        proto: impl TryInto<Protocol>,
+        tcptype: Option<TcpType>,
+    ) -> Result<Self, IceError> {
+        if !is_valid_ip(addr.ip()) {
+            return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
+        }
+
+        let proto = parse_proto(proto)?;
+        if proto == Protocol::Udp {
+            return Err(IceError::BadCandidate(format!(
+                "only tcp based candidate is allowed: {}",
+                proto
+            )));
+        }
+
+        Ok(Candidate::new(
+            None,
+            1, // only RTP
+            proto,
+            None,
+            addr,
+            Some(addr),
+            CandidateKind::Host,
+            None,
+            tcptype,
+            None,
+            addr,
+        ))
+    }
+
     /// Creates a server reflexive ICE candidate.
     ///
     /// Server reflexive candidates are local sockets mapped to external ip discovered
