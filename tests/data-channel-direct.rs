@@ -98,5 +98,29 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
         .iter()
         .any(|(_, event)| event == &Event::ChannelClose(cid)));
 
+    // Assert that ChannelOpen happens quickly after IceConnectionStateChange(Completed)
+    let ice_completed_time = l
+        .events
+        .iter()
+        .find_map(|(t, e)| match e {
+            Event::IceConnectionStateChange(str0m::IceConnectionState::Completed) => Some(*t),
+            _ => None,
+        })
+        .expect("IceConnectionStateChange(Completed) event");
+    let channel_open_time = l
+        .events
+        .iter()
+        .find_map(|(t, e)| match e {
+            Event::ChannelOpen(_, _) => Some(*t),
+            _ => None,
+        })
+        .expect("ChannelOpen event");
+    let channel_open_delay = channel_open_time.duration_since(ice_completed_time);
+    assert!(
+        channel_open_delay < Duration::from_millis(100),
+        "ChannelOpen should happen within 100ms of ICE completing, but took {:?}",
+        channel_open_delay
+    );
+
     Ok(())
 }
