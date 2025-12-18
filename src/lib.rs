@@ -1073,10 +1073,21 @@ impl Rtc {
     }
 
     pub(crate) fn new_from_config(config: RtcConfig) -> Result<Self, RtcError> {
+        let crypto_provider = config
+            .crypto_provider
+            .clone()
+            // If crypto_provider is not set in config, check process default
+            .or_else(|| CryptoProvider::get_default().cloned().map(Arc::new))
+            // Or fall back on feature flags
+            .or_else(|| Some(Arc::new(from_feature_flags())))
+            // from_feature_flags panics already, so we should never see
+            // this expect message.
+            .expect("a crash earlier if no crypto provider was set");
+
         let session = Session::new(&config);
 
         let local_creds = config.local_ice_credentials.unwrap_or_else(IceCreds::new);
-        let mut ice = IceAgent::new(local_creds, config.crypto_provider.sha1_hmac_provider);
+        let mut ice = IceAgent::new(local_creds, crypto_provider.sha1_hmac_provider);
         if config.ice_lite {
             ice.set_ice_lite(config.ice_lite);
         }
@@ -1095,22 +1106,20 @@ impl Rtc {
 
         let dtls_cert = config
             .dtls_cert
-            .or_else(|| config.crypto_provider.dtls_provider.generate_certificate())
+            .or_else(|| crypto_provider.dtls_provider.generate_certificate())
             .expect(
                 "No DTLS certificate provided and the crypto provider cannot generate one. \
              Either provide a certificate via RtcConfig::set_dtls_cert or use a \
              crypto provider that supports certificate generation.",
             );
 
-        let crypto_provider = config.crypto_provider.clone();
-
         Ok(Rtc {
             alive: true,
             ice,
             dtls: Dtls::new(
                 &dtls_cert,
-                config.crypto_provider.dtls_provider,
-                config.crypto_provider.sha256_provider,
+                crypto_provider.dtls_provider,
+                crypto_provider.sha256_provider,
             )
             .expect("DTLS to init without problem"),
             dtls_connected: false,
@@ -1893,7 +1902,7 @@ impl Rtc {
 #[derive(Debug, Clone)]
 pub struct RtcConfig {
     local_ice_credentials: Option<IceCreds>,
-    crypto_provider: Arc<crate::crypto::CryptoProvider>,
+    crypto_provider: Option<Arc<crate::crypto::CryptoProvider>>,
     dtls_cert: Option<config::DtlsCert>,
     fingerprint_verification: bool,
     ice_lite: bool,
@@ -1941,18 +1950,18 @@ impl RtcConfig {
 
     /// Set the crypto provider.
     ///
-    /// This overrides what is set in [`crate::crypto::CryptoProvider::install_default()`].
+    /// This overrides what is set in [`crate::crypto::CryptoProvider::install_process_default()`].
     pub fn set_crypto_provider(mut self, p: Arc<CryptoProvider>) -> Self {
-        self.crypto_provider = p;
+        self.crypto_provider = Some(p);
         self
     }
 
-    /// The configured crypto provider.
+    /// The configured crypto provider, if explicitly set.
     ///
-    /// Defaults to what's set in [`crate::crypto::CryptoProvider::get_default()`] followed
-    /// by a fallback to the default OpenSSL provider.
-    pub fn crypto_provider(&self) -> &Arc<CryptoProvider> {
-        &self.crypto_provider
+    /// Returns `None` if not explicitly set via [`Self::set_crypto_provider()`].
+    /// When `None`, the process default will be checked when building the [`Rtc`] instance.
+    pub fn crypto_provider(&self) -> Option<&Arc<CryptoProvider>> {
+        self.crypto_provider.as_ref()
     }
 
     /// Returns the configured DTLS certificate, if set.
@@ -2427,13 +2436,9 @@ impl BweConfig {
 
 impl Default for RtcConfig {
     fn default() -> Self {
-        let crypto_provider = CryptoProvider::get_default()
-            .cloned()
-            .unwrap_or_else(from_feature_flags);
-
         Self {
             local_ice_credentials: None,
-            crypto_provider: Arc::new(crypto_provider),
+            crypto_provider: None,
             dtls_cert: None,
             fingerprint_verification: true,
             ice_lite: false,

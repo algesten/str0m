@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Defer panic on missing crypto provider until Rtc init #792 
+
 # 0.14.1
 
   * Configure sctp to not give up INIT/data retransmissions #791
