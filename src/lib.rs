@@ -1520,7 +1520,10 @@ impl Rtc {
                         if !packets.is_empty() {
                             self.sctp.push_back_transmit(packets);
                         }
-                        break;
+
+                        // Run again since this would feed the DTLS subsystem
+                        // to produce a packet now.
+                        return self.poll_output();
                     }
                 }
                 SctpEvent::Open { id, label } => {
