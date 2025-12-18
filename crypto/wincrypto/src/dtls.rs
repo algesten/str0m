@@ -57,6 +57,7 @@ impl DtlsProvider for WinCryptoDtlsProvider {
         Ok(Box::new(WinCryptoDtlsInstance {
             dtls,
             pending_outputs: VecDeque::new(),
+            queued_app_data: VecDeque::new(),
             last_timeout: None,
         }))
     }
@@ -69,6 +70,8 @@ impl DtlsProvider for WinCryptoDtlsProvider {
 struct WinCryptoDtlsInstance {
     dtls: Dtls,
     pending_outputs: VecDeque<PendingOutput>,
+    /// Application data queued before handshake completes.
+    queued_app_data: VecDeque<Vec<u8>>,
     /// The last time we were given via handle_timeout, used for calculating next timeout.
     last_timeout: Option<Instant>,
 }
@@ -121,6 +124,22 @@ impl WinCryptoDtlsInstance {
             }
         }
     }
+
+    /// Flush any application data queued before handshake completed.
+    fn flush_queued_app_data(&mut self) -> Result<(), DtlsImplError> {
+        while let Some(queued) = self.queued_app_data.pop_front() {
+            let sent = self
+                .dtls
+                .send_data(&queued)
+                .map_err(|e| DtlsImplError::CryptoError(format!("DTLS send: {}", e)))?;
+            if !sent {
+                // Handshake not complete yet, put data back
+                self.queued_app_data.push_front(queued);
+                break;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl DtlsInstance for WinCryptoDtlsInstance {
@@ -136,6 +155,12 @@ impl DtlsInstance for WinCryptoDtlsInstance {
 
         // Store the event for poll_output to retrieve
         self.process_dtls_event(event);
+
+        // If we just became connected, flush any queued application data
+        if self.dtls.is_connected() {
+            self.flush_queued_app_data()?;
+        }
+
         Ok(())
     }
 
@@ -185,6 +210,16 @@ impl DtlsInstance for WinCryptoDtlsInstance {
     }
 
     fn send_application_data(&mut self, data: &[u8]) -> Result<(), DtlsImplError> {
+        // If handshake not complete, queue for later
+        if !self.dtls.is_connected() {
+            self.queued_app_data.push_back(data.to_vec());
+            return Ok(());
+        }
+
+        // Flush any queued data first
+        self.flush_queued_app_data()?;
+
+        // Now send current data
         self.dtls
             .send_data(data)
             .map_err(|e| DtlsImplError::CryptoError(format!("DTLS send: {}", e)))?;
