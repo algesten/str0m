@@ -1,5 +1,7 @@
 # Unreleased
 
+  * openssl: queue data until handshake completes #787
+
 # 0.14.0
 
   * RTT as Duration #756
@@ -32,7 +34,7 @@
   * Fix bug in PT remapping to unlocked PTs #734
   * Fix PT conflict when using Firefox #730
   * Rename Sample level API -> Frame level API #732
-  * Add new non-openssl DTLS under `dimpl` feature #708  
+  * Add new non-openssl DTLS under `dimpl` feature #708
   * Expose packetizers under `unversioned` feature #718
   * Fix bug when TWCC sequence starts above 32768 #717
 
