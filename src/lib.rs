@@ -1409,227 +1409,232 @@ impl Rtc {
             return Ok(Output::Timeout(not_happening()));
         }
 
-        while let Some(e) = self.ice.poll_event() {
-            match e {
-                IceAgentEvent::IceRestart(_) => {
-                    //
-                }
-                IceAgentEvent::IceConnectionStateChange(v) => {
-                    return Ok(Output::Event(Event::IceConnectionStateChange(v)))
-                }
-                IceAgentEvent::DiscoveredRecv { proto, source } => {
-                    debug!("ICE remote address: {:?}/{:?}", Pii(source), proto);
-                    self.remote_addrs.push(source);
-                    while self.remote_addrs.len() > 20 {
-                        self.remote_addrs.remove(0);
+        'do_poll_output: loop {
+            while let Some(e) = self.ice.poll_event() {
+                match e {
+                    IceAgentEvent::IceRestart(_) => {
+                        //
                     }
-                }
-                IceAgentEvent::NominatedSend {
-                    proto,
-                    source,
-                    destination,
-                } => {
-                    debug!(
-                        "ICE nominated send from: {:?} to: {:?} with protocol {:?}",
-                        Pii(source),
-                        Pii(destination),
-                        proto,
-                    );
-                    self.send_addr = Some(SendAddr {
+                    IceAgentEvent::IceConnectionStateChange(v) => {
+                        return Ok(Output::Event(Event::IceConnectionStateChange(v)))
+                    }
+                    IceAgentEvent::DiscoveredRecv { proto, source } => {
+                        debug!("ICE remote address: {:?}/{:?}", Pii(source), proto);
+                        self.remote_addrs.push(source);
+                        while self.remote_addrs.len() > 20 {
+                            self.remote_addrs.remove(0);
+                        }
+                    }
+                    IceAgentEvent::NominatedSend {
                         proto,
                         source,
                         destination,
-                    });
-                }
-            }
-        }
-
-        // Poll DTLS output - collect packets, handle events
-        let mut just_connected = false;
-        loop {
-            match self.dtls.poll_output(&mut self.dtls_buf) {
-                DtlsOutput::Packet(data) => {
-                    self.pending_dtls_packets.push_back(data.to_vec().into());
-                }
-                DtlsOutput::Connected => {
-                    if !self.dtls_connected {
-                        debug!("DTLS connected");
-                        self.dtls_connected = true;
-                        just_connected = true;
+                    } => {
+                        debug!(
+                            "ICE nominated send from: {:?} to: {:?} with protocol {:?}",
+                            Pii(source),
+                            Pii(destination),
+                            proto,
+                        );
+                        self.send_addr = Some(SendAddr {
+                            proto,
+                            source,
+                            destination,
+                        });
                     }
                 }
-                DtlsOutput::KeyingMaterial(km, profile) => {
-                    use config::KeyingMaterial;
-                    let km_bytes = km.as_ref().to_vec();
-                    debug!("DTLS set SRTP keying material and profile: {}", profile);
-                    let active = self.dtls.is_active().expect("DTLS must be inited by now");
-                    self.session.set_keying_material(
-                        KeyingMaterial::new(&km_bytes),
-                        &self.crypto_provider,
-                        profile,
-                        active,
-                    );
-                }
-                DtlsOutput::PeerCert(der) => {
-                    debug!("DTLS verify remote fingerprint");
-                    // Compute fingerprint from peer's DER certificate
-                    let fingerprint = crate::crypto::Fingerprint {
-                        hash_func: "sha-256".to_string(),
-                        bytes: self.crypto_provider.sha256_provider.sha256(der).to_vec(),
-                    };
-                    self.dtls.set_remote_fingerprint(fingerprint.clone());
-                    if let Some(expected) = &self.remote_fingerprint {
-                        if !self.fingerprint_verification {
-                            debug!("DTLS fingerprint verification disabled");
-                        } else if fingerprint != *expected {
-                            self.disconnect();
-                            return Err(RtcError::RemoteSdp("remote fingerprint no match".into()));
+            }
+
+            // Poll DTLS output - collect packets, handle events
+            let mut just_connected = false;
+            loop {
+                match self.dtls.poll_output(&mut self.dtls_buf) {
+                    DtlsOutput::Packet(data) => {
+                        self.pending_dtls_packets.push_back(data.to_vec().into());
+                    }
+                    DtlsOutput::Connected => {
+                        if !self.dtls_connected {
+                            debug!("DTLS connected");
+                            self.dtls_connected = true;
+                            just_connected = true;
                         }
-                    } else {
-                        self.disconnect();
-                        return Err(RtcError::RemoteSdp("no a=fingerprint before dtls".into()));
                     }
-                }
-                DtlsOutput::ApplicationData(data) => {
-                    self.sctp.handle_input(self.last_now, data);
-                }
-                DtlsOutput::Timeout(t) => {
-                    self.next_dtls_timeout = Some(t);
-                    break;
-                }
-            }
-        }
-
-        if just_connected {
-            return Ok(Output::Event(Event::Connected));
-        }
-
-        while let Some(e) = self.sctp.poll() {
-            match e {
-                SctpEvent::Transmit { mut packets } => {
-                    if let Some(v) = packets.front() {
-                        if let Err(e) = self.dtls.handle_input(v) {
-                            if is_would_block(&e) {
-                                self.sctp.push_back_transmit(packets);
-                                break;
-                            } else {
-                                return Err(e.into());
+                    DtlsOutput::KeyingMaterial(km, profile) => {
+                        use config::KeyingMaterial;
+                        let km_bytes = km.as_ref().to_vec();
+                        debug!("DTLS set SRTP keying material and profile: {}", profile);
+                        let active = self.dtls.is_active().expect("DTLS must be inited by now");
+                        self.session.set_keying_material(
+                            KeyingMaterial::new(&km_bytes),
+                            &self.crypto_provider,
+                            profile,
+                            active,
+                        );
+                    }
+                    DtlsOutput::PeerCert(der) => {
+                        debug!("DTLS verify remote fingerprint");
+                        // Compute fingerprint from peer's DER certificate
+                        let fingerprint = crate::crypto::Fingerprint {
+                            hash_func: "sha-256".to_string(),
+                            bytes: self.crypto_provider.sha256_provider.sha256(der).to_vec(),
+                        };
+                        self.dtls.set_remote_fingerprint(fingerprint.clone());
+                        if let Some(expected) = &self.remote_fingerprint {
+                            if !self.fingerprint_verification {
+                                debug!("DTLS fingerprint verification disabled");
+                            } else if fingerprint != *expected {
+                                self.disconnect();
+                                return Err(RtcError::RemoteSdp(
+                                    "remote fingerprint no match".into(),
+                                ));
                             }
+                        } else {
+                            self.disconnect();
+                            return Err(RtcError::RemoteSdp("no a=fingerprint before dtls".into()));
                         }
-                        packets.pop_front();
-                        // If there are still packets, they are sent on next
-                        // poll_output()
-                        if !packets.is_empty() {
-                            self.sctp.push_back_transmit(packets);
-                        }
+                    }
+                    DtlsOutput::ApplicationData(data) => {
+                        self.sctp.handle_input(self.last_now, data);
+                    }
+                    DtlsOutput::Timeout(t) => {
+                        self.next_dtls_timeout = Some(t);
                         break;
                     }
                 }
-                SctpEvent::Open { id, label } => {
-                    self.chan.ensure_channel_id_for(id);
-                    let id = self.chan.channel_id_by_stream_id(id).unwrap();
-                    return Ok(Output::Event(Event::ChannelOpen(id, label)));
-                }
-                SctpEvent::Close { id } => {
-                    let Some(id) = self.chan.channel_id_by_stream_id(id) else {
-                        warn!("Drop ChannelClose event for id: {:?}", id);
-                        continue;
-                    };
-                    self.chan.remove_channel(id);
-                    return Ok(Output::Event(Event::ChannelClose(id)));
-                }
-                SctpEvent::Data { id, binary, data } => {
-                    let Some(id) = self.chan.channel_id_by_stream_id(id) else {
-                        warn!("Drop ChannelData event for id: {:?}", id);
-                        continue;
-                    };
-                    let cd = ChannelData { id, binary, data };
-                    return Ok(Output::Event(Event::ChannelData(cd)));
-                }
-                SctpEvent::BufferedAmountLow { id } => {
-                    let Some(id) = self.chan.channel_id_by_stream_id(id) else {
-                        warn!("Drop BufferedAmountLow for id: {:?}", id);
-                        continue;
-                    };
-                    return Ok(Output::Event(Event::ChannelBufferedAmountLow(id)));
+            }
+
+            if just_connected {
+                return Ok(Output::Event(Event::Connected));
+            }
+
+            while let Some(e) = self.sctp.poll() {
+                match e {
+                    SctpEvent::Transmit { mut packets } => {
+                        if let Some(v) = packets.front() {
+                            if let Err(e) = self.dtls.handle_input(v) {
+                                if is_would_block(&e) {
+                                    self.sctp.push_back_transmit(packets);
+                                    break;
+                                } else {
+                                    return Err(e.into());
+                                }
+                            } else {
+                                packets.pop_front();
+                                // If there are still packets, they are sent on next
+                                // poll_output()
+                                if !packets.is_empty() {
+                                    self.sctp.push_back_transmit(packets);
+                                }
+                                continue 'do_poll_output; // Process from the top again so DTLS may handle as needed.
+                            }
+                        }
+                    }
+                    SctpEvent::Open { id, label } => {
+                        self.chan.ensure_channel_id_for(id);
+                        let id = self.chan.channel_id_by_stream_id(id).unwrap();
+                        return Ok(Output::Event(Event::ChannelOpen(id, label)));
+                    }
+                    SctpEvent::Close { id } => {
+                        let Some(id) = self.chan.channel_id_by_stream_id(id) else {
+                            warn!("Drop ChannelClose event for id: {:?}", id);
+                            continue;
+                        };
+                        self.chan.remove_channel(id);
+                        return Ok(Output::Event(Event::ChannelClose(id)));
+                    }
+                    SctpEvent::Data { id, binary, data } => {
+                        let Some(id) = self.chan.channel_id_by_stream_id(id) else {
+                            warn!("Drop ChannelData event for id: {:?}", id);
+                            continue;
+                        };
+                        let cd = ChannelData { id, binary, data };
+                        return Ok(Output::Event(Event::ChannelData(cd)));
+                    }
+                    SctpEvent::BufferedAmountLow { id } => {
+                        let Some(id) = self.chan.channel_id_by_stream_id(id) else {
+                            warn!("Drop BufferedAmountLow for id: {:?}", id);
+                            continue;
+                        };
+                        return Ok(Output::Event(Event::ChannelBufferedAmountLow(id)));
+                    }
                 }
             }
-        }
 
-        if let Some(ev) = self.session.poll_event() {
-            return Ok(Output::Event(ev));
-        }
-
-        // Some polling needs to bubble up errors.
-        if let Some(ev) = self.session.poll_event_fallible()? {
-            return Ok(Output::Event(ev));
-        }
-
-        if let Some(e) = self.stats.as_mut().and_then(|s| s.poll_output()) {
-            return Ok(match e {
-                StatsEvent::Peer(s) => Output::Event(Event::PeerStats(s)),
-                StatsEvent::MediaIngress(s) => Output::Event(Event::MediaIngressStats(s)),
-                StatsEvent::MediaEgress(s) => Output::Event(Event::MediaEgressStats(s)),
-            });
-        }
-
-        if let Some(v) = self.ice.poll_transmit() {
-            return Ok(Output::Transmit(v));
-        }
-
-        if let Some(send) = &self.send_addr {
-            // These can only be sent after we got an ICE connection.
-            let datagram = None
-                .or_else(|| self.pending_dtls_packets.pop_front())
-                .or_else(|| self.session.poll_datagram(self.last_now));
-
-            if let Some(contents) = datagram {
-                let t = net::Transmit {
-                    proto: send.proto,
-                    source: send.source,
-                    destination: send.destination,
-                    contents,
-                };
-                return Ok(Output::Transmit(t));
+            if let Some(ev) = self.session.poll_event() {
+                return Ok(Output::Event(ev));
             }
-        } else {
-            // Don't allow accumulated feedback to build up indefinitely
-            self.session.clear_feedback();
-        }
 
-        let stats = self.stats.as_mut();
-
-        // Handle DTLS timeout
-        if let Some(timeout) = self.next_dtls_timeout {
-            if timeout <= self.last_now {
-                let _ = self.dtls.handle_timeout(self.last_now);
-                self.next_dtls_timeout = None;
+            // Some polling needs to bubble up errors.
+            if let Some(ev) = self.session.poll_event_fallible()? {
+                return Ok(Output::Event(ev));
             }
+
+            if let Some(e) = self.stats.as_mut().and_then(|s| s.poll_output()) {
+                return Ok(match e {
+                    StatsEvent::Peer(s) => Output::Event(Event::PeerStats(s)),
+                    StatsEvent::MediaIngress(s) => Output::Event(Event::MediaIngressStats(s)),
+                    StatsEvent::MediaEgress(s) => Output::Event(Event::MediaEgressStats(s)),
+                });
+            }
+
+            if let Some(v) = self.ice.poll_transmit() {
+                return Ok(Output::Transmit(v));
+            }
+
+            if let Some(send) = &self.send_addr {
+                // These can only be sent after we got an ICE connection.
+                let datagram = None
+                    .or_else(|| self.pending_dtls_packets.pop_front())
+                    .or_else(|| self.session.poll_datagram(self.last_now));
+
+                if let Some(contents) = datagram {
+                    let t = net::Transmit {
+                        proto: send.proto,
+                        source: send.source,
+                        destination: send.destination,
+                        contents,
+                    };
+                    return Ok(Output::Transmit(t));
+                }
+            } else {
+                // Don't allow accumulated feedback to build up indefinitely
+                self.session.clear_feedback();
+            }
+
+            let stats = self.stats.as_mut();
+
+            // Handle DTLS timeout
+            if let Some(timeout) = self.next_dtls_timeout {
+                if timeout <= self.last_now {
+                    let _ = self.dtls.handle_timeout(self.last_now);
+                    self.next_dtls_timeout = None;
+                }
+            }
+
+            let time_and_reason = (None, Reason::NotHappening)
+                .soonest((self.next_dtls_timeout, Reason::DTLS))
+                .soonest((self.ice.poll_timeout(), Reason::Ice))
+                .soonest(self.session.poll_timeout())
+                .soonest((self.sctp.poll_timeout(), Reason::Sctp))
+                .soonest((self.chan.poll_timeout(&self.sctp), Reason::Channel))
+                .soonest((stats.and_then(|s| s.poll_timeout()), Reason::Stats));
+
+            // trace!("poll_output timeout reason: {}", time_and_reason.1);
+
+            let time = time_and_reason.0.unwrap_or_else(not_happening);
+            let reason = time_and_reason.1;
+
+            // We want to guarantee time doesn't go backwards.
+            let next = if time < self.last_now {
+                self.last_now
+            } else {
+                time
+            };
+
+            self.last_timeout_reason = reason;
+
+            return Ok(Output::Timeout(next));
         }
-
-        let time_and_reason = (None, Reason::NotHappening)
-            .soonest((self.next_dtls_timeout, Reason::DTLS))
-            .soonest((self.ice.poll_timeout(), Reason::Ice))
-            .soonest(self.session.poll_timeout())
-            .soonest((self.sctp.poll_timeout(), Reason::Sctp))
-            .soonest((self.chan.poll_timeout(&self.sctp), Reason::Channel))
-            .soonest((stats.and_then(|s| s.poll_timeout()), Reason::Stats));
-
-        // trace!("poll_output timeout reason: {}", time_and_reason.1);
-
-        let time = time_and_reason.0.unwrap_or_else(not_happening);
-        let reason = time_and_reason.1;
-
-        // We want to guarantee time doesn't go backwards.
-        let next = if time < self.last_now {
-            self.last_now
-        } else {
-            time
-        };
-
-        self.last_timeout_reason = reason;
-
-        Ok(Output::Timeout(next))
     }
 
     /// The reason for the last [`Output::Timeout`]
