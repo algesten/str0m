@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::io;
 use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::time::Instant;
@@ -7,6 +8,8 @@ use crate::crypto::dtls::{DtlsInstance, DtlsProvider};
 use crate::crypto::Fingerprint;
 use crate::crypto::Sha256Provider;
 use crate::crypto::{CryptoError, DtlsError};
+use crate::io::DatagramSend;
+use crate::util::already_happened;
 
 /// Encapsulation of DTLS.
 ///
@@ -24,6 +27,9 @@ pub struct Dtls {
 
     /// Whether set_active has been called.
     active_state: Option<bool>,
+
+    /// Packets to be sent.
+    pending_packets: VecDeque<DatagramSend>,
 }
 
 pub(crate) fn is_would_block(error: &DtlsError) -> bool {
@@ -62,6 +68,7 @@ impl Dtls {
             fingerprint,
             remote_fingerprint: None,
             active_state: None,
+            pending_packets: VecDeque::new(),
         })
     }
 
@@ -98,7 +105,20 @@ impl Dtls {
 
     /// Poll for output from the DTLS instance.
     pub fn poll_output<'a>(&mut self, buf: &'a mut [u8]) -> DtlsOutput<'a> {
-        self.instance.poll_output(buf)
+        let next = self.instance.poll_output(buf);
+
+        if let DtlsOutput::Packet(packet) = next {
+            self.pending_packets.push_back(packet.to_vec().into());
+
+            // Return timeout indicating we want another poll straight away
+            return DtlsOutput::Timeout(already_happened());
+        }
+
+        next
+    }
+
+    pub fn poll_packet(&mut self) -> Option<DatagramSend> {
+        self.pending_packets.pop_front()
     }
 
     /// Handle an incoming DTLS packet.
