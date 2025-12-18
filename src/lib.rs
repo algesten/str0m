@@ -807,7 +807,6 @@ pub struct Rtc {
     dtls: Dtls,
     dtls_connected: bool,
     dtls_buf: Vec<u8>,
-    pending_dtls_packets: std::collections::VecDeque<net::DatagramSend>,
     next_dtls_timeout: Option<Instant>,
     sctp: RtcSctp,
     chan: ChannelHandler,
@@ -1124,7 +1123,6 @@ impl Rtc {
             .expect("DTLS to init without problem"),
             dtls_connected: false,
             dtls_buf: vec![0; 2000],
-            pending_dtls_packets: std::collections::VecDeque::new(),
             next_dtls_timeout: None,
             session,
             sctp: RtcSctp::new(),
@@ -1448,8 +1446,8 @@ impl Rtc {
         let mut just_connected = false;
         loop {
             match self.dtls.poll_output(&mut self.dtls_buf) {
-                DtlsOutput::Packet(data) => {
-                    self.pending_dtls_packets.push_back(data.to_vec().into());
+                DtlsOutput::Packet(_) => {
+                    unreachable!("We don't expect DTLS packets here since we use poll_packet");
                 }
                 DtlsOutput::Connected => {
                     if !self.dtls_connected {
@@ -1516,13 +1514,17 @@ impl Rtc {
                                 return Err(e.into());
                             }
                         }
+
                         packets.pop_front();
                         // If there are still packets, they are sent on next
                         // poll_output()
                         if !packets.is_empty() {
                             self.sctp.push_back_transmit(packets);
                         }
-                        break;
+
+                        // Run again since this would feed the DTLS subsystem
+                        // to produce a packet now.
+                        return self.do_poll_output();
                     }
                 }
                 SctpEvent::Open { id, label } => {
@@ -1580,7 +1582,7 @@ impl Rtc {
         if let Some(send) = &self.send_addr {
             // These can only be sent after we got an ICE connection.
             let datagram = None
-                .or_else(|| self.pending_dtls_packets.pop_front())
+                .or_else(|| self.dtls.poll_packet())
                 .or_else(|| self.session.poll_datagram(self.last_now));
 
             if let Some(contents) = datagram {
