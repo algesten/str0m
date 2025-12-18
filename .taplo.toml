@@ -6,3 +6,9 @@ column_width = 150
 array_auto_expand = false
 # Keep arrays on single line if they fit within column_width
 array_auto_collapse = true
+
+# Override for wincrypto which has long feature arrays
+[[rule]]
+include = ["crypto/wincrypto/Cargo.toml"]
+[rule.formatting]
+array_auto_collapse = false
