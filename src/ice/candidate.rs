@@ -1,5 +1,5 @@
 use super::IceError;
-use crate::io::Protocol;
+use crate::io::{Protocol, TcpType};
 use crate::sdp::parse_candidate;
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
@@ -59,6 +59,9 @@ pub struct Candidate {
 
     /// Type of candidate.
     kind: CandidateKind, // host/srflx/prflx/relay
+
+    /// Type of tcp mode when "tcptype" is defined
+    tcptype: Option<TcpType>,
 
     /// Related address.
     ///
@@ -127,6 +130,7 @@ impl Candidate {
         base: Option<SocketAddr>,
         kind: CandidateKind,
         raddr: Option<SocketAddr>,
+        tcptype: Option<TcpType>,
         ufrag: Option<String>,
         local: SocketAddr,
     ) -> Self {
@@ -139,6 +143,7 @@ impl Candidate {
             base,
             kind,
             raddr,
+            tcptype,
             ufrag,
             local,
             local_preference: None,
@@ -155,6 +160,7 @@ impl Candidate {
         addr: SocketAddr,
         kind: CandidateKind,
         raddr: Option<SocketAddr>,
+        tcptype: Option<TcpType>,
         ufrag: Option<String>,
     ) -> Self {
         Candidate::new(
@@ -166,6 +172,7 @@ impl Candidate {
             None,
             kind,
             raddr,
+            tcptype,
             ufrag,
             match kind {
                 CandidateKind::Host => addr,
@@ -192,6 +199,7 @@ impl Candidate {
             addr,
             Some(addr),
             CandidateKind::Host,
+            None,
             None,
             None,
             addr,
@@ -228,6 +236,7 @@ impl Candidate {
             CandidateKind::ServerReflexive,
             Some(Self::arbitrary_raddr(addr)),
             None,
+            None,
             base,
         ))
     }
@@ -261,6 +270,7 @@ impl Candidate {
             CandidateKind::Relayed,
             Some(Self::arbitrary_raddr(addr)),
             None,
+            None,
             local,
         ))
     }
@@ -291,6 +301,7 @@ impl Candidate {
             addr,
             Some(base),
             CandidateKind::PeerReflexive,
+            None,
             None,
             Some(ufrag),
             base,
@@ -330,6 +341,7 @@ impl Candidate {
             addr,
             Some(base),
             CandidateKind::PeerReflexive,
+            None,
             None,
             None,
             base,
@@ -503,6 +515,11 @@ impl Candidate {
         );
         if let Some(raddr) = &self.raddr {
             s.push_str(&format!(" raddr {} rport {}", raddr.ip(), raddr.port()))
+        }
+        // https://datatracker.ietf.org/doc/html/rfc6544#section-4.5
+        // the RFC requires tcptype to be defined strictly after raddr if exists.
+        if let Some(tcptype) = &self.tcptype {
+            s.push_str(&format!(" tcptype {}", tcptype));
         }
         if let Some(ufrag) = &self.ufrag {
             s.push_str(&format!(" ufrag {}", ufrag));

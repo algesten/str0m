@@ -5,8 +5,10 @@ use combine::stream::StreamErrorFor;
 use combine::*;
 use combine::{ParseError, Parser, Stream};
 use std::net::{IpAddr, SocketAddr};
+use std::str::FromStr;
 
 use crate::crypto::Fingerprint;
+use crate::io::TcpType;
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, SessionId, Ssrc};
 use crate::sdp::SdpError;
 use crate::{Candidate, CandidateKind};
@@ -266,7 +268,12 @@ where
         port(),
         string(" typ "),
         kind,
-        optional((attempt(string(" tcptype ")), not_sp())),
+        optional((
+            attempt(string(" tcptype ")),
+            not_sp().and_then(|s| {
+                TcpType::from_str(s.as_str()).map_err(StreamErrorFor::<Input>::message_format)
+            }),
+        )),
         optional((
             attempt(string(" raddr ")),
             ip_addr(),
@@ -294,12 +301,12 @@ where
                 port,
                 _,
                 kind,
-                _,     // (" tcptype ", tcptype)
-                raddr, // (" raddr ", addr, " rport ", port)
-                _,     // (" generation ", generation)
-                _,     // (" network-id ", network_id)
-                ufrag, // (" ufrag ", ufrag)
-                _,     // ("network-cost", network_cost)
+                tcptype, // (" tcptype ", tcptype)
+                raddr,   // (" raddr ", addr, " rport ", port)
+                _,       // (" generation ", generation)
+                _,       // (" network-id ", network_id)
+                ufrag,   // (" ufrag ", ufrag)
+                _,       // ("network-cost", network_cost)
             )| {
                 Candidate::parsed(
                     found,
@@ -309,6 +316,7 @@ where
                     SocketAddr::from((addr, port)),
                     kind,
                     raddr.map(|(_, addr, _, port)| SocketAddr::from((addr, port))),
+                    tcptype,
                     ufrag.map(|(_, u)| u),
                 )
             },
