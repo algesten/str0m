@@ -436,6 +436,8 @@ pub(super) struct OsslDtlsInstance {
     pending_keying_material: Option<(Vec<u8>, SrtpProfile)>,
     pending_peer_cert: Option<Vec<u8>>,
     pending_application_data: VecDeque<Vec<u8>>,
+    /// Application data queued before handshake completes
+    queued_app_data: VecDeque<Vec<u8>>,
     next_timeout: Option<Instant>,
     connected_emitted: bool,
 }
@@ -455,6 +457,7 @@ impl OsslDtlsInstance {
             pending_keying_material: None,
             pending_peer_cert: None,
             pending_application_data: VecDeque::new(),
+            queued_app_data: VecDeque::new(),
             next_timeout: None,
             connected_emitted: false,
         })
@@ -478,6 +481,18 @@ impl OsslDtlsInstance {
         if let Some(timeout) = self.inner.poll_timeout(Instant::now()) {
             self.next_timeout = Some(timeout);
         }
+    }
+
+    /// Flush any application data that was queued before the handshake completed.
+    fn flush_queued_app_data(&mut self) -> Result<(), DtlsImplError> {
+        while let Some(queued) = self.queued_app_data.pop_front() {
+            if let Err(e) = self.inner.handle_input(&queued) {
+                self.queued_app_data.push_front(queued);
+                return Err(DtlsImplError::CryptoError(format!("DTLS error: {}", e)));
+            }
+            self.collect_output();
+        }
+        Ok(())
     }
 }
 
@@ -507,6 +522,12 @@ impl DtlsInstance for OsslDtlsInstance {
         }
 
         self.collect_output();
+
+        // If we just became connected, flush any queued application data
+        if self.inner.is_connected() {
+            self.flush_queued_app_data()?;
+        }
+
         Ok(())
     }
 
@@ -575,12 +596,17 @@ impl DtlsInstance for OsslDtlsInstance {
     }
 
     fn send_application_data(&mut self, data: &[u8]) -> Result<(), DtlsImplError> {
+        // If handshake not complete, queue for later
+        if !self.inner.is_connected() {
+            self.queued_app_data.push_back(data.to_vec());
+            return Ok(());
+        }
+
+        // Flush any queued data first
+        self.flush_queued_app_data()?;
+
+        // Now send current data
         if let Err(e) = self.inner.handle_input(data) {
-            if let CryptoError::Io(ref io_err) = e {
-                if io_err.kind() == std::io::ErrorKind::WouldBlock {
-                    return Ok(());
-                }
-            }
             return Err(DtlsImplError::CryptoError(format!("DTLS error: {}", e)));
         }
 
