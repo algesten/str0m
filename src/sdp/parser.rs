@@ -219,6 +219,7 @@ where
     Input: Stream<Token = char>,
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
 {
+    // Reference: https://datatracker.ietf.org/doc/html/rfc5245#section-15.1
     let port = || {
         not_sp::<Input>().and_then(|s| {
             s.parse::<u16>()
@@ -1252,6 +1253,7 @@ mod test {
                 .parse()
                 .unwrap()
         );
+        assert_eq!(c.proto(), Protocol::Udp);
 
         let a = "a=candidate:2113932030 1 tcp 2113932030 142.250.82.253 19305 typ host tcptype passive generation 0";
         let (c, _) = candidate_attribute().parse(a).unwrap();
