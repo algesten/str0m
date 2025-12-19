@@ -206,13 +206,18 @@ impl Candidate {
         ))
     }
 
-    /// Creates a host tcp ICE candidate.
+    /// Creates a host tcp ICE candidate. Similar to [`host`] except it includes `tcptype` extension to define
+    /// the candidate's tcp role. Specifying `None` is usually used to respond to an offer, and the
+    /// meaning is application dependent.
+    ///
+    /// e.g. if the offer includes "active" tcptype, the answerer may respond with None, but
+    /// assuming either "passive" or "so" role.
     ///
     /// Host candidates are local sockets directly on the host.
     pub fn host_tcp(
         addr: SocketAddr,
         proto: impl TryInto<Protocol>,
-        tcptype: TcpType,
+        tcptype: Option<TcpType>,
     ) -> Result<Self, IceError> {
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
@@ -235,7 +240,7 @@ impl Candidate {
             Some(addr),
             CandidateKind::Host,
             None,
-            Some(tcptype),
+            tcptype,
             None,
             addr,
         ))
