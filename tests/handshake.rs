@@ -204,7 +204,7 @@ fn run_rtc_loop_with_exchange(
                 state = DataExchangeState::Complete;
             }
             Ok(_) => {
-                // Unexpected message type
+                unreachable!("Unexpected message type");
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 println!("[{}] Timeout fired, calling handle_input(Timeout)", role);
@@ -341,16 +341,21 @@ pub fn handshake_two_threads() -> Result<(), RtcError> {
         // Parse and accept the offer
         let offer = SdpOffer::from_sdp_string(&offer).expect("Failed to parse offer SDP");
 
-        // Add pre-negotiated data channel with id 0 using SDP API
-        // For pre-negotiated channels, apply() returns None and confirms the channel
+        // Accept the offer
+        let answer = rtc.sdp_api().accept_offer(offer)?;
+
+        // Confirm the pre-negotiated data channel locally (no extra negotiation needed)
         let mut changes = rtc.sdp_api();
         changes.add_channel_with_config(ChannelConfig {
             label: "test-channel".into(),
             negotiated: Some(0),
             ..Default::default()
         });
-        // Accept the offer using the same SdpApi instance
-        let answer = changes.accept_offer(offer)?;
+        let applied = changes.apply();
+        debug_assert!(
+            applied.is_none(),
+            "AddChannel should not require negotiation"
+        );
 
         // Send answer back to client
         server_tx
