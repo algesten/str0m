@@ -47,12 +47,30 @@ pub enum Protocol {
     Tls,
 }
 
-// https://datatracker.ietf.org/doc/html/rfc6544#section-4.5
-// This defines TCP Type when "tcptype" extension is used in SDP.
+/// TCP connection role as defined by the `tcptype` SDP attribute.
+///
+/// This enum corresponds to the TCP connection setup modes defined in
+/// [RFC 6544 §4.5](https://datatracker.ietf.org/doc/html/rfc6544#section-4.5),
+/// which specifies how endpoints establish TCP connections when TCP is used
+/// as a transport for media streams.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TcpType {
+    /// The endpoint actively initiates the TCP connection.
+    ///
+    /// In this mode, the endpoint performs an active open (i.e., sends a SYN)
+    /// to the remote peer.
     Active,
+
+    /// The endpoint passively waits for an incoming TCP connection.
+    ///
+    /// In this mode, the endpoint performs a passive open (i.e., listens)
+    /// and accepts a connection initiated by the remote peer.
     Passive,
+
+    /// Simultaneous open.
+    ///
+    /// Both endpoints attempt to actively open a TCP connection to each other
+    /// at the same time. This relies on TCP simultaneous open behavior.
     So,
 }
 
