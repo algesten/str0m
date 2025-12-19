@@ -8,7 +8,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
 use crate::crypto::Fingerprint;
-use crate::io::TcpType;
+use crate::io::{Protocol, TcpType};
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, SessionId, Ssrc};
 use crate::sdp::SdpError;
 use crate::{Candidate, CandidateKind};
@@ -1218,7 +1218,7 @@ mod test {
     }
 
     #[test]
-    fn parse_candidate_ufrag() {
+    fn parse_candidates() {
         let a = "a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ srflx raddr 203.0.113.100 rport 10100 ufrag abc\r\n";
 
         let (c, _) = candidate_attribute().parse(a).unwrap();
@@ -1243,6 +1243,28 @@ mod test {
         let a = "a=candidate:387183333 1 udp 1686052607 113.185.55.72 41775 typ srflx raddr 10.217.229.219 rport 50028 generation 0 network-id 1 network-cost 900";
         let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(c.addr(), "113.185.55.72:41775".parse().unwrap());
+
+        let a = "a=candidate:3936339338 1 udp 2122265343 fd00:f8aa:3ff5:5914:90bf:3c5:3378:9d4b 59125 typ host generation 0 network-id 4 network-cost 50";
+        let (c, _) = candidate_attribute().parse(a).unwrap();
+        assert_eq!(
+            c.addr(),
+            "[fd00:f8aa:3ff5:5914:90bf:3c5:3378:9d4b]:59125"
+                .parse()
+                .unwrap()
+        );
+
+        let a = "a=candidate:2113932030 1 tcp 2113932030 142.250.82.253 19305 typ host tcptype passive generation 0";
+        let (c, _) = candidate_attribute().parse(a).unwrap();
+        assert_eq!(c.addr(), "142.250.82.253:19305".parse().unwrap());
+        assert_eq!(c.proto(), Protocol::Tcp);
+        assert_eq!(c.tcptype(), Some(TcpType::Passive));
+
+        let a =
+            "a=candidate:2113932029 1 ssltcp 2113932029 142.250.82.252 443 typ host generation 0";
+        let (c, _) = candidate_attribute().parse(a).unwrap();
+        assert_eq!(c.addr(), "142.250.82.252:443".parse().unwrap());
+        assert_eq!(c.proto(), Protocol::SslTcp);
+        assert_eq!(c.tcptype(), None);
     }
 
     #[test]
