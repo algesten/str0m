@@ -60,7 +60,8 @@ pub struct Candidate {
     /// Type of candidate.
     kind: CandidateKind, // host/srflx/prflx/relay
 
-    /// Type of tcp mode when "tcptype" is defined
+    /// TCP connection role specified by the optional `tcptype` ICE candidate
+    /// extension.
     tcptype: Option<TcpType>,
 
     /// Related address.
@@ -811,6 +812,27 @@ mod tests {
     fn bad_candidate() {
         let s = "candidate:12344 bad value";
         assert!(Candidate::from_sdp_string(s).is_err());
+    }
+
+    #[test]
+    fn tcp_candidates_sanity() {
+        let socket_addr = "1.2.3.4:9876".parse().unwrap();
+        assert!(Candidate::host_tcp(socket_addr, Protocol::Udp, None).is_err());
+
+        let socket_addr = "1.2.3.4:9876".parse().unwrap();
+        let candidates = [
+            Candidate::host(socket_addr, Protocol::Tcp).unwrap(),
+            Candidate::host_tcp(socket_addr, Protocol::Tcp, None).unwrap(),
+            Candidate::host_tcp(socket_addr, Protocol::Tcp, Some(TcpType::Passive)).unwrap(),
+            Candidate::host_tcp(socket_addr, Protocol::SslTcp, Some(TcpType::Active)).unwrap(),
+            Candidate::host_tcp(socket_addr, Protocol::Tls, Some(TcpType::So)).unwrap(),
+        ];
+
+        assert!(!candidates[0].to_sdp_string().contains("tcptype"));
+        assert!(!candidates[1].to_sdp_string().contains("tcptype"));
+        assert!(candidates[2].to_sdp_string().contains("tcptype passive"));
+        assert!(candidates[3].to_sdp_string().contains("tcptype active"));
+        assert!(candidates[4].to_sdp_string().contains("tcptype so"));
     }
 
     #[test]
