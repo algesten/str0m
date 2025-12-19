@@ -1,5 +1,6 @@
 # Unreleased
 
+  * Fix order of DTLS pending packet poll #796
   * Defer panic on missing crypto provider until Rtc init #792 
 
 # 0.14.1
