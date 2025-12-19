@@ -206,7 +206,7 @@ impl Candidate {
         ))
     }
 
-    /// Creates a host tcp ICE candidate. Similar to [`host`] except it includes `tcptype` extension to define
+    /// Creates a host tcp ICE candidate. Similar to [`Self::host`] except it includes `tcptype` extension to define
     /// the candidate's tcp role. Specifying `None` is usually used to respond to an offer, and the
     /// meaning is application dependent.
     ///
@@ -684,11 +684,21 @@ mod tests {
     #[test]
     fn basic_serialize_deserialize() {
         let socket_addr = "1.2.3.4:9876".parse().unwrap();
-        let c1 = Candidate::host(socket_addr, Protocol::Udp).unwrap();
-        let json = serde_json::to_string(&c1).unwrap();
-        let c2: Candidate = serde_json::from_str(&json).unwrap();
-        // Can't test equality because foundation is calculated on the fly. Use string compare instead.
-        assert_eq!(c1.to_string(), c2.to_string());
+        let candidates = [
+            Candidate::host(socket_addr, Protocol::Udp).unwrap(),
+            Candidate::host(socket_addr, Protocol::Tcp).unwrap(),
+            Candidate::host_tcp(socket_addr, Protocol::Tcp, Some(TcpType::Passive)).unwrap(),
+        ];
+
+        for c1 in &candidates {
+            let json = serde_json::to_string(&c1).unwrap();
+            let c2: Candidate = serde_json::from_str(&json).unwrap();
+            assert_eq!(c1.proto, c2.proto);
+            assert_eq!(c1.tcptype, c2.tcptype);
+
+            // Can't test equality because foundation is calculated on the fly. Use string compare instead.
+            assert_eq!(c1.to_string(), c2.to_string());
+        }
     }
 
     #[test]
