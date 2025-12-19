@@ -1246,7 +1246,9 @@ mod test {
         let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(c.addr(), "113.185.55.72:41775".parse().unwrap());
 
-        let a = "a=candidate:3936339338 1 udp 2122265343 fd00:f8aa:3ff5:5914:90bf:3c5:3378:9d4b 59125 typ host generation 0 network-id 4 network-cost 50";
+        let a =
+            "a=candidate:3936339338 1 udp 2122265343 fd00:f8aa:3ff5:5914:90bf:3c5:3378:9d4b 59125 \
+            typ host generation 0 network-id 4 network-cost 50";
         let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(
             c.addr(),
@@ -1256,7 +1258,8 @@ mod test {
         );
         assert_eq!(c.proto(), Protocol::Udp);
 
-        let a = "a=candidate:2113932030 1 tcp 2113932030 142.250.82.253 19305 typ host tcptype passive generation 0";
+        let a = "a=candidate:2113932030 1 tcp 2113932030 142.250.82.253 19305 \
+            typ host tcptype passive generation 0";
         let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(c.addr(), "142.250.82.253:19305".parse().unwrap());
         assert_eq!(c.proto(), Protocol::Tcp);
