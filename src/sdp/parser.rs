@@ -8,7 +8,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
 use crate::crypto::Fingerprint;
-use crate::io::{Protocol, TcpType};
+use crate::io::TcpType;
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, SessionId, Ssrc};
 use crate::sdp::SdpError;
 use crate::{Candidate, CandidateKind};
