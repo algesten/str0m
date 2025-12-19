@@ -207,8 +207,9 @@ impl Candidate {
         ))
     }
 
-    /// Creates a host tcp ICE candidate. Similar to [`Self::host`] except it includes `tcptype` extension to define
-    /// the candidate's tcp role. Specifying `None` is usually used to respond to an offer, and the
+    /// Creates a host tcp ICE candidate. Similar to [`Self::host`] except it includes
+    /// `tcptype` extension to define the candidate's tcp role.
+    /// Specifying `None` is usually used to respond to an offer, and the
     /// meaning is application dependent.
     ///
     /// e.g. if the offer includes "active" tcptype, the answerer may respond with None, but

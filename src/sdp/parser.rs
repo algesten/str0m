@@ -872,6 +872,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::io::Protocol;
 
     #[test]
     fn line_a() {
