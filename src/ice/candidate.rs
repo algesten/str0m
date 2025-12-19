@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize, Serializer};
 use std::collections::hash_map::DefaultHasher;
 use std::fmt;
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 use std::net::{IpAddr, SocketAddr};
 
 /// ICE candidates are network addresses used to connect to a peer.
@@ -121,6 +122,46 @@ impl fmt::Debug for Candidate {
 }
 
 impl Candidate {
+    /// Starts the typesafe builder.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use str0m::{Candidate, Protocol, TcpType};
+    /// # use std::net::SocketAddr;
+    /// let addr: SocketAddr = "192.168.1.1:12345".parse().unwrap();
+    ///
+    /// // A standard UDP Host candidate
+    /// let udp_host = Candidate::builder()
+    ///     .udp()
+    ///     .host(addr)
+    ///     .build()?;
+    ///
+    /// // A TCP Host candidate with a passive role
+    /// let tcp_host = Candidate::builder()
+    ///     .tcp()
+    ///     .host(addr)
+    ///     .tcptype(TcpType::Passive)
+    ///     .build()?;
+    /// ```
+    pub fn builder() -> CandidateBuilder<NoProtocol, Init> {
+        CandidateBuilder {
+            foundation: None,
+            component_id: 1, // Default RTP
+            proto: None,
+            prio: None,
+            addr: None,
+            base: None,
+            kind: None,
+            tcptype: None,
+            raddr: None,
+            ufrag: None,
+            local: None,
+            local_preference: None,
+            _marker: PhantomData,
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn new(
         foundation: Option<String>,
@@ -202,47 +243,6 @@ impl Candidate {
             CandidateKind::Host,
             None,
             None,
-            None,
-            addr,
-        ))
-    }
-
-    /// Creates a host tcp ICE candidate. Similar to [`Self::host`] except it includes
-    /// `tcptype` extension to define the candidate's tcp role.
-    /// Specifying `None` is usually used to respond to an offer, and the
-    /// meaning is application dependent.
-    ///
-    /// e.g. if the offer includes "active" tcptype, the answerer may respond with None, but
-    /// assuming either "passive" or "so" role.
-    ///
-    /// Host candidates are local sockets directly on the host.
-    pub fn host_tcp(
-        addr: SocketAddr,
-        proto: impl TryInto<Protocol>,
-        tcptype: Option<TcpType>,
-    ) -> Result<Self, IceError> {
-        if !is_valid_ip(addr.ip()) {
-            return Err(IceError::BadCandidate(format!("invalid ip {}", addr.ip())));
-        }
-
-        let proto = parse_proto(proto)?;
-        if proto == Protocol::Udp {
-            return Err(IceError::BadCandidate(format!(
-                "only tcp based candidate is allowed: {}",
-                proto
-            )));
-        }
-
-        Ok(Candidate::new(
-            None,
-            1, // only RTP
-            proto,
-            None,
-            addr,
-            Some(addr),
-            CandidateKind::Host,
-            None,
-            tcptype,
             None,
             addr,
         ))
@@ -679,6 +679,175 @@ impl<'de> Deserialize<'de> for Candidate {
     }
 }
 
+/// Marker for a builder requiring a protocol selection.
+pub struct NoProtocol;
+/// Marker for a builder using the UDP protocol.
+pub struct Udp;
+/// Marker for a builder using a TCP-based protocol.
+pub struct Tcp;
+/// Marker for a builder requiring an address and kind selection.
+pub struct Init;
+/// Marker for a builder that is ready to be finalized.
+pub struct Ready;
+
+/// A typesafe builder for constructing a [`Candidate`].
+///
+/// This builder uses the Type State Pattern to enforce correct construction order and
+/// protocol-specific constraints (such as preventing `tcptype` on UDP).
+pub struct CandidateBuilder<P, S> {
+    foundation: Option<String>,
+    component_id: u16,
+    proto: Option<Protocol>,
+    prio: Option<u32>,
+    addr: Option<SocketAddr>,
+    base: Option<SocketAddr>,
+    kind: Option<CandidateKind>,
+    tcptype: Option<TcpType>,
+    raddr: Option<SocketAddr>,
+    ufrag: Option<String>,
+    local: Option<SocketAddr>,
+    local_preference: Option<u32>,
+    _marker: PhantomData<(P, S)>,
+}
+
+// Step 1: Protocol Selection
+impl CandidateBuilder<NoProtocol, Init> {
+    /// Sets the protocol to UDP.
+    pub fn udp(self) -> CandidateBuilder<Udp, Init> {
+        self.into_protocol(Some(Protocol::Udp))
+    }
+
+    /// Sets the protocol to standard TCP.
+    pub fn tcp(self) -> CandidateBuilder<Tcp, Init> {
+        self.into_protocol(Some(Protocol::Tcp))
+    }
+
+    /// Sets the protocol to SSL-over-TCP.
+    pub fn ssl_tcp(self) -> CandidateBuilder<Tcp, Init> {
+        self.into_protocol(Some(Protocol::SslTcp))
+    }
+
+    /// Sets the protocol to TLS.
+    pub fn tls(self) -> CandidateBuilder<Tcp, Init> {
+        self.into_protocol(Some(Protocol::Tls))
+    }
+
+    fn into_protocol<NewP>(self, p: Option<Protocol>) -> CandidateBuilder<NewP, Init> {
+        CandidateBuilder {
+            proto: p,
+            _marker: PhantomData,
+            foundation: self.foundation,
+            component_id: self.component_id,
+            prio: self.prio,
+            addr: self.addr,
+            base: self.base,
+            kind: self.kind,
+            tcptype: self.tcptype,
+            raddr: self.raddr,
+            ufrag: self.ufrag,
+            local: self.local,
+            local_preference: self.local_preference,
+        }
+    }
+}
+
+// Step 2: Kind Selection
+impl<P> CandidateBuilder<P, Init> {
+    /// Configures as a Host candidate.
+    pub fn host(self, addr: SocketAddr) -> CandidateBuilder<P, Ready> {
+        self.into_ready(CandidateKind::Host, addr, Some(addr), Some(addr), None)
+    }
+
+    /// Configures as a Server Reflexive (STUN) candidate.
+    /// Returns error if `addr` and `base` are different IP versions.
+    pub fn server_reflexive(
+        self,
+        addr: SocketAddr,
+        base: SocketAddr,
+    ) -> Result<CandidateBuilder<P, Ready>, IceError> {
+        if addr.is_ipv4() != base.is_ipv4() {
+            return Err(IceError::BadCandidate("IP version mismatch".into()));
+        }
+        Ok(self.into_ready(
+            CandidateKind::ServerReflexive,
+            addr,
+            Some(base),
+            Some(base),
+            Some(Candidate::arbitrary_raddr(addr)),
+        ))
+    }
+
+    /// Configures as a Relayed (TURN) candidate.
+    /// Base is set to `addr`, and `local` is the interface address.
+    pub fn relayed(self, addr: SocketAddr, local: SocketAddr) -> CandidateBuilder<P, Ready> {
+        self.into_ready(
+            CandidateKind::Relayed,
+            addr,
+            Some(addr),
+            Some(local),
+            Some(Candidate::arbitrary_raddr(addr)),
+        )
+    }
+
+    fn into_ready(
+        self,
+        kind: CandidateKind,
+        addr: SocketAddr,
+        base: Option<SocketAddr>,
+        local: Option<SocketAddr>,
+        raddr: Option<SocketAddr>,
+    ) -> CandidateBuilder<P, Ready> {
+        CandidateBuilder {
+            kind: Some(kind),
+            addr: Some(addr),
+            base,
+            local,
+            raddr,
+            proto: self.proto,
+            _marker: PhantomData,
+            foundation: self.foundation,
+            component_id: self.component_id,
+            prio: self.prio,
+            tcptype: self.tcptype,
+            ufrag: self.ufrag,
+            local_preference: self.local_preference,
+        }
+    }
+}
+
+// Step 3: Final General Configurations and Build
+impl<P> CandidateBuilder<P, Ready> {
+    /// Consumes the builder and returns a [`Candidate`].
+    pub fn build(self) -> Result<Candidate, IceError> {
+        let addr = self.addr.expect("addr missing");
+        if !is_valid_ip(addr.ip()) {
+            return Err(IceError::BadCandidate(format!("Invalid IP: {}", addr.ip())));
+        }
+
+        Ok(Candidate::new(
+            self.foundation,
+            self.component_id,
+            self.proto.expect("proto missing"),
+            self.prio,
+            addr,
+            self.base,
+            self.kind.expect("kind missing"),
+            self.raddr,
+            self.tcptype,
+            self.ufrag,
+            self.local.expect("local missing"),
+        ))
+    }
+}
+
+impl CandidateBuilder<Tcp, Ready> {
+    /// Configures the TCP type (active, passive, so).
+    pub fn tcptype(mut self, t: TcpType) -> Self {
+        self.tcptype = Some(t);
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -689,7 +858,12 @@ mod tests {
         let candidates = [
             Candidate::host(socket_addr, Protocol::Udp).unwrap(),
             Candidate::host(socket_addr, Protocol::Tcp).unwrap(),
-            Candidate::host_tcp(socket_addr, Protocol::Tcp, Some(TcpType::Passive)).unwrap(),
+            Candidate::builder()
+                .tcp()
+                .host(socket_addr)
+                .tcptype(TcpType::Passive)
+                .build()
+                .unwrap(),
         ];
 
         for c1 in &candidates {
@@ -818,15 +992,31 @@ mod tests {
     #[test]
     fn tcp_candidates_sanity() {
         let socket_addr = "1.2.3.4:9876".parse().unwrap();
-        assert!(Candidate::host_tcp(socket_addr, Protocol::Udp, None).is_err());
-
-        let socket_addr = "1.2.3.4:9876".parse().unwrap();
         let candidates = [
             Candidate::host(socket_addr, Protocol::Tcp).unwrap(),
-            Candidate::host_tcp(socket_addr, Protocol::Tcp, None).unwrap(),
-            Candidate::host_tcp(socket_addr, Protocol::Tcp, Some(TcpType::Passive)).unwrap(),
-            Candidate::host_tcp(socket_addr, Protocol::SslTcp, Some(TcpType::Active)).unwrap(),
-            Candidate::host_tcp(socket_addr, Protocol::Tls, Some(TcpType::So)).unwrap(),
+            Candidate::builder()
+                .tcp()
+                .host(socket_addr)
+                .build()
+                .unwrap(),
+            Candidate::builder()
+                .tcp()
+                .host(socket_addr)
+                .tcptype(TcpType::Passive)
+                .build()
+                .unwrap(),
+            Candidate::builder()
+                .ssl_tcp()
+                .host(socket_addr)
+                .tcptype(TcpType::Active)
+                .build()
+                .unwrap(),
+            Candidate::builder()
+                .tls()
+                .host(socket_addr)
+                .tcptype(TcpType::So)
+                .build()
+                .unwrap(),
         ];
 
         assert!(!candidates[0].to_sdp_string().contains("tcptype"));
@@ -887,5 +1077,65 @@ mod tests {
         Candidate::relayed(addr.parse().unwrap(), local.parse().unwrap(), "udp")
             .unwrap()
             .to_sdp_string()
+    }
+
+    #[test]
+    fn builder_matches_api_host() {
+        let addr = "1.2.3.4:1234".parse().unwrap();
+
+        // UDP Host
+        let api = Candidate::host(addr, Protocol::Udp).unwrap();
+        let builder = Candidate::builder().udp().host(addr).build().unwrap();
+        assert_eq!(api, builder);
+
+        // TCP Host
+        let api = Candidate::host(addr, Protocol::Tcp).unwrap();
+        let builder = Candidate::builder().tcp().host(addr).build().unwrap();
+        assert_eq!(api, builder);
+    }
+
+    #[test]
+    fn builder_matches_api_server_reflexive() {
+        let addr = "95.1.1.1:5000".parse().unwrap();
+        let base = "192.168.1.50:5000".parse().unwrap();
+
+        let api = Candidate::server_reflexive(addr, base, Protocol::Udp).unwrap();
+        let builder = Candidate::builder()
+            .udp()
+            .server_reflexive(addr, base)
+            .unwrap()
+            .build()
+            .unwrap();
+
+        assert_eq!(api, builder);
+    }
+
+    #[test]
+    fn builder_matches_api_relayed() {
+        let addr = "1.2.3.4:3478".parse().unwrap(); // TURN relay addr
+        let local = "192.168.1.50:5000".parse().unwrap(); // Local interface
+
+        let api = Candidate::relayed(addr, local, Protocol::Udp).unwrap();
+        let builder = Candidate::builder()
+            .udp()
+            .relayed(addr, local)
+            .build()
+            .unwrap();
+
+        assert_eq!(api, builder);
+    }
+
+    #[test]
+    fn builder_consistency_errors() {
+        let v4 = "1.2.3.4:1234".parse().unwrap();
+        let v6 = "[2001:db8::1]:1234".parse().unwrap();
+
+        // API returns error on mixed versions
+        let api_err = Candidate::server_reflexive(v4, v6, Protocol::Udp);
+        // Builder should return same error type
+        let builder_err = Candidate::builder().udp().server_reflexive(v4, v6);
+
+        assert!(api_err.is_err());
+        assert!(builder_err.is_err());
     }
 }
