@@ -503,6 +503,10 @@ impl Candidate {
         self.raddr
     }
 
+    pub(crate) fn tcptype(&self) -> Option<TcpType> {
+        self.tcptype
+    }
+
     /// Returns the kind of this candidate.
     pub fn kind(&self) -> CandidateKind {
         self.kind
