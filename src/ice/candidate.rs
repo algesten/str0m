@@ -503,7 +503,8 @@ impl Candidate {
         self.raddr
     }
 
-    pub(crate) fn tcptype(&self) -> Option<TcpType> {
+    /// Returns the candidate's TCP role. Refer to [`TcpType`] for more details.
+    pub fn tcptype(&self) -> Option<TcpType> {
         self.tcptype
     }
 
