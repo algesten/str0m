@@ -24,7 +24,7 @@ jobs:
             os: macos-latest
           - name: openssl
             os: windows-latest
-            features: openssl,vendored
+            features: openssl
           - name: aws-lc-rs
             os: ubuntu-latest
           - name: aws-lc-rs
@@ -53,6 +53,15 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
+      - name: Install OpenSSL on Windows
+        if: matrix.crypto.os == 'windows-latest' && matrix.crypto.name == 'openssl'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://www.firedaemon.com/download-firedaemon-openssl-3-6-zip -OutFile $env:TEMP\openssl.zip
+          if ((Get-FileHash $env:TEMP\openssl.zip -Algorithm SHA256).Hash -ne "C1C831E8BCCE7D6C204D6813AAFB87C0D44DD88841AB31105185B55CDEC1D759") { throw "Checksum mismatch" }
+          Expand-Archive $env:TEMP\openssl.zip -DestinationPath C:\openssl-3.6.0 -Force
+          echo "OPENSSL_DIR=C:\openssl-3.6.0\x64" >> $env:GITHUB_ENV
+
       - name: Test with ${{ matrix.crypto.name }}
         run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features ${{ matrix.crypto.features || matrix.crypto.name }}
 
