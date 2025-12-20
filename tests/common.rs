@@ -385,11 +385,25 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
         #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
         "apple-crypto" => str0m_apple_crypto::default_provider(),
         
-        _ => panic!(
-            "Unknown or unavailable crypto provider '{}'. \
-             Available providers depend on compiled features and platform.",
-            name
-        ),
+        _ => {
+            let mut available = Vec::new();
+            #[cfg(feature = "aws-lc-rs")]
+            available.push("aws-lc-rs");
+            #[cfg(feature = "rust-crypto")]
+            available.push("rust-crypto");
+            #[cfg(feature = "openssl")]
+            available.push("openssl");
+            #[cfg(all(feature = "wincrypto", target_os = "windows"))]
+            available.push("wincrypto");
+            #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
+            available.push("apple-crypto");
+            
+            panic!(
+                "Unknown or unavailable crypto provider '{}'. Available providers: [{}]",
+                name,
+                available.join(", ")
+            )
+        },
     }
 }
 
