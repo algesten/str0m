@@ -57,31 +57,10 @@ jobs:
         if: matrix.crypto.os == 'windows-latest' && matrix.crypto.name == 'openssl'
         shell: pwsh
         run: |
-          Write-Host "Downloading FireDaemon OpenSSL 3.6.0..."
-          $url = "https://www.firedaemon.com/download-firedaemon-openssl-3-6-zip"
-          $zipFile = "$env:TEMP\openssl-3.6.0.zip"
-          $extractPath = "C:\openssl-3.6.0"
-          
-          # Download OpenSSL
-          Invoke-WebRequest -Uri $url -OutFile $zipFile
-          
-          # Verify checksum
-          $expectedHash = "C1C831E8BCCE7D6C204D6813AAFB87C0D44DD88841AB31105185B55CDEC1D759"
-          $actualHash = (Get-FileHash -Path $zipFile -Algorithm SHA256).Hash
-          if ($actualHash -ne $expectedHash) {
-            throw "Checksum mismatch! Expected: $expectedHash, Got: $actualHash"
-          }
-          Write-Host "Checksum verified successfully"
-          
-          # Extract OpenSSL
-          Expand-Archive -Path $zipFile -DestinationPath $extractPath -Force
-          
-          # Set environment variables for openssl-sys crate
-          $opensslDir = Join-Path $extractPath "x64"
-          echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
-          
-          Write-Host "OpenSSL installed at: $opensslDir"
-          Write-Host "OpenSSL configured successfully"
+          Invoke-WebRequest https://www.firedaemon.com/download-firedaemon-openssl-3-6-zip -OutFile $env:TEMP\openssl.zip
+          if ((Get-FileHash $env:TEMP\openssl.zip -Algorithm SHA256).Hash -ne "C1C831E8BCCE7D6C204D6813AAFB87C0D44DD88841AB31105185B55CDEC1D759") { throw "Checksum mismatch" }
+          Expand-Archive $env:TEMP\openssl.zip -DestinationPath C:\openssl-3.6.0 -Force
+          echo "OPENSSL_DIR=C:\openssl-3.6.0\x64" >> $env:GITHUB_ENV
 
       - name: Test with ${{ matrix.crypto.name }}
         run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features ${{ matrix.crypto.features || matrix.crypto.name }}
