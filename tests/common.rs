@@ -2,13 +2,14 @@
 use std::io::Cursor;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::ops::{Deref, DerefMut};
-use std::sync::Once;
+use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
 use netem::{Input as NetemInput, Netem, NetemConfig, Output as NetemOutput};
 
 use pcap_file::pcap::PcapReader;
 use str0m::change::SdpApi;
+use str0m::crypto::CryptoProvider;
 use str0m::format::Codec;
 use str0m::format::PayloadParams;
 use str0m::net::Protocol;
@@ -46,7 +47,28 @@ pub struct TestRtc {
 
 impl TestRtc {
     pub fn new(span: Span) -> Self {
-        Self::new_with_rtc(span, Rtc::new())
+        // Check if this is L or R based on span metadata and apply corresponding crypto
+        // We use a simple heuristic: check the span's record for a field that might indicate L or R
+        let metadata = span.metadata();
+        let span_name = metadata.map(|m| m.name()).unwrap_or("");
+        
+        let rtc = if span_name == "L" {
+            if let Some(crypto) = get_crypto_provider_l() {
+                Rtc::builder().set_crypto_provider(crypto).build()
+            } else {
+                Rtc::new()
+            }
+        } else if span_name == "R" {
+            if let Some(crypto) = get_crypto_provider_r() {
+                Rtc::builder().set_crypto_provider(crypto).build()
+            } else {
+                Rtc::new()
+            }
+        } else {
+            Rtc::new()
+        };
+        
+        Self::new_with_rtc(span, rtc)
     }
 
     pub fn new_with_rtc(span: Span, rtc: Rtc) -> Self {
@@ -324,18 +346,73 @@ pub fn init_crypto_default() {
     str0m::crypto::from_feature_flags().install_process_default();
 }
 
+/// Get crypto provider for the left role based on L_CRYPTO env variable.
+/// Falls back to feature flags if not set.
+pub fn get_crypto_provider_l() -> Option<Arc<CryptoProvider>> {
+    if let Ok(crypto_name) = std::env::var("L_CRYPTO") {
+        Some(Arc::new(get_crypto_provider_by_name(&crypto_name)))
+    } else {
+        None
+    }
+}
+
+/// Get crypto provider for the right role based on R_CRYPTO env variable.
+/// Falls back to feature flags if not set.
+pub fn get_crypto_provider_r() -> Option<Arc<CryptoProvider>> {
+    if let Ok(crypto_name) = std::env::var("R_CRYPTO") {
+        Some(Arc::new(get_crypto_provider_by_name(&crypto_name)))
+    } else {
+        None
+    }
+}
+
+/// Create a crypto provider from a string name.
+/// Supported names: "aws-lc-rs", "rust-crypto", "openssl", "wincrypto", "apple-crypto"
+fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
+    match name {
+        #[cfg(feature = "aws-lc-rs")]
+        "aws-lc-rs" | "aws" => str0m_aws_lc_rs::default_provider(),
+        
+        #[cfg(feature = "rust-crypto")]
+        "rust-crypto" => str0m_rust_crypto::default_provider(),
+        
+        #[cfg(feature = "openssl")]
+        "openssl" => str0m_openssl::default_provider(),
+        
+        #[cfg(all(feature = "wincrypto", target_os = "windows"))]
+        "wincrypto" => str0m_wincrypto::default_provider(),
+        
+        #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
+        "apple-crypto" => str0m_apple_crypto::default_provider(),
+        
+        _ => panic!(
+            "Unknown or unavailable crypto provider '{}'. \
+             Available providers depend on compiled features and platform.",
+            name
+        ),
+    }
+}
+
 pub fn connect_l_r() -> (TestRtc, TestRtc) {
-    let rtc1 = Rtc::builder()
+    let mut rtc1_builder = Rtc::builder()
         .set_rtp_mode(true)
-        .enable_raw_packets(true)
-        .build();
-    let rtc2 = Rtc::builder()
+        .enable_raw_packets(true);
+    
+    if let Some(crypto) = get_crypto_provider_l() {
+        rtc1_builder = rtc1_builder.set_crypto_provider(crypto);
+    }
+    
+    let mut rtc2_builder = Rtc::builder()
         .set_rtp_mode(true)
         .enable_raw_packets(true)
         // release packet straight away
-        .set_reordering_size_audio(0)
-        .build();
-    connect_l_r_with_rtc(rtc1, rtc2)
+        .set_reordering_size_audio(0);
+    
+    if let Some(crypto) = get_crypto_provider_r() {
+        rtc2_builder = rtc2_builder.set_crypto_provider(crypto);
+    }
+    
+    connect_l_r_with_rtc(rtc1_builder.build(), rtc2_builder.build())
 }
 
 pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {
