@@ -53,134 +53,40 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
-      - name: Find OpenSSL on Windows
+      - name: Install OpenSSL via NuGet on Windows
         if: matrix.crypto.os == 'windows-latest' && matrix.crypto.name == 'openssl'
         shell: pwsh
         run: |
-          Write-Host "Searching for OpenSSL DLLs on system..."
+          Write-Host "Installing OpenSSL via NuGet..."
+          nuget install openssl-native -OutputDirectory ${{ github.workspace }}\packages
           
-          # Search for OpenSSL DLL files
-          Write-Host "Looking for libcrypto and libssl DLLs..."
-          $cryptoDll = Get-ChildItem -Path "C:\" -Filter "libcrypto*.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          $sslDll = Get-ChildItem -Path "C:\" -Filter "libssl*.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          
-          if (-not $cryptoDll) {
-            Write-Host "Trying libeay32.dll..."
-            $cryptoDll = Get-ChildItem -Path "C:\" -Filter "libeay32.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-          }
-          if (-not $sslDll) {
-            Write-Host "Trying ssleay32.dll..."
-            $sslDll = Get-ChildItem -Path "C:\" -Filter "ssleay32.dll" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          # Find the installed package directory
+          $opensslPackage = Get-ChildItem -Path "${{ github.workspace }}\packages" -Filter "openssl-native*" -Directory | Select-Object -First 1
+          if (-not $opensslPackage) {
+            throw "OpenSSL NuGet package not found after installation"
           }
           
-          if ($cryptoDll -and $sslDll) {
-            Write-Host "`nFound OpenSSL DLLs:"
-            Write-Host "  libcrypto: $($cryptoDll.FullName)"
-            Write-Host "  libssl: $($sslDll.FullName)"
-            
-            $dllDir = $cryptoDll.Directory.FullName
-            Write-Host "  DLL directory: $dllDir"
-            
-            # Now search for opensslv.h header file to find include directory
-            Write-Host "`nSearching for OpenSSL headers (opensslv.h)..."
-            $opensslvHeader = Get-ChildItem -Path "C:\" -Filter "opensslv.h" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-            
-            $includeDir = $null
-            if ($opensslvHeader) {
-              # Found the header, determine the include directory
-              # opensslv.h is typically in openssl/opensslv.h, so we need the parent of openssl dir
-              if ($opensslvHeader.Directory.Name -eq "openssl") {
-                $includeDir = $opensslvHeader.Directory.Parent.FullName
-              } else {
-                $includeDir = $opensslvHeader.Directory.FullName
-              }
-              Write-Host "  Found headers at: $includeDir"
-            } else {
-              Write-Host "  WARNING: opensslv.h not found!"
-            }
-            
-            # Search for .lib files
-            Write-Host "`nSearching for .lib files..."
-            $libDir = $null
-            
-            # First try to find lib directory in standard locations relative to DLLs
-            $searchDir = $cryptoDll.Directory
-            for ($i = 0; $i -lt 5; $i++) {
-              if ($searchDir.Parent) {
-                $searchDir = $searchDir.Parent
-                $potentialLibDir = Join-Path $searchDir.FullName "lib"
-                if (Test-Path $potentialLibDir) {
-                  $libsInDir = Get-ChildItem -Path $potentialLibDir -Filter "*ssl*.lib" -ErrorAction SilentlyContinue
-                  if ($libsInDir.Count -gt 0) {
-                    Write-Host "  Found lib directory: $potentialLibDir"
-                    $libsInDir | ForEach-Object { Write-Host "    - $($_.Name)" }
-                    $libDir = $potentialLibDir
-                    break
-                  }
-                }
-              }
-            }
-            
-            # If no lib directory found, search more broadly
-            if (-not $libDir) {
-              Write-Host "  Searching for libssl*.lib files..."
-              $libsslLib = Get-ChildItem -Path "C:\" -Filter "libssl*.lib" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-              if ($libsslLib) {
-                $libDir = $libsslLib.Directory.FullName
-                Write-Host "  Found .lib files at: $libDir"
-              } else {
-                Write-Host "  WARNING: No .lib files found!"
-              }
-            }
-            
-            # Set environment variables
-            if ($includeDir -and $libDir) {
-              # We have everything we need
-              $opensslRoot = $null
-              # Try to find common root
-              $testRoot = $includeDir
-              while ($testRoot) {
-                $testLib = Join-Path $testRoot "lib"
-                $testInc = Join-Path $testRoot "include"
-                if ($testLib -eq $libDir -or $testInc -eq $includeDir) {
-                  $opensslRoot = $testRoot
-                  break
-                }
-                if (-not (Split-Path $testRoot -Parent)) { break }
-                $testRoot = Split-Path $testRoot -Parent
-              }
-              
-              if ($opensslRoot) {
-                Write-Host "`nUsing OpenSSL root: $opensslRoot"
-                echo "OPENSSL_DIR=$opensslRoot" >> $env:GITHUB_ENV
-              } else {
-                Write-Host "`nNo common root found, using separate directories"
-              }
-              
-              Write-Host "Setting OPENSSL_LIB_DIR=$libDir"
-              Write-Host "Setting OPENSSL_INCLUDE_DIR=$includeDir"
-              echo "OPENSSL_LIB_DIR=$libDir" >> $env:GITHUB_ENV
-              echo "OPENSSL_INCLUDE_DIR=$includeDir" >> $env:GITHUB_ENV
-              
-            } elseif ($includeDir) {
-              Write-Host "`nFound headers but no .lib files - may need to use vendored build"
-              echo "OPENSSL_INCLUDE_DIR=$includeDir" >> $env:GITHUB_ENV
-            } elseif ($libDir) {
-              Write-Host "`nFound .lib files but no headers - build will likely fail"
-              echo "OPENSSL_LIB_DIR=$libDir" >> $env:GITHUB_ENV
-            } else {
-              Write-Host "`nWARNING: Found DLLs but no headers or .lib files"
-              Write-Host "Build will likely fail. Consider using vendored build."
-            }
-            
-            # Always add DLL directory to PATH for runtime
-            Write-Host "Adding DLL directory to PATH: $dllDir"
-            echo "$dllDir" >> $env:GITHUB_PATH
-            
-          } else {
-            Write-Host "`nERROR: Could not find both libcrypto and libssl DLLs"
-            throw "OpenSSL DLLs not found on system"
-          }
+          Write-Host "OpenSSL package installed at: $($opensslPackage.FullName)"
+          
+          # Set up paths for x64 Windows
+          $opensslRoot = $opensslPackage.FullName
+          $includeDir = Join-Path $opensslRoot "build\native\include"
+          $libDir = Join-Path $opensslRoot "build\native\lib\x64\release"
+          $binDir = Join-Path $opensslRoot "build\native\bin\x64\release"
+          
+          Write-Host "Include directory: $includeDir"
+          Write-Host "Lib directory: $libDir"
+          Write-Host "Bin directory: $binDir"
+          
+          # Set environment variables for openssl-sys crate
+          echo "OPENSSL_DIR=$opensslRoot" >> $env:GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$includeDir" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$libDir" >> $env:GITHUB_ENV
+          
+          # Add bin directory to PATH for runtime DLLs
+          echo "$binDir" >> $env:GITHUB_PATH
+          
+          Write-Host "OpenSSL configured successfully"
 
       - name: Test with ${{ matrix.crypto.name }}
         run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features ${{ matrix.crypto.features || matrix.crypto.name }}
