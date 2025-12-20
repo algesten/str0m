@@ -1,0 +1,107 @@
+name: Nightly Crypto Cross-Testing
+
+on:
+  schedule:
+    # Run nightly at 2:00 AM UTC
+    - cron: "0 2 * * *"
+  # Allow manual trigger for testing
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Generate matrix of all crypto combinations for each platform
+  windows-crypto-test:
+    name: Windows - L:${{ matrix.l_crypto }} R:${{ matrix.r_crypto }}
+    runs-on: windows-latest
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        l_crypto: ["rust-crypto", "aws", "wincrypto", "openssl"]
+        r_crypto: ["rust-crypto", "aws", "wincrypto", "openssl"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        id: toolchain
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.l_crypto }}-${{ matrix.r_crypto }}
+
+      - name: Install OpenSSL on Windows
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://www.firedaemon.com/download-firedaemon-openssl-3-6-zip -OutFile $env:TEMP\openssl.zip
+          if ((Get-FileHash $env:TEMP\openssl.zip -Algorithm SHA256).Hash -ne "C1C831E8BCCE7D6C204D6813AAFB87C0D44DD88841AB31105185B55CDEC1D759") { throw "Checksum mismatch" }
+          Expand-Archive $env:TEMP\openssl.zip -DestinationPath C:\openssl-3.6.0 -Force
+          echo "OPENSSL_DIR=C:\openssl-3.6.0\x64" >> $env:GITHUB_ENV
+
+      - name: Test L:${{ matrix.l_crypto }} <-> R:${{ matrix.r_crypto }}
+        env:
+          L_CRYPTO: ${{ matrix.l_crypto }}
+          R_CRYPTO: ${{ matrix.r_crypto }}
+        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features rust-crypto,aws-lc-rs,wincrypto,openssl
+
+  linux-crypto-test:
+    name: Linux - L:${{ matrix.l_crypto }} R:${{ matrix.r_crypto }}
+    runs-on: ubuntu-latest
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        l_crypto: ["rust-crypto", "aws", "openssl"]
+        r_crypto: ["rust-crypto", "aws", "openssl"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        id: toolchain
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.l_crypto }}-${{ matrix.r_crypto }}
+
+      - name: Test L:${{ matrix.l_crypto }} <-> R:${{ matrix.r_crypto }}
+        env:
+          L_CRYPTO: ${{ matrix.l_crypto }}
+          R_CRYPTO: ${{ matrix.r_crypto }}
+        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features rust-crypto,aws-lc-rs,openssl
+
+  macos-crypto-test:
+    name: macOS - L:${{ matrix.l_crypto }} R:${{ matrix.r_crypto }}
+    runs-on: macos-latest
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        l_crypto: ["rust-crypto", "aws", "apple-crypto", "openssl"]
+        r_crypto: ["rust-crypto", "aws", "apple-crypto", "openssl"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        id: toolchain
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.l_crypto }}-${{ matrix.r_crypto }}
+
+      - name: Test L:${{ matrix.l_crypto }} <-> R:${{ matrix.r_crypto }}
+        env:
+          L_CRYPTO: ${{ matrix.l_crypto }}
+          R_CRYPTO: ${{ matrix.r_crypto }}
+        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features rust-crypto,aws-lc-rs,apple-crypto,openssl
+
