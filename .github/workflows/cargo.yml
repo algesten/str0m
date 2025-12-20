@@ -24,6 +24,7 @@ jobs:
             os: macos-latest
           - name: openssl
             os: windows-latest
+            features: openssl
           - name: aws-lc-rs
             os: ubuntu-latest
           - name: aws-lc-rs
@@ -56,9 +57,8 @@ jobs:
         if: matrix.crypto.os == 'windows-latest' && matrix.crypto.name == 'openssl'
         shell: pwsh
         run: |
-          $env:VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
-          vcpkg install openssl:x64-windows-static-md
-          echo "OPENSSL_DIR=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md" | Out-File -FilePath $env:GITHUB_ENV -Append
+          choco install openssl -y
+          echo "OPENSSL_DIR=C:\Program Files\OpenSSL" >> $env:GITHUB_ENV
       - name: Test with ${{ matrix.crypto.name }}
         run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features ${{ matrix.crypto.features || matrix.crypto.name }}
 
