@@ -58,11 +58,45 @@ jobs:
         shell: pwsh
         run: |
           choco install openssl -y
-          $opensslPath = (Get-ChildItem "C:\ProgramData\chocolatey\lib\openssl\tools" -Directory | Select-Object -First 1).FullName
-          if (-not $opensslPath) { $opensslPath = "C:\ProgramData\chocolatey\lib\openssl\tools" }
-          echo "OPENSSL_DIR=$opensslPath" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=$opensslPath\lib" >> $env:GITHUB_ENV
-          echo "OPENSSL_INCLUDE_DIR=$opensslPath\include" >> $env:GITHUB_ENV
+          
+          # Search for OpenSSL installation in common locations
+          Write-Host "Searching for OpenSSL installation..."
+          $searchPaths = @(
+            "C:\Program Files\OpenSSL",
+            "C:\Program Files\OpenSSL-Win64",
+            "C:\OpenSSL-Win64",
+            "C:\ProgramData\chocolatey\lib\openssl\tools"
+          )
+          
+          $opensslDir = $null
+          foreach ($path in $searchPaths) {
+            Write-Host "Checking: $path"
+            if (Test-Path $path) {
+              Write-Host "  Found directory: $path"
+              $libPath = Join-Path $path "lib"
+              $includePath = Join-Path $path "include"
+              Write-Host "  Checking for lib: $libPath"
+              Write-Host "  Checking for include: $includePath"
+              if ((Test-Path $libPath) -and (Test-Path $includePath)) {
+                $opensslDir = $path
+                Write-Host "  Valid OpenSSL installation found!"
+                break
+              }
+            }
+          }
+          
+          if (-not $opensslDir) {
+            Write-Host "OpenSSL not found in common locations. Searching entire C:\ drive..."
+            Get-ChildItem -Path "C:\" -Filter "openssl.exe" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "Found openssl.exe at: $($_.FullName)"
+            }
+            throw "Could not find OpenSSL installation with lib and include directories"
+          }
+          
+          Write-Host "Using OpenSSL at: $opensslDir"
+          echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
+          echo "OPENSSL_LIB_DIR=$opensslDir\lib" >> $env:GITHUB_ENV
+          echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
       - name: Test with ${{ matrix.crypto.name }}
         run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features ${{ matrix.crypto.features || matrix.crypto.name }}
 
