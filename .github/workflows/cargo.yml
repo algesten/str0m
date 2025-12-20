@@ -53,21 +53,34 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
-      - name: Install OpenSSL via vcpkg on Windows
+      - name: Install OpenSSL on Windows
         if: matrix.crypto.os == 'windows-latest' && matrix.crypto.name == 'openssl'
         shell: pwsh
         run: |
-          Write-Host "Installing OpenSSL via vcpkg..."
-          vcpkg install openssl:x64-windows
+          Write-Host "Downloading FireDaemon OpenSSL 3.6.0..."
+          $url = "https://www.firedaemon.com/download-firedaemon-openssl-3-6-zip"
+          $zipFile = "$env:TEMP\openssl-3.6.0.zip"
+          $extractPath = "C:\openssl-3.6.0"
           
-          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
-          $opensslDir = Join-Path $vcpkgRoot "installed\x64-windows"
+          # Download OpenSSL
+          Invoke-WebRequest -Uri $url -OutFile $zipFile
           
-          Write-Host "OpenSSL installed at: $opensslDir"
+          # Verify checksum
+          $expectedHash = "C1C831E8BCCE7D6C204D6813AAFB87C0D44DD88841AB31105185B55CDEC1D759"
+          $actualHash = (Get-FileHash -Path $zipFile -Algorithm SHA256).Hash
+          if ($actualHash -ne $expectedHash) {
+            throw "Checksum mismatch! Expected: $expectedHash, Got: $actualHash"
+          }
+          Write-Host "Checksum verified successfully"
+          
+          # Extract OpenSSL
+          Expand-Archive -Path $zipFile -DestinationPath $extractPath -Force
           
           # Set environment variables for openssl-sys crate
+          $opensslDir = Join-Path $extractPath "x64"
           echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
           
+          Write-Host "OpenSSL installed at: $opensslDir"
           Write-Host "OpenSSL configured successfully"
 
       - name: Test with ${{ matrix.crypto.name }}
