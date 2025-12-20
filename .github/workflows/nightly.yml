@@ -52,7 +52,7 @@ jobs:
         env:
           L_CRYPTO: ${{ matrix.l_crypto }}
           R_CRYPTO: ${{ matrix.r_crypto }}
-        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features rust-crypto,aws-lc-rs,wincrypto,openssl
+        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features rust-crypto,aws-lc-rs,wincrypto,openssl --lib --bins --tests
 
   linux-crypto-test:
     name: Linux - L:${{ matrix.l_crypto }} R:${{ matrix.r_crypto }}
@@ -80,7 +80,7 @@ jobs:
         env:
           L_CRYPTO: ${{ matrix.l_crypto }}
           R_CRYPTO: ${{ matrix.r_crypto }}
-        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features rust-crypto,aws-lc-rs,openssl
+        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features rust-crypto,aws-lc-rs,openssl --lib --bins --tests
 
   macos-crypto-test:
     name: macOS - L:${{ matrix.l_crypto }} R:${{ matrix.r_crypto }}
@@ -108,5 +108,5 @@ jobs:
         env:
           L_CRYPTO: ${{ matrix.l_crypto }}
           R_CRYPTO: ${{ matrix.r_crypto }}
-        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features rust-crypto,aws-lc-rs,apple-crypto,openssl
+        run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features rust-crypto,aws-lc-rs,apple-crypto,openssl --lib --bins --tests
 
