@@ -24,7 +24,6 @@ jobs:
             os: macos-latest
           - name: openssl
             os: windows-latest
-            features: openssl,vendored
           - name: aws-lc-rs
             os: ubuntu-latest
           - name: aws-lc-rs
@@ -53,6 +52,13 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
+      - name: Install OpenSSL on Windows
+        if: matrix.crypto.os == 'windows-latest' && matrix.crypto.name == 'openssl'
+        shell: pwsh
+        run: |
+          $env:VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
+          vcpkg install openssl:x64-windows-static-md
+          echo "OPENSSL_DIR=$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Test with ${{ matrix.crypto.name }}
         run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features ${{ matrix.crypto.features || matrix.crypto.name }}
 
