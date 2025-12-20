@@ -53,38 +53,20 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
-      - name: Install OpenSSL via NuGet on Windows
+      - name: Install OpenSSL via vcpkg on Windows
         if: matrix.crypto.os == 'windows-latest' && matrix.crypto.name == 'openssl'
         shell: pwsh
         run: |
-          Write-Host "Installing OpenSSL via NuGet..."
-          nuget install openssl-native -OutputDirectory ${{ github.workspace }}\packages
+          Write-Host "Installing OpenSSL via vcpkg..."
+          vcpkg install openssl:x64-windows
           
-          # Find the installed package directory
-          $opensslPackage = Get-ChildItem -Path "${{ github.workspace }}\packages" -Filter "openssl-native*" -Directory | Select-Object -First 1
-          if (-not $opensslPackage) {
-            throw "OpenSSL NuGet package not found after installation"
-          }
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          $opensslDir = Join-Path $vcpkgRoot "installed\x64-windows"
           
-          Write-Host "OpenSSL package installed at: $($opensslPackage.FullName)"
-          
-          # Set up paths for x64 Windows
-          $opensslRoot = $opensslPackage.FullName
-          $includeDir = Join-Path $opensslRoot "build\native\include"
-          $libDir = Join-Path $opensslRoot "build\native\lib\x64\release"
-          $binDir = Join-Path $opensslRoot "build\native\bin\x64\release"
-          
-          Write-Host "Include directory: $includeDir"
-          Write-Host "Lib directory: $libDir"
-          Write-Host "Bin directory: $binDir"
+          Write-Host "OpenSSL installed at: $opensslDir"
           
           # Set environment variables for openssl-sys crate
-          echo "OPENSSL_DIR=$opensslRoot" >> $env:GITHUB_ENV
-          echo "OPENSSL_INCLUDE_DIR=$includeDir" >> $env:GITHUB_ENV
-          echo "OPENSSL_LIB_DIR=$libDir" >> $env:GITHUB_ENV
-          
-          # Add bin directory to PATH for runtime DLLs
-          echo "$binDir" >> $env:GITHUB_PATH
+          echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
           
           Write-Host "OpenSSL configured successfully"
 
