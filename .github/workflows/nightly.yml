@@ -21,6 +21,7 @@ jobs:
   windows-crypto-test:
     name: Windows - L:${{ matrix.l_crypto }} R:${{ matrix.r_crypto }}
     runs-on: windows-latest
+    timeout-minutes: 15
     
     strategy:
       fail-fast: false
@@ -57,6 +58,7 @@ jobs:
   linux-crypto-test:
     name: Linux - L:${{ matrix.l_crypto }} R:${{ matrix.r_crypto }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     
     strategy:
       fail-fast: false
@@ -85,6 +87,7 @@ jobs:
   macos-crypto-test:
     name: macOS - L:${{ matrix.l_crypto }} R:${{ matrix.r_crypto }}
     runs-on: macos-latest
+    timeout-minutes: 15
     
     strategy:
       fail-fast: false
