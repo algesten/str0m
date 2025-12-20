@@ -59,12 +59,13 @@ jobs:
         run: |
           choco install openssl -y
           
-          # Search for OpenSSL installation in common locations
+          # Search for OpenSSL installation with actual library files
           Write-Host "Searching for OpenSSL installation..."
           $searchPaths = @(
-            "C:\Program Files\OpenSSL",
             "C:\Program Files\OpenSSL-Win64",
             "C:\OpenSSL-Win64",
+            "C:\Program Files\OpenSSL",
+            "C:\OpenSSL",
             "C:\ProgramData\chocolatey\lib\openssl\tools"
           )
           
@@ -72,28 +73,46 @@ jobs:
           foreach ($path in $searchPaths) {
             Write-Host "Checking: $path"
             if (Test-Path $path) {
-              Write-Host "  Found directory: $path"
+              Write-Host "  Directory exists"
               $libPath = Join-Path $path "lib"
               $includePath = Join-Path $path "include"
-              Write-Host "  Checking for lib: $libPath"
-              Write-Host "  Checking for include: $includePath"
+              
               if ((Test-Path $libPath) -and (Test-Path $includePath)) {
-                $opensslDir = $path
-                Write-Host "  Valid OpenSSL installation found!"
-                break
+                Write-Host "  lib and include directories exist"
+                # Check for actual library files
+                $libFiles = Get-ChildItem -Path $libPath -Filter "*.lib" -ErrorAction SilentlyContinue
+                Write-Host "  Found $($libFiles.Count) .lib files:"
+                $libFiles | ForEach-Object { Write-Host "    - $($_.Name)" }
+                
+                # Look for libssl and libcrypto
+                $hasLibssl = Test-Path (Join-Path $libPath "libssl*.lib")
+                $hasLibcrypto = Test-Path (Join-Path $libPath "libcrypto*.lib")
+                
+                if ($hasLibssl -and $hasLibcrypto) {
+                  $opensslDir = $path
+                  Write-Host "  ✓ Valid OpenSSL installation with libraries found!"
+                  break
+                } else {
+                  Write-Host "  ✗ Missing required library files (libssl or libcrypto)"
+                }
+              } else {
+                Write-Host "  Missing lib or include directories"
               }
             }
           }
           
           if (-not $opensslDir) {
-            Write-Host "OpenSSL not found in common locations. Searching entire C:\ drive..."
-            Get-ChildItem -Path "C:\" -Filter "openssl.exe" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-              Write-Host "Found openssl.exe at: $($_.FullName)"
+            Write-Host "`nOpenSSL with libraries not found. Searching for all OpenSSL installations..."
+            Get-ChildItem -Path "C:\Program Files" -Directory -Filter "OpenSSL*" -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "Found: $($_.FullName)"
             }
-            throw "Could not find OpenSSL installation with lib and include directories"
+            Get-ChildItem -Path "C:\" -Directory -Filter "OpenSSL*" -ErrorAction SilentlyContinue | ForEach-Object {
+              Write-Host "Found: $($_.FullName)"
+            }
+            throw "Could not find OpenSSL installation with required library files"
           }
           
-          Write-Host "Using OpenSSL at: $opensslDir"
+          Write-Host "`nUsing OpenSSL at: $opensslDir"
           echo "OPENSSL_DIR=$opensslDir" >> $env:GITHUB_ENV
           echo "OPENSSL_LIB_DIR=$opensslDir\lib" >> $env:GITHUB_ENV
           echo "OPENSSL_INCLUDE_DIR=$opensslDir\include" >> $env:GITHUB_ENV
