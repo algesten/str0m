@@ -51,7 +51,7 @@ impl TestRtc {
         // We use a simple heuristic: check the span's record for a field that might indicate L or R
         let metadata = span.metadata();
         let span_name = metadata.map(|m| m.name()).unwrap_or("");
-        
+
         let rtc = if span_name == "L" {
             if let Some(crypto) = get_crypto_provider_l() {
                 Rtc::builder().set_crypto_provider(crypto).build()
@@ -67,7 +67,7 @@ impl TestRtc {
         } else {
             Rtc::new()
         };
-        
+
         Self::new_with_rtc(span, rtc)
     }
 
@@ -372,19 +372,19 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
     match name {
         #[cfg(feature = "aws-lc-rs")]
         "aws-lc-rs" | "aws" => str0m_aws_lc_rs::default_provider(),
-        
+
         #[cfg(feature = "rust-crypto")]
         "rust-crypto" => str0m_rust_crypto::default_provider(),
-        
+
         #[cfg(feature = "openssl")]
         "openssl" => str0m_openssl::default_provider(),
-        
+
         #[cfg(all(feature = "wincrypto", target_os = "windows"))]
         "wincrypto" => str0m_wincrypto::default_provider(),
-        
+
         #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
         "apple-crypto" => str0m_apple_crypto::default_provider(),
-        
+
         _ => {
             let mut available = Vec::new();
             #[cfg(feature = "aws-lc-rs")]
@@ -397,35 +397,33 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
             available.push("wincrypto");
             #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
             available.push("apple-crypto");
-            
+
             panic!(
                 "Unknown or unavailable crypto provider '{}'. Available providers: [{}]",
                 name,
                 available.join(", ")
             )
-        },
+        }
     }
 }
 
 pub fn connect_l_r() -> (TestRtc, TestRtc) {
-    let mut rtc1_builder = Rtc::builder()
-        .set_rtp_mode(true)
-        .enable_raw_packets(true);
-    
+    let mut rtc1_builder = Rtc::builder().set_rtp_mode(true).enable_raw_packets(true);
+
     if let Some(crypto) = get_crypto_provider_l() {
         rtc1_builder = rtc1_builder.set_crypto_provider(crypto);
     }
-    
+
     let mut rtc2_builder = Rtc::builder()
         .set_rtp_mode(true)
         .enable_raw_packets(true)
         // release packet straight away
         .set_reordering_size_audio(0);
-    
+
     if let Some(crypto) = get_crypto_provider_r() {
         rtc2_builder = rtc2_builder.set_crypto_provider(crypto);
     }
-    
+
     connect_l_r_with_rtc(rtc1_builder.build(), rtc2_builder.build())
 }
 
