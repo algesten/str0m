@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "aws-lc-rs"), allow(unused))]
+
 //! Integration tests for Bandwidth Estimation (BWE) under various network conditions.
 //!
 //! We only run the BWE tests with the aws-lc-rs crypto backend. This is because the
