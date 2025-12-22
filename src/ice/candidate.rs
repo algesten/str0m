@@ -759,22 +759,19 @@ impl<P> CandidateBuilder<P, Init> {
     }
 
     /// Configures as a Server Reflexive (STUN) candidate.
-    /// Returns error if `addr` and `base` are different IP versions.
+    /// `base` and `addr` must use the same IP version.
     pub fn server_reflexive(
         self,
         addr: SocketAddr,
         base: SocketAddr,
-    ) -> Result<CandidateBuilder<P, Ready>, IceError> {
-        if addr.is_ipv4() != base.is_ipv4() {
-            return Err(IceError::BadCandidate("IP version mismatch".into()));
-        }
-        Ok(self.into_ready(
+    ) -> CandidateBuilder<P, Ready> {
+        self.into_ready(
             CandidateKind::ServerReflexive,
             addr,
             Some(base),
             Some(base),
             Some(Candidate::arbitrary_raddr(addr)),
-        ))
+        )
     }
 
     /// Configures as a Relayed (TURN) candidate.
@@ -822,6 +819,16 @@ impl<P> CandidateBuilder<P, Ready> {
         let addr = self.addr.expect("addr missing");
         if !is_valid_ip(addr.ip()) {
             return Err(IceError::BadCandidate(format!("Invalid IP: {}", addr.ip())));
+        }
+
+        if let Some(base) = self.base {
+            if addr.is_ipv4() != base.is_ipv4() {
+                return Err(IceError::BadCandidate(format!(
+                    "address IP version mismatch: addr={} base={}",
+                    addr.ip(),
+                    base.ip(),
+                )));
+            }
         }
 
         Ok(Candidate::new(
@@ -1103,7 +1110,6 @@ mod tests {
         let builder = Candidate::builder()
             .udp()
             .server_reflexive(addr, base)
-            .unwrap()
             .build()
             .unwrap();
 
@@ -1133,7 +1139,7 @@ mod tests {
         // API returns error on mixed versions
         let api_err = Candidate::server_reflexive(v4, v6, Protocol::Udp);
         // Builder should return same error type
-        let builder_err = Candidate::builder().udp().server_reflexive(v4, v6);
+        let builder_err = Candidate::builder().udp().server_reflexive(v4, v6).build();
 
         assert!(api_err.is_err());
         assert!(builder_err.is_err());
