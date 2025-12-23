@@ -4,11 +4,6 @@ on:
   schedule:
     # Run nightly at 2:00 AM UTC
     - cron: "0 2 * * *"
-  # Temporary: Run on PRs for testing this workflow
-  pull_request:
-    paths:
-      - '.github/workflows/nightly.yml'
-      - 'tests/common.rs'
   # Allow manual trigger for testing
   workflow_dispatch:
 
