@@ -94,3 +94,6 @@ required-features = ["examples"]
 [[example]]
 name = "http-post"
 required-features = ["examples"]
+
+[patch.crates-io]
+dimpl = { git = "https://github.com/algesten/dimpl", branch = "dev/wincrypto_interop" }
