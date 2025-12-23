@@ -417,7 +417,6 @@ pub fn connect_l_r() -> (TestRtc, TestRtc) {
     let mut rtc2_builder = Rtc::builder()
         .set_rtp_mode(true)
         .enable_raw_packets(true)
-<<<<<<< HEAD
         // release packet straight away
         .set_reordering_size_audio(0);
 
@@ -426,10 +425,6 @@ pub fn connect_l_r() -> (TestRtc, TestRtc) {
     }
 
     connect_l_r_with_rtc(rtc1_builder.build(), rtc2_builder.build())
-=======
-        .build();
-    connect_l_r_with_rtc(rtc1, rtc2)
->>>>>>> main
 }
 
 pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {
