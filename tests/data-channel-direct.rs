@@ -6,14 +6,14 @@ use str0m::{Candidate, Event, RtcConfig, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Role, TestRtc};
+use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn data_channel_direct() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let mut l = TestRtc::new(Role::Left);
+    let mut l = TestRtc::new(Peer::Left);
 
     let rtc_r = RtcConfig::new().set_ice_lite(true).build();
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);

@@ -7,15 +7,15 @@ use str0m::{Event, RtcError};
 
 mod common;
 use common::{h264_data, init_crypto_default, vp8_data, vp9_data};
-use common::{init_log, progress, Role, TestRtc};
+use common::{init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let mut l = TestRtc::new(Role::Left);
-    let mut r = TestRtc::new(Role::Right);
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new(Peer::Right);
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
@@ -104,8 +104,8 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let mut l = TestRtc::new(Role::Left);
-    let mut r = TestRtc::new(Role::Right);
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new(Peer::Right);
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
@@ -195,8 +195,8 @@ pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let mut l = TestRtc::new(Role::Left);
-    let mut r = TestRtc::new(Role::Right);
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new(Peer::Right);
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());

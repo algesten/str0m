@@ -21,29 +21,29 @@ use str0m::{Event, Input, Output, Rtc, RtcError};
 use tracing::info_span;
 use tracing::Span;
 
-/// Role for test peers - Left or Right.
+/// Peer for test peers - Left or Right.
 /// Used to determine which crypto provider to use based on environment variables.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Role {
+pub enum Peer {
     Left,
     Right,
 }
 
-impl Role {
-    /// Create a tracing span for this role.
+impl Peer {
+    /// Create a tracing span for this peer.
     pub fn span(&self) -> Span {
         match self {
-            Role::Left => info_span!("L"),
-            Role::Right => info_span!("R"),
+            Peer::Left => info_span!("L"),
+            Peer::Right => info_span!("R"),
         }
     }
 
-    /// Get the crypto provider for this role based on environment variables.
+    /// Get the crypto provider for this peer based on environment variables.
     /// Returns None if no environment variable is set.
     pub fn crypto_provider(&self) -> Option<Arc<CryptoProvider>> {
         let env_var = match self {
-            Role::Left => "L_CRYPTO",
-            Role::Right => "R_CRYPTO",
+            Peer::Left => "L_CRYPTO",
+            Peer::Right => "R_CRYPTO",
         };
 
         if let Ok(crypto_name) = std::env::var(env_var) {
@@ -79,14 +79,14 @@ pub struct TestRtc {
 }
 
 impl TestRtc {
-    pub fn new(role: Role) -> Self {
-        let rtc = if let Some(crypto) = role.crypto_provider() {
+    pub fn new(peer: Peer) -> Self {
+        let rtc = if let Some(crypto) = peer.crypto_provider() {
             Rtc::builder().set_crypto_provider(crypto).build()
         } else {
             Rtc::new()
         };
 
-        Self::new_with_rtc(role.span(), rtc)
+        Self::new_with_rtc(peer.span(), rtc)
     }
 
     pub fn new_with_rtc(span: Span, rtc: Rtc) -> Self {
@@ -408,7 +408,7 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
 pub fn connect_l_r() -> (TestRtc, TestRtc) {
     let mut rtc1_builder = Rtc::builder().set_rtp_mode(true).enable_raw_packets(true);
 
-    if let Some(crypto) = Role::Left.crypto_provider() {
+    if let Some(crypto) = Peer::Left.crypto_provider() {
         rtc1_builder = rtc1_builder.set_crypto_provider(crypto);
     }
 
@@ -418,7 +418,7 @@ pub fn connect_l_r() -> (TestRtc, TestRtc) {
         // release packet straight away
         .set_reordering_size_audio(0);
 
-    if let Some(crypto) = Role::Right.crypto_provider() {
+    if let Some(crypto) = Peer::Right.crypto_provider() {
         rtc2_builder = rtc2_builder.set_crypto_provider(crypto);
     }
 

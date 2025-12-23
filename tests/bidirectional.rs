@@ -6,15 +6,15 @@ use str0m::media::{Direction, MediaKind};
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Role, TestRtc};
+use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let mut l = TestRtc::new(Role::Left);
-    let mut r = TestRtc::new(Role::Right);
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new(Peer::Right);
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
