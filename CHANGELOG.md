@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Bump dimpl 0.2.1 for SChannel compat #801
+
 0.14.2
 
   * Fix order of DTLS pending packet poll #796
