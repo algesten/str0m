@@ -5,18 +5,17 @@ use str0m::change::SdpOffer;
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaKind};
 use str0m::{Event, RtcError};
-use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, TestRtc};
+use common::{init_crypto_default, init_log, progress, Role, TestRtc};
 
 #[test]
 pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let mut l = TestRtc::new(info_span!("L"));
-    let mut r = TestRtc::new(info_span!("R"));
+    let mut l = TestRtc::new(Role::Left);
+    let mut r = TestRtc::new(Role::Right);
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());

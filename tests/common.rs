@@ -21,6 +21,39 @@ use str0m::{Event, Input, Output, Rtc, RtcError};
 use tracing::info_span;
 use tracing::Span;
 
+/// Role for test peers - Left or Right.
+/// Used to determine which crypto provider to use based on environment variables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
+    Left,
+    Right,
+}
+
+impl Role {
+    /// Create a tracing span for this role.
+    pub fn span(&self) -> Span {
+        match self {
+            Role::Left => info_span!("L"),
+            Role::Right => info_span!("R"),
+        }
+    }
+
+    /// Get the crypto provider for this role based on environment variables.
+    /// Returns None if no environment variable is set.
+    pub fn crypto_provider(&self) -> Option<Arc<CryptoProvider>> {
+        let env_var = match self {
+            Role::Left => "L_CRYPTO",
+            Role::Right => "R_CRYPTO",
+        };
+
+        if let Ok(crypto_name) = std::env::var(env_var) {
+            Some(Arc::new(get_crypto_provider_by_name(&crypto_name)))
+        } else {
+            None
+        }
+    }
+}
+
 /// Owned version of Receive for queueing.
 #[derive(Clone)]
 pub struct PendingPacket {
@@ -46,29 +79,14 @@ pub struct TestRtc {
 }
 
 impl TestRtc {
-    pub fn new(span: Span) -> Self {
-        // Check if this is L or R based on span metadata and apply corresponding crypto
-        // We use a simple heuristic: check the span's record for a field that might indicate L or R
-        let metadata = span.metadata();
-        let span_name = metadata.map(|m| m.name()).unwrap_or("");
-
-        let rtc = if span_name == "L" {
-            if let Some(crypto) = get_crypto_provider_l() {
-                Rtc::builder().set_crypto_provider(crypto).build()
-            } else {
-                Rtc::new()
-            }
-        } else if span_name == "R" {
-            if let Some(crypto) = get_crypto_provider_r() {
-                Rtc::builder().set_crypto_provider(crypto).build()
-            } else {
-                Rtc::new()
-            }
+    pub fn new(role: Role) -> Self {
+        let rtc = if let Some(crypto) = role.crypto_provider() {
+            Rtc::builder().set_crypto_provider(crypto).build()
         } else {
             Rtc::new()
         };
 
-        Self::new_with_rtc(span, rtc)
+        Self::new_with_rtc(role.span(), rtc)
     }
 
     pub fn new_with_rtc(span: Span, rtc: Rtc) -> Self {
@@ -346,26 +364,6 @@ pub fn init_crypto_default() {
     str0m::crypto::from_feature_flags().install_process_default();
 }
 
-/// Get crypto provider for the left role based on L_CRYPTO env variable.
-/// Falls back to feature flags if not set.
-pub fn get_crypto_provider_l() -> Option<Arc<CryptoProvider>> {
-    if let Ok(crypto_name) = std::env::var("L_CRYPTO") {
-        Some(Arc::new(get_crypto_provider_by_name(&crypto_name)))
-    } else {
-        None
-    }
-}
-
-/// Get crypto provider for the right role based on R_CRYPTO env variable.
-/// Falls back to feature flags if not set.
-pub fn get_crypto_provider_r() -> Option<Arc<CryptoProvider>> {
-    if let Ok(crypto_name) = std::env::var("R_CRYPTO") {
-        Some(Arc::new(get_crypto_provider_by_name(&crypto_name)))
-    } else {
-        None
-    }
-}
-
 /// Create a crypto provider from a string name.
 /// Supported names: "aws-lc-rs", "rust-crypto", "openssl", "wincrypto", "apple-crypto"
 fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
@@ -410,7 +408,7 @@ fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
 pub fn connect_l_r() -> (TestRtc, TestRtc) {
     let mut rtc1_builder = Rtc::builder().set_rtp_mode(true).enable_raw_packets(true);
 
-    if let Some(crypto) = get_crypto_provider_l() {
+    if let Some(crypto) = Role::Left.crypto_provider() {
         rtc1_builder = rtc1_builder.set_crypto_provider(crypto);
     }
 
@@ -420,7 +418,7 @@ pub fn connect_l_r() -> (TestRtc, TestRtc) {
         // release packet straight away
         .set_reordering_size_audio(0);
 
-    if let Some(crypto) = get_crypto_provider_r() {
+    if let Some(crypto) = Role::Right.crypto_provider() {
         rtc2_builder = rtc2_builder.set_crypto_provider(crypto);
     }
 
