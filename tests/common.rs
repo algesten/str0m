@@ -412,11 +412,7 @@ pub fn connect_l_r() -> (TestRtc, TestRtc) {
         rtc1_builder = rtc1_builder.set_crypto_provider(crypto);
     }
 
-    let mut rtc2_builder = Rtc::builder()
-        .set_rtp_mode(true)
-        .enable_raw_packets(true)
-        // release packet straight away
-        .set_reordering_size_audio(0);
+    let mut rtc2_builder = Rtc::builder().set_rtp_mode(true).enable_raw_packets(true);
 
     if let Some(crypto) = Peer::Right.crypto_provider() {
         rtc2_builder = rtc2_builder.set_crypto_provider(crypto);
