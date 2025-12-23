@@ -4,19 +4,18 @@ use std::time::Duration;
 use str0m::format::{Codec, CodecExtra};
 use str0m::media::{Direction, MediaKind};
 use str0m::{Event, RtcError};
-use tracing::info_span;
 
 mod common;
 use common::{h264_data, init_crypto_default, vp8_data, vp9_data};
-use common::{init_log, progress, TestRtc};
+use common::{init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let mut l = TestRtc::new(info_span!("L"));
-    let mut r = TestRtc::new(info_span!("R"));
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new(Peer::Right);
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
@@ -105,8 +104,8 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let mut l = TestRtc::new(info_span!("L"));
-    let mut r = TestRtc::new(info_span!("R"));
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new(Peer::Right);
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
@@ -196,8 +195,8 @@ pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let mut l = TestRtc::new(info_span!("L"));
-    let mut r = TestRtc::new(info_span!("R"));
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new(Peer::Right);
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());

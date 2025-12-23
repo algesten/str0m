@@ -2,13 +2,14 @@
 use std::io::Cursor;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::ops::{Deref, DerefMut};
-use std::sync::Once;
+use std::sync::{Arc, Once};
 use std::time::{Duration, Instant};
 
 use netem::{Input as NetemInput, Netem, NetemConfig, Output as NetemOutput};
 
 use pcap_file::pcap::PcapReader;
 use str0m::change::SdpApi;
+use str0m::crypto::CryptoProvider;
 use str0m::format::Codec;
 use str0m::format::PayloadParams;
 use str0m::net::Protocol;
@@ -19,6 +20,39 @@ use str0m::Candidate;
 use str0m::{Event, Input, Output, Rtc, RtcError};
 use tracing::info_span;
 use tracing::Span;
+
+/// Peer for test peers - Left or Right.
+/// Used to determine which crypto provider to use based on environment variables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Peer {
+    Left,
+    Right,
+}
+
+impl Peer {
+    /// Create a tracing span for this peer.
+    pub fn span(&self) -> Span {
+        match self {
+            Peer::Left => info_span!("L"),
+            Peer::Right => info_span!("R"),
+        }
+    }
+
+    /// Get the crypto provider for this peer based on environment variables.
+    /// Returns None if no environment variable is set.
+    pub fn crypto_provider(&self) -> Option<Arc<CryptoProvider>> {
+        let env_var = match self {
+            Peer::Left => "L_CRYPTO",
+            Peer::Right => "R_CRYPTO",
+        };
+
+        if let Ok(crypto_name) = std::env::var(env_var) {
+            Some(Arc::new(get_crypto_provider_by_name(&crypto_name)))
+        } else {
+            None
+        }
+    }
+}
 
 /// Owned version of Receive for queueing.
 #[derive(Clone)]
@@ -45,8 +79,14 @@ pub struct TestRtc {
 }
 
 impl TestRtc {
-    pub fn new(span: Span) -> Self {
-        Self::new_with_rtc(span, Rtc::new())
+    pub fn new(peer: Peer) -> Self {
+        let rtc = if let Some(crypto) = peer.crypto_provider() {
+            Rtc::builder().set_crypto_provider(crypto).build()
+        } else {
+            Rtc::new()
+        };
+
+        Self::new_with_rtc(peer.span(), rtc)
     }
 
     pub fn new_with_rtc(span: Span, rtc: Rtc) -> Self {
@@ -324,16 +364,61 @@ pub fn init_crypto_default() {
     str0m::crypto::from_feature_flags().install_process_default();
 }
 
+/// Create a crypto provider from a string name.
+/// Supported names: "aws-lc-rs", "rust-crypto", "openssl", "wincrypto", "apple-crypto"
+fn get_crypto_provider_by_name(name: &str) -> CryptoProvider {
+    match name {
+        #[cfg(feature = "aws-lc-rs")]
+        "aws-lc-rs" | "aws" => str0m_aws_lc_rs::default_provider(),
+
+        #[cfg(feature = "rust-crypto")]
+        "rust-crypto" => str0m_rust_crypto::default_provider(),
+
+        #[cfg(feature = "openssl")]
+        "openssl" => str0m_openssl::default_provider(),
+
+        #[cfg(all(feature = "wincrypto", target_os = "windows"))]
+        "wincrypto" => str0m_wincrypto::default_provider(),
+
+        #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
+        "apple-crypto" => str0m_apple_crypto::default_provider(),
+
+        _ => {
+            let mut available = Vec::new();
+            #[cfg(feature = "aws-lc-rs")]
+            available.push("aws-lc-rs");
+            #[cfg(feature = "rust-crypto")]
+            available.push("rust-crypto");
+            #[cfg(feature = "openssl")]
+            available.push("openssl");
+            #[cfg(all(feature = "wincrypto", target_os = "windows"))]
+            available.push("wincrypto");
+            #[cfg(all(feature = "apple-crypto", target_vendor = "apple"))]
+            available.push("apple-crypto");
+
+            panic!(
+                "Unknown or unavailable crypto provider '{}'. Available providers: [{}]",
+                name,
+                available.join(", ")
+            )
+        }
+    }
+}
+
 pub fn connect_l_r() -> (TestRtc, TestRtc) {
-    let rtc1 = Rtc::builder()
-        .set_rtp_mode(true)
-        .enable_raw_packets(true)
-        .build();
-    let rtc2 = Rtc::builder()
-        .set_rtp_mode(true)
-        .enable_raw_packets(true)
-        .build();
-    connect_l_r_with_rtc(rtc1, rtc2)
+    let mut rtc1_builder = Rtc::builder().set_rtp_mode(true).enable_raw_packets(true);
+
+    if let Some(crypto) = Peer::Left.crypto_provider() {
+        rtc1_builder = rtc1_builder.set_crypto_provider(crypto);
+    }
+
+    let mut rtc2_builder = Rtc::builder().set_rtp_mode(true).enable_raw_packets(true);
+
+    if let Some(crypto) = Peer::Right.crypto_provider() {
+        rtc2_builder = rtc2_builder.set_crypto_provider(crypto);
+    }
+
+    connect_l_r_with_rtc(rtc1_builder.build(), rtc2_builder.build())
 }
 
 pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {

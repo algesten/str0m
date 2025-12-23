@@ -6,18 +6,17 @@ use str0m::media::{Direction, MediaKind, MediaTime};
 use str0m::rtp::RawPacket;
 use str0m::{Event, RtcError};
 use tracing::info;
-use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, TestRtc};
+use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn mediatime_backwards() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let mut l = TestRtc::new(info_span!("L"));
-    let mut r = TestRtc::new(info_span!("R"));
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new(Peer::Right);
 
     // Enable raw packets to trace the RTP headers
     r.rtc = str0m::Rtc::builder().enable_raw_packets(true).build();

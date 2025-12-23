@@ -7,7 +7,7 @@ use str0m::{Candidate, Event, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, TestRtc};
+use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn contiguous_all_the_way() -> Result<(), RtcError> {
@@ -141,7 +141,7 @@ impl Server {
     }
 
     fn get_output(self) -> Result<Vec<MediaData>, RtcError> {
-        let mut l = TestRtc::new(info_span!("L"));
+        let mut l = TestRtc::new(Peer::Left);
 
         // We need to lower the default reordering buffer size, or we won't make it
         // past the dropped packet.

@@ -5,7 +5,7 @@ use str0m::rtp::Ssrc;
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{connect_l_r, init_crypto_default, init_log, progress, TestRtc};
+use common::{connect_l_r, init_crypto_default, init_log, progress, Peer, TestRtc};
 use tracing::info_span;
 
 #[test]
@@ -57,8 +57,8 @@ pub fn sdp_no_media_added_event() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let mut l = TestRtc::new(info_span!("L"));
-    let mut r = TestRtc::new(info_span!("R"));
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new(Peer::Right);
 
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());

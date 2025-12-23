@@ -6,14 +6,14 @@ use str0m::{Event, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, TestRtc};
+use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
 
 #[test]
 pub fn flappy_ice_lite_state() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let mut l = TestRtc::new(info_span!("L"));
+    let mut l = TestRtc::new(Peer::Left);
 
     let rtc = RtcConfig::new().set_ice_lite(true).build();
     let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc);
