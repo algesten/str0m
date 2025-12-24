@@ -166,7 +166,7 @@ jobs:
         run: cargo +${{steps.toolchain.outputs.name}} build --target ${{ matrix.platform.target }} --no-default-features --features ${{ matrix.platform.features }}
 
       - name: Test ${{ matrix.platform.name }}
-        run: cargo +${{steps.toolchain.outputs.name}} test --target ${{ matrix.platform.target }} --no-default-features --features ${{ matrix.platform.features }}
+        run: cargo +${{steps.toolchain.outputs.name}} test --release --target ${{ matrix.platform.target }} --no-default-features --features ${{ matrix.platform.features }} --lib --bins --tests
 
   # Build-only for mobile platforms
   mobile-build:
@@ -195,19 +195,19 @@ jobs:
           - name: Android ARM64
             os: ubuntu-latest
             target: aarch64-linux-android
-            features: rust-crypto,aws-lc-rs,openssl
+            features: rust-crypto,aws-lc-rs
           - name: Android ARMv7
             os: ubuntu-latest
             target: armv7-linux-androideabi
-            features: rust-crypto,aws-lc-rs,openssl
+            features: rust-crypto,aws-lc-rs
           - name: Android x86_64
             os: ubuntu-latest
             target: x86_64-linux-android
-            features: rust-crypto,aws-lc-rs,openssl
+            features: rust-crypto,aws-lc-rs
           - name: Android i686
             os: ubuntu-latest
             target: i686-linux-android
-            features: rust-crypto,aws-lc-rs,openssl
+            features: rust-crypto,aws-lc-rs
 
     steps:
       - uses: actions/checkout@v4
