@@ -182,7 +182,7 @@ jobs:
           - name: iOS ARM64
             os: macos-latest
             target: aarch64-apple-ios
-            features: rust-crypto,aws-lc-rs,apple-crypto
+            features: rust-crypto,aws-lc-rs
           # Android targets - ARM64 only
           - name: Android ARM64
             os: ubuntu-latest
