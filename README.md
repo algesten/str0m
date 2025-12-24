@@ -541,11 +541,6 @@ Platforms str0m is compiled and tested on:
 | `x86_64-unknown-linux-gnu`     | :white_check_mark:| :white_check_mark:|
 | `x86_64-apple-darwin`          | :white_check_mark:| :white_check_mark:|
 | `aarch64-apple-darwin`         | :white_check_mark:| :white_check_mark:|
-
-Additional platforms verified in nightly builds:
-
-| Platform                       | Compiled          | Tested            |
-| ------------------------------ | ----------------- | ----------------- |
 | `aarch64-unknown-linux-gnu`    | :white_check_mark:| :white_check_mark:|
 | `aarch64-pc-windows-msvc`      | :white_check_mark:| :white_check_mark:|
 | `aarch64-apple-ios`            | :white_check_mark:| :x:               |
