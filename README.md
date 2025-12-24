@@ -535,11 +535,26 @@ if str0m is suitable for your project.
 
 Platforms str0m is compiled and tested on:
 
-| Platform                   | Compiled          | Tested            |
-| -------------------------- | ----------------- | ----------------- |
-| `x86_64-pc-windows-msvc`   | :white_check_mark:| :white_check_mark:|
-| `x86_64-unknown-linux-gnu` | :white_check_mark:| :white_check_mark:|
-| `x86_64-apple-darwin`      | :white_check_mark:| :white_check_mark:|
+| Platform                       | Compiled          | Tested            |
+| ------------------------------ | ----------------- | ----------------- |
+| `x86_64-pc-windows-msvc`       | :white_check_mark:| :white_check_mark:|
+| `x86_64-unknown-linux-gnu`     | :white_check_mark:| :white_check_mark:|
+| `x86_64-apple-darwin`          | :white_check_mark:| :white_check_mark:|
+| `aarch64-apple-darwin`         | :white_check_mark:| :white_check_mark:|
+
+Additional platforms verified in nightly builds:
+
+| Platform                       | Compiled          | Tested            |
+| ------------------------------ | ----------------- | ----------------- |
+| `aarch64-unknown-linux-gnu`    | :white_check_mark:| :white_check_mark:|
+| `aarch64-pc-windows-msvc`      | :white_check_mark:| :white_check_mark:|
+| `aarch64-apple-ios`            | :white_check_mark:| :x:               |
+| `aarch64-apple-ios-sim`        | :white_check_mark:| :x:               |
+| `x86_64-apple-ios`             | :white_check_mark:| :x:               |
+| `aarch64-linux-android`        | :white_check_mark:| :x:               |
+| `armv7-linux-androideabi`      | :white_check_mark:| :x:               |
+| `x86_64-linux-android`         | :white_check_mark:| :x:               |
+| `i686-linux-android`           | :white_check_mark:| :x:               |
 
 If your platform isn't listed but is supported by Rust, we'd love for you to give str0m a try and
 share your experience. We greatly appreciate your feedback!

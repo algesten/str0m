@@ -6,6 +6,8 @@ on:
     - cron: "0 2 * * *"
   # Allow manual trigger for testing
   workflow_dispatch:
+  # Temporarily enabled on PR for verification
+  pull_request:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -107,4 +109,141 @@ jobs:
           L_CRYPTO: ${{ matrix.l_crypto }}
           R_CRYPTO: ${{ matrix.r_crypto }}
         run: cargo +${{steps.toolchain.outputs.name}} test --release --no-default-features --features rust-crypto,aws-lc-rs,apple-crypto,openssl --lib --bins --tests
+
+  # Additional platform testing
+  platform-build-test:
+    name: ${{ matrix.platform.name }} - Build & Test
+    runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 30
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: Linux ARM64
+            os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            features: rust-crypto,aws-lc-rs,openssl
+          - name: Windows ARM64
+            os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            features: rust-crypto,aws-lc-rs,wincrypto,openssl
+          - name: macOS Intel
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            features: rust-crypto,aws-lc-rs,apple-crypto,openssl
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        id: toolchain
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform.target }}
+
+      - name: Install OpenSSL on Windows
+        if: matrix.platform.os == 'windows-11-arm'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://www.firedaemon.com/download-firedaemon-openssl-3-6-zip -OutFile $env:TEMP\openssl.zip
+          if ((Get-FileHash $env:TEMP\openssl.zip -Algorithm SHA256).Hash -ne "C1C831E8BCCE7D6C204D6813AAFB87C0D44DD88841AB31105185B55CDEC1D759") { throw "Checksum mismatch" }
+          Expand-Archive $env:TEMP\openssl.zip -DestinationPath C:\openssl-3.6.0 -Force
+          echo "OPENSSL_DIR=C:\openssl-3.6.0\arm64" >> $env:GITHUB_ENV
+
+      - name: Build ${{ matrix.platform.name }}
+        run: cargo +${{steps.toolchain.outputs.name}} build --target ${{ matrix.platform.target }} --no-default-features --features ${{ matrix.platform.features }}
+
+      - name: Test ${{ matrix.platform.name }}
+        run: cargo +${{steps.toolchain.outputs.name}} test --target ${{ matrix.platform.target }} --no-default-features --features ${{ matrix.platform.features }}
+
+  # Build-only for mobile platforms
+  mobile-build:
+    name: ${{ matrix.platform.name }} - Build Only
+    runs-on: ${{ matrix.platform.os }}
+    timeout-minutes: 30
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          # iOS targets
+          - name: iOS ARM64
+            os: macos-latest
+            target: aarch64-apple-ios
+            features: rust-crypto,aws-lc-rs,apple-crypto
+          - name: iOS Simulator ARM64
+            os: macos-latest
+            target: aarch64-apple-ios-sim
+            features: rust-crypto,aws-lc-rs,apple-crypto
+          - name: iOS x86_64
+            os: macos-latest
+            target: x86_64-apple-ios
+            features: rust-crypto,aws-lc-rs,apple-crypto
+          # Android targets
+          - name: Android ARM64
+            os: ubuntu-latest
+            target: aarch64-linux-android
+            features: rust-crypto,aws-lc-rs,openssl
+          - name: Android ARMv7
+            os: ubuntu-latest
+            target: armv7-linux-androideabi
+            features: rust-crypto,aws-lc-rs,openssl
+          - name: Android x86_64
+            os: ubuntu-latest
+            target: x86_64-linux-android
+            features: rust-crypto,aws-lc-rs,openssl
+          - name: Android i686
+            os: ubuntu-latest
+            target: i686-linux-android
+            features: rust-crypto,aws-lc-rs,openssl
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@stable
+        id: toolchain
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.platform.target }}
+
+      - name: Install Android NDK
+        if: contains(matrix.platform.target, 'android')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip wget
+          wget https://dl.google.com/android/repository/android-ndk-r27-linux.zip
+          unzip -q android-ndk-r27-linux.zip
+          echo "ANDROID_NDK_HOME=$PWD/android-ndk-r27" >> $GITHUB_ENV
+
+      - name: Configure Android linker
+        if: contains(matrix.platform.target, 'android')
+        run: |
+          mkdir -p .cargo
+          cat >> .cargo/config.toml << 'EOF'
+          [target.aarch64-linux-android]
+          linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang"
+          
+          [target.armv7-linux-androideabi]
+          linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang"
+          
+          [target.x86_64-linux-android]
+          linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android21-clang"
+          
+          [target.i686-linux-android]
+          linker = "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/i686-linux-android21-clang"
+          EOF
+
+      - name: Build ${{ matrix.platform.name }}
+        run: cargo +${{steps.toolchain.outputs.name}} build --target ${{ matrix.platform.target }} --no-default-features --features ${{ matrix.platform.features }}
 
