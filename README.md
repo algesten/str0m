@@ -316,7 +316,7 @@ Note that you can use any backend crate directly without enabling its feature fl
 str0m_rust_crypto::default_provider().install_process_default();
 ```
 
-### Set crypto provider per Rtc instance
+### Crypto provider per Rtc instance
 
 ```rust
 use std::sync::Arc;
