@@ -1,4 +1,4 @@
-name: Nightly Crypto Cross-Testing
+name: Nightly
 
 on:
   schedule:
