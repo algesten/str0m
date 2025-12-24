@@ -178,35 +178,15 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          # iOS targets
+          # iOS targets - ARM64 only
           - name: iOS ARM64
             os: macos-latest
             target: aarch64-apple-ios
             features: rust-crypto,aws-lc-rs,apple-crypto
-          - name: iOS Simulator ARM64
-            os: macos-latest
-            target: aarch64-apple-ios-sim
-            features: rust-crypto,aws-lc-rs,apple-crypto
-          - name: iOS x86_64
-            os: macos-latest
-            target: x86_64-apple-ios
-            features: rust-crypto,aws-lc-rs,apple-crypto
-          # Android targets
+          # Android targets - ARM64 only
           - name: Android ARM64
             os: ubuntu-latest
             target: aarch64-linux-android
-            features: rust-crypto,aws-lc-rs
-          - name: Android ARMv7
-            os: ubuntu-latest
-            target: armv7-linux-androideabi
-            features: rust-crypto,aws-lc-rs
-          - name: Android x86_64
-            os: ubuntu-latest
-            target: x86_64-linux-android
-            features: rust-crypto,aws-lc-rs
-          - name: Android i686
-            os: ubuntu-latest
-            target: i686-linux-android
             features: rust-crypto,aws-lc-rs
 
     steps:
