@@ -6,8 +6,6 @@ on:
     - cron: "0 2 * * *"
   # Allow manual trigger for testing
   workflow_dispatch:
-  # Temporarily enabled on PR for verification
-  pull_request:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
