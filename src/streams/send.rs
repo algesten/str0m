@@ -862,7 +862,7 @@ impl StreamTx {
         // Wallclock needs to be in the past.
         if w > now {
             let delta = w - now;
-            debug!("write_rtp wallclock is in the future: {:?}", delta);
+            trace!("write_rtp wallclock is in the future: {:?}", delta);
             return None;
         }
         let offset = now - w;
