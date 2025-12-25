@@ -29,6 +29,13 @@ use macros::log_loss;
 pub(crate) use macros::{log_pacer_media_debt, log_pacer_padding_debt};
 pub(crate) use probe::{ProbeClusterConfig, ProbeClusterState, ProbeControl, ProbeEstimator};
 
+/// Ratio for treating the current estimate as "near desired".
+///
+/// Used by:
+/// - `ProbeControl`: stop bursty probe clusters when close enough.
+/// - `PacerControl`: allow a small, controlled padding "creep" in the same regime.
+pub(crate) const NEAR_DESIRED_RATIO: f64 = 0.95;
+
 const INITIAL_BITRATE_WINDOW: Duration = Duration::from_millis(500);
 const BITRATE_WINDOW: Duration = Duration::from_millis(150);
 const STARTUP_PAHSE: Duration = Duration::from_secs(2);

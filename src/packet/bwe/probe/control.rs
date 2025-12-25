@@ -1,6 +1,7 @@
 use std::time::{Duration, Instant};
 
 use crate::packet::bwe::ProbeClusterConfig;
+use crate::packet::bwe::NEAR_DESIRED_RATIO;
 use crate::rtp_::{Bitrate, TwccClusterId};
 use crate::util::already_happened;
 
@@ -9,15 +10,6 @@ use crate::util::already_happened;
 /// If `desired_bitrate` is set, we will never create a probe above
 /// `desired_bitrate * DESIRED_PROBE_CAP_SCALE`.
 const DESIRED_PROBE_CAP_SCALE: f64 = 1.1;
-
-/// Stop probing when the current estimate is sufficiently close to the user provided `desired`.
-///
-/// Motivation: near `desired`, even a capped probe (up to ~`desired * 1.1`) can easily saturate
-/// the bottleneck, trigger overuse, and cause sharp estimate drops / oscillations.
-///
-/// Once we're close, we prefer to let the normal estimator/pacer behavior converge without
-/// additional probe bursts.
-const NEAR_DESIRED_NO_PROBE_RATIO: f64 = 0.95;
 
 /// Decides when and at what bitrate to send probe clusters.
 ///
@@ -126,7 +118,7 @@ impl ProbeControl {
         // Near-desired strategy:
         // When we're close to the application's desired bitrate, avoid probing to reduce
         // probe-induced overuse and oscillations.
-        if estimate >= desired * NEAR_DESIRED_NO_PROBE_RATIO {
+        if estimate >= desired * NEAR_DESIRED_RATIO {
             return false;
         }
 
