@@ -27,7 +27,8 @@ use loss_controller::LossController;
 use macros::log_loss;
 
 pub(crate) use macros::{log_pacer_media_debt, log_pacer_padding_debt};
-pub(crate) use probe::{ProbeClusterConfig, ProbeClusterState, ProbeControl, ProbeEstimator};
+pub(crate) use probe::{ProbeClusterConfig, ProbeClusterState, ProbeControl};
+pub(crate) use probe::{ProbeControlArgs, ProbeEstimator};
 
 /// Ratio for treating the current estimate as "near desired".
 ///
@@ -204,14 +205,17 @@ impl SendSideBandwithEstimator {
     /// Returns a configured probe cluster if one should be initiated, or None otherwise.
     pub(crate) fn maybe_create_probe(
         &mut self,
-        desired_bitrate: Bitrate,
+        desired: Bitrate,
         now: Instant,
     ) -> Option<ProbeClusterConfig> {
-        let is_overuse = self.delay_controller.is_overusing();
+        let args = ProbeControlArgs {
+            estimate: self.last_estimate()?,
+            desired,
+            is_overuse: self.delay_controller.is_overusing(),
+            now,
+        };
 
-        let current_estimate = self.last_estimate()?;
-        self.probe_control
-            .maybe_create_probe(current_estimate, desired_bitrate, is_overuse, now)
+        self.probe_control.maybe_create_probe(args)
     }
 
     /// Start analyzing a probe cluster.
