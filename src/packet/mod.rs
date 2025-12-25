@@ -48,8 +48,10 @@ mod bwe;
 pub(crate) use bwe::{ProbeClusterConfig, SendSideBandwithEstimator};
 
 mod pacer;
+mod pacer_control;
 pub(crate) use pacer::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
 pub(crate) use pacer::{QueuePriority, QueueSnapshot, QueueState};
+pub(crate) use pacer_control::PacerControl;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Types of media.

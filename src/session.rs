@@ -11,7 +11,7 @@ use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
-use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
+use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerControl, PacerImpl};
 use crate::packet::{ProbeClusterConfig, SendSideBandwithEstimator};
 use crate::rtp::{Extension, RawPacket};
 use crate::rtp_::Direction;
@@ -123,6 +123,7 @@ impl Session {
             let send_side_bwe = SendSideBandwithEstimator::new(rate, config.enable_loss_controller);
             let bwe = Bwe {
                 bwe: send_side_bwe,
+                pace_control: PacerControl::new(),
                 desired_bitrate: Bitrate::ZERO,
                 current_bitrate: rate,
 
@@ -947,35 +948,22 @@ impl Session {
             return;
         };
 
-        // Calculate padding rate:
-        // 1. If desired > BWE estimate: pad to estimate (help discover more capacity)
-        // 2. If send_rate < declared current: pad the gap (maintain declared rate, ALR handling)
-        // 3. Otherwise: no padding
         let Some(current_estimate) = bwe.bwe.last_estimate() else {
             // No estimate yet, no padding
             return;
         };
         let send_rate = bwe.bwe.acked_bitrate();
 
-        let padding_rate = if bwe.desired_bitrate > current_estimate {
-            // Case 1: App wants more than we know network can handle
-            // Pad the gap to reach current estimate to help validate and discover more
-            // via probe cluster bursts.
-            current_estimate.saturating_sub(send_rate)
-        } else if send_rate < bwe.current_bitrate {
-            // Case 2: App is sending less than declared (ALR - Application Limited Region)
-            // Pad the gap to maintain the declared send rate
-            bwe.current_bitrate - send_rate
-        } else {
-            // Case 3: App is sending at or above declared rate, no padding needed
-            Bitrate::ZERO
-        };
+        // Calculate pacing and padding rates
+        let result = bwe.pace_control.calculate(
+            bwe.current_bitrate,
+            bwe.desired_bitrate,
+            current_estimate,
+            send_rate,
+        );
 
-        self.pacer.set_padding_rate(padding_rate);
-
-        // Set pacing rate to smooth out media transmission (burst avoidance)
-        let pacing_rate = bwe.current_bitrate * PACING_FACTOR;
-        self.pacer.set_pacing_rate(pacing_rate);
+        self.pacer.set_padding_rate(result.padding_rate);
+        self.pacer.set_pacing_rate(result.pacing_rate);
     }
 
     pub fn media_by_mid(&self, mid: Mid) -> Option<&Media> {
@@ -1036,6 +1024,7 @@ impl Session {
 
 struct Bwe {
     bwe: SendSideBandwithEstimator,
+    pace_control: PacerControl,
     desired_bitrate: Bitrate,
     current_bitrate: Bitrate,
 
