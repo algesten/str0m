@@ -67,9 +67,9 @@ dependencies = [
 
 [[package]]
 name = "dimpl"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e22956ce1bf433b0cd0f544d71f4994ac5dee5f1515bb1d2d1cb1401a770851"
+checksum = "a27d8e2d24b0147f64aec4e9f662ae152eaa1209805da3b63e2533e658204a3d"
 dependencies = [
  "arrayvec",
  "der",
@@ -318,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-netem"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fastrand",
  "str0m-proto",
@@ -326,7 +326,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-proto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64ct",
  "dimpl",

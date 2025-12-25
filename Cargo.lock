@@ -1759,7 +1759,7 @@ checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
 
 [[package]]
 name = "str0m"
-version = "0.14.2"
+version = "0.14.3"
 dependencies = [
  "_str0m_test",
  "combine",
@@ -1788,7 +1788,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-apple-crypto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "core-foundation",
  "der",
@@ -1804,7 +1804,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-aws-lc-rs"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aws-lc-rs",
  "dimpl",
@@ -1813,7 +1813,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-netem"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fastrand",
  "str0m-proto",
@@ -1821,7 +1821,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-openssl"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "libc",
  "openssl",
@@ -1832,7 +1832,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-proto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64ct",
  "dimpl",
@@ -1842,7 +1842,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-rust-crypto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1857,7 +1857,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-wincrypto"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "str0m-proto",
  "tracing",

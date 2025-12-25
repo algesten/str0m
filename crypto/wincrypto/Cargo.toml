@@ -1,6 +1,6 @@
 [package]
 name = "str0m-wincrypto"
-version = "0.3.1"
+version = "0.3.2"
 description = "Supporting crate for str0m"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/algesten/str0m"
@@ -12,7 +12,7 @@ rust-version = "1.81.0"
 
 [dependencies]
 tracing = "0.1.37"
-str0m-proto = { version = "0.1.0", path = "../../proto" }
+str0m-proto = { version = "0.1.1", path = "../../proto" }
 windows = { version = "0.58", features = [
   "Win32_Security_Cryptography",
   "Win32_Security_Authentication_Identity",

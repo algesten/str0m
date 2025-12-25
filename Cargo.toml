@@ -1,6 +1,6 @@
 [package]
 name = "str0m"
-version = "0.14.2"
+version = "0.14.3"
 authors = ["Martin Algesten <martin@algesten.se>", "Hugo Tunius <h@tunius.se>", "Davide Bertola <dade@dadeb.it>"]
 description = "WebRTC library in Sans-IO style"
 license = "MIT OR Apache-2.0"
@@ -58,24 +58,24 @@ serde = { version = "1.0.152", features = ["derive"] }
 # DTLS made for str0m (required dependency)
 dimpl = { version = "0.2.1", default-features = false }
 
-str0m-proto = { version = "0.1.0", path = "proto" }
+str0m-proto = { version = "0.1.1", path = "proto" }
 
 # Crypto providers
-str0m-aws-lc-rs = { version = "0.1.0", path = "crypto/aws-lc-rs", optional = true }
-str0m-rust-crypto = { version = "0.1.0", path = "crypto/rust-crypto", optional = true }
-str0m-openssl = { version = "0.1.1", path = "crypto/openssl", optional = true }
+str0m-aws-lc-rs = { version = "0.1.1", path = "crypto/aws-lc-rs", optional = true }
+str0m-rust-crypto = { version = "0.1.1", path = "crypto/rust-crypto", optional = true }
+str0m-openssl = { version = "0.1.2", path = "crypto/openssl", optional = true }
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
-str0m-apple-crypto = { version = "0.1.0", path = "crypto/apple-crypto", optional = true }
+str0m-apple-crypto = { version = "0.1.1", path = "crypto/apple-crypto", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # Windows Crypto (CNG + SChannel)
-str0m-wincrypto = { version = "0.3.1", path = "crypto/wincrypto", optional = true }
+str0m-wincrypto = { version = "0.3.2", path = "crypto/wincrypto", optional = true }
 
 [dev-dependencies]
 rouille = { version = "3.6.2", features = [] }
-str0m-rust-crypto = { version = "0.1.0", path = "crypto/rust-crypto" }
-netem = { package = "str0m-netem", version = "0.1.0", path = "netem" }
+str0m-rust-crypto = { version = "0.1.1", path = "crypto/rust-crypto" }
+netem = { package = "str0m-netem", version = "0.1.1", path = "netem" }
 
 serde_json = "1.0"
 tracing-subscriber = { version = "0.3.16", features = ["env-filter", "std"] }

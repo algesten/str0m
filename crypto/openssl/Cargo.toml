@@ -1,6 +1,6 @@
 [package]
 name = "str0m-openssl"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Martin Algesten <martin@algesten.se>"]
 description = "OpenSSL backend for str0m WebRTC"
 license = "MIT OR Apache-2.0"
@@ -16,7 +16,7 @@ vendored = ["openssl/vendored"]
 
 [dependencies]
 tracing = "0.1.37"
-str0m-proto = { version = "0.1.0", path = "../../proto", features = ["openssl"] }
+str0m-proto = { version = "0.1.1", path = "../../proto", features = ["openssl"] }
 openssl = { version = "0.10.70" }
 openssl-sys = { version = "0.9.80" }
 libc = { version = "0.2" }

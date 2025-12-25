@@ -1,6 +1,6 @@
 [package]
 name = "str0m-netem"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Martin Algesten <martin@algesten.se>"]
 description = "Sans-IO network emulation for testing str0m under simulated network conditions"
 license = "MIT OR Apache-2.0"
@@ -13,4 +13,4 @@ rust-version = "1.81.0"
 
 [dependencies]
 fastrand = "2"
-str0m-proto = { version = "0.1.0", path = "../proto" }
+str0m-proto = { version = "0.1.1", path = "../proto" }
