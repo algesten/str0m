@@ -74,6 +74,10 @@ impl Bitrate {
     pub fn as_valid(&self) -> Option<Bitrate> {
         self.is_valid().then_some(*self)
     }
+
+    pub fn saturating_sub(&self, send_rate: Bitrate) -> Bitrate {
+        Bitrate(self.0 - send_rate.0).max(Bitrate::ZERO)
+    }
 }
 
 impl From<u64> for Bitrate {
@@ -300,6 +304,11 @@ impl Sum<DataSize> for DataSize {
 impl fmt::Display for DataSize {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let size = self.0 as f64;
+
+        if size == 0.0 {
+            return write!(f, "0B");
+        }
+
         let log = (size as u64).ilog10();
 
         match log {

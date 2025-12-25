@@ -84,7 +84,11 @@ impl RateControl {
                 self.increase(observed_bitrate, now);
             }
             State::Decrease => {
-                self.decrease(observed_bitrate, now);
+                // Only apply decrease if enough time has passed since last bitrate change
+                // or if throughput is critically low (< 50% of estimate)
+                if self.time_to_reduce_further(now, observed_bitrate) {
+                    self.decrease(observed_bitrate, now);
+                }
             }
             State::Hold => {
                 // Do nothing
@@ -92,12 +96,79 @@ impl RateControl {
         }
     }
 
+    /// Check if it's time to reduce the bitrate further.
+    ///
+    /// This implements WebRTC's TimeToReduceFurther logic which prevents
+    /// rapid successive decreases, especially after probe results.
+    ///
+    /// Returns true if:
+    /// 1. Enough time (1 RTT, clamped to 10-200ms) has passed since last change, OR
+    /// 2. Throughput is critically low (< 50% of current estimate)
+    fn time_to_reduce_further(&self, now: Instant, observed_bitrate: Bitrate) -> bool {
+        let Some(last_change) = self.last_estimate_update else {
+            return true; // No previous change, allow decrease
+        };
+
+        // WebRTC uses: clamp(rtt, 10ms, 200ms)
+        let rtt = self.last_rtt.unwrap_or(Duration::from_millis(100));
+        let reduction_interval = rtt.clamp(Duration::from_millis(10), Duration::from_millis(200));
+
+        let time_since_change = now.saturating_duration_since(last_change);
+
+        if time_since_change >= reduction_interval {
+            return true;
+        }
+
+        // If throughput is critically low (< 50% of estimate), allow immediate decrease
+        let threshold = self.estimated_bitrate * 0.5;
+        if observed_bitrate < threshold {
+            return true;
+        }
+
+        false
+    }
+
     /// The current estimated bitrate.
     pub(super) fn estimated_bitrate(&self) -> Bitrate {
         self.estimated_bitrate
     }
 
+    /// Set a probe result indicating discovered capacity.
+    ///
+    /// When a probe succeeds, it means the network can handle at least this bitrate.
+    /// We use this to quickly increase our estimate without waiting for gradual ramp-up.
+    ///
+    /// This matches WebRTC's SetEstimate() which updates the timestamp to prevent
+    /// the next regular update from immediately overriding the probe result.
+    pub(super) fn set_probe_result(&mut self, probe_bitrate: Bitrate, now: Instant) {
+        // Only increase our estimate if probe found higher capacity
+        if probe_bitrate <= self.estimated_bitrate {
+            return;
+        }
+
+        // Use update_estimate to properly update both the bitrate AND timestamp
+        // This prevents the next regular update from immediately overriding this result
+        self.update_estimate(probe_bitrate, now);
+
+        // Transition to increase state - we discovered more capacity
+        self.state = State::Increase;
+        crate::packet::bwe::macros::log_rate_control_state!(self.state as i8);
+    }
+
     fn increase(&mut self, observed_bitrate: Bitrate, now: Instant) {
+        // WebRTC limits increases to 1.5x observed throughput to avoid unlimited growth
+        // when we're already above what we're actually sending
+        // See: aimd_rate_control.cc line 251-252
+        let increase_limit = observed_bitrate * 1.5 + Bitrate::kbps(10);
+
+        if self.estimated_bitrate >= increase_limit {
+            // WebRTC updates time_last_bitrate_change_ even when skipping increase
+            // (see aimd_rate_control.cc line 281, which is outside the increase check)
+            // This prevents stale timestamps from allowing premature decreases
+            self.last_estimate_update = Some(now);
+            return;
+        }
+
         let last_estimate_update = *self.last_estimate_update.get_or_insert(now);
 
         if self
@@ -131,8 +202,10 @@ impl RateControl {
 
             self.estimated_bitrate.as_f64() + increase
         };
+
+        // Cap at the increase limit (and observed bitrate ratio)
         let max = observed_bitrate.as_f64() * MAX_ESTIMATE_RATIO;
-        new_estimate = max.min(new_estimate);
+        new_estimate = max.min(new_estimate).min(increase_limit.as_f64());
 
         self.update_estimate(new_estimate.into(), now);
     }
@@ -170,11 +243,6 @@ impl RateControl {
         // it immediately.
         self.state = State::Hold;
         crate::packet::bwe::macros::log_rate_control_state!(self.state as i8);
-        debug!(
-            "RateControl: Moving from {} to {} after decreasing estimate",
-            State::Decrease,
-            State::Hold
-        );
         self.update_estimate(new_estimate, now);
     }
 
@@ -236,7 +304,6 @@ impl State {
 
         if new_state != *self {
             crate::packet::bwe::macros::log_rate_control_state!(new_state as i8);
-            debug!("RateControl: Moving from {self} to {new_state} on {signal}");
         }
 
         new_state

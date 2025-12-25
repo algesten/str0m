@@ -62,7 +62,7 @@ pub fn bwe_cellular() -> Result<(), RtcError> {
 
 #[test]
 #[cfg(feature = "aws-lc-rs")]
-pub fn bwe_wifi() -> Result<(), RtcError> {
+pub fn bwe_wifi_only() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
