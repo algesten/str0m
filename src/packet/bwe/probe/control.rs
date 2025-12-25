@@ -92,20 +92,35 @@ impl ProbeControl {
         &mut self,
         estimate: Bitrate,
         desired: Bitrate,
+        is_overuse: bool,
         now: Instant,
     ) -> Option<ProbeClusterConfig> {
-        self.should_probe(estimate, desired, now)
+        self.should_probe(estimate, desired, is_overuse, now)
             .then(|| self.create_probe(estimate, desired, now))
     }
 
     /// Check if we should initiate a probe now (internal).
-    fn should_probe(&self, estimate: Bitrate, desired: Bitrate, now: Instant) -> bool {
-        // 1. Startup: Always probe immediately if we haven't probed yet.
+    fn should_probe(
+        &self,
+        estimate: Bitrate,
+        desired: Bitrate,
+        is_overuse: bool,
+        now: Instant,
+    ) -> bool {
+        // Startup: Always probe immediately if we haven't probed yet.
         let Some(last_bitrate) = self.last_probed else {
             return true;
         };
 
-        // 2. Time check: Respect minimum interval between probes.
+        // Don't start new probes while the delay-based detector is in overuse.
+        //
+        // Otherwise, a sharp decrease (due to overuse) immediately makes us "far from desired",
+        // which would re-trigger probing and can contribute to oscillations near the path knee.
+        if is_overuse {
+            return false;
+        }
+
+        // Time check: Respect minimum interval between probes.
         if now < self.next_probe_time {
             return false;
         }
@@ -135,7 +150,7 @@ impl ProbeControl {
             return true;
         }
 
-        // 4. Growth Strategy:
+        // Growth Strategy:
         // Probe if the estimate has improved significantly (natural network improvement).
         if estimate >= last_bitrate * self.probe_increase_threshold {
             // We rely on create_probe to cap the target bitrate to desired_bitrate * 1.1.
@@ -215,7 +230,7 @@ mod test {
 
         // First probe should always succeed, even with zero desired (startup)
         assert!(control
-            .maybe_create_probe(Bitrate::kbps(500), Bitrate::ZERO, now)
+            .maybe_create_probe(Bitrate::kbps(500), Bitrate::ZERO, false, now)
             .is_some());
     }
 
@@ -227,19 +242,19 @@ mod test {
 
         // Create first probe
         assert!(control
-            .maybe_create_probe(Bitrate::kbps(500), desired, now)
+            .maybe_create_probe(Bitrate::kbps(500), desired, false, now)
             .is_some());
 
         // Try to probe 1 second later - should be rejected
         let soon = now + Duration::from_secs(1);
         assert!(control
-            .maybe_create_probe(Bitrate::kbps(1000), desired, soon)
+            .maybe_create_probe(Bitrate::kbps(1000), desired, false, soon)
             .is_none());
 
         // Try 5 seconds later - should be allowed
         let later = now + Duration::from_secs(5);
         assert!(control
-            .maybe_create_probe(Bitrate::kbps(1000), desired, later)
+            .maybe_create_probe(Bitrate::kbps(1000), desired, false, later)
             .is_some());
     }
 
@@ -253,24 +268,24 @@ mod test {
 
         // Create first probe at 1000 kbps
         assert!(control
-            .maybe_create_probe(Bitrate::kbps(1000), desired, now)
+            .maybe_create_probe(Bitrate::kbps(1000), desired, false, now)
             .is_some());
 
         let later = now + Duration::from_secs(10);
 
         // Same bitrate - rejected
         assert!(control
-            .maybe_create_probe(Bitrate::kbps(1000), desired, later)
+            .maybe_create_probe(Bitrate::kbps(1000), desired, false, later)
             .is_none());
 
         // Small increase (15%) - rejected (threshold is 20%)
         assert!(control
-            .maybe_create_probe(Bitrate::kbps(1150), desired, later)
+            .maybe_create_probe(Bitrate::kbps(1150), desired, false, later)
             .is_none());
 
         // Significant increase (25%) - accepted
         assert!(control
-            .maybe_create_probe(Bitrate::kbps(1250), desired, later)
+            .maybe_create_probe(Bitrate::kbps(1250), desired, false, later)
             .is_some());
     }
 
@@ -282,14 +297,14 @@ mod test {
 
         // First probe establishes last_probed = 800 kbps.
         assert!(control
-            .maybe_create_probe(Bitrate::kbps(800), desired, now)
+            .maybe_create_probe(Bitrate::kbps(800), desired, false, now)
             .is_some());
 
         // After min interval, estimate has grown by exactly 20% (would trigger growth strategy),
         // but it's also >= 0.95 * desired, so we should NOT probe.
         let later = now + Duration::from_secs(6);
         assert!(control
-            .maybe_create_probe(Bitrate::kbps(950), desired, later)
+            .maybe_create_probe(Bitrate::kbps(950), desired, false, later)
             .is_none());
     }
 
@@ -299,7 +314,7 @@ mod test {
         let now = Instant::now();
 
         let probe = control
-            .maybe_create_probe(Bitrate::kbps(1000), Bitrate::ZERO, now)
+            .maybe_create_probe(Bitrate::kbps(1000), Bitrate::ZERO, false, now)
             .unwrap();
 
         // First probe starts at 3x.
@@ -313,12 +328,12 @@ mod test {
         let desired = Bitrate::mbps(10);
 
         // First probe
-        control.maybe_create_probe(Bitrate::kbps(1000), desired, now);
+        control.maybe_create_probe(Bitrate::kbps(1000), desired, false, now);
 
         // Second probe
         let later = now + Duration::from_secs(10);
         let probe = control
-            .maybe_create_probe(Bitrate::kbps(2000), desired, later)
+            .maybe_create_probe(Bitrate::kbps(2000), desired, false, later)
             .unwrap();
 
         // Should be 2.0x of current estimate because we are targeting the desired bitrate
@@ -332,7 +347,7 @@ mod test {
         let desired = Bitrate::mbps(10);
 
         // Create first probe
-        control.maybe_create_probe(Bitrate::kbps(1000), desired, now);
+        control.maybe_create_probe(Bitrate::kbps(1000), desired, false, now);
 
         // Reset
         control = ProbeControl::new();
@@ -340,7 +355,7 @@ mod test {
         // Should be treated as first probe again
         let later = now + Duration::from_secs(1); // Normally too soon
         let probe = control
-            .maybe_create_probe(Bitrate::kbps(500), desired, later)
+            .maybe_create_probe(Bitrate::kbps(500), desired, false, later)
             .unwrap();
 
         // First probe starts at 3x.
@@ -355,17 +370,17 @@ mod test {
 
         // Create probes with enough time and bitrate increase between them
         let probe1 = control
-            .maybe_create_probe(Bitrate::kbps(1000), desired, now)
+            .maybe_create_probe(Bitrate::kbps(1000), desired, false, now)
             .unwrap();
 
         let later1 = now + Duration::from_secs(6);
         let probe2 = control
-            .maybe_create_probe(Bitrate::kbps(1500), desired, later1)
+            .maybe_create_probe(Bitrate::kbps(1500), desired, false, later1)
             .unwrap();
 
         let later2 = later1 + Duration::from_secs(6);
         let probe3 = control
-            .maybe_create_probe(Bitrate::kbps(2000), desired, later2)
+            .maybe_create_probe(Bitrate::kbps(2000), desired, false, later2)
             .unwrap();
 
         // IDs should be different
@@ -382,7 +397,7 @@ mod test {
         // First probe wants 3x, but should be capped by desired*1.1 if desired is set.
         let desired = Bitrate::mbps(40);
         let probe = control
-            .maybe_create_probe(Bitrate::mbps(20), desired, now)
+            .maybe_create_probe(Bitrate::mbps(20), desired, false, now)
             .unwrap();
 
         // Allow a tiny epsilon since Bitrate is float-backed.

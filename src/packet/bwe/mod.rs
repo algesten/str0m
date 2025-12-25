@@ -207,9 +207,11 @@ impl SendSideBandwithEstimator {
         desired_bitrate: Bitrate,
         now: Instant,
     ) -> Option<ProbeClusterConfig> {
+        let is_overuse = self.delay_controller.is_overusing();
+
         let current_estimate = self.last_estimate()?;
         self.probe_control
-            .maybe_create_probe(current_estimate, desired_bitrate, now)
+            .maybe_create_probe(current_estimate, desired_bitrate, is_overuse, now)
     }
 
     /// Start analyzing a probe cluster.

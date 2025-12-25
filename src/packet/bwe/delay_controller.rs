@@ -127,6 +127,14 @@ impl DelayController {
         self.last_estimate
     }
 
+    /// Whether the delay-based detector currently signals overuse.
+    ///
+    /// This is useful for gating behaviors (like probing) that would otherwise
+    /// re-excite the system while we're already congested.
+    pub(crate) fn is_overusing(&self) -> bool {
+        self.trendline_estimator.hypothesis() == BandwidthUsage::Overuse
+    }
+
     fn add_max_rtt(&mut self, max_rtt: Duration) {
         while self.max_rtt_history.len() > MAX_RTT_HISTORY_WINDOW {
             self.max_rtt_history.pop_front();
