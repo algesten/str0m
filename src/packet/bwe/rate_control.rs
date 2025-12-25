@@ -84,6 +84,12 @@ impl RateControl {
                 self.increase(observed_bitrate, now);
             }
             State::Decrease => {
+                // Maintain observed bitrate statistics while we are in the decrease state.
+                //
+                // This must NOT be gated by time_to_reduce_further. That function is
+                // intended to gate *applying another reduction*, not collecting throughput stats.
+                self.update_observed_bitrate(observed_bitrate);
+
                 // Only apply decrease if enough time has passed since last bitrate change
                 // or if throughput is critically low (< 50% of estimate)
                 if self.time_to_reduce_further(now, observed_bitrate) {
@@ -94,6 +100,19 @@ impl RateControl {
                 // Do nothing
             }
         }
+    }
+
+    fn update_observed_bitrate(&mut self, observed_bitrate: Bitrate) {
+        if self
+            .averaged_observed_bitrate
+            .lower_range(3.0)
+            .map(|lower| observed_bitrate.as_f64() < lower)
+            .unwrap_or(false)
+        {
+            self.averaged_observed_bitrate.reset();
+        }
+        self.averaged_observed_bitrate
+            .update(observed_bitrate.as_f64());
     }
 
     /// Check if it's time to reduce the bitrate further.
@@ -212,24 +231,12 @@ impl RateControl {
 
     fn decrease(&mut self, observed_bitrate: Bitrate, now: Instant) {
         crate::packet::bwe::macros::log_rate_control_applied_change!("decrease");
-        if self
-            .averaged_observed_bitrate
-            .lower_range(3.0)
-            .map(|lower| observed_bitrate.as_f64() < lower)
-            .unwrap_or(false)
-        {
-            self.averaged_observed_bitrate.reset();
-        }
-
         let mut new_estimate = observed_bitrate * BETA;
 
         if self.estimated_bitrate < new_estimate {
             // Avoid increasing the bitrate on overuse
             new_estimate = self.estimated_bitrate;
         }
-
-        self.averaged_observed_bitrate
-            .update(observed_bitrate.as_f64());
 
         #[allow(unused)]
         if let Some(observed_average) = self.averaged_observed_bitrate.average {
