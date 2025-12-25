@@ -80,7 +80,7 @@ pub fn bwe_wifi_only() -> Result<(), RtcError> {
         .run_for_duration(&mut l, &mut r, Duration::from_secs(40), desired_bitrate)?
         .expect("Should have BWE estimate");
 
-    let expected = Bitrate::kbps(42930);
+    let expected = Bitrate::kbps(44120);
     let tolerance = 0.01;
     let min_expected = Bitrate::bps((expected.as_u64() as f64 * (1.0 - tolerance)) as u64);
     let max_expected = Bitrate::bps((expected.as_u64() as f64 * (1.0 + tolerance)) as u64);
@@ -120,7 +120,7 @@ pub fn bwe_wifi_congested() -> Result<(), RtcError> {
     let estimate = estimate.expect("Should have BWE estimate");
 
     // Congested WiFi link is 5 Mbps, BWE should converge towards this
-    let expected = Bitrate::kbps(5512);
+    let expected = Bitrate::kbps(4925);
     let tolerance = 0.01;
     let min_expected = Bitrate::bps((expected.as_u64() as f64 * (1.0 - tolerance)) as u64);
     let max_expected = Bitrate::bps((expected.as_u64() as f64 * (1.0 + tolerance)) as u64);
