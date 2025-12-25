@@ -11,17 +11,18 @@ use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
-use crate::packet::SendSideBandwithEstimator;
 use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
+use crate::packet::{ProbeClusterConfig, SendSideBandwithEstimator};
 use crate::rtp::{Extension, RawPacket};
 use crate::rtp_::Direction;
 use crate::rtp_::MidRid;
 use crate::rtp_::Pt;
 use crate::rtp_::SeqNo;
 use crate::rtp_::SRTCP_OVERHEAD;
-use crate::rtp_::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
+use crate::rtp_::{extend_u16, RtpHeader, SessionId};
 use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
 use crate::rtp_::{SrtpContext, Ssrc};
+use crate::rtp_::{TwccPacketId, TwccRecvRegister, TwccSendRegister};
 use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, Streams};
 use crate::util::{already_happened, not_happening, Soonest};
@@ -243,11 +244,25 @@ impl Session {
             }
         }
 
-        if let Some(bwe) = self.bwe.as_mut() {
-            bwe.handle_timeout(now);
-        }
+        self.handle_timeout_bwe(now);
 
         Ok(())
+    }
+
+    fn handle_timeout_bwe(&mut self, now: Instant) {
+        let Some(bwe) = self.bwe.as_mut() else {
+            return;
+        };
+
+        if let Some(probe_config) = bwe.handle_timeout(now) {
+            bwe.start_probe(probe_config);
+            self.pacer.start_probe(probe_config);
+        }
+
+        // Check if active probe just completed
+        if let Some(_cluster_id) = self.pacer.check_probe_complete(now) {
+            bwe.end_probe(now);
+        }
     }
 
     fn update_queue_state(&mut self, now: Instant) {
@@ -752,7 +767,8 @@ impl Session {
         let srtp_tx = self.srtp_tx.as_mut()?;
 
         // Figure out which, if any, queue to poll
-        let midrid = self.pacer.poll_queue()?;
+        // The cluster_id is captured by the pacer at poll time, before register_send() might clear it
+        let (midrid, cluster_id) = self.pacer.poll_queue()?;
         let media = self
             .medias
             .iter()
@@ -799,8 +815,13 @@ impl Session {
         let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
         if twcc_enabled {
+            let packet_id = if let Some(cluster) = cluster_id {
+                TwccPacketId::with_cluster(twcc_seq, cluster)
+            } else {
+                TwccPacketId::new(twcc_seq)
+            };
             self.twcc_tx_register
-                .register_seq(twcc_seq.into(), now, payload_size);
+                .register_seq(packet_id, now, payload_size);
         }
 
         // Technically we should wait for the next handle_timeout, but this speeds things up a bit
@@ -926,20 +947,34 @@ impl Session {
             return;
         };
 
-        let padding_rate = bwe
-            .last_estimate()
-            .map(|estimate| estimate.min(bwe.desired_bitrate))
-            .unwrap_or(Bitrate::ZERO);
+        // Calculate padding rate:
+        // 1. If desired > BWE estimate: pad to estimate (help discover more capacity)
+        // 2. If send_rate < declared current: pad the gap (maintain declared rate, ALR handling)
+        // 3. Otherwise: no padding
+        let Some(current_estimate) = bwe.bwe.last_estimate() else {
+            // No estimate yet, no padding
+            return;
+        };
+        let send_rate = bwe.bwe.acked_bitrate();
+
+        let padding_rate = if bwe.desired_bitrate > current_estimate {
+            // Case 1: App wants more than we know network can handle
+            // Pad the gap to reach current estimate to help validate and discover more
+            // via probe cluster bursts.
+            current_estimate.saturating_sub(send_rate)
+        } else if send_rate < bwe.current_bitrate {
+            // Case 2: App is sending less than declared (ALR - Application Limited Region)
+            // Pad the gap to maintain the declared send rate
+            bwe.current_bitrate - send_rate
+        } else {
+            // Case 3: App is sending at or above declared rate, no padding needed
+            Bitrate::ZERO
+        };
 
         self.pacer.set_padding_rate(padding_rate);
 
-        // We pad up to the pacing rate, therefore we need to increase pacing if the estimate, and
-        // thus the padding rate, exceeds the current bitrate adjusted with the pacing factor.
-        // Otherwise we can have a case where the current bitrate is 250Kbit/s resulting in a
-        // pacing rate of 275KBit/s which means we'll only ever pad about 25Kbit/s. If the estimate
-        // is actually 600Kbit/s we need to use that for the pacing rate to ensure we send as much as
-        // we think the link capacity can sustain, if not the estimate is a lie.
-        let pacing_rate = (bwe.current_bitrate * PACING_FACTOR).max(padding_rate);
+        // Set pacing rate to smooth out media transmission (burst avoidance)
+        let pacing_rate = bwe.current_bitrate * PACING_FACTOR;
         self.pacer.set_pacing_rate(pacing_rate);
     }
 
@@ -1008,8 +1043,19 @@ struct Bwe {
 }
 
 impl Bwe {
-    fn handle_timeout(&mut self, now: Instant) {
+    fn handle_timeout(&mut self, now: Instant) -> Option<ProbeClusterConfig> {
         self.bwe.handle_timeout(now);
+
+        // Check if it's time to probe
+        self.bwe.maybe_create_probe(self.desired_bitrate, now)
+    }
+
+    fn start_probe(&mut self, config: ProbeClusterConfig) {
+        self.bwe.start_probe(config);
+    }
+
+    fn end_probe(&mut self, now: Instant) {
+        self.bwe.end_probe(now);
     }
 
     fn reset(&mut self, init_bitrate: Bitrate) {
