@@ -1,6 +1,7 @@
 # Unreleased
 
   * Bump dimpl 0.2.1 for SChannel compat #801
+  * Reduce allocating in `str0m-aws-lc-rs` encrypt/decrypt #804
 
 0.14.2
 

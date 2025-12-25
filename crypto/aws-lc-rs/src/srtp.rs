@@ -90,15 +90,15 @@ impl AeadAes128GcmCipher for AwsLcRsAeadAes128GcmCipher {
         let nonce = Nonce::try_assume_unique_for_key(iv)
             .map_err(|e| CryptoError::Other(format!("Invalid nonce: {}", e)))?;
 
-        // Copy input to a mutable buffer
-        let mut buf = input.to_vec();
-
-        self.key
-            .seal_in_place_append_tag(nonce, Aad::from(aad), &mut buf)
+        let len = input.len();
+        output[..len].copy_from_slice(input);
+        let tag = self
+            .key
+            .seal_in_place_separate_tag(nonce, Aad::from(aad), &mut output[..len])
             .map_err(|e| CryptoError::Other(format!("AES-GCM encrypt failed: {}", e)))?;
 
-        // Copy the result (ciphertext + tag) to output
-        output[..buf.len()].copy_from_slice(&buf);
+        // Copy the result tag to the output
+        output[len..len + AeadAes128Gcm::TAG_LEN].copy_from_slice(tag.as_ref());
         Ok(())
     }
 
@@ -123,16 +123,13 @@ impl AeadAes128GcmCipher for AwsLcRsAeadAes128GcmCipher {
             Aad::from(aad_data.as_slice())
         };
 
-        // Copy input to a mutable buffer for in-place decryption
-        let mut buf = input.to_vec();
-
-        let plaintext = self
-            .key
-            .open_in_place(nonce, aad, &mut buf)
+        let ct_len = input.len() - AeadAes128Gcm::TAG_LEN;
+        let (ciphertext, tag) = input.split_at(ct_len);
+        self.key
+            .open_separate_gather(nonce, aad, ciphertext, tag, &mut output[..ct_len])
             .map_err(|e| CryptoError::Other(format!("AES-GCM decrypt failed: {}", e)))?;
 
-        output[..plaintext.len()].copy_from_slice(plaintext);
-        Ok(plaintext.len())
+        Ok(ct_len)
     }
 }
 
@@ -166,15 +163,15 @@ impl AeadAes256GcmCipher for AwsLcRsAeadAes256GcmCipher {
         let nonce = Nonce::try_assume_unique_for_key(iv)
             .map_err(|e| CryptoError::Other(format!("Invalid nonce: {}", e)))?;
 
-        // Copy input to a mutable buffer
-        let mut buf = input.to_vec();
-
-        self.key
-            .seal_in_place_append_tag(nonce, Aad::from(aad), &mut buf)
+        let len = input.len();
+        output[..len].copy_from_slice(input);
+        let tag = self
+            .key
+            .seal_in_place_separate_tag(nonce, Aad::from(aad), &mut output[..len])
             .map_err(|e| CryptoError::Other(format!("AES-GCM encrypt failed: {}", e)))?;
 
-        // Copy the result (ciphertext + tag) to output
-        output[..buf.len()].copy_from_slice(&buf);
+        // Copy the result tag to the output
+        output[len..len + AeadAes256Gcm::TAG_LEN].copy_from_slice(tag.as_ref());
         Ok(())
     }
 
@@ -199,16 +196,13 @@ impl AeadAes256GcmCipher for AwsLcRsAeadAes256GcmCipher {
             Aad::from(aad_data.as_slice())
         };
 
-        // Copy input to a mutable buffer for in-place decryption
-        let mut buf = input.to_vec();
-
-        let plaintext = self
-            .key
-            .open_in_place(nonce, aad, &mut buf)
+        let ct_len = input.len() - AeadAes256Gcm::TAG_LEN;
+        let (ciphertext, tag) = input.split_at(ct_len);
+        self.key
+            .open_separate_gather(nonce, aad, ciphertext, tag, &mut output[..ct_len])
             .map_err(|e| CryptoError::Other(format!("AES-GCM decrypt failed: {}", e)))?;
 
-        output[..plaintext.len()].copy_from_slice(plaintext);
-        Ok(plaintext.len())
+        Ok(ct_len)
     }
 }
 
