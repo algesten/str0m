@@ -1,7 +1,7 @@
 use std::mem;
 use std::time::{Duration, Instant};
 
-use crate::rtp_::SeqNo;
+use crate::rtp_::TwccSeq;
 
 use super::time::{TimeDelta, Timestamp};
 use super::AckedPacket;
@@ -12,8 +12,8 @@ const MAX_BURST_DURATION: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Default)]
 pub struct ArrivalGroup {
-    first: Option<(SeqNo, Instant, Instant)>,
-    last_seq_no: Option<SeqNo>,
+    first: Option<(TwccSeq, Instant, Instant)>,
+    last_seq_no: Option<TwccSeq>,
     last_local_send_time: Option<Instant>,
     last_remote_recv_time: Option<Instant>,
     size: usize,

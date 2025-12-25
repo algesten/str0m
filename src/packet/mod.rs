@@ -45,7 +45,7 @@ mod payload;
 pub(crate) use payload::Payloader;
 
 mod bwe;
-pub(crate) use bwe::SendSideBandwithEstimator;
+pub(crate) use bwe::{ProbeClusterConfig, SendSideBandwithEstimator};
 
 mod pacer;
 pub(crate) use pacer::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};

@@ -43,7 +43,7 @@ impl DelayController {
             arrival_group_accumulator: ArrivalGroupAccumulator::default(),
             trendline_estimator: TrendlineEstimator::new(20),
             rate_control: RateControl::new(initial_bitrate, Bitrate::kbps(40), Bitrate::gbps(10)),
-            last_estimate: None,
+            last_estimate: Some(initial_bitrate),
             max_rtt_history: VecDeque::default(),
             mean_max_rtt: None,
             next_timeout: already_happened(),
@@ -56,6 +56,7 @@ impl DelayController {
         &mut self,
         acked: &[AckedPacket],
         acked_bitrate: Option<Bitrate>,
+        probe_bitrate: Option<Bitrate>,
         now: Instant,
     ) -> Option<Bitrate> {
         let mut max_rtt = None;
@@ -80,7 +81,13 @@ impl DelayController {
 
         let new_hypothesis = self.trendline_estimator.hypothesis();
 
-        self.update_estimate(new_hypothesis, acked_bitrate, self.mean_max_rtt, now);
+        self.update_estimate(
+            new_hypothesis,
+            acked_bitrate,
+            probe_bitrate,
+            self.mean_max_rtt,
+            now,
+        );
         self.last_twcc_report = now;
 
         self.last_estimate
@@ -109,6 +116,7 @@ impl DelayController {
         self.update_estimate(
             self.trendline_estimator.hypothesis(),
             acked_bitrate,
+            None,
             self.mean_max_rtt,
             now,
         );
@@ -137,10 +145,25 @@ impl DelayController {
         &mut self,
         hypothesis: BandwidthUsage,
         observed_bitrate: Option<Bitrate>,
+        probe_bitrate: Option<Bitrate>,
         mean_max_rtt: Option<Duration>,
         now: Instant,
     ) {
-        if let Some(observed_bitrate) = observed_bitrate {
+        // WebRTC's logic from delay_based_bwe.cc MaybeUpdateEstimate():
+        // - If we have a probe result, apply it directly and skip delay-based updates
+        // - Otherwise, apply normal delay-based rate control
+        //
+        // This prevents probe results from being immediately overridden by delay-based
+        // decreases caused by the probe itself (probes cause temporary queuing delay).
+
+        if let Some(probe_rate) = probe_bitrate {
+            // Apply probe result directly, bypassing delay-based updates
+            self.rate_control.set_probe_result(probe_rate, now);
+            let estimated_rate = self.rate_control.estimated_bitrate();
+            crate::packet::bwe::macros::log_bitrate_estimate!(estimated_rate.as_f64());
+            self.last_estimate = Some(estimated_rate);
+        } else if let Some(observed_bitrate) = observed_bitrate {
+            // No probe result, apply normal delay-based rate control
             self.rate_control
                 .update(hypothesis.into(), observed_bitrate, mean_max_rtt, now);
             let estimated_rate = self.rate_control.estimated_bitrate();

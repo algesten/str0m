@@ -8,13 +8,14 @@ use std::cmp::Ordering;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use crate::rtp_::{Bitrate, DataSize, SeqNo, TwccSendRecord};
+use crate::rtp_::{Bitrate, DataSize, TwccSendRecord, TwccSeq};
 
 mod acked_bitrate_estimator;
 mod arrival_group;
 mod delay_controller;
 mod loss_controller;
-pub(crate) mod macros;
+mod macros;
+mod probe;
 mod rate_control;
 mod time;
 mod trendline_estimator;
@@ -24,6 +25,9 @@ use arrival_group::InterGroupDelayDelta;
 use delay_controller::DelayController;
 use loss_controller::LossController;
 use macros::log_loss;
+
+pub(crate) use macros::{log_pacer_media_debt, log_pacer_padding_debt};
+pub(crate) use probe::{ProbeClusterConfig, ProbeClusterState, ProbeControl, ProbeEstimator};
 
 const INITIAL_BITRATE_WINDOW: Duration = Duration::from_millis(500);
 const BITRATE_WINDOW: Duration = Duration::from_millis(150);
@@ -37,6 +41,10 @@ pub struct SendSideBandwithEstimator {
     delay_controller: DelayController,
     loss_controller: Option<LossController>,
     acked_bitrate_estimator: AckedBitrateEstimator,
+    probe_control: ProbeControl,
+    probe_estimator: ProbeEstimator,
+    /// Latest probe result waiting to be consumed by update()
+    pending_probe_result: Option<Bitrate>,
     started_at: Option<Instant>,
 }
 
@@ -54,8 +62,18 @@ impl SendSideBandwithEstimator {
                 INITIAL_BITRATE_WINDOW,
                 BITRATE_WINDOW,
             ),
+            probe_control: ProbeControl::new(),
+            probe_estimator: ProbeEstimator::new(),
+            pending_probe_result: None,
             started_at: None,
         }
+    }
+
+    /// Get the actual measured send rate (based on acked packets)
+    pub(crate) fn acked_bitrate(&self) -> Bitrate {
+        self.acked_bitrate_estimator
+            .current_estimate()
+            .unwrap_or(Bitrate::ZERO)
     }
 
     /// Record a packet from a TWCC report.
@@ -67,6 +85,10 @@ impl SendSideBandwithEstimator {
         let _ = self.started_at.get_or_insert(now);
 
         let send_records: Vec<_> = records.collect();
+
+        // Feed records to probe estimator for analysis
+        self.probe_estimator.update(send_records.iter().map(|r| *r));
+
         let mut acked_packets = vec![];
 
         let mut max_rtt = None;
@@ -89,9 +111,13 @@ impl SendSideBandwithEstimator {
         }
 
         let acked_bitrate = self.acked_bitrate_estimator.current_estimate();
-        let Some(delay_estimate) = self
-            .delay_controller
-            .update(&acked_packets, acked_bitrate, now)
+
+        // Consume pending probe result if available
+        let probe_result = self.pending_probe_result.take();
+
+        let Some(delay_estimate) =
+            self.delay_controller
+                .update(&acked_packets, acked_bitrate, probe_result, now)
         else {
             return;
         };
@@ -120,12 +146,27 @@ impl SendSideBandwithEstimator {
     }
 
     pub(crate) fn poll_timeout(&self) -> Instant {
-        self.delay_controller.poll_timeout()
+        let delay_timeout = self.delay_controller.poll_timeout();
+        let probe_timeout = self.probe_control.poll_timeout();
+        let probe_estimator_timeout = self.probe_estimator.poll_timeout();
+        delay_timeout
+            .min(probe_timeout)
+            .min(probe_estimator_timeout)
     }
 
     pub(crate) fn handle_timeout(&mut self, now: Instant) {
         self.delay_controller
             .handle_timeout(self.acked_bitrate_estimator.current_estimate(), now);
+
+        // Check if probe estimation is ready.
+        //
+        // When a probe cluster completes, the ProbeEstimator calculates the achieved
+        // bitrate. We store this result so it can be consumed by the next update()
+        // call, where it's passed to the DelayController as an additional input signal.
+        if let Some(probe_estimate) = self.probe_estimator.handle_timeout(now) {
+            // Store the result to be consumed in the next update() call
+            self.pending_probe_result = Some(probe_estimate);
+        }
     }
 
     /// Get the latest estimate.
@@ -148,6 +189,39 @@ impl SendSideBandwithEstimator {
         }
     }
 
+    /// Check if we should initiate a probe cluster now.
+    ///
+    /// This should be called periodically (e.g., on each poll) to allow the ProbeControl
+    /// to decide if it's time to probe for more bandwidth.
+    ///
+    /// Returns a configured probe cluster if one should be initiated, or None otherwise.
+    pub(crate) fn maybe_create_probe(
+        &mut self,
+        desired_bitrate: Bitrate,
+        now: Instant,
+    ) -> Option<ProbeClusterConfig> {
+        let current_estimate = self.last_estimate()?;
+        self.probe_control
+            .maybe_create_probe(current_estimate, desired_bitrate, now)
+    }
+
+    /// Start analyzing a probe cluster.
+    ///
+    /// This should be called when the pacer starts sending a probe cluster,
+    /// to tell the estimator which cluster to watch for in TWCC feedback.
+    pub(crate) fn start_probe(&mut self, config: ProbeClusterConfig) {
+        self.probe_estimator.probe_start(config);
+    }
+
+    /// End a probe cluster and begin hangover period.
+    ///
+    /// This should be called when the pacer finishes sending a probe cluster.
+    /// The estimator will continue collecting feedback some duration after to
+    /// due to RTT of the packets in flight.
+    pub(crate) fn end_probe(&mut self, now: Instant) {
+        self.probe_estimator.end_probe(now);
+    }
+
     pub(crate) fn reset(&mut self, init_bitrate: Bitrate) {
         *self = Self::new(init_bitrate, self.loss_controller.is_some());
     }
@@ -157,7 +231,7 @@ impl SendSideBandwithEstimator {
 #[derive(Debug, Copy, Clone)]
 pub struct AckedPacket {
     /// The TWCC sequence number
-    seq_no: SeqNo,
+    seq_no: TwccSeq,
     /// The size of the packets in bytes.
     size: DataSize,
     /// When we sent the packet
