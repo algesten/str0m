@@ -11,6 +11,14 @@ use crate::util::already_happened;
 /// `desired_bitrate * DESIRED_PROBE_CAP_SCALE`.
 const DESIRED_PROBE_CAP_SCALE: f64 = 1.1;
 
+/// After overuse is detected, suppress starting new probes for a short cooldown.
+///
+/// This is intentionally handled inside `ProbeControl` (probe scheduling policy), and makes the
+/// "don't probe while overusing" signal sticky enough to avoid immediately re-probing after a
+/// sharp drop.
+const OVERUSE_PROBE_COOLDOWN_MIN: Duration = Duration::from_millis(200);
+const OVERUSE_PROBE_COOLDOWN_MAX: Duration = Duration::from_secs(2);
+
 /// Decides when and at what bitrate to send probe clusters.
 ///
 /// # Design Philosophy
@@ -49,6 +57,9 @@ pub(crate) struct ProbeControl {
     /// Threshold for considering an estimate increase significant
     /// e.g., 1.2 = must increase by 20% to probe again
     probe_increase_threshold: f64,
+
+    /// Last time we observed overuse (from delay controller).
+    last_overuse_at: Option<Instant>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -72,6 +83,7 @@ impl ProbeControl {
             last_probed: None,
             min_probe_interval: Duration::from_secs(5),
             probe_increase_threshold: 1.2,
+            last_overuse_at: None,
         }
     }
 
@@ -101,18 +113,23 @@ impl ProbeControl {
     }
 
     /// Check if we should initiate a probe now (internal).
-    fn should_probe(&self, args: ProbeControlArgs) -> bool {
+    fn should_probe(&mut self, args: ProbeControlArgs) -> bool {
         // Startup: Always probe immediately if we haven't probed yet.
         let Some(last_bitrate) = self.last_probed else {
             return true;
         };
 
-        // Don't start new probes while the delay-based detector is in overuse.
-        //
-        // Otherwise, a sharp decrease (due to overuse) immediately makes us "far from desired",
-        // which would re-trigger probing and can contribute to oscillations near the path knee.
+        // Overuse handling:
+        // - If the delay-based detector currently signals overuse, remember the time and don't probe.
+        // - Also suppress probing for a short cooldown after the last overuse signal.
         if args.is_overuse {
+            self.last_overuse_at = Some(args.now);
             return false;
+        }
+        if let Some(last) = self.last_overuse_at {
+            if args.now.saturating_duration_since(last) < self.overuse_probe_cooldown() {
+                return false;
+            }
         }
 
         // Time check: Respect minimum interval between probes.
@@ -155,6 +172,13 @@ impl ProbeControl {
         }
 
         false
+    }
+
+    fn overuse_probe_cooldown(&self) -> Duration {
+        // Derive cooldown from probe interval so it scales with tuning, but keep it bounded.
+        // (Default: 5s / 10 = 500ms).
+        let scaled = self.min_probe_interval / 10;
+        scaled.clamp(OVERUSE_PROBE_COOLDOWN_MIN, OVERUSE_PROBE_COOLDOWN_MAX)
     }
 
     /// Create a probe cluster configuration (internal).
