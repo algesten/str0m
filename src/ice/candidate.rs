@@ -127,8 +127,11 @@ impl Candidate {
     /// # Example
     ///
     /// ```
-    /// # use str0m::{Candidate, Protocol, TcpType};
+    /// # use str0m::Candidate;
+    /// # use str0m::error::IceError;
+    /// # use str0m::net::{Protocol, TcpType};
     /// # use std::net::SocketAddr;
+    ///
     /// let addr: SocketAddr = "192.168.1.1:12345".parse().unwrap();
     ///
     /// // A standard UDP Host candidate
@@ -143,6 +146,8 @@ impl Candidate {
     ///     .host(addr)
     ///     .tcptype(TcpType::Passive)
     ///     .build()?;
+    ///
+    /// # Ok::<(), IceError>(())
     /// ```
     pub fn builder() -> CandidateBuilder<NoProtocol, Init> {
         CandidateBuilder {
