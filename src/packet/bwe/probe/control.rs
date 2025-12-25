@@ -10,6 +10,15 @@ use crate::util::already_happened;
 /// `desired_bitrate * DESIRED_PROBE_CAP_SCALE`.
 const DESIRED_PROBE_CAP_SCALE: f64 = 1.1;
 
+/// Stop probing when the current estimate is sufficiently close to the user provided `desired`.
+///
+/// Motivation: near `desired`, even a capped probe (up to ~`desired * 1.1`) can easily saturate
+/// the bottleneck, trigger overuse, and cause sharp estimate drops / oscillations.
+///
+/// Once we're close, we prefer to let the normal estimator/pacer behavior converge without
+/// additional probe bursts.
+const NEAR_DESIRED_NO_PROBE_RATIO: f64 = 0.95;
+
 /// Decides when and at what bitrate to send probe clusters.
 ///
 /// # Design Philosophy
@@ -40,7 +49,7 @@ pub(crate) struct ProbeControl {
 
     /// The BWE estimate when we last probed
     /// Used to detect significant increases that warrant probing
-    last_probed_bitrate: Option<Bitrate>,
+    last_probed: Option<Bitrate>,
 
     /// Minimum time between probes (prevents probe storms)
     min_probe_interval: Duration,
@@ -60,7 +69,7 @@ impl ProbeControl {
         Self {
             next_cluster_id: TwccClusterId::default(),
             next_probe_time: already_happened(),
-            last_probed_bitrate: None,
+            last_probed: None,
             min_probe_interval: Duration::from_secs(5),
             probe_increase_threshold: 1.2,
         }
@@ -89,23 +98,18 @@ impl ProbeControl {
     ///
     pub fn maybe_create_probe(
         &mut self,
-        current_estimate: Bitrate,
-        desired_bitrate: Bitrate,
+        estimate: Bitrate,
+        desired: Bitrate,
         now: Instant,
     ) -> Option<ProbeClusterConfig> {
-        self.should_probe(current_estimate, desired_bitrate, now)
-            .then(|| self.create_probe(current_estimate, desired_bitrate, now))
+        self.should_probe(estimate, desired, now)
+            .then(|| self.create_probe(estimate, desired, now))
     }
 
     /// Check if we should initiate a probe now (internal).
-    fn should_probe(
-        &self,
-        current_estimate: Bitrate,
-        desired_bitrate: Bitrate,
-        now: Instant,
-    ) -> bool {
+    fn should_probe(&self, estimate: Bitrate, desired: Bitrate, now: Instant) -> bool {
         // 1. Startup: Always probe immediately if we haven't probed yet.
-        let Some(last_bitrate) = self.last_probed_bitrate else {
+        let Some(last_bitrate) = self.last_probed else {
             return true;
         };
 
@@ -115,26 +119,33 @@ impl ProbeControl {
         }
 
         // No desired bitrate, don't probe.
-        if desired_bitrate <= Bitrate::ZERO {
+        if desired <= Bitrate::ZERO {
+            return false;
+        }
+
+        // Near-desired strategy:
+        // When we're close to the application's desired bitrate, avoid probing to reduce
+        // probe-induced overuse and oscillations.
+        if estimate >= desired * NEAR_DESIRED_NO_PROBE_RATIO {
             return false;
         }
 
         // Saturation Strategy:
         // If we are already at or above the desired bitrate, stop probing.
-        if current_estimate >= desired_bitrate * DESIRED_PROBE_CAP_SCALE {
+        if estimate >= desired * DESIRED_PROBE_CAP_SCALE {
             return false;
         }
 
         // High Demand Strategy:
         // If the application wants significantly more than current capacity (1.5x),
         // we should probe to discover that capacity, even if the estimate is stable.
-        if desired_bitrate >= current_estimate * 1.5 {
+        if desired >= estimate * 1.5 {
             return true;
         }
 
         // 4. Growth Strategy:
         // Probe if the estimate has improved significantly (natural network improvement).
-        if current_estimate >= last_bitrate * self.probe_increase_threshold {
+        if estimate >= last_bitrate * self.probe_increase_threshold {
             // We rely on create_probe to cap the target bitrate to desired_bitrate * 1.1.
             // As long as we want more (desired > current) and estimate is growing,
             // a probe is useful to accelerate the ramp-up.
@@ -159,38 +170,38 @@ impl ProbeControl {
     /// - **Subsequent probes**: 15ms (WebRTC's `network_state_probe_duration`)
     fn create_probe(
         &mut self,
-        current_estimate: Bitrate,
-        desired_bitrate: Bitrate,
+        estimate: Bitrate,
+        desired: Bitrate,
         now: Instant,
     ) -> ProbeClusterConfig {
         let cluster_id = self.next_cluster_id.inc();
-        let is_first_probe = self.last_probed_bitrate.is_none();
+        let is_first_probe = self.last_probed.is_none();
 
-        let desired_limit = desired_bitrate * DESIRED_PROBE_CAP_SCALE;
+        let desired_limit = desired * DESIRED_PROBE_CAP_SCALE;
 
         // Determine probe bitrate
-        let mut target_bitrate = if is_first_probe {
+        let mut target = if is_first_probe {
             // First probe: aggressive 3x
-            current_estimate * 3.0
-        } else if desired_limit >= current_estimate {
+            estimate * 3.0
+        } else if desired_limit >= estimate {
             // Probe toward desired capacity
-            current_estimate * 2.0
+            estimate * 2.0
         } else {
             // Normal incremental probing
-            current_estimate * 1.5
+            estimate * 1.5
         };
 
         // Also cap by the application's desired bitrate if set.
         // The application doesn't want probes above `desired_bitrate * DESIRED_PROBE_CAP_SCALE`.
-        if target_bitrate > desired_limit {
-            target_bitrate = desired_limit;
+        if target > desired_limit {
+            target = desired_limit;
         }
 
         // Update state
         self.next_probe_time = now + self.min_probe_interval;
-        self.last_probed_bitrate = Some(current_estimate);
+        self.last_probed = Some(estimate);
 
-        let config = ProbeClusterConfig::new(cluster_id, target_bitrate);
+        let config = ProbeClusterConfig::new(cluster_id, target);
 
         // First probe gets extra time (100ms) to allow media streams to start sending
         if is_first_probe {
@@ -269,6 +280,25 @@ mod test {
         assert!(control
             .maybe_create_probe(Bitrate::kbps(1250), desired, later)
             .is_some());
+    }
+
+    #[test]
+    fn near_desired_suppresses_probe_even_if_growth_triggered() {
+        let mut control = ProbeControl::new();
+        let now = Instant::now();
+        let desired = Bitrate::kbps(1000);
+
+        // First probe establishes last_probed = 800 kbps.
+        assert!(control
+            .maybe_create_probe(Bitrate::kbps(800), desired, now)
+            .is_some());
+
+        // After min interval, estimate has grown by exactly 20% (would trigger growth strategy),
+        // but it's also >= 0.95 * desired, so we should NOT probe.
+        let later = now + Duration::from_secs(6);
+        assert!(control
+            .maybe_create_probe(Bitrate::kbps(950), desired, later)
+            .is_none());
     }
 
     #[test]
