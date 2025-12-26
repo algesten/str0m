@@ -8,11 +8,11 @@ use crate::util::AsymmetricTimeEwma;
 /// This should be applied at the "event emission" boundary (what we report to the application),
 /// not inside the BWE control loop itself.
 #[derive(Debug, Clone)]
-pub(crate) struct EgressEstimateEwma {
+pub(crate) struct EgressEstimateSmoother {
     ewma_bps: AsymmetricTimeEwma,
 }
 
-impl EgressEstimateEwma {
+impl EgressEstimateSmoother {
     pub(crate) fn new(tau_up: Duration, tau_down: Duration) -> Self {
         Self {
             ewma_bps: AsymmetricTimeEwma::new(tau_up, tau_down),

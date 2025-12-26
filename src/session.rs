@@ -11,7 +11,7 @@ use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
-use crate::packet::{AppRateEwma, EgressEstimateEwma, LeakyBucketPacer};
+use crate::packet::{AppRate, EgressEstimateSmoother, LeakyBucketPacer};
 use crate::packet::{NullPacer, Pacer, PacerControl, PacerImpl};
 use crate::packet::{ProbeClusterConfig, SendSideBandwithEstimator};
 use crate::rtp::{Extension, RawPacket};
@@ -127,9 +127,9 @@ impl Session {
                 bwe: send_side_bwe,
                 pace_control: PacerControl::new(),
                 desired_bitrate: Bitrate::ZERO,
-                app_rate: AppRateEwma::new(Duration::from_millis(500)),
+                app_rate: AppRate::new(Duration::from_millis(500)),
                 // Published estimate smoothing: slow up, fast down.
-                egress_estimate: EgressEstimateEwma::new(
+                egress_estimate: EgressEstimateSmoother::new(
                     Duration::from_secs(2),
                     Duration::from_millis(300),
                 ),
@@ -1039,8 +1039,8 @@ struct Bwe {
     bwe: SendSideBandwithEstimator,
     pace_control: PacerControl,
     desired_bitrate: Bitrate,
-    app_rate: AppRateEwma,
-    egress_estimate: EgressEstimateEwma,
+    app_rate: AppRate,
+    egress_estimate: EgressEstimateSmoother,
 
     last_emitted_estimate: Bitrate,
 }

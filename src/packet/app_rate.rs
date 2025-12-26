@@ -1,6 +1,6 @@
 //! Application-limited transmit rate tracking.
 //!
-//! This module tracks an application-limited rate using an EWMA.
+//! This module tracks an application-limited transmit rate.
 //!
 //! **EWMA** stands for **Exponentially Weighted Moving Average**: a moving average where
 //! recent samples have more influence and older samples decay exponentially over time.
@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use crate::rtp_::Bitrate;
 use crate::util::TimeEwma;
 
-/// Application-limited transmit rate tracked as an **EWMA** (Exponentially Weighted Moving Average).
+/// Application-limited transmit rate tracker.
 ///
 /// This is computed from actual packets we emit (media + real RTX resends), excluding:
 /// - pure padding packets
@@ -20,7 +20,7 @@ use crate::util::TimeEwma;
 /// The update is time-based (EWMA with a time constant). The caller is expected to feed it
 /// from the sender path (e.g. `Session::poll_packet()`) when emitting a non-padding packet.
 #[derive(Debug, Clone)]
-pub(crate) struct AppRateEwma {
+pub(crate) struct AppRate {
     /// Last time we flushed accumulated bytes into the EWMA.
     last_at: Option<Instant>,
     /// Accumulated bytes since `last_at`.
@@ -28,7 +28,7 @@ pub(crate) struct AppRateEwma {
     ewma_bps: TimeEwma,
 }
 
-impl AppRateEwma {
+impl AppRate {
     // Align with pacer tick (40ms) while smoothing over ~0.5s.
     const MIN_UPDATE_INTERVAL: Duration = Duration::from_millis(40);
 

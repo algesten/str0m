@@ -48,10 +48,10 @@ mod bwe;
 pub(crate) use bwe::{ProbeClusterConfig, SendSideBandwithEstimator};
 
 mod app_rate;
-pub(crate) use app_rate::AppRateEwma;
+pub(crate) use app_rate::AppRate;
 
 mod egress_estimate;
-pub(crate) use egress_estimate::EgressEstimateEwma;
+pub(crate) use egress_estimate::EgressEstimateSmoother;
 
 mod pacer;
 mod pacer_control;
