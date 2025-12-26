@@ -15,6 +15,9 @@ pub(crate) use time_tricks::{
     already_happened, epoch_to_beginning, not_happening, InstantExt, SystemTimeExt,
 };
 
+mod ewma;
+pub(crate) use ewma::TimeEwma;
+
 pub(crate) trait Soonest {
     fn soonest(self, other: Self) -> Self;
 }

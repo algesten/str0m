@@ -1,6 +1,6 @@
 //! Application-limited transmit rate tracking.
 //!
-//! This module provides a small EWMA helper.
+//! This module tracks an application-limited rate using an EWMA.
 //!
 //! **EWMA** stands for **Exponentially Weighted Moving Average**: a moving average where
 //! recent samples have more influence and older samples decay exponentially over time.
@@ -8,6 +8,7 @@
 use std::time::{Duration, Instant};
 
 use crate::rtp_::Bitrate;
+use crate::util::TimeEwma;
 
 /// Application-limited transmit rate tracked as an **EWMA** (Exponentially Weighted Moving Average).
 ///
@@ -20,14 +21,11 @@ use crate::rtp_::Bitrate;
 /// from the sender path (e.g. `Session::poll_packet()`) when emitting a non-padding packet.
 #[derive(Debug, Clone)]
 pub(crate) struct AppRateEwma {
-    /// Time constant for the EWMA.
-    tau: Duration,
     /// Last time we flushed accumulated bytes into the EWMA.
     last_at: Option<Instant>,
     /// Accumulated bytes since `last_at`.
     pending_bytes: u64,
-    /// Current EWMA estimate in bps.
-    bps: f64,
+    ewma_bps: TimeEwma,
 }
 
 impl AppRateEwma {
@@ -36,10 +34,9 @@ impl AppRateEwma {
 
     pub(crate) fn new(tau: Duration) -> Self {
         Self {
-            tau,
             last_at: None,
             pending_bytes: 0,
-            bps: 0.0,
+            ewma_bps: TimeEwma::new(tau),
         }
     }
 
@@ -63,22 +60,13 @@ impl AppRateEwma {
         }
 
         let inst_bps = (self.pending_bytes as f64) * 8.0 / dt.as_secs_f64().max(1e-9);
-
-        // Time-based EWMA: alpha = 1 - exp(-dt / tau)
-        let tau_s = self.tau.as_secs_f64().max(1e-9);
-        let alpha = 1.0 - (-dt.as_secs_f64() / tau_s).exp();
-
-        if self.bps == 0.0 {
-            self.bps = inst_bps;
-        } else {
-            self.bps += alpha * (inst_bps - self.bps);
-        }
+        let _ = self.ewma_bps.update(now, inst_bps);
 
         self.pending_bytes = 0;
         self.last_at = Some(now);
     }
 
     pub(crate) fn bitrate(&self) -> Bitrate {
-        Bitrate::from(self.bps.max(0.0))
+        Bitrate::from(self.ewma_bps.avg().unwrap_or(0.0).max(0.0))
     }
 }
