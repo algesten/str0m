@@ -69,7 +69,7 @@ pub fn bwe_wifi_only() -> Result<(), RtcError> {
     // WiFi: 100 Mbps link, 5ms latency, ~1% loss
     let netem_config = NetemConfig::wifi().seed(42);
     let initial_bitrate = Bitrate::mbps(2);
-    let desired_bitrate = Bitrate::mbps(50);
+    let desired_bitrate = Bitrate::mbps(60);
 
     let (mut l, mut r) =
         connect_with_bwe(initial_bitrate, desired_bitrate, netem_config, netem_config);
@@ -258,7 +258,7 @@ fn connect_with_bwe(
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc1, rtc2);
 
-    l.bwe().set_current_bitrate(initial_bitrate);
+    // Desired bitrate controls probing/padding behavior for BWE.
     l.bwe().set_desired_bitrate(desired_bitrate);
 
     // Set netem configurations for incoming traffic
@@ -341,7 +341,6 @@ impl BweTestContext {
         desired_bitrate: Bitrate,
     ) -> Result<Option<Bitrate>, RtcError> {
         // Configure BWE with desired bitrate to enable probing
-        l.bwe().set_current_bitrate(desired_bitrate);
         l.bwe().set_desired_bitrate(desired_bitrate);
 
         let start_duration = l.duration();

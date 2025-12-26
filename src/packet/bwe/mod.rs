@@ -84,6 +84,14 @@ impl SendSideBandwithEstimator {
             .unwrap_or(Bitrate::ZERO)
     }
 
+    /// Whether the delay-based detector currently signals overuse.
+    ///
+    /// This is useful for gating behaviors (like padding/probing) that would otherwise
+    /// re-excite the system while we're already congested.
+    pub(crate) fn is_overusing(&self) -> bool {
+        self.delay_controller.is_overusing()
+    }
+
     /// Record a packet from a TWCC report.
     pub(crate) fn update<'t>(
         &mut self,

@@ -198,7 +198,14 @@ impl ProbeControl {
         let cluster_id = self.next_cluster_id.inc();
         let is_first_probe = self.last_probed.is_none();
 
-        let desired_limit = args.desired * DESIRED_PROBE_CAP_SCALE;
+        // If `desired` is not set (<= 0), don't cap the *startup* probe.
+        // Startup probing is used to quickly find an initial capacity even if the app hasn't
+        // provided a desired bitrate yet.
+        let desired_limit = if args.desired > Bitrate::ZERO {
+            args.desired * DESIRED_PROBE_CAP_SCALE
+        } else {
+            Bitrate::INFINITY
+        };
 
         // Determine probe bitrate
         let mut target = if is_first_probe {

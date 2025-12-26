@@ -47,6 +47,9 @@ pub(crate) use payload::Payloader;
 mod bwe;
 pub(crate) use bwe::{ProbeClusterConfig, SendSideBandwithEstimator};
 
+mod app_rate;
+pub(crate) use app_rate::AppRateEwma;
+
 mod pacer;
 mod pacer_control;
 pub(crate) use pacer::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};

@@ -11,7 +11,7 @@ use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
-use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerControl, PacerImpl};
+use crate::packet::{AppRateEwma, LeakyBucketPacer, NullPacer, Pacer, PacerControl, PacerImpl};
 use crate::packet::{ProbeClusterConfig, SendSideBandwithEstimator};
 use crate::rtp::{Extension, RawPacket};
 use crate::rtp_::Direction;
@@ -38,7 +38,8 @@ const NACK_MIN_INTERVAL: Duration = Duration::from_millis(33);
 /// Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Amend to the current_bitrate value.
+/// Pacer overshoot factor used to set initial pacing and to ensure pacing stays above
+/// the target rate in steady state.
 const PACING_FACTOR: f64 = 1.1;
 
 /// Amount of deviation needed to emit a new BWE value. This is to reduce
@@ -125,7 +126,7 @@ impl Session {
                 bwe: send_side_bwe,
                 pace_control: PacerControl::new(),
                 desired_bitrate: Bitrate::ZERO,
-                current_bitrate: rate,
+                app_rate: AppRateEwma::new(Duration::from_millis(500)),
 
                 last_emitted_estimate: Bitrate::ZERO,
             };
@@ -825,6 +826,14 @@ impl Session {
                 .register_seq(packet_id, now, payload_size);
         }
 
+        // Update application-limited rate (media + real RTX resends). Padding/probes are excluded
+        // by `is_padding` which is set by StreamTx when the packet was generated as padding.
+        if let Some(bwe) = self.bwe.as_mut() {
+            if !is_padding {
+                bwe.app_rate.record_bytes(now, payload_size as u64);
+            }
+        }
+
         // Technically we should wait for the next handle_timeout, but this speeds things up a bit
         // avoiding an extra poll_timeout.
         self.update_queue_state(now);
@@ -906,13 +915,6 @@ impl Session {
         snapshot.ingress_loss_fraction = self.twcc_rx_register.loss();
     }
 
-    pub fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {
-        if let Some(bwe) = self.bwe.as_mut() {
-            bwe.current_bitrate = current_bitrate;
-            self.configure_pacer();
-        }
-    }
-
     pub fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
         if let Some(bwe) = self.bwe.as_mut() {
             bwe.desired_bitrate = desired_bitrate;
@@ -952,14 +954,19 @@ impl Session {
             // No estimate yet, no padding
             return;
         };
+        // TWCC acked send-rate (receiver-confirmed throughput).
         let send_rate = bwe.bwe.acked_bitrate();
+        let is_overuse = bwe.bwe.is_overusing();
+        // Application-limited rate (actual payload we put on the wire excluding padding/probes).
+        let app_rate = bwe.app_rate.bitrate();
 
         // Calculate pacing and padding rates
         let result = bwe.pace_control.calculate(
-            bwe.current_bitrate,
             bwe.desired_bitrate,
             current_estimate,
             send_rate,
+            app_rate,
+            is_overuse,
         );
 
         self.pacer.set_padding_rate(result.padding_rate);
@@ -1026,7 +1033,7 @@ struct Bwe {
     bwe: SendSideBandwithEstimator,
     pace_control: PacerControl,
     desired_bitrate: Bitrate,
-    current_bitrate: Bitrate,
+    app_rate: AppRateEwma,
 
     last_emitted_estimate: Bitrate,
 }
