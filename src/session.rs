@@ -11,7 +11,8 @@ use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
-use crate::packet::{AppRateEwma, LeakyBucketPacer, NullPacer, Pacer, PacerControl, PacerImpl};
+use crate::packet::{AppRateEwma, EgressEstimateEwma, LeakyBucketPacer};
+use crate::packet::{NullPacer, Pacer, PacerControl, PacerImpl};
 use crate::packet::{ProbeClusterConfig, SendSideBandwithEstimator};
 use crate::rtp::{Extension, RawPacket};
 use crate::rtp_::Direction;
@@ -127,6 +128,11 @@ impl Session {
                 pace_control: PacerControl::new(),
                 desired_bitrate: Bitrate::ZERO,
                 app_rate: AppRateEwma::new(Duration::from_millis(500)),
+                // Published estimate smoothing: slow up, fast down.
+                egress_estimate: EgressEstimateEwma::new(
+                    Duration::from_secs(2),
+                    Duration::from_millis(300),
+                ),
 
                 last_emitted_estimate: Bitrate::ZERO,
             };
@@ -1034,6 +1040,7 @@ struct Bwe {
     pace_control: PacerControl,
     desired_bitrate: Bitrate,
     app_rate: AppRateEwma,
+    egress_estimate: EgressEstimateEwma,
 
     last_emitted_estimate: Bitrate,
 }
@@ -1041,6 +1048,7 @@ struct Bwe {
 impl Bwe {
     fn handle_timeout(&mut self, now: Instant) -> Option<ProbeClusterConfig> {
         self.bwe.handle_timeout(now);
+        self.update_published_estimate(now);
 
         // Check if it's time to probe
         self.bwe.maybe_create_probe(self.desired_bitrate, now)
@@ -1064,10 +1072,12 @@ impl Bwe {
         now: Instant,
     ) {
         self.bwe.update(records, now);
+        self.update_published_estimate(now);
     }
 
     fn poll_estimate(&mut self) -> Option<Bitrate> {
-        let estimate = self.bwe.last_estimate()?;
+        // Emit the smoothed/published estimate if it changed enough.
+        let estimate = self.egress_estimate.estimate()?;
 
         let min = self.last_emitted_estimate * (1.0 - ESTIMATE_TOLERANCE);
         let max = self.last_emitted_estimate * (1.0 + ESTIMATE_TOLERANCE);
@@ -1087,6 +1097,13 @@ impl Bwe {
 
     fn last_estimate(&self) -> Option<Bitrate> {
         self.bwe.last_estimate()
+    }
+
+    fn update_published_estimate(&mut self, now: Instant) {
+        let Some(raw) = self.bwe.last_estimate() else {
+            return;
+        };
+        let _ = self.egress_estimate.update(now, raw);
     }
 }
 

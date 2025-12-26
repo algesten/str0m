@@ -16,7 +16,7 @@ pub(crate) use time_tricks::{
 };
 
 mod ewma;
-pub(crate) use ewma::TimeEwma;
+pub(crate) use ewma::{AsymmetricTimeEwma, TimeEwma};
 
 pub(crate) trait Soonest {
     fn soonest(self, other: Self) -> Self;

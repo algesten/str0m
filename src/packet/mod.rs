@@ -50,6 +50,9 @@ pub(crate) use bwe::{ProbeClusterConfig, SendSideBandwithEstimator};
 mod app_rate;
 pub(crate) use app_rate::AppRateEwma;
 
+mod egress_estimate;
+pub(crate) use egress_estimate::EgressEstimateEwma;
+
 mod pacer;
 mod pacer_control;
 pub(crate) use pacer::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
