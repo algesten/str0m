@@ -884,10 +884,12 @@ impl Session {
         snapshot.ingress_loss_fraction = self.twcc_rx_register.loss();
     }
 
-    pub fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {
+    pub fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate, force: bool) {
         if let Some(bwe) = self.bwe.as_mut() {
-            bwe.current_bitrate = current_bitrate;
-            self.configure_pacer();
+            if force || bwe.current_bitrate.significant_diff(current_bitrate) {
+                bwe.current_bitrate = current_bitrate;
+                self.configure_pacer();
+            }
         }
     }
 

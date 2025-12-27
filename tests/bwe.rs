@@ -258,7 +258,7 @@ fn connect_with_bwe(
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc1, rtc2);
 
-    l.bwe().set_current_bitrate(initial_bitrate);
+    l.bwe().set_current_bitrate(initial_bitrate, true);
     l.bwe().set_desired_bitrate(desired_bitrate);
 
     // Set netem configurations for incoming traffic
@@ -341,7 +341,7 @@ impl BweTestContext {
         desired_bitrate: Bitrate,
     ) -> Result<Option<Bitrate>, RtcError> {
         // Configure BWE with desired bitrate to enable probing
-        l.bwe().set_current_bitrate(desired_bitrate);
+        l.bwe().set_current_bitrate(desired_bitrate, true);
         l.bwe().set_desired_bitrate(desired_bitrate);
 
         let start_duration = l.duration();
