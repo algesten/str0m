@@ -282,6 +282,18 @@ pub struct MediaData {
     pub audio_start_of_talk_spurt: bool,
 }
 
+impl MediaData {
+    /// Return true if MediaData is keyframe independently of Codec
+    pub fn is_keyframe(&self) -> bool {
+        match self.codec_extra {
+            CodecExtra::None => false,
+            CodecExtra::H264(h264_extra) => h264_extra.is_keyframe,
+            CodecExtra::Vp8(vp8_extra) => vp8_extra.is_keyframe,
+            CodecExtra::Vp9(vp9_extra) => vp9_extra.is_keyframe,
+        }
+    }
+}
+
 /// Details for an incoming a keyframe request (PLI or FIR).
 ///
 /// This is obtained via the [`Event::KeyframeRequest`][crate::Event::KeyframeRequest].
