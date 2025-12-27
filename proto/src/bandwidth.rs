@@ -82,9 +82,6 @@ impl Bitrate {
         if a == 0.0 {
             return b != 0.0;
         }
-        if b == 0.0 {
-            return a != 0.0;
-        }
         ((a - b).abs() / a) > 0.05
     }
 }

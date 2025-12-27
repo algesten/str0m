@@ -40,7 +40,7 @@ impl<'a> Bwe<'a> {
     /// # use str0m::{Rtc, bwe::Bitrate};
     /// let mut rtc = Rtc::new();
     ///
-    /// rtc.bwe().set_current_bitrate(Bitrate::kbps(250));
+    /// rtc.bwe().set_current_bitrate(Bitrate::kbps(250), true);
     /// # }
     /// ```
     ///
@@ -52,7 +52,7 @@ impl<'a> Bwe<'a> {
     /// # use str0m::{Rtc, bwe::Bitrate};
     /// let mut rtc = Rtc::new();
     ///
-    /// rtc.bwe().set_current_bitrate(Bitrate::kbps(750));
+    /// rtc.bwe().set_current_bitrate(Bitrate::kbps(750), true);
     /// # }
     /// ```
     ///
