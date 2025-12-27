@@ -6,6 +6,7 @@ use std::fmt;
 use std::io;
 use std::net::SocketAddr;
 use std::ops::Deref;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +45,68 @@ pub enum Protocol {
     SslTcp,
     /// TLS (only used via relay)
     Tls,
+}
+
+/// TCP connection role as defined by the `tcptype` SDP attribute.
+///
+/// This enum corresponds to the TCP connection setup modes defined in
+/// [RFC 6544 §4.5](https://datatracker.ietf.org/doc/html/rfc6544#section-4.5),
+/// which specifies how endpoints establish TCP connections when TCP is used
+/// as a transport for media streams.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TcpType {
+    /// The endpoint actively initiates the TCP connection.
+    ///
+    /// In this mode, the endpoint performs an active open (i.e., sends a SYN)
+    /// to the remote peer.
+    Active,
+
+    /// The endpoint passively waits for an incoming TCP connection.
+    ///
+    /// In this mode, the endpoint performs a passive open (i.e., listens)
+    /// and accepts a connection initiated by the remote peer.
+    Passive,
+
+    /// Simultaneous open.
+    ///
+    /// Both endpoints attempt to actively open a TCP connection to each other
+    /// at the same time. This relies on TCP simultaneous open behavior.
+    So,
+}
+
+impl fmt::Display for TcpType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let str = match self {
+            Self::Active => "active",
+            Self::Passive => "passive",
+            Self::So => "so",
+        };
+        f.write_str(str)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseTcpTypeError;
+
+impl fmt::Display for ParseTcpTypeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("invalid TCP type (expected: active, passive, or so)")
+    }
+}
+
+impl std::error::Error for ParseTcpTypeError {}
+
+impl FromStr for TcpType {
+    type Err = ParseTcpTypeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            _ if s.eq_ignore_ascii_case("active") => Ok(Self::Active),
+            _ if s.eq_ignore_ascii_case("passive") => Ok(Self::Passive),
+            _ if s.eq_ignore_ascii_case("so") => Ok(Self::So),
+            _ => Err(ParseTcpTypeError),
+        }
+    }
 }
 
 /// An instruction to send an outgoing packet.
