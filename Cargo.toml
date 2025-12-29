@@ -49,6 +49,7 @@ fastrand = "2.0.1"
 sctp-proto = "0.7.0"
 combine = "4.6.6"
 subtle = "2.0.0"
+arrayvec = "0.7.6"
 
 # STUN
 # Pin crc to avoid 3.4 which requires rustc 1.83

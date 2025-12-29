@@ -1,5 +1,7 @@
 # Unreleased
 
+  * BWE V2 (Probe clusters) #823
+
 0.15.0
 
   * MediaData::is_keyframe() helper #805

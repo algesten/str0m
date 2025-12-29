@@ -3,9 +3,6 @@ use std::time::{Duration, Instant};
 use crate::rtp_::DataSize;
 use crate::Bitrate;
 
-// Ported from libWebRTC's src/modules/congestion_controller/goog_cc/bitrate_estimator.cc at
-// `9f3ccf291e`.
-
 const SMALL_SAMPLE_THRESHOLD: DataSize = DataSize::bytes(2000);
 const SMALL_SAMPLE_UNCERTAINTY: f64 = 25.0;
 const UNCERTAINTY: f64 = 10.0;
@@ -116,9 +113,8 @@ impl AckedBitrateEstimator {
             if receive_time - last >= window {
                 // No update for a while, reset estimates.
                 self.sum = DataSize::ZERO;
-                self.current_window = Duration::from_micros(
-                    self.window.as_micros() as u64 % window.as_micros() as u64,
-                );
+                let remaining = self.current_window.as_micros() as u64 % window.as_micros() as u64;
+                self.current_window = Duration::from_micros(remaining);
             }
         }
 
@@ -202,6 +198,56 @@ mod test {
             estimate.as_u64(),
             108320,
             "AckedBitrateEstiamtor should produce the correct bitrate"
+        );
+    }
+
+    #[test]
+    fn test_long_gap_preserves_overflow_via_modulo_after_initial() {
+        let now = Instant::now();
+        let window = Duration::from_millis(150);
+        let mut estimator = AckedBitrateEstimator::new(Duration::from_millis(500), window);
+
+        // First, get past the initial 500ms window to establish an estimate
+        // Need to send enough data over 500ms to trigger the first estimate
+        for i in 0..50 {
+            estimator.update(now + Duration::from_millis(i * 10), DataSize::bytes(1000));
+        }
+        estimator.update(now + Duration::from_millis(501), DataSize::bytes(1000));
+        assert!(
+            estimator.current_estimate().is_some(),
+            "Should have initial estimate after 500ms"
+        );
+
+        // Now we're using the 150ms window
+        // Build up current_window to 100ms
+        estimator.update(now + Duration::from_millis(550), DataSize::bytes(1000));
+        estimator.update(now + Duration::from_millis(650), DataSize::bytes(1000));
+        // current_window is now 100ms
+
+        // Long gap of 225ms (> 150ms window)
+        // current_window becomes 100 + 225 = 325ms
+        // After gap detection: current_window = 325ms % 150ms = 25ms (correct)
+        //                  or: current_window = 150ms % 150ms = 0ms (buggy)
+        estimator.update(now + Duration::from_millis(875), DataSize::bytes(1000));
+
+        // Add 50ms
+        estimator.update(now + Duration::from_millis(925), DataSize::bytes(1000));
+        // Correct: current_window = 25 + 50 = 75ms
+        // Buggy: current_window = 0 + 50 = 50ms
+
+        // Add 80ms
+        let estimate_before = estimator.current_estimate().unwrap();
+        estimator.update(now + Duration::from_millis(1005), DataSize::bytes(1000));
+        // Correct: current_window = 75 + 80 = 155ms (>= 150ms, triggers new sample)
+        // Buggy: current_window = 50 + 80 = 130ms (< 150ms, no new sample)
+        let estimate_after = estimator.current_estimate().unwrap();
+
+        // With correct modulo, estimate should change (new sample produced)
+        // With buggy modulo, estimate stays the same (no sample produced yet)
+        assert_ne!(
+            estimate_before.as_u64(),
+            estimate_after.as_u64(),
+            "Estimate should change after accumulating >= 150ms due to correct modulo overflow"
         );
     }
 }

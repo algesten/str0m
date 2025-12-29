@@ -1,13 +1,4 @@
 /// One byte bit pattern to allow matching against specific bits.
-///
-/// ```ignore
-/// # use crate::util::BitPattern;
-/// let pattern = BitPattern::new(*b"1x00x100");
-///
-/// assert!(pattern.matches(0b11001100));
-/// // Most significant bit should be a 1, but is 0.
-/// assert!(!pattern.matches(0b01001100));
-/// ````
 #[derive(Copy, Clone)]
 pub(crate) struct BitPattern {
     mask: u8,

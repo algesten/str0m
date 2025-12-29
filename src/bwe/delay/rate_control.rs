@@ -1,9 +1,13 @@
 use std::fmt;
 use std::time::{Duration, Instant};
 
+use super::super::macros::log_rate_control_applied_change;
+use super::super::macros::log_rate_control_observed_bitrate;
+use super::super::macros::log_rate_control_state;
 use crate::rtp_::Bitrate;
+use crate::util::MovingAverage;
 
-use super::BandwidthUsage;
+use super::super::BandwidthUsage;
 
 // Recommended values from https://datatracker.ietf.org/doc/html/draft-ietf-rmcat-gcc-02#section-5
 /// Smoothing factor applied to moving stats for observed bitrates when we are in the decreasing
@@ -15,6 +19,10 @@ const BETA: f64 = 0.85;
 const MULTIPLICATIVE_INCREASE_COEF: f64 = 1.08;
 /// The maximal ratio of the observed bitrate that we allow estimating in a single increase.
 const MAX_ESTIMATE_RATIO: f64 = 1.5;
+/// Default backoff time added to RTT for response time calculation (kDefaultBackoffTimeInMs in WebRTC).
+const DEFAULT_BACKOFF_TIME: Duration = Duration::from_millis(100);
+/// Number of standard deviations below mean to reset observed bitrate average.
+const OBSERVED_BITRATE_RESET_THRESHOLD_STD: f64 = 3.0;
 
 /// A type used to estimates a suitable send bitrate.
 ///
@@ -22,7 +30,7 @@ const MAX_ESTIMATE_RATIO: f64 = 1.5;
 /// * The observed received bitrate(via TWCC feddback).
 /// * RTT.
 /// * Congestion estimates from the delay controller.
-pub(super) struct RateControl {
+pub struct RateControl {
     state: State,
 
     estimated_bitrate: Bitrate,
@@ -40,8 +48,8 @@ pub(super) struct RateControl {
 }
 
 impl RateControl {
-    pub(super) fn new(start_bitrate: Bitrate, min_bitrate: Bitrate, max_bitrate: Bitrate) -> Self {
-        crate::packet::bwe::macros::log_rate_control_state!(State::Increase as i8);
+    pub fn new(start_bitrate: Bitrate, min_bitrate: Bitrate, max_bitrate: Bitrate) -> Self {
+        log_rate_control_state!(State::Increase as i8);
 
         Self {
             state: State::Increase,
@@ -58,7 +66,7 @@ impl RateControl {
     }
 
     /// Update with input from the delay controller.
-    pub(super) fn update(
+    pub fn update(
         &mut self,
         signal: Signal,
         observed_bitrate: Bitrate,
@@ -71,10 +79,10 @@ impl RateControl {
         }
 
         self.state = self.state.transition(signal);
-        crate::packet::bwe::macros::log_rate_control_observed_bitrate!(
+        log_rate_control_observed_bitrate!(
             observed_bitrate.as_f64(),
             self.averaged_observed_bitrate
-                .average
+                .get()
                 .map(|avg| avg.to_string())
                 .unwrap_or_default()
         );
@@ -84,7 +92,17 @@ impl RateControl {
                 self.increase(observed_bitrate, now);
             }
             State::Decrease => {
-                self.decrease(observed_bitrate, now);
+                // Maintain observed bitrate statistics while we are in the decrease state.
+                //
+                // This must NOT be gated by time_to_reduce_further. That function is
+                // intended to gate *applying another reduction*, not collecting throughput stats.
+                self.update_observed_bitrate(observed_bitrate);
+
+                // Only apply decrease if enough time has passed since last bitrate change
+                // or if throughput is critically low (< 50% of estimate)
+                if self.time_to_reduce_further(now, observed_bitrate) {
+                    self.decrease(observed_bitrate, now);
+                }
             }
             State::Hold => {
                 // Do nothing
@@ -92,13 +110,102 @@ impl RateControl {
         }
     }
 
+    fn update_observed_bitrate(&mut self, observed_bitrate: Bitrate) {
+        if self
+            .averaged_observed_bitrate
+            .lower_range(OBSERVED_BITRATE_RESET_THRESHOLD_STD)
+            .map(|lower| observed_bitrate.as_f64() < lower)
+            .unwrap_or(false)
+        {
+            self.averaged_observed_bitrate.reset();
+        }
+        self.averaged_observed_bitrate
+            .update(observed_bitrate.as_f64());
+    }
+
+    /// Check if it's time to reduce the bitrate further.
+    ///
+    /// This implements WebRTC's TimeToReduceFurther logic which prevents
+    /// rapid successive decreases, especially after probe results.
+    ///
+    /// Returns true if:
+    /// 1. Enough time (1 RTT, clamped to 10-200ms) has passed since last change, OR
+    /// 2. Throughput is critically low (< 50% of current estimate)
+    fn time_to_reduce_further(&self, now: Instant, observed_bitrate: Bitrate) -> bool {
+        let Some(last_change) = self.last_estimate_update else {
+            return true; // No previous change, allow decrease
+        };
+
+        // WebRTC uses: clamp(rtt, 10ms, 200ms)
+        let rtt = self.last_rtt.unwrap_or(DEFAULT_BACKOFF_TIME);
+        let reduction_interval = rtt.clamp(Duration::from_millis(10), Duration::from_millis(200));
+
+        let time_since_change = now.saturating_duration_since(last_change);
+
+        if time_since_change >= reduction_interval {
+            return true;
+        }
+
+        // If throughput is critically low (< 50% of estimate), allow immediate decrease
+        let threshold = self.estimated_bitrate * 0.5;
+        if observed_bitrate < threshold {
+            return true;
+        }
+
+        false
+    }
+
     /// The current estimated bitrate.
-    pub(super) fn estimated_bitrate(&self) -> Bitrate {
+    pub fn estimated_bitrate(&self) -> Bitrate {
         self.estimated_bitrate
     }
 
+    /// Set a probe result indicating discovered capacity.
+    ///
+    /// When a probe succeeds, it means the network can handle at least this bitrate.
+    /// We use this to quickly increase our estimate without waiting for gradual ramp-up.
+    ///
+    /// Apply a probe result directly to the estimate.
+    ///
+    /// This matches WebRTC's behavior where probe results are accepted unconditionally
+    /// (subject only to min/max clamping), regardless of whether they're higher or lower
+    /// than the current estimate. The timestamp is updated to prevent the next regular
+    /// update from immediately overriding the probe result.
+    ///
+    /// WebRTC does NOT change the rate control state when applying a probe - the state
+    /// remains unchanged to avoid triggering unintended AIMD behavior.
+    pub fn set_probe_result(&mut self, probe_bitrate: Bitrate, now: Instant) {
+        // WebRTC calls SetEstimate() directly without filtering by current estimate
+        // or changing the rate control state. Accept the probe result unconditionally
+        // (update_estimate handles clamping to min/max bounds).
+        self.update_estimate(probe_bitrate, now);
+
+        // Do NOT change self.state - keep current state to match WebRTC behavior.
+        // Changing state here could trigger unintended AIMD decrease/increase logic.
+    }
+
     fn increase(&mut self, observed_bitrate: Bitrate, now: Instant) {
-        let last_estimate_update = *self.last_estimate_update.get_or_insert(now);
+        // WebRTC limits increases to 1.5x observed throughput to avoid unlimited growth
+        // when we're already above what we're actually sending
+        // See: aimd_rate_control.cc line 251-252
+        let increase_limit = observed_bitrate * 1.5 + Bitrate::kbps(10);
+
+        if self.estimated_bitrate >= increase_limit {
+            // WebRTC updates time_last_bitrate_change_ even when skipping increase
+            // (see aimd_rate_control.cc line 281, which is outside the increase check)
+            // This prevents stale timestamps from allowing premature decreases
+            self.last_estimate_update = Some(now);
+            return;
+        }
+
+        // Initialize timestamp if this is the first increase call, otherwise use existing value.
+        // Note: In practice, last_estimate_update is always Some here because either:
+        // 1) We returned early above and set it, or
+        // 2) A previous call to decrease() or increase() already set it
+        let last_estimate_update = self.last_estimate_update.unwrap_or(now);
+        if self.last_estimate_update.is_none() {
+            self.last_estimate_update = Some(now);
+        }
 
         if self
             .averaged_observed_bitrate
@@ -115,9 +222,8 @@ impl RateControl {
 
         let mut new_estimate = if near_convergence {
             // Additive increase
-            crate::packet::bwe::macros::log_rate_control_applied_change!("increase_additive");
-            let response_time =
-                self.last_rtt.unwrap_or(Duration::ZERO) + Duration::from_millis(100);
+            log_rate_control_applied_change!("increase_additive");
+            let response_time = self.last_rtt.unwrap_or(Duration::ZERO) + DEFAULT_BACKOFF_TIME;
 
             let alpha =
                 0.5 * (since_last_update.as_secs_f64() / response_time.as_secs_f64()).min(1.0);
@@ -125,29 +231,22 @@ impl RateControl {
             self.estimated_bitrate.as_f64() + (alpha * expected_packet_size).max(1000.0)
         } else {
             // Multiplicative increase
-            crate::packet::bwe::macros::log_rate_control_applied_change!("increase_multiplicative");
+            log_rate_control_applied_change!("increase_multiplicative");
             let eta = MULTIPLICATIVE_INCREASE_COEF.powf(since_last_update.as_secs_f64().min(1.0));
             let increase = ((eta - 1.0) * self.estimated_bitrate.as_f64()).max(1_000.0);
 
             self.estimated_bitrate.as_f64() + increase
         };
+
+        // Cap at the increase limit (and observed bitrate ratio)
         let max = observed_bitrate.as_f64() * MAX_ESTIMATE_RATIO;
-        new_estimate = max.min(new_estimate);
+        new_estimate = max.min(new_estimate).min(increase_limit.as_f64());
 
         self.update_estimate(new_estimate.into(), now);
     }
 
     fn decrease(&mut self, observed_bitrate: Bitrate, now: Instant) {
-        crate::packet::bwe::macros::log_rate_control_applied_change!("decrease");
-        if self
-            .averaged_observed_bitrate
-            .lower_range(3.0)
-            .map(|lower| observed_bitrate.as_f64() < lower)
-            .unwrap_or(false)
-        {
-            self.averaged_observed_bitrate.reset();
-        }
-
+        log_rate_control_applied_change!("decrease");
         let mut new_estimate = observed_bitrate * BETA;
 
         if self.estimated_bitrate < new_estimate {
@@ -155,12 +254,9 @@ impl RateControl {
             new_estimate = self.estimated_bitrate;
         }
 
-        self.averaged_observed_bitrate
-            .update(observed_bitrate.as_f64());
-
         #[allow(unused)]
-        if let Some(observed_average) = self.averaged_observed_bitrate.average {
-            crate::packet::bwe::macros::log_rate_control_observed_bitrate!(
+        if let Some(observed_average) = self.averaged_observed_bitrate.get() {
+            log_rate_control_observed_bitrate!(
                 observed_bitrate.as_u64(),
                 observed_average.round() as u64
             );
@@ -169,12 +265,7 @@ impl RateControl {
         // should wait until this happens as consequence of the delay control, but libWebRTC does
         // it immediately.
         self.state = State::Hold;
-        crate::packet::bwe::macros::log_rate_control_state!(self.state as i8);
-        debug!(
-            "RateControl: Moving from {} to {} after decreasing estimate",
-            State::Decrease,
-            State::Hold
-        );
+        log_rate_control_state!(self.state as i8);
         self.update_estimate(new_estimate, now);
     }
 
@@ -235,8 +326,7 @@ impl State {
         };
 
         if new_state != *self {
-            crate::packet::bwe::macros::log_rate_control_state!(new_state as i8);
-            debug!("RateControl: Moving from {self} to {new_state} on {signal}");
+            log_rate_control_state!(new_state as i8);
         }
 
         new_state
@@ -270,82 +360,6 @@ impl fmt::Display for Signal {
             Signal::Underuse => write!(f, "underuse"),
             Signal::Normal => write!(f, "normal"),
         }
-    }
-}
-
-/// Exponential moving average
-#[derive(Debug)]
-pub struct MovingAverage {
-    smoothing_factor: f64,
-    average: Option<f64>,
-    variance: f64,
-    std: f64,
-}
-
-impl MovingAverage {
-    pub fn new(smoothing_factor: f64) -> Self {
-        Self {
-            smoothing_factor,
-            average: None,
-            variance: 0.0,
-            std: 0.0,
-        }
-    }
-
-    fn within_std(&self, value: f64, num_std: f64) -> bool {
-        let Some(average) = self.average else {
-            return false;
-        };
-
-        let floor = average - self.std * num_std;
-        let ceil = average + self.std * num_std;
-
-        floor <= value && value <= ceil
-    }
-
-    fn upper_range(&self, num_std: f64) -> Option<f64> {
-        if self.std == 0.0 {
-            return None;
-        }
-
-        self.average.map(|avg| avg + num_std * self.std)
-    }
-
-    fn lower_range(&self, num_std: f64) -> Option<f64> {
-        if self.std == 0.0 {
-            return None;
-        }
-
-        self.average.map(|avg| avg - num_std * self.std)
-    }
-
-    pub fn update(&mut self, value: f64) {
-        let average = match self.average {
-            Some(average) => {
-                let delta = value - average;
-                let new_average = average + self.smoothing_factor * delta;
-                let new_variance = (1.0 - self.smoothing_factor)
-                    * (self.variance + self.smoothing_factor * delta.powf(2.0));
-
-                self.variance = new_variance;
-                self.std = new_variance.sqrt();
-
-                new_average
-            }
-            None => value,
-        };
-
-        self.average = Some(average);
-    }
-
-    fn valid(&self) -> bool {
-        self.average.is_some()
-    }
-
-    fn reset(&mut self) {
-        self.average = None;
-        self.std = 0.0;
-        self.variance = 0.0;
     }
 }
 

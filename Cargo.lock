@@ -1772,6 +1772,7 @@ name = "str0m"
 version = "0.15.0"
 dependencies = [
  "_str0m_test",
+ "arrayvec",
  "combine",
  "crc",
  "dimpl",

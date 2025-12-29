@@ -2,8 +2,11 @@ use std::collections::VecDeque;
 use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
-use super::time::{TimeDelta, Timestamp};
-use super::{BandwidthUsage, InterGroupDelayDelta};
+use super::super::macros::{log_trendline_estimate, log_trendline_modified_trend};
+
+use super::super::time::{TimeDelta, Timestamp};
+use super::super::BandwidthUsage;
+use super::arrival_group::InterGroupDelayDelta;
 
 const SMOOTHING_COEF: f64 = 0.9;
 const OVER_USE_THRESHOLD_DEFAULT_MS: f64 = 12.5;
@@ -16,7 +19,7 @@ const K_DOWN: f64 = 0.039;
 
 const DELAY_COUNT_RANGE: RangeInclusive<usize> = 60..=1000;
 
-pub(super) struct TrendlineEstimator {
+pub struct TrendlineEstimator {
     /// The window size in packets
     window_size: usize,
 
@@ -52,7 +55,7 @@ pub(super) struct TrendlineEstimator {
 }
 
 impl TrendlineEstimator {
-    pub(super) fn new(window_size: usize) -> Self {
+    pub fn new(window_size: usize) -> Self {
         Self {
             window_size,
             zero_time: None,
@@ -68,11 +71,7 @@ impl TrendlineEstimator {
         }
     }
 
-    pub(super) fn add_delay_observation(
-        &mut self,
-        delay_variation: InterGroupDelayDelta,
-        now: Instant,
-    ) {
+    pub fn add_delay_observation(&mut self, delay_variation: InterGroupDelayDelta, now: Instant) {
         if self.history.is_empty() {
             self.do_add_to_history(delay_variation, now);
             return;
@@ -98,7 +97,7 @@ impl TrendlineEstimator {
         }
     }
 
-    pub(super) fn hypothesis(&self) -> BandwidthUsage {
+    pub fn hypothesis(&self) -> BandwidthUsage {
         self.hypothesis
     }
 
@@ -137,7 +136,7 @@ impl TrendlineEstimator {
     fn update_trendline(&mut self, variation: InterGroupDelayDelta, now: Instant) -> Option<()> {
         let trend = self.linear_fit().unwrap_or(self.previous_trend);
         trace!("Computed trend {:?}", trend);
-        crate::packet::bwe::macros::log_trendline_estimate!(trend);
+        log_trendline_estimate!(trend);
 
         self.detect(trend, variation, now);
 
@@ -182,10 +181,7 @@ impl TrendlineEstimator {
             * trend
             * THRESHOLD_GAIN;
 
-        crate::packet::bwe::macros::log_trendline_modified_trend!(
-            modified_trend,
-            self.delay_threshold
-        );
+        log_trendline_modified_trend!(modified_trend, self.delay_threshold);
 
         if modified_trend > self.delay_threshold {
             let overuse = match &mut self.overuse {
@@ -295,11 +291,8 @@ struct Overuse {
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use std::time::{Duration, Instant};
-
-    use crate::packet::bwe::BandwidthUsage;
-
-    use super::{InterGroupDelayDelta, TrendlineEstimator};
 
     #[test]
     fn test_window_size_limit() {

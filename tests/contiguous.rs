@@ -222,6 +222,9 @@ impl Server {
             }
         }
 
+        // Drain any remaining packets from the pacer
+        progress(&mut l, &mut r)?;
+
         let events = r
             .events
             .into_iter()

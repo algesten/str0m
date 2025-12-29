@@ -76,6 +76,12 @@ macro_rules! log_loss_bw_limit_in_window {
     }
 }
 
+macro_rules! log_probe_bitrate_estimate {
+    ($($arg:expr),+) => {
+        crate::log_stat!("PROBE_BITRATE_ESTIMATE", $($arg),+);
+    }
+}
+
 pub(crate) use log_bitrate_estimate;
 pub(crate) use log_delay_variation;
 pub(crate) use log_inherent_loss;
@@ -84,6 +90,7 @@ pub(crate) use log_loss_based_bitrate_estimate;
 pub(crate) use log_loss_bw_limit_in_window;
 pub(crate) use log_pacer_media_debt;
 pub(crate) use log_pacer_padding_debt;
+pub(crate) use log_probe_bitrate_estimate;
 pub(crate) use log_rate_control_applied_change;
 pub(crate) use log_rate_control_observed_bitrate;
 pub(crate) use log_rate_control_state;
