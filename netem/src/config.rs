@@ -50,7 +50,7 @@ impl NetemConfig {
     /// Create a new network emulator configuration with default values.
     ///
     /// Default: no delay, no loss, no rate limit, seed 0.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             latency: Duration::ZERO,
             jitter: Duration::ZERO,
@@ -246,11 +246,6 @@ impl NetemConfig {
     /// Simulates a network link with limited capacity. When packets arrive faster
     /// than the link can transmit, they queue up. When the queue (buffer) is full,
     /// packets are dropped (tail drop), simulating congestion-induced loss.
-    ///
-    /// # Arguments
-    ///
-    /// * `rate` - Link capacity (e.g., `Bitrate::mbps(10)` for 10 Mbps)
-    /// * `buffer` - Buffer size before packets are dropped (e.g., `DataSize::bytes(200_000)`)
     ///
     /// # Example
     ///

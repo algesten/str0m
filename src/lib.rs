@@ -736,7 +736,15 @@ pub mod rtp {
     }
 }
 
-pub mod bwe;
+pub(crate) mod pacer;
+
+#[path = "bwe/mod.rs"]
+pub(crate) mod bwe_;
+
+/// Bandwidth estimation.
+pub mod bwe {
+    pub use crate::bwe_::api::*;
+}
 
 mod sctp;
 use sctp::{RtcSctp, SctpEvent};
@@ -938,6 +946,12 @@ pub enum Event {
     /// This clones data, and is therefore expensive.
     /// Should not be enabled outside of tests and troubleshooting.
     RawPacket(Box<RawPacket>),
+
+    /// For internal testing only.
+    ///
+    /// The probe cluster config when a probe fires.
+    #[cfg(feature = "_internal_test_exports")]
+    Probe(crate::bwe_::ProbeClusterConfig),
 }
 
 impl Event {
@@ -974,6 +988,8 @@ pub enum Output {
     /// Some event such as media data arriving from the remote peer or connection events.
     Event(Event),
 }
+
+pub use crate::pacer::PacerReason;
 
 /// The reason for the next [`Output::Timeout`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -1040,16 +1056,17 @@ pub enum Reason {
     /// Written media data needs packetizing. This is not used in RTP mode.
     Packetize,
 
-    /// Paced sending of RTP packets (if BWE is enabled).
-    ///
-    /// The pacer ensures bigger RTP chunks, like keyframes, are not sent as a burst,
-    /// but sent smoothly.
-    Pacing,
+    /// Pacer doing things.
+    Pacer(PacerReason),
 
-    /// Bandwidth estimation update (if enabled).
-    ///
-    /// Calculations regarding sender bandwidth using incoming TWCC.
-    Bwe,
+    /// The delay controller of the BWE subsystem.
+    BweDelayControl,
+
+    /// The probe controller of the BWE subsystem.
+    BweProbeControl,
+
+    /// The probe estimator of the BWE subsystem.
+    BweProbeEstimator,
 }
 
 impl Rtc {
@@ -1792,6 +1809,11 @@ impl Rtc {
 
     fn do_handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
         self.init_time(now);
+
+        // Prevent time from going backwards.
+        if now < self.last_now {
+            return Ok(());
+        }
 
         self.last_now = now;
         self.ice.handle_timeout(now);

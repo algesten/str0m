@@ -46,7 +46,6 @@ pub struct RtcConfig {
 #[derive(Debug, Clone)]
 pub(crate) struct BweConfig {
     pub(crate) initial_bitrate: Bitrate,
-    pub(crate) enable_loss_controller: bool,
 }
 
 impl RtcConfig {
@@ -354,16 +353,6 @@ impl RtcConfig {
         self
     }
 
-    /// Enable the experimental loss based BWE subsystem.
-    /// Defaults to disabled for now, will be enabled by default in the future.
-    pub fn enable_experimental_loss_based_bwe(mut self, enabled: bool) -> Self {
-        if let Some(c) = &mut self.bwe_config {
-            c.enable_loss_controller = enabled;
-        }
-
-        self
-    }
-
     /// The initial bitrate as set by [`Self::enable_bwe()`].
     ///
     /// ```
@@ -549,10 +538,7 @@ impl RtcConfig {
 
 impl BweConfig {
     fn new(initial_bitrate: Bitrate) -> Self {
-        Self {
-            initial_bitrate,
-            enable_loss_controller: false,
-        }
+        Self { initial_bitrate }
     }
 }
 

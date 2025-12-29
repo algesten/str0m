@@ -1,10 +1,10 @@
 use std::mem;
 use std::time::{Duration, Instant};
 
-use crate::rtp_::SeqNo;
+use crate::rtp_::TwccSeq;
 
-use super::time::{TimeDelta, Timestamp};
-use super::AckedPacket;
+use super::super::time::{TimeDelta, Timestamp};
+use super::super::AckedPacket;
 
 const BURST_TIME_INTERVAL: Duration = Duration::from_millis(5);
 const SEND_TIME_GROUP_LENGTH: Duration = Duration::from_millis(5);
@@ -12,8 +12,8 @@ const MAX_BURST_DURATION: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Default)]
 pub struct ArrivalGroup {
-    first: Option<(SeqNo, Instant, Instant)>,
-    last_seq_no: Option<SeqNo>,
+    first: Option<(TwccSeq, Instant, Instant)>,
+    last_seq_no: Option<TwccSeq>,
     last_local_send_time: Option<Instant>,
     last_remote_recv_time: Option<Instant>,
     size: usize,
@@ -137,10 +137,7 @@ impl ArrivalGroupAccumulator {
     /// Accumulate a packet.
     ///
     /// If adding this packet produced a new delay delta it is returned.
-    pub(super) fn accumulate_packet(
-        &mut self,
-        packet: &AckedPacket,
-    ) -> Option<InterGroupDelayDelta> {
+    pub fn accumulate_packet(&mut self, packet: &AckedPacket) -> Option<InterGroupDelayDelta> {
         let need_new_group = self.current_group.add_packet(packet);
 
         if !need_new_group {
@@ -179,14 +176,14 @@ impl ArrivalGroupAccumulator {
 
 /// The calculate delay delta between two groups of packets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct InterGroupDelayDelta {
+pub struct InterGroupDelayDelta {
     /// The delta between the send times of the two groups i.e. delta between the last packet sent
     /// in each group.
-    pub(super) send_delta: TimeDelta,
+    pub send_delta: TimeDelta,
     /// The delta between the remote arrival times of the two groups.
-    pub(super) arrival_delta: TimeDelta,
+    pub arrival_delta: TimeDelta,
     /// The reported receive time for the last packet in the first arrival group.
-    pub(super) last_remote_recv_time: Instant,
+    pub last_remote_recv_time: Instant,
 }
 
 #[cfg(test)]
