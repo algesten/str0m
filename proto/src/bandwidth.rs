@@ -74,6 +74,11 @@ impl Bitrate {
     pub fn as_valid(&self) -> Option<Bitrate> {
         self.is_valid().then_some(*self)
     }
+
+    /// Whether this value is zero
+    pub fn is_zero(&self) -> bool {
+        *self == Bitrate::ZERO
+    }
 }
 
 impl From<u64> for Bitrate {
@@ -95,7 +100,7 @@ impl Mul<Duration> for Bitrate {
         let bits = self.0 * rhs.as_secs_f64();
         let bytes = bits / 8.0;
 
-        DataSize::bytes(bytes.round() as u64)
+        DataSize::bytes(bytes.round() as i64)
     }
 }
 
@@ -147,29 +152,29 @@ impl fmt::Display for Bitrate {
 
 /// A data size expressed in bytes.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct DataSize(u64);
+pub struct DataSize(i64);
 
 impl DataSize {
     /// A data size of zero bytes.
     pub const ZERO: Self = DataSize::bytes(0);
 
     /// Create a data size of some bytes.
-    pub const fn bytes(bytes: u64) -> DataSize {
+    pub const fn bytes(bytes: i64) -> DataSize {
         Self(bytes)
     }
 
     /// Create a data size of some kilobytes.
-    pub const fn kbytes(kbytes: u64) -> DataSize {
+    pub const fn kbytes(kbytes: i64) -> DataSize {
         Self(kbytes * 1024)
     }
 
     /// Create a data size of some megabytes.
-    pub const fn mbytes(mbytes: u64) -> DataSize {
+    pub const fn mbytes(mbytes: i64) -> DataSize {
         Self(mbytes * 1024 * 1024)
     }
 
     /// Create a data size of some gigabytes.
-    pub const fn gbytes(gbytes: u64) -> DataSize {
+    pub const fn gbytes(gbytes: i64) -> DataSize {
         Self(gbytes * 1024 * 1024 * 1024)
     }
 
@@ -180,12 +185,19 @@ impl DataSize {
 
     /// The number of bytes as usize.
     pub fn as_bytes_usize(&self) -> usize {
-        self.0 as usize
+        self.0
+            .try_into()
+            .expect("DataSize i64 value must fit in usize")
+    }
+
+    /// The number of bytes as i64.
+    pub fn as_bytes_i64(&self) -> i64 {
+        self.0
     }
 
     /// Subtract, saturating at zero.
     pub fn saturating_sub(self, rhs: Self) -> Self {
-        Self(self.0.saturating_sub(rhs.0))
+        Self((self.0 - rhs.0).max(0))
     }
 
     /// The number of kilobytes as f64.
@@ -196,13 +208,13 @@ impl DataSize {
 
 impl From<usize> for DataSize {
     fn from(value: usize) -> Self {
-        Self(value as u64)
+        Self(value as i64)
     }
 }
 
 impl From<u8> for DataSize {
     fn from(value: u8) -> Self {
-        Self(value as u64)
+        Self(value as i64)
     }
 }
 
@@ -240,6 +252,14 @@ impl Div<Bitrate> for DataSize {
     }
 }
 
+impl Mul<i64> for DataSize {
+    type Output = i64;
+
+    fn mul(self, rhs: i64) -> Self::Output {
+        self.as_bytes_i64() * rhs
+    }
+}
+
 impl Div<f64> for Bitrate {
     type Output = Bitrate;
 
@@ -256,7 +276,7 @@ impl Mul<u64> for DataSize {
     type Output = DataSize;
 
     fn mul(self, rhs: u64) -> Self::Output {
-        Self(self.0 * rhs)
+        Self(self.0 * rhs as i64)
     }
 }
 
@@ -270,16 +290,13 @@ impl Sub<DataSize> for DataSize {
     type Output = DataSize;
 
     fn sub(self, rhs: DataSize) -> Self::Output {
-        let mut res = self;
-        res -= rhs;
-
-        res
+        Self(self.0 - rhs.0)
     }
 }
 
 impl SubAssign<DataSize> for DataSize {
     fn sub_assign(&mut self, rhs: DataSize) {
-        self.0 = self.0.saturating_sub(rhs.0);
+        self.0 -= rhs.0;
     }
 }
 
@@ -383,5 +400,53 @@ mod test {
         let new_rate = rate / 2.0;
 
         assert_eq!(new_rate, Bitrate::kbps(1250));
+    }
+
+    #[test]
+    fn test_datasize_negative() {
+        let size = DataSize::bytes(-100);
+        assert_eq!(size.as_bytes_i64(), -100);
+
+        // Test negative kilobytes
+        let size_kb = DataSize::kbytes(-5);
+        assert_eq!(size_kb.as_bytes_i64(), -5 * 1024);
+
+        // Test that negative values work in comparisons
+        let positive = DataSize::bytes(50);
+        let negative = DataSize::bytes(-50);
+        assert!(negative < positive);
+        assert!(negative < DataSize::ZERO);
+    }
+
+    #[test]
+    fn test_datasize_mul_negative() {
+        let size = DataSize::bytes(100);
+
+        // Multiply by -1 to negate
+        let negated = size * -1i64;
+        assert_eq!(negated, -100);
+
+        // Multiply by -2
+        let doubled_neg = size * -2i64;
+        assert_eq!(doubled_neg, -200);
+
+        // Negative size multiplied by -1
+        let negative_size = DataSize::bytes(-50);
+        let positive_result = negative_size * -1i64;
+        assert_eq!(positive_result, 50);
+    }
+
+    #[test]
+    fn test_datasize_arithmetic_with_negatives() {
+        let positive = DataSize::bytes(100);
+        let negative = DataSize::bytes(-50);
+
+        // Add negative to positive
+        let result = positive + negative;
+        assert_eq!(result.as_bytes_i64(), 50);
+
+        // Subtract negative from positive (should add)
+        let result2 = positive - negative;
+        assert_eq!(result2.as_bytes_i64(), 150);
     }
 }

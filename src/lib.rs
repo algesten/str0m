@@ -736,7 +736,15 @@ pub mod rtp {
     }
 }
 
-pub mod bwe;
+pub(crate) mod pacer;
+
+#[path = "bwe/mod.rs"]
+pub(crate) mod bwe_;
+
+/// Bandwidth estimation.
+pub mod bwe {
+    pub use crate::bwe_::api::*;
+}
 
 mod sctp;
 use sctp::{RtcSctp, SctpEvent};
@@ -938,6 +946,12 @@ pub enum Event {
     /// This clones data, and is therefore expensive.
     /// Should not be enabled outside of tests and troubleshooting.
     RawPacket(Box<RawPacket>),
+
+    /// For internal testing only.
+    ///
+    /// The probe cluster config when a probe fires.
+    #[cfg(feature = "_internal_test_exports")]
+    Probe(crate::bwe_::ProbeClusterConfig),
 }
 
 impl Event {
@@ -1046,10 +1060,14 @@ pub enum Reason {
     /// but sent smoothly.
     Pacing,
 
-    /// Bandwidth estimation update (if enabled).
-    ///
-    /// Calculations regarding sender bandwidth using incoming TWCC.
-    Bwe,
+    /// The delay controller of the BWE subsystem.
+    BweDelayControl,
+
+    /// The probe controller of the BWE subsystem.
+    BweProbeControl,
+
+    /// The probe estimator of the BWE subsystem.
+    BweProbeEstimator,
 }
 
 impl Rtc {
@@ -1790,6 +1808,11 @@ impl Rtc {
 
     fn do_handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
         self.init_time(now);
+
+        // Prevent time from going backwards.
+        if now < self.last_now {
+            return Ok(());
+        }
 
         self.last_now = now;
         self.ice.handle_timeout(now);

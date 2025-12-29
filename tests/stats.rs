@@ -49,6 +49,9 @@ pub fn stats() -> Result<(), RtcError> {
     let data_a = vec![1_u8; 80];
     let data_b = vec![2_u8; 80];
 
+    l.set_forced_time_advance(Duration::from_millis(1));
+    r.set_forced_time_advance(Duration::from_millis(1));
+
     loop {
         {
             let wallclock = l.start + l.duration();

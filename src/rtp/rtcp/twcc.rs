@@ -5,7 +5,9 @@ use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
 use super::{extend_u16, FeedbackMessageType, RtcpHeader, RtcpPacket};
-use super::{RtcpType, SeqNo, Ssrc, TransportType};
+use super::{RtcpType, Ssrc, TransportType};
+
+use crate::rtp_::{TwccClusterId, TwccSeq};
 
 /// Transport Wide Congestion Control.
 ///
@@ -40,7 +42,7 @@ impl Twcc {
     }
 
     /// Iterate over the reported sequences.
-    pub fn into_iter(self, time_zero: Instant, extend_from: SeqNo) -> TwccIter {
+    pub fn into_iter(self, time_zero: Instant, extend_from: TwccSeq) -> TwccIter {
         let millis = self.reference_time as u64 * 64;
         let time_base = time_zero + Duration::from_millis(millis);
         let base_seq = extend_u16(Some(*extend_from), self.base_seq);
@@ -65,10 +67,10 @@ pub struct TwccIter {
 }
 
 impl Iterator for TwccIter {
-    type Item = (SeqNo, PacketStatus, Option<Instant>);
+    type Item = (TwccSeq, PacketStatus, Option<Instant>);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let seq: SeqNo = (self.base_seq + self.index as u64).into();
+        let seq: TwccSeq = (self.base_seq + self.index as u64).into();
 
         if *seq == self.last_seq {
             return None;
@@ -253,7 +255,7 @@ pub struct TwccRecvRegister {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Receipt {
-    seq: SeqNo,
+    seq: TwccSeq,
     time: Instant,
 }
 
@@ -271,13 +273,13 @@ impl TwccRecvRegister {
     }
 
     /// Find the last sequence number, or `None` if the queue is empty.
-    pub fn max_seq(&self) -> Option<SeqNo> {
+    pub fn max_seq(&self) -> Option<TwccSeq> {
         // The highest seq must be the last since update_seq inserts values
         // using a binary search.
         self.queue.back().map(|r| r.seq)
     }
 
-    pub fn update_seq(&mut self, seq: SeqNo, time: Instant) {
+    pub fn update_seq(&mut self, seq: TwccSeq, time: Instant) {
         self.receive_window.record_seq(seq);
 
         match self.queue.binary_search_by_key(&seq, |r| r.seq) {
@@ -503,7 +505,7 @@ impl TwccRecvRegister {
 fn build_interims(
     queue: &VecDeque<Receipt>,
     report_from: usize,
-    base_seq: SeqNo,
+    base_seq: TwccSeq,
     base_time: Instant,
     interims: &mut VecDeque<ChunkInterim>,
 ) {
@@ -562,10 +564,10 @@ enum ChunkInterim {
 #[derive(Debug, Default)]
 struct ReceiveWindow {
     /// The base seq num, set on the first receive.
-    base_seq: Option<SeqNo>,
+    base_seq: Option<TwccSeq>,
 
     /// The large seq num received.
-    max_seq: Option<SeqNo>,
+    max_seq: Option<TwccSeq>,
 
     /// The previous number of packets expected, used to calculate a delta for loss.
     expected_prior: u64,
@@ -578,7 +580,7 @@ struct ReceiveWindow {
 }
 
 impl ReceiveWindow {
-    fn record_seq(&mut self, seq: SeqNo) {
+    fn record_seq(&mut self, seq: TwccSeq) {
         if self.base_seq.is_none() {
             self.base_seq = Some(seq);
         }
@@ -1011,7 +1013,7 @@ pub struct TwccSendRegister {
     apply_report_counter: u64,
 
     /// Last registered Twcc number.
-    last_registered: SeqNo,
+    last_registered: TwccSeq,
 }
 
 impl<'a> IntoIterator for &'a TwccSendRegister {
@@ -1023,11 +1025,50 @@ impl<'a> IntoIterator for &'a TwccSendRegister {
     }
 }
 
+/// Packet identification for TWCC tracking.
+///
+/// Groups together the TWCC sequence number and optional probe cluster context.
+#[derive(Debug, Clone, Copy)]
+pub struct TwccPacketId {
+    /// TWCC sequence number
+    seq: TwccSeq,
+    /// Probe cluster this packet belongs to, if any
+    cluster: Option<TwccClusterId>,
+}
+
+impl TwccPacketId {
+    /// Create a packet ID for a regular media packet (no probe cluster).
+    pub fn new(seq: impl Into<TwccSeq>) -> Self {
+        Self {
+            seq: seq.into(),
+            cluster: None,
+        }
+    }
+
+    /// Create a packet ID for a probe packet.
+    pub fn with_cluster(seq: impl Into<TwccSeq>, cluster: impl Into<TwccClusterId>) -> Self {
+        Self {
+            seq: seq.into(),
+            cluster: Some(cluster.into()),
+        }
+    }
+
+    /// Get the TWCC sequence number.
+    pub fn seq(&self) -> TwccSeq {
+        self.seq
+    }
+
+    /// Get the probe cluster, if any.
+    pub fn cluster(&self) -> Option<TwccClusterId> {
+        self.cluster
+    }
+}
+
 /// Record for a send entry in twcc.
 #[derive(Debug)]
 pub struct TwccSendRecord {
-    /// Twcc sequence number for a packet we sent.
-    seq: SeqNo,
+    /// Packet identification (sequence + optional probe cluster)
+    packet_id: TwccPacketId,
 
     /// The (local) time we sent the packet represented by seq.
     local_send_time: Instant,
@@ -1040,8 +1081,13 @@ pub struct TwccSendRecord {
 
 impl TwccSendRecord {
     /// The twcc sequence number of the packet we sent.
-    pub fn seq(&self) -> SeqNo {
-        self.seq
+    pub fn seq(&self) -> TwccSeq {
+        self.packet_id.seq()
+    }
+
+    /// The probe cluster this packet belongs to, if it's a probe packet.
+    pub fn cluster(&self) -> Option<TwccClusterId> {
+        self.packet_id.cluster()
     }
 
     /// The time we sent the packet.
@@ -1070,6 +1116,32 @@ impl TwccSendRecord {
     }
 }
 
+#[cfg(test)]
+impl TwccSendRecord {
+    /// Test-only constructor to build TWCC send records with arbitrary receive status.
+    ///
+    /// This is used by unit tests for BWE/probing, allowing them to model received vs lost packets
+    /// without constructing full RTCP TWCC reports.
+    pub(crate) fn test_new(
+        packet_id: TwccPacketId,
+        local_send_time: Instant,
+        size: usize,
+        local_recv_time: Instant,
+        remote_recv_time: Option<Instant>,
+    ) -> Self {
+        Self {
+            packet_id,
+            local_send_time,
+            size: size as u16,
+            recv_report: Some(TwccRecvReport {
+                local_recv_time,
+                remote_recv_time,
+                apply_report_counter: 0,
+            }),
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct TwccRecvReport {
     ///  The (local) time we received confirmation the other side received the seq.
@@ -1093,10 +1165,10 @@ impl TwccSendRegister {
         }
     }
 
-    pub fn register_seq(&mut self, seq: SeqNo, now: Instant, size: usize) {
-        self.last_registered = seq;
+    pub fn register_seq(&mut self, packet_id: TwccPacketId, now: Instant, size: usize) {
+        self.last_registered = packet_id.seq();
         self.queue.push_back(TwccSendRecord {
-            seq,
+            packet_id,
             local_send_time: now,
             // In practice the max sizes is constrained by the MTU and will max out around 1200
             // bytes, hence this cast is fine.
@@ -1126,24 +1198,27 @@ impl TwccSendRegister {
         let apply_report_counter = self.apply_report_counter;
 
         let time_zero = self.time_zero.unwrap();
-        let head_seq = self.queue.front().map(|r| r.seq)?;
+        let head_seq = self.queue.front().map(|r| r.seq())?;
 
         let mut iter = twcc
             .into_iter(time_zero, self.last_registered)
             .skip_while(|(seq, _, _)| seq < &head_seq);
         let (first_seq_no, _, first_instant) = iter.next()?;
 
-        let mut iter2 = self.queue.iter_mut().skip_while(|r| *r.seq < *first_seq_no);
+        let mut iter2 = self
+            .queue
+            .iter_mut()
+            .skip_while(|r| *r.seq() < *first_seq_no);
         let first_record = iter2.next()?;
 
         fn update(
             now: Instant,
             r: &mut TwccSendRecord,
-            seq: SeqNo,
+            seq: TwccSeq,
             remote_recv_time: Option<Instant>,
             apply_report_counter: u64,
         ) -> bool {
-            if r.seq != seq {
+            if r.seq() != seq {
                 return false;
             }
 
@@ -1170,7 +1245,7 @@ impl TwccSendRegister {
             true
         }
 
-        if first_record.seq != first_seq_no {
+        if first_record.seq() != first_seq_no {
             // Old report for which we no longer have any send records.
             return None;
         }
@@ -1184,7 +1259,7 @@ impl TwccSendRegister {
             first_instant,
             apply_report_counter,
         ) {
-            problematic_seq = Some((first_record.seq, first_seq_no));
+            problematic_seq = Some((first_record.seq(), first_seq_no));
         }
 
         let mut last_seq_no = first_seq_no;
@@ -1194,7 +1269,7 @@ impl TwccSendRegister {
             }
 
             if !update(now, record, seq, instant, apply_report_counter) {
-                problematic_seq = Some((record.seq, seq));
+                problematic_seq = Some((record.seq(), seq));
             }
             last_seq_no = seq;
         }
@@ -1210,7 +1285,7 @@ impl TwccSendRegister {
 
         let first_index = self
             .queue
-            .binary_search_by_key(&first_seq_no, |r| r.seq)
+            .binary_search_by_key(&first_seq_no, |r| r.seq())
             .expect("first_seq_no to be registered");
 
         let range = first_seq_no..=last_seq_no;
@@ -1277,8 +1352,8 @@ impl TwccSendRegister {
 
 #[derive()]
 struct TwccSendRecordsIter<'a> {
-    range: RangeInclusive<SeqNo>,
-    current: SeqNo,
+    range: RangeInclusive<TwccSeq>,
+    current: TwccSeq,
     index: usize,
     queue: &'a VecDeque<TwccSendRecord>,
 }
@@ -1292,7 +1367,7 @@ impl<'a> Iterator for TwccSendRecordsIter<'a> {
         }
 
         let item = &self.queue[self.index];
-        assert!(self.current == item.seq);
+        assert!(self.current == item.seq());
         self.current.inc();
         self.index += 1;
 
@@ -1823,7 +1898,7 @@ mod test {
         let mut now = Instant::now();
 
         for i in 0..50 {
-            reg.register_seq(i.into(), now, 0);
+            reg.register_seq(TwccPacketId::new(i), now, 0);
             now = now + Duration::from_micros(15);
         }
 
@@ -1994,7 +2069,7 @@ mod test {
         let mut reg = TwccSendRegister::new(25);
         let mut now = Instant::now();
         for i in 0..25 {
-            reg.register_seq(i.into(), now, 0);
+            reg.register_seq(TwccPacketId::new(i), now, 0);
             now = now + Duration::from_micros(15);
         }
 
@@ -2025,7 +2100,7 @@ mod test {
             .expect("apply_report to return Some(_)");
 
         assert_eq!(
-            iter.map(|r| *r.seq).collect::<Vec<_>>(),
+            iter.map(|r| *r.seq()).collect::<Vec<_>>(),
             vec![0, 1, 2, 3, 4, 5, 6, 7]
         );
     }
@@ -2035,7 +2110,7 @@ mod test {
         let mut reg = TwccSendRegister::new(25);
         let mut now = Instant::now();
         for i in 0..9 {
-            reg.register_seq(i.into(), now, 0);
+            reg.register_seq(TwccPacketId::new(i), now, 0);
             now = now + Duration::from_millis(15);
         }
 
@@ -2116,10 +2191,10 @@ mod test {
         let mut twcc_gen = TwccRecvRegister::new(1000);
         let mut twcc_handler = TwccSendRegister::new(1000);
 
-        twcc_handler.register_seq(1.into(), now + Duration::from_millis(1), 0);
-        twcc_handler.register_seq(2.into(), now + Duration::from_millis(2), 0);
-        twcc_handler.register_seq(3.into(), now + Duration::from_millis(3), 0);
-        twcc_handler.register_seq(4.into(), now + Duration::from_millis(4), 0);
+        twcc_handler.register_seq(TwccPacketId::new(1), now + Duration::from_millis(1), 0);
+        twcc_handler.register_seq(TwccPacketId::new(2), now + Duration::from_millis(2), 0);
+        twcc_handler.register_seq(TwccPacketId::new(3), now + Duration::from_millis(3), 0);
+        twcc_handler.register_seq(TwccPacketId::new(4), now + Duration::from_millis(4), 0);
 
         {
             let acked_packets = twcc_handler
@@ -2134,15 +2209,15 @@ mod test {
                     now + Duration::from_millis(8),
                 )
                 .unwrap()
-                .filter_map(|sr| sr.remote_recv_time().map(|_| sr.seq.as_u16()))
+                .filter_map(|sr| sr.remote_recv_time().map(|_| sr.seq().as_u16()))
                 .collect::<Vec<_>>();
 
             assert_eq!(acked_packets, [1, 2, 4]);
         }
 
-        twcc_handler.register_seq(5.into(), now + Duration::from_millis(9), 0);
-        twcc_handler.register_seq(6.into(), now + Duration::from_millis(10), 0);
-        twcc_handler.register_seq(7.into(), now + Duration::from_millis(11), 0);
+        twcc_handler.register_seq(TwccPacketId::new(5), now + Duration::from_millis(9), 0);
+        twcc_handler.register_seq(TwccPacketId::new(6), now + Duration::from_millis(10), 0);
+        twcc_handler.register_seq(TwccPacketId::new(7), now + Duration::from_millis(11), 0);
 
         {
             let acked_packets = twcc_handler
@@ -2156,7 +2231,7 @@ mod test {
                     now + Duration::from_millis(14),
                 )
                 .unwrap()
-                .filter_map(|sr| sr.remote_recv_time().map(|_| sr.seq.as_u16()))
+                .filter_map(|sr| sr.remote_recv_time().map(|_| sr.seq().as_u16()))
                 .collect::<Vec<_>>();
 
             // 3 was delayed before and is acked now

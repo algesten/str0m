@@ -197,6 +197,20 @@ num_id!(SessionId, u64);
 pub struct SeqNo(u64);
 num_id!(SeqNo, u64);
 
+/// TWCC-specific sequence number.
+///
+/// Transport-Wide Congestion Control uses its own sequence number space,
+/// separate from RTP sequence numbers. This type ensures TWCC sequences
+/// cannot be confused with RTP SeqNo values.
+///
+/// TWCC sequences are also u64 internally (tracking rollovers), though the
+/// wire format uses u16.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Default,
+)]
+pub struct TwccSeq(u64);
+num_id!(TwccSeq, u64);
+
 impl SeqNo {
     pub(crate) const MAX: SeqNo = SeqNo(u64::MAX);
 
@@ -258,6 +272,39 @@ impl SeqNo {
     }
 }
 
+impl TwccSeq {
+    /// Check if the `other` sequence number is directly following this.
+    #[inline(always)]
+    pub fn is_next(&self, other: TwccSeq) -> bool {
+        if **self >= *other {
+            return false;
+        }
+        *other - **self == 1
+    }
+
+    /// Increase (mutate) this sequence number and return the previous value.
+    #[inline(always)]
+    pub fn inc(&mut self) -> TwccSeq {
+        let n = TwccSeq(self.0);
+        self.0 += 1;
+        n
+    }
+
+    /// The TWCC wire format value (discarding the ROC).
+    ///
+    /// This is the same as discarding the top 48 bits by casting to a u16.
+    #[inline(always)]
+    pub fn as_u16(&self) -> u16 {
+        self.0 as u16
+    }
+
+    /// Get the rollover counter (ROC) value.
+    #[inline(always)]
+    pub fn roc(&self) -> u64 {
+        self.0 >> 16
+    }
+}
+
 impl Default for SeqNo {
     fn default() -> Self {
         // https://www.rfc-editor.org/rfc/rfc3550#page-13
@@ -269,6 +316,26 @@ impl Default for SeqNo {
         // debugability or test usage conflicts.
         // i.e the range is (1, 2^15-1)
         Self((NonCryptographicRng::u16() % 32767 + 1) as u64)
+    }
+}
+
+/// Probe cluster identifier for bandwidth estimation.
+///
+/// Used to tag TWCC packets as belonging to a specific probe cluster,
+/// enabling analysis of probe results when feedback arrives.
+///
+/// Uses u64 to avoid wrap-around in long-running connections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub struct TwccClusterId(u64);
+num_id!(TwccClusterId, u64);
+
+impl TwccClusterId {
+    /// Increase (mutate) this cluster ID and return the previous value.
+    #[inline(always)]
+    pub fn inc(&mut self) -> TwccClusterId {
+        let n = TwccClusterId(self.0);
+        self.0 = self.0.wrapping_add(1);
+        n
     }
 }
 
