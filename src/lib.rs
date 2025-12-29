@@ -736,7 +736,15 @@ pub mod rtp {
     }
 }
 
-pub mod bwe;
+pub(crate) mod pacer;
+
+#[path = "bwe/mod.rs"]
+pub(crate) mod bwe_;
+
+/// Bandwidth estimation.
+pub mod bwe {
+    pub use crate::bwe_::api::*;
+}
 
 mod sctp;
 use sctp::{RtcSctp, SctpEvent};
@@ -1398,7 +1406,10 @@ impl Rtc {
 
         match &o {
             Output::Event(e) => match e {
-                Event::ChannelData(_) | Event::MediaData(_) | Event::RtpPacket(_) => {
+                Event::ChannelData(_)
+                | Event::MediaData(_)
+                | Event::RtpPacket(_)
+                | Event::SenderFeedback(_) => {
                     trace!("{:?}", e)
                 }
                 _ => debug!("{:?}", e),
@@ -1784,6 +1795,11 @@ impl Rtc {
 
     fn do_handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
         self.init_time(now);
+
+        // Prevent time from going backwards.
+        if now < self.last_now {
+            return Ok(());
+        }
 
         self.last_now = now;
         self.ice.handle_timeout(now);
