@@ -1,0 +1,27 @@
+[package]
+name = "str0m-sctp"
+version = "0.6.0"
+authors = ["Rain Liu <yliu@webrtc.rs>", "Martin Algesten <martin@algesten.se>"]
+edition = "2021"
+description = "A pure Rust implementation of SCTP in Sans-IO style (vendored for str0m WARP support)"
+license = "MIT/Apache-2.0"
+documentation = "https://docs.rs/sctp-proto"
+homepage = "https://webrtc.rs"
+repository = "https://github.com/algesten/str0m"
+keywords = ["sctp", "warp"]
+categories = [ "network-programming", "asynchronous" ]
+
+rust-version = "1.76.0"
+
+[dependencies]
+bytes = "1.5.0"
+rand = "0.9.1"
+rustc-hash = "2.1.1"
+slab = "0.4.9"
+thiserror = "2.0.16"
+log = "0.4.21"
+crc = "=3.2.1"
+
+[dev-dependencies]
+assert_matches = "1.5.0"
+lazy_static = "1.4.0"
