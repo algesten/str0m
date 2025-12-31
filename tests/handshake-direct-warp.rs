@@ -20,6 +20,9 @@ const DATA_CHANNEL_ID: u16 = 0;
 ///
 /// WARP reduces WebRTC connection establishment from 6 to 2 roundtrips through:
 /// 1. SPED (DTLS-in-STUN): Embeds DTLS handshake in STUN packets (saves 2 roundtrips)
+///    - Requires new STUN attributes to carry DTLS messages (pion/stun#260)
+///    - STUN Binding Requests/Responses carry DTLS ClientHello, ServerHello, etc.
+///    - ICE connectivity checks and DTLS handshake happen simultaneously
 /// 2. SNAP (SCTP Negotiation Acceleration Protocol): Skips SCTP 4-way handshake by
 ///    exchanging association parameters via SDP during signaling (saves 2 roundtrips)
 ///
@@ -28,11 +31,16 @@ const DATA_CHANNEL_ID: u16 = 0;
 /// - SNAP: Exchange SCTP parameters in SDP, skip handshake when DTLS completes (0 RTTs)
 /// - Works because DTLS already provides authentication, making SCTP cookie mechanism redundant
 ///
+/// SPED Details:
+/// - New STUN attributes carry DTLS fragments (see IANA STUN parameters registry)
+/// - STUN messages remain small enough for single UDP packets
+/// - DTLS and ICE state machines run concurrently instead of sequentially
+///
 /// This test establishes a baseline using standard ICE+DTLS+SCTP for comparison.
 /// Full WARP implementation requires protocol-level changes in STUN, ICE, DTLS, and SCTP libraries.
 ///
 /// Expected improvements with WARP:
-/// - Baseline (this test): ~6 roundtrips (ICE check, DTLS handshake, SCTP association)
+/// - Baseline (this test): ~6 roundtrips (ICE: 1 RTT, DTLS: 2 RTTs, SCTP: 2 RTTs)
 /// - With WARP: ~2 roundtrips (combined handshakes)
 #[test]
 pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
@@ -172,10 +180,12 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
     println!("\n=== WARP Protocol Notes ===");
     println!("This test demonstrates the baseline timing for WebRTC connection establishment.");
     println!("Full WARP implementation would reduce roundtrips through:");
-    println!("  1. SPED: DTLS-in-STUN (embed DTLS handshake in ICE connectivity checks)");
+    println!("  1. SPED: DTLS-in-STUN via new STUN attributes (pion/stun#260)");
+    println!("     - Carry DTLS messages in STUN Binding Requests/Responses");
+    println!("     - ICE and DTLS state machines run concurrently");
     println!("  2. SNAP: Skip SCTP 4-way handshake by exchanging parameters in SDP");
     println!("     (draft-hancke-tsvwg-snap: INIT/INIT-ACK/COOKIE-ECHO/COOKIE-ACK -> direct open)");
-    println!("Expected improvement: 6 roundtrips -> 2 roundtrips");
+    println!("Expected improvement: 6 roundtrips (ICE: 1, DTLS: 2, SCTP: 2) -> 2 roundtrips");
     println!("This requires protocol-level changes in str0m's STUN, ICE, DTLS, and SCTP layers.");
 
     // Verify the exchange happened
@@ -202,10 +212,11 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
 /// Initialize an Rtc instance configured for client or server role.
 ///
 /// WARP Note: In full WARP implementation, this would configure:
-/// - SPED (DTLS-in-STUN): Piggyback DTLS handshake in STUN packets
+/// - SPED (DTLS-in-STUN): New STUN attributes (pion/stun#260) to piggyback DTLS handshake
+///   in STUN Binding Requests/Responses during ICE connectivity checks
 /// - SNAP (draft-hancke-tsvwg-snap): Exchange SCTP parameters in SDP to skip 4-way handshake
 ///
-/// For now, we use standard configuration.
+/// For now, we use standard configuration where ICE, DTLS, and SCTP run sequentially.
 ///
 /// Returns the Rtc instance and the local ICE credentials/DTLS fingerprint for exchange.
 fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, String), RtcError> {
@@ -234,8 +245,9 @@ fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, S
 /// Configure the Rtc instance with remote credentials.
 ///
 /// WARP optimization notes:
-/// - SPED (DTLS-in-STUN): Would piggyback DTLS ClientHello in initial STUN binding requests,
-///   saving 2 roundtrips by combining ICE and DTLS handshakes
+/// - SPED (DTLS-in-STUN): Would add new STUN attributes (pion/stun#260, IANA STUN parameters)
+///   to carry DTLS ClientHello/ServerHello in STUN Binding Requests/Responses, saving 2 roundtrips
+///   by running ICE and DTLS state machines concurrently instead of sequentially
 /// - SNAP (draft-hancke-tsvwg-snap): Would skip SCTP's 4-way handshake (INIT/INIT-ACK/COOKIE-ECHO/COOKIE-ACK)
 ///   by exchanging association parameters via SDP during signaling. Once DTLS completes, data channels
 ///   open immediately without SCTP negotiation, saving 2 roundtrips.
