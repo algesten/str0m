@@ -19,8 +19,14 @@ const DATA_CHANNEL_ID: u16 = 0;
 /// Test WARP (WebRTC Abridged Roundtrip Protocol) baseline.
 ///
 /// WARP reduces WebRTC connection establishment from 6 to 2 roundtrips through:
-/// 1. SPED (STUN with Piggybacked DTLS): Embeds DTLS handshake in STUN packets (saves 2 roundtrips)
-/// 2. SNAP (SCTP Negotiation Acceleration Protocol): Accelerates SCTP association (saves 2 roundtrips)
+/// 1. SPED (DTLS-in-STUN): Embeds DTLS handshake in STUN packets (saves 2 roundtrips)
+/// 2. SNAP (SCTP Negotiation Acceleration Protocol): Skips SCTP 4-way handshake by
+///    exchanging association parameters via SDP during signaling (saves 2 roundtrips)
+///
+/// SNAP Details (draft-hancke-tsvwg-snap):
+/// - Traditional SCTP: INIT -> INIT-ACK (with cookie) -> COOKIE-ECHO -> COOKIE-ACK (2 RTTs)
+/// - SNAP: Exchange SCTP parameters in SDP, skip handshake when DTLS completes (0 RTTs)
+/// - Works because DTLS already provides authentication, making SCTP cookie mechanism redundant
 ///
 /// This test establishes a baseline using standard ICE+DTLS+SCTP for comparison.
 /// Full WARP implementation requires protocol-level changes in STUN, ICE, DTLS, and SCTP libraries.
@@ -167,7 +173,8 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
     println!("This test demonstrates the baseline timing for WebRTC connection establishment.");
     println!("Full WARP implementation would reduce roundtrips through:");
     println!("  1. SPED: DTLS-in-STUN (embed DTLS handshake in ICE connectivity checks)");
-    println!("  2. SNAP: Accelerated SCTP (send SCTP INIT with DTLS completion)");
+    println!("  2. SNAP: Skip SCTP 4-way handshake by exchanging parameters in SDP");
+    println!("     (draft-hancke-tsvwg-snap: INIT/INIT-ACK/COOKIE-ECHO/COOKIE-ACK -> direct open)");
     println!("Expected improvement: 6 roundtrips -> 2 roundtrips");
     println!("This requires protocol-level changes in str0m's STUN, ICE, DTLS, and SCTP layers.");
 
@@ -194,8 +201,11 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
 
 /// Initialize an Rtc instance configured for client or server role.
 ///
-/// WARP Note: In full WARP implementation, this would configure SPED (DTLS-in-STUN)
-/// and SNAP (accelerated SCTP) protocols. For now, we use standard configuration.
+/// WARP Note: In full WARP implementation, this would configure:
+/// - SPED (DTLS-in-STUN): Piggyback DTLS handshake in STUN packets
+/// - SNAP (draft-hancke-tsvwg-snap): Exchange SCTP parameters in SDP to skip 4-way handshake
+///
+/// For now, we use standard configuration.
 ///
 /// Returns the Rtc instance and the local ICE credentials/DTLS fingerprint for exchange.
 fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, String), RtcError> {
@@ -226,8 +236,9 @@ fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, S
 /// WARP optimization notes:
 /// - SPED (DTLS-in-STUN): Would piggyback DTLS ClientHello in initial STUN binding requests,
 ///   saving 2 roundtrips by combining ICE and DTLS handshakes
-/// - SNAP (SCTP acceleration): Would send SCTP INIT with DTLS handshake completion,
-///   saving 2 more roundtrips in data channel establishment
+/// - SNAP (draft-hancke-tsvwg-snap): Would skip SCTP's 4-way handshake (INIT/INIT-ACK/COOKIE-ECHO/COOKIE-ACK)
+///   by exchanging association parameters via SDP during signaling. Once DTLS completes, data channels
+///   open immediately without SCTP negotiation, saving 2 roundtrips.
 /// - Total: 6 -> 2 roundtrips (WARP = "WebRTC Abridged Roundtrip Protocol")
 ///
 /// Current implementation uses standard ICE+DTLS+SCTP sequence as baseline.
@@ -246,12 +257,9 @@ fn configure_rtc_warp(
     {
         let mut direct_api = rtc.direct_api();
 
-        // Standard ICE configuration (WARP would optimize this):
-        // Server uses ice-lite (set in init_rtc)
+        // Standard ICE configuration (baseline that WARP would optimize):
+        // Server uses ice-lite (already set in init_rtc)
         // Client is controlling, server is not
-        if !is_client {
-            direct_api.set_ice_lite(true);
-        }
         direct_api.set_ice_controlling(is_client);
 
         // Set remote ICE credentials
