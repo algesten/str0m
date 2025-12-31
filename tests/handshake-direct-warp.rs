@@ -16,6 +16,18 @@ use common::{init_crypto_default, init_log};
 /// Pre-negotiated data channel SCTP stream ID
 const DATA_CHANNEL_ID: u16 = 0;
 
+/// Test WARP (WebRTC Abridged Roundtrip Protocol) baseline.
+///
+/// WARP reduces WebRTC connection establishment from 6 to 2 roundtrips through:
+/// 1. SPED (STUN with Piggybacked DTLS): Embeds DTLS handshake in STUN packets (saves 2 roundtrips)
+/// 2. SNAP (SCTP Negotiation Acceleration Protocol): Accelerates SCTP association (saves 2 roundtrips)
+///
+/// This test establishes a baseline using standard ICE+DTLS+SCTP for comparison.
+/// Full WARP implementation requires protocol-level changes in STUN, ICE, DTLS, and SCTP libraries.
+///
+/// Expected improvements with WARP:
+/// - Baseline (this test): ~6 roundtrips (ICE check, DTLS handshake, SCTP association)
+/// - With WARP: ~2 roundtrips (combined handshakes)
 #[test]
 pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
     init_log();
@@ -38,7 +50,7 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
         let _guard = span.enter();
         let mut timing = TimingReport::new();
 
-        // Initialize server with WARP mode (ice-lite, not controlling)
+        // Initialize server with baseline ICE/DTLS/SCTP (WARP would optimize this)
         let (mut rtc, local_creds, local_fingerprint) = init_rtc(false, server_addr)?;
 
         // Send server's credentials to client
@@ -65,7 +77,7 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
                 Err(e) => panic!("Server failed to receive credentials: {:?}", e),
             };
 
-        // Configure with remote credentials in WARP mode (ice-lite, not controlling)
+        // Configure with remote credentials (baseline - WARP would combine with ICE checks)
         configure_rtc_warp(
             &mut rtc,
             false,
@@ -88,7 +100,7 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
         let _guard = span.enter();
         let mut timing = TimingReport::new();
 
-        // Initialize client with WARP mode (ice-lite, IS controlling for WARP)
+        // Initialize client with baseline ICE/DTLS/SCTP (WARP would optimize this)
         let (mut rtc, local_creds, local_fingerprint) = init_rtc(true, client_addr)?;
 
         // Wait for server's credentials first
@@ -113,7 +125,7 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
             .expect("Failed to send client credentials");
         timing.sent_offer = Some(Instant::now());
 
-        // Configure with remote credentials in WARP mode (ice-lite, IS controlling)
+        // Configure with remote credentials (baseline - WARP would combine with ICE checks)
         configure_rtc_warp(
             &mut rtc,
             true,
@@ -150,6 +162,14 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
         "\n=== Total Test Time: {:.3}ms ===",
         total_time.as_secs_f64() * 1000.0
     );
+    
+    println!("\n=== WARP Protocol Notes ===");
+    println!("This test demonstrates the baseline timing for WebRTC connection establishment.");
+    println!("Full WARP implementation would reduce roundtrips through:");
+    println!("  1. SPED: DTLS-in-STUN (embed DTLS handshake in ICE connectivity checks)");
+    println!("  2. SNAP: Accelerated SCTP (send SCTP INIT with DTLS completion)");
+    println!("Expected improvement: 6 roundtrips -> 2 roundtrips");
+    println!("This requires protocol-level changes in str0m's STUN, ICE, DTLS, and SCTP layers.");
 
     // Verify the exchange happened
     assert!(
@@ -172,7 +192,10 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
     Ok(())
 }
 
-/// Initialize an Rtc instance configured for client or server role in WARP mode.
+/// Initialize an Rtc instance configured for client or server role.
+///
+/// WARP Note: In full WARP implementation, this would configure SPED (DTLS-in-STUN)
+/// and SNAP (accelerated SCTP) protocols. For now, we use standard configuration.
 ///
 /// Returns the Rtc instance and the local ICE credentials/DTLS fingerprint for exchange.
 fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, String), RtcError> {
@@ -180,8 +203,11 @@ fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, S
 
     let mut rtc_config = RtcConfig::new().set_local_ice_credentials(ice_creds.clone());
     
-    // In WARP mode, both peers use ice-lite for reduced roundtrips
-    rtc_config = rtc_config.set_ice_lite(true);
+    // WARP mode: Server uses ice-lite (standard for servers)
+    // Client uses full ICE (required for initiating checks)
+    if !is_client {
+        rtc_config = rtc_config.set_ice_lite(true);
+    }
     
     let mut rtc = rtc_config.build();
 
@@ -195,11 +221,16 @@ fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, S
     Ok((rtc, ice_creds, fingerprint))
 }
 
-/// Configure the Rtc instance with remote credentials in WARP mode.
+/// Configure the Rtc instance with remote credentials.
 ///
-/// WARP mode: Both peers use ice-lite, but the client is controlling.
-/// This reduces ICE connectivity check roundtrips since ice-lite peers
-/// only respond to checks rather than actively probing.
+/// WARP optimization notes:
+/// - SPED (DTLS-in-STUN): Would piggyback DTLS ClientHello in initial STUN binding requests,
+///   saving 2 roundtrips by combining ICE and DTLS handshakes
+/// - SNAP (SCTP acceleration): Would send SCTP INIT with DTLS handshake completion,
+///   saving 2 more roundtrips in data channel establishment
+/// - Total: 6 -> 2 roundtrips (WARP = "WebRTC Abridged Roundtrip Protocol")
+///
+/// Current implementation uses standard ICE+DTLS+SCTP sequence as baseline.
 fn configure_rtc_warp(
     rtc: &mut Rtc,
     is_client: bool,
@@ -215,10 +246,12 @@ fn configure_rtc_warp(
     {
         let mut direct_api = rtc.direct_api();
 
-        // WARP mode configuration:
-        // Both peers use ice-lite (already set in init_rtc)
+        // Standard ICE configuration (WARP would optimize this):
+        // Server uses ice-lite (set in init_rtc)
         // Client is controlling, server is not
-        direct_api.set_ice_lite(true);
+        if !is_client {
+            direct_api.set_ice_lite(true);
+        }
         direct_api.set_ice_controlling(is_client);
 
         // Set remote ICE credentials
@@ -300,7 +333,7 @@ impl TimingReport {
 
     fn print(&self, name: &str) {
         let start = self.start.unwrap();
-        println!("\n=== {} Timing Report (WARP Mode) ===", name);
+        println!("\n=== {} Timing Report (WARP Baseline) ===", name);
         if let Some(t) = self.sent_offer {
             println!(
                 "  Sent offer:      {:>8.3}ms",
