@@ -333,6 +333,21 @@ impl<'a> StunMessage<'a> {
         self.attrs.network_cost
     }
 
+    /// Returns the value of the DTLS-CLIENT-HELLO attribute (SPED/WARP), if present.
+    pub fn dtls_client_hello(&self) -> Option<&'a [u8]> {
+        self.attrs.dtls_client_hello
+    }
+
+    /// Returns the value of the DTLS-SERVER-HELLO attribute (SPED/WARP), if present.
+    pub fn dtls_server_hello(&self) -> Option<&'a [u8]> {
+        self.attrs.dtls_server_hello
+    }
+
+    /// Returns the value of the DTLS-FRAGMENT attribute (SPED/WARP), if present.
+    pub fn dtls_fragment(&self) -> Option<&'a [u8]> {
+        self.attrs.dtls_fragment
+    }
+
     /// Constructs a new BINDING request using the provided data.
     pub(crate) fn binding_request(
         username: &'a str,
@@ -570,6 +585,12 @@ pub struct Attributes<'a> {
     ice_controlled: Option<u64>,             // 0x8029
     ice_controlling: Option<u64>,            // 0x802a
     network_cost: Option<(u16, u16)>,        // 0xc057 https://tools.ietf.org/html/draft-thatcher-ice-network-cost-00
+    // SPED (DTLS-in-STUN) attributes for WARP support
+    // See: https://github.com/pion/stun/pull/260
+    // These are experimental attribute codes pending IANA assignment
+    dtls_client_hello: Option<&'a [u8]>,     // 0xC060 (experimental) DTLS ClientHello message
+    dtls_server_hello: Option<&'a [u8]>,     // 0xC061 (experimental) DTLS ServerHello + Certificate + ServerHelloDone
+    dtls_fragment: Option<&'a [u8]>,         // 0xC062 (experimental) Any DTLS handshake or application data fragment
 }
 
 impl<'a> fmt::Debug for Attributes<'a> {
@@ -685,6 +706,13 @@ impl<'a> Attributes<'a> {
 
     const NETWORK_COST: u16 = 0xc057;
 
+    // SPED (DTLS-in-STUN) attributes for WARP support - experimental codes
+    // See: https://github.com/pion/stun/pull/260
+    // These are temporary experimental codes pending IANA assignment
+    const DTLS_CLIENT_HELLO: u16 = 0xC060;
+    const DTLS_SERVER_HELLO: u16 = 0xC061;
+    const DTLS_FRAGMENT: u16 = 0xC062;
+
     fn padded_len(&self) -> usize {
         const ATTR_TLV_LENGTH: usize = 4;
 
@@ -745,6 +773,18 @@ impl<'a> Attributes<'a> {
             .error_code
             .map(|(_, reason)| ATTR_TLV_LENGTH + 4 + reason.len() + calculate_pad(reason.len()))
             .unwrap_or_default();
+        let dtls_client_hello = self
+            .dtls_client_hello
+            .map(|d| ATTR_TLV_LENGTH + d.len() + calculate_pad(d.len()))
+            .unwrap_or_default();
+        let dtls_server_hello = self
+            .dtls_server_hello
+            .map(|d| ATTR_TLV_LENGTH + d.len() + calculate_pad(d.len()))
+            .unwrap_or_default();
+        let dtls_fragment = self
+            .dtls_fragment
+            .map(|d| ATTR_TLV_LENGTH + d.len() + calculate_pad(d.len()))
+            .unwrap_or_default();
 
         username
             + ice_controlled
@@ -760,6 +800,9 @@ impl<'a> Attributes<'a> {
             + realm
             + nonce
             + error_code
+            + dtls_client_hello
+            + dtls_server_hello
+            + dtls_fragment
     }
 
     fn to_bytes(self, out: &mut dyn Write, trans_id: &[u8]) -> io::Result<()> {
@@ -864,6 +907,46 @@ impl<'a> Attributes<'a> {
             // Need to ensure padding is correct only with respect to reason since the
             // prior length was 4 byte aligned.
             let pad = calculate_pad(reason.len());
+            out.write_all(&PAD[0..pad])?;
+        }
+        // SPED attributes for DTLS-in-STUN (WARP support)
+        if let Some(d) = self.dtls_client_hello {
+            if d.len() > u16::MAX as usize {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "DTLS-CLIENT-HELLO attribute too long, max 65535 bytes",
+                ));
+            }
+            out.write_all(&Self::DTLS_CLIENT_HELLO.to_be_bytes())?;
+            out.write_all(&(d.len() as u16).to_be_bytes())?;
+            out.write_all(d)?;
+            let pad = calculate_pad(d.len());
+            out.write_all(&PAD[0..pad])?;
+        }
+        if let Some(d) = self.dtls_server_hello {
+            if d.len() > u16::MAX as usize {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "DTLS-SERVER-HELLO attribute too long, max 65535 bytes",
+                ));
+            }
+            out.write_all(&Self::DTLS_SERVER_HELLO.to_be_bytes())?;
+            out.write_all(&(d.len() as u16).to_be_bytes())?;
+            out.write_all(d)?;
+            let pad = calculate_pad(d.len());
+            out.write_all(&PAD[0..pad])?;
+        }
+        if let Some(d) = self.dtls_fragment {
+            if d.len() > u16::MAX as usize {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "DTLS-FRAGMENT attribute too long, max 65535 bytes",
+                ));
+            }
+            out.write_all(&Self::DTLS_FRAGMENT.to_be_bytes())?;
+            out.write_all(&(d.len() as u16).to_be_bytes())?;
+            out.write_all(d)?;
+            let pad = calculate_pad(d.len());
             out.write_all(&PAD[0..pad])?;
         }
 
@@ -1042,6 +1125,16 @@ impl<'a> Attributes<'a> {
                             let cost = (buf[6] as u16) << 8 | buf[7] as u16;
                             attributes.network_cost = Some((net_id, cost));
                         }
+                    }
+                    // SPED attributes for DTLS-in-STUN (WARP support)
+                    Self::DTLS_CLIENT_HELLO => {
+                        attributes.dtls_client_hello = Some(&buf[4..len + 4]);
+                    }
+                    Self::DTLS_SERVER_HELLO => {
+                        attributes.dtls_server_hello = Some(&buf[4..len + 4]);
+                    }
+                    Self::DTLS_FRAGMENT => {
+                        attributes.dtls_fragment = Some(&buf[4..len + 4]);
                     }
                     _ => {}
                 }
@@ -1380,6 +1473,24 @@ mod builder {
         /// Sets the NETWORK_COST attribute (ICE).
         pub fn network_cost(mut self, net_id: u16, cost: u16) -> Self {
             self.attrs.network_cost = Some((net_id, cost));
+            self
+        }
+
+        /// Add DTLS-CLIENT-HELLO attribute (SPED/WARP).
+        pub fn dtls_client_hello(mut self, data: &'a [u8]) -> Self {
+            self.attrs.dtls_client_hello = Some(data);
+            self
+        }
+
+        /// Add DTLS-SERVER-HELLO attribute (SPED/WARP).
+        pub fn dtls_server_hello(mut self, data: &'a [u8]) -> Self {
+            self.attrs.dtls_server_hello = Some(data);
+            self
+        }
+
+        /// Add DTLS-FRAGMENT attribute (SPED/WARP).
+        pub fn dtls_fragment(mut self, data: &'a [u8]) -> Self {
+            self.attrs.dtls_fragment = Some(data);
             self
         }
 
