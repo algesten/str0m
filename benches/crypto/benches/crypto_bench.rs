@@ -16,8 +16,8 @@ use str0m_proto::crypto::CryptoProvider;
 
 // Test data sizes for throughput testing
 const SMALL_DATA_SIZE: usize = 172; // Typical RTP packet payload
-const MEDIUM_DATA_SIZE: usize = 1200; // Typical MTU-sized payload
-const LARGE_DATA_SIZE: usize = 8192; // Larger payload for bulk operations
+const MEDIUM_DATA_SIZE: usize = 512; // Medium payload
+const LARGE_DATA_SIZE: usize = 1200; // MTU-sized payload
 
 fn get_test_data(size: usize) -> Vec<u8> {
     (0..size).map(|i| (i & 0xFF) as u8).collect()

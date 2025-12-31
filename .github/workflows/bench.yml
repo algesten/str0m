@@ -15,8 +15,18 @@ env:
 
 jobs:
   benchmark:
-    name: Benchmark
-    runs-on: ubuntu-latest
+    name: Benchmark (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: linux
+          - os: macos-latest
+            name: macos
+          - os: windows-latest
+            name: windows
 
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +45,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-bench-
 
+      - name: Install OpenSSL on Windows
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://www.firedaemon.com/download-firedaemon-openssl-3-6-zip -OutFile $env:TEMP\openssl.zip
+          if ((Get-FileHash $env:TEMP\openssl.zip -Algorithm SHA256).Hash -ne "C1C831E8BCCE7D6C204D6813AAFB87C0D44DD88841AB31105185B55CDEC1D759") { throw "Checksum mismatch" }
+          Expand-Archive $env:TEMP\openssl.zip -DestinationPath C:\openssl-3.6.0 -Force
+          echo "OPENSSL_DIR=C:\openssl-3.6.0\x64" >> $env:GITHUB_ENV
+
       - name: Run benchmarks
         working-directory: benches/crypto
         run: cargo bench
@@ -44,6 +63,6 @@ jobs:
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
         with:
-          name: criterion-report
+          name: criterion-report-${{ matrix.name }}
           path: benches/crypto/target/criterion
           retention-days: 30
