@@ -16,7 +16,17 @@ use common::{init_crypto_default, init_log};
 /// Pre-negotiated data channel SCTP stream ID
 const DATA_CHANNEL_ID: u16 = 0;
 
-/// Test WARP (WebRTC Abridged Roundtrip Protocol) baseline.
+/// SCTP parameters for SNAP (SCTP Negotiation Acceleration Protocol)
+#[derive(Debug, Clone)]
+struct SctpParams {
+    initiate_tag: u32,
+    initial_tsn: u32,
+    a_rwnd: u32,
+    num_outbound_streams: u16,
+    num_inbound_streams: u16,
+}
+
+/// Test WARP (WebRTC Abridged Roundtrip Protocol) with SNAP parameter exchange.
 ///
 /// WARP reduces WebRTC connection establishment from 6 to 2 roundtrips through:
 /// 1. SPED (DTLS-in-STUN): Embeds DTLS handshake in STUN packets (saves 2 roundtrips)
@@ -25,6 +35,12 @@ const DATA_CHANNEL_ID: u16 = 0;
 ///    - ICE connectivity checks and DTLS handshake happen simultaneously
 /// 2. SNAP (SCTP Negotiation Acceleration Protocol): Skips SCTP 4-way handshake by
 ///    exchanging association parameters via SDP during signaling (saves 2 roundtrips)
+///
+/// SNAP Implementation in this test:
+/// - Exchanges SCTP parameters (initiate_tag, initial_tsn, a_rwnd, num_streams) via channels
+/// - Simulates what would happen in SDP offer/answer exchange
+/// - Note: SCTP handshake still occurs as str0m-sctp library needs modification to skip it
+/// - Full SNAP requires SCTP association to accept pre-negotiated params and bypass handshake
 ///
 /// SNAP Details (draft-hancke-tsvwg-snap):
 /// - Traditional SCTP: INIT -> INIT-ACK (with cookie) -> COOKIE-ECHO -> COOKIE-ACK (2 RTTs)
@@ -36,11 +52,8 @@ const DATA_CHANNEL_ID: u16 = 0;
 /// - STUN messages remain small enough for single UDP packets
 /// - DTLS and ICE state machines run concurrently instead of sequentially
 ///
-/// This test establishes a baseline using standard ICE+DTLS+SCTP for comparison.
-/// Full WARP implementation requires protocol-level changes in STUN, ICE, DTLS, and SCTP libraries.
-///
 /// Expected improvements with WARP:
-/// - Baseline (this test): ~6 roundtrips (ICE: 1 RTT, DTLS: 2 RTTs, SCTP: 2 RTTs)
+/// - Baseline (without WARP): ~6 roundtrips (ICE: 1 RTT, DTLS: 2 RTTs, SCTP: 2 RTTs)
 /// - With WARP: ~2 roundtrips (combined handshakes)
 #[test]
 pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
@@ -67,7 +80,16 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
         // Initialize server with baseline ICE/DTLS/SCTP (WARP would optimize this)
         let (mut rtc, local_creds, local_fingerprint) = init_rtc(false, server_addr)?;
 
-        // Send server's credentials to client
+        // SNAP: Generate SCTP parameters (would be in SDP offer in real implementation)
+        let server_sctp_params = SctpParams {
+            initiate_tag: fastrand::u32(..),
+            initial_tsn: fastrand::u32(..),
+            a_rwnd: 1048576, // 1MB receive window
+            num_outbound_streams: 65535,
+            num_inbound_streams: 65535,
+        };
+
+        // Send server's credentials and SCTP parameters to client
         server_tx
             .send(Message::Credentials {
                 ice_ufrag: local_creds.ufrag.clone(),
@@ -75,8 +97,18 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
                 dtls_fingerprint: local_fingerprint,
             })
             .expect("Failed to send server credentials");
+        
+        server_tx
+            .send(Message::SctpParameters {
+                initiate_tag: server_sctp_params.initiate_tag,
+                initial_tsn: server_sctp_params.initial_tsn,
+                a_rwnd: server_sctp_params.a_rwnd,
+                num_outbound_streams: server_sctp_params.num_outbound_streams,
+                num_inbound_streams: server_sctp_params.num_inbound_streams,
+            })
+            .expect("Failed to send SCTP parameters");
 
-        // Wait for client's credentials
+        // Wait for client's credentials and SCTP parameters
         let (remote_ice_ufrag, remote_ice_pwd, remote_fingerprint) =
             match server_rx.recv_timeout(Duration::from_secs(5)) {
                 Ok(Message::Credentials {
@@ -90,6 +122,28 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
                 Ok(_) => panic!("Server expected Credentials, got something else"),
                 Err(e) => panic!("Server failed to receive credentials: {:?}", e),
             };
+        
+        // SNAP: Receive client's SCTP parameters
+        let _client_sctp_params = match server_rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(Message::SctpParameters {
+                initiate_tag,
+                initial_tsn,
+                a_rwnd,
+                num_outbound_streams,
+                num_inbound_streams,
+            }) => {
+                println!("[SERVER] Received SCTP params via SNAP (would skip INIT handshake)");
+                SctpParams {
+                    initiate_tag,
+                    initial_tsn,
+                    a_rwnd,
+                    num_outbound_streams,
+                    num_inbound_streams,
+                }
+            }
+            Ok(_) => panic!("Server expected SctpParameters"),
+            Err(e) => panic!("Server failed to receive SCTP parameters: {:?}", e),
+        };
 
         // Configure with remote credentials (baseline - WARP would combine with ICE checks)
         configure_rtc_warp(
@@ -117,7 +171,16 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
         // Initialize client with baseline ICE/DTLS/SCTP (WARP would optimize this)
         let (mut rtc, local_creds, local_fingerprint) = init_rtc(true, client_addr)?;
 
-        // Wait for server's credentials first
+        // SNAP: Generate SCTP parameters (would be in SDP answer in real implementation)
+        let client_sctp_params = SctpParams {
+            initiate_tag: fastrand::u32(..),
+            initial_tsn: fastrand::u32(..),
+            a_rwnd: 1048576, // 1MB receive window
+            num_outbound_streams: 65535,
+            num_inbound_streams: 65535,
+        };
+
+        // Wait for server's credentials and SCTP parameters first
         let (remote_ice_ufrag, remote_ice_pwd, remote_fingerprint) =
             match client_rx.recv_timeout(Duration::from_secs(5)) {
                 Ok(Message::Credentials {
@@ -128,8 +191,30 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
                 Ok(_) => panic!("Client expected Credentials, got something else"),
                 Err(e) => panic!("Client failed to receive server credentials: {:?}", e),
             };
+        
+        // SNAP: Receive server's SCTP parameters
+        let _server_sctp_params = match client_rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(Message::SctpParameters {
+                initiate_tag,
+                initial_tsn,
+                a_rwnd,
+                num_outbound_streams,
+                num_inbound_streams,
+            }) => {
+                println!("[CLIENT] Received SCTP params via SNAP (would skip INIT handshake)");
+                SctpParams {
+                    initiate_tag,
+                    initial_tsn,
+                    a_rwnd,
+                    num_outbound_streams,
+                    num_inbound_streams,
+                }
+            }
+            Ok(_) => panic!("Client expected SctpParameters"),
+            Err(e) => panic!("Client failed to receive SCTP parameters: {:?}", e),
+        };
 
-        // Send client's credentials to server
+        // Send client's credentials and SCTP parameters to server
         client_tx
             .send(Message::Credentials {
                 ice_ufrag: local_creds.ufrag.clone(),
@@ -137,6 +222,16 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
                 dtls_fingerprint: local_fingerprint,
             })
             .expect("Failed to send client credentials");
+        
+        client_tx
+            .send(Message::SctpParameters {
+                initiate_tag: client_sctp_params.initiate_tag,
+                initial_tsn: client_sctp_params.initial_tsn,
+                a_rwnd: client_sctp_params.a_rwnd,
+                num_outbound_streams: client_sctp_params.num_outbound_streams,
+                num_inbound_streams: client_sctp_params.num_inbound_streams,
+            })
+            .expect("Failed to send SCTP parameters");
         timing.sent_offer = Some(Instant::now());
 
         // Configure with remote credentials (baseline - WARP would combine with ICE checks)
@@ -178,15 +273,22 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
     );
     
     println!("\n=== WARP Protocol Notes ===");
-    println!("This test demonstrates the baseline timing for WebRTC connection establishment.");
-    println!("Full WARP implementation would reduce roundtrips through:");
+    println!("This test demonstrates SNAP parameter exchange for WebRTC WARP protocol.");
+    println!("");
+    println!("SNAP Implementation:");
+    println!("  ✓ SCTP parameters exchanged via channels (simulating SDP offer/answer)");
+    println!("  ✓ Both peers received: initiate_tag, initial_tsn, a_rwnd, num_streams");
+    println!("  ⚠ SCTP handshake still occurs (library modification needed to skip it)");
+    println!("");
+    println!("Full WARP would reduce roundtrips through:");
     println!("  1. SPED: DTLS-in-STUN via new STUN attributes (pion/stun#260)");
     println!("     - Carry DTLS messages in STUN Binding Requests/Responses");
     println!("     - ICE and DTLS state machines run concurrently");
-    println!("  2. SNAP: Skip SCTP 4-way handshake by exchanging parameters in SDP");
-    println!("     (draft-hancke-tsvwg-snap: INIT/INIT-ACK/COOKIE-ECHO/COOKIE-ACK -> direct open)");
+    println!("  2. SNAP: Use pre-negotiated SCTP parameters to skip handshake");
+    println!("     (draft-hancke-tsvwg-snap: skip INIT/INIT-ACK/COOKIE-ECHO/COOKIE-ACK)");
+    println!("");
     println!("Expected improvement: 6 roundtrips (ICE: 1, DTLS: 2, SCTP: 2) -> 2 roundtrips");
-    println!("This requires protocol-level changes in str0m's STUN, ICE, DTLS, and SCTP layers.");
+    println!("Next step: Modify str0m-sctp to accept pre-negotiated params and skip handshake.");
 
     // Verify the exchange happened
     assert!(
@@ -316,6 +418,15 @@ enum Message {
         ice_ufrag: String,
         ice_pwd: String,
         dtls_fingerprint: String,
+    },
+    /// SNAP: SCTP parameters for skipping 4-way handshake
+    /// In full WARP, these would be exchanged via SDP during signaling
+    SctpParameters {
+        initiate_tag: u32,
+        initial_tsn: u32,
+        a_rwnd: u32,
+        num_outbound_streams: u16,
+        num_inbound_streams: u16,
     },
     /// RTP/DTLS/SCTP packet
     Packet {
