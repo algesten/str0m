@@ -738,6 +738,9 @@ pub mod bwe;
 mod sctp;
 use sctp::{RtcSctp, SctpEvent};
 
+// Re-export SnapParams for WARP support
+pub use sctp_proto::SnapParams;
+
 mod sdp;
 
 pub mod format;

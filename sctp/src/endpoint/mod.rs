@@ -12,7 +12,7 @@ use std::{
 
 use crate::association::Association;
 use crate::chunk::chunk_type::CT_INIT;
-use crate::config::{ClientConfig, EndpointConfig, ServerConfig, TransportConfig};
+use crate::config::{ClientConfig, EndpointConfig, ServerConfig, SnapParams, TransportConfig};
 use crate::packet::PartialDecode;
 use crate::shared::{
     AssociationEvent, AssociationEventInner, AssociationId, EndpointEvent, EndpointEventInner,
@@ -196,6 +196,9 @@ impl Endpoint {
         let remote_aid = RandomAssociationIdGenerator::new().generate_aid();
         let local_aid = self.new_aid();
 
+        let snap_params = config.snap_params();
+        let transport = config.transport;
+
         let (ch, conn) = self.add_association(
             remote_aid,
             local_aid,
@@ -203,7 +206,8 @@ impl Endpoint {
             None,
             Instant::now(),
             None,
-            config.transport,
+            transport,
+            snap_params,
         );
         Ok((ch, conn))
     }
@@ -245,6 +249,7 @@ impl Endpoint {
 
         let server_config = server_config.clone();
         let transport_config = server_config.transport.clone();
+        let snap_params = server_config.snap_params();
 
         let remote_aid = *partial_decode.initiate_tag.as_ref().unwrap();
         let local_aid = self.new_aid();
@@ -257,6 +262,7 @@ impl Endpoint {
             now,
             Some(server_config),
             transport_config,
+            snap_params,
         );
 
         conn.handle_event(AssociationEvent(AssociationEventInner::Datagram(
@@ -282,6 +288,7 @@ impl Endpoint {
         now: Instant,
         server_config: Option<Arc<ServerConfig>>,
         transport_config: Arc<TransportConfig>,
+        snap_params: Option<SnapParams>,
     ) -> (AssociationHandle, Association) {
         let conn = Association::new(
             server_config,
@@ -291,6 +298,7 @@ impl Endpoint {
             remote_addr,
             local_ip,
             now,
+            snap_params,
         );
 
         let id = self.associations.insert(AssociationMeta {

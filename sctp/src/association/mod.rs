@@ -13,7 +13,7 @@ use crate::chunk::{
     chunk_shutdown_complete::ChunkShutdownComplete, chunk_type::CT_FORWARD_TSN, Chunk,
     ErrorCauseUnrecognizedChunkType, USER_INITIATED_ABORT,
 };
-use crate::config::{ServerConfig, TransportConfig, COMMON_HEADER_SIZE, DATA_CHUNK_HEADER_SIZE};
+use crate::config::{ServerConfig, SnapParams, TransportConfig, COMMON_HEADER_SIZE, DATA_CHUNK_HEADER_SIZE};
 use crate::error::{Error, Result};
 use crate::packet::{CommonHeader, Packet};
 use crate::param::{
@@ -299,6 +299,7 @@ impl Association {
         remote_addr: SocketAddr,
         local_ip: Option<IpAddr>,
         now: Instant,
+        snap_params: Option<SnapParams>,
     ) -> Self {
         let side = if server_config.is_some() {
             Side::Server
@@ -355,7 +356,39 @@ impl Association {
             ..Default::default()
         };
 
-        if side.is_client() {
+        // SNAP: Skip handshake if parameters are pre-negotiated
+        if let Some(snap) = snap_params {
+            debug!("[{}] SNAP enabled - skipping SCTP handshake", side);
+            
+            // Set peer parameters from SNAP
+            this.peer_verification_tag = snap.peer_verification_tag;
+            this.peer_last_tsn = snap.peer_initial_tsn.wrapping_sub(1);
+            this.rwnd = snap.peer_a_rwnd;
+            this.ssthresh = snap.peer_a_rwnd;
+            
+            // Set stream limits based on peer's advertised values
+            let peer_outbound = snap.peer_num_outbound_streams;
+            let peer_inbound = snap.peer_num_inbound_streams;
+            
+            // Actual number of streams is min of what we support and what peer supports
+            // Peer's outbound streams become our inbound streams
+            this.my_max_num_inbound_streams = this.my_max_num_inbound_streams.min(peer_outbound);
+            // Peer's inbound streams become our outbound streams  
+            this.my_max_num_outbound_streams = this.my_max_num_outbound_streams.min(peer_inbound);
+            
+            // Transition directly to Established state
+            this.set_state(AssociationState::Established);
+            this.handshake_completed = true;
+            
+            // Emit Connected event
+            this.events.push_back(Event::Connected);
+            
+            debug!(
+                "[{}] SNAP: Associated with peer_tag={}, peer_tsn={}, streams={}",
+                side, this.peer_verification_tag, snap.peer_initial_tsn, this.my_max_num_outbound_streams
+            );
+        } else if side.is_client() {
+            // Standard handshake for client
             let mut init = ChunkInit {
                 initial_tsn: this.my_next_tsn,
                 num_outbound_streams: this.my_max_num_outbound_streams,

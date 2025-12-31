@@ -20,6 +20,22 @@ pub(crate) const RTO_MAX: u64 = 60000;
 // Default max retransmit value (RFC 4960 Section 15)
 const DEFAULT_MAX_INIT_RETRANS: usize = 8;
 
+/// SNAP (SCTP Negotiation Acceleration Protocol) parameters
+/// for skipping the 4-way handshake (draft-hancke-tsvwg-snap)
+#[derive(Debug, Clone, Copy)]
+pub struct SnapParams {
+    /// Remote peer's initiate tag
+    pub peer_verification_tag: u32,
+    /// Remote peer's initial TSN
+    pub peer_initial_tsn: u32,
+    /// Remote peer's advertised receiver window
+    pub peer_a_rwnd: u32,
+    /// Remote peer's number of outbound streams
+    pub peer_num_outbound_streams: u16,
+    /// Remote peer's number of inbound streams
+    pub peer_num_inbound_streams: u16,
+}
+
 /// Config collects the arguments to create_association construction into
 /// a single structure
 #[derive(Debug)]
@@ -247,6 +263,9 @@ pub struct ServerConfig {
 
     /// Maximum number of concurrent associations
     pub(crate) concurrent_associations: u32,
+
+    /// SNAP parameters (if skipping SCTP handshake)
+    pub(crate) snap_params: Option<SnapParams>,
 }
 
 impl Default for ServerConfig {
@@ -254,6 +273,7 @@ impl Default for ServerConfig {
         ServerConfig {
             transport: Arc::new(TransportConfig::default()),
             concurrent_associations: 100_000,
+            snap_params: None,
         }
     }
 }
@@ -262,6 +282,16 @@ impl ServerConfig {
     /// Create a default config with a particular handshake token key
     pub fn new() -> Self {
         ServerConfig::default()
+    }
+
+    /// Set SNAP parameters to skip SCTP handshake (draft-hancke-tsvwg-snap)
+    pub fn with_snap_params(mut self, params: SnapParams) -> Self {
+        self.snap_params = Some(params);
+        self
+    }
+
+    pub(crate) fn snap_params(&self) -> Option<SnapParams> {
+        self.snap_params
     }
 }
 
@@ -272,12 +302,16 @@ impl ServerConfig {
 pub struct ClientConfig {
     /// Transport configuration to use
     pub transport: Arc<TransportConfig>,
+
+    /// SNAP parameters (if skipping SCTP handshake)
+    pub(crate) snap_params: Option<SnapParams>,
 }
 
 impl Default for ClientConfig {
     fn default() -> Self {
         ClientConfig {
             transport: Arc::new(TransportConfig::default()),
+            snap_params: None,
         }
     }
 }
@@ -286,5 +320,15 @@ impl ClientConfig {
     /// Create a default config with a particular cryptographic config
     pub fn new() -> Self {
         ClientConfig::default()
+    }
+
+    /// Set SNAP parameters to skip SCTP handshake (draft-hancke-tsvwg-snap)
+    pub fn with_snap_params(mut self, params: SnapParams) -> Self {
+        self.snap_params = Some(params);
+        self
+    }
+
+    pub(crate) fn snap_params(&self) -> Option<SnapParams> {
+        self.snap_params
     }
 }

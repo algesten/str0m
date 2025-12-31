@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use sctp_proto::{Association, AssociationHandle, ClientConfig, DatagramEvent, TransportConfig};
-use sctp_proto::{Endpoint, EndpointConfig, Stream, StreamEvent, Transmit};
-use sctp_proto::{Event, Payload, PayloadProtocolIdentifier, ServerConfig};
+use sctp_proto::{Endpoint, EndpointConfig, ServerConfig, SnapParams, Stream, StreamEvent, Transmit};
+use sctp_proto::{Event, Payload, PayloadProtocolIdentifier};
 
 pub use sctp_proto::Error as ProtoError;
 use sctp_proto::ReliabilityType;
@@ -31,6 +31,7 @@ pub(crate) struct RtcSctp {
     pushed_back_transmit: Option<VecDeque<Vec<u8>>>,
     last_now: Instant,
     client: bool,
+    snap_params: Option<SnapParams>,
 }
 
 /// This is okay because there is no way for a user of Rtc to interact with the Sctp subsystem
@@ -230,8 +231,9 @@ impl RtcSctp {
         // DTLS above MTU 1200: 1277
         // Let's try 1120, see if we can avoid warnings.
         config.max_payload_size(1120);
-        let server_config = ServerConfig::default();
-        let endpoint = Endpoint::new(Arc::new(config), Some(Arc::new(server_config)));
+        
+        // Create endpoint without server config initially - we'll set it in init() if needed
+        let endpoint = Endpoint::new(Arc::new(config), None);
         let fake_addr = "1.1.1.1:5000".parse().unwrap();
 
         RtcSctp {
@@ -244,7 +246,12 @@ impl RtcSctp {
             pushed_back_transmit: None,
             last_now: Instant::now(), // placeholder until init()
             client: false,
+            snap_params: None,
         }
+    }
+
+    pub fn set_snap_params(&mut self, params: SnapParams) {
+        self.snap_params = Some(params);
     }
 
     pub fn is_inited(&self) -> bool {
@@ -265,9 +272,14 @@ impl RtcSctp {
                 .with_max_init_retransmits(None)
                 .with_max_data_retransmits(None);
 
-            let config = ClientConfig {
-                transport: Arc::new(transport),
-            };
+            let mut config = ClientConfig::new();
+            config.transport = Arc::new(transport);
+            
+            // Apply SNAP parameters if available
+            if let Some(snap_params) = self.snap_params {
+                config = config.with_snap_params(snap_params);
+                debug!("Client using SNAP parameters");
+            }
 
             debug!("New local association");
             let (handle, assoc) = self
@@ -278,7 +290,33 @@ impl RtcSctp {
             self.assoc = Some(assoc);
             set_state(&mut self.state, RtcSctpState::AwaitAssociationEstablished);
         } else {
-            set_state(&mut self.state, RtcSctpState::AwaitRemoteAssociation);
+            // Server mode
+            if let Some(snap_params) = self.snap_params {
+                // SNAP: Server also creates association immediately like client
+                debug!("Server using SNAP parameters");
+                
+                let transport = TransportConfig::default()
+                    .with_max_init_retransmits(None)
+                    .with_max_data_retransmits(None);
+                
+                let mut config = ClientConfig::new();
+                config.transport = Arc::new(transport);
+                config = config.with_snap_params(snap_params);
+                
+                debug!("New local association (server with SNAP)");
+                let (handle, assoc) = self
+                    .endpoint
+                    .connect(config, self.fake_addr)
+                    .expect("be able to create an association");
+                self.handle = handle;
+                self.assoc = Some(assoc);
+                set_state(&mut self.state, RtcSctpState::AwaitAssociationEstablished);
+            } else {
+                // Standard server mode - wait for incoming INIT
+                let server_config = ServerConfig::default();
+                self.endpoint.set_server_config(Some(Arc::new(server_config)));
+                set_state(&mut self.state, RtcSctpState::AwaitRemoteAssociation);
+            }
         }
     }
 

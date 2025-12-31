@@ -101,6 +101,12 @@ impl<'a> DirectApi<'a> {
         self.rtc.init_sctp(client)
     }
 
+    /// Set SNAP parameters to skip SCTP handshake (WARP support).
+    /// Must be called before start_sctp().
+    pub fn set_snap_params(&mut self, params: sctp_proto::SnapParams) {
+        self.rtc.sctp.set_snap_params(params);
+    }
+
     /// Create a new data channel.
     pub fn create_data_channel(&mut self, config: ChannelConfig) -> ChannelId {
         let id = self.rtc.chan.new_channel(&config);
