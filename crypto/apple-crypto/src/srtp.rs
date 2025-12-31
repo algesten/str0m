@@ -134,29 +134,47 @@ fn gcm_final(cryptor: CCCryptorRef) -> Result<[u8; GCM_TAG_LEN], CryptoError> {
 
 // CTR Helper Functions
 
-/// Create a CTR cryptor and perform encryption/decryption.
-fn ctr_crypt(
-    key: &[u8],
-    iv: &[u8; 16],
-    input: &[u8],
-    output: &mut [u8],
-) -> Result<(), CryptoError> {
+/// Perform one round of AES-ECB encryption.
+fn aes_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) -> CCCryptorStatus {
+    let mut data_out_moved: usize = 0;
+    // SAFETY: CCCrypt is safe with valid key/input/output pointers and lengths
+    unsafe {
+        CCCrypt(
+            kCCEncrypt,                    // operation: encrypt
+            kCCAlgorithmAES,               // algorithm: AES
+            kCCOptionECBMode,              // options: ECB mode (no chaining)
+            key.as_ptr() as *const _,      // key: encryption key
+            key.len(),                     // keyLength: 16 or 32 bytes
+            std::ptr::null(),              // iv: not used for ECB
+            input.as_ptr() as *const _,    // dataIn: input block
+            input.len(),                   // dataInLength: must be block-aligned
+            output.as_mut_ptr() as *mut _, // dataOut: output buffer
+            output.len(),                  // dataOutAvailable: output capacity
+            &mut data_out_moved,           // dataOutMoved: bytes written
+        )
+    }
+}
+
+/// Create a CTR mode cryptor for the given key.
+fn ctr_create_cryptor(key: &[u8]) -> Result<CCCryptorRef, CryptoError> {
     let mut cryptor: CCCryptorRef = std::ptr::null_mut();
+    // Use a zero IV for initial creation - we'll reset it before each operation
+    let zero_iv = [0u8; 16];
     // SAFETY: CCCryptorCreateWithMode is safe with valid key/iv pointers and lengths
     let status = unsafe {
         CCCryptorCreateWithMode(
-            kCCEncrypt,               // operation: encrypt (CTR is symmetric)
-            kCCModeCTR,               // mode: Counter Mode
-            kCCAlgorithmAES,          // algorithm: AES
-            ccNoPadding,              // padding: none (stream cipher)
-            iv.as_ptr() as *const _,  // iv: 16-byte counter block
-            key.as_ptr() as *const _, // key: encryption key
-            key.len(),                // keyLength: 16 bytes for AES-128
-            std::ptr::null(),         // tweak: not used for CTR
-            0,                        // tweakLength: not used
-            0,                        // numRounds: 0 = default
-            0,                        // options: none
-            &mut cryptor,             // cryptorRef: output handle
+            kCCEncrypt,                   // operation: encrypt (CTR is symmetric)
+            kCCModeCTR,                   // mode: Counter Mode
+            kCCAlgorithmAES,              // algorithm: AES
+            ccNoPadding,                  // padding: none (stream cipher)
+            zero_iv.as_ptr() as *const _, // iv: placeholder, will be reset
+            key.as_ptr() as *const _,     // key: encryption key
+            key.len(),                    // keyLength: 16 bytes for AES-128
+            std::ptr::null(),             // tweak: not used for CTR
+            0,                            // tweakLength: not used
+            0,                            // numRounds: 0 = default
+            0,                            // options: none
+            &mut cryptor,                 // cryptorRef: output handle
         )
     };
     if status != kCCSuccess {
@@ -164,7 +182,24 @@ fn ctr_crypt(
             "CCCryptorCreateWithMode failed: {status}"
         )));
     }
-    let _guard = CryptorGuard(cryptor);
+    Ok(cryptor)
+}
+
+/// Reset a CTR cryptor with a new IV and perform encryption/decryption.
+fn ctr_crypt_with_cryptor(
+    cryptor: CCCryptorRef,
+    iv: &[u8; 16],
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<(), CryptoError> {
+    // Reset the cryptor with the new IV
+    // SAFETY: cryptor is valid, iv pointer is from a valid slice
+    let status = unsafe { crate::ffi::CCCryptorReset(cryptor, iv.as_ptr() as *const _) };
+    if status != kCCSuccess {
+        return Err(CryptoError::Other(format!(
+            "CCCryptorReset failed: {status}"
+        )));
+    }
 
     let mut data_out_moved: usize = 0;
     // SAFETY: cryptor is valid, input/output pointers and lengths are from valid slices
@@ -187,31 +222,21 @@ fn ctr_crypt(
     Ok(())
 }
 
-/// Perform one round of AES-ECB encryption.
-fn aes_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) -> CCCryptorStatus {
-    let mut data_out_moved: usize = 0;
-    // SAFETY: CCCrypt is safe with valid key/input/output pointers and lengths
-    unsafe {
-        CCCrypt(
-            kCCEncrypt,                    // operation: encrypt
-            kCCAlgorithmAES,               // algorithm: AES
-            kCCOptionECBMode,              // options: ECB mode (no chaining)
-            key.as_ptr() as *const _,      // key: encryption key
-            key.len(),                     // keyLength: 16 or 32 bytes
-            std::ptr::null(),              // iv: not used for ECB
-            input.as_ptr() as *const _,    // dataIn: input block
-            input.len(),                   // dataInLength: must be block-aligned
-            output.as_mut_ptr() as *mut _, // dataOut: output buffer
-            output.len(),                  // dataOutAvailable: output capacity
-            &mut data_out_moved,           // dataOutMoved: bytes written
-        )
-    }
-}
-
-// AES-128-CM-SHA1-80 Cipher (CTR mode)
+// AES-128-CM-SHA1-80 Cipher (CTR mode) - Optimized with cached cryptor
 
 struct AppleCryptoAes128CmSha1_80Cipher {
-    key: [u8; 16],
+    cryptor: CCCryptorRef,
+}
+
+// SAFETY: The CCCryptorRef is only accessed through &mut self, ensuring exclusive access
+unsafe impl Send for AppleCryptoAes128CmSha1_80Cipher {}
+unsafe impl Sync for AppleCryptoAes128CmSha1_80Cipher {}
+
+impl Drop for AppleCryptoAes128CmSha1_80Cipher {
+    fn drop(&mut self) {
+        // SAFETY: cryptor is a valid CCCryptorRef that was created by CCCryptorCreateWithMode
+        unsafe { crate::ffi::CCCryptorRelease(self.cryptor) };
+    }
 }
 
 impl std::fmt::Debug for AppleCryptoAes128CmSha1_80Cipher {
@@ -220,6 +245,8 @@ impl std::fmt::Debug for AppleCryptoAes128CmSha1_80Cipher {
     }
 }
 
+impl std::panic::UnwindSafe for AppleCryptoAes128CmSha1_80Cipher {}
+
 impl Aes128CmSha1_80Cipher for AppleCryptoAes128CmSha1_80Cipher {
     fn encrypt(
         &mut self,
@@ -227,7 +254,7 @@ impl Aes128CmSha1_80Cipher for AppleCryptoAes128CmSha1_80Cipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<(), CryptoError> {
-        ctr_crypt(&self.key, iv, input, output)
+        ctr_crypt_with_cryptor(self.cryptor, iv, input, output)
     }
 
     fn decrypt(
@@ -390,7 +417,8 @@ impl std::fmt::Debug for AppleCryptoSupportedAes128CmSha1_80 {
 
 impl SupportedAes128CmSha1_80 for AppleCryptoSupportedAes128CmSha1_80 {
     fn create_cipher(&self, key: [u8; 16], _encrypt: bool) -> Box<dyn Aes128CmSha1_80Cipher> {
-        Box::new(AppleCryptoAes128CmSha1_80Cipher { key })
+        let cryptor = ctr_create_cryptor(&key).expect("Failed to create CTR cryptor");
+        Box::new(AppleCryptoAes128CmSha1_80Cipher { cryptor })
     }
 }
 

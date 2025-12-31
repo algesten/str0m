@@ -68,6 +68,11 @@ extern "C" {
 
     pub(crate) fn CCCryptorRelease(cryptorRef: CCCryptorRef) -> CCCryptorStatus;
 
+    pub(crate) fn CCCryptorReset(
+        cryptorRef: CCCryptorRef,
+        iv: *const c_void,
+    ) -> CCCryptorStatus;
+
     pub(crate) fn CCCryptorUpdate(
         cryptorRef: CCCryptorRef,
         dataIn: *const c_void,

@@ -1,5 +1,42 @@
 //! Apple CommonCrypto/Security framework implementation of cryptographic functions.
 //! DTLS via dimpl with Apple CommonCrypto as crypto backend.
+//!
+//! # Performance Notes
+//!
+//! ## AES-GCM Performance
+//!
+//! The AES-GCM cipher implementations (AEAD-AES-128-GCM and AEAD-AES-256-GCM) in this
+//! provider are **significantly slower** than other implementations (OpenSSL, AWS-LC-RS,
+//! RustCrypto). This is due to a limitation in Apple's CommonCrypto API:
+//!
+//! - CommonCrypto's GCM mode does not support resetting the IV on an existing cryptor
+//! - Calling `CCCryptorGCMAddIV()` twice returns error -4308 (`kCCUnspecifiedError`)
+//! - `CCCryptorReset()` only works for CBC/CTR modes, not GCM
+//! - Therefore, a new `CCCryptorRef` must be created for every encrypt/decrypt operation
+//!
+//! In benchmarks, this results in ~10x slower performance compared to AWS-LC-RS for
+//! GCM operations.
+//!
+//! ## AES-CTR Performance  
+//!
+//! The AES-128-CM-SHA1-80 cipher (CTR mode) is optimized by caching the `CCCryptorRef`
+//! and using `CCCryptorReset()` to change the IV between operations. This makes CTR
+//! mode competitive with other implementations.
+//!
+//! ## Tradeoffs
+//!
+//! Despite the GCM performance overhead, using this provider has benefits:
+//! - **Smaller binary size** - No bundled crypto library, uses system frameworks
+//! - **Native platform crypto** - Uses Apple's audited, hardware-accelerated implementation
+//! - **No additional dependencies** - CommonCrypto is always available on Apple platforms
+//! - **Compliance** - Some environments require using the platform's native crypto
+//!
+//! The performance difference may be acceptable depending on your use case. For example,
+//! if you're building an iOS app where binary size matters and you're not handling
+//! hundreds of concurrent media streams, the GCM overhead may be negligible.
+//!
+//! **It's up to the user to decide what they prioritize**: raw performance vs. smaller
+//! binaries and native platform integration.
 
 #![allow(clippy::redundant_pub_crate)]
 #![allow(unsafe_code)]

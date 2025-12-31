@@ -1,0 +1,49 @@
+name: Benchmarks
+
+on:
+  schedule:
+    # Run every night at 2:00 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+  pull_request:
+    # TODO: Remove before merging - only for testing the workflow
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  benchmark:
+    name: Benchmark
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bench-
+
+      - name: Run benchmarks
+        working-directory: benches/crypto
+        run: cargo bench
+        env:
+          RUSTFLAGS: "-C target-cpu=native"
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: criterion-report
+          path: benches/crypto/target/criterion
+          retention-days: 30

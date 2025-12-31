@@ -1,0 +1,34 @@
+[package]
+name = "crypto-comparison"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+str0m-proto = { path = "../../proto" }
+str0m-openssl = { path = "../../crypto/openssl" }
+str0m-aws-lc-rs = { path = "../../crypto/aws-lc-rs" }
+str0m-rust-crypto = { path = "../../crypto/rust-crypto" }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+str0m-apple-crypto = { path = "../../crypto/apple-crypto" }
+
+[target.'cfg(windows)'.dependencies]
+str0m-wincrypto = { path = "../../crypto/wincrypto" }
+
+[dev-dependencies]
+criterion = { version = "0.8.1", features = ["html_reports"] }
+
+[[bench]]
+name = "crypto_bench"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
