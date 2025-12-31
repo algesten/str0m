@@ -283,6 +283,8 @@ struct TimingReport {
     channel_open: Option<Instant>,
     sent_data: Option<Instant>,
     received_data: Option<Instant>,
+    udp_packets_sent: usize,
+    udp_packets_received: usize,
 }
 
 impl TimingReport {
@@ -326,6 +328,14 @@ impl TimingReport {
                 (t - start).as_secs_f64() * 1000.0
             );
         }
+        println!(
+            "  UDP Packets Sent:     {}",
+            self.udp_packets_sent
+        );
+        println!(
+            "  UDP Packets Received: {}",
+            self.udp_packets_received
+        );
         if let Some(t) = self.ice_completed {
             println!(
                 "  ICE Completed:   {:>8.3}ms",
@@ -393,6 +403,7 @@ fn run_rtc_loop_with_exchange(
                 Output::Timeout(t) => break t,
                 Output::Transmit(t) => {
                     // Send packet to other peer
+                    timing.udp_packets_sent += 1;
                     let _ = outgoing.send(Message::Packet {
                         proto: t.proto,
                         source: t.source,
@@ -430,6 +441,7 @@ fn run_rtc_loop_with_exchange(
                 destination,
                 contents,
             }) => {
+                timing.udp_packets_received += 1;
                 println!("[{}] Received packet ({} bytes)", role, contents.len());
                 let receive = Receive {
                     proto,
