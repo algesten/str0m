@@ -651,6 +651,15 @@ impl<'a> fmt::Debug for Attributes<'a> {
         if let Some(value) = self.network_cost {
             debug_struct.field("network_cost", &value);
         }
+        if let Some(value) = self.dtls_client_hello {
+            debug_struct.field("dtls_client_hello", &DebugHex(value));
+        }
+        if let Some(value) = self.dtls_server_hello {
+            debug_struct.field("dtls_server_hello", &DebugHex(value));
+        }
+        if let Some(value) = self.dtls_fragment {
+            debug_struct.field("dtls_fragment", &DebugHex(value));
+        }
 
         debug_struct.finish()
     }
