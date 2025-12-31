@@ -81,8 +81,9 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
         let (mut rtc, local_creds, local_fingerprint) = init_rtc(false, server_addr)?;
 
         // SNAP: Generate SCTP parameters (would be in SDP offer in real implementation)
+        // Use a fixed tag that we'll ensure matches the Association's my_verification_tag
         let server_sctp_params = SctpParams {
-            initiate_tag: fastrand::u32(..),
+            initiate_tag: 0x53455256, // "SERV" in hex - fixed server tag
             initial_tsn: fastrand::u32(..),
             a_rwnd: 1048576, // 1MB receive window
             num_outbound_streams: 65535,
@@ -153,6 +154,7 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
             remote_ice_ufrag,
             remote_ice_pwd,
             remote_fingerprint,
+            server_sctp_params.clone(),
             client_sctp_params,
         )?;
         timing.sent_answer = Some(Instant::now());
@@ -173,8 +175,9 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
         let (mut rtc, local_creds, local_fingerprint) = init_rtc(true, client_addr)?;
 
         // SNAP: Generate SCTP parameters (would be in SDP answer in real implementation)
+        // Use a fixed tag that we'll ensure matches the Association's my_verification_tag  
         let client_sctp_params = SctpParams {
-            initiate_tag: fastrand::u32(..),
+            initiate_tag: 0x434C4E54, // "CLNT" in hex - fixed client tag
             initial_tsn: fastrand::u32(..),
             a_rwnd: 1048576, // 1MB receive window
             num_outbound_streams: 65535,
@@ -243,6 +246,7 @@ pub fn handshake_direct_warp_api_two_threads() -> Result<(), RtcError> {
             remote_ice_ufrag,
             remote_ice_pwd,
             remote_fingerprint,
+            client_sctp_params.clone(),
             server_sctp_params,
         )?;
         timing.got_answer = Some(Instant::now());
@@ -364,6 +368,7 @@ fn configure_rtc_warp(
     remote_ice_ufrag: String,
     remote_ice_pwd: String,
     remote_fingerprint: String,
+    my_sctp_params: SctpParams,
     remote_sctp_params: SctpParams,
 ) -> Result<(), RtcError> {
     // Add remote candidate
@@ -392,6 +397,8 @@ fn configure_rtc_warp(
         
         // SNAP: Set remote SCTP parameters to skip handshake
         let snap_params = str0m::SnapParams {
+            my_verification_tag: my_sctp_params.initiate_tag,
+            my_initial_tsn: my_sctp_params.initial_tsn,
             peer_verification_tag: remote_sctp_params.initiate_tag,
             peer_initial_tsn: remote_sctp_params.initial_tsn,
             peer_a_rwnd: remote_sctp_params.a_rwnd,
@@ -464,6 +471,8 @@ struct TimingReport {
     channel_open: Option<Instant>,
     sent_data: Option<Instant>,
     received_data: Option<Instant>,
+    udp_packets_sent: usize,
+    udp_packets_received: usize,
 }
 
 impl TimingReport {
@@ -507,6 +516,14 @@ impl TimingReport {
                 (t - start).as_secs_f64() * 1000.0
             );
         }
+        println!(
+            "  UDP Packets Sent:     {}",
+            self.udp_packets_sent
+        );
+        println!(
+            "  UDP Packets Received: {}",
+            self.udp_packets_received
+        );
         if let Some(t) = self.ice_completed {
             println!(
                 "  ICE Completed:   {:>8.3}ms",
@@ -574,6 +591,7 @@ fn run_rtc_loop_with_exchange(
                 Output::Timeout(t) => break t,
                 Output::Transmit(t) => {
                     // Send packet to other peer
+                    timing.udp_packets_sent += 1;
                     let _ = outgoing.send(Message::Packet {
                         proto: t.proto,
                         source: t.source,
@@ -611,6 +629,7 @@ fn run_rtc_loop_with_exchange(
                 destination,
                 contents,
             }) => {
+                timing.udp_packets_received += 1;
                 println!("[{}] Received packet ({} bytes)", role, contents.len());
                 let receive = Receive {
                     proto,

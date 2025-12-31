@@ -24,6 +24,10 @@ const DEFAULT_MAX_INIT_RETRANS: usize = 8;
 /// for skipping the 4-way handshake (draft-hancke-tsvwg-snap)
 #[derive(Debug, Clone, Copy)]
 pub struct SnapParams {
+    /// Our own initiate tag (to use as my_verification_tag)
+    pub my_verification_tag: u32,
+    /// Our own initial TSN
+    pub my_initial_tsn: u32,
     /// Remote peer's initiate tag
     pub peer_verification_tag: u32,
     /// Remote peer's initial TSN

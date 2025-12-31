@@ -360,11 +360,24 @@ impl Association {
         if let Some(snap) = snap_params {
             debug!("[{}] SNAP enabled - skipping SCTP handshake", side);
             
+            // Use SNAP's my parameters instead of random values
+            this.my_verification_tag = snap.my_verification_tag;
+            this.my_next_tsn = snap.my_initial_tsn;
+            this.my_next_rsn = snap.my_initial_tsn;
+            this.min_tsn2measure_rtt = snap.my_initial_tsn;
+            this.cumulative_tsn_ack_point = snap.my_initial_tsn.wrapping_sub(1);
+            this.advanced_peer_tsn_ack_point = snap.my_initial_tsn.wrapping_sub(1);
+            
             // Set peer parameters from SNAP
             this.peer_verification_tag = snap.peer_verification_tag;
             this.peer_last_tsn = snap.peer_initial_tsn.wrapping_sub(1);
             this.rwnd = snap.peer_a_rwnd;
             this.ssthresh = snap.peer_a_rwnd;
+            
+            // Set SCTP ports (since we skip handshake, ports won't be learned from packets)
+            // Use the standard WebRTC DataChannel SCTP port 5000
+            this.source_port = 5000;
+            this.destination_port = 5000;
             
             // Set stream limits based on peer's advertised values
             let peer_outbound = snap.peer_num_outbound_streams;
@@ -384,8 +397,10 @@ impl Association {
             this.events.push_back(Event::Connected);
             
             debug!(
-                "[{}] SNAP: Associated with peer_tag={}, peer_tsn={}, streams={}",
-                side, this.peer_verification_tag, snap.peer_initial_tsn, this.my_max_num_outbound_streams
+                "[{}] SNAP: my_tag={}, my_tsn={}, peer_tag={}, peer_tsn={}, streams={}, ports={}:{}",
+                side, this.my_verification_tag, snap.my_initial_tsn,
+                this.peer_verification_tag, snap.peer_initial_tsn, this.my_max_num_outbound_streams,
+                this.source_port, this.destination_port
             );
         } else if side.is_client() {
             // Standard handshake for client

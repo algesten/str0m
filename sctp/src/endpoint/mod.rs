@@ -290,6 +290,9 @@ impl Endpoint {
         transport_config: Arc<TransportConfig>,
         snap_params: Option<SnapParams>,
     ) -> (AssociationHandle, Association) {
+        // When using SNAP, use the my_verification_tag from SNAP params for registration
+        let registration_aid = snap_params.as_ref().map(|s| s.my_verification_tag).unwrap_or(local_aid);
+        
         let conn = Association::new(
             server_config,
             transport_config,
@@ -304,12 +307,12 @@ impl Endpoint {
         let id = self.associations.insert(AssociationMeta {
             init_cid: remote_aid,
             cids_issued: 0,
-            loc_cids: iter::once((0, local_aid)).collect(),
+            loc_cids: iter::once((0, registration_aid)).collect(),
             initial_remote: remote_addr,
         });
 
         let ch = AssociationHandle(id);
-        self.association_ids.insert(local_aid, ch);
+        self.association_ids.insert(registration_aid, ch);
 
         (ch, conn)
     }
