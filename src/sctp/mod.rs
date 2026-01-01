@@ -31,6 +31,7 @@ pub(crate) struct RtcSctp {
     pushed_back_transmit: Option<VecDeque<Vec<u8>>>,
     last_now: Instant,
     client: bool,
+    sctp_config: Option<SctpConfig>,
 }
 
 /// This is okay because there is no way for a user of Rtc to interact with the Sctp subsystem
@@ -51,6 +52,245 @@ impl RtcSctpState {
             self,
             RtcSctpState::AwaitAssociationEstablished | RtcSctpState::Established
         )
+    }
+}
+
+/// Builder for [`SctpConfig`].
+///
+/// Use this to configure SCTP transport parameters before building
+/// an immutable [`SctpConfig`].
+///
+/// # Example
+/// ```
+/// use str0m::channel::SctpConfig;
+///
+/// let config = SctpConfig::builder()
+///     .with_max_receive_buffer_size(1024 * 1024)
+///     .with_max_message_size(256 * 1024)
+///     .with_max_init_retransmits(None)
+///     .with_max_data_retransmits(None)
+///     .build();
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct SctpConfigBuilder {
+    max_receive_buffer_size: Option<u32>,
+    max_message_size: Option<u32>,
+    max_num_outbound_streams: Option<u16>,
+    max_num_inbound_streams: Option<u16>,
+    max_init_retransmits: Option<Option<usize>>,
+    max_data_retransmits: Option<Option<usize>>,
+    rto_initial_ms: Option<u64>,
+    rto_min_ms: Option<u64>,
+    rto_max_ms: Option<u64>,
+    remote_chunk_init: Option<Vec<u8>>,
+}
+
+impl SctpConfigBuilder {
+    /// Creates a new builder with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the maximum receive buffer size.
+    pub fn with_max_receive_buffer_size(mut self, value: u32) -> Self {
+        self.max_receive_buffer_size = Some(value);
+        self
+    }
+
+    /// Set the maximum message size.
+    pub fn with_max_message_size(mut self, value: u32) -> Self {
+        self.max_message_size = Some(value);
+        self
+    }
+
+    /// Set the maximum number of outbound streams.
+    pub fn with_max_num_outbound_streams(mut self, value: u16) -> Self {
+        self.max_num_outbound_streams = Some(value);
+        self
+    }
+
+    /// Set the maximum number of inbound streams.
+    pub fn with_max_num_inbound_streams(mut self, value: u16) -> Self {
+        self.max_num_inbound_streams = Some(value);
+        self
+    }
+
+    /// Set maximum INIT retransmissions.
+    ///
+    /// `None` means unlimited retries, which is recommended for WebRTC
+    /// where connectivity is managed by ICE.
+    pub fn with_max_init_retransmits(mut self, value: Option<usize>) -> Self {
+        self.max_init_retransmits = Some(value);
+        self
+    }
+
+    /// Set maximum DATA retransmissions.
+    ///
+    /// `None` means unlimited retries, which is recommended for WebRTC
+    /// where connectivity is managed by ICE.
+    pub fn with_max_data_retransmits(mut self, value: Option<usize>) -> Self {
+        self.max_data_retransmits = Some(value);
+        self
+    }
+
+    /// Set initial RTO (retransmission timeout) in milliseconds.
+    ///
+    /// Default: 3000
+    pub fn with_rto_initial_ms(mut self, value: u64) -> Self {
+        self.rto_initial_ms = Some(value);
+        self
+    }
+
+    /// Set minimum RTO (retransmission timeout) in milliseconds.
+    ///
+    /// Default: 1000
+    pub fn with_rto_min_ms(mut self, value: u64) -> Self {
+        self.rto_min_ms = Some(value);
+        self
+    }
+
+    /// Set maximum RTO (retransmission timeout) in milliseconds.
+    ///
+    /// Default: 60000
+    pub fn with_rto_max_ms(mut self, value: u64) -> Self {
+        self.rto_max_ms = Some(value);
+        self
+    }
+
+    /// Set the remote INIT chunk data for out-of-band signaling.
+    ///
+    /// When provided, the SCTP association can skip the 4-way handshake
+    /// and go directly to established state.
+    pub fn with_remote_chunk_init(mut self, value: Vec<u8>) -> Self {
+        self.remote_chunk_init = Some(value);
+        self
+    }
+
+    /// Build the immutable [`SctpConfig`].
+    pub fn build(self) -> SctpConfig {
+        // For WebRTC, we never want to give up retransmitting
+        // init and data packets. The connectivity is in ICE,
+        // and SCTP should not give up until ICE gives up.
+        let mut transport = TransportConfig::default()
+            .with_max_init_retransmits(None)
+            .with_max_data_retransmits(None);
+
+        if let Some(v) = self.max_receive_buffer_size {
+            transport = transport.with_max_receive_buffer_size(v);
+        }
+        if let Some(v) = self.max_message_size {
+            transport = transport.with_max_message_size(v);
+        }
+        if let Some(v) = self.max_num_outbound_streams {
+            transport = transport.with_max_num_outbound_streams(v);
+        }
+        if let Some(v) = self.max_num_inbound_streams {
+            transport = transport.with_max_num_inbound_streams(v);
+        }
+        if let Some(v) = self.max_init_retransmits {
+            transport = transport.with_max_init_retransmits(v);
+        }
+        if let Some(v) = self.max_data_retransmits {
+            transport = transport.with_max_data_retransmits(v);
+        }
+        if let Some(v) = self.rto_initial_ms {
+            transport = transport.with_rto_initial_ms(v);
+        }
+        if let Some(v) = self.rto_min_ms {
+            transport = transport.with_rto_min_ms(v);
+        }
+        if let Some(v) = self.rto_max_ms {
+            transport = transport.with_rto_max_ms(v);
+        }
+
+        SctpConfig {
+            transport: Arc::new(transport),
+            remote_chunk_init: self.remote_chunk_init,
+        }
+    }
+}
+
+/// SCTP transport configuration.
+///
+/// The transport parameters are immutable once built, but the remote INIT chunk
+/// can be set after creation for out-of-band signaling.
+///
+/// Created via [`SctpConfig::builder()`] or [`SctpConfig::new()`].
+///
+/// # Example
+/// ```
+/// use str0m::channel::SctpConfig;
+///
+/// // Using builder for custom transport settings
+/// let mut config = SctpConfig::builder()
+///     .with_max_message_size(256 * 1024)
+///     .build();
+///
+/// // Get local INIT chunk to send to remote peer
+/// let local_init = config.local_init_chunk();
+///
+/// // Later, set the remote INIT chunk received from peer
+/// // config.set_remote_chunk_init(remote_init_bytes);
+/// ```
+#[derive(Debug, Clone)]
+pub struct SctpConfig {
+    transport: Arc<TransportConfig>,
+    remote_chunk_init: Option<Vec<u8>>,
+}
+
+impl Default for SctpConfig {
+    fn default() -> Self {
+        SctpConfigBuilder::new().build()
+    }
+}
+
+impl SctpConfig {
+    /// Creates a new default SCTP configuration.
+    ///
+    /// By default, max init and data retransmits are set to `None` (unlimited),
+    /// which is recommended for WebRTC where connectivity is managed by ICE.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a new builder for configuring SCTP parameters.
+    pub fn builder() -> SctpConfigBuilder {
+        SctpConfigBuilder::new()
+    }
+
+    /// Get the local INIT chunk bytes for out-of-band signaling.
+    ///
+    /// This can be exchanged with the remote peer via a signaling channel,
+    /// allowing both sides to skip the SCTP 4-way handshake.
+    pub fn local_init_chunk(&self) -> Vec<u8> {
+        self.transport
+            .marshalled_chunk_init()
+            .expect("marshalled_chunk_init should not fail")
+            .to_vec()
+    }
+
+    /// Check if remote INIT chunk has been configured for out-of-band signaling.
+    pub fn has_remote_chunk_init(&self) -> bool {
+        self.remote_chunk_init.is_some()
+    }
+
+    /// Set the remote INIT chunk for out-of-band signaling.
+    ///
+    /// When both local and remote INIT chunks are exchanged via a signaling
+    /// channel, the SCTP association can skip the 4-way handshake and go
+    /// directly to established state.
+    ///
+    /// This must be called before starting SCTP.
+    pub fn set_remote_chunk_init(&mut self, value: Vec<u8>) {
+        self.remote_chunk_init = Some(value);
+    }
+
+    /// Build a ClientConfig from this SctpConfig.
+    pub(crate) fn into_client_config(self) -> ClientConfig {
+        ClientConfig {
+            transport: self.transport,
+            remote_chunk_init: self.remote_chunk_init.map(Into::into),
+        }
     }
 }
 
@@ -224,7 +464,7 @@ impl StreamEntry {
 }
 
 impl RtcSctp {
-    pub fn new() -> Self {
+    pub fn new(sctp_config: Option<SctpConfig>) -> Self {
         let mut config = EndpointConfig::default();
         // Default here is 1200, I've seen warnings that are 77 over.
         // DTLS above MTU 1200: 1277
@@ -244,11 +484,39 @@ impl RtcSctp {
             pushed_back_transmit: None,
             last_now: Instant::now(), // placeholder until init()
             client: false,
+            sctp_config,
         }
     }
 
     pub fn is_inited(&self) -> bool {
         self.state != RtcSctpState::Uninited
+    }
+
+    /// Set the SCTP configuration.
+    ///
+    /// This must be called before [`Self::init()`] to take effect.
+    pub fn set_config(&mut self, config: SctpConfig) {
+        assert!(
+            self.state == RtcSctpState::Uninited,
+            "Cannot set SCTP config after init"
+        );
+        self.sctp_config = Some(config);
+    }
+
+    /// Get a mutable reference to the SCTP configuration, creating a default one if necessary.
+    ///
+    /// Use this to modify the config, for example to set the remote INIT chunk
+    /// for out-of-band signaling.
+    ///
+    /// # Panics
+    ///
+    /// Panics if SCTP has already been initialized via `start_sctp()`.
+    pub fn sctp_config(&mut self) -> &mut SctpConfig {
+        assert!(
+            self.state == RtcSctpState::Uninited,
+            "sctp_config() called after SCTP was initialized - must be called before start_sctp()"
+        );
+        self.sctp_config.get_or_insert_with(SctpConfig::default)
     }
 
     pub fn init(&mut self, client: bool, now: Instant) {
@@ -257,26 +525,32 @@ impl RtcSctp {
         self.client = client;
         self.last_now = now;
 
-        if client {
-            // For WebRTC, we never want to give up retransmitting
-            // init and data packets. The connectivity is in ICE,
-            // and SCTP should not give up until ICE gives up.
-            let transport = TransportConfig::default()
-                .with_max_init_retransmits(None)
-                .with_max_data_retransmits(None);
+        let sctp_config = self.sctp_config.take().unwrap_or_default();
+        let has_remote_chunk_init = sctp_config.has_remote_chunk_init();
 
-            let config = ClientConfig {
-                transport: Arc::new(transport),
-            };
+        if client || has_remote_chunk_init {
+            // If we're a client, or if we have remote_chunk_init from out-of-band
+            // signaling, we can connect directly and skip the SCTP handshake.
+            let config = sctp_config.into_client_config();
 
-            debug!("New local association");
+            debug!(
+                "New {} association (out-of-band: {})",
+                if client { "local" } else { "server" },
+                has_remote_chunk_init
+            );
             let (handle, assoc) = self
                 .endpoint
-                .connect(config, self.fake_addr)
+                .connect(config, self.fake_addr, now)
                 .expect("be able to create an association");
             self.handle = handle;
             self.assoc = Some(assoc);
-            set_state(&mut self.state, RtcSctpState::AwaitAssociationEstablished);
+
+            if has_remote_chunk_init {
+                // With out-of-band signaling, we skip the handshake and go directly to established
+                set_state(&mut self.state, RtcSctpState::Established);
+            } else {
+                set_state(&mut self.state, RtcSctpState::AwaitAssociationEstablished);
+            }
         } else {
             set_state(&mut self.state, RtcSctpState::AwaitRemoteAssociation);
         }

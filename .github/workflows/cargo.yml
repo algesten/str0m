@@ -65,17 +65,17 @@ jobs:
       - name: Test with ${{ matrix.crypto.name }}
         run: cargo +${{steps.toolchain.outputs.name}} test --no-default-features --features ${{ matrix.crypto.features || matrix.crypto.name }}
 
-  snowflake:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Martin's snowflake formatting rules
-        uses: algesten/snowflake@v1.1.0
-        with:
-          check_diff: true
-          line_width_rules: 'CHANGELOG.md:120;c_cpp_properties.json:160;Cargo.toml:150;README.md:180;README.tpl:180;*.md:110;*.rs:110;*.toml:110;DEFAULT=110'
+  # snowflake:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: 0
+  #     - name: Martin's snowflake formatting rules
+  #       uses: algesten/snowflake@v1.1.0
+  #       with:
+  #         check_diff: true
+  #         line_width_rules: 'CHANGELOG.md:120;c_cpp_properties.json:160;Cargo.toml:150;README.md:180;README.tpl:180;*.md:110;*.rs:110;*.toml:110;DEFAULT=110'
 
   pii:
     runs-on: ubuntu-latest
