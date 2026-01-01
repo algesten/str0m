@@ -1,7 +1,4 @@
 //! SRTP cipher implementations using Apple CommonCrypto.
-
-use subtle::ConstantTimeEq;
-
 use str0m_proto::crypto::SupportedAeadAes128Gcm;
 use str0m_proto::crypto::{AeadAes128Gcm, AeadAes128GcmCipher, AeadAes256Gcm, AeadAes256GcmCipher};
 use str0m_proto::crypto::{Aes128CmSha1_80Cipher, CryptoError, SrtpProvider};
@@ -9,128 +6,16 @@ use str0m_proto::crypto::{SupportedAeadAes256Gcm, SupportedAes128CmSha1_80};
 
 use crate::ffi::ccNoPadding;
 use crate::ffi::kCCAlgorithmAES;
-use crate::ffi::kCCDecrypt;
 use crate::ffi::kCCEncrypt;
 use crate::ffi::kCCModeCTR;
-use crate::ffi::kCCModeGCM;
 use crate::ffi::kCCOptionECBMode;
 use crate::ffi::kCCSuccess;
 use crate::ffi::CCCrypt;
 use crate::ffi::CCCryptorCreateWithMode;
-use crate::ffi::CCCryptorGCMAddAAD;
-use crate::ffi::CCCryptorGCMAddIV;
-use crate::ffi::CCCryptorGCMDecrypt;
-use crate::ffi::CCCryptorGCMEncrypt;
-use crate::ffi::CCCryptorGCMFinal;
 use crate::ffi::CCCryptorRef;
 use crate::ffi::CCCryptorStatus;
 use crate::ffi::CCCryptorUpdate;
 use crate::ffi::CryptorGuard;
-use crate::ffi::GCM_TAG_LEN;
-
-// GCM Helper Functions
-
-/// Create a GCM cryptor for encryption or decryption.
-fn gcm_create_cryptor(
-    op: crate::ffi::CCOperation,
-    key: &[u8],
-) -> Result<CCCryptorRef, CryptoError> {
-    let mut cryptor: CCCryptorRef = std::ptr::null_mut();
-    // SAFETY: CCCryptorCreateWithMode is safe with valid key pointer and length
-    let status = unsafe {
-        CCCryptorCreateWithMode(
-            op,                       // operation: encrypt or decrypt
-            kCCModeGCM,               // mode: Galois/Counter Mode
-            kCCAlgorithmAES,          // algorithm: AES
-            ccNoPadding,              // padding: none (GCM handles internally)
-            std::ptr::null(),         // iv: set later via CCCryptorGCMAddIV
-            key.as_ptr() as *const _, // key: encryption key
-            key.len(),                // keyLength: 16 or 32 bytes
-            std::ptr::null(),         // tweak: not used for GCM
-            0,                        // tweakLength: not used
-            0,                        // numRounds: 0 = default
-            0,                        // options: none
-            &mut cryptor,             // cryptorRef: output handle
-        )
-    };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!(
-            "CCCryptorCreateWithMode failed: {status}"
-        )));
-    }
-    Ok(cryptor)
-}
-
-/// Add IV to a GCM cryptor.
-fn gcm_add_iv(cryptor: CCCryptorRef, iv: &[u8]) -> Result<(), CryptoError> {
-    // SAFETY: cryptor is valid, iv pointer and length are from valid slice
-    let status = unsafe { CCCryptorGCMAddIV(cryptor, iv.as_ptr() as *const _, iv.len()) };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!("AddIV failed: {status}")));
-    }
-    Ok(())
-}
-
-/// Add AAD to a GCM cryptor.
-fn gcm_add_aad(cryptor: CCCryptorRef, aad: &[u8]) -> Result<(), CryptoError> {
-    // SAFETY: cryptor is valid, aad pointer and length are from valid slice
-    let status = unsafe { CCCryptorGCMAddAAD(cryptor, aad.as_ptr() as *const _, aad.len()) };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!("AddAAD failed: {status}")));
-    }
-    Ok(())
-}
-
-/// Encrypt data with a GCM cryptor.
-fn gcm_encrypt(cryptor: CCCryptorRef, input: &[u8], output: &mut [u8]) -> Result<(), CryptoError> {
-    // SAFETY: cryptor is valid, input/output pointers and lengths are from valid slices
-    let status = unsafe {
-        CCCryptorGCMEncrypt(
-            cryptor,
-            input.as_ptr() as *const _,
-            input.len(),
-            output.as_mut_ptr() as *mut _,
-        )
-    };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!("Encrypt failed: {status}")));
-    }
-    Ok(())
-}
-
-/// Decrypt data with a GCM cryptor.
-fn gcm_decrypt(
-    cryptor: CCCryptorRef,
-    input: &[u8],
-    len: usize,
-    output: &mut [u8],
-) -> Result<(), CryptoError> {
-    // SAFETY: cryptor is valid, input/output pointers and lengths are from valid slices
-    let status = unsafe {
-        CCCryptorGCMDecrypt(
-            cryptor,
-            input.as_ptr() as *const _,
-            len,
-            output.as_mut_ptr() as *mut _,
-        )
-    };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!("Decrypt failed: {status}")));
-    }
-    Ok(())
-}
-
-/// Finalize GCM and get the authentication tag.
-fn gcm_final(cryptor: CCCryptorRef) -> Result<[u8; GCM_TAG_LEN], CryptoError> {
-    let mut tag = [0u8; GCM_TAG_LEN];
-    let mut tag_len = GCM_TAG_LEN;
-    // SAFETY: cryptor is valid, tag buffer is properly sized
-    let status = unsafe { CCCryptorGCMFinal(cryptor, tag.as_mut_ptr() as *mut _, &mut tag_len) };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!("Final failed: {status}")));
-    }
-    Ok(tag)
-}
 
 // CTR Helper Functions
 
@@ -266,15 +151,11 @@ impl AeadAes128GcmCipher for AppleCryptoAeadAes128GcmCipher {
             "Associated data length MUST be at least 12 octets"
         );
 
-        let cryptor = gcm_create_cryptor(kCCEncrypt, &self.key)?;
-        let _guard = CryptorGuard(cryptor);
-
-        gcm_add_iv(cryptor, iv)?;
-        gcm_add_aad(cryptor, aad)?;
-        gcm_encrypt(cryptor, input, output)?;
-
-        let tag = gcm_final(cryptor)?;
-        output[input.len()..input.len() + GCM_TAG_LEN].copy_from_slice(&tag);
+        output.copy_from_slice(
+            apple_cryptokit::aes_gcm_encrypt_with_aad(&self.key, iv, input, aad)
+                .map_err(|err| CryptoError::Other(format!("{err:?}")))?
+                .as_slice(),
+        );
 
         Ok(())
     }
@@ -288,24 +169,18 @@ impl AeadAes128GcmCipher for AppleCryptoAeadAes128GcmCipher {
     ) -> Result<usize, CryptoError> {
         assert!(input.len() >= AeadAes128Gcm::TAG_LEN);
 
-        let ct_len = input.len() - GCM_TAG_LEN;
-        let expected_tag = &input[ct_len..];
+        static EMPTY: [u8; 0] = [];
+        let aad = match aads.len() {
+            0 => &EMPTY,
+            1 => aads[0],
+            _ => &aads.concat(),
+        };
 
-        let cryptor = gcm_create_cryptor(kCCDecrypt, &self.key)?;
-        let _guard = CryptorGuard(cryptor);
+        let output_vec = apple_cryptokit::aes_gcm_decrypt_with_aad(&self.key, iv, input, aad)
+            .map_err(|err| CryptoError::Other(format!("{err:?}")))?;
+        output.copy_from_slice(output_vec.as_slice());
 
-        gcm_add_iv(cryptor, iv)?;
-        for aad in aads {
-            gcm_add_aad(cryptor, aad)?;
-        }
-        gcm_decrypt(cryptor, input, ct_len, output)?;
-
-        let computed_tag = gcm_final(cryptor)?;
-        if !bool::from(computed_tag.ct_eq(expected_tag)) {
-            return Err(CryptoError::Other("Tag mismatch".to_string()));
-        }
-
-        Ok(ct_len)
+        Ok(output_vec.len())
     }
 }
 
@@ -334,15 +209,11 @@ impl AeadAes256GcmCipher for AppleCryptoAeadAes256GcmCipher {
             "Associated data length MUST be at least 12 octets"
         );
 
-        let cryptor = gcm_create_cryptor(kCCEncrypt, &self.key)?;
-        let _guard = CryptorGuard(cryptor);
-
-        gcm_add_iv(cryptor, iv)?;
-        gcm_add_aad(cryptor, aad)?;
-        gcm_encrypt(cryptor, input, output)?;
-
-        let tag = gcm_final(cryptor)?;
-        output[input.len()..input.len() + GCM_TAG_LEN].copy_from_slice(&tag);
+        output.copy_from_slice(
+            apple_cryptokit::aes_gcm_encrypt_with_aad(&self.key, iv, input, aad)
+                .map_err(|err| CryptoError::Other(format!("{err:?}")))?
+                .as_slice(),
+        );
 
         Ok(())
     }
@@ -356,24 +227,18 @@ impl AeadAes256GcmCipher for AppleCryptoAeadAes256GcmCipher {
     ) -> Result<usize, CryptoError> {
         assert!(input.len() >= AeadAes256Gcm::TAG_LEN);
 
-        let ct_len = input.len() - GCM_TAG_LEN;
-        let expected_tag = &input[ct_len..];
+        static EMPTY: [u8; 0] = [];
+        let aad = match aads.len() {
+            0 => &EMPTY,
+            1 => aads[0],
+            _ => &aads.concat(),
+        };
 
-        let cryptor = gcm_create_cryptor(kCCDecrypt, &self.key)?;
-        let _guard = CryptorGuard(cryptor);
+        let output_vec = apple_cryptokit::aes_gcm_decrypt_with_aad(&self.key, iv, input, aad)
+            .map_err(|err| CryptoError::Other(format!("{err:?}")))?;
+        output.copy_from_slice(output_vec.as_slice());
 
-        gcm_add_iv(cryptor, iv)?;
-        for aad in aads {
-            gcm_add_aad(cryptor, aad)?;
-        }
-        gcm_decrypt(cryptor, input, ct_len, output)?;
-
-        let computed_tag = gcm_final(cryptor)?;
-        if !bool::from(computed_tag.ct_eq(expected_tag)) {
-            return Err(CryptoError::Other("Tag mismatch".to_string()));
-        }
-
-        Ok(ct_len)
+        Ok(output_vec.len())
     }
 }
 

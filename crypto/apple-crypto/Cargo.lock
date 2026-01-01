@@ -3,6 +3,15 @@
 version = 4
 
 [[package]]
+name = "apple-cryptokit-rs"
+version = "0.1.0"
+source = "git+https://github.com/efer-ms/apple-cryptokit-rs?branch=efer%2Frpath#5511623cfdfa19c99afc281ad769e579578baf36"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -317,6 +326,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
+ "serde_derive",
 ]
 
 [[package]]
@@ -340,6 +350,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_json"
+version = "1.0.148"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3084b546a1dd6289475996f182a22aba973866ea8e8b02c51d9f46b1336a22da"
+dependencies = [
+ "itoa",
+ "memchr",
+ "serde",
+ "serde_core",
+ "zmij",
+]
+
+[[package]]
 name = "signature"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -359,6 +382,7 @@ dependencies = [
 name = "str0m-apple-crypto"
 version = "0.1.1"
 dependencies = [
+ "apple-cryptokit-rs",
  "core-foundation",
  "der",
  "dimpl",
@@ -497,3 +521,9 @@ name = "zeroize"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
+
+[[package]]
+name = "zmij"
+version = "1.0.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aac060176f7020d62c3bcc1cdbcec619d54f48b07ad1963a3f80ce7a0c17755f"
