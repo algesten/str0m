@@ -540,6 +540,72 @@ pub fn h265_data() -> PcapData {
     load_pcap_data(include_bytes!("data/h265.pcap"))
 }
 
+// ---------------------------------------------------------------------------
+// SNAP (SCTP Negotiation Acceleration Protocol) test helpers
+// ---------------------------------------------------------------------------
+
+/// Extract the `a=sctp-init:<value>` from an SDP string, if present.
+pub fn extract_sctp_init(sdp: &str) -> Option<String> {
+    sdp.lines()
+        .find(|l| l.starts_with("a=sctp-init:"))
+        .map(|l| l.trim_start_matches("a=sctp-init:").to_string())
+}
+
+/// Replace the `a=sctp-init:` attribute value in an SDP string.
+///
+/// Preserves original line endings (`\r\n`).
+pub fn replace_sctp_init(sdp: &str, replacement: &str) -> String {
+    let mut result = String::with_capacity(sdp.len());
+    // split("\r\n") produces an extra empty element after a trailing CRLF;
+    // skip it to avoid appending a spurious double-CRLF at the end.
+    for line in sdp.split("\r\n") {
+        if line.is_empty() && result.ends_with("\r\n") {
+            continue;
+        }
+        if line.starts_with("a=sctp-init:") {
+            result.push_str(&format!("a=sctp-init:{replacement}\r\n"));
+        } else {
+            result.push_str(line);
+            result.push_str("\r\n");
+        }
+    }
+    result
+}
+
+/// Remove the `a=sctp-init:` attribute from an SDP string.
+///
+/// Preserves original line endings (`\r\n`).
+pub fn remove_sctp_init(sdp: &str) -> String {
+    let mut result = String::with_capacity(sdp.len());
+    // split("\r\n") produces an extra empty element after a trailing CRLF;
+    // skip it to avoid appending a spurious double-CRLF at the end.
+    for line in sdp.split("\r\n") {
+        if line.is_empty() && result.ends_with("\r\n") {
+            continue;
+        }
+        if !line.starts_with("a=sctp-init:") {
+            result.push_str(line);
+            result.push_str("\r\n");
+        }
+    }
+    result
+}
+
+/// Generate SNAP init data for out-of-band SCTP negotiation.
+///
+/// Returns `Some((local_init_bytes, SctpInitData))` when `use_snap` is true, `None` otherwise.
+pub fn snap_init_data(use_snap: bool) -> Option<(Vec<u8>, str0m::channel::SctpInitData)> {
+    if use_snap {
+        let mut data = str0m::channel::SctpInitData::new();
+        let local_init = data
+            .local_init_chunk()
+            .expect("generate_snap_token should not fail");
+        Some((local_init, data))
+    } else {
+        None
+    }
+}
+
 pub fn load_pcap_data(data: &[u8]) -> PcapData {
     let reader = Cursor::new(data);
     let mut r = PcapReader::new(reader).expect("pcap reader");

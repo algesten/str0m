@@ -749,7 +749,7 @@ pub mod bwe {
 }
 
 mod sctp;
-use sctp::{RtcSctp, SctpEvent};
+use sctp::{RtcSctp, SctpEvent, SctpInitData};
 
 mod sdp;
 
@@ -1145,6 +1145,11 @@ impl Rtc {
              crypto provider that supports certificate generation.",
             );
 
+        let mut sctp = RtcSctp::new();
+        if config.snap_enabled {
+            sctp.enable_snap();
+        }
+
         Ok(Rtc {
             alive: true,
             ice,
@@ -1160,7 +1165,7 @@ impl Rtc {
             dtls_buf: vec![0; 2000],
             next_dtls_timeout: None,
             session,
-            sctp: RtcSctp::new(),
+            sctp,
             chan: ChannelHandler::default(),
             stats: config.stats_interval.map(Stats::new),
             remote_fingerprint: None,
@@ -1379,14 +1384,19 @@ impl Rtc {
         Ok(())
     }
 
-    fn init_sctp(&mut self, client: bool) {
+    fn try_init_sctp(
+        &mut self,
+        client: bool,
+        sctp_init_data: Option<SctpInitData>,
+    ) -> Result<(), RtcError> {
         // If we got an m=application line, ensure we have negotiated the
         // SCTP association with the other side.
         if self.sctp.is_inited() {
-            return;
+            return Ok(());
         }
 
-        self.sctp.init(client, self.last_now);
+        self.sctp.init(client, self.last_now, sctp_init_data)?;
+        Ok(())
     }
 
     /// Creates a new Mid that is not in the session already.

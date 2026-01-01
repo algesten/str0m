@@ -78,6 +78,16 @@ impl Sdp {
         candidates.into_iter()
     }
 
+    /// Get the `a=sctp-init` value from the application m-line, if present.
+    ///
+    /// Returns the base64-encoded SCTP INIT value.
+    pub(crate) fn sctp_init(&self) -> Option<&str> {
+        self.media_lines
+            .iter()
+            .find(|m| m.typ.is_channel())
+            .and_then(|m| m.sctp_init())
+    }
+
     pub(crate) fn setup(&self) -> Option<Setup> {
         self.session
             .setup()
@@ -255,6 +265,19 @@ impl MediaLine {
             // We should only use `mid()` once we're certain there is
             // a mid line. This is checked by `check_consistent`.
             .expect("missing a=mid")
+    }
+
+    /// Get the sctp-init attribute value (base64-encoded string).
+    ///
+    /// Returns `None` if no `a=sctp-init` attribute is present.
+    pub fn sctp_init(&self) -> Option<&str> {
+        self.attrs.iter().find_map(|a| {
+            if let MediaAttribute::SctpInit(v) = a {
+                Some(v.as_str())
+            } else {
+                None
+            }
+        })
     }
 
     pub fn msid(&self) -> Option<Msid> {
@@ -806,6 +829,9 @@ pub enum MediaAttribute {
     Mid(Mid),     // 0, 1, 2
     SctpPort(u16),
     MaxMessageSize(usize),
+    /// a=sctp-init:<base64-encoded SCTP INIT chunk>
+    /// See draft-hancke-tsvwg-snap
+    SctpInit(String),
     // a=extmap:1 urn:ietf:params:rtp-hdrext:ssrc-audio-level
     // a=extmap:2 http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time
     ExtMap {
@@ -1326,6 +1352,7 @@ impl fmt::Display for MediaAttribute {
             Mid(v) => write!(f, "a=mid:{v}\r\n")?,
             SctpPort(v) => write!(f, "a=sctp-port:{v}\r\n")?,
             MaxMessageSize(v) => write!(f, "a=max-message-size:{v}\r\n")?,
+            SctpInit(v) => write!(f, "a=sctp-init:{v}\r\n")?,
             ExtMap { id, ext } => {
                 if !ext.is_serialized() {
                     return Ok(());
