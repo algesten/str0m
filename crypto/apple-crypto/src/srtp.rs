@@ -146,18 +146,7 @@ impl AeadAes128GcmCipher for AppleCryptoAeadAes128GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<(), CryptoError> {
-        assert!(
-            aad.len() >= 12,
-            "Associated data length MUST be at least 12 octets"
-        );
-
-        output.copy_from_slice(
-            apple_cryptokit::aes_gcm_encrypt_with_aad(&self.key, iv, input, aad)
-                .map_err(|err| CryptoError::Other(format!("{err:?}")))?
-                .as_slice(),
-        );
-
-        Ok(())
+        aes_gcm_encrypt(&self.key, iv, input, aad, output)
     }
 
     fn decrypt(
@@ -168,19 +157,7 @@ impl AeadAes128GcmCipher for AppleCryptoAeadAes128GcmCipher {
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
         assert!(input.len() >= AeadAes128Gcm::TAG_LEN);
-
-        static EMPTY: [u8; 0] = [];
-        let aad = match aads.len() {
-            0 => &EMPTY,
-            1 => aads[0],
-            _ => &aads.concat(),
-        };
-
-        let output_vec = apple_cryptokit::aes_gcm_decrypt_with_aad(&self.key, iv, input, aad)
-            .map_err(|err| CryptoError::Other(format!("{err:?}")))?;
-        output.copy_from_slice(output_vec.as_slice());
-
-        Ok(output_vec.len())
+        aes_gcm_decrypt(&self.key, iv, aads, input, output)
     }
 }
 
@@ -204,18 +181,7 @@ impl AeadAes256GcmCipher for AppleCryptoAeadAes256GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<(), CryptoError> {
-        assert!(
-            aad.len() >= 12,
-            "Associated data length MUST be at least 12 octets"
-        );
-
-        output.copy_from_slice(
-            apple_cryptokit::aes_gcm_encrypt_with_aad(&self.key, iv, input, aad)
-                .map_err(|err| CryptoError::Other(format!("{err:?}")))?
-                .as_slice(),
-        );
-
-        Ok(())
+        aes_gcm_encrypt(&self.key, iv, input, aad, output)
     }
 
     fn decrypt(
@@ -226,20 +192,50 @@ impl AeadAes256GcmCipher for AppleCryptoAeadAes256GcmCipher {
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
         assert!(input.len() >= AeadAes256Gcm::TAG_LEN);
-
-        static EMPTY: [u8; 0] = [];
-        let aad = match aads.len() {
-            0 => &EMPTY,
-            1 => aads[0],
-            _ => &aads.concat(),
-        };
-
-        let output_vec = apple_cryptokit::aes_gcm_decrypt_with_aad(&self.key, iv, input, aad)
-            .map_err(|err| CryptoError::Other(format!("{err:?}")))?;
-        output.copy_from_slice(output_vec.as_slice());
-
-        Ok(output_vec.len())
+        aes_gcm_decrypt(&self.key, iv, aads, input, output)
     }
+}
+
+fn aes_gcm_encrypt(
+    key: &[u8],
+    iv: &[u8],
+    input: &[u8],
+    aad: &[u8],
+    output: &mut [u8],
+) -> Result<(), CryptoError> {
+    assert!(
+        aad.len() >= 12,
+        "Associated data length MUST be at least 12 octets"
+    );
+
+    output.copy_from_slice(
+        apple_cryptokit::aes_gcm_encrypt_with_aad(key, iv, input, aad)
+            .map_err(|err| CryptoError::Other(format!("{err:?}")))?
+            .as_slice(),
+    );
+
+    Ok(())
+}
+
+fn aes_gcm_decrypt(
+    key: &[u8],
+    iv: &[u8],
+    aads: &[&[u8]],
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<usize, CryptoError> {
+    static EMPTY: [u8; 0] = [];
+    let aad = match aads.len() {
+        0 => &EMPTY,
+        1 => aads[0],
+        _ => &aads.concat(),
+    };
+
+    let output_vec = apple_cryptokit::aes_gcm_decrypt_with_aad(key, iv, input, aad)
+        .map_err(|err| CryptoError::Other(format!("{err:?}")))?;
+    output.copy_from_slice(output_vec.as_slice());
+
+    Ok(output_vec.len())
 }
 
 // SRTP Profile Support Implementations
