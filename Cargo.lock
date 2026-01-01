@@ -153,6 +153,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
 
 [[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
 name = "base64ct"
 version = "1.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1346,7 +1352,7 @@ version = "3.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3716fbf57fc1084d7a706adf4e445298d123e4a44294c4e8213caf1b85fcc921"
 dependencies = [
- "base64",
+ "base64 0.13.1",
  "brotli",
  "chrono",
  "deflate",
@@ -1401,7 +1407,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5eebeaeb360c87bfb72e84abdb3447159c0eaececf1bef2aecd65a8be949d1c9"
 dependencies = [
- "base64",
+ "base64 0.13.1",
 ]
 
 [[package]]
@@ -1443,9 +1449,8 @@ dependencies = [
 
 [[package]]
 name = "sctp-proto"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57239be45f014795255107f85dfe3503791711e77c4995f936caf89a2afe0c16"
+version = "0.7.1"
+source = "git+https://github.com/algesten/sctp-proto?branch=dev/outofbandneg#2bc388ebd756ad7b6992a98c4b854b5d12888d06"
 dependencies = [
  "bytes",
  "crc",
@@ -1622,6 +1627,7 @@ version = "0.16.2"
 dependencies = [
  "_str0m_test",
  "arrayvec",
+ "base64 0.22.1",
  "combine",
  "crc",
  "dimpl",

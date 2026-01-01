@@ -43,8 +43,8 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
     l.direct_api().start_dtls(true).unwrap();
     r.direct_api().start_dtls(false).unwrap();
 
-    l.direct_api().start_sctp(true);
-    r.direct_api().start_sctp(false);
+    l.direct_api().start_sctp(true).unwrap();
+    r.direct_api().start_sctp(false).unwrap();
 
     let config = ChannelConfig {
         negotiated: Some(1),

@@ -3,7 +3,7 @@ use crate::crypto::Fingerprint;
 use crate::media::{Media, MediaKind};
 use crate::rtp_::MidRid;
 use crate::rtp_::{Mid, Rid, Ssrc};
-use crate::sctp::ChannelConfig;
+use crate::sctp::{ChannelConfig, SctpConfig};
 use crate::streams::{StreamRx, StreamTx, DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP};
 use crate::Candidate;
 use crate::IceCreds;
@@ -110,9 +110,59 @@ impl<'a> DirectApi<'a> {
         self.rtc.init_dtls(active)
     }
 
+    /// Set the SCTP configuration.
+    ///
+    /// This must be called before [`Self::start_sctp()`] to take effect.
+    /// Use this when you have out-of-band negotiated SCTP parameters,
+    /// such as the remote INIT chunk.
+    ///
+    /// Returns an error if SCTP has already been initialized via `start_sctp()`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use str0m::channel::SctpConfig;
+    ///
+    /// let mut sctp_config = SctpConfig::new();
+    /// sctp_config.set_remote_chunk_init(remote_init_bytes);
+    /// rtc.direct_api().set_sctp_config(sctp_config)?;
+    /// rtc.direct_api().start_sctp(false)?; // server with out-of-band signaling
+    /// ```
+    pub fn set_sctp_config(&mut self, config: SctpConfig) -> Result<(), RtcError> {
+        self.rtc.sctp.set_config(config).map_err(RtcError::from)
+    }
+
+    /// Get or create a mutable reference to the SCTP configuration.
+    ///
+    /// Use this to modify the config, for example to set the remote INIT chunk
+    /// for out-of-band signaling. A default config is created if none was set.
+    ///
+    /// Returns `None` if SCTP has already been initialized via `start_sctp()`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Get local INIT chunk to send via signaling
+    /// let local_init = rtc.direct_api().sctp_config()
+    ///     .expect("SCTP not yet initialized")
+    ///     .local_init_chunk()
+    ///     .expect("Failed to generate local INIT chunk");
+    /// // ... send local_init via signaling, receive remote_init ...
+    /// rtc.direct_api().sctp_config()
+    ///     .expect("SCTP not yet initialized")
+    ///     .set_remote_chunk_init(remote_init);
+    /// rtc.direct_api().start_sctp(false); // skips SCTP handshake
+    /// ```
+    pub fn sctp_config(&mut self) -> Option<&mut SctpConfig> {
+        self.rtc.sctp.sctp_config_or_default()
+    }
+
     /// Start the SCTP over DTLS.
-    pub fn start_sctp(&mut self, client: bool) {
-        self.rtc.init_sctp(client)
+    ///
+    /// When `client` is `true`, this side initiates the SCTP association as the
+    /// connecting party. With SNAP (out-of-band SCTP init exchange), `false` is
+    /// also perfectly acceptable as long as `remote_chunk_init` is supplied via
+    /// the SCTP config — the 4-way handshake will be skipped entirely.
+    pub fn start_sctp(&mut self, client: bool) -> Result<(), RtcError> {
+        self.rtc.try_init_sctp(client)
     }
 
     /// Create a new data channel.

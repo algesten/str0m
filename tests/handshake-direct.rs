@@ -1,5 +1,7 @@
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -11,23 +13,45 @@ use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcConfig,
 use tracing::{info_span, Span};
 
 mod common;
-use common::{init_crypto_default, init_log};
+use common::{init_crypto_default, init_log, snap_local_init};
+
+/// Maximum total packets expected when using SNAP.
+///
+/// SNAP skips the 4-way SCTP handshake (INIT, INIT-ACK, COOKIE-ECHO,
+/// COOKIE-ACK), so the total packet count should be well under this limit.
+/// The exact number depends on ICE/DTLS setup specifics.
+const MAX_SNAP_PACKETS: usize = 20;
 
 /// Pre-negotiated data channel SCTP stream ID
 const DATA_CHANNEL_ID: u16 = 0;
 
+/// Standard direct API handshake (no SNAP).
 #[test]
 pub fn handshake_direct_api_two_threads() -> Result<(), RtcError> {
+    run_direct_handshake(false)
+}
+
+/// Direct API handshake with SNAP (out-of-band SCTP INIT exchange, skips 4-way handshake).
+#[test]
+pub fn handshake_direct_api_snap() -> Result<(), RtcError> {
+    run_direct_handshake(true)
+}
+
+/// Shared implementation for both standard and SNAP direct API handshake tests.
+fn run_direct_handshake(use_snap: bool) -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
     let test_start = Instant::now();
 
     // Channels for communication between threads
-    // client -> server
     let (client_tx, server_rx) = mpsc::channel::<Message>();
-    // server -> client
     let (server_tx, client_rx) = mpsc::channel::<Message>();
+
+    let client_packets_sent = Arc::new(AtomicUsize::new(0));
+    let server_packets_sent = Arc::new(AtomicUsize::new(0));
+    let client_packets_sent_clone = client_packets_sent.clone();
+    let server_packets_sent_clone = server_packets_sent.clone();
 
     let client_addr: SocketAddr = (Ipv4Addr::new(192, 168, 1, 1), 5000).into();
     let server_addr: SocketAddr = (Ipv4Addr::new(192, 168, 1, 2), 5001).into();
@@ -41,31 +65,35 @@ pub fn handshake_direct_api_two_threads() -> Result<(), RtcError> {
         // Initialize server (is_client = false)
         let (mut rtc, local_creds, local_fingerprint) = init_rtc(false, server_addr)?;
 
+        // If SNAP, get local SCTP INIT for out-of-band exchange
+        let local_sctp_init = snap_local_init(&mut rtc, use_snap);
+
         // Send server's credentials to client
         server_tx
             .send(Message::Credentials {
                 ice_ufrag: local_creds.ufrag.clone(),
                 ice_pwd: local_creds.pass.clone(),
                 dtls_fingerprint: local_fingerprint,
+                sctp_init: local_sctp_init,
             })
             .expect("Failed to send server credentials");
 
         // Wait for client's credentials
-        let (remote_ice_ufrag, remote_ice_pwd, remote_fingerprint) =
+        let (remote_ice_ufrag, remote_ice_pwd, remote_fingerprint, remote_sctp_init) =
             match server_rx.recv_timeout(Duration::from_secs(5)) {
                 Ok(Message::Credentials {
                     ice_ufrag,
                     ice_pwd,
                     dtls_fingerprint,
+                    sctp_init,
                 }) => {
                     timing.got_offer = Some(Instant::now());
-                    (ice_ufrag, ice_pwd, dtls_fingerprint)
+                    (ice_ufrag, ice_pwd, dtls_fingerprint, sctp_init)
                 }
                 Ok(_) => panic!("Server expected Credentials, got something else"),
                 Err(e) => panic!("Server failed to receive credentials: {:?}", e),
             };
 
-        // Configure with remote credentials (is_client = false)
         configure_rtc(
             &mut rtc,
             false,
@@ -73,11 +101,19 @@ pub fn handshake_direct_api_two_threads() -> Result<(), RtcError> {
             remote_ice_ufrag,
             remote_ice_pwd,
             remote_fingerprint,
+            remote_sctp_init,
         )?;
         timing.sent_answer = Some(Instant::now());
 
-        // Run the event loop with message exchange
-        run_rtc_loop_with_exchange(&mut rtc, &span, &server_rx, &server_tx, &mut timing, false)?;
+        run_rtc_loop_with_exchange(
+            &mut rtc,
+            &span,
+            &server_rx,
+            &server_tx,
+            &mut timing,
+            false,
+            &server_packets_sent_clone,
+        )?;
 
         Ok(timing)
     });
@@ -91,14 +127,18 @@ pub fn handshake_direct_api_two_threads() -> Result<(), RtcError> {
         // Initialize client (is_client = true)
         let (mut rtc, local_creds, local_fingerprint) = init_rtc(true, client_addr)?;
 
+        // If SNAP, get local SCTP INIT for out-of-band exchange
+        let local_sctp_init = snap_local_init(&mut rtc, use_snap);
+
         // Wait for server's credentials first
-        let (remote_ice_ufrag, remote_ice_pwd, remote_fingerprint) =
+        let (remote_ice_ufrag, remote_ice_pwd, remote_fingerprint, remote_sctp_init) =
             match client_rx.recv_timeout(Duration::from_secs(5)) {
                 Ok(Message::Credentials {
                     ice_ufrag,
                     ice_pwd,
                     dtls_fingerprint,
-                }) => (ice_ufrag, ice_pwd, dtls_fingerprint),
+                    sctp_init,
+                }) => (ice_ufrag, ice_pwd, dtls_fingerprint, sctp_init),
                 Ok(_) => panic!("Client expected Credentials, got something else"),
                 Err(e) => panic!("Client failed to receive server credentials: {:?}", e),
             };
@@ -109,11 +149,11 @@ pub fn handshake_direct_api_two_threads() -> Result<(), RtcError> {
                 ice_ufrag: local_creds.ufrag.clone(),
                 ice_pwd: local_creds.pass.clone(),
                 dtls_fingerprint: local_fingerprint,
+                sctp_init: local_sctp_init,
             })
             .expect("Failed to send client credentials");
         timing.sent_offer = Some(Instant::now());
 
-        // Configure with remote credentials (is_client = true)
         configure_rtc(
             &mut rtc,
             true,
@@ -121,11 +161,19 @@ pub fn handshake_direct_api_two_threads() -> Result<(), RtcError> {
             remote_ice_ufrag,
             remote_ice_pwd,
             remote_fingerprint,
+            remote_sctp_init,
         )?;
         timing.got_answer = Some(Instant::now());
 
-        // Run the event loop with message exchange
-        run_rtc_loop_with_exchange(&mut rtc, &span, &client_rx, &client_tx, &mut timing, true)?;
+        run_rtc_loop_with_exchange(
+            &mut rtc,
+            &span,
+            &client_rx,
+            &client_tx,
+            &mut timing,
+            true,
+            &client_packets_sent_clone,
+        )?;
 
         Ok(timing)
     });
@@ -141,15 +189,33 @@ pub fn handshake_direct_api_two_threads() -> Result<(), RtcError> {
         .expect("Client returned error");
 
     let total_time = test_start.elapsed();
+    let variant = if use_snap { "SNAP" } else { "standard" };
 
-    // Print timing reports
-    client_timing.print("CLIENT");
-    server_timing.print("SERVER");
+    client_timing.print(&format!("CLIENT ({})", variant));
+    server_timing.print(&format!("SERVER ({})", variant));
 
     println!(
-        "\n=== Total Test Time: {:.3}ms ===",
+        "\n=== Total Test Time ({}): {:.3}ms ===",
+        variant,
         total_time.as_secs_f64() * 1000.0
     );
+
+    let client_sent = client_packets_sent.load(Ordering::SeqCst);
+    let server_sent = server_packets_sent.load(Ordering::SeqCst);
+    let total_packets = client_sent + server_sent;
+    println!("\n=== Packet Counts ({}) ===", variant);
+    println!("  Client packets sent: {}", client_sent);
+    println!("  Server packets sent: {}", server_sent);
+    println!("  Total packets: {}", total_packets);
+
+    if use_snap {
+        // SNAP skips the 4-way SCTP handshake, so it must use strictly fewer
+        // packets than a standard connection.
+        assert!(
+            total_packets < MAX_SNAP_PACKETS,
+            "SNAP should use fewer packets, got {total_packets}"
+        );
+    }
 
     // Verify the exchange happened
     assert!(
@@ -173,8 +239,6 @@ pub fn handshake_direct_api_two_threads() -> Result<(), RtcError> {
 }
 
 /// Initialize an Rtc instance configured for client or server role.
-///
-/// Returns the Rtc instance and the local ICE credentials/DTLS fingerprint for exchange.
 fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, String), RtcError> {
     let ice_creds = IceCreds::new();
 
@@ -184,10 +248,8 @@ fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, S
     }
     let mut rtc = rtc_config.build(Instant::now());
 
-    // Get DTLS fingerprint
     let fingerprint = rtc.direct_api().local_dtls_fingerprint().to_string();
 
-    // Add local candidate
     let local_candidate = Candidate::host(local_addr, "udp")?;
     rtc.add_local_candidate(local_candidate);
 
@@ -195,6 +257,9 @@ fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, S
 }
 
 /// Configure the Rtc instance with remote credentials and start DTLS/SCTP.
+///
+/// If `remote_sctp_init` is `Some`, the remote SCTP INIT chunk is set for
+/// out-of-band establishment (SNAP), skipping the 4-way SCTP handshake.
 fn configure_rtc(
     rtc: &mut Rtc,
     is_client: bool,
@@ -202,39 +267,39 @@ fn configure_rtc(
     remote_ice_ufrag: String,
     remote_ice_pwd: String,
     remote_fingerprint: String,
+    remote_sctp_init: Option<Vec<u8>>,
 ) -> Result<(), RtcError> {
-    // Add remote candidate
     let remote_candidate = Candidate::host(remote_addr, "udp")?;
     rtc.add_remote_candidate(remote_candidate);
 
     {
         let mut direct_api = rtc.direct_api();
 
-        // Set ICE parameters
-        // Client: not ice-lite, IS controlling
-        // Server: ice-lite, NOT controlling
         direct_api.set_ice_lite(!is_client);
         direct_api.set_ice_controlling(is_client);
 
-        // Set remote ICE credentials
         direct_api.set_remote_ice_credentials(IceCreds {
             ufrag: remote_ice_ufrag,
             pass: remote_ice_pwd,
         });
 
-        // Set remote DTLS fingerprint
         let fingerprint: Fingerprint = remote_fingerprint
             .parse()
             .expect("Failed to parse remote fingerprint");
         direct_api.set_remote_fingerprint(fingerprint);
 
-        // Start DTLS - client IS the DTLS client, server is NOT
         direct_api.start_dtls(is_client)?;
 
-        // Start SCTP - client IS the SCTP client, server is NOT
-        direct_api.start_sctp(is_client);
+        // If SNAP, set remote SCTP INIT chunk to skip 4-way handshake
+        if let Some(init) = remote_sctp_init {
+            direct_api
+                .sctp_config()
+                .expect("SCTP config available before init")
+                .set_remote_chunk_init(init);
+        }
 
-        // Create pre-negotiated data channel
+        direct_api.start_sctp(is_client)?;
+
         direct_api.create_data_channel(ChannelConfig {
             label: "test-channel".into(),
             negotiated: Some(DATA_CHANNEL_ID),
@@ -244,7 +309,6 @@ fn configure_rtc(
         });
     }
 
-    // Initialize with a timeout
     rtc.handle_input(Input::Timeout(Instant::now()))?;
 
     Ok(())
@@ -253,11 +317,13 @@ fn configure_rtc(
 /// Messages exchanged between client and server threads.
 #[derive(Debug)]
 enum Message {
-    /// ICE and DTLS credentials exchange
+    /// ICE, DTLS, and optionally SCTP credentials exchange
     Credentials {
         ice_ufrag: String,
         ice_pwd: String,
         dtls_fingerprint: String,
+        /// SCTP INIT chunk for SNAP (`None` when not using SNAP)
+        sctp_init: Option<Vec<u8>>,
     },
     /// RTP/DTLS/SCTP packet
     Packet {
@@ -370,29 +436,27 @@ fn run_rtc_loop_with_exchange(
     outgoing: &Sender<Message>,
     timing: &mut TimingReport,
     is_client: bool,
+    packets_sent: &AtomicUsize,
 ) -> Result<(), RtcError> {
     let mut state = DataExchangeState::WaitingForChannelOpen;
     let mut channel_id: Option<ChannelId> = None;
     let role = if is_client { "CLIENT" } else { "SERVER" };
 
     loop {
-        // Check if we're done
         if state == DataExchangeState::Complete {
             break;
         }
 
-        // Safety timeout - don't run forever
         if timing.start.unwrap().elapsed() > Duration::from_secs(10) {
             println!("[{}] Overall timeout reached", role);
             break;
         }
 
-        // Poll all outputs until we get a timeout
         let timeout = loop {
             match span.in_scope(|| rtc.poll_output())? {
                 Output::Timeout(t) => break t,
                 Output::Transmit(t) => {
-                    // Send packet to other peer
+                    packets_sent.fetch_add(1, Ordering::SeqCst);
                     let _ = outgoing.send(Message::Packet {
                         proto: t.proto,
                         source: t.source,
@@ -417,12 +481,10 @@ fn run_rtc_loop_with_exchange(
             }
         };
 
-        // Calculate wait duration - this is when we NEED to wake up
         let now = Instant::now();
         let wait = timeout.saturating_duration_since(now);
         println!("[{}] poll_output returned timeout in {:?}", role, wait);
 
-        // Wait for incoming message or timeout
         match incoming.recv_timeout(wait) {
             Ok(Message::Packet {
                 proto,
@@ -510,26 +572,20 @@ fn handle_event(
                 msg
             );
             if is_client {
-                // Client expects "sevenofnine" reply
                 if msg == "sevenofnine" {
                     println!("[CLIENT] Got reply 'sevenofnine' - sending Exit and completing");
                     timing.received_data = Some(Instant::now());
-                    // Send Exit signal to server
                     let _ = outgoing.send(Message::Exit);
                     *state = DataExchangeState::Complete;
                 }
-            } else {
-                // Server receives "sixseven" and replies
-                if msg == "sixseven" {
-                    timing.received_data = Some(Instant::now());
-                    // Use channel id from the data event (works for pre-negotiated channels)
-                    let cid = data.id;
-                    if let Some(mut chan) = rtc.channel(cid) {
-                        chan.write(true, b"sevenofnine").expect("Failed to write");
-                        println!("[SERVER] Sent reply 'sevenofnine'");
-                        timing.sent_data = Some(Instant::now());
-                        *state = DataExchangeState::SentMessage;
-                    }
+            } else if msg == "sixseven" {
+                timing.received_data = Some(Instant::now());
+                let cid = data.id;
+                if let Some(mut chan) = rtc.channel(cid) {
+                    chan.write(true, b"sevenofnine").expect("Failed to write");
+                    println!("[SERVER] Sent reply 'sevenofnine'");
+                    timing.sent_data = Some(Instant::now());
+                    *state = DataExchangeState::SentMessage;
                 }
             }
         }

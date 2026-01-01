@@ -845,6 +845,21 @@ pub struct Rtc {
     last_timeout_reason: Reason,
     crypto_provider: Arc<crate::crypto::CryptoProvider>,
     fingerprint_verification: bool,
+    snap: SnapState,
+}
+
+/// SNAP (SCTP Negotiation Acceleration Protocol) negotiation state.
+///
+/// Tracks whether SNAP is enabled and caches the SCTP INIT chunks
+/// exchanged during the initial offer/answer for re-offer validation (§5.6).
+#[derive(Debug, Default)]
+pub(crate) struct SnapState {
+    /// Whether to generate `a=sctp-init` in outgoing offers.
+    pub enabled: bool,
+    /// Cached local SCTP INIT bytes. Re-emitted on subsequent offers/answers (§5.6).
+    pub local_init: Option<Vec<u8>>,
+    /// Cached remote SCTP INIT bytes. Used to validate subsequent offers/answers (§5.6).
+    pub remote_init: Option<Vec<u8>>,
 }
 
 struct SendAddr {
@@ -1166,7 +1181,7 @@ impl Rtc {
             dtls_buf: vec![0; 2000],
             next_dtls_timeout: None,
             session,
-            sctp: RtcSctp::new(),
+            sctp: RtcSctp::new(config.sctp_config),
             chan: ChannelHandler::default(),
             stats: config.stats_interval.map(Stats::new),
             remote_fingerprint: None,
@@ -1180,6 +1195,10 @@ impl Rtc {
             last_timeout_reason: Reason::NotHappening,
             crypto_provider,
             fingerprint_verification: config.fingerprint_verification,
+            snap: SnapState {
+                enabled: config.snap_enabled,
+                ..Default::default()
+            },
         })
     }
 
@@ -1393,14 +1412,16 @@ impl Rtc {
         Ok(())
     }
 
-    fn init_sctp(&mut self, client: bool) {
+    pub(crate) fn try_init_sctp(&mut self, is_initiator: bool) -> Result<(), RtcError> {
         // If we got an m=application line, ensure we have negotiated the
         // SCTP association with the other side.
         if self.sctp.is_inited() {
-            return;
+            return Ok(());
         }
 
-        self.sctp.init(client, self.last_now);
+        self.sctp
+            .init(is_initiator, self.last_now)
+            .map_err(RtcError::from)
     }
 
     /// Creates a new Mid that is not in the session already.
@@ -1557,58 +1578,65 @@ impl Rtc {
             return Ok(Output::Event(Event::Connected));
         }
 
-        while let Some(e) = self.sctp.poll() {
-            match e {
-                SctpEvent::Transmit { mut packets } => {
-                    if let Some(v) = packets.front() {
-                        if let Err(e) = self.dtls.handle_input(v) {
-                            if is_would_block(&e) {
-                                self.sctp.push_back_transmit(packets);
-                                break;
-                            } else {
-                                return Err(e.into());
+        // Guard SCTP polling behind DTLS connection state. This is critical
+        // for SNAP, where the SCTP association transitions to Established
+        // immediately (before DTLS completes), but also correct for the
+        // non-SNAP path: there is no point polling SCTP for transmit before
+        // the DTLS tunnel is ready to carry the packets.
+        if self.dtls_connected {
+            while let Some(e) = self.sctp.poll() {
+                match e {
+                    SctpEvent::Transmit { mut packets } => {
+                        if let Some(v) = packets.front() {
+                            if let Err(e) = self.dtls.handle_input(v) {
+                                if is_would_block(&e) {
+                                    self.sctp.push_back_transmit(packets);
+                                    break;
+                                } else {
+                                    return Err(e.into());
+                                }
                             }
-                        }
 
-                        packets.pop_front();
-                        // If there are still packets, they are sent on next
-                        // poll_output()
-                        if !packets.is_empty() {
-                            self.sctp.push_back_transmit(packets);
-                        }
+                            packets.pop_front();
+                            // If there are still packets, they are sent on next
+                            // poll_output()
+                            if !packets.is_empty() {
+                                self.sctp.push_back_transmit(packets);
+                            }
 
-                        // Run again since this would feed the DTLS subsystem
-                        // to produce a packet now.
-                        return self.do_poll_output();
+                            // Run again since this would feed the DTLS subsystem
+                            // to produce a packet now.
+                            return self.do_poll_output();
+                        }
                     }
-                }
-                SctpEvent::Open { id, label } => {
-                    self.chan.ensure_channel_id_for(id);
-                    let id = self.chan.channel_id_by_stream_id(id).unwrap();
-                    return Ok(Output::Event(Event::ChannelOpen(id, label)));
-                }
-                SctpEvent::Close { id } => {
-                    let Some(id) = self.chan.channel_id_by_stream_id(id) else {
-                        warn!("Drop ChannelClose event for id: {:?}", id);
-                        continue;
-                    };
-                    self.chan.remove_channel(id);
-                    return Ok(Output::Event(Event::ChannelClose(id)));
-                }
-                SctpEvent::Data { id, binary, data } => {
-                    let Some(id) = self.chan.channel_id_by_stream_id(id) else {
-                        warn!("Drop ChannelData event for id: {:?}", id);
-                        continue;
-                    };
-                    let cd = ChannelData { id, binary, data };
-                    return Ok(Output::Event(Event::ChannelData(cd)));
-                }
-                SctpEvent::BufferedAmountLow { id } => {
-                    let Some(id) = self.chan.channel_id_by_stream_id(id) else {
-                        warn!("Drop BufferedAmountLow for id: {:?}", id);
-                        continue;
-                    };
-                    return Ok(Output::Event(Event::ChannelBufferedAmountLow(id)));
+                    SctpEvent::Open { id, label } => {
+                        self.chan.ensure_channel_id_for(id);
+                        let id = self.chan.channel_id_by_stream_id(id).unwrap();
+                        return Ok(Output::Event(Event::ChannelOpen(id, label)));
+                    }
+                    SctpEvent::Close { id } => {
+                        let Some(id) = self.chan.channel_id_by_stream_id(id) else {
+                            warn!("Drop ChannelClose event for id: {:?}", id);
+                            continue;
+                        };
+                        self.chan.remove_channel(id);
+                        return Ok(Output::Event(Event::ChannelClose(id)));
+                    }
+                    SctpEvent::Data { id, binary, data } => {
+                        let Some(id) = self.chan.channel_id_by_stream_id(id) else {
+                            warn!("Drop ChannelData event for id: {:?}", id);
+                            continue;
+                        };
+                        let cd = ChannelData { id, binary, data };
+                        return Ok(Output::Event(Event::ChannelData(cd)));
+                    }
+                    SctpEvent::BufferedAmountLow { id } => {
+                        let Some(id) = self.chan.channel_id_by_stream_id(id) else {
+                            warn!("Drop BufferedAmountLow for id: {:?}", id);
+                            continue;
+                        };
+                        return Ok(Output::Event(Event::ChannelBufferedAmountLow(id)));
+                    }
                 }
             }
         }

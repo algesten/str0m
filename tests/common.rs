@@ -479,8 +479,8 @@ pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {
     l.direct_api().start_dtls(true).unwrap();
     r.direct_api().start_dtls(false).unwrap();
 
-    l.direct_api().start_sctp(true);
-    r.direct_api().start_sctp(false);
+    l.direct_api().start_sctp(true).unwrap();
+    r.direct_api().start_sctp(false).unwrap();
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -516,6 +516,58 @@ pub fn av1_data() -> PcapData {
 
 pub fn h265_data() -> PcapData {
     load_pcap_data(include_bytes!("data/h265.pcap"))
+}
+
+// ---------------------------------------------------------------------------
+// SNAP (SCTP Negotiation Acceleration Protocol) test helpers
+// ---------------------------------------------------------------------------
+
+/// Extract the `a=sctp-init:<value>` from an SDP string, if present.
+pub fn extract_sctp_init(sdp: &str) -> Option<String> {
+    sdp.lines()
+        .find(|l| l.starts_with("a=sctp-init:"))
+        .map(|l| l.trim_start_matches("a=sctp-init:").to_string())
+}
+
+/// Replace the `a=sctp-init:` attribute value in an SDP string.
+pub fn replace_sctp_init(sdp: &str, replacement: &str) -> String {
+    sdp.lines()
+        .map(|line| {
+            if line.starts_with("a=sctp-init:") {
+                format!("a=sctp-init:{replacement}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\r\n")
+        + "\r\n"
+}
+
+/// Remove the `a=sctp-init:` attribute from an SDP string.
+pub fn remove_sctp_init(sdp: &str) -> String {
+    sdp.lines()
+        .filter(|line| !line.starts_with("a=sctp-init:"))
+        .collect::<Vec<_>>()
+        .join("\r\n")
+        + "\r\n"
+}
+
+/// Generate a local SCTP INIT chunk for SNAP via the direct API.
+///
+/// Returns `Some(init_bytes)` when `use_snap` is true, `None` otherwise.
+pub fn snap_local_init(rtc: &mut Rtc, use_snap: bool) -> Option<Vec<u8>> {
+    if use_snap {
+        Some(
+            rtc.direct_api()
+                .sctp_config()
+                .expect("SCTP config available before init")
+                .local_init_chunk()
+                .expect("generate_snap_init should not fail"),
+        )
+    } else {
+        None
+    }
 }
 
 pub fn load_pcap_data(data: &[u8]) -> PcapData {
