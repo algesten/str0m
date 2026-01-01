@@ -29,7 +29,7 @@ impl Cipher for AesGcm {
         let output = apple_cryptokit::aes_gcm_encrypt_with_aad(&self.key, &nonce, plaintext, &aad)
             .map_err(|err| format!("{err:?}"))?;
         plaintext.clear();
-        plaintext.copy_from_slice(&output);
+        plaintext.extend_from_slice(&output);
         Ok(())
     }
 
@@ -37,7 +37,7 @@ impl Cipher for AesGcm {
         let output =
             apple_cryptokit::aes_gcm_decrypt_with_aad(&self.key, &nonce, ciphertext.as_ref(), &aad)
                 .map_err(|err| format!("{err:?}"))?;
-        ciphertext.truncate(0);
+        ciphertext.truncate(output.len());
         ciphertext.as_mut().copy_from_slice(&output);
         Ok(())
     }
