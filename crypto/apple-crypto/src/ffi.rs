@@ -16,7 +16,6 @@ pub(crate) type CCAlgorithm = u32;
 pub(crate) type CCMode = u32;
 pub(crate) type CCPadding = u32;
 pub(crate) type CCCryptorRef = *mut c_void;
-pub(crate) type CC_LONG = u32;
 
 // CommonCrypto Constants
 
@@ -84,34 +83,6 @@ extern "C" {
         dataOutAvailable: usize,
         dataOutMoved: *mut usize,
     ) -> CCCryptorStatus;
-
-    // SHA Hash Functions (streaming)
-
-    pub(crate) fn CC_SHA256_Init(c: *mut CC_SHA256_CTX) -> i32;
-    pub(crate) fn CC_SHA256_Update(c: *mut CC_SHA256_CTX, data: *const u8, len: CC_LONG) -> i32;
-    pub(crate) fn CC_SHA256_Final(md: *mut u8, c: *mut CC_SHA256_CTX) -> i32;
-
-    pub(crate) fn CC_SHA384_Init(c: *mut CC_SHA512_CTX) -> i32;
-    pub(crate) fn CC_SHA384_Update(c: *mut CC_SHA512_CTX, data: *const u8, len: CC_LONG) -> i32;
-    pub(crate) fn CC_SHA384_Final(md: *mut u8, c: *mut CC_SHA512_CTX) -> i32;
-}
-
-// SHA Context Structures
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct CC_SHA256_CTX {
-    pub(crate) count: [u32; 2],
-    pub(crate) hash: [u32; 8],
-    pub(crate) wbuf: [u32; 16],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub(crate) struct CC_SHA512_CTX {
-    pub(crate) count: [u64; 2],
-    pub(crate) hash: [u64; 8],
-    pub(crate) wbuf: [u64; 16],
 }
 
 // RAII Guard for CCCryptorRef

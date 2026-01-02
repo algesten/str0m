@@ -3,16 +3,6 @@
 use dimpl::buffer::Buf;
 use dimpl::crypto::{HashAlgorithm, HashContext, HashProvider};
 
-use crate::ffi::CC_SHA256_Final;
-use crate::ffi::CC_SHA256_Init;
-use crate::ffi::CC_SHA256_Update;
-use crate::ffi::CC_SHA384_Final;
-use crate::ffi::CC_SHA384_Init;
-use crate::ffi::CC_SHA384_Update;
-use crate::ffi::CC_LONG;
-use crate::ffi::CC_SHA256_CTX;
-use crate::ffi::CC_SHA512_CTX;
-
 #[derive(Debug)]
 pub(super) struct AppleHashProvider;
 
@@ -28,17 +18,11 @@ impl HashProvider for AppleHashProvider {
 
 pub(super) static HASH_PROVIDER: AppleHashProvider = AppleHashProvider;
 
-struct Sha256Context {
-    ctx: CC_SHA256_CTX,
-}
+struct Sha256Context(apple_cryptokit::hashing::Sha256);
 
 impl Sha256Context {
     fn new() -> Self {
-        // SAFETY: zeroed memory is valid for CC_SHA256_CTX
-        let mut ctx = unsafe { std::mem::zeroed() };
-        // SAFETY: ctx is properly initialized zeroed memory
-        unsafe { CC_SHA256_Init(&mut ctx) };
-        Self { ctx }
+        Self(apple_cryptokit::hashing::Sha256::new())
     }
 }
 
@@ -50,31 +34,21 @@ impl std::fmt::Debug for Sha256Context {
 
 impl HashContext for Sha256Context {
     fn update(&mut self, data: &[u8]) {
-        // SAFETY: ctx is valid, data pointer and length are from valid slice
-        unsafe { CC_SHA256_Update(&mut self.ctx, data.as_ptr(), data.len() as CC_LONG) };
+        self.0.update(data);
     }
 
     fn clone_and_finalize(&self, out: &mut Buf) {
-        let mut ctx_copy = self.ctx;
-        let mut digest = [0u8; 32];
-        // SAFETY: ctx_copy is valid copy, digest is properly sized buffer
-        unsafe { CC_SHA256_Final(digest.as_mut_ptr(), &mut ctx_copy) };
+        let digest = self.0.snapshot();
         out.clear();
         out.extend_from_slice(&digest);
     }
 }
 
-struct Sha384Context {
-    ctx: CC_SHA512_CTX,
-}
+struct Sha384Context(apple_cryptokit::hashing::Sha384);
 
 impl Sha384Context {
     fn new() -> Self {
-        // SAFETY: zeroed memory is valid for CC_SHA512_CTX
-        let mut ctx = unsafe { std::mem::zeroed() };
-        // SAFETY: ctx is properly initialized zeroed memory
-        unsafe { CC_SHA384_Init(&mut ctx) };
-        Self { ctx }
+        Self(apple_cryptokit::hashing::Sha384::new())
     }
 }
 
@@ -86,15 +60,11 @@ impl std::fmt::Debug for Sha384Context {
 
 impl HashContext for Sha384Context {
     fn update(&mut self, data: &[u8]) {
-        // SAFETY: ctx is valid, data pointer and length are from valid slice
-        unsafe { CC_SHA384_Update(&mut self.ctx, data.as_ptr(), data.len() as CC_LONG) };
+        self.0.update(data);
     }
 
     fn clone_and_finalize(&self, out: &mut Buf) {
-        let mut ctx_copy = self.ctx;
-        let mut digest = [0u8; 48];
-        // SAFETY: ctx_copy is valid copy, digest is properly sized buffer
-        unsafe { CC_SHA384_Final(digest.as_mut_ptr(), &mut ctx_copy) };
+        let digest = self.0.snapshot();
         out.clear();
         out.extend_from_slice(&digest);
     }
@@ -102,20 +72,10 @@ impl HashContext for Sha384Context {
 
 /// Compute SHA-256 hash of data and return as fixed-size array.
 pub(super) fn sha256(data: &[u8]) -> [u8; 32] {
-    let mut ctx = Sha256Context::new();
-    ctx.update(data);
-    let mut digest = [0u8; 32];
-    // SAFETY: ctx is valid, digest is properly sized buffer
-    unsafe { CC_SHA256_Final(digest.as_mut_ptr(), &mut ctx.ctx) };
-    digest
+    apple_cryptokit::sha256_hash(data)
 }
 
 /// Compute SHA-384 hash of data and return as fixed-size array.
 pub(super) fn sha384(data: &[u8]) -> [u8; 48] {
-    let mut ctx = Sha384Context::new();
-    ctx.update(data);
-    let mut digest = [0u8; 48];
-    // SAFETY: ctx is valid, digest is properly sized buffer
-    unsafe { CC_SHA384_Final(digest.as_mut_ptr(), &mut ctx.ctx) };
-    digest
+    apple_cryptokit::sha384_hash(data)
 }
