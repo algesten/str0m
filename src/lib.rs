@@ -736,7 +736,7 @@ pub mod rtp {
 pub mod bwe;
 
 mod sctp;
-use sctp::{RtcSctp, SctpEvent};
+use sctp::{RtcSctp, SctpConfig, SctpEvent};
 
 mod sdp;
 
@@ -1130,7 +1130,7 @@ impl Rtc {
             dtls_buf: vec![0; 2000],
             next_dtls_timeout: None,
             session,
-            sctp: RtcSctp::new(),
+            sctp: RtcSctp::new(config.sctp_config),
             chan: ChannelHandler::default(),
             stats: config.stats_interval.map(Stats::new),
             remote_fingerprint: None,
@@ -1927,6 +1927,7 @@ pub struct RtcConfig {
     send_buffer_video: usize,
     rtp_mode: bool,
     enable_raw_packets: bool,
+    sctp_config: Option<SctpConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -2426,6 +2427,30 @@ impl RtcConfig {
         self
     }
 
+    /// Set the SCTP configuration.
+    ///
+    /// If not set, default SCTP settings optimized for WebRTC will be used.
+    ///
+    /// # Example
+    /// ```
+    /// # use str0m::Rtc;
+    /// # use str0m::channel::SctpConfig;
+    /// let rtc = Rtc::builder()
+    ///     .set_sctp_config(SctpConfig::builder()
+    ///         .with_max_message_size(256 * 1024)
+    ///         .build())
+    ///     .build();
+    /// ```
+    pub fn set_sctp_config(mut self, config: SctpConfig) -> Self {
+        self.sctp_config = Some(config);
+        self
+    }
+
+    /// Get the configured SCTP settings, if set.
+    pub fn sctp_config(&self) -> Option<&SctpConfig> {
+        self.sctp_config.as_ref()
+    }
+
     /// Create a [`Rtc`] from the configuration.
     pub fn build(self) -> Rtc {
         Rtc::new_from_config(self).expect("Failed to create Rtc from config")
@@ -2462,6 +2487,7 @@ impl Default for RtcConfig {
             send_buffer_video: 1000,
             rtp_mode: false,
             enable_raw_packets: false,
+            sctp_config: None,
         }
     }
 }

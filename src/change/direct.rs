@@ -3,7 +3,7 @@ use crate::crypto::Fingerprint;
 use crate::media::{Media, MediaKind};
 use crate::rtp_::MidRid;
 use crate::rtp_::{Mid, Rid, Ssrc};
-use crate::sctp::ChannelConfig;
+use crate::sctp::{ChannelConfig, SctpConfig};
 use crate::streams::{StreamRx, StreamTx, DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP};
 use crate::IceCreds;
 use crate::Rtc;
@@ -94,6 +94,46 @@ impl<'a> DirectApi<'a> {
     /// Start the DTLS subsystem.
     pub fn start_dtls(&mut self, active: bool) -> Result<(), RtcError> {
         self.rtc.init_dtls(active)
+    }
+
+    /// Set the SCTP configuration.
+    ///
+    /// This must be called before [`Self::start_sctp()`] to take effect.
+    /// Use this when you have out-of-band negotiated SCTP parameters,
+    /// such as the remote INIT chunk.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use str0m::channel::SctpConfig;
+    ///
+    /// let sctp_config = SctpConfig::new()
+    ///     .with_remote_chunk_init(remote_init_bytes);
+    /// rtc.direct_api().set_sctp_config(sctp_config);
+    /// rtc.direct_api().start_sctp(false); // server with out-of-band signaling
+    /// ```
+    pub fn set_sctp_config(&mut self, config: SctpConfig) {
+        self.rtc.sctp.set_config(config);
+    }
+
+    /// Get a mutable reference to the SCTP configuration.
+    ///
+    /// Use this to modify the config, for example to set the remote INIT chunk
+    /// for out-of-band signaling.
+    ///
+    /// # Panics
+    ///
+    /// Panics if SCTP has already been initialized via `start_sctp()`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Get local INIT chunk to send via signaling
+    /// let local_init = rtc.direct_api().sctp_config().local_init_chunk();
+    /// // ... send local_init via signaling, receive remote_init ...
+    /// rtc.direct_api().sctp_config().set_remote_chunk_init(remote_init);
+    /// rtc.direct_api().start_sctp(false); // skips SCTP handshake
+    /// ```
+    pub fn sctp_config(&mut self) -> &mut SctpConfig {
+        self.rtc.sctp.sctp_config()
     }
 
     /// Start the SCTP over DTLS.

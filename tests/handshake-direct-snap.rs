@@ -1,8 +1,11 @@
+use std::fs::File;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use pcap_file::pcap::{PcapHeader, PcapPacket, PcapWriter};
+use pcap_file::DataLink;
 use str0m::channel::{ChannelConfig, ChannelId, Reliability};
 use str0m::config::Fingerprint;
 use str0m::ice::IceCreds;
@@ -17,7 +20,7 @@ use common::{init_crypto_default, init_log};
 const DATA_CHANNEL_ID: u16 = 0;
 
 #[test]
-pub fn handshake_direct_api_two_threads() -> Result<(), RtcError> {
+pub fn handshake_direct_api_snap_two_threads() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
@@ -40,129 +43,172 @@ pub fn handshake_direct_api_two_threads() -> Result<(), RtcError> {
     let client_addr: SocketAddr = (Ipv4Addr::new(192, 168, 1, 1), 5000).into();
     let server_addr: SocketAddr = (Ipv4Addr::new(192, 168, 1, 2), 5001).into();
 
+    // Pcap capture start time for both sides
+    let pcap_start = Instant::now();
+    let pcap_start_server = pcap_start;
+    let pcap_start_client = pcap_start;
+
     // Spawn server thread
-    let server_handle = thread::spawn(move || -> Result<TimingReport, RtcError> {
-        let span = info_span!("SERVER");
-        let _guard = span.enter();
-        let mut timing = TimingReport::new();
+    let server_handle = thread::spawn(
+        move || -> Result<(TimingReport, Vec<CapturedPacket>), RtcError> {
+            let span = info_span!("SERVER");
+            let _guard = span.enter();
+            let mut timing = TimingReport::new();
+            let mut captured_packets = Vec::new();
 
-        // Initialize server (is_client = false)
-        let (mut rtc, local_creds, local_fingerprint) = init_rtc(false, server_addr)?;
+            // Initialize server (is_client = false)
+            let (mut rtc, local_creds, local_fingerprint) = init_rtc(false, server_addr)?;
 
-        // Send server's credentials to client
-        server_tx
-            .send(Message::Credentials {
-                ice_ufrag: local_creds.ufrag.clone(),
-                ice_pwd: local_creds.pass.clone(),
-                dtls_fingerprint: local_fingerprint,
-            })
-            .expect("Failed to send server credentials");
+            // Get local SCTP INIT chunk for out-of-band exchange
+            let local_sctp_init = rtc.direct_api().sctp_config().local_init_chunk();
 
-        // Wait for client's credentials
-        let (remote_ice_ufrag, remote_ice_pwd, remote_fingerprint) =
-            match server_rx.recv_timeout(Duration::from_secs(5)) {
-                Ok(Message::Credentials {
-                    ice_ufrag,
-                    ice_pwd,
-                    dtls_fingerprint,
-                }) => {
-                    timing.got_offer = Some(Instant::now());
-                    (ice_ufrag, ice_pwd, dtls_fingerprint)
-                }
-                Ok(_) => panic!("Server expected Credentials, got something else"),
-                Err(e) => panic!("Server failed to receive credentials: {:?}", e),
-            };
+            // Send server's credentials + SCTP INIT to client
+            server_tx
+                .send(Message::Credentials {
+                    ice_ufrag: local_creds.ufrag.clone(),
+                    ice_pwd: local_creds.pass.clone(),
+                    dtls_fingerprint: local_fingerprint,
+                    sctp_init: local_sctp_init,
+                })
+                .expect("Failed to send server credentials");
 
-        // Configure with remote credentials (is_client = false)
-        configure_rtc(
-            &mut rtc,
-            false,
-            client_addr,
-            remote_ice_ufrag,
-            remote_ice_pwd,
-            remote_fingerprint,
-        )?;
-        timing.sent_answer = Some(Instant::now());
+            // Wait for client's credentials + SCTP INIT
+            let (remote_ice_ufrag, remote_ice_pwd, remote_fingerprint, remote_sctp_init) =
+                match server_rx.recv_timeout(Duration::from_secs(5)) {
+                    Ok(Message::Credentials {
+                        ice_ufrag,
+                        ice_pwd,
+                        dtls_fingerprint,
+                        sctp_init,
+                    }) => {
+                        timing.got_offer = Some(Instant::now());
+                        (ice_ufrag, ice_pwd, dtls_fingerprint, sctp_init)
+                    }
+                    Ok(_) => panic!("Server expected Credentials, got something else"),
+                    Err(e) => panic!("Server failed to receive credentials: {:?}", e),
+                };
 
-        // Run the event loop with message exchange
-        run_rtc_loop_with_exchange(
-            &mut rtc,
-            &span,
-            &server_rx,
-            &server_tx,
-            &mut timing,
-            false,
-            &server_packets_sent_clone,
-        )?;
+            // Configure with remote credentials (is_client = false)
+            configure_rtc(
+                &mut rtc,
+                false,
+                client_addr,
+                remote_ice_ufrag,
+                remote_ice_pwd,
+                remote_fingerprint,
+                Some(remote_sctp_init),
+            )?;
+            timing.sent_answer = Some(Instant::now());
 
-        Ok(timing)
-    });
+            // Run the event loop with message exchange
+            run_rtc_loop_with_exchange(
+                &mut rtc,
+                &span,
+                &server_rx,
+                &server_tx,
+                &mut timing,
+                false,
+                &server_packets_sent_clone,
+                &mut captured_packets,
+                pcap_start_server,
+            )?;
+
+            Ok((timing, captured_packets))
+        },
+    );
 
     // Spawn client thread
-    let client_handle = thread::spawn(move || -> Result<TimingReport, RtcError> {
-        let span = info_span!("CLIENT");
-        let _guard = span.enter();
-        let mut timing = TimingReport::new();
+    let client_handle = thread::spawn(
+        move || -> Result<(TimingReport, Vec<CapturedPacket>), RtcError> {
+            let span = info_span!("CLIENT");
+            let _guard = span.enter();
+            let mut timing = TimingReport::new();
+            let mut captured_packets = Vec::new();
 
-        // Initialize client (is_client = true)
-        let (mut rtc, local_creds, local_fingerprint) = init_rtc(true, client_addr)?;
+            // Initialize client (is_client = true)
+            let (mut rtc, local_creds, local_fingerprint) = init_rtc(true, client_addr)?;
 
-        // Wait for server's credentials first
-        let (remote_ice_ufrag, remote_ice_pwd, remote_fingerprint) =
-            match client_rx.recv_timeout(Duration::from_secs(5)) {
-                Ok(Message::Credentials {
-                    ice_ufrag,
-                    ice_pwd,
-                    dtls_fingerprint,
-                }) => (ice_ufrag, ice_pwd, dtls_fingerprint),
-                Ok(_) => panic!("Client expected Credentials, got something else"),
-                Err(e) => panic!("Client failed to receive server credentials: {:?}", e),
-            };
+            // Get local SCTP INIT chunk for out-of-band exchange
+            let local_sctp_init = rtc.direct_api().sctp_config().local_init_chunk();
 
-        // Send client's credentials to server
-        client_tx
-            .send(Message::Credentials {
-                ice_ufrag: local_creds.ufrag.clone(),
-                ice_pwd: local_creds.pass.clone(),
-                dtls_fingerprint: local_fingerprint,
-            })
-            .expect("Failed to send client credentials");
-        timing.sent_offer = Some(Instant::now());
+            // Wait for server's credentials + SCTP INIT first
+            let (remote_ice_ufrag, remote_ice_pwd, remote_fingerprint, remote_sctp_init) =
+                match client_rx.recv_timeout(Duration::from_secs(5)) {
+                    Ok(Message::Credentials {
+                        ice_ufrag,
+                        ice_pwd,
+                        dtls_fingerprint,
+                        sctp_init,
+                    }) => (ice_ufrag, ice_pwd, dtls_fingerprint, sctp_init),
+                    Ok(_) => panic!("Client expected Credentials, got something else"),
+                    Err(e) => panic!("Client failed to receive server credentials: {:?}", e),
+                };
 
-        // Configure with remote credentials (is_client = true)
-        configure_rtc(
-            &mut rtc,
-            true,
-            server_addr,
-            remote_ice_ufrag,
-            remote_ice_pwd,
-            remote_fingerprint,
-        )?;
-        timing.got_answer = Some(Instant::now());
+            // Send client's credentials + SCTP INIT to server
+            client_tx
+                .send(Message::Credentials {
+                    ice_ufrag: local_creds.ufrag.clone(),
+                    ice_pwd: local_creds.pass.clone(),
+                    dtls_fingerprint: local_fingerprint,
+                    sctp_init: local_sctp_init,
+                })
+                .expect("Failed to send client credentials");
+            timing.sent_offer = Some(Instant::now());
 
-        // Run the event loop with message exchange
-        run_rtc_loop_with_exchange(
-            &mut rtc,
-            &span,
-            &client_rx,
-            &client_tx,
-            &mut timing,
-            true,
-            &client_packets_sent_clone,
-        )?;
+            // Configure with remote credentials (is_client = true)
+            configure_rtc(
+                &mut rtc,
+                true,
+                server_addr,
+                remote_ice_ufrag,
+                remote_ice_pwd,
+                remote_fingerprint,
+                Some(remote_sctp_init),
+            )?;
+            timing.got_answer = Some(Instant::now());
 
-        Ok(timing)
-    });
+            // Run the event loop with message exchange
+            run_rtc_loop_with_exchange(
+                &mut rtc,
+                &span,
+                &client_rx,
+                &client_tx,
+                &mut timing,
+                true,
+                &client_packets_sent_clone,
+                &mut captured_packets,
+                pcap_start_client,
+            )?;
+
+            Ok((timing, captured_packets))
+        },
+    );
 
     // Wait for both threads to complete
-    let server_timing = server_handle
+    let (server_timing, server_packets) = server_handle
         .join()
         .expect("Server thread panicked")
         .expect("Server returned error");
-    let client_timing = client_handle
+    let (client_timing, client_packets) = client_handle
         .join()
         .expect("Client thread panicked")
         .expect("Client returned error");
+
+    // Write captured packets to pcap files
+    write_pcap_file("client_direct_snap.pcap", &client_packets)
+        .expect("Failed to write client pcap");
+    write_pcap_file("server_direct_snap.pcap", &server_packets)
+        .expect("Failed to write server pcap");
+
+    println!("\n=== PCAP Files Written ===");
+    println!(
+        "  client_direct_snap.pcap: {} packets",
+        client_packets.len()
+    );
+    println!(
+        "  server_direct_snap.pcap: {} packets",
+        server_packets.len()
+    );
 
     let total_time = test_start.elapsed();
 
@@ -175,13 +221,14 @@ pub fn handshake_direct_api_two_threads() -> Result<(), RtcError> {
         total_time.as_secs_f64() * 1000.0
     );
 
-    // Print packet counts to show handshake overhead
+    // Print packet counts to verify SCTP handshake was skipped
     let client_sent = client_packets_sent.load(Ordering::SeqCst);
     let server_sent = server_packets_sent.load(Ordering::SeqCst);
-    println!("\n=== Packet Counts (standard SCTP handshake) ===");
+    println!("\n=== Packet Counts (with out-of-band SCTP) ===");
     println!("  Client packets sent: {}", client_sent);
     println!("  Server packets sent: {}", server_sent);
     println!("  Total packets: {}", client_sent + server_sent);
+    println!("  (Without out-of-band SCTP, this would be ~4 more packets for SCTP handshake)");
 
     // Verify the exchange happened
     assert!(
@@ -234,6 +281,7 @@ fn configure_rtc(
     remote_ice_ufrag: String,
     remote_ice_pwd: String,
     remote_fingerprint: String,
+    remote_sctp_init: Option<Vec<u8>>,
 ) -> Result<(), RtcError> {
     // Add remote candidate
     let remote_candidate = Candidate::host(remote_addr, "udp")?;
@@ -263,7 +311,12 @@ fn configure_rtc(
         // Start DTLS - client IS the DTLS client, server is NOT
         direct_api.start_dtls(is_client)?;
 
-        // Start SCTP - client IS the SCTP client, server is NOT
+        // Set remote SCTP INIT chunk for out-of-band establishment (skips SCTP handshake)
+        if let Some(init) = remote_sctp_init {
+            direct_api.sctp_config().set_remote_chunk_init(init);
+        }
+
+        // Start SCTP - with remote_chunk_init set, this skips the 4-way handshake
         direct_api.start_sctp(is_client);
 
         // Create pre-negotiated data channel
@@ -285,11 +338,13 @@ fn configure_rtc(
 /// Messages exchanged between client and server threads.
 #[derive(Debug)]
 enum Message {
-    /// ICE and DTLS credentials exchange
+    /// ICE, DTLS, and SCTP credentials exchange (out-of-band signaling)
     Credentials {
         ice_ufrag: String,
         ice_pwd: String,
         dtls_fingerprint: String,
+        /// SCTP INIT chunk for out-of-band establishment
+        sctp_init: Vec<u8>,
     },
     /// RTP/DTLS/SCTP packet
     Packet {
@@ -300,6 +355,76 @@ enum Message {
     },
     /// Signal to exit (sent by client to server)
     Exit,
+}
+
+/// Direction of a captured packet
+#[derive(Debug, Clone, Copy)]
+enum PacketDirection {
+    Incoming,
+    Outgoing,
+}
+
+/// A captured packet with metadata for pcap writing
+#[derive(Debug)]
+struct CapturedPacket {
+    timestamp: Duration,
+    direction: PacketDirection,
+    source: SocketAddr,
+    destination: SocketAddr,
+    data: Vec<u8>,
+}
+
+/// Write captured packets to a pcap file with proper IP/UDP headers
+fn write_pcap_file(filename: &str, packets: &[CapturedPacket]) -> std::io::Result<()> {
+    let file = File::create(filename)?;
+
+    // Use RAW data link type for raw IP packets (no Ethernet header)
+    let header = PcapHeader {
+        datalink: DataLink::RAW,
+        ..Default::default()
+    };
+
+    let mut writer = PcapWriter::with_header(file, header)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
+    for packet in packets {
+        if let (SocketAddr::V4(src), SocketAddr::V4(dst)) = (packet.source, packet.destination) {
+            let udp_len = 8 + packet.data.len() as u16;
+            let ip_len = 20 + udp_len;
+
+            let mut packet_data = Vec::with_capacity(ip_len as usize);
+
+            // IPv4 header (20 bytes)
+            packet_data.push(0x45); // Version (4) + IHL (5)
+            packet_data.push(0x00); // DSCP + ECN
+            packet_data.extend_from_slice(&ip_len.to_be_bytes()); // Total length
+            packet_data.extend_from_slice(&[0x00, 0x00]); // Identification
+            packet_data.extend_from_slice(&[0x40, 0x00]); // Flags (Don't Fragment) + Fragment offset
+            packet_data.push(64); // TTL
+            packet_data.push(17); // Protocol: UDP
+            packet_data.extend_from_slice(&[0x00, 0x00]); // Header checksum (0 = disabled)
+            packet_data.extend_from_slice(&src.ip().octets()); // Source IP
+            packet_data.extend_from_slice(&dst.ip().octets()); // Destination IP
+
+            // UDP header (8 bytes)
+            packet_data.extend_from_slice(&src.port().to_be_bytes()); // Source port
+            packet_data.extend_from_slice(&dst.port().to_be_bytes()); // Destination port
+            packet_data.extend_from_slice(&udp_len.to_be_bytes()); // UDP length
+            packet_data.extend_from_slice(&[0x00, 0x00]); // UDP checksum (0 = disabled)
+
+            // UDP payload (the actual STUN/DTLS/SCTP data)
+            packet_data.extend_from_slice(&packet.data);
+
+            let pcap_packet =
+                PcapPacket::new(packet.timestamp, packet_data.len() as u32, &packet_data);
+
+            writer
+                .write_packet(&pcap_packet)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Timing report for major events
@@ -403,11 +528,16 @@ fn run_rtc_loop_with_exchange(
     timing: &mut TimingReport,
     is_client: bool,
     packets_sent: &std::sync::atomic::AtomicUsize,
+    captured_packets: &mut Vec<CapturedPacket>,
+    pcap_start: Instant,
 ) -> Result<(), RtcError> {
     use std::sync::atomic::Ordering;
     let mut state = DataExchangeState::WaitingForChannelOpen;
     let mut channel_id: Option<ChannelId> = None;
     let role = if is_client { "CLIENT" } else { "SERVER" };
+    let mut connected = false;
+    let mut channel_open = false;
+    let mut handshake_complete = false;
 
     loop {
         // Check if we're done
@@ -426,8 +556,22 @@ fn run_rtc_loop_with_exchange(
             match span.in_scope(|| rtc.poll_output())? {
                 Output::Timeout(t) => break t,
                 Output::Transmit(t) => {
-                    // Count packets sent
-                    packets_sent.fetch_add(1, Ordering::SeqCst);
+                    // Only count handshake packets
+                    if !handshake_complete {
+                        packets_sent.fetch_add(1, Ordering::SeqCst);
+                    }
+
+                    // Capture outgoing packet (only during handshake)
+                    if !handshake_complete {
+                        captured_packets.push(CapturedPacket {
+                            timestamp: pcap_start.elapsed(),
+                            direction: PacketDirection::Outgoing,
+                            source: t.source,
+                            destination: t.destination,
+                            data: t.contents.to_vec(),
+                        });
+                    }
+
                     // Send packet to other peer
                     let _ = outgoing.send(Message::Packet {
                         proto: t.proto,
@@ -437,6 +581,21 @@ fn run_rtc_loop_with_exchange(
                     });
                 }
                 Output::Event(e) => {
+                    // Track connected and channel open events
+                    match &e {
+                        Event::Connected => {
+                            connected = true;
+                        }
+                        Event::ChannelOpen(_, _) => {
+                            channel_open = true;
+                        }
+                        _ => {}
+                    }
+                    // Update handshake_complete immediately when both flags are set
+                    // This prevents capturing data channel packets
+                    if connected && channel_open {
+                        handshake_complete = true;
+                    }
                     handle_event(
                         rtc,
                         &e,
@@ -467,6 +626,18 @@ fn run_rtc_loop_with_exchange(
                 contents,
             }) => {
                 println!("[{}] Received packet ({} bytes)", role, contents.len());
+
+                // Capture incoming packet (only during handshake)
+                if !handshake_complete {
+                    captured_packets.push(CapturedPacket {
+                        timestamp: pcap_start.elapsed(),
+                        direction: PacketDirection::Incoming,
+                        source,
+                        destination,
+                        data: contents.clone(),
+                    });
+                }
+
                 let receive = Receive {
                     proto,
                     source,
