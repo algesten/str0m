@@ -394,4 +394,271 @@ mod test {
         );
         assert_eq!(slice_to_hex(&out[..16]), "23304b7a39f9f3ff067d8d8f9e24ecc7");
     }
+
+    // AES-128-CTR Test Vectors from NIST SP 800-38A
+    // https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf
+    // Section F.5.1
+
+    #[test]
+    fn test_aes_128_ctr_encrypt() {
+        let key = hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c");
+        let iv = hex_to_vec("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+        let plaintext = hex_to_vec("6bc1bee22e409f96e93d7e117393172a");
+        let expected = hex_to_vec("874d6191b620e3261bef6864990db6ce");
+
+        let mut cipher = AppleCryptoAes128CmSha1_80Cipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; plaintext.len()];
+        cipher
+            .encrypt(&iv.try_into().unwrap(), &plaintext, &mut output)
+            .unwrap();
+
+        assert_eq!(slice_to_hex(&output), slice_to_hex(&expected));
+    }
+
+    #[test]
+    fn test_aes_128_ctr_decrypt() {
+        let key = hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c");
+        let iv = hex_to_vec("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+        let ciphertext = hex_to_vec("874d6191b620e3261bef6864990db6ce");
+        let expected = hex_to_vec("6bc1bee22e409f96e93d7e117393172a");
+
+        let mut cipher = AppleCryptoAes128CmSha1_80Cipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; ciphertext.len()];
+        cipher
+            .decrypt(&iv.try_into().unwrap(), &ciphertext, &mut output)
+            .unwrap();
+
+        assert_eq!(slice_to_hex(&output), slice_to_hex(&expected));
+    }
+
+    #[test]
+    fn test_aes_128_ctr_multiple_blocks() {
+        let key = hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c");
+        let iv = hex_to_vec("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+        let plaintext = hex_to_vec(
+            "6bc1bee22e409f96e93d7e117393172a\
+             ae2d8a571e03ac9c9eb76fac45af8e51\
+             30c81c46a35ce411e5fbc1191a0a52ef",
+        );
+        let expected = hex_to_vec(
+            "874d6191b620e3261bef6864990db6ce\
+             9806f66b7970fdff8617187bb9fffdff\
+             5ae4df3edbd5d35e5b4f09020db03eab",
+        );
+
+        let mut cipher = AppleCryptoAes128CmSha1_80Cipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; plaintext.len()];
+        cipher
+            .encrypt(&iv.try_into().unwrap(), &plaintext, &mut output)
+            .unwrap();
+
+        assert_eq!(slice_to_hex(&output), slice_to_hex(&expected));
+    }
+
+    // AES-128-GCM Test Vectors from NIST SP 800-38D
+    // https://csrc.nist.gov/publications/detail/sp/800-38d/final
+    // Test Case 4
+
+    #[test]
+    fn test_aes_128_gcm_encrypt() {
+        let key = hex_to_vec("feffe9928665731c6d6a8f9467308308");
+        let iv = hex_to_vec("cafebabefacedbaddecaf888");
+        let plaintext = hex_to_vec(
+            "d9313225f88406e5a55909c5aff5269a\
+             86a7a9531534f7da2e4c303d8a318a72\
+             1c3c0c95956809532fcf0e2449a6b525\
+             b16aedf5aa0de657ba637b39",
+        );
+        let aad = hex_to_vec(
+            "feedfacedeadbeeffeedfacedeadbeef\
+             abaddad2",
+        );
+        let expected_ciphertext = hex_to_vec(
+            "42831ec2217774244b7221b784d0d49c\
+             e3aa212f2c02a4e035c17e2329aca12e\
+             21d514b25466931c7d8f6a5aac84aa05\
+             1ba30b396a0aac973d58e091",
+        );
+        let expected_tag = hex_to_vec("5bc94fbc3221a5db94fae95ae7121a47");
+
+        let mut cipher = AppleCryptoAeadAes128GcmCipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; plaintext.len() + 16];
+        cipher
+            .encrypt(&iv.try_into().unwrap(), &aad, &plaintext, &mut output)
+            .unwrap();
+
+        assert_eq!(
+            slice_to_hex(&output[..plaintext.len()]),
+            slice_to_hex(&expected_ciphertext)
+        );
+        assert_eq!(
+            slice_to_hex(&output[plaintext.len()..]),
+            slice_to_hex(&expected_tag)
+        );
+    }
+
+    #[test]
+    fn test_aes_128_gcm_decrypt() {
+        let key = hex_to_vec("feffe9928665731c6d6a8f9467308308");
+        let iv = hex_to_vec("cafebabefacedbaddecaf888");
+        let ciphertext = hex_to_vec(
+            "42831ec2217774244b7221b784d0d49c\
+             e3aa212f2c02a4e035c17e2329aca12e\
+             21d514b25466931c7d8f6a5aac84aa05\
+             1ba30b396a0aac973d58e091",
+        );
+        let tag = hex_to_vec("5bc94fbc3221a5db94fae95ae7121a47");
+        let aad = hex_to_vec(
+            "feedfacedeadbeeffeedfacedeadbeef\
+             abaddad2",
+        );
+        let expected_plaintext = hex_to_vec(
+            "d9313225f88406e5a55909c5aff5269a\
+             86a7a9531534f7da2e4c303d8a318a72\
+             1c3c0c95956809532fcf0e2449a6b525\
+             b16aedf5aa0de657ba637b39",
+        );
+
+        let mut input = ciphertext.clone();
+        input.extend_from_slice(&tag);
+
+        let mut cipher = AppleCryptoAeadAes128GcmCipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; ciphertext.len()];
+        let len = cipher
+            .decrypt(&iv.try_into().unwrap(), &[&aad], &input, &mut output)
+            .unwrap();
+
+        assert_eq!(len, expected_plaintext.len());
+        assert_eq!(
+            slice_to_hex(&output[..len]),
+            slice_to_hex(&expected_plaintext)
+        );
+    }
+
+    #[test]
+    fn test_aes_128_gcm_decrypt_invalid_tag() {
+        let key = hex_to_vec("feffe9928665731c6d6a8f9467308308");
+        let iv = hex_to_vec("cafebabefacedbaddecaf888");
+        let ciphertext = hex_to_vec(
+            "42831ec2217774244b7221b784d0d49c\
+             e3aa212f2c02a4e035c17e2329aca12e\
+             21d514b25466931c7d8f6a5aac84aa05\
+             1ba30b396a0aac973d58e091",
+        );
+        let bad_tag = hex_to_vec("0000000000000000000000000000000"); // Wrong tag
+        let aad = hex_to_vec(
+            "feedfacedeadbeeffeedfacedeadbeef\
+             abaddad2",
+        );
+
+        let mut input = ciphertext.clone();
+        input.extend_from_slice(&bad_tag);
+
+        let mut cipher = AppleCryptoAeadAes128GcmCipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; ciphertext.len()];
+        let result = cipher.decrypt(&iv.try_into().unwrap(), &[&aad], &input, &mut output);
+
+        assert!(result.is_err());
+    }
+
+    // AES-256-GCM Test Vectors from NIST SP 800-38D
+    // Test Case 16
+
+    #[test]
+    fn test_aes_256_gcm_encrypt() {
+        let key = hex_to_vec(
+            "feffe9928665731c6d6a8f9467308308\
+             feffe9928665731c6d6a8f9467308308",
+        );
+        let iv = hex_to_vec("cafebabefacedbaddecaf888");
+        let plaintext = hex_to_vec(
+            "d9313225f88406e5a55909c5aff5269a\
+             86a7a9531534f7da2e4c303d8a318a72\
+             1c3c0c95956809532fcf0e2449a6b525\
+             b16aedf5aa0de657ba637b39",
+        );
+        let aad = hex_to_vec(
+            "feedfacedeadbeeffeedfacedeadbeef\
+             abaddad2",
+        );
+        let expected_ciphertext = hex_to_vec(
+            "522dc1f099567d07f47f37a32a84427d\
+             643a8cdcbfe5c0c97598a2bd2555d1aa\
+             8cb08e48590dbb3da7b08b1056828838\
+             c5f61e6393ba7a0abcc9f662",
+        );
+        let expected_tag = hex_to_vec("76fc6ece0f4e1768cddf8853bb2d551b");
+
+        let mut cipher = AppleCryptoAeadAes256GcmCipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; plaintext.len() + 16];
+        cipher
+            .encrypt(&iv.try_into().unwrap(), &aad, &plaintext, &mut output)
+            .unwrap();
+
+        assert_eq!(
+            slice_to_hex(&output[..plaintext.len()]),
+            slice_to_hex(&expected_ciphertext)
+        );
+        assert_eq!(
+            slice_to_hex(&output[plaintext.len()..]),
+            slice_to_hex(&expected_tag)
+        );
+    }
+
+    #[test]
+    fn test_aes_256_gcm_decrypt() {
+        let key = hex_to_vec(
+            "feffe9928665731c6d6a8f9467308308\
+             feffe9928665731c6d6a8f9467308308",
+        );
+        let iv = hex_to_vec("cafebabefacedbaddecaf888");
+        let ciphertext = hex_to_vec(
+            "522dc1f099567d07f47f37a32a84427d\
+             643a8cdcbfe5c0c97598a2bd2555d1aa\
+             8cb08e48590dbb3da7b08b1056828838\
+             c5f61e6393ba7a0abcc9f662",
+        );
+        let tag = hex_to_vec("76fc6ece0f4e1768cddf8853bb2d551b");
+        let aad = hex_to_vec(
+            "feedfacedeadbeeffeedfacedeadbeef\
+             abaddad2",
+        );
+        let expected_plaintext = hex_to_vec(
+            "d9313225f88406e5a55909c5aff5269a\
+             86a7a9531534f7da2e4c303d8a318a72\
+             1c3c0c95956809532fcf0e2449a6b525\
+             b16aedf5aa0de657ba637b39",
+        );
+
+        let mut input = ciphertext.clone();
+        input.extend_from_slice(&tag);
+
+        let mut cipher = AppleCryptoAeadAes256GcmCipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; ciphertext.len()];
+        let len = cipher
+            .decrypt(&iv.try_into().unwrap(), &[&aad], &input, &mut output)
+            .unwrap();
+
+        assert_eq!(len, expected_plaintext.len());
+        assert_eq!(
+            slice_to_hex(&output[..len]),
+            slice_to_hex(&expected_plaintext)
+        );
+    }
 }
