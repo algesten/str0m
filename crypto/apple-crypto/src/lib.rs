@@ -5,9 +5,9 @@
 #![allow(unsafe_code)]
 #![cfg(target_vendor = "apple")]
 
+mod common_crypto;
 mod dimpl_provider;
 mod dtls;
-mod ffi;
 mod sha1;
 mod sha256;
 mod srtp;

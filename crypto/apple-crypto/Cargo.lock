@@ -5,7 +5,6 @@ version = 4
 [[package]]
 name = "apple-cryptokit-rs"
 version = "0.1.0"
-source = "git+https://github.com/efer-ms/apple-cryptokit-rs?branch=efer%2Frpath#5511623cfdfa19c99afc281ad769e579578baf36"
 dependencies = [
  "serde",
  "serde_json",

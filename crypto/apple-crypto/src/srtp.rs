@@ -4,94 +4,7 @@ use str0m_proto::crypto::{AeadAes128Gcm, AeadAes128GcmCipher, AeadAes256Gcm, Aea
 use str0m_proto::crypto::{Aes128CmSha1_80Cipher, CryptoError, SrtpProvider};
 use str0m_proto::crypto::{SupportedAeadAes256Gcm, SupportedAes128CmSha1_80};
 
-use crate::ffi::ccNoPadding;
-use crate::ffi::kCCAlgorithmAES;
-use crate::ffi::kCCEncrypt;
-use crate::ffi::kCCModeCTR;
-use crate::ffi::kCCOptionECBMode;
-use crate::ffi::kCCSuccess;
-use crate::ffi::CCCrypt;
-use crate::ffi::CCCryptorCreateWithMode;
-use crate::ffi::CCCryptorRef;
-use crate::ffi::CCCryptorStatus;
-use crate::ffi::CCCryptorUpdate;
-use crate::ffi::CryptorGuard;
-
-// CTR Helper Functions
-
-/// Create a CTR cryptor and perform encryption/decryption.
-fn ctr_crypt(
-    key: &[u8],
-    iv: &[u8; 16],
-    input: &[u8],
-    output: &mut [u8],
-) -> Result<(), CryptoError> {
-    let mut cryptor: CCCryptorRef = std::ptr::null_mut();
-    // SAFETY: CCCryptorCreateWithMode is safe with valid key/iv pointers and lengths
-    let status = unsafe {
-        CCCryptorCreateWithMode(
-            kCCEncrypt,               // operation: encrypt (CTR is symmetric)
-            kCCModeCTR,               // mode: Counter Mode
-            kCCAlgorithmAES,          // algorithm: AES
-            ccNoPadding,              // padding: none (stream cipher)
-            iv.as_ptr() as *const _,  // iv: 16-byte counter block
-            key.as_ptr() as *const _, // key: encryption key
-            key.len(),                // keyLength: 16 bytes for AES-128
-            std::ptr::null(),         // tweak: not used for CTR
-            0,                        // tweakLength: not used
-            0,                        // numRounds: 0 = default
-            0,                        // options: none
-            &mut cryptor,             // cryptorRef: output handle
-        )
-    };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!(
-            "CCCryptorCreateWithMode failed: {status}"
-        )));
-    }
-    let _guard = CryptorGuard(cryptor);
-
-    let mut data_out_moved: usize = 0;
-    // SAFETY: cryptor is valid, input/output pointers and lengths are from valid slices
-    let status = unsafe {
-        CCCryptorUpdate(
-            cryptor,                       // cryptorRef: active cryptor
-            input.as_ptr() as *const _,    // dataIn: input data
-            input.len(),                   // dataInLength: input size
-            output.as_mut_ptr() as *mut _, // dataOut: output buffer
-            output.len(),                  // dataOutAvailable: output capacity
-            &mut data_out_moved,           // dataOutMoved: bytes written
-        )
-    };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!(
-            "AES-CTR encrypt failed: {status}"
-        )));
-    }
-
-    Ok(())
-}
-
-/// Perform one round of AES-ECB encryption.
-fn aes_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) -> CCCryptorStatus {
-    let mut data_out_moved: usize = 0;
-    // SAFETY: CCCrypt is safe with valid key/input/output pointers and lengths
-    unsafe {
-        CCCrypt(
-            kCCEncrypt,                    // operation: encrypt
-            kCCAlgorithmAES,               // algorithm: AES
-            kCCOptionECBMode,              // options: ECB mode (no chaining)
-            key.as_ptr() as *const _,      // key: encryption key
-            key.len(),                     // keyLength: 16 or 32 bytes
-            std::ptr::null(),              // iv: not used for ECB
-            input.as_ptr() as *const _,    // dataIn: input block
-            input.len(),                   // dataInLength: must be block-aligned
-            output.as_mut_ptr() as *mut _, // dataOut: output buffer
-            output.len(),                  // dataOutAvailable: output capacity
-            &mut data_out_moved,           // dataOutMoved: bytes written
-        )
-    }
-}
+use crate::common_crypto;
 
 // AES-128-CM-SHA1-80 Cipher (CTR mode)
 
@@ -112,7 +25,7 @@ impl Aes128CmSha1_80Cipher for AppleCryptoAes128CmSha1_80Cipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<(), CryptoError> {
-        ctr_crypt(&self.key, iv, input, output)
+        aes_ctr_round(&self.key, iv, input, output)
     }
 
     fn decrypt(
@@ -122,7 +35,7 @@ impl Aes128CmSha1_80Cipher for AppleCryptoAes128CmSha1_80Cipher {
         output: &mut [u8],
     ) -> Result<(), CryptoError> {
         // AES-CTR mode is symmetric, so we can use the same operation
-        self.encrypt(iv, input, output)
+        aes_ctr_round(&self.key, iv, input, output)
     }
 }
 
@@ -307,14 +220,58 @@ impl SrtpProvider for AppleCryptoSrtpProvider {
     }
 
     fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
-        let status = aes_ecb_round(key, input, output);
-        assert_eq!(status, kCCSuccess, "AES-128-ECB encryption failed");
+        common_crypto::aes_ecb_round(key, input, output).unwrap();
     }
 
     fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
-        let status = aes_ecb_round(key, input, output);
-        assert_eq!(status, kCCSuccess, "AES-256-ECB encryption failed");
+        common_crypto::aes_ecb_round(key, input, output).unwrap();
     }
+}
+
+// CTR Helper Functions
+fn aes_ctr_round(
+    key: &[u8],
+    iv: &[u8; 16],
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<(), CryptoError> {
+    static MAX_BUFFER_SIZE: usize = 2048;
+
+    // First, we'll make a copy of the IV with a countered as many times as
+    // needed into a new countered_iv.
+    let mut iv = iv.to_vec();
+    let mut countered_iv = [0u8; MAX_BUFFER_SIZE];
+    let mut encrypted_countered_iv = [0u8; MAX_BUFFER_SIZE];
+    let mut offset = 0;
+    while offset <= input.len() {
+        let mut _count = 0;
+        let start = offset;
+        let end = offset + 16;
+        countered_iv[start..end].copy_from_slice(&iv);
+        offset += 16;
+        for idx in 0..16 {
+            let n = iv[15 - idx];
+            if n == 0xff {
+                iv[15 - idx] = 0;
+            } else {
+                iv[15 - idx] += 1;
+                break;
+            }
+        }
+    }
+
+    common_crypto::aes_ecb_round(
+        key,
+        &countered_iv[..offset],
+        &mut encrypted_countered_iv[..offset],
+    )?;
+
+    // XOR the intermediate_output with the input
+    for i in 0..input.len() {
+        output[i] = input[i] ^ encrypted_countered_iv[i];
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
