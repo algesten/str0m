@@ -406,6 +406,8 @@ fn dtls_create_ctx(cert: &DtlsCert) -> Result<SslContext, CryptoError> {
     let mut options = SslOptions::empty();
     options.insert(SslOptions::SINGLE_ECDH_USE);
     options.insert(SslOptions::NO_DTLSV1);
+    // Use the MTU we set via set_mtu() instead of querying
+    options.insert(SslOptions::NO_QUERY_MTU);
     ctx.set_options(options);
 
     Ok(ctx.build())
