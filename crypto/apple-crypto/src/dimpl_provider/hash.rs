@@ -70,16 +70,6 @@ impl HashContext for Sha384Context {
     }
 }
 
-/// Compute SHA-256 hash of data and return as fixed-size array.
-pub(super) fn sha256(data: &[u8]) -> [u8; 32] {
-    apple_cryptokit::sha256_hash(data)
-}
-
-/// Compute SHA-384 hash of data and return as fixed-size array.
-pub(super) fn sha384(data: &[u8]) -> [u8; 48] {
-    apple_cryptokit::sha384_hash(data)
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -95,33 +85,6 @@ mod test {
     }
 
     // SHA-256 Test Vectors
-
-    #[test]
-    fn test_sha256_empty() {
-        let result = sha256(b"");
-        assert_eq!(
-            slice_to_hex(&result),
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
-    }
-
-    #[test]
-    fn test_sha256_abc() {
-        let result = sha256(b"abc");
-        assert_eq!(
-            slice_to_hex(&result),
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-        );
-    }
-
-    #[test]
-    fn test_sha256_longer() {
-        let result = sha256(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq");
-        assert_eq!(
-            slice_to_hex(&result),
-            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
-        );
-    }
 
     #[test]
     fn test_sha256_context_single_update() {
@@ -172,33 +135,6 @@ mod test {
     }
 
     // SHA-384 Test Vectors
-
-    #[test]
-    fn test_sha384_empty() {
-        let result = sha384(b"");
-        assert_eq!(
-            slice_to_hex(&result),
-            "38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b"
-        );
-    }
-
-    #[test]
-    fn test_sha384_abc() {
-        let result = sha384(b"abc");
-        assert_eq!(
-            slice_to_hex(&result),
-            "cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7"
-        );
-    }
-
-    #[test]
-    fn test_sha384_longer() {
-        let result = sha384(b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu");
-        assert_eq!(
-            slice_to_hex(&result),
-            "09330c33f71147e83d192fc782cd1b4753111b173b3b05d22fa08086e3b0f712fcc7c71a557e2db966c3e9fa91746039"
-        );
-    }
 
     #[test]
     fn test_sha384_context_single_update() {

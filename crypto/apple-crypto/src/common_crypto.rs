@@ -51,11 +51,7 @@ extern "C" {
 }
 
 /// Perform one round of AES-ECB encryption.
-pub(crate) fn aes_ecb_round(
-    key: &[u8],
-    input: &[u8],
-    output: &mut [u8],
-) -> Result<(), CryptoError> {
+pub fn aes_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) -> Result<(), CryptoError> {
     let mut data_out_moved: usize = 0;
     // SAFETY: CCCrypt is safe with valid key/input/output pointers and lengths
     let status = unsafe {

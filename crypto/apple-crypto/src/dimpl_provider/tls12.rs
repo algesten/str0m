@@ -56,8 +56,6 @@ impl PrfProvider for ApplePrfProvider {
 
             if out.len() < output_len {
                 // Calculate A(i+1) = HMAC(secret, A(i))
-                // Use a temporary buffer to avoid aliasing issues
-
                 hmac_seed = match hash {
                     HashAlgorithm::SHA256 => {
                         apple_cryptokit::hmac_sha256(secret, &hmac_seed).map(Vec::from)
