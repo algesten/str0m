@@ -40,7 +40,7 @@ impl<'a> Bwe<'a> {
     /// # use str0m::{Rtc, bwe::Bitrate};
     /// let mut rtc = Rtc::new();
     ///
-    /// rtc.bwe().set_current_bitrate(Bitrate::kbps(250));
+    /// rtc.bwe().set_current_bitrate(Bitrate::kbps(250), true);
     /// # }
     /// ```
     ///
@@ -52,7 +52,7 @@ impl<'a> Bwe<'a> {
     /// # use str0m::{Rtc, bwe::Bitrate};
     /// let mut rtc = Rtc::new();
     ///
-    /// rtc.bwe().set_current_bitrate(Bitrate::kbps(750));
+    /// rtc.bwe().set_current_bitrate(Bitrate::kbps(750), true);
     /// # }
     /// ```
     ///
@@ -61,8 +61,10 @@ impl<'a> Bwe<'a> {
     /// When the original media is derived from another WebRTC implementation that support BWE it's
     /// advisable to use the value from `RTCOutboundRtpStreamStats.targetBitrate` from `getStats`
     /// rather than the `maxBitrate` values from `RTCRtpEncodingParameters`.
-    pub fn set_current_bitrate(&mut self, current_bitrate: Bitrate) {
-        self.0.session.set_bwe_current_bitrate(current_bitrate);
+    pub fn set_current_bitrate(&mut self, current_bitrate: Bitrate, force: bool) {
+        self.0
+            .session
+            .set_bwe_current_bitrate(current_bitrate, force);
     }
 
     /// Configure the desired bitrate.
