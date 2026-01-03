@@ -96,7 +96,7 @@ pub fn srtp_aes_128_cm(
 ) -> Result<usize, WinCryptoError> {
     // First, we'll make a copy of the IV with a countered as many times as
     // needed into a new countered_iv.
-    let mut iv = iv.to_vec();
+    let mut iv = *iv;
     let mut countered_iv = [0u8; MAX_BUFFER_SIZE];
     let mut offset = 0;
     while offset <= input.len() {
