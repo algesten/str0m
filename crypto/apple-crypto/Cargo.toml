@@ -15,7 +15,7 @@ str0m-proto = { version = "0.1.1", path = "../../proto" }
 dimpl = { version = "0.2.1", default-features = false }
 
 # Apple platform bindings
-apple-cryptokit-rs = { path = "../../../apple-cryptokit-rs" } # git = "https://github.com/efer-ms/apple-cryptokit-rs", branch = "efer/rpath" }
+apple-cryptokit-rs = { git = "https://github.com/efer-ms/apple-cryptokit-rs", branch = "efer/hashtweaks" }
 core-foundation = "0.10"
 security-framework = "3.5"
 

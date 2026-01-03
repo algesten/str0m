@@ -92,6 +92,7 @@ dependencies = [
 [[package]]
 name = "apple-cryptokit-rs"
 version = "0.1.0"
+source = "git+https://github.com/efer-ms/apple-cryptokit-rs?branch=efer/hashtweaks#66d00283e59f67637a9d71a9ebdc1f00a4e02ed1"
 dependencies = [
  "serde",
  "serde_json",
