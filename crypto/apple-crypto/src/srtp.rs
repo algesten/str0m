@@ -226,7 +226,15 @@ impl SrtpProvider for AppleCryptoSrtpProvider {
     }
 }
 
-// CTR Helper Functions
+// CTR implementation.
+//
+// This is not a generic CTR implementation, as it imposes a 2k limit on
+// the input/output, which is more than enough for our SRTP use where each
+// packet is smaller than the MTU.
+//
+// Note: If we need to support larger blocks, we could loop 2k at a time.
+// However, CTR is frowned upon, it's only provided since it is a requirement
+// for WebRTC, but in almost all cases AES-GCM should be used.
 fn aes_ctr_round(
     key: &[u8],
     iv: &[u8; 16],
