@@ -1,212 +1,10 @@
 //! SRTP cipher implementations using Apple CommonCrypto.
-
-use subtle::ConstantTimeEq;
-
 use str0m_proto::crypto::SupportedAeadAes128Gcm;
 use str0m_proto::crypto::{AeadAes128Gcm, AeadAes128GcmCipher, AeadAes256Gcm, AeadAes256GcmCipher};
 use str0m_proto::crypto::{Aes128CmSha1_80Cipher, CryptoError, SrtpProvider};
 use str0m_proto::crypto::{SupportedAeadAes256Gcm, SupportedAes128CmSha1_80};
 
-use crate::ffi::ccNoPadding;
-use crate::ffi::kCCAlgorithmAES;
-use crate::ffi::kCCDecrypt;
-use crate::ffi::kCCEncrypt;
-use crate::ffi::kCCModeCTR;
-use crate::ffi::kCCModeGCM;
-use crate::ffi::kCCOptionECBMode;
-use crate::ffi::kCCSuccess;
-use crate::ffi::CCCrypt;
-use crate::ffi::CCCryptorCreateWithMode;
-use crate::ffi::CCCryptorGCMAddAAD;
-use crate::ffi::CCCryptorGCMAddIV;
-use crate::ffi::CCCryptorGCMDecrypt;
-use crate::ffi::CCCryptorGCMEncrypt;
-use crate::ffi::CCCryptorGCMFinal;
-use crate::ffi::CCCryptorRef;
-use crate::ffi::CCCryptorStatus;
-use crate::ffi::CCCryptorUpdate;
-use crate::ffi::CryptorGuard;
-use crate::ffi::GCM_TAG_LEN;
-
-// GCM Helper Functions
-
-/// Create a GCM cryptor for encryption or decryption.
-fn gcm_create_cryptor(
-    op: crate::ffi::CCOperation,
-    key: &[u8],
-) -> Result<CCCryptorRef, CryptoError> {
-    let mut cryptor: CCCryptorRef = std::ptr::null_mut();
-    // SAFETY: CCCryptorCreateWithMode is safe with valid key pointer and length
-    let status = unsafe {
-        CCCryptorCreateWithMode(
-            op,                       // operation: encrypt or decrypt
-            kCCModeGCM,               // mode: Galois/Counter Mode
-            kCCAlgorithmAES,          // algorithm: AES
-            ccNoPadding,              // padding: none (GCM handles internally)
-            std::ptr::null(),         // iv: set later via CCCryptorGCMAddIV
-            key.as_ptr() as *const _, // key: encryption key
-            key.len(),                // keyLength: 16 or 32 bytes
-            std::ptr::null(),         // tweak: not used for GCM
-            0,                        // tweakLength: not used
-            0,                        // numRounds: 0 = default
-            0,                        // options: none
-            &mut cryptor,             // cryptorRef: output handle
-        )
-    };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!(
-            "CCCryptorCreateWithMode failed: {status}"
-        )));
-    }
-    Ok(cryptor)
-}
-
-/// Add IV to a GCM cryptor.
-fn gcm_add_iv(cryptor: CCCryptorRef, iv: &[u8]) -> Result<(), CryptoError> {
-    // SAFETY: cryptor is valid, iv pointer and length are from valid slice
-    let status = unsafe { CCCryptorGCMAddIV(cryptor, iv.as_ptr() as *const _, iv.len()) };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!("AddIV failed: {status}")));
-    }
-    Ok(())
-}
-
-/// Add AAD to a GCM cryptor.
-fn gcm_add_aad(cryptor: CCCryptorRef, aad: &[u8]) -> Result<(), CryptoError> {
-    // SAFETY: cryptor is valid, aad pointer and length are from valid slice
-    let status = unsafe { CCCryptorGCMAddAAD(cryptor, aad.as_ptr() as *const _, aad.len()) };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!("AddAAD failed: {status}")));
-    }
-    Ok(())
-}
-
-/// Encrypt data with a GCM cryptor.
-fn gcm_encrypt(cryptor: CCCryptorRef, input: &[u8], output: &mut [u8]) -> Result<(), CryptoError> {
-    // SAFETY: cryptor is valid, input/output pointers and lengths are from valid slices
-    let status = unsafe {
-        CCCryptorGCMEncrypt(
-            cryptor,
-            input.as_ptr() as *const _,
-            input.len(),
-            output.as_mut_ptr() as *mut _,
-        )
-    };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!("Encrypt failed: {status}")));
-    }
-    Ok(())
-}
-
-/// Decrypt data with a GCM cryptor.
-fn gcm_decrypt(
-    cryptor: CCCryptorRef,
-    input: &[u8],
-    len: usize,
-    output: &mut [u8],
-) -> Result<(), CryptoError> {
-    // SAFETY: cryptor is valid, input/output pointers and lengths are from valid slices
-    let status = unsafe {
-        CCCryptorGCMDecrypt(
-            cryptor,
-            input.as_ptr() as *const _,
-            len,
-            output.as_mut_ptr() as *mut _,
-        )
-    };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!("Decrypt failed: {status}")));
-    }
-    Ok(())
-}
-
-/// Finalize GCM and get the authentication tag.
-fn gcm_final(cryptor: CCCryptorRef) -> Result<[u8; GCM_TAG_LEN], CryptoError> {
-    let mut tag = [0u8; GCM_TAG_LEN];
-    let mut tag_len = GCM_TAG_LEN;
-    // SAFETY: cryptor is valid, tag buffer is properly sized
-    let status = unsafe { CCCryptorGCMFinal(cryptor, tag.as_mut_ptr() as *mut _, &mut tag_len) };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!("Final failed: {status}")));
-    }
-    Ok(tag)
-}
-
-// CTR Helper Functions
-
-/// Create a CTR cryptor and perform encryption/decryption.
-fn ctr_crypt(
-    key: &[u8],
-    iv: &[u8; 16],
-    input: &[u8],
-    output: &mut [u8],
-) -> Result<(), CryptoError> {
-    let mut cryptor: CCCryptorRef = std::ptr::null_mut();
-    // SAFETY: CCCryptorCreateWithMode is safe with valid key/iv pointers and lengths
-    let status = unsafe {
-        CCCryptorCreateWithMode(
-            kCCEncrypt,               // operation: encrypt (CTR is symmetric)
-            kCCModeCTR,               // mode: Counter Mode
-            kCCAlgorithmAES,          // algorithm: AES
-            ccNoPadding,              // padding: none (stream cipher)
-            iv.as_ptr() as *const _,  // iv: 16-byte counter block
-            key.as_ptr() as *const _, // key: encryption key
-            key.len(),                // keyLength: 16 bytes for AES-128
-            std::ptr::null(),         // tweak: not used for CTR
-            0,                        // tweakLength: not used
-            0,                        // numRounds: 0 = default
-            0,                        // options: none
-            &mut cryptor,             // cryptorRef: output handle
-        )
-    };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!(
-            "CCCryptorCreateWithMode failed: {status}"
-        )));
-    }
-    let _guard = CryptorGuard(cryptor);
-
-    let mut data_out_moved: usize = 0;
-    // SAFETY: cryptor is valid, input/output pointers and lengths are from valid slices
-    let status = unsafe {
-        CCCryptorUpdate(
-            cryptor,                       // cryptorRef: active cryptor
-            input.as_ptr() as *const _,    // dataIn: input data
-            input.len(),                   // dataInLength: input size
-            output.as_mut_ptr() as *mut _, // dataOut: output buffer
-            output.len(),                  // dataOutAvailable: output capacity
-            &mut data_out_moved,           // dataOutMoved: bytes written
-        )
-    };
-    if status != kCCSuccess {
-        return Err(CryptoError::Other(format!(
-            "AES-CTR encrypt failed: {status}"
-        )));
-    }
-
-    Ok(())
-}
-
-/// Perform one round of AES-ECB encryption.
-fn aes_ecb_round(key: &[u8], input: &[u8], output: &mut [u8]) -> CCCryptorStatus {
-    let mut data_out_moved: usize = 0;
-    // SAFETY: CCCrypt is safe with valid key/input/output pointers and lengths
-    unsafe {
-        CCCrypt(
-            kCCEncrypt,                    // operation: encrypt
-            kCCAlgorithmAES,               // algorithm: AES
-            kCCOptionECBMode,              // options: ECB mode (no chaining)
-            key.as_ptr() as *const _,      // key: encryption key
-            key.len(),                     // keyLength: 16 or 32 bytes
-            std::ptr::null(),              // iv: not used for ECB
-            input.as_ptr() as *const _,    // dataIn: input block
-            input.len(),                   // dataInLength: must be block-aligned
-            output.as_mut_ptr() as *mut _, // dataOut: output buffer
-            output.len(),                  // dataOutAvailable: output capacity
-            &mut data_out_moved,           // dataOutMoved: bytes written
-        )
-    }
-}
+use crate::common_crypto;
 
 // AES-128-CM-SHA1-80 Cipher (CTR mode)
 
@@ -227,7 +25,7 @@ impl Aes128CmSha1_80Cipher for AppleCryptoAes128CmSha1_80Cipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<(), CryptoError> {
-        ctr_crypt(&self.key, iv, input, output)
+        aes_ctr_round(&self.key, iv, input, output)
     }
 
     fn decrypt(
@@ -237,7 +35,7 @@ impl Aes128CmSha1_80Cipher for AppleCryptoAes128CmSha1_80Cipher {
         output: &mut [u8],
     ) -> Result<(), CryptoError> {
         // AES-CTR mode is symmetric, so we can use the same operation
-        self.encrypt(iv, input, output)
+        aes_ctr_round(&self.key, iv, input, output)
     }
 }
 
@@ -261,22 +59,7 @@ impl AeadAes128GcmCipher for AppleCryptoAeadAes128GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<(), CryptoError> {
-        assert!(
-            aad.len() >= 12,
-            "Associated data length MUST be at least 12 octets"
-        );
-
-        let cryptor = gcm_create_cryptor(kCCEncrypt, &self.key)?;
-        let _guard = CryptorGuard(cryptor);
-
-        gcm_add_iv(cryptor, iv)?;
-        gcm_add_aad(cryptor, aad)?;
-        gcm_encrypt(cryptor, input, output)?;
-
-        let tag = gcm_final(cryptor)?;
-        output[input.len()..input.len() + GCM_TAG_LEN].copy_from_slice(&tag);
-
-        Ok(())
+        aes_gcm_encrypt(&self.key, iv, input, aad, output)
     }
 
     fn decrypt(
@@ -287,25 +70,7 @@ impl AeadAes128GcmCipher for AppleCryptoAeadAes128GcmCipher {
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
         assert!(input.len() >= AeadAes128Gcm::TAG_LEN);
-
-        let ct_len = input.len() - GCM_TAG_LEN;
-        let expected_tag = &input[ct_len..];
-
-        let cryptor = gcm_create_cryptor(kCCDecrypt, &self.key)?;
-        let _guard = CryptorGuard(cryptor);
-
-        gcm_add_iv(cryptor, iv)?;
-        for aad in aads {
-            gcm_add_aad(cryptor, aad)?;
-        }
-        gcm_decrypt(cryptor, input, ct_len, output)?;
-
-        let computed_tag = gcm_final(cryptor)?;
-        if !bool::from(computed_tag.ct_eq(expected_tag)) {
-            return Err(CryptoError::Other("Tag mismatch".to_string()));
-        }
-
-        Ok(ct_len)
+        aes_gcm_decrypt(&self.key, iv, aads, input, output)
     }
 }
 
@@ -329,22 +94,7 @@ impl AeadAes256GcmCipher for AppleCryptoAeadAes256GcmCipher {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<(), CryptoError> {
-        assert!(
-            aad.len() >= 12,
-            "Associated data length MUST be at least 12 octets"
-        );
-
-        let cryptor = gcm_create_cryptor(kCCEncrypt, &self.key)?;
-        let _guard = CryptorGuard(cryptor);
-
-        gcm_add_iv(cryptor, iv)?;
-        gcm_add_aad(cryptor, aad)?;
-        gcm_encrypt(cryptor, input, output)?;
-
-        let tag = gcm_final(cryptor)?;
-        output[input.len()..input.len() + GCM_TAG_LEN].copy_from_slice(&tag);
-
-        Ok(())
+        aes_gcm_encrypt(&self.key, iv, input, aad, output)
     }
 
     fn decrypt(
@@ -355,26 +105,48 @@ impl AeadAes256GcmCipher for AppleCryptoAeadAes256GcmCipher {
         output: &mut [u8],
     ) -> Result<usize, CryptoError> {
         assert!(input.len() >= AeadAes256Gcm::TAG_LEN);
-
-        let ct_len = input.len() - GCM_TAG_LEN;
-        let expected_tag = &input[ct_len..];
-
-        let cryptor = gcm_create_cryptor(kCCDecrypt, &self.key)?;
-        let _guard = CryptorGuard(cryptor);
-
-        gcm_add_iv(cryptor, iv)?;
-        for aad in aads {
-            gcm_add_aad(cryptor, aad)?;
-        }
-        gcm_decrypt(cryptor, input, ct_len, output)?;
-
-        let computed_tag = gcm_final(cryptor)?;
-        if !bool::from(computed_tag.ct_eq(expected_tag)) {
-            return Err(CryptoError::Other("Tag mismatch".to_string()));
-        }
-
-        Ok(ct_len)
+        aes_gcm_decrypt(&self.key, iv, aads, input, output)
     }
+}
+
+fn aes_gcm_encrypt(
+    key: &[u8],
+    iv: &[u8],
+    input: &[u8],
+    aad: &[u8],
+    output: &mut [u8],
+) -> Result<(), CryptoError> {
+    assert!(
+        aad.len() >= 12,
+        "Associated data length MUST be at least 12 octets"
+    );
+
+    let output_vec = apple_cryptokit::aes_gcm_encrypt_with_aad(key, iv, input, aad)
+        .map_err(|err| CryptoError::Other(format!("{err:?}")))?;
+    output[..output_vec.len()].copy_from_slice(output_vec.as_slice());
+
+    Ok(())
+}
+
+fn aes_gcm_decrypt(
+    key: &[u8],
+    iv: &[u8],
+    aads: &[&[u8]],
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<usize, CryptoError> {
+    static EMPTY: [u8; 0] = [];
+    let aad = match aads.len() {
+        0 => &EMPTY,
+        1 => aads[0],
+        _ => &aads.concat(),
+    };
+
+    let output_vec = apple_cryptokit::aes_gcm_decrypt_with_aad(key, iv, input, aad)
+        .map_err(|err| CryptoError::Other(format!("{err:?}")))?;
+    output[..output_vec.len()].copy_from_slice(output_vec.as_slice());
+
+    Ok(output_vec.len())
 }
 
 // SRTP Profile Support Implementations
@@ -446,14 +218,64 @@ impl SrtpProvider for AppleCryptoSrtpProvider {
     }
 
     fn srtp_aes_128_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
-        let status = aes_ecb_round(key, input, output);
-        assert_eq!(status, kCCSuccess, "AES-128-ECB encryption failed");
+        common_crypto::aes_ecb_round(key, input, output).unwrap();
     }
 
     fn srtp_aes_256_ecb_round(&self, key: &[u8], input: &[u8], output: &mut [u8]) {
-        let status = aes_ecb_round(key, input, output);
-        assert_eq!(status, kCCSuccess, "AES-256-ECB encryption failed");
+        common_crypto::aes_ecb_round(key, input, output).unwrap();
     }
+}
+
+// CTR implementation.
+//
+// This is not a generic CTR implementation, as it imposes a 2k limit on
+// the input/output, which is more than enough for our SRTP use where each
+// packet is smaller than the MTU.
+//
+// Note: If we need to support larger blocks, we could loop 2k at a time.
+// However, CTR is frowned upon, it's only provided since it is a requirement
+// for WebRTC, but in almost all cases AES-GCM should be used.
+fn aes_ctr_round(
+    key: &[u8],
+    iv: &[u8; 16],
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<(), CryptoError> {
+    // First, we'll make a copy of the IV with a countered as many times as
+    // needed into a new countered_iv.
+    let mut iv = *iv;
+    let mut countered_iv = [0u8; 2048];
+    let mut encrypted_countered_iv = [0u8; 2048];
+    let mut offset = 0;
+    while offset <= input.len() {
+        let mut _count = 0;
+        let start = offset;
+        let end = offset + 16;
+        countered_iv[start..end].copy_from_slice(&iv);
+        offset += 16;
+        for idx in 0..16 {
+            let n = iv[15 - idx];
+            if n == 0xff {
+                iv[15 - idx] = 0;
+            } else {
+                iv[15 - idx] += 1;
+                break;
+            }
+        }
+    }
+
+    common_crypto::aes_ecb_round(
+        key,
+        &countered_iv[..offset],
+        &mut encrypted_countered_iv[..offset],
+    )?;
+
+    // XOR the intermediate_output with the input
+    for i in 0..input.len() {
+        output[i] = input[i] ^ encrypted_countered_iv[i];
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -575,5 +397,272 @@ mod test {
             &mut out,
         );
         assert_eq!(slice_to_hex(&out[..16]), "23304b7a39f9f3ff067d8d8f9e24ecc7");
+    }
+
+    // AES-128-CTR Test Vectors from NIST SP 800-38A
+    // https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf
+    // Section F.5.1
+
+    #[test]
+    fn test_aes_128_ctr_encrypt() {
+        let key = hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c");
+        let iv = hex_to_vec("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+        let plaintext = hex_to_vec("6bc1bee22e409f96e93d7e117393172a");
+        let expected = hex_to_vec("874d6191b620e3261bef6864990db6ce");
+
+        let mut cipher = AppleCryptoAes128CmSha1_80Cipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; plaintext.len()];
+        cipher
+            .encrypt(&iv.try_into().unwrap(), &plaintext, &mut output)
+            .unwrap();
+
+        assert_eq!(slice_to_hex(&output), slice_to_hex(&expected));
+    }
+
+    #[test]
+    fn test_aes_128_ctr_decrypt() {
+        let key = hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c");
+        let iv = hex_to_vec("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+        let ciphertext = hex_to_vec("874d6191b620e3261bef6864990db6ce");
+        let expected = hex_to_vec("6bc1bee22e409f96e93d7e117393172a");
+
+        let mut cipher = AppleCryptoAes128CmSha1_80Cipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; ciphertext.len()];
+        cipher
+            .decrypt(&iv.try_into().unwrap(), &ciphertext, &mut output)
+            .unwrap();
+
+        assert_eq!(slice_to_hex(&output), slice_to_hex(&expected));
+    }
+
+    #[test]
+    fn test_aes_128_ctr_multiple_blocks() {
+        let key = hex_to_vec("2b7e151628aed2a6abf7158809cf4f3c");
+        let iv = hex_to_vec("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
+        let plaintext = hex_to_vec(
+            "6bc1bee22e409f96e93d7e117393172a\
+             ae2d8a571e03ac9c9eb76fac45af8e51\
+             30c81c46a35ce411e5fbc1191a0a52ef",
+        );
+        let expected = hex_to_vec(
+            "874d6191b620e3261bef6864990db6ce\
+             9806f66b7970fdff8617187bb9fffdff\
+             5ae4df3edbd5d35e5b4f09020db03eab",
+        );
+
+        let mut cipher = AppleCryptoAes128CmSha1_80Cipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; plaintext.len()];
+        cipher
+            .encrypt(&iv.try_into().unwrap(), &plaintext, &mut output)
+            .unwrap();
+
+        assert_eq!(slice_to_hex(&output), slice_to_hex(&expected));
+    }
+
+    // AES-128-GCM Test Vectors from NIST SP 800-38D
+    // https://csrc.nist.gov/publications/detail/sp/800-38d/final
+    // Test Case 4
+
+    #[test]
+    fn test_aes_128_gcm_encrypt() {
+        let key = hex_to_vec("feffe9928665731c6d6a8f9467308308");
+        let iv = hex_to_vec("cafebabefacedbaddecaf888");
+        let plaintext = hex_to_vec(
+            "d9313225f88406e5a55909c5aff5269a\
+             86a7a9531534f7da2e4c303d8a318a72\
+             1c3c0c95956809532fcf0e2449a6b525\
+             b16aedf5aa0de657ba637b39",
+        );
+        let aad = hex_to_vec(
+            "feedfacedeadbeeffeedfacedeadbeef\
+             abaddad2",
+        );
+        let expected_ciphertext = hex_to_vec(
+            "42831ec2217774244b7221b784d0d49c\
+             e3aa212f2c02a4e035c17e2329aca12e\
+             21d514b25466931c7d8f6a5aac84aa05\
+             1ba30b396a0aac973d58e091",
+        );
+        let expected_tag = hex_to_vec("5bc94fbc3221a5db94fae95ae7121a47");
+
+        let mut cipher = AppleCryptoAeadAes128GcmCipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; plaintext.len() + 16];
+        cipher
+            .encrypt(&iv.try_into().unwrap(), &aad, &plaintext, &mut output)
+            .unwrap();
+
+        assert_eq!(
+            slice_to_hex(&output[..plaintext.len()]),
+            slice_to_hex(&expected_ciphertext)
+        );
+        assert_eq!(
+            slice_to_hex(&output[plaintext.len()..]),
+            slice_to_hex(&expected_tag)
+        );
+    }
+
+    #[test]
+    fn test_aes_128_gcm_decrypt() {
+        let key = hex_to_vec("feffe9928665731c6d6a8f9467308308");
+        let iv = hex_to_vec("cafebabefacedbaddecaf888");
+        let ciphertext = hex_to_vec(
+            "42831ec2217774244b7221b784d0d49c\
+             e3aa212f2c02a4e035c17e2329aca12e\
+             21d514b25466931c7d8f6a5aac84aa05\
+             1ba30b396a0aac973d58e091",
+        );
+        let tag = hex_to_vec("5bc94fbc3221a5db94fae95ae7121a47");
+        let aad = hex_to_vec(
+            "feedfacedeadbeeffeedfacedeadbeef\
+             abaddad2",
+        );
+        let expected_plaintext = hex_to_vec(
+            "d9313225f88406e5a55909c5aff5269a\
+             86a7a9531534f7da2e4c303d8a318a72\
+             1c3c0c95956809532fcf0e2449a6b525\
+             b16aedf5aa0de657ba637b39",
+        );
+
+        let mut input = ciphertext.clone();
+        input.extend_from_slice(&tag);
+
+        let mut cipher = AppleCryptoAeadAes128GcmCipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; ciphertext.len()];
+        let len = cipher
+            .decrypt(&iv.try_into().unwrap(), &[&aad], &input, &mut output)
+            .unwrap();
+
+        assert_eq!(len, expected_plaintext.len());
+        assert_eq!(
+            slice_to_hex(&output[..len]),
+            slice_to_hex(&expected_plaintext)
+        );
+    }
+
+    #[test]
+    fn test_aes_128_gcm_decrypt_invalid_tag() {
+        let key = hex_to_vec("feffe9928665731c6d6a8f9467308308");
+        let iv = hex_to_vec("cafebabefacedbaddecaf888");
+        let ciphertext = hex_to_vec(
+            "42831ec2217774244b7221b784d0d49c\
+             e3aa212f2c02a4e035c17e2329aca12e\
+             21d514b25466931c7d8f6a5aac84aa05\
+             1ba30b396a0aac973d58e091",
+        );
+        let bad_tag = hex_to_vec("0000000000000000000000000000000"); // Wrong tag
+        let aad = hex_to_vec(
+            "feedfacedeadbeeffeedfacedeadbeef\
+             abaddad2",
+        );
+
+        let mut input = ciphertext.clone();
+        input.extend_from_slice(&bad_tag);
+
+        let mut cipher = AppleCryptoAeadAes128GcmCipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; ciphertext.len()];
+        let result = cipher.decrypt(&iv.try_into().unwrap(), &[&aad], &input, &mut output);
+
+        assert!(result.is_err());
+    }
+
+    // AES-256-GCM Test Vectors from NIST SP 800-38D
+    // Test Case 16
+
+    #[test]
+    fn test_aes_256_gcm_encrypt() {
+        let key = hex_to_vec(
+            "feffe9928665731c6d6a8f9467308308\
+             feffe9928665731c6d6a8f9467308308",
+        );
+        let iv = hex_to_vec("cafebabefacedbaddecaf888");
+        let plaintext = hex_to_vec(
+            "d9313225f88406e5a55909c5aff5269a\
+             86a7a9531534f7da2e4c303d8a318a72\
+             1c3c0c95956809532fcf0e2449a6b525\
+             b16aedf5aa0de657ba637b39",
+        );
+        let aad = hex_to_vec(
+            "feedfacedeadbeeffeedfacedeadbeef\
+             abaddad2",
+        );
+        let expected_ciphertext = hex_to_vec(
+            "522dc1f099567d07f47f37a32a84427d\
+             643a8cdcbfe5c0c97598a2bd2555d1aa\
+             8cb08e48590dbb3da7b08b1056828838\
+             c5f61e6393ba7a0abcc9f662",
+        );
+        let expected_tag = hex_to_vec("76fc6ece0f4e1768cddf8853bb2d551b");
+
+        let mut cipher = AppleCryptoAeadAes256GcmCipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; plaintext.len() + 16];
+        cipher
+            .encrypt(&iv.try_into().unwrap(), &aad, &plaintext, &mut output)
+            .unwrap();
+
+        assert_eq!(
+            slice_to_hex(&output[..plaintext.len()]),
+            slice_to_hex(&expected_ciphertext)
+        );
+        assert_eq!(
+            slice_to_hex(&output[plaintext.len()..]),
+            slice_to_hex(&expected_tag)
+        );
+    }
+
+    #[test]
+    fn test_aes_256_gcm_decrypt() {
+        let key = hex_to_vec(
+            "feffe9928665731c6d6a8f9467308308\
+             feffe9928665731c6d6a8f9467308308",
+        );
+        let iv = hex_to_vec("cafebabefacedbaddecaf888");
+        let ciphertext = hex_to_vec(
+            "522dc1f099567d07f47f37a32a84427d\
+             643a8cdcbfe5c0c97598a2bd2555d1aa\
+             8cb08e48590dbb3da7b08b1056828838\
+             c5f61e6393ba7a0abcc9f662",
+        );
+        let tag = hex_to_vec("76fc6ece0f4e1768cddf8853bb2d551b");
+        let aad = hex_to_vec(
+            "feedfacedeadbeeffeedfacedeadbeef\
+             abaddad2",
+        );
+        let expected_plaintext = hex_to_vec(
+            "d9313225f88406e5a55909c5aff5269a\
+             86a7a9531534f7da2e4c303d8a318a72\
+             1c3c0c95956809532fcf0e2449a6b525\
+             b16aedf5aa0de657ba637b39",
+        );
+
+        let mut input = ciphertext.clone();
+        input.extend_from_slice(&tag);
+
+        let mut cipher = AppleCryptoAeadAes256GcmCipher {
+            key: key.try_into().unwrap(),
+        };
+        let mut output = vec![0u8; ciphertext.len()];
+        let len = cipher
+            .decrypt(&iv.try_into().unwrap(), &[&aad], &input, &mut output)
+            .unwrap();
+
+        assert_eq!(len, expected_plaintext.len());
+        assert_eq!(
+            slice_to_hex(&output[..len]),
+            slice_to_hex(&expected_plaintext)
+        );
     }
 }

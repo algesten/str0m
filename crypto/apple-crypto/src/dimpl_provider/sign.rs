@@ -18,8 +18,6 @@ use x509_cert::Certificate as X509Certificate;
 use dimpl::crypto::{CipherSuite, HashAlgorithm, KeyProvider};
 use dimpl::crypto::{SignatureAlgorithm, SignatureVerifier, SigningKey as SigningKeyTrait};
 
-use super::hash::{sha256, sha384};
-
 // Security framework FFI bindings
 #[link(name = "Security", kind = "framework")]
 extern "C" {
@@ -63,11 +61,11 @@ impl SigningKeyTrait for EcdsaSigningKey {
         // Hash the data first (Security framework needs pre-hashed data for digest algorithms)
         let (hash, algorithm): (Vec<u8>, Algorithm) = match self.curve {
             EcCurve::P256 => (
-                sha256(data).to_vec(),
+                apple_cryptokit::sha256_hash(data).to_vec(),
                 Algorithm::ECDSASignatureDigestX962SHA256,
             ),
             EcCurve::P384 => (
-                sha384(data).to_vec(),
+                apple_cryptokit::sha384_hash(data).to_vec(),
                 Algorithm::ECDSASignatureDigestX962SHA384,
             ),
         };
@@ -305,11 +303,11 @@ impl SignatureVerifier for AppleCryptoSignatureVerifier {
         // Hash the data
         let (hash, algorithm): (Vec<u8>, Algorithm) = match hash_alg {
             HashAlgorithm::SHA256 => (
-                sha256(data).to_vec(),
+                apple_cryptokit::sha256_hash(data).to_vec(),
                 Algorithm::ECDSASignatureDigestX962SHA256,
             ),
             HashAlgorithm::SHA384 => (
-                sha384(data).to_vec(),
+                apple_cryptokit::sha384_hash(data).to_vec(),
                 Algorithm::ECDSASignatureDigestX962SHA384,
             ),
             _ => {

@@ -90,6 +90,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "apple-cryptokit-rs"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20b9a95a7b2d800d9439f0e296718e48b227f60f13eeb074e72da4eada8f167f"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1790,6 +1800,7 @@ dependencies = [
 name = "str0m-apple-crypto"
 version = "0.1.1"
 dependencies = [
+ "apple-cryptokit-rs",
  "core-foundation",
  "der",
  "dimpl",

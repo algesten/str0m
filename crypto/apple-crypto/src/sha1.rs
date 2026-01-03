@@ -2,8 +2,6 @@
 
 use str0m_proto::crypto::Sha1HmacProvider;
 
-use crate::ffi::{kCCHmacAlgSHA1, CCHmacContext, CCHmacFinal, CCHmacInit, CCHmacUpdate};
-
 // SHA1 HMAC Provider Implementation
 
 pub(crate) struct AppleCryptoSha1HmacProvider;
@@ -16,28 +14,14 @@ impl std::fmt::Debug for AppleCryptoSha1HmacProvider {
 
 impl Sha1HmacProvider for AppleCryptoSha1HmacProvider {
     fn sha1_hmac(&self, key: &[u8], payloads: &[&[u8]]) -> [u8; 20] {
-        let mut ctx = CCHmacContext::default();
-        let mut result = [0u8; 20];
+        static EMPTY: [u8; 0] = [];
+        let payload = match payloads.len() {
+            0 => &EMPTY,
+            1 => payloads[0],
+            _ => &payloads.concat(),
+        };
 
-        // SAFETY: CCHmacInit/Update/Final are safe with valid context, key,
-        // data pointers and lengths from slices, and result buffer is properly
-        // sized for SHA1 (20 bytes). Using streaming API avoids Vec allocation
-        // for concatenating payloads.
-        unsafe {
-            CCHmacInit(
-                &mut ctx,
-                kCCHmacAlgSHA1,
-                key.as_ptr() as *const _,
-                key.len(),
-            );
-
-            for payload in payloads {
-                CCHmacUpdate(&mut ctx, payload.as_ptr() as *const _, payload.len());
-            }
-
-            CCHmacFinal(&mut ctx, result.as_mut_ptr() as *mut _);
-        }
-        result
+        apple_cryptokit::hmac_sha1(key, payload).unwrap()
     }
 }
 
