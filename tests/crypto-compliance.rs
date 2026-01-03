@@ -8,6 +8,38 @@ fn get_provider() -> &'static CryptoProvider {
     CryptoProvider::get_default().unwrap()
 }
 
+/// Convert an ASCII hex array into a byte array at compile time.
+macro_rules! hex_as_bytes {
+    ($input:expr) => {{
+        const fn from_hex_char(c: u8) -> u8 {
+            match c {
+                b'0'..=b'9' => c - b'0',
+                b'a'..=b'f' => c - b'a' + 10,
+                b'A'..=b'F' => c - b'A' + 10,
+                _ => panic!("Invalid hex character"),
+            }
+        }
+
+        const INPUT: &[u8] = $input;
+        const LEN: usize = INPUT.len();
+        const OUTPUT_LEN: usize = LEN / 2;
+
+        const fn convert() -> [u8; OUTPUT_LEN] {
+            assert!(LEN % 2 == 0, "Hex string length must be even");
+
+            let mut out = [0u8; OUTPUT_LEN];
+            let mut i = 0;
+            while i < LEN {
+                out[i / 2] = (from_hex_char(INPUT[i]) << 4) | from_hex_char(INPUT[i + 1]);
+                i += 2;
+            }
+            out
+        }
+
+        convert()
+    }};
+}
+
 mod sha256 {
     fn verify_test_vector(input: &[u8], expected: &[u8; 32]) {
         let sha256_provider = super::get_provider().sha256_provider;
@@ -19,11 +51,7 @@ mod sha256 {
     fn test_hello_world() {
         verify_test_vector(
             b"hello world",
-            &[
-                0xb9, 0x4d, 0x27, 0xb9, 0x93, 0x4d, 0x3e, 0x08, 0xa5, 0x2e, 0x52, 0xd7, 0xda, 0x7d,
-                0xab, 0xfa, 0xc4, 0x84, 0xef, 0xe3, 0x7a, 0x53, 0x80, 0xee, 0x90, 0x88, 0xf7, 0xac,
-                0xe2, 0xef, 0xcd, 0xe9,
-            ],
+            &hex_as_bytes!(b"b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"),
         );
     }
 
@@ -32,11 +60,7 @@ mod sha256 {
         // SHA-256 of "" - NIST test vector
         verify_test_vector(
             b"",
-            &[
-                0xe3, 0xb0, 0xc4, 0x42, 0x98, 0xfc, 0x1c, 0x14, 0x9a, 0xfb, 0xf4, 0xc8, 0x99, 0x6f,
-                0xb9, 0x24, 0x27, 0xae, 0x41, 0xe4, 0x64, 0x9b, 0x93, 0x4c, 0xa4, 0x95, 0x99, 0x1b,
-                0x78, 0x52, 0xb8, 0x55,
-            ],
+            &hex_as_bytes!(b"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
         );
     }
 
@@ -45,11 +69,7 @@ mod sha256 {
         // SHA-256 of "abc" - NIST test vector
         verify_test_vector(
             b"abc",
-            &[
-                0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea, 0x41, 0x41, 0x40, 0xde, 0x5d, 0xae,
-                0x22, 0x23, 0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c, 0xb4, 0x10, 0xff, 0x61,
-                0xf2, 0x00, 0x15, 0xad,
-            ],
+            &hex_as_bytes!(b"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
         );
     }
 }
@@ -66,10 +86,7 @@ mod sha1_hmac {
         verify_test_vector(
             &[0x0b; 20],
             &[b"Hi There"],
-            &[
-                0xb6, 0x17, 0x31, 0x86, 0x55, 0x05, 0x72, 0x64, 0xe2, 0x8b, 0xc0, 0xb6, 0xfb, 0x37,
-                0x8c, 0x8e, 0xf1, 0x46, 0xbe, 0x00,
-            ],
+            &hex_as_bytes!(b"b617318655057264e28bc0b6fb378c8ef146be00"),
         );
     }
 
@@ -78,10 +95,7 @@ mod sha1_hmac {
         verify_test_vector(
             b"Jefe",
             &[b"what do ya want for nothing?"],
-            &[
-                0xef, 0xfc, 0xdf, 0x6a, 0xe5, 0xeb, 0x2f, 0xa2, 0xd2, 0x74, 0x16, 0xd5, 0xf1, 0x84,
-                0xdf, 0x9c, 0x25, 0x9a, 0x7c, 0x79,
-            ],
+            &hex_as_bytes!(b"effcdf6ae5eb2fa2d27416d5f184df9c259a7c79"),
         );
     }
 
@@ -90,10 +104,7 @@ mod sha1_hmac {
         verify_test_vector(
             &[0xaa; 20],
             &[&[0xddu8; 50]],
-            &[
-                0x12, 0x5d, 0x73, 0x42, 0xb9, 0xac, 0x11, 0xcd, 0x91, 0xa3, 0x9a, 0xf4, 0x8a, 0xa1,
-                0x7b, 0x4f, 0x63, 0xf1, 0x75, 0xd3,
-            ],
+            &hex_as_bytes!(b"125d7342b9ac11cd91a39af48aa17b4f63f175d3"),
         );
     }
 
@@ -105,10 +116,7 @@ mod sha1_hmac {
                 24, 25,
             ],
             &[&[0xcdu8; 50]],
-            &[
-                0x4c, 0x90, 0x07, 0xf4, 0x02, 0x62, 0x50, 0xc6, 0xbc, 0x84, 0x14, 0xf9, 0xbf, 0x50,
-                0xc8, 0x6c, 0x2d, 0x72, 0x35, 0xda,
-            ],
+            &hex_as_bytes!(b"4c9007f4026250c6bc8414f9bf50c86c2d7235da"),
         );
     }
 
@@ -117,10 +125,7 @@ mod sha1_hmac {
         verify_test_vector(
             &[0x0c; 20],
             &[b"Test With Truncation"],
-            &[
-                0x4c, 0x1a, 0x03, 0x42, 0x4b, 0x55, 0xe0, 0x7f, 0xe7, 0xf2, 0x7b, 0xe1, 0xd5, 0x8b,
-                0xb9, 0x32, 0x4a, 0x9a, 0x5a, 0x04,
-            ],
+            &hex_as_bytes!(b"4c1a03424b55e07fe7f27be1d58bb9324a9a5a04"),
         );
     }
 
@@ -129,10 +134,7 @@ mod sha1_hmac {
         verify_test_vector(
             &[0xaa; 80],
             &[b"Test Using Larger Than Block-Size Key - Hash Key First"],
-            &[
-                0xaa, 0x4a, 0xe5, 0xe1, 0x52, 0x72, 0xd0, 0x0e, 0x95, 0x70, 0x56, 0x37, 0xce, 0x8a,
-                0x3b, 0x55, 0xed, 0x40, 0x21, 0x12,
-            ],
+            &hex_as_bytes!(b"aa4ae5e15272d00e95705637ce8a3b55ed402112"),
         );
     }
 
@@ -144,10 +146,7 @@ mod sha1_hmac {
                 b"Test Using Larger Than Block-Size Key and Larger ",
                 b"Than One Block-Size Data",
             ],
-            &[
-                0xe8, 0xe9, 0x9d, 0x0f, 0x45, 0x23, 0x7d, 0x78, 0x6d, 0x6b, 0xba, 0xa7, 0x96, 0x5c,
-                0x78, 0x08, 0xbb, 0xff, 0x1a, 0x91,
-            ],
+            &hex_as_bytes!(b"e8e99d0f45237d786d6bbaa7965c7808bbff1a91"),
         );
     }
 }
@@ -159,10 +158,7 @@ mod aead_aes_128_gcm {}
 mod aead_aes_256_gcm {}
 
 mod srtp_aes_128_ecb_round {
-    const TEST_KEY: [u8; 16] = [
-        0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6, 0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f,
-        0x3c,
-    ];
+    const TEST_KEY: [u8; 16] = hex_as_bytes!(b"2b7e151628aed2a6abf7158809cf4f3c");
 
     fn verify_test_vector(key: &[u8], input: &[u8], expected: &[u8]) {
         let srtp_provider = super::get_provider().srtp_provider;
@@ -178,14 +174,8 @@ mod srtp_aes_128_ecb_round {
     fn test_vec_1() {
         verify_test_vector(
             &TEST_KEY,
-            &[
-                0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93,
-                0x17, 0x2a,
-            ],
-            &[
-                0x3a, 0xd7, 0x7b, 0xb4, 0x0d, 0x7a, 0x36, 0x60, 0xa8, 0x9e, 0xca, 0xf3, 0x24, 0x66,
-                0xef, 0x97,
-            ],
+            &hex_as_bytes!(b"6bc1bee22e409f96e93d7e117393172a"),
+            &hex_as_bytes!(b"3ad77bb40d7a3660a89ecaf32466ef97"),
         );
     }
 
@@ -193,14 +183,8 @@ mod srtp_aes_128_ecb_round {
     fn test_vec_2() {
         verify_test_vector(
             &TEST_KEY,
-            &[
-                0xae, 0x2d, 0x8a, 0x57, 0x1e, 0x03, 0xac, 0x9c, 0x9e, 0xb7, 0x6f, 0xac, 0x45, 0xaf,
-                0x8e, 0x51,
-            ],
-            &[
-                0xf5, 0xd3, 0xd5, 0x85, 0x03, 0xb9, 0x69, 0x9d, 0xe7, 0x85, 0x89, 0x5a, 0x96, 0xfd,
-                0xba, 0xaf,
-            ],
+            &hex_as_bytes!(b"ae2d8a571e03ac9c9eb76fac45af8e51"),
+            &hex_as_bytes!(b"f5d3d58503b9699de785895a96fdbaaf"),
         );
     }
 
@@ -208,14 +192,8 @@ mod srtp_aes_128_ecb_round {
     fn test_vec_3() {
         verify_test_vector(
             &TEST_KEY,
-            &[
-                0x30, 0xc8, 0x1c, 0x46, 0xa3, 0x5c, 0xe4, 0x11, 0xe5, 0xfb, 0xc1, 0x19, 0x1a, 0x0a,
-                0x52, 0xef,
-            ],
-            &[
-                0x43, 0xb1, 0xcd, 0x7f, 0x59, 0x8e, 0xce, 0x23, 0x88, 0x1b, 0x00, 0xe3, 0xed, 0x03,
-                0x06, 0x88,
-            ],
+            &hex_as_bytes!(b"30c81c46a35ce411e5fbc1191a0a52ef"),
+            &hex_as_bytes!(b"43b1cd7f598ece23881b00e3ed030688"),
         );
     }
 
@@ -223,29 +201,20 @@ mod srtp_aes_128_ecb_round {
     fn test_vec_4() {
         verify_test_vector(
             &TEST_KEY,
-            &[
-                0xf6, 0x9f, 0x24, 0x45, 0xdf, 0x4f, 0x9b, 0x17, 0xad, 0x2b, 0x41, 0x7b, 0xe6, 0x6c,
-                0x37, 0x10,
-            ],
-            &[
-                0x7b, 0x0c, 0x78, 0x5e, 0x27, 0xe8, 0xad, 0x3f, 0x82, 0x23, 0x20, 0x71, 0x04, 0x72,
-                0x5d, 0xd4,
-            ],
+            &hex_as_bytes!(b"f69f2445df4f9b17ad2b417be66c3710"),
+            &hex_as_bytes!(b"7b0c785e27e8ad3f8223207104725dd4"),
         );
     }
 }
 
 mod srtp_aes_256_ecb_round {
-    const TEST_KEY: [u8; 32] = [
-        0x60, 0x3d, 0xeb, 0x10, 0x15, 0xca, 0x71, 0xbe, 0x2b, 0x73, 0xae, 0xf0, 0x85, 0x7d, 0x77,
-        0x81, 0x1f, 0x35, 0x2c, 0x07, 0x3b, 0x61, 0x08, 0xd7, 0x2d, 0x98, 0x10, 0xa3, 0x09, 0x14,
-        0xdf, 0xf4,
-    ];
+    const TEST_KEY: [u8; 32] =
+        hex_as_bytes!(b"603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff4");
 
     fn verify_test_vector(key: &[u8], input: &[u8], expected: &[u8]) {
         let srtp_provider = super::get_provider().srtp_provider;
         let mut out = [0u8; 2048];
-        srtp_provider.srtp_aes_128_ecb_round(key, input, out.as_mut_slice());
+        srtp_provider.srtp_aes_256_ecb_round(key, input, out.as_mut_slice());
         assert_eq!(expected, &out[0..input.len()])
     }
 
@@ -256,14 +225,8 @@ mod srtp_aes_256_ecb_round {
     fn test_vec_1() {
         verify_test_vector(
             &TEST_KEY,
-            &[
-                0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96, 0xe9, 0x3d, 0x7e, 0x11, 0x73, 0x93,
-                0x17, 0x2a,
-            ],
-            &[
-                0xf3, 0xee, 0xd1, 0xbd, 0xb5, 0xd2, 0xa0, 0x3c, 0x06, 0x4b, 0x5a, 0x7e, 0x3d, 0xb1,
-                0x81, 0xf8,
-            ],
+            &hex_as_bytes!(b"6bc1bee22e409f96e93d7e117393172a"),
+            &hex_as_bytes!(b"f3eed1bdb5d2a03c064b5a7e3db181f8"),
         );
     }
 
@@ -271,14 +234,8 @@ mod srtp_aes_256_ecb_round {
     fn test_vec_2() {
         verify_test_vector(
             &TEST_KEY,
-            &[
-                0xae, 0x2d, 0x8a, 0x57, 0x1e, 0x03, 0xac, 0x9c, 0x9e, 0xb7, 0x6f, 0xac, 0x45, 0xaf,
-                0x8e, 0x51,
-            ],
-            &[
-                0x59, 0x1c, 0xcb, 0x10, 0xd4, 0x10, 0xed, 0x26, 0xdc, 0x5b, 0xa7, 0x4a, 0x31, 0x36,
-                0x28, 0x70,
-            ],
+            &hex_as_bytes!(b"ae2d8a571e03ac9c9eb76fac45af8e51"),
+            &hex_as_bytes!(b"591ccb10d410ed26dc5ba74a31362870"),
         );
     }
 
@@ -286,14 +243,8 @@ mod srtp_aes_256_ecb_round {
     fn test_vec_3() {
         verify_test_vector(
             &TEST_KEY,
-            &[
-                0x30, 0xc8, 0x1c, 0x46, 0xa3, 0x5c, 0xe4, 0x11, 0xe5, 0xfb, 0xc1, 0x19, 0x1a, 0x0a,
-                0x52, 0xef,
-            ],
-            &[
-                0xb6, 0xed, 0x21, 0xb9, 0x9c, 0xa6, 0xf4, 0xf9, 0xf1, 0x53, 0xe7, 0xb1, 0xbe, 0xaf,
-                0xed, 0x1d,
-            ],
+            &hex_as_bytes!(b"30c81c46a35ce411e5fbc1191a0a52ef"),
+            &hex_as_bytes!(b"b6ed21b99ca6f4f9f153e7b1beafed1d"),
         );
     }
 
@@ -301,14 +252,8 @@ mod srtp_aes_256_ecb_round {
     fn test_vec_4() {
         verify_test_vector(
             &TEST_KEY,
-            &[
-                0xf6, 0x9f, 0x24, 0x45, 0xdf, 0x4f, 0x9b, 0x17, 0xad, 0x2b, 0x41, 0x7b, 0xe6, 0x6c,
-                0x37, 0x10,
-            ],
-            &[
-                0x23, 0x30, 0x4b, 0x7a, 0x39, 0xf9, 0xf3, 0xff, 0x06, 0x7d, 0x8d, 0x8f, 0x9e, 0x24,
-                0xec, 0xc7,
-            ],
+            &hex_as_bytes!(b"f69f2445df4f9b17ad2b417be66c3710"),
+            &hex_as_bytes!(b"23304b7a39f9f3ff067d8d8f9e24ecc7"),
         );
     }
 }
