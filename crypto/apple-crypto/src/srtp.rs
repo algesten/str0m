@@ -121,11 +121,9 @@ fn aes_gcm_encrypt(
         "Associated data length MUST be at least 12 octets"
     );
 
-    output.copy_from_slice(
-        apple_cryptokit::aes_gcm_encrypt_with_aad(key, iv, input, aad)
-            .map_err(|err| CryptoError::Other(format!("{err:?}")))?
-            .as_slice(),
-    );
+    let output_vec = apple_cryptokit::aes_gcm_encrypt_with_aad(key, iv, input, aad)
+        .map_err(|err| CryptoError::Other(format!("{err:?}")))?;
+    output[..output_vec.len()].copy_from_slice(output_vec.as_slice());
 
     Ok(())
 }
@@ -146,7 +144,7 @@ fn aes_gcm_decrypt(
 
     let output_vec = apple_cryptokit::aes_gcm_decrypt_with_aad(key, iv, input, aad)
         .map_err(|err| CryptoError::Other(format!("{err:?}")))?;
-    output.copy_from_slice(output_vec.as_slice());
+    output[..output_vec.len()].copy_from_slice(output_vec.as_slice());
 
     Ok(output_vec.len())
 }
