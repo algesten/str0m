@@ -109,7 +109,8 @@ mod test {
         // Test with a key larger than block size and large data
         // RFC 4231: key is 0xaa repeated 131 times
         let key = vec![0xaa; 131];
-        let data = b"This is a test using a larger than block-size key and a larger than block-size data. The key needs to be hashed before being used by the HMAC algorithm.";
+        let data = b"This is a test using a larger than block-size key and a larger \
+than block-size data. The key needs to be hashed before being used by the HMAC algorithm.";
         let expected = "9b09ffa71b942fcb27635fbcd5b0e944bfdc63644f0713938a7f51535c3a35e2";
 
         let provider = AppleHmacProvider;
