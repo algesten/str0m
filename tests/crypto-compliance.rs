@@ -1,3 +1,7 @@
+/// Test algorithm implementations for the CryptoProvider
+///
+/// This contains tests run against the installed crypto provider to verify
+/// hash, cipher and signature implementations against known test vectors.
 use str0m::crypto::CryptoProvider;
 
 mod common;
@@ -151,11 +155,271 @@ mod sha1_hmac {
     }
 }
 
-mod aes_128_cm_sha1_80 {}
+mod aes_128_cm_sha1_80 {
+    fn verify_test_vector(
+        key: [u8; 16],
+        iv: [u8; 16],
+        encrypt: bool,
+        input: &[u8],
+        expected: &[u8],
+    ) {
+        let srtp_provider = super::get_provider().srtp_provider;
+        let cipher_provider = srtp_provider.aes_128_cm_sha1_80();
+        let mut cipher = cipher_provider.create_cipher(key, encrypt);
 
-mod aead_aes_128_gcm {}
+        let mut output = vec![0u8; input.len()];
+        if encrypt {
+            cipher.encrypt(&iv, input, &mut output).unwrap();
+        } else {
+            cipher.decrypt(&iv, input, &mut output).unwrap();
+        }
+        assert_eq!(expected, &output)
+    }
 
-mod aead_aes_256_gcm {}
+    // AES-128-CTR Test Vectors from NIST SP 800-38A
+    // https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf
+    // Section F.5.1
+
+    #[test]
+    fn test_ctr_encrypt() {
+        verify_test_vector(
+            hex_as_bytes!(b"2b7e151628aed2a6abf7158809cf4f3c"),
+            hex_as_bytes!(b"f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"),
+            true,
+            &hex_as_bytes!(b"6bc1bee22e409f96e93d7e117393172a"),
+            &hex_as_bytes!(b"874d6191b620e3261bef6864990db6ce"),
+        );
+    }
+
+    #[test]
+    fn test_decrypt() {
+        verify_test_vector(
+            hex_as_bytes!(b"2b7e151628aed2a6abf7158809cf4f3c"),
+            hex_as_bytes!(b"f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"),
+            false,
+            &hex_as_bytes!(b"874d6191b620e3261bef6864990db6ce"),
+            &hex_as_bytes!(b"6bc1bee22e409f96e93d7e117393172a"),
+        );
+    }
+
+    #[test]
+    fn test_multiple_blocks() {
+        verify_test_vector(
+            hex_as_bytes!(b"2b7e151628aed2a6abf7158809cf4f3c"),
+            hex_as_bytes!(b"f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff"),
+            true,
+            &hex_as_bytes!(
+                b"6bc1bee22e409f96e93d7e117393172a\
+             ae2d8a571e03ac9c9eb76fac45af8e51\
+             30c81c46a35ce411e5fbc1191a0a52ef"
+            ),
+            &hex_as_bytes!(
+                b"874d6191b620e3261bef6864990db6ce\
+             9806f66b7970fdff8617187bb9fffdff\
+             5ae4df3edbd5d35e5b4f09020db03eab"
+            ),
+        );
+    }
+}
+
+mod aead_aes_128_gcm {
+    fn verify_test_vector(
+        key: [u8; 16],
+        iv: [u8; 12],
+        encrypt: bool,
+        aads: &[&[u8]],
+        input: &[u8],
+        expected: &[u8],
+    ) {
+        let srtp_provider = super::get_provider().srtp_provider;
+        let cipher_provider = srtp_provider.aead_aes_128_gcm();
+        let mut cipher = cipher_provider.create_cipher(key, encrypt);
+
+        let output_len = if encrypt {
+            input.len() + 16
+        } else {
+            input.len() - 16
+        };
+        let mut output = vec![0u8; output_len];
+        if encrypt {
+            cipher.encrypt(&iv, aads[0], input, &mut output).unwrap();
+        } else {
+            cipher.decrypt(&iv, aads, input, &mut output).unwrap();
+        }
+        assert_eq!(expected, &output)
+    }
+
+    // AES-128-GCM Test Vectors from NIST SP 800-38D
+    // https://csrc.nist.gov/publications/detail/sp/800-38d/final
+    // Test Case 4
+
+    #[test]
+    fn test_encrypt() {
+        verify_test_vector(
+            hex_as_bytes!(b"feffe9928665731c6d6a8f9467308308"),
+            hex_as_bytes!(b"cafebabefacedbaddecaf888"),
+            true,
+            &[&hex_as_bytes!(
+                b"feedfacedeadbeeffeedfacedeadbeef\
+                abaddad2"
+            )],
+            &hex_as_bytes!(
+                b"d9313225f88406e5a55909c5aff5269a\
+                86a7a9531534f7da2e4c303d8a318a72\
+                1c3c0c95956809532fcf0e2449a6b525\
+                b16aedf5aa0de657ba637b39"
+            ),
+            &hex_as_bytes!(
+                b"42831ec2217774244b7221b784d0d49c\
+                e3aa212f2c02a4e035c17e2329aca12e\
+                21d514b25466931c7d8f6a5aac84aa05\
+                1ba30b396a0aac973d58e091\
+                5bc94fbc3221a5db94fae95ae7121a47"
+            ),
+        );
+    }
+
+    #[test]
+    fn test_decrypt() {
+        verify_test_vector(
+            hex_as_bytes!(b"feffe9928665731c6d6a8f9467308308"),
+            hex_as_bytes!(b"cafebabefacedbaddecaf888"),
+            false,
+            &[&hex_as_bytes!(
+                b"feedfacedeadbeeffeedfacedeadbeef\
+                abaddad2"
+            )],
+            &hex_as_bytes!(
+                b"42831ec2217774244b7221b784d0d49c\
+                e3aa212f2c02a4e035c17e2329aca12e\
+                21d514b25466931c7d8f6a5aac84aa05\
+                1ba30b396a0aac973d58e091\
+                5bc94fbc3221a5db94fae95ae7121a47"
+            ),
+            &hex_as_bytes!(
+                b"d9313225f88406e5a55909c5aff5269a\
+                86a7a9531534f7da2e4c303d8a318a72\
+                1c3c0c95956809532fcf0e2449a6b525\
+                b16aedf5aa0de657ba637b39"
+            ),
+        );
+    }
+
+    #[test]
+    fn test_decrypt_invalid_tag() {
+        let srtp_provider = super::get_provider().srtp_provider;
+        let cipher_provider = srtp_provider.aead_aes_128_gcm();
+        let mut cipher = cipher_provider
+            .create_cipher(hex_as_bytes!(b"feffe9928665731c6d6a8f9467308308"), false);
+
+        let mut output = vec![0u8; 1024];
+        let result = cipher.decrypt(
+            &hex_as_bytes!(b"cafebabefacedbaddecaf888"),
+            &[&hex_as_bytes!(
+                b"feedfacedeadbeeffeedfacedeadbeef\
+                abaddad2"
+            )],
+            &hex_as_bytes!(
+                b"42831ec2217774244b7221b784d0d49c\
+                e3aa212f2c02a4e035c17e2329aca12e\
+                21d514b25466931c7d8f6a5aac84aa05\
+                1ba30b396a0aac973d58e091\
+                000000000000000000000000000000"
+            ),
+            &mut output,
+        );
+        assert!(result.is_err());
+    }
+}
+
+mod aead_aes_256_gcm {
+    fn verify_test_vector(
+        key: [u8; 32],
+        iv: [u8; 12],
+        encrypt: bool,
+        aads: &[&[u8]],
+        input: &[u8],
+        expected: &[u8],
+    ) {
+        let srtp_provider = super::get_provider().srtp_provider;
+        let cipher_provider = srtp_provider.aead_aes_256_gcm();
+        let mut cipher = cipher_provider.create_cipher(key, encrypt);
+
+        let output_len = if encrypt {
+            input.len() + 16
+        } else {
+            input.len() - 16
+        };
+        let mut output = vec![0u8; output_len];
+        if encrypt {
+            cipher.encrypt(&iv, aads[0], input, &mut output).unwrap();
+        } else {
+            cipher.decrypt(&iv, aads, input, &mut output).unwrap();
+        }
+        assert_eq!(expected, &output)
+    }
+
+    // AES-256-GCM Test Vectors from NIST SP 800-38D
+    // Test Case 16
+
+    #[test]
+    fn test_encrypt() {
+        verify_test_vector(
+            hex_as_bytes!(
+                b"feffe9928665731c6d6a8f9467308308\
+                feffe9928665731c6d6a8f9467308308"
+            ),
+            hex_as_bytes!(b"cafebabefacedbaddecaf888"),
+            true,
+            &[&hex_as_bytes!(
+                b"feedfacedeadbeeffeedfacedeadbeef\
+                abaddad2"
+            )],
+            &hex_as_bytes!(
+                b"d9313225f88406e5a55909c5aff5269a\
+                86a7a9531534f7da2e4c303d8a318a72\
+                1c3c0c95956809532fcf0e2449a6b525\
+                b16aedf5aa0de657ba637b39"
+            ),
+            &hex_as_bytes!(
+                b"522dc1f099567d07f47f37a32a84427d\
+                643a8cdcbfe5c0c97598a2bd2555d1aa\
+                8cb08e48590dbb3da7b08b1056828838\
+                c5f61e6393ba7a0abcc9f662\
+                76fc6ece0f4e1768cddf8853bb2d551b"
+            ),
+        );
+    }
+
+    #[test]
+    fn test_decrypt() {
+        verify_test_vector(
+            hex_as_bytes!(
+                b"feffe9928665731c6d6a8f9467308308\
+                feffe9928665731c6d6a8f9467308308"
+            ),
+            hex_as_bytes!(b"cafebabefacedbaddecaf888"),
+            false,
+            &[&hex_as_bytes!(
+                b"feedfacedeadbeeffeedfacedeadbeef\
+                abaddad2"
+            )],
+            &hex_as_bytes!(
+                b"522dc1f099567d07f47f37a32a84427d\
+                643a8cdcbfe5c0c97598a2bd2555d1aa\
+                8cb08e48590dbb3da7b08b1056828838\
+                c5f61e6393ba7a0abcc9f662\
+                76fc6ece0f4e1768cddf8853bb2d551b"
+            ),
+            &hex_as_bytes!(
+                b"d9313225f88406e5a55909c5aff5269a\
+                86a7a9531534f7da2e4c303d8a318a72\
+                1c3c0c95956809532fcf0e2449a6b525\
+                b16aedf5aa0de657ba637b39"
+            ),
+        );
+    }
+}
 
 mod srtp_aes_128_ecb_round {
     const TEST_KEY: [u8; 16] = hex_as_bytes!(b"2b7e151628aed2a6abf7158809cf4f3c");
