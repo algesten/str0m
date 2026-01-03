@@ -233,13 +233,11 @@ fn aes_ctr_round(
     input: &[u8],
     output: &mut [u8],
 ) -> Result<(), CryptoError> {
-    static MAX_BUFFER_SIZE: usize = 2048;
-
     // First, we'll make a copy of the IV with a countered as many times as
     // needed into a new countered_iv.
     let mut iv = iv.to_vec();
-    let mut countered_iv = [0u8; MAX_BUFFER_SIZE];
-    let mut encrypted_countered_iv = [0u8; MAX_BUFFER_SIZE];
+    let mut countered_iv = [0u8; 2048];
+    let mut encrypted_countered_iv = [0u8; 2048];
     let mut offset = 0;
     while offset <= input.len() {
         let mut _count = 0;
