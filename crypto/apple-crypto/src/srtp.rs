@@ -235,7 +235,7 @@ fn aes_ctr_round(
 ) -> Result<(), CryptoError> {
     // First, we'll make a copy of the IV with a countered as many times as
     // needed into a new countered_iv.
-    let mut iv = iv.to_vec();
+    let mut iv = iv.clone();
     let mut countered_iv = [0u8; 2048];
     let mut encrypted_countered_iv = [0u8; 2048];
     let mut offset = 0;
