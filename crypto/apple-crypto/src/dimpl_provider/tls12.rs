@@ -50,7 +50,8 @@ impl PrfProvider for ApplePrfProvider {
         out.clear();
         while out.len() < output_len {
             // HMAC(secret, A(i) + label_seed)
-            // Update payload with A(i)
+
+            // Update the payload with the last computed hash.
             payload[..hmac_seed_length].copy_from_slice(&hmac_seed[..hmac_seed_length]);
 
             let mut hmac_block = [0; apple_cryptokit::authentication::HMAC_SHA384_OUTPUT_SIZE];
@@ -72,30 +73,24 @@ impl PrfProvider for ApplePrfProvider {
             let remaining = output_len - out.len();
             let to_copy = std::cmp::min(remaining, hmac_block_length);
             out.extend_from_slice(&hmac_block[..to_copy]);
-
             if out.len() < output_len {
-                let mut tmp_hmac_seed =
-                    [0; apple_cryptokit::authentication::HMAC_SHA384_OUTPUT_SIZE];
-
                 // Calculate A(i+1) = HMAC(secret, A(i))
                 match hash {
                     HashAlgorithm::SHA256 => apple_cryptokit::authentication::hmac_sha256_to(
                         secret,
-                        &hmac_seed,
-                        tmp_hmac_seed.as_mut_slice(),
+                        &payload,
+                        hmac_seed.as_mut_slice(),
                     ),
                     HashAlgorithm::SHA384 => apple_cryptokit::authentication::hmac_sha384_to(
                         secret,
-                        &hmac_seed,
-                        tmp_hmac_seed.as_mut_slice(),
+                        &payload,
+                        hmac_seed.as_mut_slice(),
                     ),
                     _ => return Err(format!("Unsupported hash algorithm for PRF: {hash:?}")),
                 }
                 .map_err(|err| format!("{err:?}"))?;
-                hmac_seed.copy_from_slice(&tmp_hmac_seed);
             }
         }
-
         Ok(())
     }
 }

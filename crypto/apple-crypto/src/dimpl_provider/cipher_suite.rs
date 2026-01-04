@@ -4,7 +4,8 @@ use dimpl::buffer::{Buf, TmpBuf};
 use dimpl::crypto::SupportedCipherSuite;
 use dimpl::crypto::{Aad, Cipher, CipherSuite, HashAlgorithm, Nonce};
 
-const GCM_TAG_LEN: usize = 12;
+const AES_GCM_TAG_LEN: usize = 16;
+
 /// AES-GCM cipher implementation using CommonCrypto.
 struct AesGcm {
     key: Vec<u8>,
@@ -27,7 +28,7 @@ impl AesGcm {
 
 impl Cipher for AesGcm {
     fn encrypt(&mut self, plaintext: &mut Buf, aad: Aad, nonce: Nonce) -> Result<(), String> {
-        let ciphertext_length = plaintext.len() + GCM_TAG_LEN;
+        let ciphertext_length = plaintext.len() + AES_GCM_TAG_LEN;
         let mut ciphertext = OutputBuffer::new(ciphertext_length);
         let output_size = apple_cryptokit::symmetric::aes::aes_gcm_encrypt_to_with_aad(
             &self.key,
@@ -43,7 +44,7 @@ impl Cipher for AesGcm {
     }
 
     fn decrypt(&mut self, ciphertext: &mut TmpBuf, aad: Aad, nonce: Nonce) -> Result<(), String> {
-        let plaintext_length = ciphertext.len() - GCM_TAG_LEN;
+        let plaintext_length = ciphertext.len() - AES_GCM_TAG_LEN;
         let mut output = OutputBuffer::new(plaintext_length);
         let output_size = apple_cryptokit::symmetric::aes::aes_gcm_decrypt_to_with_aad(
             &self.key,
