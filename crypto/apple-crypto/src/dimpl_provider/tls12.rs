@@ -58,12 +58,12 @@ impl PrfProvider for ApplePrfProvider {
             let hmac_block_length = match hash {
                 HashAlgorithm::SHA256 => apple_cryptokit::authentication::hmac_sha256_to(
                     secret,
-                    &payload,
+                    payload,
                     hmac_block.as_mut_slice(),
                 ),
                 HashAlgorithm::SHA384 => apple_cryptokit::authentication::hmac_sha384_to(
                     secret,
-                    &payload,
+                    payload,
                     hmac_block.as_mut_slice(),
                 ),
                 _ => return Err(format!("Unsupported hash algorithm for PRF: {hash:?}")),
@@ -78,12 +78,12 @@ impl PrfProvider for ApplePrfProvider {
                 match hash {
                     HashAlgorithm::SHA256 => apple_cryptokit::authentication::hmac_sha256_to(
                         secret,
-                        &payload,
+                        payload,
                         hmac_seed.as_mut_slice(),
                     ),
                     HashAlgorithm::SHA384 => apple_cryptokit::authentication::hmac_sha384_to(
                         secret,
-                        &payload,
+                        payload,
                         hmac_seed.as_mut_slice(),
                     ),
                     _ => return Err(format!("Unsupported hash algorithm for PRF: {hash:?}")),

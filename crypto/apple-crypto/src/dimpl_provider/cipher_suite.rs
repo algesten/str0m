@@ -112,6 +112,7 @@ static AES_256_GCM_SHA384: Aes256GcmSha384 = Aes256GcmSha384;
 pub(super) static ALL_CIPHER_SUITES: &[&dyn SupportedCipherSuite] =
     &[&AES_128_GCM_SHA256, &AES_256_GCM_SHA384];
 
+#[allow(clippy::large_enum_variant)]
 enum OutputBuffer {
     Stack([u8; Self::STACK_BUFFER_SIZE]),
     Heap(Vec<u8>),
@@ -132,15 +133,15 @@ impl OutputBuffer {
 
     fn as_mut_slice(&mut self) -> &mut [u8] {
         match self {
-            OutputBuffer::Stack(buffer) => buffer.as_mut_slice(),
-            OutputBuffer::Heap(buffer) => buffer.as_mut_slice(),
+            Self::Stack(buffer) => buffer.as_mut_slice(),
+            Self::Heap(buffer) => buffer.as_mut_slice(),
         }
     }
 
     fn as_slice(&self) -> &[u8] {
         match self {
-            OutputBuffer::Stack(buffer) => buffer.as_slice(),
-            OutputBuffer::Heap(buffer) => buffer.as_slice(),
+            Self::Stack(buffer) => buffer.as_slice(),
+            Self::Heap(buffer) => buffer.as_slice(),
         }
     }
 }
