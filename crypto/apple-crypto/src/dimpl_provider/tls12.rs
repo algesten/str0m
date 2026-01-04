@@ -19,35 +19,41 @@ impl PrfProvider for ApplePrfProvider {
     ) -> Result<(), String> {
         // Sized to the largest hash size we support.
         let mut hmac_seed = [0; apple_cryptokit::authentication::HMAC_SHA384_OUTPUT_SIZE];
+        let hmac_seed_length = match hash {
+            HashAlgorithm::SHA256 => apple_cryptokit::authentication::HMAC_SHA256_OUTPUT_SIZE,
+            HashAlgorithm::SHA384 => apple_cryptokit::authentication::HMAC_SHA384_OUTPUT_SIZE,
+            _ => return Err(format!("Unsupported hash algorithm for PRF: {hash:?}")),
+        };
 
         // Build label + seed
         scratch.clear();
+        scratch.extend_from_slice(&hmac_seed[..hmac_seed_length]);
         scratch.extend_from_slice(label.as_bytes());
         scratch.extend_from_slice(seed);
-        let label_seed = scratch.to_vec();
+        let payload = scratch.as_mut();
 
-        out.clear();
-
-        let hmac_seed_length = match hash {
+        match hash {
             HashAlgorithm::SHA256 => apple_cryptokit::authentication::hmac_sha256_to(
                 secret,
-                &label_seed,
+                &payload[hmac_seed_length..],
                 hmac_seed.as_mut_slice(),
             ),
             HashAlgorithm::SHA384 => apple_cryptokit::authentication::hmac_sha384_to(
                 secret,
-                &label_seed,
+                &payload[hmac_seed_length..],
                 hmac_seed.as_mut_slice(),
             ),
             _ => return Err(format!("Unsupported hash algorithm for PRF: {hash:?}")),
         }
         .map_err(|err| format!("{err:?}"))?;
 
+        out.clear();
         while out.len() < output_len {
             // HMAC(secret, A(i) + label_seed)
-            let payload = [&hmac_seed[..hmac_seed_length], label_seed.as_slice()].concat();
-            let mut hmac_block = [0; apple_cryptokit::authentication::HMAC_SHA384_OUTPUT_SIZE];
+            // Update payload with A(i)
+            payload[..hmac_seed_length].copy_from_slice(&hmac_seed[..hmac_seed_length]);
 
+            let mut hmac_block = [0; apple_cryptokit::authentication::HMAC_SHA384_OUTPUT_SIZE];
             let hmac_block_length = match hash {
                 HashAlgorithm::SHA256 => apple_cryptokit::authentication::hmac_sha256_to(
                     secret,
