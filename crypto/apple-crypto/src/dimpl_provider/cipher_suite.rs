@@ -26,19 +26,32 @@ impl AesGcm {
 
 impl Cipher for AesGcm {
     fn encrypt(&mut self, plaintext: &mut Buf, aad: Aad, nonce: Nonce) -> Result<(), String> {
-        let output = apple_cryptokit::aes_gcm_encrypt_with_aad(&self.key, &nonce, plaintext, &aad)
-            .map_err(|err| format!("{err:?}"))?;
+        let mut output = [0u8; 2048];
+        let output_size = apple_cryptokit::symmetric::aes::aes_gcm_encrypt_to_with_aad(
+            &self.key,
+            &nonce,
+            plaintext,
+            &aad,
+            output.as_mut_slice(),
+        )
+        .map_err(|err| format!("{err:?}"))?;
         plaintext.clear();
-        plaintext.extend_from_slice(&output);
+        plaintext.extend_from_slice(&output[0..output_size]);
         Ok(())
     }
 
     fn decrypt(&mut self, ciphertext: &mut TmpBuf, aad: Aad, nonce: Nonce) -> Result<(), String> {
-        let output =
-            apple_cryptokit::aes_gcm_decrypt_with_aad(&self.key, &nonce, ciphertext.as_ref(), &aad)
-                .map_err(|err| format!("{err:?}"))?;
-        ciphertext.truncate(output.len());
-        ciphertext.as_mut().copy_from_slice(&output);
+        let mut output = [0u8; 2048];
+        let output_size = apple_cryptokit::symmetric::aes::aes_gcm_decrypt_to_with_aad(
+            &self.key,
+            &nonce,
+            ciphertext.as_ref(),
+            &aad,
+            output.as_mut_slice(),
+        )
+        .map_err(|err| format!("{err:?}"))?;
+        ciphertext.truncate(output_size);
+        ciphertext.as_mut().copy_from_slice(&output[0..output_size]);
         Ok(())
     }
 }
