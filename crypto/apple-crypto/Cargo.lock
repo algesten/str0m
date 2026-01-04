@@ -4,9 +4,9 @@ version = 4
 
 [[package]]
 name = "apple-cryptokit-rs"
-version = "0.1.2"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20b9a95a7b2d800d9439f0e296718e48b227f60f13eeb074e72da4eada8f167f"
+checksum = "508eed99695e0ddc94adb8dda623477e76bb8b5dcc9f59a01b43ce646f715343"
 dependencies = [
  "serde",
  "serde_json",
