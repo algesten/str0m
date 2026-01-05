@@ -57,7 +57,7 @@ pub struct StreamRx {
     last_clock_rate: Option<(Pt, Frequency)>,
 
     /// Last received sender info.
-    sender_info: Option<(Instant, SenderInfo)>,
+    sender_info: Option<LastSenderInfo>,
 
     /// ROC to reset with on next incoming packet.
     reset_roc: Option<u64>,
@@ -106,6 +106,17 @@ pub struct StreamRx {
 
     /// The configured threshold before considering the lack of packets as going into paused.
     pause_threshold: Duration,
+}
+
+/// The last sender info we recieved.
+#[derive(Debug)]
+pub(crate) struct LastSenderInfo {
+    /// When this SenderInfo was received.
+    received_at: Instant,
+    /// The sender info itself.
+    info: SenderInfo,
+    /// Whether we have emitted it yet via `poll_sender_info`
+    emitted: bool,
 }
 
 /// Holder of stats.
@@ -269,7 +280,10 @@ impl StreamRx {
     fn set_sender_info(&mut self, now: Instant, mut info: SenderInfo) {
         // Extend the incoming time given our knowledge of last time.
         let extended = {
-            let prev = self.sender_info.map(|(_, sr)| sr.rtp_time.numer());
+            let prev = self
+                .sender_info
+                .as_ref()
+                .map(|last| last.info.rtp_time.numer());
             let r_u32 = info.rtp_time.numer() as u32;
             extend_u32(prev, r_u32)
         };
@@ -284,7 +298,11 @@ impl StreamRx {
         // Clock rate is that of the last received packet.
         info.rtp_time = MediaTime::new(extended, clock_rate);
 
-        self.sender_info = Some((now, info));
+        self.sender_info = Some(LastSenderInfo {
+            received_at: now,
+            info,
+            emitted: false,
+        });
     }
 
     fn set_dlrr_item(&mut self, now: Instant, dlrr: DlrrItem) {
@@ -440,8 +458,8 @@ impl StreamRx {
             self.last_clock_rate = Some((header.payload_type, time.frequency()));
 
             // If we get an SR before the first packet, we update the potential clock rate.
-            if let Some(info) = &mut self.sender_info {
-                info.1.rtp_time = MediaTime::new(info.1.rtp_time.numer(), time.frequency());
+            if let Some(i) = &mut self.sender_info {
+                i.info.rtp_time = MediaTime::new(i.info.rtp_time.numer(), time.frequency());
             }
         }
 
@@ -451,7 +469,7 @@ impl StreamRx {
             header,
             payload: data,
             nackable: false,
-            last_sender_info: self.sender_info.map(|(_, s)| s),
+            last_sender_info: self.sender_info.as_ref().map(|l| l.info),
             timestamp: now,
         };
 
@@ -585,7 +603,8 @@ impl StreamRx {
         report.last_sr_time = {
             let t64 = self
                 .sender_info
-                .map_or(0u64, |(_, s)| s.ntp_time.as_ntp_64());
+                .as_ref()
+                .map_or(0u64, |l| l.info.ntp_time.as_ntp_64());
 
             (t64 >> 16) as u32
         };
@@ -594,7 +613,8 @@ impl StreamRx {
         // receiving the last SR packet from source SSRC_n and sending this
         // reception report block.  If no SR packet has been received yet
         // from SSRC_n, the DLSR field is set to zero.
-        report.last_sr_delay = if let Some((t, _)) = self.sender_info {
+        report.last_sr_delay = if let Some(l) = self.sender_info.as_ref() {
+            let t = l.received_at;
             let delay = now - t;
             ((delay.as_micros() * 65_536) / 1_000_000) as u32
         } else {
@@ -681,6 +701,18 @@ impl StreamRx {
             rid: self.midrid.rid(),
             paused: self.paused,
         })
+    }
+
+    /// Poll the most recent sender info and when it was received
+    pub(crate) fn poll_sender_info(&mut self) -> Option<(SenderInfo, Instant)> {
+        let i = self.sender_info.as_mut()?;
+        if i.emitted {
+            return None;
+        }
+
+        i.emitted = true;
+
+        Some((i.info, i.received_at))
     }
 
     pub(crate) fn reset_buffers(&mut self, max_seq_lookup: impl Fn(Ssrc) -> Option<SeqNo>) {
@@ -779,7 +811,7 @@ impl StreamRxStats {
         &self,
         snapshot: &mut StatsSnapshot,
         midrid: MidRid,
-        sender_info: Option<&(Instant, SenderInfo)>,
+        sender_info: Option<&LastSenderInfo>,
         now: Instant,
     ) {
         if self.bytes == 0 {
@@ -797,9 +829,9 @@ impl StreamRxStats {
             rtt: self.rtt,
             loss: self.loss,
             timestamp: now,
-            remote: sender_info.map(|(_, sender_info)| RemoteEgressStats {
-                bytes: sender_info.sender_octet_count as u64,
-                packets: sender_info.sender_packet_count as u64,
+            remote: sender_info.map(|l| RemoteEgressStats {
+                bytes: l.info.sender_octet_count as u64,
+                packets: l.info.sender_packet_count as u64,
             }),
         };
 

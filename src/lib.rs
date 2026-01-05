@@ -750,6 +750,7 @@ pub mod channel;
 use channel::{Channel, ChannelData, ChannelHandler, ChannelId};
 
 pub mod media;
+use media::SenderFeedback;
 use media::{Direction, Media, Mid, Pt, Rid, Writer};
 use media::{KeyframeRequest, KeyframeRequestKind};
 use media::{MediaAdded, MediaChanged, MediaData};
@@ -924,6 +925,9 @@ pub enum Event {
     ///
     /// This means the stream has not received any data for some time (default 1.5 seconds).
     StreamPaused(StreamPaused),
+
+    /// Sender feedback for an incoming stream, derived from RTCP SR.
+    SenderFeedback(SenderFeedback),
 
     /// Incoming RTP data.
     RtpPacket(RtpPacket),
