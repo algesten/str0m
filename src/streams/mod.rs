@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crate::format::CodecConfig;
 use crate::format::PayloadParams;
-use crate::media::{KeyframeRequest, Media};
+use crate::media::{KeyframeRequest, Media, SenderFeedback};
 use crate::rtp_::MidRid;
 use crate::rtp_::Ssrc;
 use crate::rtp_::{Bitrate, Pt};
@@ -472,6 +472,19 @@ impl Streams {
                 mid: s.mid(),
                 rid: s.rid(),
                 kind,
+            })
+        })
+    }
+
+    pub(crate) fn poll_sender_feedback(&mut self) -> Option<SenderFeedback> {
+        self.streams_rx.values_mut().find_map(|s| {
+            let (sender_info, at) = s.poll_sender_info()?;
+
+            Some(SenderFeedback {
+                mid: s.mid(),
+                rid: s.rid(),
+                received_at: at,
+                sender_info,
             })
         })
     }

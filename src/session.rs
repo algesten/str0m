@@ -635,6 +635,10 @@ impl Session {
             return Some(Event::KeyframeRequest(req));
         }
 
+        if let Some(report) = self.streams.poll_sender_feedback() {
+            return Some(Event::SenderFeedback(report));
+        }
+
         if let Some((mid, bitrate)) = self.streams.poll_remb_request() {
             return Some(Event::EgressBitrateEstimate(BweKind::Remb(mid, bitrate)));
         }

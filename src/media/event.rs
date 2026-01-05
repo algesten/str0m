@@ -323,6 +323,22 @@ pub enum KeyframeRequestKind {
     Fir,
 }
 
+/// Incoming feedback from a sender.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SenderFeedback {
+    /// The media identifier this feedback is for.
+    pub mid: Mid,
+
+    /// Rid the feedback is for. Relevant when doing simulcast.
+    pub rid: Option<Rid>,
+
+    /// When the RTCP packet containing the included [`SenderInfo`] was received.
+    pub received_at: Instant,
+
+    /// Information about the sender of this report.
+    pub sender_info: SenderInfo,
+}
+
 impl fmt::Debug for MediaData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MediaData")
