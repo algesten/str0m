@@ -15,7 +15,7 @@ str0m-proto = { version = "0.1.1", path = "../../proto" }
 dimpl = { version = "0.2.1", default-features = false }
 
 # Apple platform bindings
-apple-cryptokit-rs = "0.1.2"
+apple-cryptokit-rs = "0.2.1"
 core-foundation = "0.10"
 security-framework = "3.5"
 

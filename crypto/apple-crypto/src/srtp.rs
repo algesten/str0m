@@ -121,9 +121,8 @@ fn aes_gcm_encrypt(
         "Associated data length MUST be at least 12 octets"
     );
 
-    let output_vec = apple_cryptokit::aes_gcm_encrypt_with_aad(key, iv, input, aad)
+    apple_cryptokit::symmetric::aes::aes_gcm_encrypt_to_with_aad(key, iv, input, aad, output)
         .map_err(|err| CryptoError::Other(format!("{err:?}")))?;
-    output[..output_vec.len()].copy_from_slice(output_vec.as_slice());
 
     Ok(())
 }
@@ -142,11 +141,8 @@ fn aes_gcm_decrypt(
         _ => &aads.concat(),
     };
 
-    let output_vec = apple_cryptokit::aes_gcm_decrypt_with_aad(key, iv, input, aad)
-        .map_err(|err| CryptoError::Other(format!("{err:?}")))?;
-    output[..output_vec.len()].copy_from_slice(output_vec.as_slice());
-
-    Ok(output_vec.len())
+    apple_cryptokit::symmetric::aes::aes_gcm_decrypt_to_with_aad(key, iv, input, aad, output)
+        .map_err(|err| CryptoError::Other(format!("{err:?}")))
 }
 
 // SRTP Profile Support Implementations

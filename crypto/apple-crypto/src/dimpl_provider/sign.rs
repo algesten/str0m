@@ -58,22 +58,31 @@ impl std::fmt::Debug for EcdsaSigningKey {
 
 impl SigningKeyTrait for EcdsaSigningKey {
     fn sign(&mut self, data: &[u8], out: &mut Buf) -> Result<(), String> {
+        // Sized to the largest hash size we support.
+        let mut hash_buffer = [0; apple_cryptokit::hashing::sha384::SHA384_OUTPUT_SIZE];
+
         // Hash the data first (Security framework needs pre-hashed data for digest algorithms)
-        let (hash, algorithm): (Vec<u8>, Algorithm) = match self.curve {
-            EcCurve::P256 => (
-                apple_cryptokit::sha256_hash(data).to_vec(),
-                Algorithm::ECDSASignatureDigestX962SHA256,
-            ),
-            EcCurve::P384 => (
-                apple_cryptokit::sha384_hash(data).to_vec(),
-                Algorithm::ECDSASignatureDigestX962SHA384,
-            ),
+        let (hash_length, algorithm) = match self.curve {
+            EcCurve::P256 => {
+                apple_cryptokit::hashing::sha256_hash_to(data, hash_buffer.as_mut_slice());
+                (
+                    apple_cryptokit::hashing::sha256::SHA256_OUTPUT_SIZE,
+                    Algorithm::ECDSASignatureDigestX962SHA256,
+                )
+            }
+            EcCurve::P384 => {
+                apple_cryptokit::hashing::sha384_hash_to(data, hash_buffer.as_mut_slice());
+                (
+                    apple_cryptokit::hashing::sha384::SHA384_OUTPUT_SIZE,
+                    Algorithm::ECDSASignatureDigestX962SHA384,
+                )
+            }
         };
 
         // Sign using Security framework
         let signature = self
             .key
-            .create_signature(algorithm, &hash)
+            .create_signature(algorithm, &hash_buffer[..hash_length])
             .map_err(|e| format!("Signing failed: {e}"))?;
 
         out.clear();
@@ -300,16 +309,25 @@ impl SignatureVerifier for AppleCryptoSignatureVerifier {
             ));
         };
 
+        // Sized to the largest hash size we support.
+        let mut hash_buffer = [0; apple_cryptokit::hashing::sha384::SHA384_OUTPUT_SIZE];
+
         // Hash the data
-        let (hash, algorithm): (Vec<u8>, Algorithm) = match hash_alg {
-            HashAlgorithm::SHA256 => (
-                apple_cryptokit::sha256_hash(data).to_vec(),
-                Algorithm::ECDSASignatureDigestX962SHA256,
-            ),
-            HashAlgorithm::SHA384 => (
-                apple_cryptokit::sha384_hash(data).to_vec(),
-                Algorithm::ECDSASignatureDigestX962SHA384,
-            ),
+        let (hash_length, algorithm) = match hash_alg {
+            HashAlgorithm::SHA256 => {
+                apple_cryptokit::hashing::sha256_hash_to(data, hash_buffer.as_mut_slice());
+                (
+                    apple_cryptokit::hashing::sha256::SHA256_OUTPUT_SIZE,
+                    Algorithm::ECDSASignatureDigestX962SHA256,
+                )
+            }
+            HashAlgorithm::SHA384 => {
+                apple_cryptokit::hashing::sha384_hash_to(data, hash_buffer.as_mut_slice());
+                (
+                    apple_cryptokit::hashing::sha384::SHA384_OUTPUT_SIZE,
+                    Algorithm::ECDSASignatureDigestX962SHA384,
+                )
+            }
             _ => {
                 return Err(format!(
                     "Unsupported hash algorithm for ECDSA: {hash_alg:?}"
@@ -365,7 +383,7 @@ impl SignatureVerifier for AppleCryptoSignatureVerifier {
 
         // Verify the signature using the high-level API
         public_key
-            .verify_signature(algorithm, &hash, signature)
+            .verify_signature(algorithm, &hash_buffer[..hash_length], signature)
             .map_err(|e| format!("ECDSA signature verification failed: {e}"))?;
 
         Ok(())
