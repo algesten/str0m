@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use security_framework::access_control::SecAccessControl;
 use security_framework::key::{GenerateKeyOptions, KeyType, SecKey};
 
 use str0m_proto::crypto::dtls::{DtlsCert, DtlsImplError, DtlsInstance, DtlsOutput, DtlsProvider};
@@ -15,6 +16,9 @@ fn generate_certificate_impl() -> Result<DtlsCert, CryptoError> {
     let mut options = GenerateKeyOptions::default();
     options.set_key_type(KeyType::ec());
     options.set_size_in_bits(256);
+    let access_control = SecAccessControl::create_with_flags(0)
+        .map_err(|e| CryptoError::Other(format!("Failed to create access control: {e}")))?;
+    options.set_access_control(access_control);
 
     let private_key = SecKey::new(&options)
         .map_err(|e| CryptoError::Other(format!("Failed to generate key pair: {e}")))?;
