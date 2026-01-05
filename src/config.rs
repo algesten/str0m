@@ -249,21 +249,19 @@ impl RtcConfig {
         self
     }
 
-    // TODO: AV1 depacketizer/packetizer.
-    //
-    // /// Enable AV1 video codec.
-    // ///
-    // /// Enabled by default.
-    // pub fn enable_av1(mut self) -> Self {
-    //     self.codec_config.add_default_av1();
-    //     self
-    // }
-
     /// Enable VP9 video codec.
     ///
     /// Enabled by default.
     pub fn enable_vp9(mut self, enabled: bool) -> Self {
         self.codec_config.enable_vp9(enabled);
+        self
+    }
+
+    /// Enable AV1 video codec.
+    ///
+    /// Enabled by default.
+    pub fn enable_av1(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_av1(enabled);
         self
     }
 

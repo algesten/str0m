@@ -290,6 +290,7 @@ impl MediaData {
             CodecExtra::H264(h264_extra) => h264_extra.is_keyframe,
             CodecExtra::Vp8(vp8_extra) => vp8_extra.is_keyframe,
             CodecExtra::Vp9(vp9_extra) => vp9_extra.is_keyframe,
+            CodecExtra::AV1(av1_extra) => av1_extra.is_keyframe,
         }
     }
 }

@@ -27,6 +27,12 @@ pub(crate) const PT_VP9: Pt = Pt::new_with_value(98);
 /// Default payload type for VP9 profile 0 RTX.
 pub(crate) const PT_VP9_RTX: Pt = Pt::new_with_value(99);
 
+/// Default payload type for AV1.
+pub(crate) const PT_AV1: Pt = Pt::new_with_value(45);
+
+/// Default payload type for AV1 RTX.
+pub(crate) const PT_AV1_RTX: Pt = Pt::new_with_value(46);
+
 /// Default payload type for Opus.
 pub(crate) const PT_OPUS: Pt = Pt::new_with_value(111);
 
@@ -56,8 +62,8 @@ impl CodecConfig {
 
         c.enable_vp8(true);
         c.enable_h264(true);
-        // c.add_default_av1();
         c.enable_vp9(true);
+        c.enable_av1(true);
 
         c
     }
@@ -220,20 +226,6 @@ impl CodecConfig {
         }
     }
 
-    // TODO: AV1 depacketizer/packetizer.
-    //
-    // /// Add a default AV1 payload type.
-    // pub fn add_default_av1(&mut self) {
-    //     self.add_config(
-    //         41.into(),
-    //         Some(42.into()),
-    //         Codec::Av1,
-    //         90_000,
-    //         None,
-    //         FormatParams::default(),
-    //     )
-    // }
-
     /// Add a default VP9 payload type.
     pub fn enable_vp9(&mut self, enabled: bool) {
         self.params.retain(|c| c.spec.codec != Codec::Vp9);
@@ -261,6 +253,22 @@ impl CodecConfig {
                 profile_id: Some(2),
                 ..Default::default()
             },
+        );
+    }
+
+    /// Add a default AV1 payload type.
+    pub fn enable_av1(&mut self, enabled: bool) {
+        self.params.retain(|c| c.spec.codec != Codec::Av1);
+        if !enabled {
+            return;
+        }
+        self.add_config(
+            PT_AV1,
+            Some(PT_AV1_RTX),
+            Codec::Av1,
+            Frequency::NINETY_KHZ,
+            None,
+            FormatParams::default(),
         );
     }
 

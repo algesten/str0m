@@ -76,12 +76,13 @@ pub fn sdp_answer(data: &[u8]) -> Option<()> {
 pub fn depack(data: &[u8]) -> Option<()> {
     let mut rng = Rng::new(data);
 
-    let codec = match rng.u8(4)? {
+    let codec = match rng.u8(5)? {
         0 => Codec::Opus,
         1 => Codec::Vp8,
         2 => Codec::Vp9,
         3 => Codec::H264,
         4 => Codec::H265,
+        5 => Codec::Av1,
         _ => unreachable!(),
     };
 

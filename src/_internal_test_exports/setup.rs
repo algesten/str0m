@@ -43,6 +43,7 @@ pub fn random_config(rng: &mut Rng) -> Option<RtcConfig> {
     c = c.enable_h264(rng.bool()?);
     c = c.enable_vp8(rng.bool()?);
     c = c.enable_vp9(rng.bool()?);
+    c = c.enable_av1(rng.bool()?);
     if rng.bool()? {
         rng.bool(); // consume one
         c = c.set_stats_interval(None);
