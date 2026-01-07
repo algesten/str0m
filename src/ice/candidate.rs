@@ -153,7 +153,6 @@ impl Candidate {
         CandidateBuilder {
             foundation: None,
             component_id: 1, // Default RTP
-            proto: None,
             prio: None,
             addr: None,
             base: None,
@@ -164,6 +163,7 @@ impl Candidate {
             local: None,
             local_preference: None,
             _marker: PhantomData,
+            protocol_state: NoProtocol,
         }
     }
 
@@ -689,6 +689,13 @@ impl<'de> Deserialize<'de> for Candidate {
 pub struct NoProtocol;
 
 #[doc(hidden)]
+/// Marker indicating a transport protocol has been assigned to the builder.
+pub struct HasProtocol<P> {
+    _marker: PhantomData<P>,
+    protocol: Protocol,
+}
+
+#[doc(hidden)]
 /// Marker for a builder using the UDP protocol.
 pub struct Udp;
 
@@ -711,7 +718,6 @@ pub struct Ready;
 pub struct CandidateBuilder<P, S> {
     foundation: Option<String>,
     component_id: u16,
-    proto: Option<Protocol>,
     prio: Option<u32>,
     addr: Option<SocketAddr>,
     base: Option<SocketAddr>,
@@ -721,35 +727,40 @@ pub struct CandidateBuilder<P, S> {
     ufrag: Option<String>,
     local: Option<SocketAddr>,
     local_preference: Option<u32>,
-    _marker: PhantomData<(P, S)>,
+    _marker: PhantomData<S>,
+
+    protocol_state: P,
 }
 
 // Step 1: Protocol Selection
 impl CandidateBuilder<NoProtocol, Init> {
     /// Sets the protocol to UDP.
-    pub fn udp(self) -> CandidateBuilder<Udp, Init> {
+    pub fn udp(self) -> CandidateBuilder<HasProtocol<Udp>, Init> {
         self.into_protocol(Protocol::Udp)
     }
 
     /// Sets the protocol to standard TCP.
-    pub fn tcp(self) -> CandidateBuilder<Tcp, Init> {
+    pub fn tcp(self) -> CandidateBuilder<HasProtocol<Tcp>, Init> {
         self.into_protocol(Protocol::Tcp)
     }
 
     /// Sets the protocol to SSL-over-TCP.
-    pub fn ssl_tcp(self) -> CandidateBuilder<Tcp, Init> {
+    pub fn ssl_tcp(self) -> CandidateBuilder<HasProtocol<Tcp>, Init> {
         self.into_protocol(Protocol::SslTcp)
     }
 
     /// Sets the protocol to TLS.
-    pub fn tls(self) -> CandidateBuilder<Tcp, Init> {
+    pub fn tls(self) -> CandidateBuilder<HasProtocol<Tcp>, Init> {
         self.into_protocol(Protocol::Tls)
     }
 
-    fn into_protocol<NewP>(self, p: Protocol) -> CandidateBuilder<NewP, Init> {
+    fn into_protocol<NewP>(self, p: Protocol) -> CandidateBuilder<HasProtocol<NewP>, Init> {
         CandidateBuilder {
-            proto: Some(p),
             _marker: PhantomData,
+            protocol_state: HasProtocol {
+                _marker: PhantomData,
+                protocol: p,
+            },
             foundation: self.foundation,
             component_id: self.component_id,
             prio: self.prio,
@@ -814,7 +825,7 @@ impl<P> CandidateBuilder<P, Init> {
             base,
             local,
             raddr,
-            proto: self.proto,
+            protocol_state: self.protocol_state,
             _marker: PhantomData,
             foundation: self.foundation,
             component_id: self.component_id,
@@ -827,7 +838,7 @@ impl<P> CandidateBuilder<P, Init> {
 }
 
 // Step 3: Final General Configurations and Build
-impl<P> CandidateBuilder<P, Ready> {
+impl<P> CandidateBuilder<HasProtocol<P>, Ready> {
     /// Consumes the builder and returns a [`Candidate`].
     pub fn build(self) -> Result<Candidate, IceError> {
         let addr = self.addr.expect("addr missing");
@@ -848,7 +859,7 @@ impl<P> CandidateBuilder<P, Ready> {
         Ok(Candidate::new(
             self.foundation,
             self.component_id,
-            self.proto.expect("proto missing"),
+            self.protocol_state.protocol,
             self.prio,
             addr,
             self.base,
@@ -861,7 +872,7 @@ impl<P> CandidateBuilder<P, Ready> {
     }
 }
 
-impl CandidateBuilder<Tcp, Ready> {
+impl CandidateBuilder<HasProtocol<Tcp>, Ready> {
     /// Configures the TCP type (active, passive, so).
     pub fn tcptype(mut self, t: TcpType) -> Self {
         self.tcptype = Some(t);
