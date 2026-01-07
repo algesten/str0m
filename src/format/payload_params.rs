@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::ops::RangeInclusive;
 
 use crate::packet::H264ProfileLevel;
+use crate::packet::H265ProfileTierLevel;
 use crate::rtp_::Pt;
 
 use super::codec::{Codec, CodecSpec};
@@ -280,6 +281,10 @@ impl PayloadParams {
             return Self::match_h264_score(c0, c1);
         }
 
+        if c0.codec == Codec::H265 {
+            return Self::match_h265_score(c0, c1);
+        }
+
         if c0.codec == Codec::Vp9 {
             return Self::match_vp9_score(c0, c1);
         }
@@ -406,6 +411,76 @@ impl PayloadParams {
         Some(100_usize.saturating_sub(level_difference))
     }
 
+    pub(crate) fn match_h265_score(c0: CodecSpec, c1: CodecSpec) -> Option<usize> {
+        // If both sides have full H.265 PTL, do strict matching.
+        // If one side only has profile-id (stored in profile_id field), match on profile only.
+        let c0_has_ptl = c0.format.h265_profile_tier_level.is_some();
+        let c1_has_ptl = c1.format.h265_profile_tier_level.is_some();
+
+        if c0_has_ptl && c1_has_ptl {
+            // Both have full PTL - strict matching
+            let c0_ptl = c0.format.h265_profile_tier_level.unwrap();
+            let c1_ptl = c1.format.h265_profile_tier_level.unwrap();
+
+            // Profiles must match exactly.
+            if c0_ptl.profile() != c1_ptl.profile() {
+                return None;
+            }
+
+            // Tiers must match exactly.
+            if c0_ptl.tier() != c1_ptl.tier() {
+                return None;
+            }
+
+            // We can decode bitstreams at our configured level or any lower level.
+            if c1_ptl.level() > c0_ptl.level() {
+                return None;
+            }
+
+            // Decrement score based on level difference (prefer exact match).
+            let level_difference: usize = c0_ptl
+                .level()
+                .ordinal()
+                .saturating_sub(c1_ptl.level().ordinal());
+
+            return Some(100_usize.saturating_sub(level_difference));
+        }
+
+        // At least one side has only profile-id (not full PTL).
+        // Match on profile only, using FALLBACK for missing values.
+        let c0_ptl = c0
+            .format
+            .h265_profile_tier_level
+            .unwrap_or(H265ProfileTierLevel::FALLBACK);
+
+        let c1_ptl = c1
+            .format
+            .h265_profile_tier_level
+            .unwrap_or(H265ProfileTierLevel::FALLBACK);
+
+        // Check profile-id field as well (Chrome may use this for H.265)
+        let c0_profile = if c0_has_ptl {
+            c0_ptl.profile().to_id()
+        } else {
+            c0.format.profile_id.unwrap_or(c0_ptl.profile().to_id() as u32) as u8
+        };
+
+        let c1_profile = if c1_has_ptl {
+            c1_ptl.profile().to_id()
+        } else {
+            c1.format.profile_id.unwrap_or(c1_ptl.profile().to_id() as u32) as u8
+        };
+
+        // Profiles must match
+        if c0_profile != c1_profile {
+            return None;
+        }
+
+        // When only profile is specified, we can't check tier/level compatibility.
+        // Return a lower score (90) to prefer exact PTL matches when available.
+        Some(90)
+    }
+
     pub(crate) fn update_param(
         &mut self,
         remote_pts: &[PayloadParams],
@@ -420,6 +495,28 @@ impl PayloadParams {
         else {
             return;
         };
+
+        // For some codecs, fmtp parameters are effectively negotiated and the SDP answer
+        // must not introduce parameters the remote did not offer.
+        //
+        // In particular, some browsers offer H.265 with only `profile-id` and will reject
+        // an answer that includes additional H.265 fmtp parameters (e.g. `tier-flag`, `level-id`).
+        // To maximize interoperability, mirror the remote's negotiated H.265 fmtp shape.
+        if self.spec.codec == Codec::H265 && first.spec.codec == Codec::H265 {
+            if let Some(ptl) = first.spec.format.h265_profile_tier_level {
+                self.spec.format.h265_profile_tier_level = Some(ptl);
+                // Avoid also serializing `profile-id` via the VP9 `profile_id` field.
+                self.spec.format.profile_id = None;
+            } else if let Some(profile_id) = first.spec.format.profile_id {
+                // Remote only offered `profile-id`.
+                self.spec.format.h265_profile_tier_level = None;
+                self.spec.format.profile_id = Some(profile_id);
+            } else {
+                // No remote H.265 fmtp, omit ours as well.
+                self.spec.format.h265_profile_tier_level = None;
+                self.spec.format.profile_id = None;
+            }
+        }
 
         let mut remote_pt = first.pt;
         let mut remote_rtx = first.resend;

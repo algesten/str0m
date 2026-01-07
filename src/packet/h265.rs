@@ -1,7 +1,18 @@
 #![allow(clippy::all)]
 #![allow(unused)]
 
-use super::{CodecExtra, Depacketizer, PacketError};
+use super::{CodecExtra, Depacketizer, PacketError, Packetizer};
+
+/// H265 (HEVC) information describing the depacketized / packetized data.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct H265CodecExtra {
+    /// Flag which indicates that within [`MediaData`], there is an individual frame
+    /// containing complete and independent visual information. This frame serves
+    /// as a reference point for other frames in the video sequence.
+    ///
+    /// [`MediaData`]: crate::media::MediaData
+    pub is_keyframe: bool,
+}
 
 ///
 /// Network Abstraction Unit Header implementation
@@ -14,6 +25,270 @@ const H265NALU_AGGREGATION_PACKET_TYPE: u8 = 48;
 const H265NALU_FRAGMENTATION_UNIT_TYPE: u8 = 49;
 /// https://datatracker.ietf.org/doc/html/rfc7798#section-4.4.4
 const H265NALU_PACI_PACKET_TYPE: u8 = 50;
+
+// HEVC NAL unit type values as defined by the H.265 / HEVC bitstream specification,
+// ITU-T Rec. H.265 | ISO/IEC 23008-2, clause 7.4.2.2 ("NAL unit header semantics"),
+// Table 7-1 (NAL unit type assignments).
+const H265NALU_VPS_NALU_TYPE: u8 = 32;
+const H265NALU_SPS_NALU_TYPE: u8 = 33;
+const H265NALU_PPS_NALU_TYPE: u8 = 34;
+const H265NALU_AUD_NALU_TYPE: u8 = 35;
+const H265NALU_FILLER_NALU_TYPE: u8 = 38;
+
+// IRAP (Intra Random Access Point) NAL unit types - keyframes/random access points
+// BLA (Broken Link Access) pictures.
+const H265NALU_BLA_W_LP: u8 = 16;
+const H265NALU_BLA_W_RADL: u8 = 17;
+const H265NALU_BLA_N_LP: u8 = 18;
+// IDR (Instantaneous Decoding Refresh) pictures.
+const H265NALU_IDR_W_RADL: u8 = 19;
+const H265NALU_IDR_N_LP: u8 = 20;
+// CRA (Clean Random Access) picture.
+const H265NALU_CRA_NUT: u8 = 21;
+
+pub static ANNEXB_NALUSTART_CODE: &[u8] = &[0x00, 0x00, 0x00, 0x01];
+
+/// Packetizes H265 (HEVC) RTP payloads.
+///
+/// This implements the packetization rules from RFC 7798.
+///
+/// Supported output payload types:
+/// - Single NAL Unit packets (one NAL unit per RTP payload)
+/// - Fragmentation Units (FU, type 49) for NAL units larger than the MTU
+/// - Aggregation Packets (AP, type 48) for parameter sets (VPS/SPS/PPS)
+///
+/// The packetizer caches VPS, SPS, and PPS NAL units and emits them together
+/// in a single Aggregation Packet (AP) immediately before the next non-parameter-set
+/// NAL unit, as recommended by RFC 7798.
+///
+/// ## Input format
+///
+/// The input `payload` may be either:
+/// - A single NAL unit (starting with the 2-byte HEVC NAL unit header), OR
+/// - An Annex-B bytestream containing one or more NAL units separated by start codes
+///   (`0x00 00 01` or `0x00 00 00 01`).
+///
+/// Start codes are stripped from the output RTP payloads.
+
+#[derive(Default, Debug, Clone)]
+pub struct H265Packetizer {
+    vps_nalu: Option<Vec<u8>>,
+    sps_nalu: Option<Vec<u8>>,
+    pps_nalu: Option<Vec<u8>>,
+}
+
+impl H265Packetizer {
+    /// Finds the next Annex-B NAL unit start code in `payload`, starting at `start`.
+    ///
+    /// Detects `0x00 00 01` or `0x00 00 00 01` as defined by the HEVC Annex-B
+    /// byte stream format (ITU-T Rec. H.265 | ISO/IEC 23008-2, Annex B),
+    /// and returns `(start_index, start_code_len)` (length = 3 or 4).
+    ///
+    /// Returns `(-1, -1)` if no start code is found.
+    fn next_start_code(payload: &[u8], start: usize) -> (isize, isize) {
+        let mut zero_count = 0;
+
+        for (i, &b) in payload[start..].iter().enumerate() {
+            if b == 0 {
+                zero_count += 1;
+                continue;
+            } else if b == 1 && zero_count >= 2 {
+                return ((start + i - zero_count) as isize, (zero_count as isize) + 1);
+            }
+
+            zero_count = 0;
+        }
+
+        (-1, -1)
+    }
+
+    /// Packetization overview (RFC 7798):
+    ///
+    /// Input NAL units (Annex-B or raw)
+    ///     ├─ Single NALU  → RTP payload = NAL header + payload
+    ///     ├─ Large NALU   → Fragmentation Units (Type 49)
+    ///     └─ VPS/SPS/PPS → Aggregation Packet (Type 48)
+    fn emit_nalu(&mut self, nalu: &[u8], mtu: usize, out: &mut Vec<Vec<u8>>) {
+        if nalu.is_empty() || mtu == 0 {
+            return;
+        }
+
+        if nalu.len() < H265NALU_HEADER_SIZE {
+            return;
+        }
+
+        // Parse the HEVC NAL unit header.
+        let original_hdr = H265NALUHeader::new(nalu[0], nalu[1]);
+        let original_type = original_hdr.nalu_type();
+
+        // Ignore AUD/filler.
+        if original_type == H265NALU_AUD_NALU_TYPE || original_type == H265NALU_FILLER_NALU_TYPE {
+            return;
+        }
+
+        // Cache parameter sets; send them before the next non-parameter-set NALU.
+        if original_type == H265NALU_VPS_NALU_TYPE {
+            self.vps_nalu = Some(nalu.to_vec());
+            return;
+        } else if original_type == H265NALU_SPS_NALU_TYPE {
+            self.sps_nalu = Some(nalu.to_vec());
+            return;
+        } else if original_type == H265NALU_PPS_NALU_TYPE {
+            self.pps_nalu = Some(nalu.to_vec());
+            return;
+        }
+
+        // If we have cached VPS/SPS/PPS, emit an Aggregation Packet (AP, Type=48)
+        // immediately before the next non-parameter-set NAL unit, per RFC 7798 §4.4.2.
+        //
+        // AP payload = one or more aggregation units, each consisting of:
+        //   - a 16-bit NAL unit size (network byte order),
+        //   - followed by the complete HEVC NAL unit (including its 2-byte NAL header).
+        //
+        if let (Some(sps_nalu), Some(pps_nalu)) = (&self.sps_nalu, &self.pps_nalu) {
+            // Build AP indicator (PayloadHdr) by copying F, layer_id, tid from the current header
+            // but setting Type=48.
+            const TYPE_MASK: u16 = 0b01111110 << 8;
+            let orig_u16 = u16::from_be_bytes([nalu[0], nalu[1]]);
+            let ap_u16 =
+                (orig_u16 & !TYPE_MASK) | ((H265NALU_AGGREGATION_PACKET_TYPE as u16) << (8 + 1));
+            let ap_hdr = ap_u16.to_be_bytes();
+
+            let mut items_len = (2 + sps_nalu.len()) + (2 + pps_nalu.len());
+            let include_vps = self.vps_nalu.as_ref();
+            if let Some(vps) = include_vps {
+                items_len += 2 + vps.len();
+            }
+
+            let mut ap = Vec::with_capacity(H265NALU_HEADER_SIZE + items_len);
+            ap.extend_from_slice(&ap_hdr);
+
+            if let Some(vps) = include_vps {
+                ap.extend_from_slice(&(vps.len() as u16).to_be_bytes());
+                ap.extend_from_slice(vps);
+            }
+
+            ap.extend_from_slice(&(sps_nalu.len() as u16).to_be_bytes());
+            ap.extend_from_slice(sps_nalu);
+            ap.extend_from_slice(&(pps_nalu.len() as u16).to_be_bytes());
+            ap.extend_from_slice(pps_nalu);
+
+            if ap.len() <= mtu {
+                // AP fits in MTU, emit it.
+                out.push(ap);
+            } else {
+                // AP exceeds MTU. Fall back to emitting parameter sets as individual Single NAL packets.
+                // This ensures parameter sets are not lost.
+                if let Some(vps) = include_vps {
+                    if vps.len() <= mtu {
+                        out.push(vps.to_vec());
+                    }
+                    // If VPS is larger than MTU, we could fragment it as FU, but in practice
+                    // VPS/SPS/PPS are typically small. Silently dropping oversized parameter sets
+                    // is acceptable as a fallback.
+                }
+                if sps_nalu.len() <= mtu {
+                    out.push(sps_nalu.to_vec());
+                }
+                if pps_nalu.len() <= mtu {
+                    out.push(pps_nalu.to_vec());
+                }
+            }
+
+            // Clear cache after successfully emitting parameter sets (either as AP or individual packets).
+            self.vps_nalu = None;
+            self.sps_nalu = None;
+            self.pps_nalu = None;
+        }
+
+        // Single NAL Unit packetization (RFC 7798 §4.4.1).
+        if nalu.len() <= mtu {
+            out.push(nalu.to_vec());
+            return;
+        }
+
+        // Fragmentation Unit (FU) packetization (RFC 7798 §4.4.3).
+        const FU_OVERHEAD: usize = H265NALU_HEADER_SIZE + H265FRAGMENTATION_UNIT_HEADER_SIZE;
+        if mtu <= FU_OVERHEAD || nalu.len() <= H265NALU_HEADER_SIZE {
+            return;
+        }
+
+        // Build FU indicator (PayloadHdr) by copying F, layer_id, tid from the original header
+        // but setting Type=49.
+        const TYPE_MASK: u16 = 0b01111110 << 8;
+        let orig_u16 = u16::from_be_bytes([nalu[0], nalu[1]]);
+        let fu_u16 =
+            (orig_u16 & !TYPE_MASK) | ((H265NALU_FRAGMENTATION_UNIT_TYPE as u16) << (8 + 1));
+        let fu_indicator = fu_u16.to_be_bytes();
+
+        // Fragment payload is the original NAL unit payload without the 2-byte NAL header.
+        let payload = &nalu[H265NALU_HEADER_SIZE..];
+        let max_fragment = mtu - FU_OVERHEAD;
+
+        let mut offset = 0;
+        while offset < payload.len() {
+            let remaining = payload.len() - offset;
+            let take = remaining.min(max_fragment);
+
+            let is_start = offset == 0;
+            let is_end = offset + take == payload.len();
+
+            let mut fu_header: u8 = original_type & 0b0011_1111;
+            if is_start {
+                fu_header |= 0b1000_0000;
+            }
+            if is_end {
+                fu_header |= 0b0100_0000;
+            }
+
+            let mut pkt = Vec::with_capacity(FU_OVERHEAD + take);
+            pkt.extend_from_slice(&fu_indicator);
+            pkt.push(fu_header);
+            pkt.extend_from_slice(&payload[offset..offset + take]);
+            out.push(pkt);
+
+            offset += take;
+        }
+    }
+}
+
+impl Packetizer for H265Packetizer {
+    fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
+        if payload.is_empty() || mtu == 0 {
+            return Ok(vec![]);
+        }
+
+        let mut packets = Vec::new();
+
+        // If no Annex-B start codes are present, treat as a single NAL unit.
+        let (mut next_start, mut next_len) = Self::next_start_code(payload, 0);
+        if next_start == -1 {
+            self.emit_nalu(payload, mtu, &mut packets);
+            return Ok(packets);
+        }
+
+        // Walk Annex-B bytestream and emit NAL units between start codes.
+        while next_start != -1 {
+            let nalu_start = (next_start + next_len) as usize;
+            let (next_start2, next_len2) = Self::next_start_code(payload, nalu_start);
+            next_start = next_start2;
+            next_len = next_len2;
+
+            if next_start != -1 {
+                let nalu_end = next_start as usize;
+                self.emit_nalu(&payload[nalu_start..nalu_end], mtu, &mut packets);
+            } else {
+                self.emit_nalu(&payload[nalu_start..], mtu, &mut packets);
+            }
+        }
+
+        Ok(packets)
+    }
+
+    fn is_marker(&mut self, _data: &[u8], _previous: Option<&[u8]>, last: bool) -> bool {
+        last
+    }
+}
 
 /// H265NALUHeader is a H265 NAL Unit Header
 /// https://datatracker.ietf.org/doc/html/rfc7798#section-1.1.4
@@ -78,6 +353,27 @@ impl H265NALUHeader {
     /// is_paci_packet returns whether or not the packet is a PACI packet.
     pub fn is_paci_packet(&self) -> bool {
         self.nalu_type() == H265NALU_PACI_PACKET_TYPE
+    }
+
+    /// is_idr_picture returns whether or not the NAL unit is an IDR picture.
+    pub fn is_idr_picture(&self) -> bool {
+        let typ = self.nalu_type();
+        typ == H265NALU_IDR_W_RADL || typ == H265NALU_IDR_N_LP
+    }
+
+    /// is_irap returns whether or not the NAL unit is an IRAP (Intra Random Access Point) picture.
+    /// IRAP pictures include BLA, IDR, and CRA pictures, which are all random access points / keyframes.
+    pub fn is_irap(&self) -> bool {
+        let typ = self.nalu_type();
+        matches!(
+            typ,
+            H265NALU_BLA_W_LP
+                | H265NALU_BLA_W_RADL
+                | H265NALU_BLA_N_LP
+                | H265NALU_IDR_W_RADL
+                | H265NALU_IDR_N_LP
+                | H265NALU_CRA_NUT
+        )
     }
 }
 
@@ -384,6 +680,18 @@ impl H265AggregationPacket {
     /// other_units returns the all the other Aggregated Unit of the packet (excluding the first one).
     pub fn other_units(&self) -> &[H265AggregationUnit] {
         self.other_units.as_slice()
+    }
+
+    /// nal_units returns all NAL units in the aggregation packet.
+    pub fn nal_units(&self) -> Vec<&[u8]> {
+        let mut units = Vec::new();
+        if let Some(first) = &self.first_unit {
+            units.push(first.nal_unit.as_slice());
+        }
+        for unit in &self.other_units {
+            units.push(unit.nal_unit.as_slice());
+        }
+        units
     }
 }
 
@@ -735,6 +1043,7 @@ impl Default for H265Payload {
 pub struct H265Depacketizer {
     payload: H265Payload,
     might_need_donl: bool,
+    fu_buffer: Option<Vec<u8>>,
 }
 
 impl H265Depacketizer {
@@ -757,7 +1066,9 @@ impl H265Depacketizer {
 
 impl Depacketizer for H265Depacketizer {
     fn out_size_hint(&self, packets_size: usize) -> Option<usize> {
-        Some(packets_size)
+        // Roughly account for Annex B start codes
+        let estimated_packets = (packets_size / 1200).saturating_add(1);
+        Some(packets_size.saturating_add(4usize.saturating_mul(estimated_packets)))
     }
 
     /// depacketize parses the passed byte slice and stores the result
@@ -766,7 +1077,7 @@ impl Depacketizer for H265Depacketizer {
         &mut self,
         packet: &[u8],
         out: &mut Vec<u8>,
-        _: &mut CodecExtra,
+        codec_extra: &mut CodecExtra,
     ) -> Result<(), PacketError> {
         if packet.len() <= H265NALU_HEADER_SIZE {
             return Err(PacketError::ErrShortPacket);
@@ -781,12 +1092,69 @@ impl Depacketizer for H265Depacketizer {
             let mut decoded = H265PACIPacket::default();
             decoded.depacketize(packet)?;
 
+            // Emit PACI payload with Annex-B start code
+            out.extend_from_slice(ANNEXB_NALUSTART_CODE);
+            out.extend_from_slice(&decoded.payload());
+
+            // Check if this is a keyframe.
+            if !decoded.payload().is_empty() {
+                let payload_hdr = H265NALUHeader::new(decoded.payload()[0], decoded.payload()[1]);
+                let is_keyframe = if let CodecExtra::H265(e) = codec_extra {
+                    payload_hdr.is_irap() | e.is_keyframe
+                } else {
+                    payload_hdr.is_irap()
+                };
+                *codec_extra = CodecExtra::H265(H265CodecExtra { is_keyframe });
+            }
+
             self.payload = H265Payload::H265PACIPacket(decoded);
         } else if header.is_fragmentation_unit() {
             let mut decoded = H265FragmentationUnitPacket::default();
             decoded.with_donl(self.might_need_donl);
 
             decoded.depacketize(packet)?;
+
+            let fu_header = decoded.fu_header();
+
+            if fu_header.s() {
+                // Start of fragmented NAL unit.
+                if self.fu_buffer.is_some() {
+                    // Incomplete previous FU, discard it.
+                    self.fu_buffer = None;
+                }
+                self.fu_buffer = Some(Vec::new());
+            }
+
+            if let Some(ref mut buf) = self.fu_buffer {
+                buf.extend_from_slice(&decoded.payload());
+            }
+
+            if fu_header.e() {
+                // End of fragmented NAL unit - reconstruct original NAL.
+                if let Some(fu_payload) = self.fu_buffer.take() {
+                    // Rebuild original NAL unit header from FU header.
+                    const TYPE_MASK: u16 = 0b01111110 << 8;
+                    let payload_hdr_u16 = u16::from_be_bytes([packet[0], packet[1]]);
+                    let orig_type = fu_header.fu_type();
+                    let orig_hdr_u16 =
+                        (payload_hdr_u16 & !TYPE_MASK) | ((orig_type as u16) << (8 + 1));
+                    let orig_hdr = orig_hdr_u16.to_be_bytes();
+                    let orig_hdr_obj = H265NALUHeader::new(orig_hdr[0], orig_hdr[1]);
+
+                    // Check if this is a keyframe.
+                    let is_keyframe = if let CodecExtra::H265(e) = codec_extra {
+                        orig_hdr_obj.is_irap() | e.is_keyframe
+                    } else {
+                        orig_hdr_obj.is_irap()
+                    };
+                    *codec_extra = CodecExtra::H265(H265CodecExtra { is_keyframe });
+
+                    // Emit Annex-B start code + original NAL header + payload.
+                    out.extend_from_slice(ANNEXB_NALUSTART_CODE);
+                    out.extend_from_slice(&orig_hdr);
+                    out.extend_from_slice(&fu_payload);
+                }
+            }
 
             self.payload = H265Payload::H265FragmentationUnitPacket(decoded);
         } else if header.is_aggregation_packet() {
@@ -795,17 +1163,44 @@ impl Depacketizer for H265Depacketizer {
 
             decoded.depacketize(packet)?;
 
+            // Emit each NAL unit in aggregation packet with Annex-B start codes.
+            for nalu in decoded.nal_units() {
+                if nalu.len() >= H265NALU_HEADER_SIZE {
+                    let nalu_hdr = H265NALUHeader::new(nalu[0], nalu[1]);
+                    let is_keyframe = if let CodecExtra::H265(e) = codec_extra {
+                        nalu_hdr.is_irap() | e.is_keyframe
+                    } else {
+                        nalu_hdr.is_irap()
+                    };
+                    *codec_extra = CodecExtra::H265(H265CodecExtra { is_keyframe });
+                }
+
+                out.extend_from_slice(ANNEXB_NALUSTART_CODE);
+                out.extend_from_slice(nalu);
+            }
+
             self.payload = H265Payload::H265AggregationPacket(decoded);
         } else {
+            // Single NAL unit packet.
             let mut decoded = H265SingleNALUnitPacket::default();
             decoded.with_donl(self.might_need_donl);
 
             decoded.depacketize(packet)?;
 
+            // Check if this is a keyframe.
+            let is_keyframe = if let CodecExtra::H265(e) = codec_extra {
+                header.is_idr_picture() | e.is_keyframe
+            } else {
+                header.is_idr_picture()
+            };
+            *codec_extra = CodecExtra::H265(H265CodecExtra { is_keyframe });
+
+            // Emit Annex-B start code + NAL unit.
+            out.extend_from_slice(ANNEXB_NALUSTART_CODE);
+            out.extend_from_slice(packet);
+
             self.payload = H265Payload::H265SingleNALUnitPacket(decoded);
         }
-
-        out.extend_from_slice(packet);
 
         Ok(())
     }
@@ -826,6 +1221,41 @@ mod test {
     use super::*;
 
     type Result<T> = std::result::Result<T, PacketError>;
+
+    fn reconstruct_from_fu_packets(packets: &[Vec<u8>]) -> Vec<u8> {
+        // Reconstruct the original NAL unit from a sequence of FU packets.
+        // Assumes all packets are FU (type 49) and are consecutive.
+        //
+        // FU payloads are:
+        //   [0..2)  : PayloadHdr (type=49)
+        //   [2]     : FU header (S/E/type)
+        //   [3..]   : fragment bytes
+        const TYPE_MASK: u16 = 0b01111110 << 8;
+
+        let mut out = Vec::new();
+        let mut started = false;
+
+        for pkt in packets {
+            assert!(pkt.len() >= 3);
+            let hdr = H265NALUHeader::new(pkt[0], pkt[1]);
+            assert!(hdr.is_fragmentation_unit());
+
+            let fu = H265FragmentationUnitHeader(pkt[2]);
+
+            if fu.s() {
+                // Rebuild the original 2-byte NAL header by replacing Type with fu_type.
+                let fu_u16 = u16::from_be_bytes([pkt[0], pkt[1]]);
+                let orig_u16 = (fu_u16 & !TYPE_MASK) | ((fu.fu_type() as u16) << (8 + 1));
+                out.extend_from_slice(&orig_u16.to_be_bytes());
+                started = true;
+            }
+
+            assert!(started, "FU sequence must start with S=1");
+            out.extend_from_slice(&pkt[3..]);
+        }
+
+        out
+    }
 
     #[test]
     fn test_h265_nalu_header() -> Result<()> {
@@ -922,6 +1352,52 @@ mod test {
             assert_eq!(header.layer_id(), cur.layer_id, "invalid layer_id");
             assert_eq!(header.tid(), cur.tid, "invalid tid");
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_h265_irap_detection() -> Result<()> {
+        // Test that is_irap() detects all IRAP types (BLA, IDR, CRA)
+        // BLA_W_LP (16)
+        let header = H265NALUHeader::new(0x20, 0x01);
+        assert!(header.is_irap(), "BLA_W_LP should be detected as IRAP");
+        assert!(!header.is_idr_picture(), "BLA_W_LP is not an IDR");
+
+        // BLA_W_RADL (17)
+        let header = H265NALUHeader::new(0x22, 0x01);
+        assert!(header.is_irap(), "BLA_W_RADL should be detected as IRAP");
+        assert!(!header.is_idr_picture(), "BLA_W_RADL is not an IDR");
+
+        // BLA_N_LP (18)
+        let header = H265NALUHeader::new(0x24, 0x01);
+        assert!(header.is_irap(), "BLA_N_LP should be detected as IRAP");
+        assert!(!header.is_idr_picture(), "BLA_N_LP is not an IDR");
+
+        // IDR_W_RADL (19)
+        let header = H265NALUHeader::new(0x26, 0x01);
+        assert!(header.is_irap(), "IDR_W_RADL should be detected as IRAP");
+        assert!(header.is_idr_picture(), "IDR_W_RADL is an IDR");
+
+        // IDR_N_LP (20)
+        let header = H265NALUHeader::new(0x28, 0x01);
+        assert!(header.is_irap(), "IDR_N_LP should be detected as IRAP");
+        assert!(header.is_idr_picture(), "IDR_N_LP is an IDR");
+
+        // CRA_NUT (21)
+        let header = H265NALUHeader::new(0x2a, 0x01);
+        assert!(header.is_irap(), "CRA_NUT should be detected as IRAP");
+        assert!(!header.is_idr_picture(), "CRA_NUT is not an IDR");
+
+        // TRAIL_R (1) - not an IRAP
+        let header = H265NALUHeader::new(0x02, 0x01);
+        assert!(!header.is_irap(), "TRAIL_R should not be detected as IRAP");
+        assert!(!header.is_idr_picture(), "TRAIL_R is not an IDR");
+
+        // VPS (32) - not an IRAP
+        let header = H265NALUHeader::new(0x40, 0x01);
+        assert!(!header.is_irap(), "VPS should not be detected as IRAP");
+        assert!(!header.is_idr_picture(), "VPS is not an IDR");
 
         Ok(())
     }
@@ -1719,6 +2195,246 @@ mod test {
             let mut extra = CodecExtra::None;
             let _ = pck.depacketize(&cur, &mut out, &mut extra)?;
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_h265_packetizer_single_nalu() -> Result<()> {
+        let mut p = H265Packetizer::default();
+
+        // A minimal "single NAL" (2-byte NAL header + payload).
+        // Use a non-parameter-set type so the packetizer doesn't cache it.
+        let nalu = b"\x02\x01\xaa\xbb\xcc".to_vec();
+
+        let out = p.packetize(1200, &nalu)?;
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0], nalu);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_h265_packetizer_annexb_split() -> Result<()> {
+        let mut p = H265Packetizer::default();
+
+        // Use non-parameter-set NALU types so they are emitted directly.
+        let nalu1 = b"\x02\x01\x11\x22\x33".to_vec();
+        let nalu2 = b"\x26\x01\xaa\xbb\xcc\xdd".to_vec();
+
+        // Annex-B start codes around the NAL units.
+        let mut bytestream = Vec::new();
+        bytestream.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        bytestream.extend_from_slice(&nalu1);
+        bytestream.extend_from_slice(&[0x00, 0x00, 0x01]);
+        bytestream.extend_from_slice(&nalu2);
+
+        let out = p.packetize(1200, &bytestream)?;
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0], nalu1);
+        assert_eq!(out[1], nalu2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_h265_packetizer_fu_fragmentation_roundtrip_payload() -> Result<()> {
+        let mut p = H265Packetizer::default();
+
+        // Craft a NAL unit large enough to force FU fragmentation.
+        // Header 0x02 0x01 => F=0, type=1 (VCL), tid=1.
+        let mut nalu = vec![0x02, 0x01];
+        nalu.extend((0..60).map(|i| i as u8));
+
+        // Force fragmentation: FU overhead is 3 bytes, so this yields multiple fragments.
+        let mtu = 20;
+        let out = p.packetize(mtu, &nalu)?;
+        assert!(out.len() > 1, "expected fragmentation");
+
+        // Validate each FU packet and reconstruct the original payload (sans 2-byte NAL header).
+        let orig_hdr = H265NALUHeader::new(nalu[0], nalu[1]);
+        let orig_type = orig_hdr.nalu_type();
+        let orig_payload = &nalu[H265NALU_HEADER_SIZE..];
+
+        let mut reconstructed = Vec::new();
+
+        for (idx, pkt) in out.iter().enumerate() {
+            assert!(pkt.len() <= mtu);
+            assert!(pkt.len() >= H265NALU_HEADER_SIZE + H265FRAGMENTATION_UNIT_HEADER_SIZE);
+
+            let hdr = H265NALUHeader::new(pkt[0], pkt[1]);
+            assert_eq!(hdr.nalu_type(), H265NALU_FRAGMENTATION_UNIT_TYPE);
+            assert!(!hdr.f());
+            assert_eq!(hdr.layer_id(), orig_hdr.layer_id());
+            assert_eq!(hdr.tid(), orig_hdr.tid());
+
+            let fu = H265FragmentationUnitHeader(pkt[2]);
+            assert_eq!(fu.fu_type(), orig_type);
+            if idx == 0 {
+                assert!(fu.s());
+                assert!(!fu.e());
+            } else if idx == out.len() - 1 {
+                assert!(!fu.s());
+                assert!(fu.e());
+            } else {
+                assert!(!fu.s());
+                assert!(!fu.e());
+            }
+
+            reconstructed.extend_from_slice(&pkt[3..]);
+        }
+
+        assert_eq!(reconstructed, orig_payload);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_h265_packetizer_single_nalu_no_fragment() -> Result<()> {
+        let mut p = H265Packetizer::default();
+
+        // A small NALU: 2-byte header + payload.
+        let nalu = [0x02, 0x01, 0xaa, 0xbb, 0xcc, 0xdd];
+        let pkts = p.packetize(1200, &nalu)?;
+
+        assert_eq!(pkts.len(), 1);
+        assert_eq!(pkts[0], nalu);
+        Ok(())
+    }
+
+    #[test]
+    fn test_h265_packetizer_annexb_splits_nalus() -> Result<()> {
+        let mut p = H265Packetizer::default();
+
+        // Use non-parameter-set NALU types so they are emitted directly.
+        let nalu1 = [0x02, 0x01, 0x11, 0x22, 0x33];
+        let nalu2 = [0x26, 0x01, 0x44, 0x55];
+
+        let mut annexb = Vec::new();
+        annexb.extend_from_slice(&[0x00, 0x00, 0x01]);
+        annexb.extend_from_slice(&nalu1);
+        annexb.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        annexb.extend_from_slice(&nalu2);
+
+        let pkts = p.packetize(1200, &annexb)?;
+
+        assert_eq!(pkts.len(), 2);
+        assert_eq!(pkts[0], nalu1);
+        assert_eq!(pkts[1], nalu2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_h265_packetizer_fu_fragmentation_reconstructs() -> Result<()> {
+        let mut p = H265Packetizer::default();
+
+        // Create a NALU large enough to require fragmentation.
+        // Header is a small VCL-ish type (type=1) with tid=1.
+        let mut nalu = vec![0x02, 0x01];
+        nalu.extend(std::iter::repeat(0x5a).take(100));
+
+        // Tiny MTU to force multiple fragments.
+        let mtu = 20;
+        let pkts = p.packetize(mtu, &nalu)?;
+        assert!(pkts.len() > 1);
+        assert!(pkts.iter().all(|p| p.len() <= mtu));
+
+        // All outputs should be FU packets for this NALU.
+        for (i, pkt) in pkts.iter().enumerate() {
+            let hdr = H265NALUHeader::new(pkt[0], pkt[1]);
+            assert!(hdr.is_fragmentation_unit());
+
+            let fu = H265FragmentationUnitHeader(pkt[2]);
+            if i == 0 {
+                assert!(fu.s());
+                assert!(!fu.e());
+            } else if i + 1 == pkts.len() {
+                assert!(!fu.s());
+                assert!(fu.e());
+            } else {
+                assert!(!fu.s());
+                assert!(!fu.e());
+            }
+        }
+
+        let reconstructed = reconstruct_from_fu_packets(&pkts);
+        assert_eq!(reconstructed, nalu);
+        Ok(())
+    }
+
+    #[test]
+    fn test_h265_packetizer_emits_ap_for_vps_sps_pps() -> Result<()> {
+        let mut p = H265Packetizer::default();
+
+        // VPS (type 32), SPS (type 33), PPS (type 34), then a VCL NALU (type 1).
+        let vps = vec![0x40, 0x01, 0x01, 0x02];
+        let sps = vec![0x42, 0x01, 0x03, 0x04, 0x05];
+        let pps = vec![0x44, 0x01, 0x06];
+        let vcl = vec![0x02, 0x01, 0xaa, 0xbb, 0xcc, 0xdd];
+
+        // Cache parameter sets (no output yet).
+        assert!(p.packetize(1200, &vps)?.is_empty());
+        assert!(p.packetize(1200, &sps)?.is_empty());
+        assert!(p.packetize(1200, &pps)?.is_empty());
+
+        // First non-parameter-set NALU should trigger AP emission.
+        let out = p.packetize(1200, &vcl)?;
+        assert_eq!(out.len(), 2);
+
+        // Validate AP packet structure.
+        assert!(out[0].len() >= H265NALU_HEADER_SIZE + 2);
+        let ap_hdr = H265NALUHeader::new(out[0][0], out[0][1]);
+        assert_eq!(ap_hdr.nalu_type(), H265NALU_AGGREGATION_PACKET_TYPE);
+
+        let mut off = H265NALU_HEADER_SIZE;
+        for expected in [&vps, &sps, &pps] {
+            let len = u16::from_be_bytes([out[0][off], out[0][off + 1]]) as usize;
+            off += 2;
+            assert_eq!(len, expected.len());
+            assert_eq!(&out[0][off..off + len], expected.as_slice());
+            off += len;
+        }
+
+        // And the actual VCL NALU follows as a normal single-NALU packet.
+        assert_eq!(out[1], vcl);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_h265_packetizer_ap_exceeds_mtu_fallback() -> Result<()> {
+        let mut p = H265Packetizer::default();
+
+        // Create VPS, SPS, PPS parameter sets.
+        let vps = vec![0x40, 0x01, 0x01, 0x02];
+        let sps = vec![0x42, 0x01, 0x03, 0x04, 0x05];
+        let pps = vec![0x44, 0x01, 0x06];
+        let vcl = vec![0x02, 0x01, 0xaa, 0xbb];
+
+        // Cache parameter sets (no output yet).
+        assert!(p.packetize(1200, &vps)?.is_empty());
+        assert!(p.packetize(1200, &sps)?.is_empty());
+        assert!(p.packetize(1200, &pps)?.is_empty());
+
+        // Set MTU to a value smaller than the AP size would be.
+        // AP overhead: 2 (AP header) + 2 (VPS size) + 4 (VPS) + 2 (SPS size) + 5 (SPS) + 2 (PPS size) + 3 (PPS) = 20 bytes
+        // So MTU=15 will be too small for the AP.
+        let small_mtu = 15;
+        let out = p.packetize(small_mtu, &vcl)?;
+
+        // Should emit parameter sets as individual Single NAL packets, then the VCL NALU.
+        // Expected: VPS, SPS, PPS, VCL = 4 packets
+        assert_eq!(
+            out.len(),
+            4,
+            "Expected 4 packets (VPS, SPS, PPS, VCL) when AP exceeds MTU"
+        );
+
+        // Verify each parameter set packet.
+        assert_eq!(out[0], vps, "First packet should be VPS");
+        assert_eq!(out[1], sps, "Second packet should be SPS");
+        assert_eq!(out[2], pps, "Third packet should be PPS");
+        assert_eq!(out[3], vcl, "Fourth packet should be VCL");
 
         Ok(())
     }

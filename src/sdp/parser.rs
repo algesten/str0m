@@ -605,10 +605,40 @@ where
     let rtcp_fb = attribute_line("rtcp-fb", (pt(), token(' '), any_value()))
         .map(|(pt, _, value)| MediaAttribute::RtcpFb { pt, value });
 
-    let fmtp_param = sep_by1(
-        key_val().map(|(k, v)| FormatParam::parse(&k, &v)),
-        token(';'),
-    );
+    let fmtp_param = sep_by1(key_val(), token(';')).map(|pairs: Vec<(String, String)>| {
+        use crate::packet::H265ProfileTierLevel;
+        use std::collections::HashMap;
+
+        // Check if this looks like H.265 by presence of tier-flag or level-id
+        let is_h265 = pairs
+            .iter()
+            .any(|(k, _)| k == "tier-flag" || k == "level-id");
+
+        if is_h265 {
+            // For H.265, build composite ProfileTierLevel (like H.264's ProfileLevelId)
+            let map: HashMap<String, String> = pairs.into_iter().collect();
+
+            let mut result = vec![];
+            if let Some(ptl) = H265ProfileTierLevel::from_fmtp(&map) {
+                result.push(FormatParam::H265ProfileTierLevel(ptl));
+            }
+
+            // Include non-H.265-PTL parameters
+            for (k, v) in map.iter() {
+                if k != "profile-id" && k != "tier-flag" && k != "level-id" {
+                    result.push(FormatParam::parse(k, v));
+                }
+            }
+
+            result
+        } else {
+            // Standard parsing for non-H.265 codecs
+            pairs
+                .into_iter()
+                .map(|(k, v)| FormatParam::parse(&k, &v))
+                .collect::<Vec<_>>()
+        }
+    });
 
     // a=fmtp:111 minptime=10; useinbandfec=1
     // a=fmtp:111 minptime=10;useinbandfec=1

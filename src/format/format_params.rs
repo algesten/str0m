@@ -71,6 +71,16 @@ pub struct FormatParams {
     /// to the seq_tier syntax element specified in AV1. If the parameter is not
     /// present, the tier MUST be inferred to be 0.
     pub tier: Option<u8>,
+
+    /// H.265/HEVC profile, tier, and level.
+    ///
+    /// Contains:
+    /// * profile: Main, Main10, Main Still Picture, etc.
+    /// * tier: Main or High.
+    /// * level: 3.1, 4.0, 5.0, etc.
+    ///
+    /// See ITU-T H.265 Annex A for complete definitions.
+    pub h265_profile_tier_level: Option<crate::packet::H265ProfileTierLevel>,
 }
 
 impl FormatParams {
@@ -78,19 +88,41 @@ impl FormatParams {
     ///
     /// Example `minptime=10;useinbandfec=1`.
     pub fn parse_line(line: &str) -> Self {
-        let key_vals = line.split(';').filter_map(|pair| {
-            let mut kv = pair.split('=');
-            match (kv.next(), kv.next()) {
-                (Some(k), Some(v)) => Some((k.trim(), v.trim())),
-                _ => None,
-            }
-        });
+        use crate::packet::H265ProfileTierLevel;
+        use std::collections::HashMap;
+
+        let key_vals: Vec<_> = line
+            .split(';')
+            .filter_map(|pair| {
+                let mut kv = pair.split('=');
+                match (kv.next(), kv.next()) {
+                    (Some(k), Some(v)) => Some((k.trim().to_string(), v.trim().to_string())),
+                    _ => None,
+                }
+            })
+            .collect();
+
+        let is_h265 = key_vals
+            .iter()
+            .any(|(k, _)| k == "tier-flag" || k == "level-id");
 
         let mut p = FormatParams::default();
 
-        for (k, v) in key_vals {
-            let param = FormatParam::parse(k, v);
-            p.set_param(&param);
+        if is_h265 {
+            let map: HashMap<String, String> = key_vals.into_iter().collect();
+            if let Some(ptl) = H265ProfileTierLevel::from_fmtp(&map) {
+                p.set_param(&FormatParam::H265ProfileTierLevel(ptl));
+            }
+            // Parse non-PTL parameters
+            for (k, v) in map.iter() {
+                if k != "profile-id" && k != "tier-flag" && k != "level-id" {
+                    p.set_param(&FormatParam::parse(k, v));
+                }
+            }
+        } else {
+            for (k, v) in key_vals {
+                p.set_param(&FormatParam::parse(&k, &v));
+            }
         }
 
         p
@@ -109,6 +141,9 @@ impl FormatParams {
             Profile(v) => self.profile = Some(*v),
             LevelIdx(v) => self.level_idx = Some(*v),
             Tier(v) => self.tier = Some(*v),
+            H265ProfileTierLevel(v) => self.h265_profile_tier_level = Some(*v),
+            // H.265 individual params are only for SDP serialization, not for setting
+            H265ProfileId(_) | H265TierFlag(_) | H265LevelId(_) => {}
             Apt(_) => {}
             Unknown => {}
         }
@@ -147,6 +182,12 @@ impl FormatParams {
         }
         if let Some(v) = self.tier {
             r.push(Tier(v));
+        }
+        // H.265 Profile/Tier/Level: Expand composite into three separate params for SDP.
+        if let Some(ptl) = self.h265_profile_tier_level {
+            r.push(H265ProfileId(ptl.profile_id()));
+            r.push(H265TierFlag(ptl.tier_flag()));
+            r.push(H265LevelId(ptl.level_id()));
         }
 
         r

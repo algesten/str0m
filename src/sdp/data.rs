@@ -919,6 +919,19 @@ pub enum FormatParam {
     /// AV1 tier
     Tier(u8),
 
+    /// H.265/HEVC profile, tier, and level (composite like H.264's ProfileLevelId).
+    #[allow(dead_code)]
+    H265ProfileTierLevel(crate::packet::H265ProfileTierLevel),
+
+    /// H.265 profile_id (used only for SDP serialization).
+    H265ProfileId(u8),
+
+    /// H.265 tier_flag (used only for SDP serialization).
+    H265TierFlag(u8),
+
+    /// H.265 level_id (used only for SDP serialization).
+    H265LevelId(u8),
+
     /// RTX (resend) codecs, which PT it concerns.
     Apt(Pt),
 
@@ -969,6 +982,13 @@ impl fmt::Display for FormatParam {
             Profile(v) => write!(f, "profile={}", v),
             LevelIdx(v) => write!(f, "level-idx={}", *v),
             Tier(v) => write!(f, "tier={}", v),
+            H265ProfileTierLevel(_) => {
+                // H.265 PTL composite should be expanded to three params before serialization
+                panic!("H265ProfileTierLevel should be expanded before Display serialization")
+            }
+            H265ProfileId(v) => write!(f, "profile-id={}", v),
+            H265TierFlag(v) => write!(f, "tier-flag={}", v),
+            H265LevelId(v) => write!(f, "level-id={}", v),
             Apt(v) => write!(f, "apt={v}"),
             Unknown => Ok(()),
         }
@@ -1306,6 +1326,10 @@ impl fmt::Display for MediaAttribute {
             }
             RtcpFb { pt, value } => write!(f, "a=rtcp-fb:{pt} {value}\r\n")?,
             Fmtp { pt, values } => {
+                if values.is_empty() {
+                    // Skip empty fmtp lines - they're invalid SDP
+                    return Ok(());
+                }
                 write!(f, "a=fmtp:{pt} ")?;
                 for (idx, v) in values.iter().enumerate() {
                     if idx + 1 < values.len() {
@@ -1660,5 +1684,26 @@ mod test {
         assert!(!sdp.media_lines[0].disabled, "audio has port=9");
         assert!(sdp.media_lines[1].disabled, "video has port=0");
         assert!(sdp.media_lines[2].disabled, "application has port=0");
+    }
+
+    #[test]
+    fn h265_fmtp_round_trip() {
+        use crate::packet::H265ProfileTierLevel;
+
+        // Test that H.265 fmtp params round-trip correctly
+        let ptl = H265ProfileTierLevel::new(1, 0, 93).unwrap(); // Main, Main tier, Level 3.1
+
+        let f = FormatParams {
+            h265_profile_tier_level: Some(ptl),
+            ..Default::default()
+        };
+
+        // Serialize to string
+        let fmtp_str = f.to_string();
+        assert_eq!(fmtp_str, "profile-id=1;tier-flag=0;level-id=93");
+
+        // Parse back
+        let parsed = FormatParams::parse_line(&fmtp_str);
+        assert_eq!(parsed.h265_profile_tier_level, Some(ptl));
     }
 }
