@@ -134,13 +134,13 @@ impl Candidate {
     ///
     /// let addr: SocketAddr = "192.168.1.1:12345".parse().unwrap();
     ///
-    /// // A standard UDP Host candidate
+    /// // A standard UDP host candidate
     /// let udp_host = Candidate::builder()
     ///     .udp()
     ///     .host(addr)
     ///     .build()?;
     ///
-    /// // A TCP Host candidate with a passive role
+    /// // A TCP host candidate with a passive role
     /// let tcp_host = Candidate::builder()
     ///     .tcp()
     ///     .host(addr)
@@ -684,14 +684,23 @@ impl<'de> Deserialize<'de> for Candidate {
     }
 }
 
+#[doc(hidden)]
 /// Marker for a builder requiring a protocol selection.
 pub struct NoProtocol;
+
+#[doc(hidden)]
 /// Marker for a builder using the UDP protocol.
 pub struct Udp;
+
+#[doc(hidden)]
 /// Marker for a builder using a TCP-based protocol.
 pub struct Tcp;
+
+#[doc(hidden)]
 /// Marker for a builder requiring an address and kind selection.
 pub struct Init;
+
+#[doc(hidden)]
 /// Marker for a builder that is ready to be finalized.
 pub struct Ready;
 
@@ -719,27 +728,27 @@ pub struct CandidateBuilder<P, S> {
 impl CandidateBuilder<NoProtocol, Init> {
     /// Sets the protocol to UDP.
     pub fn udp(self) -> CandidateBuilder<Udp, Init> {
-        self.into_protocol(Some(Protocol::Udp))
+        self.into_protocol(Protocol::Udp)
     }
 
     /// Sets the protocol to standard TCP.
     pub fn tcp(self) -> CandidateBuilder<Tcp, Init> {
-        self.into_protocol(Some(Protocol::Tcp))
+        self.into_protocol(Protocol::Tcp)
     }
 
     /// Sets the protocol to SSL-over-TCP.
     pub fn ssl_tcp(self) -> CandidateBuilder<Tcp, Init> {
-        self.into_protocol(Some(Protocol::SslTcp))
+        self.into_protocol(Protocol::SslTcp)
     }
 
     /// Sets the protocol to TLS.
     pub fn tls(self) -> CandidateBuilder<Tcp, Init> {
-        self.into_protocol(Some(Protocol::Tls))
+        self.into_protocol(Protocol::Tls)
     }
 
-    fn into_protocol<NewP>(self, p: Option<Protocol>) -> CandidateBuilder<NewP, Init> {
+    fn into_protocol<NewP>(self, p: Protocol) -> CandidateBuilder<NewP, Init> {
         CandidateBuilder {
-            proto: p,
+            proto: Some(p),
             _marker: PhantomData,
             foundation: self.foundation,
             component_id: self.component_id,
@@ -758,7 +767,7 @@ impl CandidateBuilder<NoProtocol, Init> {
 
 // Step 2: Kind Selection
 impl<P> CandidateBuilder<P, Init> {
-    /// Configures as a Host candidate.
+    /// Configures as a host candidate.
     pub fn host(self, addr: SocketAddr) -> CandidateBuilder<P, Ready> {
         self.into_ready(CandidateKind::Host, addr, Some(addr), Some(addr), None)
     }
