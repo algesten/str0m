@@ -249,6 +249,14 @@ impl RtcConfig {
         self
     }
 
+    /// Enable H265 video codec.
+    ///
+    /// Disabled by default.
+    pub fn enable_h265(mut self, enabled: bool) -> Self {
+        self.codec_config.enable_h265(enabled);
+        self
+    }
+
     // TODO: AV1 depacketizer/packetizer.
     //
     // /// Enable AV1 video codec.

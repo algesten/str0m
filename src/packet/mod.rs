@@ -17,7 +17,12 @@ mod h264_profile;
 pub(crate) use h264_profile::H264ProfileLevel;
 
 mod h265;
+pub use h265::H265CodecExtra;
 use h265::H265Depacketizer;
+pub use h265::H265Packetizer;
+
+mod h265_profile;
+pub(crate) use h265_profile::H265ProfileTierLevel;
 
 mod opus;
 pub use opus::{OpusDepacketizer, OpusPacketizer};
@@ -100,6 +105,8 @@ pub enum CodecExtra {
     Vp9(Vp9CodecExtra),
     /// Codec extra parameters for H264.
     H264(H264CodecExtra),
+    /// Codec extra parameters for H265.
+    H265(H265CodecExtra),
 }
 
 /// Depacketizes an RTP payload.
@@ -187,7 +194,7 @@ pub(crate) enum CodecPacketizer {
     #[allow(unused)]
     G722(G722Packetizer),
     H264(H264Packetizer),
-    // H265() TODO
+    H265(H265Packetizer),
     Opus(OpusPacketizer),
     Vp8(Vp8Packetizer),
     Vp9(Vp9Packetizer),
@@ -216,7 +223,7 @@ impl From<Codec> for CodecPacketizer {
             Codec::PCMU => CodecPacketizer::G711(G711Packetizer::default()),
             Codec::PCMA => CodecPacketizer::G711(G711Packetizer::default()),
             Codec::H264 => CodecPacketizer::H264(H264Packetizer::default()),
-            Codec::H265 => unimplemented!("Missing packetizer for H265"),
+            Codec::H265 => CodecPacketizer::H265(H265Packetizer::default()),
             Codec::Vp8 => CodecPacketizer::Vp8(Vp8Packetizer::default()),
             Codec::Vp9 => CodecPacketizer::Vp9(Vp9Packetizer::default()),
             Codec::Av1 => unimplemented!("Missing packetizer for AV1"),
@@ -252,6 +259,7 @@ impl Packetizer for CodecPacketizer {
             G711(v) => v.packetize(mtu, b),
             G722(v) => v.packetize(mtu, b),
             H264(v) => v.packetize(mtu, b),
+            H265(v) => v.packetize(mtu, b),
             Opus(v) => v.packetize(mtu, b),
             Vp8(v) => v.packetize(mtu, b),
             Vp9(v) => v.packetize(mtu, b),
@@ -266,6 +274,7 @@ impl Packetizer for CodecPacketizer {
             CodecPacketizer::G722(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Opus(v) => v.is_marker(data, previous, last),
             CodecPacketizer::H264(v) => v.is_marker(data, previous, last),
+            CodecPacketizer::H265(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Vp8(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Vp9(v) => v.is_marker(data, previous, last),
             CodecPacketizer::Null(v) => v.is_marker(data, previous, last),
