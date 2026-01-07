@@ -149,21 +149,17 @@ impl Candidate {
     ///
     /// # Ok::<(), IceError>(())
     /// ```
-    pub fn builder() -> CandidateBuilder<NoProtocol, Init> {
+    pub fn builder() -> CandidateBuilder<NoProtocol, NoRoute> {
         CandidateBuilder {
+            protocol_state: NoProtocol,
+            route_state: NoRoute,
             foundation: None,
             component_id: 1, // Default RTP
             prio: None,
-            addr: None,
-            base: None,
-            kind: None,
             tcptype: None,
             raddr: None,
             ufrag: None,
-            local: None,
             local_preference: None,
-            _marker: PhantomData,
-            protocol_state: NoProtocol,
         }
     }
 
@@ -705,11 +701,16 @@ pub struct Tcp;
 
 #[doc(hidden)]
 /// Marker for a builder requiring an address and kind selection.
-pub struct Init;
+pub struct NoRoute;
 
 #[doc(hidden)]
 /// Marker for a builder that is ready to be finalized.
-pub struct Ready;
+pub struct HasRoute {
+    kind: CandidateKind,
+    addr: SocketAddr,
+    base: SocketAddr,
+    local: SocketAddr,
+}
 
 /// A typesafe builder for constructing a [`Candidate`].
 ///
@@ -719,68 +720,60 @@ pub struct CandidateBuilder<P, S> {
     foundation: Option<String>,
     component_id: u16,
     prio: Option<u32>,
-    addr: Option<SocketAddr>,
-    base: Option<SocketAddr>,
-    kind: Option<CandidateKind>,
     tcptype: Option<TcpType>,
     raddr: Option<SocketAddr>,
     ufrag: Option<String>,
-    local: Option<SocketAddr>,
     local_preference: Option<u32>,
-    _marker: PhantomData<S>,
 
     protocol_state: P,
+    route_state: S,
 }
 
 // Step 1: Protocol Selection
-impl CandidateBuilder<NoProtocol, Init> {
+impl CandidateBuilder<NoProtocol, NoRoute> {
     /// Sets the protocol to UDP.
-    pub fn udp(self) -> CandidateBuilder<HasProtocol<Udp>, Init> {
-        self.into_protocol(Protocol::Udp)
+    pub fn udp(self) -> CandidateBuilder<HasProtocol<Udp>, NoRoute> {
+        self.into_has_protocol(Protocol::Udp)
     }
 
     /// Sets the protocol to standard TCP.
-    pub fn tcp(self) -> CandidateBuilder<HasProtocol<Tcp>, Init> {
-        self.into_protocol(Protocol::Tcp)
+    pub fn tcp(self) -> CandidateBuilder<HasProtocol<Tcp>, NoRoute> {
+        self.into_has_protocol(Protocol::Tcp)
     }
 
     /// Sets the protocol to SSL-over-TCP.
-    pub fn ssl_tcp(self) -> CandidateBuilder<HasProtocol<Tcp>, Init> {
-        self.into_protocol(Protocol::SslTcp)
+    pub fn ssl_tcp(self) -> CandidateBuilder<HasProtocol<Tcp>, NoRoute> {
+        self.into_has_protocol(Protocol::SslTcp)
     }
 
     /// Sets the protocol to TLS.
-    pub fn tls(self) -> CandidateBuilder<HasProtocol<Tcp>, Init> {
-        self.into_protocol(Protocol::Tls)
+    pub fn tls(self) -> CandidateBuilder<HasProtocol<Tcp>, NoRoute> {
+        self.into_has_protocol(Protocol::Tls)
     }
 
-    fn into_protocol<NewP>(self, p: Protocol) -> CandidateBuilder<HasProtocol<NewP>, Init> {
+    fn into_has_protocol<NewP>(self, p: Protocol) -> CandidateBuilder<HasProtocol<NewP>, NoRoute> {
         CandidateBuilder {
-            _marker: PhantomData,
             protocol_state: HasProtocol {
                 _marker: PhantomData,
                 protocol: p,
             },
+            route_state: self.route_state,
             foundation: self.foundation,
             component_id: self.component_id,
             prio: self.prio,
-            addr: self.addr,
-            base: self.base,
-            kind: self.kind,
             tcptype: self.tcptype,
             raddr: self.raddr,
             ufrag: self.ufrag,
-            local: self.local,
             local_preference: self.local_preference,
         }
     }
 }
 
 // Step 2: Kind Selection
-impl<P> CandidateBuilder<P, Init> {
+impl<P> CandidateBuilder<P, NoRoute> {
     /// Configures as a host candidate.
-    pub fn host(self, addr: SocketAddr) -> CandidateBuilder<P, Ready> {
-        self.into_ready(CandidateKind::Host, addr, Some(addr), Some(addr), None)
+    pub fn host(self, addr: SocketAddr) -> CandidateBuilder<P, HasRoute> {
+        self.into_has_route(CandidateKind::Host, addr, addr, addr, None)
     }
 
     /// Configures as a Server Reflexive (STUN) candidate.
@@ -789,44 +782,45 @@ impl<P> CandidateBuilder<P, Init> {
         self,
         addr: SocketAddr,
         base: SocketAddr,
-    ) -> CandidateBuilder<P, Ready> {
-        self.into_ready(
+    ) -> CandidateBuilder<P, HasRoute> {
+        self.into_has_route(
             CandidateKind::ServerReflexive,
             addr,
-            Some(base),
-            Some(base),
+            base,
+            base,
             Some(Candidate::arbitrary_raddr(addr)),
         )
     }
 
     /// Configures as a Relayed (TURN) candidate.
     /// Base is set to `addr`, and `local` is the interface address.
-    pub fn relayed(self, addr: SocketAddr, local: SocketAddr) -> CandidateBuilder<P, Ready> {
-        self.into_ready(
+    pub fn relayed(self, addr: SocketAddr, local: SocketAddr) -> CandidateBuilder<P, HasRoute> {
+        self.into_has_route(
             CandidateKind::Relayed,
             addr,
-            Some(addr),
-            Some(local),
+            addr,
+            local,
             Some(Candidate::arbitrary_raddr(addr)),
         )
     }
 
-    fn into_ready(
+    fn into_has_route(
         self,
         kind: CandidateKind,
         addr: SocketAddr,
-        base: Option<SocketAddr>,
-        local: Option<SocketAddr>,
+        base: SocketAddr,
+        local: SocketAddr,
         raddr: Option<SocketAddr>,
-    ) -> CandidateBuilder<P, Ready> {
+    ) -> CandidateBuilder<P, HasRoute> {
         CandidateBuilder {
-            kind: Some(kind),
-            addr: Some(addr),
-            base,
-            local,
-            raddr,
             protocol_state: self.protocol_state,
-            _marker: PhantomData,
+            route_state: HasRoute {
+                kind,
+                addr,
+                base,
+                local,
+            },
+            raddr,
             foundation: self.foundation,
             component_id: self.component_id,
             prio: self.prio,
@@ -838,22 +832,23 @@ impl<P> CandidateBuilder<P, Init> {
 }
 
 // Step 3: Final General Configurations and Build
-impl<P> CandidateBuilder<HasProtocol<P>, Ready> {
+impl<P> CandidateBuilder<HasProtocol<P>, HasRoute> {
     /// Consumes the builder and returns a [`Candidate`].
     pub fn build(self) -> Result<Candidate, IceError> {
-        let addr = self.addr.expect("addr missing");
-        if !is_valid_ip(addr.ip()) {
-            return Err(IceError::BadCandidate(format!("Invalid IP: {}", addr.ip())));
+        let route = &self.route_state;
+        if !is_valid_ip(route.addr.ip()) {
+            return Err(IceError::BadCandidate(format!(
+                "Invalid IP: {}",
+                route.addr.ip()
+            )));
         }
 
-        if let Some(base) = self.base {
-            if addr.is_ipv4() != base.is_ipv4() {
-                return Err(IceError::BadCandidate(format!(
-                    "address IP version mismatch: addr={} base={}",
-                    addr.ip(),
-                    base.ip(),
-                )));
-            }
+        if route.addr.is_ipv4() != route.base.is_ipv4() {
+            return Err(IceError::BadCandidate(format!(
+                "address IP version mismatch: addr={} base={}",
+                route.addr.ip(),
+                route.base.ip(),
+            )));
         }
 
         Ok(Candidate::new(
@@ -861,18 +856,18 @@ impl<P> CandidateBuilder<HasProtocol<P>, Ready> {
             self.component_id,
             self.protocol_state.protocol,
             self.prio,
-            addr,
-            self.base,
-            self.kind.expect("kind missing"),
+            route.addr,
+            Some(route.base),
+            route.kind,
             self.raddr,
             self.tcptype,
             self.ufrag,
-            self.local.expect("local missing"),
+            route.local,
         ))
     }
 }
 
-impl CandidateBuilder<HasProtocol<Tcp>, Ready> {
+impl CandidateBuilder<HasProtocol<Tcp>, HasRoute> {
     /// Configures the TCP type (active, passive, so).
     pub fn tcptype(mut self, t: TcpType) -> Self {
         self.tcptype = Some(t);
