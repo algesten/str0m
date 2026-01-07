@@ -716,7 +716,7 @@ pub struct HasRoute {
 ///
 /// This builder uses the Type State Pattern to enforce correct construction order and
 /// protocol-specific constraints (such as preventing `tcptype` on UDP).
-pub struct CandidateBuilder<P, S> {
+pub struct CandidateBuilder<P, R> {
     foundation: Option<String>,
     component_id: u16,
     prio: Option<u32>,
@@ -726,7 +726,7 @@ pub struct CandidateBuilder<P, S> {
     local_preference: Option<u32>,
 
     protocol_state: P,
-    route_state: S,
+    route_state: R,
 }
 
 // Step 1: Protocol Selection
@@ -769,10 +769,10 @@ impl CandidateBuilder<NoProtocol, NoRoute> {
     }
 }
 
-// Step 2: Kind Selection
-impl<P> CandidateBuilder<P, NoRoute> {
+// Step 2: Route Selection
+impl<P> CandidateBuilder<HasProtocol<P>, NoRoute> {
     /// Configures as a host candidate.
-    pub fn host(self, addr: SocketAddr) -> CandidateBuilder<P, HasRoute> {
+    pub fn host(self, addr: SocketAddr) -> CandidateBuilder<HasProtocol<P>, HasRoute> {
         self.into_has_route(CandidateKind::Host, addr, addr, addr, None)
     }
 
@@ -782,7 +782,7 @@ impl<P> CandidateBuilder<P, NoRoute> {
         self,
         addr: SocketAddr,
         base: SocketAddr,
-    ) -> CandidateBuilder<P, HasRoute> {
+    ) -> CandidateBuilder<HasProtocol<P>, HasRoute> {
         self.into_has_route(
             CandidateKind::ServerReflexive,
             addr,
@@ -794,7 +794,11 @@ impl<P> CandidateBuilder<P, NoRoute> {
 
     /// Configures as a Relayed (TURN) candidate.
     /// Base is set to `addr`, and `local` is the interface address.
-    pub fn relayed(self, addr: SocketAddr, local: SocketAddr) -> CandidateBuilder<P, HasRoute> {
+    pub fn relayed(
+        self,
+        addr: SocketAddr,
+        local: SocketAddr,
+    ) -> CandidateBuilder<HasProtocol<P>, HasRoute> {
         self.into_has_route(
             CandidateKind::Relayed,
             addr,
@@ -811,7 +815,7 @@ impl<P> CandidateBuilder<P, NoRoute> {
         base: SocketAddr,
         local: SocketAddr,
         raddr: Option<SocketAddr>,
-    ) -> CandidateBuilder<P, HasRoute> {
+    ) -> CandidateBuilder<HasProtocol<P>, HasRoute> {
         CandidateBuilder {
             protocol_state: self.protocol_state,
             route_state: HasRoute {
@@ -867,7 +871,7 @@ impl<P> CandidateBuilder<HasProtocol<P>, HasRoute> {
     }
 }
 
-impl CandidateBuilder<HasProtocol<Tcp>, HasRoute> {
+impl<R> CandidateBuilder<HasProtocol<Tcp>, R> {
     /// Configures the TCP type (active, passive, so).
     pub fn tcptype(mut self, t: TcpType) -> Self {
         self.tcptype = Some(t);
