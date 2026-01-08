@@ -919,18 +919,8 @@ pub enum FormatParam {
     /// AV1 tier
     Tier(u8),
 
-    /// H.265/HEVC profile, tier, and level (composite like H.264's ProfileLevelId).
-    #[allow(dead_code)]
+    /// H.265/HEVC profile, tier, and level.
     H265ProfileTierLevel(crate::packet::H265ProfileTierLevel),
-
-    /// H.265 profile_id (used only for SDP serialization).
-    H265ProfileId(u8),
-
-    /// H.265 tier_flag (used only for SDP serialization).
-    H265TierFlag(u8),
-
-    /// H.265 level_id (used only for SDP serialization).
-    H265LevelId(u8),
 
     /// RTX (resend) codecs, which PT it concerns.
     Apt(Pt),
@@ -964,6 +954,43 @@ impl FormatParam {
             Unknown
         })
     }
+
+    /// Parse multiple format parameters from key-value pairs.
+    /// Handles H.265 special case where three params combine into one composite.
+    pub fn parse_pairs(pairs: Vec<(String, String)>) -> Vec<FormatParam> {
+        use crate::packet::H265ProfileTierLevel;
+        use std::collections::HashMap;
+
+        // Check if this looks like H.265 by presence of tier-flag or level-id.
+        let is_h265 = pairs
+            .iter()
+            .any(|(k, _)| k == "tier-flag" || k == "level-id");
+
+        if is_h265 {
+            // For H.265, build composite ProfileTierLevel.
+            let map: HashMap<String, String> = pairs.into_iter().collect();
+
+            let mut result = vec![];
+            if let Some(ptl) = H265ProfileTierLevel::from_fmtp(&map) {
+                result.push(FormatParam::H265ProfileTierLevel(ptl));
+            }
+
+            // Include non-H.265-PTL parameters.
+            for (k, v) in map.iter() {
+                if k != "profile-id" && k != "tier-flag" && k != "level-id" {
+                    result.push(FormatParam::parse(k, v));
+                }
+            }
+
+            result
+        } else {
+            // Standard parsing for non-H.265 codecs.
+            pairs
+                .into_iter()
+                .map(|(k, v)| FormatParam::parse(&k, &v))
+                .collect()
+        }
+    }
 }
 
 impl fmt::Display for FormatParam {
@@ -982,13 +1009,15 @@ impl fmt::Display for FormatParam {
             Profile(v) => write!(f, "profile={}", v),
             LevelIdx(v) => write!(f, "level-idx={}", *v),
             Tier(v) => write!(f, "tier={}", v),
-            H265ProfileTierLevel(_) => {
-                // H.265 PTL composite should be expanded to three params before serialization
-                panic!("H265ProfileTierLevel should be expanded before Display serialization")
+            H265ProfileTierLevel(ptl) => {
+                write!(
+                    f,
+                    "profile-id={};tier-flag={};level-id={}",
+                    ptl.profile_id(),
+                    ptl.tier_flag(),
+                    ptl.level_id()
+                )
             }
-            H265ProfileId(v) => write!(f, "profile-id={}", v),
-            H265TierFlag(v) => write!(f, "tier-flag={}", v),
-            H265LevelId(v) => write!(f, "level-id={}", v),
             Apt(v) => write!(f, "apt={v}"),
             Unknown => Ok(()),
         }

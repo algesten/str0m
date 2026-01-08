@@ -78,6 +78,39 @@ pub struct H265Packetizer {
 }
 
 impl H265Packetizer {
+    /// Builds an Aggregation Packet (AP) from multiple NAL units.
+    ///
+    /// # Arguments
+    /// * `template_nalu` - A NAL unit to copy F, layer_id, and tid from.
+    /// * `nal_units` - Slice of NAL units to aggregate.
+    ///
+    /// # Returns
+    /// A complete AP packet with Type=48 header and all NAL units.
+    fn build_ap_packet(template_nalu: &[u8], nal_units: &[&[u8]]) -> Vec<u8> {
+        // Build AP header (PayloadHdr) by copying F, layer_id, tid from template
+        // but setting Type=48.
+        const TYPE_MASK: u16 = 0b01111110 << 8;
+        let orig_u16 = u16::from_be_bytes([template_nalu[0], template_nalu[1]]);
+        let ap_u16 =
+            (orig_u16 & !TYPE_MASK) | ((H265NALU_AGGREGATION_PACKET_TYPE as u16) << (8 + 1));
+        let ap_hdr = ap_u16.to_be_bytes();
+
+        // Calculate total size: header + (size_field + nal_unit) for each unit
+        let total_size: usize = H265NALU_HEADER_SIZE
+            + nal_units.iter().map(|nu| 2 + nu.len()).sum::<usize>();
+
+        let mut ap = Vec::with_capacity(total_size);
+        ap.extend_from_slice(&ap_hdr);
+
+        // Append each NAL unit with its 16-bit size prefix
+        for nal_unit in nal_units {
+            ap.extend_from_slice(&(nal_unit.len() as u16).to_be_bytes());
+            ap.extend_from_slice(nal_unit);
+        }
+
+        ap
+    }
+
     /// Finds the next Annex-B NAL unit start code in `payload`, starting at `start`.
     ///
     /// Detects `0x00 00 01` or `0x00 00 00 01` as defined by the HEVC Annex-B
@@ -140,38 +173,17 @@ impl H265Packetizer {
 
         // If we have cached VPS/SPS/PPS, emit an Aggregation Packet (AP, Type=48)
         // immediately before the next non-parameter-set NAL unit, per RFC 7798 §4.4.2.
-        //
-        // AP payload = one or more aggregation units, each consisting of:
-        //   - a 16-bit NAL unit size (network byte order),
-        //   - followed by the complete HEVC NAL unit (including its 2-byte NAL header).
-        //
         if let (Some(sps_nalu), Some(pps_nalu)) = (&self.sps_nalu, &self.pps_nalu) {
-            // Build AP indicator (PayloadHdr) by copying F, layer_id, tid from the current header
-            // but setting Type=48.
-            const TYPE_MASK: u16 = 0b01111110 << 8;
-            let orig_u16 = u16::from_be_bytes([nalu[0], nalu[1]]);
-            let ap_u16 =
-                (orig_u16 & !TYPE_MASK) | ((H265NALU_AGGREGATION_PACKET_TYPE as u16) << (8 + 1));
-            let ap_hdr = ap_u16.to_be_bytes();
-
-            let mut items_len = (2 + sps_nalu.len()) + (2 + pps_nalu.len());
-            let include_vps = self.vps_nalu.as_ref();
-            if let Some(vps) = include_vps {
-                items_len += 2 + vps.len();
+            // Collect parameter sets to aggregate.
+            let mut nal_units: Vec<&[u8]> = Vec::with_capacity(3);
+            if let Some(vps) = &self.vps_nalu {
+                nal_units.push(vps);
             }
+            nal_units.push(sps_nalu);
+            nal_units.push(pps_nalu);
 
-            let mut ap = Vec::with_capacity(H265NALU_HEADER_SIZE + items_len);
-            ap.extend_from_slice(&ap_hdr);
-
-            if let Some(vps) = include_vps {
-                ap.extend_from_slice(&(vps.len() as u16).to_be_bytes());
-                ap.extend_from_slice(vps);
-            }
-
-            ap.extend_from_slice(&(sps_nalu.len() as u16).to_be_bytes());
-            ap.extend_from_slice(sps_nalu);
-            ap.extend_from_slice(&(pps_nalu.len() as u16).to_be_bytes());
-            ap.extend_from_slice(pps_nalu);
+            // Build the AP packet using helper method.
+            let ap = Self::build_ap_packet(nalu, &nal_units);
 
             if ap.len() <= mtu {
                 // AP fits in MTU, emit it.
@@ -179,19 +191,13 @@ impl H265Packetizer {
             } else {
                 // AP exceeds MTU. Fall back to emitting parameter sets as individual Single NAL packets.
                 // This ensures parameter sets are not lost.
-                if let Some(vps) = include_vps {
-                    if vps.len() <= mtu {
-                        out.push(vps.to_vec());
+                for nal_unit in nal_units {
+                    if nal_unit.len() <= mtu {
+                        out.push(nal_unit.to_vec());
                     }
-                    // If VPS is larger than MTU, we could fragment it as FU, but in practice
+                    // If parameter set is larger than MTU, we could fragment it as FU, but in practice
                     // VPS/SPS/PPS are typically small. Silently dropping oversized parameter sets
                     // is acceptable as a fallback.
-                }
-                if sps_nalu.len() <= mtu {
-                    out.push(sps_nalu.to_vec());
-                }
-                if pps_nalu.len() <= mtu {
-                    out.push(pps_nalu.to_vec());
                 }
             }
 
@@ -233,17 +239,12 @@ impl H265Packetizer {
             let is_start = offset == 0;
             let is_end = offset + take == payload.len();
 
-            let mut fu_header: u8 = original_type & 0b0011_1111;
-            if is_start {
-                fu_header |= 0b1000_0000;
-            }
-            if is_end {
-                fu_header |= 0b0100_0000;
-            }
+            // Use H265FragmentationUnitHeader for consistency with depacketizer.
+            let fu_header = H265FragmentationUnitHeader::new(is_start, is_end, original_type);
 
             let mut pkt = Vec::with_capacity(FU_OVERHEAD + take);
             pkt.extend_from_slice(&fu_indicator);
-            pkt.push(fu_header);
+            pkt.push(fu_header.0);
             pkt.extend_from_slice(&payload[offset..offset + take]);
             out.push(pkt);
 
@@ -714,6 +715,23 @@ const H265FRAGMENTATION_UNIT_HEADER_SIZE: usize = 1;
 pub struct H265FragmentationUnitHeader(pub u8);
 
 impl H265FragmentationUnitHeader {
+    /// new creates a new H265FragmentationUnitHeader.
+    ///
+    /// # Arguments
+    /// * `s` - Start bit: true if this is the first fragment
+    /// * `e` - End bit: true if this is the last fragment
+    /// * `fu_type` - The NAL unit type of the fragmented NAL unit (6 bits)
+    pub fn new(s: bool, e: bool, fu_type: u8) -> Self {
+        let mut header = fu_type & 0b0011_1111; // Mask to 6 bits
+        if s {
+            header |= 0b1000_0000; // Set S bit
+        }
+        if e {
+            header |= 0b0100_0000; // Set E bit
+        }
+        H265FragmentationUnitHeader(header)
+    }
+
     /// s represents the start of a fragmented NAL unit.
     pub fn s(&self) -> bool {
         const MASK: u8 = 0b10000000;
