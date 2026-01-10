@@ -67,11 +67,11 @@ impl LinkCapacityEstimator {
     }
 
     /// Get the current capacity estimate, if available and not expired.
-    pub fn get_capacity_estimate(&self, now: Instant) -> Option<Bitrate> {
+    pub fn capacity_estimate(&self, now: Instant) -> Option<Bitrate> {
         let estimate = self.capacity_estimate?;
         let last_time = self.last_estimate_time?;
 
-        // Check if estimate has expired
+        // Check if estimate has expired (defensive against clock skew)
         if now.saturating_duration_since(last_time) > self.capacity_estimate_reset_window {
             trace!("Link capacity estimate expired");
             return None;
@@ -112,7 +112,7 @@ mod tests {
         let estimator = LinkCapacityEstimator::new();
         let now = Instant::now();
 
-        assert_eq!(estimator.get_capacity_estimate(now), None);
+        assert_eq!(estimator.capacity_estimate(now), None);
         assert!(!estimator.has_estimate());
     }
 
@@ -124,7 +124,7 @@ mod tests {
 
         estimator.update_from_probe(probe_result, now);
 
-        assert_eq!(estimator.get_capacity_estimate(now), Some(probe_result));
+        assert_eq!(estimator.capacity_estimate(now), Some(probe_result));
         assert!(estimator.has_estimate());
     }
 
@@ -137,18 +137,12 @@ mod tests {
         estimator.update_from_probe(Bitrate::mbps(5), now);
 
         // Should keep the higher estimate
-        assert_eq!(
-            estimator.get_capacity_estimate(now),
-            Some(Bitrate::mbps(10))
-        );
+        assert_eq!(estimator.capacity_estimate(now), Some(Bitrate::mbps(10)));
 
         estimator.update_from_probe(Bitrate::mbps(15), now);
 
         // Should update to higher estimate
-        assert_eq!(
-            estimator.get_capacity_estimate(now),
-            Some(Bitrate::mbps(15))
-        );
+        assert_eq!(estimator.capacity_estimate(now), Some(Bitrate::mbps(15)));
     }
 
     #[test]
@@ -157,21 +151,18 @@ mod tests {
         let now = Instant::now();
 
         estimator.update_from_probe(Bitrate::mbps(10), now);
-        assert_eq!(
-            estimator.get_capacity_estimate(now),
-            Some(Bitrate::mbps(10))
-        );
+        assert_eq!(estimator.capacity_estimate(now), Some(Bitrate::mbps(10)));
 
         // Check just before expiration
         let almost_expired = now + Duration::from_secs(59);
         assert_eq!(
-            estimator.get_capacity_estimate(almost_expired),
+            estimator.capacity_estimate(almost_expired),
             Some(Bitrate::mbps(10))
         );
 
         // Check after expiration
         let expired = now + Duration::from_secs(61);
-        assert_eq!(estimator.get_capacity_estimate(expired), None);
+        assert_eq!(estimator.capacity_estimate(expired), None);
     }
 
     #[test]
@@ -185,7 +176,7 @@ mod tests {
         estimator.reset();
 
         assert!(!estimator.has_estimate());
-        assert_eq!(estimator.get_capacity_estimate(now), None);
+        assert_eq!(estimator.capacity_estimate(now), None);
     }
 
     #[test]
@@ -200,9 +191,6 @@ mod tests {
         estimator.update_from_probe(Bitrate::NEG_INFINITY, now);
 
         // Should keep the valid estimate
-        assert_eq!(
-            estimator.get_capacity_estimate(now),
-            Some(Bitrate::mbps(10))
-        );
+        assert_eq!(estimator.capacity_estimate(now), Some(Bitrate::mbps(10)));
     }
 }

@@ -19,6 +19,8 @@ const BETA: f64 = 0.85;
 const MULTIPLICATIVE_INCREASE_COEF: f64 = 1.08;
 /// The maximal ratio of the observed bitrate that we allow estimating in a single increase.
 const MAX_ESTIMATE_RATIO: f64 = 1.5;
+/// Default backoff time added to RTT for response time calculation (kDefaultBackoffTimeInMs in WebRTC).
+const DEFAULT_BACKOFF_TIME: Duration = Duration::from_millis(100);
 
 /// A type used to estimates a suitable send bitrate.
 ///
@@ -133,7 +135,7 @@ impl RateControl {
         };
 
         // WebRTC uses: clamp(rtt, 10ms, 200ms)
-        let rtt = self.last_rtt.unwrap_or(Duration::from_millis(100));
+        let rtt = self.last_rtt.unwrap_or(DEFAULT_BACKOFF_TIME);
         let reduction_interval = rtt.clamp(Duration::from_millis(10), Duration::from_millis(200));
 
         let time_since_change = now.saturating_duration_since(last_change);
@@ -194,7 +196,14 @@ impl RateControl {
             return;
         }
 
-        let last_estimate_update = *self.last_estimate_update.get_or_insert(now);
+        // Initialize timestamp if this is the first increase call, otherwise use existing value.
+        // Note: In practice, last_estimate_update is always Some here because either:
+        // 1) We returned early above and set it, or
+        // 2) A previous call to decrease() or increase() already set it
+        let last_estimate_update = self.last_estimate_update.unwrap_or(now);
+        if self.last_estimate_update.is_none() {
+            self.last_estimate_update = Some(now);
+        }
 
         if self
             .averaged_observed_bitrate
@@ -212,8 +221,7 @@ impl RateControl {
         let mut new_estimate = if near_convergence {
             // Additive increase
             log_rate_control_applied_change!("increase_additive");
-            let response_time =
-                self.last_rtt.unwrap_or(Duration::ZERO) + Duration::from_millis(100);
+            let response_time = self.last_rtt.unwrap_or(Duration::ZERO) + DEFAULT_BACKOFF_TIME;
 
             let alpha =
                 0.5 * (since_last_update.as_secs_f64() / response_time.as_secs_f64()).min(1.0);

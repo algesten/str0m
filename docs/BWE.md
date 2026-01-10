@@ -149,11 +149,11 @@ The probe system consists of three components working together to discover avail
 
 Decides when and at what rate to send probe clusters to discover available bandwidth. The controller implements WebRTC's full state machine with three states: Init (startup), WaitingForProbingResult (active probing with potential for further probes), and ProbingComplete (idle, monitoring for triggers). The state machine uses a 1-second timeout (`MAX_WAITING_TIME_FOR_PROBING_RESULT`) when waiting for probe results.
 
-In str0m, `max_bitrate` represents both WebRTC's separate `max_bitrate` (hard cap) and `max_total_allocated_bitrate` (sum of stream allocations). Since str0m doesn't track per-stream bitrates, these are unified into a single value representing the application's desired sending rate.
+In str0m, `max_bitrate` represents the application's desired sending rate (equivalent to WebRTC's `max_total_allocated_bitrate`), not a hard cap. Since str0m doesn't track per-stream bitrates, WebRTC's separate `max_bitrate` (hard cap) and `max_total_allocated_bitrate` (allocation sum) concepts are unified into this single value.
 
 **Probing Triggers:**
 
-1. **Initial Exponential Probing**: On startup or when BWE becomes active (`on_bwe_active()`), sends two probe clusters immediately at 3× and 6× the start bitrate (`first_exponential_probe_scale` = 3.0, `second_exponential_probe_scale` = 6.0). These use longer duration (100ms, `initial_probe_duration`) and wider packet spacing (20ms, `initial_min_probe_delta`) to accommodate media stream initialization. The exponential scaling allows rapid capacity discovery—if the network can handle 6×, we learn that immediately rather than slowly ramping up over many seconds.
+1. **Initial Exponential Probing**: On startup or when BWE becomes active (`on_bwe_active()`), sends two probe clusters immediately at 3× and 6× the start bitrate (`first_exponential_probe_scale` = 3.0, `second_exponential_probe_scale` = 6.0). These use standard probe parameters (15ms duration, 2ms min delta between bursts). The exponential scaling allows rapid capacity discovery—if the network can handle 6×, we learn that immediately rather than slowly ramping up over many seconds.
 
 2. **Further Probing**: When waiting for probe results and the measured bitrate exceeds 70% of the last probe rate (`further_probe_threshold` = 0.7), automatically triggers another probe at 2× the measured rate (`further_exponential_probe_scale` = 2.0). This enables exponential capacity discovery when the network can support it—if we successfully sent at X and are receiving at >0.7X, the link isn't saturated and we should explore higher rates.
 
@@ -171,7 +171,7 @@ The controller blocks probing based on `BandwidthLimitedCause` state to avoid ma
 
 Probes are also capped by application constraints to avoid wasteful probing:
 
-- **2× `max_bitrate`**: The application's desired sending rate, with a 2× margin to allow discovering additional capacity. In str0m, `max_bitrate` represents what WebRTC separates into `max_bitrate` (hard cap) and `max_total_allocated_bitrate` (sum of stream allocations). The 2× margin allows probing for extra capacity that could be useful for handling bursts or future demand.
+- **2× `max_bitrate`**: Probes are capped at twice the application's desired sending rate to allow discovering extra capacity. This differs from WebRTC's `min(max_bitrate, 2× max_total_allocated_bitrate)` where `max_bitrate` is a separate hard cap. str0m unifies these concepts—`max_bitrate` represents desired sending rate (allocation), and the 2× cap allows probing for additional capacity useful for handling bursts or future demand.
 
 The controller uses a queue to handle WebRTC's multiple-probes-at-once pattern while maintaining str0m's one-probe-per-tick API. When a trigger fires, it enqueues all probe configs and signals readiness via `poll_timeout()`, then `maybe_create_probe()` drains them one at a time.
 
@@ -182,7 +182,7 @@ The output is a `ProbeClusterConfig` that flows to both the Pacer (which execute
 **Location:** `src/bwe/probe/cluster.rs`
 **WebRTC:** `modules/congestion_controller/goog_cc/probe_controller.cc` (ProbeClusterConfig)
 
-Defines what to send for a probe cluster, split into two related structures. `ProbeClusterConfig` serves as the immutable blueprint containing a unique `cluster_id` for TWCC tagging, the `target_bitrate` to probe at, the `target_duration` to sustain (default 15ms for normal probes, extended to 100ms for initial probes), the `min_packet_count` required (default 5 packets), and the `min_probe_delta` (minimum time between probe bursts, default 2ms for normal probes, 20ms for initial probes). These parameters match WebRTC's `ProbeClusterConfig` structure and defaults.
+Defines what to send for a probe cluster, split into two related structures. `ProbeClusterConfig` serves as the immutable blueprint containing a unique `cluster_id` for TWCC tagging, the `target_bitrate` to probe at, the `target_duration` to sustain (default 15ms), the `min_packet_count` required (default 5 packets), and the `min_probe_delta` (minimum time between probe bursts, default 2ms). These parameters match WebRTC's `ProbeClusterConfig` structure and defaults.
 
 `ProbeClusterState` handles runtime tracking during probe execution, monitoring bytes and packets sent while calculating the next probe time based on both the target bitrate pacing and the `min_probe_delta` constraint. The `min_probe_delta` enforces a minimum spacing between probe packet bursts, preventing probes from overwhelming receiver buffers with back-to-back packets—even high-speed networks need time to process and feedback packet arrivals. When requesting padding for a burst, the state calculates `burst_bytes = target_bitrate × min_probe_delta` to ensure each burst is large enough to achieve the target rate given the spacing constraint.
 
@@ -272,10 +272,10 @@ The calculated pacing_rate and padding_rate flow to the Pacer, controlling trans
    - **Impact**: Slightly higher padding in audio-only scenarios
 
 2. **Bitrate Constraints:**
-   - **WebRTC**: Separate `max_bitrate` (hard cap) and `max_total_allocated_bitrate` (sum of stream allocations), probes capped at `min(max_bitrate, 2× max_total_allocated_bitrate)`
-   - **str0m**: Single `max_bitrate` field, probes capped at `2× max_bitrate`
+   - **WebRTC**: Separate `max_bitrate` (hard cap) and `max_total_allocated_bitrate` (allocation sum), probes capped at `min(max_bitrate, 2× max_total_allocated_bitrate)`
+   - **str0m**: Single `max_bitrate` representing desired sending rate (allocation), probes capped at `2× max_bitrate`
    - **Reason**: str0m doesn't track per-stream bitrate allocations
-   - **Impact**: Equivalent behavior for the 2× probing margin, simpler API
+   - **Impact**: Simplified API. Probing behavior differs: str0m allows probing up to 2× desired rate without a separate hard cap, while WebRTC constrains by the minimum of the two values
 
 ### Shared with WebRTC
 

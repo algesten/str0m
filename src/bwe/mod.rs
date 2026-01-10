@@ -146,6 +146,7 @@ struct SendSideBandwidthEstimator {
     started_at: Option<Instant>,
     alr_detector: AlrDetector,
     link_capacity_estimator: LinkCapacityEstimator,
+    last_estimate_sent_to_probe: Option<Bitrate>,
 }
 
 impl SendSideBandwidthEstimator {
@@ -168,6 +169,7 @@ impl SendSideBandwidthEstimator {
             started_at: None,
             alr_detector,
             link_capacity_estimator: LinkCapacityEstimator::new(),
+            last_estimate_sent_to_probe: None,
         }
     }
 
@@ -271,7 +273,7 @@ impl SendSideBandwidthEstimator {
             .update_bandwidth_estimate(&send_records, delay_estimate);
 
         // Loss-based result is capped by delay_based_limit
-        let loss_result = self.loss_controller.get_loss_based_result();
+        let loss_result = self.loss_controller.loss_based_result();
         if let Some(loss_estimate) = loss_result.bandwidth_estimate {
             if loss_estimate > delay_estimate {
                 // Loss controller produced higher estimate than delay controller
@@ -318,7 +320,7 @@ impl SendSideBandwidthEstimator {
         self.loss_controller.set_alr_start_time(alr_start_time);
 
         // Get link capacity estimate and forward to loss controller.
-        let link_capacity = self.link_capacity_estimator.get_capacity_estimate(now);
+        let link_capacity = self.link_capacity_estimator.capacity_estimate(now);
         self.loss_controller
             .set_link_capacity_estimate(link_capacity);
 
@@ -326,11 +328,15 @@ impl SendSideBandwidthEstimator {
         self.probe_estimator.handle_timeout(now);
 
         // Feed the current estimate into the probe controller (also updates large-drop tracking
-        // and "probe further" logic).
+        // and "probe further" logic). Only call when estimate actually changes to avoid
+        // unnecessary processing and brittle invariants around threshold calculations.
         if let Some(estimate) = self.last_estimate() {
-            let cause = self.bandwidth_limited_cause();
-            self.probe_control
-                .set_estimated_bitrate(estimate, cause, now);
+            if self.last_estimate_sent_to_probe != Some(estimate) {
+                let cause = self.bandwidth_limited_cause();
+                self.probe_control
+                    .set_estimated_bitrate(estimate, cause, now);
+                self.last_estimate_sent_to_probe = Some(estimate);
+            }
         }
 
         // str0m trigger: probing becomes active once we have started sending media.
@@ -357,7 +363,7 @@ impl SendSideBandwidthEstimator {
             return BandwidthLimitedCause::DelayBasedLimitedDelayIncreased;
         }
 
-        match self.loss_controller.get_loss_based_result().state {
+        match self.loss_controller.loss_based_result().state {
             LossControllerState::DelayBased => BandwidthLimitedCause::DelayBasedLimited,
             LossControllerState::Increasing => BandwidthLimitedCause::LossLimitedBweIncreasing,
             LossControllerState::Decreasing => BandwidthLimitedCause::LossLimitedBwe,
@@ -368,7 +374,7 @@ impl SendSideBandwidthEstimator {
     pub fn last_estimate(&self) -> Option<Bitrate> {
         let delay_estimate = self.delay_controller.last_estimate();
 
-        let loss_result = self.loss_controller.get_loss_based_result();
+        let loss_result = self.loss_controller.loss_based_result();
 
         // Only apply loss-based limiting when actively in a loss-limiting state
         match loss_result.state {

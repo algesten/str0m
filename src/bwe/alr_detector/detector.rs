@@ -78,6 +78,7 @@ impl AlrDetector {
             return;
         };
 
+        // saturating_duration_since handles potential clock skew between packets
         let delta = now.saturating_duration_since(last);
         self.last_send_time = Some(now);
 

@@ -1,3 +1,8 @@
+//! Bandwidth probing controller - decides when and how to probe network capacity.
+//!
+//! This module implements WebRTC's `ProbeController` state machine for discovering available
+//! bandwidth through intentional bursts of packets at rates higher than current estimates.
+
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -211,9 +216,15 @@ impl ProbeControl {
 
     /// Update max bitrate (application's desired sending rate).
     ///
-    /// In str0m, this represents both WebRTC's `max_bitrate` (hard cap) and
-    /// `max_total_allocated_bitrate` (sum of stream allocations). Since str0m
-    /// doesn't track per-stream bitrates, these are unified into a single value.
+    /// **Important**: In str0m, `max_bitrate` represents the application's desired
+    /// sending rate (equivalent to WebRTC's `max_total_allocated_bitrate`), NOT a
+    /// hard cap. str0m does not track per-stream bitrate allocations, so these
+    /// concepts are unified into a single value.
+    ///
+    /// Probes are capped at `2× max_bitrate` to allow discovering extra capacity
+    /// beyond current demand, which differs from WebRTC's behavior of
+    /// `min(max_bitrate, 2× max_total_allocated_bitrate)` where max_bitrate is
+    /// a separate hard cap.
     ///
     /// This may trigger allocation probing when in ALR and the max increases.
     pub fn set_max_bitrate(&mut self, max_bitrate: Bitrate) {
@@ -245,6 +256,8 @@ impl ProbeControl {
     }
 
     fn process_waiting_for_probing_result(&mut self, now: Instant) {
+        // Use saturating_duration_since to handle clock skew, time adjustments, or test
+        // scenarios where time might appear to go backwards.
         let since_last_probing_initiated =
             now.saturating_duration_since(self.time_last_probing_initiated);
 
@@ -265,6 +278,13 @@ impl ProbeControl {
 
     fn process_probing_complete(&mut self, now: Instant) {
         // 1. Allocation probing (max_bitrate increased while in ALR).
+        //
+        // Note: This uses "call-time semantics" - the flag is cleared unconditionally,
+        // and probing only triggers if we're currently in ALR. This means:
+        // - If max_bitrate increases outside ALR, the flag is cleared immediately
+        // - No probe will happen when ALR begins later
+        // - This matches WebRTC's `OnMaxTotalAllocatedBitrate()` behavior where
+        //   allocation probes only trigger when the call happens during ALR
         if self.max_bitrate_changed {
             self.max_bitrate_changed = false;
 
@@ -401,6 +421,8 @@ impl ProbeControl {
         // WebRTC probes after a large drop only if we're in ALR, just left ALR, or if rapid recovery
         // experiment is enabled. str0m does not implement that experiment toggle, so we use ALR/left-ALR.
         let in_alr = self.alr_start_time.is_some();
+        // Check if we recently exited ALR (within 3 seconds).
+        // saturating_duration_since handles potential clock skew defensively.
         let alr_ended_recently = self
             .alr_end_time
             .map(|t| now.saturating_duration_since(t) < ALR_ENDED_TIMEOUT)
@@ -416,6 +438,7 @@ impl ProbeControl {
 
         let suggested_probe = self.bitrate_before_last_large_drop * PROBE_FRACTION_AFTER_DROP;
         let min_expected_probe_result = suggested_probe * (1.0 - PROBE_UNCERTAINTY);
+        // saturating_duration_since prevents underflow from clock adjustments
         let time_since_drop = now.saturating_duration_since(self.time_of_last_large_drop);
         let time_since_probe = now.saturating_duration_since(self.last_bwe_drop_probing_time);
 
@@ -525,5 +548,158 @@ mod test {
         let p = pc.maybe_create_probe().unwrap();
         assert_eq!(p.target_bitrate(), Bitrate::mbps(2));
         assert!(p.is_alr_probe());
+    }
+
+    #[test]
+    fn handles_bitrate_infinity_without_panic() {
+        let mut pc = ProbeControl::new();
+        let now = Instant::now();
+
+        pc.set_max_bitrate(Bitrate::mbps(50));
+
+        // Should not panic with Infinity
+        pc.set_estimated_bitrate(
+            Bitrate::INFINITY,
+            BandwidthLimitedCause::DelayBasedLimited,
+            now,
+        );
+        pc.handle_timeout(now);
+
+        // Verify behavior is reasonable (no probing with infinite estimate)
+        assert!(pc.maybe_create_probe().is_none());
+    }
+
+    #[test]
+    fn handles_clock_skew_gracefully() {
+        let mut pc = ProbeControl::new();
+        let now = Instant::now();
+
+        pc.set_max_bitrate(Bitrate::mbps(50));
+        pc.set_estimated_bitrate(
+            Bitrate::kbps(300),
+            BandwidthLimitedCause::DelayBasedLimited,
+            now,
+        );
+        pc.on_bwe_active(Bitrate::kbps(300));
+        pc.handle_timeout(now);
+
+        // Simulate time going backwards (clock skew)
+        let earlier = now - Duration::from_secs(5);
+
+        // Should handle gracefully with saturating_duration_since
+        pc.handle_timeout(earlier);
+
+        // Should still be able to continue normally
+        pc.handle_timeout(now + Duration::from_secs(1));
+    }
+
+    #[test]
+    fn handles_max_bitrate_zero() {
+        let mut pc = ProbeControl::new();
+        let now = Instant::now();
+
+        // Set max_bitrate to zero (unlimited probing scenario)
+        pc.set_max_bitrate(Bitrate::ZERO);
+        pc.set_estimated_bitrate(
+            Bitrate::kbps(300),
+            BandwidthLimitedCause::DelayBasedLimited,
+            now,
+        );
+        pc.on_bwe_active(Bitrate::kbps(300));
+        pc.handle_timeout(now);
+
+        // Should still create probes (though without a cap)
+        let p1 = pc.maybe_create_probe();
+        assert!(p1.is_some(), "Should create initial probe even with max=0");
+    }
+
+    #[test]
+    fn max_bitrate_change_outside_alr_doesnt_probe_when_alr_starts() {
+        let mut pc = ProbeControl::new();
+        let now = Instant::now();
+
+        pc.set_max_bitrate(Bitrate::mbps(1));
+        pc.set_estimated_bitrate(
+            Bitrate::kbps(500),
+            BandwidthLimitedCause::DelayBasedLimited,
+            now,
+        );
+        pc.on_bwe_active(Bitrate::kbps(500));
+        pc.handle_timeout(now);
+
+        // Drain initial probes
+        let _ = pc.maybe_create_probe();
+        let _ = pc.maybe_create_probe();
+
+        // Timeout to reach probing complete
+        pc.handle_timeout(now + Duration::from_secs(2));
+
+        // Increase max_bitrate OUTSIDE ALR
+        pc.set_max_bitrate(Bitrate::mbps(4));
+        pc.handle_timeout(now + Duration::from_secs(2));
+
+        // Flag should be cleared, no probe yet
+        assert!(pc.maybe_create_probe().is_none());
+
+        // Now enter ALR later
+        pc.set_alr_start_time(
+            Some(now + Duration::from_secs(3)),
+            now + Duration::from_secs(3),
+        );
+        pc.handle_timeout(now + Duration::from_secs(3));
+
+        // Should NOT trigger allocation probing (flag was cleared)
+        assert!(
+            pc.maybe_create_probe().is_none(),
+            "Allocation probe should not trigger when max changed outside ALR"
+        );
+    }
+
+    #[test]
+    fn large_drop_probing_schedules_via_next_timeout() {
+        let mut pc = ProbeControl::new();
+        let now = Instant::now();
+
+        pc.set_max_bitrate(Bitrate::mbps(10));
+        pc.set_estimated_bitrate(
+            Bitrate::mbps(5),
+            BandwidthLimitedCause::DelayBasedLimited,
+            now,
+        );
+        pc.on_bwe_active(Bitrate::mbps(5));
+        pc.handle_timeout(now);
+
+        // Drain initial probes
+        let _ = pc.maybe_create_probe();
+        let _ = pc.maybe_create_probe();
+
+        // Timeout to probing complete
+        pc.handle_timeout(now + Duration::from_secs(2));
+
+        // Enter ALR
+        pc.set_alr_start_time(
+            Some(now + Duration::from_secs(2)),
+            now + Duration::from_secs(2),
+        );
+
+        // Simulate large drop (to 60% of original = 3 Mbps, below 66% threshold)
+        pc.set_estimated_bitrate(
+            Bitrate::mbps(3),
+            BandwidthLimitedCause::DelayBasedLimited,
+            now + Duration::from_secs(2),
+        );
+
+        // Wait more than MIN_TIME_BETWEEN_ALR_PROBES (5 seconds) and less than BITRATE_DROP_TIMEOUT
+        let later = now + Duration::from_secs(6);
+        pc.handle_timeout(later);
+
+        // Should trigger large-drop recovery probe at 85% of pre-drop rate (4.25 Mbps)
+        let p = pc.maybe_create_probe();
+        assert!(p.is_some(), "Large-drop recovery should schedule probe");
+        if let Some(probe) = p {
+            // 85% of 5 Mbps = 4.25 Mbps
+            assert!(probe.target_bitrate() >= Bitrate::mbps(4));
+            assert!(probe.target_bitrate() <= Bitrate::mbps(5));
+        }
     }
 }

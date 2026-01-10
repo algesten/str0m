@@ -226,7 +226,7 @@ impl LossController {
     }
 
     /// Update the estimate using TWCC feedback from the network.
-    /// After this [`get_loss_based_result`] returns the latest estimate.
+    /// After this [`loss_based_result`] returns the latest estimate.
     pub fn update_bandwidth_estimate(
         &mut self,
         packet_results: &[impl PacketResult],
@@ -404,7 +404,7 @@ impl LossController {
         self.min_bitrate = min_bitrate;
     }
 
-    pub fn get_loss_based_result(&self) -> LossBasedBweResult {
+    pub fn loss_based_result(&self) -> LossBasedBweResult {
         let mut result = LossBasedBweResult {
             bandwidth_estimate: self.current_estimate.loss_limited_bandwidth.as_valid(),
             state: self.state,
@@ -599,11 +599,15 @@ impl LossController {
             }
         }
 
-        // if this happens consider clamping to -1.0e-6 as goog-webrtc does
-        assert!(
-            derivatives.1.is_sign_negative() && derivatives.1 != 0.0 && !derivatives.1.is_nan(),
-            "The second derivative is mathematically guaranteed to be negative and should not be zero"
-        );
+        // Clamp second derivative to safe value if invalid due to floating-point edge cases
+        // (infinity, denormals, extreme values from pathological TWCC feedback)
+        if !derivatives.1.is_sign_negative() || derivatives.1 == 0.0 || derivatives.1.is_nan() {
+            derivatives.1 = -1.0e-6;
+            debug!(
+                "Second derivative clamped to safe value due to invalid result: was {:?}",
+                derivatives.1
+            );
+        }
 
         derivatives
     }
@@ -1149,7 +1153,7 @@ mod test {
         let LossBasedBweResult {
             bandwidth_estimate,
             state,
-        } = lbc.get_loss_based_result();
+        } = lbc.loss_based_result();
 
         assert_eq!(
             bandwidth_estimate,
@@ -1187,7 +1191,7 @@ mod test {
         let LossBasedBweResult {
             bandwidth_estimate,
             state,
-        } = lbc.get_loss_based_result();
+        } = lbc.loss_based_result();
 
         assert!(
             state == LossControllerState::DelayBased || state == LossControllerState::Increasing,
@@ -1243,7 +1247,7 @@ mod test {
         let LossBasedBweResult {
             bandwidth_estimate,
             state,
-        } = lbc.get_loss_based_result();
+        } = lbc.loss_based_result();
 
         let estimate = bandwidth_estimate.expect("Should have an estimate");
         assert!(
@@ -1296,7 +1300,7 @@ mod test {
             pkt_builder = pkt_builder.forward_time(Duration::from_millis(250));
         }
 
-        let LossBasedBweResult { state, .. } = lbc.get_loss_based_result();
+        let LossBasedBweResult { state, .. } = lbc.loss_based_result();
 
         // Note: The loss controller returns loss_limited_bandwidth even in DelayBased state.
         // After recovery, it may be in Increasing or DelayBased state depending on dynamics.
@@ -1350,7 +1354,7 @@ mod test {
         let LossBasedBweResult {
             bandwidth_estimate,
             state,
-        } = lbc.get_loss_based_result();
+        } = lbc.loss_based_result();
 
         let estimate = bandwidth_estimate.expect("Should have an estimate");
         assert!(
@@ -1389,7 +1393,7 @@ mod test {
             let LossBasedBweResult {
                 bandwidth_estimate,
                 state,
-            } = lbc.get_loss_based_result();
+            } = lbc.loss_based_result();
 
             let estimate = bandwidth_estimate.expect("Should have an estimate");
             assert!(
@@ -1414,7 +1418,7 @@ mod test {
             let LossBasedBweResult {
                 bandwidth_estimate,
                 state,
-            } = lbc.get_loss_based_result();
+            } = lbc.loss_based_result();
 
             let estimate = bandwidth_estimate.expect("Should have an estimate");
             assert!(
@@ -1435,7 +1439,7 @@ mod test {
             let LossBasedBweResult {
                 bandwidth_estimate,
                 state,
-            } = lbc.get_loss_based_result();
+            } = lbc.loss_based_result();
 
             let estimate = bandwidth_estimate.expect("Should have an estimate");
             assert!(

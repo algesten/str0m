@@ -41,8 +41,8 @@ const TARGET_UTILIZATION_FRACTION: f64 = 0.95;
 /// result. Probe packets reported as lost (no remote receive timestamp) are ignored.
 #[derive(Debug)]
 pub struct ProbeEstimator {
-    /// Active probe states.
-    states: Vec<ProbeEstimatorState>,
+    /// Active probe states (VecDeque for efficient front removal).
+    states: VecDeque<ProbeEstimatorState>,
 
     /// Clusters that were updated in the last call to `update`.
     did_update: VecDeque<TwccClusterId>,
@@ -79,7 +79,7 @@ struct ProbeEstimatorState {
 impl ProbeEstimator {
     pub fn new() -> Self {
         Self {
-            states: Vec::new(),
+            states: VecDeque::new(),
             did_update: VecDeque::with_capacity(10),
         }
     }
@@ -89,7 +89,7 @@ impl ProbeEstimator {
     /// Resets all accumulated state and begins watching for packets with the
     /// given cluster ID.
     pub fn probe_start(&mut self, config: ProbeClusterConfig) {
-        self.states.push(ProbeEstimatorState::new(config));
+        self.states.push_back(ProbeEstimatorState::new(config));
 
         // Sanity check: Under normal operation, we expect at most 2-4 active probes:
         // - Initial exponential probing: 2 probes (3×, 6×)
