@@ -10,6 +10,7 @@ pub enum PacketError {
     ErrTooManyPDiff,
     ErrH265CorruptedPacket,
     ErrInvalidH265PacketType,
+    ErrH265PACIPHESTooLong,
     StapASizeLargerThanBuffer(usize, usize),
     NaluTypeIsNotHandled(u8),
     ErrVP9CorruptedPacket,
@@ -24,6 +25,9 @@ impl fmt::Display for PacketError {
             PacketError::ErrTooManyPDiff => write!(f, "Too many P-Diff"),
             PacketError::ErrH265CorruptedPacket => write!(f, "H265 corrupted packet"),
             PacketError::ErrInvalidH265PacketType => write!(f, "H265 invalid packet type"),
+            PacketError::ErrH265PACIPHESTooLong => {
+                write!(f, "H265 PACI PHES field exceeds maximum size of 31 bytes")
+            }
             PacketError::StapASizeLargerThanBuffer(size, buffer) => write!(
                 f,
                 "H264 StapA size larger than buffer: {} > {}",

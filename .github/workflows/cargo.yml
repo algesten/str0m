@@ -75,7 +75,7 @@ jobs:
         uses: algesten/snowflake@v1.1.0
         with:
           check_diff: true
-          line_width_rules: 'CHANGELOG.md:120;c_cpp_properties.json:160;Cargo.toml:150;README.md:180;README.tpl:180;*.md:110;*.rs:110;*.toml:110;*.lock:200;*.svg:1000;DEFAULT=110'
+          line_width_rules: 'CHANGELOG.md:120;c_cpp_properties.json:160;Cargo.toml:150;README.md:180;README.tpl:180;*.md:110;*.rs:110;*.toml:110;*.lock:200;*.svg:1000;tests/data/*.txt:9999;DEFAULT=110'
 
   pii:
     runs-on: ubuntu-latest
