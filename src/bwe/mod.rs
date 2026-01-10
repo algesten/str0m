@@ -42,7 +42,7 @@ pub(crate) use probe::{ProbeClusterConfig, ProbeClusterState, ProbeControl};
 
 const INITIAL_BITRATE_WINDOW: Duration = Duration::from_millis(500);
 const BITRATE_WINDOW: Duration = Duration::from_millis(150);
-const STARTUP_PAHSE: Duration = Duration::from_secs(2);
+const STARTUP_PHASE: Duration = Duration::from_secs(2);
 
 /// Amount of deviation needed to emit a new BWE value. This is to reduce
 /// the total number BWE events to only fire when there is a substantial change.
@@ -462,7 +462,7 @@ impl AckedPacket {
 // NB: Extracted for lifetime reasons
 fn in_startup_phase(started_at: Option<Instant>, now: Instant) -> bool {
     started_at
-        .map(|s| now.duration_since(s) <= STARTUP_PAHSE)
+        .map(|s| now.duration_since(s) <= STARTUP_PHASE)
         .unwrap_or(false)
 }
 
