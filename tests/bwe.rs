@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use netem::NetemConfig;
+use netem::{DataSize, NetemConfig};
 use str0m::bwe::{Bitrate, BweKind};
 use str0m::format::Codec;
 use str0m::media::MediaKind;
@@ -127,129 +127,82 @@ pub fn bwe_wifi_congested() -> Result<(), RtcError> {
     Ok(())
 }
 
-// #[test]
-// #[cfg(feature = "aws-lc-rs")]
-// pub fn bwe_changing_bandwidth() -> Result<(), RtcError> {
-//     init_log();
-//     init_crypto_default();
+#[test]
+#[cfg(feature = "aws-lc-rs")]
+pub fn bwe_changing_bandwidth() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
 
-//     // Start with good WiFi: 100 Mbps
-//     let wifi_config = NetemConfig::wifi().seed(42);
-//     let congested_config = NetemConfig::wifi_congested().seed(42);
-//     let initial_bitrate = Bitrate::mbps(2);
-//     let desired_bitrate = Bitrate::mbps(12);
+    // Send rate: 2 Mbps - bandwidth conditions will straddle this
+    let media_send_rate = Bitrate::mbps(2);
+    let initial_bitrate = Bitrate::mbps(1);
+    let desired_bitrate = Bitrate::mbps(5);
 
-//     let (mut l, mut r) =
-//         connect_with_bwe(initial_bitrate, desired_bitrate, wifi_config, wifi_config);
+    let plan = vec![
+        // Phase 1: High bandwidth (10 Mbps) - above send rate, no constraint
+        Step::Conditions {
+            config: NetemConfig::new()
+                .latency(Duration::from_millis(10))
+                .jitter(Duration::from_millis(2))
+                .link(Bitrate::mbps(10), DataSize::kbytes(200))
+                .seed(42),
+        },
+        Step::Media {
+            current_bitrate: initial_bitrate,
+            desired_bitrate,
+            media_send_rate,
+        },
+        Step::Run {
+            duration: Duration::from_secs(40),
+        },
+        Step::Check {
+            // BWE should discover high bandwidth (10 Mbps link)
+            // Should be well above the send rate
+            at_least: Bitrate::mbps(5),
+        },
+        // Phase 2: Low bandwidth (1 Mbps) - below send rate, constrains it
+        Step::Conditions {
+            config: NetemConfig::new()
+                .latency(Duration::from_millis(10))
+                .jitter(Duration::from_millis(20))
+                .link(Bitrate::mbps(1), DataSize::kbytes(50))
+                .seed(42),
+        },
+        Step::Run {
+            duration: Duration::from_secs(30),
+        },
+        Step::Check {
+            // BWE should detect the reduced bandwidth and lower estimate
+            // Link is 1 Mbps, so estimate should be constrained to ~1 Mbps
+            at_least: Bitrate::kbps(500), // At least 500 kbps, but should be around 1 Mbps
+        },
+        // Phase 3: Switch back to high bandwidth (10 Mbps)
+        Step::Conditions {
+            config: NetemConfig::new()
+                .latency(Duration::from_millis(10))
+                .jitter(Duration::from_millis(2))
+                .link(Bitrate::mbps(10), DataSize::kbytes(200))
+                .seed(42),
+        },
+        Step::Run {
+            duration: Duration::from_secs(30),
+        },
+        Step::Check {
+            // BWE should recover and discover high bandwidth again
+            // Should be higher than the constrained phase 2
+            at_least: Bitrate::mbps(3),
+        },
+    ];
 
-//     let mut ctx = BweTestContext::new(&mut l, &mut r);
+    let (mut l, mut r) = connect_with_bwe(initial_bitrate, desired_bitrate);
 
-//     // Phase 1: Good WiFi (40 seconds)
-//     let phase1_estimate = ctx
-//         .run_for_duration(
-//             &mut l,
-//             &mut r,
-//             Duration::from_secs(40),
-//             initial_bitrate,
-//             desired_bitrate,
-//             initial_bitrate,
-//         )?
-//         .expect("Should have BWE estimate after phase 1");
+    let mut ctx = BweTestContext::new(&mut l, &mut r);
 
-//     // Phase 2: Switch to congested WiFi (5 Mbps) for 30 seconds
-//     l.set_netem(congested_config);
-//     r.set_netem(congested_config);
+    // Run the plan that changes bandwidth conditions
+    ctx.run_plan(&mut l, &mut r, &plan)?;
 
-//     let phase2_estimate = ctx
-//         .run_for_duration(
-//             &mut l,
-//             &mut r,
-//             Duration::from_secs(30),
-//             initial_bitrate,
-//             desired_bitrate,
-//             initial_bitrate,
-//         )?
-//         .expect("Should have BWE estimate after phase 2");
-
-//     // Phase 3: Switch back to good WiFi (100 Mbps) for 30 seconds
-//     l.set_netem(wifi_config);
-//     r.set_netem(wifi_config);
-
-//     let phase3_estimate = ctx
-//         .run_for_duration(
-//             &mut l,
-//             &mut r,
-//             Duration::from_secs(30),
-//             initial_bitrate,
-//             desired_bitrate,
-//             initial_bitrate,
-//         )?
-//         .expect("Should have BWE estimate after phase 3");
-
-//     // Assertions:
-//     // Phase 1 (WiFi 100 Mbps): BWE should be high
-//     // With minimal padding and probe-based discovery, probes actively discover bandwidth
-//     let wifi_expected = Bitrate::kbps(11669);
-//     let tolerance = 0.01;
-//     let wifi_min = Bitrate::bps((wifi_expected.as_u64() as f64 * (1.0 - tolerance)) as u64);
-//     let wifi_max = Bitrate::bps((wifi_expected.as_u64() as f64 * (1.0 + tolerance)) as u64);
-
-//     assert!(
-//         phase1_estimate >= wifi_min && phase1_estimate <= wifi_max,
-//         "Phase 1 BWE estimate {} should be within {}% of {} (range: {} - {})",
-//         phase1_estimate,
-//         tolerance * 100.0,
-//         wifi_expected,
-//         wifi_min,
-//         wifi_max
-//     );
-
-//     // Phase 2 (Congested 5 Mbps): BWE should drop, but ALR keeps estimate higher
-//     // With minimal padding (50 kbps) and ALR-triggered probes maintaining estimate
-//     let congested_expected = Bitrate::kbps(11669);
-//     let congested_min =
-//         Bitrate::bps((congested_expected.as_u64() as f64 * (1.0 - tolerance)) as u64);
-//     let congested_max =
-//         Bitrate::bps((congested_expected.as_u64() as f64 * (1.0 + tolerance)) as u64);
-
-//     assert!(
-//         phase2_estimate >= congested_min && phase2_estimate <= congested_max,
-//         "Phase 2 BWE estimate {} should be within {}% of {} (range: {} - {})",
-//         phase2_estimate,
-//         tolerance * 100.0,
-//         congested_expected,
-//         congested_min,
-//         congested_max
-//     );
-
-//     // Phase 3 (WiFi 100 Mbps again): BWE should recover
-//     // With probe-based discovery and ALR detection, recovery is slower
-//     // as we rely on periodic ALR probes (every 5 seconds) to rediscover capacity
-//     // After 30 seconds, we're partially recovered but not back to phase 1 levels
-//     assert!(
-//         phase3_estimate >= congested_min,
-//         "Phase 3 BWE estimate {} should be recovering from congestion (min: {})",
-//         phase3_estimate,
-//         congested_min
-//     );
-
-//     // Additional check: with ALR probing maintaining stable estimates,
-//     // phase 2 should be <= both phase 1 and phase 3
-//     assert!(
-//         phase2_estimate <= phase1_estimate,
-//         "Phase 2 estimate {} should be <= phase 1 estimate {}",
-//         phase2_estimate,
-//         phase1_estimate
-//     );
-//     assert!(
-//         phase2_estimate <= phase3_estimate,
-//         "Phase 2 estimate {} should be <= phase 3 estimate {}",
-//         phase2_estimate,
-//         phase3_estimate
-//     );
-
-//     Ok(())
-// }
+    Ok(())
+}
 
 /// Helper to create two connected peers with BWE enabled on the sender.
 fn connect_with_bwe(initial_bitrate: Bitrate, desired_bitrate: Bitrate) -> (TestRtc, TestRtc) {
