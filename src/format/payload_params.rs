@@ -462,13 +462,17 @@ impl PayloadParams {
         let c0_profile = if c0_has_ptl {
             c0_ptl.profile().to_id()
         } else {
-            c0.format.profile_id.unwrap_or(c0_ptl.profile().to_id() as u32) as u8
+            c0.format
+                .profile_id
+                .unwrap_or(c0_ptl.profile().to_id() as u32) as u8
         };
 
         let c1_profile = if c1_has_ptl {
             c1_ptl.profile().to_id()
         } else {
-            c1.format.profile_id.unwrap_or(c1_ptl.profile().to_id() as u32) as u8
+            c1.format
+                .profile_id
+                .unwrap_or(c1_ptl.profile().to_id() as u32) as u8
         };
 
         // Profiles must match
