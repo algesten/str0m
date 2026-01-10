@@ -49,7 +49,7 @@ const STARTUP_PHASE: Duration = Duration::from_secs(2);
 const ESTIMATE_TOLERANCE: f64 = 0.05;
 
 pub struct Bwe {
-    bwe: SendSideBandwithEstimator,
+    bwe: SendSideBandwidthEstimator,
     desired_bitrate: Bitrate,
     current_bitrate: Bitrate,
     last_emitted_estimate: Bitrate,
@@ -57,7 +57,7 @@ pub struct Bwe {
 
 impl Bwe {
     pub fn new(initial: Bitrate) -> Self {
-        let send_side_bwe = SendSideBandwithEstimator::new(initial);
+        let send_side_bwe = SendSideBandwidthEstimator::new(initial);
         Bwe {
             bwe: send_side_bwe,
             desired_bitrate: Bitrate::ZERO,
@@ -137,7 +137,7 @@ impl Bwe {
     }
 }
 
-struct SendSideBandwithEstimator {
+struct SendSideBandwidthEstimator {
     delay_controller: DelayController,
     loss_controller: LossController,
     acked_bitrate_estimator: AckedBitrateEstimator,
@@ -148,7 +148,7 @@ struct SendSideBandwithEstimator {
     link_capacity_estimator: LinkCapacityEstimator,
 }
 
-impl SendSideBandwithEstimator {
+impl SendSideBandwidthEstimator {
     pub fn new(initial_bitrate: Bitrate) -> Self {
         let mut alr_detector = AlrDetector::new();
         alr_detector.set_estimated_bitrate(initial_bitrate);

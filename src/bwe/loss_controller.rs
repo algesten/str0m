@@ -1196,7 +1196,7 @@ mod test {
         );
 
         // Note: The loss controller returns loss_limited_bandwidth even in DelayBased state.
-        // The BWE integration layer (SendSideBandwithEstimator::last_estimate) is responsible
+        // The BWE integration layer (SendSideBandwidthEstimator::last_estimate) is responsible
         // for using the delay-based estimate when state is DelayBased.
         // This matches WebRTC's LossBasedBweV2 behavior (see loss_based_bwe_v2.cc:379).
         assert!(
