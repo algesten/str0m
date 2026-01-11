@@ -157,6 +157,8 @@ pub enum Step {
         description: &'static str,
         check: Arc<dyn Fn(usize, &ProbeClusterConfig) -> bool>,
     },
+    /// Assert no probes fired since last event_offset update
+    AssertNoProbes { description: &'static str },
 }
 
 impl BweTestContext {
@@ -283,6 +285,23 @@ impl BweTestContext {
                     assert!(any_ok, "No probe check passed");
 
                     // Check does not reset event offset.
+                }
+                Step::AssertNoProbes { description } => {
+                    info!("{}/{}: Assert no probes: {}", no + 1, total, description);
+
+                    // Count probes since previous step started.
+                    let probe_count = l.events[event_offset..]
+                        .iter()
+                        .filter(|e| matches!(e, (_, Event::Probe(_))))
+                        .count();
+
+                    assert_eq!(
+                        probe_count, 0,
+                        "Expected no probes, but {} probe(s) fired",
+                        probe_count
+                    );
+
+                    // AssertNoProbes does not reset event offset.
                 }
             }
         }

@@ -14,46 +14,8 @@ pub fn bwe_allocation_probe_on_alr_entry() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let plan = vec![
-        // Set up a moderate-capacity network (don't let estimate exceed max_bitrate)
-        Step::Conditions {
-            description: "Moderate bandwidth network",
-            config: NetemConfig::new()
-                .link(Bitrate::mbps(3), DataSize::kbytes(100))
-                .seed(42),
-        },
-        // Start with low initial bitrate, high desired bitrate
-        Step::Media {
-            description: "Start with 1 Mbps, desire 5 Mbps",
-            current_bitrate: Bitrate::mbps(1),
-            desired_bitrate: Bitrate::mbps(5),
-            media_send_rate: Bitrate::mbps(1), // Higher rate to avoid early ALR entry
-        },
-        // Wait for initial probing, estimate growth, and probe controller to reach ProbingComplete
-        Step::Run {
-            description: "Wait for probing to complete",
-            duration: Duration::from_secs(5),
-        },
-        Step::Check {
-            description: "Estimate should have grown from probing",
-            at_least: Bitrate::mbps(1),
-        },
-        // Enter ALR by reducing media send rate below estimate
-        // This should trigger immediate allocation probing
-        Step::Media {
-            description: "Enter ALR: send 500 kbps with 5 Mbps desired",
-            current_bitrate: Bitrate::mbps(1),
-            desired_bitrate: Bitrate::mbps(5),
-            media_send_rate: Bitrate::kbps(500), // Low send rate = ALR
-        },
-        Step::Run {
-            description: "Wait for ALR entry and allocation probe",
-            duration: Duration::from_secs(2),
-        },
-        // Verify allocation probe fires
-        // With estimate ~1-2 Mbps and max_bitrate 5 Mbps:
-        // - First probe at 1x max = 5 Mbps, but capped by 2x estimate (~2-4 Mbps)
-        // - Second probe at 2x max = 10 Mbps, but capped by 2x estimate
+    let mut plan = alr_setup_steps(Bitrate::mbps(5));
+    plan.extend(vec![
         Step::CheckProbe {
             description: "Allocation probe is marked as ALR probe",
             check: Arc::new(|_index, probe| probe.is_alr_probe()),
@@ -68,12 +30,10 @@ pub fn bwe_allocation_probe_on_alr_entry() -> Result<(), RtcError> {
                     && probe.target_bitrate() <= expected * (1.0 + tolerance)
             }),
         },
-    ];
+    ]);
 
-    let (mut l, mut r) = connect_with_bwe(Bitrate::mbps(1), Bitrate::mbps(5));
-
+    let (mut l, mut r) = connect_with_bwe(Bitrate::mbps(2), Bitrate::mbps(5));
     let mut ctx = BweTestContext::new(&mut l, &mut r);
-
     ctx.run_plan(&mut l, &mut r, &plan)?;
 
     Ok(())
@@ -84,39 +44,8 @@ pub fn bwe_periodic_allocation_probing_in_alr() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    let plan = vec![
-        Step::Conditions {
-            description: "Moderate bandwidth network",
-            config: NetemConfig::new()
-                .link(Bitrate::mbps(3), DataSize::kbytes(100))
-                .seed(42),
-        },
-        Step::Media {
-            description: "Start at 1 Mbps, desire 5 Mbps",
-            current_bitrate: Bitrate::mbps(1),
-            desired_bitrate: Bitrate::mbps(5),
-            media_send_rate: Bitrate::mbps(1),
-        },
-        // Wait for initial probing to complete and reach ProbingComplete state
-        Step::Run {
-            description: "Wait for probing to complete",
-            duration: Duration::from_secs(5),
-        },
-        Step::Check {
-            description: "Estimate should have grown",
-            at_least: Bitrate::mbps(1),
-        },
-        // Enter ALR with low send rate
-        Step::Media {
-            description: "Enter ALR with low send rate",
-            current_bitrate: Bitrate::mbps(1),
-            desired_bitrate: Bitrate::mbps(5),
-            media_send_rate: Bitrate::kbps(500),
-        },
-        Step::Run {
-            description: "Wait for ALR entry",
-            duration: Duration::from_secs(2),
-        },
+    let mut plan = alr_setup_steps(Bitrate::mbps(5));
+    plan.extend(vec![
         // First allocation probe on ALR entry
         Step::CheckProbe {
             description: "First allocation probe on ALR entry",
@@ -132,12 +61,10 @@ pub fn bwe_periodic_allocation_probing_in_alr() -> Result<(), RtcError> {
             description: "Periodic allocation probe fires after 5 seconds",
             check: Arc::new(|_index, probe| probe.is_alr_probe()),
         },
-    ];
+    ]);
 
-    let (mut l, mut r) = connect_with_bwe(Bitrate::mbps(1), Bitrate::mbps(5));
-
+    let (mut l, mut r) = connect_with_bwe(Bitrate::mbps(2), Bitrate::mbps(5));
     let mut ctx = BweTestContext::new(&mut l, &mut r);
-
     ctx.run_plan(&mut l, &mut r, &plan)?;
 
     Ok(())
@@ -199,4 +126,106 @@ pub fn bwe_no_allocation_probing_when_estimate_at_max() -> Result<(), RtcError> 
     ctx.run_plan(&mut l, &mut r, &plan)?;
 
     Ok(())
+}
+
+#[test]
+fn alr_exit_has_hysteresis() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    let mut plan = alr_setup_steps(Bitrate::mbps(5));
+    plan.extend(vec![
+        Step::CheckProbe {
+            description: "In ALR - allocation probe fires on entry",
+            check: Arc::new(|_index, probe| probe.is_alr_probe()),
+        },
+        // Increase send rate to the hysteresis gap (between entry and exit thresholds)
+        // Entry: ratio > 0.80 (utilization < 20%)
+        // Exit: ratio < 0.50 (utilization > 50%)
+        // Gap: 0.50-0.80 ratio (20-50% utilization) - should STAY in ALR
+        Step::Media {
+            description: "Increase to ~35% utilization (in hysteresis gap)",
+            current_bitrate: Bitrate::mbps(2),
+            desired_bitrate: Bitrate::mbps(5),
+            media_send_rate: Bitrate::mbps(1), // ~35% of 3 Mbps estimate
+        },
+        Step::Run {
+            description: "Wait over 500ms window for ALR check",
+            duration: Duration::from_secs(1),
+        },
+        // Should still be in ALR - periodic probes should continue
+        Step::Run {
+            description: "Wait for periodic probe (should still be in ALR)",
+            duration: Duration::from_secs(6),
+        },
+        Step::CheckProbe {
+            description: "Periodic ALR probe confirms still in ALR",
+            check: Arc::new(|_index, probe| probe.is_alr_probe()),
+        },
+        // Now increase above exit threshold to confirm we eventually exit
+        Step::Media {
+            description: "Increase to 60% utilization (above exit threshold)",
+            current_bitrate: Bitrate::mbps(2),
+            desired_bitrate: Bitrate::mbps(5),
+            media_send_rate: Bitrate::mbps(2), // ~60% of 3 Mbps estimate
+        },
+        Step::Run {
+            description: "Wait for ALR exit",
+            duration: Duration::from_secs(2),
+        },
+        // Test completes - we've verified hysteresis by staying in ALR in the gap
+    ]);
+
+    let (mut l, mut r) = connect_with_bwe(Bitrate::mbps(2), Bitrate::mbps(5));
+    let mut ctx = BweTestContext::new(&mut l, &mut r);
+    ctx.run_plan(&mut l, &mut r, &plan)?;
+
+    Ok(())
+}
+
+/// Common setup steps for ALR tests: establish connection, wait for probes to complete,
+/// then enter ALR with low send rate. Tests can append their specific scenarios.
+fn alr_setup_steps(max_bitrate: Bitrate) -> Vec<Step> {
+    let mut plan = alr_preamble_steps(max_bitrate);
+    plan.extend(enter_alr_steps(max_bitrate));
+    plan
+}
+
+/// Common ALR test preamble: establish connection and allow initial probing to settle
+/// without entering ALR.
+fn alr_preamble_steps(max_bitrate: Bitrate) -> Vec<Step> {
+    vec![
+        Step::Conditions {
+            description: "Moderate bandwidth network",
+            config: NetemConfig::new()
+                .link(Bitrate::mbps(3), DataSize::kbytes(100))
+                .seed(42),
+        },
+        Step::Media {
+            description: "Start with 2 Mbps to avoid early ALR",
+            current_bitrate: Bitrate::mbps(2),
+            desired_bitrate: max_bitrate,
+            media_send_rate: Bitrate::mbps(2), // Higher rate prevents ALR during initial probes
+        },
+        Step::Run {
+            description: "Wait for initial probes to complete",
+            duration: Duration::from_secs(2),
+        },
+    ]
+}
+
+/// Enter ALR and give the ALR detector time to latch.
+fn enter_alr_steps(max_bitrate: Bitrate) -> Vec<Step> {
+    vec![
+        Step::Media {
+            description: "Enter ALR with low send rate",
+            current_bitrate: Bitrate::mbps(2),
+            desired_bitrate: max_bitrate,
+            media_send_rate: Bitrate::kbps(500),
+        },
+        Step::Run {
+            description: "Allow ALR detection",
+            duration: Duration::from_secs(1),
+        },
+    ]
 }

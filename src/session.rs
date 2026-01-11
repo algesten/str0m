@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::bwe::BweKind;
-use crate::bwe_::{Bwe, ProbeClusterConfig};
+use crate::bwe_::Bwe;
 use crate::config::KeyingMaterial;
 use crate::crypto::dtls::SrtpProfile;
 use crate::crypto::CryptoProvider;
@@ -106,7 +106,7 @@ pub(crate) struct Session {
     raw_packets: Option<VecDeque<Box<RawPacket>>>,
 
     #[cfg(feature = "_internal_test_exports")]
-    pending_probe: Option<ProbeClusterConfig>,
+    pending_probe: Option<crate::bwe_::ProbeClusterConfig>,
 }
 
 impl Session {
