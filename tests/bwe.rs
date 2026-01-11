@@ -28,39 +28,49 @@ const LAYER_TOP: Bitrate = Bitrate::kbps(1_500);
 
 const RAMP_UP_SINGLE: &[Step] = &[
     Step::Conditions {
+        description: "Startup conditions",
         config: NetemConfig::new(),
     },
     Step::Media {
+        description: "Low layer ramping up to mid",
         current_bitrate: LAYER_LOW,
         desired_bitrate: LAYER_MID,
         media_send_rate: LAYER_LOW,
     },
     Step::Run {
+        description: "Wait for mid",
         duration: Duration::from_secs(10),
     },
     Step::Check {
+        description: "Check enough for mid",
         at_least: Bitrate::kbps(750),
     },
     Step::Media {
+        description: "Mid layer ramping up to top",
         current_bitrate: LAYER_MID,
         desired_bitrate: LAYER_TOP,
         media_send_rate: LAYER_MID,
     },
     Step::Run {
+        description: "Wait for top",
         duration: Duration::from_secs(30),
     },
     Step::Check {
+        description: "Check enough for top",
         at_least: Bitrate::kbps(1_500),
     },
     Step::Media {
+        description: "Top layer",
         current_bitrate: LAYER_TOP,
         desired_bitrate: LAYER_TOP,
         media_send_rate: LAYER_TOP,
     },
     Step::Run {
+        description: "Ensure top stabilizes",
         duration: Duration::from_secs(10),
     },
     Step::Check {
+        description: "Top is stable",
         at_least: Bitrate::kbps(1_500),
     },
 ];
@@ -73,6 +83,7 @@ pub fn bwe_cellular() -> Result<(), RtcError> {
 
     let mut plan = RAMP_UP_SINGLE.to_vec();
     plan[0] = Step::Conditions {
+        description: "Cellular conditions",
         config: NetemConfig::cellular().seed(42),
     };
 
@@ -94,6 +105,7 @@ pub fn bwe_wifi_normal() -> Result<(), RtcError> {
     // WiFi: 100 Mbps link, 5ms latency, ~1% loss
     let mut plan = RAMP_UP_SINGLE.to_vec();
     plan[0] = Step::Conditions {
+        description: "WiFi conditions",
         config: NetemConfig::wifi().seed(42),
     };
 
@@ -115,6 +127,7 @@ pub fn bwe_wifi_congested() -> Result<(), RtcError> {
     // Congested WiFi: 5 Mbps link, 10ms latency, ~10% loss
     let mut plan = RAMP_UP_SINGLE.to_vec();
     plan[0] = Step::Conditions {
+        description: "Congested WiFi conditions",
         config: NetemConfig::congested().seed(42),
     };
 
@@ -133,14 +146,10 @@ pub fn bwe_changing_bandwidth() -> Result<(), RtcError> {
     init_log();
     init_crypto_default();
 
-    // Send rate: 2 Mbps - bandwidth conditions will straddle this
-    let media_send_rate = Bitrate::mbps(2);
-    let initial_bitrate = Bitrate::mbps(1);
-    let desired_bitrate = Bitrate::mbps(5);
-
     let plan = vec![
         // Phase 1: High bandwidth (10 Mbps) - above send rate, no constraint
         Step::Conditions {
+            description: "High bandwidth conditions",
             config: NetemConfig::new()
                 .latency(Duration::from_millis(10))
                 .jitter(Duration::from_millis(2))
@@ -148,36 +157,61 @@ pub fn bwe_changing_bandwidth() -> Result<(), RtcError> {
                 .seed(42),
         },
         Step::Media {
-            current_bitrate: initial_bitrate,
-            desired_bitrate,
-            media_send_rate,
+            description: "Probe for high bandwidth",
+            current_bitrate: Bitrate::mbps(1),
+            desired_bitrate: Bitrate::mbps(5),
+            media_send_rate: Bitrate::mbps(1),
         },
         Step::Run {
-            duration: Duration::from_secs(40),
+            description: "Wait for high bandwidth",
+            duration: Duration::from_secs(20),
         },
         Step::Check {
             // BWE should discover high bandwidth (10 Mbps link)
             // Should be well above the send rate
+            description: "Ensure we have high bandwidth",
             at_least: Bitrate::mbps(5),
         },
         // Phase 2: Low bandwidth (1 Mbps) - below send rate, constrains it
         Step::Conditions {
+            description: "Bad network conditions",
             config: NetemConfig::new()
                 .latency(Duration::from_millis(10))
                 .jitter(Duration::from_millis(20))
-                .link(Bitrate::mbps(1), DataSize::kbytes(50))
+                .link(Bitrate::kbps(800), DataSize::kbytes(50))
                 .seed(42),
         },
         Step::Run {
-            duration: Duration::from_secs(30),
+            description: "Run bad conditions",
+            duration: Duration::from_secs(5),
         },
         Step::Check {
             // BWE should detect the reduced bandwidth and lower estimate
             // Link is 1 Mbps, so estimate should be constrained to ~1 Mbps
-            at_least: Bitrate::kbps(500), // At least 500 kbps, but should be around 1 Mbps
+            description: "Lower estimate for bad conditions",
+            at_least: Bitrate::kbps(600),
+        },
+        // Drop the send rate.
+        Step::Media {
+            description: "Drop the send rate for bad conditions",
+            current_bitrate: Bitrate::mbps(600),
+            desired_bitrate: Bitrate::mbps(5),
+            media_send_rate: Bitrate::kbps(600),
+        },
+        // Should stabilize
+        Step::Run {
+            description: "Wait for bad conditions stabilization",
+            duration: Duration::from_secs(10),
+        },
+        Step::Check {
+            // BWE should detect the reduced bandwidth and lower estimate
+            // Link is 1 Mbps, so estimate should be constrained to ~1 Mbps
+            description: "Bad conditions stabilized",
+            at_least: Bitrate::kbps(600),
         },
         // Phase 3: Switch back to high bandwidth (10 Mbps)
         Step::Conditions {
+            description: "High bandwidth conditions",
             config: NetemConfig::new()
                 .latency(Duration::from_millis(10))
                 .jitter(Duration::from_millis(2))
@@ -185,16 +219,18 @@ pub fn bwe_changing_bandwidth() -> Result<(), RtcError> {
                 .seed(42),
         },
         Step::Run {
+            description: "Wait for high bandwidth to recover",
             duration: Duration::from_secs(30),
         },
         Step::Check {
             // BWE should recover and discover high bandwidth again
             // Should be higher than the constrained phase 2
+            description: "High bandwidth should recover",
             at_least: Bitrate::mbps(3),
         },
     ];
 
-    let (mut l, mut r) = connect_with_bwe(initial_bitrate, desired_bitrate);
+    let (mut l, mut r) = connect_with_bwe(Bitrate::mbps(1), Bitrate::mbps(5));
 
     let mut ctx = BweTestContext::new(&mut l, &mut r);
 
@@ -265,17 +301,28 @@ struct BweTestContext {
 #[derive(Debug, Clone, Copy)]
 enum Step {
     /// Network conditions
-    Conditions { config: NetemConfig },
+    Conditions {
+        description: &'static str,
+        config: NetemConfig,
+    },
     /// Send media
     Media {
+        description: &'static str,
         current_bitrate: Bitrate,
         desired_bitrate: Bitrate,
         media_send_rate: Bitrate,
     },
     /// Run simulation for duration
-    Run { duration: Duration },
+    Run {
+        description: &'static str,
+
+        duration: Duration,
+    },
     /// Check the latest BWE estimate
-    Check { at_least: Bitrate },
+    Check {
+        description: &'static str,
+        at_least: Bitrate,
+    },
 }
 
 impl BweTestContext {
@@ -321,27 +368,40 @@ impl BweTestContext {
         r: &mut TestRtc,
         plan: &[Step],
     ) -> Result<(), RtcError> {
+        let total = plan.len();
         for (no, step) in plan.iter().enumerate() {
-            info!("Running step {}: {:?}", no + 1, step);
-
             match step {
-                Step::Conditions { config } => {
+                Step::Conditions {
+                    description,
+                    config,
+                } => {
+                    info!("{}/{}: Set conditions: {}", no + 1, total, description);
                     l.set_netem(*config);
                     r.set_netem(*config);
                 }
                 Step::Media {
+                    description,
                     current_bitrate,
                     desired_bitrate,
                     media_send_rate,
                 } => {
+                    info!("{}/{}: Media rates: {}", no + 1, total, description);
                     l.bwe().set_current_bitrate(*current_bitrate);
                     l.bwe().set_desired_bitrate(*desired_bitrate);
                     self.set_media_send_rate(*media_send_rate);
                 }
-                Step::Run { duration } => {
+                Step::Run {
+                    description,
+                    duration,
+                } => {
+                    info!("{}/{}: Run: {}", no + 1, total, description);
                     self.run_for_duration(l, r, *duration)?;
                 }
-                Step::Check { at_least } => {
+                Step::Check {
+                    description,
+                    at_least,
+                } => {
+                    info!("{}/{}: Check estimate: {}", no + 1, total, description);
                     let estimate = get_last_bwe_estimate(l).expect("a BWE estimate");
 
                     const TOLERANCE: f64 = 0.01;
