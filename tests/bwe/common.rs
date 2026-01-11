@@ -19,61 +19,6 @@ use tracing::info;
 mod test_common;
 pub use test_common::*;
 
-// Test bitrate layers
-pub const LAYER_LOW: Bitrate = Bitrate::kbps(250);
-pub const LAYER_MID: Bitrate = Bitrate::kbps(750);
-pub const LAYER_TOP: Bitrate = Bitrate::kbps(1_500);
-
-// Standard ramp-up test plan
-pub const RAMP_UP_SINGLE: &[Step] = &[
-    Step::Conditions {
-        description: "Startup conditions",
-        config: NetemConfig::new(),
-    },
-    Step::Media {
-        description: "Low layer ramping up to mid",
-        current_bitrate: LAYER_LOW,
-        desired_bitrate: LAYER_MID,
-        media_send_rate: LAYER_LOW,
-    },
-    Step::Run {
-        description: "Wait for mid",
-        duration: Duration::from_secs(10),
-    },
-    Step::Check {
-        description: "Check enough for mid",
-        at_least: Bitrate::kbps(750),
-    },
-    Step::Media {
-        description: "Mid layer ramping up to top",
-        current_bitrate: LAYER_MID,
-        desired_bitrate: LAYER_TOP,
-        media_send_rate: LAYER_MID,
-    },
-    Step::Run {
-        description: "Wait for top",
-        duration: Duration::from_secs(30),
-    },
-    Step::Check {
-        description: "Check enough for top",
-        at_least: Bitrate::kbps(1_500),
-    },
-    Step::Media {
-        description: "Top layer",
-        current_bitrate: LAYER_TOP,
-        desired_bitrate: LAYER_TOP,
-        media_send_rate: LAYER_TOP,
-    },
-    Step::Run {
-        description: "Ensure top stabilizes",
-        duration: Duration::from_secs(10),
-    },
-    Step::Check {
-        description: "Top is stable",
-        at_least: Bitrate::kbps(1_500),
-    },
-];
-
 /// Helper to create two connected peers with BWE enabled on the sender.
 pub fn connect_with_bwe(initial_bitrate: Bitrate, desired_bitrate: Bitrate) -> (TestRtc, TestRtc) {
     // Only sender (L) needs BWE enabled
@@ -243,19 +188,23 @@ impl BweTestContext {
                     description,
                     at_least,
                 } => {
-                    info!("{}/{}: Check estimate: {}", no + 1, total, description);
                     let estimate = get_last_bwe_estimate(l).expect("a BWE estimate");
+                    info!(
+                        "{}/{}: Check estimate: {} ({} >= {})",
+                        no + 1,
+                        total,
+                        description,
+                        estimate,
+                        *at_least
+                    );
 
-                    const TOLERANCE: f64 = 0.01;
-
-                    let is_ok = estimate >= *at_least * (1.0 - TOLERANCE);
+                    let is_ok = estimate >= *at_least;
 
                     assert!(
                         is_ok,
-                        "Step {} estimate {} should be within {}% of expected {}",
+                        "Step {} estimate {} should be at least {}",
                         no + 1,
                         estimate,
-                        TOLERANCE * 100.0,
                         *at_least
                     );
                     // Check does not reset event offset.

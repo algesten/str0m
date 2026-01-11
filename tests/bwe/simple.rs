@@ -1,11 +1,67 @@
 //! Simple BWE tests under different network conditions (cellular, WiFi).
 
-use netem::NetemConfig;
+use std::time::Duration;
+
+use netem::{Bitrate, NetemConfig};
 use str0m::RtcError;
 
-use crate::common::{connect_with_bwe, BweTestContext, Step, LAYER_LOW, LAYER_MID, RAMP_UP_SINGLE};
+use crate::common::{connect_with_bwe, BweTestContext, Step};
 use crate::common::{init_crypto_default, init_log};
 
+// Test bitrate layers
+pub const LAYER_LOW: Bitrate = Bitrate::kbps(250);
+pub const LAYER_MID: Bitrate = Bitrate::kbps(750);
+pub const LAYER_TOP: Bitrate = Bitrate::kbps(1_500);
+
+// Standard ramp-up test plan
+pub const RAMP_UP_SINGLE: &[Step] = &[
+    Step::Conditions {
+        description: "Startup conditions",
+        config: NetemConfig::new(),
+    },
+    Step::Media {
+        description: "Low layer ramping up to mid",
+        current_bitrate: LAYER_LOW,
+        desired_bitrate: LAYER_MID,
+        media_send_rate: LAYER_LOW,
+    },
+    Step::Run {
+        description: "Wait for mid",
+        duration: Duration::from_secs(10),
+    },
+    Step::Check {
+        description: "Check enough for mid",
+        at_least: Bitrate::kbps(750),
+    },
+    Step::Media {
+        description: "Mid layer ramping up to top",
+        current_bitrate: LAYER_MID,
+        desired_bitrate: LAYER_TOP,
+        media_send_rate: LAYER_MID,
+    },
+    Step::Run {
+        description: "Wait for top",
+        duration: Duration::from_secs(30),
+    },
+    Step::Check {
+        description: "Check enough for top",
+        at_least: Bitrate::kbps(1_500),
+    },
+    Step::Media {
+        description: "Top layer",
+        current_bitrate: LAYER_TOP,
+        desired_bitrate: LAYER_TOP,
+        media_send_rate: LAYER_TOP,
+    },
+    Step::Run {
+        description: "Ensure top stabilizes",
+        duration: Duration::from_secs(10),
+    },
+    Step::Check {
+        description: "Top is stable",
+        at_least: Bitrate::kbps(1_500),
+    },
+];
 #[test]
 pub fn bwe_cellular() -> Result<(), RtcError> {
     init_log();
