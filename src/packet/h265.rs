@@ -1,4 +1,3 @@
-// snowflake: disable line_width
 #![allow(clippy::all)]
 #![allow(unused)]
 
@@ -1684,6 +1683,24 @@ mod test {
                     is_fu: true,
                     ..Default::default()
                 },
+                // Aggregation Packet (Type 48)
+                TestType {
+                    raw_header: &[0x60, 0x01],
+                    typ: H265NALU_AGGREGATION_PACKET_TYPE,
+                    layer_id: 0,
+                    tid: 1,
+                    is_ap: true,
+                    ..Default::default()
+                },
+                // PACI Packet (Type 50)
+                TestType {
+                    raw_header: &[0x64, 0x01],
+                    typ: H265NALU_PACI_PACKET_TYPE,
+                    layer_id: 0,
+                    tid: 1,
+                    is_paci: true,
+                    ..Default::default()
+                },
             ];
 
             for cur in tests {
@@ -1761,6 +1778,18 @@ mod test {
             assert!(!header.is_irap(), "VPS should not be detected as IRAP");
             assert!(!header.is_idr_picture(), "VPS is not an IDR");
 
+            // RADL_R (6) – not IRAP
+            let header = H265NALUHeader::new(0x0c, 0x01); // 6 << 1
+            assert!(!header.is_irap());
+
+            // RASL_R (9) – not IRAP
+            let header = H265NALUHeader::new(0x12, 0x01); // 9 << 1
+            assert!(!header.is_irap());
+
+            // Prefix SEI (39)
+            let header = H265NALUHeader::new(0x4e, 0x01); // 39 << 1
+            assert!(!header.is_irap());
+
             Ok(())
         }
 
@@ -1818,6 +1847,20 @@ mod test {
                     s: false,
                     e: true,
                     typ: 1,
+                },
+                // Invalid: S=1 and E=1 simultaneously (illegal per RFC 7798)
+                TestType {
+                    header: H265FragmentationUnitHeader(0xD3),
+                    s: true,
+                    e: true,
+                    typ: 19,
+                },
+                // Illegal FU: VPS (type 32) must not be fragmented
+                TestType {
+                    header: H265FragmentationUnitHeader(0xA0),
+                    s: true,
+                    e: false,
+                    typ: 32,
                 },
             ];
 
@@ -1907,6 +1950,59 @@ mod test {
                         ..Default::default()
                     }),
                     with_donl: true,
+                    ..Default::default()
+                },
+                // IDR_W_RADL (19)
+                TestType {
+                    raw: &[0x26, 0x01, 0xde, 0xad, 0xbe, 0xef],
+                    expected_packet: Some(H265SingleNALUnitPacket {
+                        payload_header: H265NALUHeader::new(0x26, 0x01),
+                        payload: vec![0xde, 0xad, 0xbe, 0xef],
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                // CRA_NUT (21)
+                TestType {
+                    raw: &[0x2a, 0x01, 0xaa, 0xbb],
+                    expected_packet: Some(H265SingleNALUnitPacket {
+                        payload_header: H265NALUHeader::new(0x2a, 0x01),
+                        payload: vec![0xaa, 0xbb],
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                // type=1, layer_id=3, tid=2
+                TestType {
+                    raw: &[0x01, 0x32, 0x99, 0x88],
+                    expected_packet: Some(H265SingleNALUnitPacket {
+                        payload_header: H265NALUHeader::new(0x01, 0x32),
+                        payload: vec![0x99, 0x88],
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                // IDR with DONL
+                TestType {
+                    raw: &[0x26, 0x01, 0x12, 0x34, 0xaa, 0xbb],
+                    expected_packet: Some(H265SingleNALUnitPacket {
+                        payload_header: H265NALUHeader::new(0x26, 0x01),
+                        donl: Some(0x1234),
+                        payload: vec![0xaa, 0xbb],
+                        ..Default::default()
+                    }),
+                    with_donl: true,
+                    ..Default::default()
+                },
+                TestType {
+                    raw: &[0x26, 0x01, 0x12, 0x34, 0xaa, 0xbb],
+                    with_donl: true,
+                    expected_packet: Some(H265SingleNALUnitPacket {
+                        payload_header: H265NALUHeader::new(0x26, 0x01),
+                        donl: Some(0x1234),
+                        payload: vec![0xaa, 0xbb],
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 },
             ];
@@ -2058,6 +2154,174 @@ mod test {
                             nal_unit_size: 1,
                             nal_unit: vec![0xaa],
                         }],
+                        might_need_donl: false,
+                    }),
+                    ..Default::default()
+                },
+                // Valid AP WITHOUT DONL/DOND (with_donl = false)
+                // Requires: first unit + at least 1 other unit
+                TestType {
+                    raw: &[
+                        0x60, 0x01, // AP payload header (Type=48)
+                        0x00, 0x02, // first NALU size = 2
+                        0x11, 0x22, // first NALU
+                        0x00, 0x01, // second NALU size = 1
+                        0x33, // second NALU
+                    ],
+                    with_donl: false,
+                    expected_packet: Some(H265AggregationPacket {
+                        first_unit: Some(H265AggregationUnitFirst {
+                            donl: None,
+                            nal_unit_size: 2,
+                            nal_unit: vec![0x11, 0x22],
+                        }),
+                        other_units: vec![H265AggregationUnit {
+                            dond: None,
+                            nal_unit_size: 1,
+                            nal_unit: vec![0x33],
+                        }],
+                        might_need_donl: false,
+                    }),
+                    ..Default::default()
+                },
+                // Valid AP WITH DONL + multiple other units (exercise DOND parsing twice)
+                // Includes DOND=0 and another DOND value
+                TestType {
+                    raw: &[
+                        0x60, 0x01, // AP payload header (Type=48)
+                        0x00, 0x10, // DONL = 0x0010
+                        0x00, 0x01, // first NALU size = 1
+                        0xaa, // first NALU
+                        0x00, // DOND for 2nd AU
+                        0x00, 0x01, // second NALU size = 1
+                        0xbb, // second NALU
+                        0x05, // DOND for 3rd AU
+                        0x00, 0x02, // third NALU size = 2
+                        0xcc, 0xdd, // third NALU
+                    ],
+                    with_donl: true,
+                    expected_packet: Some(H265AggregationPacket {
+                        first_unit: Some(H265AggregationUnitFirst {
+                            donl: Some(0x0010),
+                            nal_unit_size: 1,
+                            nal_unit: vec![0xaa],
+                        }),
+                        other_units: vec![
+                            H265AggregationUnit {
+                                dond: Some(0x00),
+                                nal_unit_size: 1,
+                                nal_unit: vec![0xbb],
+                            },
+                            H265AggregationUnit {
+                                dond: Some(0x05),
+                                nal_unit_size: 2,
+                                nal_unit: vec![0xcc, 0xdd],
+                            },
+                        ],
+                        might_need_donl: false,
+                    }),
+                    ..Default::default()
+                },
+                // “Forgiving tail” behavior (with_donl=false):
+                // After parsing one valid other unit, an incomplete next unit causes a BREAK (not error).
+                TestType {
+                    raw: &[
+                        0x60, 0x01, // AP payload header (Type=48)
+                        0x00, 0x01, // first NALU size = 1
+                        0x11, // first NALU
+                        0x00, 0x01, // second NALU size = 1
+                        0x22, // second NALU
+                        0x99, // trailing junk: not enough bytes for next 2-byte size => loop breaks
+                    ],
+                    with_donl: false,
+                    expected_packet: Some(H265AggregationPacket {
+                        first_unit: Some(H265AggregationUnitFirst {
+                            donl: None,
+                            nal_unit_size: 1,
+                            nal_unit: vec![0x11],
+                        }),
+                        other_units: vec![H265AggregationUnit {
+                            dond: None,
+                            nal_unit_size: 1,
+                            nal_unit: vec![0x22],
+                        }],
+                        might_need_donl: false,
+                    }),
+                    ..Default::default()
+                },
+                // “Forgiving tail” behavior (with_donl=true):
+                // Trailing single DOND byte is read, then payload.len()<2 => BREAK, but since we already parsed one unit, OK.
+                TestType {
+                    raw: &[
+                        0x60, 0x01, // AP payload header (Type=48)
+                        0x12, 0x34, // DONL
+                        0x00, 0x01, // first NALU size = 1
+                        0xaa, // first NALU
+                        0x01, // DOND for 2nd AU
+                        0x00, 0x01, // second NALU size = 1
+                        0xbb, // second NALU
+                        0x55, // trailing DOND only, no size => break (and still succeed)
+                    ],
+                    with_donl: true,
+                    expected_packet: Some(H265AggregationPacket {
+                        first_unit: Some(H265AggregationUnitFirst {
+                            donl: Some(0x1234),
+                            nal_unit_size: 1,
+                            nal_unit: vec![0xaa],
+                        }),
+                        other_units: vec![H265AggregationUnit {
+                            dond: Some(0x01),
+                            nal_unit_size: 1,
+                            nal_unit: vec![0xbb],
+                        }],
+                        might_need_donl: false,
+                    }),
+                    ..Default::default()
+                },
+                // Wrong outer header type: FU (49) should be rejected by AP depacketizer
+                TestType {
+                    raw: &[
+                        0x62, 0x01, // Type=49 (FU), not AP
+                        0x00, 0x01, 0xaa, // extra bytes, just to avoid short-packet path
+                    ],
+                    expected_err: Some(PacketError::ErrInvalidH265PacketType),
+                    ..Default::default()
+                },
+                // Wrong outer header type: PACI (50) should be rejected by AP depacketizer
+                TestType {
+                    raw: &[
+                        0x64, 0x01, // Type=50 (PACI), not AP
+                        0x00, 0x01, 0xaa,
+                    ],
+                    expected_err: Some(PacketError::ErrInvalidH265PacketType),
+                    ..Default::default()
+                },
+                TestType {
+                    raw: &[
+                        0x60, 0x01, 0x12, 0x34, // DONL = 0x1234
+                        0x00, 0x01, 0xaa, 0x05, // DOND = +5
+                        0x00, 0x01, 0xbb, 0xFE, // DOND = -2 (wrap)
+                        0x00, 0x01, 0xcc,
+                    ],
+                    with_donl: true,
+                    expected_packet: Some(H265AggregationPacket {
+                        first_unit: Some(H265AggregationUnitFirst {
+                            donl: Some(0x1234),
+                            nal_unit_size: 1,
+                            nal_unit: vec![0xaa],
+                        }),
+                        other_units: vec![
+                            H265AggregationUnit {
+                                dond: Some(0x05),
+                                nal_unit_size: 1,
+                                nal_unit: vec![0xbb],
+                            },
+                            H265AggregationUnit {
+                                dond: Some(0xFE),
+                                nal_unit_size: 1,
+                                nal_unit: vec![0xcc],
+                            },
+                        ],
                         might_need_donl: false,
                     }),
                     ..Default::default()
@@ -2672,6 +2936,61 @@ mod test {
                     raw: &[0x60, 0x01, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00],
                     expected_err: Some(PacketError::ErrShortPacket),
                     with_donl: true,
+                    ..Default::default()
+                },
+                // IDR Single NAL
+                TestType {
+                    raw: &[0x26, 0x01, 0xde, 0xad],
+                    expected_packet_type: Some(H265Payload::H265SingleNALUnitPacket(
+                        H265SingleNALUnitPacket::default(),
+                    )),
+                    ..Default::default()
+                },
+                // FU start of IDR_W_RADL
+                TestType {
+                    raw: &[0x62, 0x01, 0x93, 0xaa, 0xbb],
+                    expected_packet_type: Some(H265Payload::H265FragmentationUnitPacket(
+                        H265FragmentationUnitPacket::default(),
+                    )),
+                    ..Default::default()
+                },
+                // AP containing IDR (with DONL)
+                TestType {
+                    raw: &[
+                        0x60, 0x01, // AP
+                        0x00, 0x10, // DONL
+                        0x00, 0x01, // size
+                        0x26, // IDR header byte
+                        0x00, // DOND
+                        0x00, 0x01, // size
+                        0x01, // TRAIL
+                    ],
+                    with_donl: true,
+                    expected_packet_type: Some(H265Payload::H265AggregationPacket(
+                        H265AggregationPacket::default(),
+                    )),
+                    ..Default::default()
+                },
+                // FU with S=1 and E=1 (illegal but must still be routed as FU)
+                TestType {
+                    raw: &[0x62, 0x01, 0xD3, 0xaa, 0xbb],
+                    expected_packet_type: Some(H265Payload::H265FragmentationUnitPacket(
+                        H265FragmentationUnitPacket::default(),
+                    )),
+                    ..Default::default()
+                },
+                TestType {
+                    raw: &[
+                        0x64, 0x01,       // PACI header
+                        0x64,       // PHES
+                        0b00111000, // TSCI
+                        0x62, 0x01, // FU outer header
+                        0x93, // S=1, FuType=19 (IDR)
+                        0xaa, 0xbb,
+                    ],
+                    expected_packet_type: Some(H265Payload::H265PACIPacket(
+                        H265PACIPacket::default(),
+                    )),
                     ..Default::default()
                 },
             ];
@@ -3642,6 +3961,77 @@ mod test {
                 vcl_header.nalu_type(),
                 1,
                 "Second packet should be VCL NAL (type 1)"
+            );
+
+            Ok(())
+        }
+        #[test]
+        fn test_h265_packetizer_exact_fu_boundary_mtu() -> Result<()> {
+            // -------------------------------------------------------------------------
+            // This test verifies the most dangerous MTU geometry for HEVC FU:
+            //
+            //   MTU == FU_header_size + (NAL_payload / 2)
+            //
+            // which must produce exactly TWO fragments with correct S/E bits and no
+            // zero-length or extra FU packets.
+            // -------------------------------------------------------------------------
+
+            // Large IDR NAL (type = 19)
+            let nal_payload_size = 1400;
+
+            // Build a fake IDR NALU: [NALU header (2 bytes)] + payload
+            let mut nalu = Vec::with_capacity(nal_payload_size + 2);
+            nalu.push(0x26); // nal_unit_type = 19 (IDR_W_RADL)
+            nalu.push(0x01);
+            nalu.extend(std::iter::repeat(0xaa).take(nal_payload_size));
+
+            // FU overhead: 2-byte NAL header + 1-byte FU header = 3 bytes
+            let fu_overhead = H265NALU_HEADER_SIZE + H265FRAGMENTATION_UNIT_HEADER_SIZE;
+
+            // Force an exact split into two equal fragments
+            let mtu = fu_overhead + (nal_payload_size / 2);
+
+            let mut packetizer = H265Packetizer::default();
+
+            // Packetize
+            let packets = packetizer.packetize(mtu, &nalu)?;
+
+            // Must produce exactly two FU packets
+            assert_eq!(
+                packets.len(),
+                2,
+                "exact-boundary FU must produce exactly 2 packets"
+            );
+
+            // ---- First packet: FU start ----
+            {
+                let payload = &packets[0];
+                let fu_hdr = H265FragmentationUnitHeader(payload[2]);
+                assert!(fu_hdr.s(), "first FU packet must have S=1");
+                assert!(!fu_hdr.e(), "first FU packet must have E=0");
+                assert_eq!(fu_hdr.fu_type(), 19, "FU must carry IDR type");
+            }
+
+            // ---- Second packet: FU end ----
+            {
+                let payload = &packets[1];
+                let fu_hdr = H265FragmentationUnitHeader(payload[2]);
+                assert!(!fu_hdr.s(), "last FU packet must have S=0");
+                assert!(fu_hdr.e(), "last FU packet must have E=1");
+                assert_eq!(fu_hdr.fu_type(), 19, "FU must carry IDR type");
+            }
+
+            // Reassemble payload to ensure no bytes were lost or duplicated
+            let mut reconstructed = Vec::new();
+            for p in &packets {
+                // Skip: 2-byte outer NAL header + 1-byte FU header
+                reconstructed.extend_from_slice(&p[3..]);
+            }
+
+            assert_eq!(
+                reconstructed.len(),
+                nal_payload_size,
+                "reassembled FU payload must exactly match original NAL size"
             );
 
             Ok(())
