@@ -710,6 +710,9 @@ WebRTC.
 - **WebRTC constants**: `alr_probing_interval = 5s`, `alr_probe_scale =
   2.0`
 - **Status**: Optional feature, must be explicitly enabled by application
+- **str0m note**: This feature is effectively implemented in str0m (always
+  enabled when BWE is active). We monitor this field trial to track
+  whether WebRTC takes the implementation in a different direction.
 
 ### Repeated Initial Probing
 - **API**: `StreamsConfig.enable_repeated_initial_probing = true`
