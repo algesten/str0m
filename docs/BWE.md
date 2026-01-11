@@ -340,15 +340,18 @@ concepts are unified into this single value.
    sent at X and are receiving at >0.7X, the link isn't saturated and we
    should explore higher rates.
 
-3. **Allocation Probing**: When in ALR and `max_bitrate` (application's
-   desired bitrate) increases, probes at 1× and 2× the new maximum
-   (`first_allocation_probe_scale` = 1.0,
+3. **Allocation Probing**: When in ALR and `estimated_bitrate < max_bitrate`
+   (application's desired bitrate exceeds current estimate), probes at 1× and
+   2× max_bitrate (`first_allocation_probe_scale` = 1.0,
    `second_allocation_probe_scale` = 2.0), limited by 2× current BWE
-   estimate (`allocation_probe_limit_by_current_scale` = 2.0). Only
-   triggers when probing is complete and estimate is below the new maximum.
-   This responds to application demand changes—when the encoder wants to
-   send more (e.g., screen share starts, or video quality increases), we
-   probe to validate the network can handle it.
+   estimate (`allocation_probe_limit_by_current_scale` = 2.0). Triggers
+   immediately upon entering ALR (when estimate is below max_bitrate) and
+   periodically every 5 seconds (`MIN_TIME_BETWEEN_ALR_PROBES`) while
+   remaining in ALR with headroom available. This level-triggered approach
+   ensures that whenever the application wants more bandwidth than currently
+   available, the system actively probes to discover if the network can
+   support it—whether from initial ALR entry, network improvements during
+   ALR, or sustained application demand exceeding the estimate.
 
 4. **Large-Drop Recovery**: After a bitrate drop to 66% or below
    (`BITRATE_DROP_THRESHOLD`), if the drop occurred within 5 seconds
@@ -664,6 +667,18 @@ transmission smoothing and padding generation respectively.
      probing up to 2× desired rate without a separate hard cap, while WebRTC
      constrains by the minimum of the two values
 
+3. **Allocation Probing Trigger:**
+   - **WebRTC**: Edge-triggered on `OnMaxTotalAllocatedBitrate()` calls during
+     ALR (probes only when allocation changes while in ALR)
+   - **str0m**: Level-triggered on `estimate < max_bitrate` condition (probes
+     immediately on ALR entry and every 5 seconds while in ALR with headroom)
+   - **Reason**: Better handles network recovery scenarios where application's
+     desired bitrate remains constant but network capacity improves
+   - **Impact**: More aggressive capacity rediscovery during ALR. Ensures
+     consistent application demand (e.g., "I want 5 Mbps") triggers probing
+     whenever the network might support it, not just when the demand value
+     changes
+
 ### Shared with WebRTC
 
 - Core delay-based detection algorithm (trendline estimator with AIMD rate
@@ -673,7 +688,6 @@ transmission smoothing and padding generation respectively.
 - Probe cluster configuration (target duration, min packet count, min probe
   delta)
 - Initial exponential probing (3×, 6× with further probing at 2×)
-- Allocation probing (1×, 2× allocation with current BWE limit)
 - Large-drop recovery probing (85% of pre-drop rate)
 - Bandwidth-limited-cause gating for probing
 - Arrival group formation rules
