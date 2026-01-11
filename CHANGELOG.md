@@ -1,5 +1,7 @@
 # Unreleased
 
+  * AV1 Packetizer/Depacketizer #819
+
 0.14.3
 
   * Bump dimpl 0.2.1 for SChannel compat #801
@@ -8,7 +10,7 @@
 0.14.2
 
   * Fix order of DTLS pending packet poll #796
-  * Defer panic on missing crypto provider until Rtc init #792 
+  * Defer panic on missing crypto provider until Rtc init #792
 
 # 0.14.1
 

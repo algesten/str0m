@@ -13,6 +13,7 @@ pub enum PacketError {
     StapASizeLargerThanBuffer(usize, usize),
     NaluTypeIsNotHandled(u8),
     ErrVP9CorruptedPacket,
+    ErrAV1CorruptedPacket,
 }
 
 impl fmt::Display for PacketError {
@@ -32,6 +33,7 @@ impl fmt::Display for PacketError {
                 write!(f, "H264 NALU type is not handled: {}", nalu_type)
             }
             PacketError::ErrVP9CorruptedPacket => write!(f, "VP9 corrupted packet"),
+            PacketError::ErrAV1CorruptedPacket => write!(f, "AV1 corrupted packet"),
         }
     }
 }
