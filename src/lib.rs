@@ -665,7 +665,7 @@ use dtls::Dtls;
 mod ice_;
 use ice_::IceAgent;
 use ice_::IceAgentEvent;
-pub use ice_::{Candidate, CandidateKind, IceConnectionState, IceCreds};
+pub use ice_::{Candidate, CandidateBuilder, CandidateKind, IceConnectionState, IceCreds};
 
 #[path = "config.rs"]
 mod config_mod;
@@ -774,7 +774,7 @@ pub mod error;
 
 /// Network related types to get socket data in/out of [`Rtc`].
 pub mod net {
-    pub use crate::io::{DatagramRecv, DatagramSend, Protocol, Receive, Transmit};
+    pub use crate::io::{DatagramRecv, DatagramSend, Protocol, Receive, TcpType, Transmit};
 }
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
