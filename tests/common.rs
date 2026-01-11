@@ -76,6 +76,7 @@ pub struct TestRtc {
     pub last: Instant,
     pub events: Vec<(Instant, Event)>,
     pub pending: Netem<PendingPacket>,
+    pub forced_time_advance: Duration,
 }
 
 impl TestRtc {
@@ -98,7 +99,15 @@ impl TestRtc {
             last: now,
             events: vec![],
             pending: Netem::new(NetemConfig::new()),
+            forced_time_advance: Duration::from_millis(10),
         }
+    }
+
+    /// Set the forced time advance duration when RTC returns v==rtc.last.
+    /// This prevents the test from getting stuck when RTC has no pending timeouts.
+    /// Should be set to the packet interval for the target bitrate (e.g., 0.2ms for 50 Mbps).
+    pub fn set_forced_time_advance(&mut self, duration: Duration) {
+        self.forced_time_advance = duration;
     }
 
     /// Configure network emulation for incoming traffic to this RTC.
@@ -283,9 +292,11 @@ fn rtc_poll_to_timeout(
     other_netem: &mut Netem<PendingPacket>,
 ) -> Result<(), RtcError> {
     loop {
-        match rtc.span.in_scope(|| rtc.rtc.poll_output())? {
+        let next = rtc.span.in_scope(|| rtc.rtc.poll_output())?;
+        // println!("next: {:?}", next);
+        match next {
             Output::Timeout(v) => {
-                let tick = rtc.last + Duration::from_millis(10);
+                let tick = rtc.last + rtc.forced_time_advance;
                 rtc.last = if v == rtc.last { tick } else { tick.min(v) };
                 break;
             }

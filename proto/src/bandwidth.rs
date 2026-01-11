@@ -183,6 +183,11 @@ impl DataSize {
         self.0 as usize
     }
 
+    /// The number of bytes as i64.
+    pub fn as_bytes_i64(&self) -> i64 {
+        self.0 as i64
+    }
+
     /// Subtract, saturating at zero.
     pub fn saturating_sub(self, rhs: Self) -> Self {
         Self(self.0.saturating_sub(rhs.0))

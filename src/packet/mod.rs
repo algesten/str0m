@@ -50,13 +50,6 @@ mod error;
 mod payload;
 pub(crate) use payload::Payloader;
 
-mod bwe;
-pub(crate) use bwe::SendSideBandwithEstimator;
-
-mod pacer;
-pub(crate) use pacer::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
-pub(crate) use pacer::{QueuePriority, QueueSnapshot, QueueState};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Types of media.
 pub enum MediaKind {
