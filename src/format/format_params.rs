@@ -71,6 +71,16 @@ pub struct FormatParams {
     /// to the seq_tier syntax element specified in AV1. If the parameter is not
     /// present, the tier MUST be inferred to be 0.
     pub tier: Option<u8>,
+
+    /// H.265/HEVC profile, tier, and level.
+    ///
+    /// Contains:
+    /// * profile: Main, Main10, Main Still Picture, etc.
+    /// * tier: Main or High.
+    /// * level: 3.1, 4.0, 5.0, etc.
+    ///
+    /// See ITU-T H.265 Annex A for complete definitions.
+    pub h265_profile_tier_level: Option<crate::packet::H265ProfileTierLevel>,
 }
 
 impl FormatParams {
@@ -78,18 +88,20 @@ impl FormatParams {
     ///
     /// Example `minptime=10;useinbandfec=1`.
     pub fn parse_line(line: &str) -> Self {
-        let key_vals = line.split(';').filter_map(|pair| {
-            let mut kv = pair.split('=');
-            match (kv.next(), kv.next()) {
-                (Some(k), Some(v)) => Some((k.trim(), v.trim())),
-                _ => None,
-            }
-        });
+        let key_vals: Vec<_> = line
+            .split(';')
+            .filter_map(|pair| {
+                let mut kv = pair.split('=');
+                match (kv.next(), kv.next()) {
+                    (Some(k), Some(v)) => Some((k.trim().to_string(), v.trim().to_string())),
+                    _ => None,
+                }
+            })
+            .collect();
 
         let mut p = FormatParams::default();
 
-        for (k, v) in key_vals {
-            let param = FormatParam::parse(k, v);
+        for param in FormatParam::parse_pairs(key_vals) {
             p.set_param(&param);
         }
 
@@ -109,6 +121,7 @@ impl FormatParams {
             Profile(v) => self.profile = Some(*v),
             LevelIdx(v) => self.level_idx = Some(*v),
             Tier(v) => self.tier = Some(*v),
+            H265ProfileTierLevel(v) => self.h265_profile_tier_level = Some(*v),
             Apt(_) => {}
             Unknown => {}
         }
@@ -147,6 +160,10 @@ impl FormatParams {
         }
         if let Some(v) = self.tier {
             r.push(Tier(v));
+        }
+        // H.265 Profile/Tier/Level: Keep as composite, it serializes all three params
+        if let Some(ptl) = self.h265_profile_tier_level {
+            r.push(H265ProfileTierLevel(ptl));
         }
 
         r
