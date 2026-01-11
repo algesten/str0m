@@ -1,32 +1,29 @@
-#![cfg_attr(not(feature = "aws-lc-rs"), allow(unused))]
+#![allow(unused)]
 
-//! Integration tests for Bandwidth Estimation (BWE) under various network conditions.
-//!
-//! We only run the BWE tests with the aws-lc-rs crypto backend. This is because the
-//! choice of backend doesn't affect the test. For rust-crypto, the pure rust backend,
-//! the tests run very slow under debug mode and we don't want to run tests in release mode.
+//! Common utilities for Bandwidth Estimation (BWE) integration tests.
 
 use std::time::Duration;
 
-use netem::{DataSize, NetemConfig};
+use netem::NetemConfig;
 use str0m::bwe::{Bitrate, BweKind};
 use str0m::format::Codec;
 use str0m::media::MediaKind;
 use str0m::media::Pt;
 use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, Rtc, RtcError};
-
-mod common;
-use common::{init_crypto_default, init_log, progress, TestRtc};
 use tracing::info;
 
-use crate::common::connect_l_r_with_rtc;
+#[path = "common.rs"]
+mod common;
+pub use common::*;
 
-const LAYER_LOW: Bitrate = Bitrate::kbps(250);
-const LAYER_MID: Bitrate = Bitrate::kbps(750);
-const LAYER_TOP: Bitrate = Bitrate::kbps(1_500);
+// Test bitrate layers
+pub const LAYER_LOW: Bitrate = Bitrate::kbps(250);
+pub const LAYER_MID: Bitrate = Bitrate::kbps(750);
+pub const LAYER_TOP: Bitrate = Bitrate::kbps(1_500);
 
-const RAMP_UP_SINGLE: &[Step] = &[
+// Standard ramp-up test plan
+pub const RAMP_UP_SINGLE: &[Step] = &[
     Step::Conditions {
         description: "Startup conditions",
         config: NetemConfig::new(),
@@ -75,184 +72,15 @@ const RAMP_UP_SINGLE: &[Step] = &[
     },
 ];
 
-#[test]
-#[cfg(feature = "aws-lc-rs")]
-pub fn bwe_cellular() -> Result<(), RtcError> {
-    init_log();
-    init_crypto_default();
-
-    let mut plan = RAMP_UP_SINGLE.to_vec();
-    plan[0] = Step::Conditions {
-        description: "Cellular conditions",
-        config: NetemConfig::cellular().seed(42),
-    };
-
-    let (mut l, mut r) = connect_with_bwe(LAYER_LOW, LAYER_MID);
-
-    let mut ctx = BweTestContext::new(&mut l, &mut r);
-
-    ctx.run_plan(&mut l, &mut r, &plan)?;
-
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "aws-lc-rs")]
-pub fn bwe_wifi_normal() -> Result<(), RtcError> {
-    init_log();
-    init_crypto_default();
-
-    // WiFi: 100 Mbps link, 5ms latency, ~1% loss
-    let mut plan = RAMP_UP_SINGLE.to_vec();
-    plan[0] = Step::Conditions {
-        description: "WiFi conditions",
-        config: NetemConfig::wifi().seed(42),
-    };
-
-    let (mut l, mut r) = connect_with_bwe(LAYER_LOW, LAYER_MID);
-
-    let mut ctx = BweTestContext::new(&mut l, &mut r);
-
-    ctx.run_plan(&mut l, &mut r, &RAMP_UP_SINGLE)?;
-
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "aws-lc-rs")]
-pub fn bwe_wifi_congested() -> Result<(), RtcError> {
-    init_log();
-    init_crypto_default();
-
-    // Congested WiFi: 5 Mbps link, 10ms latency, ~10% loss
-    let mut plan = RAMP_UP_SINGLE.to_vec();
-    plan[0] = Step::Conditions {
-        description: "Congested WiFi conditions",
-        config: NetemConfig::congested().seed(42),
-    };
-
-    let (mut l, mut r) = connect_with_bwe(LAYER_LOW, LAYER_MID);
-
-    let mut ctx = BweTestContext::new(&mut l, &mut r);
-
-    ctx.run_plan(&mut l, &mut r, &RAMP_UP_SINGLE)?;
-
-    Ok(())
-}
-
-#[test]
-#[cfg(feature = "aws-lc-rs")]
-pub fn bwe_changing_bandwidth() -> Result<(), RtcError> {
-    init_log();
-    init_crypto_default();
-
-    let plan = vec![
-        // Phase 1: High bandwidth (10 Mbps) - above send rate, no constraint
-        Step::Conditions {
-            description: "High bandwidth conditions",
-            config: NetemConfig::new()
-                .latency(Duration::from_millis(10))
-                .jitter(Duration::from_millis(2))
-                .link(Bitrate::mbps(10), DataSize::kbytes(200))
-                .seed(42),
-        },
-        Step::Media {
-            description: "Probe for high bandwidth",
-            current_bitrate: Bitrate::mbps(1),
-            desired_bitrate: Bitrate::mbps(5),
-            media_send_rate: Bitrate::mbps(1),
-        },
-        Step::Run {
-            description: "Wait for high bandwidth",
-            duration: Duration::from_secs(20),
-        },
-        Step::Check {
-            // BWE should discover high bandwidth (10 Mbps link)
-            // Should be well above the send rate
-            description: "Ensure we have high bandwidth",
-            at_least: Bitrate::mbps(5),
-        },
-        // Phase 2: Low bandwidth (1 Mbps) - below send rate, constrains it
-        Step::Conditions {
-            description: "Bad network conditions",
-            config: NetemConfig::new()
-                .latency(Duration::from_millis(10))
-                .jitter(Duration::from_millis(20))
-                .link(Bitrate::kbps(800), DataSize::kbytes(50))
-                .seed(42),
-        },
-        Step::Run {
-            description: "Run bad conditions",
-            duration: Duration::from_secs(5),
-        },
-        Step::Check {
-            // BWE should detect the reduced bandwidth and lower estimate
-            // Link is 1 Mbps, so estimate should be constrained to ~1 Mbps
-            description: "Lower estimate for bad conditions",
-            at_least: Bitrate::kbps(600),
-        },
-        // Drop the send rate.
-        Step::Media {
-            description: "Drop the send rate for bad conditions",
-            current_bitrate: Bitrate::mbps(600),
-            desired_bitrate: Bitrate::mbps(5),
-            media_send_rate: Bitrate::kbps(600),
-        },
-        // Should stabilize
-        Step::Run {
-            description: "Wait for bad conditions stabilization",
-            duration: Duration::from_secs(10),
-        },
-        Step::Check {
-            // BWE should detect the reduced bandwidth and lower estimate
-            // Link is 1 Mbps, so estimate should be constrained to ~1 Mbps
-            description: "Bad conditions stabilized",
-            at_least: Bitrate::kbps(600),
-        },
-        // Phase 3: Switch back to high bandwidth (10 Mbps)
-        Step::Conditions {
-            description: "High bandwidth conditions",
-            config: NetemConfig::new()
-                .latency(Duration::from_millis(10))
-                .jitter(Duration::from_millis(2))
-                .link(Bitrate::mbps(10), DataSize::kbytes(200))
-                .seed(42),
-        },
-        Step::Run {
-            description: "Wait for high bandwidth to recover",
-            duration: Duration::from_secs(30),
-        },
-        Step::Check {
-            // BWE should recover and discover high bandwidth again
-            // Should be higher than the constrained phase 2
-            description: "High bandwidth should recover",
-            at_least: Bitrate::mbps(3),
-        },
-    ];
-
-    let (mut l, mut r) = connect_with_bwe(Bitrate::mbps(1), Bitrate::mbps(5));
-
-    let mut ctx = BweTestContext::new(&mut l, &mut r);
-
-    // Run the plan that changes bandwidth conditions
-    ctx.run_plan(&mut l, &mut r, &plan)?;
-
-    Ok(())
-}
-
 /// Helper to create two connected peers with BWE enabled on the sender.
-fn connect_with_bwe(initial_bitrate: Bitrate, desired_bitrate: Bitrate) -> (TestRtc, TestRtc) {
+pub fn connect_with_bwe(initial_bitrate: Bitrate, desired_bitrate: Bitrate) -> (TestRtc, TestRtc) {
     // Only sender (L) needs BWE enabled
     let rtc1 = Rtc::builder()
         .set_rtp_mode(true)
         .enable_bwe(Some(initial_bitrate))
-        // .enable_raw_packets(true)
         .build();
 
-    let rtc2 = Rtc::builder()
-        //
-        .set_rtp_mode(true)
-        .build();
+    let rtc2 = Rtc::builder().set_rtp_mode(true).build();
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc1, rtc2);
 
@@ -274,21 +102,22 @@ fn connect_with_bwe(initial_bitrate: Bitrate, desired_bitrate: Bitrate) -> (Test
 }
 
 /// Extract the last BWE estimate from events.
-fn get_last_bwe_estimate(rtc: &TestRtc) -> Option<Bitrate> {
+pub fn get_last_bwe_estimate(rtc: &TestRtc) -> Option<Bitrate> {
     rtc.events
         .iter()
         .filter_map(|(_, e)| {
             if let Event::EgressBitrateEstimate(BweKind::Twcc(bitrate)) = e {
-                Some(*bitrate)
+                Some(bitrate)
             } else {
                 None
             }
         })
         .last()
+        .copied()
 }
 
 /// BweTestContext holds state for running BWE tests.
-struct BweTestContext {
+pub struct BweTestContext {
     ssrc: Ssrc,
     pt: Pt,
     seq_no: u64,
@@ -299,7 +128,7 @@ struct BweTestContext {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum Step {
+pub enum Step {
     /// Network conditions
     Conditions {
         description: &'static str,
@@ -315,7 +144,6 @@ enum Step {
     /// Run simulation for duration
     Run {
         description: &'static str,
-
         duration: Duration,
     },
     /// Check the latest BWE estimate
@@ -326,7 +154,7 @@ enum Step {
 }
 
 impl BweTestContext {
-    fn new(l: &mut TestRtc, r: &mut TestRtc) -> Self {
+    pub fn new(l: &mut TestRtc, r: &mut TestRtc) -> Self {
         let mid = "vid".into();
         let ssrc_tx: Ssrc = 42.into();
         let ssrc_rtx: Ssrc = 44.into();
@@ -362,7 +190,7 @@ impl BweTestContext {
         }
     }
 
-    fn run_plan(
+    pub fn run_plan(
         &mut self,
         l: &mut TestRtc,
         r: &mut TestRtc,
