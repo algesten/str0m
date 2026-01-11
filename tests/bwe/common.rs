@@ -1,10 +1,13 @@
+#![cfg(all(feature = "aws-lc-rs", feature = "_internal_test_exports"))]
 #![allow(unused)]
 
 //! Common utilities for Bandwidth Estimation (BWE) integration tests.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use netem::NetemConfig;
+use str0m::_internal_test_exports::ProbeClusterConfig;
 use str0m::bwe::{Bitrate, BweKind};
 use str0m::format::Codec;
 use str0m::media::MediaKind;
@@ -13,9 +16,9 @@ use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, Rtc, RtcError};
 use tracing::info;
 
-#[path = "common.rs"]
-mod common;
-pub use common::*;
+#[path = "../common.rs"]
+mod test_common;
+pub use test_common::*;
 
 // Test bitrate layers
 pub const LAYER_LOW: Bitrate = Bitrate::kbps(250);
@@ -127,7 +130,7 @@ pub struct BweTestContext {
     byte_budget: f64,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone)]
 pub enum Step {
     /// Network conditions
     Conditions {
@@ -150,6 +153,10 @@ pub enum Step {
     Check {
         description: &'static str,
         at_least: Bitrate,
+    },
+    CheckProbe {
+        description: &'static str,
+        check: Arc<dyn Fn(usize, &ProbeClusterConfig) -> bool>,
     },
 }
 
@@ -197,6 +204,9 @@ impl BweTestContext {
         plan: &[Step],
     ) -> Result<(), RtcError> {
         let total = plan.len();
+
+        let mut event_offset = 0;
+
         for (no, step) in plan.iter().enumerate() {
             match step {
                 Step::Conditions {
@@ -206,6 +216,7 @@ impl BweTestContext {
                     info!("{}/{}: Set conditions: {}", no + 1, total, description);
                     l.set_netem(*config);
                     r.set_netem(*config);
+                    event_offset = l.events.len();
                 }
                 Step::Media {
                     description,
@@ -217,6 +228,7 @@ impl BweTestContext {
                     l.bwe().set_current_bitrate(*current_bitrate);
                     l.bwe().set_desired_bitrate(*desired_bitrate);
                     self.set_media_send_rate(*media_send_rate);
+                    event_offset = l.events.len();
                 }
                 Step::Run {
                     description,
@@ -224,6 +236,7 @@ impl BweTestContext {
                 } => {
                     info!("{}/{}: Run: {}", no + 1, total, description);
                     self.run_for_duration(l, r, *duration)?;
+                    // Don't update event_offset here - let CheckProbe see events from this Run
                 }
                 Step::Check {
                     description,
@@ -244,6 +257,33 @@ impl BweTestContext {
                         TOLERANCE * 100.0,
                         *at_least
                     );
+                    // Check does not reset event offset.
+                }
+                Step::CheckProbe { description, check } => {
+                    info!("{}/{}: Check probe: {}", no + 1, total, description);
+
+                    // All probes since previous step started.
+                    let probes = l.events[event_offset..]
+                        .iter()
+                        .filter_map(|e| match e {
+                            (_, Event::Probe(probe)) => Some(probe),
+                            _ => None,
+                        })
+                        .enumerate();
+
+                    let mut any_ok = false;
+
+                    for (index, probe) in probes {
+                        let is_ok = (check)(index, probe);
+                        if is_ok {
+                            any_ok = true;
+                            break;
+                        }
+                    }
+
+                    assert!(any_ok, "No probe check passed");
+
+                    // Check does not reset event offset.
                 }
             }
         }

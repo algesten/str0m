@@ -43,3 +43,6 @@ impl PayloadParams {
         self.locked
     }
 }
+
+/// UNSTABLE: not public API!
+pub use crate::bwe_::ProbeClusterConfig;

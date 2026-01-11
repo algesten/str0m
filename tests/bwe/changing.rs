@@ -1,4 +1,4 @@
-#![cfg(feature = "aws-lc-rs")]
+#![cfg(all(feature = "aws-lc-rs", feature = "_internal_test_exports"))]
 
 //! BWE test with changing network bandwidth conditions.
 
@@ -8,8 +8,7 @@ use netem::{DataSize, NetemConfig};
 use str0m::bwe::Bitrate;
 use str0m::RtcError;
 
-mod bwe_common;
-use bwe_common::{connect_with_bwe, init_crypto_default, init_log, BweTestContext, Step};
+use crate::common::{connect_with_bwe, init_crypto_default, init_log, BweTestContext, Step};
 
 #[test]
 pub fn bwe_changing_bandwidth() -> Result<(), RtcError> {

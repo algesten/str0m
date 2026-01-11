@@ -5,9 +5,8 @@
 use netem::NetemConfig;
 use str0m::RtcError;
 
-mod bwe_common;
-use bwe_common::{connect_with_bwe, BweTestContext, Step, LAYER_LOW, LAYER_MID, RAMP_UP_SINGLE};
-use bwe_common::{init_crypto_default, init_log};
+use crate::common::{connect_with_bwe, BweTestContext, Step, LAYER_LOW, LAYER_MID, RAMP_UP_SINGLE};
+use crate::common::{init_crypto_default, init_log};
 
 #[test]
 pub fn bwe_cellular() -> Result<(), RtcError> {

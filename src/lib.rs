@@ -946,6 +946,12 @@ pub enum Event {
     /// This clones data, and is therefore expensive.
     /// Should not be enabled outside of tests and troubleshooting.
     RawPacket(Box<RawPacket>),
+
+    /// For internal testing only.
+    ///
+    /// The probe cluster config when a probe fires.
+    #[cfg(feature = "_internal_test_exports")]
+    Probe(crate::bwe_::ProbeClusterConfig),
 }
 
 impl Event {

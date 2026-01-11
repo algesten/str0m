@@ -38,7 +38,12 @@ use macros::log_loss;
 
 pub(crate) use macros::{log_pacer_media_debt, log_pacer_padding_debt};
 pub(crate) use probe::{BandwidthLimitedCause, ProbeEstimator};
-pub(crate) use probe::{ProbeClusterConfig, ProbeClusterState, ProbeControl};
+pub(crate) use probe::{ProbeClusterState, ProbeControl};
+
+#[cfg(feature = "_internal_test_exports")]
+pub use probe::ProbeClusterConfig;
+#[cfg(not(feature = "_internal_test_exports"))]
+pub(crate) use probe::ProbeClusterConfig;
 
 const INITIAL_BITRATE_WINDOW: Duration = Duration::from_millis(500);
 const BITRATE_WINDOW: Duration = Duration::from_millis(150);

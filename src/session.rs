@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::bwe::BweKind;
-use crate::bwe_::Bwe;
+use crate::bwe_::{Bwe, ProbeClusterConfig};
 use crate::config::KeyingMaterial;
 use crate::crypto::dtls::SrtpProfile;
 use crate::crypto::CryptoProvider;
@@ -104,6 +104,9 @@ pub(crate) struct Session {
     feedback_rx: VecDeque<Rtcp>,
 
     raw_packets: Option<VecDeque<Box<RawPacket>>>,
+
+    #[cfg(feature = "_internal_test_exports")]
+    pending_probe: Option<ProbeClusterConfig>,
 }
 
 impl Session {
@@ -165,6 +168,8 @@ impl Session {
             } else {
                 None
             },
+            #[cfg(feature = "_internal_test_exports")]
+            pending_probe: None,
         }
     }
 
@@ -248,6 +253,10 @@ impl Session {
         let do_probe = self.packet_first_sent;
 
         if let Some(probe_config) = bwe.handle_timeout(now, do_probe) {
+            #[cfg(feature = "_internal_test_exports")]
+            {
+                self.pending_probe = Some(probe_config);
+            }
             bwe.start_probe(probe_config);
             self.pacer.start_probe(probe_config);
         }
@@ -610,6 +619,13 @@ impl Session {
     }
 
     pub fn poll_event(&mut self) -> Option<Event> {
+        #[cfg(feature = "_internal_test_exports")]
+        {
+            if let Some(probe) = self.pending_probe.take() {
+                return Some(Event::Probe(probe));
+            }
+        }
+
         if let Some(bitrate_estimate) = self.bwe.as_mut().and_then(|bwe| bwe.poll_estimate()) {
             return Some(Event::EgressBitrateEstimate(BweKind::Twcc(
                 bitrate_estimate,
