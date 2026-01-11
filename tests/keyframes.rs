@@ -361,8 +361,8 @@ fn test_av1_keyframes_detection() -> Result<(), RtcError> {
         let CodecExtra::AV1(extra) = data.codec_extra else {
             panic!("Got non AV1 CodecExtra")
         };
-        let assume_keyframe = data.seq_range.contains(&7486.into())
-                                 || data.seq_range.contains(&7485.into());
+        let assume_keyframe =
+            data.seq_range.contains(&7486.into()) || data.seq_range.contains(&7485.into());
         if extra.is_keyframe {
             assert!(assume_keyframe, "Expected keyframe");
         } else {
