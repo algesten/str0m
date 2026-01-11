@@ -1,4 +1,3 @@
-#![cfg(all(feature = "aws-lc-rs", feature = "_internal_test_exports"))]
 #![allow(unused)]
 
 //! Common utilities for Bandwidth Estimation (BWE) integration tests.

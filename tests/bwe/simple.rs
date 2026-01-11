@@ -1,5 +1,3 @@
-#![cfg(feature = "aws-lc-rs")]
-
 //! Simple BWE tests under different network conditions (cellular, WiFi).
 
 use netem::NetemConfig;

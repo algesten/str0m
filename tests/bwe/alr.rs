@@ -1,5 +1,3 @@
-#![cfg(feature = "aws-lc-rs")]
-
 //! BWE test for allocation probing mechanics when entering ALR.
 
 use std::sync::Arc;

@@ -1,5 +1,3 @@
-#![cfg(all(feature = "aws-lc-rs", feature = "_internal_test_exports"))]
-
 //! BWE test with changing network bandwidth conditions.
 
 use std::time::Duration;
