@@ -1,6 +1,10 @@
 # Unreleased
 
   * AV1 Packetizer/Depacketizer #819
+  * Surface Sender Info as Event (breaking) #820
+  * Improve performance on apple crypto #818 #821
+  * Crypto compliance tests #817
+  * Update Apple Crypto crate to use CryptoKit #813
 
 0.14.3
 
