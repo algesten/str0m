@@ -74,6 +74,16 @@ impl Bitrate {
     pub fn as_valid(&self) -> Option<Bitrate> {
         self.is_valid().then_some(*self)
     }
+
+    /// Return true if difference is significant (more then 5%)
+    pub fn significant_diff(&self, other: Self) -> bool {
+        let a = self.as_f64();
+        let b = other.as_f64();
+        if a == 0.0 {
+            return b != 0.0;
+        }
+        ((a - b).abs() / a) > 0.05
+    }
 }
 
 impl From<u64> for Bitrate {
