@@ -104,7 +104,7 @@ pub fn data_channel_flood() -> Result<(), RtcError> {
             break;
         }
     }
-    assert!(r.events.len() > 120);
+    assert!(r.events.len() > 9000);
 
     Ok(())
 }
