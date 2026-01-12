@@ -161,7 +161,13 @@ mod tests {
             .is_ok());
         assert_eq!(
             output.as_ref(),
-            &hex_as_bytes!(b"e3f229ba727be17b8d122620557cd453c2aab21d07c3d495329b52d4e61edb5a6b301791e90d35c9c9a46b4e14baf9af0fa022f7077def17abfd3797c0564bab4fbc91666e9def9b97fce34f796789baa48082d122ee42c5a72e5a5110fff70187347b66")
+            &hex_as_bytes!(
+                b"e3f229ba727be17b8d122620557cd453c2aab21d\
+                             07c3d495329b52d4e61edb5a6b301791e90d35c9\
+                             c9a46b4e14baf9af0fa022f7077def17abfd3797\
+                             c0564bab4fbc91666e9def9b97fce34f796789ba\
+                             a48082d122ee42c5a72e5a5110fff70187347b66"
+            )
         );
     }
 }
