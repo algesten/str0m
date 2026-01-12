@@ -1456,118 +1456,123 @@ impl Rtc {
 
         // Poll DTLS output - collect packets, handle events
         let mut just_connected = false;
-        loop {
-            match self.dtls.poll_output(&mut self.dtls_buf) {
-                DtlsOutput::Packet(_) => {
-                    unreachable!("We don't expect DTLS packets here since we use poll_packet");
-                }
-                DtlsOutput::Connected => {
-                    if !self.dtls_connected {
-                        debug!("DTLS connected");
-                        self.dtls_connected = true;
-                        just_connected = true;
+        'dtls_sctp_loop: loop {
+            loop {
+                match self.dtls.poll_output(&mut self.dtls_buf) {
+                    DtlsOutput::Packet(_) => {
+                        unreachable!("We don't expect DTLS packets here since we use poll_packet");
                     }
-                }
-                DtlsOutput::KeyingMaterial(km, profile) => {
-                    use config::KeyingMaterial;
-                    let km_bytes = km.as_ref().to_vec();
-                    debug!("DTLS set SRTP keying material and profile: {}", profile);
-                    let active = self.dtls.is_active().expect("DTLS must be inited by now");
-                    self.session.set_keying_material(
-                        KeyingMaterial::new(&km_bytes),
-                        &self.crypto_provider,
-                        profile,
-                        active,
-                    );
-                }
-                DtlsOutput::PeerCert(der) => {
-                    debug!("DTLS verify remote fingerprint");
-                    // Compute fingerprint from peer's DER certificate
-                    let fingerprint = crate::crypto::Fingerprint {
-                        hash_func: "sha-256".to_string(),
-                        bytes: self.crypto_provider.sha256_provider.sha256(der).to_vec(),
-                    };
-                    self.dtls.set_remote_fingerprint(fingerprint.clone());
-                    if let Some(expected) = &self.remote_fingerprint {
-                        if !self.fingerprint_verification {
-                            debug!("DTLS fingerprint verification disabled");
-                        } else if fingerprint != *expected {
-                            self.disconnect();
-                            return Err(RtcError::RemoteSdp("remote fingerprint no match".into()));
+                    DtlsOutput::Connected => {
+                        if !self.dtls_connected {
+                            debug!("DTLS connected");
+                            self.dtls_connected = true;
+                            just_connected = true;
                         }
-                    } else {
-                        self.disconnect();
-                        return Err(RtcError::RemoteSdp("no a=fingerprint before dtls".into()));
                     }
-                }
-                DtlsOutput::ApplicationData(data) => {
-                    self.sctp.handle_input(self.last_now, data);
-                }
-                DtlsOutput::Timeout(t) => {
-                    self.next_dtls_timeout = Some(t);
-                    break;
-                }
-            }
-        }
-
-        if just_connected {
-            return Ok(Output::Event(Event::Connected));
-        }
-
-        while let Some(e) = self.sctp.poll() {
-            match e {
-                SctpEvent::Transmit { mut packets } => {
-                    if let Some(v) = packets.front() {
-                        if let Err(e) = self.dtls.handle_input(v) {
-                            if is_would_block(&e) {
-                                self.sctp.push_back_transmit(packets);
-                                break;
-                            } else {
-                                return Err(e.into());
+                    DtlsOutput::KeyingMaterial(km, profile) => {
+                        use config::KeyingMaterial;
+                        let km_bytes = km.as_ref().to_vec();
+                        debug!("DTLS set SRTP keying material and profile: {}", profile);
+                        let active = self.dtls.is_active().expect("DTLS must be inited by now");
+                        self.session.set_keying_material(
+                            KeyingMaterial::new(&km_bytes),
+                            &self.crypto_provider,
+                            profile,
+                            active,
+                        );
+                    }
+                    DtlsOutput::PeerCert(der) => {
+                        debug!("DTLS verify remote fingerprint");
+                        // Compute fingerprint from peer's DER certificate
+                        let fingerprint = crate::crypto::Fingerprint {
+                            hash_func: "sha-256".to_string(),
+                            bytes: self.crypto_provider.sha256_provider.sha256(der).to_vec(),
+                        };
+                        self.dtls.set_remote_fingerprint(fingerprint.clone());
+                        if let Some(expected) = &self.remote_fingerprint {
+                            if !self.fingerprint_verification {
+                                debug!("DTLS fingerprint verification disabled");
+                            } else if fingerprint != *expected {
+                                self.disconnect();
+                                return Err(RtcError::RemoteSdp(
+                                    "remote fingerprint no match".into(),
+                                ));
                             }
+                        } else {
+                            self.disconnect();
+                            return Err(RtcError::RemoteSdp("no a=fingerprint before dtls".into()));
                         }
-
-                        packets.pop_front();
-                        // If there are still packets, they are sent on next
-                        // poll_output()
-                        if !packets.is_empty() {
-                            self.sctp.push_back_transmit(packets);
-                        }
-
-                        // Run again since this would feed the DTLS subsystem
-                        // to produce a packet now.
-                        return self.do_poll_output();
+                    }
+                    DtlsOutput::ApplicationData(data) => {
+                        self.sctp.handle_input(self.last_now, data);
+                    }
+                    DtlsOutput::Timeout(t) => {
+                        self.next_dtls_timeout = Some(t);
+                        break;
                     }
                 }
-                SctpEvent::Open { id, label } => {
-                    self.chan.ensure_channel_id_for(id);
-                    let id = self.chan.channel_id_by_stream_id(id).unwrap();
-                    return Ok(Output::Event(Event::ChannelOpen(id, label)));
-                }
-                SctpEvent::Close { id } => {
-                    let Some(id) = self.chan.channel_id_by_stream_id(id) else {
-                        warn!("Drop ChannelClose event for id: {:?}", id);
-                        continue;
-                    };
-                    self.chan.remove_channel(id);
-                    return Ok(Output::Event(Event::ChannelClose(id)));
-                }
-                SctpEvent::Data { id, binary, data } => {
-                    let Some(id) = self.chan.channel_id_by_stream_id(id) else {
-                        warn!("Drop ChannelData event for id: {:?}", id);
-                        continue;
-                    };
-                    let cd = ChannelData { id, binary, data };
-                    return Ok(Output::Event(Event::ChannelData(cd)));
-                }
-                SctpEvent::BufferedAmountLow { id } => {
-                    let Some(id) = self.chan.channel_id_by_stream_id(id) else {
-                        warn!("Drop BufferedAmountLow for id: {:?}", id);
-                        continue;
-                    };
-                    return Ok(Output::Event(Event::ChannelBufferedAmountLow(id)));
+            }
+
+            if just_connected {
+                return Ok(Output::Event(Event::Connected));
+            }
+
+            while let Some(e) = self.sctp.poll() {
+                match e {
+                    SctpEvent::Transmit { mut packets } => {
+                        if let Some(v) = packets.front() {
+                            if let Err(e) = self.dtls.handle_input(v) {
+                                if is_would_block(&e) {
+                                    self.sctp.push_back_transmit(packets);
+                                    break;
+                                } else {
+                                    return Err(e.into());
+                                }
+                            }
+
+                            packets.pop_front();
+                            // If there are still packets, they are sent on next
+                            // poll_output()
+                            if !packets.is_empty() {
+                                self.sctp.push_back_transmit(packets);
+                            }
+
+                            // Run again since this would feed the DTLS subsystem
+                            // to produce a packet now.
+                            continue 'dtls_sctp_loop;
+                        }
+                    }
+                    SctpEvent::Open { id, label } => {
+                        self.chan.ensure_channel_id_for(id);
+                        let id = self.chan.channel_id_by_stream_id(id).unwrap();
+                        return Ok(Output::Event(Event::ChannelOpen(id, label)));
+                    }
+                    SctpEvent::Close { id } => {
+                        let Some(id) = self.chan.channel_id_by_stream_id(id) else {
+                            warn!("Drop ChannelClose event for id: {:?}", id);
+                            continue;
+                        };
+                        self.chan.remove_channel(id);
+                        return Ok(Output::Event(Event::ChannelClose(id)));
+                    }
+                    SctpEvent::Data { id, binary, data } => {
+                        let Some(id) = self.chan.channel_id_by_stream_id(id) else {
+                            warn!("Drop ChannelData event for id: {:?}", id);
+                            continue;
+                        };
+                        let cd = ChannelData { id, binary, data };
+                        return Ok(Output::Event(Event::ChannelData(cd)));
+                    }
+                    SctpEvent::BufferedAmountLow { id } => {
+                        let Some(id) = self.chan.channel_id_by_stream_id(id) else {
+                            warn!("Drop BufferedAmountLow for id: {:?}", id);
+                            continue;
+                        };
+                        return Ok(Output::Event(Event::ChannelBufferedAmountLow(id)));
+                    }
                 }
             }
+            break; // Out of dtls_sctp loop
         }
 
         if let Some(ev) = self.session.poll_event() {
