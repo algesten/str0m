@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Handle tcptype ICE candidates #797
+  * New API for building ICE Candidates (breaking) #797
   * AV1 Packetizer/Depacketizer #819
   * Surface Sender Info as Event (breaking) #820
   * Improve performance on apple crypto #818 #821

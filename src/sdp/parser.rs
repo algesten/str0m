@@ -5,8 +5,10 @@ use combine::stream::StreamErrorFor;
 use combine::*;
 use combine::{ParseError, Parser, Stream};
 use std::net::{IpAddr, SocketAddr};
+use std::str::FromStr;
 
 use crate::crypto::Fingerprint;
+use crate::io::TcpType;
 use crate::rtp_::{Direction, Extension, Frequency, Mid, Pt, SessionId, Ssrc};
 use crate::sdp::SdpError;
 use crate::{Candidate, CandidateKind};
@@ -217,6 +219,7 @@ where
     Input: Stream<Token = char>,
     Input::Error: ParseError<Input::Token, Input::Range, Input::Position>,
 {
+    // Reference: https://datatracker.ietf.org/doc/html/rfc5245#section-15.1
     let port = || {
         not_sp::<Input>().and_then(|s| {
             s.parse::<u16>()
@@ -266,12 +269,17 @@ where
         port(),
         string(" typ "),
         kind,
-        optional((attempt(string(" tcptype ")), not_sp())),
         optional((
             attempt(string(" raddr ")),
             ip_addr(),
             string(" rport "),
             port(),
+        )),
+        optional((
+            attempt(string(" tcptype ")),
+            not_sp().and_then(|s| {
+                TcpType::from_str(s.as_str()).map_err(StreamErrorFor::<Input>::message_format)
+            }),
         )),
         optional((attempt(string(" generation ")), not_sp())),
         optional((attempt(string(" network-id ")), not_sp())),
@@ -294,12 +302,12 @@ where
                 port,
                 _,
                 kind,
-                _,     // (" tcptype ", tcptype)
-                raddr, // (" raddr ", addr, " rport ", port)
-                _,     // (" generation ", generation)
-                _,     // (" network-id ", network_id)
-                ufrag, // (" ufrag ", ufrag)
-                _,     // ("network-cost", network_cost)
+                raddr,   // (" raddr ", addr, " rport ", port)
+                tcptype, // (" tcptype ", tcptype)
+                _,       // (" generation ", generation)
+                _,       // (" network-id ", network_id)
+                ufrag,   // (" ufrag ", ufrag)
+                _,       // ("network-cost", network_cost)
             )| {
                 Candidate::parsed(
                     found,
@@ -309,6 +317,7 @@ where
                     SocketAddr::from((addr, port)),
                     kind,
                     raddr.map(|(_, addr, _, port)| SocketAddr::from((addr, port))),
+                    tcptype.map(|(_, tcptype)| tcptype),
                     ufrag.map(|(_, u)| u),
                 )
             },
@@ -863,6 +872,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::io::Protocol;
 
     #[test]
     fn line_a() {
@@ -1210,7 +1220,7 @@ mod test {
     }
 
     #[test]
-    fn parse_candidate_ufrag() {
+    fn parse_candidates() {
         let a = "a=candidate:1 1 udp 1845494015 198.51.100.100 11100 typ srflx raddr 203.0.113.100 rport 10100 ufrag abc\r\n";
 
         let (c, _) = candidate_attribute().parse(a).unwrap();
@@ -1235,6 +1245,32 @@ mod test {
         let a = "a=candidate:387183333 1 udp 1686052607 113.185.55.72 41775 typ srflx raddr 10.217.229.219 rport 50028 generation 0 network-id 1 network-cost 900";
         let (c, _) = candidate_attribute().parse(a).unwrap();
         assert_eq!(c.addr(), "113.185.55.72:41775".parse().unwrap());
+
+        let a =
+            "a=candidate:3936339338 1 udp 2122265343 fd00:f8aa:3ff5:5914:90bf:3c5:3378:9d4b 59125 \
+            typ host generation 0 network-id 4 network-cost 50";
+        let (c, _) = candidate_attribute().parse(a).unwrap();
+        assert_eq!(
+            c.addr(),
+            "[fd00:f8aa:3ff5:5914:90bf:3c5:3378:9d4b]:59125"
+                .parse()
+                .unwrap()
+        );
+        assert_eq!(c.proto(), Protocol::Udp);
+
+        let a = "a=candidate:2113932030 1 tcp 2113932030 142.250.82.253 19305 \
+            typ host tcptype passive generation 0";
+        let (c, _) = candidate_attribute().parse(a).unwrap();
+        assert_eq!(c.addr(), "142.250.82.253:19305".parse().unwrap());
+        assert_eq!(c.proto(), Protocol::Tcp);
+        assert_eq!(c.tcptype(), Some(TcpType::Passive));
+
+        let a =
+            "a=candidate:2113932029 1 ssltcp 2113932029 142.250.82.252 443 typ host generation 0";
+        let (c, _) = candidate_attribute().parse(a).unwrap();
+        assert_eq!(c.addr(), "142.250.82.252:443".parse().unwrap());
+        assert_eq!(c.proto(), Protocol::SslTcp);
+        assert_eq!(c.tcptype(), None);
     }
 
     #[test]

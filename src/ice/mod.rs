@@ -5,7 +5,7 @@ mod agent;
 pub use agent::{IceAgent, IceAgentEvent, IceConnectionState, IceCreds, LocalPreference};
 
 mod candidate;
-pub use candidate::{Candidate, CandidateKind};
+pub use candidate::{Candidate, CandidateBuilder, CandidateKind};
 
 mod pair;
 
