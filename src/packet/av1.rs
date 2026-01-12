@@ -259,7 +259,7 @@ impl AV1Packetizer {
 
 impl Packetizer for AV1Packetizer {
     fn packetize(&mut self, mtu: usize, payload: &[u8]) -> Result<Vec<Vec<u8>>, PacketError> {
-        if payload.is_empty() || mtu == 0 {
+        if payload.is_empty() || mtu <= AGGREGATION_HEADER_SIZE {
             return Ok(vec![]);
         }
 
@@ -363,8 +363,13 @@ impl Depacketizer for AV1Depacketizer {
                 reader.remaining_bytes()
             };
 
-            // Safety check
-            if fragment_obu_length + reader.get_offset() > packet.len() {
+            // Safety checks
+            if fragment_obu_length == 0 {
+                return Err(PacketError::ErrAV1CorruptedPacket);
+            }
+            if reader.get_offset() > packet.len()
+                || fragment_obu_length > packet.len() - reader.get_offset()
+            {
                 return Err(PacketError::ErrAV1CorruptedPacket);
             }
 
@@ -389,27 +394,25 @@ impl Depacketizer for AV1Depacketizer {
 
             self.obu_length += fragment_obu_length;
 
-            let obu = &mut parse_obus(&self.obu_buffer)?[0];
-            if let Some(obu_type) = obu.obu_type() {
-                if !obu_type.include_in_packetization() {
-                    self.obu_length = 0;
-                    self.obu_buffer.clear();
-                    obu_idx += 1;
-                    continue;
-                }
-            }
+            let mut obus = parse_obus(&self.obu_buffer)?;
+            let Some(obu) = obus.first_mut() else {
+                self.obu_length = 0;
+                self.obu_buffer.clear();
+                obu_idx += 1;
+                continue;
+            };
 
             // Write the obu payload to output
             // set size flag
             let size_flag_set = obu.header & OBU_SIZE_PRESENT_MASK != 0;
             obu.header |= OBU_SIZE_PRESENT_MASK;
             out.push(obu.header);
-            self.obu_length -= 1;
+            self.obu_length = self.obu_length.saturating_sub(1);
 
             // add extension if any
             if obu.has_extension() {
                 out.push(obu.ext_header);
-                self.obu_length -= 1;
+                self.obu_length = self.obu_length.saturating_sub(1);
             }
 
             // add size if not present
@@ -420,8 +423,12 @@ impl Depacketizer for AV1Depacketizer {
             }
 
             // finally payload
+            if self.obu_length > self.obu_buffer.len() {
+                return Err(PacketError::ErrAV1CorruptedPacket);
+            }
             let start_idx = self.obu_buffer.len() - self.obu_length;
             out.extend_from_slice(&self.obu_buffer[start_idx..start_idx + self.obu_length]);
+
             self.obu_length = 0;
             self.obu_buffer.clear();
 
