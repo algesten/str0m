@@ -1,6 +1,7 @@
 use std::net::Ipv4Addr;
 use std::time::Duration;
 
+use netem::NetemConfig;
 use str0m::channel::ChannelConfig;
 use str0m::{Event, RtcError};
 
@@ -50,6 +51,59 @@ pub fn data_channel() -> Result<(), RtcError> {
         }
     }
 
+    assert!(r.events.len() > 120);
+
+    Ok(())
+}
+
+#[test]
+pub fn data_channel_flood() -> Result<(), RtcError> {
+    init_log();
+    init_crypto_default();
+
+    let mut l = TestRtc::new(Peer::Left);
+    let mut r = TestRtc::new(Peer::Right);
+
+    l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+    r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
+
+    let mut change = l.sdp_api();
+    let cid = change.add_channel("My little channel".into());
+    let (offer, pending) = change.apply().unwrap();
+
+    let answer = r.rtc.sdp_api().accept_offer(offer)?;
+    l.rtc.sdp_api().accept_answer(pending, answer)?;
+
+    loop {
+        if l.is_connected() || r.is_connected() {
+            break;
+        }
+        progress(&mut l, &mut r)?;
+    }
+
+    let max = l.last.max(r.last);
+    l.last = max;
+    r.last = max;
+
+    while l.channel(cid).is_none() {
+        progress(&mut l, &mut r)?;
+    }
+
+    r.set_netem(NetemConfig::new().latency(Duration::from_millis(1000)));
+
+    for _ in 0..10_000 {
+        let mut chan = l.channel(cid).unwrap();
+        chan.write(true, &[0u8; 1400]).expect("to write string");
+        progress(&mut l, &mut r)?;
+    }
+
+    loop {
+        progress(&mut l, &mut r)?;
+
+        if l.duration() > Duration::from_secs(10) {
+            break;
+        }
+    }
     assert!(r.events.len() > 120);
 
     Ok(())
