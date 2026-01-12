@@ -1798,7 +1798,7 @@ dependencies = [
 
 [[package]]
 name = "str0m-apple-crypto"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "apple-cryptokit-rs",
  "core-foundation",
