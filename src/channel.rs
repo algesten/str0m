@@ -51,8 +51,27 @@ impl<'a> Channel<'a> {
     }
 
     /// Write data to the remote peer and indicate whether it's text or binary.
-    pub fn write(&mut self, binary: bool, buf: &[u8]) -> Result<usize, RtcError> {
-        Ok(self.rtc.sctp.write(self.sctp_stream_id, binary, buf)?)
+    ///
+    /// Returns true or false whether the buffer was accepted or not.
+    #[must_use = "Whether the buffer was accepted by the write()"]
+    pub fn write(&mut self, binary: bool, buf: &[u8]) -> Result<bool, RtcError> {
+        // If it's not available, don't accept.
+        let available = self.rtc.sctp.available();
+        if buf.len() > available {
+            return Ok(false);
+        }
+
+        // Try write.
+        let written = self.rtc.sctp.write(self.sctp_stream_id, binary, buf)?;
+
+        // Invariant: if available calculation is correct, we should have accepted.
+        assert_eq!(
+            written,
+            buf.len(),
+            "Data channel write() less than entire buffer"
+        );
+
+        Ok(true)
     }
 
     /// Get the amount of buffered data.

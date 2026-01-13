@@ -21,6 +21,9 @@ use dcep::DcepOpen;
 mod error;
 pub use error::SctpError;
 
+/// Bytes that can be buffered inside str0m across all streams.
+const MAX_BUFFERED_ACROSS_STREAMS: usize = 128 * 1024;
+
 pub(crate) struct RtcSctp {
     state: RtcSctpState,
     endpoint: Endpoint,
@@ -357,6 +360,15 @@ impl RtcSctp {
         rec.state == StreamEntryState::Open
     }
 
+    pub fn available(&mut self) -> usize {
+        let Some(assoc) = &mut self.assoc else {
+            return 0;
+        };
+
+        let total = Self::total_buffered(assoc, &self.entries);
+        MAX_BUFFERED_ACROSS_STREAMS - total
+    }
+
     pub fn write(&mut self, id: u16, binary: bool, buf: &[u8]) -> Result<usize, SctpError> {
         if self.state != RtcSctpState::Established {
             return Err(SctpError::WriteBeforeEstablished);
@@ -392,6 +404,18 @@ impl RtcSctp {
         };
 
         Ok(stream.write_with_ppi(buf, ppi)?)
+    }
+
+    fn total_buffered(assoc: &mut Association, entries: &[StreamEntry]) -> usize {
+        entries
+            .iter()
+            .filter_map(|e| {
+                assoc
+                    .stream(e.id)
+                    .ok()
+                    .and_then(|s| s.buffered_amount().ok())
+            })
+            .sum()
     }
 
     pub fn buffered_amount(&mut self, id: u16) -> usize {
