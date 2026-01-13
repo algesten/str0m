@@ -1398,7 +1398,13 @@ impl Rtc {
 
         match &o {
             Output::Event(e) => match e {
-                Event::ChannelData(_) | Event::MediaData(_) | Event::RtpPacket(_) => {
+                Event::ChannelData(_)
+                | Event::MediaData(_)
+                | Event::RtpPacket(_)
+                | Event::SenderFeedback(_)
+                | Event::MediaEgressStats(_)
+                | Event::MediaIngressStats(_)
+                | Event::PeerStats(_) => {
                     trace!("{:?}", e)
                 }
                 _ => debug!("{:?}", e),
