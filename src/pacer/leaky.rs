@@ -83,6 +83,11 @@ impl Pacer for LeakyBucketPacer {
         // Clear the gate when time advances
         self.needs_timeout_before_next_poll = false;
 
+        // Clear the poll time - it will be recalculated below if needed.
+        // This is important because if we return early (e.g., next_poll_queue is already set),
+        // we don't want the old Immediate timeout to keep firing.
+        self.next_poll_time = None;
+
         // This is called periodically and whenever packet is queued.
         self.queue_states.clear();
         self.queue_states.extend(iter);
