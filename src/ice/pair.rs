@@ -197,9 +197,9 @@ impl CandidatePair {
         self.remote_binding_request_time
     }
 
-    pub fn has_recent_remote_binding_request(&self, now: Instant) -> bool {
+    pub fn is_ice_lite_alive(&self, now: Instant) -> bool {
         let Some(t) = self.remote_binding_request_time else {
-            return false;
+            return true; // No timestamp yet = hasn't had a chance to fail
         };
         now - t < RECENT_BINDING_REQUEST
     }
