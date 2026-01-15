@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use crate::bwe_::ProbeClusterConfig;
 use crate::rtp_::{Bitrate, DataSize, MidRid, TwccClusterId};
+use crate::Reason;
 
 mod control;
 pub(crate) use control::PacerControl;
@@ -62,7 +63,7 @@ impl Pacer for PacerImpl {
         }
     }
 
-    fn poll_timeout(&self) -> Option<Instant> {
+    fn poll_timeout(&self) -> (Option<Instant>, Reason) {
         match self {
             PacerImpl::Null(v) => v.poll_timeout(),
             PacerImpl::LeakyBucket(v) => v.poll_timeout(),
@@ -115,7 +116,7 @@ pub trait Pacer {
     fn set_padding_rate(&mut self, padding_bitrate: Bitrate);
 
     /// Poll for a timeout.
-    fn poll_timeout(&self) -> Option<Instant>;
+    fn poll_timeout(&self) -> (Option<Instant>, Reason);
 
     /// Handle time moving forward, should be called periodically as indicated by [`Pacer::poll_timeout`].
     fn handle_timeout(
@@ -136,4 +137,25 @@ pub trait Pacer {
 
     /// Whether we have a queue for padding.
     fn has_padding_queue(&self) -> bool;
+}
+
+/// The sub-reason for the [`Reason::Pacer`][crate::Reason::Pacer].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PacerReason {
+    /// Handle to update pacer budgets.
+    Handle,
+    /// First ever call to handle_timeout().
+    FirstEver,
+    /// Unpaced content such as audio.
+    Unpaced,
+    /// BWE probe cluster call 1.
+    Probe1,
+    /// BWE probe cluster call 2.
+    Probe2,
+    /// Regular paced content like video.
+    Paced,
+    /// Padding to inflate used bandwidth.
+    Padding,
+    /// Immediate timeout for state keeping reasons
+    Immediate,
 }

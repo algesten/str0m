@@ -871,7 +871,7 @@ impl Session {
         (feedback_at, Reason::Feedback)
             .soonest((nack_at, Reason::Nack))
             .soonest((twcc_at, Reason::Twcc))
-            .soonest((pacing_at, Reason::Pacing))
+            .soonest(pacing_at)
             .soonest((packetize_at, Reason::Packetize))
             .soonest((paused_at, Reason::PauseCheck))
             .soonest((send_stream_at, Reason::SendStream))

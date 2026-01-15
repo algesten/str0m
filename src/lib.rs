@@ -989,6 +989,8 @@ pub enum Output {
     Event(Event),
 }
 
+pub use crate::pacer::PacerReason;
+
 /// The reason for the next [`Output::Timeout`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Reason {
@@ -1054,11 +1056,8 @@ pub enum Reason {
     /// Written media data needs packetizing. This is not used in RTP mode.
     Packetize,
 
-    /// Paced sending of RTP packets (if BWE is enabled).
-    ///
-    /// The pacer ensures bigger RTP chunks, like keyframes, are not sent as a burst,
-    /// but sent smoothly.
-    Pacing,
+    /// Pacer doing things.
+    Pacer(PacerReason),
 
     /// The delay controller of the BWE subsystem.
     BweDelayControl,

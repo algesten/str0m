@@ -7,8 +7,10 @@ use super::QueueState;
 use crate::bwe_::ProbeClusterConfig;
 use crate::bwe_::ProbeClusterState;
 use crate::bwe_::{log_pacer_media_debt, log_pacer_padding_debt};
+use crate::pacer::PacerReason;
 use crate::rtp_::{Bitrate, DataSize, MidRid, TwccClusterId};
 use crate::util::Soonest;
+use crate::Reason;
 
 const MAX_BITRATE: Bitrate = Bitrate::gbps(10);
 const MAX_DEBT_IN_TIME: Duration = Duration::from_millis(500);
@@ -28,7 +30,7 @@ pub struct LeakyBucketPacer {
     /// The last time we indicated that a packet should be sent.
     last_emitted: Option<Instant>,
     /// The next time we should send a queued packet.
-    next_poll_time: Option<Instant>,
+    next_poll_time: Option<(Instant, PacerReason)>,
     /// The current media debt.
     media_debt: DataSize,
     /// The current padding debt.
@@ -62,13 +64,15 @@ impl Pacer for LeakyBucketPacer {
         // bitrate will be updated on next handle_timeout().
     }
 
-    fn poll_timeout(&self) -> Option<Instant> {
+    fn poll_timeout(&self) -> (Option<Instant>, Reason) {
         let next_handle_time = self.last_handle_time.map(|lh| lh + PACING);
 
-        let (when, _what) =
-            (next_handle_time, "pacer_handle").soonest((self.next_poll_time, "pacer_poll"));
+        let poll_at = self
+            .next_poll_time
+            .map(|(t, r)| (Some(t), Reason::Pacer(r)))
+            .unwrap_or((None, Reason::NotHappening));
 
-        when
+        (next_handle_time, Reason::Pacer(PacerReason::Handle)).soonest(poll_at)
     }
 
     fn handle_timeout(
@@ -97,9 +101,9 @@ impl Pacer for LeakyBucketPacer {
             return None;
         }
 
-        let (next_poll_time, queue) = self.next_poll(now)?;
+        let (next_poll_time_and_reason, queue) = self.next_poll(now)?;
 
-        if now < next_poll_time {
+        if now < next_poll_time_and_reason.0 {
             // We don't set this because between now and the neaxt poll, queue state can change such
             // that we should poll a different queue i.e. media could be queued.
             self.next_poll_queue = None;
@@ -107,7 +111,7 @@ impl Pacer for LeakyBucketPacer {
             self.next_poll_queue = queue.map(|q| q.midrid);
         }
 
-        self.next_poll_time = Some(next_poll_time);
+        self.next_poll_time = Some(next_poll_time_and_reason);
 
         None
     }
@@ -242,7 +246,7 @@ impl LeakyBucketPacer {
         log_pacer_padding_debt!(self.padding_debt.as_bytes_usize());
     }
 
-    fn next_poll(&self, now: Instant) -> Option<(Instant, Option<&QueueState>)> {
+    fn next_poll(&self, now: Instant) -> Option<((Instant, PacerReason), Option<&QueueState>)> {
         // If we have never sent before, do so immediately on an arbitrary non-empty queue.
         if self.last_emitted.is_none() {
             let mut queues = self
@@ -250,7 +254,9 @@ impl LeakyBucketPacer {
                 .iter()
                 .filter(|q| q.snapshot.packet_count > 0);
 
-            return queues.next().map(|q| (now, Some(q)));
+            return queues
+                .next()
+                .map(|q| ((now, PacerReason::FirstEver), Some(q)));
         };
 
         let unpaced = self
@@ -262,7 +268,7 @@ impl LeakyBucketPacer {
 
         // Unpaced packets (such as audio by default) are sent immediately.
         if let Some((queued_at, qs)) = unpaced {
-            return Some((queued_at, Some(qs)));
+            return Some(((queued_at, PacerReason::Unpaced), Some(qs)));
         }
 
         let non_empty_queue = {
@@ -281,7 +287,7 @@ impl LeakyBucketPacer {
                 // Check if we're actively probing and should use probe-specific timing
                 let poll_at = if let Some(probe) = self.probe_queue.front() {
                     // During probe: use absolute time directly from probe state
-                    probe.next_probe_time()
+                    (probe.next_probe_time(), PacerReason::Probe1)
                 } else {
                     // Normal pacing: use relative offset based on debt
                     let drain_debt_time = self.media_debt / self.adjusted_bitrate;
@@ -293,9 +299,12 @@ impl LeakyBucketPacer {
                         Duration::ZERO
                     };
 
-                    self.last_handle_time
+                    let time = self
+                        .last_handle_time
                         .map(|h| h + next_send_offset)
-                        .unwrap_or(now)
+                        .unwrap_or(now);
+
+                    (time, PacerReason::Paced)
                 };
 
                 return Some((poll_at, Some(queue)));
@@ -314,7 +323,7 @@ impl LeakyBucketPacer {
             let next_probe_time = probe.next_probe_time();
             // We explicitly don't return a queue to poll here. We need another call to
             // handle_timeout to request the padding before we can poll the selected queue.
-            return Some((next_probe_time, None));
+            return Some(((next_probe_time, PacerReason::Probe2), None));
         }
 
         // If all queues are empty and we have a padding rate, wait until we have drained
@@ -333,7 +342,7 @@ impl LeakyBucketPacer {
 
         // We explicitly don't return a queue to poll here. We need another call to
         // handle_timeout to request the padding before we can poll the selected queue.
-        Some((padding_at, None))
+        Some(((padding_at, PacerReason::Padding), None))
     }
 
     fn maybe_update_adjusted_bitrate(&mut self, now: Instant) {
@@ -457,7 +466,13 @@ impl LeakyBucketPacer {
         // set a very old timestamp, and while lib.rs prevents last_now from going backwards,
         // it doesn't force it to advance, so all packets would get the same timestamp.
         const MINIMAL_DELTA: Duration = Duration::from_micros(1);
-        self.next_poll_time = self.last_handle_time.map(|t| t + MINIMAL_DELTA);
+
+        let Some(time) = self.last_handle_time.map(|t| t + MINIMAL_DELTA) else {
+            self.next_poll_time = None;
+            return;
+        };
+
+        self.next_poll_time = Some((time, PacerReason::Immediate));
     }
 }
 
@@ -923,7 +938,7 @@ mod test {
         pacer.register_send(now, DataSize::from(packet_size), qid);
         queue.register_send(qid, now);
 
-        let timeout = pacer.poll_timeout();
+        let timeout = pacer.poll_timeout().0;
         // After gating, the pacer requests a timeout at now + 1µs to ensure time advances
         const MINIMAL_DELTA: Duration = Duration::from_micros(1);
         assert!(
@@ -965,7 +980,7 @@ mod test {
         if let Some(padding_request) = pacer.handle_timeout(now, queue.queue_state(now)) {
             queue.generate_padding(padding_request.padding, now);
 
-            let timeout = pacer.poll_timeout();
+            let timeout = pacer.poll_timeout().0;
             if timeout.map(|t| t <= now).unwrap_or(false) {
                 // Refresh queue state
                 pacer.handle_timeout(now, queue.queue_state(now));
@@ -1070,6 +1085,7 @@ mod test {
             };
 
             let sleep_until_poll = timeout
+                .0
                 .map(|t| t.duration_since(base + elapsed))
                 .unwrap_or(Duration::ZERO);
 
