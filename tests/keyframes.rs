@@ -358,7 +358,7 @@ fn test_av1_keyframes_detection() -> Result<(), RtcError> {
     });
 
     for data in iter {
-        let CodecExtra::AV1(extra) = data.codec_extra else {
+        let CodecExtra::Av1(extra) = data.codec_extra else {
             panic!("Got non AV1 CodecExtra")
         };
         let assume_keyframe =
