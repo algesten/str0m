@@ -163,6 +163,10 @@ jobs:
       - name: Build ${{ matrix.platform.name }}
         run: cargo +${{steps.toolchain.outputs.name}} build --target ${{ matrix.platform.target }} --no-default-features --features ${{ matrix.platform.features }}
 
+      - name: Set Swift library path for macOS Intel
+        if: matrix.platform.os == 'macos-15-intel'
+        run: echo "DYLD_LIBRARY_PATH=/usr/lib/swift${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" >> $GITHUB_ENV
+
       - name: Test ${{ matrix.platform.name }}
         run: cargo +${{steps.toolchain.outputs.name}} test --release --target ${{ matrix.platform.target }} --no-default-features --features ${{ matrix.platform.features }} --lib --bins --tests
 
