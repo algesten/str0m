@@ -318,6 +318,10 @@ impl Depacketizer for AV1Depacketizer {
         out: &mut Vec<u8>,
         codec_extra: &mut super::CodecExtra,
     ) -> Result<(), PacketError> {
+        if packet.is_empty() {
+            return Err(PacketError::ErrShortPacket);
+        }
+
         let mut reader = (packet, 0);
 
         self.parse_aggregation_header(packet[0]);
