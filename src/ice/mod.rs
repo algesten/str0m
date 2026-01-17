@@ -458,6 +458,20 @@ mod test {
         );
     }
 
+    /// Regression test: ice-lite agents should not disconnect immediately on first timeout.
+    #[test]
+    pub fn ice_lite_no_immediate_disconnect() {
+        let mut a1 = TestAgent::new(info_span!("L"));
+        a1.set_ice_lite(true);
+
+        a1.add_host_candidate("1.1.1.1:1000");
+        a1.add_remote_candidate(host("2.2.2.2:2000", "udp"));
+
+        a1.span.in_scope(|| a1.agent.handle_timeout(a1.time));
+
+        assert!(!a1.state().is_disconnected());
+    }
+
     #[test]
     pub fn prflx_host() {
         let mut a1 = TestAgent::new(info_span!("L")).with_port_restricted_nat("4.4.4.4");
