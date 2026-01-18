@@ -51,6 +51,10 @@ impl<'a> Channel<'a> {
     }
 
     /// Write data to the remote peer and indicate whether it's text or binary.
+    ///
+    /// Returns the number of bytes written. This can be 0 if the system cannot handle any
+    /// more data at this point (due to buffers and send windows).
+    #[must_use = "The amount that was handled by the write()"]
     pub fn write(&mut self, binary: bool, buf: &[u8]) -> Result<usize, RtcError> {
         Ok(self.rtc.sctp.write(self.sctp_stream_id, binary, buf)?)
     }
