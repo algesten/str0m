@@ -2,6 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
 use crate::bwe::BweKind;
+use crate::bwe_::Bwe;
 use crate::config::KeyingMaterial;
 use crate::crypto::dtls::SrtpProfile;
 use crate::crypto::CryptoProvider;
@@ -11,17 +12,18 @@ use crate::io::{DatagramSend, DATAGRAM_MTU, DATAGRAM_MTU_WARN};
 use crate::media::Media;
 use crate::media::{KeyframeRequestKind, MID_PROBE};
 use crate::media::{MediaAdded, MediaChanged};
-use crate::packet::SendSideBandwithEstimator;
-use crate::packet::{LeakyBucketPacer, NullPacer, Pacer, PacerImpl};
+use crate::pacer::PacerControl;
+use crate::pacer::{Pacer, PacerImpl};
 use crate::rtp::{Extension, RawPacket};
 use crate::rtp_::Direction;
 use crate::rtp_::MidRid;
 use crate::rtp_::Pt;
 use crate::rtp_::SeqNo;
 use crate::rtp_::SRTCP_OVERHEAD;
-use crate::rtp_::{extend_u16, RtpHeader, SessionId, TwccRecvRegister, TwccSendRegister};
+use crate::rtp_::{extend_u16, RtpHeader, SessionId, TwccPacketId};
 use crate::rtp_::{Bitrate, ExtensionMap, Mid, Rtcp, RtcpFb};
 use crate::rtp_::{SrtpContext, Ssrc};
+use crate::rtp_::{TwccRecvRegister, TwccSendRegister};
 use crate::stats::StatsSnapshot;
 use crate::streams::{RtpPacket, Streams};
 use crate::util::{already_happened, not_happening, Soonest};
@@ -35,14 +37,7 @@ use crate::{RtcConfig, RtcError};
 const NACK_MIN_INTERVAL: Duration = Duration::from_millis(33);
 
 /// Delay between reports of TWCC. This is deliberately very low.
-const TWCC_INTERVAL: Duration = Duration::from_millis(100);
-
-/// Amend to the current_bitrate value.
-const PACING_FACTOR: f64 = 1.1;
-
-/// Amount of deviation needed to emit a new BWE value. This is to reduce
-/// the total number BWE events to only fire when there is a substantial change.
-const ESTIMATE_TOLERANCE: f64 = 0.05;
+const TWCC_INTERVAL: Duration = Duration::from_millis(50);
 
 pub(crate) struct Session {
     id: SessionId,
@@ -89,12 +84,16 @@ pub(crate) struct Session {
 
     /// A pacer for sending RTP at specific rate.
     pacer: PacerImpl,
+    pacer_control: PacerControl,
 
     // temporary buffer when getting the next (unencrypted) RTP packet from Media line.
     poll_packet_buf: Vec<u8>,
 
     // Next packet for RtpPacket event.
     pending_packet: Option<RtpPacket>,
+
+    // Whether we sent a single outgoing RTP packet.
+    packet_first_sent: bool,
 
     pub ice_lite: bool,
 
@@ -105,6 +104,9 @@ pub(crate) struct Session {
     feedback_rx: VecDeque<Rtcp>,
 
     raw_packets: Option<VecDeque<Box<RawPacket>>>,
+
+    #[cfg(feature = "_internal_test_exports")]
+    pending_probe: Option<crate::bwe_::ProbeClusterConfig>,
 }
 
 impl Session {
@@ -117,20 +119,11 @@ impl Session {
         }
         let (pacer, bwe) = if let Some(config) = &config.bwe_config {
             let rate = config.initial_bitrate;
-            let pacer = PacerImpl::LeakyBucket(LeakyBucketPacer::new(rate * PACING_FACTOR * 2.0));
-
-            let send_side_bwe = SendSideBandwithEstimator::new(rate, config.enable_loss_controller);
-            let bwe = Bwe {
-                bwe: send_side_bwe,
-                desired_bitrate: Bitrate::ZERO,
-                current_bitrate: rate,
-
-                last_emitted_estimate: Bitrate::ZERO,
-            };
-
+            let pacer = PacerImpl::leaky_bucket(rate * 2.0);
+            let bwe = Bwe::new(rate);
             (pacer, Some(bwe))
         } else {
-            (PacerImpl::Null(NullPacer::default()), None)
+            (PacerImpl::null(), None)
         };
 
         let enable_stats = config.stats_interval.is_some();
@@ -162,8 +155,10 @@ impl Session {
             bwe,
             enable_twcc_feedback: false,
             pacer,
+            pacer_control: PacerControl::new(),
             poll_packet_buf: vec![0; 2000],
             pending_packet: None,
+            packet_first_sent: false,
             ice_lite: config.ice_lite,
             rtp_mode: config.rtp_mode,
             feedback_tx: VecDeque::new(),
@@ -173,6 +168,8 @@ impl Session {
             } else {
                 None
             },
+            #[cfg(feature = "_internal_test_exports")]
+            pending_probe: None,
         }
     }
 
@@ -243,11 +240,33 @@ impl Session {
             }
         }
 
-        if let Some(bwe) = self.bwe.as_mut() {
-            bwe.handle_timeout(now);
-        }
+        self.handle_timeout_bwe(now);
 
         Ok(())
+    }
+
+    fn handle_timeout_bwe(&mut self, now: Instant) {
+        let Some(bwe) = self.bwe.as_mut() else {
+            return;
+        };
+
+        // We can only run probes after first packet is sent and there
+        // are any queues that can handle padding requests.
+        let do_probe = self.packet_first_sent && self.pacer.has_padding_queue();
+
+        if let Some(probe_config) = bwe.handle_timeout(now, do_probe) {
+            #[cfg(feature = "_internal_test_exports")]
+            {
+                self.pending_probe = Some(probe_config);
+            }
+            bwe.start_probe(probe_config);
+            self.pacer.start_probe(probe_config);
+        }
+
+        // Check if active probe just completed
+        if let Some(cluster_id) = self.pacer.check_probe_complete(now) {
+            bwe.end_probe(now, cluster_id);
+        }
     }
 
     fn update_queue_state(&mut self, now: Instant) {
@@ -602,6 +621,13 @@ impl Session {
     }
 
     pub fn poll_event(&mut self) -> Option<Event> {
+        #[cfg(feature = "_internal_test_exports")]
+        {
+            if let Some(probe) = self.pending_probe.take() {
+                return Some(Event::Probe(probe));
+            }
+        }
+
         if let Some(bitrate_estimate) = self.bwe.as_mut().and_then(|bwe| bwe.poll_estimate()) {
             return Some(Event::EgressBitrateEstimate(BweKind::Twcc(
                 bitrate_estimate,
@@ -756,7 +782,8 @@ impl Session {
         let srtp_tx = self.srtp_tx.as_mut()?;
 
         // Figure out which, if any, queue to poll
-        let midrid = self.pacer.poll_queue()?;
+        // The cluster_id is captured by the pacer at poll time, before register_send() might clear it
+        let (midrid, cluster_id) = self.pacer.poll_queue()?;
         let media = self
             .medias
             .iter()
@@ -803,13 +830,23 @@ impl Session {
         let protected = srtp_tx.protect_rtp(buf, &header, *seq_no);
 
         if twcc_enabled {
+            let packet_id = if let Some(cluster) = cluster_id {
+                TwccPacketId::with_cluster(twcc_seq, cluster)
+            } else {
+                TwccPacketId::new(twcc_seq)
+            };
             self.twcc_tx_register
-                .register_seq(twcc_seq.into(), now, payload_size);
+                .register_seq(packet_id, now, payload_size);
         }
 
-        // Technically we should wait for the next handle_timeout, but this speeds things up a bit
-        // avoiding an extra poll_timeout.
-        self.update_queue_state(now);
+        // Update BWE subsystem
+        if let Some(bwe) = self.bwe.as_mut() {
+            bwe.on_media_sent(payload_size.into(), is_padding, now);
+        }
+
+        if !self.packet_first_sent {
+            self.packet_first_sent = true;
+        }
 
         Some(protected.into())
     }
@@ -820,18 +857,25 @@ impl Session {
         let twcc_at = self.twcc_at();
         let pacing_at = self.pacer.poll_timeout();
         let packetize_at = self.medias.iter().flat_map(|m| m.poll_timeout()).next();
-        let bwe_at = self.bwe.as_ref().map(|bwe| bwe.poll_timeout());
         let paused_at = self.paused_at();
         let send_stream_at = self.streams.send_stream();
+
+        // Gives us built-in reason
+        let bwe_at = self
+            .bwe
+            .as_ref()
+            .map(|bwe| bwe.poll_timeout())
+            // We should never see this reason.
+            .unwrap_or((None, Reason::BweDelayControl));
 
         (feedback_at, Reason::Feedback)
             .soonest((nack_at, Reason::Nack))
             .soonest((twcc_at, Reason::Twcc))
-            .soonest((pacing_at, Reason::Pacing))
+            .soonest(pacing_at)
             .soonest((packetize_at, Reason::Packetize))
-            .soonest((bwe_at, Reason::Bwe))
             .soonest((paused_at, Reason::PauseCheck))
             .soonest((send_stream_at, Reason::SendStream))
+            .soonest(bwe_at)
     }
 
     pub fn has_mid(&self, mid: Mid) -> bool {
@@ -890,14 +934,14 @@ impl Session {
 
     pub fn set_bwe_current_bitrate(&mut self, current_bitrate: Bitrate) {
         if let Some(bwe) = self.bwe.as_mut() {
-            bwe.current_bitrate = current_bitrate;
+            bwe.set_current_bitrate(current_bitrate);
             self.configure_pacer();
         }
     }
 
     pub fn set_bwe_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
         if let Some(bwe) = self.bwe.as_mut() {
-            bwe.desired_bitrate = desired_bitrate;
+            bwe.set_desired_bitrate(desired_bitrate);
             self.configure_pacer();
         }
     }
@@ -926,25 +970,25 @@ impl Session {
     }
 
     fn configure_pacer(&mut self) {
-        let Some(bwe) = self.bwe.as_ref() else {
+        let Some(bwe) = self.bwe.as_mut() else {
             return;
         };
 
-        let padding_rate = bwe
-            .last_estimate()
-            .map(|estimate| estimate.min(bwe.desired_bitrate))
-            .unwrap_or(Bitrate::ZERO);
+        let Some(current_estimate) = bwe.last_estimate() else {
+            // No estimate yet, no padding
+            return;
+        };
+        let is_overuse = bwe.is_overusing();
 
-        self.pacer.set_padding_rate(padding_rate);
+        let current_bitrate = bwe.current_bitrate();
 
-        // We pad up to the pacing rate, therefore we need to increase pacing if the estimate, and
-        // thus the padding rate, exceeds the current bitrate adjusted with the pacing factor.
-        // Otherwise we can have a case where the current bitrate is 250Kbit/s resulting in a
-        // pacing rate of 275KBit/s which means we'll only ever pad about 25Kbit/s. If the estimate
-        // is actually 600Kbit/s we need to use that for the pacing rate to ensure we send as much as
-        // we think the link capacity can sustain, if not the estimate is a lie.
-        let pacing_rate = (bwe.current_bitrate * PACING_FACTOR).max(padding_rate);
-        self.pacer.set_pacing_rate(pacing_rate);
+        // Calculate pacing and padding rates
+        let result = self
+            .pacer_control
+            .calculate(current_bitrate, current_estimate, is_overuse);
+
+        self.pacer.set_padding_rate(result.padding_rate);
+        self.pacer.set_pacing_rate(result.pacing_rate);
     }
 
     pub fn media_by_mid(&self, mid: Mid) -> Option<&Media> {
@@ -1000,55 +1044,6 @@ impl Session {
     /// Checks whether the SRTP contexts are up.
     pub fn is_connected(&self) -> bool {
         self.srtp_rx.is_some() && self.srtp_tx.is_some()
-    }
-}
-
-struct Bwe {
-    bwe: SendSideBandwithEstimator,
-    desired_bitrate: Bitrate,
-    current_bitrate: Bitrate,
-
-    last_emitted_estimate: Bitrate,
-}
-
-impl Bwe {
-    fn handle_timeout(&mut self, now: Instant) {
-        self.bwe.handle_timeout(now);
-    }
-
-    fn reset(&mut self, init_bitrate: Bitrate) {
-        self.bwe.reset(init_bitrate);
-    }
-
-    fn update<'t>(
-        &mut self,
-        records: impl Iterator<Item = &'t crate::rtp_::TwccSendRecord>,
-        now: Instant,
-    ) {
-        self.bwe.update(records, now);
-    }
-
-    fn poll_estimate(&mut self) -> Option<Bitrate> {
-        let estimate = self.bwe.last_estimate()?;
-
-        let min = self.last_emitted_estimate * (1.0 - ESTIMATE_TOLERANCE);
-        let max = self.last_emitted_estimate * (1.0 + ESTIMATE_TOLERANCE);
-
-        if estimate < min || estimate > max {
-            self.last_emitted_estimate = estimate;
-            Some(estimate)
-        } else {
-            // Estimate is within tolerances.
-            None
-        }
-    }
-
-    fn poll_timeout(&self) -> Instant {
-        self.bwe.poll_timeout()
-    }
-
-    fn last_estimate(&self) -> Option<Bitrate> {
-        self.bwe.last_estimate()
     }
 }
 
