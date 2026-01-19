@@ -5,6 +5,7 @@ use crate::{rtp_::Mid, Rtc};
 pub use crate::rtp_::Bitrate;
 
 #[derive(Debug, PartialEq)]
+#[non_exhaustive]
 /// Bandwidth estimation kind.
 pub enum BweKind {
     /// Transport wide congestion control.
