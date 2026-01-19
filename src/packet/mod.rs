@@ -90,6 +90,7 @@ pub trait Packetizer: fmt::Debug {
 /// Contains additional codec specific information which are deemed useful for
 /// managing and repackaging the frame
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum CodecExtra {
     /// No extra information available
     None,

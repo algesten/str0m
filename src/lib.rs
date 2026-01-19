@@ -992,7 +992,10 @@ pub enum Output {
 pub use crate::pacer::PacerReason;
 
 /// The reason for the next [`Output::Timeout`].
+///
+/// This enum is not considered stable API and may change in minor revisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[non_exhaustive]
 pub enum Reason {
     /// No timeout scheduled.
     ///

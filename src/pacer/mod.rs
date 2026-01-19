@@ -140,7 +140,10 @@ pub trait Pacer {
 }
 
 /// The sub-reason for the [`Reason::Pacer`][crate::Reason::Pacer].
+///
+/// This enum is not considered stable API and may change in minor revisions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum PacerReason {
     /// Handle to update pacer budgets.
     Handle,
