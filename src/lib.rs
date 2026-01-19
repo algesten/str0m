@@ -1404,7 +1404,9 @@ impl Rtc {
                 | Event::SenderFeedback(_)
                 | Event::MediaEgressStats(_)
                 | Event::MediaIngressStats(_)
-                | Event::PeerStats(_) => {
+                | Event::PeerStats(_)
+                | Event::ChannelBufferedAmountLow(_)
+                | Event::EgressBitrateEstimate(_) => {
                     trace!("{:?}", e)
                 }
                 _ => debug!("{:?}", e),
