@@ -1,5 +1,7 @@
 # Unreleased
 
+  * Fix HMAC P_hash implementation for Apple Crypto #824
+  * MediaData::is_keyframe() helper #805
   * Handle tcptype ICE candidates #797
   * New API for building ICE Candidates (breaking) #797
   * AV1 Packetizer/Depacketizer #819
