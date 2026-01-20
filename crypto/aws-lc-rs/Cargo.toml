@@ -13,5 +13,5 @@ rust-version = "1.81.0"
 
 [dependencies]
 str0m-proto = { version = "0.1.1", path = "../../proto" }
-dimpl = { version = "0.2.1", default-features = false, features = ["aws-lc-rs", "rcgen"] }
+dimpl = { version = "0.2.2", default-features = false, features = ["aws-lc-rs", "rcgen"] }
 aws-lc-rs = { version = "1", default-features = false, features = ["aws-lc-sys", "prebuilt-nasm"] }
