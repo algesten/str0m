@@ -1,6 +1,7 @@
 # Unreleased
 
-  * Fix HMAC P_hash implementation for Apple Crypto #824
+0.15.0
+
   * MediaData::is_keyframe() helper #805
   * Handle tcptype ICE candidates #797
   * New API for building ICE Candidates (breaking) #797
@@ -8,6 +9,7 @@
   * Surface Sender Info as Event (breaking) #820
   * Improve performance on apple crypto #818 #821
   * Crypto compliance tests #817
+  * Fix HMAC P_hash implementation for Apple Crypto #824
   * Update Apple Crypto crate to use CryptoKit #813
 
 0.14.3
