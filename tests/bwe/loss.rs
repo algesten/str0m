@@ -25,7 +25,6 @@ fn loss_caps_estimate_below_delay_based() -> Result<(), RtcError> {
         },
         Step::Media {
             description: "Send at 2 Mbps",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: Bitrate::mbps(5),
             media_send_rate: Bitrate::mbps(2),
         },
@@ -67,7 +66,6 @@ fn loss_controller_only_reduces_never_increases() -> Result<(), RtcError> {
         },
         Step::Media {
             description: "Send at 2 Mbps",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: Bitrate::mbps(5),
             media_send_rate: Bitrate::mbps(2),
         },

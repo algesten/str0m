@@ -25,7 +25,6 @@ pub fn bwe_allocation_probe_on_desired_increase_in_alr() -> Result<(), RtcError>
         // Now increase desired bitrate while in ALR - should trigger IncreaseAlr probes
         Step::Media {
             description: "Increase desired bitrate while in ALR",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: Bitrate::mbps(5), // Increased from 3 to 5
             media_send_rate: Bitrate::kbps(500), // Stay in ALR
         },
@@ -94,7 +93,6 @@ pub fn bwe_no_allocation_probing_when_estimate_at_max() -> Result<(), RtcError> 
         // Start with bitrate close to max desired
         Step::Media {
             description: "Start at 1.5 Mbps, desire 2 Mbps",
-            current_bitrate: Bitrate::mbps(1),
             desired_bitrate: Bitrate::mbps(2),
             media_send_rate: Bitrate::mbps(1),
         },
@@ -110,7 +108,6 @@ pub fn bwe_no_allocation_probing_when_estimate_at_max() -> Result<(), RtcError> 
         // Enter ALR with estimate >= max_bitrate
         Step::Media {
             description: "Enter ALR with estimate at max",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: Bitrate::mbps(2),
             media_send_rate: Bitrate::kbps(500),
         },
@@ -152,7 +149,6 @@ fn alr_exit_has_hysteresis() -> Result<(), RtcError> {
         // Gap: 0.50-0.80 ratio (20-50% utilization) - should STAY in ALR
         Step::Media {
             description: "Increase to ~35% utilization (in hysteresis gap)",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: Bitrate::mbps(5),
             media_send_rate: Bitrate::mbps(1), // ~35% of 3 Mbps estimate
         },
@@ -172,7 +168,6 @@ fn alr_exit_has_hysteresis() -> Result<(), RtcError> {
         // Now increase above exit threshold to confirm we eventually exit
         Step::Media {
             description: "Increase to 60% utilization (above exit threshold)",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: Bitrate::mbps(5),
             media_send_rate: Bitrate::mbps(2), // ~60% of 3 Mbps estimate
         },
@@ -210,7 +205,6 @@ fn alr_preamble_steps(max_bitrate: Bitrate) -> Vec<Step> {
         },
         Step::Media {
             description: "Start with 2 Mbps to avoid early ALR",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: max_bitrate,
             media_send_rate: Bitrate::mbps(2), // Higher rate prevents ALR during initial probes
         },
@@ -226,7 +220,6 @@ fn enter_alr_steps(max_bitrate: Bitrate) -> Vec<Step> {
     vec![
         Step::Media {
             description: "Enter ALR with low send rate",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: max_bitrate,
             media_send_rate: Bitrate::kbps(500),
         },

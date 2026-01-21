@@ -23,7 +23,6 @@ fn overuse_triggers_aimd_decrease() -> Result<(), RtcError> {
         },
         Step::Media {
             description: "Send at 2 Mbps",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: Bitrate::mbps(5),
             media_send_rate: Bitrate::mbps(2),
         },
@@ -75,7 +74,6 @@ fn underuse_allows_estimate_growth() -> Result<(), RtcError> {
         },
         Step::Media {
             description: "Start low, send consistently",
-            current_bitrate: Bitrate::mbps(1),
             desired_bitrate: Bitrate::mbps(10),
             media_send_rate: Bitrate::mbps(1),
         },

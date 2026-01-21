@@ -21,7 +21,6 @@ pub const RAMP_UP_SINGLE: &[Step] = &[
     },
     Step::Media {
         description: "Low layer ramping up to mid",
-        current_bitrate: LAYER_LOW,
         desired_bitrate: LAYER_MID,
         media_send_rate: LAYER_LOW,
     },
@@ -35,7 +34,6 @@ pub const RAMP_UP_SINGLE: &[Step] = &[
     },
     Step::Media {
         description: "Mid layer ramping up to top",
-        current_bitrate: LAYER_MID,
         desired_bitrate: LAYER_TOP,
         media_send_rate: LAYER_MID,
     },
@@ -49,7 +47,6 @@ pub const RAMP_UP_SINGLE: &[Step] = &[
     },
     Step::Media {
         description: "Top layer",
-        current_bitrate: LAYER_TOP,
         desired_bitrate: LAYER_TOP,
         media_send_rate: LAYER_TOP,
     },

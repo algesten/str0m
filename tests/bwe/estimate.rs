@@ -23,7 +23,6 @@ fn estimate_capped_by_max_bitrate() -> Result<(), RtcError> {
         },
         Step::Media {
             description: "Send at 2 Mbps with 3 Mbps max",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: Bitrate::mbps(3), // max_bitrate
             media_send_rate: Bitrate::mbps(2),
         },
@@ -60,7 +59,6 @@ fn estimate_recovers_after_capacity_restoration() -> Result<(), RtcError> {
         },
         Step::Media {
             description: "Send at 2 Mbps",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: Bitrate::mbps(5),
             media_send_rate: Bitrate::mbps(2),
         },
@@ -91,7 +89,6 @@ fn estimate_recovers_after_capacity_restoration() -> Result<(), RtcError> {
         // Reduce send rate to avoid overwhelming the low estimate
         Step::Media {
             description: "Reduce send rate to allow AIMD recovery",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: Bitrate::mbps(5),
             media_send_rate: Bitrate::kbps(500), // Send at ~estimate level
         },
@@ -148,7 +145,6 @@ fn estimate_converges_to_actual_capacity() -> Result<(), RtcError> {
         },
         Step::Media {
             description: "Send at 1.5 Mbps",
-            current_bitrate: Bitrate::mbps(1),
             desired_bitrate: Bitrate::mbps(5),
             media_send_rate: Bitrate::mbps(1),
         },
