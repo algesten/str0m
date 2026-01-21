@@ -56,7 +56,6 @@ const STARTUP_PHASE: Duration = Duration::from_secs(2);
 pub struct Bwe {
     bwe: SendSideBandwidthEstimator,
     desired_bitrate: Bitrate,
-    current_bitrate: Bitrate,
     smoother: EstimateSmoother,
 }
 
@@ -66,7 +65,6 @@ impl Bwe {
         Bwe {
             bwe: send_side_bwe,
             desired_bitrate: Bitrate::ZERO,
-            current_bitrate: initial,
             smoother: EstimateSmoother::new(),
         }
     }
@@ -120,14 +118,6 @@ impl Bwe {
 
     pub fn is_overusing(&self) -> bool {
         self.bwe.is_overusing()
-    }
-
-    pub fn set_current_bitrate(&mut self, v: Bitrate) {
-        self.current_bitrate = v;
-    }
-
-    pub fn current_bitrate(&self) -> Bitrate {
-        self.current_bitrate
     }
 
     pub fn set_desired_bitrate(&mut self, v: Bitrate) {

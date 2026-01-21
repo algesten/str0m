@@ -23,7 +23,6 @@ fn aimd_multiplicative_decrease_on_congestion() -> Result<(), RtcError> {
         },
         Step::Media {
             description: "Send at 2 Mbps",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: Bitrate::mbps(5),
             media_send_rate: Bitrate::mbps(2),
         },
@@ -75,7 +74,6 @@ fn aimd_additive_increase_recovers_estimate() -> Result<(), RtcError> {
         },
         Step::Media {
             description: "Send at 2 Mbps",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: Bitrate::mbps(5),
             media_send_rate: Bitrate::mbps(2),
         },
@@ -143,7 +141,6 @@ fn aimd_recovery_reaches_original_estimate() -> Result<(), RtcError> {
         },
         Step::Media {
             description: "Send at 2 Mbps",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: Bitrate::mbps(5),
             media_send_rate: Bitrate::mbps(2),
         },

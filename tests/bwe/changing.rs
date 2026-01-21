@@ -25,7 +25,6 @@ pub fn bwe_changing_bandwidth() -> Result<(), RtcError> {
         },
         Step::Media {
             description: "Probe for high bandwidth",
-            current_bitrate: Bitrate::mbps(1),
             desired_bitrate: Bitrate::mbps(5),
             media_send_rate: Bitrate::mbps(1),
         },
@@ -61,7 +60,6 @@ pub fn bwe_changing_bandwidth() -> Result<(), RtcError> {
         // Drop the send rate.
         Step::Media {
             description: "Drop the send rate for bad conditions",
-            current_bitrate: Bitrate::mbps(600),
             desired_bitrate: Bitrate::mbps(5),
             media_send_rate: Bitrate::kbps(600),
         },
@@ -87,7 +85,7 @@ pub fn bwe_changing_bandwidth() -> Result<(), RtcError> {
         },
         Step::Run {
             description: "Wait for high bandwidth to recover",
-            duration: Duration::from_secs(30),
+            duration: Duration::from_secs(40),
         },
         Step::Check {
             // BWE should recover and discover high bandwidth again

@@ -23,7 +23,6 @@ fn initial_exponential_probes_3x_and_6x() -> Result<(), RtcError> {
         },
         Step::Media {
             description: "Start at 1 Mbps",
-            current_bitrate: Bitrate::mbps(1),
             desired_bitrate: Bitrate::mbps(10),
             media_send_rate: Bitrate::mbps(1),
         },
@@ -75,7 +74,6 @@ fn further_exponential_probes_at_2x() -> Result<(), RtcError> {
         },
         Step::Media {
             description: "Start at 1 Mbps, high max",
-            current_bitrate: Bitrate::mbps(1),
             desired_bitrate: Bitrate::mbps(20),
             media_send_rate: Bitrate::mbps(1),
         },
@@ -117,7 +115,6 @@ fn probes_respect_max_bitrate_cap() -> Result<(), RtcError> {
         },
         Step::Media {
             description: "Start at 2 Mbps, cap at 10 Mbps",
-            current_bitrate: Bitrate::mbps(2),
             desired_bitrate: Bitrate::mbps(10), // This is the max
             media_send_rate: Bitrate::mbps(2),
         },

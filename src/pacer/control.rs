@@ -2,15 +2,7 @@ use crate::rtp_::Bitrate;
 
 const PACING_FACTOR: f64 = 1.1;
 
-/// Minimum declared bitrate to enable padding.
-/// We use 50 kbps as a simple threshold - enough to maintain NAT bindings and RTX state,
-/// but not so high as to waste bandwidth on very low bitrate streams (e.g., audio-only).
-///
-/// libWebRTC's padding is set to the min_bitrate of the lowest simulcast layer (typically 30 kbps)
-/// of video. It does not concern audio.
-const MIN_PADDING_THRESHOLD: Bitrate = Bitrate::bps(50_000);
-
-/// Target padding rate when above the threshold. This maintains NAT bindings, RTX state,
+/// Target padding rate when media is active. This maintains NAT bindings, RTX state,
 /// and allows ALR periodic probes to discover higher bandwidth.
 const PADDING_TARGET: Bitrate = Bitrate::bps(50_000);
 
@@ -35,7 +27,7 @@ impl PacerControl {
 
     pub fn calculate(
         &self,
-        current_bitrate: Bitrate,
+        has_active_media: bool,
         estimate: Bitrate,
         is_overuse: bool,
     ) -> PacingResult {
@@ -43,11 +35,11 @@ impl PacerControl {
         let padding_rate = if is_overuse {
             // No padding during overuse
             Bitrate::ZERO
-        } else if current_bitrate >= MIN_PADDING_THRESHOLD {
+        } else if has_active_media {
             // Pad to 50 kbps to maintain NAT bindings and RTX state
             PADDING_TARGET
         } else {
-            // No padding for very low bitrate scenarios
+            // No padding when no media is being sent
             Bitrate::ZERO
         };
 
@@ -69,36 +61,31 @@ mod test {
     use super::*;
 
     #[test]
-    fn padding_enabled_above_threshold() {
+    fn padding_enabled_with_active_media() {
         let c = PacerControl::new();
-        let current_bitrate = Bitrate::kbps(500);
         let estimate = Bitrate::kbps(1_000);
 
-        let r = c.calculate(current_bitrate, estimate, false);
+        let r = c.calculate(true, estimate, false);
 
-        // Should pad to 50 kbps when current_bitrate >= 50 kbps
         assert_eq!(r.padding_rate, PADDING_TARGET);
     }
 
     #[test]
-    fn no_padding_below_threshold() {
+    fn no_padding_without_active_media() {
         let c = PacerControl::new();
-        let current_bitrate = Bitrate::kbps(40); // Below 50 kbps threshold
         let estimate = Bitrate::kbps(1_000);
 
-        let r = c.calculate(current_bitrate, estimate, false);
+        let r = c.calculate(false, estimate, false);
 
-        // No padding for very low bitrate scenarios
         assert_eq!(r.padding_rate, Bitrate::ZERO);
     }
 
     #[test]
     fn overuse_suppresses_padding() {
         let c = PacerControl::new();
-        let current_bitrate = Bitrate::mbps(50);
         let estimate = Bitrate::mbps(40);
 
-        let r = c.calculate(current_bitrate, estimate, true);
+        let r = c.calculate(true, estimate, true);
         assert_eq!(r.padding_rate, Bitrate::ZERO);
     }
 }
