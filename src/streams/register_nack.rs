@@ -172,7 +172,12 @@ impl NackRegister {
 
         // Check for premature eviction and grow buffer if needed
         let mut premature_eviction = false;
-        for s in *active.start..*start {
+        for (i, s) in (*active.start..*start).enumerate() {
+            // The buffer is circular, so after checking packets.len() entries,
+            // we've checked all possible slots that could contain data.
+            if i >= self.packets.len() {
+                break;
+            }
             let p = self.packet(s.into());
             if !p.received && s != *seq && p.nack_count < MAX_NACKS {
                 // Check if this packet was waiting for RTT to elapse
@@ -197,7 +202,7 @@ impl NackRegister {
             }
             self.packet_mut(s.into()).reset();
 
-            if i > self.packets.len() {
+            if i >= self.packets.len() {
                 // we have reset all entries already
                 break;
             }
