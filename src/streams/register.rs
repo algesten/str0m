@@ -82,7 +82,7 @@ impl ReceiverRegister {
             self.first = Some(seq);
         }
 
-        let new = self.nack.update(seq);
+        let new = self.nack.update(seq, arrival);
 
         if new {
             self.count += 1;
