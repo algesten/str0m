@@ -8,6 +8,7 @@ use super::{extend_u16, FeedbackMessageType, RtcpHeader, RtcpPacket};
 use super::{RtcpType, Ssrc, TransportType};
 
 use crate::rtp_::{TwccClusterId, TwccSeq};
+use crate::util::MovingAverage;
 
 /// Transport Wide Congestion Control.
 ///
@@ -997,7 +998,9 @@ impl<'a> TryFrom<&'a [u8]> for PacketChunk {
     }
 }
 
-#[derive(Debug)]
+/// RFC 6298: Exponentially Weighted Moving Average smoothing factor for RTT (alpha = 1/8)
+const RTT_SMOOTHING_FACTOR: f64 = 0.125;
+
 pub struct TwccSendRegister {
     /// How many send records to keep.
     keep: usize,
@@ -1014,6 +1017,9 @@ pub struct TwccSendRegister {
 
     /// Last registered Twcc number.
     last_registered: TwccSeq,
+
+    /// Smoothed RTT using EWMA (RFC 6298).
+    smoothed_rtt: MovingAverage,
 }
 
 impl<'a> IntoIterator for &'a TwccSendRegister {
@@ -1162,6 +1168,7 @@ impl TwccSendRegister {
             time_zero: None,
             apply_report_counter: 0,
             last_registered: 0.into(),
+            smoothed_rtt: MovingAverage::new(RTT_SMOOTHING_FACTOR),
         }
     }
 
@@ -1290,6 +1297,23 @@ impl TwccSendRegister {
 
         let range = first_seq_no..=last_seq_no;
 
+        // Update smoothed RTT from newly processed records
+        let max_rtt = self
+            .queue
+            .iter()
+            .skip(first_index)
+            .take_while(|r| r.seq() <= last_seq_no)
+            .filter(|r| {
+                r.recv_report
+                    .map(|rr| rr.apply_report_counter == apply_report_counter)
+                    .unwrap_or(false)
+            })
+            .filter_map(|r| r.rtt())
+            .max();
+        if let Some(rtt) = max_rtt {
+            self.smoothed_rtt.update(rtt.as_secs_f64());
+        }
+
         Some(
             TwccSendRecordsIter {
                 range: range.clone(),
@@ -1347,6 +1371,14 @@ impl TwccSendRegister {
     /// Calculate the RTT for the most recently reported packet.
     pub fn rtt(&self) -> Option<Duration> {
         self.queue.iter().rev().find_map(|s| s.rtt())
+    }
+
+    /// Get the smoothed RTT using EWMA (RFC 6298).
+    ///
+    /// This provides a more stable RTT estimate compared to `rtt()` which
+    /// returns the raw RTT from the most recent packet.
+    pub fn smoothed_rtt(&self) -> Option<Duration> {
+        self.smoothed_rtt.get().map(Duration::from_secs_f64)
     }
 }
 
