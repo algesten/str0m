@@ -215,7 +215,7 @@ impl Session {
         self.do_payload()?;
 
         let sender_ssrc = self.streams.first_ssrc_local();
-        let twcc_rtt = self.twcc_tx_register.rtt();
+        let twcc_rtt = self.twcc_tx_register.smoothed_rtt();
 
         // Check if we should process NACKs based on minimum interval
         let do_nack = now >= self.last_nack + NACK_MIN_INTERVAL;

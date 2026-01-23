@@ -17,22 +17,8 @@ use super::register::ReceiverRegister;
 use super::StreamPaused;
 use super::{rr_interval, RtpPacket};
 
-/// Default RTT when no RTT measurement is available yet.
-/// Using 33ms to match the original NACK_MIN_INTERVAL for backwards compatibility
-/// with existing systems that expect this timing.
-const NACK_DEFAULT_RTT: Duration = Duration::from_millis(33);
-
-/// Maximum RTT used for NACK timing. We cap the RTT to ensure NACK
-/// retries can happen within a reasonable timeframe, even on high-RTT
-/// networks. 50ms provides a balance between avoiding duplicate NACKs
-/// and ensuring quick recovery under cellular conditions.
-const NACK_MAX_RTT: Duration = Duration::from_millis(50);
-
-/// Compute the RTT to use for NACK timing.
-/// Uses measured RTT if available, defaults to NACK_DEFAULT_RTT, and caps at NACK_MAX_RTT.
-fn nack_rtt(twcc_rtt: Option<Duration>) -> Duration {
-    twcc_rtt.unwrap_or(NACK_DEFAULT_RTT).min(NACK_MAX_RTT)
-}
+/// Default RTT when no RTT measurement is available yet (matching libWebRTC's kDefaultRtt).
+const NACK_DEFAULT_RTT: Duration = Duration::from_millis(100);
 
 /// Incoming encoded stream.
 ///
@@ -679,7 +665,7 @@ impl StreamRx {
             return None;
         }
 
-        let rtt = nack_rtt(twcc_rtt);
+        let rtt = twcc_rtt.unwrap_or(NACK_DEFAULT_RTT);
 
         // nack_report uses RTT-aware timing internally to decide which packets need NACKs
         let nacks = self

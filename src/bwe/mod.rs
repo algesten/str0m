@@ -430,10 +430,12 @@ pub struct AckedPacket {
     remote_recv_time: Instant,
     /// The local time when received confirmation that the other side received the seq i.e. when we
     /// received the TWCC report for this packet.
+    #[allow(dead_code)]
     local_recv_time: Instant,
 }
 
 impl AckedPacket {
+    #[allow(dead_code)]
     fn rtt(&self) -> Duration {
         self.local_recv_time - self.local_send_time
     }
