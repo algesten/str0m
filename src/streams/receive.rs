@@ -17,8 +17,22 @@ use super::register::ReceiverRegister;
 use super::StreamPaused;
 use super::{rr_interval, RtpPacket};
 
-/// Default RTT when no RTT measurement is available yet (matching libWebRTC's kDefaultRtt).
-const NACK_DEFAULT_RTT: Duration = Duration::from_millis(100);
+/// Default RTT when no RTT measurement is available yet.
+/// Using 33ms to match the original NACK_MIN_INTERVAL for backwards compatibility
+/// with existing systems that expect this timing.
+const NACK_DEFAULT_RTT: Duration = Duration::from_millis(33);
+
+/// Maximum RTT used for NACK timing. We cap the RTT to ensure NACK
+/// retries can happen within a reasonable timeframe, even on high-RTT
+/// networks. 50ms provides a balance between avoiding duplicate NACKs
+/// and ensuring quick recovery under cellular conditions.
+const NACK_MAX_RTT: Duration = Duration::from_millis(50);
+
+/// Compute the RTT to use for NACK timing.
+/// Uses measured RTT if available, defaults to NACK_DEFAULT_RTT, and caps at NACK_MAX_RTT.
+fn nack_rtt(twcc_rtt: Option<Duration>) -> Duration {
+    twcc_rtt.unwrap_or(NACK_DEFAULT_RTT).min(NACK_MAX_RTT)
+}
 
 /// Incoming encoded stream.
 ///
@@ -110,7 +124,8 @@ pub struct StreamRx {
     /// The configured threshold before considering the lack of packets as going into paused.
     pause_threshold: Duration,
 
-    /// Next time a NACK should be sent for this stream
+    /// Next time a NACK should be sent for this stream.
+    /// Used to avoid iterating through the active window when no NACKs are due.
     nack_at: Option<Instant>,
 }
 
@@ -393,7 +408,6 @@ impl StreamRx {
         clock_rate: Frequency,
         is_repair: bool,
         seq_no: SeqNo,
-        twcc_rtt: Option<Duration>,
     ) -> RegisterUpdateReceipt {
         self.last_used = now;
 
@@ -403,37 +417,16 @@ impl StreamRx {
         }
         self.check_paused_at = Some(now + self.pause_threshold);
 
-        let is_new_packet;
-        let should_update_nack_at;
+        let register_ref = if is_repair {
+            &mut self.register_rtx
+        } else {
+            &mut self.register
+        };
 
-        {
-            let register_ref = if is_repair {
-                &mut self.register_rtx
-            } else {
-                &mut self.register
-            };
+        // Unwrap is OK because we always call extend_seq() for the same is_repair flag beforehand
+        let register = register_ref.as_mut().unwrap();
 
-            // Unwrap is OK because we always call extend_seq() for the same is_repair flag beforehand
-            let register = register_ref.as_mut().unwrap();
-
-            is_new_packet = register.update(seq_no, now, header.timestamp, clock_rate.get());
-
-            // Check if we should update nack_at (only for main register, not RTX)
-            should_update_nack_at = !is_repair && self.nack_enabled();
-        }
-
-        // Update nack_at when gaps are detected (after releasing register borrow)
-        if should_update_nack_at {
-            let rtt = twcc_rtt.unwrap_or(NACK_DEFAULT_RTT);
-            let register = self.register.as_ref().unwrap();
-            if let Some(next_time) = register.next_nack_time(now, rtt) {
-                // If there are missing packets, update nack_at
-                self.nack_at = Some(match self.nack_at {
-                    None => next_time,
-                    Some(existing) => existing.min(next_time),
-                });
-            }
-        }
+        let is_new_packet = register.update(seq_no, now, header.timestamp, clock_rate.get());
 
         // Get the previous time for comparison
         let previous_time = self.last_time.map(|t| t.numer());
@@ -686,15 +679,9 @@ impl StreamRx {
             return None;
         }
 
-        // Don't generate NACKs before scheduled time
-        if let Some(nack_at) = self.nack_at {
-            if now < nack_at {
-                return None;
-            }
-        }
+        let rtt = nack_rtt(twcc_rtt);
 
-        let rtt = twcc_rtt.unwrap_or(NACK_DEFAULT_RTT);
-
+        // nack_report uses RTT-aware timing internally to decide which packets need NACKs
         let nacks = self
             .register
             .as_mut()
@@ -709,7 +696,8 @@ impl StreamRx {
             self.stats.nacks += 1;
         }
 
-        // Update nack_at for next time
+        // Schedule next NACK check based on when packets will need retransmission.
+        // This is used by Streams::nack_at() to optimize poll scheduling.
         self.nack_at = self
             .register
             .as_ref()

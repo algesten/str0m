@@ -31,6 +31,10 @@ use crate::Event;
 use crate::{net, Reason};
 use crate::{RtcConfig, RtcError};
 
+/// Minimum time between NACK processing. This ensures the session is
+/// polled regularly for NACK purposes, maintaining consistent timing.
+const NACK_MIN_INTERVAL: Duration = Duration::from_millis(33);
+
 /// Delay between reports of TWCC. This is deliberately very low.
 const TWCC_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -66,6 +70,7 @@ pub(crate) struct Session {
 
     srtp_rx: Option<SrtpContext>,
     srtp_tx: Option<SrtpContext>,
+    last_nack: Instant,
     last_twcc: Instant,
     twcc: u64,
     twcc_rx_register: TwccRecvRegister,
@@ -140,6 +145,7 @@ impl Session {
 
             srtp_rx: None,
             srtp_tx: None,
+            last_nack: already_happened(),
             last_twcc: already_happened(),
             twcc: 0,
             twcc_rx_register: TwccRecvRegister::new(100),
@@ -211,14 +217,22 @@ impl Session {
         let sender_ssrc = self.streams.first_ssrc_local();
         let twcc_rtt = self.twcc_tx_register.rtt();
 
+        // Check if we should process NACKs based on minimum interval
+        let do_nack = now >= self.last_nack + NACK_MIN_INTERVAL;
+
         self.streams.handle_timeout(
             now,
             sender_ssrc,
+            do_nack,
             &self.medias,
             &self.codec_config,
             &mut self.feedback_tx,
             twcc_rtt,
         );
+
+        if do_nack {
+            self.last_nack = now;
+        }
 
         self.update_queue_state(now);
 
@@ -494,12 +508,8 @@ impl Session {
         // like A -> B -> A. When we go back to A, we must keep the ROC.
         update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
 
-        // Get RTT from TWCC for NACK timing
-        let twcc_rtt = self.twcc_tx_register.rtt();
-
         // Register reception in nack registers.
-        let receipt_outer =
-            stream.update_register(now, &header, clock_rate, is_repair, seq_no, twcc_rtt);
+        let receipt_outer = stream.update_register(now, &header, clock_rate, is_repair, seq_no);
 
         // RTX packets must be rewritten to be a normal packet. This only changes the
         // the seq_no, however MediaTime might be different when interpreted against the
@@ -526,7 +536,7 @@ impl Session {
             update_max_seq(&mut self.max_rx_seq_lookup, header.ssrc, seq_no);
 
             // Now update the "main" register with the repaired packet info.
-            stream.update_register(now, &header, clock_rate, false, seq_no, twcc_rtt)
+            stream.update_register(now, &header, clock_rate, false, seq_no)
         } else {
             // This is not RTX, the outer seq and time is what we use. The first
             // stream.update will have updated the main register.
@@ -887,7 +897,16 @@ impl Session {
             return None;
         }
 
-        self.streams.nack_at()
+        // Use the earlier of:
+        // 1. Per-stream NACK time (RTT-aware)
+        // 2. Minimum interval since last NACK (for consistent polling)
+        let stream_nack_at = self.streams.nack_at();
+        let min_interval_at = self.last_nack + NACK_MIN_INTERVAL;
+
+        match stream_nack_at {
+            Some(t) => Some(t.min(min_interval_at)),
+            None => Some(min_interval_at),
+        }
     }
 
     fn twcc_at(&self) -> Option<Instant> {

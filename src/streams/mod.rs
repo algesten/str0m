@@ -404,10 +404,12 @@ impl Streams {
         !self.streams_rx.is_empty()
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_timeout(
         &mut self,
         now: Instant,
         sender_ssrc: Ssrc,
+        do_nack: bool,
         medias: &[Media],
         config: &CodecConfig,
         feedback: &mut VecDeque<Rtcp>,
@@ -429,7 +431,9 @@ impl Streams {
                 stream.create_rr_and_update(now, sender_ssrc, feedback);
             }
 
-            stream.maybe_create_nack(now, sender_ssrc, feedback, twcc_rtt);
+            if do_nack {
+                stream.maybe_create_nack(now, sender_ssrc, feedback, twcc_rtt);
+            }
 
             stream.handle_timeout(now);
         }
