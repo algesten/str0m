@@ -778,6 +778,8 @@ use stats::{PeerStats, Stats, StatsEvent, StatsSnapshot};
 
 mod streams;
 
+mod transaction;
+
 pub mod error;
 
 /// Network related types to get socket data in/out of [`Rtc`].
@@ -788,6 +790,9 @@ pub mod net {
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use error::RtcError;
+
+// Transaction-based API types
+pub use transaction::{BweTx, ChannelTx, IceTx, MediaWriterTx, Mutate, Poll, RtcTx, TxOutput};
 
 /// Instance that does WebRTC. Main struct of the entire library.
 ///
@@ -1441,7 +1446,46 @@ impl Rtc {
         Ok(o)
     }
 
-    fn do_poll_output(&mut self) -> Result<Output, RtcError> {
+    /// Begin a transaction for performing mutations on this [`Rtc`] instance.
+    ///
+    /// This is the entry point for the transaction-based API that provides
+    /// compile-time enforcement of the poll-to-timeout contract. All mutations
+    /// go through the returned [`RtcTx`] handle.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let mut rtc = Rtc::new();
+    ///
+    /// // All mutations start with begin(now)
+    /// let tx = rtc.begin(now);
+    /// let mut tx = tx.receive(recv_time, data)?;
+    ///
+    /// // Poll until timeout
+    /// loop {
+    ///     match tx.poll() {
+    ///         TxOutput::Timeout(when) => break,
+    ///         TxOutput::Transmit(t, pkt) => {
+    ///             tx = t;
+    ///             send(pkt);
+    ///         }
+    ///         TxOutput::Event(t, evt) => {
+    ///             tx = t;
+    ///             handle(evt);
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// The transaction enforces:
+    /// - No mutation after mutation without polling (compile error)
+    /// - No two active transactions (compile error - double mutable borrow)
+    /// - Drop without polling to timeout causes panic
+    pub fn begin(&mut self, now: Instant) -> RtcTx<'_, Mutate> {
+        RtcTx::new(self, now)
+    }
+
+    pub(crate) fn do_poll_output(&mut self) -> Result<Output, RtcError> {
         if !self.alive {
             self.last_timeout_reason = Reason::NotHappening;
             return Ok(Output::Timeout(not_happening()));
@@ -1810,7 +1854,7 @@ impl Rtc {
         self.need_init_time = false;
     }
 
-    fn do_handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
+    pub(crate) fn do_handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
         self.init_time(now);
 
         // Prevent time from going backwards.
@@ -1845,7 +1889,11 @@ impl Rtc {
         Ok(())
     }
 
-    fn do_handle_receive(&mut self, now: Instant, r: net::Receive) -> Result<(), RtcError> {
+    pub(crate) fn do_handle_receive(
+        &mut self,
+        now: Instant,
+        r: net::Receive,
+    ) -> Result<(), RtcError> {
         self.init_time(now);
 
         trace!("IN {:?}", r);
