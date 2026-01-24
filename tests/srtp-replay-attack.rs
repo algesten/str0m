@@ -68,6 +68,7 @@ pub fn srtp_replay_attack_rtp_mode() -> Result<(), RtcError> {
                     vec![1, 3, 3, 7],
                 )
                 .expect("clean write");
+            eprintln!("WRITE: seq_no={}", seq_no);
             send_count += 1;
         }
 
@@ -182,6 +183,7 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
                     vec![1, 3, 3, 7],
                 )
                 .expect("clean write");
+            eprintln!("WRITE: seq_no={}", seq_no);
             send_count += 1;
         }
 
