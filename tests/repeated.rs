@@ -6,7 +6,7 @@ use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{connect_l_r, init_crypto_default, init_log, poll_to_completion, progress};
+use common::{connect_l_r, init_crypto_default, init_log};
 
 #[test]
 pub fn repeated() -> Result<(), RtcError> {
@@ -21,36 +21,32 @@ pub fn repeated() -> Result<(), RtcError> {
     // using SSRC 1 as knowledge shared between sending and receiving side.
     let ssrc: Ssrc = 1.into();
 
-    {
-        let time = l.last;
-        let tx = l.rtc.begin(time).unwrap();
+    l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
         api.declare_stream_tx(ssrc, None, mid, None);
-        poll_to_completion(&l.span, api.finish(), time, &mut r.pending).unwrap();
-    }
+        Ok(api.finish())
+    })?;
 
-    {
-        let time = r.last;
-        let tx = r.rtc.begin(time).unwrap();
+    r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
         api.expect_stream_rx(ssrc, None, mid, None);
-        poll_to_completion(&r.span, api.finish(), time, &mut l.pending).unwrap();
-    }
+        Ok(api.finish())
+    })?;
 
     let max = l.last.max(r.last);
     l.last = max;
     r.last = max;
 
     let params = l.params_opus();
-    let ssrc = {
-        let tx = l.rtc.begin(l.last).unwrap();
+    let mut ssrc_result = None;
+    l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
-        let s = api.stream_tx_by_mid(mid, None).unwrap().ssrc();
-        poll_to_completion(&l.span, api.finish(), l.last, &mut r.pending).unwrap();
-        s
-    };
+        ssrc_result = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+        Ok(api.finish())
+    })?;
+    let ssrc = ssrc_result.unwrap();
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
 
@@ -74,23 +70,22 @@ pub fn repeated() -> Result<(), RtcError> {
                 ..Default::default()
             };
 
-            // Use transaction API to write RTP
-            let tx = l.rtc.begin(l.last)?;
-            let tx = tx.write_rtp(
-                ssrc,
-                pt,
-                seq_no,
-                time,
-                wallclock,
-                false,
-                exts,
-                false,
-                vec![0x01, 0x02, 0x03, 0x04],
-            )?;
-            poll_to_completion(&l.span, tx, l.last, &mut r.pending)?;
+            l.drive(&mut r, |tx| {
+                tx.write_rtp(
+                    ssrc,
+                    pt,
+                    seq_no,
+                    time,
+                    wallclock,
+                    false,
+                    exts,
+                    false,
+                    vec![0x01, 0x02, 0x03, 0x04],
+                )
+            })?;
         }
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > Duration::from_secs(30) {
             break;

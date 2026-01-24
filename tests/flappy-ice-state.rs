@@ -6,7 +6,7 @@ use str0m::{Event, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, poll_to_completion, progress, Peer, TestRtc};
+use common::{init_crypto_default, init_log, Peer, TestRtc};
 
 #[test]
 pub fn flappy_ice_lite_state() -> Result<(), RtcError> {
@@ -21,38 +21,39 @@ pub fn flappy_ice_lite_state() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    let time = l.last;
-
-    // Create offer from L using transaction API
-    let (offer, pending) = {
-        let tx = l.rtc.begin(time)?;
+    // Create offer from L
+    let mut offer = None;
+    let mut pending = None;
+    l.drive(&mut r, |tx| {
         let mut change = tx.sdp_api();
         change.add_channel("My little channel".into());
-        let (offer, pending, tx) = change.apply().unwrap();
-        poll_to_completion(&l.span, tx, time, &mut r.pending)?;
-        (offer, pending)
-    };
+        let (o, p, tx) = change.apply().unwrap();
+        offer = Some(o);
+        pending = Some(p);
+        Ok(tx)
+    })?;
+    let offer = offer.unwrap();
+    let pending = pending.unwrap();
 
     // R accepts the offer
-    let answer = {
-        let tx = r.rtc.begin(time)?;
-        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
-        poll_to_completion(&r.span, tx, time, &mut l.pending)?;
-        answer
-    };
+    let mut answer = None;
+    r.drive(&mut l, |tx| {
+        let (a, tx) = tx.sdp_api().accept_offer(offer).unwrap();
+        answer = Some(a);
+        Ok(tx)
+    })?;
+    let answer = answer.unwrap();
 
     // L accepts the answer
-    {
-        let tx = l.rtc.begin(time)?;
-        let tx = tx.sdp_api().accept_answer(pending, answer)?;
-        poll_to_completion(&l.span, tx, time, &mut r.pending)?;
-    }
+    l.drive(&mut r, |tx| {
+        tx.sdp_api().accept_answer(pending, answer)
+    })?;
 
     loop {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let max = l.last.max(r.last);
@@ -60,7 +61,7 @@ pub fn flappy_ice_lite_state() -> Result<(), RtcError> {
     r.last = max;
 
     loop {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > Duration::from_secs(120) {
             break;

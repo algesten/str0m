@@ -7,7 +7,7 @@ use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{connect_l_r, init_crypto_default, init_log, progress};
+use common::{connect_l_r, init_crypto_default, init_log};
 
 #[test]
 pub fn rtp_direct_reset_ssrc() -> Result<(), RtcError> {
@@ -91,7 +91,7 @@ pub fn rtp_direct_reset_ssrc() -> Result<(), RtcError> {
             }
         }
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if first_batch.is_empty() && first_counts.is_empty() {
             break;
@@ -100,7 +100,7 @@ pub fn rtp_direct_reset_ssrc() -> Result<(), RtcError> {
 
     // Run a bit longer to ensure first batch of packets arrive
     for _ in 0..20 {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     // Try resetting to the same SSRC (should fail and return None)
@@ -167,12 +167,12 @@ pub fn rtp_direct_reset_ssrc() -> Result<(), RtcError> {
             }
         }
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if second_batch.is_empty() && second_counts.is_empty() {
             // Run a bit longer to ensure packets arrive
             for _ in 0..20 {
-                progress(&mut l, &mut r)?;
+                l.drive(&mut r, |tx| Ok(tx.finish()))?;
             }
             break;
         }

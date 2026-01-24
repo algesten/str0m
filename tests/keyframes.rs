@@ -7,7 +7,7 @@ use str0m::{Event, RtcError};
 
 mod common;
 use common::{av1_data, h264_data, init_crypto_default, vp8_data, vp9_data};
-use common::{init_log, progress, Peer, TestRtc};
+use common::{init_log, Peer, TestRtc};
 
 #[test]
 pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
@@ -32,7 +32,7 @@ pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let max = l.last.max(r.last);
@@ -49,7 +49,7 @@ pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
     for (relative, header, payload) in data {
         // Keep RTC time progressed to be "in sync" with the test data.
         while (l.last - max) < relative {
-            progress(&mut l, &mut r)?;
+            l.drive(&mut r, |tx| Ok(tx.finish()))?;
         }
 
         let absolute = max + relative;
@@ -67,7 +67,7 @@ pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
         )
         .unwrap();
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > Duration::from_secs(5) {
             break;
@@ -122,7 +122,7 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let max = l.last.max(r.last);
@@ -139,7 +139,7 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
     for (relative, header, payload) in data {
         // Keep RTC time progressed to be "in sync" with the test data.
         while (l.last - max) < relative {
-            progress(&mut l, &mut r)?;
+            l.drive(&mut r, |tx| Ok(tx.finish()))?;
         }
 
         let absolute = max + relative;
@@ -157,7 +157,7 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
         )
         .unwrap();
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > Duration::from_secs(5) {
             break;
@@ -213,7 +213,7 @@ pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        let _ = progress(&mut l, &mut r);
+        let _ = l.drive(&mut r, |tx| Ok(tx.finish()));
     }
 
     let max = l.last.max(r.last);
@@ -230,7 +230,7 @@ pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
     for (relative, header, payload) in data {
         // Keep RTC time progressed to be "in sync" with the test data.
         while (l.last - max) < relative {
-            let _ = progress(&mut l, &mut r);
+            let _ = l.drive(&mut r, |tx| Ok(tx.finish()));
         }
 
         let absolute = max + relative;
@@ -248,7 +248,7 @@ pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
         )
         .unwrap();
 
-        let _ = progress(&mut l, &mut r);
+        let _ = l.drive(&mut r, |tx| Ok(tx.finish()));
 
         if l.duration() > Duration::from_secs(5) {
             break;
@@ -307,7 +307,7 @@ fn test_av1_keyframes_detection() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let max = l.last.max(r.last);
@@ -324,7 +324,7 @@ fn test_av1_keyframes_detection() -> Result<(), RtcError> {
     for (relative, header, payload) in data {
         // Keep RTC time progressed to be "in sync" with the test data.
         while (l.last - max) < relative {
-            progress(&mut l, &mut r)?;
+            l.drive(&mut r, |tx| Ok(tx.finish()))?;
         }
 
         let absolute = max + relative;
@@ -342,7 +342,7 @@ fn test_av1_keyframes_detection() -> Result<(), RtcError> {
         )
         .unwrap();
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > Duration::from_secs(5) {
             break;

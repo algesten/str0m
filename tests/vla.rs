@@ -6,7 +6,7 @@ use str0m::rtp::{Extension, ExtensionValues, Ssrc};
 use str0m::{Event, Rtc, RtcError};
 
 mod common;
-use common::{connect_l_r_with_rtc, init_crypto_default, init_log, poll_to_completion, progress};
+use common::{connect_l_r_with_rtc, init_crypto_default, init_log};
 
 #[test]
 pub fn vla_rtp_mode() -> Result<(), RtcError> {
@@ -29,21 +29,18 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
     let mid = "vid".into();
     let ssrc_tx: Ssrc = 1000.into();
 
-    {
-        let time = l.last;
-        let tx = l.rtc.begin(time).unwrap();
+    l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
         api.declare_stream_tx(ssrc_tx, None, mid, None);
-        poll_to_completion(&l.span, api.finish(), time, &mut r.pending).unwrap();
-    }
-    {
-        let time = r.last;
-        let tx = r.rtc.begin(time).unwrap();
+        Ok(api.finish())
+    })?;
+
+    r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
-        poll_to_completion(&r.span, api.finish(), time, &mut l.pending).unwrap();
-    }
+        Ok(api.finish())
+    })?;
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -51,13 +48,13 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
 
     let params = l.params_vp8();
     let pt = params.pt();
-    let ssrc = {
-        let tx = l.rtc.begin(l.last).unwrap();
+    let mut ssrc_result = None;
+    l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
-        let s = api.stream_tx_by_mid(mid, None).unwrap().ssrc();
-        poll_to_completion(&l.span, api.finish(), l.last, &mut r.pending).unwrap();
-        s
-    };
+        ssrc_result = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+        Ok(api.finish())
+    })?;
+    let ssrc = ssrc_result.unwrap();
 
     let vla = VideoLayersAllocation {
         current_simulcast_stream_index: 0,
@@ -80,9 +77,8 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
     exts.user_values.set(vla.clone());
 
     let last = l.last;
-    {
-        let tx = l.rtc.begin(last).unwrap();
-        let tx = tx.write_rtp(
+    l.drive(&mut r, |tx| {
+        tx.write_rtp(
             ssrc,
             pt,
             (1000_u64).into(),
@@ -92,13 +88,12 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
             exts,
             false,
             vec![0xAA; 10],
-        ).unwrap();
-        poll_to_completion(&l.span, tx, last, &mut r.pending).unwrap();
-    }
+        )
+    })?;
 
     let mut vla_received = false;
     for _ in 0..100 {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         for (_, event) in &r.events {
             if let Event::RtpPacket(packet) = event {
@@ -156,21 +151,18 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
     let mid = "vid".into();
     let ssrc_tx: Ssrc = 1000.into();
 
-    {
-        let time = l.last;
-        let tx = l.rtc.begin(time).unwrap();
+    l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
         api.declare_stream_tx(ssrc_tx, None, mid, None);
-        poll_to_completion(&l.span, api.finish(), time, &mut r.pending).unwrap();
-    }
-    {
-        let time = r.last;
-        let tx = r.rtc.begin(time).unwrap();
+        Ok(api.finish())
+    })?;
+
+    r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
-        poll_to_completion(&r.span, api.finish(), time, &mut l.pending).unwrap();
-    }
+        Ok(api.finish())
+    })?;
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -195,23 +187,19 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
     let pt = l.params_vp8().pt();
     let last = l.last;
 
-    // Use transaction API for writing with user extension value
-    let tx = l.rtc.begin(l.last).expect("begin");
-    let writer = match tx.writer(mid) {
-        Ok(w) => w,
-        Err(_) => panic!("writer not found for mid"),
-    };
-    let tx = writer.user_extension_value(vla.clone()).write(
-        pt,
-        last,
-        MediaTime::ZERO,
-        vec![0xAA; 10],
-    )?;
-    poll_to_completion(&l.span, tx, l.last, &mut r.pending)?;
+    l.drive(&mut r, |tx| {
+        let writer = tx.writer(mid).expect("writer");
+        writer.user_extension_value(vla.clone()).write(
+            pt,
+            last,
+            MediaTime::ZERO,
+            vec![0xAA; 10],
+        )
+    })?;
 
     let mut vla_received = false;
     for _ in 0..100 {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         for (_, event) in &r.events {
             if let Event::MediaData(data) = event {

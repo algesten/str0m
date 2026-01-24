@@ -7,7 +7,7 @@ use str0m::{Rtc, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, negotiate, progress, TestRtc};
+use common::{init_crypto_default, init_log, negotiate, TestRtc};
 
 #[test]
 pub fn no_pre_ice_feedback() -> Result<(), RtcError> {
@@ -37,7 +37,7 @@ pub fn no_pre_ice_feedback() -> Result<(), RtcError> {
             break;
         }
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     for (_, event) in l.events.iter() {

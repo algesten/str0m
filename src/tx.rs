@@ -45,6 +45,12 @@ pub struct RtcTx<'a, State> {
     _state: PhantomData<State>,
 }
 
+impl<State> fmt::Debug for RtcTx<'_, State> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RtcTx").finish_non_exhaustive()
+    }
+}
+
 pub(crate) struct RtcTxInner<'a> {
     pub(crate) rtc: &'a mut Rtc,
 }

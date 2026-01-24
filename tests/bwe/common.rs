@@ -292,42 +292,48 @@ impl BweTestContext {
             // Use packet size of ~1150 bytes (allows RTX probe reuse)
             let packet_size = 1150;
 
-            let mut did_progress = false;
+            let mut did_send = false;
 
             // Send packets while we have budget
-            // IMPORTANT: Must call progress() after EACH write_rtp to consume outputs
             while self.byte_budget >= packet_size as f64 {
                 // Calculate wallclock for THIS packet at current simulated time
                 let wallclock = l.start + l.duration();
                 let time = (self.seq_no * 1000 + 47_000_000) as u32;
 
                 let exts = ExtensionValues::default();
+                let ssrc = self.ssrc;
+                let pt = self.pt;
+                let seq_no = self.seq_no.into();
 
-                // Send a video packet
-                let payload = vec![0u8; packet_size];
-                l.write_rtp(
-                    self.ssrc,
-                    self.pt,
-                    self.seq_no.into(),
-                    time,
-                    wallclock,
-                    false,
-                    exts,
-                    true,
-                    payload,
-                )
-                .expect("clean write");
+                // Write packet without advancing time
+                l.set_progress_duration(Duration::ZERO);
+                l.drive(r, |tx| {
+                    tx.write_rtp(
+                        ssrc,
+                        pt,
+                        seq_no,
+                        time,
+                        wallclock,
+                        false,
+                        exts,
+                        true,
+                        vec![0u8; packet_size],
+                    )
+                })?;
 
                 self.seq_no += 1;
                 self.byte_budget -= packet_size as f64;
+                did_send = true;
 
-                // Must progress after each write_rtp to consume outputs
-                progress(l, r)?;
-                did_progress = true;
+                // Progress time after each packet
+                l.set_progress_duration(Duration::from_millis(5));
+                l.drive(r, |tx| Ok(tx.finish()))?;
             }
 
-            if !did_progress {
-                progress(l, r)?;
+            if !did_send {
+                // Progress time if no packets sent
+                l.set_progress_duration(Duration::from_millis(5));
+                l.drive(r, |tx| Ok(tx.finish()))?;
             }
         }
 

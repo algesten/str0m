@@ -8,7 +8,7 @@ use str0m::{Rtc, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, negotiate, progress, TestRtc};
+use common::{init_crypto_default, init_log, negotiate, TestRtc};
 
 #[test]
 pub fn twcc() -> Result<(), RtcError> {
@@ -32,7 +32,7 @@ pub fn twcc() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let max = l.last.max(r.last);
@@ -52,7 +52,7 @@ pub fn twcc() -> Result<(), RtcError> {
             l.write_media(mid, pt, wallclock, time, data_a.to_vec(), None)?;
         }
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > Duration::from_secs(10) {
             break;

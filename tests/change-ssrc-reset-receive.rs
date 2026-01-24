@@ -8,7 +8,7 @@ use str0m::{Event, RtcError};
 use tracing::info;
 
 mod common;
-use common::{connect_l_r, init_crypto_default, init_log, progress};
+use common::{connect_l_r, init_crypto_default, init_log};
 
 #[test]
 pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
@@ -112,7 +112,7 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
             }
         }
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if first_batch.is_empty() && first_counts.is_empty() {
             break;
@@ -121,7 +121,7 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
 
     // Run a bit longer to ensure first batch of packets arrive
     for _ in 0..20 {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     info!("First batch sent with SSRC: {}", ssrc_tx_initial);
@@ -145,7 +145,7 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
     let pause_duration = Duration::from_millis(2000);
     let pause_end = l.last + pause_duration;
     while l.last < pause_end {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     info!(
@@ -217,12 +217,12 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
             }
         }
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if second_batch.is_empty() && second_counts.is_empty() {
             // Run a bit longer to ensure packets arrive
             for _ in 0..20 {
-                progress(&mut l, &mut r)?;
+                l.drive(&mut r, |tx| Ok(tx.finish()))?;
             }
             break;
         }

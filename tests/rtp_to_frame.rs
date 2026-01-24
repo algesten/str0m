@@ -7,7 +7,7 @@ use str0m::rtp::{ExtensionValues, SeqNo, Ssrc};
 use str0m::{Event, Rtc, RtcError};
 
 mod common;
-use common::{connect_l_r_with_rtc, init_crypto_default, init_log, progress};
+use common::{connect_l_r_with_rtc, init_crypto_default, init_log};
 
 #[test]
 pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
@@ -89,7 +89,7 @@ pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
             }
         }
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > Duration::from_secs(10) {
             break;

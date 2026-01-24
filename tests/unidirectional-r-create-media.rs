@@ -7,7 +7,7 @@ use str0m::media::{Direction, MediaKind};
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{init_crypto_default, init_log, poll_to_completion, progress, Peer, TestRtc};
+use common::{init_crypto_default, init_log, Peer, TestRtc};
 
 #[test]
 pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
@@ -20,17 +20,21 @@ pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    let time = l.last;
-
     // The change is on the R (not sending side) with Direction::RecvOnly.
-    let (mid, offer, pending) = {
-        let tx = r.rtc.begin(time)?;
+    let mut mid = None;
+    let mut offer = None;
+    let mut pending = None;
+    r.drive(&mut l, |tx| {
         let mut change = tx.sdp_api();
-        let mid = change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None);
-        let (offer, pending, tx) = change.apply().unwrap();
-        poll_to_completion(&r.span, tx, time, &mut l.pending)?;
-        (mid, offer, pending)
-    };
+        mid = Some(change.add_media(MediaKind::Audio, Direction::RecvOnly, None, None, None));
+        let (o, p, tx) = change.apply().unwrap();
+        offer = Some(o);
+        pending = Some(p);
+        Ok(tx)
+    })?;
+    let mid = mid.unwrap();
+    let offer = offer.unwrap();
+    let pending = pending.unwrap();
 
     // str0m always produces a=ssrc lines, also for RecvOnly (since direction can change).
     // We munge the a=ssrc lines away.
@@ -41,25 +45,24 @@ pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
     let offer = SdpOffer::from_sdp_string(&offer_str).unwrap();
 
     // L accepts the offer
-    let answer = {
-        let tx = l.rtc.begin(time)?;
-        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
-        poll_to_completion(&l.span, tx, time, &mut r.pending)?;
-        answer
-    };
+    let mut answer = None;
+    l.drive(&mut r, |tx| {
+        let (a, tx) = tx.sdp_api().accept_offer(offer).unwrap();
+        answer = Some(a);
+        Ok(tx)
+    })?;
+    let answer = answer.unwrap();
 
     // R accepts the answer
-    {
-        let tx = r.rtc.begin(time)?;
-        let tx = tx.sdp_api().accept_answer(pending, answer)?;
-        poll_to_completion(&r.span, tx, time, &mut l.pending)?;
-    }
+    r.drive(&mut l, |tx| {
+        tx.sdp_api().accept_answer(pending, answer)
+    })?;
 
     loop {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let max = l.last.max(r.last);
@@ -76,17 +79,10 @@ pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
 
-        // Use transaction API to write media
-        let tx = l.rtc.begin(l.last)?;
-        let writer = match tx.writer(mid) {
-            Ok(w) => w,
-            Err(_) => panic!("Failed to get writer for mid"),
-        };
-        let tx = writer.write(pt, wallclock, time, data_a.clone())?;
-        poll_to_completion(&l.span, tx, l.last, &mut r.pending)?;
-
-        progress(&mut l, &mut r)?;
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| {
+            let writer = tx.writer(mid).expect("writer");
+            writer.write(pt, wallclock, time, data_a.clone())
+        })?;
 
         if l.duration() > Duration::from_secs(10) {
             break;

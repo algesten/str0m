@@ -8,7 +8,7 @@ use str0m::{Event, RtcConfig, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, TestRtc};
+use common::{init_crypto_default, init_log, TestRtc};
 
 #[test]
 pub fn stats() -> Result<(), RtcError> {
@@ -35,7 +35,7 @@ pub fn stats() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let max = l.last.max(r.last);
@@ -65,7 +65,7 @@ pub fn stats() -> Result<(), RtcError> {
             r.write_media(mid, pt, wallclock, time, data_b.clone(), None)?;
         }
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > Duration::from_secs(25) {
             break;

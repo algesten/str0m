@@ -7,7 +7,7 @@ use str0m::{Event, Rtc, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, negotiate, progress, TestRtc};
+use common::{init_crypto_default, init_log, negotiate, TestRtc};
 
 #[test]
 pub fn remb() -> Result<(), RtcError> {
@@ -31,13 +31,13 @@ pub fn remb() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     //wait for srtp success
     let settle_time = l.duration() + Duration::from_millis(20);
     loop {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > settle_time {
             break;
@@ -52,7 +52,7 @@ pub fn remb() -> Result<(), RtcError> {
 
     let settle_time = l.duration() + Duration::from_millis(20);
     loop {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > settle_time {
             break;

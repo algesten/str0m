@@ -9,7 +9,7 @@ use str0m::{Event, Output, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{init_crypto_default, init_log, Peer, TestRtc};
 
 #[test]
 pub fn contiguous_all_the_way() -> Result<(), RtcError> {
@@ -166,7 +166,7 @@ impl Server {
             if l.is_connected() || r.is_connected() {
                 break;
             }
-            progress(&mut l, &mut r)?;
+            l.drive(&mut r, |tx| Ok(tx.finish()))?;
         }
 
         let max = l.last.max(r.last);
@@ -191,7 +191,7 @@ impl Server {
 
             // Keep RTC time progressed to be "in sync" with the test data.
             while (l.last - max) < relative {
-                progress(&mut l, &mut r)?;
+                l.drive(&mut r, |tx| Ok(tx.finish()))?;
             }
 
             let absolute = max + relative;
@@ -229,7 +229,7 @@ impl Server {
                 }
             }
 
-            progress(&mut l, &mut r)?;
+            l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
             if let Some(duration) = self.timeout {
                 if l.duration() > duration {
@@ -239,7 +239,7 @@ impl Server {
         }
 
         // Drain any remaining packets from the pacer
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         let events = r
             .events

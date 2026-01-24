@@ -78,6 +78,8 @@ pub struct TestRtc {
     pub events: Vec<(Instant, Event)>,
     pub pending: Netem<PendingPacket>,
     pub forced_time_advance: Duration,
+    /// Max duration for the progress loop in drive(). Default 5ms.
+    pub progress_duration: Duration,
 }
 
 impl TestRtc {
@@ -101,6 +103,7 @@ impl TestRtc {
             events: vec![],
             pending: Netem::new(NetemConfig::new()),
             forced_time_advance: Duration::from_millis(10),
+            progress_duration: Duration::from_millis(5),
         }
     }
 
@@ -109,6 +112,12 @@ impl TestRtc {
     /// Should be set to the packet interval for the target bitrate (e.g., 0.2ms for 50 Mbps).
     pub fn set_forced_time_advance(&mut self, duration: Duration) {
         self.forced_time_advance = duration;
+    }
+
+    /// Set the max duration for the progress loop in drive(). Default 5ms.
+    /// Set to Duration::ZERO to disable time advancement in drive().
+    pub fn set_progress_duration(&mut self, duration: Duration) {
+        self.progress_duration = duration;
     }
 
     /// Configure network emulation for incoming traffic to this RTC.
@@ -204,7 +213,7 @@ impl TestRtc {
         result
     }
 
-    /// Write RTP packet.
+    /// Write RTP packet (discards transmits - for tests that don't need delivery).
     /// DEPRECATED: Use `drive` with `tx.write_rtp()` instead.
     #[allow(clippy::too_many_arguments)]
     pub fn write_rtp(
@@ -411,7 +420,7 @@ impl TestRtc {
             let (time, is_self, is_netem) = next;
 
             if let Some(first) = first_time {
-                if time.saturating_duration_since(first) >= Duration::from_millis(5) {
+                if time.saturating_duration_since(first) >= self.progress_duration {
                     break;
                 }
             } else {
@@ -599,44 +608,6 @@ where
         .unwrap();
 
     result.unwrap()
-}
-
-/// Simple progress function that just advances time without an operation.
-/// This is equivalent to `l.drive(r, |tx| Ok(tx.finish()))`.
-pub fn progress(l: &mut TestRtc, r: &mut TestRtc) -> Result<(), RtcError> {
-    l.drive(r, |tx| Ok(tx.finish()))
-}
-
-/// Poll an RtcTx to completion and deliver transmits to the target netem.
-/// DEPRECATED: Use `drive` method on TestRtc instead.
-pub fn poll_to_completion(
-    span: &Span,
-    mut tx: RtcTx<'_, Poll>,
-    _time: Instant,
-    target_netem: &mut Netem<PendingPacket>,
-) -> Result<Instant, RtcError> {
-    let timeout = loop {
-        match span.in_scope(|| tx.poll())? {
-            Output::Timeout(t) => break t,
-            Output::Transmit(t, v) => {
-                tx = t;
-                let now = Instant::now();
-                target_netem.handle_input(NetemInput::Packet(
-                    now,
-                    PendingPacket {
-                        proto: v.proto,
-                        source: v.source,
-                        destination: v.destination,
-                        contents: v.contents.to_vec(),
-                    },
-                ));
-            }
-            Output::Event(t, _v) => {
-                tx = t;
-            }
-        }
-    };
-    Ok(timeout)
 }
 
 /// Simple poll to completion without netem.

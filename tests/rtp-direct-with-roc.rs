@@ -8,7 +8,7 @@ use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{connect_l_r, init_crypto_default, init_log, progress};
+use common::{connect_l_r, init_crypto_default, init_log};
 
 #[test]
 pub fn rtp_direct_with_roc() -> Result<(), RtcError> {
@@ -101,7 +101,7 @@ pub fn rtp_direct_with_roc() -> Result<(), RtcError> {
             }
         }
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > Duration::from_secs(10) {
             break;

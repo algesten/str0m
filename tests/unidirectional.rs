@@ -6,7 +6,7 @@ use str0m::media::{Direction, MediaKind};
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{init_crypto_default, init_log, poll_to_completion, progress, Peer, TestRtc};
+use common::{init_crypto_default, init_log, Peer, TestRtc};
 
 #[test]
 pub fn unidirectional() -> Result<(), RtcError> {
@@ -22,36 +22,39 @@ pub fn unidirectional() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    let time = l.last;
-
     // The change is on the L (sending side) with Direction::SendRecv.
-    let (mid, offer, pending) = {
-        let tx = l.rtc.begin(time)?;
+    let mut mid = None;
+    let mut offer = None;
+    let mut pending = None;
+    l.drive(&mut r, |tx| {
         let mut change = tx.sdp_api();
-        let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
-        let (offer, pending, tx) = change.apply().unwrap();
-        poll_to_completion(&l.span, tx, time, &mut r.pending)?;
-        (mid, offer, pending)
-    };
+        mid = Some(change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None));
+        let (o, p, tx) = change.apply().unwrap();
+        offer = Some(o);
+        pending = Some(p);
+        Ok(tx)
+    })?;
+    let mid = mid.unwrap();
+    let offer = offer.unwrap();
+    let pending = pending.unwrap();
 
-    let answer = {
-        let tx = r.rtc.begin(time)?;
-        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
-        poll_to_completion(&r.span, tx, time, &mut l.pending)?;
-        answer
-    };
+    let mut answer = None;
+    r.drive(&mut l, |tx| {
+        let (a, tx) = tx.sdp_api().accept_offer(offer).unwrap();
+        answer = Some(a);
+        Ok(tx)
+    })?;
+    let answer = answer.unwrap();
 
-    {
-        let tx = l.rtc.begin(time)?;
-        let tx = tx.sdp_api().accept_answer(pending, answer)?;
-        poll_to_completion(&l.span, tx, time, &mut r.pending)?;
-    }
+    l.drive(&mut r, |tx| {
+        tx.sdp_api().accept_answer(pending, answer)
+    })?;
 
     loop {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let max = l.last.max(r.last);
@@ -69,18 +72,13 @@ pub fn unidirectional() -> Result<(), RtcError> {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
 
-        let tx = l.rtc.begin(l.last)?;
-        let writer = match tx.writer(mid) {
-            Ok(w) => w,
-            Err(_) => panic!("Failed to get writer for mid"),
-        };
-        let tx = writer
-            .start_of_talkspurt(start_of_talk_spurt)
-            .write(pt, wallclock, time, data_a.clone())?;
-        poll_to_completion(&l.span, tx, l.last, &mut r.pending)?;
+        l.drive(&mut r, |tx| {
+            let writer = tx.writer(mid).expect("writer");
+            writer
+                .start_of_talkspurt(start_of_talk_spurt)
+                .write(pt, wallclock, time, data_a.clone())
+        })?;
         start_of_talk_spurt = false;
-
-        progress(&mut l, &mut r)?;
 
         if l.duration() > Duration::from_secs(10) {
             break;

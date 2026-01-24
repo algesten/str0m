@@ -9,7 +9,7 @@
 mod common;
 #[cfg(feature = "pii")]
 mod pii_log_redaction {
-    use common::{connect_l_r, init_crypto_default, poll_to_completion, progress};
+    use common::{connect_l_r, init_crypto_default};
     use std::collections::VecDeque;
     use std::time::Duration;
 
@@ -81,35 +81,31 @@ mod pii_log_redaction {
         // In this example we are using MID only (no RID) to identify the incoming media.
         let ssrc_tx: Ssrc = 42.into();
 
-        {
-            let time = l.last;
-            let tx = l.rtc.begin(time).unwrap();
+        l.drive(&mut r, |tx| {
             let mut api = tx.direct_api();
             api.declare_media(mid, MediaKind::Audio);
             api.declare_stream_tx(ssrc_tx, None, mid, None);
-            poll_to_completion(&l.span, api.finish(), time, &mut r.pending).unwrap();
-        }
+            Ok(api.finish())
+        })?;
 
-        {
-            let time = r.last;
-            let tx = r.rtc.begin(time).unwrap();
+        r.drive(&mut l, |tx| {
             let mut api = tx.direct_api();
             api.declare_media(mid, MediaKind::Audio);
-            poll_to_completion(&r.span, api.finish(), time, &mut l.pending).unwrap();
-        }
+            Ok(api.finish())
+        })?;
 
         let max = l.last.max(r.last);
         l.last = max;
         r.last = max;
 
         let params = l.params_opus();
-        let ssrc = {
-            let tx = l.rtc.begin(l.last).unwrap();
+        let mut ssrc_result = None;
+        l.drive(&mut r, |tx| {
             let api = tx.direct_api();
-            let s = api.stream_tx_by_mid(mid, None).unwrap().ssrc();
-            poll_to_completion(&l.span, api.finish(), l.last, &mut r.pending).unwrap();
-            s
-        };
+            ssrc_result = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+            Ok(api.finish())
+        })?;
+        let ssrc = ssrc_result.unwrap();
         assert_eq!(params.spec().codec, Codec::Opus);
         let pt = params.pt();
 
@@ -143,23 +139,23 @@ mod pii_log_redaction {
                         ..Default::default()
                     };
 
-                    let tx = l.rtc.begin(l.last)?;
-                    let tx = tx.write_rtp(
-                        ssrc,
-                        pt,
-                        seq_no,
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        false,
-                        packet.to_vec(),
-                    )?;
-                    poll_to_completion(tx)?;
+                    l.drive(&mut r, |tx| {
+                        tx.write_rtp(
+                            ssrc,
+                            pt,
+                            seq_no,
+                            time,
+                            wallclock,
+                            false,
+                            exts,
+                            false,
+                            packet.to_vec(),
+                        )
+                    })?;
                 }
             }
 
-            progress(&mut l, &mut r)?;
+            l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
             if l.duration() > Duration::from_secs(10) {
                 break;

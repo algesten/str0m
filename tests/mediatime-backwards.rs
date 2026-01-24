@@ -8,7 +8,7 @@ use str0m::{Event, RtcError};
 use tracing::info;
 
 mod common;
-use common::{init_crypto_default, init_log, negotiate, progress, Peer, TestRtc};
+use common::{init_crypto_default, init_log, negotiate, Peer, TestRtc};
 
 #[test]
 pub fn mediatime_backwards() -> Result<(), RtcError> {
@@ -33,7 +33,7 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let max = l.last.max(r.last);
@@ -55,16 +55,10 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
         let timestamp = base_timestamp + i * 960; // Standard Opus timestamp increment
         let time = MediaTime::from_90khz(timestamp as u64);
 
-        // Use the transaction API to write media
-        let tx = l.rtc.begin(l.last).expect("begin");
-        let writer = match tx.writer(mid) {
-            Ok(w) => w,
-            Err(_) => panic!("writer not found for mid"),
-        };
-        let tx = writer.write(pt, wallclock, time, data_a.clone())?;
-        common::poll_to_completion(&l.span, tx, l.last, &mut r.pending)?;
-
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| {
+            let writer = tx.writer(mid).expect("writer");
+            writer.write(pt, wallclock, time, data_a.clone())
+        })?;
     }
 
     info!("Sent 10 normal packets with regular timestamps");
@@ -91,7 +85,7 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
     let pause_end = l.last + pause_duration;
     while l.last < pause_end {
         // Just handle timeouts without sending any packets
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     info!(
@@ -105,7 +99,7 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
     let pause_check_timeout = Duration::from_millis(500);
 
     while !seen_paused && l.last < pause_check_start + pause_check_timeout {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         // Check for pause event
         for (_, event) in &r.events {
@@ -140,18 +134,14 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
     // Save the timestamp index for comparison BEFORE sending
     let events_before_problematic = r.events.len();
 
-    // Use the transaction API to write media
-    let tx = l.rtc.begin(l.last).expect("begin");
-    let writer = match tx.writer(mid) {
-        Ok(w) => w,
-        Err(_) => panic!("writer not found for mid"),
-    };
-    let tx = writer.write(pt, wallclock, time, data_a.clone())?;
-    common::poll_to_completion(&l.span, tx, l.last, &mut r.pending)?;
+    l.drive(&mut r, |tx| {
+        let writer = tx.writer(mid).expect("writer");
+        writer.write(pt, wallclock, time, data_a.clone())
+    })?;
 
     // Process the packet and a few more cycles to ensure it's received
     for _ in 0..10 {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     // We're looking for evidence that:

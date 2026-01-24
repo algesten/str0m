@@ -9,7 +9,7 @@ use str0m::rtp::{ExtensionValues, RawPacket, SeqNo, Ssrc};
 use str0m::RtcError;
 
 mod common;
-use common::{connect_l_r, init_crypto_default, init_log, poll_to_completion, progress};
+use common::{connect_l_r, init_crypto_default, init_log};
 
 #[test]
 pub fn loss_recovery() -> Result<(), RtcError> {
@@ -30,36 +30,32 @@ pub fn loss_recovery() -> Result<(), RtcError> {
     let ssrc_tx: Ssrc = 42.into();
     let ssrc_rtx: Ssrc = 44.into();
 
-    {
-        let time = l.last;
-        let tx = l.rtc.begin(time).unwrap();
+    l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
         api.declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
-        poll_to_completion(&l.span, api.finish(), time, &mut r.pending).unwrap();
-    }
+        Ok(api.finish())
+    })?;
 
-    {
-        let time = r.last;
-        let tx = r.rtc.begin(time).unwrap();
+    r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
         api.expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
-        poll_to_completion(&r.span, api.finish(), time, &mut l.pending).unwrap();
-    }
+        Ok(api.finish())
+    })?;
 
     let max = l.last.max(r.last);
     l.last = max;
     r.last = max;
 
     let params = l.params_vp8();
-    let ssrc = {
-        let tx = l.rtc.begin(l.last).unwrap();
+    let mut ssrc_result = None;
+    l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
-        let s = api.stream_tx_by_mid(mid, None).unwrap().ssrc();
-        poll_to_completion(&l.span, api.finish(), l.last, &mut r.pending).unwrap();
-        s
-    };
+        ssrc_result = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+        Ok(api.finish())
+    })?;
+    let ssrc = ssrc_result.unwrap();
     assert_eq!(params.spec().codec, Codec::Vp8);
     let pt = params.pt();
 
@@ -75,10 +71,8 @@ pub fn loss_recovery() -> Result<(), RtcError> {
 
         let exts = ExtensionValues::default();
 
-        // Use transaction API to write RTP
-        let tx = l.rtc.begin(l.last).expect("begin");
-        let tx = tx
-            .write_rtp(
+        l.drive(&mut r, |tx| {
+            tx.write_rtp(
                 ssrc,
                 pt,
                 seq_no,
@@ -89,8 +83,7 @@ pub fn loss_recovery() -> Result<(), RtcError> {
                 true,
                 to_write.to_vec(),
             )
-            .expect("write_rtp");
-        poll_to_completion(&l.span, tx, l.last, &mut r.pending).expect("poll");
+        })?;
 
         // Disable loss near start and end to let retransmission algo stabilize
         // (see MISORDER_DELAY in register.rs)
@@ -98,7 +91,7 @@ pub fn loss_recovery() -> Result<(), RtcError> {
             r.set_netem(NetemConfig::new()); // No loss
         }
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         // Re-enable loss for middle packets
         if index == 9 {
@@ -112,7 +105,7 @@ pub fn loss_recovery() -> Result<(), RtcError> {
     // let some time pass for retransmission to happen
     let settle_time = l.duration() + Duration::from_secs(10);
     loop {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > settle_time {
             break;
@@ -212,36 +205,32 @@ pub fn nack_delay() -> Result<(), RtcError> {
     let ssrc_tx: Ssrc = 42.into();
     let ssrc_rtx: Ssrc = 44.into();
 
-    {
-        let time = l.last;
-        let tx = l.rtc.begin(time).unwrap();
+    l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
         api.declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
-        poll_to_completion(&l.span, api.finish(), time, &mut r.pending).unwrap();
-    }
+        Ok(api.finish())
+    })?;
 
-    {
-        let time = r.last;
-        let tx = r.rtc.begin(time).unwrap();
+    r.drive(&mut l, |tx| {
         let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
         api.expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
-        poll_to_completion(&r.span, api.finish(), time, &mut l.pending).unwrap();
-    }
+        Ok(api.finish())
+    })?;
 
     let max = l.last.max(r.last);
     l.last = max;
     r.last = max;
 
     let params = l.params_vp8();
-    let ssrc = {
-        let tx = l.rtc.begin(l.last).unwrap();
+    let mut ssrc_result = None;
+    l.drive(&mut r, |tx| {
         let mut api = tx.direct_api();
-        let s = api.stream_tx_by_mid(mid, None).unwrap().ssrc();
-        poll_to_completion(&l.span, api.finish(), l.last, &mut r.pending).unwrap();
-        s
-    };
+        ssrc_result = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+        Ok(api.finish())
+    })?;
+    let ssrc = ssrc_result.unwrap();
     assert_eq!(params.spec().codec, Codec::Vp8);
     let pt = params.pt();
 
@@ -289,10 +278,8 @@ pub fn nack_delay() -> Result<(), RtcError> {
                     ..Default::default()
                 };
 
-                // Use transaction API to write RTP
-                let tx = l.rtc.begin(l.last).expect("begin");
-                let tx = tx
-                    .write_rtp(
+                l.drive(&mut r, |tx| {
+                    tx.write_rtp(
                         ssrc,
                         pt,
                         seq_no,
@@ -303,12 +290,11 @@ pub fn nack_delay() -> Result<(), RtcError> {
                         true,
                         packet.to_vec(),
                     )
-                    .expect("write_rtp");
-                poll_to_completion(&l.span, tx, l.last, &mut r.pending).expect("poll");
+                })?;
             }
         }
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > Duration::from_secs(10) {
             break;

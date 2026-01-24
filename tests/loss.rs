@@ -7,7 +7,7 @@ mod common;
 
 use std::time::Duration;
 
-use common::{connect_l_r, init_crypto_default, progress, vp8_data};
+use common::{connect_l_r, init_crypto_default, vp8_data};
 use netem::{GilbertElliot, LossModel, NetemConfig};
 use str0m::format::Codec;
 use str0m::media::MediaKind;
@@ -70,7 +70,7 @@ fn run_loss_test(loss_model: impl Into<LossModel>, seed: u64) -> Result<usize, R
     for (relative, header, payload) in data {
         // Keep RTC time progressed to be "in sync" with the test data
         while (l.last - max) < relative {
-            progress(&mut l, &mut r)?;
+            l.drive(&mut r, |tx| Ok(tx.finish()))?;
         }
 
         let absolute = max + relative;
@@ -88,7 +88,7 @@ fn run_loss_test(loss_model: impl Into<LossModel>, seed: u64) -> Result<usize, R
         )
         .unwrap();
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > Duration::from_secs(10) {
             break;
@@ -98,7 +98,7 @@ fn run_loss_test(loss_model: impl Into<LossModel>, seed: u64) -> Result<usize, R
     // Let retransmissions complete (also subject to loss)
     let settle_time = l.duration() + Duration::from_secs(2);
     while l.duration() < settle_time {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     // Count received RTP packets
