@@ -68,8 +68,8 @@ impl<'a> Ice<'a> {
 
     /// Add a remote ICE candidate. Remote candidates are addresses of the peer.
     ///
-    /// For [`SdpApi`]: Remote candidates are typically added via
-    /// receiving a remote [`SdpOffer`][change::SdpOffer] or [`SdpAnswer`][change::SdpAnswer].
+    /// For SDP API: Remote candidates are typically added via
+    /// receiving a remote SDP offer or answer.
     ///
     /// However for the case of [Trickle Ice][1], this is the way to add remote candidates
     /// that are "trickled" from the other side.

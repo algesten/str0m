@@ -14,7 +14,7 @@ use crate::{Mutate, Poll};
 /// Direct change strategy.
 ///
 /// Makes immediate changes to the Rtc session without any SDP OFFER/ANSWER. This
-/// is an alternative to [`Rtc::sdp_api()`] for use cases when you don't want to use SDP
+/// is an alternative to `tx.sdp_api()` for use cases when you don't want to use SDP
 /// (or when you want to write RTP directly).
 ///
 /// To use the Direct API together with a browser client, you would need to make

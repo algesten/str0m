@@ -497,8 +497,8 @@ impl RtcConfig {
 
     /// Make the entire Rtc be in RTP mode.
     ///
-    /// This means all media, read from [`RtpPacket`][crate::rtp::RtpPacket] and written to
-    /// [`StreamTx::write_rtp`][crate::rtp::StreamTx::write_rtp] are RTP packetized.
+    /// This means all media, read from [`RtpPacket`][crate::rtp::RtpPacket] and written via
+    /// `RtcTx::write_rtp()` are RTP packetized.
     /// It bypasses all internal packetization/depacketization inside str0m.
     ///
     /// WARNING: This is a low level API and is not str0m's primary use case.

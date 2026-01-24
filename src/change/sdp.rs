@@ -407,7 +407,7 @@ impl<'a> SdpApi<'a> {
     /// pending ICE restart.
     ///
     /// The local ICE candidates can be kept as is, or be cleared out, in which case new ice
-    /// candidates must be added via [`Rtc::add_local_candidate`] before connectivity can be
+    /// candidates must be added via `tx.ice().add_local_candidate()` before connectivity can be
     /// re-established.
     ///
     /// Returns the new ICE credentials that will be used going forward.
@@ -520,7 +520,7 @@ impl<'a> SdpApi<'a> {
     }
 }
 
-/// Pending offer from a previous [`Rtc::sdp_api()`] call.
+/// Pending offer from a previous `tx.sdp_api()` call.
 ///
 /// This allows us to accept a remote answer. No changes have been made to the session
 /// before we call [`SdpApi::accept_answer()`], which means that rolling back a

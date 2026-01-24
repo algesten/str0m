@@ -148,17 +148,17 @@ impl<'a> RtcTx<'a, Mutate> {
 
     /// Configure the Bandwidth Estimate (BWE) subsystem.
     ///
-    /// Only relevant if BWE was enabled in the [`RtcConfig::enable_bwe()`]
+    /// Only relevant if BWE was enabled in the [`RtcConfig::enable_bwe()`][crate::RtcConfig::enable_bwe()]
     pub fn bwe(self) -> Bwe<'a> {
         Bwe::new(self)
     }
 
     /// Obtain handle for writing to a data channel.
     ///
-    /// This is first available when a [`ChannelId`] is advertised via [`Event::ChannelOpen`].
-    /// The function returns `Err(self)` also for IDs from [`SdpApi::add_channel()`].
+    /// This is first available when a [`ChannelId`] is advertised via [`Event::ChannelOpen`][crate::Event::ChannelOpen].
+    /// The function returns `Err(self)` also for IDs from [`SdpApi::add_channel()`][crate::change::SdpApi::add_channel()].
     ///
-    /// Incoming channel data is via the [`Event::ChannelData`] event.
+    /// Incoming channel data is via the [`Event::ChannelData`][crate::Event::ChannelData] event.
     ///
     /// ```no_run
     /// # use std::time::Instant;
@@ -237,9 +237,9 @@ impl<'a> RtcTx<'a, Mutate> {
 
     /// Write an RTP packet to a send stream.
     ///
-    /// This is the RTP-level API for sending media. For frame-level API, see [`writer()`].
+    /// This is the RTP-level API for sending media. For frame-level API, see [`Self::writer()`].
     ///
-    /// The stream must first be declared using [`DirectApi::declare_stream_tx`].
+    /// The stream must first be declared using [`DirectApi::declare_stream_tx`][crate::change::DirectApi::declare_stream_tx].
     ///
     /// # Arguments
     ///

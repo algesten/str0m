@@ -261,7 +261,7 @@ impl Media {
     }
 
     /// Current direction. This can be changed using
-    /// [`SdpApi::set_direction()`][crate::SdpApi::set_direction()] followed by an SDP negotiation.
+    /// `tx.sdp_api().set_direction()` (via the transaction API) followed by an SDP negotiation.
     ///
     /// To test whether it's possible to send media with the current direction, use
     ///

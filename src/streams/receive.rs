@@ -21,7 +21,7 @@ use super::{rr_interval, RtpPacket};
 ///
 /// A stream is a primary SSRC + optional RTX SSRC.
 ///
-/// This is RTP level API. For frame level API see [`Rtc::writer`][crate::Rtc::writer].
+/// This is RTP level API. For frame level API see `tx.writer()` via the transaction API.
 #[derive(Debug)]
 pub struct StreamRx {
     /// Unique idenfier of the remote stream.

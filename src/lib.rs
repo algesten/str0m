@@ -894,10 +894,10 @@ pub enum Event {
     /// The negotiation is to set up an SCTP association via DTLS. Subsequent data
     /// channels reuse the same association.
     ///
-    /// Upon this event, the [`Channel`] can be obtained via [`Rtc::channel()`].
+    /// Upon this event, a [`Channel`][channel::Channel] can be obtained via `tx.channel()`.
     ///
-    /// For [`SdpApi`]: The first ever data channel results in an SDP
-    /// negotiation, and this events comes at the end of that.
+    /// For SDP API: The first ever data channel results in an SDP
+    /// negotiation, and this event comes at the end of that.
     ChannelOpen(ChannelId, String),
 
     /// Incoming data channel data from the remote peer.
@@ -1536,16 +1536,15 @@ impl Rtc {
         self.last_timeout_reason
     }
 
-    /// Check if this `Rtc` instance accepts the given input. This is used for demultiplexing
+    /// Check if this `Rtc` instance accepts the given receive data. This is used for demultiplexing
     /// several `Rtc` instances over the same UDP server socket.
     ///
-    /// [`Input::Timeout`] is always accepted. [`Input::Receive`] is tested against the nominated
-    /// ICE candidate. If that doesn't match and the incoming data is a STUN packet, the accept call
-    /// is delegated to the ICE agent which recognizes the remote peer from `a=ufrag`/`a=password`
-    /// credentials negotiated in the SDP. If that also doesn't match, all remote ICE candidates are
-    /// checked for a match.
+    /// The receive is tested against the nominated ICE candidate. If that doesn't match and the
+    /// incoming data is a STUN packet, the accept call is delegated to the ICE agent which
+    /// recognizes the remote peer from `a=ufrag`/`a=password` credentials negotiated in the SDP.
+    /// If that also doesn't match, all remote ICE candidates are checked for a match.
     ///
-    /// In a server setup, the server would try to find an `Rtc` instance using [`Rtc::accepts()`].
+    /// In a server setup, the server would try to find an `Rtc` instance using `Rtc::accepts()`.
     /// The first found instance would then process the input using the transaction API.
     ///
     /// ```no_run

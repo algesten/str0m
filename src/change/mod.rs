@@ -3,9 +3,9 @@
 //! str0m has two main APIs for changing the WebRTC session.
 //!
 //! 1. SDP API. The common way to talk to browsers using SDP OFFER/ANSWER negotiations.
-//!    [`Rtc::sdp_api()`][crate::Rtc::sdp_api]
+//!    Access via `tx.sdp_api()` on a transaction.
 //! 2. Direct API. Makes changes directly to the session without any negotiation.
-//!    [`Rtc::direct_api()`][crate::Rtc::direct_api]
+//!    Access via `tx.direct_api()` on a transaction.
 //!
 //! ## Direct API
 //!
