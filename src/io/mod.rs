@@ -423,8 +423,8 @@ impl fmt::Display for Protocol {
 }
 
 mod relative_1970 {
-    use serde::{de::Error, Deserialize, Deserializer, Serialize, Serializer};
-    use std::time::{Duration, Instant, SystemTime};
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::time::{Duration, Instant};
 
     use crate::util::InstantExt;
 

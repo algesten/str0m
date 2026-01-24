@@ -445,7 +445,7 @@ fn run_rtc_loop_with_exchange(
                 source,
                 destination,
                 contents: contents.as_slice().try_into()?,
-                timestamp: Some(now),
+                recv_time: Some(now),
             };
             span.in_scope(|| tx.receive(now, receive))?
         } else {

@@ -113,7 +113,7 @@ fn run(mut rtc: Rtc, socket: UdpSocket) -> Result<(), RtcError> {
                     source,
                     destination: socket.local_addr().unwrap(),
                     contents: buf.as_slice().try_into()?,
-                    timestamp: Some(Instant::now()),
+                    recv_time: Some(Instant::now()),
                 })
             }
             Err(e) => match e.kind() {

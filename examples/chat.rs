@@ -230,7 +230,7 @@ fn read_socket_input<'a>(
                     source,
                     destination: socket.local_addr().unwrap(),
                     contents,
-                    timestamp: Some(recv_time),
+                    recv_time: Some(recv_time),
                 },
             ))
         }

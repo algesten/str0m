@@ -272,7 +272,7 @@ fn poll_and_replay_tx<'a>(
                         source: pkt.source,
                         destination: pkt.destination,
                         contents: (&*data).try_into().unwrap(),
-                        timestamp: Some(last),
+                        recv_time: Some(last),
                     };
                     let recv_tx = r.rtc.begin(last);
                     let mut recv_tx = r.span.in_scope(|| recv_tx.receive(last, recv))?;

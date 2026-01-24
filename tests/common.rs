@@ -301,7 +301,7 @@ fn netem_to_rtc(
         source: packet.source,
         destination: packet.destination,
         contents: (&packet.contents[..]).try_into()?,
-        timestamp: Some(time),
+        recv_time: Some(time),
     };
 
     // Collect outputs in temporary storage to avoid borrow issues

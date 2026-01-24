@@ -116,7 +116,7 @@
 //! All mutations go through [`Rtc::begin()`], which returns a transaction that must be
 //! polled to timeout. Each loop iteration should have exactly ONE transaction.
 //!
-//! ```ignore
+//! ```no_run
 //! # use str0m::{Rtc, Output, IceConnectionState, Event};
 //! # use str0m::net::{Receive, Protocol};
 //! # use std::io::ErrorKind;
@@ -133,7 +133,12 @@
 //! loop {
 //!     // Wait for timeout or network input
 //!     let duration = timeout.saturating_duration_since(Instant::now());
-//!     socket.set_read_timeout(Some(duration.max(Duration::from_micros(1)))).unwrap();
+//!
+//!     // set_read_timeout can't handle Some(ZERO).
+//!     let duration = if duration.is_zero() { None } else { Some(duration) };
+//!     socket.set_read_timeout(duration).unwrap();
+//!
+//!     // Ensure enough buffer for a full MTU.
 //!     buf.resize(2000, 0);
 //!
 //!     // Try to receive network data (non-blocking due to timeout)
@@ -753,7 +758,9 @@ use stats::{PeerStats, Stats, StatsEvent, StatsSnapshot};
 
 mod streams;
 
-mod transaction;
+// Transaction-based API types
+mod tx;
+pub use tx::{BweTx, ChannelTx, IceTx, MediaWriterTx, Mutate, Output, Poll, RtcTx};
 
 pub mod error;
 
@@ -766,9 +773,6 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use error::RtcError;
 
-// Transaction-based API types
-pub use transaction::{BweTx, ChannelTx, IceTx, MediaWriterTx, Mutate, Output, Poll, RtcTx};
-
 /// Instance that does WebRTC. Main struct of the entire library.
 ///
 /// ## Usage
@@ -780,7 +784,7 @@ pub use transaction::{BweTx, ChannelTx, IceTx, MediaWriterTx, Mutate, Output, Po
 /// Each loop iteration should have exactly ONE transaction. Wait for input
 /// first, then begin a transaction that either receives or advances time.
 ///
-/// ```ignore
+/// ```no_run
 /// # use str0m::{Rtc, Output};
 /// # use str0m::net::{Receive, Protocol};
 /// # use std::time::Instant;
@@ -1425,7 +1429,7 @@ impl Rtc {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```no_run
     /// let mut rtc = Rtc::new();
     ///
     /// // All mutations start with begin(now)
@@ -1694,7 +1698,7 @@ impl Rtc {
     /// This is updated when [`RtcTx::poll()`][crate::RtcTx::poll()] returns
     /// [`Output::Timeout`].
     ///
-    /// ```ignore
+    /// ```no_run
     /// # use str0m::{Rtc, Output, Reason};
     /// # use std::time::Instant;
     /// let mut rtc = Rtc::new();
@@ -1730,7 +1734,7 @@ impl Rtc {
     /// In a server setup, the server would try to find an `Rtc` instance using [`Rtc::accepts()`].
     /// The first found instance would then process the input using the transaction API.
     ///
-    /// ```ignore
+    /// ```no_run
     /// # use str0m::{Rtc, Input, Output};
     /// # use std::time::Instant;
     /// // A vec holding the managed rtc instances. One instance per remote peer.
