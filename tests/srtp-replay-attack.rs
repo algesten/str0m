@@ -220,27 +220,44 @@ pub fn progress_with_replay(
 
     // Collect transmits to replay them after the transaction
     let mut transmits_to_replay = Vec::new();
+    let mut events = Vec::new();
 
     // Use transaction API
-    let tx = f.rtc.begin(f.last);
-    let mut tx = tx.finish();
+    let time = f.last;
+    let timeout;
+    {
+        let tx = f.rtc.begin(time);
+        let mut tx = tx.finish();
 
-    loop {
-        match f.span.in_scope(|| tx.poll()) {
-            Output::Timeout(v) => {
-                let tick = f.last + Duration::from_millis(10);
-                f.last = if v == f.last { tick } else { tick.min(v) };
-                break;
+        timeout = loop {
+            match f.span.in_scope(|| tx.poll()) {
+                Output::Timeout(v) => break v,
+                Output::Transmit(t_handle, v) => {
+                    tx = t_handle;
+                    transmits_to_replay.push((
+                        v.proto,
+                        v.source,
+                        v.destination,
+                        v.contents.to_vec(),
+                    ));
+                }
+                Output::Event(t_handle, v) => {
+                    tx = t_handle;
+                    events.push(v);
+                }
             }
-            Output::Transmit(t_handle, v) => {
-                tx = t_handle;
-                transmits_to_replay.push((v.proto, v.source, v.destination, v.contents.to_vec()));
-            }
-            Output::Event(t_handle, v) => {
-                tx = t_handle;
-                f.events.push((f.last, v));
-            }
-        }
+        };
+    }
+
+    // Update f.last after transaction
+    let tick = time + Duration::from_millis(10);
+    f.last = if timeout == time {
+        tick
+    } else {
+        tick.min(timeout)
+    };
+    for v in events {
+        f.events.push((f.last, v));
     }
 
     // Now replay the transmits to t
@@ -253,19 +270,34 @@ pub fn progress_with_replay(
                 contents: (&*data).try_into().unwrap(),
                 timestamp: Some(f.last),
             };
-            let recv_tx = t.rtc.begin(f.last);
-            let recv_tx = t.span.in_scope(|| recv_tx.receive(f.last, recv))?;
-            // Poll this receive to timeout
-            let mut recv_tx = recv_tx;
-            loop {
-                match t.span.in_scope(|| recv_tx.poll()) {
-                    Output::Timeout(_) => break,
-                    Output::Transmit(t_handle, _) => recv_tx = t_handle,
-                    Output::Event(t_handle, v) => {
-                        recv_tx = t_handle;
-                        t.events.push((t.last, v));
+
+            let mut recv_events = Vec::new();
+            let recv_timeout;
+            {
+                let recv_tx = t.rtc.begin(f.last);
+                let mut recv_tx = t.span.in_scope(|| recv_tx.receive(f.last, recv))?;
+                // Poll this receive to timeout
+                recv_timeout = loop {
+                    match t.span.in_scope(|| recv_tx.poll()) {
+                        Output::Timeout(v) => break v,
+                        Output::Transmit(t_handle, _) => recv_tx = t_handle,
+                        Output::Event(t_handle, v) => {
+                            recv_tx = t_handle;
+                            recv_events.push(v);
+                        }
                     }
-                }
+                };
+            }
+
+            // Update t.last after each receive transaction
+            let recv_tick = f.last + Duration::from_millis(10);
+            t.last = if recv_timeout == f.last {
+                recv_tick
+            } else {
+                recv_tick.min(recv_timeout)
+            };
+            for v in recv_events {
+                t.events.push((t.last, v));
             }
         }
     }
