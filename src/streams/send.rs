@@ -254,7 +254,7 @@ impl StreamTx {
     ///              and this flag should be set accordingly.
     /// * `payload` RTP packet payload, without header.
     #[allow(clippy::too_many_arguments)]
-    pub fn write_rtp(
+    pub(crate) fn write_rtp(
         &mut self,
         pt: Pt,
         seq_no: SeqNo,

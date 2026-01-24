@@ -3,7 +3,7 @@ use std::time::Duration;
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaData, MediaKind};
 use str0m::Rtc;
-use str0m::{Candidate, Event, RtcError};
+use str0m::{Event, RtcError};
 use tracing::info_span;
 
 mod common;
@@ -149,22 +149,16 @@ impl Server {
 
         let mut r = TestRtc::new_with_rtc(info_span!("R"), rtc_r);
 
-        l.add_local_candidate(Candidate::host(
-            (Ipv4Addr::new(1, 1, 1, 1), 1000).into(),
-            "udp",
-        )?);
-        r.add_local_candidate(Candidate::host(
-            (Ipv4Addr::new(2, 2, 2, 2), 2000).into(),
-            "udp",
-        )?);
+        l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
+        r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
         // The change is on the L (sending side) with Direction::SendRecv.
-        let mut change = l.sdp_api();
-        let mid = change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-        let (offer, pending) = change.apply().unwrap();
+        let (offer, pending, mid) = l.sdp_create_offer(|change| {
+            change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None)
+        });
 
-        let answer = r.rtc.sdp_api().accept_offer(offer)?;
-        l.rtc.sdp_api().accept_answer(pending, answer)?;
+        let answer = r.sdp_accept_offer(offer)?;
+        l.sdp_accept_answer(pending, answer)?;
 
         loop {
             if l.is_connected() || r.is_connected() {
@@ -185,6 +179,7 @@ impl Server {
         assert_eq!(params.spec().codec, self.codec);
 
         let pt = params.pt();
+        let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
 
         for (relative, header, payload) in self.input_data {
             // Drop a random packet in the middle.
@@ -199,9 +194,8 @@ impl Server {
 
             let absolute = max + relative;
 
-            let mut direct = l.direct_api();
-            let tx = direct.stream_tx_by_mid(mid, None).unwrap();
-            tx.write_rtp(
+            l.write_rtp(
+                ssrc,
                 pt,
                 header.sequence_number(None),
                 header.timestamp,

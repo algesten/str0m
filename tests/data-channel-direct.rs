@@ -20,39 +20,49 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
 
     let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp")?;
     let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp")?;
-    l.add_local_candidate(host1.clone()).unwrap();
-    l.add_remote_candidate(host2.clone());
-    r.add_local_candidate(host2).unwrap();
-    r.add_remote_candidate(host1);
 
-    let finger_l = l.direct_api().local_dtls_fingerprint().clone();
-    let finger_r = r.direct_api().local_dtls_fingerprint().clone();
+    // Add candidates via Ice API
+    l.with_ice(|ice| {
+        ice.add_local_candidate(host1.clone()).unwrap();
+        ice.add_remote_candidate(host2.clone());
+    });
+    r.with_ice(|ice| {
+        ice.add_local_candidate(host2).unwrap();
+        ice.add_remote_candidate(host1);
+    });
 
-    l.direct_api().set_remote_fingerprint(finger_r);
-    r.direct_api().set_remote_fingerprint(finger_l);
+    // Exchange DTLS fingerprints
+    let finger_l = l.with_direct_api(|api| api.local_dtls_fingerprint().clone());
+    let finger_r = r.with_direct_api(|api| api.local_dtls_fingerprint().clone());
 
-    let creds_l = l.direct_api().local_ice_credentials();
-    let creds_r = r.direct_api().local_ice_credentials();
+    l.with_direct_api(|api| api.set_remote_fingerprint(finger_r));
+    r.with_direct_api(|api| api.set_remote_fingerprint(finger_l));
 
-    l.direct_api().set_remote_ice_credentials(creds_r);
-    r.direct_api().set_remote_ice_credentials(creds_l);
+    // Exchange ICE credentials
+    let creds_l = l.with_direct_api(|api| api.local_ice_credentials());
+    let creds_r = r.with_direct_api(|api| api.local_ice_credentials());
 
-    l.direct_api().set_ice_controlling(true);
-    r.direct_api().set_ice_controlling(false);
+    l.with_direct_api(|api| api.set_remote_ice_credentials(creds_r));
+    r.with_direct_api(|api| api.set_remote_ice_credentials(creds_l));
 
-    l.direct_api().start_dtls(true).unwrap();
-    r.direct_api().start_dtls(false).unwrap();
+    // Set controlling/controlled roles
+    l.with_direct_api(|api| api.set_ice_controlling(true));
+    r.with_direct_api(|api| api.set_ice_controlling(false));
 
-    l.direct_api().start_sctp(true);
-    r.direct_api().start_sctp(false);
+    // Start DTLS and SCTP
+    l.with_direct_api(|api| api.start_dtls(true).unwrap());
+    r.with_direct_api(|api| api.start_dtls(false).unwrap());
+
+    l.with_direct_api(|api| api.start_sctp(true));
+    r.with_direct_api(|api| api.start_sctp(false));
 
     let config = ChannelConfig {
         negotiated: Some(1),
         label: "my-chan".into(),
         ..Default::default()
     };
-    let cid = l.direct_api().create_data_channel(config.clone());
-    r.direct_api().create_data_channel(config);
+    let cid = l.with_direct_api(|api| api.create_data_channel(config.clone()));
+    r.with_direct_api(|api| api.create_data_channel(config));
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -66,9 +76,8 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
     r.last = max;
 
     loop {
-        if let Some(mut chan) = l.channel(cid) {
-            chan.write(false, "Hello world! ".as_bytes())
-                .expect("to write string");
+        if l.try_write_channel(cid, false, "Hello world! ".as_bytes()).is_some() {
+            // Successfully wrote to channel
         }
 
         progress(&mut l, &mut r)?;
@@ -78,7 +87,7 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
         }
     }
 
-    l.direct_api().close_data_channel(cid);
+    l.close_channel(cid);
 
     loop {
         progress(&mut l, &mut r)?;

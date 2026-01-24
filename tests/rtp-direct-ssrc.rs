@@ -22,20 +22,20 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
     // using SSRC 1 as knowledge shared between sending and receiving side.
     let ssrc: Ssrc = 1.into();
 
-    l.direct_api().declare_media(mid, MediaKind::Audio);
+    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
 
-    l.direct_api().declare_stream_tx(ssrc, None, mid, None);
+    l.with_direct_api(|api| { api.declare_stream_tx(ssrc, None, mid, None); });
 
-    r.direct_api().declare_media(mid, MediaKind::Audio);
+    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
 
-    r.direct_api().expect_stream_rx(ssrc, None, mid, None);
+    r.with_direct_api(|api| { api.expect_stream_rx(ssrc, None, mid, None); });
 
     let max = l.last.max(r.last);
     l.last = max;
     r.last = max;
 
     let params = l.params_opus();
-    let ssrc = l.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
+    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
 
@@ -60,9 +60,6 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
             if let Some(packet) = to_write.pop_front() {
                 let wallclock = l.start + l.duration();
 
-                let mut direct = l.direct_api();
-                let stream = direct.stream_tx(&ssrc).unwrap();
-
                 let count = counts.remove(0);
                 let time = (count * 1000 + 47_000_000) as u32;
                 let seq_no = (47_000 + count).into();
@@ -73,18 +70,18 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
                     ..Default::default()
                 };
 
-                stream
-                    .write_rtp(
-                        pt,
-                        seq_no,
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        false,
-                        packet.to_vec(),
-                    )
-                    .expect("clean write");
+                l.write_rtp(
+                    ssrc,
+                    pt,
+                    seq_no,
+                    time,
+                    wallclock,
+                    false,
+                    exts,
+                    false,
+                    packet.to_vec(),
+                )
+                .expect("clean write");
             }
         }
 
@@ -130,16 +127,16 @@ pub fn rtp_direct_ssrc() -> Result<(), RtcError> {
     assert!(!h2.marker);
 
     assert!(l.media(mid).is_some());
-    assert!(l.direct_api().stream_tx_by_mid(mid, None).is_some());
-    l.direct_api().remove_media(mid);
+    assert!(l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).is_some()));
+    l.with_direct_api(|api| { api.remove_media(mid); });
     assert!(l.media(mid).is_none());
-    assert!(l.direct_api().stream_tx_by_mid(mid, None).is_none());
+    assert!(l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).is_none()));
 
     assert!(r.media(mid).is_some());
-    assert!(r.direct_api().stream_rx_by_mid(mid, None).is_some());
-    r.direct_api().remove_media(mid);
+    assert!(r.with_direct_api(|api| api.stream_rx_by_mid(mid, None).is_some()));
+    r.with_direct_api(|api| { api.remove_media(mid); });
     assert!(r.media(mid).is_none());
-    assert!(r.direct_api().stream_rx_by_mid(mid, None).is_none());
+    assert!(r.with_direct_api(|api| api.stream_rx_by_mid(mid, None).is_none()));
 
     Ok(())
 }

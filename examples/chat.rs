@@ -19,9 +19,20 @@ use str0m::crypto::from_feature_flags;
 use str0m::media::{Direction, KeyframeRequest, MediaData, Mid, Rid};
 use str0m::media::{KeyframeRequestKind, MediaKind};
 use str0m::net::Protocol;
-use str0m::{net::Receive, Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcError};
+use str0m::{net::Receive, Candidate, Event, IceConnectionState, Output, Poll as TxPoll, Rtc, RtcError, RtcTx};
 
 mod util;
+
+/// Poll transaction until timeout, discarding events and transmits.
+fn poll_tx(mut tx: RtcTx<'_, TxPoll>) -> Result<(), RtcError> {
+    loop {
+        match tx.poll()? {
+            Output::Timeout(_) => return Ok(()),
+            Output::Transmit(t, _) => tx = t,
+            Output::Event(t, _) => tx = t,
+        }
+    }
+}
 
 fn init_log() {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -90,13 +101,21 @@ fn web_request(request: &Request, addr: SocketAddr, tx: SyncSender<Rtc>) -> Resp
 
     // Add the shared UDP socket as a host candidate
     let candidate = Candidate::host(addr, "udp").expect("a host candidate");
-    rtc.add_local_candidate(candidate).unwrap();
+    let now = Instant::now();
+
+    {
+        let mut ice = rtc.begin(now).expect("begin").ice();
+        ice.add_local_candidate(candidate).unwrap();
+        poll_tx(ice.finish()).unwrap();
+    }
 
     // Create an SDP Answer.
-    let answer = rtc
-        .sdp_api()
-        .accept_offer(offer)
-        .expect("offer to be accepted");
+    let answer = {
+        let tx = rtc.begin(now).expect("begin");
+        let (answer, tx) = tx.sdp_api().accept_offer(offer).expect("offer to be accepted");
+        poll_tx(tx).unwrap();
+        answer
+    };
 
     // The Rtc instance is shipped off to the main run loop.
     tx.send(rtc).expect("to send Rtc instance");
@@ -151,17 +170,13 @@ fn run(socket: UdpSocket, rx: Receiver<Rtc>) -> Result<(), RtcError> {
         if let Some((recv_time, recv)) = read_socket_input(&socket, &mut buf) {
             // The rtc.accepts() call is how we demultiplex the incoming packet to know which
             // Rtc instance the traffic belongs to.
-            let input = Input::Receive(recv_time, recv);
-            if let Some(client) = clients.iter_mut().find(|c| c.accepts(&input)) {
+            if let Some(client) = clients.iter_mut().find(|c| c.accepts(&recv)) {
                 // We found the client that accepts the input.
-                let Input::Receive(recv_time, recv) = input else {
-                    unreachable!()
-                };
                 client.poll_to_timeout(Some((recv_time, recv)), &mut to_propagate, &socket);
             } else {
                 // This is quite common because we don't get the Rtc instance via the mpsc channel
                 // quickly enough before the browser send the first STUN.
-                debug!("No client accepts UDP input: {:?}", input);
+                debug!("No client accepts UDP input from: {:?}", recv.source);
             }
         }
     }
@@ -315,8 +330,8 @@ impl Client {
         }
     }
 
-    fn accepts(&self, input: &Input) -> bool {
-        self.rtc.accepts(input)
+    fn accepts(&self, recv: &Receive<'_>) -> bool {
+        self.rtc.accepts(recv)
     }
 
     /// Poll the client to timeout, optionally processing received data first.
@@ -343,11 +358,17 @@ impl Client {
 
         // Begin transaction, process receive if any, poll to timeout
         {
-            let tx = self.rtc.begin(now);
+            let tx = match self.rtc.begin(now) {
+                Ok(tx) => tx,
+                Err(e) => {
+                    warn!("Client ({}) begin failed: {:?}", *self.id, e);
+                    return Instant::now();
+                }
+            };
 
             // Either process received data or just advance time
             let tx = match receive {
-                Some((recv_time, data)) => match tx.receive(recv_time, data) {
+                Some((_recv_time, data)) => match tx.receive(data) {
                     Ok(tx) => tx,
                     Err(e) => {
                         warn!("Client ({}) receive failed: {:?}", *self.id, e);
@@ -363,16 +384,20 @@ impl Client {
             let mut tx = tx;
             timeout = loop {
                 match tx.poll() {
-                    Output::Timeout(t) => break t,
-                    Output::Transmit(t, pkt) => {
+                    Ok(Output::Timeout(t)) => break t,
+                    Ok(Output::Transmit(t, pkt)) => {
                         tx = t;
                         socket
                             .send_to(&pkt.contents, pkt.destination)
                             .expect("sending UDP data");
                     }
-                    Output::Event(t, evt) => {
+                    Ok(Output::Event(t, evt)) => {
                         tx = t;
                         events.push(evt);
+                    }
+                    Err(e) => {
+                        warn!("Client ({}) poll failed: {:?}", *self.id, e);
+                        break Instant::now();
                     }
                 }
             };
@@ -457,10 +482,6 @@ impl Client {
         rid: Option<Rid>,
         kind: KeyframeRequestKind,
     ) {
-        let Some(mut writer) = self.rtc.writer(mid) else {
-            return;
-        };
-
         let Some(track_entry) = self.tracks_in.iter_mut().find(|t| t.id.mid == mid) else {
             return;
         };
@@ -473,9 +494,19 @@ impl Client {
             return;
         }
 
-        _ = writer.request_keyframe(rid, kind);
+        let now = Instant::now();
+        let tx = match self.rtc.begin(now) {
+            Ok(tx) => tx,
+            Err(_) => return,
+        };
+        let Ok(mut writer) = tx.writer(mid) else {
+            return;
+        };
 
-        track_entry.last_keyframe_request = Some(Instant::now());
+        _ = writer.request_keyframe(rid, kind);
+        poll_tx(writer.finish()).unwrap();
+
+        track_entry.last_keyframe_request = Some(now);
     }
 
     fn handle_incoming_keyframe_req(&self, mut req: KeyframeRequest) -> Propagated {
@@ -500,7 +531,12 @@ impl Client {
             return false;
         }
 
-        let mut change = self.rtc.sdp_api();
+        let now = Instant::now();
+        let tx = match self.rtc.begin(now) {
+            Ok(tx) => tx,
+            Err(_) => return false,
+        };
+        let mut change = tx.sdp_api();
 
         for track in &mut self.tracks_out {
             if let TrackOutState::ToOpen = track.state {
@@ -519,14 +555,24 @@ impl Client {
         }
 
         if !change.has_changes() {
+            // Need to poll even when no changes to complete the transaction
+            poll_tx(change.finish()).unwrap();
             return false;
         }
 
-        let Some((offer, pending)) = change.apply() else {
+        let Some((offer, pending, tx)) = change.apply() else {
             return false;
         };
 
-        let Some(mut channel) = self.cid.and_then(|id| self.rtc.channel(id)) else {
+        // Write offer to channel via DirectApi (outside transaction)
+        poll_tx(tx).unwrap();
+
+        // Use a new transaction for channel write
+        let tx = match self.rtc.begin(now) {
+            Ok(tx) => tx,
+            Err(_) => return false,
+        };
+        let Ok(mut channel) = tx.channel(self.cid.unwrap()) else {
             return false;
         };
 
@@ -534,6 +580,8 @@ impl Client {
         channel
             .write(false, json.as_bytes())
             .expect("to write answer");
+
+        poll_tx(channel.finish());
 
         self.pending = Some(pending);
 
@@ -551,11 +599,13 @@ impl Client {
     }
 
     fn handle_offer(&mut self, offer: SdpOffer) {
-        let answer = self
-            .rtc
+        let now = Instant::now();
+        let tx = self.rtc.begin(now).expect("begin");
+        let (answer, tx) = tx
             .sdp_api()
             .accept_offer(offer)
             .expect("offer to be accepted");
+        poll_tx(tx).unwrap();
 
         // Keep local track state in sync, cancelling any pending negotiation
         // so we can redo it after this offer is handled.
@@ -565,23 +615,27 @@ impl Client {
             }
         }
 
-        let mut channel = self
-            .cid
-            .and_then(|id| self.rtc.channel(id))
-            .expect("channel to be open");
+        let tx = self.rtc.begin(now).expect("begin");
+        let Ok(mut channel) = tx.channel(self.cid.expect("channel to exist")) else {
+            return;
+        };
 
         let json = serde_json::to_string(&answer).unwrap();
         channel
             .write(false, json.as_bytes())
             .expect("to write answer");
+        poll_tx(channel.finish());
     }
 
     fn handle_answer(&mut self, answer: SdpAnswer) {
         if let Some(pending) = self.pending.take() {
-            self.rtc
+            let now = Instant::now();
+            let tx = self.rtc.begin(now).expect("begin");
+            let tx = tx
                 .sdp_api()
                 .accept_answer(pending, answer)
                 .expect("answer to be accepted");
+            poll_tx(tx).unwrap();
 
             for track in &mut self.tracks_out {
                 if let TrackOutState::Negotiating(m) = track.state {
@@ -627,19 +681,32 @@ impl Client {
             self.chosen_rid = data.rid;
         }
 
-        let Some(writer) = self.rtc.writer(mid) else {
+        let now = Instant::now();
+        let tx = match self.rtc.begin(now) {
+            Ok(tx) => tx,
+            Err(e) => {
+                warn!("Client ({}) begin failed: {:?}", *self.id, e);
+                return;
+            }
+        };
+        let Ok(writer) = tx.writer(mid) else {
             return;
         };
 
         // Match outgoing pt to incoming codec.
         let Some(pt) = writer.match_params(data.params) else {
+            poll_tx(writer.finish()).unwrap();
             return;
         };
 
-        if let Err(e) = writer.write(pt, data.network_time, data.time, data.data.clone()) {
-            warn!("Client ({}) failed: {:?}", *self.id, e);
-            self.rtc.disconnect();
-        }
+        let tx = match writer.write(pt, data.network_time, data.time, data.data.clone()) {
+            Ok(tx) => tx,
+            Err(e) => {
+                warn!("Client ({}) failed: {:?}", *self.id, e);
+                return;
+            }
+        };
+        poll_tx(tx).unwrap();
     }
 
     fn handle_keyframe_request(&mut self, req: KeyframeRequest, mid_in: Mid) {
@@ -650,7 +717,15 @@ impl Client {
             return;
         }
 
-        let Some(mut writer) = self.rtc.writer(mid_in) else {
+        let now = Instant::now();
+        let tx = match self.rtc.begin(now) {
+            Ok(tx) => tx,
+            Err(e) => {
+                warn!("Client ({}) begin failed: {:?}", *self.id, e);
+                return;
+            }
+        };
+        let Ok(mut writer) = tx.writer(mid_in) else {
             return;
         };
 
@@ -658,6 +733,7 @@ impl Client {
             // This can fail if the rid doesn't match any media.
             info!("request_keyframe failed: {:?}", e);
         }
+        poll_tx(writer.finish()).unwrap();
     }
 }
 

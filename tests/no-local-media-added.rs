@@ -19,10 +19,10 @@ pub fn direct_declare_media_no_media_added_event() -> Result<(), RtcError> {
     // In this example we are using MID only (no RID) to identify the incoming media.
     let ssrc_tx: Ssrc = 42.into();
 
-    l.direct_api().declare_media(mid, MediaKind::Audio);
-    l.direct_api().declare_stream_tx(ssrc_tx, None, mid, None);
+    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, None, mid, None); });
 
-    r.direct_api().declare_media(mid, MediaKind::Audio);
+    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -62,12 +62,12 @@ pub fn sdp_no_media_added_event() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    let mut change = l.sdp_api();
-    let _ = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
-    let (offer, pending) = change.apply().unwrap();
+    let (offer, pending, _) = l.sdp_create_offer(|change| {
+        change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None)
+    });
 
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    let answer = r.sdp_accept_offer(offer)?;
+    l.sdp_accept_answer(pending, answer)?;
 
     loop {
         if l.is_connected() || r.is_connected() {

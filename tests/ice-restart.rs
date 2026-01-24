@@ -6,7 +6,7 @@ use str0m::RtcError;
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{init_crypto_default, init_log, poll_to_completion, progress, Peer, TestRtc};
 
 #[test]
 pub fn ice_restart() -> Result<(), RtcError> {
@@ -22,18 +22,28 @@ pub fn ice_restart() -> Result<(), RtcError> {
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     let (offer, pending) = l.span.in_scope(|| {
-        let mut change = l.rtc.sdp_api();
+        let tx = l.rtc.begin(l.last).unwrap();
+        let mut change = tx.sdp_api();
         let _ = change.add_channel("My little channel".into());
-
-        change.apply().unwrap()
+        let (offer, pending, tx) = change.apply().unwrap();
+        poll_to_completion(tx).unwrap();
+        (offer, pending)
     });
     println!("L Initial Offer: {}", offer);
 
-    let answer = r.span.in_scope(|| r.rtc.sdp_api().accept_offer(offer))?;
+    let answer = r.span.in_scope(|| {
+        let tx = r.rtc.begin(r.last).unwrap();
+        let (answer, tx) = tx.sdp_api().accept_offer(offer).unwrap();
+        poll_to_completion(tx).unwrap();
+        answer
+    });
     println!("R Initial answer: {}", answer);
 
-    l.span
-        .in_scope(|| l.rtc.sdp_api().accept_answer(pending, answer))?;
+    l.span.in_scope(|| {
+        let tx = l.rtc.begin(l.last).unwrap();
+        let tx = tx.sdp_api().accept_answer(pending, answer).unwrap();
+        poll_to_completion(tx).unwrap();
+    });
 
     loop {
         if l.is_connected() && r.is_connected() {
@@ -46,17 +56,28 @@ pub fn ice_restart() -> Result<(), RtcError> {
     let r_creds = r._local_ice_creds();
 
     let (offer, pending) = r.span.in_scope(|| {
-        let mut change = r.rtc.sdp_api();
+        let tx = r.rtc.begin(r.last).unwrap();
+        let mut change = tx.sdp_api();
         change.ice_restart(true);
-
-        change.apply().expect("Should be able to apply changes")
+        let (offer, pending, tx) = change.apply().expect("Should be able to apply changes");
+        poll_to_completion(tx).unwrap();
+        (offer, pending)
     });
     println!("R Offer: {}", offer);
 
-    let answer = l.span.in_scope(|| l.rtc.sdp_api().accept_offer(offer))?;
+    let answer = l.span.in_scope(|| {
+        let tx = l.rtc.begin(l.last).unwrap();
+        let (answer, tx) = tx.sdp_api().accept_offer(offer).unwrap();
+        poll_to_completion(tx).unwrap();
+        answer
+    });
     println!("L Answer: {}", answer);
-    r.span
-        .in_scope(|| r.rtc.sdp_api().accept_answer(pending, answer))?;
+
+    r.span.in_scope(|| {
+        let tx = r.rtc.begin(r.last).unwrap();
+        let tx = tx.sdp_api().accept_answer(pending, answer).unwrap();
+        poll_to_completion(tx).unwrap();
+    });
 
     assert!(!l.rtc.is_connected());
     assert!(!r.rtc.is_connected());

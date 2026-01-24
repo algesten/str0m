@@ -15,13 +15,27 @@ pub use preference::default_local_preference;
 mod error;
 pub use error::IceError;
 
-use crate::{tx::RtcTx, Mutate, Poll};
+use crate::tx::{RtcTx, RtcTxInner};
+use crate::{Mutate, Poll};
 
+/// ICE (Interactive Connectivity Establishment) API for managing candidates.
+///
+/// This is obtained from [`RtcTx::ice()`] and provides methods for adding
+/// local and remote ICE candidates for connectivity establishment.
+///
+/// Call [`Ice::finish()`] when done to transition back to polling state.
 pub struct Ice<'a> {
-    tx: RtcTx<'a, Mutate>,
+    inner: RtcTxInner<'a>,
 }
 
 impl<'a> Ice<'a> {
+    /// Create a new Ice wrapper from a transaction.
+    pub(crate) fn new(tx: RtcTx<'a, Mutate>) -> Self {
+        Ice {
+            inner: tx.into_inner(),
+        }
+    }
+
     /// Add a local ICE candidate. Local candidates are socket addresses the `Rtc` instance
     /// use for communicating with the peer.
     ///
@@ -49,7 +63,7 @@ impl<'a> Ice<'a> {
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
     pub fn add_local_candidate(&mut self, c: Candidate) -> Option<&Candidate> {
-        todo!()
+        self.inner.rtc.ice.add_local_candidate(c)
     }
 
     /// Add a remote ICE candidate. Remote candidates are addresses of the peer.
@@ -74,12 +88,12 @@ impl<'a> Ice<'a> {
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
     pub fn add_remote_candidate(&mut self, c: Candidate) {
-        todo!()
+        self.inner.rtc.ice.add_remote_candidate(c)
     }
 
-    /// TODO
-    pub fn finish(mut self) -> RtcTx<'a, Poll> {
-        todo!()
+    /// Finish ICE operations and transition to polling state.
+    pub fn finish(self) -> RtcTx<'a, Poll> {
+        RtcTx::from_inner(self.inner)
     }
 }
 

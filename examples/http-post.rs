@@ -14,9 +14,20 @@ use str0m::change::SdpOffer;
 use str0m::crypto::from_feature_flags;
 use str0m::net::Protocol;
 use str0m::net::Receive;
-use str0m::{Candidate, Event, IceConnectionState, Output, Rtc, RtcConfig, RtcError};
+use str0m::{Candidate, Event, IceConnectionState, Output, Poll, Rtc, RtcConfig, RtcError, RtcTx};
 
 mod util;
+
+/// Poll transaction until timeout, discarding events and transmits.
+fn poll_until_timeout(mut tx: RtcTx<'_, Poll>) -> Result<(), RtcError> {
+    loop {
+        match tx.poll()? {
+            Output::Timeout(_) => return Ok(()),
+            Output::Transmit(t, _) => tx = t,
+            Output::Event(t, _) => tx = t,
+        }
+    }
+}
 
 fn init_log() {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -71,13 +82,27 @@ fn web_request(request: &Request) -> Response {
     let socket = UdpSocket::bind(format!("{addr}:0")).expect("binding a random UDP port");
     let addr = socket.local_addr().expect("a local socket address");
     let candidate = Candidate::host(addr, "udp").expect("a host candidate");
-    rtc.add_local_candidate(candidate).unwrap();
+
+    let now = Instant::now();
+
+    // Add local candidate via Ice API
+    {
+        let mut ice = rtc.begin(now).expect("begin").ice();
+        ice.add_local_candidate(candidate).unwrap();
+        poll_until_timeout(ice.finish()).unwrap();
+    }
 
     // Create an SDP Answer.
-    let answer = rtc
-        .sdp_api()
-        .accept_offer(offer)
-        .expect("offer to be accepted");
+    let answer = {
+        let (answer, tx) = rtc
+            .begin(now)
+            .expect("begin")
+            .sdp_api()
+            .accept_offer(offer)
+            .expect("offer to be accepted");
+        poll_until_timeout(tx).unwrap();
+        answer
+    };
 
     // Launch WebRTC in separate thread.
     thread::spawn(|| {
@@ -126,18 +151,18 @@ fn run(mut rtc: Rtc, socket: UdpSocket) -> Result<(), RtcError> {
         let now = Instant::now();
 
         // Begin a transaction - exactly ONE per loop iteration
-        let tx = rtc.begin(now);
+        let tx = rtc.begin(now)?;
 
         // Either handle received data or just advance time
         let mut tx = if let Some(recv) = recv {
-            tx.receive(now, recv)?
+            tx.receive(recv)?
         } else {
             tx.finish()
         };
 
         // Poll until we get a timeout
         timeout = loop {
-            match tx.poll() {
+            match tx.poll()? {
                 Output::Timeout(t) => break t,
                 Output::Transmit(t, pkt) => {
                     tx = t;

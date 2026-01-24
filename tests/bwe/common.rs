@@ -31,7 +31,7 @@ pub fn connect_with_bwe(initial_bitrate: Bitrate, desired_bitrate: Bitrate) -> (
 
     let (mut l, mut r) = connect_l_r_with_rtc(rtc1, rtc2);
 
-    l.bwe().set_desired_bitrate(desired_bitrate);
+    l.with_bwe(|bwe| bwe.set_desired_bitrate(desired_bitrate));
 
     // The resolution must be smaller than the fastest send rate we want to test.
     l.set_forced_time_advance(Duration::from_micros(100));
@@ -110,16 +110,14 @@ impl BweTestContext {
         let ssrc_tx: Ssrc = 42.into();
         let ssrc_rtx: Ssrc = 44.into();
 
-        l.direct_api().declare_media(mid, MediaKind::Video);
-        l.direct_api()
-            .declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
+        l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
+        l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None); });
 
-        r.direct_api().declare_media(mid, MediaKind::Video);
-        r.direct_api()
-            .expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
+        r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
+        r.with_direct_api(|api| { api.expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None); });
 
         // Enable TWCC feedback on the receiver so it sends feedback to the sender
-        r.direct_api().enable_twcc_feedback();
+        r.with_direct_api(|api| api.enable_twcc_feedback());
 
         // Sync time
         let max = l.last.max(r.last);
@@ -130,7 +128,7 @@ impl BweTestContext {
         assert_eq!(params.spec().codec, Codec::Vp8);
         let pt = params.pt();
 
-        let ssrc = l.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
+        let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
 
         Self {
             ssrc,
@@ -168,7 +166,7 @@ impl BweTestContext {
                     media_send_rate,
                 } => {
                     info!("{}/{}: Media rates: {}", no + 1, total, description);
-                    l.bwe().set_desired_bitrate(*desired_bitrate);
+                    l.with_bwe(|bwe| bwe.set_desired_bitrate(*desired_bitrate));
                     self.set_media_send_rate(*media_send_rate);
                     event_offset = l.events.len();
                 }
@@ -295,25 +293,22 @@ impl BweTestContext {
                 let wallclock = l.start + l.duration();
                 let time = (self.seq_no * 1000 + 47_000_000) as u32;
 
-                let mut direct = l.direct_api();
-                let stream = direct.stream_tx(&self.ssrc).unwrap();
-
                 let exts = ExtensionValues::default();
 
                 // Send a video packet
                 let payload = vec![0u8; packet_size];
-                stream
-                    .write_rtp(
-                        self.pt,
-                        self.seq_no.into(),
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        true,
-                        payload,
-                    )
-                    .expect("clean write");
+                l.write_rtp(
+                    self.ssrc,
+                    self.pt,
+                    self.seq_no.into(),
+                    time,
+                    wallclock,
+                    false,
+                    exts,
+                    true,
+                    payload,
+                )
+                .expect("clean write");
 
                 self.seq_no += 1;
                 self.byte_budget -= packet_size as f64;

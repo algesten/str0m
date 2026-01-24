@@ -22,9 +22,9 @@ pub fn srtp_replay_attack_rtp_mode() -> Result<(), RtcError> {
     let mid = "aud".into();
 
     let ssrc_tx: Ssrc = 42.into();
-    l.direct_api().declare_media(mid, MediaKind::Audio);
-    l.direct_api().declare_stream_tx(ssrc_tx, None, mid, None);
-    r.direct_api().declare_media(mid, MediaKind::Audio);
+    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, None, mid, None); });
+    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -56,21 +56,19 @@ pub fn srtp_replay_attack_rtp_mode() -> Result<(), RtcError> {
             };
 
             // Use transaction API: write_rtp returns RtcTx<Poll> that must be polled
-            let tx = l.rtc.begin(l.last);
+            let tx = l.rtc.begin(l.last).expect("begin");
             let tx = l.span.in_scope(|| {
-                tx.media_writer(mid)
-                    .ok()
-                    .expect("media_writer should succeed")
-                    .write_rtp(
-                        pt,
-                        seq_no,
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        false,
-                        vec![1, 3, 3, 7],
-                    )
+                tx.write_rtp(
+                    ssrc_tx,
+                    pt,
+                    seq_no,
+                    time,
+                    wallclock,
+                    false,
+                    exts,
+                    false,
+                    vec![1, 3, 3, 7],
+                )
             })?;
 
             // Poll and replay transmits to receiver
@@ -81,7 +79,7 @@ pub fn srtp_replay_attack_rtp_mode() -> Result<(), RtcError> {
             send_count += 1;
         } else {
             // Just advance time without writing
-            let tx = l.rtc.begin(l.last).finish();
+            let tx = l.rtc.begin(l.last).expect("begin").finish();
             let (new_last, events) =
                 poll_and_replay_tx(&l.span, &mut r, tx, l.last, REPLAY_PER_PACKET)?;
             l.last = new_last;
@@ -142,9 +140,9 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
     let mid = "aud".into();
 
     let ssrc_tx: Ssrc = 42.into();
-    l.direct_api().declare_media(mid, MediaKind::Audio);
-    l.direct_api().declare_stream_tx(ssrc_tx, None, mid, None);
-    r.direct_api().declare_media(mid, MediaKind::Audio);
+    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, None, mid, None); });
+    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -176,21 +174,19 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
             };
 
             // Use transaction API: write_rtp returns RtcTx<Poll> that must be polled
-            let tx = l.rtc.begin(l.last);
+            let tx = l.rtc.begin(l.last).expect("begin");
             let tx = l.span.in_scope(|| {
-                tx.media_writer(mid)
-                    .ok()
-                    .expect("media_writer should succeed")
-                    .write_rtp(
-                        pt,
-                        seq_no,
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        false,
-                        vec![1, 3, 3, 7],
-                    )
+                tx.write_rtp(
+                    ssrc_tx,
+                    pt,
+                    seq_no,
+                    time,
+                    wallclock,
+                    false,
+                    exts,
+                    false,
+                    vec![1, 3, 3, 7],
+                )
             })?;
 
             // Poll and replay transmits to receiver
@@ -201,7 +197,7 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
             send_count += 1;
         } else {
             // Just advance time without writing
-            let tx = l.rtc.begin(l.last).finish();
+            let tx = l.rtc.begin(l.last).expect("begin").finish();
             let (new_last, events) =
                 poll_and_replay_tx(&l.span, &mut r, tx, l.last, REPLAY_PER_PACKET)?;
             l.last = new_last;
@@ -255,7 +251,7 @@ fn poll_and_replay_tx<'a>(
     let mut events = Vec::new();
 
     loop {
-        match span.in_scope(|| tx.poll()) {
+        match span.in_scope(|| tx.poll()).expect("poll") {
             Output::Timeout(v) => {
                 let tick = last + Duration::from_millis(10);
                 last = if v == last { tick } else { tick.min(v) };
@@ -274,12 +270,12 @@ fn poll_and_replay_tx<'a>(
                         contents: (&*data).try_into().unwrap(),
                         recv_time: Some(last),
                     };
-                    let recv_tx = r.rtc.begin(last);
-                    let mut recv_tx = r.span.in_scope(|| recv_tx.receive(last, recv))?;
+                    let recv_tx = r.rtc.begin(last).expect("begin");
+                    let mut recv_tx = r.span.in_scope(|| recv_tx.receive(recv))?;
 
                     // Poll receiver to timeout
                     loop {
-                        match r.span.in_scope(|| recv_tx.poll()) {
+                        match r.span.in_scope(|| recv_tx.poll()).expect("poll") {
                             Output::Timeout(_) => break,
                             Output::Transmit(th, _) => recv_tx = th,
                             Output::Event(th, ev) => {
@@ -303,7 +299,7 @@ fn poll_and_replay_tx<'a>(
 /// Progress without writing - just advance time and replay transmits.
 fn progress_with_replay(l: &mut TestRtc, r: &mut TestRtc, replay: usize) -> Result<(), RtcError> {
     // Create transaction, poll, and collect results
-    let tx = l.rtc.begin(l.last).finish();
+    let tx = l.rtc.begin(l.last).expect("begin").finish();
     let span = l.span.clone();
     let last = l.last;
 

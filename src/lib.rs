@@ -639,14 +639,13 @@ mod dtls;
 use crate::crypto::dtls::DtlsOutput;
 use crate::crypto::{from_feature_flags, CryptoProvider};
 use crate::dtls::is_would_block;
-use crate::tx::RtcTx;
 use dtls::Dtls;
 
 #[path = "ice/mod.rs"]
 mod ice_;
 use ice_::IceAgent;
 use ice_::IceAgentEvent;
-pub use ice_::{Candidate, CandidateBuilder, CandidateKind, IceConnectionState, IceCreds};
+pub use ice_::{Candidate, CandidateBuilder, CandidateKind, Ice, IceConnectionState, IceCreds};
 
 #[path = "config.rs"]
 mod config_mod;
@@ -761,7 +760,7 @@ mod streams;
 
 // Transaction-based API types
 mod tx;
-pub use tx::{Mutate, Output, Poll};
+pub use tx::{Mutate, Output, Poll, RtcTx};
 
 pub mod error;
 
@@ -1214,6 +1213,26 @@ impl Rtc {
         }
     }
 
+    pub(crate) fn init_dtls(&mut self, active: bool) -> Result<(), RtcError> {
+        if self.dtls.is_inited() {
+            return Ok(());
+        }
+
+        debug!("DTLS setup is: {:?}", active);
+        self.dtls.set_active(active);
+
+        // Initialize the DTLS state (client or server) before any operations
+        // This ensures internal state like random (client) or last_now (server) is initialized
+        self.dtls.handle_timeout(self.last_now)?;
+
+        if active {
+            // Drive handshake by sending an empty packet to trigger ClientHello
+            let _ = self.dtls.handle_receive(&[]);
+        }
+
+        Ok(())
+    }
+
     fn init_sctp(&mut self, client: bool) {
         // If we got an m=application line, ensure we have negotiated the
         // SCTP association with the other side.
@@ -1253,9 +1272,9 @@ impl Rtc {
     /// This is the entry point for the transaction-based API that provides
     /// compile-time enforcement of the poll-to-timeout contract. All mutations
     /// go through the returned [`RtcTx`] handle.
-    pub fn begin(&mut self, now: Instant) -> RtcTx<'_, Mutate> {
-        let res = self.handle_timeout(now);
-        RtcTx::new(self, res)
+    pub fn begin(&mut self, now: Instant) -> Result<RtcTx<'_, Mutate>, RtcError> {
+        self.handle_timeout(now)?;
+        Ok(RtcTx::new(self))
     }
 
     pub(crate) fn poll_output(&mut self) -> Result<PollOutput, RtcError> {
@@ -1560,7 +1579,7 @@ impl Rtc {
     ///     }
     /// }
     /// ```
-    pub fn accepts(&self, r: net::Receive<'_>) -> bool {
+    pub fn accepts(&self, r: &net::Receive<'_>) -> bool {
         // Fast path: DTLS, RTP, and RTCP traffic coming in from the same socket address
         // we've nominated for sending via the ICE agent. This is the typical case
         if let Some(send_addr) = &self.send_addr {
@@ -1596,6 +1615,7 @@ impl Rtc {
         }
 
         self.last_now = now;
+        self.dtls.handle_timeout(now)?;
         self.ice.handle_timeout(now);
         self.sctp.handle_timeout(now);
         self.chan.handle_timeout(now, &mut self.sctp);
@@ -1663,6 +1683,20 @@ impl Rtc {
         let n = self.change_counter;
         self.change_counter += 1;
         n
+    }
+
+    /// Check if the Rtc instance is connected and ready to send/receive data.
+    ///
+    /// Returns true when ICE, DTLS, and the session are all connected.
+    pub fn is_connected(&self) -> bool {
+        self.ice.state().is_connected() && self.dtls_connected && self.session.is_connected()
+    }
+
+    /// Get information about a media (audio/video) by its mid.
+    ///
+    /// Returns `None` if no media with the given mid exists.
+    pub fn media(&self, mid: Mid) -> Option<&Media> {
+        self.session.media_by_mid(mid)
     }
 
     /// The codec configs for sending/receiving data.

@@ -5,15 +5,14 @@ use std::marker::PhantomData;
 use std::thread;
 use std::time::Instant;
 
-use crate::bwe::{Bitrate, Bwe};
+use crate::bwe::Bwe;
 use crate::change::{DirectApi, SdpApi};
 use crate::channel::{Channel, ChannelId};
 use crate::ice_::Ice;
-use crate::media::{KeyframeRequestKind, MediaTime, Mid, Pt, Rid, Writer};
+use crate::media::{Mid, Writer};
 use crate::net::Receive;
-use crate::rtp::{ExtensionValues, SeqNo, VideoOrientation};
-use crate::rtp_::MidRid;
-use crate::Candidate;
+use crate::rtp::{ExtensionValues, SeqNo, Ssrc};
+use crate::Pt;
 use crate::Rtc;
 use crate::RtcError;
 
@@ -46,19 +45,15 @@ pub struct RtcTx<'a, State> {
     _state: PhantomData<State>,
 }
 
-struct RtcTxInner<'a> {
-    rtc: &'a mut Rtc,
-    ret: Option<Result<(), RtcError>>,
+pub(crate) struct RtcTxInner<'a> {
+    pub(crate) rtc: &'a mut Rtc,
 }
 
 impl<'a> RtcTx<'a, Mutate> {
     /// Creates a new transaction in the Mutate state.
-    pub(crate) fn new(rtc: &'a mut Rtc, ret: Result<(), RtcError>) -> Self {
+    pub(crate) fn new(rtc: &'a mut Rtc) -> Self {
         RtcTx {
-            inner: Some(RtcTxInner {
-                rtc,
-                ret: Some(ret),
-            }),
+            inner: Some(RtcTxInner { rtc }),
             _state: PhantomData,
         }
     }
@@ -69,68 +64,78 @@ impl<'a> RtcTx<'a, Mutate> {
         self.inner.take().expect("RtcTx inner state already taken")
     }
 
+    /// Consume self and return the inner parts for sub-API wrappers.
+    /// The wrapper is responsible for calling `into_poll` when done.
+    pub(crate) fn into_inner(mut self) -> RtcTxInner<'a> {
+        self.take_inner()
+    }
+
+    /// Create a Poll state transaction from inner parts.
+    /// Used by sub-API wrappers to return Poll state after finish().
+    pub(crate) fn from_inner(inner: RtcTxInner<'a>) -> RtcTx<'a, Poll> {
+        RtcTx {
+            inner: Some(inner),
+            _state: PhantomData,
+        }
+    }
+
     /// Transition to Poll state without any mutation.
     ///
     /// Use this when you only need to advance time without performing any
     /// other operation.
-    pub fn finish(mut self) -> Result<RtcTx<'a, Poll>, RtcError> {
-        let mut inner = self.take_inner();
+    pub fn finish(mut self) -> RtcTx<'a, Poll> {
+        let inner = self.take_inner();
 
-        // Surface delayed result from Rtc::begin()
-        // UNWRAP: is correct since there must be a delayed result.
-        inner.ret.take().unwrap()?;
-
-        Ok(RtcTx {
+        RtcTx {
             inner: Some(inner),
             _state: PhantomData,
-        })
+        }
     }
 
     /// ICE operations.
-    pub fn ice(mut self) -> Ice<'a> {
-        todo!()
+    pub fn ice(self) -> Ice<'a> {
+        Ice::new(self)
     }
 
     /// Make changes to the Rtc session via SDP.
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
     /// # use str0m::media::{MediaKind, Direction};
     /// # use str0m::change::SdpAnswer;
     /// let mut rtc = Rtc::new();
     ///
-    /// let mut changes = rtc.sdp_api();
+    /// let mut changes = rtc.begin(Instant::now()).sdp_api();
     /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
     /// let mid_video = changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
     ///
-    /// let (offer, pending) = changes.apply().unwrap();
+    /// let (offer, pending, tx) = changes.apply().unwrap();
     /// let json = serde_json::to_vec(&offer).unwrap();
+    /// // poll tx to completion...
     ///
     /// // Send json OFFER to remote peer. Receive an answer back.
     /// let answer: SdpAnswer = todo!();
     ///
-    /// rtc.sdp_api().accept_answer(pending, answer).unwrap();
+    /// let tx = rtc.begin(Instant::now()).sdp_api().accept_answer(pending, answer).unwrap();
+    /// // poll tx to completion...
     /// ```
     pub fn sdp_api(self) -> SdpApi<'a> {
-        todo!()
+        SdpApi::new(self)
     }
 
     /// Makes direct changes to the Rtc session.
     ///
-    /// This is a low level API. For "normal" use via SDP, see [`Rtc::sdp_api()`].
+    /// This is a low level API. For "normal" use via SDP, see [`RtcTx::sdp_api()`].
     pub fn direct_api(self) -> DirectApi<'a> {
-        todo!()
+        DirectApi::new(self)
     }
 
     /// Process received network data.
     ///
     /// This is how to handle incoming UDP packets.
     pub fn receive(mut self, data: Receive<'_>) -> Result<RtcTx<'a, Poll>, RtcError> {
-        let mut inner = self.take_inner();
-
-        // Surface delayed result from Rtc::begin()
-        // UNWRAP: is correct since there must be a delayed result.
-        inner.ret.take().unwrap()?;
+        let inner = self.take_inner();
 
         // Handle the receive
         inner.rtc.handle_receive(data)?;
@@ -144,34 +149,46 @@ impl<'a> RtcTx<'a, Mutate> {
     /// Configure the Bandwidth Estimate (BWE) subsystem.
     ///
     /// Only relevant if BWE was enabled in the [`RtcConfig::enable_bwe()`]
-    pub fn bwe(mut self) -> Bwe<'a> {
-        todo!()
+    pub fn bwe(self) -> Bwe<'a> {
+        Bwe::new(self)
     }
 
     /// Obtain handle for writing to a data channel.
     ///
     /// This is first available when a [`ChannelId`] is advertised via [`Event::ChannelOpen`].
-    /// The function returns `None` also for IDs from [`SdpApi::add_channel()`].
+    /// The function returns `Err(self)` also for IDs from [`SdpApi::add_channel()`].
     ///
     /// Incoming channel data is via the [`Event::ChannelData`] event.
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// # use str0m::{Rtc, channel::ChannelId};
     /// let mut rtc = Rtc::new();
     ///
     /// let cid: ChannelId = todo!(); // obtain channel id from Event::ChannelOpen
-    /// let channel = rtc.channel(cid).unwrap();
-    /// // TODO write data channel data.
+    /// let channel = rtc.begin(Instant::now()).channel(cid).unwrap();
+    /// // write data channel data...
+    /// // channel.finish() to get RtcTx<Poll>
     /// ```
-    pub fn channel(mut self, id: ChannelId) -> Result<Channel<'a>, Self> {
-        todo!()
+    pub fn channel(self, id: ChannelId) -> Result<Channel<'a>, Self> {
+        // Look up the SCTP stream id for the channel
+        let sctp_stream_id = {
+            let inner = self.inner.as_ref().expect("inner not taken");
+            inner.rtc.chan.stream_id_by_channel_id(id)
+        };
+
+        match sctp_stream_id {
+            Some(sctp_stream_id) => Ok(Channel::new(sctp_stream_id, self)),
+            None => Err(self),
+        }
     }
 
     /// Send outgoing media data (frames) or request keyframes.
     ///
-    /// Returns `None` if the direction isn't sending (`sendrecv` or `sendonly`).
+    /// Returns `Err(self)` if the direction isn't sending (`sendrecv` or `sendonly`).
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
     /// # use str0m::media::{MediaData, Mid};
     /// # use str0m::format::PayloadParams;
@@ -181,7 +198,7 @@ impl<'a> RtcTx<'a, Mutate> {
     /// let mid: Mid = todo!(); // obtain mid from Event::MediaAdded.
     ///
     /// // Writer for this mid.
-    /// let writer = rtc.writer(mid).unwrap();
+    /// let writer = rtc.begin(Instant::now()).writer(mid).unwrap();
     ///
     /// // Get incoming media data from another peer
     /// let data: MediaData = todo!();
@@ -189,14 +206,81 @@ impl<'a> RtcTx<'a, Mutate> {
     /// // Match incoming PT to an outgoing PT.
     /// let pt = writer.match_params(data.params).unwrap();
     ///
-    /// writer.write(pt, data.network_time, data.time, data.data).unwrap();
+    /// let tx = writer.write(pt, data.network_time, data.time, data.data).unwrap();
+    /// // poll tx to completion...
     /// ```
     ///
     /// This is a frame level API: For RTP level see [`DirectApi::stream_tx()`]
     /// and [`DirectApi::stream_rx()`].
     ///
-    pub fn writer(mut self, mid: Mid) -> Result<Writer<'a>, Self> {
-        todo!()
+    pub fn writer(self, mid: Mid) -> Result<Writer<'a>, Self> {
+        // Check if the direction allows sending
+        let can_write = {
+            let inner = self.inner.as_ref().expect("inner not taken");
+            inner
+                .rtc
+                .session
+                .media_by_mid(mid)
+                .map(|m| m.direction().is_sending())
+                .unwrap_or(false)
+        };
+
+        if can_write {
+            Ok(Writer::new(self, mid))
+        } else {
+            Err(self)
+        }
+    }
+
+    /// Write an RTP packet to a send stream.
+    ///
+    /// This is the RTP-level API for sending media. For frame-level API, see [`writer()`].
+    ///
+    /// The stream must first be declared using [`DirectApi::declare_stream_tx`].
+    ///
+    /// # Arguments
+    ///
+    /// * `ssrc` - The SSRC of the stream to write to.
+    /// * `pt` - Payload type. Declared in the Media this encoded stream belongs to.
+    /// * `seq_no` - Sequence number to use for this packet.
+    /// * `time` - Time in whatever the clock rate is for the media in question (normally 90_000 for video
+    ///            and 48_000 for audio).
+    /// * `wallclock` - Real world time that corresponds to the media time in the RTP packet.
+    /// * `marker` - Whether to "mark" this packet. Usually done for the last packet of a frame.
+    /// * `ext_vals` - The RTP header extension values to set.
+    /// * `nackable` - Whether we should respond this packet for incoming NACK from the remote peer.
+    /// * `payload` - RTP packet payload, without header.
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_rtp(
+        mut self,
+        ssrc: Ssrc,
+        pt: Pt,
+        seq_no: SeqNo,
+        time: u32,
+        wallclock: Instant,
+        marker: bool,
+        ext_vals: ExtensionValues,
+        nackable: bool,
+        payload: Vec<u8>,
+    ) -> Result<RtcTx<'a, Poll>, RtcError> {
+        let inner = self.take_inner();
+
+        // Get the stream and write the RTP packet
+        let stream = inner
+            .rtc
+            .session
+            .streams
+            .stream_tx(&ssrc)
+            .ok_or(RtcError::UnknownSsrc(ssrc))?;
+
+        stream
+            .write_rtp(pt, seq_no, time, wallclock, marker, ext_vals, nackable, payload)
+            .map_err(RtcError::RtpWrite)?;
+
+        Ok(RtcTx {
+            inner: Some(inner),
+            _state: PhantomData,
+        })
     }
 }
 
@@ -217,9 +301,6 @@ impl<'a> RtcTx<'a, Poll> {
     /// is complete.
     pub fn poll(mut self) -> Result<Output<'a>, RtcError> {
         let inner = self.take_inner();
-
-        // Invariant: handle_Timeout error must be surfaced by now.
-        assert!(inner.ret.is_none());
 
         match inner.rtc.poll_output()? {
             crate::PollOutput::Timeout(t) => {
@@ -321,7 +402,7 @@ mod tests {
         crate::init_crypto_default();
 
         let mut rtc = Rtc::new();
-        let tx = rtc.begin(Instant::now());
+        let tx = rtc.begin(Instant::now()).expect("begin");
         let _tx = tx.finish(); // Transitions to Poll but doesn't poll to completion
                                // Drop without polling - should panic
     }
@@ -332,7 +413,7 @@ mod tests {
         crate::init_crypto_default();
 
         let mut rtc = Rtc::new();
-        let tx = rtc.begin(Instant::now());
+        let tx = rtc.begin(Instant::now()).expect("begin");
         let ice_tx = tx.ice();
         let _tx = ice_tx.finish(); // Returns Poll state but not polled
                                    // Should panic on drop
@@ -344,7 +425,7 @@ mod tests {
         crate::init_crypto_default();
 
         let mut rtc = Rtc::new();
-        let tx = rtc.begin(Instant::now());
+        let tx = rtc.begin(Instant::now()).expect("begin");
         let bwe_tx = tx.bwe();
         let _tx = bwe_tx.finish(); // Returns Poll state but not polled
                                    // Should panic on drop

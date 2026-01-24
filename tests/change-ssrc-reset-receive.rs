@@ -25,13 +25,10 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
     // New SSRC to use after reset
     let ssrc_tx_new: Ssrc = 84.into();
 
-    l.direct_api().declare_media(mid, MediaKind::Audio);
-    l.direct_api()
-        .declare_stream_tx(ssrc_tx_initial, None, mid, Some(rid));
+    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx_initial, None, mid, Some(rid)); });
 
-    r.direct_api()
-        .declare_media(mid, MediaKind::Audio)
-        .expect_rid_rx(rid);
+    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio).expect_rid_rx(rid); });
 
     // Set initial timing
     let max = l.last.max(r.last);
@@ -39,11 +36,7 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
     r.last = max;
 
     let params = l.params_opus();
-    let ssrc = l
-        .direct_api()
-        .stream_tx_by_mid(mid, Some(rid))
-        .unwrap()
-        .ssrc();
+    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, Some(rid)).unwrap().ssrc());
     assert_eq!(
         ssrc, ssrc_tx_initial,
         "Initial SSRC should match what we set"
@@ -81,8 +74,6 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
             write_at = l.last + Duration::from_millis(300);
             if let Some(packet) = first_batch.pop_front() {
                 let wallclock = l.start + l.duration();
-                let mut direct = l.direct_api();
-                let stream = direct.stream_tx_by_mid(mid, Some(rid)).unwrap();
 
                 let count = first_counts.remove(0);
                 // Calculate timestamp to create rollover scenario
@@ -100,18 +91,18 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
                     ..Default::default()
                 };
 
-                stream
-                    .write_rtp(
-                        pt,
-                        seq_no,
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        false,
-                        packet.to_vec(),
-                    )
-                    .expect("clean write with initial SSRC");
+                l.write_rtp(
+                    ssrc_tx_initial,
+                    pt,
+                    seq_no,
+                    time,
+                    wallclock,
+                    false,
+                    exts,
+                    false,
+                    packet.to_vec(),
+                )
+                .expect("clean write with initial SSRC");
             }
         }
 
@@ -130,16 +121,13 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
     info!("First batch sent with SSRC: {}", ssrc_tx_initial);
 
     // Reset the SSRC with None for RTX since the stream doesn't use RTX
-    let mut api = l.direct_api();
-    let result = api.reset_stream_tx(mid, Some(rid), ssrc_tx_new, None);
-    assert!(result.is_some(), "Reset should succeed with valid new SSRC");
+    let result = l.with_direct_api(|api| api.reset_stream_tx(mid, Some(rid), ssrc_tx_new, None).is_some());
+    assert!(result, "Reset should succeed with valid new SSRC");
 
     // Verify the SSRC was changed
-    let updated_ssrc = l
-        .direct_api()
-        .stream_tx_by_mid(mid, Some(rid))
-        .unwrap()
-        .ssrc();
+    let updated_ssrc = l.with_direct_api(|api| {
+        api.stream_tx_by_mid(mid, Some(rid)).unwrap().ssrc()
+    });
     assert_eq!(
         updated_ssrc, ssrc_tx_new,
         "SSRC should be updated to new value"
@@ -189,8 +177,6 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
             write_at = l.last + Duration::from_millis(300);
             if let Some(packet) = second_batch.pop_front() {
                 let wallclock = l.start + l.duration();
-                let mut direct = l.direct_api();
-                let stream = direct.stream_tx_by_mid(mid, Some(rid)).unwrap();
 
                 let count = second_counts.remove(0);
                 // Use a timestamp that would appear to go backward if last_time isn't reset
@@ -208,18 +194,18 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
                     time, ssrc_tx_new
                 );
 
-                stream
-                    .write_rtp(
-                        pt,
-                        seq_no,
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        false,
-                        packet.to_vec(),
-                    )
-                    .expect("clean write with new SSRC");
+                l.write_rtp(
+                    ssrc_tx_new,
+                    pt,
+                    seq_no,
+                    time,
+                    wallclock,
+                    false,
+                    exts,
+                    false,
+                    packet.to_vec(),
+                )
+                .expect("clean write with new SSRC");
             }
         }
 
@@ -349,13 +335,13 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
         "Second packet with new SSRC should have expected timestamp"
     );
 
-    let mut api = r.direct_api();
-    let rx = api.stream_rx_by_mid(mid, Some(rid)).unwrap();
-
     // If we don't reset the state properly on SSRC change, this will be
     // a crazy value.
+    let last_time = r.with_direct_api(|api| {
+        api.stream_rx_by_mid(mid, Some(rid)).unwrap().last_time()
+    });
     assert_eq!(
-        rx.last_time(),
+        last_time,
         Some(MediaTime::new(1001000, Frequency::FORTY_EIGHT_KHZ))
     );
 

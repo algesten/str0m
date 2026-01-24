@@ -29,9 +29,9 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
     let mid = "vid".into();
     let ssrc_tx: Ssrc = 1000.into();
 
-    l.direct_api().declare_media(mid, MediaKind::Video);
-    l.direct_api().declare_stream_tx(ssrc_tx, None, mid, None);
-    r.direct_api().declare_media(mid, MediaKind::Video);
+    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
+    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, None, mid, None); });
+    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -39,7 +39,7 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
 
     let params = l.params_vp8();
     let pt = params.pt();
-    let ssrc = l.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
+    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
 
     let vla = VideoLayersAllocation {
         current_simulcast_stream_index: 0,
@@ -62,20 +62,18 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
     exts.user_values.set(vla.clone());
 
     let last = l.last;
-    let mut direct = l.direct_api();
-    let stream = direct.stream_tx(&ssrc).unwrap();
-    stream
-        .write_rtp(
-            pt,
-            (1000 as u64).into(),
-            0,
-            last,
-            false,
-            exts,
-            false,
-            vec![0xAA; 10],
-        )
-        .unwrap();
+    l.write_rtp(
+        ssrc,
+        pt,
+        (1000_u64).into(),
+        0,
+        last,
+        false,
+        exts,
+        false,
+        vec![0xAA; 10],
+    )
+    .unwrap();
 
     let mut vla_received = false;
     for _ in 0..100 {
@@ -137,9 +135,9 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
     let mid = "vid".into();
     let ssrc_tx: Ssrc = 1000.into();
 
-    l.direct_api().declare_media(mid, MediaKind::Video);
-    l.direct_api().declare_stream_tx(ssrc_tx, None, mid, None);
-    r.direct_api().declare_media(mid, MediaKind::Video);
+    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
+    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, None, mid, None); });
+    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -164,11 +162,16 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
     let pt = l.params_vp8().pt();
     let last = l.last;
 
-    let writer = l.writer(mid).unwrap();
-
-    writer
+    // Use transaction API for writing with user extension value
+    let tx = l.rtc.begin(l.last).expect("begin");
+    let writer = match tx.writer(mid) {
+        Ok(w) => w,
+        Err(_) => panic!("writer not found for mid"),
+    };
+    let tx = writer
         .user_extension_value(vla.clone())
         .write(pt, last, MediaTime::ZERO, vec![0xAA; 10])?;
+    common::poll_to_completion(tx)?;
 
     let mut vla_received = false;
     for _ in 0..100 {

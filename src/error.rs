@@ -13,6 +13,7 @@ pub use crate::sctp::ProtoError;
 pub use crate::sctp::SctpError;
 pub use crate::sdp::SdpError;
 
+use crate::rtp::Ssrc;
 use crate::{Direction, KeyframeRequestKind, Mid, Pt, Rid};
 
 /// Errors for the whole Rtc engine.
@@ -37,8 +38,14 @@ pub enum RtcError {
     /// RTP packetization error
     Packet(Mid, Pt, PacketError),
 
+    /// RTP write error (for direct write_rtp API)
+    RtpWrite(PacketError),
+
     /// The PT attempted to write to is not known.
     UnknownPt(Pt),
+
+    /// The SSRC attempted to write to is not known.
+    UnknownSsrc(Ssrc),
 
     /// The Rid attempted to write is not known.
     UnknownRid(Rid),
@@ -91,7 +98,9 @@ impl fmt::Display for RtcError {
             RtcError::Io(err) => write!(f, "{}", err),
             RtcError::Dtls(err) => write!(f, "{}", err),
             RtcError::Packet(mid, pt, err) => write!(f, "{} {} {}", mid, pt, err),
+            RtcError::RtpWrite(err) => write!(f, "RTP write error: {}", err),
             RtcError::UnknownPt(pt) => write!(f, "PT is unknown {}", pt),
+            RtcError::UnknownSsrc(ssrc) => write!(f, "SSRC is unknown {}", ssrc),
             RtcError::UnknownRid(rid) => write!(f, "RID is unknown {}", rid),
             RtcError::NoSenderSource => write!(f, "No sender source"),
             RtcError::ResendRequiresRtxPt => write!(
@@ -122,6 +131,7 @@ impl Error for RtcError {
             RtcError::Io(err) => Some(err),
             RtcError::Dtls(err) => Some(err),
             RtcError::Packet(_, _, err) => Some(err),
+            RtcError::RtpWrite(err) => Some(err),
             RtcError::Net(err) => Some(err),
             RtcError::Ice(err) => Some(err),
             RtcError::Sctp(err) => Some(err),

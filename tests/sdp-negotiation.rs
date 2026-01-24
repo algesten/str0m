@@ -2,6 +2,7 @@ mod common;
 use common::init_crypto_default;
 use common::init_log;
 use common::negotiate;
+use common::poll_to_completion;
 use common::TestRtc;
 use str0m::change::SdpOffer;
 use str0m::format::Codec;
@@ -127,15 +128,21 @@ pub fn answer_no_match() {
 
     // Create offer from L
     let (offer, pending) = l.span.in_scope(|| {
-        let mut change = l.rtc.sdp_api();
+        let tx = l.rtc.begin(l.last).unwrap();
+        let mut change = tx.sdp_api();
         change.add_media(MediaKind::Video, Direction::SendRecv, None, None, None);
-        change.apply().unwrap()
+        let (offer, pending, tx) = change.apply().unwrap();
+        poll_to_completion(tx).unwrap();
+        (offer, pending)
     });
 
     // R accepts the offer and generates an answer
-    let answer = r
-        .span
-        .in_scope(|| r.rtc.sdp_api().accept_offer(offer).unwrap());
+    let answer = r.span.in_scope(|| {
+        let tx = r.rtc.begin(r.last).unwrap();
+        let (answer, tx) = tx.sdp_api().accept_offer(offer).unwrap();
+        poll_to_completion(tx).unwrap();
+        answer
+    });
 
     // Check that the answer SDP has port 0 for the rejected m-line
     let answer_sdp = answer.to_sdp_string();
@@ -154,7 +161,9 @@ pub fn answer_no_match() {
 
     // L accepts the answer
     l.span.in_scope(|| {
-        l.rtc.sdp_api().accept_answer(pending, answer).unwrap();
+        let tx = l.rtc.begin(l.last).unwrap();
+        let tx = tx.sdp_api().accept_answer(pending, answer).unwrap();
+        poll_to_completion(tx).unwrap();
     });
 
     let mid = l._mids()[0];
@@ -203,9 +212,11 @@ pub fn answer_different_pt_to_offer() {
     assert_eq!(&[vp8(96)], &**l.codec_config());
     assert_eq!(&[vp8(96)], &**r.codec_config());
 
-    let mut change = r.sdp_api();
+    let tx = r.rtc.begin(r.last).unwrap();
+    let mut change = tx.sdp_api();
     change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-    let (offer, _pending) = change.apply().unwrap();
+    let (offer, _pending, tx) = change.apply().unwrap();
+    poll_to_completion(tx).unwrap();
 
     let sdp = offer.to_sdp_string();
 
@@ -232,7 +243,9 @@ pub fn answer_different_pt_to_offer() {
 
     let offer = SdpOffer::from_sdp_string(&munged).unwrap();
 
-    let answer = l.sdp_api().accept_offer(offer).unwrap();
+    let tx = l.rtc.begin(l.last).unwrap();
+    let (answer, tx) = tx.sdp_api().accept_offer(offer).unwrap();
+    poll_to_completion(tx).unwrap();
 
     // L remains 96.
     assert_eq!(&[vp8(96)], &**l.codec_config());
@@ -467,7 +480,9 @@ fn max_bundle_offer_accepted() {
 
     // Parse and accept the max-bundle offer
     let offer = SdpOffer::from_sdp_string(max_bundle_offer).expect("should parse");
-    let answer = r.rtc.sdp_api().accept_offer(offer).expect("should accept");
+    let tx = r.rtc.begin(r.last).expect("begin");
+    let (answer, tx) = tx.sdp_api().accept_offer(offer).expect("should accept");
+    poll_to_completion(tx).unwrap();
 
     // Verify the answer includes both m-lines in the BUNDLE group
     let answer_sdp = answer.to_sdp_string();

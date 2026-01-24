@@ -6,7 +6,7 @@ use str0m::rtp::{ExtensionValues, Ssrc};
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{connect_l_r, init_crypto_default, init_log, progress};
+use common::{connect_l_r, init_crypto_default, init_log, poll_to_completion, progress};
 
 #[test]
 pub fn repeated() -> Result<(), RtcError> {
@@ -21,20 +21,20 @@ pub fn repeated() -> Result<(), RtcError> {
     // using SSRC 1 as knowledge shared between sending and receiving side.
     let ssrc: Ssrc = 1.into();
 
-    l.direct_api().declare_media(mid, MediaKind::Audio);
+    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
 
-    l.direct_api().declare_stream_tx(ssrc, None, mid, None);
+    l.with_direct_api(|api| { api.declare_stream_tx(ssrc, None, mid, None); });
 
-    r.direct_api().declare_media(mid, MediaKind::Audio);
+    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
 
-    r.direct_api().expect_stream_rx(ssrc, None, mid, None);
+    r.with_direct_api(|api| { api.expect_stream_rx(ssrc, None, mid, None); });
 
     let max = l.last.max(r.last);
     l.last = max;
     r.last = max;
 
     let params = l.params_opus();
-    let ssrc = l.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
+    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
 
@@ -48,9 +48,6 @@ pub fn repeated() -> Result<(), RtcError> {
             write_at = l.last + Duration::from_millis(300);
             let wallclock = l.start + l.duration();
 
-            let mut direct = l.direct_api();
-            let stream = direct.stream_tx(&ssrc).unwrap();
-
             let count = counts.remove(0);
             let time = (count * 1000 + 47_000_000) as u32;
             let seq_no = (47_000 + count).into();
@@ -61,18 +58,20 @@ pub fn repeated() -> Result<(), RtcError> {
                 ..Default::default()
             };
 
-            stream
-                .write_rtp(
-                    pt,
-                    seq_no,
-                    time,
-                    wallclock,
-                    false,
-                    exts,
-                    false,
-                    vec![0x01, 0x02, 0x03, 0x04],
-                )
-                .expect("clean write");
+            // Use transaction API to write RTP
+            let tx = l.rtc.begin(l.last)?;
+            let tx = tx.write_rtp(
+                ssrc,
+                pt,
+                seq_no,
+                time,
+                wallclock,
+                false,
+                exts,
+                false,
+                vec![0x01, 0x02, 0x03, 0x04],
+            )?;
+            poll_to_completion(tx)?;
         }
 
         progress(&mut l, &mut r)?;

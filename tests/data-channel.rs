@@ -5,7 +5,7 @@ use str0m::channel::ChannelConfig;
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{init_crypto_default, init_log, poll_to_completion, progress, Peer, TestRtc};
 
 #[test]
 pub fn data_channel() -> Result<(), RtcError> {
@@ -18,13 +18,31 @@ pub fn data_channel() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    let mut change = l.sdp_api();
-    let cid = change.add_channel("My little channel".into());
-    change.add_channel("My little channel 2".into());
-    let (offer, pending) = change.apply().unwrap();
+    // Create offer from L using transaction API
+    let (cid, offer, pending) = {
+        let tx = l.rtc.begin(l.last)?;
+        let mut change = tx.sdp_api();
+        let cid = change.add_channel("My little channel".into());
+        change.add_channel("My little channel 2".into());
+        let (offer, pending, tx) = change.apply().unwrap();
+        poll_to_completion(tx)?;
+        (cid, offer, pending)
+    };
 
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    // R accepts the offer
+    let answer = {
+        let tx = r.rtc.begin(r.last)?;
+        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
+        poll_to_completion(tx)?;
+        answer
+    };
+
+    // L accepts the answer
+    {
+        let tx = l.rtc.begin(l.last)?;
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        poll_to_completion(tx)?;
+    }
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -38,10 +56,7 @@ pub fn data_channel() -> Result<(), RtcError> {
     r.last = max;
 
     loop {
-        if let Some(mut chan) = l.channel(cid) {
-            chan.write(false, "Hello world! ".as_bytes())
-                .expect("to write string");
-        }
+        l.try_write_channel(cid, false, "Hello world! ".as_bytes());
 
         progress(&mut l, &mut r)?;
 
@@ -67,12 +82,29 @@ pub fn channel_config_inband() -> Result<(), RtcError> {
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // Create in-band negotiated channel (DCEP)
-    let mut change = l.sdp_api();
-    let cid = change.add_channel("DCEP Channel".into());
-    let (offer, pending) = change.apply().unwrap();
+    let (cid, offer, pending) = {
+        let tx = l.rtc.begin(l.last)?;
+        let mut change = tx.sdp_api();
+        let cid = change.add_channel("DCEP Channel".into());
+        let (offer, pending, tx) = change.apply().unwrap();
+        poll_to_completion(tx)?;
+        (cid, offer, pending)
+    };
 
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    // R accepts the offer
+    let answer = {
+        let tx = r.rtc.begin(r.last)?;
+        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
+        poll_to_completion(tx)?;
+        answer
+    };
+
+    // L accepts the answer
+    {
+        let tx = l.rtc.begin(l.last)?;
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        poll_to_completion(tx)?;
+    }
 
     // Wait for connection
     loop {
@@ -121,15 +153,11 @@ pub fn channel_config_inband() -> Result<(), RtcError> {
 
         // Verify config is available immediately when ChannelOpen is emitted
         if let Some(id) = l_found_id {
-            if let Some(channel) = l.channel(id) {
-                l_config_available_on_open = channel.config().is_some();
-            }
+            l_config_available_on_open = l.channel_config(id).is_some();
         }
 
         if let Some(id) = r_found_id {
-            if let Some(channel) = r.channel(id) {
-                r_config_available_on_open = channel.config().is_some();
-            }
+            r_config_available_on_open = r.channel_config(id).is_some();
         }
 
         if (l_channel_opened && r_channel_opened) || l.duration() > Duration::from_secs(10) {
@@ -163,12 +191,29 @@ pub fn channel_config_outband_local() -> Result<(), RtcError> {
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // Enable SCTP by adding a temporary channel (will be removed)
-    let mut change_l = l.sdp_api();
-    let _temp_cid = change_l.add_channel("temp".into());
-    let (offer, pending) = change_l.apply().unwrap();
+    let (offer, pending) = {
+        let tx = l.rtc.begin(l.last)?;
+        let mut change = tx.sdp_api();
+        let _temp_cid = change.add_channel("temp".into());
+        let (offer, pending, tx) = change.apply().unwrap();
+        poll_to_completion(tx)?;
+        (offer, pending)
+    };
 
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    // R accepts the offer
+    let answer = {
+        let tx = r.rtc.begin(r.last)?;
+        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
+        poll_to_completion(tx)?;
+        answer
+    };
+
+    // L accepts the answer
+    {
+        let tx = l.rtc.begin(l.last)?;
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        poll_to_completion(tx)?;
+    }
 
     // Wait for connection
     loop {
@@ -207,8 +252,8 @@ pub fn channel_config_outband_local() -> Result<(), RtcError> {
         ..Default::default()
     };
 
-    let cid_l = l.direct_api().create_data_channel(config.clone());
-    let cid_r = r.direct_api().create_data_channel(config);
+    let cid_l = l.with_direct_api(|api| api.create_data_channel(config.clone()));
+    let cid_r = r.with_direct_api(|api| api.create_data_channel(config));
 
     // Allow some time for channels to be established
     for _ in 0..10 {
@@ -216,20 +261,8 @@ pub fn channel_config_outband_local() -> Result<(), RtcError> {
     }
 
     // Verify config is immediately available for locally created out-of-band channels
-    let l_channel = l.channel(cid_l).expect("L channel should be available");
-    let r_channel = r.channel(cid_r).expect("R channel should be available");
-
-    assert!(
-        l_channel.config().is_some(),
-        "L side config should be immediately available for local out-of-band channel"
-    );
-    assert!(
-        r_channel.config().is_some(),
-        "R side config should be immediately available for local out-of-band channel"
-    );
-
-    let l_config = l_channel.config().unwrap();
-    let r_config = r_channel.config().unwrap();
+    let l_config = l.channel_config(cid_l).expect("L channel config should be available");
+    let r_config = r.channel_config(cid_r).expect("R channel config should be available");
 
     assert_eq!(l_config.label, "OutOfBand Local");
     assert_eq!(r_config.label, "OutOfBand Local");
@@ -250,12 +283,29 @@ pub fn channel_config_with_protocol() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    let mut change = l.sdp_api();
-    let _temp_cid = change.add_channel("temp".into());
-    let (offer, pending) = change.apply().unwrap();
+    let (offer, pending) = {
+        let tx = l.rtc.begin(l.last)?;
+        let mut change = tx.sdp_api();
+        let _temp_cid = change.add_channel("temp".into());
+        let (offer, pending, tx) = change.apply().unwrap();
+        poll_to_completion(tx)?;
+        (offer, pending)
+    };
 
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    // R accepts the offer
+    let answer = {
+        let tx = r.rtc.begin(r.last)?;
+        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
+        poll_to_completion(tx)?;
+        answer
+    };
+
+    // L accepts the answer
+    {
+        let tx = l.rtc.begin(l.last)?;
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        poll_to_completion(tx)?;
+    }
 
     // Wait for connection
     loop {
@@ -289,18 +339,16 @@ pub fn channel_config_with_protocol() -> Result<(), RtcError> {
         ..Default::default()
     };
 
-    let cid_l = l.direct_api().create_data_channel(config.clone());
-    let cid_r = r.direct_api().create_data_channel(config);
+    let cid_l = l.with_direct_api(|api| api.create_data_channel(config.clone()));
+    let cid_r = r.with_direct_api(|api| api.create_data_channel(config));
 
     for _ in 0..10 {
         progress(&mut l, &mut r)?;
     }
 
     // Verify protocol is correctly set on both sides
-    let l_channel = l.channel(cid_l).unwrap();
-    let r_channel = r.channel(cid_r).unwrap();
-    let l_config = l_channel.config().unwrap();
-    let r_config = r_channel.config().unwrap();
+    let l_config = l.channel_config(cid_l).expect("L channel config");
+    let r_config = r.channel_config(cid_r).expect("R channel config");
 
     assert_eq!(l_config.protocol, custom_protocol);
     assert_eq!(r_config.protocol, custom_protocol);

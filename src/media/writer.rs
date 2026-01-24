@@ -4,18 +4,19 @@ use crate::format::PayloadParams;
 use crate::rtp_::MidRid;
 use crate::rtp_::VideoOrientation;
 use crate::session::Session;
-use crate::RtcError;
+use crate::tx::{RtcTx, RtcTxInner};
+use crate::{Mutate, Poll, RtcError};
 
 use super::{ExtensionValues, KeyframeRequestKind, Media, MediaTime, Mid, Pt, Rid, ToPayload};
 
 /// Writer of frame level data.
 ///
-/// Obtained via [`Rtc::writer`][crate::Rtc::writer].
+/// Obtained via [`RtcTx::writer`].
 ///
 /// This is the Frame Level API. For RTP level see
 /// [`DirectApi::stream_tx`][crate::change::DirectApi::stream_tx].
 pub struct Writer<'a> {
-    session: &'a mut Session,
+    inner: RtcTxInner<'a>,
     mid: Mid,
     rid: Option<Rid>,
     start_of_talkspurt: Option<bool>,
@@ -25,10 +26,10 @@ pub struct Writer<'a> {
 impl<'a> Writer<'a> {
     /// Create a new writer object.
     ///
-    /// The `mid` parameter is required to have a corresponding media in `self.session`.
-    pub(crate) fn new(session: &'a mut Session, mid: Mid) -> Self {
+    /// The `mid` parameter is required to have a corresponding media in the session.
+    pub(crate) fn new(tx: RtcTx<'a, Mutate>, mid: Mid) -> Self {
         Writer {
-            session,
+            inner: tx.into_inner(),
             mid,
             rid: None,
             start_of_talkspurt: None,
@@ -36,13 +37,23 @@ impl<'a> Writer<'a> {
         }
     }
 
+    /// Get a reference to the session.
+    fn session(&self) -> &Session {
+        &self.inner.rtc.session
+    }
+
+    /// Get a mutable reference to the session.
+    fn session_mut(&mut self) -> &mut Session {
+        &mut self.inner.rtc.session
+    }
+
     /// Get the configured payload parameters for the `mid` this writer is for.
     ///
     /// For the [`Writer::write()`] call, the `pt` must be set correctly.
     pub fn payload_params(&self) -> impl Iterator<Item = &PayloadParams> {
         // This unwrap is OK due to the invariant of self.mid being resolvable
-        let media = self.session.media_by_mid(self.mid).unwrap();
-        self.session
+        let media = self.session().media_by_mid(self.mid).unwrap();
+        self.session()
             .codec_config
             .params()
             .iter()
@@ -58,7 +69,7 @@ impl<'a> Writer<'a> {
     /// This call performs matching and if a match is found, returns the _local_ PT
     /// that can be used for sending media.
     pub fn match_params(&self, params: PayloadParams) -> Option<Pt> {
-        self.session
+        self.session()
             .codec_config
             .match_params(params)
             .map(|p| p.pt())
@@ -127,49 +138,57 @@ impl<'a> Writer<'a> {
     ///
     /// Panics if [`RtcConfig::set_rtp_mode()`][crate::RtcConfig::set_rtp_mode] is `true`.
     pub fn write(
-        self,
+        mut self,
         pt: Pt,
         wallclock: Instant,
         rtp_time: MediaTime,
         data: impl Into<Vec<u8>>,
-    ) -> Result<(), RtcError> {
-        // This (indirect) unwrap is OK due to the invariant of self.mid being resolvable
-        let media = media_by_mid_mut(&mut self.session.medias, self.mid);
-
-        if !self.session.codec_config.has_pt(pt) {
-            return Err(RtcError::UnknownPt(pt));
-        }
-
-        if let Some(rid) = self.rid {
-            if !media.rids_tx().contains(rid) {
-                return Err(RtcError::UnknownRid(rid));
-            }
-        }
+    ) -> Result<RtcTx<'a, Poll>, RtcError> {
+        // Copy out values we need before borrowing session mutably
+        let mid = self.mid;
+        let rid = self.rid;
+        let start_of_talkspurt = self.start_of_talkspurt;
+        let ext_vals = std::mem::take(&mut self.ext_vals);
 
         let data: Vec<u8> = data.into();
 
         trace!(
             "write {:?} {:?} {:?} time: {:?} len: {}",
-            self.mid,
-            self.rid,
+            mid,
+            rid,
             pt,
             rtp_time,
             data.len()
         );
 
+        // This (indirect) unwrap is OK due to the invariant of self.mid being resolvable
+        let session = self.session_mut();
+
+        if !session.codec_config.has_pt(pt) {
+            return Err(RtcError::UnknownPt(pt));
+        }
+
+        let media = media_by_mid_mut(&mut session.medias, mid);
+
+        if let Some(rid) = rid {
+            if !media.rids_tx().contains(rid) {
+                return Err(RtcError::UnknownRid(rid));
+            }
+        }
+
         let to_payload = ToPayload {
             pt,
-            rid: self.rid,
+            rid,
             wallclock,
             rtp_time,
             data,
-            start_of_talk_spurt: self.start_of_talkspurt.unwrap_or(false),
-            ext_vals: self.ext_vals,
+            start_of_talk_spurt: start_of_talkspurt.unwrap_or(false),
+            ext_vals,
         };
 
         media.set_to_payload(to_payload)?;
 
-        Ok(())
+        Ok(RtcTx::from_inner(self.inner))
     }
 
     /// Test if the kind of keyframe request is possible.
@@ -184,7 +203,7 @@ impl<'a> Writer<'a> {
     /// a=rtcp-fb:96 nack pli
     /// ```
     pub fn is_request_keyframe_possible(&self, kind: KeyframeRequestKind) -> bool {
-        self.session.is_request_keyframe_possible(kind)
+        self.session().is_request_keyframe_possible(kind)
     }
 
     /// Request a keyframe from a remote peer sending media data.
@@ -198,6 +217,7 @@ impl<'a> Writer<'a> {
     /// # Example
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
     /// # use str0m::media::{Mid, KeyframeRequestKind};
     /// let mut rtc = Rtc::new();
@@ -205,9 +225,11 @@ impl<'a> Writer<'a> {
     /// // add candidates, do SDP negotiation
     /// let mid: Mid = todo!(); // obtain mid from Event::MediaAdded.
     ///
-    /// let writer = rtc.writer(mid).unwrap();
+    /// let mut writer = rtc.begin(Instant::now()).writer(mid).unwrap();
     ///
     /// writer.request_keyframe(None, KeyframeRequestKind::Pli).unwrap();
+    /// let tx = writer.finish().unwrap();
+    /// // poll tx to completion...
     /// ```
     pub fn request_keyframe(
         &mut self,
@@ -221,7 +243,7 @@ impl<'a> Writer<'a> {
         let midrid = MidRid(self.mid, rid);
 
         let stream = self
-            .session
+            .session_mut()
             .streams
             .stream_rx_by_midrid(midrid, false)
             .ok_or(RtcError::NoReceiverSource(rid))?;
@@ -229,6 +251,14 @@ impl<'a> Writer<'a> {
         stream.request_keyframe(kind);
 
         Ok(())
+    }
+
+    /// Finish using the Writer without writing anything.
+    ///
+    /// Use this when you want to use the builder methods but then decide not to write,
+    /// or when you only called `request_keyframe`.
+    pub fn finish(self) -> RtcTx<'a, Poll> {
+        RtcTx::from_inner(self.inner)
     }
 }
 

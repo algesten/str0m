@@ -3,8 +3,9 @@
 use std::{fmt, str, time::Instant};
 
 use crate::sctp::RtcSctp;
+use crate::tx::{RtcTx, RtcTxInner};
 use crate::util::already_happened;
-use crate::{Rtc, RtcError};
+use crate::{Mutate, Poll, RtcError};
 
 pub use crate::sctp::ChannelConfig;
 pub use crate::sctp::Reliability;
@@ -36,23 +37,28 @@ pub struct ChannelData {
 
 /// Channel for sending data to the remote peer.
 ///
-/// Get this handle from [`Rtc::channel()`][crate::Rtc::channel()].
+/// Get this handle from [`RtcTx::channel()`].
 pub struct Channel<'a> {
     sctp_stream_id: u16,
-    rtc: &'a mut Rtc,
+    inner: RtcTxInner<'a>,
 }
 
 impl<'a> Channel<'a> {
-    pub(crate) fn new(sctp_stream_id: u16, rtc: &'a mut Rtc) -> Self {
+    pub(crate) fn new(sctp_stream_id: u16, tx: RtcTx<'a, Mutate>) -> Self {
         Channel {
-            rtc,
             sctp_stream_id,
+            inner: tx.into_inner(),
         }
+    }
+
+    /// Finish using the Channel and return to polling state.
+    pub fn finish(self) -> RtcTx<'a, Poll> {
+        RtcTx::from_inner(self.inner)
     }
 
     /// Write data to the remote peer and indicate whether it's text or binary.
     pub fn write(&mut self, binary: bool, buf: &[u8]) -> Result<usize, RtcError> {
-        Ok(self.rtc.sctp.write(self.sctp_stream_id, binary, buf)?)
+        Ok(self.inner.rtc.sctp.write(self.sctp_stream_id, binary, buf)?)
     }
 
     /// Get the amount of buffered data.
@@ -62,7 +68,7 @@ impl<'a> Channel<'a> {
     ///
     /// [buff]: https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel/bufferedAmount
     pub fn buffered_amount(&mut self) -> usize {
-        self.rtc.sctp.buffered_amount(self.sctp_stream_id)
+        self.inner.rtc.sctp.buffered_amount(self.sctp_stream_id)
     }
 
     /// Set the threshold to emit an
@@ -73,7 +79,8 @@ impl<'a> Channel<'a> {
     ///
     /// [buff]: https://developer.mozilla.org/en-US/docs/Web/API/RTCDataChannel/bufferedAmountLowThreshold
     pub fn set_buffered_amount_low_threshold(&mut self, threshold: usize) {
-        self.rtc
+        self.inner
+            .rtc
             .sctp
             .set_buffered_amount_low_threshold(self.sctp_stream_id, threshold);
     }
@@ -104,7 +111,7 @@ impl<'a> Channel<'a> {
     ///
     /// [n]: https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection/createDataChannel#negotiated
     pub fn config(&self) -> Option<&ChannelConfig> {
-        self.rtc.sctp.config(self.sctp_stream_id)
+        self.inner.rtc.sctp.config(self.sctp_stream_id)
     }
 }
 

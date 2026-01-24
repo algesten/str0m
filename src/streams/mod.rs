@@ -586,6 +586,14 @@ impl Streams {
         self.streams_tx.values_mut().find(|s| s.is_midrid(midrid))
     }
 
+    /// Re-index a stream after its SSRC has been changed.
+    /// Returns the old SSRC if the stream was found and re-indexed, None otherwise.
+    pub(crate) fn reindex_stream_tx(&mut self, old_ssrc: Ssrc, new_ssrc: Ssrc) -> Option<Ssrc> {
+        let stream = self.streams_tx.remove(&old_ssrc)?;
+        self.streams_tx.insert(new_ssrc, stream);
+        Some(old_ssrc)
+    }
+
     pub(crate) fn stream_rx_by_midrid(
         &mut self,
         midrid: MidRid,

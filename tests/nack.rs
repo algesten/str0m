@@ -9,7 +9,7 @@ use str0m::rtp::{ExtensionValues, RawPacket, SeqNo, Ssrc};
 use str0m::RtcError;
 
 mod common;
-use common::{connect_l_r, init_crypto_default, init_log, progress};
+use common::{connect_l_r, init_crypto_default, init_log, poll_to_completion, progress};
 
 #[test]
 pub fn loss_recovery() -> Result<(), RtcError> {
@@ -30,22 +30,24 @@ pub fn loss_recovery() -> Result<(), RtcError> {
     let ssrc_tx: Ssrc = 42.into();
     let ssrc_rtx: Ssrc = 44.into();
 
-    l.direct_api().declare_media(mid, MediaKind::Video);
+    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
 
-    l.direct_api()
-        .declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
+    l.with_direct_api(|api| {
+        api.declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
+    });
 
-    r.direct_api().declare_media(mid, MediaKind::Video);
+    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
 
-    r.direct_api()
-        .expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
+    r.with_direct_api(|api| {
+        api.expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
+    });
 
     let max = l.last.max(r.last);
     l.last = max;
     r.last = max;
 
     let params = l.params_vp8();
-    let ssrc = l.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
+    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
     assert_eq!(params.spec().codec, Codec::Vp8);
     let pt = params.pt();
 
@@ -56,26 +58,25 @@ pub fn loss_recovery() -> Result<(), RtcError> {
     for index in 0..num_packets {
         let wallclock = l.start + l.duration();
 
-        let mut direct = l.direct_api();
-        let stream = direct.stream_tx(&ssrc).unwrap();
-
         let time = (index * 1000 + 47_000_000) as u32;
         let seq_no = (47_000 + index as u64).into();
 
         let exts = ExtensionValues::default();
 
-        stream
-            .write_rtp(
-                pt,
-                seq_no,
-                time,
-                wallclock,
-                false,
-                exts,
-                true,
-                to_write.to_vec(),
-            )
-            .expect("clean write");
+        // Use transaction API to write RTP
+        let tx = l.rtc.begin(l.last).expect("begin");
+        let tx = tx.write_rtp(
+            ssrc,
+            pt,
+            seq_no,
+            time,
+            wallclock,
+            false,
+            exts,
+            true,
+            to_write.to_vec(),
+        ).expect("write_rtp");
+        poll_to_completion(tx).expect("poll");
 
         // Disable loss near start and end to let retransmission algo stabilize
         // (see MISORDER_DELAY in register.rs)
@@ -197,22 +198,24 @@ pub fn nack_delay() -> Result<(), RtcError> {
     let ssrc_tx: Ssrc = 42.into();
     let ssrc_rtx: Ssrc = 44.into();
 
-    l.direct_api().declare_media(mid, MediaKind::Video);
+    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
 
-    l.direct_api()
-        .declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
+    l.with_direct_api(|api| {
+        api.declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
+    });
 
-    r.direct_api().declare_media(mid, MediaKind::Video);
+    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
 
-    r.direct_api()
-        .expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
+    r.with_direct_api(|api| {
+        api.expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
+    });
 
     let max = l.last.max(r.last);
     l.last = max;
     r.last = max;
 
     let params = l.params_vp8();
-    let ssrc = l.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
+    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
     assert_eq!(params.spec().codec, Codec::Vp8);
     let pt = params.pt();
 
@@ -244,12 +247,9 @@ pub fn nack_delay() -> Result<(), RtcError> {
             if let Some(packet) = to_write.pop_front() {
                 let wallclock = l.start + l.duration();
 
-                let mut direct = l.direct_api();
-                let stream = direct.stream_tx(&ssrc).unwrap();
-
                 let count = counts.remove(0);
                 let time = (count * 1000 + 47_000_000) as u32;
-                let seq_no = (47_000 + count).into();
+                let seq_no: SeqNo = (47_000 + count).into();
 
                 if count == 5 {
                     // Drop a packet
@@ -263,18 +263,20 @@ pub fn nack_delay() -> Result<(), RtcError> {
                     ..Default::default()
                 };
 
-                stream
-                    .write_rtp(
-                        pt,
-                        seq_no,
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        true,
-                        packet.to_vec(),
-                    )
-                    .expect("clean write");
+                // Use transaction API to write RTP
+                let tx = l.rtc.begin(l.last).expect("begin");
+                let tx = tx.write_rtp(
+                    ssrc,
+                    pt,
+                    seq_no,
+                    time,
+                    wallclock,
+                    false,
+                    exts,
+                    true,
+                    packet.to_vec(),
+                ).expect("write_rtp");
+                poll_to_completion(tx).expect("poll");
             }
         }
 

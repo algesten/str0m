@@ -8,16 +8,17 @@ use std::time::{Duration, Instant};
 use netem::{Input as NetemInput, Netem, NetemConfig, Output as NetemOutput};
 
 use pcap_file::pcap::PcapReader;
-use str0m::change::SdpApi;
+use str0m::change::{DirectApi, SdpApi};
 use str0m::crypto::CryptoProvider;
 use str0m::format::Codec;
 use str0m::format::PayloadParams;
 use str0m::net::Protocol;
+use str0m::Ice;
 use str0m::net::Receive;
 use str0m::rtp::ExtensionMap;
 use str0m::rtp::RtpHeader;
 use str0m::Candidate;
-use str0m::{Event, Input, Output, Poll, Rtc, RtcError, RtcTx};
+use str0m::{Event, Output, Poll, Rtc, RtcError, RtcTx};
 use tracing::info_span;
 use tracing::Span;
 
@@ -118,10 +119,198 @@ impl TestRtc {
     }
 
     pub fn add_host_candidate(&mut self, socket: SocketAddr) -> Candidate {
-        self.rtc
-            .add_local_candidate(Candidate::host(socket, "udp").unwrap())
-            .unwrap()
-            .clone()
+        self.with_ice(|ice| {
+            ice.add_local_candidate(Candidate::host(socket, "udp").unwrap())
+                .unwrap()
+                .clone()
+        })
+    }
+
+    /// Execute a closure with access to the Ice API.
+    pub fn with_ice<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce(&mut Ice) -> R,
+    {
+        let time = self.last;
+        let mut api = self.rtc.begin(time).unwrap().ice();
+        let result = f(&mut api);
+        poll_to_completion(api.finish()).unwrap();
+        result
+    }
+
+    /// Execute a closure with access to the DirectApi.
+    pub fn with_direct_api<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce(&mut DirectApi) -> R,
+    {
+        let time = self.last;
+        let mut api = self.rtc.begin(time).unwrap().direct_api();
+        let result = f(&mut api);
+        poll_to_completion(api.finish()).unwrap();
+        result
+    }
+
+    /// Execute a closure with access to the Bwe API.
+    pub fn with_bwe<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce(&mut str0m::bwe::Bwe) -> R,
+    {
+        let time = self.last;
+        let mut api = self.rtc.begin(time).unwrap().bwe();
+        let result = f(&mut api);
+        poll_to_completion(api.finish()).unwrap();
+        result
+    }
+
+    /// Try to write to a data channel. Returns None if channel doesn't exist.
+    pub fn try_write_channel(
+        &mut self,
+        id: str0m::channel::ChannelId,
+        binary: bool,
+        data: &[u8],
+    ) -> Option<usize> {
+        let time = self.last;
+        let tx = self.rtc.begin(time).unwrap();
+        match tx.channel(id) {
+            Ok(mut chan) => {
+                let result = chan.write(binary, data).ok();
+                poll_to_completion(chan.finish()).unwrap();
+                result
+            }
+            Err(tx) => {
+                // Channel doesn't exist
+                poll_to_completion(tx.finish()).unwrap();
+                None
+            }
+        }
+    }
+
+    /// Close a data channel.
+    pub fn close_channel(&mut self, id: str0m::channel::ChannelId) {
+        self.with_direct_api(|api| api.close_data_channel(id));
+    }
+
+    /// Get channel config if channel exists.
+    pub fn channel_config(
+        &mut self,
+        id: str0m::channel::ChannelId,
+    ) -> Option<str0m::channel::ChannelConfig> {
+        let time = self.last;
+        let tx = self.rtc.begin(time).unwrap();
+        match tx.channel(id) {
+            Ok(chan) => {
+                let config = chan.config().cloned();
+                poll_to_completion(chan.finish()).unwrap();
+                config
+            }
+            Err(tx) => {
+                poll_to_completion(tx.finish()).unwrap();
+                None
+            }
+        }
+    }
+
+    /// Check if a channel exists.
+    pub fn has_channel(&mut self, id: str0m::channel::ChannelId) -> bool {
+        let time = self.last;
+        let tx = self.rtc.begin(time).unwrap();
+        match tx.channel(id) {
+            Ok(chan) => {
+                poll_to_completion(chan.finish()).unwrap();
+                true
+            }
+            Err(tx) => {
+                poll_to_completion(tx.finish()).unwrap();
+                false
+            }
+        }
+    }
+
+    /// Create an SDP offer with the given changes.
+    pub fn sdp_create_offer<F, R>(
+        &mut self,
+        f: F,
+    ) -> (str0m::change::SdpOffer, str0m::change::SdpPendingOffer, R)
+    where
+        F: FnOnce(&mut SdpApi) -> R,
+    {
+        let time = self.last;
+        let tx = self.rtc.begin(time).unwrap();
+        let mut api = tx.sdp_api();
+        let result = f(&mut api);
+        let (offer, pending, tx) = api.apply().unwrap();
+        poll_to_completion(tx).unwrap();
+        (offer, pending, result)
+    }
+
+    /// Accept an SDP offer and return the answer.
+    pub fn sdp_accept_offer(
+        &mut self,
+        offer: str0m::change::SdpOffer,
+    ) -> Result<str0m::change::SdpAnswer, RtcError> {
+        let time = self.last;
+        let tx = self.rtc.begin(time)?;
+        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
+        poll_to_completion(tx)?;
+        Ok(answer)
+    }
+
+    /// Accept an SDP answer.
+    pub fn sdp_accept_answer(
+        &mut self,
+        pending: str0m::change::SdpPendingOffer,
+        answer: str0m::change::SdpAnswer,
+    ) -> Result<(), RtcError> {
+        let time = self.last;
+        let tx = self.rtc.begin(time)?;
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        poll_to_completion(tx)?;
+        Ok(())
+    }
+
+    /// Write media data using the Writer API.
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_media(
+        &mut self,
+        mid: str0m::media::Mid,
+        pt: str0m::media::Pt,
+        wallclock: std::time::Instant,
+        time: str0m::media::MediaTime,
+        data: Vec<u8>,
+        start_of_talkspurt: Option<bool>,
+    ) -> Result<(), RtcError> {
+        let time_now = self.last;
+        let tx = self.rtc.begin(time_now)?;
+        let writer = tx.writer(mid).unwrap_or_else(|_| panic!("writer for mid"));
+        let writer = if let Some(sots) = start_of_talkspurt {
+            writer.start_of_talkspurt(sots)
+        } else {
+            writer
+        };
+        let tx = writer.write(pt, wallclock, time, data)?;
+        poll_to_completion(tx)?;
+        Ok(())
+    }
+
+    /// Write an RTP packet directly.
+    #[allow(clippy::too_many_arguments)]
+    pub fn write_rtp(
+        &mut self,
+        ssrc: str0m::rtp::Ssrc,
+        pt: str0m::media::Pt,
+        seq_no: str0m::rtp::SeqNo,
+        time: u32,
+        wallclock: std::time::Instant,
+        marker: bool,
+        ext_vals: str0m::rtp::ExtensionValues,
+        nackable: bool,
+        payload: Vec<u8>,
+    ) -> Result<(), RtcError> {
+        let time_now = self.last;
+        let tx = self.rtc.begin(time_now)?;
+        let tx = tx.write_rtp(ssrc, pt, seq_no, time, wallclock, marker, ext_vals, nackable, payload)?;
+        poll_to_completion(tx)?;
+        Ok(())
     }
 
     pub fn duration(&self) -> Duration {
@@ -177,10 +366,10 @@ impl TestRtc {
         let timeout;
 
         {
-            let tx = self.rtc.begin(time);
+            let tx = self.rtc.begin(time)?;
             let mut tx = tx.finish();
             timeout = loop {
-                match self.span.in_scope(|| tx.poll()) {
+                match self.span.in_scope(|| tx.poll())? {
                     Output::Timeout(v) => break v,
                     Output::Transmit(t, _v) => {
                         tx = t;
@@ -312,10 +501,10 @@ fn netem_to_rtc(
     let last = rtc.last;
 
     {
-        let tx = rtc.rtc.begin(time);
-        let mut tx = rtc.span.in_scope(|| tx.receive(time, recv))?;
+        let tx = rtc.rtc.begin(time)?;
+        let mut tx = rtc.span.in_scope(|| tx.receive(recv))?;
         timeout = loop {
-            match tx.poll() {
+            match tx.poll()? {
                 Output::Timeout(v) => break v,
                 Output::Transmit(t, v) => {
                     tx = t;
@@ -365,10 +554,10 @@ fn rtc_timeout(
     let last = rtc.last;
 
     {
-        let tx = rtc.rtc.begin(time);
+        let tx = rtc.rtc.begin(time)?;
         let mut tx = tx.finish();
         timeout = loop {
-            match tx.poll() {
+            match tx.poll()? {
                 Output::Timeout(v) => break v,
                 Output::Transmit(t, v) => {
                     tx = t;
@@ -412,29 +601,55 @@ pub fn negotiate<F, R>(offerer: &mut TestRtc, answerer: &mut TestRtc, mut do_cha
 where
     F: FnMut(&mut SdpApi) -> R,
 {
+    let time = offerer.last;
+
+    // Create offer
     let (offer, pending, result) = offerer.span.in_scope(|| {
-        let mut change = offerer.rtc.sdp_api();
+        let tx = offerer.rtc.begin(time).unwrap();
+        let mut change = tx.sdp_api();
 
         let result = do_change(&mut change);
 
-        let (offer, pending) = change.apply().unwrap();
+        let (offer, pending, tx) = change.apply().unwrap();
+
+        // Poll the transaction to completion
+        poll_to_completion(tx).unwrap();
 
         (offer, pending, result)
     });
 
-    let answer = answerer
-        .span
-        .in_scope(|| answerer.rtc.sdp_api().accept_offer(offer).unwrap());
+    // Accept offer and create answer
+    let answer = answerer.span.in_scope(|| {
+        let tx = answerer.rtc.begin(time).unwrap();
+        let (answer, tx) = tx.sdp_api().accept_offer(offer).unwrap();
 
+        // Poll the transaction to completion
+        poll_to_completion(tx).unwrap();
+
+        answer
+    });
+
+    // Accept answer
     offerer.span.in_scope(|| {
-        offerer
-            .rtc
-            .sdp_api()
-            .accept_answer(pending, answer)
-            .unwrap();
+        let tx = offerer.rtc.begin(time).unwrap();
+        let tx = tx.sdp_api().accept_answer(pending, answer).unwrap();
+
+        // Poll the transaction to completion
+        poll_to_completion(tx).unwrap();
     });
 
     result
+}
+
+/// Poll a transaction to completion, discarding transmits and events.
+pub fn poll_to_completion(mut tx: RtcTx<'_, Poll>) -> Result<(), RtcError> {
+    loop {
+        match tx.poll()? {
+            Output::Timeout(_) => return Ok(()),
+            Output::Transmit(t, _) => tx = t,
+            Output::Event(t, _) => tx = t,
+        }
+    }
 }
 
 impl Deref for TestRtc {
@@ -533,31 +748,41 @@ pub fn connect_l_r_with_rtc(rtc1: Rtc, rtc2: Rtc) -> (TestRtc, TestRtc) {
 
     let host1 = Candidate::host((Ipv4Addr::new(1, 1, 1, 1), 1000).into(), "udp").unwrap();
     let host2 = Candidate::host((Ipv4Addr::new(2, 2, 2, 2), 2000).into(), "udp").unwrap();
-    l.add_local_candidate(host1.clone());
-    l.add_remote_candidate(host2.clone());
-    r.add_local_candidate(host2);
-    r.add_remote_candidate(host1);
 
-    let finger_l = l.direct_api().local_dtls_fingerprint().clone();
-    let finger_r = r.direct_api().local_dtls_fingerprint().clone();
+    // Add candidates via Ice API
+    l.with_ice(|ice| {
+        ice.add_local_candidate(host1.clone());
+        ice.add_remote_candidate(host2.clone());
+    });
+    r.with_ice(|ice| {
+        ice.add_local_candidate(host2);
+        ice.add_remote_candidate(host1);
+    });
 
-    l.direct_api().set_remote_fingerprint(finger_r);
-    r.direct_api().set_remote_fingerprint(finger_l);
+    // Exchange DTLS fingerprints via DirectApi
+    let finger_l = l.with_direct_api(|api| api.local_dtls_fingerprint().clone());
+    let finger_r = r.with_direct_api(|api| api.local_dtls_fingerprint().clone());
 
-    let creds_l = l.direct_api().local_ice_credentials();
-    let creds_r = r.direct_api().local_ice_credentials();
+    l.with_direct_api(|api| api.set_remote_fingerprint(finger_r));
+    r.with_direct_api(|api| api.set_remote_fingerprint(finger_l));
 
-    l.direct_api().set_remote_ice_credentials(creds_r);
-    r.direct_api().set_remote_ice_credentials(creds_l);
+    // Exchange ICE credentials
+    let creds_l = l.with_direct_api(|api| api.local_ice_credentials());
+    let creds_r = r.with_direct_api(|api| api.local_ice_credentials());
 
-    l.direct_api().set_ice_controlling(true);
-    r.direct_api().set_ice_controlling(false);
+    l.with_direct_api(|api| api.set_remote_ice_credentials(creds_r));
+    r.with_direct_api(|api| api.set_remote_ice_credentials(creds_l));
 
-    l.direct_api().start_dtls(true).unwrap();
-    r.direct_api().start_dtls(false).unwrap();
+    // Set controlling/controlled roles
+    l.with_direct_api(|api| api.set_ice_controlling(true));
+    r.with_direct_api(|api| api.set_ice_controlling(false));
 
-    l.direct_api().start_sctp(true);
-    r.direct_api().start_sctp(false);
+    // Start DTLS and SCTP
+    l.with_direct_api(|api| api.start_dtls(true).unwrap());
+    r.with_direct_api(|api| api.start_dtls(false).unwrap());
+
+    l.with_direct_api(|api| api.start_sctp(true));
+    r.with_direct_api(|api| api.start_sctp(false));
 
     loop {
         if l.is_connected() || r.is_connected() {

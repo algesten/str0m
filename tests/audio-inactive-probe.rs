@@ -6,7 +6,7 @@ use str0m::media::{Direction, MediaKind};
 use str0m::{Rtc, RtcError};
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{init_crypto_default, init_log, poll_to_completion, progress, Peer, TestRtc};
 
 /// Similar test but with bandwidth estimation enabled to increase probe likelihood
 #[test]
@@ -24,12 +24,12 @@ pub fn audio_stream_then_inactive_with_bwe() -> Result<(), RtcError> {
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // Step 1: Negotiate an audio stream with BWE
-    let mut change = l.sdp_api();
-    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
-    let (offer, pending) = change.apply().unwrap();
+    let (offer, pending, mid) = l.sdp_create_offer(|change| {
+        change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None)
+    });
 
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    let answer = r.sdp_accept_offer(offer)?;
+    l.sdp_accept_answer(pending, answer)?;
 
     // Wait for connection
     loop {
@@ -53,9 +53,7 @@ pub fn audio_stream_then_inactive_with_bwe() -> Result<(), RtcError> {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
 
-        if let Some(writer) = l.writer(mid) {
-            let _ = writer.write(pt, wallclock, time, data.clone());
-        }
+        let _ = l.write_media(mid, pt, wallclock, time, data.clone(), None);
 
         progress(&mut l, &mut r)?;
 
@@ -65,12 +63,12 @@ pub fn audio_stream_then_inactive_with_bwe() -> Result<(), RtcError> {
     }
 
     // Step 3: Disable the stream immediately (without draining probe queue)
-    let mut change = l.sdp_api();
-    change.set_direction(mid, Direction::Inactive);
-    let (offer, pending) = change.apply().unwrap();
+    let (offer, pending, _) = l.sdp_create_offer(|change| {
+        change.set_direction(mid, Direction::Inactive);
+    });
 
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    let answer = r.sdp_accept_offer(offer)?;
+    l.sdp_accept_answer(pending, answer)?;
 
     // Step 4: Continue progressing - this is where probe_queue access might fail
     // if the pacer tries to use probe_queue when there's no video queue available

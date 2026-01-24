@@ -6,7 +6,7 @@ use str0m::media::{Direction, MediaKind};
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{init_crypto_default, init_log, poll_to_completion, progress, Peer, TestRtc};
 
 #[test]
 pub fn unidirectional() -> Result<(), RtcError> {
@@ -23,12 +23,19 @@ pub fn unidirectional() -> Result<(), RtcError> {
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // The change is on the L (sending side) with Direction::SendRecv.
-    let mut change = l.sdp_api();
+    let tx = l.rtc.begin(l.last).unwrap();
+    let mut change = tx.sdp_api();
     let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
-    let (offer, pending) = change.apply().unwrap();
+    let (offer, pending, tx) = change.apply().unwrap();
+    poll_to_completion(tx)?;
 
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    let tx = r.rtc.begin(r.last).unwrap();
+    let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
+    poll_to_completion(tx)?;
+
+    let tx = l.rtc.begin(l.last).unwrap();
+    let tx = tx.sdp_api().accept_answer(pending, answer)?;
+    poll_to_completion(tx)?;
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -51,10 +58,13 @@ pub fn unidirectional() -> Result<(), RtcError> {
     loop {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
-        l.writer(mid)
-            .unwrap()
+
+        let tx = l.rtc.begin(l.last).unwrap();
+        let writer = tx.writer(mid).unwrap_or_else(|_| panic!("writer for mid"));
+        let tx = writer
             .start_of_talkspurt(start_of_talk_spurt)
             .write(pt, wallclock, time, data_a.clone())?;
+        poll_to_completion(tx)?;
         start_of_talk_spurt = false;
 
         progress(&mut l, &mut r)?;

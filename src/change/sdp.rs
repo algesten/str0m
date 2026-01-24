@@ -17,26 +17,28 @@ use crate::sctp::ChannelConfig;
 use crate::sdp::{self, MediaAttribute, MediaLine, MediaType, Msid, Sdp};
 use crate::sdp::{Proto, SessionAttribute, Setup, SimulcastGroups};
 use crate::session::Session;
+use crate::tx::RtcTx;
 use crate::Rtc;
 use crate::RtcError;
-use crate::{Candidate, IceCreds};
+use crate::{Candidate, IceCreds, Poll};
 
 pub use crate::sdp::{SdpAnswer, SdpOffer};
 use crate::streams::{Streams, DEFAULT_RTX_CACHE_DURATION, DEFAULT_RTX_RATIO_CAP};
 
 /// Changes to the Rtc via SDP Offer/Answer dance.
 pub struct SdpApi<'a> {
-    rtc: &'a mut Rtc,
+    inner: crate::tx::RtcTxInner<'a>,
     changes: Changes,
 }
 
 impl<'a> SdpApi<'a> {
-    pub(crate) fn new(rtc: &'a mut Rtc) -> Self {
+    pub(crate) fn new(tx: crate::tx::RtcTx<'a, crate::Mutate>) -> Self {
         SdpApi {
-            rtc,
+            inner: tx.into_inner(),
             changes: Changes::default(),
         }
     }
+
 
     /// Accept an [`SdpOffer`] from the remote peer. If this call returns successfully, the
     /// changes will have been made to the session. The resulting [`SdpAnswer`] should be
@@ -50,6 +52,7 @@ impl<'a> SdpApi<'a> {
     /// or if `a=group` doesn't match the number of m-lines.
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
     /// # use str0m::change::{SdpOffer};
     /// // obtain offer from remote peer.
@@ -57,61 +60,64 @@ impl<'a> SdpApi<'a> {
     /// let offer: SdpOffer = serde_json::from_slice(json_offer).unwrap();
     ///
     /// let mut rtc = Rtc::new();
-    /// let answer = rtc.sdp_api().accept_offer(offer).unwrap();
+    /// let (answer, tx) = rtc.begin(Instant::now()).sdp_api().accept_offer(offer).unwrap();
     ///
     /// // send json_answer to remote peer.
     /// let json_answer = serde_json::to_vec(&answer).unwrap();
+    ///
+    /// // poll tx to completion...
     /// ```
-    pub fn accept_offer(self, offer: SdpOffer) -> Result<SdpAnswer, RtcError> {
+    pub fn accept_offer(self, offer: SdpOffer) -> Result<(SdpAnswer, RtcTx<'a, Poll>), RtcError> {
         debug!("Accept offer");
 
         // Invalidate any outstanding PendingOffer.
-        self.rtc.next_change_id();
+        self.inner.rtc.next_change_id();
 
         if offer.media_lines.is_empty() {
             return Err(RtcError::RemoteSdp("No m-lines in offer".into()));
         }
 
-        if self.rtc.ice.ice_lite() && offer.session.ice_lite() {
+        if self.inner.rtc.ice.ice_lite() && offer.session.ice_lite() {
             return Err(RtcError::RemoteSdp(
                 "Both peers being ICE-Lite not supported".into(),
             ));
         }
 
-        add_ice_details(self.rtc, &offer, None)?;
+        add_ice_details(self.inner.rtc, &offer, None)?;
 
-        if self.rtc.remote_fingerprint.is_none() {
+        if self.inner.rtc.remote_fingerprint.is_none() {
             if let Some(f) = offer.fingerprint() {
-                self.rtc.remote_fingerprint = Some(f);
+                self.inner.rtc.remote_fingerprint = Some(f);
             } else {
-                self.rtc.disconnect();
+                self.inner.rtc.disconnect();
                 return Err(RtcError::RemoteSdp("missing a=fingerprint".into()));
             }
         }
 
-        if !self.rtc.dtls.is_inited() {
+        if !self.inner.rtc.dtls.is_inited() {
             // The side that makes the first offer is the controlling side, unless they
             // are ICE Lite, in which case the roles are reversed (see RFC 5245).
-            self.rtc.ice.set_controlling(offer.session.ice_lite());
+            self.inner.rtc.ice.set_controlling(offer.session.ice_lite());
         }
 
         // Ensure setup=active/passive is corresponding remote and init dtls.
-        init_dtls(self.rtc, &offer)?;
+        init_dtls(self.inner.rtc, &offer)?;
 
         // Modify session with offer
-        apply_offer(&mut self.rtc.session, offer)?;
+        apply_offer(&mut self.inner.rtc.session, offer)?;
 
         // Handle potentially new m=application line.
-        let client = self.rtc.dtls.is_active().expect("DTLS active to be set");
-        if self.rtc.session.app().is_some() {
-            self.rtc.init_sctp(client);
+        let client = self.inner.rtc.dtls.is_active().expect("DTLS active to be set");
+        if self.inner.rtc.session.app().is_some() {
+            self.inner.rtc.init_sctp(client);
         }
 
-        let params = AsSdpParams::new(self.rtc, None);
-        let sdp = as_sdp(&self.rtc.session, params);
+        let params = AsSdpParams::new(self.inner.rtc, None);
+        let sdp = as_sdp(&self.inner.rtc.session, params);
 
         debug!("Create answer");
-        Ok(sdp.into())
+        let tx = RtcTx::from_inner(self.inner);
+        Ok((sdp.into(), tx))
     }
 
     /// Accept an answer to a previously created [`SdpOffer`].
@@ -121,50 +127,53 @@ impl<'a> SdpApi<'a> {
     /// [`SdpApi::accept_offer()`] before using this pending instance.
     ///
     /// ```no_run
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
     /// # use str0m::media::{MediaKind, Direction};
     /// # use str0m::change::SdpAnswer;
     /// let mut rtc = Rtc::new();
     ///
-    /// let mut changes = rtc.sdp_api();
+    /// let mut changes = rtc.begin(Instant::now()).sdp_api();
     /// let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
-    /// let (offer, pending) = changes.apply().unwrap();
+    /// let (offer, pending, tx) = changes.apply().unwrap();
+    /// // poll tx to completion...
     ///
     /// // send offer to remote peer, receive answer back
     /// let answer: SdpAnswer = todo!();
     ///
-    /// rtc.sdp_api().accept_answer(pending, answer).unwrap();
+    /// let tx = rtc.begin(Instant::now()).sdp_api().accept_answer(pending, answer).unwrap();
+    /// // poll tx to completion...
     /// ```
     pub fn accept_answer(
         self,
         mut pending: SdpPendingOffer,
         answer: SdpAnswer,
-    ) -> Result<(), RtcError> {
+    ) -> Result<RtcTx<'a, Poll>, RtcError> {
         debug!("Accept answer");
 
         // Ensure we don't use the wrong changes below. We must use that of pending.
         drop(self.changes);
 
-        if !self.rtc.is_correct_change_id(pending.change_id) {
+        if !self.inner.rtc.is_correct_change_id(pending.change_id) {
             return Err(RtcError::ChangesOutOfOrder);
         }
 
-        if self.rtc.ice.ice_lite() && answer.session.ice_lite() {
+        if self.inner.rtc.ice.ice_lite() && answer.session.ice_lite() {
             return Err(RtcError::RemoteSdp(
                 "Both peers being ICE-Lite not supported".into(),
             ));
         }
 
-        add_ice_details(self.rtc, &answer, Some(&pending))?;
+        add_ice_details(self.inner.rtc, &answer, Some(&pending))?;
 
         // Ensure setup=active/passive is corresponding remote and init dtls.
-        init_dtls(self.rtc, &answer)?;
+        init_dtls(self.inner.rtc, &answer)?;
 
-        if self.rtc.remote_fingerprint.is_none() {
+        if self.inner.rtc.remote_fingerprint.is_none() {
             if let Some(f) = answer.fingerprint() {
-                self.rtc.remote_fingerprint = Some(f);
+                self.inner.rtc.remote_fingerprint = Some(f);
             } else {
-                self.rtc.disconnect();
+                self.inner.rtc.disconnect();
                 return Err(RtcError::RemoteSdp("missing a=fingerprint".into()));
             }
         }
@@ -173,19 +182,19 @@ impl<'a> SdpApi<'a> {
         let new_channels = pending.changes.take_new_channels();
 
         // Modify session with answer
-        apply_answer(&mut self.rtc.session, pending.changes, answer)?;
+        apply_answer(&mut self.inner.rtc.session, pending.changes, answer)?;
 
         // Handle potentially new m=application line.
-        let client = self.rtc.dtls.is_active().expect("DTLS to be inited");
-        if self.rtc.session.app().is_some() {
-            self.rtc.init_sctp(client);
+        let client = self.inner.rtc.dtls.is_active().expect("DTLS to be inited");
+        if self.inner.rtc.session.app().is_some() {
+            self.inner.rtc.init_sctp(client);
         }
 
         for (id, config) in new_channels {
-            self.rtc.chan.confirm(id, config);
+            self.inner.rtc.chan.confirm(id, config);
         }
 
-        Ok(())
+        Ok(RtcTx::from_inner(self.inner))
     }
 
     /// Test if any changes have been made.
@@ -237,7 +246,7 @@ impl<'a> SdpApi<'a> {
         track_id: Option<String>,
         simulcast: Option<crate::media::Simulcast>,
     ) -> Mid {
-        let mid = self.rtc.new_mid();
+        let mid = self.inner.rtc.new_mid();
 
         // https://www.rfc-editor.org/rfc/rfc8830
         // msid-id = 1*64token-char
@@ -272,8 +281,8 @@ impl<'a> SdpApi<'a> {
         let main_ssrc_count = simulcast.as_ref().map(|s| s.send.len()).unwrap_or(1);
 
         for _ in 0..main_ssrc_count {
-            let rtx = kind.is_video().then(|| self.rtc.session.streams.new_ssrc());
-            ssrcs.push((self.rtc.session.streams.new_ssrc(), rtx));
+            let rtx = kind.is_video().then(|| self.inner.rtc.session.streams.new_ssrc());
+            ssrcs.push((self.inner.rtc.session.streams.new_ssrc(), rtx));
         }
 
         // TODO: let user configure stream/track name.
@@ -313,7 +322,7 @@ impl<'a> SdpApi<'a> {
     /// If the direction is set for media that doesn't exist, or if the direction is
     /// the same that's already set [`SdpApi::apply()`] not require a negotiation.
     pub fn set_direction(&mut self, mid: Mid, dir: Direction) {
-        let changed = self.rtc.session.set_direction(mid, dir);
+        let changed = self.inner.rtc.session.set_direction(mid, dir);
 
         if changed {
             self.changes.0.push(Change::Direction(mid, dir));
@@ -371,15 +380,15 @@ impl<'a> SdpApi<'a> {
     /// # }
     /// ```
     pub fn add_channel_with_config(&mut self, config: ChannelConfig) -> ChannelId {
-        let has_media = self.rtc.session.app().is_some();
+        let has_media = self.inner.rtc.session.app().is_some();
         let changes_contains_add_app = self.changes.contains_add_app();
 
         if !has_media && !changes_contains_add_app {
-            let mid = self.rtc.new_mid();
+            let mid = self.inner.rtc.new_mid();
             self.changes.0.push(Change::AddApp(mid));
         }
 
-        let id = self.rtc.chan.new_channel(&config);
+        let id = self.inner.rtc.chan.new_channel(&config);
 
         self.changes.0.push(Change::AddChannel((id, config)));
 
@@ -409,13 +418,14 @@ impl<'a> SdpApi<'a> {
 
     /// Attempt to apply the changes made.
     ///
-    /// If this returns [`SdpOffer`], the caller the changes are
-    /// not happening straight away, and the caller is expected to do a negotiation with the remote
-    /// peer and apply the answer using [`SdpPendingOffer`].
+    /// If this returns `Some((offer, pending, tx))`, the changes are not happening straight away,
+    /// and the caller is expected to do a negotiation with the remote peer and apply the answer
+    /// using [`SdpPendingOffer`]. The returned transaction must still be polled to completion.
     ///
     /// In case this returns `None`, there either were no changes, or the changes could be applied
     /// without doing a negotiation. Specifically for additional [`SdpApi::add_channel()`]
-    /// after the first, there is no negotiation needed.
+    /// after the first, there is no negotiation needed. Use [`SdpApi::finish()`] to get the
+    /// transaction for polling when no changes are needed.
     ///
     /// The [`SdpPendingOffer`] is valid until the next time we call this function, at which
     /// point using it will raise an error. Using [`SdpApi::accept_offer()`] will also invalidate
@@ -423,35 +433,55 @@ impl<'a> SdpApi<'a> {
     ///
     /// ```
     /// # #[cfg(feature = "openssl")] {
+    /// # use std::time::Instant;
     /// # use str0m::Rtc;
     /// let mut rtc = Rtc::new();
     ///
-    /// let changes = rtc.sdp_api();
+    /// let changes = rtc.begin(Instant::now()).sdp_api();
     /// assert!(changes.apply().is_none());
     /// # }
     /// ```
-    pub fn apply(self) -> Option<(SdpOffer, SdpPendingOffer)> {
+    pub fn apply(self) -> Option<(SdpOffer, SdpPendingOffer, RtcTx<'a, Poll>)> {
         if self.changes.is_empty() {
             return None;
         }
 
-        let change_id = self.rtc.next_change_id();
+        let change_id = self.inner.rtc.next_change_id();
 
         let requires_negotiation = self.changes.0.iter().any(requires_negotiation);
 
         if requires_negotiation {
-            let offer = create_offer(self.rtc, &self.changes);
+            let offer = create_offer(self.inner.rtc, &self.changes);
             let pending = SdpPendingOffer {
                 change_id,
                 changes: self.changes,
             };
             debug!("Create offer");
-            Some((offer, pending))
+            let tx = RtcTx::from_inner(self.inner);
+            Some((offer, pending, tx))
         } else {
             debug!("Apply direct changes");
-            apply_direct_changes(self.rtc, self.changes);
+            apply_direct_changes(self.inner.rtc, self.changes);
             None
         }
+    }
+
+    /// Finish the SdpApi without making any changes that require negotiation.
+    ///
+    /// Use this when you only made non-negotiation changes (like adding channels after the first)
+    /// or when you want to transition to poll state without any changes.
+    pub fn finish(self) -> RtcTx<'a, Poll> {
+        // Apply any direct changes
+        if !self.changes.is_empty() {
+            let requires_negotiation = self.changes.0.iter().any(requires_negotiation);
+            if requires_negotiation {
+                // If negotiation is required, caller should use apply() instead
+                debug!("finish() called but negotiation required - applying direct changes only");
+            }
+            apply_direct_changes(self.inner.rtc, self.changes);
+        }
+
+        RtcTx::from_inner(self.inner)
     }
 
     /// Combines the modifications made in [`SdpApi`] with those in [`SdpPendingOffer`].
@@ -479,7 +509,7 @@ impl<'a> SdpApi<'a> {
     /// let (_offer, pending) = changes.apply().unwrap();
     /// ```
     pub fn merge(&mut self, mut pending_offer: SdpPendingOffer) {
-        pending_offer.retain_relevant(self.rtc);
+        pending_offer.retain_relevant(self.inner.rtc);
         self.changes.extend(pending_offer.changes.drain(..));
     }
 }
@@ -1620,14 +1650,28 @@ impl Change {
 
 #[cfg(test)]
 mod test {
+    use std::time::Instant;
+
     use sdp::RestrictionId;
     use sdp::SimulcastLayer as SdpSimulcastLayer;
 
     use crate::format::Codec;
     use crate::media::{Simulcast, SimulcastLayer};
     use crate::sdp::RtpMap;
+    use crate::tx::Output;
 
     use super::*;
+
+    /// Helper to poll a transaction to completion, discarding outputs.
+    fn poll_to_completion(mut tx: RtcTx<'_, Poll>) {
+        loop {
+            match tx.poll().unwrap() {
+                Output::Timeout(_) => break,
+                Output::Transmit(t, _) => tx = t,
+                Output::Event(t, _) => tx = t,
+            }
+        }
+    }
 
     fn resolve_pt(m_line: &MediaLine, needle: Pt) -> RtpMap {
         m_line
@@ -1650,20 +1694,25 @@ mod test {
 
         let mut rtc1 = Rtc::new();
         let mut rtc2 = Rtc::new();
+        let now = Instant::now();
 
-        let mut change1 = rtc1.sdp_api();
+        let mut change1 = rtc1.begin(now).expect("begin").sdp_api();
         change1.add_channel("ch1".into());
-        let (offer1, pending1) = change1.apply().unwrap();
+        let (offer1, pending1, tx) = change1.apply().unwrap();
+        poll_to_completion(tx);
 
-        let mut change2 = rtc2.sdp_api();
+        let mut change2 = rtc2.begin(now).expect("begin").sdp_api();
         change2.add_channel("ch2".into());
-        let (offer2, _) = change2.apply().unwrap();
+        let (offer2, _, tx) = change2.apply().unwrap();
+        poll_to_completion(tx);
 
         // invalidates pending1
-        let _ = rtc1.sdp_api().accept_offer(offer2).unwrap();
-        let answer2 = rtc2.sdp_api().accept_offer(offer1).unwrap();
+        let (_, tx) = rtc1.begin(now).expect("begin").sdp_api().accept_offer(offer2).unwrap();
+        poll_to_completion(tx);
+        let (answer2, tx) = rtc2.begin(now).expect("begin").sdp_api().accept_offer(offer1).unwrap();
+        poll_to_completion(tx);
 
-        let r = rtc1.sdp_api().accept_answer(pending1, answer2);
+        let r = rtc1.begin(now).expect("begin").sdp_api().accept_answer(pending1, answer2);
 
         assert!(matches!(r, Err(RtcError::ChangesOutOfOrder)));
     }
@@ -1673,14 +1722,18 @@ mod test {
         crate::init_crypto_default();
 
         let mut rtc = Rtc::new();
-        let mut changes = rtc.sdp_api();
-        changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
-        let (offer, pending) = changes.apply().unwrap();
+        let now = Instant::now();
 
-        let mut changes = rtc.sdp_api();
+        let mut changes = rtc.begin(now).expect("begin").sdp_api();
+        changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
+        let (offer, pending, tx) = changes.apply().unwrap();
+        poll_to_completion(tx);
+
+        let mut changes = rtc.begin(now).expect("begin").sdp_api();
         changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
         changes.merge(pending);
-        let (new_offer, _) = changes.apply().unwrap();
+        let (new_offer, _, tx) = changes.apply().unwrap();
+        poll_to_completion(tx);
 
         assert_eq!(offer.media_lines[0], new_offer.media_lines[1]);
         assert_eq!(new_offer.media_lines.len(), 2);
@@ -1701,12 +1754,16 @@ mod test {
             .enable_vp8(true)
             .enable_h264(true)
             .build();
+        let now = Instant::now();
 
-        let mut change1 = rtc1.sdp_api();
+        let mut change1 = rtc1.begin(now).expect("begin").sdp_api();
         change1.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-        let (offer1, _) = change1.apply().unwrap();
+        let (offer1, _, tx) = change1.apply().unwrap();
+        poll_to_completion(tx);
 
-        let answer = rtc2.sdp_api().accept_offer(offer1).unwrap();
+        let (answer, tx) = rtc2.begin(now).expect("begin").sdp_api().accept_offer(offer1).unwrap();
+        poll_to_completion(tx);
+
         assert_eq!(
             answer.media_lines.len(),
             1,
@@ -1738,14 +1795,18 @@ mod test {
 
         let mut rtc1 = Rtc::new();
         let mut rtc2 = Rtc::new();
+        let now = Instant::now();
 
         // Test initial media creation
         let mid = {
-            let mut changes = rtc1.sdp_api();
+            let mut changes = rtc1.begin(now).expect("begin").sdp_api();
             let mid = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
-            let (offer, pending) = changes.apply().unwrap();
-            let answer = rtc2.sdp_api().accept_offer(offer).unwrap();
-            rtc1.sdp_api().accept_answer(pending, answer).unwrap();
+            let (offer, pending, tx) = changes.apply().unwrap();
+            poll_to_completion(tx);
+            let (answer, tx) = rtc2.begin(now).expect("begin").sdp_api().accept_offer(offer).unwrap();
+            poll_to_completion(tx);
+            let tx = rtc1.begin(now).expect("begin").sdp_api().accept_answer(pending, answer).unwrap();
+            poll_to_completion(tx);
 
             assert!(matches!(rtc1.media(mid).unwrap().rids_rx(), Rids::Any));
             assert!(matches!(rtc1.media(mid).unwrap().rids_tx(), Rids::None));
@@ -1757,11 +1818,14 @@ mod test {
 
         // Test later updates to that media
         {
-            let mut changes = rtc1.sdp_api();
+            let mut changes = rtc1.begin(now).expect("begin").sdp_api();
             changes.set_direction(mid, Direction::Inactive);
-            let (offer, pending) = changes.apply().unwrap();
-            let answer = rtc2.sdp_api().accept_offer(offer).unwrap();
-            rtc1.sdp_api().accept_answer(pending, answer).unwrap();
+            let (offer, pending, tx) = changes.apply().unwrap();
+            poll_to_completion(tx);
+            let (answer, tx) = rtc2.begin(now).expect("begin").sdp_api().accept_offer(offer).unwrap();
+            poll_to_completion(tx);
+            let tx = rtc1.begin(now).expect("begin").sdp_api().accept_answer(pending, answer).unwrap();
+            poll_to_completion(tx);
 
             assert!(matches!(rtc1.media(mid).unwrap().rids_rx(), Rids::Any));
             assert!(matches!(rtc1.media(mid).unwrap().rids_tx(), Rids::None));
@@ -1775,6 +1839,7 @@ mod test {
         crate::init_crypto_default();
 
         let mut rtc1 = Rtc::new();
+        let now = Instant::now();
 
         let mut simulcast = Simulcast::new();
 
@@ -1782,7 +1847,7 @@ mod test {
         simulcast.add_send_layer(SimulcastLayer::new("m"));
         simulcast.add_send_layer(SimulcastLayer::new("l"));
 
-        let mut change = rtc1.sdp_api();
+        let mut change = rtc1.begin(now).expect("begin").sdp_api();
         change.add_media(
             MediaKind::Video,
             Direction::SendOnly,
@@ -1803,8 +1868,9 @@ mod test {
             assert!(p.1.is_some()); // all should have rtx
         }
 
-        let (offer, _) = change.apply().unwrap();
-        let sdp = offer.into_inner();
+        let (offer, _, tx) = change.apply().unwrap();
+        poll_to_completion(tx);
+        let sdp: sdp::Sdp = offer.into_inner();
         let line = &sdp.media_lines[0];
 
         assert_eq!(
@@ -1863,6 +1929,7 @@ mod test {
         crate::init_crypto_default();
 
         let mut rtc1 = Rtc::new();
+        let now = Instant::now();
 
         let mut simulcast = Simulcast::new();
 
@@ -1908,7 +1975,7 @@ mod test {
         // No attributes
         simulcast.add_send_layer(SimulcastLayer::new_with_attributes("no_attrs").build());
 
-        let mut change = rtc1.sdp_api();
+        let mut change = rtc1.begin(now).expect("begin").sdp_api();
         change.add_media(
             MediaKind::Video,
             Direction::SendOnly,
@@ -1917,8 +1984,9 @@ mod test {
             Some(simulcast),
         );
 
-        let (offer, _) = change.apply().unwrap();
-        let sdp = offer.into_inner();
+        let (offer, _, tx) = change.apply().unwrap();
+        poll_to_completion(tx);
+        let sdp: sdp::Sdp = offer.into_inner();
         let line = &sdp.media_lines[0];
 
         fn pairs_to_some_vec(pairs: &[(&str, &str)]) -> Option<Vec<(String, String)>> {

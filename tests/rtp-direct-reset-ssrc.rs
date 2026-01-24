@@ -24,13 +24,13 @@ pub fn rtp_direct_reset_ssrc() -> Result<(), RtcError> {
     // New SSRC to use after reset
     let ssrc_tx_new: Ssrc = 84.into();
 
-    l.direct_api().declare_media(mid, MediaKind::Audio);
-    l.direct_api()
-        .declare_stream_tx(ssrc_tx_initial, None, mid, Some(rid));
+    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx_initial, None, mid, Some(rid)); });
 
-    r.direct_api()
-        .declare_media(mid, MediaKind::Audio)
-        .expect_rid_rx(rid);
+    r.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Audio)
+            .expect_rid_rx(rid);
+    });
 
     // Set initial timing
     let max = l.last.max(r.last);
@@ -38,11 +38,7 @@ pub fn rtp_direct_reset_ssrc() -> Result<(), RtcError> {
     r.last = max;
 
     let params = l.params_opus();
-    let ssrc = l
-        .direct_api()
-        .stream_tx_by_mid(mid, Some(rid))
-        .unwrap()
-        .ssrc();
+    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, Some(rid)).unwrap().ssrc());
     assert_eq!(
         ssrc, ssrc_tx_initial,
         "Initial SSRC should match what we set"
@@ -63,8 +59,6 @@ pub fn rtp_direct_reset_ssrc() -> Result<(), RtcError> {
             write_at = l.last + Duration::from_millis(300);
             if let Some(packet) = first_batch.pop_front() {
                 let wallclock = l.start + l.duration();
-                let mut direct = l.direct_api();
-                let stream = direct.stream_tx_by_mid(mid, Some(rid)).unwrap();
 
                 let count = first_counts.remove(0);
                 let time = (count * 1000 + 47_000_000) as u32;
@@ -76,18 +70,22 @@ pub fn rtp_direct_reset_ssrc() -> Result<(), RtcError> {
                     ..Default::default()
                 };
 
-                stream
-                    .write_rtp(
-                        pt,
-                        seq_no,
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        false,
-                        packet.to_vec(),
-                    )
-                    .expect("clean write with initial SSRC");
+                // Get the current SSRC from the stream
+                let current_ssrc = l.with_direct_api(|api| {
+                    api.stream_tx_by_mid(mid, Some(rid)).unwrap().ssrc()
+                });
+                l.write_rtp(
+                    current_ssrc,
+                    pt,
+                    seq_no,
+                    time,
+                    wallclock,
+                    false,
+                    exts,
+                    false,
+                    packet.to_vec(),
+                )
+                .expect("clean write with initial SSRC");
             }
         }
 
@@ -104,24 +102,18 @@ pub fn rtp_direct_reset_ssrc() -> Result<(), RtcError> {
     }
 
     // Try resetting to the same SSRC (should fail and return None)
-    let mut api = l.direct_api();
-    let result = api.reset_stream_tx(mid, Some(rid), ssrc_tx_initial, None);
+    let result = l.with_direct_api(|api| api.reset_stream_tx(mid, Some(rid), ssrc_tx_initial, None).is_some());
     assert!(
-        result.is_none(),
+        !result,
         "Resetting to the same SSRC should return None"
     );
 
     // Reset the SSRC with None for RTX since the stream doesn't use RTX
-    let mut api = l.direct_api();
-    let result = api.reset_stream_tx(mid, Some(rid), ssrc_tx_new, None);
-    assert!(result.is_some(), "Reset should succeed with valid new SSRC");
+    let result = l.with_direct_api(|api| api.reset_stream_tx(mid, Some(rid), ssrc_tx_new, None).is_some());
+    assert!(result, "Reset should succeed with valid new SSRC");
 
     // Verify the SSRC was changed
-    let updated_ssrc = l
-        .direct_api()
-        .stream_tx_by_mid(mid, Some(rid))
-        .unwrap()
-        .ssrc();
+    let updated_ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, Some(rid)).unwrap().ssrc());
     assert_eq!(
         updated_ssrc, ssrc_tx_new,
         "SSRC should be updated to new value"
@@ -140,8 +132,6 @@ pub fn rtp_direct_reset_ssrc() -> Result<(), RtcError> {
             write_at = l.last + Duration::from_millis(300);
             if let Some(packet) = second_batch.pop_front() {
                 let wallclock = l.start + l.duration();
-                let mut direct = l.direct_api();
-                let stream = direct.stream_tx_by_mid(mid, Some(rid)).unwrap();
 
                 let count = second_counts.remove(0);
                 let time = (count * 1000 + 48_000_000) as u32;
@@ -153,18 +143,22 @@ pub fn rtp_direct_reset_ssrc() -> Result<(), RtcError> {
                     ..Default::default()
                 };
 
-                stream
-                    .write_rtp(
-                        pt,
-                        seq_no,
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        false,
-                        packet.to_vec(),
-                    )
-                    .expect("clean write with new SSRC");
+                // Get the current SSRC from the stream (should be new SSRC after reset)
+                let current_ssrc = l.with_direct_api(|api| {
+                    api.stream_tx_by_mid(mid, Some(rid)).unwrap().ssrc()
+                });
+                l.write_rtp(
+                    current_ssrc,
+                    pt,
+                    seq_no,
+                    time,
+                    wallclock,
+                    false,
+                    exts,
+                    false,
+                    packet.to_vec(),
+                )
+                .expect("clean write with new SSRC");
             }
         }
 
@@ -244,8 +238,8 @@ pub fn rtp_direct_reset_ssrc() -> Result<(), RtcError> {
     assert_eq!(h3.ext_vals.audio_level, Some(-53));
 
     // Clean up
-    l.direct_api().remove_media(mid);
-    r.direct_api().remove_media(mid);
+    l.with_direct_api(|api| api.remove_media(mid));
+    r.with_direct_api(|api| api.remove_media(mid));
 
     Ok(())
 }
@@ -269,13 +263,15 @@ pub fn rtp_direct_reset_ssrc_with_rtx() -> Result<(), RtcError> {
     let ssrc_rtx_new: Ssrc = 201.into();
 
     // Create media and stream with both main and RTX SSRCs
-    l.direct_api().declare_media(mid, MediaKind::Video);
-    l.direct_api()
-        .declare_stream_tx(ssrc_tx_initial, Some(ssrc_rtx_initial), mid, Some(rid));
+    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
+    l.with_direct_api(|api| {
+        api.declare_stream_tx(ssrc_tx_initial, Some(ssrc_rtx_initial), mid, Some(rid));
+    });
 
-    r.direct_api()
-        .declare_media(mid, MediaKind::Video)
-        .expect_rid_rx(rid);
+    r.with_direct_api(|api| {
+        api.declare_media(mid, MediaKind::Video)
+            .expect_rid_rx(rid);
+    });
 
     // Set initial timing
     let max = l.last.max(r.last);
@@ -283,8 +279,7 @@ pub fn rtp_direct_reset_ssrc_with_rtx() -> Result<(), RtcError> {
     r.last = max;
 
     // Verify the initial SSRCs
-    {
-        let mut api = l.direct_api();
+    l.with_direct_api(|api| {
         let stream = api.stream_tx_by_mid(mid, Some(rid)).unwrap();
         assert_eq!(
             stream.ssrc(),
@@ -296,24 +291,23 @@ pub fn rtp_direct_reset_ssrc_with_rtx() -> Result<(), RtcError> {
             Some(ssrc_rtx_initial),
             "Initial RTX SSRC should match what we set"
         );
-    }
+    });
 
     // Try resetting with the same RTX SSRC (should fail)
-    let mut api = l.direct_api();
-    let result = api.reset_stream_tx(mid, Some(rid), ssrc_tx_new, Some(ssrc_rtx_initial));
-    assert!(result.is_none(), "Reset with same RTX SSRC should fail");
+    let result =
+        l.with_direct_api(|api| api.reset_stream_tx(mid, Some(rid), ssrc_tx_new, Some(ssrc_rtx_initial)).is_some());
+    assert!(!result, "Reset with same RTX SSRC should fail");
 
     // Reset with new main and RTX SSRCs (should succeed)
-    let mut api = l.direct_api();
-    let result = api.reset_stream_tx(mid, Some(rid), ssrc_tx_new, Some(ssrc_rtx_new));
+    let result =
+        l.with_direct_api(|api| api.reset_stream_tx(mid, Some(rid), ssrc_tx_new, Some(ssrc_rtx_new)).is_some());
     assert!(
-        result.is_some(),
+        result,
         "Reset with new main and RTX SSRCs should succeed"
     );
 
     // Verify the SSRCs were changed
-    {
-        let mut api = l.direct_api();
+    l.with_direct_api(|api| {
         let stream = api.stream_tx_by_mid(mid, Some(rid)).unwrap();
         assert_eq!(
             stream.ssrc(),
@@ -325,11 +319,11 @@ pub fn rtp_direct_reset_ssrc_with_rtx() -> Result<(), RtcError> {
             Some(ssrc_rtx_new),
             "RTX SSRC should be updated to new value"
         );
-    }
+    });
 
     // Clean up
-    l.direct_api().remove_media(mid);
-    r.direct_api().remove_media(mid);
+    l.with_direct_api(|api| api.remove_media(mid));
+    r.with_direct_api(|api| api.remove_media(mid));
 
     Ok(())
 }

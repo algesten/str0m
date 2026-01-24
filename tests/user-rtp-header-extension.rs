@@ -12,7 +12,7 @@ use str0m::{Event, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, TestRtc};
+use common::{init_crypto_default, init_log, poll_to_completion, progress, TestRtc};
 
 #[test]
 pub fn user_rtp_header_extension() -> Result<(), RtcError> {
@@ -86,14 +86,22 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // The change is on the L (sending side) with Direction::SendRecv.
-    let mut change = l.sdp_api();
+    let tx = l.rtc.begin(l.last).expect("begin");
+    let mut change = tx.sdp_api();
     let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
-    let (offer, pending) = change.apply().unwrap();
+    let (offer, pending, tx) = change.apply().unwrap();
+    poll_to_completion(tx)?;
     let offer_str = offer.to_sdp_string();
     let offer_parsed =
         SdpOffer::from_sdp_string(&offer_str).expect("Should parse offer from string");
-    let answer = r.rtc.sdp_api().accept_offer(offer_parsed)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+
+    let tx = r.rtc.begin(r.last).expect("begin");
+    let (answer, tx) = tx.sdp_api().accept_offer(offer_parsed)?;
+    poll_to_completion(tx)?;
+
+    let tx = l.rtc.begin(l.last).expect("begin");
+    let tx = tx.sdp_api().accept_answer(pending, answer)?;
+    poll_to_completion(tx)?;
 
     // Verify that the extension is negotiated.
     let ext_l = l.media(mid).unwrap().remote_extmap();
@@ -129,11 +137,16 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
 
-        l.writer(mid)
-            .unwrap()
-            // Set my bespoke RTP header value.
+        let tx = l.rtc.begin(l.last).expect("begin");
+        let writer = match tx.writer(mid) {
+            Ok(w) => w,
+            Err(_) => panic!("writer for mid"),
+        };
+        // Set my bespoke RTP header value.
+        let tx = writer
             .user_extension_value(MyValue(42))
             .write(pt, wallclock, time, data_a.clone())?;
+        poll_to_completion(tx)?;
 
         progress(&mut l, &mut r)?;
 
@@ -227,12 +240,19 @@ pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // The change is on the L (sending side) with Direction::SendRecv.
-    let mut change = l.sdp_api();
+    let tx = l.rtc.begin(l.last).expect("begin");
+    let mut change = tx.sdp_api();
     let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
-    let (offer, pending) = change.apply().unwrap();
+    let (offer, pending, tx) = change.apply().unwrap();
+    poll_to_completion(tx)?;
 
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    let tx = r.rtc.begin(r.last).expect("begin");
+    let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
+    poll_to_completion(tx)?;
+
+    let tx = l.rtc.begin(l.last).expect("begin");
+    let tx = tx.sdp_api().accept_answer(pending, answer)?;
+    poll_to_completion(tx)?;
 
     // Verify that the extension is negotiated.
     let ext_l = l.media(mid).unwrap().remote_extmap();
@@ -269,11 +289,16 @@ pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
 
-        l.writer(mid)
-            .unwrap()
-            // Set my bespoke RTP header value.
+        let tx = l.rtc.begin(l.last).expect("begin");
+        let writer = match tx.writer(mid) {
+            Ok(w) => w,
+            Err(_) => panic!("writer for mid"),
+        };
+        // Set my bespoke RTP header value.
+        let tx = writer
             .user_extension_value(my_value.clone())
             .write(pt, wallclock, time, data_a.clone())?;
+        poll_to_completion(tx)?;
 
         progress(&mut l, &mut r)?;
 

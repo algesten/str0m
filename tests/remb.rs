@@ -44,10 +44,11 @@ pub fn remb() -> Result<(), RtcError> {
         }
     }
 
-    r.direct_api()
-        .stream_rx_by_mid(mid, None)
-        .expect("Should has rx")
-        .request_remb(Bitrate::bps(123456));
+    r.with_direct_api(|api| {
+        api.stream_rx_by_mid(mid, None)
+            .expect("Should has rx")
+            .request_remb(Bitrate::bps(123456));
+    });
 
     let settle_time = l.duration() + Duration::from_millis(20);
     loop {

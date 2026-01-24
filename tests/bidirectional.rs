@@ -6,7 +6,7 @@ use str0m::media::{Direction, MediaKind};
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{init_crypto_default, init_log, poll_to_completion, progress, Peer, TestRtc};
 
 #[test]
 pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
@@ -19,12 +19,30 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    let mut change = l.sdp_api();
-    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
-    let (offer, pending) = change.apply().unwrap();
+    // Create offer from L using transaction API
+    let (mid, offer, pending) = {
+        let tx = l.rtc.begin(l.last)?;
+        let mut change = tx.sdp_api();
+        let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+        let (offer, pending, tx) = change.apply().unwrap();
+        poll_to_completion(tx)?;
+        (mid, offer, pending)
+    };
 
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    // R accepts the offer
+    let answer = {
+        let tx = r.rtc.begin(r.last)?;
+        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
+        poll_to_completion(tx)?;
+        answer
+    };
+
+    // L accepts the answer
+    {
+        let tx = l.rtc.begin(l.last)?;
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        poll_to_completion(tx)?;
+    }
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -48,9 +66,10 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
         {
             let wallclock = l.start + l.duration();
             let time = l.duration().into();
-            l.writer(mid)
-                .unwrap()
-                .write(pt, wallclock, time, data_a.clone())?;
+            let tx = l.rtc.begin(l.last)?;
+            let writer = tx.writer(mid).unwrap_or_else(|_| panic!("writer for mid"));
+            let tx = writer.write(pt, wallclock, time, data_a.clone())?;
+            poll_to_completion(tx)?;
         }
 
         progress(&mut l, &mut r)?;
@@ -58,9 +77,10 @@ pub fn bidirectional_same_m_line() -> Result<(), RtcError> {
         {
             let wallclock = r.start + r.duration();
             let time = l.duration().into();
-            r.writer(mid)
-                .unwrap()
-                .write(pt, wallclock, time, data_b.clone())?;
+            let tx = r.rtc.begin(r.last)?;
+            let writer = tx.writer(mid).unwrap_or_else(|_| panic!("writer for mid"));
+            let tx = writer.write(pt, wallclock, time, data_b.clone())?;
+            poll_to_completion(tx)?;
         }
 
         progress(&mut l, &mut r)?;

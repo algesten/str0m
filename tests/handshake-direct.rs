@@ -11,7 +11,7 @@ use str0m::{Candidate, Event, IceConnectionState, Output, Rtc, RtcConfig, RtcErr
 use tracing::{info_span, Span};
 
 mod common;
-use common::{init_crypto_default, init_log};
+use common::{init_crypto_default, init_log, poll_to_completion};
 
 /// Pre-negotiated data channel SCTP stream ID
 const DATA_CHANNEL_ID: u16 = 0;
@@ -184,12 +184,23 @@ fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, S
     }
     let mut rtc = rtc_config.build();
 
-    // Get DTLS fingerprint
-    let fingerprint = rtc.direct_api().local_dtls_fingerprint().to_string();
+    // Get DTLS fingerprint via transaction API
+    let fingerprint = {
+        let tx = rtc.begin(Instant::now())?;
+        let mut direct = tx.direct_api();
+        let fp = direct.local_dtls_fingerprint().to_string();
+        poll_to_completion(direct.finish())?;
+        fp
+    };
 
-    // Add local candidate
+    // Add local candidate via ice API
     let local_candidate = Candidate::host(local_addr, "udp")?;
-    rtc.add_local_candidate(local_candidate);
+    {
+        let tx = rtc.begin(Instant::now())?;
+        let mut ice = tx.ice();
+        ice.add_local_candidate(local_candidate);
+        poll_to_completion(ice.finish())?;
+    }
 
     Ok((rtc, ice_creds, fingerprint))
 }
@@ -203,12 +214,19 @@ fn configure_rtc(
     remote_ice_pwd: String,
     remote_fingerprint: String,
 ) -> Result<(), RtcError> {
-    // Add remote candidate
+    // Add remote candidate via ice API
     let remote_candidate = Candidate::host(remote_addr, "udp")?;
-    rtc.add_remote_candidate(remote_candidate);
-
     {
-        let mut direct_api = rtc.direct_api();
+        let tx = rtc.begin(Instant::now())?;
+        let mut ice = tx.ice();
+        ice.add_remote_candidate(remote_candidate);
+        poll_to_completion(ice.finish())?;
+    }
+
+    // Configure via direct API
+    {
+        let tx = rtc.begin(Instant::now())?;
+        let mut direct_api = tx.direct_api();
 
         // Set ICE parameters
         // Client: not ice-lite, IS controlling
@@ -242,19 +260,8 @@ fn configure_rtc(
             reliability: Reliability::Reliable,
             protocol: "".into(),
         });
-    }
 
-    // Initialize with a timeout using transaction API
-    {
-        let tx = rtc.begin(Instant::now());
-        let mut tx = tx.finish();
-        loop {
-            match tx.poll() {
-                Output::Timeout(_) => break,
-                Output::Transmit(t, _) => tx = t,
-                Output::Event(t, _) => tx = t,
-            }
-        }
+        poll_to_completion(direct_api.finish())?;
     }
 
     Ok(())
@@ -438,7 +445,7 @@ fn run_rtc_loop_with_exchange(
 
         // One transaction per loop iteration
         let now = Instant::now();
-        let tx = rtc.begin(now);
+        let tx = rtc.begin(now)?;
         let mut tx = if let Some((proto, source, destination, contents)) = packet {
             let receive = Receive {
                 proto,
@@ -447,14 +454,14 @@ fn run_rtc_loop_with_exchange(
                 contents: contents.as_slice().try_into()?,
                 recv_time: Some(now),
             };
-            span.in_scope(|| tx.receive(now, receive))?
+            span.in_scope(|| tx.receive(receive))?
         } else {
             tx.finish()
         };
 
         // Poll to timeout
         timeout = loop {
-            match span.in_scope(|| tx.poll()) {
+            match span.in_scope(|| tx.poll())? {
                 Output::Timeout(t) => break t,
                 Output::Transmit(t, pkt) => {
                     tx = t;
@@ -536,8 +543,10 @@ fn handle_event(
 
             // Client sends first message
             if is_client {
-                if let Some(mut chan) = rtc.channel(*cid) {
+                let tx = rtc.begin(Instant::now()).expect("begin");
+                if let Ok(mut chan) = tx.channel(*cid) {
                     chan.write(true, b"sixseven").expect("Failed to write");
+                    poll_to_completion(chan.finish()).expect("poll");
                     println!("[CLIENT] Sent 'sixseven'");
                     timing.sent_data = Some(Instant::now());
                     *state = DataExchangeState::SentMessage;
@@ -566,8 +575,10 @@ fn handle_event(
                     timing.received_data = Some(Instant::now());
                     // Use channel id from the data event (works for pre-negotiated channels)
                     let cid = data.id;
-                    if let Some(mut chan) = rtc.channel(cid) {
+                    let tx = rtc.begin(Instant::now()).expect("begin");
+                    if let Ok(mut chan) = tx.channel(cid) {
                         chan.write(true, b"sevenofnine").expect("Failed to write");
+                        poll_to_completion(chan.finish()).expect("poll");
                         println!("[SERVER] Sent reply 'sevenofnine'");
                         timing.sent_data = Some(Instant::now());
                         *state = DataExchangeState::SentMessage;

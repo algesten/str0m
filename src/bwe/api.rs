@@ -1,6 +1,8 @@
 //! Bandwidth estimation.
 
-use crate::{rtp_::Mid, Rtc};
+use crate::rtp_::Mid;
+use crate::tx::{RtcTx, RtcTxInner};
+use crate::{Mutate, Poll, RtcError};
 
 pub use crate::rtp_::Bitrate;
 
@@ -15,9 +17,23 @@ pub enum BweKind {
 }
 
 /// Access to the Bandwidth Estimate subsystem.
-pub struct Bwe<'a>(pub(crate) &'a mut Rtc);
+pub struct Bwe<'a> {
+    inner: RtcTxInner<'a>,
+}
 
 impl<'a> Bwe<'a> {
+    /// Creates a new Bwe instance from a transaction.
+    pub(crate) fn new(tx: RtcTx<'a, Mutate>) -> Self {
+        Bwe {
+            inner: tx.into_inner(),
+        }
+    }
+
+    /// Finish using the Bwe API and return to polling state.
+    pub fn finish(self) -> RtcTx<'a, Poll> {
+        RtcTx::from_inner(self.inner)
+    }
+
     /// Configure the desired bitrate.
     ///
     /// Configure the bandwidth estimation system with the desired bitrate.
@@ -37,7 +53,7 @@ impl<'a> Bwe<'a> {
     /// link can sustain 4.5Mbit/s there will eventually be an
     /// [`Event::EgressBitrateEstimate`][crate::Event::EgressBitrateEstimate] with this estimate.
     pub fn set_desired_bitrate(&mut self, desired_bitrate: Bitrate) {
-        self.0.session.set_bwe_desired_bitrate(desired_bitrate);
+        self.inner.rtc.session.set_bwe_desired_bitrate(desired_bitrate);
     }
 
     /// Reset the BWE with a new init_bitrate
@@ -52,6 +68,6 @@ impl<'a> Bwe<'a> {
     /// provided init_bitrate.
     ///
     pub fn reset(&mut self, init_bitrate: Bitrate) {
-        self.0.session.reset_bwe(init_bitrate);
+        self.inner.rtc.session.reset_bwe(init_bitrate);
     }
 }

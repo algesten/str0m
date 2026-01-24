@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use str0m::format::Codec;
 use str0m::media::MediaKind;
-use str0m::rtp::{ExtensionValues, Ssrc};
+use str0m::rtp::{ExtensionValues, SeqNo, Ssrc};
 use str0m::{Event, Rtc, RtcError};
 
 mod common;
@@ -22,16 +22,16 @@ pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
     let mid = "audio".into();
     let ssrc_tx: Ssrc = 1337.into();
 
-    l.direct_api().declare_media(mid, MediaKind::Audio);
-    l.direct_api().declare_stream_tx(ssrc_tx, None, mid, None);
-    r.direct_api().declare_media(mid, MediaKind::Audio);
+    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
+    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, None, mid, None); });
+    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Audio); });
 
     let max = l.last.max(r.last);
     l.last = max;
     r.last = max;
 
     let params = l.params_opus();
-    let ssrc = l.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
+    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
 
@@ -56,12 +56,9 @@ pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
             if let Some(packet) = to_write.pop_front() {
                 let wallclock = l.start + l.duration();
 
-                let mut direct = l.direct_api();
-                let stream = direct.stream_tx(&ssrc).unwrap();
-
                 let count = counts.remove(0);
                 let time = (count * 1000 + 47_000_000) as u32;
-                let seq_no = (47_000 + count).into();
+                let seq_no: SeqNo = (47_000 + count).into();
 
                 let exts = ExtensionValues {
                     audio_level: Some(-42 - count as i8),
@@ -69,18 +66,20 @@ pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
                     ..Default::default()
                 };
 
-                stream
-                    .write_rtp(
-                        pt,
-                        seq_no,
-                        time,
-                        wallclock,
-                        *seq_no % 2 == 0, // set marker bit on every second packet
-                        exts,
-                        false,
-                        packet.to_vec(),
-                    )
-                    .expect("clean write");
+                let marker = *seq_no % 2 == 0; // set marker bit on every second packet
+
+                l.write_rtp(
+                    ssrc,
+                    pt,
+                    seq_no,
+                    time,
+                    wallclock,
+                    marker,
+                    exts,
+                    false,
+                    packet.to_vec(),
+                )
+                .expect("clean write");
             }
         }
 

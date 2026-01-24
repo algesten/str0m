@@ -24,12 +24,12 @@ pub fn stats() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    let mut change = l.sdp_api();
-    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
-    let (offer, pending) = change.apply().unwrap();
+    let (offer, pending, mid) = l.sdp_create_offer(|change| {
+        change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None)
+    });
 
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    let answer = r.sdp_accept_offer(offer)?;
+    l.sdp_accept_answer(pending, answer)?;
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -56,17 +56,13 @@ pub fn stats() -> Result<(), RtcError> {
         {
             let wallclock = l.start + l.duration();
             let time = l.duration().into();
-            l.writer(mid)
-                .unwrap()
-                .write(pt, wallclock, time, data_a.clone())?;
+            l.write_media(mid, pt, wallclock, time, data_a.clone(), None)?;
         }
 
         {
             let wallclock = r.start + r.duration();
             let time = l.duration().into();
-            r.writer(mid)
-                .unwrap()
-                .write(pt, wallclock, time, data_b.clone())?;
+            r.write_media(mid, pt, wallclock, time, data_b.clone(), None)?;
         }
 
         progress(&mut l, &mut r)?;

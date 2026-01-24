@@ -8,7 +8,7 @@ use str0m::{Event, RtcError};
 use tracing::info;
 
 mod common;
-use common::{init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{init_crypto_default, init_log, negotiate, progress, Peer, TestRtc};
 
 #[test]
 pub fn mediatime_backwards() -> Result<(), RtcError> {
@@ -25,12 +25,9 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // The change is on the L (sending side) with Direction::SendRecv.
-    let mut change = l.sdp_api();
-    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
-    let (offer, pending) = change.apply().unwrap();
-
-    let answer = r.rtc.sdp_api().accept_offer(offer)?;
-    l.rtc.sdp_api().accept_answer(pending, answer)?;
+    let mid = negotiate(&mut l, &mut r, |change| {
+        change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None)
+    });
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -58,10 +55,14 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
         let timestamp = base_timestamp + i * 960; // Standard Opus timestamp increment
         let time = MediaTime::from_90khz(timestamp as u64);
 
-        l.rtc
-            .writer(mid)
-            .unwrap()
-            .write(pt, wallclock, time, data_a.clone())?;
+        // Use the transaction API to write media
+        let tx = l.rtc.begin(l.last).expect("begin");
+        let writer = match tx.writer(mid) {
+            Ok(w) => w,
+            Err(_) => panic!("writer not found for mid"),
+        };
+        let tx = writer.write(pt, wallclock, time, data_a.clone())?;
+        common::poll_to_completion(tx)?;
 
         progress(&mut l, &mut r)?;
     }
@@ -139,10 +140,14 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
     // Save the timestamp index for comparison BEFORE sending
     let events_before_problematic = r.events.len();
 
-    l.rtc
-        .writer(mid)
-        .unwrap()
-        .write(pt, wallclock, time, data_a.clone())?;
+    // Use the transaction API to write media
+    let tx = l.rtc.begin(l.last).expect("begin");
+    let writer = match tx.writer(mid) {
+        Ok(w) => w,
+        Err(_) => panic!("writer not found for mid"),
+    };
+    let tx = writer.write(pt, wallclock, time, data_a.clone())?;
+    common::poll_to_completion(tx)?;
 
     // Process the packet and a few more cycles to ensure it's received
     for _ in 0..10 {

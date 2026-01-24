@@ -33,22 +33,22 @@ fn run_loss_test(loss_model: impl Into<LossModel>, seed: u64) -> Result<usize, R
     let ssrc_tx: Ssrc = 42.into();
     let ssrc_rtx: Ssrc = 44.into();
 
-    l.direct_api().declare_media(mid, MediaKind::Video);
-    l.direct_api()
-        .declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
+    l.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
+    l.with_direct_api(|api| { api.declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None); });
 
     // Increase the RTX ratio cap to 0.2 to allow more retransmissions.
     // With heavy loss, the RTX ratio naturally grows, and the default
     // cap (0.15) is too low to allow all needed retransmissions.
-    l.direct_api().stream_tx(&ssrc_tx).unwrap().set_rtx_cache(
-        1024,
-        Duration::from_secs(3),
-        Some(0.2),
-    );
+    l.with_direct_api(|api| {
+        api.stream_tx(&ssrc_tx).unwrap().set_rtx_cache(
+            1024,
+            Duration::from_secs(3),
+            Some(0.2),
+        );
+    });
 
-    r.direct_api().declare_media(mid, MediaKind::Video);
-    r.direct_api()
-        .expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
+    r.with_direct_api(|api| { api.declare_media(mid, MediaKind::Video); });
+    r.with_direct_api(|api| { api.expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None); });
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -69,9 +69,8 @@ fn run_loss_test(loss_model: impl Into<LossModel>, seed: u64) -> Result<usize, R
 
         let absolute = max + relative;
 
-        let mut direct = l.direct_api();
-        let tx = direct.stream_tx(&ssrc_tx).unwrap();
-        tx.write_rtp(
+        l.write_rtp(
+            ssrc_tx,
             pt,
             header.sequence_number(None),
             header.timestamp,
