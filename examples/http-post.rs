@@ -95,15 +95,48 @@ fn web_request(request: &Request) -> Response {
 fn run(mut rtc: Rtc, socket: UdpSocket) -> Result<(), RtcError> {
     // Buffer for incoming data.
     let mut buf = Vec::new();
+    let mut timeout = Instant::now();
 
     loop {
+        let duration = timeout.saturating_duration_since(Instant::now());
+
+        // socket.set_read_timeout(Some(0)) is not ok
+        socket.set_read_timeout(Some(duration.max(std::time::Duration::from_micros(1))))?;
+        buf.resize(2000, 0);
+
+        // Try to receive network data
+        let recv = match socket.recv_from(&mut buf) {
+            Ok((n, source)) => {
+                buf.truncate(n);
+                Some(Receive {
+                    proto: Protocol::Udp,
+                    source,
+                    destination: socket.local_addr().unwrap(),
+                    contents: buf.as_slice().try_into()?,
+                    timestamp: Some(Instant::now()),
+                })
+            }
+            Err(e) => match e.kind() {
+                // Expected error for set_read_timeout(). One for windows, one for the rest.
+                ErrorKind::WouldBlock | ErrorKind::TimedOut => None,
+                _ => return Err(e.into()),
+            },
+        };
+
         let now = Instant::now();
 
-        // Begin a transaction and poll to timeout
+        // Begin a transaction - exactly ONE per loop iteration
         let tx = rtc.begin(now);
-        let mut tx = tx.finish();
 
-        let timeout = loop {
+        // Either handle received data or just advance time
+        let mut tx = if let Some(recv) = recv {
+            tx.receive(now, recv)?
+        } else {
+            tx.finish()
+        };
+
+        // Poll until we get a timeout
+        timeout = loop {
             match tx.poll() {
                 Output::Timeout(t) => break t,
                 Output::Transmit(t, pkt) => {
@@ -117,59 +150,6 @@ fn run(mut rtc: Rtc, socket: UdpSocket) -> Result<(), RtcError> {
                     }
                 }
             }
-        };
-
-        let duration = timeout.saturating_duration_since(Instant::now());
-
-        // socket.set_read_timeout(Some(0)) is not ok
-        if duration.is_zero() {
-            continue;
-        }
-
-        socket.set_read_timeout(Some(duration))?;
-        buf.resize(2000, 0);
-
-        match socket.recv_from(&mut buf) {
-            Ok((n, source)) => {
-                buf.truncate(n);
-                let recv_time = Instant::now();
-                let recv = Receive {
-                    proto: Protocol::Udp,
-                    source,
-                    destination: socket.local_addr().unwrap(),
-                    contents: buf.as_slice().try_into()?,
-                    timestamp: Some(recv_time),
-                };
-
-                // Handle the received data
-                let tx = rtc.begin(recv_time);
-                let mut tx = tx.receive(recv_time, recv)?;
-                loop {
-                    match tx.poll() {
-                        Output::Timeout(_) => break,
-                        Output::Transmit(t, pkt) => {
-                            tx = t;
-                            socket.send_to(&pkt.contents, pkt.destination)?;
-                        }
-                        Output::Event(t, evt) => {
-                            tx = t;
-                            if evt
-                                == Event::IceConnectionStateChange(IceConnectionState::Disconnected)
-                            {
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-            }
-
-            Err(e) => match e.kind() {
-                // Expected error for set_read_timeout(). One for windows, one for the rest.
-                ErrorKind::WouldBlock | ErrorKind::TimedOut => {
-                    // Timeout - continue loop
-                }
-                _ => return Err(e.into()),
-            },
         };
     }
 }

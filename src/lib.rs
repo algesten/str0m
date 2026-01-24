@@ -114,7 +114,7 @@
 //!
 //! Driving the state of the `Rtc` forward is a run loop using the transaction-based API.
 //! All mutations go through [`Rtc::begin()`], which returns a transaction that must be
-//! polled to timeout.
+//! polled to timeout. Each loop iteration should have exactly ONE transaction.
 //!
 //! ```ignore
 //! # use str0m::{Rtc, Output, IceConnectionState, Event};
@@ -128,18 +128,46 @@
 //!
 //! // A UdpSocket we obtained _somehow_.
 //! let socket: UdpSocket = todo!();
+//! let mut timeout = Instant::now();
 //!
 //! loop {
+//!     // Wait for timeout or network input
+//!     let duration = timeout.saturating_duration_since(Instant::now());
+//!     socket.set_read_timeout(Some(duration.max(std::time::Duration::from_micros(1)))).unwrap();
+//!     buf.resize(2000, 0);
+//!
+//!     // Try to receive network data (non-blocking due to timeout)
+//!     let recv = match socket.recv_from(&mut buf) {
+//!         Ok((n, source)) => {
+//!             buf.truncate(n);
+//!             Some(Receive::new(
+//!                 Protocol::Udp,
+//!                 source,
+//!                 socket.local_addr().unwrap(),
+//!                 &buf,
+//!             ).unwrap())
+//!         }
+//!         Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => None,
+//!         Err(e) => {
+//!             eprintln!("Error: {:?}", e);
+//!             return;
+//!         }
+//!     };
+//!
 //!     let now = Instant::now();
 //!
-//!     // Begin a transaction - this is the entry point for all operations
+//!     // Begin a transaction - exactly ONE per loop iteration
 //!     let tx = rtc.begin(now);
 //!
-//!     // Transition to Poll state (either via receive() or finish())
-//!     let mut tx = tx.finish();
+//!     // Either handle received data or just advance time
+//!     let mut tx = if let Some(recv) = recv {
+//!         tx.receive(now, recv).unwrap()
+//!     } else {
+//!         tx.finish()
+//!     };
 //!
 //!     // Poll until we get a timeout
-//!     let timeout = loop {
+//!     timeout = loop {
 //!         match tx.poll() {
 //!             Output::Timeout(t) => break t,
 //!             Output::Transmit(t, pkt) => {
@@ -155,50 +183,6 @@
 //!             }
 //!         }
 //!     };
-//!
-//!     // Wait for timeout or network input
-//!     let duration = timeout.saturating_duration_since(Instant::now());
-//!     if duration.is_zero() {
-//!         continue;
-//!     }
-//!
-//!     socket.set_read_timeout(Some(duration)).unwrap();
-//!     buf.resize(2000, 0);
-//!
-//!     match socket.recv_from(&mut buf) {
-//!         Ok((n, source)) => {
-//!             buf.truncate(n);
-//!             let recv = Receive::new(
-//!                 Protocol::Udp,
-//!                 source,
-//!                 socket.local_addr().unwrap(),
-//!                 &buf,
-//!             ).unwrap();
-//!
-//!             // Handle received data in next iteration
-//!             let tx = rtc.begin(Instant::now());
-//!             let mut tx = tx.receive(Instant::now(), recv).unwrap();
-//!             loop {
-//!                 match tx.poll() {
-//!                     Output::Timeout(_) => break,
-//!                     Output::Transmit(t, pkt) => {
-//!                         tx = t;
-//!                         socket.send_to(&pkt.contents, pkt.destination).unwrap();
-//!                     }
-//!                     Output::Event(t, _evt) => {
-//!                         tx = t;
-//!                     }
-//!                 }
-//!             }
-//!         }
-//!         Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
-//!             // Timeout - continue loop
-//!         }
-//!         Err(e) => {
-//!             eprintln!("Error: {:?}", e);
-//!             return;
-//!         }
-//!     }
 //! }
 //! ```
 //!
@@ -793,26 +777,34 @@ pub use transaction::{BweTx, ChannelTx, IceTx, MediaWriterTx, Mutate, Output, Po
 /// [`Rtc::begin()`]. This provides compile-time enforcement that you poll to
 /// timeout after any mutation.
 ///
+/// Each loop iteration should have exactly ONE transaction. Wait for input
+/// first, then begin a transaction that either receives or advances time.
+///
 /// ```ignore
 /// # use str0m::{Rtc, Output};
 /// # use str0m::net::{Receive, Protocol};
 /// # use std::time::Instant;
 /// let mut rtc = Rtc::new();
+/// let mut timeout = Instant::now();
 ///
 /// loop {
+///     // Wait for network input or timeout FIRST
+///     let recv: Option<Receive> = todo!(); // try_recv with timeout
+///
 ///     let now = Instant::now();
 ///
-///     // All mutations start with begin(now)
+///     // All mutations start with begin(now) - ONE transaction per iteration
 ///     let tx = rtc.begin(now);
 ///
-///     // Either handle received network data...
-///     // let mut tx = tx.receive(recv_time, data)?;
-///
-///     // ...or just advance time
-///     let mut tx = tx.finish();
+///     // Either handle received network data or just advance time
+///     let mut tx = if let Some(data) = recv {
+///         tx.receive(now, data).unwrap()
+///     } else {
+///         tx.finish()
+///     };
 ///
 ///     // Poll until timeout (mandatory - transaction panics if dropped early)
-///     let timeout = loop {
+///     timeout = loop {
 ///         match tx.poll() {
 ///             Output::Timeout(t) => break t,
 ///             Output::Transmit(t, pkt) => {
@@ -825,8 +817,6 @@ pub use transaction::{BweTx, ChannelTx, IceTx, MediaWriterTx, Mutate, Output, Po
 ///             }
 ///         }
 ///     };
-///
-///     // Wait for timeout or network input before next iteration
 /// }
 /// ```
 pub struct Rtc {

@@ -384,6 +384,7 @@ fn run_rtc_loop_with_exchange(
     let mut state = DataExchangeState::WaitingForChannelOpen;
     let mut channel_id: Option<ChannelId> = None;
     let role = if is_client { "CLIENT" } else { "SERVER" };
+    let mut timeout = Instant::now();
 
     loop {
         // Check if we're done
@@ -397,30 +398,76 @@ fn run_rtc_loop_with_exchange(
             break;
         }
 
-        // Collect transmits and events during polling, process events after
+        // Calculate wait duration
+        let now = Instant::now();
+        let wait = timeout.saturating_duration_since(now);
+        println!("[{}] waiting for input or timeout in {:?}", role, wait);
+
+        // Wait for incoming message or timeout - FIRST, before transaction
+        let packet = match incoming.recv_timeout(wait.max(Duration::from_micros(1))) {
+            Ok(Message::Packet {
+                proto,
+                source,
+                destination,
+                contents,
+            }) => {
+                println!("[{}] Received packet ({} bytes)", role, contents.len());
+                Some((proto, source, destination, contents))
+            }
+            Ok(Message::Exit) => {
+                println!("[{}] Received Exit signal", role);
+                state = DataExchangeState::Complete;
+                continue;
+            }
+            Ok(_) => {
+                unreachable!("Unexpected message type");
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                println!("[{}] Timeout fired", role);
+                None
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                println!("[{}] Channel disconnected", role);
+                break;
+            }
+        };
+
+        // Collect transmits and events during polling
         let mut transmits: Vec<(Protocol, SocketAddr, SocketAddr, Vec<u8>)> = Vec::new();
         let mut events: Vec<Event> = Vec::new();
 
-        // Poll all outputs until we get a timeout using transaction API
-        let timeout = {
-            let tx = rtc.begin(Instant::now());
-            let mut tx = tx.finish();
-            loop {
-                match span.in_scope(|| tx.poll()) {
-                    Output::Timeout(t) => break t,
-                    Output::Transmit(t, pkt) => {
-                        tx = t;
-                        transmits.push((
-                            pkt.proto,
-                            pkt.source,
-                            pkt.destination,
-                            pkt.contents.to_vec(),
-                        ));
-                    }
-                    Output::Event(t, e) => {
-                        tx = t;
-                        events.push(e);
-                    }
+        // One transaction per loop iteration
+        let now = Instant::now();
+        let tx = rtc.begin(now);
+        let mut tx = if let Some((proto, source, destination, contents)) = packet {
+            let receive = Receive {
+                proto,
+                source,
+                destination,
+                contents: contents.as_slice().try_into()?,
+                timestamp: Some(now),
+            };
+            span.in_scope(|| tx.receive(now, receive))?
+        } else {
+            tx.finish()
+        };
+
+        // Poll to timeout
+        timeout = loop {
+            match span.in_scope(|| tx.poll()) {
+                Output::Timeout(t) => break t,
+                Output::Transmit(t, pkt) => {
+                    tx = t;
+                    transmits.push((
+                        pkt.proto,
+                        pkt.source,
+                        pkt.destination,
+                        pkt.contents.to_vec(),
+                    ));
+                }
+                Output::Event(t, e) => {
+                    tx = t;
+                    events.push(e);
                 }
             }
         };
@@ -448,99 +495,6 @@ fn run_rtc_loop_with_exchange(
             );
             if state == DataExchangeState::Complete {
                 return Ok(());
-            }
-        }
-
-        // Calculate wait duration - this is when we NEED to wake up
-        let now = Instant::now();
-        let wait = timeout.saturating_duration_since(now);
-        println!("[{}] poll returned timeout in {:?}", role, wait);
-
-        // Wait for incoming message or timeout
-        match incoming.recv_timeout(wait) {
-            Ok(Message::Packet {
-                proto,
-                source,
-                destination,
-                contents,
-            }) => {
-                println!("[{}] Received packet ({} bytes)", role, contents.len());
-                let recv_time = Instant::now();
-                let receive = Receive {
-                    proto,
-                    source,
-                    destination,
-                    contents: contents.as_slice().try_into()?,
-                    timestamp: Some(recv_time),
-                };
-
-                // Process receive using transaction API
-                let mut recv_events: Vec<Event> = Vec::new();
-                let mut recv_transmits: Vec<(Protocol, SocketAddr, SocketAddr, Vec<u8>)> =
-                    Vec::new();
-                {
-                    let tx = rtc.begin(recv_time);
-                    let mut tx = span.in_scope(|| tx.receive(recv_time, receive))?;
-                    loop {
-                        match span.in_scope(|| tx.poll()) {
-                            Output::Timeout(_) => break,
-                            Output::Transmit(t, pkt) => {
-                                tx = t;
-                                recv_transmits.push((
-                                    pkt.proto,
-                                    pkt.source,
-                                    pkt.destination,
-                                    pkt.contents.to_vec(),
-                                ));
-                            }
-                            Output::Event(t, e) => {
-                                tx = t;
-                                recv_events.push(e);
-                            }
-                        }
-                    }
-                }
-
-                // Send any transmits generated by receive
-                for (proto, source, destination, contents) in recv_transmits {
-                    let _ = outgoing.send(Message::Packet {
-                        proto,
-                        source,
-                        destination,
-                        contents,
-                    });
-                }
-
-                // Process events from receive
-                for e in recv_events {
-                    handle_event(
-                        rtc,
-                        &e,
-                        timing,
-                        is_client,
-                        &mut state,
-                        &mut channel_id,
-                        outgoing,
-                    );
-                    if state == DataExchangeState::Complete {
-                        return Ok(());
-                    }
-                }
-            }
-            Ok(Message::Exit) => {
-                println!("[{}] Received Exit signal", role);
-                state = DataExchangeState::Complete;
-            }
-            Ok(_) => {
-                unreachable!("Unexpected message type");
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                println!("[{}] Timeout fired", role);
-                // Just continue to the next loop iteration, which will poll with the current time
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                println!("[{}] Channel disconnected", role);
-                break;
             }
         }
     }
