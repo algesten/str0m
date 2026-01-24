@@ -47,9 +47,7 @@ pub fn audio_stream_then_inactive_with_bwe() -> Result<(), RtcError> {
     })?;
     let answer = answer.unwrap();
 
-    l.drive(&mut r, |tx| {
-        tx.sdp_api().accept_answer(pending, answer)
-    })?;
+    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
 
     // Wait for connection
     loop {
@@ -105,9 +103,7 @@ pub fn audio_stream_then_inactive_with_bwe() -> Result<(), RtcError> {
     })?;
     let answer = answer.unwrap();
 
-    l.drive(&mut r, |tx| {
-        tx.sdp_api().accept_answer(pending, answer)
-    })?;
+    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
 
     // Step 4: Continue progressing - this is where probe_queue access might fail
     // if the pacer tries to use probe_queue when there's no video queue available

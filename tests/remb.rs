@@ -44,11 +44,13 @@ pub fn remb() -> Result<(), RtcError> {
         }
     }
 
-    r.with_direct_api(|api| {
+    r.drive(&mut l, |tx| {
+        let mut api = tx.direct_api();
         api.stream_rx_by_mid(mid, None)
             .expect("Should has rx")
             .request_remb(Bitrate::bps(123456));
-    });
+        Ok(api.finish())
+    })?;
 
     let settle_time = l.duration() + Duration::from_millis(20);
     loop {

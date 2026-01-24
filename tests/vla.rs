@@ -189,12 +189,9 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
 
     l.drive(&mut r, |tx| {
         let writer = tx.writer(mid).expect("writer");
-        writer.user_extension_value(vla.clone()).write(
-            pt,
-            last,
-            MediaTime::ZERO,
-            vec![0xAA; 10],
-        )
+        writer
+            .user_extension_value(vla.clone())
+            .write(pt, last, MediaTime::ZERO, vec![0xAA; 10])
     })?;
 
     let mut vla_received = false;

@@ -22,15 +22,19 @@ pub fn srtp_replay_attack_rtp_mode() -> Result<(), RtcError> {
     let mid = "aud".into();
 
     let ssrc_tx: Ssrc = 42.into();
-    l.with_direct_api(|api| {
+    {
+        let tx = l.rtc.begin(l.last).unwrap();
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-    });
-    l.with_direct_api(|api| {
         api.declare_stream_tx(ssrc_tx, None, mid, None);
-    });
-    r.with_direct_api(|api| {
+        common::poll_simple(api.finish()).unwrap();
+    }
+    {
+        let tx = r.rtc.begin(r.last).unwrap();
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-    });
+        common::poll_simple(api.finish()).unwrap();
+    }
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -146,15 +150,19 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
     let mid = "aud".into();
 
     let ssrc_tx: Ssrc = 42.into();
-    l.with_direct_api(|api| {
+    {
+        let tx = l.rtc.begin(l.last).unwrap();
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-    });
-    l.with_direct_api(|api| {
         api.declare_stream_tx(ssrc_tx, None, mid, None);
-    });
-    r.with_direct_api(|api| {
+        common::poll_simple(api.finish()).unwrap();
+    }
+    {
+        let tx = r.rtc.begin(r.last).unwrap();
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-    });
+        common::poll_simple(api.finish()).unwrap();
+    }
 
     let max = l.last.max(r.last);
     l.last = max;

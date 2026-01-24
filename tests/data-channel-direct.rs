@@ -165,14 +165,12 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
 
     loop {
         // Try to write to channel
-        l.drive(&mut r, |tx| {
-            match tx.channel(cid) {
-                Ok(mut chan) => {
-                    let _ = chan.write(false, "Hello world! ".as_bytes());
-                    Ok(chan.finish())
-                }
-                Err(tx) => Ok(tx.finish()),
+        l.drive(&mut r, |tx| match tx.channel(cid) {
+            Ok(mut chan) => {
+                let _ = chan.write(false, "Hello world! ".as_bytes());
+                Ok(chan.finish())
             }
+            Err(tx) => Ok(tx.finish()),
         })?;
 
         l.drive(&mut r, |tx| Ok(tx.finish()))?;
@@ -183,14 +181,12 @@ pub fn data_channel_direct() -> Result<(), RtcError> {
     }
 
     // Close channel
-    l.drive(&mut r, |tx| {
-        match tx.channel(cid) {
-            Ok(mut chan) => {
-                chan.close();
-                Ok(chan.finish())
-            }
-            Err(tx) => Ok(tx.finish()),
+    l.drive(&mut r, |tx| match tx.channel(cid) {
+        Ok(mut chan) => {
+            chan.close();
+            Ok(chan.finish())
         }
+        Err(tx) => Ok(tx.finish()),
     })?;
 
     loop {

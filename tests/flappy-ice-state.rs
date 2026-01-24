@@ -45,9 +45,7 @@ pub fn flappy_ice_lite_state() -> Result<(), RtcError> {
     let answer = answer.unwrap();
 
     // L accepts the answer
-    l.drive(&mut r, |tx| {
-        tx.sdp_api().accept_answer(pending, answer)
-    })?;
+    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
 
     loop {
         if l.is_connected() || r.is_connected() {

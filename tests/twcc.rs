@@ -49,7 +49,11 @@ pub fn twcc() -> Result<(), RtcError> {
         {
             let wallclock = l.start + l.duration();
             let time = l.duration().into();
-            l.write_media(mid, pt, wallclock, time, data_a.to_vec(), None)?;
+            l.drive(&mut r, |tx| {
+                tx.writer(mid)
+                    .unwrap()
+                    .write(pt, wallclock, time, data_a.to_vec())
+            })?;
         }
 
         l.drive(&mut r, |tx| Ok(tx.finish()))?;

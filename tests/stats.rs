@@ -8,7 +8,7 @@ use str0m::{Event, RtcConfig, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, TestRtc};
+use common::{init_crypto_default, init_log, negotiate, TestRtc};
 
 #[test]
 pub fn stats() -> Result<(), RtcError> {
@@ -24,12 +24,9 @@ pub fn stats() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    let (offer, pending, mid) = l.sdp_create_offer(|change| {
+    let mid = negotiate(&mut l, &mut r, |change| {
         change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None)
     });
-
-    let answer = r.sdp_accept_offer(offer)?;
-    l.sdp_accept_answer(pending, answer)?;
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -56,13 +53,21 @@ pub fn stats() -> Result<(), RtcError> {
         {
             let wallclock = l.start + l.duration();
             let time = l.duration().into();
-            l.write_media(mid, pt, wallclock, time, data_a.clone(), None)?;
+            l.drive(&mut r, |tx| {
+                tx.writer(mid)
+                    .unwrap()
+                    .write(pt, wallclock, time, data_a.clone())
+            })?;
         }
 
         {
             let wallclock = r.start + r.duration();
             let time = l.duration().into();
-            r.write_media(mid, pt, wallclock, time, data_b.clone(), None)?;
+            r.drive(&mut l, |tx| {
+                tx.writer(mid)
+                    .unwrap()
+                    .write(pt, wallclock, time, data_b.clone())
+            })?;
         }
 
         l.drive(&mut r, |tx| Ok(tx.finish()))?;

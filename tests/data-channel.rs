@@ -60,14 +60,12 @@ pub fn data_channel() -> Result<(), RtcError> {
 
     loop {
         // Write to channel
-        l.drive(&mut r, |tx| {
-            match tx.channel(cid) {
-                Ok(mut chan) => {
-                    chan.write(false, "Hello world! ".as_bytes()).unwrap();
-                    Ok(chan.finish())
-                }
-                Err(tx) => Ok(tx.finish()),
+        l.drive(&mut r, |tx| match tx.channel(cid) {
+            Ok(mut chan) => {
+                chan.write(false, "Hello world! ".as_bytes()).unwrap();
+                Ok(chan.finish())
             }
+            Err(tx) => Ok(tx.finish()),
         })?;
 
         l.drive(&mut r, |tx| Ok(tx.finish()))?;
@@ -168,26 +166,22 @@ pub fn channel_config_inband() -> Result<(), RtcError> {
 
         // Verify config is available immediately when ChannelOpen is emitted
         if let Some(id) = l_found_id {
-            l.drive(&mut r, |tx| {
-                match tx.channel(id) {
-                    Ok(chan) => {
-                        l_config_available_on_open = chan.config().is_some();
-                        Ok(chan.finish())
-                    }
-                    Err(tx) => Ok(tx.finish()),
+            l.drive(&mut r, |tx| match tx.channel(id) {
+                Ok(chan) => {
+                    l_config_available_on_open = chan.config().is_some();
+                    Ok(chan.finish())
                 }
+                Err(tx) => Ok(tx.finish()),
             })?;
         }
 
         if let Some(id) = r_found_id {
-            r.drive(&mut l, |tx| {
-                match tx.channel(id) {
-                    Ok(chan) => {
-                        r_config_available_on_open = chan.config().is_some();
-                        Ok(chan.finish())
-                    }
-                    Err(tx) => Ok(tx.finish()),
+            r.drive(&mut l, |tx| match tx.channel(id) {
+                Ok(chan) => {
+                    r_config_available_on_open = chan.config().is_some();
+                    Ok(chan.finish())
                 }
+                Err(tx) => Ok(tx.finish()),
             })?;
         }
 
@@ -307,26 +301,22 @@ pub fn channel_config_outband_local() -> Result<(), RtcError> {
 
     // Verify config is immediately available for locally created out-of-band channels
     let mut l_config = None;
-    l.drive(&mut r, |tx| {
-        match tx.channel(cid_l) {
-            Ok(chan) => {
-                l_config = chan.config().cloned();
-                Ok(chan.finish())
-            }
-            Err(tx) => Ok(tx.finish()),
+    l.drive(&mut r, |tx| match tx.channel(cid_l) {
+        Ok(chan) => {
+            l_config = chan.config().cloned();
+            Ok(chan.finish())
         }
+        Err(tx) => Ok(tx.finish()),
     })?;
     let l_config = l_config.expect("l config");
 
     let mut r_config = None;
-    r.drive(&mut l, |tx| {
-        match tx.channel(cid_r) {
-            Ok(chan) => {
-                r_config = chan.config().cloned();
-                Ok(chan.finish())
-            }
-            Err(tx) => Ok(tx.finish()),
+    r.drive(&mut l, |tx| match tx.channel(cid_r) {
+        Ok(chan) => {
+            r_config = chan.config().cloned();
+            Ok(chan.finish())
         }
+        Err(tx) => Ok(tx.finish()),
     })?;
     let r_config = r_config.expect("r config");
 
@@ -428,26 +418,22 @@ pub fn channel_config_with_protocol() -> Result<(), RtcError> {
 
     // Verify protocol is correctly set on both sides
     let mut l_config = None;
-    l.drive(&mut r, |tx| {
-        match tx.channel(cid_l) {
-            Ok(chan) => {
-                l_config = chan.config().cloned();
-                Ok(chan.finish())
-            }
-            Err(tx) => Ok(tx.finish()),
+    l.drive(&mut r, |tx| match tx.channel(cid_l) {
+        Ok(chan) => {
+            l_config = chan.config().cloned();
+            Ok(chan.finish())
         }
+        Err(tx) => Ok(tx.finish()),
     })?;
     let l_config = l_config.expect("l config");
 
     let mut r_config = None;
-    r.drive(&mut l, |tx| {
-        match tx.channel(cid_r) {
-            Ok(chan) => {
-                r_config = chan.config().cloned();
-                Ok(chan.finish())
-            }
-            Err(tx) => Ok(tx.finish()),
+    r.drive(&mut l, |tx| match tx.channel(cid_r) {
+        Ok(chan) => {
+            r_config = chan.config().cloned();
+            Ok(chan.finish())
         }
+        Err(tx) => Ok(tx.finish()),
     })?;
     let r_config = r_config.expect("r config");
 

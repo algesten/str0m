@@ -25,16 +25,18 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
     // New SSRC to use after reset
     let ssrc_tx_new: Ssrc = 84.into();
 
-    l.with_direct_api(|api| {
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-    });
-    l.with_direct_api(|api| {
         api.declare_stream_tx(ssrc_tx_initial, None, mid, Some(rid));
-    });
+        Ok(api.finish())
+    })?;
 
-    r.with_direct_api(|api| {
+    r.drive(&mut l, |tx| {
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio).expect_rid_rx(rid);
-    });
+        Ok(api.finish())
+    })?;
 
     // Set initial timing
     let max = l.last.max(r.last);
@@ -42,7 +44,13 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
     r.last = max;
 
     let params = l.params_opus();
-    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, Some(rid)).unwrap().ssrc());
+    let mut ssrc = None;
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
+        ssrc = Some(api.stream_tx_by_mid(mid, Some(rid)).unwrap().ssrc());
+        Ok(api.finish())
+    })?;
+    let ssrc = ssrc.unwrap();
     assert_eq!(
         ssrc, ssrc_tx_initial,
         "Initial SSRC should match what we set"
@@ -97,17 +105,19 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
                     ..Default::default()
                 };
 
-                l.write_rtp(
-                    ssrc_tx_initial,
-                    pt,
-                    seq_no,
-                    time,
-                    wallclock,
-                    false,
-                    exts,
-                    false,
-                    packet.to_vec(),
-                )
+                l.drive(&mut r, |tx| {
+                    tx.write_rtp(
+                        ssrc_tx_initial,
+                        pt,
+                        seq_no,
+                        time,
+                        wallclock,
+                        false,
+                        exts,
+                        false,
+                        packet.to_vec(),
+                    )
+                })
                 .expect("clean write with initial SSRC");
             }
         }
@@ -127,17 +137,26 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
     info!("First batch sent with SSRC: {}", ssrc_tx_initial);
 
     // Reset the SSRC with None for RTX since the stream doesn't use RTX
-    let result = l.with_direct_api(|api| {
-        api.reset_stream_tx(mid, Some(rid), ssrc_tx_new, None)
-            .is_some()
-    });
+    let mut result = false;
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
+        result = api
+            .reset_stream_tx(mid, Some(rid), ssrc_tx_new, None)
+            .is_some();
+        Ok(api.finish())
+    })?;
     assert!(result, "Reset should succeed with valid new SSRC");
 
     // Verify the SSRC was changed
-    let updated_ssrc =
-        l.with_direct_api(|api| api.stream_tx_by_mid(mid, Some(rid)).unwrap().ssrc());
+    let mut updated_ssrc = None;
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
+        updated_ssrc = Some(api.stream_tx_by_mid(mid, Some(rid)).unwrap().ssrc());
+        Ok(api.finish())
+    })?;
     assert_eq!(
-        updated_ssrc, ssrc_tx_new,
+        updated_ssrc.unwrap(),
+        ssrc_tx_new,
         "SSRC should be updated to new value"
     );
 
@@ -202,17 +221,19 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
                     time, ssrc_tx_new
                 );
 
-                l.write_rtp(
-                    ssrc_tx_new,
-                    pt,
-                    seq_no,
-                    time,
-                    wallclock,
-                    false,
-                    exts,
-                    false,
-                    packet.to_vec(),
-                )
+                l.drive(&mut r, |tx| {
+                    tx.write_rtp(
+                        ssrc_tx_new,
+                        pt,
+                        seq_no,
+                        time,
+                        wallclock,
+                        false,
+                        exts,
+                        false,
+                        packet.to_vec(),
+                    )
+                })
                 .expect("clean write with new SSRC");
             }
         }
@@ -345,8 +366,12 @@ pub fn change_ssrc_reset_receive() -> Result<(), RtcError> {
 
     // If we don't reset the state properly on SSRC change, this will be
     // a crazy value.
-    let last_time =
-        r.with_direct_api(|api| api.stream_rx_by_mid(mid, Some(rid)).unwrap().last_time());
+    let mut last_time = None;
+    r.drive(&mut l, |tx| {
+        let mut api = tx.direct_api();
+        last_time = api.stream_rx_by_mid(mid, Some(rid)).unwrap().last_time();
+        Ok(api.finish())
+    })?;
     assert_eq!(
         last_time,
         Some(MediaTime::new(1001000, Frequency::FORTY_EIGHT_KHZ))

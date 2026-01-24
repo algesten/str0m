@@ -22,22 +22,31 @@ pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
     let mid = "audio".into();
     let ssrc_tx: Ssrc = 1337.into();
 
-    l.with_direct_api(|api| {
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-    });
-    l.with_direct_api(|api| {
         api.declare_stream_tx(ssrc_tx, None, mid, None);
-    });
-    r.with_direct_api(|api| {
+        Ok(api.finish())
+    })?;
+
+    r.drive(&mut l, |tx| {
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-    });
+        Ok(api.finish())
+    })?;
 
     let max = l.last.max(r.last);
     l.last = max;
     r.last = max;
 
     let params = l.params_opus();
-    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+    let mut ssrc = None;
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
+        ssrc = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+        Ok(api.finish())
+    })?;
+    let ssrc = ssrc.unwrap();
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
 
@@ -74,17 +83,19 @@ pub fn audio_start_of_talk_spurt() -> Result<(), RtcError> {
 
                 let marker = *seq_no % 2 == 0; // set marker bit on every second packet
 
-                l.write_rtp(
-                    ssrc,
-                    pt,
-                    seq_no,
-                    time,
-                    wallclock,
-                    marker,
-                    exts,
-                    false,
-                    packet.to_vec(),
-                )
+                l.drive(&mut r, |tx| {
+                    tx.write_rtp(
+                        ssrc,
+                        pt,
+                        seq_no,
+                        time,
+                        wallclock,
+                        marker,
+                        exts,
+                        false,
+                        packet.to_vec(),
+                    )
+                })
                 .expect("clean write");
             }
         }

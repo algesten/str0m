@@ -9,7 +9,7 @@ use str0m::{Event, Output, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, Peer, TestRtc};
+use common::{init_crypto_default, init_log, negotiate, Peer, TestRtc};
 
 #[test]
 pub fn contiguous_all_the_way() -> Result<(), RtcError> {
@@ -154,13 +154,10 @@ impl Server {
         l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
         r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-        // The change is on the L (sending side) with Direction::SendRecv.
-        let (offer, pending, mid) = l.sdp_create_offer(|change| {
+        // The change is on the L (sending side) with Direction::SendOnly.
+        let mid = negotiate(&mut l, &mut r, |change| {
             change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None)
         });
-
-        let answer = r.sdp_accept_offer(offer)?;
-        l.sdp_accept_answer(pending, answer)?;
 
         loop {
             if l.is_connected() || r.is_connected() {
@@ -181,7 +178,13 @@ impl Server {
         assert_eq!(params.spec().codec, self.codec);
 
         let pt = params.pt();
-        let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+        let mut ssrc = None;
+        l.drive(&mut r, |tx| {
+            let mut api = tx.direct_api();
+            ssrc = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+            Ok(api.finish())
+        })?;
+        let ssrc = ssrc.unwrap();
 
         for (relative, header, payload) in self.input_data {
             // Drop a random packet in the middle.

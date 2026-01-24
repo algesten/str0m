@@ -91,15 +91,7 @@ pub fn rtx_cache_0() -> Result<(), RtcError> {
                 let packet = packet.to_vec();
                 l.drive(&mut r, |tx| {
                     tx.write_rtp(
-                        ssrc,
-                        pt,
-                        seq_no,
-                        time,
-                        wallclock,
-                        false,
-                        exts,
-                        false,
-                        packet,
+                        ssrc, pt, seq_no, time, wallclock, false, exts, false, packet,
                     )
                 })?;
             }

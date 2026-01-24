@@ -46,9 +46,7 @@ pub fn unidirectional() -> Result<(), RtcError> {
     })?;
     let answer = answer.unwrap();
 
-    l.drive(&mut r, |tx| {
-        tx.sdp_api().accept_answer(pending, answer)
-    })?;
+    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -74,9 +72,12 @@ pub fn unidirectional() -> Result<(), RtcError> {
 
         l.drive(&mut r, |tx| {
             let writer = tx.writer(mid).expect("writer");
-            writer
-                .start_of_talkspurt(start_of_talk_spurt)
-                .write(pt, wallclock, time, data_a.clone())
+            writer.start_of_talkspurt(start_of_talk_spurt).write(
+                pt,
+                wallclock,
+                time,
+                data_a.clone(),
+            )
         })?;
         start_of_talk_spurt = false;
 

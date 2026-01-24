@@ -22,24 +22,31 @@ pub fn rtp_direct_mid_rid() -> Result<(), RtcError> {
     // In this example we are using MID and RID to identify the incoming media.
     let ssrc_tx: Ssrc = 42.into();
 
-    l.with_direct_api(|api| {
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-    });
-
-    l.with_direct_api(|api| {
         api.declare_stream_tx(ssrc_tx, None, mid, Some(rid));
-    });
+        Ok(api.finish())
+    })?;
 
-    r.with_direct_api(|api| {
+    r.drive(&mut l, |tx| {
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio).expect_rid_rx(rid);
-    });
+        Ok(api.finish())
+    })?;
 
     let max = l.last.max(r.last);
     l.last = max;
     r.last = max;
 
     let params = l.params_opus();
-    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+    let mut ssrc = None;
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
+        ssrc = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+        Ok(api.finish())
+    })?;
+    let ssrc = ssrc.unwrap();
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
 
@@ -74,17 +81,19 @@ pub fn rtp_direct_mid_rid() -> Result<(), RtcError> {
                     ..Default::default()
                 };
 
-                l.write_rtp(
-                    ssrc,
-                    pt,
-                    seq_no,
-                    time,
-                    wallclock,
-                    false,
-                    exts,
-                    false,
-                    packet.to_vec(),
-                )
+                l.drive(&mut r, |tx| {
+                    tx.write_rtp(
+                        ssrc,
+                        pt,
+                        seq_no,
+                        time,
+                        wallclock,
+                        false,
+                        exts,
+                        false,
+                        packet.to_vec(),
+                    )
+                })
                 .expect("clean write");
             }
         }
@@ -111,16 +120,45 @@ pub fn rtp_direct_mid_rid() -> Result<(), RtcError> {
     assert_eq!(media.len(), 3);
 
     assert!(l.media(mid).is_some());
-    assert!(l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).is_some()));
-    l.with_direct_api(|api| api.remove_media(mid));
+    let mut has_stream = false;
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
+        has_stream = api.stream_tx_by_mid(mid, None).is_some();
+        Ok(api.finish())
+    })?;
+    assert!(has_stream);
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
+        api.remove_media(mid);
+        Ok(api.finish())
+    })?;
     assert!(l.media(mid).is_none());
-    assert!(l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).is_none()));
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
+        has_stream = api.stream_tx_by_mid(mid, None).is_some();
+        Ok(api.finish())
+    })?;
+    assert!(!has_stream);
 
     assert!(r.media(mid).is_some());
-    assert!(r.with_direct_api(|api| api.stream_rx_by_mid(mid, None).is_some()));
-    r.with_direct_api(|api| api.remove_media(mid));
+    r.drive(&mut l, |tx| {
+        let mut api = tx.direct_api();
+        has_stream = api.stream_rx_by_mid(mid, None).is_some();
+        Ok(api.finish())
+    })?;
+    assert!(has_stream);
+    r.drive(&mut l, |tx| {
+        let mut api = tx.direct_api();
+        api.remove_media(mid);
+        Ok(api.finish())
+    })?;
     assert!(r.media(mid).is_none());
-    assert!(r.with_direct_api(|api| api.stream_rx_by_mid(mid, None).is_none()));
+    r.drive(&mut l, |tx| {
+        let mut api = tx.direct_api();
+        has_stream = api.stream_rx_by_mid(mid, None).is_some();
+        Ok(api.finish())
+    })?;
+    assert!(!has_stream);
 
     Ok(())
 }

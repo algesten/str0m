@@ -6,7 +6,7 @@ use str0m::media::{Direction, MediaKind};
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{av1_data, h264_data, init_crypto_default, vp8_data, vp9_data};
+use common::{av1_data, h264_data, init_crypto_default, negotiate, vp8_data, vp9_data};
 use common::{init_log, Peer, TestRtc};
 
 #[test]
@@ -20,13 +20,10 @@ pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    // The change is on the L (sending side) with Direction::SendRecv.
-    let (offer, pending, mid) = l.sdp_create_offer(|change| {
+    // The change is on the L (sending side) with Direction::SendOnly.
+    let mid = negotiate(&mut l, &mut r, |change| {
         change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None)
     });
-
-    let answer = r.sdp_accept_offer(offer)?;
-    l.sdp_accept_answer(pending, answer)?;
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -42,7 +39,13 @@ pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
     let params = l.params_vp8();
     assert_eq!(params.spec().codec, Codec::Vp8);
     let pt = params.pt();
-    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+    let mut ssrc = None;
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
+        ssrc = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+        Ok(api.finish())
+    })?;
+    let ssrc = ssrc.unwrap();
 
     let data = vp8_data();
 
@@ -54,17 +57,19 @@ pub fn test_vp8_keyframes_detection() -> Result<(), RtcError> {
 
         let absolute = max + relative;
 
-        l.write_rtp(
-            ssrc,
-            pt,
-            header.sequence_number(None),
-            header.timestamp,
-            absolute,
-            header.marker,
-            header.ext_vals,
-            true,
-            payload,
-        )
+        l.drive(&mut r, |tx| {
+            tx.write_rtp(
+                ssrc,
+                pt,
+                header.sequence_number(None),
+                header.timestamp,
+                absolute,
+                header.marker,
+                header.ext_vals.clone(),
+                true,
+                payload,
+            )
+        })
         .unwrap();
 
         l.drive(&mut r, |tx| Ok(tx.finish()))?;
@@ -110,13 +115,10 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    // The change is on the L (sending side) with Direction::SendRecv.
-    let (offer, pending, mid) = l.sdp_create_offer(|change| {
+    // The change is on the L (sending side) with Direction::SendOnly.
+    let mid = negotiate(&mut l, &mut r, |change| {
         change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None)
     });
-
-    let answer = r.sdp_accept_offer(offer)?;
-    l.sdp_accept_answer(pending, answer)?;
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -132,7 +134,13 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
     let params = l.params_vp9();
     assert_eq!(params.spec().codec, Codec::Vp9);
     let pt = params.pt();
-    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+    let mut ssrc = None;
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
+        ssrc = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+        Ok(api.finish())
+    })?;
+    let ssrc = ssrc.unwrap();
 
     let data = vp9_data();
 
@@ -144,17 +152,19 @@ pub fn test_vp9_keyframes_detection() -> Result<(), RtcError> {
 
         let absolute = max + relative;
 
-        l.write_rtp(
-            ssrc,
-            pt,
-            header.sequence_number(None),
-            header.timestamp,
-            absolute,
-            header.marker,
-            header.ext_vals,
-            true,
-            payload,
-        )
+        l.drive(&mut r, |tx| {
+            tx.write_rtp(
+                ssrc,
+                pt,
+                header.sequence_number(None),
+                header.timestamp,
+                absolute,
+                header.marker,
+                header.ext_vals.clone(),
+                true,
+                payload,
+            )
+        })
         .unwrap();
 
         l.drive(&mut r, |tx| Ok(tx.finish()))?;
@@ -201,13 +211,10 @@ pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    // The change is on the L (sending side) with Direction::SendRecv.
-    let (offer, pending, mid) = l.sdp_create_offer(|change| {
+    // The change is on the L (sending side) with Direction::SendOnly.
+    let mid = negotiate(&mut l, &mut r, |change| {
         change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None)
     });
-
-    let answer = r.sdp_accept_offer(offer)?;
-    l.sdp_accept_answer(pending, answer)?;
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -223,7 +230,13 @@ pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
     let params = l.params_h264();
     assert_eq!(params.spec().codec, Codec::H264);
     let pt = params.pt();
-    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+    let mut ssrc = None;
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
+        ssrc = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+        Ok(api.finish())
+    })?;
+    let ssrc = ssrc.unwrap();
 
     let data = h264_data();
 
@@ -235,17 +248,19 @@ pub fn test_h264_keyframes_detection() -> Result<(), RtcError> {
 
         let absolute = max + relative;
 
-        l.write_rtp(
-            ssrc,
-            pt,
-            header.sequence_number(None),
-            header.timestamp,
-            absolute,
-            header.marker,
-            header.ext_vals,
-            true,
-            payload,
-        )
+        l.drive(&mut r, |tx| {
+            tx.write_rtp(
+                ssrc,
+                pt,
+                header.sequence_number(None),
+                header.timestamp,
+                absolute,
+                header.marker,
+                header.ext_vals.clone(),
+                true,
+                payload,
+            )
+        })
         .unwrap();
 
         let _ = l.drive(&mut r, |tx| Ok(tx.finish()));
@@ -295,13 +310,10 @@ fn test_av1_keyframes_detection() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    // The change is on the L (sending side) with Direction::SendRecv.
-    let (offer, pending, mid) = l.sdp_create_offer(|change| {
+    // The change is on the L (sending side) with Direction::SendOnly.
+    let mid = negotiate(&mut l, &mut r, |change| {
         change.add_media(MediaKind::Video, Direction::SendOnly, None, None, None)
     });
-
-    let answer = r.sdp_accept_offer(offer)?;
-    l.sdp_accept_answer(pending, answer)?;
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -317,7 +329,13 @@ fn test_av1_keyframes_detection() -> Result<(), RtcError> {
     let params = l.params_av1();
     assert_eq!(params.spec().codec, Codec::Av1);
     let pt = params.pt();
-    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+    let mut ssrc = None;
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
+        ssrc = Some(api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+        Ok(api.finish())
+    })?;
+    let ssrc = ssrc.unwrap();
 
     let data = av1_data();
 
@@ -329,17 +347,19 @@ fn test_av1_keyframes_detection() -> Result<(), RtcError> {
 
         let absolute = max + relative;
 
-        l.write_rtp(
-            ssrc,
-            pt,
-            header.sequence_number(None),
-            header.timestamp,
-            absolute,
-            header.marker,
-            header.ext_vals,
-            true,
-            payload,
-        )
+        l.drive(&mut r, |tx| {
+            tx.write_rtp(
+                ssrc,
+                pt,
+                header.sequence_number(None),
+                header.timestamp,
+                absolute,
+                header.marker,
+                header.ext_vals.clone(),
+                true,
+                payload,
+            )
+        })
         .unwrap();
 
         l.drive(&mut r, |tx| Ok(tx.finish()))?;

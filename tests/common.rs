@@ -78,7 +78,6 @@ pub struct TestRtc {
     pub events: Vec<(Instant, Event)>,
     pub pending: Netem<PendingPacket>,
     pub forced_time_advance: Duration,
-    /// Max duration for the progress loop in drive(). Default 5ms.
     pub progress_duration: Duration,
 }
 

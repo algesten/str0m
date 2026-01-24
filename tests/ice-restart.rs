@@ -44,9 +44,7 @@ pub fn ice_restart() -> Result<(), RtcError> {
     let answer = answer.unwrap();
     println!("R Initial answer: {}", answer);
 
-    l.drive(&mut r, |tx| {
-        tx.sdp_api().accept_answer(pending, answer)
-    })?;
+    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
 
     loop {
         if l.is_connected() && r.is_connected() {
@@ -81,9 +79,7 @@ pub fn ice_restart() -> Result<(), RtcError> {
     let answer = answer.unwrap();
     println!("L Answer: {}", answer);
 
-    r.drive(&mut l, |tx| {
-        tx.sdp_api().accept_answer(pending, answer)
-    })?;
+    r.drive(&mut l, |tx| tx.sdp_api().accept_answer(pending, answer))?;
 
     assert!(!l.rtc.is_connected());
     assert!(!r.rtc.is_connected());

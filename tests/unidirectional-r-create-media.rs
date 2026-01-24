@@ -54,9 +54,7 @@ pub fn unidirectional_r_create_media() -> Result<(), RtcError> {
     let answer = answer.unwrap();
 
     // R accepts the answer
-    r.drive(&mut l, |tx| {
-        tx.sdp_api().accept_answer(pending, answer)
-    })?;
+    r.drive(&mut l, |tx| tx.sdp_api().accept_answer(pending, answer))?;
 
     loop {
         if l.is_connected() || r.is_connected() {

@@ -321,7 +321,9 @@ pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
                 Err(_) => panic!("writer for mid"),
             };
             // Set my bespoke RTP header value.
-            writer.user_extension_value(val).write(pt, wallclock, time, data)
+            writer
+                .user_extension_value(val)
+                .write(pt, wallclock, time, data)
         })?;
 
         l.drive(&mut r, |tx| Ok(tx.finish()))?;

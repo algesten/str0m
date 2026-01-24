@@ -187,7 +187,7 @@ fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, S
     // Get DTLS fingerprint via transaction API
     let fingerprint = {
         let tx = rtc.begin(Instant::now())?;
-        let mut direct = tx.direct_api();
+        let direct = tx.direct_api();
         let fp = direct.local_dtls_fingerprint().to_string();
         poll_simple(direct.finish())?;
         fp

@@ -33,28 +33,25 @@ fn run_loss_test(loss_model: impl Into<LossModel>, seed: u64) -> Result<usize, R
     let ssrc_tx: Ssrc = 42.into();
     let ssrc_rtx: Ssrc = 44.into();
 
-    l.with_direct_api(|api| {
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
-    });
-    l.with_direct_api(|api| {
         api.declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
-    });
-
-    // Increase the RTX ratio cap to 0.2 to allow more retransmissions.
-    // With heavy loss, the RTX ratio naturally grows, and the default
-    // cap (0.15) is too low to allow all needed retransmissions.
-    l.with_direct_api(|api| {
+        // Increase the RTX ratio cap to 0.2 to allow more retransmissions.
+        // With heavy loss, the RTX ratio naturally grows, and the default
+        // cap (0.15) is too low to allow all needed retransmissions.
         api.stream_tx(&ssrc_tx)
             .unwrap()
             .set_rtx_cache(1024, Duration::from_secs(3), Some(0.2));
-    });
+        Ok(api.finish())
+    })?;
 
-    r.with_direct_api(|api| {
+    r.drive(&mut l, |tx| {
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
-    });
-    r.with_direct_api(|api| {
         api.expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
-    });
+        Ok(api.finish())
+    })?;
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -75,20 +72,19 @@ fn run_loss_test(loss_model: impl Into<LossModel>, seed: u64) -> Result<usize, R
 
         let absolute = max + relative;
 
-        l.write_rtp(
-            ssrc_tx,
-            pt,
-            header.sequence_number(None),
-            header.timestamp,
-            absolute,
-            header.marker,
-            Default::default(), // Don't use pcap ext_vals - wrong extension mapping
-            true,
-            payload,
-        )
-        .unwrap();
-
-        l.drive(&mut r, |tx| Ok(tx.finish()))?;
+        l.drive(&mut r, |tx| {
+            tx.write_rtp(
+                ssrc_tx,
+                pt,
+                header.sequence_number(None),
+                header.timestamp,
+                absolute,
+                header.marker,
+                Default::default(), // Don't use pcap ext_vals - wrong extension mapping
+                true,
+                payload,
+            )
+        })?;
 
         if l.duration() > Duration::from_secs(10) {
             break;
