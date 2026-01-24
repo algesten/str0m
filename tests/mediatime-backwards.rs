@@ -62,7 +62,7 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
             Err(_) => panic!("writer not found for mid"),
         };
         let tx = writer.write(pt, wallclock, time, data_a.clone())?;
-        common::poll_to_completion(tx)?;
+        common::poll_to_completion(&l.span, tx, l.last, &mut r.pending)?;
 
         progress(&mut l, &mut r)?;
     }
@@ -147,7 +147,7 @@ pub fn mediatime_backwards() -> Result<(), RtcError> {
         Err(_) => panic!("writer not found for mid"),
     };
     let tx = writer.write(pt, wallclock, time, data_a.clone())?;
-    common::poll_to_completion(tx)?;
+    common::poll_to_completion(&l.span, tx, l.last, &mut r.pending)?;
 
     // Process the packet and a few more cycles to ensure it's received
     for _ in 0..10 {

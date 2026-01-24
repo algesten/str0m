@@ -11,7 +11,7 @@ use str0m::{Candidate, Event, IceConnectionState, Output, Rtc, RtcConfig, RtcErr
 use tracing::{info_span, Span};
 
 mod common;
-use common::{init_crypto_default, init_log, poll_to_completion};
+use common::{init_crypto_default, init_log, poll_simple};
 
 /// Pre-negotiated data channel SCTP stream ID
 const DATA_CHANNEL_ID: u16 = 0;
@@ -189,7 +189,7 @@ fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, S
         let tx = rtc.begin(Instant::now())?;
         let mut direct = tx.direct_api();
         let fp = direct.local_dtls_fingerprint().to_string();
-        poll_to_completion(direct.finish())?;
+        poll_simple(direct.finish())?;
         fp
     };
 
@@ -199,7 +199,7 @@ fn init_rtc(is_client: bool, local_addr: SocketAddr) -> Result<(Rtc, IceCreds, S
         let tx = rtc.begin(Instant::now())?;
         let mut ice = tx.ice();
         ice.add_local_candidate(local_candidate);
-        poll_to_completion(ice.finish())?;
+        poll_simple(ice.finish())?;
     }
 
     Ok((rtc, ice_creds, fingerprint))
@@ -220,7 +220,7 @@ fn configure_rtc(
         let tx = rtc.begin(Instant::now())?;
         let mut ice = tx.ice();
         ice.add_remote_candidate(remote_candidate);
-        poll_to_completion(ice.finish())?;
+        poll_simple(ice.finish())?;
     }
 
     // Configure via direct API
@@ -261,7 +261,7 @@ fn configure_rtc(
             protocol: "".into(),
         });
 
-        poll_to_completion(direct_api.finish())?;
+        poll_simple(direct_api.finish())?;
     }
 
     Ok(())
@@ -546,7 +546,7 @@ fn handle_event(
                 let tx = rtc.begin(Instant::now()).expect("begin");
                 if let Ok(mut chan) = tx.channel(*cid) {
                     chan.write(true, b"sixseven").expect("Failed to write");
-                    poll_to_completion(chan.finish()).expect("poll");
+                    poll_simple(chan.finish()).expect("poll");
                     println!("[CLIENT] Sent 'sixseven'");
                     timing.sent_data = Some(Instant::now());
                     *state = DataExchangeState::SentMessage;
@@ -578,7 +578,7 @@ fn handle_event(
                     let tx = rtc.begin(Instant::now()).expect("begin");
                     if let Ok(mut chan) = tx.channel(cid) {
                         chan.write(true, b"sevenofnine").expect("Failed to write");
-                        poll_to_completion(chan.finish()).expect("poll");
+                        poll_simple(chan.finish()).expect("poll");
                         println!("[SERVER] Sent reply 'sevenofnine'");
                         timing.sent_data = Some(Instant::now());
                         *state = DataExchangeState::SentMessage;

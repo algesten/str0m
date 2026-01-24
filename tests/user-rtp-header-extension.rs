@@ -12,7 +12,7 @@ use str0m::{Event, RtcError};
 use tracing::info_span;
 
 mod common;
-use common::{init_crypto_default, init_log, poll_to_completion, progress, TestRtc};
+use common::{init_crypto_default, init_log, TestRtc};
 
 #[test]
 pub fn user_rtp_header_extension() -> Result<(), RtcError> {
@@ -86,22 +86,34 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // The change is on the L (sending side) with Direction::SendRecv.
-    let tx = l.rtc.begin(l.last).expect("begin");
-    let mut change = tx.sdp_api();
-    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
-    let (offer, pending, tx) = change.apply().unwrap();
-    poll_to_completion(tx)?;
+    let mut mid = None;
+    let mut offer = None;
+    let mut pending = None;
+    l.drive(&mut r, |tx| {
+        let mut change = tx.sdp_api();
+        mid = Some(change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None));
+        let (o, p, tx) = change.apply().unwrap();
+        offer = Some(o);
+        pending = Some(p);
+        Ok(tx)
+    })?;
+    let mid = mid.unwrap();
+    let offer = offer.unwrap();
+    let pending = pending.unwrap();
+
     let offer_str = offer.to_sdp_string();
     let offer_parsed =
         SdpOffer::from_sdp_string(&offer_str).expect("Should parse offer from string");
 
-    let tx = r.rtc.begin(r.last).expect("begin");
-    let (answer, tx) = tx.sdp_api().accept_offer(offer_parsed)?;
-    poll_to_completion(tx)?;
+    let mut answer = None;
+    r.drive(&mut l, |tx| {
+        let (a, tx) = tx.sdp_api().accept_offer(offer_parsed)?;
+        answer = Some(a);
+        Ok(tx)
+    })?;
+    let answer = answer.unwrap();
 
-    let tx = l.rtc.begin(l.last).expect("begin");
-    let tx = tx.sdp_api().accept_answer(pending, answer)?;
-    poll_to_completion(tx)?;
+    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
 
     // Verify that the extension is negotiated.
     let ext_l = l.media(mid).unwrap().remote_extmap();
@@ -120,7 +132,7 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let max = l.last.max(r.last);
@@ -137,19 +149,19 @@ pub fn user_rtp_header_extension() -> Result<(), RtcError> {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
 
-        let tx = l.rtc.begin(l.last).expect("begin");
-        let writer = match tx.writer(mid) {
-            Ok(w) => w,
-            Err(_) => panic!("writer for mid"),
-        };
-        // Set my bespoke RTP header value.
-        let tx =
+        let data = data_a.clone();
+        l.drive(&mut r, |tx| {
+            let writer = match tx.writer(mid) {
+                Ok(w) => w,
+                Err(_) => panic!("writer for mid"),
+            };
+            // Set my bespoke RTP header value.
             writer
                 .user_extension_value(MyValue(42))
-                .write(pt, wallclock, time, data_a.clone())?;
-        poll_to_completion(tx)?;
+                .write(pt, wallclock, time, data)
+        })?;
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > Duration::from_secs(3) {
             break;
@@ -241,19 +253,30 @@ pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // The change is on the L (sending side) with Direction::SendRecv.
-    let tx = l.rtc.begin(l.last).expect("begin");
-    let mut change = tx.sdp_api();
-    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
-    let (offer, pending, tx) = change.apply().unwrap();
-    poll_to_completion(tx)?;
+    let mut mid = None;
+    let mut offer = None;
+    let mut pending = None;
+    l.drive(&mut r, |tx| {
+        let mut change = tx.sdp_api();
+        mid = Some(change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None));
+        let (o, p, tx) = change.apply().unwrap();
+        offer = Some(o);
+        pending = Some(p);
+        Ok(tx)
+    })?;
+    let mid = mid.unwrap();
+    let offer = offer.unwrap();
+    let pending = pending.unwrap();
 
-    let tx = r.rtc.begin(r.last).expect("begin");
-    let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
-    poll_to_completion(tx)?;
+    let mut answer = None;
+    r.drive(&mut l, |tx| {
+        let (a, tx) = tx.sdp_api().accept_offer(offer)?;
+        answer = Some(a);
+        Ok(tx)
+    })?;
+    let answer = answer.unwrap();
 
-    let tx = l.rtc.begin(l.last).expect("begin");
-    let tx = tx.sdp_api().accept_answer(pending, answer)?;
-    poll_to_completion(tx)?;
+    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
 
     // Verify that the extension is negotiated.
     let ext_l = l.media(mid).unwrap().remote_extmap();
@@ -272,7 +295,7 @@ pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let max = l.last.max(r.last);
@@ -290,21 +313,18 @@ pub fn user_rtp_header_extension_two_byte_form() -> Result<(), RtcError> {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
 
-        let tx = l.rtc.begin(l.last).expect("begin");
-        let writer = match tx.writer(mid) {
-            Ok(w) => w,
-            Err(_) => panic!("writer for mid"),
-        };
-        // Set my bespoke RTP header value.
-        let tx = writer.user_extension_value(my_value.clone()).write(
-            pt,
-            wallclock,
-            time,
-            data_a.clone(),
-        )?;
-        poll_to_completion(tx)?;
+        let data = data_a.clone();
+        let val = my_value.clone();
+        l.drive(&mut r, |tx| {
+            let writer = match tx.writer(mid) {
+                Ok(w) => w,
+                Err(_) => panic!("writer for mid"),
+            };
+            // Set my bespoke RTP header value.
+            writer.user_extension_value(val).write(pt, wallclock, time, data)
+        })?;
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > Duration::from_secs(3) {
             break;

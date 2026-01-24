@@ -5,7 +5,7 @@ use str0m::rtp::Ssrc;
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{connect_l_r, init_crypto_default, init_log, progress, Peer, TestRtc};
+use common::{connect_l_r, init_crypto_default, init_log, Peer, TestRtc};
 
 #[test]
 pub fn direct_declare_media_no_media_added_event() -> Result<(), RtcError> {
@@ -19,16 +19,23 @@ pub fn direct_declare_media_no_media_added_event() -> Result<(), RtcError> {
     // In this example we are using MID only (no RID) to identify the incoming media.
     let ssrc_tx: Ssrc = 42.into();
 
-    l.with_direct_api(|api| {
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-    });
-    l.with_direct_api(|api| {
-        api.declare_stream_tx(ssrc_tx, None, mid, None);
-    });
+        Ok(api.finish())
+    })?;
 
-    r.with_direct_api(|api| {
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
+        api.declare_stream_tx(ssrc_tx, None, mid, None);
+        Ok(api.finish())
+    })?;
+
+    r.drive(&mut l, |tx| {
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-    });
+        Ok(api.finish())
+    })?;
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -38,7 +45,7 @@ pub fn direct_declare_media_no_media_added_event() -> Result<(), RtcError> {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let found_local = l
@@ -68,18 +75,37 @@ pub fn sdp_no_media_added_event() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    let (offer, pending, _) = l.sdp_create_offer(|change| {
-        change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None)
-    });
+    // Create offer from L
+    let mut offer = None;
+    let mut pending = None;
+    l.drive(&mut r, |tx| {
+        let mut change = tx.sdp_api();
+        change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+        let (o, p, tx) = change.apply().unwrap();
+        offer = Some(o);
+        pending = Some(p);
+        Ok(tx)
+    })?;
+    let offer = offer.unwrap();
+    let pending = pending.unwrap();
 
-    let answer = r.sdp_accept_offer(offer)?;
-    l.sdp_accept_answer(pending, answer)?;
+    // R accepts the offer
+    let mut answer = None;
+    r.drive(&mut l, |tx| {
+        let (a, tx) = tx.sdp_api().accept_offer(offer)?;
+        answer = Some(a);
+        Ok(tx)
+    })?;
+    let answer = answer.unwrap();
+
+    // L accepts the answer
+    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
 
     loop {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let found_local = l

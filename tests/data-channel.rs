@@ -5,7 +5,7 @@ use str0m::channel::ChannelConfig;
 use str0m::{Event, RtcError};
 
 mod common;
-use common::{init_crypto_default, init_log, poll_to_completion, progress, Peer, TestRtc};
+use common::{init_crypto_default, init_log, Peer, TestRtc};
 
 #[test]
 pub fn data_channel() -> Result<(), RtcError> {
@@ -19,36 +19,39 @@ pub fn data_channel() -> Result<(), RtcError> {
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // Create offer from L using transaction API
-    let (cid, offer, pending) = {
-        let tx = l.rtc.begin(l.last)?;
+    let mut cid = None;
+    let mut offer = None;
+    let mut pending = None;
+    l.drive(&mut r, |tx| {
         let mut change = tx.sdp_api();
-        let cid = change.add_channel("My little channel".into());
+        cid = Some(change.add_channel("My little channel".into()));
         change.add_channel("My little channel 2".into());
-        let (offer, pending, tx) = change.apply().unwrap();
-        poll_to_completion(tx)?;
-        (cid, offer, pending)
-    };
+        let (o, p, tx) = change.apply().unwrap();
+        offer = Some(o);
+        pending = Some(p);
+        Ok(tx)
+    })?;
+    let cid = cid.unwrap();
+    let offer = offer.unwrap();
+    let pending = pending.unwrap();
 
     // R accepts the offer
-    let answer = {
-        let tx = r.rtc.begin(r.last)?;
-        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
-        poll_to_completion(tx)?;
-        answer
-    };
+    let mut answer = None;
+    r.drive(&mut l, |tx| {
+        let (a, tx) = tx.sdp_api().accept_offer(offer)?;
+        answer = Some(a);
+        Ok(tx)
+    })?;
+    let answer = answer.unwrap();
 
     // L accepts the answer
-    {
-        let tx = l.rtc.begin(l.last)?;
-        let tx = tx.sdp_api().accept_answer(pending, answer)?;
-        poll_to_completion(tx)?;
-    }
+    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
 
     loop {
         if l.is_connected() || r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let max = l.last.max(r.last);
@@ -56,9 +59,18 @@ pub fn data_channel() -> Result<(), RtcError> {
     r.last = max;
 
     loop {
-        l.try_write_channel(cid, false, "Hello world! ".as_bytes());
+        // Write to channel
+        l.drive(&mut r, |tx| {
+            match tx.channel(cid) {
+                Ok(mut chan) => {
+                    chan.write(false, "Hello world! ".as_bytes()).unwrap();
+                    Ok(chan.finish())
+                }
+                Err(tx) => Ok(tx.finish()),
+            }
+        })?;
 
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         if l.duration() > Duration::from_secs(10) {
             break;
@@ -82,36 +94,39 @@ pub fn channel_config_inband() -> Result<(), RtcError> {
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // Create in-band negotiated channel (DCEP)
-    let (cid, offer, pending) = {
-        let tx = l.rtc.begin(l.last)?;
+    let mut cid = None;
+    let mut offer = None;
+    let mut pending = None;
+    l.drive(&mut r, |tx| {
         let mut change = tx.sdp_api();
-        let cid = change.add_channel("DCEP Channel".into());
-        let (offer, pending, tx) = change.apply().unwrap();
-        poll_to_completion(tx)?;
-        (cid, offer, pending)
-    };
+        cid = Some(change.add_channel("DCEP Channel".into()));
+        let (o, p, tx) = change.apply().unwrap();
+        offer = Some(o);
+        pending = Some(p);
+        Ok(tx)
+    })?;
+    let cid = cid.unwrap();
+    let offer = offer.unwrap();
+    let pending = pending.unwrap();
 
     // R accepts the offer
-    let answer = {
-        let tx = r.rtc.begin(r.last)?;
-        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
-        poll_to_completion(tx)?;
-        answer
-    };
+    let mut answer = None;
+    r.drive(&mut l, |tx| {
+        let (a, tx) = tx.sdp_api().accept_offer(offer)?;
+        answer = Some(a);
+        Ok(tx)
+    })?;
+    let answer = answer.unwrap();
 
     // L accepts the answer
-    {
-        let tx = l.rtc.begin(l.last)?;
-        let tx = tx.sdp_api().accept_answer(pending, answer)?;
-        poll_to_completion(tx)?;
-    }
+    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
 
     // Wait for connection
     loop {
         if l.is_connected() && r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let max = l.last.max(r.last);
@@ -125,7 +140,7 @@ pub fn channel_config_inband() -> Result<(), RtcError> {
 
     // Process events and verify config availability immediately when ChannelOpen is fired
     loop {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         // Check L side events and collect channel ID if found
         let mut l_found_id = None;
@@ -153,11 +168,27 @@ pub fn channel_config_inband() -> Result<(), RtcError> {
 
         // Verify config is available immediately when ChannelOpen is emitted
         if let Some(id) = l_found_id {
-            l_config_available_on_open = l.channel_config(id).is_some();
+            l.drive(&mut r, |tx| {
+                match tx.channel(id) {
+                    Ok(chan) => {
+                        l_config_available_on_open = chan.config().is_some();
+                        Ok(chan.finish())
+                    }
+                    Err(tx) => Ok(tx.finish()),
+                }
+            })?;
         }
 
         if let Some(id) = r_found_id {
-            r_config_available_on_open = r.channel_config(id).is_some();
+            r.drive(&mut l, |tx| {
+                match tx.channel(id) {
+                    Ok(chan) => {
+                        r_config_available_on_open = chan.config().is_some();
+                        Ok(chan.finish())
+                    }
+                    Err(tx) => Ok(tx.finish()),
+                }
+            })?;
         }
 
         if (l_channel_opened && r_channel_opened) || l.duration() > Duration::from_secs(10) {
@@ -191,36 +222,37 @@ pub fn channel_config_outband_local() -> Result<(), RtcError> {
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
     // Enable SCTP by adding a temporary channel (will be removed)
-    let (offer, pending) = {
-        let tx = l.rtc.begin(l.last)?;
+    let mut offer = None;
+    let mut pending = None;
+    l.drive(&mut r, |tx| {
         let mut change = tx.sdp_api();
         let _temp_cid = change.add_channel("temp".into());
-        let (offer, pending, tx) = change.apply().unwrap();
-        poll_to_completion(tx)?;
-        (offer, pending)
-    };
+        let (o, p, tx) = change.apply().unwrap();
+        offer = Some(o);
+        pending = Some(p);
+        Ok(tx)
+    })?;
+    let offer = offer.unwrap();
+    let pending = pending.unwrap();
 
     // R accepts the offer
-    let answer = {
-        let tx = r.rtc.begin(r.last)?;
-        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
-        poll_to_completion(tx)?;
-        answer
-    };
+    let mut answer = None;
+    r.drive(&mut l, |tx| {
+        let (a, tx) = tx.sdp_api().accept_offer(offer)?;
+        answer = Some(a);
+        Ok(tx)
+    })?;
+    let answer = answer.unwrap();
 
     // L accepts the answer
-    {
-        let tx = l.rtc.begin(l.last)?;
-        let tx = tx.sdp_api().accept_answer(pending, answer)?;
-        poll_to_completion(tx)?;
-    }
+    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
 
     // Wait for connection
     loop {
         if l.is_connected() && r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let max = l.last.max(r.last);
@@ -229,7 +261,7 @@ pub fn channel_config_outband_local() -> Result<(), RtcError> {
 
     // Wait for SCTP to be established first
     loop {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
 
         // Check for SCTP connection via any channel events
         let connected = l
@@ -252,21 +284,51 @@ pub fn channel_config_outband_local() -> Result<(), RtcError> {
         ..Default::default()
     };
 
-    let cid_l = l.with_direct_api(|api| api.create_data_channel(config.clone()));
-    let cid_r = r.with_direct_api(|api| api.create_data_channel(config));
+    let mut cid_l = None;
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
+        cid_l = Some(api.create_data_channel(config.clone()));
+        Ok(api.finish())
+    })?;
+    let cid_l = cid_l.unwrap();
+
+    let mut cid_r = None;
+    r.drive(&mut l, |tx| {
+        let mut api = tx.direct_api();
+        cid_r = Some(api.create_data_channel(config));
+        Ok(api.finish())
+    })?;
+    let cid_r = cid_r.unwrap();
 
     // Allow some time for channels to be established
     for _ in 0..10 {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     // Verify config is immediately available for locally created out-of-band channels
-    let l_config = l
-        .channel_config(cid_l)
-        .expect("L channel config should be available");
-    let r_config = r
-        .channel_config(cid_r)
-        .expect("R channel config should be available");
+    let mut l_config = None;
+    l.drive(&mut r, |tx| {
+        match tx.channel(cid_l) {
+            Ok(chan) => {
+                l_config = chan.config().cloned();
+                Ok(chan.finish())
+            }
+            Err(tx) => Ok(tx.finish()),
+        }
+    })?;
+    let l_config = l_config.expect("l config");
+
+    let mut r_config = None;
+    r.drive(&mut l, |tx| {
+        match tx.channel(cid_r) {
+            Ok(chan) => {
+                r_config = chan.config().cloned();
+                Ok(chan.finish())
+            }
+            Err(tx) => Ok(tx.finish()),
+        }
+    })?;
+    let r_config = r_config.expect("r config");
 
     assert_eq!(l_config.label, "OutOfBand Local");
     assert_eq!(r_config.label, "OutOfBand Local");
@@ -287,36 +349,37 @@ pub fn channel_config_with_protocol() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    let (offer, pending) = {
-        let tx = l.rtc.begin(l.last)?;
+    let mut offer = None;
+    let mut pending = None;
+    l.drive(&mut r, |tx| {
         let mut change = tx.sdp_api();
         let _temp_cid = change.add_channel("temp".into());
-        let (offer, pending, tx) = change.apply().unwrap();
-        poll_to_completion(tx)?;
-        (offer, pending)
-    };
+        let (o, p, tx) = change.apply().unwrap();
+        offer = Some(o);
+        pending = Some(p);
+        Ok(tx)
+    })?;
+    let offer = offer.unwrap();
+    let pending = pending.unwrap();
 
     // R accepts the offer
-    let answer = {
-        let tx = r.rtc.begin(r.last)?;
-        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
-        poll_to_completion(tx)?;
-        answer
-    };
+    let mut answer = None;
+    r.drive(&mut l, |tx| {
+        let (a, tx) = tx.sdp_api().accept_offer(offer)?;
+        answer = Some(a);
+        Ok(tx)
+    })?;
+    let answer = answer.unwrap();
 
     // L accepts the answer
-    {
-        let tx = l.rtc.begin(l.last)?;
-        let tx = tx.sdp_api().accept_answer(pending, answer)?;
-        poll_to_completion(tx)?;
-    }
+    l.drive(&mut r, |tx| tx.sdp_api().accept_answer(pending, answer))?;
 
     // Wait for connection
     loop {
         if l.is_connected() && r.is_connected() {
             break;
         }
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     let max = l.last.max(r.last);
@@ -325,7 +388,7 @@ pub fn channel_config_with_protocol() -> Result<(), RtcError> {
 
     // Wait for SCTP to be established
     loop {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
         let connected = l
             .events
             .iter()
@@ -343,16 +406,50 @@ pub fn channel_config_with_protocol() -> Result<(), RtcError> {
         ..Default::default()
     };
 
-    let cid_l = l.with_direct_api(|api| api.create_data_channel(config.clone()));
-    let cid_r = r.with_direct_api(|api| api.create_data_channel(config));
+    let mut cid_l = None;
+    l.drive(&mut r, |tx| {
+        let mut api = tx.direct_api();
+        cid_l = Some(api.create_data_channel(config.clone()));
+        Ok(api.finish())
+    })?;
+    let cid_l = cid_l.unwrap();
+
+    let mut cid_r = None;
+    r.drive(&mut l, |tx| {
+        let mut api = tx.direct_api();
+        cid_r = Some(api.create_data_channel(config));
+        Ok(api.finish())
+    })?;
+    let cid_r = cid_r.unwrap();
 
     for _ in 0..10 {
-        progress(&mut l, &mut r)?;
+        l.drive(&mut r, |tx| Ok(tx.finish()))?;
     }
 
     // Verify protocol is correctly set on both sides
-    let l_config = l.channel_config(cid_l).expect("L channel config");
-    let r_config = r.channel_config(cid_r).expect("R channel config");
+    let mut l_config = None;
+    l.drive(&mut r, |tx| {
+        match tx.channel(cid_l) {
+            Ok(chan) => {
+                l_config = chan.config().cloned();
+                Ok(chan.finish())
+            }
+            Err(tx) => Ok(tx.finish()),
+        }
+    })?;
+    let l_config = l_config.expect("l config");
+
+    let mut r_config = None;
+    r.drive(&mut l, |tx| {
+        match tx.channel(cid_r) {
+            Ok(chan) => {
+                r_config = chan.config().cloned();
+                Ok(chan.finish())
+            }
+            Err(tx) => Ok(tx.finish()),
+        }
+    })?;
+    let r_config = r_config.expect("r config");
 
     assert_eq!(l_config.protocol, custom_protocol);
     assert_eq!(r_config.protocol, custom_protocol);

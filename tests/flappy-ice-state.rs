@@ -21,29 +21,31 @@ pub fn flappy_ice_lite_state() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
+    let time = l.last;
+
     // Create offer from L using transaction API
     let (offer, pending) = {
-        let tx = l.rtc.begin(l.last)?;
+        let tx = l.rtc.begin(time)?;
         let mut change = tx.sdp_api();
         change.add_channel("My little channel".into());
         let (offer, pending, tx) = change.apply().unwrap();
-        poll_to_completion(tx)?;
+        poll_to_completion(&l.span, tx, time, &mut r.pending)?;
         (offer, pending)
     };
 
     // R accepts the offer
     let answer = {
-        let tx = r.rtc.begin(r.last)?;
+        let tx = r.rtc.begin(time)?;
         let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
-        poll_to_completion(tx)?;
+        poll_to_completion(&r.span, tx, time, &mut l.pending)?;
         answer
     };
 
     // L accepts the answer
     {
-        let tx = l.rtc.begin(l.last)?;
+        let tx = l.rtc.begin(time)?;
         let tx = tx.sdp_api().accept_answer(pending, answer)?;
-        poll_to_completion(tx)?;
+        poll_to_completion(&l.span, tx, time, &mut r.pending)?;
     }
 
     loop {

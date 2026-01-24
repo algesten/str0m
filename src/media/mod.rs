@@ -616,6 +616,8 @@ impl Media {
             kind,
             dir: Direction::SendRecv,
             remote_exts: exts,
+            // DirectAPI users explicitly manage media, so they don't need MediaAdded events
+            need_open_event: false,
             ..Default::default()
         }
     }

@@ -21,28 +21,36 @@ pub fn repeated() -> Result<(), RtcError> {
     // using SSRC 1 as knowledge shared between sending and receiving side.
     let ssrc: Ssrc = 1.into();
 
-    l.with_direct_api(|api| {
+    {
+        let time = l.last;
+        let tx = l.rtc.begin(time).unwrap();
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-    });
-
-    l.with_direct_api(|api| {
         api.declare_stream_tx(ssrc, None, mid, None);
-    });
+        poll_to_completion(&l.span, api.finish(), time, &mut r.pending).unwrap();
+    }
 
-    r.with_direct_api(|api| {
+    {
+        let time = r.last;
+        let tx = r.rtc.begin(time).unwrap();
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Audio);
-    });
-
-    r.with_direct_api(|api| {
         api.expect_stream_rx(ssrc, None, mid, None);
-    });
+        poll_to_completion(&r.span, api.finish(), time, &mut l.pending).unwrap();
+    }
 
     let max = l.last.max(r.last);
     l.last = max;
     r.last = max;
 
     let params = l.params_opus();
-    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+    let ssrc = {
+        let tx = l.rtc.begin(l.last).unwrap();
+        let mut api = tx.direct_api();
+        let s = api.stream_tx_by_mid(mid, None).unwrap().ssrc();
+        poll_to_completion(&l.span, api.finish(), l.last, &mut r.pending).unwrap();
+        s
+    };
     assert_eq!(params.spec().codec, Codec::Opus);
     let pt = params.pt();
 
@@ -79,7 +87,7 @@ pub fn repeated() -> Result<(), RtcError> {
                 false,
                 vec![0x01, 0x02, 0x03, 0x04],
             )?;
-            poll_to_completion(tx)?;
+            poll_to_completion(&l.span, tx, l.last, &mut r.pending)?;
         }
 
         progress(&mut l, &mut r)?;

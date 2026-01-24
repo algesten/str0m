@@ -1,9 +1,11 @@
 use std::net::Ipv4Addr;
 use std::time::Duration;
+
+use netem::Input as NetemInput;
 use str0m::format::Codec;
 use str0m::media::{Direction, MediaData, MediaKind};
 use str0m::Rtc;
-use str0m::{Event, RtcError};
+use str0m::{Event, Output, RtcError};
 use tracing::info_span;
 
 mod common;
@@ -194,7 +196,9 @@ impl Server {
 
             let absolute = max + relative;
 
-            l.write_rtp(
+            // Write RTP and poll, delivering transmits to other peer
+            let tx = l.rtc.begin(l.last)?;
+            let mut tx = tx.write_rtp(
                 ssrc,
                 pt,
                 header.sequence_number(None),
@@ -204,8 +208,26 @@ impl Server {
                 header.ext_vals,
                 true,
                 payload,
-            )
-            .unwrap();
+            )?;
+            loop {
+                match tx.poll()? {
+                    Output::Timeout(_) => break,
+                    Output::Transmit(t, v) => {
+                        tx = t;
+                        let packet = common::PendingPacket {
+                            proto: v.proto,
+                            source: v.source,
+                            destination: v.destination,
+                            contents: v.contents.to_vec(),
+                        };
+                        r.pending.handle_input(NetemInput::Packet(l.last, packet));
+                    }
+                    Output::Event(t, v) => {
+                        tx = t;
+                        l.events.push((l.last, v));
+                    }
+                }
+            }
 
             progress(&mut l, &mut r)?;
 

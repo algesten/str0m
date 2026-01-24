@@ -23,13 +23,30 @@ pub fn audio_stream_then_inactive_with_bwe() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
-    // Step 1: Negotiate an audio stream with BWE
-    let (offer, pending, mid) = l.sdp_create_offer(|change| {
-        change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None)
-    });
+    let time = l.last;
 
-    let answer = r.sdp_accept_offer(offer)?;
-    l.sdp_accept_answer(pending, answer)?;
+    // Step 1: Negotiate an audio stream with BWE
+    let (mid, offer, pending) = {
+        let tx = l.rtc.begin(time)?;
+        let mut change = tx.sdp_api();
+        let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+        let (offer, pending, tx) = change.apply().unwrap();
+        poll_to_completion(&l.span, tx, time, &mut r.pending)?;
+        (mid, offer, pending)
+    };
+
+    let answer = {
+        let tx = r.rtc.begin(time)?;
+        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
+        poll_to_completion(&r.span, tx, time, &mut l.pending)?;
+        answer
+    };
+
+    {
+        let tx = l.rtc.begin(time)?;
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        poll_to_completion(&l.span, tx, time, &mut r.pending)?;
+    }
 
     // Wait for connection
     loop {
@@ -53,7 +70,13 @@ pub fn audio_stream_then_inactive_with_bwe() -> Result<(), RtcError> {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
 
-        let _ = l.write_media(mid, pt, wallclock, time, data.clone(), None);
+        let tx = l.rtc.begin(l.last)?;
+        let writer = match tx.writer(mid) {
+            Ok(w) => w,
+            Err(_) => panic!("Failed to get writer for mid"),
+        };
+        let tx = writer.write(pt, wallclock, time, data.clone())?;
+        poll_to_completion(&l.span, tx, l.last, &mut r.pending)?;
 
         progress(&mut l, &mut r)?;
 
@@ -62,13 +85,30 @@ pub fn audio_stream_then_inactive_with_bwe() -> Result<(), RtcError> {
         }
     }
 
-    // Step 3: Disable the stream immediately (without draining probe queue)
-    let (offer, pending, _) = l.sdp_create_offer(|change| {
-        change.set_direction(mid, Direction::Inactive);
-    });
+    let time = l.last;
 
-    let answer = r.sdp_accept_offer(offer)?;
-    l.sdp_accept_answer(pending, answer)?;
+    // Step 3: Disable the stream immediately (without draining probe queue)
+    let (offer, pending) = {
+        let tx = l.rtc.begin(time)?;
+        let mut change = tx.sdp_api();
+        change.set_direction(mid, Direction::Inactive);
+        let (offer, pending, tx) = change.apply().unwrap();
+        poll_to_completion(&l.span, tx, time, &mut r.pending)?;
+        (offer, pending)
+    };
+
+    let answer = {
+        let tx = r.rtc.begin(time)?;
+        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
+        poll_to_completion(&r.span, tx, time, &mut l.pending)?;
+        answer
+    };
+
+    {
+        let tx = l.rtc.begin(time)?;
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        poll_to_completion(&l.span, tx, time, &mut r.pending)?;
+    }
 
     // Step 4: Continue progressing - this is where probe_queue access might fail
     // if the pacer tries to use probe_queue when there's no video queue available

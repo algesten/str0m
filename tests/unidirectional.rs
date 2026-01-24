@@ -22,20 +22,30 @@ pub fn unidirectional() -> Result<(), RtcError> {
     l.add_host_candidate((Ipv4Addr::new(1, 1, 1, 1), 1000).into());
     r.add_host_candidate((Ipv4Addr::new(2, 2, 2, 2), 2000).into());
 
+    let time = l.last;
+
     // The change is on the L (sending side) with Direction::SendRecv.
-    let tx = l.rtc.begin(l.last).unwrap();
-    let mut change = tx.sdp_api();
-    let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
-    let (offer, pending, tx) = change.apply().unwrap();
-    poll_to_completion(tx)?;
+    let (mid, offer, pending) = {
+        let tx = l.rtc.begin(time)?;
+        let mut change = tx.sdp_api();
+        let mid = change.add_media(MediaKind::Audio, Direction::SendRecv, None, None, None);
+        let (offer, pending, tx) = change.apply().unwrap();
+        poll_to_completion(&l.span, tx, time, &mut r.pending)?;
+        (mid, offer, pending)
+    };
 
-    let tx = r.rtc.begin(r.last).unwrap();
-    let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
-    poll_to_completion(tx)?;
+    let answer = {
+        let tx = r.rtc.begin(time)?;
+        let (answer, tx) = tx.sdp_api().accept_offer(offer)?;
+        poll_to_completion(&r.span, tx, time, &mut l.pending)?;
+        answer
+    };
 
-    let tx = l.rtc.begin(l.last).unwrap();
-    let tx = tx.sdp_api().accept_answer(pending, answer)?;
-    poll_to_completion(tx)?;
+    {
+        let tx = l.rtc.begin(time)?;
+        let tx = tx.sdp_api().accept_answer(pending, answer)?;
+        poll_to_completion(&l.span, tx, time, &mut r.pending)?;
+    }
 
     loop {
         if l.is_connected() || r.is_connected() {
@@ -59,15 +69,15 @@ pub fn unidirectional() -> Result<(), RtcError> {
         let wallclock = l.start + l.duration();
         let time = l.duration().into();
 
-        let tx = l.rtc.begin(l.last).unwrap();
-        let writer = tx.writer(mid).unwrap_or_else(|_| panic!("writer for mid"));
-        let tx = writer.start_of_talkspurt(start_of_talk_spurt).write(
-            pt,
-            wallclock,
-            time,
-            data_a.clone(),
-        )?;
-        poll_to_completion(tx)?;
+        let tx = l.rtc.begin(l.last)?;
+        let writer = match tx.writer(mid) {
+            Ok(w) => w,
+            Err(_) => panic!("Failed to get writer for mid"),
+        };
+        let tx = writer
+            .start_of_talkspurt(start_of_talk_spurt)
+            .write(pt, wallclock, time, data_a.clone())?;
+        poll_to_completion(&l.span, tx, l.last, &mut r.pending)?;
         start_of_talk_spurt = false;
 
         progress(&mut l, &mut r)?;

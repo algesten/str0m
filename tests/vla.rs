@@ -6,7 +6,7 @@ use str0m::rtp::{Extension, ExtensionValues, Ssrc};
 use str0m::{Event, Rtc, RtcError};
 
 mod common;
-use common::{connect_l_r_with_rtc, init_crypto_default, init_log, progress};
+use common::{connect_l_r_with_rtc, init_crypto_default, init_log, poll_to_completion, progress};
 
 #[test]
 pub fn vla_rtp_mode() -> Result<(), RtcError> {
@@ -29,15 +29,21 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
     let mid = "vid".into();
     let ssrc_tx: Ssrc = 1000.into();
 
-    l.with_direct_api(|api| {
+    {
+        let time = l.last;
+        let tx = l.rtc.begin(time).unwrap();
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
-    });
-    l.with_direct_api(|api| {
         api.declare_stream_tx(ssrc_tx, None, mid, None);
-    });
-    r.with_direct_api(|api| {
+        poll_to_completion(&l.span, api.finish(), time, &mut r.pending).unwrap();
+    }
+    {
+        let time = r.last;
+        let tx = r.rtc.begin(time).unwrap();
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
-    });
+        poll_to_completion(&r.span, api.finish(), time, &mut l.pending).unwrap();
+    }
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -45,7 +51,13 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
 
     let params = l.params_vp8();
     let pt = params.pt();
-    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+    let ssrc = {
+        let tx = l.rtc.begin(l.last).unwrap();
+        let mut api = tx.direct_api();
+        let s = api.stream_tx_by_mid(mid, None).unwrap().ssrc();
+        poll_to_completion(&l.span, api.finish(), l.last, &mut r.pending).unwrap();
+        s
+    };
 
     let vla = VideoLayersAllocation {
         current_simulcast_stream_index: 0,
@@ -68,18 +80,21 @@ pub fn vla_rtp_mode() -> Result<(), RtcError> {
     exts.user_values.set(vla.clone());
 
     let last = l.last;
-    l.write_rtp(
-        ssrc,
-        pt,
-        (1000_u64).into(),
-        0,
-        last,
-        false,
-        exts,
-        false,
-        vec![0xAA; 10],
-    )
-    .unwrap();
+    {
+        let tx = l.rtc.begin(last).unwrap();
+        let tx = tx.write_rtp(
+            ssrc,
+            pt,
+            (1000_u64).into(),
+            0,
+            last,
+            false,
+            exts,
+            false,
+            vec![0xAA; 10],
+        ).unwrap();
+        poll_to_completion(&l.span, tx, last, &mut r.pending).unwrap();
+    }
 
     let mut vla_received = false;
     for _ in 0..100 {
@@ -141,15 +156,21 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
     let mid = "vid".into();
     let ssrc_tx: Ssrc = 1000.into();
 
-    l.with_direct_api(|api| {
+    {
+        let time = l.last;
+        let tx = l.rtc.begin(time).unwrap();
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
-    });
-    l.with_direct_api(|api| {
         api.declare_stream_tx(ssrc_tx, None, mid, None);
-    });
-    r.with_direct_api(|api| {
+        poll_to_completion(&l.span, api.finish(), time, &mut r.pending).unwrap();
+    }
+    {
+        let time = r.last;
+        let tx = r.rtc.begin(time).unwrap();
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
-    });
+        poll_to_completion(&r.span, api.finish(), time, &mut l.pending).unwrap();
+    }
 
     let max = l.last.max(r.last);
     l.last = max;
@@ -186,7 +207,7 @@ pub fn vla_frame_mode() -> Result<(), RtcError> {
         MediaTime::ZERO,
         vec![0xAA; 10],
     )?;
-    common::poll_to_completion(tx)?;
+    poll_to_completion(&l.span, tx, l.last, &mut r.pending)?;
 
     let mut vla_received = false;
     for _ in 0..100 {

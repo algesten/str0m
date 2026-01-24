@@ -30,28 +30,36 @@ pub fn loss_recovery() -> Result<(), RtcError> {
     let ssrc_tx: Ssrc = 42.into();
     let ssrc_rtx: Ssrc = 44.into();
 
-    l.with_direct_api(|api| {
+    {
+        let time = l.last;
+        let tx = l.rtc.begin(time).unwrap();
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
-    });
-
-    l.with_direct_api(|api| {
         api.declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
-    });
+        poll_to_completion(&l.span, api.finish(), time, &mut r.pending).unwrap();
+    }
 
-    r.with_direct_api(|api| {
+    {
+        let time = r.last;
+        let tx = r.rtc.begin(time).unwrap();
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
-    });
-
-    r.with_direct_api(|api| {
         api.expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
-    });
+        poll_to_completion(&r.span, api.finish(), time, &mut l.pending).unwrap();
+    }
 
     let max = l.last.max(r.last);
     l.last = max;
     r.last = max;
 
     let params = l.params_vp8();
-    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+    let ssrc = {
+        let tx = l.rtc.begin(l.last).unwrap();
+        let mut api = tx.direct_api();
+        let s = api.stream_tx_by_mid(mid, None).unwrap().ssrc();
+        poll_to_completion(&l.span, api.finish(), l.last, &mut r.pending).unwrap();
+        s
+    };
     assert_eq!(params.spec().codec, Codec::Vp8);
     let pt = params.pt();
 
@@ -82,7 +90,7 @@ pub fn loss_recovery() -> Result<(), RtcError> {
                 to_write.to_vec(),
             )
             .expect("write_rtp");
-        poll_to_completion(tx).expect("poll");
+        poll_to_completion(&l.span, tx, l.last, &mut r.pending).expect("poll");
 
         // Disable loss near start and end to let retransmission algo stabilize
         // (see MISORDER_DELAY in register.rs)
@@ -204,28 +212,36 @@ pub fn nack_delay() -> Result<(), RtcError> {
     let ssrc_tx: Ssrc = 42.into();
     let ssrc_rtx: Ssrc = 44.into();
 
-    l.with_direct_api(|api| {
+    {
+        let time = l.last;
+        let tx = l.rtc.begin(time).unwrap();
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
-    });
-
-    l.with_direct_api(|api| {
         api.declare_stream_tx(ssrc_tx, Some(ssrc_rtx), mid, None);
-    });
+        poll_to_completion(&l.span, api.finish(), time, &mut r.pending).unwrap();
+    }
 
-    r.with_direct_api(|api| {
+    {
+        let time = r.last;
+        let tx = r.rtc.begin(time).unwrap();
+        let mut api = tx.direct_api();
         api.declare_media(mid, MediaKind::Video);
-    });
-
-    r.with_direct_api(|api| {
         api.expect_stream_rx(ssrc_tx, Some(ssrc_rtx), mid, None);
-    });
+        poll_to_completion(&r.span, api.finish(), time, &mut l.pending).unwrap();
+    }
 
     let max = l.last.max(r.last);
     l.last = max;
     r.last = max;
 
     let params = l.params_vp8();
-    let ssrc = l.with_direct_api(|api| api.stream_tx_by_mid(mid, None).unwrap().ssrc());
+    let ssrc = {
+        let tx = l.rtc.begin(l.last).unwrap();
+        let mut api = tx.direct_api();
+        let s = api.stream_tx_by_mid(mid, None).unwrap().ssrc();
+        poll_to_completion(&l.span, api.finish(), l.last, &mut r.pending).unwrap();
+        s
+    };
     assert_eq!(params.spec().codec, Codec::Vp8);
     let pt = params.pt();
 
@@ -288,7 +304,7 @@ pub fn nack_delay() -> Result<(), RtcError> {
                         packet.to_vec(),
                     )
                     .expect("write_rtp");
-                poll_to_completion(tx).expect("poll");
+                poll_to_completion(&l.span, tx, l.last, &mut r.pending).expect("poll");
             }
         }
 

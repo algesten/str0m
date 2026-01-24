@@ -81,21 +81,35 @@ mod pii_log_redaction {
         // In this example we are using MID only (no RID) to identify the incoming media.
         let ssrc_tx: Ssrc = 42.into();
 
-        l.with_direct_api(|d| {
-            d.declare_media(mid, MediaKind::Audio);
-            d.declare_stream_tx(ssrc_tx, None, mid, None);
-        });
+        {
+            let time = l.last;
+            let tx = l.rtc.begin(time).unwrap();
+            let mut api = tx.direct_api();
+            api.declare_media(mid, MediaKind::Audio);
+            api.declare_stream_tx(ssrc_tx, None, mid, None);
+            poll_to_completion(&l.span, api.finish(), time, &mut r.pending).unwrap();
+        }
 
-        r.with_direct_api(|d| {
-            d.declare_media(mid, MediaKind::Audio);
-        });
+        {
+            let time = r.last;
+            let tx = r.rtc.begin(time).unwrap();
+            let mut api = tx.direct_api();
+            api.declare_media(mid, MediaKind::Audio);
+            poll_to_completion(&r.span, api.finish(), time, &mut l.pending).unwrap();
+        }
 
         let max = l.last.max(r.last);
         l.last = max;
         r.last = max;
 
         let params = l.params_opus();
-        let ssrc = l.with_direct_api(|d| d.stream_tx_by_mid(mid, None).unwrap().ssrc());
+        let ssrc = {
+            let tx = l.rtc.begin(l.last).unwrap();
+            let api = tx.direct_api();
+            let s = api.stream_tx_by_mid(mid, None).unwrap().ssrc();
+            poll_to_completion(&l.span, api.finish(), l.last, &mut r.pending).unwrap();
+            s
+        };
         assert_eq!(params.spec().codec, Codec::Opus);
         let pt = params.pt();
 

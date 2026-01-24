@@ -65,6 +65,11 @@ impl<'a> Channel<'a> {
             .write(self.sctp_stream_id, binary, buf)?)
     }
 
+    /// Close the data channel.
+    pub fn close(&mut self) {
+        self.inner.rtc.sctp.close_stream(self.sctp_stream_id);
+    }
+
     /// Get the amount of buffered data.
     ///
     /// Returns 0 if the channel is closed or encountered some error. This is to
