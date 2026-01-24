@@ -236,18 +236,15 @@ pub fn progress_with_replay(
     r: &mut TestRtc,
     replay: usize,
 ) -> Result<(), RtcError> {
-    let (f, t) = if l.last < r.last { (l, r) } else { (r, l) };
-
-    // Use transaction API - matches original behavior:
-    // Poll sender until timeout, immediately forward transmits to receiver
-    let tx = f.rtc.begin(f.last);
+    // Always poll l (sender) first to transmit its packets to r (receiver)
+    let tx = l.rtc.begin(l.last);
     let mut tx = tx.finish();
 
     loop {
-        match f.span.in_scope(|| tx.poll()) {
+        match l.span.in_scope(|| tx.poll()) {
             Output::Timeout(v) => {
-                let tick = f.last + Duration::from_millis(10);
-                f.last = if v == f.last { tick } else { tick.min(v) };
+                let tick = l.last + Duration::from_millis(10);
+                l.last = if v == l.last { tick } else { tick.min(v) };
                 break;
             }
             Output::Transmit(t_handle, v) => {
@@ -258,25 +255,25 @@ pub fn progress_with_replay(
                     let seq = u16::from_be_bytes([data[2], data[3]]);
                     eprintln!("TRANSMIT: RTP packet with seq_no={}", seq);
                 }
-                // Replay the packet to the receiver (like original)
+                // Replay the packet to the receiver
                 for _ in 0..replay {
                     let recv = Receive {
                         proto: v.proto,
                         source: v.source,
                         destination: v.destination,
                         contents: (&*data).try_into().unwrap(),
-                        timestamp: Some(f.last),
+                        timestamp: Some(l.last),
                     };
-                    let recv_tx = t.rtc.begin(f.last);
-                    let mut recv_tx = t.span.in_scope(|| recv_tx.receive(f.last, recv))?;
+                    let recv_tx = r.rtc.begin(l.last);
+                    let mut recv_tx = r.span.in_scope(|| recv_tx.receive(l.last, recv))?;
                     // Poll receive to completion
                     loop {
-                        match t.span.in_scope(|| recv_tx.poll()) {
+                        match r.span.in_scope(|| recv_tx.poll()) {
                             Output::Timeout(_) => break,
                             Output::Transmit(th, _) => recv_tx = th,
                             Output::Event(th, ev) => {
                                 recv_tx = th;
-                                t.events.push((t.last, ev));
+                                r.events.push((r.last, ev));
                             }
                         }
                     }
@@ -284,7 +281,7 @@ pub fn progress_with_replay(
             }
             Output::Event(t_handle, v) => {
                 tx = t_handle;
-                f.events.push((f.last, v));
+                l.events.push((l.last, v));
             }
         }
     }
