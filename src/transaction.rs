@@ -48,9 +48,9 @@ use std::time::Instant;
 use crate::bwe::Bitrate;
 use crate::channel::ChannelId;
 use crate::media::{KeyframeRequestKind, MediaTime, Mid, Pt, Rid, Writer};
-use crate::rtp_::MidRid;
 use crate::net::Receive;
 use crate::rtp::{ExtensionValues, SeqNo, VideoOrientation};
+use crate::rtp_::MidRid;
 use crate::Candidate;
 use crate::Rtc;
 use crate::RtcError;
@@ -579,7 +579,9 @@ impl<'a> MediaWriterTx<'a> {
             .ok_or(RtcError::NoSenderSource)?;
 
         stream
-            .write_rtp(pt, seq_no, time, wallclock, marker, ext_vals, nackable, payload)
+            .write_rtp(
+                pt, seq_no, time, wallclock, marker, ext_vals, nackable, payload,
+            )
             .map_err(|e| RtcError::Packet(self.mid, pt, e))?;
 
         self.rtc.do_handle_timeout(self.now)?;

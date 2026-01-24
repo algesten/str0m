@@ -61,18 +61,29 @@ pub fn srtp_replay_attack_rtp_mode() -> Result<(), RtcError> {
                 tx.media_writer(mid)
                     .ok()
                     .expect("media_writer should succeed")
-                    .write_rtp(pt, seq_no, time, wallclock, false, exts, false, vec![1, 3, 3, 7])
+                    .write_rtp(
+                        pt,
+                        seq_no,
+                        time,
+                        wallclock,
+                        false,
+                        exts,
+                        false,
+                        vec![1, 3, 3, 7],
+                    )
             })?;
 
             // Poll and replay transmits to receiver
-            let (new_last, events) = poll_and_replay_tx(&l.span, &mut r, tx, l.last, REPLAY_PER_PACKET)?;
+            let (new_last, events) =
+                poll_and_replay_tx(&l.span, &mut r, tx, l.last, REPLAY_PER_PACKET)?;
             l.last = new_last;
             l.events.extend(events);
             send_count += 1;
         } else {
             // Just advance time without writing
             let tx = l.rtc.begin(l.last).finish();
-            let (new_last, events) = poll_and_replay_tx(&l.span, &mut r, tx, l.last, REPLAY_PER_PACKET)?;
+            let (new_last, events) =
+                poll_and_replay_tx(&l.span, &mut r, tx, l.last, REPLAY_PER_PACKET)?;
             l.last = new_last;
             l.events.extend(events);
         }
@@ -170,18 +181,29 @@ pub fn srtp_replay_attack_frame_mode() -> Result<(), RtcError> {
                 tx.media_writer(mid)
                     .ok()
                     .expect("media_writer should succeed")
-                    .write_rtp(pt, seq_no, time, wallclock, false, exts, false, vec![1, 3, 3, 7])
+                    .write_rtp(
+                        pt,
+                        seq_no,
+                        time,
+                        wallclock,
+                        false,
+                        exts,
+                        false,
+                        vec![1, 3, 3, 7],
+                    )
             })?;
 
             // Poll and replay transmits to receiver
-            let (new_last, events) = poll_and_replay_tx(&l.span, &mut r, tx, l.last, REPLAY_PER_PACKET)?;
+            let (new_last, events) =
+                poll_and_replay_tx(&l.span, &mut r, tx, l.last, REPLAY_PER_PACKET)?;
             l.last = new_last;
             l.events.extend(events);
             send_count += 1;
         } else {
             // Just advance time without writing
             let tx = l.rtc.begin(l.last).finish();
-            let (new_last, events) = poll_and_replay_tx(&l.span, &mut r, tx, l.last, REPLAY_PER_PACKET)?;
+            let (new_last, events) =
+                poll_and_replay_tx(&l.span, &mut r, tx, l.last, REPLAY_PER_PACKET)?;
             l.last = new_last;
             l.events.extend(events);
         }
