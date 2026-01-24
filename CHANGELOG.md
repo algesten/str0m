@@ -1,5 +1,6 @@
 # Unreleased
 
+  * BWE remove current_bitrate param (breaking) #838
   * BWE V2 (Probe clusters) #823
 
 0.15.0
