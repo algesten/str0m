@@ -9,7 +9,7 @@
 mod common;
 #[cfg(feature = "pii")]
 mod pii_log_redaction {
-    use common::{connect_l_r, init_crypto_default, progress};
+    use common::{connect_l_r, init_crypto_default, poll_to_completion, progress};
     use std::collections::VecDeque;
     use std::time::Duration;
 
@@ -81,18 +81,21 @@ mod pii_log_redaction {
         // In this example we are using MID only (no RID) to identify the incoming media.
         let ssrc_tx: Ssrc = 42.into();
 
-        l.direct_api().declare_media(mid, MediaKind::Audio);
+        l.with_direct_api(|d| {
+            d.declare_media(mid, MediaKind::Audio);
+            d.declare_stream_tx(ssrc_tx, None, mid, None);
+        });
 
-        l.direct_api().declare_stream_tx(ssrc_tx, None, mid, None);
-
-        r.direct_api().declare_media(mid, MediaKind::Audio);
+        r.with_direct_api(|d| {
+            d.declare_media(mid, MediaKind::Audio);
+        });
 
         let max = l.last.max(r.last);
         l.last = max;
         r.last = max;
 
         let params = l.params_opus();
-        let ssrc = l.direct_api().stream_tx_by_mid(mid, None).unwrap().ssrc();
+        let ssrc = l.with_direct_api(|d| d.stream_tx_by_mid(mid, None).unwrap().ssrc());
         assert_eq!(params.spec().codec, Codec::Opus);
         let pt = params.pt();
 
@@ -116,10 +119,6 @@ mod pii_log_redaction {
                 write_at = l.last + Duration::from_millis(300);
                 if let Some(packet) = to_write.pop_front() {
                     let wallclock = l.start + l.duration();
-
-                    let mut direct = l.direct_api();
-                    let stream = direct.stream_tx(&ssrc).unwrap();
-
                     let count = counts.remove(0);
                     let time = (count * 1000 + 47_000_000) as u32;
                     let seq_no = (47_000 + count).into();
@@ -130,18 +129,19 @@ mod pii_log_redaction {
                         ..Default::default()
                     };
 
-                    stream
-                        .write_rtp(
-                            pt,
-                            seq_no,
-                            time,
-                            wallclock,
-                            false,
-                            exts,
-                            false,
-                            packet.to_vec(),
-                        )
-                        .expect("clean write");
+                    let tx = l.rtc.begin(l.last)?;
+                    let tx = tx.write_rtp(
+                        ssrc,
+                        pt,
+                        seq_no,
+                        time,
+                        wallclock,
+                        false,
+                        exts,
+                        false,
+                        packet.to_vec(),
+                    )?;
+                    poll_to_completion(tx)?;
                 }
             }
 
@@ -167,16 +167,16 @@ mod pii_log_redaction {
         assert_eq!(media.len(), 3);
 
         assert!(l.media(mid).is_some());
-        assert!(l.direct_api().stream_tx_by_mid(mid, None).is_some());
-        l.direct_api().remove_media(mid);
+        assert!(l.with_direct_api(|d| d.stream_tx_by_mid(mid, None).is_some()));
+        l.with_direct_api(|d| d.remove_media(mid));
         assert!(l.media(mid).is_none());
-        assert!(l.direct_api().stream_tx_by_mid(mid, None).is_none());
+        assert!(l.with_direct_api(|d| d.stream_tx_by_mid(mid, None).is_none()));
 
         assert!(r.media(mid).is_some());
-        assert!(r.direct_api().stream_rx_by_mid(mid, None).is_some());
-        r.direct_api().remove_media(mid);
+        assert!(r.with_direct_api(|d| d.stream_rx_by_mid(mid, None).is_some()));
+        r.with_direct_api(|d| d.remove_media(mid));
         assert!(r.media(mid).is_none());
-        assert!(r.direct_api().stream_rx_by_mid(mid, None).is_none());
+        assert!(r.with_direct_api(|d| d.stream_rx_by_mid(mid, None).is_none()));
 
         Ok(())
     }
