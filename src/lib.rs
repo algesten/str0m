@@ -121,7 +121,7 @@
 //! # use str0m::net::{Receive, Protocol};
 //! # use std::io::ErrorKind;
 //! # use std::net::UdpSocket;
-//! # use std::time::Instant;
+//! # use std::time::{Duration, Instant};
 //! # let mut rtc = Rtc::new();
 //! // Buffer for reading incoming UDP packets.
 //! let mut buf = vec![0; 2000];
@@ -133,7 +133,7 @@
 //! loop {
 //!     // Wait for timeout or network input
 //!     let duration = timeout.saturating_duration_since(Instant::now());
-//!     socket.set_read_timeout(Some(duration.max(std::time::Duration::from_micros(1)))).unwrap();
+//!     socket.set_read_timeout(Some(duration.max(Duration::from_micros(1)))).unwrap();
 //!     buf.resize(2000, 0);
 //!
 //!     // Try to receive network data (non-blocking due to timeout)

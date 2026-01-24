@@ -7,6 +7,7 @@ use std::io;
 use std::net::SocketAddr;
 use std::ops::Deref;
 use std::str::FromStr;
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
@@ -201,7 +202,7 @@ pub struct Receive<'a> {
     ///
     /// This is used internally by str0m for timing calculations.
     #[serde(skip)]
-    pub timestamp: Option<std::time::Instant>,
+    pub timestamp: Option<Instant>,
 }
 
 impl<'a> Receive<'a> {
@@ -228,7 +229,7 @@ impl<'a> Receive<'a> {
         source: SocketAddr,
         destination: SocketAddr,
         buf: &'a [u8],
-        timestamp: std::time::Instant,
+        timestamp: Instant,
     ) -> Result<Self, NetError> {
         let contents = DatagramRecv::try_from(buf)?;
         Ok(Receive {
@@ -241,12 +242,12 @@ impl<'a> Receive<'a> {
     }
 
     /// Sets the timestamp on this receive.
-    pub fn set_timestamp(&mut self, timestamp: std::time::Instant) {
+    pub fn set_timestamp(&mut self, timestamp: Instant) {
         self.timestamp = Some(timestamp);
     }
 
     /// Gets the timestamp, if set.
-    pub fn timestamp(&self) -> Option<std::time::Instant> {
+    pub fn timestamp(&self) -> Option<Instant> {
         self.timestamp
     }
 }

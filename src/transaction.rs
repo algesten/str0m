@@ -43,6 +43,7 @@
 
 use std::fmt;
 use std::marker::PhantomData;
+use std::thread;
 use std::time::Instant;
 
 use crate::bwe::Bitrate;
@@ -324,7 +325,7 @@ impl<'a> RtcTx<'a, Poll> {
 impl<State> Drop for RtcTx<'_, State> {
     fn drop(&mut self) {
         // If inner is still Some, the transaction wasn't completed properly
-        if self.inner.is_some() && !std::thread::panicking() {
+        if self.inner.is_some() && !thread::panicking() {
             panic!(
                 "RtcTx dropped without polling to completion. \
                  You must poll() until Output::Timeout is returned."

@@ -5,7 +5,7 @@ use std::io::ErrorKind;
 use std::net::UdpSocket;
 use std::process;
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use rouille::Server;
 use rouille::{Request, Response};
@@ -101,7 +101,7 @@ fn run(mut rtc: Rtc, socket: UdpSocket) -> Result<(), RtcError> {
         let duration = timeout.saturating_duration_since(Instant::now());
 
         // socket.set_read_timeout(Some(0)) is not ok
-        socket.set_read_timeout(Some(duration.max(std::time::Duration::from_micros(1))))?;
+        socket.set_read_timeout(Some(duration.max(Duration::from_micros(1))))?;
         buf.resize(2000, 0);
 
         // Try to receive network data
