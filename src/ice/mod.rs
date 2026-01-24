@@ -15,7 +15,7 @@ pub use preference::default_local_preference;
 mod error;
 pub use error::IceError;
 
-use crate::{tx::RtcTx, Mutate};
+use crate::{tx::RtcTx, Mutate, Poll};
 
 pub struct Ice<'a> {
     tx: RtcTx<'a, Mutate>,
@@ -74,6 +74,11 @@ impl<'a> Ice<'a> {
     ///
     /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
     pub fn add_remote_candidate(&mut self, c: Candidate) {
+        todo!()
+    }
+
+    /// TODO
+    pub fn finish(mut self) -> RtcTx<'a, Poll> {
         todo!()
     }
 }
