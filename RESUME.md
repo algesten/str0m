@@ -2,7 +2,8 @@
 
 ## Overview
 
-Working on str0m (a sans-I/O WebRTC implementation) to implement a transaction-based type-state API that enforces poll-to-timeout at compile time.
+Working on str0m (a sans-I/O WebRTC implementation) to implement a transaction-based
+type-state API that enforces poll-to-timeout at compile time.
 
 **Issue**: https://github.com/algesten/str0m/issues/839
 
@@ -167,7 +168,8 @@ cargo test handshake # Run handshake tests specifically
 
 1. Read `src/ice/mod.rs` to see the current Ice structure
 2. Implement `Ice::new()` constructor
-3. Implement `add_local_candidate()` and `add_remote_candidate()` by accessing `self.tx.inner.as_mut().unwrap().rtc`
+3. Implement `add_local_candidate()` and `add_remote_candidate()` by accessing
+   `self.tx.inner.as_mut().unwrap().rtc`
 4. Implement `tx.ice()` in `src/tx.rs` to return `Ice::new(self)`
 5. Check if `Ice::finish()` is already implemented correctly
 6. Repeat pattern for other sub-APIs (Bwe, Channel, Writer, SdpApi, DirectApi)
