@@ -639,6 +639,7 @@ mod dtls;
 use crate::crypto::dtls::DtlsOutput;
 use crate::crypto::{from_feature_flags, CryptoProvider};
 use crate::dtls::is_would_block;
+use crate::tx::RtcTx;
 use dtls::Dtls;
 
 #[path = "ice/mod.rs"]
@@ -760,7 +761,7 @@ mod streams;
 
 // Transaction-based API types
 mod tx;
-pub use tx::{BweTx, ChannelTx, IceTx, MediaWriterTx, Mutate, Output, Poll, RtcTx};
+pub use tx::{Mutate, Output, Poll};
 
 pub mod error;
 
@@ -968,20 +969,6 @@ impl Event {
             None
         }
     }
-}
-
-/// Input type used by [`Rtc::accepts()`] for demultiplexing.
-///
-/// To handle the input, use the transaction API: create a transaction with [`Rtc::begin()`],
-/// then call [`RtcTx::receive()`][`crate::RtcTx::receive()`] for network data
-/// or [`RtcTx::finish()`][`crate::RtcTx::finish()`] for timeout.
-#[derive(Debug)]
-#[allow(clippy::large_enum_variant)] // We purposely don't want to allocate.
-pub enum Input<'a> {
-    /// A timeout without any network input.
-    Timeout(Instant),
-    /// Network input.
-    Receive(Instant, net::Receive<'a>),
 }
 
 /// Internal output type used by `do_poll_output`.
@@ -1227,166 +1214,6 @@ impl Rtc {
         }
     }
 
-    /// Add a local ICE candidate. Local candidates are socket addresses the `Rtc` instance
-    /// use for communicating with the peer.
-    ///
-    /// If the candidate is accepted by the `Rtc` instance, it will return `Some` with a reference
-    /// to it. You should then signal this candidate to the remote peer.
-    ///
-    /// This library has no built-in discovery of local network addresses on the host
-    /// or NATed addresses via a STUN server or TURN server. The user of the library
-    /// is expected to add new local candidates as they are discovered.
-    ///
-    /// In WebRTC lingo, the `Rtc` instance is permanently in a mode of [Trickle Ice][1]. It's
-    /// however advisable to add at least one local candidate before starting the instance.
-    ///
-    /// ```
-    /// # #[cfg(feature = "openssl")] {
-    /// # use str0m::{Rtc, Candidate};
-    /// let mut rtc = Rtc::new();
-    ///
-    /// let a = "127.0.0.1:5000".parse().unwrap();
-    /// let c = Candidate::host(a, "udp").unwrap();
-    ///
-    /// rtc.add_local_candidate(c);
-    /// # }
-    /// ```
-    ///
-    /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
-    pub fn add_local_candidate(&mut self, c: Candidate) -> Option<&Candidate> {
-        self.ice.add_local_candidate(c)
-    }
-
-    /// Add a remote ICE candidate. Remote candidates are addresses of the peer.
-    ///
-    /// For [`SdpApi`]: Remote candidates are typically added via
-    /// receiving a remote [`SdpOffer`][change::SdpOffer] or [`SdpAnswer`][change::SdpAnswer].
-    ///
-    /// However for the case of [Trickle Ice][1], this is the way to add remote candidates
-    /// that are "trickled" from the other side.
-    ///
-    /// ```
-    /// # #[cfg(feature = "openssl")] {
-    /// # use str0m::{Rtc, Candidate};
-    /// let mut rtc = Rtc::new();
-    ///
-    /// let a = "1.2.3.4:5000".parse().unwrap();
-    /// let c = Candidate::host(a, "udp").unwrap();
-    ///
-    /// rtc.add_remote_candidate(c);
-    /// }
-    /// ```
-    ///
-    /// [1]: https://www.rfc-editor.org/rfc/rfc8838.txt
-    pub fn add_remote_candidate(&mut self, c: Candidate) {
-        self.ice.add_remote_candidate(c);
-    }
-
-    /// Checks if we are connected.
-    ///
-    /// This tests if we have ICE connection, DTLS and the SRTP crypto derived contexts are up.
-    pub fn is_connected(&self) -> bool {
-        self.ice.state().is_connected() && self.dtls_connected && self.session.is_connected()
-    }
-
-    /// Make changes to the Rtc session via SDP.
-    ///
-    /// ```no_run
-    /// # use str0m::Rtc;
-    /// # use str0m::media::{MediaKind, Direction};
-    /// # use str0m::change::SdpAnswer;
-    /// let mut rtc = Rtc::new();
-    ///
-    /// let mut changes = rtc.sdp_api();
-    /// let mid_audio = changes.add_media(MediaKind::Audio, Direction::SendOnly, None, None, None);
-    /// let mid_video = changes.add_media(MediaKind::Video, Direction::SendOnly, None, None, None);
-    ///
-    /// let (offer, pending) = changes.apply().unwrap();
-    /// let json = serde_json::to_vec(&offer).unwrap();
-    ///
-    /// // Send json OFFER to remote peer. Receive an answer back.
-    /// let answer: SdpAnswer = todo!();
-    ///
-    /// rtc.sdp_api().accept_answer(pending, answer).unwrap();
-    /// ```
-    pub fn sdp_api(&mut self) -> SdpApi {
-        SdpApi::new(self)
-    }
-
-    /// Makes direct changes to the Rtc session.
-    ///
-    /// This is a low level API. For "normal" use via SDP, see [`Rtc::sdp_api()`].
-    pub fn direct_api(&mut self) -> DirectApi {
-        DirectApi::new(self)
-    }
-
-    /// Send outgoing media data (frames) or request keyframes.
-    ///
-    /// Returns `None` if the direction isn't sending (`sendrecv` or `sendonly`).
-    ///
-    /// ```no_run
-    /// # use str0m::Rtc;
-    /// # use str0m::media::{MediaData, Mid};
-    /// # use str0m::format::PayloadParams;
-    /// let mut rtc = Rtc::new();
-    ///
-    /// // add candidates, do SDP negotiation
-    /// let mid: Mid = todo!(); // obtain mid from Event::MediaAdded.
-    ///
-    /// // Writer for this mid.
-    /// let writer = rtc.writer(mid).unwrap();
-    ///
-    /// // Get incoming media data from another peer
-    /// let data: MediaData = todo!();
-    ///
-    /// // Match incoming PT to an outgoing PT.
-    /// let pt = writer.match_params(data.params).unwrap();
-    ///
-    /// writer.write(pt, data.network_time, data.time, data.data).unwrap();
-    /// ```
-    ///
-    /// This is a frame level API: For RTP level see [`DirectApi::stream_tx()`]
-    /// and [`DirectApi::stream_rx()`].
-    ///
-    pub fn writer(&mut self, mid: Mid) -> Option<Writer> {
-        if self.session.rtp_mode {
-            panic!("In rtp_mode use direct_api().stream_tx().write_rtp()");
-        }
-
-        // This does not catch potential RIDs required to send simulcast, but
-        // it's a good start. An error might arise later on RID mismatch.
-        self.session.media_by_mid_mut(mid)?;
-
-        Some(Writer::new(&mut self.session, mid))
-    }
-
-    /// Currently configured media.
-    ///
-    /// Read only access. Changes are made via [`Rtc::sdp_api()`] or [`Rtc::direct_api()`].
-    pub fn media(&self, mid: Mid) -> Option<&Media> {
-        self.session.media_by_mid(mid)
-    }
-
-    fn init_dtls(&mut self, active: bool) -> Result<(), RtcError> {
-        if self.dtls.is_inited() {
-            return Ok(());
-        }
-
-        debug!("DTLS setup is: {:?}", active);
-        self.dtls.set_active(active);
-
-        // Initialize the DTLS state (client or server) before any operations
-        // This ensures internal state like random (client) or last_now (server) is initialized
-        self.dtls.handle_timeout(self.last_now)?;
-
-        if active {
-            // Drive handshake by sending an empty packet to trigger ClientHello
-            let _ = self.dtls.handle_receive(&[]);
-        }
-
-        Ok(())
-    }
-
     fn init_sctp(&mut self, client: bool) {
         // If we got an m=application line, ensure we have negotiated the
         // SCTP association with the other side.
@@ -1426,41 +1253,12 @@ impl Rtc {
     /// This is the entry point for the transaction-based API that provides
     /// compile-time enforcement of the poll-to-timeout contract. All mutations
     /// go through the returned [`RtcTx`] handle.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// let mut rtc = Rtc::new();
-    ///
-    /// // All mutations start with begin(now)
-    /// let tx = rtc.begin(now);
-    /// let mut tx = tx.receive(recv_time, data)?;
-    ///
-    /// // Poll until timeout
-    /// loop {
-    ///     match tx.poll() {
-    ///         TxOutput::Timeout(when) => break,
-    ///         TxOutput::Transmit(t, pkt) => {
-    ///             tx = t;
-    ///             send(pkt);
-    ///         }
-    ///         TxOutput::Event(t, evt) => {
-    ///             tx = t;
-    ///             handle(evt);
-    ///         }
-    ///     }
-    /// }
-    /// ```
-    ///
-    /// The transaction enforces:
-    /// - No mutation after mutation without polling (compile error)
-    /// - No two active transactions (compile error - double mutable borrow)
-    /// - Drop without polling to timeout causes panic
     pub fn begin(&mut self, now: Instant) -> RtcTx<'_, Mutate> {
-        RtcTx::new(self, now)
+        let res = self.handle_timeout(now);
+        RtcTx::new(self, res)
     }
 
-    pub(crate) fn do_poll_output(&mut self) -> Result<PollOutput, RtcError> {
+    pub(crate) fn poll_output(&mut self) -> Result<PollOutput, RtcError> {
         if !self.alive {
             self.last_timeout_reason = Reason::NotHappening;
             return Ok(PollOutput::Timeout(not_happening()));
@@ -1583,7 +1381,7 @@ impl Rtc {
 
                         // Run again since this would feed the DTLS subsystem
                         // to produce a packet now.
-                        return self.do_poll_output();
+                        return self.poll_output();
                     }
                 }
                 SctpEvent::Open { id, label } => {
@@ -1762,12 +1560,7 @@ impl Rtc {
     ///     }
     /// }
     /// ```
-    pub fn accepts(&self, input: &Input) -> bool {
-        let Input::Receive(_, r) = input else {
-            // always accept the Input::Timeout.
-            return true;
-        };
-
+    pub fn accepts(&self, r: net::Receive<'_>) -> bool {
         // Fast path: DTLS, RTP, and RTCP traffic coming in from the same socket address
         // we've nominated for sending via the ICE agent. This is the typical case
         if let Some(send_addr) = &self.send_addr {
@@ -1792,21 +1585,10 @@ impl Rtc {
         false
     }
 
-    fn init_time(&mut self, now: Instant) {
-        // The operation is somewhat expensive, hence we only do it once.
-        if !self.need_init_time {
-            return;
-        }
-
+    fn handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
         // We assume this first "now" is a time 0 start point for calculating ntp/unix time offsets.
         // This initializes the conversion of Instant -> NTP/Unix time.
         let _ = now.to_unix_duration();
-
-        self.need_init_time = false;
-    }
-
-    pub(crate) fn do_handle_timeout(&mut self, now: Instant) -> Result<(), RtcError> {
-        self.init_time(now);
 
         // Prevent time from going backwards.
         if now < self.last_now {
@@ -1840,16 +1622,10 @@ impl Rtc {
         Ok(())
     }
 
-    pub(crate) fn do_handle_receive(
-        &mut self,
-        now: Instant,
-        r: net::Receive,
-    ) -> Result<(), RtcError> {
-        self.init_time(now);
+    fn handle_receive(&mut self, r: net::Receive) -> Result<(), RtcError> {
+        use DatagramRecvInner::*;
 
         trace!("IN {:?}", r);
-        self.last_now = now;
-        use DatagramRecvInner::*;
 
         let bytes_rx = match r.contents.inner {
             // TODO: stun is already parsed (depacketized) here
@@ -1858,6 +1634,8 @@ impl Rtc {
         };
 
         self.peer_bytes_rx += bytes_rx as u64;
+
+        let now = self.last_now;
 
         match r.contents.inner {
             Stun(stun) => {
@@ -1875,42 +1653,6 @@ impl Rtc {
         }
 
         Ok(())
-    }
-
-    /// Obtain handle for writing to a data channel.
-    ///
-    /// This is first available when a [`ChannelId`] is advertised via [`Event::ChannelOpen`].
-    /// The function returns `None` also for IDs from [`SdpApi::add_channel()`].
-    ///
-    /// Incoming channel data is via the [`Event::ChannelData`] event.
-    ///
-    /// ```no_run
-    /// # use str0m::{Rtc, channel::ChannelId};
-    /// let mut rtc = Rtc::new();
-    ///
-    /// let cid: ChannelId = todo!(); // obtain channel id from Event::ChannelOpen
-    /// let channel = rtc.channel(cid).unwrap();
-    /// // TODO write data channel data.
-    /// ```
-    pub fn channel(&mut self, id: ChannelId) -> Option<Channel<'_>> {
-        if !self.alive {
-            return None;
-        }
-
-        let sctp_stream_id = self.chan.stream_id_by_channel_id(id)?;
-
-        if !self.sctp.is_open(sctp_stream_id) {
-            return None;
-        }
-
-        Some(Channel::new(sctp_stream_id, self))
-    }
-
-    /// Configure the Bandwidth Estimate (BWE) subsystem.
-    ///
-    /// Only relevant if BWE was enabled in the [`RtcConfig::enable_bwe()`]
-    pub fn bwe(&mut self) -> Bwe {
-        Bwe(self)
     }
 
     fn is_correct_change_id(&self, change_id: usize) -> bool {
