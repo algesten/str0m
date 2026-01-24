@@ -198,74 +198,79 @@ impl TestRtc {
     /// 3. Runs the 4-way progress loop (self.last, other.last, self.pending, other.pending)
     ///
     /// For just progressing without an operation, use `|tx| Ok(tx.finish())`.
-    pub fn drive<F>(&mut self, other: &mut TestRtc, f: F) -> Result<(), RtcError>
+    pub fn drive<F, T>(&mut self, other: &mut TestRtc, f: F) -> Result<T, RtcError>
     where
-        F: FnOnce(RtcTx<'_, Mutate>) -> Result<RtcTx<'_, Poll>, RtcError>,
+        F: FnOnce(RtcTx<'_, Mutate>) -> Result<(RtcTx<'_, Poll>, T), RtcError>,
     {
-        // Step 1: Execute operation on self and poll to completion
+        let timeout;
+        let ret;
+        let time = self.last;
+
         {
-            let mut events = Vec::new();
-            let timeout;
-            let time = self.last;
-
-            {
-                let tx = self.rtc.begin(time)?;
-                let mut tx = f(tx)?;
-                timeout = loop {
-                    match self.span.in_scope(|| tx.poll())? {
-                        Output::Timeout(t) => break t,
-                        Output::Transmit(t, v) => {
-                            tx = t;
-                            let packet = PendingPacket {
-                                proto: v.proto,
-                                source: v.source,
-                                destination: v.destination,
-                                contents: v.contents.to_vec(),
-                            };
-                            other.pending.handle_input(NetemInput::Packet(time, packet));
-                        }
-                        Output::Event(t, v) => {
-                            tx = t;
-                            events.push(v);
-                        }
+            let tx = self.rtc.begin(time)?;
+            let (mut tx, _ret) = f(tx)?;
+            ret = _ret;
+            timeout = loop {
+                match self.span.in_scope(|| tx.poll())? {
+                    Output::Timeout(t) => break t,
+                    Output::Transmit(t, v) => {
+                        tx = t;
+                        let packet = PendingPacket {
+                            proto: v.proto,
+                            source: v.source,
+                            destination: v.destination,
+                            contents: v.contents.to_vec(),
+                        };
+                        other.pending.handle_input(NetemInput::Packet(time, packet));
                     }
-                };
-            }
-        }
-
-        // Step 2: Run 4-way progress loop
-        let mut first_time = None;
-        loop {
-            let self_netem = self.pending.poll_timeout();
-            let other_netem = other.pending.poll_timeout();
-
-            // Find earliest: (time, is_self, is_netem)
-            let mut next = (self.last, true, false);
-            if other.last < next.0 {
-                next = (other.last, false, false);
-            }
-            if self_netem < next.0 {
-                next = (self_netem, true, true);
-            }
-            if other_netem < next.0 {
-                next = (other_netem, false, true);
-            }
-
-            let (time, is_self, is_netem) = next;
-
-            if let Some(first) = first_time {
-                if time.saturating_duration_since(first) >= self.progress_duration {
-                    break;
+                    Output::Event(t, v) => {
+                        tx = t;
+                        self.events.push((time, v));
+                    }
                 }
-            } else {
-                first_time = Some(time);
-            }
-
-            progress_one(self, other, time, is_self, is_netem)?;
+            };
         }
 
-        Ok(())
+        progress(self, other)?;
+
+        Ok(ret)
     }
+}
+
+fn progress(this: &mut TestRtc, other: &mut TestRtc) -> Result<(), RtcError> {
+    // Step 2: Run 4-way progress loop
+    let mut first_time = None;
+
+    loop {
+        let self_netem = this.pending.poll_timeout();
+        let other_netem = other.pending.poll_timeout();
+
+        // Find earliest: (time, is_self, is_netem)
+        let mut next = (this.last, true, false);
+        if other.last < next.0 {
+            next = (other.last, false, false);
+        }
+        if self_netem < next.0 {
+            next = (self_netem, true, true);
+        }
+        if other_netem < next.0 {
+            next = (other_netem, false, true);
+        }
+
+        let (time, is_self, is_netem) = next;
+
+        if let Some(first) = first_time {
+            if time.saturating_duration_since(first) >= this.progress_duration {
+                break;
+            }
+        } else {
+            first_time = Some(time);
+        }
+
+        progress_one(this, other, time, is_self, is_netem)?;
+    }
+
+    Ok(())
 }
 
 fn progress_one(
