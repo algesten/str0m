@@ -112,16 +112,17 @@
 //!
 //! ## Run loop
 //!
-//! Driving the state of the `Rtc` forward is a run loop that, regardless of sync or async,
-//! looks like this.
+//! Driving the state of the `Rtc` forward is a run loop using the transaction-based API.
+//! All mutations go through [`Rtc::begin()`], which returns a transaction that must be
+//! polled to timeout.
 //!
-//! ```no_run
-//! # use str0m::{Rtc, Output, IceConnectionState, Event, Input};
+//! ```ignore
+//! # use str0m::{Rtc, Output, IceConnectionState, Event};
 //! # use str0m::net::{Receive, Protocol};
 //! # use std::io::ErrorKind;
 //! # use std::net::UdpSocket;
 //! # use std::time::Instant;
-//! # let rtc = Rtc::new();
+//! # let mut rtc = Rtc::new();
 //! // Buffer for reading incoming UDP packets.
 //! let mut buf = vec![0; 2000];
 //!
@@ -129,85 +130,75 @@
 //! let socket: UdpSocket = todo!();
 //!
 //! loop {
-//!     // Poll output until we get a timeout. The timeout means we
-//!     // are either awaiting UDP socket input or the timeout to happen.
-//!     let timeout = match rtc.poll_output().unwrap() {
-//!         // Stop polling when we get the timeout.
-//!         Output::Timeout(v) => v,
+//!     let now = Instant::now();
 //!
-//!         // Transmit this data to the remote peer. Typically via
-//!         // a UDP socket. The destination IP comes from the ICE
-//!         // agent. It might change during the session.
-//!         Output::Transmit(v) => {
-//!             socket.send_to(&v.contents, v.destination).unwrap();
-//!             continue;
-//!         }
+//!     // Begin a transaction - this is the entry point for all operations
+//!     let tx = rtc.begin(now);
 //!
-//!         // Events are mainly incoming media data from the remote
-//!         // peer, but also data channel data and statistics.
-//!         Output::Event(v) => {
+//!     // Transition to Poll state (either via receive() or finish())
+//!     let mut tx = tx.finish();
 //!
-//!             // Abort if we disconnect.
-//!             if v == Event::IceConnectionStateChange(IceConnectionState::Disconnected) {
-//!                 return;
+//!     // Poll until we get a timeout
+//!     let timeout = loop {
+//!         match tx.poll() {
+//!             Output::Timeout(t) => break t,
+//!             Output::Transmit(t, pkt) => {
+//!                 tx = t;
+//!                 socket.send_to(&pkt.contents, pkt.destination).unwrap();
 //!             }
-//!
-//!             // TODO: handle more cases of v here, such as incoming media data.
-//!
-//!             continue;
+//!             Output::Event(t, evt) => {
+//!                 tx = t;
+//!                 if evt == Event::IceConnectionStateChange(IceConnectionState::Disconnected) {
+//!                     return;
+//!                 }
+//!                 // Handle other events...
+//!             }
 //!         }
 //!     };
 //!
-//!     // Duration until timeout.
-//!     let duration = timeout - Instant::now();
-//!
-//!     // socket.set_read_timeout(Some(0)) is not ok
+//!     // Wait for timeout or network input
+//!     let duration = timeout.saturating_duration_since(Instant::now());
 //!     if duration.is_zero() {
-//!         // Drive time forwards in rtc straight away.
-//!         rtc.handle_input(Input::Timeout(Instant::now())).unwrap();
 //!         continue;
 //!     }
 //!
 //!     socket.set_read_timeout(Some(duration)).unwrap();
-//!
-//!     // Scale up buffer to receive an entire UDP packet.
 //!     buf.resize(2000, 0);
 //!
-//!     // Try to receive. Because we have a timeout on the socket,
-//!     // we will either receive a packet, or timeout.
-//!     // This is where having an async loop shines. We can await multiple things to
-//!     // happen such as outgoing media data, the timeout and incoming network traffic.
-//!     // When using async there is no need to set timeout on the socket.
-//!     let input = match socket.recv_from(&mut buf) {
+//!     match socket.recv_from(&mut buf) {
 //!         Ok((n, source)) => {
-//!             // UDP data received.
 //!             buf.truncate(n);
-//!             Input::Receive(
-//!                 Instant::now(),
-//!                 Receive {
-//!                     proto: Protocol::Udp,
-//!                     source,
-//!                     destination: socket.local_addr().unwrap(),
-//!                     contents: buf.as_slice().try_into().unwrap(),
-//!                 },
-//!             )
-//!         }
+//!             let recv = Receive::new(
+//!                 Protocol::Udp,
+//!                 source,
+//!                 socket.local_addr().unwrap(),
+//!                 &buf,
+//!             ).unwrap();
 //!
-//!         Err(e) => match e.kind() {
-//!             // Expected error for set_read_timeout().
-//!             // One for windows, one for the rest.
-//!             ErrorKind::WouldBlock
-//!                 | ErrorKind::TimedOut => Input::Timeout(Instant::now()),
-//!
-//!             e => {
-//!                 eprintln!("Error: {:?}", e);
-//!                 return; // abort
+//!             // Handle received data in next iteration
+//!             let tx = rtc.begin(Instant::now());
+//!             let mut tx = tx.receive(Instant::now(), recv).unwrap();
+//!             loop {
+//!                 match tx.poll() {
+//!                     Output::Timeout(_) => break,
+//!                     Output::Transmit(t, pkt) => {
+//!                         tx = t;
+//!                         socket.send_to(&pkt.contents, pkt.destination).unwrap();
+//!                     }
+//!                     Output::Event(t, _evt) => {
+//!                         tx = t;
+//!                     }
+//!                 }
 //!             }
-//!         },
-//!     };
-//!
-//!     // Input is either a Timeout or Receive of data. Both drive the state forward.
-//!     rtc.handle_input(input).unwrap();
+//!         }
+//!         Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
+//!             // Timeout - continue loop
+//!         }
+//!         Err(e) => {
+//!             eprintln!("Error: {:?}", e);
+//!             return;
+//!         }
+//!     }
 //! }
 //! ```
 //!
@@ -792,35 +783,50 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub use error::RtcError;
 
 // Transaction-based API types
-pub use transaction::{BweTx, ChannelTx, IceTx, MediaWriterTx, Mutate, Poll, RtcTx, TxOutput};
+pub use transaction::{BweTx, ChannelTx, IceTx, MediaWriterTx, Mutate, Output, Poll, RtcTx};
 
 /// Instance that does WebRTC. Main struct of the entire library.
 ///
 /// ## Usage
 ///
-/// ```no_run
-/// # use str0m::{Rtc, Output, Input};
+/// All interactions with an `Rtc` instance use a transaction-based API through
+/// [`Rtc::begin()`]. This provides compile-time enforcement that you poll to
+/// timeout after any mutation.
+///
+/// ```ignore
+/// # use str0m::{Rtc, Output};
+/// # use str0m::net::{Receive, Protocol};
+/// # use std::time::Instant;
 /// let mut rtc = Rtc::new();
 ///
 /// loop {
-///     let timeout = match rtc.poll_output().unwrap() {
-///         Output::Timeout(v) => v,
-///         Output::Transmit(t) => {
-///             // TODO: Send data to remote peer.
-///             continue; // poll again
-///         }
-///         Output::Event(e) => {
-///             // TODO: Handle event.
-///             continue; // poll again
+///     let now = Instant::now();
+///
+///     // All mutations start with begin(now)
+///     let tx = rtc.begin(now);
+///
+///     // Either handle received network data...
+///     // let mut tx = tx.receive(recv_time, data)?;
+///
+///     // ...or just advance time
+///     let mut tx = tx.finish();
+///
+///     // Poll until timeout (mandatory - transaction panics if dropped early)
+///     let timeout = loop {
+///         match tx.poll() {
+///             Output::Timeout(t) => break t,
+///             Output::Transmit(t, pkt) => {
+///                 tx = t;
+///                 // TODO: send pkt to remote peer
+///             }
+///             Output::Event(t, evt) => {
+///                 tx = t;
+///                 // TODO: handle event
+///             }
 ///         }
 ///     };
 ///
-///     // TODO: Wait for one of two events, reaching `timeout`
-///     //       or receiving network input. Both are encapsulated
-///     //       in the Input enum.
-///     let input: Input = todo!();
-///
-///     rtc.handle_input(input).unwrap();
+///     // Wait for timeout or network input before next iteration
 /// }
 /// ```
 pub struct Rtc {
@@ -853,7 +859,7 @@ struct SendAddr {
     destination: SocketAddr,
 }
 
-/// Events produced by [`Rtc::poll_output()`].
+/// Events produced when polling an [`RtcTx`].
 #[derive(Debug)]
 #[non_exhaustive]
 #[rustfmt::skip]
@@ -970,7 +976,11 @@ impl Event {
     }
 }
 
-/// Input as expected by [`Rtc::handle_input()`]. Either network data or a timeout.
+/// Input type used by [`Rtc::accepts()`] for demultiplexing.
+///
+/// To handle the input, use the transaction API: create a transaction with [`Rtc::begin()`],
+/// then call [`RtcTx::receive()`][`crate::RtcTx::receive()`] for network data
+/// or [`RtcTx::finish()`][`crate::RtcTx::finish()`] for timeout.
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)] // We purposely don't want to allocate.
 pub enum Input<'a> {
@@ -980,11 +990,11 @@ pub enum Input<'a> {
     Receive(Instant, net::Receive<'a>),
 }
 
-/// Output produced by [`Rtc::poll_output()`]
+/// Internal output type used by `do_poll_output`.
+/// The public API uses [`Output`] from the transaction module.
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug)]
-pub enum Output {
-    /// When the [`Rtc`] instance expects an [`Input::Timeout`].
+pub(crate) enum PollOutput {
+    /// When the [`Rtc`] instance expects a timeout.
     Timeout(Instant),
 
     /// Network data that is to be sent.
@@ -1204,8 +1214,8 @@ impl Rtc {
 
     /// Force disconnects the instance making [`Rtc::is_alive()`] return `false`.
     ///
-    /// This makes [`Rtc::poll_output`] and [`Rtc::handle_input`] go inert and not
-    /// produce anymore network output or events.
+    /// This makes the transaction API go inert and not produce anymore network
+    /// output or events.
     ///
     /// ```
     /// # #[cfg(feature = "openssl")] {
@@ -1417,35 +1427,6 @@ impl Rtc {
     /// 1. The polled timeout is reached.
     /// 2. New network input.
     ///
-    /// See [`Rtc`] instance documentation for how this is expected to be used in a loop.
-    pub fn poll_output(&mut self) -> Result<Output, RtcError> {
-        let o = self.do_poll_output()?;
-
-        match &o {
-            Output::Event(e) => match e {
-                Event::ChannelData(_)
-                | Event::MediaData(_)
-                | Event::RtpPacket(_)
-                | Event::SenderFeedback(_)
-                | Event::MediaEgressStats(_)
-                | Event::MediaIngressStats(_)
-                | Event::PeerStats(_)
-                | Event::ChannelBufferedAmountLow(_)
-                | Event::EgressBitrateEstimate(_) => {
-                    trace!("{:?}", e)
-                }
-                _ => debug!("{:?}", e),
-            },
-            Output::Transmit(t) => {
-                self.peer_bytes_tx += t.contents.len() as u64;
-                trace!("OUT {:?}", t)
-            }
-            Output::Timeout(_t) => {}
-        }
-
-        Ok(o)
-    }
-
     /// Begin a transaction for performing mutations on this [`Rtc`] instance.
     ///
     /// This is the entry point for the transaction-based API that provides
@@ -1485,10 +1466,10 @@ impl Rtc {
         RtcTx::new(self, now)
     }
 
-    pub(crate) fn do_poll_output(&mut self) -> Result<Output, RtcError> {
+    pub(crate) fn do_poll_output(&mut self) -> Result<PollOutput, RtcError> {
         if !self.alive {
             self.last_timeout_reason = Reason::NotHappening;
-            return Ok(Output::Timeout(not_happening()));
+            return Ok(PollOutput::Timeout(not_happening()));
         }
 
         while let Some(e) = self.ice.poll_event() {
@@ -1497,7 +1478,7 @@ impl Rtc {
                     //
                 }
                 IceAgentEvent::IceConnectionStateChange(v) => {
-                    return Ok(Output::Event(Event::IceConnectionStateChange(v)))
+                    return Ok(PollOutput::Event(Event::IceConnectionStateChange(v)))
                 }
                 IceAgentEvent::DiscoveredRecv { proto, source } => {
                     debug!("ICE remote address: {:?}/{:?}", Pii(source), proto);
@@ -1583,7 +1564,7 @@ impl Rtc {
         }
 
         if just_connected {
-            return Ok(Output::Event(Event::Connected));
+            return Ok(PollOutput::Event(Event::Connected));
         }
 
         while let Some(e) = self.sctp.poll() {
@@ -1614,7 +1595,7 @@ impl Rtc {
                 SctpEvent::Open { id, label } => {
                     self.chan.ensure_channel_id_for(id);
                     let id = self.chan.channel_id_by_stream_id(id).unwrap();
-                    return Ok(Output::Event(Event::ChannelOpen(id, label)));
+                    return Ok(PollOutput::Event(Event::ChannelOpen(id, label)));
                 }
                 SctpEvent::Close { id } => {
                     let Some(id) = self.chan.channel_id_by_stream_id(id) else {
@@ -1622,7 +1603,7 @@ impl Rtc {
                         continue;
                     };
                     self.chan.remove_channel(id);
-                    return Ok(Output::Event(Event::ChannelClose(id)));
+                    return Ok(PollOutput::Event(Event::ChannelClose(id)));
                 }
                 SctpEvent::Data { id, binary, data } => {
                     let Some(id) = self.chan.channel_id_by_stream_id(id) else {
@@ -1630,37 +1611,37 @@ impl Rtc {
                         continue;
                     };
                     let cd = ChannelData { id, binary, data };
-                    return Ok(Output::Event(Event::ChannelData(cd)));
+                    return Ok(PollOutput::Event(Event::ChannelData(cd)));
                 }
                 SctpEvent::BufferedAmountLow { id } => {
                     let Some(id) = self.chan.channel_id_by_stream_id(id) else {
                         warn!("Drop BufferedAmountLow for id: {:?}", id);
                         continue;
                     };
-                    return Ok(Output::Event(Event::ChannelBufferedAmountLow(id)));
+                    return Ok(PollOutput::Event(Event::ChannelBufferedAmountLow(id)));
                 }
             }
         }
 
         if let Some(ev) = self.session.poll_event() {
-            return Ok(Output::Event(ev));
+            return Ok(PollOutput::Event(ev));
         }
 
         // Some polling needs to bubble up errors.
         if let Some(ev) = self.session.poll_event_fallible()? {
-            return Ok(Output::Event(ev));
+            return Ok(PollOutput::Event(ev));
         }
 
         if let Some(e) = self.stats.as_mut().and_then(|s| s.poll_output()) {
             return Ok(match e {
-                StatsEvent::Peer(s) => Output::Event(Event::PeerStats(s)),
-                StatsEvent::MediaIngress(s) => Output::Event(Event::MediaIngressStats(s)),
-                StatsEvent::MediaEgress(s) => Output::Event(Event::MediaEgressStats(s)),
+                StatsEvent::Peer(s) => PollOutput::Event(Event::PeerStats(s)),
+                StatsEvent::MediaIngress(s) => PollOutput::Event(Event::MediaIngressStats(s)),
+                StatsEvent::MediaEgress(s) => PollOutput::Event(Event::MediaEgressStats(s)),
             });
         }
 
         if let Some(v) = self.ice.poll_transmit() {
-            return Ok(Output::Transmit(v));
+            return Ok(PollOutput::Transmit(v));
         }
 
         if let Some(send) = &self.send_addr {
@@ -1676,7 +1657,7 @@ impl Rtc {
                     destination: send.destination,
                     contents,
                 };
-                return Ok(Output::Transmit(t));
+                return Ok(PollOutput::Transmit(t));
             }
         } else {
             // Don't allow accumulated feedback to build up indefinitely
@@ -1715,28 +1696,33 @@ impl Rtc {
 
         self.last_timeout_reason = reason;
 
-        Ok(Output::Timeout(next))
+        Ok(PollOutput::Timeout(next))
     }
 
     /// The reason for the last [`Output::Timeout`]
     ///
-    /// This is updated when calling [`Rtc::poll_output()`] and the next output
-    /// is a timeout.
+    /// This is updated when [`RtcTx::poll()`][crate::RtcTx::poll()] returns
+    /// [`Output::Timeout`].
     ///
-    /// ```
-    /// # #[cfg(feature = "openssl")] {
-    /// # use str0m::{Rtc, Input, Output, Reason};
+    /// ```ignore
+    /// # use str0m::{Rtc, Output, Reason};
+    /// # use std::time::Instant;
     /// let mut rtc = Rtc::new();
     ///
-    /// let output = rtc.poll_output().unwrap();
+    /// let tx = rtc.begin(Instant::now());
+    /// let mut tx = tx.finish();
+    ///
+    /// // Poll to timeout
+    /// loop {
+    ///     match tx.poll() {
+    ///         Output::Timeout(_) => break,
+    ///         Output::Transmit(t, _) | Output::Event(t, _) => { tx = t; }
+    ///     }
+    /// }
     ///
     /// // Reason updates every time we get an Output::Timeout
-    /// assert!(matches!(output, Output::Timeout(_)));
-    ///
-    /// // If there are no timeouts scheduled, we get NotHappening. The timeout
-    /// // value itself will be in the distant future.
+    /// // If there are no timeouts scheduled, we get NotHappening.
     /// assert_eq!(rtc.last_timeout_reason(), Reason::DTLS);
-    /// # }
     /// ```
     pub fn last_timeout_reason(&self) -> Reason {
         self.last_timeout_reason
@@ -1751,23 +1737,33 @@ impl Rtc {
     /// credentials negotiated in the SDP. If that also doesn't match, all remote ICE candidates are
     /// checked for a match.
     ///
-    /// In a server setup, the server would try to find an `Rtc` instances using [`Rtc::accepts()`].
-    /// The first found instance would be given the input via [`Rtc::handle_input()`].
+    /// In a server setup, the server would try to find an `Rtc` instance using [`Rtc::accepts()`].
+    /// The first found instance would then process the input using the transaction API.
     ///
-    /// ```no_run
-    /// # use str0m::{Rtc, Input};
+    /// ```ignore
+    /// # use str0m::{Rtc, Input, Output};
+    /// # use std::time::Instant;
     /// // A vec holding the managed rtc instances. One instance per remote peer.
     /// let mut rtcs = vec![Rtc::new(), Rtc::new(), Rtc::new()];
     ///
     /// // Configure instances with local ice candidates etc.
     ///
     /// loop {
-    ///     // TODO poll_timeout() and handle the output.
-    ///
     ///     let input: Input = todo!(); // read network data from socket.
     ///     for rtc in &mut rtcs {
     ///         if rtc.accepts(&input) {
-    ///             rtc.handle_input(input).unwrap();
+    ///             // Use the transaction API to handle the input
+    ///             let Input::Receive(recv_time, data) = input else { continue };
+    ///             let tx = rtc.begin(Instant::now());
+    ///             let mut tx = tx.receive(recv_time, data).unwrap();
+    ///             loop {
+    ///                 match tx.poll() {
+    ///                     Output::Timeout(_) => break,
+    ///                     Output::Transmit(t, pkt) => { tx = t; /* send pkt */ }
+    ///                     Output::Event(t, evt) => { tx = t; /* handle evt */ }
+    ///                 }
+    ///             }
+    ///             break;
     ///         }
     ///     }
     /// }
@@ -1800,45 +1796,6 @@ impl Rtc {
         }
 
         false
-    }
-
-    /// Provide input to this `Rtc` instance. Input is either a [`Input::Timeout`] for some
-    /// time that was previously obtained from [`Rtc::poll_output()`], or [`Input::Receive`]
-    /// for network data.
-    ///
-    /// Both the timeout and the network data contains a [`std::time::Instant`] which drives
-    /// time forward in the instance. For network data, the intention is to record the time
-    /// of receiving the network data as precise as possible. This time is used to calculate
-    /// things like jitter and bandwidth.
-    ///
-    /// It's always okay to call [`Rtc::handle_input()`] with a timeout, also before the
-    /// time obtained via [`Rtc::poll_output()`].
-    ///
-    /// ```no_run
-    /// # use str0m::{Rtc, Input};
-    /// # use std::time::Instant;
-    /// let mut rtc = Rtc::new();
-    ///
-    /// loop {
-    ///     let timeout: Instant = todo!(); // rtc.poll_output() until we get a timeout.
-    ///
-    ///     let input: Input = todo!(); // wait for network data or timeout.
-    ///     rtc.handle_input(input);
-    /// }
-    /// ```
-    pub fn handle_input(&mut self, input: Input) -> Result<(), RtcError> {
-        if !self.alive {
-            return Ok(());
-        }
-
-        match input {
-            Input::Timeout(now) => self.do_handle_timeout(now)?,
-            Input::Receive(now, r) => {
-                self.do_handle_receive(now, r)?;
-                self.do_handle_timeout(now)?;
-            }
-        }
-        Ok(())
     }
 
     fn init_time(&mut self, now: Instant) {

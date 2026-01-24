@@ -437,11 +437,11 @@ impl RtcConfig {
     ///
     /// This must be larger than 0. The value configures an internal ring buffer used as a temporary
     /// holding space between calling [`Writer::write`][crate::media::Writer::write()] and
-    /// [`Rtc::poll_output`].
+    /// polling the transaction to timeout via [`RtcTx::poll()`][crate::RtcTx::poll()].
     ///
     /// For audio one call to `write()` typically results in one RTP packet since the entire
     /// payload fits in one. If you can guarantee that every `write()` is a single RTP packet,
-    /// and is always followed by a `poll_output()`, it might be possible to set this value to 1.
+    /// and is always followed by polling to timeout, it might be possible to set this value to 1.
     /// But that would give no margins for unexpected patterns.
     ///
     /// panics if set to 0.
@@ -468,8 +468,8 @@ impl RtcConfig {
     ///
     /// This must be larger than 0. The value configures an internal ring buffer that is both
     /// used as a temporary holding space between calling
-    /// [`Writer::write`][crate::media::Writer::write()] and [`Rtc::poll_output`] as well as for
-    /// fulfilling resends.
+    /// [`Writer::write`][crate::media::Writer::write()] and polling the transaction to timeout
+    /// via [`RtcTx::poll()`][crate::RtcTx::poll()] as well as for fulfilling resends.
     ///
     /// For video, this buffer is used for more than for audio. First, a call to `write()` often
     /// results in multiple RTP packets since large frames don't fit in one payload. That means

@@ -28,12 +28,12 @@
 //! // poll() consumes tx; Transmit/Event return it, Timeout does not
 //! loop {
 //!     match tx.poll() {
-//!         TxOutput::Timeout(when) => break,           // tx consumed, done
-//!         TxOutput::Transmit(t, pkt) => {
+//!         Output::Timeout(when) => break,           // tx consumed, done
+//!         Output::Transmit(t, pkt) => {
 //!             tx = t;                                 // must reassign
 //!             send(pkt);
 //!         }
-//!         TxOutput::Event(t, evt) => {
+//!         Output::Event(t, evt) => {
 //!             tx = t;                                 // must reassign
 //!             handle(evt);
 //!         }
@@ -261,42 +261,64 @@ impl<'a> RtcTx<'a, Poll> {
     /// Poll the transaction for output.
     ///
     /// Returns one of:
-    /// - [`TxOutput::Timeout`]: Transaction complete, you can drop the result
-    /// - [`TxOutput::Transmit`]: Send this packet, then continue polling
-    /// - [`TxOutput::Event`]: Handle this event, then continue polling
+    /// - [`Output::Timeout`]: Transaction complete, you can drop the result
+    /// - [`Output::Transmit`]: Send this packet, then continue polling
+    /// - [`Output::Event`]: Handle this event, then continue polling
     ///
     /// The transaction handle is returned with `Transmit` and `Event` variants
     /// so you must continue polling. When `Timeout` is returned, the transaction
     /// is complete.
-    pub fn poll(mut self) -> TxOutput<'a> {
+    pub fn poll(mut self) -> Output<'a> {
         let inner = self.take_inner();
 
         match inner.rtc.do_poll_output() {
             Ok(output) => match output {
-                crate::Output::Timeout(t) => {
+                crate::PollOutput::Timeout(t) => {
                     // Transaction complete - don't put inner back
-                    TxOutput::Timeout(t)
+                    Output::Timeout(t)
                 }
-                crate::Output::Transmit(t) => TxOutput::Transmit(
-                    RtcTx {
-                        inner: Some(inner),
-                        _state: PhantomData,
-                    },
-                    t,
-                ),
-                crate::Output::Event(e) => TxOutput::Event(
-                    RtcTx {
-                        inner: Some(inner),
-                        _state: PhantomData,
-                    },
-                    e,
-                ),
+                crate::PollOutput::Transmit(t) => {
+                    // Track bytes transmitted
+                    inner.rtc.peer_bytes_tx += t.contents.len() as u64;
+                    tracing::trace!("OUT {:?}", t);
+                    Output::Transmit(
+                        RtcTx {
+                            inner: Some(inner),
+                            _state: PhantomData,
+                        },
+                        t,
+                    )
+                }
+                crate::PollOutput::Event(e) => {
+                    // Log event at appropriate level
+                    match &e {
+                        crate::Event::ChannelData(_)
+                        | crate::Event::MediaData(_)
+                        | crate::Event::RtpPacket(_)
+                        | crate::Event::SenderFeedback(_)
+                        | crate::Event::MediaEgressStats(_)
+                        | crate::Event::MediaIngressStats(_)
+                        | crate::Event::PeerStats(_)
+                        | crate::Event::ChannelBufferedAmountLow(_)
+                        | crate::Event::EgressBitrateEstimate(_) => {
+                            tracing::trace!("{:?}", e)
+                        }
+                        _ => tracing::debug!("{:?}", e),
+                    }
+                    Output::Event(
+                        RtcTx {
+                            inner: Some(inner),
+                            _state: PhantomData,
+                        },
+                        e,
+                    )
+                }
             },
             Err(e) => {
                 // On error, don't put inner back (transaction is done)
                 tracing::error!("poll_output error: {:?}", e);
                 // Return a timeout to signal completion
-                TxOutput::Timeout(inner.now)
+                Output::Timeout(inner.now)
             }
         }
     }
@@ -308,8 +330,7 @@ impl<State> Drop for RtcTx<'_, State> {
         if self.inner.is_some() && !std::thread::panicking() {
             panic!(
                 "RtcTx dropped without polling to completion. \
-                 You must poll() until TxOutput::Timeout is returned, \
-                 or call abandon() if you need to stop early."
+                 You must poll() until Output::Timeout is returned."
             );
         }
     }
@@ -317,7 +338,7 @@ impl<State> Drop for RtcTx<'_, State> {
 
 /// Output from polling a transaction.
 #[allow(clippy::large_enum_variant)]
-pub enum TxOutput<'a> {
+pub enum Output<'a> {
     /// Transaction is complete. The timeout indicates when to call `begin()` again.
     Timeout(Instant),
 
@@ -328,12 +349,12 @@ pub enum TxOutput<'a> {
     Event(RtcTx<'a, Poll>, crate::Event),
 }
 
-impl fmt::Debug for TxOutput<'_> {
+impl fmt::Debug for Output<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TxOutput::Timeout(t) => f.debug_tuple("Timeout").field(t).finish(),
-            TxOutput::Transmit(_, t) => f.debug_tuple("Transmit").field(t).finish(),
-            TxOutput::Event(_, e) => f.debug_tuple("Event").field(e).finish(),
+            Output::Timeout(t) => f.debug_tuple("Timeout").field(t).finish(),
+            Output::Transmit(_, t) => f.debug_tuple("Transmit").field(t).finish(),
+            Output::Event(_, e) => f.debug_tuple("Event").field(e).finish(),
         }
     }
 }

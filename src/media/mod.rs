@@ -410,10 +410,6 @@ impl Media {
     }
 
     fn set_to_payload(&mut self, to_payload: ToPayload) -> Result<(), RtcError> {
-        if self.to_payload.len() > 100 {
-            return Err(RtcError::WriteWithoutPoll);
-        }
-
         self.to_payload.push_back(to_payload);
 
         Ok(())

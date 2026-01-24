@@ -131,7 +131,7 @@ fn run(socket: UdpSocket, rx: Receiver<Rtc>) -> Result<(), RtcError> {
         // Poll clients until they return timeout
         let mut timeout = Instant::now() + Duration::from_millis(100);
         for client in clients.iter_mut() {
-            let t = poll_until_timeout(client, &mut to_propagate, &socket);
+            let t = client.poll_to_timeout(None, &mut to_propagate, &socket);
             timeout = timeout.min(t);
         }
 
@@ -148,23 +148,21 @@ fn run(socket: UdpSocket, rx: Receiver<Rtc>) -> Result<(), RtcError> {
             .set_read_timeout(Some(duration))
             .expect("setting socket read timeout");
 
-        if let Some(input) = read_socket_input(&socket, &mut buf) {
+        if let Some((recv_time, recv)) = read_socket_input(&socket, &mut buf) {
             // The rtc.accepts() call is how we demultiplex the incoming packet to know which
             // Rtc instance the traffic belongs to.
+            let input = Input::Receive(recv_time, recv);
             if let Some(client) = clients.iter_mut().find(|c| c.accepts(&input)) {
                 // We found the client that accepts the input.
-                client.handle_input(input);
+                let Input::Receive(recv_time, recv) = input else {
+                    unreachable!()
+                };
+                client.poll_to_timeout(Some((recv_time, recv)), &mut to_propagate, &socket);
             } else {
                 // This is quite common because we don't get the Rtc instance via the mpsc channel
                 // quickly enough before the browser send the first STUN.
                 debug!("No client accepts UDP input: {:?}", input);
             }
-        }
-
-        // Drive time forward in all clients.
-        let now = Instant::now();
-        for client in &mut clients {
-            client.handle_input(Input::Timeout(now));
         }
     }
 }
@@ -176,29 +174,6 @@ fn spawn_new_client(rx: &Receiver<Rtc>) -> Option<Client> {
         Ok(rtc) => Some(Client::new(rtc)),
         Err(TryRecvError::Empty) => None,
         _ => panic!("Receiver<Rtc> disconnected"),
-    }
-}
-
-/// Poll all the output from the client until it returns a timeout.
-/// Collect any output in the queue, transmit data on the socket, return the timeout
-fn poll_until_timeout(
-    client: &mut Client,
-    queue: &mut VecDeque<Propagated>,
-    socket: &UdpSocket,
-) -> Instant {
-    loop {
-        if !client.rtc.is_alive() {
-            // This client will be cleaned up in the next run of the main loop.
-            return Instant::now();
-        }
-
-        let propagated = client.poll_output(socket);
-
-        if let Propagated::Timeout(t) = propagated {
-            return t;
-        }
-
-        queue.push_back(propagated)
     }
 }
 
@@ -226,12 +201,15 @@ fn propagate(propagated: &Propagated, clients: &mut [Client]) {
                     client.handle_keyframe_request(*req, *mid_in)
                 }
             }
-            Propagated::Noop | Propagated::Timeout(_) => {}
+            Propagated::Noop => {}
         }
     }
 }
 
-fn read_socket_input<'a>(socket: &UdpSocket, buf: &'a mut Vec<u8>) -> Option<Input<'a>> {
+fn read_socket_input<'a>(
+    socket: &UdpSocket,
+    buf: &'a mut Vec<u8>,
+) -> Option<(Instant, Receive<'a>)> {
     buf.resize(2000, 0);
 
     match socket.recv_from(buf) {
@@ -244,7 +222,7 @@ fn read_socket_input<'a>(socket: &UdpSocket, buf: &'a mut Vec<u8>) -> Option<Inp
                 return None;
             };
 
-            Some(Input::Receive(
+            Some((
                 Instant::now(),
                 Receive {
                     proto: Protocol::Udp,
@@ -339,80 +317,109 @@ impl Client {
         self.rtc.accepts(input)
     }
 
-    fn handle_input(&mut self, input: Input) {
+    /// Poll the client to timeout, optionally processing received data first.
+    /// Returns the timeout instant.
+    fn poll_to_timeout(
+        &mut self,
+        receive: Option<(Instant, Receive<'_>)>,
+        queue: &mut VecDeque<Propagated>,
+        socket: &UdpSocket,
+    ) -> Instant {
         if !self.rtc.is_alive() {
-            return;
-        }
-
-        if let Err(e) = self.rtc.handle_input(input) {
-            warn!("Client ({}) disconnected: {:?}", *self.id, e);
-            self.rtc.disconnect();
-        }
-    }
-
-    fn poll_output(&mut self, socket: &UdpSocket) -> Propagated {
-        if !self.rtc.is_alive() {
-            return Propagated::Noop;
+            return Instant::now();
         }
 
         // Incoming tracks from other clients cause new entries in track_out that
         // need SDP negotiation with the remote peer.
-        if self.negotiate_if_needed() {
-            return Propagated::Noop;
+        self.negotiate_if_needed();
+
+        let now = Instant::now();
+
+        // Collect events during polling - we'll handle them after the transaction completes
+        let mut events: Vec<Event> = Vec::new();
+        let timeout;
+
+        // Begin transaction, process receive if any, poll to timeout
+        {
+            let tx = self.rtc.begin(now);
+
+            // Either process received data or just advance time
+            let tx = match receive {
+                Some((recv_time, data)) => match tx.receive(recv_time, data) {
+                    Ok(tx) => tx,
+                    Err(e) => {
+                        warn!("Client ({}) receive failed: {:?}", *self.id, e);
+                        // The error already consumed the transaction's inner state,
+                        // disconnect is handled by the caller
+                        return Instant::now();
+                    }
+                },
+                None => tx.finish(),
+            };
+
+            // Poll to timeout, collecting events
+            let mut tx = tx;
+            timeout = loop {
+                match tx.poll() {
+                    Output::Timeout(t) => break t,
+                    Output::Transmit(t, pkt) => {
+                        tx = t;
+                        socket
+                            .send_to(&pkt.contents, pkt.destination)
+                            .expect("sending UDP data");
+                    }
+                    Output::Event(t, evt) => {
+                        tx = t;
+                        events.push(evt);
+                    }
+                }
+            };
         }
 
-        match self.rtc.poll_output() {
-            Ok(output) => self.handle_output(output, socket),
-            Err(e) => {
-                warn!("Client ({}) poll_output failed: {:?}", *self.id, e);
-                self.rtc.disconnect();
-                Propagated::Noop
+        // Now handle events after the transaction is complete
+        for evt in events {
+            let propagated = self.handle_event(evt);
+            if !matches!(propagated, Propagated::Noop) {
+                queue.push_back(propagated);
             }
         }
+
+        timeout
     }
 
-    fn handle_output(&mut self, output: Output, socket: &UdpSocket) -> Propagated {
-        match output {
-            Output::Transmit(transmit) => {
-                socket
-                    .send_to(&transmit.contents, transmit.destination)
-                    .expect("sending UDP data");
+    fn handle_event(&mut self, evt: Event) -> Propagated {
+        match evt {
+            Event::IceConnectionStateChange(v) => {
+                if v == IceConnectionState::Disconnected {
+                    // Ice disconnect could result in trying to establish a new connection,
+                    // but this impl just disconnects directly.
+                    self.rtc.disconnect();
+                }
                 Propagated::Noop
             }
-            Output::Timeout(t) => Propagated::Timeout(t),
-            Output::Event(e) => match e {
-                Event::IceConnectionStateChange(v) => {
-                    if v == IceConnectionState::Disconnected {
-                        // Ice disconnect could result in trying to establish a new connection,
-                        // but this impl just disconnects directly.
-                        self.rtc.disconnect();
-                    }
-                    Propagated::Noop
-                }
-                Event::MediaAdded(e) => self.handle_media_added(e.mid, e.kind),
-                Event::MediaData(data) => self.handle_media_data_in(data),
-                Event::KeyframeRequest(req) => self.handle_incoming_keyframe_req(req),
-                Event::ChannelOpen(cid, _) => {
-                    self.cid = Some(cid);
-                    Propagated::Noop
-                }
-                Event::ChannelData(data) => self.handle_channel_data(data),
+            Event::MediaAdded(e) => self.handle_media_added(e.mid, e.kind),
+            Event::MediaData(data) => self.handle_media_data_in(data),
+            Event::KeyframeRequest(req) => self.handle_incoming_keyframe_req(req),
+            Event::ChannelOpen(cid, _) => {
+                self.cid = Some(cid);
+                Propagated::Noop
+            }
+            Event::ChannelData(data) => self.handle_channel_data(data),
 
-                // NB: To see statistics, uncomment set_stats_interval() above.
-                Event::MediaIngressStats(data) => {
-                    info!("{:?}", data);
-                    Propagated::Noop
-                }
-                Event::MediaEgressStats(data) => {
-                    info!("{:?}", data);
-                    Propagated::Noop
-                }
-                Event::PeerStats(data) => {
-                    info!("{:?}", data);
-                    Propagated::Noop
-                }
-                _ => Propagated::Noop,
-            },
+            // NB: To see statistics, uncomment set_stats_interval() above.
+            Event::MediaIngressStats(data) => {
+                info!("{:?}", data);
+                Propagated::Noop
+            }
+            Event::MediaEgressStats(data) => {
+                info!("{:?}", data);
+                Propagated::Noop
+            }
+            Event::PeerStats(data) => {
+                info!("{:?}", data);
+                Propagated::Noop
+            }
+            _ => Propagated::Noop,
         }
     }
 
@@ -658,9 +665,6 @@ impl Client {
 enum Propagated {
     /// When we have nothing to propagate.
     Noop,
-
-    /// Poll client has reached timeout.
-    Timeout(Instant),
 
     /// A new incoming track opened.
     TrackOpen(ClientId, Weak<TrackIn>),

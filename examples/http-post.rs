@@ -14,7 +14,7 @@ use str0m::change::SdpOffer;
 use str0m::crypto::from_feature_flags;
 use str0m::net::Protocol;
 use str0m::net::Receive;
-use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc, RtcConfig, RtcError};
+use str0m::{Candidate, Event, IceConnectionState, Output, Rtc, RtcConfig, RtcError};
 
 mod util;
 
@@ -97,56 +97,78 @@ fn run(mut rtc: Rtc, socket: UdpSocket) -> Result<(), RtcError> {
     let mut buf = Vec::new();
 
     loop {
-        // Poll output until we get a timeout. The timeout means we are either awaiting UDP socket input
-        // or the timeout to happen.
-        let timeout = match rtc.poll_output()? {
-            Output::Timeout(v) => v,
+        let now = Instant::now();
 
-            Output::Transmit(v) => {
-                socket.send_to(&v.contents, v.destination)?;
-                continue;
-            }
+        // Begin a transaction and poll to timeout
+        let tx = rtc.begin(now);
+        let mut tx = tx.finish();
 
-            Output::Event(v) => {
-                if v == Event::IceConnectionStateChange(IceConnectionState::Disconnected) {
-                    return Ok(());
+        let timeout = loop {
+            match tx.poll() {
+                Output::Timeout(t) => break t,
+                Output::Transmit(t, pkt) => {
+                    tx = t;
+                    socket.send_to(&pkt.contents, pkt.destination)?;
                 }
-                continue;
+                Output::Event(t, evt) => {
+                    tx = t;
+                    if evt == Event::IceConnectionStateChange(IceConnectionState::Disconnected) {
+                        return Ok(());
+                    }
+                }
             }
         };
 
-        let timeout = timeout - Instant::now();
+        let duration = timeout.saturating_duration_since(Instant::now());
 
         // socket.set_read_timeout(Some(0)) is not ok
-        if timeout.is_zero() {
-            rtc.handle_input(Input::Timeout(Instant::now()))?;
+        if duration.is_zero() {
             continue;
         }
 
-        socket.set_read_timeout(Some(timeout))?;
+        socket.set_read_timeout(Some(duration))?;
         buf.resize(2000, 0);
 
-        let input = match socket.recv_from(&mut buf) {
+        match socket.recv_from(&mut buf) {
             Ok((n, source)) => {
                 buf.truncate(n);
-                Input::Receive(
-                    Instant::now(),
-                    Receive {
-                        proto: Protocol::Udp,
-                        source,
-                        destination: socket.local_addr().unwrap(),
-                        contents: buf.as_slice().try_into()?,
-                    },
-                )
+                let recv_time = Instant::now();
+                let recv = Receive {
+                    proto: Protocol::Udp,
+                    source,
+                    destination: socket.local_addr().unwrap(),
+                    contents: buf.as_slice().try_into()?,
+                };
+
+                // Handle the received data
+                let tx = rtc.begin(recv_time);
+                let mut tx = tx.receive(recv_time, recv)?;
+                loop {
+                    match tx.poll() {
+                        Output::Timeout(_) => break,
+                        Output::Transmit(t, pkt) => {
+                            tx = t;
+                            socket.send_to(&pkt.contents, pkt.destination)?;
+                        }
+                        Output::Event(t, evt) => {
+                            tx = t;
+                            if evt
+                                == Event::IceConnectionStateChange(IceConnectionState::Disconnected)
+                            {
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
             }
 
             Err(e) => match e.kind() {
                 // Expected error for set_read_timeout(). One for windows, one for the rest.
-                ErrorKind::WouldBlock | ErrorKind::TimedOut => Input::Timeout(Instant::now()),
+                ErrorKind::WouldBlock | ErrorKind::TimedOut => {
+                    // Timeout - continue loop
+                }
                 _ => return Err(e.into()),
             },
         };
-
-        rtc.handle_input(input)?;
     }
 }
